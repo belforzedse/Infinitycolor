@@ -1,17 +1,5 @@
 type AuditAction = "Create" | "Update" | "Delete";
 
-function getActorFromEvent(event: any): string | undefined {
-  try {
-    // Strapi lifecycles don't expose ctx directly; we may enrich later via services/controllers if needed
-    // For now, fallback to updatedBy/createdBy if present in result
-    const createdBy =
-      event?.result?.createdBy?.id || event?.params?.data?.updatedBy?.id;
-    return createdBy ? String(createdBy) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function diffChanges(
   previous: Record<string, any>,
   current: Record<string, any>
@@ -51,7 +39,6 @@ export default {
           local_user: result.id,
           Action: "Create" as AuditAction,
           Description: "Local user created",
-          PerformedBy: getActorFromEvent(event),
         },
       }
     );
@@ -106,7 +93,6 @@ export default {
           Action: "Update" as AuditAction,
           Changes: changes,
           Description: "Local user updated",
-          PerformedBy: getActorFromEvent(event),
         },
       }
     );
@@ -131,7 +117,6 @@ export default {
           local_user: id,
           Action: "Delete" as AuditAction,
           Description: "Local user deleted",
-          PerformedBy: getActorFromEvent(event),
         },
       }
     );
