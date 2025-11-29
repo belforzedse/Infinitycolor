@@ -82,12 +82,12 @@ export default function SuperAdminLayoutContentWrapperDesktop(props: Props) {
     <>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="text-3xl text-[#202224]">{isRecycleBinOpen ? "زباله‌دان" : title}</span>
+          <span className="text-2xl lg:text-3xl text-[#202224]">{isRecycleBinOpen ? "زباله‌دان" : title}</span>
 
           {titleSuffixComponent}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 lg:gap-3">
           {hasRecycleBin && (
             <RecycleBinButton
               count={count}
@@ -113,7 +113,7 @@ export default function SuperAdminLayoutContentWrapperDesktop(props: Props) {
           <SuperAdminPageSizeSelect />
         </div>
       )}
-      <div className="card mt-3 p-7">{children}</div>
+      <div className="card mt-3 p-4 md:p-5 lg:p-7">{children}</div>
       {hasPagination && (
         <SuperAdminPagination
           className="mt-4"
