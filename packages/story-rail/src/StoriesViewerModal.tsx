@@ -3,55 +3,20 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { StoryViewer as LibStoryViewer } from "react-instagram-stories";
 import type { StoryItemControls, User } from "react-instagram-stories";
-import type { Story } from "@/types/story";
-import { buildStoryMediaUrl } from "@/lib/story-media-url";
-
-export interface StoriesViewerModalProps {
-  stories: Story[];
-  seenIds: Set<number>;
-  isOpen: boolean;
-  initialIndex: number;
-  onClose: () => void;
-  onStoryView: (storyId: number) => void;
-}
+import type { StoriesViewerModalProps, StoryRailStory } from "./types";
+import { hasUsableMediaUrl, isImageStory, isVideoStory } from "./story-utils";
 
 const FALLBACK_AVATAR_URL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 const VIDEO_LOADING_DURATION_MS = 10 * 60 * 1000;
 
-function isSupportedImageUrl(url: string): boolean {
-  return /\.(avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i.test(url);
-}
-
-function isSupportedVideoUrl(url: string): boolean {
-  return /\.(m3u8|mov|mp4|m4v|ogg|ogv|webm)(?:[?#].*)?$/i.test(url);
-}
-
-function hasUsableMediaUrl(url?: string): url is string {
-  return typeof url === "string" && url.trim().length > 0;
-}
-
-function isImageStory(story: Story): boolean {
-  const mediaUrl = story.Media?.url;
-  if (story.MediaType !== "image" || !hasUsableMediaUrl(mediaUrl)) return false;
-  const mime = story.Media?.mime;
-  return mime ? mime.startsWith("image/") : isSupportedImageUrl(mediaUrl);
-}
-
-function isVideoStory(story: Story): boolean {
-  const mediaUrl = story.Media?.url;
-  if (story.MediaType !== "video" || !hasUsableMediaUrl(mediaUrl)) return false;
-  const mime = story.Media?.mime;
-  return mime ? mime.startsWith("video/") : isSupportedVideoUrl(mediaUrl);
-}
-
-function getStaticAvatarUrl(story: Story): string {
-  if (story.Thumbnail?.url) return buildStoryMediaUrl(story.Thumbnail.url);
-  if (isImageStory(story) && story.Media?.url) return buildStoryMediaUrl(story.Media.url);
+function getStaticAvatarUrl(story: StoryRailStory, resolveMediaUrl: (url: string) => string): string {
+  if (story.Thumbnail?.url) return resolveMediaUrl(story.Thumbnail.url);
+  if (isImageStory(story) && story.Media?.url) return resolveMediaUrl(story.Media.url);
   return FALLBACK_AVATAR_URL;
 }
 
-function getStoryItemId(story: Story): string {
+function getStoryItemId(story: StoryRailStory): string {
   const mediaKey = story.Media?.id ?? story.Media?.url ?? "missing-media";
   const timestampKey = story.updatedAt || story.createdAt || "unknown-time";
   return `story-${story.id}-${story.MediaType}-${mediaKey}-${timestampKey}`;
@@ -197,18 +162,24 @@ function createVideoStoryComponent({
   return VideoStory;
 }
 
-function storiesToUsers(stories: Story[]): User[] {
+function storiesToUsers<TStory extends StoryRailStory>({
+  stories,
+  resolveMediaUrl,
+  unavailableText,
+}: {
+  stories: TStory[];
+  resolveMediaUrl: (url: string) => string;
+  unavailableText: string;
+}): User[] {
   return stories.map((story) => {
-    const mediaUrl = hasUsableMediaUrl(story.Media?.url)
-      ? buildStoryMediaUrl(story.Media.url)
-      : "";
+    const mediaUrl = hasUsableMediaUrl(story.Media?.url) ? resolveMediaUrl(story.Media.url) : "";
     const storyItemId = getStoryItemId(story);
-    const poster = story.Thumbnail?.url ? buildStoryMediaUrl(story.Thumbnail.url) : undefined;
+    const poster = story.Thumbnail?.url ? resolveMediaUrl(story.Thumbnail.url) : undefined;
 
     return {
       id: String(story.id),
       username: story.Title,
-      avatarUrl: getStaticAvatarUrl(story),
+      avatarUrl: getStaticAvatarUrl(story, resolveMediaUrl),
       hasUnreadStories: false,
       stories: [
         isVideoStory(story)
@@ -229,7 +200,7 @@ function storiesToUsers(stories: Story[]): User[] {
             : {
                 id: storyItemId,
                 type: "text" as const,
-                text: story.Title || "Story unavailable",
+                text: story.Title || unavailableText,
                 backgroundColor: "#111827",
                 textColor: "#ffffff",
                 duration: story.DurationMs,
@@ -239,15 +210,21 @@ function storiesToUsers(stories: Story[]): User[] {
   });
 }
 
-export default function StoriesViewerModal({
+export function StoriesViewerModal<TStory extends StoryRailStory = StoryRailStory>({
   stories,
   seenIds,
   isOpen,
   initialIndex,
   onClose,
   onStoryView,
-}: StoriesViewerModalProps) {
-  const users = useMemo(() => storiesToUsers(stories), [stories]);
+  resolveMediaUrl,
+  unavailableText = "Story unavailable",
+  classNames,
+}: StoriesViewerModalProps<TStory>) {
+  const users = useMemo(
+    () => storiesToUsers({ stories, resolveMediaUrl, unavailableText }),
+    [stories, resolveMediaUrl, unavailableText],
+  );
   const safeInitialIndex = useMemo(
     () => clampIndex(initialIndex, users.length),
     [initialIndex, users.length],
@@ -274,11 +251,6 @@ export default function StoriesViewerModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
 
-  /**
-   * Must stay referentially stable: `react-instagram-stories` StoryViewer's `useEffect` lists `onStoryChange`
-   * in its dependency array and calls it whenever the reference changes. Inline handlers loop updates.
-   * Refs keep the latest `stories` / `seenIds` / `onStoryView` without changing the callback identity.
-   */
   const handleStoryChange = useCallback((userIndex: number) => {
     const story = storiesRef.current[userIndex];
     if (!story) return;
@@ -303,11 +275,13 @@ export default function StoriesViewerModal({
       onClose={onClose}
       onStoryChange={handleStoryChange}
       classNames={{
-        overlay: "bg-black/95",
+        overlay: classNames?.overlay ?? "bg-black/95",
         progressBars: {
-          bar: { fill: "bg-gradient-to-r from-pink-400 to-pink-600" },
+          bar: { fill: classNames?.progressFill ?? "bg-gradient-to-r from-pink-400 to-pink-600" },
         },
       }}
     />
   );
 }
+
+export default StoriesViewerModal;
