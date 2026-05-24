@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 type Phase = "hidden" | "enter" | "progress" | "done";
 
-export default function NavigationProgress() {
+export function NavigationProgress() {
   const pathname = usePathname();
   const previousPathname = useRef(pathname);
   const activeRef = useRef(false);
@@ -27,7 +27,9 @@ export default function NavigationProgress() {
 
   const queuePhase = useCallback(
     (nextPhase: Phase, delay = 0) => {
-      queueTimer(() => setPhase(nextPhase), delay);
+      queueTimer(() => {
+        window.requestAnimationFrame(() => setPhase(nextPhase));
+      }, delay);
     },
     [queueTimer],
   );
@@ -40,7 +42,7 @@ export default function NavigationProgress() {
       queuePhase("enter");
       queueTimer(() => {
         activeRef.current = false;
-        setPhase("hidden");
+        window.requestAnimationFrame(() => setPhase("hidden"));
       }, 2000);
       return;
     }
@@ -49,7 +51,7 @@ export default function NavigationProgress() {
     queuePhase("progress", 50);
     queueTimer(() => {
       activeRef.current = false;
-      setPhase("done");
+      window.requestAnimationFrame(() => setPhase("done"));
     }, 2200);
     queuePhase("hidden", 2500);
   }, [clearTimers, queuePhase, queueTimer, reducedMotion]);
@@ -120,7 +122,7 @@ export default function NavigationProgress() {
       window.removeEventListener("click", handleClick, true);
       window.removeEventListener("popstate", handlePopState);
     };
-  }, [clearTimers, finishNavigation, queueTimer, reducedMotion, startNavigation]);
+  }, [clearTimers, finishNavigation, startNavigation]);
 
   useEffect(() => {
     if (pathname === previousPathname.current) return;

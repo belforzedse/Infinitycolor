@@ -1,10 +1,5 @@
-/**
- * Shared pseudo-element glass crossfade used by `Button` variant `default` and profile nav active row.
- * @see apps/social/src/components/ui/Button.tsx
- */
-function cx(...parts: (string | undefined | false)[]): string {
-  return parts.filter(Boolean).join(" ");
-}
+import type { HTMLAttributes } from "react";
+import { cx } from "./classnames";
 
 export function glassDefaultCrossfadeSurface(
   beforeRounded: string,
@@ -22,4 +17,23 @@ export function glassDefaultCrossfadeSurface(
     "after:opacity-0 after:transition-opacity after:duration-300 after:ease-out",
     "hover:before:opacity-0 hover:after:opacity-100 motion-reduce:hover:before:opacity-100 motion-reduce:hover:after:opacity-0",
   );
+}
+
+export type GlassSurfaceProps = HTMLAttributes<HTMLDivElement> & {
+  tone?: "surface" | "panel" | "chip" | "header";
+};
+
+export function GlassSurface({
+  tone = "surface",
+  className,
+  ...props
+}: GlassSurfaceProps) {
+  const toneClass = {
+    surface: "luxury-glass-surface",
+    panel: "luxury-glass-panel",
+    chip: "luxury-glass-chip",
+    header: "luxury-glass-header",
+  }[tone];
+
+  return <div className={cx(toneClass, className)} {...props} />;
 }
