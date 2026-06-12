@@ -117,4 +117,4 @@ These paths are ignored by git. Do not store `.env` files, storage state, tokens
 
 ## CI Status
 
-`.gitlab-ci.yml` is intentionally unchanged in Phase 1. After local smoke passes, add a separate CI mini-plan before introducing a GitLab `test` or `verify` stage.
+`.gitlab-ci.yml` includes a non-blocking `e2e:smoke` job for the `dev` branch. The job runs against an isolated Postgres/Redis/backend service stack and starts the frontend from source so `NEXT_PUBLIC_*` values point at the throwaway backend.
