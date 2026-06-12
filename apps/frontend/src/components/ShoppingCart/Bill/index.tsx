@@ -548,8 +548,8 @@ function ShoppingCartBillForm({}: Props) {
           form.appendChild(input);
           document.body.appendChild(form);
           form.submit();
-        } else if (gateway === "snappay" || gateway === "samankish") {
-          // SnappPay and Samankish use GET redirect with token in URL
+        } else if (gateway === "snappay" || gateway === "samankish" || gateway === "zarinpal") {
+          // These gateways use GET redirect with token/authority in URL
           window.location.href = cartResponse.redirectUrl!;
         } else if (gateway === "wallet") {
           trackMatomoEvent({
