@@ -12,6 +12,7 @@ jest.mock("@/contexts/CartContext", () => ({
     openDrawer: mockOpenDrawer,
     cartItems: cartItemsMock,
     updateQuantity: mockUpdateQuantity,
+    isCartReady: true,
   }),
 }));
 

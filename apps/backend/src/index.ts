@@ -299,9 +299,33 @@ const EDITOR_RESTRICTED_CONTROLLERS: RestrictedController[] = [
   { typeKey: "api::post-comment-like", controller: "post-comment-like", allowActions: [] },
 ];
 
-// Founder is store-manager-plus, not near-superadmin: it mirrors store-manager Content API
-// restrictions while custom controllers may still grant founder-specific extras such as order logs.
-const FOUNDER_RESTRICTED_CONTROLLERS: RestrictedController[] = STORE_MANAGER_RESTRICTED_CONTROLLERS;
+const FOUNDER_REPORT_ACTIONS = [
+  "productSales",
+  "productOverview",
+  "productTrends",
+  "productPerformance",
+  "productInventory",
+  "productDetail",
+  "productExport",
+] as const;
+
+// Founder is store-manager-plus, not near-superadmin: it keeps store-manager restrictions
+// but allows order-scoped audit logs and the sales-reporting workspace.
+const FOUNDER_RESTRICTED_CONTROLLERS: RestrictedController[] =
+  STORE_MANAGER_RESTRICTED_CONTROLLERS.map((restriction) => {
+    if (
+      restriction.typeKey === "api::admin-activity" &&
+      restriction.controller === "admin-activity"
+    ) {
+      return { ...restriction, allowActions: ["findOrderActivities"] };
+    }
+
+    if (restriction.typeKey === "api::report" && restriction.controller === "report") {
+      return { ...restriction, allowActions: FOUNDER_REPORT_ACTIONS };
+    }
+
+    return restriction;
+  });
 
 /**
  * Determines whether a role permission spec grants all permissions.

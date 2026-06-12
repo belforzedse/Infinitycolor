@@ -61,10 +61,34 @@ function createActionTree() {
         },
       },
     },
+    "api::admin-activity": {
+      controllers: {
+        "admin-activity": {
+          find: action(),
+          findOne: action(),
+          findOrderActivities: action(),
+          findUserActivities: action(),
+          findProductActivities: action(),
+          findReport: action(),
+        },
+      },
+    },
     "api::report": {
       controllers: {
         report: {
+          liquidity: action(),
           productSales: action(),
+          productOverview: action(),
+          productTrends: action(),
+          productPerformance: action(),
+          productInventory: action(),
+          productDetail: action(),
+          productExport: action(),
+          gatewayLiquidity: action(),
+          adminActivity: action(),
+          adminActivityById: action(),
+          trafficDashboard: action(),
+          trafficRealtime: action(),
         },
       },
     },
@@ -102,17 +126,58 @@ function createStrapiForPermissions() {
 }
 
 describe("role permission templates", () => {
-  it("gives founders the same generated permissions as store managers", () => {
+  it("keeps store managers away from admin activity and reports", () => {
     const storeManager = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "store-manager",
     );
+
+    expect(
+      storeManager["api::admin-activity"].controllers["admin-activity"].findOrderActivities
+        .enabled,
+    ).toBe(false);
+    expect(
+      storeManager["api::admin-activity"].controllers["admin-activity"].findReport.enabled,
+    ).toBe(false);
+    expect(storeManager["api::report"].controllers.report.productSales.enabled).toBe(false);
+    expect(storeManager["api::report"].controllers.report.trafficDashboard.enabled).toBe(false);
+  });
+
+  it("allows founders to read order-scoped admin activity but not standalone activity reports", () => {
     const founder = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "founder",
     );
 
-    expect(founder).toEqual(storeManager);
+    const adminActivity = founder["api::admin-activity"].controllers["admin-activity"];
+    expect(adminActivity.findOrderActivities.enabled).toBe(true);
+    expect(adminActivity.find.enabled).toBe(false);
+    expect(adminActivity.findOne.enabled).toBe(false);
+    expect(adminActivity.findReport.enabled).toBe(false);
+    expect(adminActivity.findUserActivities.enabled).toBe(false);
+    expect(adminActivity.findProductActivities.enabled).toBe(false);
+  });
+
+  it("allows founders to use sales reports without traffic or admin-activity reports", () => {
+    const founder = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "founder",
+    );
+
+    const report = founder["api::report"].controllers.report;
+    expect(report.productSales.enabled).toBe(true);
+    expect(report.productOverview.enabled).toBe(true);
+    expect(report.productTrends.enabled).toBe(true);
+    expect(report.productPerformance.enabled).toBe(true);
+    expect(report.productInventory.enabled).toBe(true);
+    expect(report.productDetail.enabled).toBe(true);
+    expect(report.productExport.enabled).toBe(true);
+    expect(report.liquidity.enabled).toBe(false);
+    expect(report.gatewayLiquidity.enabled).toBe(false);
+    expect(report.adminActivity.enabled).toBe(false);
+    expect(report.adminActivityById.enabled).toBe(false);
+    expect(report.trafficDashboard.enabled).toBe(false);
+    expect(report.trafficRealtime.enabled).toBe(false);
   });
 
   it("keeps manager-plus roles customer-capable but away from superadmin-only actions", () => {
