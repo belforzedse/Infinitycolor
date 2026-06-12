@@ -4,7 +4,14 @@ describe("imageLoader", () => {
   const originalEnv = process.env.NEXT_PUBLIC_IMAGE_BASE_URL;
 
   afterEach(() => {
-    process.env.NEXT_PUBLIC_IMAGE_BASE_URL = originalEnv;
+    // Restore properly: assigning `undefined` to a process.env key coerces it to
+    // the string "undefined", which would break later tests (e.g. the fallback
+    // case uses it as a URL base). Delete it when it was originally unset.
+    if (originalEnv === undefined) {
+      delete process.env.NEXT_PUBLIC_IMAGE_BASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_IMAGE_BASE_URL = originalEnv;
+    }
   });
 
   it("should return data URLs unchanged", () => {
