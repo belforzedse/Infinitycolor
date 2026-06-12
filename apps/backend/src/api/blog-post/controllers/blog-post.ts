@@ -4,7 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import { MANAGEMENT_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
 import { validateBlogSlug, generateUniqueBlogSlug } from "../../../utils/slugValidation";
 import { enrichBlogPostsWithAuthorNames } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
@@ -165,7 +165,7 @@ const blogPostController = factories.createCoreController("api::blog-post.blog-p
     const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
 
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, ["Superadmin", "Store manager", "Editor"]);
+    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
 
     // If not Editor+, only show published posts
     if (!hasEditorRole) {
@@ -215,7 +215,7 @@ const blogPostController = factories.createCoreController("api::blog-post.blog-p
     (this as any).ensureDefaultPopulate(ctx);
 
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, ["Superadmin", "Store manager", "Editor"]);
+    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
 
     // Get the post
     const post = await strapi.entityService.findOne("api::blog-post.blog-post", id, {
@@ -249,7 +249,7 @@ const blogPostController = factories.createCoreController("api::blog-post.blog-p
     // Allow API tokens (no user) or users with proper roles
     if (user) {
       const actorRoleName = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, ["Superadmin", "Store manager", "Editor"])) {
+      if (!roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
         return ctx.forbidden("You don't have permission to create blog posts");
       }
     }
@@ -308,7 +308,7 @@ const blogPostController = factories.createCoreController("api::blog-post.blog-p
     // Allow API tokens (no user) or users with proper roles
     if (user) {
       const actorRoleName = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, ["Superadmin", "Store manager", "Editor"])) {
+      if (!roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
         return ctx.forbidden("You don't have permission to update blog posts");
       }
     }
@@ -359,7 +359,7 @@ const blogPostController = factories.createCoreController("api::blog-post.blog-p
     const { user } = ctx.state;
 
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    if (!user || !roleIsAllowed(actorRoleName, ["Superadmin", "Store manager", "Editor"])) {
+    if (!user || !roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
       return ctx.forbidden("You don't have permission to delete blog posts");
     }
 
@@ -430,7 +430,7 @@ const blogPostController = factories.createCoreController("api::blog-post.blog-p
 
     const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, ["Superadmin", "Store manager", "Editor"]);
+    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
 
     const posts = await strapi.entityService.findMany("api::blog-post.blog-post", {
       filters: { Slug: slug },

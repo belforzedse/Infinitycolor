@@ -1,11 +1,13 @@
 import { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 export const getMyCartHandler = (strapi: Strapi) => async (ctx: any) => {
-  const { user } = ctx.state;
-
   try {
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
+
     const cartService = strapi.service("api::cart.cart");
-    const cart = await cartService.getUserCart(user.id);
+    const cart = await cartService.getUserCart(userId);
 
     return {
       data: {

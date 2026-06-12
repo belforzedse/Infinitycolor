@@ -4,6 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 function getPositiveInt(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -18,10 +19,8 @@ export default factories.createCoreController("api::post-like.post-like", ({ str
         return ctx.badRequest("Post ID is required");
       }
 
-      const pluginUserId = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("Authentication required");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       const post = await strapi.entityService.findOne("api::post.post", postId);
       if (!post) {
@@ -64,10 +63,8 @@ export default factories.createCoreController("api::post-like.post-like", ({ str
 
   async getUserLikes(ctx) {
     try {
-      const pluginUserId = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("Authentication required");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       const page = getPositiveInt(ctx.query?.page, 1);
       const pageSize = getPositiveInt(ctx.query?.pageSize, 25);

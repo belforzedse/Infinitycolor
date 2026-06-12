@@ -3,6 +3,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 export default factories.createCoreController(
   "api::local-user-wallet.local-user-wallet",
@@ -10,8 +11,11 @@ export default factories.createCoreController(
     async getCurrentUserWallet(ctx) {
       try {
         // Resolve plugin user id via ctx.state or Authorization header
-        let pluginUserId = ctx.state.user?.id;
-        if (!pluginUserId) {
+        let pluginUserId: number | null | undefined = null;
+        if (ctx.state.user) {
+          pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+          if (!pluginUserId) return;
+        } else {
           const authHeader = ctx.request.header.authorization || "";
           const token = authHeader.toLowerCase().startsWith("bearer ")
             ? authHeader.split(" ")[1]

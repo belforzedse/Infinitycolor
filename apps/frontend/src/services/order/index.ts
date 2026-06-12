@@ -235,10 +235,11 @@ export const getOrderPaymentStatus = async (
     const response = signal
       ? await apiClient.get<OrderPaymentStatusResponse>(
           `/orders/${orderId}/payment-status`,
-          { signal },
+          { signal, suppressAuthRedirect: true },
         )
       : await apiClient.get<OrderPaymentStatusResponse>(
           `/orders/${orderId}/payment-status`,
+          { suppressAuthRedirect: true },
         );
     return response.data;
   } catch (error: any) {

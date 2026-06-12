@@ -4,6 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 export default factories.createCoreController(
   "api::product-review.product-review",
@@ -11,7 +12,8 @@ export default factories.createCoreController(
     // Create a new product review
     async submitReview(ctx) {
       try {
-        const { user } = ctx.state;
+        const userId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!userId) return;
         const { productId, rate, content } = ctx.request.body;
 
         if (!productId || !rate || !content) {
@@ -32,7 +34,7 @@ export default factories.createCoreController(
           .query("api::product-review.product-review")
           .findOne({
             where: {
-              user: user.id,
+              user: userId,
               product: productId,
               removedAt: null,
             },
@@ -61,7 +63,7 @@ export default factories.createCoreController(
             "api::product-review.product-review",
             {
               data: {
-                user: user.id,
+                user: userId,
                 product: productId,
                 Rate: rate,
                 Content: content,
@@ -82,13 +84,14 @@ export default factories.createCoreController(
     // Get all reviews for the current user
     async getUserReviews(ctx) {
       try {
-        const { user } = ctx.state;
+        const userId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!userId) return;
 
         const { results: reviews, pagination } = await strapi
           .service("api::product-review.product-review")
           .find({
             filters: {
-              user: user.id,
+              user: userId,
               removedAt: null,
             },
             populate: ["product"],

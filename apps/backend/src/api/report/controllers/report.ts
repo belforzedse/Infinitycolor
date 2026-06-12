@@ -3,7 +3,13 @@
  */
 
 import type { RoleName } from "../../../utils/roles";
-import { ROLE_NAMES, roleIsAllowed, fetchUserWithRole } from "../../../utils/roles";
+import {
+  MANAGEMENT_ROLES,
+  ROLE_NAMES,
+  STORE_MANAGER_PLUS_ROLES,
+  roleIsAllowed,
+  fetchUserWithRole,
+} from "../../../utils/roles";
 import { parsePositiveInt } from "../../../utils/parsePositiveInt";
 import {
   getMatomoRealtimePayload,
@@ -211,11 +217,7 @@ async function attachCoverImages(rows: productAnalytics.ProductPerformanceRow[])
 export default {
   async liquidity(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
-      );
+      const user = await ensureRoleAccess(ctx, STORE_MANAGER_PLUS_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
@@ -617,8 +619,8 @@ export default {
     try {
       const user = await ensureRoleAccess(
         ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
+        STORE_MANAGER_PLUS_ROLES,
+        PRODUCT_REPORT_ACCESS_MESSAGE,
       );
       if (!user) return;
 
@@ -812,8 +814,7 @@ export default {
 
       // Defense-in-depth: although writes are now gated to management roles, keep the role filter
       // so any legacy/non-admin rows are excluded from the report.
-      const allowedRoles = [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER, ROLE_NAMES.EDITOR];
-      filters.PerformedByRole = { $in: allowedRoles };
+      filters.PerformedByRole = { $in: MANAGEMENT_ROLES };
 
       const manualActivities = await strapi.entityService.findMany(
         "api::manual-admin-activity.manual-admin-activity" as any,
@@ -874,7 +875,7 @@ export default {
           const rows = await knex("manual_admin_activities as m")
             .leftJoin(`${linkTable} as l`, "l.manual_admin_activity_id", "m.id")
             .whereBetween("m.created_at", [start.toISOString(), end.toISOString()])
-            .whereIn("m.performed_by_role", allowedRoles)
+            .whereIn("m.performed_by_role", MANAGEMENT_ROLES)
             .distinct(
               "l.user_id as id",
               "m.performed_by_name as name",

@@ -14,6 +14,11 @@ import { decrementManualOrderStockHandler } from "./helpers/manualOrderStock";
 import { getActiveReserveHandler } from "./handlers/getActiveReserve";
 import { releaseReserveHandler } from "./handlers/releaseReserve";
 import { logAdminOrderCreate, logAdminOrderFieldUpdate } from "../../../utils/adminActivity";
+import {
+  STORE_MANAGER_PLUS_ROLES,
+  resolveCustomerTargetUserId,
+  roleIsAllowed,
+} from "../../../utils/roles";
 
 // Business fields captured as admin activity on a generic `PUT /orders/:id` edit. Whitelisted on
 // purpose: anything not listed here (tokens, payment internals, relations) is never diffed/logged.
@@ -27,16 +32,9 @@ export default factories.createCoreController(
       const requester = ctx.state.user;
 
       const requesterId = requester?.id ? Number(requester.id) : null;
-      const requesterRoleType = requester?.role?.type?.toLowerCase();
-      const requesterRoleName = requester?.role?.name?.toLowerCase();
       const isAdminUser =
         requester?.isAdmin === true ||
-        requesterRoleType === "superadmin" ||
-        requesterRoleType === "store-manager" ||
-        requesterRoleType === "founder" ||
-        requesterRoleName === "superadmin" ||
-        requesterRoleName === "store manager" ||
-        requesterRoleName === "founder";
+        roleIsAllowed(requester?.role?.name || requester?.role?.type, STORE_MANAGER_PLUS_ROLES);
 
       try {
         // Query with all necessary relations populated
@@ -260,11 +258,13 @@ export default factories.createCoreController(
 
     async checkPaymentStatus(ctx) {
       const { id } = ctx.params;
-      const { user } = ctx.state;
 
       try {
+        const userId = await resolveCustomerTargetUserId(ctx, strapi as any);
+        if (!userId) return;
+
         const order = await strapi.db.query("api::order.order").findOne({
-          where: { id, user: { id: user.id } },
+          where: { id, user: { id: userId } },
           populate: {
             contract: {
               populate: {
@@ -338,12 +338,14 @@ export default factories.createCoreController(
     },
 
     async getMyOrders(ctx) {
-      const { user } = ctx.state;
       const { page = 1, pageSize = 10, reserveGroupId } = ctx.query;
 
       try {
+        const userId = await resolveCustomerTargetUserId(ctx, strapi as any);
+        if (!userId) return;
+
         const filters: { user: { id: number }; reserveGroupId?: string } = {
-          user: { id: user.id },
+          user: { id: userId },
         };
         if (reserveGroupId && typeof reserveGroupId === "string") {
           filters.reserveGroupId = reserveGroupId;
@@ -404,10 +406,12 @@ export default factories.createCoreController(
     },
 
     async getMyOrderDetail(ctx) {
-      const { user } = ctx.state;
       const { id } = ctx.params;
 
       try {
+        const userId = await resolveCustomerTargetUserId(ctx, strapi as any);
+        if (!userId) return;
+
         const orderId = Number(id);
         if (Number.isNaN(orderId)) {
           return ctx.badRequest("Order id must be a number", {
@@ -416,7 +420,7 @@ export default factories.createCoreController(
         }
 
         const order = await strapi.db.query("api::order.order").findOne({
-          where: { id: orderId, user: { id: user.id } },
+          where: { id: orderId, user: { id: userId } },
         populate: {
             order_items: {
               populate: {

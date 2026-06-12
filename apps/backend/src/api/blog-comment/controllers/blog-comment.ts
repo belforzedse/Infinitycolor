@@ -4,7 +4,12 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import {
+  MANAGEMENT_ROLES,
+  fetchUserWithRole,
+  resolveCustomerTargetUserId,
+  roleIsAllowed,
+} from "../../../utils/roles";
 import { resolveUserDisplayName } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
 import {
@@ -73,7 +78,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
     const user = (await this.resolveUserFromAuthHeader(ctx)) || ctx.state.user;
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, ["Superadmin", "Store manager", "Editor"]);
+    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
 
     // If not Editor+, only show approved comments
     if (!hasEditorRole) {
@@ -94,16 +99,18 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     if (!user) {
       return ctx.unauthorized("Authentication required");
     }
+    const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!targetUserId) return;
 
     const { data } = ctx.request.body;
-    const populatedUser = await fetchUserWithRole(strapi, user.id);
+    const populatedUser = await fetchUserWithRole(strapi, targetUserId);
     const commentAuthor = populatedUser || user;
     const resolvedName = resolveUserDisplayName(commentAuthor);
 
     // Set user and date automatically
     const commentData = {
       ...data,
-      user: user.id,
+      user: targetUserId,
       Date: new Date(),
       Status: "Pending", // All comments start as pending
       Name: resolvedName,
@@ -125,6 +132,8 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     if (!user) {
       return ctx.unauthorized("Authentication required");
     }
+    const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!targetUserId) return;
 
     // Get existing comment
     const existingComment = await strapi.entityService.findOne("api::blog-comment.blog-comment", id, {
@@ -136,10 +145,9 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     }
 
     // Check if user owns the comment or has Editor+ role
-    const hasEditorRole = user?.role?.name &&
-      ["Superadmin", "Store manager", "Editor"].includes(user.role.name);
+    const hasEditorRole = roleIsAllowed(user?.role?.name, MANAGEMENT_ROLES);
 
-    if (existingComment.user.id !== user.id && !hasEditorRole) {
+    if (String(existingComment.user.id) !== String(targetUserId) && !hasEditorRole) {
       return ctx.forbidden("You can only edit your own comments");
     }
 
@@ -164,6 +172,8 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     if (!user) {
       return ctx.unauthorized("Authentication required");
     }
+    const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!targetUserId) return;
 
     // Get existing comment
     const existingComment = await strapi.entityService.findOne("api::blog-comment.blog-comment", id, {
@@ -175,10 +185,9 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     }
 
     // Check if user owns the comment or has Editor+ role
-    const hasEditorRole = user?.role?.name &&
-      ["Superadmin", "Store manager", "Editor"].includes(user.role.name);
+    const hasEditorRole = roleIsAllowed(user?.role?.name, MANAGEMENT_ROLES);
 
-    if (existingComment.user.id !== user.id && !hasEditorRole) {
+    if (String(existingComment.user.id) !== String(targetUserId) && !hasEditorRole) {
       return ctx.forbidden("You can only delete your own comments");
     }
 
@@ -228,7 +237,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
     const user = (await this.resolveUserFromAuthHeader(ctx)) || ctx.state.user;
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, ["Superadmin", "Store manager", "Editor"]);
+    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
 
     const filters: any = { blog_post: postId };
     if (!hasEditorRole) {
@@ -249,8 +258,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
   async approve(ctx) {
     const { user } = ctx.state;
 
-    const hasEditorRole = user?.role?.name &&
-      ["Superadmin", "Store manager", "Editor"].includes(user.role.name);
+    const hasEditorRole = roleIsAllowed(user?.role?.name, MANAGEMENT_ROLES);
 
     if (!hasEditorRole) {
       return ctx.forbidden("You don't have permission to approve comments");
@@ -270,8 +278,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
   async reject(ctx) {
     const { user } = ctx.state;
 
-    const hasEditorRole = user?.role?.name &&
-      ["Superadmin", "Store manager", "Editor"].includes(user.role.name);
+    const hasEditorRole = roleIsAllowed(user?.role?.name, MANAGEMENT_ROLES);
 
     if (!hasEditorRole) {
       return ctx.forbidden("You don't have permission to reject comments");
