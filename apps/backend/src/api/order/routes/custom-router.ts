@@ -15,6 +15,14 @@ export default {
     },
     {
       method: "GET",
+      path: "/orders/payment-callback",
+      handler: "order.verifyPayment",
+      config: {
+        auth: false,
+      },
+    },
+    {
+      method: "GET",
       path: "/orders/active-reserve",
       handler: "order.getActiveReserve",
       config: {
