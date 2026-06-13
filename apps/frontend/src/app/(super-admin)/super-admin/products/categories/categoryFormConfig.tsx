@@ -28,58 +28,21 @@ const createParentOptionsFetcher =
   > => {
     try {
       const response = await getAllCategories();
-      
-      // Debug log in development
-      if (process.env.NODE_ENV === "development") {
-        console.log("getAllCategories raw response:", response);
-        console.log("Response type:", typeof response);
-        console.log("Is array?", Array.isArray(response));
-        console.log("Has data property?", response && typeof response === 'object' && 'data' in response);
-        if (response && typeof response === 'object' && 'data' in response) {
-          console.log("response.data:", (response as any).data);
-          console.log("response.data is array?", Array.isArray((response as any).data));
-        }
-      }
-      
-      // getAllCategories returns PaginatedResponse<categoryResponseType>
-      // which is { data: categoryResponseType[], meta: {...} }
-      // So response.data should be the array of categories
+
       let categories: categoryResponseType[] = [];
-      
-      // Handle the response structure: response is { data: [...], meta: {...} }
-      if (response && typeof response === 'object') {
-        // Check if response has a 'data' property
-        if ('data' in response) {
+
+      if (Array.isArray(response)) {
+        categories = response;
+      } else if (response && typeof response === "object" && "data" in response) {
           const data = (response as any).data;
           if (Array.isArray(data)) {
             categories = data;
           } else if (data && typeof data === 'object' && 'data' in data && Array.isArray(data.data)) {
-            // Nested data structure: { data: { data: [...], meta: {...} } }
             categories = data.data;
           }
-        } else {
-          // Response might be the array directly (shouldn't happen but handle it)
-          console.warn("Response doesn't have 'data' property:", response);
-        }
-      } else if (Array.isArray(response)) {
-        // If response is directly an array, use it
-        categories = response;
-      }
-
-      // Debug log in development
-      if (process.env.NODE_ENV === "development") {
-        console.log("Categories array after parsing:", categories);
-        console.log("Is array?", Array.isArray(categories));
-        console.log("Categories length:", categories.length);
-        if (categories.length > 0) {
-          console.log("First category:", categories[0]);
-        }
       }
 
       if (!Array.isArray(categories) || categories.length === 0) {
-        if (process.env.NODE_ENV === "development") {
-          console.warn("Categories is not an array or is empty:", categories, "Response:", response);
-        }
         return [];
       }
 
@@ -99,19 +62,9 @@ const createParentOptionsFetcher =
           const label = category.attributes?.Title ?? "-";
           const value = String(category.id); // Ensure it's a string
 
-          // Debug log in development
-          if (process.env.NODE_ENV === "development") {
-            console.log("Mapping category:", { id: category.id, label, value, attributes: category.attributes });
-          }
-
           return { label, value };
         })
         .filter((opt) => opt.label && opt.value && opt.label !== "-"); // Filter out invalid options
-
-      // Debug log in development
-      if (process.env.NODE_ENV === "development") {
-        console.log("Parent category options fetched:", options.length, "options", options);
-      }
 
       return options;
     } catch (error) {

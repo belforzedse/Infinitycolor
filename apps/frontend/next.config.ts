@@ -40,7 +40,6 @@ const contentSecurityPolicyReportOnly = [
   "worker-src 'self' blob:",
   "manifest-src 'self'",
   "frame-src 'self' https:",
-  "upgrade-insecure-requests",
 ].join("; ");
 
 const securityHeaders = [
