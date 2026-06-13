@@ -8,10 +8,23 @@ import { createStrapiMock, mockContext } from "../../../__tests__/mocks/factorie
 
 describe("payment-gateway.availableGateways", () => {
   let controllerFactory: any;
+  const originalEnv = process.env;
 
   beforeAll(async () => {
     const mod = await import("../controllers/payment-gateway");
     controllerFactory = mod.default;
+  });
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.URL;
+    delete process.env.ZARINPAL_CALLBACK_URL;
+    delete process.env.ZARINPAL_E2E_DETERMINISTIC;
+    delete process.env.ZARINPAL_MERCHANT_ID;
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   it("returns all supported gateways when no backend rows exist", async () => {
@@ -74,6 +87,28 @@ describe("payment-gateway.availableGateways", () => {
           { code: "mellat", title: "بانک ملت" },
           { code: "snappay", title: "پرداخت اقساطی اسنپ‌پی" },
           { code: "wallet", title: "کیف پول" },
+        ],
+      },
+    });
+  });
+
+  it("includes ZarinPal for local deterministic callbacks", async () => {
+    process.env.URL = "http://localhost:1337";
+    const { strapi } = createStrapiMock();
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValue([]);
+    const controller = controllerFactory({ strapi });
+    const ctx = mockContext({});
+
+    await controller.availableGateways(ctx);
+
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: {
+        gateways: [
+          { code: "samankish", title: "Ø³Ø§Ù…Ø§Ù†â€ŒÚ©ÛŒØ´" },
+          { code: "mellat", title: "Ø¨Ø§Ù†Ú© Ù…Ù„Øª" },
+          { code: "zarinpal", title: "Ø²Ø±ÛŒÙ†â€ŒÙ¾Ø§Ù„" },
+          { code: "snappay", title: "Ù¾Ø±Ø¯Ø§Ø®Øª Ø§Ù‚Ø³Ø§Ø·ÛŒ Ø§Ø³Ù†Ù¾â€ŒÙ¾ÛŒ" },
+          { code: "wallet", title: "Ú©ÛŒÙ Ù¾ÙˆÙ„" },
         ],
       },
     });

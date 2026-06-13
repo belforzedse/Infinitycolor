@@ -125,7 +125,33 @@ const FIXTURE = {
       sizeIndex: 1,
       externalId: "e2e-storefront:variation:black-l",
     },
+    {
+      // Dedicated high-stock variation for payment flows (blue / large, in stock).
+      sku: "E2E-STOREFRONT-PAY",
+      price: "500000",
+      discountPrice: null,
+      stock: 99,
+      colorIndex: 0,
+      sizeIndex: 1,
+      externalId: "e2e-storefront:variation:pay",
+    },
   ],
+  shipping: {
+    // The checkout DeliveryOptions filter only surfaces methods whose title
+    // contains a recognized keyword (پست/تیپاکس for general cities, پیک/حضوری for
+    // Gorgan). Seed one of each branch, marked "(E2E)" for safe teardown, so a
+    // selectable shipping method exists no matter which city the address resolves to.
+    marker: "(E2E)",
+    methods: [
+      { title: "پست پیشتاز (E2E)", price: 40000 },
+      { title: "ارسال با پیک (E2E)", price: 50000 },
+    ],
+  },
+  address: {
+    postalCode: "1234567890",
+    fullAddress: "E2E deterministic address, plaque 1",
+    description: "E2E seeded address",
+  },
   auth: {
     customer: {
       phone: envOrDefault("E2E_CUSTOMER_PHONE", "+989000000101"),
@@ -144,6 +170,36 @@ const FIXTURE = {
       lastName: "Admin",
       roleName: "Superadmin",
       externalId: "e2e-storefront:user:admin",
+    },
+    founder: {
+      phone: envOrDefault("E2E_FOUNDER_PHONE", "+989000000202"),
+      password: envOrDefault("E2E_FOUNDER_PASSWORD", "E2eFounder!123"),
+      email: "e2e.founder@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "Founder",
+      roleName: "Founder",
+      externalId: "e2e-storefront:user:founder",
+      optional: true,
+    },
+    storeManager: {
+      phone: envOrDefault("E2E_STORE_MANAGER_PHONE", "+989000000203"),
+      password: envOrDefault("E2E_STORE_MANAGER_PASSWORD", "E2eManager!123"),
+      email: "e2e.manager@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "Manager",
+      roleName: "Store manager",
+      externalId: "e2e-storefront:user:store-manager",
+      optional: true,
+    },
+    editor: {
+      phone: envOrDefault("E2E_EDITOR_PHONE", "+989000000204"),
+      password: envOrDefault("E2E_EDITOR_PASSWORD", "E2eEditor!123"),
+      email: "e2e.editor@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "Editor",
+      roleName: "Editor",
+      externalId: "e2e-storefront:user:editor",
+      optional: true,
     },
   },
   adminCategory: {
@@ -369,6 +425,17 @@ async function teardownUserData(client, userIds) {
   await deleteWhereIn(client, "contracts_local_user_links", "user_id", userIds);
   await deleteWhereIn(client, "contracts", "id", contractIds);
 
+  const addressIds = await idsFromLink(
+    client,
+    "local_user_addresses_user_links",
+    "local_user_address_id",
+    "user_id",
+    userIds,
+  );
+  await deleteWhereIn(client, "local_user_addresses_shipping_city_links", "local_user_address_id", addressIds);
+  await deleteWhereIn(client, "local_user_addresses_user_links", "user_id", userIds);
+  await deleteWhereIn(client, "local_user_addresses", "id", addressIds);
+
   const infoIds = await idsFromLink(
     client,
     "local_user_infos_user_links",
@@ -414,6 +481,17 @@ async function deleteAdminCrudCategories(client) {
   await deleteWhereIn(client, "product_categories", "id", categoryIds);
 }
 
+async function deleteShippingMethod(client) {
+  if (!(await tableExists(client, "shippings"))) return;
+  const result = await client.query(`SELECT id FROM shippings WHERE title LIKE $1`, [
+    `%${FIXTURE.shipping.marker}%`,
+  ]);
+  const shippingIds = result.rows.map((row) => Number(row.id)).filter(Number.isFinite);
+  if (!shippingIds.length) return;
+  await deleteWhereIn(client, "orders_shipping_links", "shipping_id", shippingIds);
+  await deleteWhereIn(client, "shippings", "id", shippingIds);
+}
+
 async function teardown(client) {
   const userIds = await e2eUserIds(client);
   const productIds = await idsBySource(client, "products");
@@ -425,6 +503,7 @@ async function teardown(client) {
   const fileIds = await mediaIds(client);
 
   await teardownUserData(client, userIds);
+  await deleteShippingMethod(client);
   await deleteAdminCrudCategories(client);
   await deleteWhereIn(client, "files_related_morphs", "related_id", productIds);
   await deleteWhereIn(client, "files_related_morphs", "file_id", fileIds);
@@ -462,6 +541,15 @@ async function roleIdByName(client, roleName) {
     throw new Error(`Required E2E role not found: ${roleName}`);
   }
   return roleId;
+}
+
+async function roleIdByNameOptional(client, roleName) {
+  if (!(await tableExists(client, "up_roles"))) return null;
+  const result = await client.query(`SELECT id FROM up_roles WHERE lower(name) = lower($1) LIMIT 1`, [
+    roleName,
+  ]);
+  const roleId = Number(result.rows[0]?.id);
+  return Number.isFinite(roleId) ? roleId : null;
 }
 
 async function ensureRolePermission(client, roleName, action, now) {
@@ -546,7 +634,77 @@ async function seedUser(client, userDef, now) {
 async function seedUsers(client, now) {
   const customer = await seedUser(client, FIXTURE.auth.customer, now);
   const admin = await seedUser(client, FIXTURE.auth.admin, now);
-  return { customer, admin };
+
+  // Role-specific users power the permission/CRUD suites. They are optional so a
+  // backend whose bootstrap has not yet created these roles still seeds cleanly.
+  const optionalRoles = {};
+  for (const [key, userDef] of [
+    ["founder", FIXTURE.auth.founder],
+    ["storeManager", FIXTURE.auth.storeManager],
+    ["editor", FIXTURE.auth.editor],
+  ]) {
+    const roleId = await roleIdByNameOptional(client, userDef.roleName);
+    if (!roleId) {
+      console.warn(
+        `[seed:e2e] Role "${userDef.roleName}" not found; skipping ${key} user. ` +
+          "Permission tests for this role will be unavailable until the backend bootstrap creates it.",
+      );
+      optionalRoles[key] = null;
+      continue;
+    }
+    optionalRoles[key] = await seedUser(client, userDef, now);
+  }
+
+  return { customer, admin, ...optionalRoles };
+}
+
+async function firstShippingCityId(client) {
+  if (!(await tableExists(client, "shipping_cities"))) return null;
+  const result = await client.query(`SELECT id FROM shipping_cities ORDER BY id ASC LIMIT 1`);
+  const cityId = Number(result.rows[0]?.id);
+  return Number.isFinite(cityId) ? cityId : null;
+}
+
+async function seedShippingMethods(client, now) {
+  const ids = [];
+  for (const method of FIXTURE.shipping.methods) {
+    const shipping = await insertRow(client, "shippings", {
+      title: method.title,
+      price: method.price,
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+    });
+    ids.push(shipping.id);
+  }
+  return ids;
+}
+
+async function seedCustomerAddress(client, userId, now) {
+  const cityId = await firstShippingCityId(client);
+  const address = await insertRow(client, "local_user_addresses", {
+    postal_code: FIXTURE.address.postalCode,
+    full_address: FIXTURE.address.fullAddress,
+    description: FIXTURE.address.description,
+    is_temporary: false,
+    created_at: now,
+    updated_at: now,
+  });
+
+  if (await tableExists(client, "local_user_addresses_user_links")) {
+    await insertLink(client, "local_user_addresses_user_links", {
+      local_user_address_id: address.id,
+      user_id: userId,
+    });
+  }
+  if (cityId && (await tableExists(client, "local_user_addresses_shipping_city_links"))) {
+    await insertLink(client, "local_user_addresses_shipping_city_links", {
+      local_user_address_id: address.id,
+      shipping_city_id: cityId,
+    });
+  }
+
+  return { id: address.id, cityId };
 }
 
 async function seedCustomerCart(client, userId, variationId, now) {
@@ -746,6 +904,14 @@ async function seed(client) {
 
   const users = await seedUsers(client, now);
   const customerCart = await seedCustomerCart(client, users.customer.id, variations[0].id, now);
+  const customerAddress = await seedCustomerAddress(client, users.customer.id, now);
+  const shippingIds = await seedShippingMethods(client, now);
+
+  const paymentVariationIndex = FIXTURE.variations.findIndex(
+    (variation) => variation.sku === "E2E-STOREFRONT-PAY",
+  );
+  const paymentVariationId =
+    paymentVariationIndex >= 0 ? variations[paymentVariationIndex].id : null;
 
   return {
     categoryId: category.id,
@@ -753,9 +919,15 @@ async function seed(client) {
     productId: product.id,
     productSlug: FIXTURE.product.slug,
     variationIds: variations.map((variation) => variation.id),
+    paymentVariationId,
     customerUserId: users.customer.id,
     customerCartId: customerCart.id,
+    customerAddressId: customerAddress.id,
+    shippingIds,
     adminUserId: users.admin.id,
+    founderUserId: users.founder ? users.founder.id : null,
+    storeManagerUserId: users.storeManager ? users.storeManager.id : null,
+    editorUserId: users.editor ? users.editor.id : null,
   };
 }
 

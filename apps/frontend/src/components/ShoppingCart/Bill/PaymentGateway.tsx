@@ -96,6 +96,7 @@ function ShoppingCartBillPaymentGateway({
       {showSnappay && (
         <button
           onClick={() => onChange(snappay.id)}
+          data-testid="payment-gateway-snappay"
           className={classNames(
             "flex w-full flex-row items-center justify-between gap-4 rounded-lg border border-stone-50 bg-stone-50 py-4 pr-4 transition-opacity duration-300 lg:gap-6 lg:p-2",
             selected === snappay.id && "!border-infinity-primary",
@@ -125,6 +126,7 @@ function ShoppingCartBillPaymentGateway({
           {showSaman && (
             <button
               onClick={() => onChange(saman.id)}
+              data-testid="payment-gateway-samankish"
               className={classNames(
                 "flex w-full flex-col items-center gap-2 text-nowrap rounded-lg border border-stone-50 bg-stone-50 p-4",
                 selected === saman.id && "!border-infinity-primary",
@@ -147,6 +149,7 @@ function ShoppingCartBillPaymentGateway({
           {showMellat && (
             <button
               onClick={() => onChange(mellat.id)}
+              data-testid="payment-gateway-mellat"
               className={classNames(
                 "flex w-full flex-col items-center gap-2 text-nowrap rounded-lg border border-stone-50 bg-stone-50 p-4",
                 selected === mellat.id && "!border-infinity-primary",
@@ -169,6 +172,8 @@ function ShoppingCartBillPaymentGateway({
           {showZarinPal && (
             <button
               onClick={() => onChange(zarinpal.id)}
+              data-testid="payment-gateway-zarinpal"
+              data-selected={selected === zarinpal.id ? "true" : "false"}
               className={classNames(
                 "flex w-full flex-col items-center gap-2 text-nowrap rounded-lg border border-stone-50 bg-stone-50 p-4",
                 selected === zarinpal.id && "!border-infinity-primary",
@@ -191,6 +196,8 @@ function ShoppingCartBillPaymentGateway({
           {showWallet && (
             <button
               onClick={() => !wallet.disabled && onChange(wallet.id)}
+              data-testid="payment-gateway-wallet"
+              data-disabled={wallet.disabled ? "true" : "false"}
               onMouseEnter={() => setWalletHovered(true)}
               onMouseLeave={() => setWalletHovered(false)}
               className={classNames(

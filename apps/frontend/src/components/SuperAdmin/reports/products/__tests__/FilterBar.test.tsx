@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import FilterBar from "../FilterBar";
 import { getAllCategories } from "@/services/super-admin/product/category/getAll";
 
@@ -20,6 +20,8 @@ jest.mock("@/services/super-admin/product/category/getAll", () => ({
   getAllCategories: jest.fn(),
 }));
 
+const mockSetRange = jest.fn();
+
 jest.mock("../useReportFilters", () => ({
   useReportFilters: () => ({
     start: "2026-01-01",
@@ -34,12 +36,14 @@ jest.mock("../useReportFilters", () => ({
     setCat: jest.fn(),
     setPtype: jest.fn(),
     setStock: jest.fn(),
+    setRange: mockSetRange,
   }),
 }));
 
 describe("Product report FilterBar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
     (getAllCategories as jest.Mock).mockResolvedValue({ data: [] });
   });
 
@@ -56,6 +60,20 @@ describe("Product report FilterBar", () => {
 
     await waitFor(() => {
       expect(getAllCategories).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("applies quick date ranges with a single range update", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-13T12:00:00Z"));
+
+    render(<FilterBar showProductFilters={false} />);
+
+    fireEvent.click(screen.getAllByRole("button")[0]);
+
+    expect(mockSetRange).toHaveBeenCalledWith({
+      start: "2026-06-06",
+      end: "2026-06-13",
     });
   });
 });

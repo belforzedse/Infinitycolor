@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
-import { useQueryState } from "nuqs";
+import { useMemo } from "react";
+import { parseAsString, useQueryState, useQueryStates } from "nuqs";
 import type { ProductReportFilters } from "@/services/super-admin/reports/products";
 
 const DAY_MS = 86_400_000;
@@ -17,6 +17,20 @@ function toDateOnly(d: Date): string {
 const DEFAULT_START = toDateOnly(new Date(Date.now() - 30 * DAY_MS));
 const DEFAULT_END = toDateOnly(new Date());
 
+const reportQueryParsers = {
+  start: parseAsString.withDefault(DEFAULT_START),
+  end: parseAsString.withDefault(DEFAULT_END),
+  q: parseAsString.withDefault(""),
+  cat: parseAsString.withDefault(""),
+  ptype: parseAsString.withDefault(""),
+  stock: parseAsString.withDefault(""),
+  page: parseAsString.withDefault("1"),
+} as const;
+
+const reportQueryOptions = {
+  history: "replace" as const,
+} as const;
+
 export type ReportTab = "overview" | "trends" | "performance" | "inventory" | "payments";
 
 /**
@@ -25,17 +39,11 @@ export type ReportTab = "overview" | "trends" | "performance" | "inventory" | "p
  * source of truth for the selected period and filters.
  */
 export function useReportFilters() {
-  const [start, setStart] = useQueryState("start", { defaultValue: DEFAULT_START });
-  const [end, setEnd] = useQueryState("end", { defaultValue: DEFAULT_END });
   const [tab, setTab] = useQueryState("tab", { defaultValue: "overview" });
-  const [q, setQ] = useQueryState("q", { defaultValue: "" });
-  const [cat, setCat] = useQueryState("cat", { defaultValue: "" });
-  const [ptype, setPtype] = useQueryState("ptype", { defaultValue: "" });
-  const [stock, setStock] = useQueryState("stock", { defaultValue: "" });
-  const [, setPage] = useQueryState("page", { defaultValue: "1" });
-
-  // Changing a filter resets paging to the first page.
-  const resetPage = useCallback(() => setPage("1"), [setPage]);
+  const [{ start, end, q, cat, ptype, stock }, setQuery] = useQueryStates(
+    reportQueryParsers,
+    reportQueryOptions,
+  );
 
   const filters: ProductReportFilters = useMemo(
     () => ({
@@ -59,29 +67,26 @@ export function useReportFilters() {
     stock,
     filters,
     setStart: (v: string) => {
-      setStart(v);
-      resetPage();
+      setQuery({ start: v, page: "1" });
     },
     setEnd: (v: string) => {
-      setEnd(v);
-      resetPage();
+      setQuery({ end: v, page: "1" });
+    },
+    setRange: (v: { start: string; end: string }) => {
+      setQuery({ start: v.start, end: v.end, page: "1" });
     },
     setTab: (v: ReportTab) => setTab(v),
     setQ: (v: string) => {
-      setQ(v || null);
-      resetPage();
+      setQuery({ q: v || null, page: "1" });
     },
     setCat: (v: string) => {
-      setCat(v || null);
-      resetPage();
+      setQuery({ cat: v || null, page: "1" });
     },
     setPtype: (v: string) => {
-      setPtype(v || null);
-      resetPage();
+      setQuery({ ptype: v || null, page: "1" });
     },
     setStock: (v: string) => {
-      setStock(v || null);
-      resetPage();
+      setQuery({ stock: v || null, page: "1" });
     },
   };
 }

@@ -109,7 +109,7 @@ function PaymentSuccessContent() {
   return (
     <StorefrontContainer className="py-10" dir="rtl">
       <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-md p-8">
-        <div className="flex flex-col items-center text-center">
+        <div className="flex flex-col items-center text-center" data-testid="live-payment-success">
           {/* Success Icon */}
           <div className="relative w-24 h-24 mb-6">
             <div className="w-full h-full rounded-full bg-green-100 flex items-center justify-center">

@@ -8,10 +8,22 @@ type Props = {
   text?: string;
   path?: string;
   disabled?: boolean;
+  testId?: string;
+  dataAttributes?: Record<string, string | number | boolean | undefined>;
 };
 
 export default function SuperAdminTableCellActionButton(props: Props) {
-  const { variant, icon, onClick, text, path, disabled } = props;
+  const { variant, icon, onClick, text, path, disabled, testId, dataAttributes } = props;
+  const testAttributes = {
+    ...(testId ? { "data-testid": testId } : {}),
+    ...(dataAttributes
+      ? Object.fromEntries(
+          Object.entries(dataAttributes)
+            .filter(([, value]) => value !== undefined)
+            .map(([key, value]) => [`data-${key}`, String(value)]),
+        )
+      : {}),
+  };
 
   const className = clsx(
     "flex h-[26px] items-center justify-center gap-1 rounded-md px-2 transition-all",
@@ -25,7 +37,7 @@ export default function SuperAdminTableCellActionButton(props: Props) {
 
   if (path && !disabled) {
     return (
-      <Link className={className} href={path} onClick={onClick}>
+      <Link className={className} href={path} onClick={onClick} {...testAttributes}>
         {icon}
         {text && <span className="text-xs text-slate-500">{text}</span>}
       </Link>
@@ -38,6 +50,7 @@ export default function SuperAdminTableCellActionButton(props: Props) {
       className={className}
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
+      {...testAttributes}
     >
       {icon}
       {text && <span className="text-xs text-slate-500">{text}</span>}

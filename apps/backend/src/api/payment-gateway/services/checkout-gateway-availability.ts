@@ -20,13 +20,30 @@ export const SUPPORTED_CHECKOUT_GATEWAYS: readonly CheckoutGatewayItem[] = [
   { code: "wallet", title: "کیف پول" },
 ] as const;
 
+const isTruthyEnv = (value?: string): boolean =>
+  ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+
+const isLocalUrl = (value?: string): boolean =>
+  /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(String(value || "").trim());
+
+const resolveZarinPalCallbackUrl = (): string => {
+  const baseUrl = String(process.env.URL || "").trim().replace(/\/$/, "");
+  return String(
+    process.env.ZARINPAL_CALLBACK_URL ||
+      (baseUrl ? `${baseUrl}/api/orders/payment-callback` : ""),
+  ).trim();
+};
+
 /**
  * ZarinPal is additive and OFF by default: it only becomes available once the
- * merchant credential is configured via env. An admin can still disable it via a
- * payment-gateway DB row (IsActive=false), but it never surfaces unconfigured.
+ * merchant credential is configured via env. Local deterministic E2E/dev
+ * callbacks are also treated as configured because they never touch ZarinPal.
+ * A payment-gateway DB row may still disable it with IsActive=false.
  */
 const isZarinPalConfigured = (): boolean =>
-  Boolean(String(process.env.ZARINPAL_MERCHANT_ID || "").trim());
+  Boolean(String(process.env.ZARINPAL_MERCHANT_ID || "").trim()) ||
+  isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) ||
+  isLocalUrl(resolveZarinPalCallbackUrl());
 
 const SUPPORTED_CODES = new Set<CheckoutGatewayCode>(
   SUPPORTED_CHECKOUT_GATEWAYS.map((gateway) => gateway.code),

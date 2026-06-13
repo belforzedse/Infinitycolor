@@ -26,7 +26,7 @@ export default function OrderSuccess() {
   return (
     <StorefrontContainer className="py-10">
       <div className="mx-auto max-w-2xl rounded-lg bg-white p-8 shadow-md">
-        <div className="flex flex-col items-center text-center">
+        <div className="flex flex-col items-center text-center" data-testid="order-payment-success">
           <div className="relative mb-6 h-40 w-40">
             <Image
               src="/images/cart/success-order.png"

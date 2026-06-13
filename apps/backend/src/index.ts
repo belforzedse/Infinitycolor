@@ -292,6 +292,76 @@ const STORE_MANAGER_RESTRICTED_CONTROLLERS: RestrictedController[] = [
 ];
 
 const EDITOR_RESTRICTED_CONTROLLERS: RestrictedController[] = [
+  {
+    typeKey: "api::product",
+    controller: "product",
+    allowActions: [...READ_ACTIONS, "search"],
+  },
+  {
+    typeKey: "api::product-category",
+    controller: "product-category",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-category-content",
+    controller: "product-category-content",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-faq",
+    controller: "product-faq",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-size-helper",
+    controller: "product-size-helper",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-tag",
+    controller: "product-tag",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-variation",
+    controller: "product-variation",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-variation-color",
+    controller: "product-variation-color",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-variation-model",
+    controller: "product-variation-model",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-variation-size",
+    controller: "product-variation-size",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-stock",
+    controller: "product-stock",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-review",
+    controller: "product-review",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-review-reply",
+    controller: "product-review-reply",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-review-like",
+    controller: "product-review-like",
+    allowActions: READ_ACTIONS,
+  },
   { typeKey: "api::post", controller: "post", allowActions: READ_ACTIONS },
   { typeKey: "api::post-comment", controller: "post-comment", allowActions: READ_ACTIONS },
   { typeKey: "api::post-like", controller: "post-like", allowActions: [] },

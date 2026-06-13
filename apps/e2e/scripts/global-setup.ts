@@ -3,7 +3,14 @@ import { createHmac } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { authCredentials, authStateDir, authStorageStatePath, type E2EAuthRole } from "../helpers/auth";
+import {
+  authCredentials,
+  authStateDir,
+  authStorageStatePath,
+  authUserIdEnvName,
+  E2E_AUTH_ROLES,
+  type E2EAuthRole,
+} from "../helpers/auth";
 import { storefrontBaseURL, strapiApiURL, strapiOrigin } from "../helpers/env";
 
 const repoRoot = path.resolve(
@@ -52,6 +59,17 @@ async function waitForEndpoint(url: string, timeoutMs: number) {
 type SeedSummary = {
   customerUserId?: number;
   adminUserId?: number;
+  founderUserId?: number;
+  storeManagerUserId?: number;
+  editorUserId?: number;
+};
+
+const SEED_SUMMARY_USER_KEY: Record<E2EAuthRole, keyof SeedSummary> = {
+  customer: "customerUserId",
+  admin: "adminUserId",
+  founder: "founderUserId",
+  "store-manager": "storeManagerUserId",
+  editor: "editorUserId",
 };
 
 function runCommand(command: string) {
@@ -137,9 +155,9 @@ function issueJwt(userId: number, secret: string) {
 }
 
 function resolveSeededUserId(role: E2EAuthRole, seedSummary?: SeedSummary) {
-  const envName = role === "customer" ? "E2E_CUSTOMER_USER_ID" : "E2E_ADMIN_USER_ID";
+  const envName = authUserIdEnvName(role);
   const envValue = Number(process.env[envName]);
-  const seedValue = role === "customer" ? seedSummary?.customerUserId : seedSummary?.adminUserId;
+  const seedValue = seedSummary?.[SEED_SUMMARY_USER_KEY[role]] as number | undefined;
   const userId = Number.isFinite(envValue) && envValue > 0 ? envValue : seedValue;
 
   if (!Number.isFinite(userId) || !userId) {
@@ -261,7 +279,8 @@ export default async function globalSetup() {
   }
 
   if (process.env.E2E_AUTH_MODE !== "skip") {
-    await writeAuthStorageState("customer", seedSummary);
-    await writeAuthStorageState("admin", seedSummary);
+    for (const role of E2E_AUTH_ROLES) {
+      await writeAuthStorageState(role, seedSummary);
+    }
   }
 }

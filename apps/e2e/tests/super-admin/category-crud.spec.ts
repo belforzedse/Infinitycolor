@@ -42,7 +42,7 @@ async function gotoExpandedCategoriesList(page: Page) {
 test.describe("super-admin category CRUD smoke", () => {
   test.use({ storageState: authStorageStatePath("admin") });
 
-  test("@smoke super-admin can create, edit, and delete a product category", async ({ page }) => {
+  test("@smoke @admin super-admin can create, edit, and delete a product category", async ({ page }) => {
     test.skip(
       test.info().project.name.includes("mobile"),
       "Super-admin CRUD smoke is desktop-only in Phase 1.5",

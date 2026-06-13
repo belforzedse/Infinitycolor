@@ -26,6 +26,13 @@ const PRESETS: Array<{ label: string; days: number }> = [
   { label: "۹۰ روز", days: 90 },
 ];
 
+function getPresetRange(days: number, now = new Date()): { start: string; end: string } {
+  return {
+    start: toDateOnly(new Date(now.getTime() - days * DAY_MS)),
+    end: toDateOnly(now),
+  };
+}
+
 const inputCls =
   "h-10 w-full rounded-lg border border-neutral-300 px-3 text-sm focus:border-transparent focus:ring-2 focus:ring-infinity-primary";
 
@@ -54,8 +61,7 @@ export default function FilterBar({ showProductFilters }: { showProductFilters?:
   }, [showProductFilters]);
 
   const applyPreset = (days: number) => {
-    f.setStart(toDateOnly(new Date(Date.now() - days * DAY_MS)));
-    f.setEnd(toDateOnly(new Date()));
+    f.setRange(getPresetRange(days));
   };
 
   return (
@@ -65,6 +71,7 @@ export default function FilterBar({ showProductFilters }: { showProductFilters?:
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-neutral-600">از تاریخ</label>
             <DatePicker
+              key={f.start}
               inputClass={inputCls}
               defaultValue={new Date(f.start)}
               onChange={(d: any) => f.setStart(normalizeDate(d, f.start))}
@@ -73,6 +80,7 @@ export default function FilterBar({ showProductFilters }: { showProductFilters?:
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-neutral-600">تا تاریخ</label>
             <DatePicker
+              key={f.end}
               inputClass={inputCls}
               defaultValue={new Date(f.end)}
               onChange={(d: any) => f.setEnd(normalizeDate(d, f.end))}

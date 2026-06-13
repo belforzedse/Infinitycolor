@@ -48,7 +48,11 @@ export default function OrderSummaryCard() {
 
       <div className="mt-4 flex items-center justify-between">
         <span className="text-sm font-semibold text-slate-600">قابل پرداخت</span>
-        <span className="text-lg font-semibold text-foreground-primary">
+        <span
+          className="text-lg font-semibold text-foreground-primary"
+          data-testid="cart-summary-total"
+          data-total={totalPrice}
+        >
           {faNum(totalPrice)} تومان
         </span>
       </div>
