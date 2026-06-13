@@ -17,7 +17,14 @@ export async function selectSeededAddress(page: Page) {
 
 /** Pick the first available (enabled) shipping method radio. */
 export async function selectFirstShipping(page: Page) {
-  const option = page.locator('[data-testid="checkout-shipping-option"]').first();
+  const stableLocalOption = page
+    .locator(
+      '[data-testid="checkout-shipping-option"][data-shipping-id="1"], [data-testid="checkout-shipping-option"][data-shipping-id="2"], [data-testid="checkout-shipping-option"][data-shipping-id="3"]',
+    )
+    .first();
+  const option = (await stableLocalOption.count())
+    ? stableLocalOption
+    : page.locator('[data-testid="checkout-shipping-option"]').first();
   await expect(option).toBeVisible({ timeout: 15_000 });
   await option.click();
 }

@@ -66,7 +66,7 @@ describe("loginPassword", () => {
   });
 
   it("does not alter special or unicode password characters", async () => {
-    const password = "p@ssw0rd!#$%-Ù¾Ø³ÙˆØ±Ø¯";
+    const password = "p@ssw0rd!#$%-پسورد";
     mockPost.mockResolvedValueOnce({ token: "auth-token" });
 
     await loginPassword("09123456789", password);

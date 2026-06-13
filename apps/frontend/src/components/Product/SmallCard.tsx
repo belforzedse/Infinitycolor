@@ -162,7 +162,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
         data-product-slug={slug || id.toString()}
         data-product-title={title}
         onClickCapture={handleCardNavigate}
-        aria-label={`Ù…Ø­ØµÙˆÙ„ ${title}`}
+        aria-label={`محصول ${title}`}
       >
         <Link
           href={productUrl}

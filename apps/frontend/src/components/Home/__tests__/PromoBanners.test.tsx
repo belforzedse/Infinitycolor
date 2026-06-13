@@ -10,9 +10,9 @@ describe("HomePromoBanners", () => {
           {
             id: "one",
             imageUrl: "/uploads/banner.jpg",
-            title: "Ù†Ø¨Ø§ÛŒØ¯ Ø±Ù†Ø¯Ø± Ø´ÙˆØ¯",
-            subtitle: "Ù†Ø¨Ø§ÛŒØ¯ Ø±Ù†Ø¯Ø± Ø´ÙˆØ¯",
-            buttonText: "Ù†Ø¨Ø§ÛŒØ¯ Ø±Ù†Ø¯Ø± Ø´ÙˆØ¯",
+            title: "نباید رندر شود",
+            subtitle: "نباید رندر شود",
+            buttonText: "نباید رندر شود",
             buttonHref: "/plp",
             imageFit: "contain",
             imagePosition: "top right",
@@ -33,7 +33,7 @@ describe("HomePromoBanners", () => {
     expect(image).toHaveClass("object-cover");
     expect(image).toHaveAttribute("alt", "");
 
-    expect(screen.queryByText("Ù†Ø¨Ø§ÛŒØ¯ Ø±Ù†Ø¯Ø± Ø´ÙˆØ¯")).not.toBeInTheDocument();
+    expect(screen.queryByText("نباید رندر شود")).not.toBeInTheDocument();
   });
 
   it("does not render banners without an image URL", () => {

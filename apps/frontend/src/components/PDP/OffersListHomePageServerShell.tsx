@@ -11,13 +11,13 @@ type Props = {
 };
 
 function getPlpHref(title: string): string {
-  if (title.includes("ØªØ®ÙÛŒÙ")) {
+  if (title.includes("تخفیف")) {
     return "/plp?hasDiscount=true";
   }
-  if (title.includes("Ø¬Ø¯ÛŒØ¯")) {
+  if (title.includes("جدید")) {
     return "/plp?sort=createdAt:desc";
   }
-  if (title.includes("Ù…Ø­Ø¨ÙˆØ¨")) {
+  if (title.includes("محبوب")) {
     return "/plp?sort=AverageRating:desc";
   }
   return "/plp";
@@ -63,7 +63,7 @@ export default function OffersListHomePageServerShell({
               href={plpHref}
               className="hidden text-sm text-infinity-primary underline-offset-4 transition-colors hover:text-infinity-primary-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white md:block"
             >
-              Ù…Ø´Ø§Ù‡Ø¯Ù‡ Ù‡Ù…Ù‡
+              مشاهده همه
             </Link>
           </div>
         </div>
@@ -100,7 +100,7 @@ export default function OffersListHomePageServerShell({
                 href={plpHref}
                 className="text-foreground-primary flex items-center gap-1 text-base underline-offset-4 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
               >
-                <span>Ù…Ø´Ø§Ù‡Ø¯Ù‡ Ù‡Ù…Ù‡</span>
+                <span>مشاهده همه</span>
                 <ArrowLeftIcon />
               </Link>
             </div>
@@ -126,7 +126,7 @@ export default function OffersListHomePageServerShell({
               href={plpHref}
               className="pressable text-foreground-primary flex items-center gap-1 rounded-full border border-infinity-primary-lighter/40 px-4 py-2 text-base transition-colors hover:bg-infinity-primary-lighter/20 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
             >
-              <span>Ù…Ø´Ø§Ù‡Ø¯Ù‡ Ù…Ø­ØµÙˆÙ„Ø§Øª Ø¨ÛŒØ´ØªØ±</span>
+              <span>مشاهده محصولات بیشتر</span>
               <ArrowLeftIcon />
             </Link>
           </div>

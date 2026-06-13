@@ -104,11 +104,11 @@ describe("payment-gateway.availableGateways", () => {
     expect(ctx.send).toHaveBeenCalledWith({
       data: {
         gateways: [
-          { code: "samankish", title: "Ø³Ø§Ù…Ø§Ù†â€ŒÚ©ÛŒØ´" },
-          { code: "mellat", title: "Ø¨Ø§Ù†Ú© Ù…Ù„Øª" },
-          { code: "zarinpal", title: "Ø²Ø±ÛŒÙ†â€ŒÙ¾Ø§Ù„" },
-          { code: "snappay", title: "Ù¾Ø±Ø¯Ø§Ø®Øª Ø§Ù‚Ø³Ø§Ø·ÛŒ Ø§Ø³Ù†Ù¾â€ŒÙ¾ÛŒ" },
-          { code: "wallet", title: "Ú©ÛŒÙ Ù¾ÙˆÙ„" },
+          { code: "samankish", title: "سامان‌کیش" },
+          { code: "mellat", title: "بانک ملت" },
+          { code: "zarinpal", title: "زرین‌پال" },
+          { code: "snappay", title: "پرداخت اقساطی اسنپ‌پی" },
+          { code: "wallet", title: "کیف پول" },
         ],
       },
     });

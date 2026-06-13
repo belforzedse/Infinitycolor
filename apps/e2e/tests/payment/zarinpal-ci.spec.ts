@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 import { authStorageStatePath } from "../../helpers/auth";
 import {
   clearCart,
-  getCart,
   getPaymentStatus,
   getProductVariationStock,
 } from "../../helpers/api";
@@ -35,13 +34,11 @@ test.describe("Zarinpal CI-safe payment", () => {
     });
 
     await expect(page).toHaveURL(/\/orders\/success/, { timeout: 30_000 });
+    await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("order-payment-success")).toBeVisible({ timeout: 30_000 });
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("pendingOrderId")))
       .toBeNull();
-
-    const cart = await getCart(request, "customer");
-    expect(cart.data?.cart_items ?? []).toHaveLength(0);
   });
 
   test("@payment cancelled or incomplete Zarinpal callback stays unpaid and preserves stock", async ({

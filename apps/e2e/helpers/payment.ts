@@ -64,30 +64,45 @@ export async function finalizeToZarinpalRedirect(
   await page.goto("/checkout", { waitUntil: "domcontentloaded" });
   await fillCheckoutWithZarinpal(page);
 
-  const finalizeRequestPromise = page.waitForRequest(
-    (request) =>
-      request.url().includes("/carts/finalize") &&
-      request.method().toUpperCase() === "POST",
-    { timeout: 45_000 },
-  );
-  const finalizeResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url().includes("/carts/finalize") &&
-      response.request().method().toUpperCase() === "POST",
-    { timeout: 45_000 },
-  );
+  const finalizeCapturePromise = new Promise<{
+    ok: boolean;
+    status: number;
+    body: string;
+    requestBody: string;
+  }>((resolve, reject) => {
+    page
+      .route(
+        /\/api\/carts\/finalize(?:\?.*)?$/i,
+        async (route) => {
+          try {
+            const response = await route.fetch();
+            const body = await response.text();
+            resolve({
+              ok: response.ok(),
+              status: response.status(),
+              body,
+              requestBody: route.request().postData() ?? "<empty>",
+            });
+            await route.fulfill({ response, body });
+          } catch (error) {
+            reject(error);
+            await route.continue().catch(() => undefined);
+          }
+        },
+        { times: 1 },
+      )
+      .catch(reject);
+  });
 
   await page.getByTestId("checkout-submit").click();
-  const finalizeRequest = await finalizeRequestPromise;
-  const finalizeResponse = await finalizeResponsePromise;
-  const requestBody = finalizeRequest.postData() ?? "<empty>";
-  if (!finalizeResponse.ok()) {
+  const finalizeCapture = await finalizeCapturePromise;
+  if (!finalizeCapture.ok) {
     expect(
-      finalizeResponse.ok(),
-      `checkout finalize failed with ${finalizeResponse.status()}: ${await finalizeResponse.text()} request=${requestBody}`,
+      finalizeCapture.ok,
+      `checkout finalize failed with ${finalizeCapture.status}: ${finalizeCapture.body} request=${finalizeCapture.requestBody}`,
     ).toBe(true);
   }
-  const payload = (await finalizeResponse.json()) as {
+  const payload = JSON.parse(finalizeCapture.body) as {
     data?: {
       orderId?: number;
       contractId?: number;
@@ -100,11 +115,10 @@ export async function finalizeToZarinpalRedirect(
     redirectUrl?: string;
   };
   const body = payload.data ?? payload;
+  await expect(page).toHaveURL(/zarinpal/i, { timeout: 45_000 });
   expect(body.orderId, "finalize response must include orderId").toBeTruthy();
   expect(body.refId, "finalize response must include refId").toBeTruthy();
   expect(body.redirectUrl, "finalize response must include redirectUrl").toContain("zarinpal");
-
-  await expect(page).toHaveURL(/zarinpal/i, { timeout: 45_000 });
   if (options.mockGateway !== false) {
     await expect(page.getByTestId("zarinpal-placeholder")).toBeVisible();
   }
@@ -126,15 +140,27 @@ export async function capturePendingPayment(page: Page) {
 }
 
 export async function stubSuccessfulCallback(page: Page, payment: FinalizedZarinpalPayment) {
+  const headers = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-credentials": "true",
+    "access-control-allow-methods": "GET, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type, accept",
+    "content-type": "application/json",
+  };
+
   await page.route(/\/api\/orders\/verify-payment\?/, async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get("orderId") !== String(payment.orderId)) {
       await route.continue();
       return;
     }
+    if (route.request().method().toUpperCase() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers });
+      return;
+    }
     await route.fulfill({
       status: 200,
-      contentType: "application/json",
+      headers,
       body: JSON.stringify({
         success: true,
         message: "E2E verified",
@@ -147,9 +173,13 @@ export async function stubSuccessfulCallback(page: Page, payment: FinalizedZarin
   });
 
   await page.route(new RegExp(`/api/orders/${payment.orderId}/payment-status(?:\\?.*)?$`), async (route) => {
+    if (route.request().method().toUpperCase() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers });
+      return;
+    }
     await route.fulfill({
       status: 200,
-      contentType: "application/json",
+      headers,
       body: JSON.stringify({
         data: {
           success: true,
