@@ -51,6 +51,15 @@ export default function OffersListHomePage(props: Props) {
   const startIndex = currentPage * productsPerPage;
   const endIndex = startIndex + productsPerPage;
   const currentProducts = products.slice(startIndex, endIndex);
+  const visibleDesktopProducts =
+    currentProducts.length > 0 ? currentProducts : products.slice(0, productsPerPage);
+
+  useEffect(() => {
+    const maxPage = Math.max(0, totalPages - 1);
+    if (currentPage > maxPage) {
+      setCurrentPage(maxPage);
+    }
+  }, [currentPage, totalPages]);
 
   function goToNextProduct() {
     // Check if we're on mobile or desktop
@@ -251,7 +260,7 @@ export default function OffersListHomePage(props: Props) {
               isAnimating ? "scale-95 opacity-0" : "scale-100 opacity-100",
             )}
           >
-            {currentProducts.map((product) => (
+            {visibleDesktopProducts.map((product) => (
               <div
                 key={product.id}
                 className="min-w-0 transform transition-all duration-200 ease-out hover:-translate-y-1 hover:scale-[1.02]"

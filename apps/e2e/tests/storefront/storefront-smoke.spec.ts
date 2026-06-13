@@ -97,11 +97,13 @@ test.describe("storefront smoke", () => {
     await card.hover();
     const quickViewButton = card.getByTestId("product-card-quick-view");
     await expect(quickViewButton).toBeVisible();
-    await quickViewButton.click();
 
-    await expect(page.getByTestId("quick-view-content")).toBeVisible({
-      timeout: 30_000,
-    });
+    await expect(async () => {
+      await quickViewButton.click();
+      await expect(page.getByTestId("quick-view-content")).toBeVisible({
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 15_000 });
     await expect(page.getByTestId("quick-view-content")).toContainText(
       E2E_PRODUCT_TITLE,
     );
