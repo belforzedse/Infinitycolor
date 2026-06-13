@@ -15,10 +15,7 @@ import { SubmitOrderStep } from "@/types/Order";
 import { useRouter } from "next/navigation";
 import type { ShippingMethod } from "@/services/shipping";
 import { CartService, OrderService } from "@/services";
-import {
-  DEFAULT_CHECKOUT_GATEWAYS,
-  type CheckoutGatewayCode,
-} from "@/services/cart/types/cart";
+import { DEFAULT_CHECKOUT_GATEWAYS, type CheckoutGatewayCode } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
 import WalletService from "@/services/wallet";
 import { useCart } from "@/contexts/CartContext";
@@ -56,6 +53,7 @@ function ShoppingCartBillForm({}: Props) {
   const userLoading = useAtomValue(userLoadingAtom);
   const [hasRedirected, setHasRedirected] = useState(false);
   const [hasAccessToken, setHasAccessToken] = useState(false);
+  const [isAuthTokenReady, setIsAuthTokenReady] = useState(false);
 
   // Check authentication on mount - redirect to login if not authenticated.
   // Wait for global auth loading to finish so we don't redirect while user is still being fetched
@@ -67,8 +65,13 @@ function ShoppingCartBillForm({}: Props) {
     if (!currentPath.includes("/checkout")) {
       setHasRedirected(false);
       setHasAccessToken(false);
+      setIsAuthTokenReady(true);
       return;
     }
+
+    const token = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    setHasAccessToken(Boolean(token));
+    setIsAuthTokenReady(true);
 
     // Don't redirect while user is still loading (AuthInitializer may be populating currentUser)
     if (userLoading) return;
@@ -77,8 +80,6 @@ function ShoppingCartBillForm({}: Props) {
     // Don't redirect if we've already sent the user to auth this "session"
     if (hasRedirected) return;
     // Belt-and-suspenders: if token exists, give the app a moment to hydrate user
-    const token = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
-    setHasAccessToken(Boolean(token));
     if (token) return;
 
     setHasRedirected(true);
@@ -144,7 +145,10 @@ function ShoppingCartBillForm({}: Props) {
   } | null>(null);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
   const { totalPrice, totalItems, clearCart } = useCart();
-  const selectableGateways = useMemo(() => availableGateways.filter((gw) => gw !== "snappay" || snappEligible), [availableGateways, snappEligible]);
+  const selectableGateways = useMemo(
+    () => availableGateways.filter((gw) => gw !== "snappay" || snappEligible),
+    [availableGateways, snappEligible],
+  );
 
   const shippingToman = shippingCost ?? 0;
   const discountToman = discountPreview?.discount ?? 0;
@@ -171,9 +175,17 @@ function ShoppingCartBillForm({}: Props) {
       if (!currentUser) return;
       try {
         const res = await OrderService.getActiveReserve();
-        const d = (res as { data?: { reserveGroupId: string; reserveExpiresAt: string; orderCount: number } | null }).data;
+        const d = (
+          res as {
+            data?: { reserveGroupId: string; reserveExpiresAt: string; orderCount: number } | null;
+          }
+        ).data;
         if (d?.reserveGroupId) {
-          setActiveReserve({ reserveGroupId: d.reserveGroupId, reserveExpiresAt: d.reserveExpiresAt, orderCount: d.orderCount });
+          setActiveReserve({
+            reserveGroupId: d.reserveGroupId,
+            reserveExpiresAt: d.reserveExpiresAt,
+            orderCount: d.orderCount,
+          });
           setMergeChoice(null);
         } else {
           setActiveReserve(null);
@@ -490,7 +502,8 @@ function ShoppingCartBillForm({}: Props) {
               displayError = "آدرس انتخاب شده یافت نشد. لطفاً آدرس دیگری انتخاب کنید";
               break;
             case "RESERVE_NOT_FOUND":
-              displayError = "سفارش رزروی معتبر یافت نشد یا منقضی شده است. لطفاً سفارش جدید ثبت کنید.";
+              displayError =
+                "سفارش رزروی معتبر یافت نشد یا منقضی شده است. لطفاً سفارش جدید ثبت کنید.";
               break;
             default:
               // Use backend message translated to Persian (never show raw)
@@ -629,10 +642,7 @@ function ShoppingCartBillForm({}: Props) {
       } else {
         const normalizedError = err?.message ? String(err.message).toLowerCase() : "";
         trackCheckoutError(normalizedError.includes("network") ? "NETWORK_ERROR" : "UNKNOWN_ERROR");
-        displayError = getUserFacingErrorMessage(
-          err,
-          "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.",
-        );
+        displayError = getUserFacingErrorMessage(err, "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.");
       }
 
       setError(displayError);
@@ -676,14 +686,8 @@ function ShoppingCartBillForm({}: Props) {
 
   const isMergeMode = mergeChoice === "merge";
 
-  if (userLoading || hasRedirected || (!currentUser && !hasAccessToken)) {
-    return (
-      <div
-        className="min-h-[40vh]"
-        aria-live="polite"
-        data-testid="checkout-auth-gate"
-      />
-    );
+  if (!isAuthTokenReady || userLoading || hasRedirected || (!currentUser && !hasAccessToken)) {
+    return <div className="min-h-[40vh]" aria-live="polite" data-testid="checkout-auth-gate" />;
   }
 
   return (
@@ -801,7 +805,7 @@ function ShoppingCartBillForm({}: Props) {
             data-testid="checkout-submit"
             disabled={isSubmitting}
             className={
-              "text-xl w-full text-nowrap rounded-lg bg-infinity-primary py-3 text-white lg:text-base lg:py-4 " +
+              "w-full text-nowrap rounded-lg bg-infinity-primary py-3 text-xl text-white lg:py-4 lg:text-base " +
               (isSubmitting ? "cursor-not-allowed opacity-70" : "")
             }
           >

@@ -38,7 +38,7 @@
     "strapi": "strapi",
     "test:api": "node scripts/test-api-connection.js",
     "test": "jest --detectOpenHandles",
-    "test:ci": "jest --ci --detectOpenHandles --reporters=default --reporters=jest-junit",
+    "test:ci": "jest --ci --coverage --detectOpenHandles --reporters=default --reporters=jest-junit",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:importer": "node --test scripts/woocommerce-importer/catalog/__tests__/*.test.js",

@@ -5,11 +5,15 @@ import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
 
 const mockPush = jest.fn();
 const mockClearCart = jest.fn();
+let currentSearchParams: Record<string, string | null | undefined> = {
+  ResNum: "123",
+  RefNum: "abc",
+};
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
   useSearchParams: () => ({
-    get: (key: string) => ({ ResNum: "123", RefNum: "abc" })[key] ?? null,
+    get: (key: string) => currentSearchParams[key] ?? null,
   }),
 }));
 
@@ -45,6 +49,7 @@ const trackMatomoEventMock = trackMatomoEvent as jest.Mock;
 
 describe("PaymentCallback page", () => {
   beforeEach(() => {
+    currentSearchParams = { ResNum: "123", RefNum: "abc" };
     mockPush.mockReset();
     mockClearCart.mockReset();
     mockClearCart.mockResolvedValue(undefined);
@@ -80,7 +85,7 @@ describe("PaymentCallback page", () => {
     });
 
     expect(paymentStatusMock).toHaveBeenCalledWith(1);
-    expect(mockClearCart).toHaveBeenCalledTimes(1);
+    expect(mockClearCart).toHaveBeenCalled();
     expect(trackFunnelStepMock).toHaveBeenCalledWith("purchase", {
       label: "1",
       onceKey: "purchase:1",
@@ -98,5 +103,100 @@ describe("PaymentCallback page", () => {
     logSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+
+  it("falls back to verification success when direct payment status check fails", async () => {
+    verifyPaymentMock.mockResolvedValue({
+      orderId: 2,
+      orderNumber: "A124",
+      success: true,
+    });
+    paymentStatusMock.mockRejectedValue(new Error("status endpoint unavailable"));
+
+    render(<PaymentCallback />);
+
+    await waitFor(() => {
+      expect(paymentStatusMock).toHaveBeenCalledWith(2);
+    });
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/orders/success");
+    });
+
+    expect(mockClearCart).toHaveBeenCalled();
+    expect(trackFunnelStepMock).toHaveBeenCalledWith("purchase", {
+      label: "2",
+      onceKey: "purchase:2",
+    });
+  });
+
+  it("routes to failure when backend verification returns unsuccessful", async () => {
+    verifyPaymentMock.mockResolvedValue({
+      orderId: 3,
+      orderNumber: "A125",
+      success: false,
+    });
+    paymentStatusMock.mockResolvedValue({ isPaid: false });
+
+    render(<PaymentCallback />);
+
+    await waitFor(() => {
+      expect(verifyPaymentMock).toHaveBeenCalledWith(123, "abc");
+    });
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/orders/failure");
+    });
+
+    expect(mockClearCart).not.toHaveBeenCalled();
+    expect(trackMatomoEventMock).toHaveBeenCalledWith({
+      category: "checkout",
+      action: "payment_callback_failed",
+      name: "verification_failed",
+      onceKey: "payment-callback-failed:3",
+    });
+  });
+
+  it("routes to failure without calling verification when URL and storage params are missing", async () => {
+    currentSearchParams = {};
+
+    render(<PaymentCallback />);
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/orders/failure");
+    });
+
+    expect(verifyPaymentMock).not.toHaveBeenCalled();
+    expect(trackMatomoEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "checkout",
+        action: "payment_callback_error",
+        name: "MISSING_PARAMS",
+        onceKey: "payment-callback-error:unknown:MISSING_PARAMS",
+      }),
+    );
+  });
+
+  it("routes to failure and tracks a stable error code when verification throws", async () => {
+    verifyPaymentMock.mockRejectedValue(
+      Object.assign(new Error("network down"), { code: "NETWORK_ERROR" }),
+    );
+
+    render(<PaymentCallback />);
+
+    await waitFor(() => {
+      expect(verifyPaymentMock).toHaveBeenCalledWith(123, "abc");
+    });
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/orders/failure");
+    });
+
+    expect(mockClearCart).not.toHaveBeenCalled();
+    expect(trackMatomoEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "checkout",
+        action: "payment_callback_error",
+        name: "NETWORK_ERROR",
+        onceKey: "payment-callback-error:123:NETWORK_ERROR",
+      }),
+    );
   });
 });

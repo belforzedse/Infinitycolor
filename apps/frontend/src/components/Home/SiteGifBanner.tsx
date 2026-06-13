@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { SITE_GIF_ASPECT_CLASS } from "@/constants/site-gif";
+import { SITE_GIF_ASPECT_CLASS, normalizeSiteGifImageUrl } from "@/constants/site-gif";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +29,7 @@ export default function SiteGifBanner({
   const trimmedImage = imageUrl?.trim() ?? "";
   if (!enabled || !trimmedImage) return null;
 
-  const resolvedSrc = resolveAssetUrl(trimmedImage);
+  const resolvedSrc = resolveAssetUrl(normalizeSiteGifImageUrl(trimmedImage));
   const trimmedHref = linkHref?.trim() ?? "";
   const alt = altText?.trim() || "گیف سایت";
 

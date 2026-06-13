@@ -7,7 +7,11 @@ import SiteGifBanner from "@/components/Home/SiteGifBanner";
 import CustomizationPreviewSection from "@/components/SuperAdmin/CustomizationPreviewSection";
 import ImageUploadField from "@/components/SuperAdmin/UpsertPage/ContentWrapper/Fields/ImageUploadField";
 import { EditorSection } from "@/components/SuperAdmin/HeroSliderEditor/editors/EditorSection";
-import { SITE_GIF_DESKTOP_HEIGHT, SITE_GIF_DESKTOP_WIDTH } from "@/constants/site-gif";
+import {
+  SITE_GIF_DESKTOP_HEIGHT,
+  SITE_GIF_DESKTOP_WIDTH,
+  normalizeSiteGifImageUrl,
+} from "@/constants/site-gif";
 import { getSuperAdminSettings } from "@/services/super-admin/settings/get";
 import { updateSuperAdminSettings } from "@/services/super-admin/settings/update";
 import type { SuperAdminSettings } from "@/types/super-admin/settings";
@@ -43,7 +47,7 @@ function TextInput({
 function pickSiteGifSettings(data: SuperAdminSettings): Partial<SuperAdminSettings> {
   return {
     siteGifEnabled: data.siteGifEnabled,
-    siteGifImage: data.siteGifImage,
+    siteGifImage: normalizeSiteGifImageUrl(data.siteGifImage),
     siteGifLinkHref: data.siteGifLinkHref,
     siteGifAltText: data.siteGifAltText,
   };
@@ -169,6 +173,7 @@ export default function SiteGifSettingsPage() {
                 <ImageUploadField
                   value={data.siteGifImage}
                   onChange={(value) => patchData({ siteGifImage: value })}
+                  preferOriginal
                   helper={
                     <>
                       ابعاد پیشنهادی: {SITE_GIF_DESKTOP_WIDTH}×{SITE_GIF_DESKTOP_HEIGHT} پیکسل

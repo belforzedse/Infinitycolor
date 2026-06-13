@@ -153,12 +153,7 @@ async function ProductSectionsBlock({
   homepageSettings: SuperAdminSettings;
   promoBanners: HomePromoBanner[];
 }) {
-  return (
-    <HomeProductSections
-      homepageSettings={homepageSettings}
-      promoBanners={promoBanners}
-    />
-  );
+  return <HomeProductSections homepageSettings={homepageSettings} promoBanners={promoBanners} />;
 }
 
 async function CategorySection() {
@@ -249,16 +244,16 @@ export default async function Home() {
         {/* JSON-LD Organization Schema for SEO */}
         <OrganizationSchema />
 
-        <Suspense fallback={<StoriesRailFallback />}>
-          <StoriesSection />
-        </Suspense>
-
         <SiteGifBanner
           enabled={homepageSettings.siteGifEnabled}
           imageUrl={homepageSettings.siteGifImage}
           linkHref={homepageSettings.siteGifLinkHref}
           altText={homepageSettings.siteGifAltText}
         />
+
+        <Suspense fallback={<StoriesRailFallback />}>
+          <StoriesSection />
+        </Suspense>
 
         <section className="space-y-0">
           <Reveal variant="zoom-in" duration={650}>
@@ -275,10 +270,7 @@ export default async function Home() {
         </Suspense>
 
         <Suspense fallback={<ProductSectionsFallback />}>
-          <ProductSectionsBlock
-            homepageSettings={homepageSettings}
-            promoBanners={promoBanners}
-          />
+          <ProductSectionsBlock homepageSettings={homepageSettings} promoBanners={promoBanners} />
         </Suspense>
       </PageContainer>
 

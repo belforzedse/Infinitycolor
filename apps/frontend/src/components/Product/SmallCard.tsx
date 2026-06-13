@@ -3,10 +3,10 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import imageLoader from "@/utils/imageLoader";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import HeartIcon from "./Icons/HeartIcon";
 import EyeIcon from "./Icons/EyeIcon";
+import MoreIcon from "./Icons/MoreIcon";
 import ShuffleIcon from "@/components/PDP/Icons/ShuffleIcon";
 import useProductLike from "@/hooks/useProductLike";
 import clsx from "clsx";
@@ -61,7 +61,6 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isQuickViewOpen, setIsQuickViewOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
-  const router = useRouter();
 
   // Refs
   const menuRef = useRef<HTMLDivElement>(null);
@@ -76,9 +75,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
     productId: id.toString(),
   });
 
-  const hasDiscount = Boolean(
-    discountedPrice && discountedPrice > 0 && discountedPrice < price,
-  );
+  const hasDiscount = Boolean(discountedPrice && discountedPrice > 0 && discountedPrice < price);
 
   const saleDiscountPercent = computeSaleDiscountPercent(price, discountedPrice, discount);
 
@@ -128,15 +125,6 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
     setIsShareOpen(true);
   }, []);
 
-  const handleCardNavigate = useCallback(
-    (e: React.MouseEvent<HTMLElement>) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest("button")) return;
-      router.push(productUrl);
-    },
-    [productUrl, router],
-  );
-
   const handleToggleLike = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       e.preventDefault();
@@ -161,7 +149,6 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
         data-product-id={id}
         data-product-slug={slug || id.toString()}
         data-product-title={title}
-        onClickCapture={handleCardNavigate}
         aria-label={`محصول ${title}`}
       >
         <Link
@@ -190,6 +177,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
               handleMenuToggle={handleMenuToggle}
               isMenuOpen={isMenuOpen}
               menuButtonTestId="product-small-card-menu"
+              showMenuButton={false}
             >
               <PriceCard
                 isAvailable={isAvailable}
@@ -199,6 +187,18 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
             </InfoCard>
           </div>
         </Link>
+
+        <button
+          ref={menuButtonRef}
+          onClick={handleMenuToggle}
+          className="absolute left-4 top-4 z-20 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          aria-label="منوی عملیات"
+          aria-expanded={isMenuOpen}
+          data-testid="product-small-card-menu"
+          type="button"
+        >
+          <MoreIcon className="h-6 w-6 text-neutral-400" />
+        </button>
 
         {/* Dropdown Menu */}
         {isMenuOpen && (
