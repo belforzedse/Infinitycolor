@@ -96,9 +96,11 @@ function parseSeedSummary(output: string): SeedSummary {
   return JSON.parse(jsonText) as SeedSummary;
 }
 
-async function readBackendEnvValue(name: string) {
-  const existing = process.env[name]?.trim();
-  if (existing) return existing;
+async function readBackendEnvValue(name: string, aliases: string[] = []) {
+  for (const envName of [...aliases, name]) {
+    const existing = process.env[envName]?.trim();
+    if (existing) return existing;
+  }
 
   const envPath = path.join(repoRoot, "apps/backend/.env");
   const content = await readFile(envPath, "utf8").catch(() => "");
@@ -113,7 +115,8 @@ async function readBackendEnvValue(name: string) {
     return rawValue.replace(/^['"]|['"]$/g, "");
   }
 
-  throw new Error(`Missing ${name}; set it in the environment or apps/backend/.env`);
+  const envNames = [...aliases, name].join(" or ");
+  throw new Error(`Missing ${envNames}; set it in the environment or apps/backend/.env`);
 }
 
 function base64UrlJson(value: unknown) {
@@ -238,7 +241,7 @@ async function writeAuthStorageState(role: E2EAuthRole, seedSummary?: SeedSummar
   }
 
   const userId = resolveSeededUserId(role, seedSummary);
-  const jwtSecret = await readBackendEnvValue("JWT_SECRET");
+  const jwtSecret = await readBackendEnvValue("JWT_SECRET", ["E2E_JWT_SECRET"]);
   await writeAuthStorageStateFromToken(role, issueJwt(userId, jwtSecret));
 }
 
