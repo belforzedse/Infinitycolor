@@ -57,6 +57,8 @@ RUN --mount=type=cache,target=/root/.cache/node/corepack \
     && mkdir -p /app/dist /app/build \
     && cp -a /repo/apps/backend/dist/. /app/dist/ \
     && if [ -d /repo/apps/backend/build ]; then cp -a /repo/apps/backend/build/. /app/build/; fi \
+    && mkdir -p /app/public/uploads \
+    && if [ -f /repo/apps/backend/public/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp ]; then cp -a /repo/apps/backend/public/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /app/public/uploads/; fi \
     && cd /app \
     && echo "rebuilding sharp for musl runtime..." \
     && npm_config_platform=linux npm_config_arch=x64 npm_config_libc=musl pnpm rebuild sharp --unsafe-perm \

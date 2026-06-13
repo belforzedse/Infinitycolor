@@ -28,6 +28,8 @@ coverage
 **/.strapi-updater.json
 **/.strapi-cloud.json
 **/public/uploads
+!apps/backend/public/
+!apps/backend/public/uploads
 !apps/backend/public/uploads/
 !apps/backend/public/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp
 

@@ -24,7 +24,9 @@ test.describe("storefront smoke", () => {
     const cards = page.getByTestId("product-card");
     await expect(cards.first()).toBeAttached({ timeout: 30_000 });
 
-    const firstVisibleCard = page.locator('[data-testid="product-card"]:visible').first();
+    const firstVisibleCard = page
+      .locator('[data-testid="product-card"]:visible')
+      .first();
     await firstVisibleCard.scrollIntoViewIfNeeded();
     await expect(firstVisibleCard).toBeVisible();
 
@@ -38,20 +40,26 @@ test.describe("storefront smoke", () => {
     runtime.assertClean();
   });
 
-  test("@smoke category PLP navigates to PDP and exposes variation states", async ({ page }) => {
+  test("@smoke category PLP navigates to PDP and exposes variation states", async ({
+    page,
+  }) => {
     const runtime = await prepareStorefrontPage(page);
 
     await page.goto(`/plp/category/${E2E_CATEGORY_SLUG}`);
 
     const productLink = page.locator(visibleSeededProductLinkSelector).first();
     await expect(productLink).toBeVisible({ timeout: 30_000 });
-    await productLink.click();
 
-    await expect(page).toHaveURL(new RegExp(`/pdp/${E2E_PRODUCT_SLUG}`));
+    await expect(async () => {
+      await productLink.click();
+      await expect(page).toHaveURL(new RegExp(`/pdp/${E2E_PRODUCT_SLUG}`), {
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 15_000 });
     await expect(page.getByTestId("pdp-hero")).toBeVisible();
-    await expect(page.locator('[data-testid="pdp-product-title"]:visible').first()).toContainText(
-      E2E_PRODUCT_TITLE,
-    );
+    await expect(
+      page.locator('[data-testid="pdp-product-title"]:visible').first(),
+    ).toContainText(E2E_PRODUCT_TITLE);
 
     const hexlessColor = page
       .getByTestId("pdp-color-option")
@@ -62,7 +70,9 @@ test.describe("storefront smoke", () => {
     await hexlessColor.click();
 
     const unavailableColor = page
-      .locator(`[data-testid="pdp-color-option"][data-color-title="${E2E_UNAVAILABLE_COLOR_TITLE}"]`)
+      .locator(
+        `[data-testid="pdp-color-option"][data-color-title="${E2E_UNAVAILABLE_COLOR_TITLE}"]`,
+      )
       .first();
     await expect(unavailableColor).toBeDisabled();
 
@@ -89,8 +99,12 @@ test.describe("storefront smoke", () => {
     await expect(quickViewButton).toBeVisible();
     await quickViewButton.click();
 
-    await expect(page.getByTestId("quick-view-content")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("quick-view-content")).toContainText(E2E_PRODUCT_TITLE);
+    await expect(page.getByTestId("quick-view-content")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("quick-view-content")).toContainText(
+      E2E_PRODUCT_TITLE,
+    );
     await page.getByTestId("quick-view-full-details").click();
 
     await expect(page).toHaveURL(new RegExp(`/pdp/${E2E_PRODUCT_SLUG}`));
@@ -111,12 +125,23 @@ test.describe("storefront smoke", () => {
     const smallCard = page.locator(visibleSeededSmallCardSelector).first();
     await expect(smallCard).toBeVisible({ timeout: 30_000 });
     await smallCard.scrollIntoViewIfNeeded();
-    await smallCard.getByTestId("product-small-card-menu").click();
-    await expect(smallCard.getByTestId("product-small-card-quick-view")).toBeVisible();
+    const menuButton = smallCard.getByTestId("product-small-card-menu");
+    const quickViewButton = smallCard.getByTestId(
+      "product-small-card-quick-view",
+    );
+
+    await expect(async () => {
+      await menuButton.click();
+      await expect(quickViewButton).toBeVisible({ timeout: 1_000 });
+    }).toPass({ timeout: 10_000 });
     await smallCard.getByTestId("product-small-card-quick-view").click();
 
-    await expect(page.getByTestId("quick-view-content")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("quick-view-content")).toContainText(E2E_PRODUCT_TITLE);
+    await expect(page.getByTestId("quick-view-content")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("quick-view-content")).toContainText(
+      E2E_PRODUCT_TITLE,
+    );
     await page.getByTestId("quick-view-close").click();
     await expect(page.getByTestId("quick-view-content")).toBeHidden();
     runtime.assertClean();
@@ -127,17 +152,27 @@ test.describe("storefront smoke", () => {
   }) => {
     const runtime = await prepareStorefrontPage(page);
 
-    await page.goto(`/pdp/${E2E_PRODUCT_SLUG}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/pdp/${E2E_PRODUCT_SLUG}`, {
+      waitUntil: "domcontentloaded",
+    });
 
-    await expect(page.getByTestId("pdp-cart-action")).toHaveAttribute("data-cart-ready", "true", {
+    await expect(page.getByTestId("pdp-cart-action")).toHaveAttribute(
+      "data-cart-ready",
+      "true",
+      {
+        timeout: 30_000,
+      },
+    );
+    await expect(page.getByTestId("pdp-add-to-cart")).toBeEnabled({
       timeout: 30_000,
     });
-    await expect(page.getByTestId("pdp-add-to-cart")).toBeEnabled({ timeout: 30_000 });
     await page.getByTestId("pdp-add-to-cart").click();
     await expect
       .poll(() =>
         page.evaluate((title) => {
-          const cart = JSON.parse(localStorage.getItem("cart") || "[]") as Array<{
+          const cart = JSON.parse(
+            localStorage.getItem("cart") || "[]",
+          ) as Array<{
             name?: string;
             quantity?: number;
           }>;
@@ -155,12 +190,19 @@ test.describe("storefront smoke", () => {
 
     await cartItem.getByTestId("cart-quantity-increase").click();
     await expect
-      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("cart") || "[]")[0]?.quantity))
+      .poll(() =>
+        page.evaluate(
+          () => JSON.parse(localStorage.getItem("cart") || "[]")[0]?.quantity,
+        ),
+      )
       .toBe(2);
 
     await page.reload();
     await expect(
-      page.locator('[data-testid="cart-item"]:visible').filter({ hasText: E2E_PRODUCT_TITLE }).first(),
+      page
+        .locator('[data-testid="cart-item"]:visible')
+        .filter({ hasText: E2E_PRODUCT_TITLE })
+        .first(),
     ).toBeVisible();
 
     await page
@@ -170,7 +212,11 @@ test.describe("storefront smoke", () => {
       .getByTestId("cart-item-remove")
       .click();
     await expect
-      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("cart") || "[]").length))
+      .poll(() =>
+        page.evaluate(
+          () => JSON.parse(localStorage.getItem("cart") || "[]").length,
+        ),
+      )
       .toBe(0);
 
     runtime.assertClean();
@@ -181,6 +227,8 @@ test.describe("storefront smoke", () => {
   }) => {
     await page.goto("/checkout", { waitUntil: "domcontentloaded" });
 
-    await expect(page).toHaveURL(/\/auth\?(?:.*&)?redirect=(?:\/checkout|%2Fcheckout)/);
+    await expect(page).toHaveURL(
+      /\/auth\?(?:.*&)?redirect=(?:\/checkout|%2Fcheckout)/,
+    );
   });
 });
