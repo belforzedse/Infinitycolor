@@ -72,14 +72,18 @@ const productHasDiscount = (product: any): boolean => {
   });
 };
 
-const HOMEPAGE_FETCH_OPTIONS = {
-  next: { revalidate: 90, tags: ["home-products"] },
+const homepageFetchOptions = (): RequestInit & {
+  next?: { revalidate: number; tags: string[] };
+} => ({
+  ...(process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE === "1" || process.env.E2E_SEED_MODE === "auto"
+    ? { cache: "no-store" as const }
+    : { next: { revalidate: 90, tags: ["home-products"] } }),
   headers: {
     "Content-Type": "application/json",
     Accept: "application/json",
     "Accept-Encoding": "gzip", // Explicitly request compression
   },
-};
+});
 
 const parseBatchedHomepageAllowlist = () => {
   const raw = process.env.HOME_BATCHED_SECTION_ALLOWLIST || "";
@@ -103,7 +107,7 @@ export const getBatchedHomepageSections = async (): Promise<BatchedHomepageSecti
   try {
     const response = await fetch(
       `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.HOMEPAGE_SECTIONS}`,
-      HOMEPAGE_FETCH_OPTIONS,
+      homepageFetchOptions(),
     ).then((res) => res.json());
 
     const sections = (response as { data?: { sections?: unknown[] } })?.data?.sections ?? [];
@@ -147,7 +151,7 @@ export const getProductsByIds = async (ids: number[]): Promise<ProductCardProps[
     `pagination[limit]=${Math.max(ids.length, 20)}&` +
     `pagination[withCount]=false`;
   try {
-    const response = await fetch(`${getStrapiServerUrl()}${endpoint}`, HOMEPAGE_FETCH_OPTIONS).then((res) =>
+    const response = await fetch(`${getStrapiServerUrl()}${endpoint}`, homepageFetchOptions()).then((res) =>
       res.json(),
     );
     const rawList = (response as { data?: unknown[] })?.data ?? [];
@@ -189,7 +193,7 @@ export const getGifPromoProductsForSlot = async (
   try {
     const response = await fetch(
       `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
-      HOMEPAGE_FETCH_OPTIONS,
+      homepageFetchOptions(),
     ).then((res) => res.json());
 
     return formatProductsToCardProps((response as { data?: unknown[] })?.data ?? []).slice(0, 4);
@@ -223,7 +227,7 @@ export const getHomeSectionProducts = async (
   try {
     const response = await fetch(
       `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
-      HOMEPAGE_FETCH_OPTIONS,
+      homepageFetchOptions(),
     ).then((res) => res.json());
 
     return formatProductsToCardProps((response as { data?: unknown[] })?.data ?? []);
@@ -288,7 +292,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     const settingsPromise = settingsOverride
       ? Promise.resolve(settingsOverride)
       : getPublicSuperAdminSettings();
-    const batchPromise = fetch(`${getStrapiServerUrl()}${batchEndpoint}`, HOMEPAGE_FETCH_OPTIONS)
+    const batchPromise = fetch(`${getStrapiServerUrl()}${batchEndpoint}`, homepageFetchOptions())
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) {
@@ -309,7 +313,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     // Start new products and curated discounted fetches in parallel
     const newPromise = curatedNewest
       ? getProductsByIds(settings.homeNewestProductIds)
-      : fetch(`${getStrapiServerUrl()}${newEndpoint}`, HOMEPAGE_FETCH_OPTIONS)
+      : fetch(`${getStrapiServerUrl()}${newEndpoint}`, homepageFetchOptions())
           .then(async (res) => {
             const data = await res.json();
             if (!res.ok) {

@@ -60,6 +60,8 @@ export default defineConfig({
             process.env.HOME_BATCHED_SECTION_ALLOWLIST ?? "newest",
           HOME_PRODUCT_SERVER_SHELL_SECTION:
             process.env.HOME_PRODUCT_SERVER_SHELL_SECTION ?? "newest",
+          E2E_DISABLE_HOMEPAGE_FETCH_CACHE:
+            process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE ?? "1",
           NEXT_PUBLIC_API_BASE_URL: strapiApiURL(),
           NEXT_PUBLIC_IMAGE_BASE_URL: strapiOrigin(),
           STRAPI_INTERNAL_URL: strapiApiURL(),
