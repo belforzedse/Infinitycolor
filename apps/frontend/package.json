@@ -23,6 +23,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:seo": "node scripts/test-seo.js",
+    "check:security-headers": "node scripts/check-security-headers.mjs",
     "clean": "rm -rf .next out node_modules/.cache",
     "validate": "pnpm run check-types && pnpm run lint && pnpm run format:check"
   },

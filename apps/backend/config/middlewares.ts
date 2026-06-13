@@ -25,7 +25,6 @@ export default [
   // `//rest-cache/config/strategy` (from third-party admin plugins) route instead of 400-ing.
   "global::normalize-path",
   "strapi::security",
-  "strapi::poweredBy",
   {
     name: "strapi::cors",
     config: {
