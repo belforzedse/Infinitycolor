@@ -1,5 +1,7 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import path from "path";
+import { getNextImageRemotePatterns } from "./src/utils/imageSecurity";
+import { getSecurityHeaders } from "./src/utils/securityHeaders";
 
 /**
  * Load build version from generated JSON file
@@ -25,50 +27,6 @@ try {
 // Inject build version as environment variable for client-side access
 process.env.NEXT_PUBLIC_BUILD_VERSION = BUILD_VERSION;
 
-const contentSecurityPolicyReportOnly = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  "frame-ancestors 'self'",
-  "form-action 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
-  "style-src 'self' 'unsafe-inline' https:",
-  "img-src 'self' data: blob: https: http:",
-  "font-src 'self' data: https:",
-  "connect-src 'self' https: http: wss:",
-  "media-src 'self' data: blob: https: http:",
-  "worker-src 'self' blob:",
-  "manifest-src 'self'",
-  "frame-src 'self' https:",
-].join("; ");
-
-const securityHeaders = [
-  {
-    key: "X-Content-Type-Options",
-    value: "nosniff",
-  },
-  {
-    key: "X-Frame-Options",
-    value: "SAMEORIGIN",
-  },
-  {
-    key: "Referrer-Policy",
-    value: "strict-origin-when-cross-origin",
-  },
-  {
-    key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
-  },
-  {
-    key: "Strict-Transport-Security",
-    value: "max-age=31536000",
-  },
-  {
-    key: "Content-Security-Policy-Report-Only",
-    value: contentSecurityPolicyReportOnly,
-  },
-];
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
@@ -80,7 +38,7 @@ const nextConfig = {
     return [
       {
         source: "/(.*)",
-        headers: securityHeaders,
+        headers: getSecurityHeaders(),
       },
     ];
   },
@@ -100,11 +58,7 @@ const nextConfig = {
     minimumCacheTTL: 60 * 60 * 24 * 30,
     dangerouslyAllowSVG: false,
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
-    // Allow images from any host (http/https)
-    remotePatterns: [
-      { protocol: "https", hostname: "**" },
-      { protocol: "http", hostname: "**" },
-    ],
+    remotePatterns: getNextImageRemotePatterns(),
   },
   experimental: {
     optimizePackageImports: ["@heroicons/react", "lucide-react", "react-icons", "framer-motion"],

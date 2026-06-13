@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import imageLoader from "@/utils/imageLoader";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import HeartIcon from "./Icons/HeartIcon";
 import EyeIcon from "./Icons/EyeIcon";
@@ -60,6 +61,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isQuickViewOpen, setIsQuickViewOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const router = useRouter();
 
   // Refs
   const menuRef = useRef<HTMLDivElement>(null);
@@ -126,6 +128,15 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
     setIsShareOpen(true);
   }, []);
 
+  const handleCardNavigate = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("button")) return;
+      router.push(productUrl);
+    },
+    [productUrl, router],
+  );
+
   const handleToggleLike = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       e.preventDefault();
@@ -150,6 +161,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
         data-product-id={id}
         data-product-slug={slug || id.toString()}
         data-product-title={title}
+        onClickCapture={handleCardNavigate}
         aria-label={`Ù…Ø­ØµÙˆÙ„ ${title}`}
       >
         <Link

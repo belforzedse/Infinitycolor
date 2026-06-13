@@ -406,6 +406,36 @@ describe("Product Service Helpers", () => {
 
       expect(result).toEqual([]);
     });
+
+    it("should skip blocked external cover images and keep trusted media", () => {
+      const product = createMockProduct();
+      product.attributes.CoverImage.data!.attributes.url =
+        "https://external-domain.example/cover.jpg";
+      product.attributes.Media = {
+        data: [
+          {
+            id: 2,
+            attributes: {
+              name: "gallery.jpg",
+              alternativeText: null,
+              caption: null,
+              width: 800,
+              height: 600,
+              formats: null,
+              mime: "image/jpeg",
+              url: "/uploads/gallery.jpg",
+              ext: ".jpg",
+            },
+          } as any,
+        ],
+      };
+
+      const result = formatGalleryAssets(product);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].src).toContain("/uploads/gallery.jpg");
+      expect(result[0].src).not.toContain("external-domain.example");
+    });
   });
 
   describe("formatProductsToCardProps", () => {
@@ -520,6 +550,25 @@ describe("Product Service Helpers", () => {
       expect(result).toHaveLength(1);
       expect(result[0].colorsCount).toBeUndefined();
       expect(result[0].colorCodes).toBeUndefined();
+    });
+
+    it("should remove blocked external images from compact product cards", () => {
+      const result = formatProductsToCardProps([
+        {
+          id: 14,
+          attributes: {
+            Title: "External Image Product",
+            Price: 120000,
+            IsAvailable: true,
+            CoverImage: {
+              url: "https://external-domain.example/product.jpg",
+            },
+          },
+        },
+      ]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].images).toEqual([]);
     });
 
     it("should handle empty array", () => {

@@ -28,32 +28,43 @@ describe("imageLoader", () => {
   });
 
   it("should add width and quality parameters", () => {
-    const result = imageLoader({ src: "/image.jpg", width: 800, quality: 90 });
+    const result = imageLoader({ src: "/images/image.jpg", width: 800, quality: 90 });
 
     expect(result).toContain("w=800");
     expect(result).toContain("q=90");
   });
 
   it("should use default quality of 70", () => {
-    const result = imageLoader({ src: "/image.jpg", width: 800 });
+    const result = imageLoader({ src: "/images/image.jpg", width: 800 });
 
     expect(result).toContain("q=70");
   });
 
   it("should add avif format parameter", () => {
-    const result = imageLoader({ src: "/image.jpg", width: 800 });
+    const result = imageLoader({ src: "/images/image.jpg", width: 800 });
 
     expect(result).toContain("f=avif");
   });
 
-  it("should handle absolute URLs", () => {
+  it("should handle trusted absolute Strapi upload URLs", () => {
+    process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://api.infinitycolor.co";
+
+    const result = imageLoader({
+      src: "https://api.infinitycolor.co/uploads/image.jpg",
+      width: 800,
+    });
+
+    expect(result).toContain("https://api.infinitycolor.co/uploads/image.jpg");
+    expect(result).toContain("w=800");
+  });
+
+  it("should reject arbitrary external absolute URLs", () => {
     const result = imageLoader({
       src: "https://example.com/image.jpg",
       width: 800,
     });
 
-    expect(result).toContain("https://example.com/image.jpg");
-    expect(result).toContain("w=800");
+    expect(result).toBe("");
   });
 
   it("should handle relative URLs with BASE_URL", () => {
@@ -65,9 +76,9 @@ describe("imageLoader", () => {
     expect(result).toContain("w=800");
   });
 
-  it("should handle URLs with existing query parameters", () => {
+  it("should handle local public URLs with existing query parameters", () => {
     const result = imageLoader({
-      src: "/image.jpg?existing=param",
+      src: "/images/image.jpg?existing=param",
       width: 800,
     });
 
@@ -75,18 +86,15 @@ describe("imageLoader", () => {
     expect(result).toContain("w=800");
   });
 
-  it("should fallback to appending params on URL parse error", () => {
+  it("should reject unrecognized relative sources instead of treating them as remote images", () => {
     const invalidUrl = "not a valid url with spaces";
     const result = imageLoader({ src: invalidUrl, width: 800, quality: 90 });
 
-    expect(result).toContain("not%20a%20valid%20url%20with%20spaces");
-    expect(result).toContain("w=800");
-    expect(result).toContain("q=90");
-    expect(result).toContain("f=avif");
+    expect(result).toBe("");
   });
 
   it("should use & for URLs with existing params in fallback", () => {
-    const urlWithParams = "/image.jpg?existing=param";
+    const urlWithParams = "/images/image.jpg?existing=param";
     const result = imageLoader({ src: urlWithParams, width: 800, quality: 90 });
 
     // Should either use proper URL parsing or fallback with &
@@ -94,15 +102,15 @@ describe("imageLoader", () => {
   });
 
   it("should handle different width values", () => {
-    const result1 = imageLoader({ src: "/image.jpg", width: 400 });
-    const result2 = imageLoader({ src: "/image.jpg", width: 1920 });
+    const result1 = imageLoader({ src: "/images/image.jpg", width: 400 });
+    const result2 = imageLoader({ src: "/images/image.jpg", width: 1920 });
 
     expect(result1).toContain("w=400");
     expect(result2).toContain("w=1920");
   });
 
   it("should convert width to string", () => {
-    const result = imageLoader({ src: "/image.jpg", width: 800 });
+    const result = imageLoader({ src: "/images/image.jpg", width: 800 });
 
     expect(result).toContain("w=800");
     expect(result).not.toContain("w=[object");

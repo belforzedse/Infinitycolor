@@ -6,6 +6,7 @@ import OverviewTab from "@/components/SuperAdmin/reports/products/OverviewTab";
 import TrendsTab from "@/components/SuperAdmin/reports/products/TrendsTab";
 import PerformanceTab from "@/components/SuperAdmin/reports/products/PerformanceTab";
 import InventoryTab from "@/components/SuperAdmin/reports/products/InventoryTab";
+import PaymentShippingTab from "@/components/SuperAdmin/reports/products/PaymentShippingTab";
 import {
   useReportFilters,
   type ReportTab,
@@ -16,6 +17,7 @@ const TABS: Array<{ key: ReportTab; label: string }> = [
   { key: "trends", label: "روند" },
   { key: "performance", label: "عملکرد محصولات" },
   { key: "inventory", label: "موجودی" },
+  { key: "payments", label: "پرداخت و ارسال" },
 ];
 
 export default function ProductReportsPage() {
@@ -46,6 +48,7 @@ export default function ProductReportsPage() {
         {tab === "trends" && <TrendsTab />}
         {tab === "performance" && <PerformanceTab />}
         {tab === "inventory" && <InventoryTab />}
+        {tab === "payments" && <PaymentShippingTab />}
       </div>
     </ContentWrapper>
   );

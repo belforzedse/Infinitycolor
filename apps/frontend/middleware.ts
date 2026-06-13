@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { getSecurityHeaderEntries } from './src/utils/securityHeaders';
 
 export const LEGACY_REDIRECT_STATUS = 301;
 
@@ -22,10 +23,7 @@ const WOO_VARIATION_PARAM_NAMES = new Set(['رنگ', 'سایز', 'طرح']);
 const RETIRED_LEGACY_PATHS = new Set(['/offer/best-sellers', '/offer/week-style']);
 const SECURITY_RESPONSE_HEADERS = [
   ['X-DNS-Prefetch-Control', 'on'],
-  ['X-Frame-Options', 'SAMEORIGIN'],
-  ['X-Content-Type-Options', 'nosniff'],
-  ['Referrer-Policy', 'strict-origin-when-cross-origin'],
-  ['Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()'],
+  ...getSecurityHeaderEntries(),
 ] as const;
 type LegacyRedirectSourceUrl = Pick<URL, 'href' | 'pathname' | 'search' | 'searchParams'>;
 

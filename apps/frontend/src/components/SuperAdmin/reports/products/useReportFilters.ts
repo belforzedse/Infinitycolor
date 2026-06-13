@@ -17,7 +17,7 @@ function toDateOnly(d: Date): string {
 const DEFAULT_START = toDateOnly(new Date(Date.now() - 30 * DAY_MS));
 const DEFAULT_END = toDateOnly(new Date());
 
-export type ReportTab = "overview" | "trends" | "performance" | "inventory";
+export type ReportTab = "overview" | "trends" | "performance" | "inventory" | "payments";
 
 /**
  * Centralizes the report workspace URL state (shareable, back/forward safe).

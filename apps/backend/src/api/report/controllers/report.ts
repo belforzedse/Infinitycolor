@@ -1048,6 +1048,62 @@ export default {
     }
   },
 
+  async productBreakdown(ctx) {
+    try {
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      if (!user) return;
+
+      const { start, end } = parseProductRange(ctx);
+      const knex = strapi.db.connection;
+      const joins = await PA.resolveJoins(knex);
+
+      const [gatewayRes, shippingRes] = await Promise.all([
+        knex.raw(PA.gatewayBreakdownQuery(joins), [start, end]),
+        knex.raw(PA.shippingBreakdownQuery(joins), [start, end]),
+      ]);
+
+      // Sales by payment gateway (settlement is IRR -> Toman; attach share of total).
+      const gatewayBase = rowsOf(gatewayRes).map((r: any) => ({
+        gateway: String(r.gateway || "Unknown"),
+        label: PA.gatewayLabelFa(r.gateway),
+        ordersCount: Number(r.orders_count || 0),
+        total: Math.round(PA.irrToToman(Number(r.settled_irr || 0))),
+      }));
+      const gateways = PA.withShares(gatewayBase, "total");
+
+      // Shipping revenue by method (shipping_cost already stored in Toman).
+      const shippingMethods = rowsOf(shippingRes).map((r: any) => {
+        const raw = String(r.method || "__UNKNOWN__");
+        return {
+          method: raw === "__UNKNOWN__" ? "نامشخص" : raw,
+          ordersCount: Number(r.orders_count || 0),
+          total: Number(r.shipping_total || 0),
+        };
+      });
+
+      const gatewaySales = gateways.reduce((sum, g) => sum + g.total, 0);
+      const shippingRevenue = shippingMethods.reduce((sum, s) => sum + s.total, 0);
+      const ordersCount = gateways.reduce((sum, g) => sum + g.ordersCount, 0);
+
+      ctx.body = {
+        data: {
+          range: { start, end },
+          currency: "Toman",
+          totals: { gatewaySales, shippingRevenue, ordersCount },
+          gateways,
+          shippingMethods,
+          notes: {
+            gatewaySales:
+              "مبلغ تسویه‌شده هر درگاه بر مبنای «سفارش‌های پرداخت‌شده، خالص از مرجوعی» است و شامل هزینه ارسال نیز می‌شود.",
+            shippingRevenue: "درآمد ارسال بر مبنای هزینه ارسال ثبت‌شده روی سفارش است (نه فروش محصول).",
+          },
+        },
+      };
+    } catch (error) {
+      ctx.badRequest(error.message, { data: { success: false } });
+    }
+  },
+
   async productTrends(ctx) {
     try {
       const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);

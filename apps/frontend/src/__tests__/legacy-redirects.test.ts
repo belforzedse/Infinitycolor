@@ -15,13 +15,11 @@ const {
   isRetiredLegacyPath,
   LEGACY_REDIRECT_STATUS,
 } = require("../../middleware");
+const { getSecurityHeaderEntries } = require("../utils/securityHeaders");
 
 const SECURITY_HEADER_EXPECTATIONS = [
   ["X-DNS-Prefetch-Control", "on"],
-  ["X-Frame-Options", "SAMEORIGIN"],
-  ["X-Content-Type-Options", "nosniff"],
-  ["Referrer-Policy", "strict-origin-when-cross-origin"],
-  ["Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()"],
+  ...getSecurityHeaderEntries(),
 ] as const;
 
 function legacyTarget(path: string) {
