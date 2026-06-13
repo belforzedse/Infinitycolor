@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from "react";
 import KpiCard from "./KpiCard";
-import { useReportFilters } from "./useReportFilters";
 import { faNum } from "@/utils/faNum";
 import { getProductOverview, type ProductOverview } from "@/services/super-admin/reports/products";
 
-export default function OverviewTab() {
-  const { start, end } = useReportFilters();
+export default function OverviewTab({ start, end }: { start: string; end: string }) {
   const [data, setData] = useState<ProductOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

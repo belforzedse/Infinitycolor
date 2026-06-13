@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { DatePicker } from "zaman";
 import { useDebouncedCallback } from "use-debounce";
-import { useReportFilters } from "./useReportFilters";
+import type { ReportFilters } from "./useReportFilters";
 import { getAllCategories } from "@/services/super-admin/product/category/getAll";
 
 const DAY_MS = 86_400_000;
@@ -36,8 +36,13 @@ function getPresetRange(days: number, now = new Date()): { start: string; end: s
 const inputCls =
   "h-10 w-full rounded-lg border border-neutral-300 px-3 text-sm focus:border-transparent focus:ring-2 focus:ring-infinity-primary";
 
-export default function FilterBar({ showProductFilters }: { showProductFilters?: boolean }) {
-  const f = useReportFilters();
+export default function FilterBar({
+  f,
+  showProductFilters,
+}: {
+  f: ReportFilters;
+  showProductFilters?: boolean;
+}) {
   const [categories, setCategories] = useState<Array<{ id: number; title: string }>>([]);
   const [search, setSearch] = useState(f.q);
 

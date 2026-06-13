@@ -21,7 +21,12 @@ const TABS: Array<{ key: ReportTab; label: string }> = [
 ];
 
 export default function ProductReportsPage() {
-  const { tab, setTab } = useReportFilters();
+  // Single source of truth for the report's URL state. Passing `start`/`end`/`filters`
+  // down to the tabs as props (instead of each tab subscribing to nuqs independently)
+  // guarantees that changing the period — including via the quick-range presets — cascades
+  // a re-render to the tabs and refetches immediately.
+  const f = useReportFilters();
+  const { tab, setTab, start, end, filters } = f;
 
   return (
     <ContentWrapper title="گزارش محصولات">
@@ -42,13 +47,13 @@ export default function ProductReportsPage() {
           ))}
         </div>
 
-        <FilterBar showProductFilters={tab === "performance"} />
+        <FilterBar f={f} showProductFilters={tab === "performance"} />
 
-        {tab === "overview" && <OverviewTab />}
-        {tab === "trends" && <TrendsTab />}
-        {tab === "performance" && <PerformanceTab />}
-        {tab === "inventory" && <InventoryTab />}
-        {tab === "payments" && <PaymentShippingTab />}
+        {tab === "overview" && <OverviewTab start={start} end={end} />}
+        {tab === "trends" && <TrendsTab start={start} end={end} />}
+        {tab === "performance" && <PerformanceTab filters={filters} start={start} end={end} />}
+        {tab === "inventory" && <InventoryTab start={start} end={end} />}
+        {tab === "payments" && <PaymentShippingTab start={start} end={end} />}
       </div>
     </ContentWrapper>
   );

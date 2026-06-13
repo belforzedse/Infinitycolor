@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { useReportFilters } from "./useReportFilters";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
 import {
@@ -45,8 +44,7 @@ function faDate(s: string) {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString("fa-IR", { month: "short", day: "numeric" });
 }
 
-export default function TrendsTab() {
-  const { start, end } = useReportFilters();
+export default function TrendsTab({ start, end }: { start: string; end: string }) {
   const [metric, setMetric] = useState<Metric>("net");
   const [grouping, setGrouping] = useState<TrendGrouping | "">("");
   const [data, setData] = useState<ProductTrends | null>(null);

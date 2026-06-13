@@ -10,6 +10,14 @@ import {
   strapiOrigin,
 } from "../../helpers/env";
 
+type HomepageProductCard = {
+  attributes?: {
+    IsAvailable?: boolean;
+    Slug?: string;
+    Title?: string;
+  };
+};
+
 function withCacheBust(url: URL) {
   const { key, value } = cacheBustingSearchParam();
   url.searchParams.set(key, value);
@@ -71,11 +79,16 @@ test.describe("storefront API contract", () => {
     expect(Array.isArray(sections)).toBeTruthy();
     expect(sections.length).toBeGreaterThan(0);
 
-    const cards = sections.flatMap(
-      (section: { products?: unknown[] }) => section.products ?? [],
+    const newestSection = sections.find(
+      (section: { id?: string }) => section.id === "newest",
     );
+    expect(newestSection).toBeTruthy();
+
+    const cards = (newestSection?.products ?? []) as HomepageProductCard[];
+    expect(cards.length).toBeGreaterThan(0);
+
     const seededCard = cards.find(
-      (card: any) => card?.attributes?.Slug === E2E_PRODUCT_SLUG,
+      (card) => card.attributes?.Slug === E2E_PRODUCT_SLUG,
     );
 
     expect(seededCard?.attributes?.Title).toBe(E2E_PRODUCT_TITLE);

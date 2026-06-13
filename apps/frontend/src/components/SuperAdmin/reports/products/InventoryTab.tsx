@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useReportFilters } from "./useReportFilters";
 import { faNum } from "@/utils/faNum";
 import {
   getProductInventory,
@@ -27,8 +26,7 @@ const SECTIONS: Array<{
   { key: "slowMoving", title: "کندفروش", hint: "بیشترین روز پوشش موجودی", metric: "cover" },
 ];
 
-export default function InventoryTab() {
-  const { start, end } = useReportFilters();
+export default function InventoryTab({ start, end }: { start: string; end: string }) {
   const [data, setData] = useState<ProductInventory | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

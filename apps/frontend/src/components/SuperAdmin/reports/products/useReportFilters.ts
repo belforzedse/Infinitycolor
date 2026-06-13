@@ -33,6 +33,9 @@ const reportQueryOptions = {
 
 export type ReportTab = "overview" | "trends" | "performance" | "inventory" | "payments";
 
+/** Full return shape of {@link useReportFilters}, passed down to FilterBar/tabs as props. */
+export type ReportFilters = ReturnType<typeof useReportFilters>;
+
 /**
  * Centralizes the report workspace URL state (shareable, back/forward safe).
  * Every tab and the filter bar read the same nuqs keys, so the URL is the single

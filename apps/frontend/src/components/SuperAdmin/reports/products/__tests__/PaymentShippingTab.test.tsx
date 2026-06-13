@@ -2,10 +2,6 @@ import { render, screen, waitFor } from "@testing-library/react";
 import PaymentShippingTab from "../PaymentShippingTab";
 import { getProductBreakdown } from "@/services/super-admin/reports/products";
 
-jest.mock("../useReportFilters", () => ({
-  useReportFilters: () => ({ start: "2026-01-01", end: "2026-01-31" }),
-}));
-
 jest.mock("@/services/super-admin/reports/products", () => ({
   getProductBreakdown: jest.fn(),
 }));
@@ -34,7 +30,7 @@ describe("PaymentShippingTab", () => {
 
   it("renders gateway and shipping rows with Persian money + counts", async () => {
     mockBreakdown.mockResolvedValue(baseResponse);
-    render(<PaymentShippingTab />);
+    render(<PaymentShippingTab start="2026-01-01" end="2026-01-31" />);
 
     await waitFor(() => {
       expect(screen.getByText("ملت")).toBeInTheDocument();
@@ -56,7 +52,7 @@ describe("PaymentShippingTab", () => {
       gateways: [],
       shippingMethods: [],
     });
-    render(<PaymentShippingTab />);
+    render(<PaymentShippingTab start="2026-01-01" end="2026-01-31" />);
 
     await waitFor(() => {
       expect(screen.getAllByText("داده‌ای برای این بازه یافت نشد")).toHaveLength(2);
@@ -65,7 +61,7 @@ describe("PaymentShippingTab", () => {
 
   it("shows an error state with retry when the request fails", async () => {
     mockBreakdown.mockRejectedValue(new Error("boom"));
-    render(<PaymentShippingTab />);
+    render(<PaymentShippingTab start="2026-01-01" end="2026-01-31" />);
 
     await waitFor(() => {
       expect(screen.getByText("boom")).toBeInTheDocument();

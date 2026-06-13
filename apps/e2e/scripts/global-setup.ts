@@ -72,13 +72,13 @@ const SEED_SUMMARY_USER_KEY: Record<E2EAuthRole, keyof SeedSummary> = {
   editor: "editorUserId",
 };
 
-function runCommand(command: string) {
+function runCommand(command: string, env: NodeJS.ProcessEnv = process.env) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     const child = spawn(command, {
       cwd: repoRoot,
-      env: process.env,
+      env,
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -274,7 +274,10 @@ export default async function globalSetup() {
   if (seedMode !== "skip") {
     const command =
       process.env.E2E_AUTO_SEED_COMMAND || "pnpm --filter @repo/backend seed:e2e";
-    const result = await runCommand(command);
+    const result = await runCommand(command, {
+      ...process.env,
+      E2E_CLEAR_REDIS_CACHE: process.env.E2E_CLEAR_REDIS_CACHE ?? "1",
+    });
     seedSummary = parseSeedSummary(result.stdout);
   }
 

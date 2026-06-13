@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useReportFilters } from "./useReportFilters";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
 import {
@@ -9,8 +8,7 @@ import {
   type ProductBreakdown,
 } from "@/services/super-admin/reports/products";
 
-export default function PaymentShippingTab() {
-  const { start, end } = useReportFilters();
+export default function PaymentShippingTab({ start, end }: { start: string; end: string }) {
   const [data, setData] = useState<ProductBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import FilterBar from "../FilterBar";
+import type { ReportFilters } from "../useReportFilters";
 import { getAllCategories } from "@/services/super-admin/product/category/getAll";
 
 jest.mock("zaman", () => ({
@@ -22,23 +23,26 @@ jest.mock("@/services/super-admin/product/category/getAll", () => ({
 
 const mockSetRange = jest.fn();
 
-jest.mock("../useReportFilters", () => ({
-  useReportFilters: () => ({
+function makeFilters(): ReportFilters {
+  return {
     start: "2026-01-01",
     end: "2026-01-31",
+    tab: "overview",
     q: "",
     cat: "",
     ptype: "",
     stock: "",
+    filters: { start: "2026-01-01", end: "2026-01-31" } as ReportFilters["filters"],
     setStart: jest.fn(),
     setEnd: jest.fn(),
+    setRange: mockSetRange,
+    setTab: jest.fn(),
     setQ: jest.fn(),
     setCat: jest.fn(),
     setPtype: jest.fn(),
     setStock: jest.fn(),
-    setRange: mockSetRange,
-  }),
-}));
+  };
+}
 
 describe("Product report FilterBar", () => {
   beforeEach(() => {
@@ -48,7 +52,7 @@ describe("Product report FilterBar", () => {
   });
 
   it("does not request categories when product filters are hidden", async () => {
-    render(<FilterBar showProductFilters={false} />);
+    render(<FilterBar f={makeFilters()} showProductFilters={false} />);
 
     await waitFor(() => {
       expect(getAllCategories).not.toHaveBeenCalled();
@@ -56,7 +60,7 @@ describe("Product report FilterBar", () => {
   });
 
   it("requests categories when product filters are shown", async () => {
-    render(<FilterBar showProductFilters />);
+    render(<FilterBar f={makeFilters()} showProductFilters />);
 
     await waitFor(() => {
       expect(getAllCategories).toHaveBeenCalledTimes(1);
@@ -67,7 +71,7 @@ describe("Product report FilterBar", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-06-13T12:00:00Z"));
 
-    render(<FilterBar showProductFilters={false} />);
+    render(<FilterBar f={makeFilters()} showProductFilters={false} />);
 
     fireEvent.click(screen.getAllByRole("button")[0]);
 
