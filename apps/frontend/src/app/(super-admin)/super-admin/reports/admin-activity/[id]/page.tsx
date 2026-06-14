@@ -6,35 +6,19 @@ import Link from "next/link";
 import { getAdminActivityById, AdminActivityLog } from "@/services/super-admin/reports/adminActivity";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
-import { faNum } from "@/utils/faNum";
-
-const actionTypeMap: Record<string, string> = {
-  Create: "ایجاد",
-  Update: "بروزرسانی",
-  Delete: "حذف",
-  Publish: "انتشار",
-  Unpublish: "برداشتن انتشار",
-  Adjust: "تنظیم",
-  Other: "سایر",
-};
-
-const logTypeMap: Record<string, string> = {
-  Order: "سفارش",
-  Product: "محصول",
-  User: "کاربر",
-  Contract: "قرارداد",
-  Discount: "تخفیف",
-  Stock: "موجودی",
-  Admin: "ادمین",
-  Other: "سایر",
-};
-
-const severityMap: Record<string, { label: string; color: string }> = {
-  info: { label: "اطلاعات", color: "bg-blue-100 text-blue-700" },
-  success: { label: "موفق", color: "bg-green-100 text-green-700" },
-  warning: { label: "هشدار", color: "bg-yellow-100 text-yellow-700" },
-  error: { label: "خطا", color: "bg-red-100 text-red-700" },
-};
+import {
+  translateAction,
+  getActionBadgeClass,
+  translateResourceType,
+  getSeverityMeta,
+  translateActivityRole,
+  translateFieldLabel,
+  formatChangeValue,
+  translateMetadataKey,
+  formatMetadataValue,
+  formatActivityDateTime,
+  formatActivityIp,
+} from "@/utils/adminActivityLabels";
 
 export default function AdminActivityDetailPage() {
   const params = useParams();
@@ -93,9 +77,11 @@ export default function AdminActivityDetailPage() {
   }
 
   const adminName = activity.PerformedByName || activity.performed_by?.username || activity.performed_by?.email || activity.performed_by?.phone || "نامشخص";
-  const adminRole = activity.PerformedByRole || "-";
-  const severity = activity.Severity || "info";
-  const severityInfo = severityMap[severity] || severityMap.info;
+  const adminRole = translateActivityRole(activity.PerformedByRole) || activity.PerformedByRole || "-";
+  const severityInfo = getSeverityMeta(activity.Severity);
+  const changeEntries = activity.Changes ? Object.entries(activity.Changes) : [];
+  const metadataEntries = activity.Metadata ? Object.entries(activity.Metadata) : [];
+  const hasTechnical = changeEntries.length > 0 || metadataEntries.length > 0;
 
   const getResourceLink = () => {
     if (!activity.ResourceId || !activity.ResourceType) return null;
@@ -139,7 +125,7 @@ export default function AdminActivityDetailPage() {
                   <p className="mt-2 text-neutral-600">{activity.Message}</p>
                 )}
               </div>
-              <span className={`inline-block rounded-full px-4 py-2 text-sm font-medium ${severityInfo.color}`}>
+              <span className={`inline-block rounded-full px-4 py-2 text-sm font-medium ${severityInfo.badgeClass}`}>
                 {severityInfo.label}
               </span>
             </div>
@@ -148,20 +134,20 @@ export default function AdminActivityDetailPage() {
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               <div>
                 <label className="text-sm font-medium text-neutral-600">تاریخ و زمان</label>
-                <p className="mt-1 text-neutral-900">{new Date(activity.createdAt).toLocaleString("fa-IR")}</p>
+                <p className="mt-1 text-neutral-900">{formatActivityDateTime(activity.createdAt)}</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-neutral-600">نوع فعالیت</label>
                 <p className="mt-1">
-                  <span className="inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
-                    {actionTypeMap[activity.Action] || activity.Action}
+                  <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${getActionBadgeClass(activity.Action)}`}>
+                    {translateAction(activity.Action)}
                   </span>
                 </p>
               </div>
               <div>
                 <label className="text-sm font-medium text-neutral-600">نوع منبع</label>
                 <p className="mt-1">
-                  {logTypeMap[activity.ResourceType] || activity.ResourceType}
+                  {translateResourceType(activity.ResourceType)}
                   {resourceLink && (
                     <Link
                       href={resourceLink}
@@ -191,7 +177,7 @@ export default function AdminActivityDetailPage() {
               {activity.IP && (
                 <div>
                   <label className="text-sm font-medium text-neutral-600">آدرس IP</label>
-                  <p className="mt-1 text-neutral-900 font-mono text-sm">{activity.IP}</p>
+                  <p className="mt-1 text-neutral-900 font-mono text-sm">{formatActivityIp(activity.IP)}</p>
                 </div>
               )}
               {activity.UserAgent && (
@@ -202,27 +188,25 @@ export default function AdminActivityDetailPage() {
               )}
             </div>
 
-            {/* Changes Section */}
-            {activity.Changes && Object.keys(activity.Changes).length > 0 && (
+            {/* Changes Section — readable before/after, no raw JSON */}
+            {changeEntries.length > 0 && (
               <div className="border-t border-neutral-200 pt-6">
                 <h3 className="mb-4 text-lg font-semibold text-neutral-900">جزئیات تغییرات</h3>
-                <div className="space-y-4">
-                  {Object.entries(activity.Changes).map(([key, change]) => (
-                    <div key={key} className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
-                      <h4 className="mb-2 font-medium text-neutral-900">{key}</h4>
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <div>
-                          <label className="text-xs font-medium text-neutral-600">قبل:</label>
-                          <pre className="mt-1 max-h-32 overflow-auto rounded bg-white p-2 text-xs text-neutral-700">
-                            {JSON.stringify(change.from, null, 2)}
-                          </pre>
-                        </div>
-                        <div>
-                          <label className="text-xs font-medium text-neutral-600">بعد:</label>
-                          <pre className="mt-1 max-h-32 overflow-auto rounded bg-white p-2 text-xs text-neutral-700">
-                            {JSON.stringify(change.to, null, 2)}
-                          </pre>
-                        </div>
+                <div className="space-y-3">
+                  {changeEntries.map(([key, change]) => (
+                    <div
+                      key={key}
+                      className="flex flex-col gap-2 rounded-lg border border-neutral-200 bg-neutral-50 p-4 md:flex-row md:items-center md:justify-between"
+                    >
+                      <span className="font-medium text-neutral-900">{translateFieldLabel(key)}</span>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="rounded bg-white px-2 py-1 text-neutral-500 line-through">
+                          {formatChangeValue(key, change?.from)}
+                        </span>
+                        <span className="text-neutral-400">←</span>
+                        <span className="rounded bg-white px-2 py-1 font-medium text-neutral-800">
+                          {formatChangeValue(key, change?.to)}
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -230,14 +214,40 @@ export default function AdminActivityDetailPage() {
               </div>
             )}
 
-            {/* Metadata Section */}
-            {activity.Metadata && Object.keys(activity.Metadata).length > 0 && (
+            {/* Metadata Section — readable key/value list */}
+            {metadataEntries.length > 0 && (
               <div className="border-t border-neutral-200 pt-6">
                 <h3 className="mb-4 text-lg font-semibold text-neutral-900">اطلاعات اضافی</h3>
-                <pre className="max-h-64 overflow-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-700">
-                  {JSON.stringify(activity.Metadata, null, 2)}
-                </pre>
+                <dl className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {metadataEntries.map(([key, value]) => (
+                    <div key={key} className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                      <dt className="text-xs font-medium text-neutral-600">{translateMetadataKey(key)}</dt>
+                      <dd className="mt-1 break-words text-sm text-neutral-900">{formatMetadataValue(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
+            )}
+
+            {/* Technical details — raw JSON kept available behind an opt-in disclosure */}
+            {hasTechnical && (
+              <details className="border-t border-neutral-200 pt-6">
+                <summary className="cursor-pointer select-none text-sm font-medium text-neutral-600 hover:text-neutral-900">
+                  جزئیات فنی
+                </summary>
+                <div className="mt-3 space-y-3">
+                  {changeEntries.length > 0 && (
+                    <pre className="max-h-64 overflow-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-xs text-neutral-700">
+                      {JSON.stringify(activity.Changes, null, 2)}
+                    </pre>
+                  )}
+                  {metadataEntries.length > 0 && (
+                    <pre className="max-h-64 overflow-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-xs text-neutral-700">
+                      {JSON.stringify(activity.Metadata, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              </details>
             )}
 
             {/* Description Section */}
