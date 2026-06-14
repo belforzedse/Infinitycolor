@@ -5,7 +5,7 @@ import Footer from "@/components/PLP/Footer";
 import MobileHeader from "@/components/PLP/Header/Mobile";
 import BottomNavigation from "@/components/PLP/BottomNavigation";
 import dynamic from "next/dynamic";
-import { useCart } from "@/contexts/CartContext";
+import { useOptionalCart } from "@/contexts/CartContext";
 import React, { Suspense } from "react";
 import ScrollToTop from "@/components/ScrollToTop";
 
@@ -14,7 +14,8 @@ const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), {
 });
 
 export default function ProductLayout({ children }: { children: React.ReactNode }) {
-  const { isDrawerOpen } = useCart();
+  const cart = useOptionalCart();
+  const isDrawerOpen = cart?.isDrawerOpen ?? false;
   const [scrolled, setScrolled] = React.useState(false);
   const [showHeader, setShowHeader] = React.useState(true);
   const lastScrollY = React.useRef(0);

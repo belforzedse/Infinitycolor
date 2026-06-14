@@ -5,6 +5,7 @@ export const E2E_CATEGORY_SLUG = "e2e-storefront";
 export const E2E_HEX_COLOR_TITLE = "E2E Blue";
 export const E2E_HEXLESS_COLOR_TITLE = "E2E No Hex";
 export const E2E_UNAVAILABLE_COLOR_TITLE = "E2E Unavailable Black";
+export const E2E_UPLOAD_FIXTURE_FILE = "Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp";
 
 export const E2E_DEFAULT_CUSTOMER_PHONE = "+989000000101";
 export const E2E_DEFAULT_CUSTOMER_PASSWORD = "E2eCustomer!123";

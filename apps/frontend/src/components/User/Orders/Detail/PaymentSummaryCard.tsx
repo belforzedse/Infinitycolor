@@ -1,8 +1,9 @@
 import type { ContractTransaction, Order } from "@/services/order";
 import { faNum } from "@/utils/faNum";
+import { rialToToman } from "@/utils/price";
+import PaymentGatewayBadge from "@/components/PaymentGateway/PaymentGatewayBadge";
 import {
   getPaymentStatusMeta,
-  translatePaymentGateway,
   translatePaymentStatus,
 } from "@/utils/statusTranslations";
 
@@ -59,19 +60,20 @@ const TransactionList = ({
           className="flex flex-col gap-1 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-600 lg:flex-row lg:items-center lg:justify-between"
         >
           <div className="flex flex-col">
-            <span className="font-medium text-foreground-primary">
-              {translatePaymentGateway(
+            <PaymentGatewayBadge
+              gateway={
                 transaction.payment_gateway?.Title ||
-                  transaction.payment_gateway?.Code ||
-                  fallbackGateway,
-              )}
-            </span>
+                transaction.payment_gateway?.Code ||
+                fallbackGateway
+              }
+              className="font-medium text-foreground-primary"
+            />
             <span className="text-xs text-slate-500">
               {transaction.Type === "Gateway" ? "پرداخت آنلاین" : "پرداخت دستی"}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs">
-            <span className="font-medium text-slate-700">{formatPrice(Number(transaction.Amount || 0))}</span>
+            <span className="font-medium text-slate-700">{formatPrice(rialToToman(transaction.Amount))}</span>
             {(() => {
               const meta = getPaymentStatusMeta(transaction.Status);
               return (
@@ -94,12 +96,11 @@ export default function PaymentSummaryCard({ order }: PaymentSummaryCardProps) {
   const discount = calculateDiscount(order);
   const total = Math.max(subtotal + shipping - discount, 0);
   const transactions = order.contract_transactions ?? [];
-  const primaryGateway = translatePaymentGateway(
+  const primaryGateway =
     order.PaymentGateway ||
-      transactions[0]?.payment_gateway?.Title ||
-      transactions[0]?.payment_gateway?.Code ||
-      null,
-  );
+    transactions[0]?.payment_gateway?.Title ||
+    transactions[0]?.payment_gateway?.Code ||
+    null;
 
   return (
     <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -125,7 +126,10 @@ export default function PaymentSummaryCard({ order }: PaymentSummaryCardProps) {
         </div>
         <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
           <span>روش پرداخت</span>
-          <span className="font-semibold text-foreground-primary">{primaryGateway}</span>
+          <PaymentGatewayBadge
+            gateway={primaryGateway}
+            className="font-semibold text-foreground-primary"
+          />
         </div>
       </div>
 

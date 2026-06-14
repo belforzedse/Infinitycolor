@@ -24,6 +24,7 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
 
   const preloadSrc = useCallback((src: string) => {
     if (typeof window === "undefined") return;
+    if (!src.trim()) return;
     try {
       const img = new window.Image();
       img.src = src;
@@ -158,7 +159,7 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
             }`}>
               <Image
                 fill
-                src={asset.thumbnail}
+                src={asset.thumbnail.trim() || "/images/cart/empty-cart.png"}
                 alt={asset.alt}
                 sizes="(max-width: 768px) 84px, 112px"
                 loader={imageLoader}

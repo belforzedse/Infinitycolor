@@ -2120,8 +2120,8 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
     } else {
       // Log the failure
       console.error("Payment verification failed:", verificationResult.error);
+      const orderId = parseInt(OrderId || SaleOrderId, 10);
       try {
-        const orderId = parseInt(OrderId || SaleOrderId, 10);
         if (!isNaN(orderId)) {
           await strapi.entityService.create("api::order-log.order-log", {
             data: {
@@ -2150,8 +2150,8 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
     }
   } catch (error) {
     console.error("Error in payment verification callback:", error);
+    const orderId = parseInt(OrderId || SaleOrderId, 10);
     try {
-      const orderId = parseInt(OrderId || SaleOrderId, 10);
       if (!isNaN(orderId)) {
         await strapi.entityService.create("api::order-log.order-log", {
           data: {

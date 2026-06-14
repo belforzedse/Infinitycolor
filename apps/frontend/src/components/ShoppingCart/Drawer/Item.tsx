@@ -6,7 +6,7 @@ import { useCart } from "@/contexts/CartContext";
 import TrashIcon from "@/components/ShoppingCart/Icons/TrashIcon";
 import PlusIcon from "@/components/ShoppingCart/Icons/PlusIcon";
 import MinusIcon from "@/components/ShoppingCart/Icons/MinusIcon";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import { resolveCartItemImage } from "@/components/ShoppingCart/cartItemImage";
 
 interface CartDrawerItemProps {
   item: CartItem;
@@ -31,8 +31,7 @@ export default function CartDrawerItem({ item }: CartDrawerItemProps) {
     removeFromCart(item.id);
   };
 
-  // Format image URL
-  const imageUrl = item.image.startsWith("http") ? item.image : `${IMAGE_BASE_URL}${item.image}`;
+  const imageUrl = resolveCartItemImage(item.image);
 
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-slate-100">

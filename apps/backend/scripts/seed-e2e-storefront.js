@@ -246,7 +246,7 @@ function quoteIdent(value) {
 
 async function tableMeta(client, table) {
   const result = await client.query(
-    `SELECT column_name, is_nullable, column_default
+    `SELECT column_name, is_nullable, column_default, data_type
      FROM information_schema.columns
      WHERE table_schema = 'public' AND table_name = $1`,
     [table],
@@ -321,13 +321,15 @@ async function insertLink(client, table, data) {
 }
 
 async function seedHomepageNewestSettings(client, productId, now) {
-  if (!(await tableExists(client, "site_settings"))) return;
+  if (!(await tableExists(client, "site_settings"))) return [];
 
   const meta = await tableMeta(client, "site_settings");
   const available = new Set(meta.map((column) => column.column_name));
-  if (!available.has("home_newest_product_ids")) return;
+  if (!available.has("home_newest_product_ids")) return [];
 
   const payload = JSON.stringify([productId]);
+  const column = meta.find((item) => item.column_name === "home_newest_product_ids");
+  const jsonCast = column?.data_type === "json" ? "::json" : "::jsonb";
   const existing = await client.query(`SELECT id FROM site_settings ORDER BY id ASC LIMIT 1`);
   const updatedAtClause = available.has("updated_at") ? `, updated_at = $2` : "";
 
@@ -338,18 +340,36 @@ async function seedHomepageNewestSettings(client, productId, now) {
     const idParam = available.has("updated_at") ? "$3" : "$2";
     await client.query(
       `UPDATE site_settings
-       SET home_newest_product_ids = $1${updatedAtClause}
+       SET home_newest_product_ids = $1${jsonCast}${updatedAtClause}
        WHERE id = ${idParam}`,
       params,
     );
-    return;
+    console.log(`[seed:e2e] Curated homepage newest product ids: [${productId}].`);
+    return [productId];
   }
 
-  await insertRow(client, "site_settings", {
-    home_newest_product_ids: payload,
-    created_at: now,
-    updated_at: now,
-  });
+  const names = ["home_newest_product_ids"];
+  const values = [payload];
+  const params = [`$1${jsonCast}`];
+
+  if (available.has("created_at")) {
+    names.push("created_at");
+    values.push(now);
+    params.push(`$${values.length}`);
+  }
+  if (available.has("updated_at")) {
+    names.push("updated_at");
+    values.push(now);
+    params.push(`$${values.length}`);
+  }
+
+  await client.query(
+    `INSERT INTO site_settings (${names.map(quoteIdent).join(", ")})
+     VALUES (${params.join(", ")})`,
+    values,
+  );
+  console.log(`[seed:e2e] Curated homepage newest product ids: [${productId}].`);
+  return [productId];
 }
 
 async function idsBySource(client, table) {
@@ -863,7 +883,7 @@ async function seed(client) {
     created_at: now,
     updated_at: now,
   });
-  await seedHomepageNewestSettings(client, product.id, now);
+  const homepageNewestProductIds = await seedHomepageNewestSettings(client, product.id, now);
 
   await insertLink(client, "products_product_main_category_links", {
     product_id: product.id,
@@ -1012,6 +1032,7 @@ async function seed(client) {
     categorySlug: FIXTURE.category.slug,
     productId: product.id,
     productSlug: FIXTURE.product.slug,
+    homepageNewestProductIds,
     variationIds: variations.map((variation) => variation.id),
     paymentVariationId,
     customerUserId: users.customer.id,

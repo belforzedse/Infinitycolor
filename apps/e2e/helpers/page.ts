@@ -50,13 +50,12 @@ export async function expectImageLoaded(locator: ReturnType<Page["locator"]>) {
           const img = image as HTMLImageElement;
           return {
             complete: img.complete,
-            naturalWidth: img.naturalWidth,
-            naturalHeight: img.naturalHeight,
+            loaded: img.naturalWidth > 0 && img.naturalHeight > 0,
           };
         }),
       { timeout: 10_000 },
     )
-    .toMatchObject({ complete: true, naturalWidth: expect.any(Number), naturalHeight: expect.any(Number) });
+    .toMatchObject({ complete: true, loaded: true });
 
   const size = await locator.evaluate((image) => {
     const img = image as HTMLImageElement;

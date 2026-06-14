@@ -1,0 +1,230 @@
+import { RedisClient } from "../../../index";
+import { loadSmsConfig } from "../config";
+import { buildSmsIdempotencyKey } from "../idempotency";
+import { buildPatternPayload, sendPatternSms } from "../ippanel";
+import { notifyOrderStatusSms } from "../notifications";
+import { normalizeIranMobile } from "../phone";
+import { maskPhone, maskSecret } from "../redaction";
+
+const createResponse = (status: number, body: unknown) =>
+  ({
+    status,
+    text: jest.fn().mockResolvedValue(typeof body === "string" ? body : JSON.stringify(body)),
+  }) as any;
+
+describe("sms service", () => {
+  const originalFetch = global.fetch;
+  const originalEnv = { ...process.env };
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    process.env = { ...originalEnv, SMS_ENABLED: "false" };
+    global.fetch = jest.fn() as any;
+    const redis: any = await RedisClient;
+    redis.set.mockReset();
+    redis.del.mockReset();
+  });
+
+  afterAll(() => {
+    global.fetch = originalFetch;
+    process.env = originalEnv;
+  });
+
+  it.each([
+    ["09123456789", "+989123456789"],
+    ["989123456789", "+989123456789"],
+    ["+989123456789", "+989123456789"],
+    ["۹۱۲۳۴۵۶۷۸۹", "+989123456789"],
+    ["٠٩١٢٣٤٥٦٧٨٩", "+989123456789"],
+  ])("normalizes Iranian mobile number %s", (input, expected) => {
+    expect(normalizeIranMobile(input)).toBe(expected);
+  });
+
+  it.each(["02112345678", "1234", "+981212345678", "abc09123456789"])(
+    "rejects invalid mobile number %s",
+    (input) => {
+      expect(normalizeIranMobile(input)).toBeNull();
+    },
+  );
+
+  it("loads disabled config by default and composes the Edge endpoint", () => {
+    const config = loadSmsConfig({
+      IP_PANEL_API_KEY: "secret",
+      IP_PANEL_PATTERN_CODE: "pattern",
+      IP_PANEL_SENDER: "+983000505",
+    });
+
+    expect(config.enabled).toBe(false);
+    expect(config.apiUrl).toBe("https://edge.ippanel.com/v1/api/send");
+  });
+
+  it("supports a full IP_PANEL_API_URL override", () => {
+    const config = loadSmsConfig({
+      SMS_ENABLED: "true",
+      IP_PANEL_API_URL: "https://legacy.example.test/send",
+      IP_PANEL_API_BASE_URL: "https://edge.ippanel.com/v1",
+      IP_PANEL_PATTERN_ENDPOINT: "/api/send",
+    });
+
+    expect(config.enabled).toBe(true);
+    expect(config.apiUrl).toBe("https://legacy.example.test/send");
+  });
+
+  it("builds the IPPanel Edge pattern payload", () => {
+    expect(
+      buildPatternPayload({
+        sender: "+983000505",
+        patternCode: "pattern",
+        recipient: "+989123456789",
+        params: { code: "123456", orderId: 42, empty: undefined },
+      }),
+    ).toEqual({
+      sending_type: "pattern",
+      from_number: "+983000505",
+      code: "pattern",
+      recipients: ["+989123456789"],
+      params: { code: "123456", orderId: "42" },
+    });
+  });
+
+  it("does not call fetch when SMS is disabled", async () => {
+    const result = await sendPatternSms({
+      type: "otp",
+      phone: "09123456789",
+      params: { code: "123456" },
+      config: loadSmsConfig({ SMS_ENABLED: "false" }),
+    });
+
+    expect(result).toMatchObject({ ok: false, disabled: true, skipped: true });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("sends Persian params to IPPanel with Authorization header", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      createResponse(200, {
+        data: { message_outbox_ids: [1123594208] },
+        meta: { status: true, message: "Success", message_code: "200-1" },
+      }),
+    );
+
+    const result = await sendPatternSms({
+      type: "order_status_updated",
+      phone: "09123456789",
+      params: { code: "پرداخت", orderId: 42 },
+      config: loadSmsConfig({
+        SMS_ENABLED: "true",
+        IP_PANEL_API_KEY: "secret-key",
+        IP_PANEL_PATTERN_CODE: "pattern",
+        IP_PANEL_SENDER: "+983000505",
+      }),
+    });
+
+    expect(result).toMatchObject({ ok: true, messageId: 1123594208 });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://edge.ippanel.com/v1/api/send",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          Authorization: "secret-key",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sending_type: "pattern",
+          from_number: "+983000505",
+          code: "pattern",
+          recipients: ["+989123456789"],
+          params: { code: "پرداخت", orderId: "42" },
+        }),
+      }),
+    );
+  });
+
+  it("returns non-throwing failure results for provider and request failures", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      createResponse(200, { meta: { status: false, message: "Invalid pattern" } }),
+    );
+
+    const config = loadSmsConfig({
+      SMS_ENABLED: "true",
+      IP_PANEL_API_KEY: "secret-key",
+      IP_PANEL_PATTERN_CODE: "pattern",
+      IP_PANEL_SENDER: "+983000505",
+    });
+
+    await expect(
+      sendPatternSms({
+        type: "order_status_updated",
+        phone: "09123456789",
+        params: { code: "42" },
+        config,
+      }),
+    ).resolves.toMatchObject({ ok: false, status: 200 });
+
+    (global.fetch as jest.Mock).mockRejectedValueOnce({ name: "AbortError" });
+    await expect(
+      sendPatternSms({
+        type: "order_status_updated",
+        phone: "09123456789",
+        params: { code: "42" },
+        config,
+      }),
+    ).resolves.toMatchObject({ ok: false, reason: "timeout" });
+  });
+
+  it("masks secrets and phone numbers in logs", () => {
+    expect(maskSecret("1234567890abcdef")).toBe("1234...cdef");
+    expect(maskPhone("+989123456789")).toBe("+98****6789");
+  });
+
+  it("claims idempotency before sending order notifications", async () => {
+    const redis: any = await RedisClient;
+    redis.set.mockResolvedValueOnce("OK").mockResolvedValueOnce(null);
+    (global.fetch as jest.Mock).mockResolvedValue(
+      createResponse(200, { meta: { status: true, message_code: "200-1" } }),
+    );
+    process.env.SMS_ENABLED = "true";
+    process.env.IP_PANEL_API_KEY = "secret-key";
+    process.env.IP_PANEL_PATTERN_CODE = "pattern";
+    process.env.IP_PANEL_SENDER = "+983000505";
+
+    const strapi: any = {
+      log: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+      entityService: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 10,
+          Status: "Started",
+          user: { id: 5, phone: "09123456789" },
+          contract: { Amount: 1000 },
+        }),
+      },
+    };
+
+    await expect(
+      notifyOrderStatusSms(strapi, {
+        orderId: 10,
+        oldStatus: "Paying",
+        newStatus: "Started",
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    await expect(
+      notifyOrderStatusSms(strapi, {
+        orderId: 10,
+        oldStatus: "Paying",
+        newStatus: "Started",
+      }),
+    ).resolves.toMatchObject({ duplicate: true, skipped: true });
+
+    expect(redis.set).toHaveBeenCalledWith(
+      buildSmsIdempotencyKey({
+        type: "order_status_updated",
+        orderId: 10,
+        userId: 5,
+        fingerprint: "Paying-Started-none",
+      }),
+      "1",
+      expect.objectContaining({ NX: true }),
+    );
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+});

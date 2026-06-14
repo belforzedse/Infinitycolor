@@ -57,6 +57,8 @@ async function waitForEndpoint(url: string, timeoutMs: number) {
 }
 
 type SeedSummary = {
+  productSlug?: string;
+  homepageNewestProductIds?: number[];
   customerUserId?: number;
   adminUserId?: number;
   founderUserId?: number;
@@ -112,6 +114,51 @@ function parseSeedSummary(output: string): SeedSummary {
   }
 
   return JSON.parse(jsonText) as SeedSummary;
+}
+
+async function assertSeededHomepageSection(seedSummary?: SeedSummary) {
+  if (process.env.E2E_SKIP_HOMEPAGE_CONTRACT_CHECK === "1") return;
+
+  const productSlug = seedSummary?.productSlug;
+  if (!productSlug) return;
+
+  const url = new URL(`${strapiApiURL()}/products/homepage-sections`);
+  url.searchParams.set("_e2e", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+  const response = await fetchWithTimeout(url.toString(), {
+    headers: { Accept: "application/json" },
+  }, 15_000);
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `E2E homepage sections check failed (${response.status} ${response.statusText}): ${body}`,
+    );
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      sections?: Array<{
+        id?: string;
+        products?: Array<{ attributes?: { Slug?: string }; Slug?: string }>;
+      }>;
+    };
+  };
+  const sections = payload?.data?.sections ?? [];
+  const newest = sections.find((section) => section.id === "newest");
+  const newestProducts = newest?.products ?? [];
+  const newestSlugs = newestProducts
+    .map((product) => product.attributes?.Slug ?? product.Slug)
+    .filter(Boolean);
+
+  if (!newestSlugs.includes(productSlug)) {
+    const ids = seedSummary.homepageNewestProductIds?.join(",") || "none";
+    throw new Error(
+      `E2E homepage newest section is missing seeded product "${productSlug}". ` +
+        `Seed summary homepageNewestProductIds=[${ids}], newestCount=${newestProducts.length}, ` +
+        `newestSlugs=[${newestSlugs.join(",")}].`,
+    );
+  }
 }
 
 async function readBackendEnvValue(name: string, aliases: string[] = []) {
@@ -279,6 +326,7 @@ export default async function globalSetup() {
       E2E_CLEAR_REDIS_CACHE: process.env.E2E_CLEAR_REDIS_CACHE ?? "1",
     });
     seedSummary = parseSeedSummary(result.stdout);
+    await assertSeededHomepageSection(seedSummary);
   }
 
   if (process.env.E2E_AUTH_MODE !== "skip") {

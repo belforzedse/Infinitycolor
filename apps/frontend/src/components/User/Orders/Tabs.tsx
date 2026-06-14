@@ -175,7 +175,8 @@ export default function OrdersTabs() {
         | null
         | undefined;
       const coverImage = product?.cover_image ?? product?.CoverImage;
-      const image = coverImage?.url ? `${IMAGE_BASE_URL}${coverImage.url}` : PLACEHOLDER_IMAGE;
+      // Relative url; resolved by imageLoader against the trusted origin (see OrderRow/OrderCard).
+      const image = coverImage?.url ?? PLACEHOLDER_IMAGE;
       const totalPrice = groupOrders.reduce(
         (sum, o) =>
           sum +

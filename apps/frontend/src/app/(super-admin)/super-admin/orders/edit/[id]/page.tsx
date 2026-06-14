@@ -14,6 +14,7 @@ import toast from "react-hot-toast";
 import { ProductCoverImage } from "@/types/Product";
 import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
 import { unwrapCollection, unwrapEntity } from "@/utils/strapi";
+import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
 
 type OrderResponse = {
   id: string;
@@ -275,11 +276,14 @@ export default function EditOrderPage() {
               (tx?.external_source || contract?.external_source) ===
                 "SnappPay" && tx?.TrackId,
           );
-        const paymentGateway =
+        const rawPaymentGateway =
           unwrapEntity(lastTx?.payment_gateway)?.Title ||
           contract?.payment_gateway ||
           (normalizedOrder as any)?.PaymentGateway ||
           undefined;
+        const paymentGateway = rawPaymentGateway
+          ? getPaymentGatewayLabel(rawPaymentGateway)
+          : undefined;
         const transactionId =
           contract?.external_id || (normalizedOrder as any)?.external_id;
         const paymentToken = lastSnappayTx?.TrackId;

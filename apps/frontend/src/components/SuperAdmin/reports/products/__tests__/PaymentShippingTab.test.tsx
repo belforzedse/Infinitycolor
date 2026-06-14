@@ -32,10 +32,11 @@ describe("PaymentShippingTab", () => {
     mockBreakdown.mockResolvedValue(baseResponse);
     render(<PaymentShippingTab start="2026-01-01" end="2026-01-31" />);
 
+    // Gateway code/label is normalized to the central Persian label via PaymentGatewayBadge.
     await waitFor(() => {
-      expect(screen.getByText("ملت")).toBeInTheDocument();
+      expect(screen.getByText("بانک ملت")).toBeInTheDocument();
     });
-    expect(screen.getByText("زرین‌پال")).toBeInTheDocument();
+    expect(screen.getByText("زرین پال")).toBeInTheDocument();
     expect(screen.getByText("پست پیشتاز")).toBeInTheDocument();
     expect(screen.getByText("نامشخص")).toBeInTheDocument();
     // money formatted in Persian numerals (fa-IR grouping separator U+066C) + تومان

@@ -3,6 +3,7 @@ import {
   E2E_CATEGORY_SLUG,
   E2E_PRODUCT_SLUG,
   E2E_PRODUCT_TITLE,
+  E2E_UPLOAD_FIXTURE_FILE,
 } from "../../fixtures/storefront";
 import {
   cacheBustingSearchParam,
@@ -63,6 +64,12 @@ test.describe("storefront API contract", () => {
     );
     expect(uploadResponse.ok()).toBeTruthy();
     expect(uploadResponse.headers()["content-type"]).toContain("image/");
+
+    const fixtureUploadResponse = await request.get(
+      `${strapiOrigin()}/uploads/${E2E_UPLOAD_FIXTURE_FILE}`,
+    );
+    expect(fixtureUploadResponse.ok()).toBeTruthy();
+    expect(fixtureUploadResponse.headers()["content-type"]).toContain("image/");
   });
 
   test("@smoke homepage sections include the seeded storefront product", async ({

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
+import imageLoader from "@/utils/imageLoader";
 import Link from "next/link";
 import CancelIcon from "../Icons/CancelIcon";
 import TickIcon from "../Icons/TickIcon";
@@ -66,7 +67,14 @@ export default function OrderRow({
         <div className="flex items-center gap-1">
           <div className="relative h-12 w-12 overflow-hidden rounded-lg border border-gray-200">
             {image ? (
-              <Image src={image} alt={title} fill className="h-full w-full object-cover" />
+              <Image
+                src={image}
+                alt={title}
+                fill
+                sizes="48px"
+                className="h-full w-full object-cover"
+                loader={imageLoader}
+              />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-gray-100">
                 <span className="text-xs text-gray-400">تصویر</span>

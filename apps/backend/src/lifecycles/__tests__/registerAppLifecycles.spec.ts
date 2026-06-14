@@ -8,6 +8,11 @@ import productStockLifecycle from "../../api/product-stock/content-types/product
 import { recordAdminAudit } from "../../utils/adminAudit";
 import { logAdminEvent, logOrderEvent } from "../../utils/eventLogger";
 import { registerAppLifecycles } from "../registerAppLifecycles";
+import {
+  notifyOrderCreatedSms,
+  notifyOrderStatusSms,
+  notifyShipmentTrackingSms,
+} from "../../services/sms";
 
 jest.mock("../../utils/audit", () => ({
   resolveAuditActor: jest.fn(() => ({
@@ -25,6 +30,12 @@ jest.mock("../../utils/adminAudit", () => ({
 jest.mock("../../utils/eventLogger", () => ({
   logOrderEvent: jest.fn(),
   logAdminEvent: jest.fn(),
+}));
+
+jest.mock("../../services/sms", () => ({
+  notifyOrderCreatedSms: jest.fn().mockResolvedValue({ ok: true }),
+  notifyOrderStatusSms: jest.fn().mockResolvedValue({ ok: true }),
+  notifyShipmentTrackingSms: jest.fn().mockResolvedValue({ ok: true }),
 }));
 
 function createMockStrapi() {
@@ -171,6 +182,14 @@ describe("registerAppLifecycles", () => {
       })
     );
     expect(activityService.logOrderShipped).toHaveBeenCalledWith(5, 10, undefined);
+    expect(notifyOrderStatusSms).toHaveBeenCalledWith(
+      strapi,
+      expect.objectContaining({
+        orderId: 10,
+        oldStatus: "Paying",
+        newStatus: "Shipment",
+      })
+    );
     expect(logAdminEvent).toHaveBeenCalledWith(
       strapi,
       expect.objectContaining({
@@ -179,6 +198,115 @@ describe("registerAppLifecycles", () => {
         action: "Update",
       })
     );
+  });
+
+  it.each([
+    ["Paying", "Started"],
+    ["Started", "Shipment"],
+    ["Shipment", "Done"],
+    ["Started", "Cancelled"],
+  ])("queues one SMS for %s -> %s order status changes", async (oldStatus, newStatus) => {
+    const { strapi, subscribers } = createMockStrapi();
+    strapi.entityService.findOne
+      .mockResolvedValueOnce({
+        id: 11,
+        Status: oldStatus,
+        Type: "Cart",
+        user: { id: 5 },
+      })
+      .mockResolvedValueOnce({
+        id: 11,
+        Status: newStatus,
+        Type: "Cart",
+        user: { id: 5 },
+      });
+
+    registerAppLifecycles(strapi);
+    const subscriber = getSubscriber(subscribers, "api::order.order");
+    const event = { params: { where: { id: 11 } }, result: { id: 11 }, state: {} };
+
+    await subscriber.beforeUpdate(event);
+    await subscriber.afterUpdate(event);
+
+    expect(notifyOrderStatusSms).toHaveBeenCalledTimes(1);
+    expect(notifyOrderStatusSms).toHaveBeenCalledWith(
+      strapi,
+      expect.objectContaining({
+        orderId: 11,
+        oldStatus,
+        newStatus,
+      })
+    );
+  });
+
+  it("does not queue status SMS when status is unchanged", async () => {
+    const { strapi, subscribers } = createMockStrapi();
+    strapi.entityService.findOne
+      .mockResolvedValueOnce({
+        id: 12,
+        Status: "Started",
+        ShippingCost: 100,
+        user: { id: 5 },
+      })
+      .mockResolvedValueOnce({
+        id: 12,
+        Status: "Started",
+        ShippingCost: 200,
+        user: { id: 5 },
+      });
+
+    registerAppLifecycles(strapi);
+    const subscriber = getSubscriber(subscribers, "api::order.order");
+    const event = { params: { where: { id: 12 } }, result: { id: 12 }, state: {} };
+
+    await subscriber.beforeUpdate(event);
+    await subscriber.afterUpdate(event);
+
+    expect(notifyOrderStatusSms).not.toHaveBeenCalled();
+  });
+
+  it("queues shipment tracking SMS when ShippingBarcode changes during shipment", async () => {
+    const { strapi, subscribers, activityService } = createMockStrapi();
+    strapi.entityService.findOne
+      .mockResolvedValueOnce({
+        id: 13,
+        Status: "Shipment",
+        ShippingBarcode: null,
+        user: { id: 5 },
+      })
+      .mockResolvedValueOnce({
+        id: 13,
+        Status: "Shipment",
+        ShippingBarcode: "TRACK123",
+        user: { id: 5 },
+      });
+
+    registerAppLifecycles(strapi);
+    const subscriber = getSubscriber(subscribers, "api::order.order");
+    const event = { params: { where: { id: 13 } }, result: { id: 13 }, state: {} };
+
+    await subscriber.beforeUpdate(event);
+    await subscriber.afterUpdate(event);
+
+    expect(notifyShipmentTrackingSms).toHaveBeenCalledWith(strapi, {
+      orderId: 13,
+      trackingCode: "TRACK123",
+    });
+    expect(activityService.logOrderShipped).not.toHaveBeenCalled();
+  });
+
+  it("queues order-created SMS after order create", async () => {
+    const { strapi, subscribers } = createMockStrapi();
+
+    registerAppLifecycles(strapi);
+    const subscriber = getSubscriber(subscribers, "api::order.order");
+
+    await subscriber.afterCreate({
+      result: { id: 14, Status: "Paying", Type: "Automatic", user: { id: 5 } },
+      state: {},
+    });
+
+    expect(notifyOrderCreatedSms).toHaveBeenCalledWith(strapi, 14);
   });
 
   it("logs contract updates through the gated admin-audit writer", async () => {

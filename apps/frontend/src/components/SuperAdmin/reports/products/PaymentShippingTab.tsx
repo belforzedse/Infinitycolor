@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
+import PaymentGatewayBadge from "@/components/PaymentGateway/PaymentGatewayBadge";
+import { resolvePaymentGateway } from "@/utils/paymentGateways";
 import {
   getProductBreakdown,
   type ProductBreakdown,
@@ -62,7 +64,13 @@ export default function PaymentShippingTab({ start, end }: { start: string; end:
           <tbody>
             {data?.gateways.map((g) => (
               <tr key={g.gateway} className="border-b border-neutral-50 last:border-0">
-                <td className="py-2.5 font-medium text-neutral-800">{g.label}</td>
+                <td className="py-2.5 font-medium text-neutral-800">
+                  {resolvePaymentGateway(g.gateway) ? (
+                    <PaymentGatewayBadge gateway={g.gateway} />
+                  ) : (
+                    g.label
+                  )}
+                </td>
                 <td className="py-2.5 text-left text-neutral-600">{faNum(g.ordersCount)}</td>
                 <td className="py-2.5 text-left text-neutral-800">
                   {priceFormatter(g.total, " تومان")}
