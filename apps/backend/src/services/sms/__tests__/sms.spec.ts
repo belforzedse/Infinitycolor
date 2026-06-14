@@ -2,7 +2,12 @@ import { RedisClient } from "../../../index";
 import { loadSmsConfig } from "../config";
 import { buildSmsIdempotencyKey } from "../idempotency";
 import { buildPatternPayload, sendPatternSms } from "../ippanel";
-import { notifyOrderStatusSms } from "../notifications";
+import {
+  buildOrderNotificationParams,
+  formatCancellationReasonForSms,
+  formatOrderStatusForSms,
+  notifyOrderStatusSms,
+} from "../notifications";
 import { normalizeIranMobile } from "../phone";
 import { maskPhone, maskSecret } from "../redaction";
 
@@ -174,6 +179,50 @@ describe("sms service", () => {
   it("masks secrets and phone numbers in logs", () => {
     expect(maskSecret("1234567890abcdef")).toBe("1234...cdef");
     expect(maskPhone("+989123456789")).toBe("+98****6789");
+  });
+
+  it("maps internal order statuses to customer-facing Persian SMS labels", () => {
+    expect(formatOrderStatusForSms("Started")).toBe("پرداخت شده و در حال آماده‌سازی");
+    expect(formatOrderStatusForSms("Shipment")).toBe("ارسال شده");
+    expect(formatOrderStatusForSms("Done")).toBe("تحویل شده");
+    expect(formatOrderStatusForSms("Cancelled")).toBe("لغو شده");
+  });
+
+  it("maps cancellation reasons to customer-facing Persian SMS labels", () => {
+    expect(formatCancellationReasonForSms("out_of_stock")).toBe("ناموجود بودن کالا");
+    expect(formatCancellationReasonForSms("payment failed")).toBe("تکمیل نشدن پرداخت");
+    expect(formatCancellationReasonForSms("admin_cancelled")).toBe("لغو توسط پشتیبانی");
+    expect(formatCancellationReasonForSms()).toBe("لغو سفارش توسط پشتیبانی");
+    expect(formatCancellationReasonForSms("بر اساس درخواست شما")).toBe("بر اساس درخواست شما");
+    expect(formatCancellationReasonForSms("SOME_INTERNAL_CODE")).toBe("لغو سفارش توسط پشتیبانی");
+  });
+
+  it("builds SMS params without leaking internal status or extra reason fields", () => {
+    expect(
+      buildOrderNotificationParams({
+        orderId: 42,
+        status: "Started",
+        amount: 1000,
+      }),
+    ).toEqual({
+      code: 42,
+      orderId: 42,
+      status: "پرداخت شده و در حال آماده‌سازی",
+      trackingCode: undefined,
+      amount: 1000,
+      reason: undefined,
+    });
+
+    expect(
+      buildOrderNotificationParams({
+        orderId: 42,
+        status: "Cancelled",
+        reason: "out_of_stock",
+      }),
+    ).toMatchObject({
+      status: "لغو شده",
+      reason: "ناموجود بودن کالا",
+    });
   });
 
   it("claims idempotency before sending order notifications", async () => {

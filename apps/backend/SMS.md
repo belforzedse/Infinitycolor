@@ -37,10 +37,12 @@ Notification mappings live in `src/services/sms/notifications.ts`. The default p
 
 - `code`: OTP code or order id fallback
 - `orderId`: Strapi order id
-- `status`: order/payment status
+- `status`: customer-facing Persian order status, derived from internal order status
 - `trackingCode`: shipment tracking barcode, when available
 - `amount`: order amount, when available
-- `reason`: payment failure or cancellation reason, when available
+- `reason`: customer-facing Persian cancellation reason, when available
+
+Internal statuses and common cancellation reason codes are mapped to short Persian labels before sending. Free-text Persian cancellation notes are preserved, while empty or technical English/internal values fall back to a customer-safe support cancellation reason.
 
 The approved IPPanel pattern placeholders must match the params configured for the active pattern code.
 
