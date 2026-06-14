@@ -89,7 +89,7 @@ export default function BlogLayout({ children }: { children: React.ReactNode }) 
         پرش به محتوا
       </a>
       <header
-        className={`allow-overflow sticky z-[90] transform border-t-0 transition-all duration-200 ${
+        className={`allow-overflow sticky z-[130] transform border-t-0 transition-all duration-200 ${
           scrolled
             ? "glass-panel shadow-sm"
             : "bg-white/80 supports-[backdrop-filter]:bg-white/60"

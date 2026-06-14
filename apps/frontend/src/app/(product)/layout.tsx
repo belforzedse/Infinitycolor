@@ -126,7 +126,7 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
         پرش به محتوا
       </a>
       <header
-        className={`allow-overflow sticky z-[90] transform border-t-0 transition-all duration-200 ${
+        className={`allow-overflow sticky z-[130] transform border-t-0 transition-all duration-200 ${
           scrolled
             ? "bg-white/45 shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-white/35"
             : "bg-white/55 backdrop-blur-md supports-[backdrop-filter]:bg-white/40"
