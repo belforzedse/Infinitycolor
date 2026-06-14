@@ -27,6 +27,7 @@ export default function PLPHeaderDesktopNav() {
   });
   const pathname = usePathname();
   const rootRef = useRef<HTMLDivElement>(null);
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
   const [renderedCategory, setRenderedCategory] = useState<ProductCategorySummary | null>(null);
 
@@ -64,9 +65,30 @@ export default function PLPHeaderDesktopNav() {
 
   useEffect(() => {
     if (activeCategory) {
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+        closeTimeoutRef.current = null;
+      }
       setRenderedCategory(activeCategory);
     }
   }, [activeCategory]);
+
+  useEffect(() => {
+    if (activeCategoryId !== null || !renderedCategory) return;
+
+    const timeout = setTimeout(() => {
+      setRenderedCategory(null);
+      closeTimeoutRef.current = null;
+    }, 220);
+    closeTimeoutRef.current = timeout;
+
+    return () => {
+      clearTimeout(timeout);
+      if (closeTimeoutRef.current === timeout) {
+        closeTimeoutRef.current = null;
+      }
+    };
+  }, [activeCategoryId, renderedCategory]);
 
   useEffect(() => {
     if (!activeCategoryId) return;
@@ -182,7 +204,13 @@ export default function PLPHeaderDesktopNav() {
             className="storefront-mega-panel absolute left-0 right-0 top-full z-[110] overflow-hidden"
             data-state={activeCategory ? "open" : "closed"}
             onAnimationEnd={() => {
-              if (!activeCategory) setRenderedCategory(null);
+              if (!activeCategory) {
+                if (closeTimeoutRef.current) {
+                  clearTimeout(closeTimeoutRef.current);
+                  closeTimeoutRef.current = null;
+                }
+                setRenderedCategory(null);
+              }
             }}
           >
             <DesktopMegaMenu category={megaMenuCategory} onLinkClick={closeMegaMenu} />
