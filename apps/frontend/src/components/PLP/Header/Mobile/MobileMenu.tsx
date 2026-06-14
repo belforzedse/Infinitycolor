@@ -52,7 +52,14 @@ const MOBILE_CATEGORY_GROUPS: readonly MobileCategoryGroupDefinition[] = [
   {
     key: "upper-body",
     label: "بالاتنه",
-    terms: ["مانتو", "coat-and-mantle", "شومیز", "paperback-and-tonic", "پیراهن", "shirt"],
+    terms: [
+      "مانتو",
+      "coat-and-mantle",
+      "شومیز",
+      "paperback-and-tonic",
+      "پیراهن",
+      "shirt",
+    ],
   },
   {
     key: "lower-body",
@@ -62,7 +69,26 @@ const MOBILE_CATEGORY_GROUPS: readonly MobileCategoryGroupDefinition[] = [
   {
     key: "shoes-accessories",
     label: "کفش و اکسسوری",
-    terms: ["انواع کفش", "کفش", "shoes", "شال", "shawls-and-scarves", "جوراب", "socks"],
+    terms: [
+      "انواع کفش",
+      "کفش",
+      "shoes",
+      "شال",
+      "shawls-and-scarves",
+      "جوراب",
+      "socks",
+    ],
+  },
+  {
+    key: "mens-clothing",
+    label: "لباس مردانه",
+    terms: [
+      "لباس مردانه",
+      "مردانه",
+      "mens-clothing",
+      "men-clothing",
+      "mens",
+    ],
   },
   {
     key: "other-clothing",
@@ -71,7 +97,6 @@ const MOBILE_CATEGORY_GROUPS: readonly MobileCategoryGroupDefinition[] = [
       "لباس‌های زمستانه",
       "لباس زمستانه",
       "winter",
-      "لباس مردانه",
       "لباس زیر",
       "under-wear",
       "راحتی",
@@ -430,7 +455,7 @@ export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
                 dir="rtl"
               >
                 <OrderTrackingIcon className="h-4 w-4 shrink-0" />
-                <span>{"\u067e\u06cc\u06af\u06cc\u0631\u06cc \u0633\u0641\u0627\u0631\u0634"}</span>
+                <span>پیگیری سفارش</span>
               </Link>
 
               <div className="ml-auto flex items-center gap-2">
@@ -464,7 +489,10 @@ export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
                 <Search className="h-5 w-5 text-infinity-primary" aria-hidden="true" />
               </button>
 
-              <nav className="space-y-2" aria-label="منوی موبایل فروشگاه">
+              <nav
+                className="space-y-2"
+                aria-label="منوی موبایل فروشگاه"
+              >
                 {loading ? (
                   <MobileMenuSkeleton />
                 ) : (
