@@ -2,6 +2,7 @@ import type { Strapi } from "@strapi/strapi";
 
 import { resolveAuditActor } from "./audit";
 import { getAuditContext } from "./audit-context";
+import { redactSensitive } from "./redactSensitive";
 import {
   MANAGEMENT_ROLES,
   normalizeRoleName,
@@ -202,9 +203,11 @@ export async function recordAdminAudit(
           Message: params.message,
           MessageEn: params.messageEn,
           Severity: params.severity || "info",
-          Changes: params.changes || null,
+          // Defense-in-depth: strip any sensitive values before persisting. Helpers already
+          // whitelist the fields they record, so this only matters if a sensitive key ever slips in.
+          Changes: params.changes ? redactSensitive(params.changes) : null,
           Description: params.description,
-          Metadata: params.metadata,
+          Metadata: params.metadata ? redactSensitive(params.metadata) : params.metadata,
           performed_by: admin.userId,
           PerformedByName: admin.name || `User ${admin.userId}`,
           PerformedByRole: admin.role,

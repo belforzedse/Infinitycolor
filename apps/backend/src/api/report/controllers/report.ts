@@ -18,6 +18,7 @@ import {
   normalizeRange,
 } from "../services/matomo";
 import * as productAnalytics from "../services/product-analytics";
+import { buildStyledWorkbook, WorkbookColumn } from "../../../utils/styledWorkbook";
 
 type Interval = "day" | "week" | "month";
 
@@ -1288,20 +1289,20 @@ export default {
       const res = await knex.raw(sql, params);
       const rows = rowsOf(res).map((r: any) => PA.serializeProductRow(r, threshold));
 
-      const header = [
-        "نام محصول",
-        "SKU",
-        "نوع",
-        "دسته",
-        "تعداد فروش",
-        "فروش ناخالص (تومان)",
-        "تخفیف (تومان)",
-        "مرجوعی (تومان)",
-        "خالص فروش (تومان)",
-        "سفارش‌ها",
-        "قیمت میانگین (تومان)",
-        "موجودی",
-        "وضعیت موجودی",
+      const columns: WorkbookColumn[] = [
+        { header: "نام محصول" },
+        { header: "SKU" },
+        { header: "نوع" },
+        { header: "دسته" },
+        { header: "تعداد فروش", numeric: true },
+        { header: "فروش ناخالص (تومان)", numeric: true },
+        { header: "تخفیف (تومان)", numeric: true },
+        { header: "مرجوعی (تومان)", numeric: true },
+        { header: "خالص فروش (تومان)", numeric: true },
+        { header: "سفارش‌ها", numeric: true },
+        { header: "قیمت میانگین (تومان)", numeric: true },
+        { header: "موجودی", numeric: true },
+        { header: "وضعیت موجودی" },
       ];
       const statusFa: Record<string, string> = {
         in: "موجود",
@@ -1309,37 +1310,33 @@ export default {
         out: "ناموجود",
         unknown: "نامشخص",
       };
-      const escape = (v: any) => {
-        const s = String(v ?? "");
-        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      };
-      const lines = [header.join(",")];
-      for (const r of rows) {
-        lines.push(
-          [
-            r.productTitle,
-            r.productSKU,
-            r.productType ?? "",
-            r.category ?? "",
-            r.units,
-            r.gross,
-            r.discounts,
-            r.refunds,
-            r.net,
-            r.ordersCount,
-            r.avgPrice,
-            r.currentStock ?? "",
-            statusFa[r.stockStatus] ?? "",
-          ]
-            .map(escape)
-            .join(","),
-        );
-      }
-      // UTF-8 BOM so Excel renders Persian correctly.
-      const csv = "﻿" + lines.join("\r\n");
-      ctx.set("Content-Type", "text/csv; charset=utf-8");
-      ctx.set("Content-Disposition", `attachment; filename="product-report-${Date.now()}.csv"`);
-      ctx.body = csv;
+      const dataRows = rows.map((r) => [
+        r.productTitle,
+        r.productSKU,
+        r.productType ?? "",
+        r.category ?? "",
+        r.units,
+        r.gross,
+        r.discounts,
+        r.refunds,
+        r.net,
+        r.ordersCount,
+        r.avgPrice,
+        r.currentStock ?? "",
+        statusFa[r.stockStatus] ?? "",
+      ]);
+
+      const buffer = await buildStyledWorkbook({
+        sheetName: "گزارش محصولات",
+        columns,
+        rows: dataRows,
+      });
+      ctx.set(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      ctx.set("Content-Disposition", `attachment; filename="product-report-${Date.now()}.xlsx"`);
+      ctx.body = buffer;
     } catch (error) {
       ctx.badRequest(error.message, { data: { success: false } });
     }

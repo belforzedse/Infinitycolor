@@ -213,16 +213,22 @@ describe("product reporting endpoints", () => {
       expect(ctx.body.meta.pagination.pageSize).toBe(100);
     });
 
-    it("export returns CSV with a UTF-8 BOM and Persian header", async () => {
+    it("export returns a styled .xlsx workbook buffer", async () => {
       const controller = loadController();
       const ctx = createCtx({ query: {} });
       await controller.productExport(ctx);
 
-      expect(ctx.set).toHaveBeenCalledWith("Content-Type", "text/csv; charset=utf-8");
-      expect(typeof ctx.body).toBe("string");
-      expect(ctx.body.startsWith("﻿")).toBe(true);
-      expect(ctx.body).toContain("SKU");
-      expect(ctx.body).toContain("SKU-1");
+      expect(ctx.set).toHaveBeenCalledWith(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      expect(ctx.set).toHaveBeenCalledWith(
+        "Content-Disposition",
+        expect.stringContaining(".xlsx"),
+      );
+      expect(Buffer.isBuffer(ctx.body)).toBe(true);
+      // .xlsx is a ZIP archive → starts with the "PK" magic bytes.
+      expect(ctx.body.slice(0, 2).toString("latin1")).toBe("PK");
     });
 
     it("detail requires a productId", async () => {

@@ -2,7 +2,7 @@ import {
   buildPerformanceUrl,
   getProductOverview,
   getProductPerformance,
-  downloadProductReportCsv,
+  downloadProductReportExcel,
 } from "../index";
 import { apiClient } from "@/services";
 
@@ -71,7 +71,7 @@ describe("product report services", () => {
     expect(calledUrl).toContain(encodeURIComponent("pagination[pageSize]") + "=50");
   });
 
-  describe("downloadProductReportCsv", () => {
+  describe("downloadProductReportExcel", () => {
     const origFetch = global.fetch;
     afterEach(() => {
       global.fetch = origFetch;
@@ -80,7 +80,9 @@ describe("product report services", () => {
 
     it("calls the export endpoint with the bearer token and triggers a download", async () => {
       localStorage.setItem("accessToken", "tok-123");
-      const blob = new Blob(["x"], { type: "text/csv" });
+      const blob = new Blob(["x"], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const fetchMock = jest
         .fn()
         .mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) });
@@ -91,7 +93,7 @@ describe("product report services", () => {
         .spyOn(HTMLAnchorElement.prototype, "click")
         .mockImplementation(() => {});
 
-      await downloadProductReportCsv(
+      await downloadProductReportExcel(
         { start: "2026-05-01", end: "2026-05-31", q: "کفش" },
         { key: "gross", direction: "desc" },
       );
@@ -106,7 +108,7 @@ describe("product report services", () => {
 
     it("throws when the export request fails", async () => {
       global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 }) as any;
-      await expect(downloadProductReportCsv({ start: "a", end: "b" })).rejects.toThrow();
+      await expect(downloadProductReportExcel({ start: "a", end: "b" })).rejects.toThrow();
     });
   });
 });

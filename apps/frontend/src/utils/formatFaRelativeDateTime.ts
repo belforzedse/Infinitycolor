@@ -63,3 +63,24 @@ export const formatFaRelativeDateTime = (
   }).format(date);
   return `${fullDateText} ساعت ${timeText}`;
 };
+
+/**
+ * Absolute Jalali date + time, e.g. «۱۴ خرداد ۱۴۰۳، ساعت ۱۰:۳۰». Used where an exact, non-relative
+ * timestamp is preferred (audit/activity detail rows). Returns "-" for missing/invalid input.
+ */
+export const formatFaDateTime = (value?: Date | string | null) => {
+  if (!value) return "-";
+  const date = toDate(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  const dateText = new Intl.DateTimeFormat(PERSIAN_LOCALE, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(date);
+  const timeText = new Intl.DateTimeFormat("fa-IR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+  return `${dateText}، ساعت ${timeText}`;
+};

@@ -116,11 +116,12 @@ export async function getProductInventory(params: {
 }
 
 /**
- * Download the performance report as CSV. Uses an authorized fetch + blob (the
- * export endpoint is protected, so a plain anchor can't carry the JWT). The CSV
- * is produced by the SAME backend query + filters as the visible table.
+ * Download the performance report as a formatted Excel (.xlsx) file. Uses an
+ * authorized fetch + blob (the export endpoint is protected, so a plain anchor
+ * can't carry the JWT). The workbook is produced by the SAME backend query +
+ * filters as the visible table.
  */
-export async function downloadProductReportCsv(
+export async function downloadProductReportExcel(
   filters: ProductReportFilters,
   sort?: { key: string; direction: "asc" | "desc" },
 ): Promise<void> {
@@ -137,7 +138,7 @@ export async function downloadProductReportCsv(
   const href = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = href;
-  a.download = `product-report-${Date.now()}.csv`;
+  a.download = `product-report-${Date.now()}.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();

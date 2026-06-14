@@ -5,6 +5,7 @@ import {
   createAuditContext,
   type AuditContext,
 } from "../utils/audit-context";
+import { getClientIp, getUserAgent } from "../utils/getClientIp";
 
 export default (config: any, { strapi }: any) => {
   return async (ctx: Context, next: any) => {
@@ -36,16 +37,9 @@ export default (config: any, { strapi }: any) => {
       isAdmin = true;
     }
 
-    // Extract IP address (supports proxies)
-    const rawIp =
-      (ctx.request.header["x-forwarded-for"] as string) ||
-      (ctx.request.header["x-real-ip"] as string) ||
-      ctx.request.ip ||
-      null;
-    const ip = typeof rawIp === "string" ? rawIp.split(",")[0].trim() : null;
-
-    // Extract User-Agent
-    const userAgent = (ctx.request.header["user-agent"] as string) || null;
+    // Extract the real client IP + User-Agent via the centralized, proxy-aware helper.
+    const ip = getClientIp(ctx);
+    const userAgent = getUserAgent(ctx);
 
     // Create audit context
     const auditContext: AuditContext = {

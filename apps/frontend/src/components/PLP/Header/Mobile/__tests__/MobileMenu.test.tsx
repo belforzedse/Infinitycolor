@@ -50,7 +50,9 @@ describe("MobileMenu", () => {
         category(5, "شال", "shawls-and-scarves"),
         category(6, "شلوار", "pants"),
         category(7, "شومیز", "paperback-and-tonic"),
-        category(8, "مانتو", "coat-and-mantle", [category(9, "مانتو کتی", "coat-blazer")]),
+        category(8, "مانتو", "coat-and-mantle", [
+          category(9, "مانتو کتی", "coat-blazer"),
+        ]),
         category(10, "راحتی", "house-dress"),
         category(11, "لباس زیر", "under-wear"),
         category(12, "لباس مردانه", "لباس-مردانه"),

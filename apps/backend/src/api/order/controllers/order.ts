@@ -14,6 +14,7 @@ import { decrementManualOrderStockHandler } from "./helpers/manualOrderStock";
 import { getActiveReserveHandler } from "./handlers/getActiveReserve";
 import { releaseReserveHandler } from "./handlers/releaseReserve";
 import { logAdminOrderCreate, logAdminOrderFieldUpdate } from "../../../utils/adminActivity";
+import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import {
   STORE_MANAGER_PLUS_ROLES,
   resolveCustomerTargetUserId,
@@ -155,9 +156,8 @@ export default factories.createCoreController(
         const orderId = Number((response as any)?.data?.id ?? (response as any)?.id);
         if (actorId && orderId) {
           const requestData = (ctx.request?.body as any)?.data ?? {};
-          const ip = ctx.request?.ip || (ctx as any).ip || null;
-          const userAgent =
-            ctx.request?.headers?.["user-agent"] || (ctx as any).headers?.["user-agent"] || null;
+          const ip = getClientIp(ctx);
+          const userAgent = getUserAgent(ctx);
           void logAdminOrderCreate(
             strapi,
             orderId,
@@ -216,9 +216,8 @@ export default factories.createCoreController(
           }
 
           if (Object.keys(changes).length > 0) {
-            const ip = ctx.request?.ip || (ctx as any).ip || null;
-            const userAgent =
-              ctx.request?.headers?.["user-agent"] || (ctx as any).headers?.["user-agent"] || null;
+            const ip = getClientIp(ctx);
+            const userAgent = getUserAgent(ctx);
             void logAdminOrderFieldUpdate(strapi, Number(id), changes, actorId, ip, userAgent);
           }
         }
