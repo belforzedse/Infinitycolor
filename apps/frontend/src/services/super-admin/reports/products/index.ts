@@ -7,6 +7,7 @@ import type {
   ProductPerformanceResult,
   ProductDetail,
   ProductInventory,
+  ProductBreakdown,
   ProductReportFilters,
   TrendGrouping,
 } from "./types";
@@ -46,6 +47,16 @@ export async function getProductTrends(params: {
     cache: "no-store",
   });
   return (res as any).data as ProductTrends;
+}
+
+export async function getProductBreakdown(params: {
+  start?: string;
+  end?: string;
+}): Promise<ProductBreakdown> {
+  const res = await apiClient.get(`${BASE}/breakdown${formatQueryParams(params as any)}`, {
+    cache: "no-store",
+  });
+  return (res as any).data as ProductBreakdown;
 }
 
 /**

@@ -23,6 +23,7 @@ export default function AddCategoryPage() {
   useEditorRedirect();
 
   const [categoryImage, setCategoryImage] = useState<CategoryImageValue | undefined>();
+  const [megaMenuImage, setMegaMenuImage] = useState<CategoryImageValue | undefined>();
 
   const handleSubmit = async (formData: ProductCategoryForm) => {
     const title = formData.Title?.trim();
@@ -37,6 +38,7 @@ export default function AddCategoryPage() {
       Title: title,
       Slug: slug,
       Image: categoryImage?.id ?? null,
+      MegaMenuImage: megaMenuImage?.id ?? null,
     };
 
     if (formData.Parent) {
@@ -61,7 +63,19 @@ export default function AddCategoryPage() {
       data={createEmptyCategoryFormData()}
       onSubmit={handleSubmit}
       customSidebar={
-        <CategoryAppearancePanel image={categoryImage} onImageChange={setCategoryImage} />
+        <div className="flex flex-col gap-4">
+          <CategoryAppearancePanel image={categoryImage} onImageChange={setCategoryImage} />
+          <CategoryAppearancePanel
+            image={megaMenuImage}
+            onImageChange={setMegaMenuImage}
+            title="تصویر مگامنو دسکتاپ"
+            previewAlt="تصویر مگامنو دسته‌بندی"
+            uploadLabel="بارگذاری تصویر مگامنو"
+            successMessage="تصویر مگامنو با موفقیت بارگذاری شد"
+            errorMessage="خطا در آپلود تصویر مگامنو"
+            aspectClassName="aspect-[363/430]"
+          />
+        </div>
       }
     />
   );

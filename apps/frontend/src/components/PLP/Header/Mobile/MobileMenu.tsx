@@ -1,17 +1,19 @@
 "use client";
-import { Dialog, Transition } from "@headlessui/react";
-import { Fragment } from "react";
+
+import { Dialog } from "@headlessui/react";
+import { ChevronDown, Search, X } from "lucide-react";
+import { type AnimationEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import XIcon from "@/components/User/Icons/XIcon";
 import { usePathname } from "next/navigation";
 import { useProductCategories } from "@/hooks/useProductCategories";
-import HomeIcon from "@/components/PLP/Icons/HomeIcon";
-import SidebarItem from "@/components/User/Sidebar/SidebarItem";
-import SearchIcon from "@/components/PLP/Icons/SearchIcon";
-import { useDrag } from "@use-gesture/react";
-import { hapticButton } from "@/utils/haptics";
-import React from "react";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import type { ProductCategorySummary } from "@/services/product/categories";
+import { useCart } from "@/contexts/CartContext";
+import { useCartShellReady } from "@/hooks/useCartShellReady";
+import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
+import ShoppingCartIcon from "@/components/PLP/Icons/ShoppingCartIcon";
+import UserProfileIcon from "@/components/PLP/Icons/UserProfileIcon";
+import SaleBadgeIcon from "../SaleBadgeIcon";
 
 interface Props {
   isOpen: boolean;
@@ -19,147 +21,302 @@ interface Props {
   onSearchClick?: () => void;
 }
 
-interface MenuItem {
-  label: string;
-  href: string;
+type MobileNavItem =
+  | {
+      key: string;
+      label: string;
+      href: string;
+      type?: "link" | "sale";
+    }
+  | {
+      key: string;
+      label: string;
+      href: string;
+      type: "category";
+      category: ProductCategorySummary;
+    };
+
+function MobileMenuSkeleton() {
+  return (
+    <div className="space-y-2">
+      <div className="skeleton-shimmer-light h-10 rounded-[10px]" />
+      <div className="skeleton-shimmer-light h-10 rounded-[10px]" />
+      <div className="skeleton-shimmer-light h-10 rounded-[10px]" />
+      <div className="skeleton-shimmer-light h-10 rounded-[10px]" />
+    </div>
+  );
 }
 
 export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
   const pathname = usePathname();
+  const [expandedCategoryId, setExpandedCategoryId] = useState<number | null>(null);
+  const [menuState, setMenuState] = useState<"closed" | "open" | "closing">("closed");
+  const { totalItems, openDrawer } = useCart();
+  const isCartShellReady = useCartShellReady();
+  const visibleTotalItems = isCartShellReady ? totalItems : 0;
   const { categories, isLoading: loading } = useProductCategories({
-    mainOnly: true,
+    navbarAssignedOnly: true,
+    includeChildren: true,
     enabled: isOpen,
   });
-  const panelRef = React.useRef<HTMLDivElement>(null);
 
-  // Swipe-to-close gesture for mobile
-  const bind = useDrag(
-    ({ active, movement: [mx], direction: [xDir], velocity: [vx] }) => {
-      if (!panelRef.current || typeof window === "undefined" || window.innerWidth >= 1024) return;
-
-      // Only handle right swipe (RTL: swipe right to close)
-      const baseThreshold = 90;
-      const fastSwipeThreshold = 45;
-      const velocityThreshold = 0.5;
-      const swipeThreshold = Math.abs(vx) > velocityThreshold ? fastSwipeThreshold : baseThreshold;
-
-      if (!active && (mx > swipeThreshold || (xDir > 0 && Math.abs(vx) > velocityThreshold))) {
-        hapticButton();
-        onClose();
-      }
-    },
-    {
-      axis: "x",
-      threshold: 10,
-      preventDefault: true,
-    },
+  const menuItems: MobileNavItem[] = useMemo(
+    () => [
+      { key: "home", label: "خانه", href: "/" },
+      { key: "shop", label: "فروشگاه", href: "/plp" },
+      ...categories.map((category) => ({
+        key: `category-${category.id}`,
+        label: category.name,
+        href: getCategoryPlpHref(category.slug),
+        type: "category" as const,
+        category,
+      })),
+      {
+        key: "discounts",
+        label: "تخفیف‌ها و جشنواره‌ها",
+        href: "/plp?hasDiscount=true",
+        type: "sale" as const,
+      },
+      { key: "blog", label: "مقالات", href: "/blog" },
+    ],
+    [categories],
   );
 
-  const menuItems: MenuItem[] = [
-    { label: "خانه", href: "/" },
-    ...categories.map((item) => ({
-      label: item.name,
-      href: getCategoryPlpHref(item.slug),
-    })),
-  ];
-
-  // Lock body scroll when menu is open
-  React.useEffect(() => {
+  useEffect(() => {
     if (isOpen) {
-      const previous = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-      return () => {
-        document.body.style.overflow = previous;
-      };
+      setMenuState("open");
+      return;
     }
+
+    setMenuState((current) => (current === "closed" ? "closed" : "closing"));
   }, [isOpen]);
 
-  return (
-    <Transition appear show={isOpen} as={Fragment}>
-      <Dialog as="div" className="relative z-[1200]" onClose={onClose}>
-        <Transition.Child
-          as={Fragment}
-          enter="ease-out duration-300"
-          enterFrom="opacity-0"
-          enterTo="opacity-100"
-          leave="ease-in duration-200"
-          leaveFrom="opacity-100"
-          leaveTo="opacity-0"
-        >
-          <div className="fixed inset-0 bg-black/25 backdrop-blur-[2px]" />
-        </Transition.Child>
+  useEffect(() => {
+    if (menuState === "closed") {
+      setExpandedCategoryId(null);
+    }
+  }, [menuState]);
 
-        <div className="fixed inset-0 overflow-y-auto">
-          <div className="flex min-h-full">
-            <Transition.Child
-              as={Fragment}
-              enter="transform transition ease-out duration-300"
-              enterFrom="translate-x-full"
-              enterTo="translate-x-0"
-              leave="transform transition ease-in duration-200"
-              leaveFrom="translate-x-0"
-              leaveTo="translate-x-full"
-            >
-              <Dialog.Panel
-                ref={panelRef}
-                className="h-fit w-[216px] transform overflow-hidden rounded-bl-xl bg-white shadow-xl transition-all"
-                style={{
-                  paddingTop: "max(1.25rem, calc(1.25rem + env(safe-area-inset-top) * 0.5))",
-                  paddingBottom: "calc(env(safe-area-inset-bottom) + 1.25rem)",
-                }}
-                {...bind()}
+  const requestClose = () => {
+    setMenuState("closing");
+  };
+
+  const handlePanelAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (event.currentTarget !== event.target || menuState !== "closing") return;
+    setMenuState("closed");
+    onClose();
+  };
+
+  const isActiveHref = (href: string) => {
+    if (href === "/") return pathname === "/";
+    const pathOnly = href.split("?")[0];
+    return decodeURI(pathname) === decodeURI(pathOnly);
+  };
+
+  const handleSearchClick = () => {
+    onClose();
+    window.setTimeout(() => onSearchClick?.(), 0);
+  };
+
+  const handleCartClick = () => {
+    onClose();
+    window.setTimeout(openDrawer, 0);
+  };
+
+  const renderLink = (item: Extract<MobileNavItem, { type?: "link" | "sale" }>) => {
+    const isSale = item.type === "sale";
+    return (
+      <Link
+        key={item.key}
+        href={item.href}
+        onClick={onClose}
+        aria-current={isActiveHref(item.href) ? "page" : undefined}
+        className={[
+          "pressable flex h-10 w-full items-center justify-between rounded-[10px] bg-[#FAFAF9] px-3 text-right text-sm font-medium text-neutral-800 transition-colors hover:bg-stone-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white",
+          isActiveHref(item.href) ? "text-infinity-primary" : "",
+        ].join(" ")}
+      >
+        <span className="truncate">{item.label}</span>
+        {isSale && <SaleBadgeIcon className="h-5 w-5 shrink-0" />}
+      </Link>
+    );
+  };
+
+  const renderCategory = (item: Extract<MobileNavItem, { type: "category" }>) => {
+    const children = item.category.children ?? [];
+    const hasChildren = children.length > 0;
+    const isExpanded = expandedCategoryId === item.category.id;
+
+    if (!hasChildren) {
+      return (
+        <Link
+          key={item.key}
+          href={item.href}
+          onClick={onClose}
+          aria-current={isActiveHref(item.href) ? "page" : undefined}
+          className={[
+            "flex h-10 w-full items-center justify-between rounded-[10px] bg-[#FAFAF9] px-3 text-right text-sm font-medium text-neutral-800 transition-colors hover:bg-stone-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white",
+            isActiveHref(item.href) ? "text-infinity-primary" : "",
+          ].join(" ")}
+        >
+          <span className="truncate">{item.label}</span>
+        </Link>
+      );
+    }
+
+    return (
+      <div key={item.key} className="overflow-hidden rounded-[10px]">
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={() =>
+            setExpandedCategoryId((current) =>
+              current === item.category.id ? null : item.category.id,
+            )
+          }
+          className={[
+            "flex h-10 w-full items-center justify-between bg-[#FAFAF9] px-3 text-right text-sm font-medium text-neutral-800 transition-colors hover:bg-stone-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white",
+            isExpanded ? "text-infinity-primary" : "",
+          ].join(" ")}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            {isExpanded && (
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-infinity-primary" />
+            )}
+            <span className="truncate">{item.label}</span>
+          </span>
+          <ChevronDown
+            className={[
+              "h-4 w-4 shrink-0 text-infinity-primary transition-transform duration-200",
+              isExpanded ? "rotate-180" : "",
+            ].join(" ")}
+            aria-hidden="true"
+          />
+        </button>
+
+        <div
+          className="storefront-mobile-category-panel bg-white"
+          data-state={isExpanded ? "open" : "closed"}
+        >
+          <div className="storefront-mobile-category-panel-inner min-h-0 overflow-hidden">
+            {children.map((child) => (
+              <Link
+                key={child.id}
+                href={getCategoryPlpHref(child.slug)}
+                onClick={onClose}
+                className="block border-t border-stone-100 px-3 py-3 text-right text-sm font-medium text-neutral-700 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-infinity-primary"
               >
-                <nav className="p-5">
-                  <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
-                    <XIcon />
-                  </button>
-                  <div className="flex flex-col gap-3">
-                    {loading ? (
-                      <>
-                        <div className="skeleton-shimmer h-12 rounded-xl"></div>
-                        <div className="skeleton-shimmer-light h-12 rounded-xl"></div>
-                        <div className="skeleton-shimmer-light h-12 rounded-xl"></div>
-                      </>
-                    ) : (
-                      <>
-                        <SidebarItem
-                          href="/"
-                          icon={<HomeIcon />}
-                          text="خانه"
-                        />
-                        <button
-                          onClick={() => {
-                            onSearchClick?.();
-                            onClose();
-                          }}
-                          className="pressable relative flex w-full items-center gap-2 rounded-lg px-5 py-3 text-right text-gray-700 transition-all hover:bg-white/70 hover:text-infinity-primary"
-                        >
-                          <SearchIcon className="text-infinity-primary" />
-                          <span className="text-sm font-medium">جستجو</span>
-                        </button>
-                        {menuItems.slice(1).map((item) => {
-                          // Create a simple icon component for categories
-                          // Using a placeholder icon since we don't have specific category icons
-                          return (
-                            <Link
-                              key={item.href}
-                              href={item.href}
-                              className="pressable relative flex items-center gap-2 rounded-lg px-5 py-3 text-gray-700 transition-all hover:bg-white/70 hover:text-infinity-primary"
-                              onClick={onClose}
-                            >
-                              <span className="text-sm font-medium">{item.label}</span>
-                            </Link>
-                          );
-                        })}
-                      </>
-                    )}
-                  </div>
-                </nav>
-              </Dialog.Panel>
-            </Transition.Child>
+                <span className="block truncate">{child.name}</span>
+              </Link>
+            ))}
           </div>
         </div>
-      </Dialog>
-    </Transition>
+      </div>
+    );
+  };
+
+  if (menuState === "closed") return null;
+
+  return (
+    <Dialog
+      static
+      open
+      as="div"
+      className="relative z-[1400]"
+      onClose={requestClose}
+    >
+      <div
+        className="storefront-mobile-menu-backdrop fixed inset-0 bg-black/45 backdrop-blur-[2px]"
+        data-state={menuState === "closing" ? "closed" : "open"}
+        aria-hidden="true"
+      />
+
+      <div
+        className="fixed inset-x-0 top-0 flex justify-center px-0"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
+        <Dialog.Panel className="contents">
+          <div
+            className="storefront-mobile-menu-panel mt-1 max-h-[calc(100dvh-1.25rem)] w-full overflow-y-auto rounded-b-[18px] bg-white px-0 shadow-[0_20px_60px_rgba(15,23,42,0.22)] outline-none"
+            data-state={menuState === "closing" ? "closed" : "open"}
+            style={{
+              paddingBottom: "calc(env(safe-area-inset-bottom) + 1.25rem)",
+            }}
+            onAnimationEnd={handlePanelAnimationEnd}
+          >
+                <Dialog.Title className="sr-only">منوی فروشگاه</Dialog.Title>
+
+                <div className="flex min-h-[4.25rem] items-center gap-2 px-5 py-2" dir="ltr">
+                  <button
+                    type="button"
+                    onClick={handleCartClick}
+                    className="pressable relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-infinity-primary text-white transition-colors hover:bg-infinity-primary-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                    aria-label="Cart"
+                  >
+                    <ShoppingCartIcon className="h-5 w-5 [&_path]:stroke-white" />
+                    {visibleTotalItems > 0 && (
+                      <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-infinity-primary-dark px-1 text-[10px] font-medium leading-none text-white">
+                        {visibleTotalItems > 9 ? "9+" : visibleTotalItems}
+                      </span>
+                    )}
+                  </button>
+
+                  <Link
+                    href="/orders"
+                    onClick={onClose}
+                    className="pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-neutral-700 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                    dir="rtl"
+                  >
+                    <OrderTrackingIcon className="h-4 w-4 shrink-0" />
+                    <span>
+                      {"\u067e\u06cc\u06af\u06cc\u0631\u06cc \u0633\u0641\u0627\u0631\u0634"}
+                    </span>
+                  </Link>
+
+                  <div className="ml-auto flex items-center gap-2">
+                    <Link
+                      href="/auth/login"
+                      onClick={onClose}
+                      className="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                      aria-label="Login"
+                    >
+                      <UserProfileIcon className="h-4 w-4" />
+                    </Link>
+
+                    <button
+                      type="button"
+                      onClick={requestClose}
+                      className="pressable flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                      aria-label="Close menu"
+                    >
+                      <X className="h-5 w-5" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="px-5 pb-5">
+                  <button
+                    type="button"
+                    onClick={handleSearchClick}
+                    className="pressable mb-3 flex h-9 w-full items-center justify-between border-b border-stone-100 bg-white px-0 text-sm text-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                  >
+                    <span>دنبال چی می‌گردی؟</span>
+                    <Search className="h-5 w-5 text-infinity-primary" aria-hidden="true" />
+                  </button>
+
+                  <nav className="space-y-2" aria-label="منوی موبایل فروشگاه">
+                    {loading ? (
+                      <MobileMenuSkeleton />
+                    ) : (
+                      menuItems.map((item) =>
+                        item.type === "category" ? renderCategory(item) : renderLink(item),
+                      )
+                    )}
+                  </nav>
+                </div>
+          </div>
+        </Dialog.Panel>
+      </div>
+    </Dialog>
   );
 }

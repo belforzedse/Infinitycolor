@@ -1,10 +1,13 @@
 import { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
-  const { user } = ctx.state;
   const { cartItemId, count } = ctx.request.body;
 
   try {
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
+
     if (!cartItemId) {
       return ctx.badRequest("Cart item ID is required", {
         data: { success: false, error: "Cart item ID is required" },
@@ -25,7 +28,7 @@ export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
 
     // Verify cart item belongs to user
     const cartItem = await strapi.db.query("api::cart-item.cart-item").findOne({
-      where: { id: cartItemId, cart: { user: { id: user.id } } },
+      where: { id: cartItemId, cart: { user: { id: userId } } },
       populate: { product_variation: { populate: { product_stock: true } } },
     });
 

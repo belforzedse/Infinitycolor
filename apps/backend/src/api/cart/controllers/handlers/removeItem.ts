@@ -1,10 +1,13 @@
 import { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 export const removeItemHandler = (strapi: Strapi) => async (ctx: any) => {
-  const { user } = ctx.state;
   const { id } = ctx.params;
 
   try {
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
+
     if (!id) {
       return ctx.badRequest("Cart item ID is required", {
         data: { success: false, error: "Cart item ID is required" },
@@ -12,7 +15,7 @@ export const removeItemHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     const cartItem = await strapi.db.query("api::cart-item.cart-item").findOne({
-      where: { id, cart: { user: { id: user.id } } },
+      where: { id, cart: { user: { id: userId } } },
     });
 
     if (!cartItem) {

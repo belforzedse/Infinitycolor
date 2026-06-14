@@ -13,6 +13,14 @@ import {
   withCache,
   type CacheStatus,
 } from "../../../utils/responseCache";
+import {
+  SEARCHWISE_PRODUCT_FILTERS,
+  SEARCHWISE_PRODUCT_POPULATE,
+  buildSearchwiseFeedPayload,
+  isSearchwiseAuthorized,
+  parseSearchwisePage,
+  parseSearchwiseSize,
+} from "../services/searchwise-feed";
 
 /**
  * Check if the user is an admin (superadmin, store manager, or editor)
@@ -57,6 +65,58 @@ function readProductRemovedAt(product: any): string | null | undefined {
 function setCacheHeaderIfEnabled(ctx: any, status: CacheStatus) {
   if (!isCacheDebugHeaderEnabled()) return;
   ctx.set("X-Backend-Cache", status);
+}
+
+const SEARCHWISE_FULL_FEED_BATCH_SIZE = 500;
+
+const searchwiseCacheTtl = () => getCacheTtlFromEnv("CACHE_TTL_SEARCHWISE_FEED_SEC", 3600);
+
+const readSearchwiseHeaders = (ctx: any): Record<string, unknown> =>
+  (ctx.request?.headers || {}) as Record<string, unknown>;
+
+async function findSearchwiseProductsPage(strapi: any, page: number, size: number) {
+  const start = (page - 1) * size;
+  const [products, total] = await Promise.all([
+    strapi.entityService.findMany("api::product.product", {
+      filters: SEARCHWISE_PRODUCT_FILTERS,
+      populate: SEARCHWISE_PRODUCT_POPULATE,
+      sort: { updatedAt: "desc" },
+      start,
+      limit: size,
+    }),
+    strapi.db.query("api::product.product").count({
+      where: SEARCHWISE_PRODUCT_FILTERS,
+    }),
+  ]);
+
+  return {
+    products,
+    pagination: {
+      page,
+      size,
+      pageCount: Math.ceil(total / size),
+      total,
+    },
+  };
+}
+
+async function findAllSearchwiseProducts(strapi: any) {
+  const allProducts: any[] = [];
+  let page = 1;
+
+  while (true) {
+    const { products, pagination } = await findSearchwiseProductsPage(
+      strapi,
+      page,
+      SEARCHWISE_FULL_FEED_BATCH_SIZE,
+    );
+    allProducts.push(...products);
+
+    if (page >= pagination.pageCount || products.length === 0) break;
+    page += 1;
+  }
+
+  return allProducts;
 }
 
 const PRODUCT_POPULATE = {
@@ -292,6 +352,129 @@ export default factories.createCoreController(
       } catch (error) {
         strapi.log.error("[Product.homepageSections] Error building homepage sections:", error);
         return ctx.badRequest("An error occurred while building homepage sections", {
+          error: (error as Error).message,
+        });
+      }
+    },
+
+    async searchwiseFeed(ctx) {
+      try {
+        if (!isSearchwiseAuthorized(readSearchwiseHeaders(ctx))) {
+          return ctx.unauthorized("Unauthorized");
+        }
+
+        const payload = await withCache(
+          {
+            key: buildCacheKey({
+              routeId: "product.searchwise-feed",
+              query: ctx.query || {},
+              locale: String(ctx.query?.locale || ""),
+            }),
+            ttlSec: searchwiseCacheTtl(),
+            onStatus: (status) => setCacheHeaderIfEnabled(ctx, status),
+            shouldCacheValue: (value) => Array.isArray((value as any)?.data),
+          },
+          async () => buildSearchwiseFeedPayload(await findAllSearchwiseProducts(strapi)),
+        );
+
+        return payload;
+      } catch (error) {
+        strapi.log.error("[Product.searchwiseFeed] Error building Searchwise feed:", error);
+        return ctx.badRequest("An error occurred while building the Searchwise feed", {
+          error: (error as Error).message,
+        });
+      }
+    },
+
+    async searchwiseFeedItems(ctx) {
+      try {
+        if (!isSearchwiseAuthorized(readSearchwiseHeaders(ctx))) {
+          return ctx.unauthorized("Unauthorized");
+        }
+
+        const page = parseSearchwisePage(ctx.query?.page);
+        const size = parseSearchwiseSize(ctx.query?.size);
+
+        const payload = await withCache(
+          {
+            key: buildCacheKey({
+              routeId: "product.searchwise-feed.items",
+              query: { page, size },
+              locale: String(ctx.query?.locale || ""),
+            }),
+            ttlSec: searchwiseCacheTtl(),
+            onStatus: (status) => setCacheHeaderIfEnabled(ctx, status),
+            shouldCacheValue: (value) => Array.isArray((value as any)?.data),
+          },
+          async () => {
+            const { products, pagination } = await findSearchwiseProductsPage(strapi, page, size);
+            return buildSearchwiseFeedPayload(products, pagination);
+          },
+        );
+
+        return payload;
+      } catch (error) {
+        strapi.log.error("[Product.searchwiseFeedItems] Error building Searchwise page:", error);
+        return ctx.badRequest("An error occurred while building the Searchwise feed page", {
+          error: (error as Error).message,
+        });
+      }
+    },
+
+    async searchwiseFeedItem(ctx) {
+      try {
+        if (!isSearchwiseAuthorized(readSearchwiseHeaders(ctx))) {
+          return ctx.unauthorized("Unauthorized");
+        }
+
+        const idOrSlug = String(ctx.params?.idOrSlug || "").trim();
+        if (!idOrSlug) {
+          return ctx.badRequest("Product id or slug is required");
+        }
+
+        let decoded = idOrSlug;
+        try {
+          decoded = decodeURIComponent(idOrSlug);
+        } catch {
+          decoded = idOrSlug;
+        }
+
+        const isId = /^\d+$/.test(decoded);
+        const filters = {
+          ...SEARCHWISE_PRODUCT_FILTERS,
+          ...(isId ? { id: Number(decoded) } : { Slug: { $eq: decoded } }),
+        };
+
+        const payload = await withCache(
+          {
+            key: buildCacheKey({
+              routeId: "product.searchwise-feed.item",
+              params: { idOrSlug: decoded },
+              locale: String(ctx.query?.locale || ""),
+            }),
+            ttlSec: searchwiseCacheTtl(),
+            onStatus: (status) => setCacheHeaderIfEnabled(ctx, status),
+            shouldCacheValue: (value) => Boolean((value as any)?.data?.[0]),
+          },
+          async () => {
+            const products = await strapi.entityService.findMany("api::product.product", {
+              filters,
+              populate: SEARCHWISE_PRODUCT_POPULATE,
+              sort: { updatedAt: "desc" },
+              limit: 1,
+            });
+            return buildSearchwiseFeedPayload(products);
+          },
+        );
+
+        if (!payload?.data?.[0]) {
+          return ctx.notFound("Product not found");
+        }
+
+        return { data: payload.data[0], meta: payload.meta };
+      } catch (error) {
+        strapi.log.error("[Product.searchwiseFeedItem] Error building Searchwise product:", error);
+        return ctx.badRequest("An error occurred while building the Searchwise product", {
           error: (error as Error).message,
         });
       }

@@ -81,6 +81,21 @@ function formatSecondsSince(value?: string) {
   return Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000));
 }
 
+/**
+ * Live "X seconds ago" label. It owns its own 1-second tick so the per-second
+ * re-render stays scoped to this tiny leaf and does NOT re-render the whole
+ * report (date pickers + charts) every second — which made the pickers feel janky.
+ */
+function LiveAgo({ lastUpdated }: { lastUpdated?: string }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((prev) => prev + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+  const seconds = formatSecondsSince(lastUpdated);
+  return <>{seconds !== null ? `${faNum(seconds)} ثانیه پیش` : "نامشخص"}</>;
+}
+
 function formatFunnelStep(step: TrafficDashboard["funnel"][number]["step"]): string {
   return translateFunnelStep(step) || step;
 }
@@ -134,7 +149,6 @@ function TrafficReportInner() {
   const [refreshingNow, setRefreshingNow] = useState(false);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState<number>(15);
-  const [clockTick, setClockTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const previousRealtimeRef = useRef<TrafficRealtime | null>(null);
   const realtimeInFlightRef = useRef(false);
@@ -232,11 +246,6 @@ function TrafficReportInner() {
     };
   }, [autoRefreshSeconds, loadRealtime]);
 
-  useEffect(() => {
-    const interval = setInterval(() => setClockTick((p) => p + 1), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
   const handleManualRefresh = useCallback(async () => {
     setRefreshingNow(true);
     try {
@@ -248,7 +257,6 @@ function TrafficReportInner() {
 
   const effectiveRealtime = realtime || dashboard?.realtime || null;
   const lastUpdated = realtime?.updatedAt || dashboard?.updatedAt;
-  const secondsSinceUpdate = useMemo(() => formatSecondsSince(lastUpdated), [lastUpdated, clockTick]);
 
   const tracking = dashboard?.tracking;
   const notConfigured = dashboard != null && tracking?.configured === false;
@@ -330,7 +338,7 @@ function TrafficReportInner() {
               </span>
               <span>•</span>
               <span>
-                آخرین داده: {secondsSinceUpdate !== null ? `${faNum(secondsSinceUpdate)} ثانیه پیش` : "نامشخص"}
+                آخرین داده: <LiveAgo lastUpdated={lastUpdated} />
               </span>
               <span>•</span>
               <span>آخرین بروزرسانی: {formatDateTime(lastUpdated)}</span>

@@ -5,6 +5,7 @@
 
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 const FRONTEND_BASE =
   process.env.FRONTEND_URL || "https://infinitycolor.co";
@@ -13,8 +14,8 @@ export default factories.createCoreController(
   ({ strapi }: { strapi: Strapi }) => ({
     async chargeIntent(ctx) {
       try {
-        const pluginUserId = ctx.state.user?.id;
-        if (!pluginUserId) return ctx.unauthorized("Authentication required");
+        const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!pluginUserId) return;
 
         const { amount } = ctx.request.body || {};
         const amountIrr = Number(amount);

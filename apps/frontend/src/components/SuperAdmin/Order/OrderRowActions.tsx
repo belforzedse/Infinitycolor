@@ -60,6 +60,8 @@ export default function OrderRowActions({ orderId, shippingBarcode }: OrderRowAc
           variant="secondary"
           path={`/super-admin/orders/edit/${orderId}`}
           icon={<EyeIcon />}
+          testId="admin-order-view"
+          dataAttributes={{ id: orderId }}
         />
 
         {/* Print Receipt Button */}

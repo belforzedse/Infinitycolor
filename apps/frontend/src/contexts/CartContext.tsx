@@ -65,6 +65,8 @@ export const useCart = () => {
   return context;
 };
 
+export const useOptionalCart = () => useContext(CartContext);
+
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);

@@ -4,6 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 function getPositiveInt(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -13,10 +14,8 @@ function getPositiveInt(value: unknown, fallback: number): number {
 export default factories.createCoreController("api::notification.notification", ({ strapi }) => ({
   async listMine(ctx) {
     try {
-      const pluginUserId = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("Authentication required");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       const page = getPositiveInt(ctx.query?.page, 1);
       const pageSize = getPositiveInt(ctx.query?.pageSize, 25);
@@ -57,10 +56,8 @@ export default factories.createCoreController("api::notification.notification", 
 
   async unreadCount(ctx) {
     try {
-      const pluginUserId = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("Authentication required");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       const count = await strapi.db.query("api::notification.notification").count({
         where: { recipient: pluginUserId, IsRead: false },
@@ -75,10 +72,8 @@ export default factories.createCoreController("api::notification.notification", 
 
   async markRead(ctx) {
     try {
-      const pluginUserId = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("Authentication required");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       const { id } = ctx.params;
       const notification = await strapi.entityService.findOne(
@@ -104,10 +99,8 @@ export default factories.createCoreController("api::notification.notification", 
 
   async markAllRead(ctx) {
     try {
-      const pluginUserId = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("Authentication required");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       await strapi.db.query("api::notification.notification").updateMany({
         where: { recipient: pluginUserId, IsRead: false },

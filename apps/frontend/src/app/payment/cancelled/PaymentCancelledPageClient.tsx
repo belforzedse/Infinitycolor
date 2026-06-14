@@ -41,7 +41,7 @@ function PaymentCancelledContent() {
   return (
     <StorefrontContainer className="py-10" dir="rtl">
       <div className="mx-auto max-w-2xl rounded-lg bg-white p-8 shadow-md">
-        <div className="flex flex-col items-center text-center">
+        <div className="flex flex-col items-center text-center" data-testid="live-payment-cancelled">
           {/* Cancelled Icon */}
           <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-orange-100">
             <svg

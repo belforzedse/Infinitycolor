@@ -1,7 +1,6 @@
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
-import { ROLE_NAMES } from "../../../utils/roles";
-import { normalizeRoleName } from "../../../utils/roles";
+import { STORE_MANAGER_PLUS_ROLES, roleIsAllowed } from "../../../utils/roles";
 
 type Severity = "info" | "success" | "warning" | "error";
 
@@ -197,10 +196,8 @@ export default factories.createCoreService("api::user-activity.user-activity" as
     authenticatedUserRole: string | null,
     options?: { page?: number; pageSize?: number }
   ) {
-    const roleName = normalizeRoleName(authenticatedUserRole);
-
-    // Allow users to access their own activities, or superadmins to access any user's activities
-    if (requestedUserId !== authenticatedUserId && roleName !== ROLE_NAMES.SUPERADMIN) {
+    // Allow users to access their own activities, or manager-plus roles to access any user's activities.
+    if (requestedUserId !== authenticatedUserId && !roleIsAllowed(authenticatedUserRole, STORE_MANAGER_PLUS_ROLES)) {
       throw new Error("You can only view your own activities");
     }
 
@@ -248,4 +245,3 @@ export default factories.createCoreService("api::user-activity.user-activity" as
     options?: { page?: number; pageSize?: number }
   ) => Promise<any>;
 };
-

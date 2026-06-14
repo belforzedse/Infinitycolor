@@ -4,6 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 export default factories.createCoreController(
   "api::local-user-address.local-user-address",
@@ -11,14 +12,15 @@ export default factories.createCoreController(
     // Get addresses for the current logged-in user
     async getMyAddresses(ctx) {
       try {
-        const { user } = ctx.state;
+        const userId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!userId) return;
 
         // Query addresses for the current user
         const { results: addresses, pagination } = await strapi
           .service("api::local-user-address.local-user-address")
           .find({
             filters: {
-              user: user.id,
+              user: userId,
               IsTemporary: false,
             },
             pagination: {
@@ -46,7 +48,8 @@ export default factories.createCoreController(
     // Create a new address for the authenticated user
     async createAddress(ctx) {
       try {
-        const { user } = ctx.state;
+        const userId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!userId) return;
         const { shipping_city, PostalCode, FullAddress, Description } =
           ctx.request.body;
 
@@ -90,7 +93,7 @@ export default factories.createCoreController(
               FullAddress,
               Description,
               IsTemporary: false,
-              user: user.id,
+              user: userId,
             },
             populate: {
               shipping_city: {

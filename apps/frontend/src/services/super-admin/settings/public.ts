@@ -89,6 +89,21 @@ const PUBLIC_SETTINGS_QUERY = PUBLIC_SETTINGS_FIELDS.map(
 
 const HERO_SLIDER_QUERY = "fields[0]=homeHeroSliderPublished&fields[1]=homeHeroSliderMeta";
 
+type PublicSettingsFetchOptions = RequestInit & {
+  next?: { revalidate: number; tags: string[] };
+};
+
+const publicSettingsFetchOptions = (): PublicSettingsFetchOptions => ({
+  ...(process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE === "1" || process.env.E2E_SEED_MODE === "auto"
+    ? { cache: "no-store" as const }
+    : { next: { revalidate: 60, tags: ["site-settings"] } }),
+  headers: {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "Accept-Encoding": "gzip",
+  },
+});
+
 export type PublicHeroSlider = {
   published: unknown;
   meta: unknown;
@@ -122,14 +137,10 @@ export async function getPublicSuperAdminSettings(): Promise<SuperAdminSettings>
   try {
     // Use internal URL for server-side fetches to bypass TLS/DNS overhead
     const baseUrl = typeof window === "undefined" ? getStrapiServerUrl() : API_BASE_URL;
-    const response = await fetch(`${baseUrl}/settings?${PUBLIC_SETTINGS_QUERY}`, {
-      next: { revalidate: 60, tags: ["site-settings"] },
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "Accept-Encoding": "gzip",
-      },
-    }).then((res) => res.json());
+    const response = await fetch(
+      `${baseUrl}/settings?${PUBLIC_SETTINGS_QUERY}`,
+      publicSettingsFetchOptions(),
+    ).then((res) => res.json());
 
     const data = (response as any)?.data?.attributes;
     if (!data) return defaultSettings();

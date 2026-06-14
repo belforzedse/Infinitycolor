@@ -7,6 +7,7 @@ import { factories } from "@strapi/strapi";
 import { computeCouponDiscount } from "../../cart/services/lib/discounts";
 import { Strapi } from "@strapi/strapi";
 import { getAvailableCheckoutGateways } from "../services/checkout-gateway-availability";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 export default factories.createCoreController(
   "api::payment-gateway.payment-gateway",
@@ -84,13 +85,8 @@ export default factories.createCoreController(
     // Compute SnappPay eligibility based on current cart and shipping
     async snappEligible(ctx) {
       try {
-        // Resolve legacy local-user id from plugin user
-        const pluginUserId = ctx.state.user?.id;
-        if (!pluginUserId) {
-          return ctx.unauthorized("Unauthorized");
-        }
-        // When using plugin users, use the plugin user id as the principal
-        const userId = pluginUserId;
+        const userId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!userId) return;
 
         // Params
         // IMPORTANT: amount parameter should be the final قابل پرداخت (payable amount in Toman)
@@ -113,7 +109,7 @@ export default factories.createCoreController(
           const amountIRR = Math.max(0, amountTomanParam) * 10;
 
           strapi.log.info("SnappPay eligible request (direct amount)", {
-            userId: pluginUserId,
+            userId,
             amountToman: amountTomanParam,
             amountIRR,
           });
@@ -224,7 +220,7 @@ export default factories.createCoreController(
         // Call Snapp eligibility
         const snappay = strapi.service("api::payment-gateway.snappay");
         strapi.log.info("SnappPay eligible request", {
-        userId: pluginUserId,
+          userId,
           amountIRR,
           hasDiscountCode: !!discountCodeParam,
           discountToman: Math.round(discountAmount),

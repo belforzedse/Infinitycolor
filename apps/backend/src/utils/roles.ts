@@ -25,7 +25,21 @@ const ROLE_ALIAS_MAP: Record<string, RoleName> = {
 export const MANAGEMENT_ROLES: RoleName[] = [
   ROLE_NAMES.SUPERADMIN,
   ROLE_NAMES.STORE_MANAGER,
+  ROLE_NAMES.FOUNDER,
   ROLE_NAMES.EDITOR,
+];
+
+export const CUSTOMER_CAPABLE_ROLES: RoleName[] = [
+  ROLE_NAMES.CUSTOMER,
+  ROLE_NAMES.STORE_MANAGER,
+  ROLE_NAMES.FOUNDER,
+  ROLE_NAMES.SUPERADMIN,
+];
+
+export const STORE_MANAGER_PLUS_ROLES: RoleName[] = [
+  ROLE_NAMES.STORE_MANAGER,
+  ROLE_NAMES.FOUNDER,
+  ROLE_NAMES.SUPERADMIN,
 ];
 
 /**
@@ -33,11 +47,7 @@ export const MANAGEMENT_ROLES: RoleName[] = [
  * (orders, products, carts, shipping, sales reports).
  * Used to keep role lists centralized instead of scattering string literals.
  */
-export const OPERATIONAL_ROLES: RoleName[] = [
-  ROLE_NAMES.SUPERADMIN,
-  ROLE_NAMES.STORE_MANAGER,
-  ROLE_NAMES.FOUNDER,
-];
+export const OPERATIONAL_ROLES: RoleName[] = STORE_MANAGER_PLUS_ROLES;
 
 export function normalizeRoleName(name?: string | null): RoleName | null {
   if (!name) {
@@ -92,6 +102,95 @@ export async function fetchUserWithRole(strapi: Strapi, userId?: number) {
       where: { id: userId },
       populate: ["role", "user_role", "user_info"],
     });
+}
+
+export async function resolveUserRoleName(strapi: Strapi, user?: any): Promise<RoleName | null> {
+  const roleName =
+    user?.role?.name ||
+    user?.role?.type ||
+    user?.user_role?.Name ||
+    user?.user_role?.name;
+
+  const normalized = normalizeRoleName(roleName);
+  if (normalized) {
+    return normalized;
+  }
+
+  const fullUser = await fetchUserWithRole(strapi, user?.id);
+  return normalizeRoleName(
+    fullUser?.role?.name ||
+      fullUser?.role?.type ||
+      fullUser?.user_role?.Name ||
+      fullUser?.user_role?.name ||
+      null,
+  );
+}
+
+function readTargetUserId(ctx: any): unknown {
+  return (
+    ctx?.query?.targetUserId ??
+    ctx?.query?.userId ??
+    ctx?.request?.body?.targetUserId ??
+    ctx?.request?.body?.userId ??
+    ctx?.request?.body?.data?.targetUserId ??
+    ctx?.request?.body?.data?.userId
+  );
+}
+
+function setContextError(ctx: any, method: "badRequest" | "forbidden" | "unauthorized", status: number, message: string, payload?: object) {
+  const handler = ctx?.[method];
+  if (typeof handler === "function") {
+    try {
+      if (payload === undefined) {
+        handler.call(ctx, message);
+      } else {
+        handler.call(ctx, message, payload);
+      }
+      return;
+    } catch (error: any) {
+      if (!error?.status) {
+        throw error;
+      }
+    }
+  }
+
+  ctx.status = status;
+  ctx.body = payload ? { error: message, ...payload } : { error: message };
+}
+
+export async function resolveCustomerTargetUserId(ctx: any, strapi: Strapi): Promise<number | null> {
+  const actorId = Number(ctx?.state?.user?.id);
+  if (!Number.isInteger(actorId) || actorId <= 0) {
+    setContextError(ctx, "unauthorized", 401, "Authentication required");
+    return null;
+  }
+
+  const requested = readTargetUserId(ctx);
+  if (requested === undefined || requested === null || requested === "") {
+    return actorId;
+  }
+
+  const targetUserId = Number(requested);
+  if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+    setContextError(ctx, "badRequest", 400, "Target user id must be a positive integer", {
+      data: { success: false, error: "INVALID_TARGET_USER" },
+    });
+    return null;
+  }
+
+  if (targetUserId === actorId) {
+    return targetUserId;
+  }
+
+  const roleName = await resolveUserRoleName(strapi, ctx.state.user);
+  if (roleIsAllowed(roleName, STORE_MANAGER_PLUS_ROLES)) {
+    return targetUserId;
+  }
+
+  setContextError(ctx, "forbidden", 403, "You do not have permission to target another user", {
+    data: { success: false, error: "TARGET_USER_FORBIDDEN" },
+  });
+  return null;
 }
 
 /**

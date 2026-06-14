@@ -29,7 +29,7 @@ export default defineConfig({
     navigationTimeout: 45_000,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
-    video: "retain-on-failure",
+    video: isCI ? "off" : "retain-on-failure",
   },
   projects: [
     {
@@ -54,9 +54,18 @@ export default defineConfig({
         timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
         env: {
           ...process.env,
+          HOME_BATCHED_SECTIONS_ENABLED:
+            process.env.HOME_BATCHED_SECTIONS_ENABLED ?? "true",
+          HOME_BATCHED_SECTION_ALLOWLIST:
+            process.env.HOME_BATCHED_SECTION_ALLOWLIST ?? "newest",
+          HOME_PRODUCT_SERVER_SHELL_SECTION:
+            process.env.HOME_PRODUCT_SERVER_SHELL_SECTION ?? "newest",
+          E2E_DISABLE_HOMEPAGE_FETCH_CACHE:
+            process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE ?? "1",
           NEXT_PUBLIC_API_BASE_URL: strapiApiURL(),
           NEXT_PUBLIC_IMAGE_BASE_URL: strapiOrigin(),
           STRAPI_INTERNAL_URL: strapiApiURL(),
+          STRAPI_BUILD_TIME_URL: strapiApiURL(),
         },
       }
     : undefined,

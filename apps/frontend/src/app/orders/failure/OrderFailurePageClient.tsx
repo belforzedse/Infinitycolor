@@ -25,7 +25,7 @@ export default function OrderFailure() {
   return (
     <StorefrontContainer className="py-10">
       <div className="mx-auto max-w-2xl rounded-lg bg-white p-8 shadow-md">
-        <div className="flex flex-col items-center text-center">
+        <div className="flex flex-col items-center text-center" data-testid="order-payment-failure">
           <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-red-100">
             <svg
               xmlns="http://www.w3.org/2000/svg"

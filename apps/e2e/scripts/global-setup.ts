@@ -3,7 +3,14 @@ import { createHmac } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { authCredentials, authStateDir, authStorageStatePath, type E2EAuthRole } from "../helpers/auth";
+import {
+  authCredentials,
+  authStateDir,
+  authStorageStatePath,
+  authUserIdEnvName,
+  E2E_AUTH_ROLES,
+  type E2EAuthRole,
+} from "../helpers/auth";
 import { storefrontBaseURL, strapiApiURL, strapiOrigin } from "../helpers/env";
 
 const repoRoot = path.resolve(
@@ -50,17 +57,30 @@ async function waitForEndpoint(url: string, timeoutMs: number) {
 }
 
 type SeedSummary = {
+  productSlug?: string;
+  homepageNewestProductIds?: number[];
   customerUserId?: number;
   adminUserId?: number;
+  founderUserId?: number;
+  storeManagerUserId?: number;
+  editorUserId?: number;
 };
 
-function runCommand(command: string) {
+const SEED_SUMMARY_USER_KEY: Record<E2EAuthRole, keyof SeedSummary> = {
+  customer: "customerUserId",
+  admin: "adminUserId",
+  founder: "founderUserId",
+  "store-manager": "storeManagerUserId",
+  editor: "editorUserId",
+};
+
+function runCommand(command: string, env: NodeJS.ProcessEnv = process.env) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     const child = spawn(command, {
       cwd: repoRoot,
-      env: process.env,
+      env,
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -96,9 +116,56 @@ function parseSeedSummary(output: string): SeedSummary {
   return JSON.parse(jsonText) as SeedSummary;
 }
 
-async function readBackendEnvValue(name: string) {
-  const existing = process.env[name]?.trim();
-  if (existing) return existing;
+async function assertSeededHomepageSection(seedSummary?: SeedSummary) {
+  if (process.env.E2E_SKIP_HOMEPAGE_CONTRACT_CHECK === "1") return;
+
+  const productSlug = seedSummary?.productSlug;
+  if (!productSlug) return;
+
+  const url = new URL(`${strapiApiURL()}/products/homepage-sections`);
+  url.searchParams.set("_e2e", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+  const response = await fetchWithTimeout(url.toString(), {
+    headers: { Accept: "application/json" },
+  }, 15_000);
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `E2E homepage sections check failed (${response.status} ${response.statusText}): ${body}`,
+    );
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      sections?: Array<{
+        id?: string;
+        products?: Array<{ attributes?: { Slug?: string }; Slug?: string }>;
+      }>;
+    };
+  };
+  const sections = payload?.data?.sections ?? [];
+  const newest = sections.find((section) => section.id === "newest");
+  const newestProducts = newest?.products ?? [];
+  const newestSlugs = newestProducts
+    .map((product) => product.attributes?.Slug ?? product.Slug)
+    .filter(Boolean);
+
+  if (!newestSlugs.includes(productSlug)) {
+    const ids = seedSummary.homepageNewestProductIds?.join(",") || "none";
+    throw new Error(
+      `E2E homepage newest section is missing seeded product "${productSlug}". ` +
+        `Seed summary homepageNewestProductIds=[${ids}], newestCount=${newestProducts.length}, ` +
+        `newestSlugs=[${newestSlugs.join(",")}].`,
+    );
+  }
+}
+
+async function readBackendEnvValue(name: string, aliases: string[] = []) {
+  for (const envName of [...aliases, name]) {
+    const existing = process.env[envName]?.trim();
+    if (existing) return existing;
+  }
 
   const envPath = path.join(repoRoot, "apps/backend/.env");
   const content = await readFile(envPath, "utf8").catch(() => "");
@@ -113,7 +180,8 @@ async function readBackendEnvValue(name: string) {
     return rawValue.replace(/^['"]|['"]$/g, "");
   }
 
-  throw new Error(`Missing ${name}; set it in the environment or apps/backend/.env`);
+  const envNames = [...aliases, name].join(" or ");
+  throw new Error(`Missing ${envNames}; set it in the environment or apps/backend/.env`);
 }
 
 function base64UrlJson(value: unknown) {
@@ -134,9 +202,9 @@ function issueJwt(userId: number, secret: string) {
 }
 
 function resolveSeededUserId(role: E2EAuthRole, seedSummary?: SeedSummary) {
-  const envName = role === "customer" ? "E2E_CUSTOMER_USER_ID" : "E2E_ADMIN_USER_ID";
+  const envName = authUserIdEnvName(role);
   const envValue = Number(process.env[envName]);
-  const seedValue = role === "customer" ? seedSummary?.customerUserId : seedSummary?.adminUserId;
+  const seedValue = seedSummary?.[SEED_SUMMARY_USER_KEY[role]] as number | undefined;
   const userId = Number.isFinite(envValue) && envValue > 0 ? envValue : seedValue;
 
   if (!Number.isFinite(userId) || !userId) {
@@ -238,7 +306,7 @@ async function writeAuthStorageState(role: E2EAuthRole, seedSummary?: SeedSummar
   }
 
   const userId = resolveSeededUserId(role, seedSummary);
-  const jwtSecret = await readBackendEnvValue("JWT_SECRET");
+  const jwtSecret = await readBackendEnvValue("JWT_SECRET", ["E2E_JWT_SECRET"]);
   await writeAuthStorageStateFromToken(role, issueJwt(userId, jwtSecret));
 }
 
@@ -253,12 +321,17 @@ export default async function globalSetup() {
   if (seedMode !== "skip") {
     const command =
       process.env.E2E_AUTO_SEED_COMMAND || "pnpm --filter @repo/backend seed:e2e";
-    const result = await runCommand(command);
+    const result = await runCommand(command, {
+      ...process.env,
+      E2E_CLEAR_REDIS_CACHE: process.env.E2E_CLEAR_REDIS_CACHE ?? "1",
+    });
     seedSummary = parseSeedSummary(result.stdout);
+    await assertSeededHomepageSection(seedSummary);
   }
 
   if (process.env.E2E_AUTH_MODE !== "skip") {
-    await writeAuthStorageState("customer", seedSummary);
-    await writeAuthStorageState("admin", seedSummary);
+    for (const role of E2E_AUTH_ROLES) {
+      await writeAuthStorageState(role, seedSummary);
+    }
   }
 }

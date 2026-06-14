@@ -11,6 +11,7 @@ interface InfoCardProps {
   handleMenuToggle: (e: React.MouseEvent) => void;
   isMenuOpen: boolean;
   menuButtonTestId?: string;
+  showMenuButton?: boolean;
 }
 
 export function InfoCard({
@@ -20,6 +21,7 @@ export function InfoCard({
   handleMenuToggle,
   isMenuOpen,
   menuButtonTestId,
+  showMenuButton = true,
   children,
 }: InfoCardProps & { children?: React.ReactNode }): React.JSX.Element {
   return (
@@ -29,19 +31,21 @@ export function InfoCard({
           <GridIcon className="h-4 w-4 shrink-0 text-neutral-400" />
           <span className="truncate text-xs text-neutral-400">{category}</span>
         </div>
-        <div className="flex shrink-0 items-center justify-between">
-          <button
-            ref={menuButtonRef}
-            onClick={handleMenuToggle}
-            className="focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-            aria-label="منوی عملیات"
-            aria-expanded={isMenuOpen}
-            data-testid={menuButtonTestId}
-            type="button"
-          >
-            <MoreIcon className="h-6 w-6 text-neutral-400" />
-          </button>
-        </div>
+        {showMenuButton && (
+          <div className="flex shrink-0 items-center justify-between">
+            <button
+              ref={menuButtonRef}
+              onClick={handleMenuToggle}
+              className="focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              aria-label="منوی عملیات"
+              aria-expanded={isMenuOpen}
+              data-testid={menuButtonTestId}
+              type="button"
+            >
+              <MoreIcon className="h-6 w-6 text-neutral-400" />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-0.5">

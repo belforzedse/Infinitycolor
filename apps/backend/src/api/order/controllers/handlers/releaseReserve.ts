@@ -1,6 +1,7 @@
 // @ts-nocheck
 import type { Attribute } from "@strapi/types";
 import type { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 /** Context shape for releaseReserve: state and methods used by the handler. */
 type ReleaseReserveContext = {
@@ -27,6 +28,9 @@ export async function releaseReserveHandler(
     });
   }
 
+  const userId = await resolveCustomerTargetUserId(ctx, strapi);
+  if (!userId) return;
+
   const orderId = Number(id);
   if (Number.isNaN(orderId)) {
     return ctx.badRequest("Invalid order id", {
@@ -35,7 +39,7 @@ export async function releaseReserveHandler(
   }
 
   const order = await strapi.db.query("api::order.order").findOne({
-    where: { id: orderId, user: { id: user.id } },
+    where: { id: orderId, user: { id: userId } },
   });
 
   if (!order) {
@@ -60,7 +64,7 @@ export async function releaseReserveHandler(
 
   const groupId = order.reserveGroupId;
   const groupOrders = await strapi.db.query("api::order.order").findMany({
-    where: { user: { id: user.id }, reserveGroupId: groupId },
+    where: { user: { id: userId }, reserveGroupId: groupId },
   });
 
   await strapi.db.transaction(async () => {
@@ -98,7 +102,7 @@ export async function releaseReserveHandler(
 
   strapi.log.info("Reserve released", {
     orderId,
-    userId: user.id,
+    userId,
     reserveGroupId: groupId,
     action: "release_reserve",
     orderCount: groupOrders.length,

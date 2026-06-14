@@ -6,6 +6,7 @@ import OverviewTab from "@/components/SuperAdmin/reports/products/OverviewTab";
 import TrendsTab from "@/components/SuperAdmin/reports/products/TrendsTab";
 import PerformanceTab from "@/components/SuperAdmin/reports/products/PerformanceTab";
 import InventoryTab from "@/components/SuperAdmin/reports/products/InventoryTab";
+import PaymentShippingTab from "@/components/SuperAdmin/reports/products/PaymentShippingTab";
 import {
   useReportFilters,
   type ReportTab,
@@ -16,10 +17,16 @@ const TABS: Array<{ key: ReportTab; label: string }> = [
   { key: "trends", label: "روند" },
   { key: "performance", label: "عملکرد محصولات" },
   { key: "inventory", label: "موجودی" },
+  { key: "payments", label: "پرداخت و ارسال" },
 ];
 
 export default function ProductReportsPage() {
-  const { tab, setTab } = useReportFilters();
+  // Single source of truth for the report's URL state. Passing `start`/`end`/`filters`
+  // down to the tabs as props (instead of each tab subscribing to nuqs independently)
+  // guarantees that changing the period — including via the quick-range presets — cascades
+  // a re-render to the tabs and refetches immediately.
+  const f = useReportFilters();
+  const { tab, setTab, start, end, filters } = f;
 
   return (
     <ContentWrapper title="گزارش محصولات">
@@ -40,12 +47,13 @@ export default function ProductReportsPage() {
           ))}
         </div>
 
-        <FilterBar showProductFilters={tab === "performance"} />
+        <FilterBar f={f} showProductFilters={tab === "performance"} />
 
-        {tab === "overview" && <OverviewTab />}
-        {tab === "trends" && <TrendsTab />}
-        {tab === "performance" && <PerformanceTab />}
-        {tab === "inventory" && <InventoryTab />}
+        {tab === "overview" && <OverviewTab start={start} end={end} />}
+        {tab === "trends" && <TrendsTab start={start} end={end} />}
+        {tab === "performance" && <PerformanceTab filters={filters} start={start} end={end} />}
+        {tab === "inventory" && <InventoryTab start={start} end={end} />}
+        {tab === "payments" && <PaymentShippingTab start={start} end={end} />}
       </div>
     </ContentWrapper>
   );

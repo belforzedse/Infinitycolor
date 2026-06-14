@@ -34,6 +34,12 @@ export default {
     },
     {
       method: "GET",
+      path: "/reports/products/breakdown",
+      handler: "report.productBreakdown",
+      config: { auth: { scope: [] } },
+    },
+    {
+      method: "GET",
       path: "/reports/products/performance",
       handler: "report.productPerformance",
       config: { auth: { scope: [] } },

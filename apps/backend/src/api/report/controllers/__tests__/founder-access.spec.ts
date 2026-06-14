@@ -7,7 +7,7 @@
  *
  * Contract:
  *  - Founder MAY call productSales (sales report under «گزارشات فروش»).
- *  - Founder MUST NOT call trafficDashboard or adminActivity (Superadmin-only).
+ *  - Founder MUST NOT call traffic or standalone admin-activity reports (Superadmin-only).
  */
 
 jest.mock("../../services/matomo", () => ({
@@ -79,12 +79,34 @@ describe("report controller - Founder access", () => {
     );
   });
 
+  it("blocks Founder from realtime traffic", async () => {
+    mockStrapiForRole("Founder");
+    const controller = loadController();
+    const ctx = createCtx();
+
+    await controller.trafficRealtime(ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      expect.stringContaining("Superadmin"),
+    );
+  });
+
   it("blocks Founder from the global admin-activity report", async () => {
     mockStrapiForRole("Founder");
     const controller = loadController();
     const ctx = createCtx();
 
     await controller.adminActivity(ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalled();
+  });
+
+  it("blocks Founder from standalone admin-activity detail", async () => {
+    mockStrapiForRole("Founder");
+    const controller = loadController();
+    const ctx = createCtx({ params: { id: 12 } });
+
+    await controller.adminActivityById(ctx);
 
     expect(ctx.forbidden).toHaveBeenCalled();
   });

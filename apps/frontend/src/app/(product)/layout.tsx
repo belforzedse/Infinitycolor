@@ -5,7 +5,7 @@ import Footer from "@/components/PLP/Footer";
 import MobileHeader from "@/components/PLP/Header/Mobile";
 import BottomNavigation from "@/components/PLP/BottomNavigation";
 import dynamic from "next/dynamic";
-import { useCart } from "@/contexts/CartContext";
+import { useOptionalCart } from "@/contexts/CartContext";
 import React, { Suspense } from "react";
 import ScrollToTop from "@/components/ScrollToTop";
 
@@ -14,7 +14,8 @@ const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), {
 });
 
 export default function ProductLayout({ children }: { children: React.ReactNode }) {
-  const { isDrawerOpen } = useCart();
+  const cart = useOptionalCart();
+  const isDrawerOpen = cart?.isDrawerOpen ?? false;
   const [scrolled, setScrolled] = React.useState(false);
   const [showHeader, setShowHeader] = React.useState(true);
   const lastScrollY = React.useRef(0);
@@ -111,7 +112,7 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
       {/* Safe area white bar for standalone mode */}
       {isStandalone && (
         <div
-          className="fixed left-0 right-0 top-0 z-[60] bg-background"
+          className="fixed left-0 right-0 top-0 z-[100] bg-background"
           data-safe-area-top
           style={{ height: "env(safe-area-inset-top)" }}
         />
@@ -125,7 +126,7 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
         پرش به محتوا
       </a>
       <header
-        className={`allow-overflow sticky z-50 transform border-t-0 transition-all duration-200 ${
+        className={`allow-overflow sticky z-[130] transform border-t-0 transition-all duration-200 ${
           scrolled
             ? "bg-white/45 shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-white/35"
             : "bg-white/55 backdrop-blur-md supports-[backdrop-filter]:bg-white/40"

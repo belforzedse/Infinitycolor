@@ -3,6 +3,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 export default factories.createCoreController(
   "api::story-seen.story-seen",
@@ -13,10 +14,8 @@ export default factories.createCoreController(
      * Idempotent — safe to call multiple times for the same story.
      */
     async markSeen(ctx: any) {
-      const pluginUserId: number | undefined = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("برای ثبت مشاهده باید وارد حساب کاربری خود شوید.");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       const { storyId } = ctx.request.body as { storyId?: unknown };
 
@@ -50,10 +49,8 @@ export default factories.createCoreController(
      * Returns an array of story IDs the authenticated user has already seen.
      */
     async getMine(ctx: any) {
-      const pluginUserId: number | undefined = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("برای دریافت لیست استوری‌های مشاهده‌شده باید وارد شوید.");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       try {
         const storySeenService = strapi.service("api::story-seen.story-seen") as {

@@ -3,7 +3,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { roleIsAllowed } from "../../../utils/roles";
+import { STORE_MANAGER_PLUS_ROLES, roleIsAllowed } from "../../../utils/roles";
 
 export default factories.createCoreController("api::blog-author.blog-author", ({ strapi }) => ({
   // Create author (Superadmin/Store manager or API token)
@@ -12,7 +12,7 @@ export default factories.createCoreController("api::blog-author.blog-author", ({
 
     // Allow API tokens (no user) or users with proper roles
     if (user) {
-      if (!roleIsAllowed(user.user_role?.Name, ["Superadmin", "Store manager"])) {
+      if (!roleIsAllowed(user.user_role?.Name || user.role?.name, STORE_MANAGER_PLUS_ROLES)) {
         return ctx.forbidden("You don't have permission to create blog authors");
       }
     }
@@ -27,7 +27,7 @@ export default factories.createCoreController("api::blog-author.blog-author", ({
 
     // Allow API tokens (no user) or users with proper roles
     if (user) {
-      if (!roleIsAllowed(user.user_role?.Name, ["Superadmin", "Store manager"])) {
+      if (!roleIsAllowed(user.user_role?.Name || user.role?.name, STORE_MANAGER_PLUS_ROLES)) {
         return ctx.forbidden("You don't have permission to update blog authors");
       }
     }
@@ -40,7 +40,7 @@ export default factories.createCoreController("api::blog-author.blog-author", ({
   async delete(ctx) {
     const { user } = ctx.state;
     
-    if (!user || !roleIsAllowed(user.user_role?.Name, ["Superadmin", "Store manager"])) {
+    if (!user || !roleIsAllowed(user.user_role?.Name || user.role?.name, STORE_MANAGER_PLUS_ROLES)) {
       return ctx.forbidden("You don't have permission to delete blog authors");
     }
     

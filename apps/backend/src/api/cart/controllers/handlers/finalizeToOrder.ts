@@ -1,4 +1,5 @@
 import { Strapi } from "@strapi/strapi";
+import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../../utils/roles";
 import {
   cancelOrderAndRelease,
   ensurePaymentGateway,
@@ -13,7 +14,6 @@ import {
 } from "../../../payment-gateway/services/checkout-gateway-availability";
 
 export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
-  const { user } = ctx.state;
   const {
     shipping,
     shippingCost,
@@ -29,7 +29,14 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     reserveGroupId,
   } = ctx.request.body;
 
+  let user = ctx.state.user;
   try {
+    const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!targetUserId) return;
+    if (Number(user?.id) !== targetUserId) {
+      user = (await fetchUserWithRole(strapi, targetUserId)) || { id: targetUserId };
+    }
+
     let resolvedAddressId = addressId;
     let resolvedShippingId = shipping;
     let resolvedShippingCost = shippingCost;

@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState } from "react";
 import { OrderService } from "@/services";
-import { translateOrderStatus, translatePaymentGateway } from "@/utils/statusTranslations";
+import { translateOrderStatus } from "@/utils/statusTranslations";
+import PaymentGatewayBadge from "@/components/PaymentGateway/PaymentGatewayBadge";
 
 interface PaymentStatusProps {
   orderId: number;
@@ -115,9 +116,9 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
         </div>
       )}
       {paymentGateway && (
-        <div className="text-sm mt-1 text-gray-600">
+        <div className="text-sm mt-1 flex items-center text-gray-600">
           <span className="ml-1">درگاه پرداخت:</span>
-          <span className="text-gray-800">{translatePaymentGateway(paymentGateway)}</span>
+          <PaymentGatewayBadge gateway={paymentGateway} className="text-gray-800" />
         </div>
       )}
       {transactionId && paymentGateway === "SnappPay" && (

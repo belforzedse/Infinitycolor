@@ -7,6 +7,7 @@ export interface CategoryData {
   Slug: string;
   Parent?: string;
   Image?: number | null;
+  MegaMenuImage?: number | null;
 }
 
 export const createCategory = async (category: CategoryData): Promise<ApiResponse<any>> => {

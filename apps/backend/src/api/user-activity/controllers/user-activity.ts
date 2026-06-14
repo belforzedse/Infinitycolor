@@ -1,21 +1,18 @@
 // @ts-nocheck
 import { factories } from "@strapi/strapi";
-import { ROLE_NAMES } from "../../../utils/roles";
-import { fetchUserWithRole, normalizeRoleName } from "../../../utils/roles";
+import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../utils/roles";
 
 export default factories.createCoreController("api::user-activity.user-activity" as any, ({ strapi }) => ({
   async findUserActivities(ctx) {
-    const user = ctx.state.user;
-    if (!user?.id) {
-      return ctx.unauthorized("Authentication required");
-    }
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
 
     const page = Number(ctx.query.page ?? 1);
     const pageSize = Number(ctx.query.pageSize ?? 20);
     const unreadOnly = String(ctx.query.unreadOnly ?? "false") === "true";
 
     const filters: Record<string, unknown> = {
-      user: { id: user.id },
+      user: { id: userId },
     };
     if (unreadOnly) {
       filters.IsRead = false;
@@ -32,10 +29,8 @@ export default factories.createCoreController("api::user-activity.user-activity"
   },
 
   async markRead(ctx) {
-    const user = ctx.state.user;
-    if (!user?.id) {
-      return ctx.unauthorized("Authentication required");
-    }
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
 
     const { ids } = ctx.request.body as { ids?: number[] };
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -45,7 +40,7 @@ export default factories.createCoreController("api::user-activity.user-activity"
     const records = await strapi.db.query("api::user-activity.user-activity" as any).findMany({
       where: {
         id: { $in: ids },
-        user: { id: user.id },
+        user: { id: userId },
       },
       select: ["id"],
     });
@@ -57,24 +52,20 @@ export default factories.createCoreController("api::user-activity.user-activity"
   },
 
   async markAllRead(ctx) {
-    const user = ctx.state.user;
-    if (!user?.id) {
-      return ctx.unauthorized("Authentication required");
-    }
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
 
     const service = strapi.service("api::user-activity.user-activity") as any;
-    await service.markAllAsRead(user.id);
+    await service.markAllAsRead(userId);
     return ctx.send({ success: true });
   },
 
   async unreadCount(ctx) {
-    const user = ctx.state.user;
-    if (!user?.id) {
-      return ctx.unauthorized("Authentication required");
-    }
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
 
     const count = await strapi.db.query("api::user-activity.user-activity" as any).count({
-      where: { user: { id: user.id }, IsRead: false },
+      where: { user: { id: userId }, IsRead: false },
     });
 
     return ctx.send({ count });
@@ -112,4 +103,3 @@ export default factories.createCoreController("api::user-activity.user-activity"
     }
   },
 }));
-

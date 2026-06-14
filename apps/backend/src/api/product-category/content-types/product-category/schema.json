@@ -27,6 +27,12 @@
       "required": false,
       "allowedTypes": ["images"]
     },
+    "MegaMenuImage": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": ["images"]
+    },
     "Color": {
       "type": "string"
     },

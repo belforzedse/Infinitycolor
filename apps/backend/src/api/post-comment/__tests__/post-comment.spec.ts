@@ -18,7 +18,9 @@ jest.mock("@strapi/strapi", () => ({
 }));
 
 jest.mock("../../../utils/roles", () => ({
+  STORE_MANAGER_PLUS_ROLES: ["Store manager", "Founder", "Superadmin"],
   fetchUserWithRole: (...args: unknown[]) => mockFetchUserWithRole(...args),
+  resolveCustomerTargetUserId: (ctx: any) => ctx.state?.user?.id ?? null,
   roleIsAllowed: (...args: unknown[]) => mockRoleIsAllowed(...args),
 }));
 

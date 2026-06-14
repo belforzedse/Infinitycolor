@@ -19,10 +19,10 @@ function onHttpError(
 ): void {
   handleAuthErrors(error);
   if (context.status === 403 && typeof window !== "undefined") {
-    void import("@/lib/atoms/auth").then(({ currentUserAtom }) => {
-      void import("@/lib/jotaiStore").then(({ jotaiStore }) => {
-        jotaiStore.set(currentUserAtom, null);
-        if (window.location.pathname.startsWith("/super-admin")) {
+    if (window.location.pathname.startsWith("/super-admin")) {
+      void import("@/lib/atoms/auth").then(({ currentUserAtom }) => {
+        void import("@/lib/jotaiStore").then(({ jotaiStore }) => {
+          jotaiStore.set(currentUserAtom, null);
           setTimeout(() => {
             if (window.history.length > 1) {
               window.history.back();
@@ -30,9 +30,9 @@ function onHttpError(
               window.location.href = "/";
             }
           }, 100);
-        }
+        });
       });
-    });
+    }
   }
 }
 

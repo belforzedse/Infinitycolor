@@ -151,8 +151,8 @@ export default function Filter({
         <PriceFilter
           minPriceValue={minPrice ? parseInt(minPrice) : undefined}
           maxPriceValue={maxPrice ? parseInt(maxPrice) : undefined}
-          minPrice={20000}
-          maxPrice={50000000}
+          minPrice={50000}
+          maxPrice={10000000}
           onPriceChange={handlePriceChange}
         />
       </PLPFilterBox>

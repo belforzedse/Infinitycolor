@@ -2065,6 +2065,7 @@ export interface ApiProductCategoryProductCategory extends Schema.CollectionType
     featured: Attribute.Boolean & Attribute.DefaultTo<false>;
     Image: Attribute.Media<"images">;
     isMainCategory: Attribute.Boolean & Attribute.DefaultTo<false>;
+    MegaMenuImage: Attribute.Media<"images">;
     parent: Attribute.Relation<
       "api::product-category.product-category",
       "manyToOne",

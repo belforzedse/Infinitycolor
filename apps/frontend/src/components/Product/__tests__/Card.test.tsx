@@ -62,7 +62,7 @@ describe("ProductCard", () => {
     require("@/services/product/product").getLazySecondaryMediaByProductId;
 
   const mockProps: ProductCardProps = {
-    images: ["/image1.jpg", "/image2.jpg"],
+    images: ["/images/image1.jpg", "/images/image2.jpg"],
     category: "Category Name",
     title: "Product Title",
     price: 100000,
@@ -231,8 +231,8 @@ describe("ProductCard", () => {
   });
 
   it("should lazy-load secondary images once on hover when initial image count is one", async () => {
-    getLazySecondaryMediaByProductId.mockResolvedValue(["/image2.jpg", "/image3.jpg"]);
-    const { container } = render(<ProductCard {...mockProps} images={["/image1.jpg"]} />);
+    getLazySecondaryMediaByProductId.mockResolvedValue(["/images/image2.jpg", "/images/image3.jpg"]);
+    const { container } = render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
     const article = container.querySelector("article");
 
     expect(article).toBeInTheDocument();
@@ -246,13 +246,16 @@ describe("ProductCard", () => {
     await waitFor(() => {
       const slider = screen.getByTestId("image-slider");
       expect(slider).toHaveAttribute("data-image-count", "3");
-      expect(slider).toHaveAttribute("data-images", "/image1.jpg,/image2.jpg,/image3.jpg");
+      expect(slider).toHaveAttribute(
+        "data-images",
+        "/images/image1.jpg,/images/image2.jpg,/images/image3.jpg",
+      );
     });
   });
 
   it("should not request lazy media when product already has multiple images", () => {
     const { container } = render(
-      <ProductCard {...mockProps} images={["/image1.jpg", "/image2.jpg"]} />,
+      <ProductCard {...mockProps} images={["/images/image1.jpg", "/images/image2.jpg"]} />,
     );
     const article = container.querySelector("article");
 
@@ -263,8 +266,8 @@ describe("ProductCard", () => {
   });
 
   it("should lazy-load secondary media on keyboard focus intent", async () => {
-    getLazySecondaryMediaByProductId.mockResolvedValue(["/image2.jpg"]);
-    render(<ProductCard {...mockProps} images={["/image1.jpg"]} />);
+    getLazySecondaryMediaByProductId.mockResolvedValue(["/images/image2.jpg"]);
+    render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
 
     fireEvent.focus(screen.getByRole("link"));
 
@@ -274,8 +277,8 @@ describe("ProductCard", () => {
   });
 
   it("should lazy-load secondary media on first touch intent", async () => {
-    getLazySecondaryMediaByProductId.mockResolvedValue(["/image2.jpg"]);
-    const { container } = render(<ProductCard {...mockProps} images={["/image1.jpg"]} />);
+    getLazySecondaryMediaByProductId.mockResolvedValue(["/images/image2.jpg"]);
+    const { container } = render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
     const article = container.querySelector("article");
 
     expect(article).toBeInTheDocument();
@@ -288,11 +291,11 @@ describe("ProductCard", () => {
 
   it("should merge lazy-loaded images without duplicates", async () => {
     getLazySecondaryMediaByProductId.mockResolvedValue([
-      "/image1.jpg",
-      "/image2.jpg",
-      "/image2.jpg",
+      "/images/image1.jpg",
+      "/images/image2.jpg",
+      "/images/image2.jpg",
     ]);
-    const { container } = render(<ProductCard {...mockProps} images={["/image1.jpg"]} />);
+    const { container } = render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
     const article = container.querySelector("article");
 
     expect(article).toBeInTheDocument();
@@ -304,13 +307,13 @@ describe("ProductCard", () => {
 
     const slider = screen.getByTestId("image-slider");
     expect(slider).toHaveAttribute("data-image-count", "2");
-    expect(slider).toHaveAttribute("data-images", "/image1.jpg,/image2.jpg");
+    expect(slider).toHaveAttribute("data-images", "/images/image1.jpg,/images/image2.jpg");
   });
 
   it("should keep original images when lazy media fetch fails", async () => {
     const consoleDebug = jest.spyOn(console, "debug").mockImplementation();
     getLazySecondaryMediaByProductId.mockRejectedValue(new Error("fetch failed"));
-    const { container } = render(<ProductCard {...mockProps} images={["/image1.jpg"]} />);
+    const { container } = render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
     const article = container.querySelector("article");
 
     expect(article).toBeInTheDocument();
@@ -322,7 +325,7 @@ describe("ProductCard", () => {
 
     const slider = screen.getByTestId("image-slider");
     expect(slider).toHaveAttribute("data-image-count", "1");
-    expect(slider).toHaveAttribute("data-images", "/image1.jpg");
+    expect(slider).toHaveAttribute("data-images", "/images/image1.jpg");
     expect(consoleDebug).toHaveBeenCalledWith(
       "[ProductCard] Secondary media fetch failed",
       expect.objectContaining({ productId: 1 }),
@@ -333,7 +336,7 @@ describe("ProductCard", () => {
 
   it("should not lazy-load secondary media for unavailable products", () => {
     const { container } = render(
-      <ProductCard {...mockProps} images={["/image1.jpg"]} isAvailable={false} />,
+      <ProductCard {...mockProps} images={["/images/image1.jpg"]} isAvailable={false} />,
     );
     const article = container.querySelector("article");
 

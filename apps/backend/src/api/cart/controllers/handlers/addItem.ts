@@ -1,10 +1,13 @@
 import { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 export const addItemHandler = (strapi: Strapi) => async (ctx: any) => {
-  const { user } = ctx.state;
   const { productVariationId, count } = ctx.request.body;
 
   try {
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
+
     if (!productVariationId) {
       return ctx.badRequest("Product variation ID is required", {
         data: { success: false, error: "Product variation ID is required" },
@@ -17,7 +20,7 @@ export const addItemHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     const cartService = strapi.service("api::cart.cart");
-    const cart = await cartService.getUserCart(user.id);
+    const cart = await cartService.getUserCart(userId);
     const result = await cartService.addCartItem(
       cart.id,
       productVariationId,

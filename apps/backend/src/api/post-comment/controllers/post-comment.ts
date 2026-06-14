@@ -4,11 +4,14 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import {
+  STORE_MANAGER_PLUS_ROLES,
+  fetchUserWithRole,
+  resolveCustomerTargetUserId,
+  roleIsAllowed,
+} from "../../../utils/roles";
 import { resolveUserDisplayName } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
-
-const MANAGEMENT_ROLES = ["Superadmin", "Store manager"];
 
 function relationId(value: any): number | string | null {
   if (!value) return null;
@@ -74,7 +77,7 @@ export default factories.createCoreController("api::post-comment.post-comment", 
 
   async hasManagementRole(user?: any) {
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    return roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
+    return roleIsAllowed(actorRoleName, STORE_MANAGER_PLUS_ROLES);
   },
 
   async find(ctx) {
@@ -121,6 +124,8 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     if (!user) {
       return ctx.unauthorized("Authentication required");
     }
+    const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!targetUserId) return;
 
     const data = ctx.request.body?.data || {};
     if (!data.Content?.trim()) {
@@ -151,17 +156,17 @@ export default factories.createCoreController("api::post-comment.post-comment", 
       }
     }
 
-    const populatedUser = await fetchUserWithRole(strapi, user.id);
+    const populatedUser = await fetchUserWithRole(strapi, targetUserId);
     const commentAuthor = populatedUser || user;
     const resolvedName = resolveUserDisplayName(commentAuthor);
-    const hasManagementRole = await this.hasManagementRole(commentAuthor);
+    const hasManagementRole = await this.hasManagementRole(user);
 
     const comment = await strapi.entityService.create("api::post-comment.post-comment", {
       data: {
         Content: data.Content,
         post: postId,
         parent_comment: parentCommentId || undefined,
-        user: user.id,
+        user: targetUserId,
         Date: new Date(),
         Status: hasManagementRole ? "Approved" : "Pending",
         Name: resolvedName,
@@ -173,7 +178,7 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     if (parentCommentId && parentComment?.user?.id) {
       await strapi.service("api::notification.notification").createCommentReply({
         recipientId: Number(parentComment.user.id),
-        actorId: Number(user.id),
+        actorId: Number(targetUserId),
         actorName: resolvedName,
         postId: Number(postId),
         postSlug: post.Slug,
@@ -190,6 +195,8 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     if (!user) {
       return ctx.unauthorized("Authentication required");
     }
+    const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!targetUserId) return;
 
     const existingComment = await strapi.entityService.findOne("api::post-comment.post-comment", id, {
       populate: ["user"],
@@ -200,7 +207,7 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     }
 
     const hasManagementRole = await this.hasManagementRole(user);
-    const ownsComment = String(existingComment.user?.id) === String(user.id);
+    const ownsComment = String(existingComment.user?.id) === String(targetUserId);
 
     if (!ownsComment && !hasManagementRole) {
       return ctx.forbidden("You can only edit your own comments");
@@ -234,6 +241,8 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     if (!user) {
       return ctx.unauthorized("Authentication required");
     }
+    const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!targetUserId) return;
 
     const existingComment = await strapi.entityService.findOne("api::post-comment.post-comment", id, {
       populate: ["user"],
@@ -244,7 +253,7 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     }
 
     const hasManagementRole = await this.hasManagementRole(user);
-    const ownsComment = String(existingComment.user?.id) === String(user.id);
+    const ownsComment = String(existingComment.user?.id) === String(targetUserId);
 
     if (!ownsComment && !hasManagementRole) {
       return ctx.forbidden("You can only delete your own comments");

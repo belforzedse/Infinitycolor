@@ -87,7 +87,9 @@ describe("OrderService", () => {
 
       const result = await getOrderPaymentStatus(123);
 
-      expect(apiClient.get).toHaveBeenCalledWith("/orders/123/payment-status");
+      expect(apiClient.get).toHaveBeenCalledWith("/orders/123/payment-status", {
+        suppressAuthRedirect: true,
+      });
       expect(result).toEqual(mockResponse.data);
     });
   });

@@ -182,13 +182,13 @@ function PaymentCallbackContent() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center">
       {loading ? (
-        <div className="p-10 text-center">
+        <div className="p-10 text-center" data-testid="payment-callback-loading">
           <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
           <p className="text-lg">در حال بررسی وضعیت پرداخت...</p>
           <p className="text-sm mt-2 text-gray-500">لطفا صفحه را نبندید</p>
         </div>
       ) : error ? (
-        <div className="p-10 text-center">
+        <div className="p-10 text-center" data-testid="payment-callback-error">
           <div className="text-xl mb-4 text-red-500">خطا در پردازش پرداخت</div>
           <p className="text-gray-700">{error}</p>
         </div>

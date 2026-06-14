@@ -7,8 +7,8 @@ import React from "react";
 import ShoppingCartQuantityControl from "../QuantityControl";
 import classNames from "classnames";
 import type { CartItem } from "@/contexts/CartContext";
-import { IMAGE_BASE_URL } from "@/constants/api";
 import { faNum } from "@/utils/faNum";
+import { resolveCartItemImage } from "../cartItemImage";
 
 interface Props {
   cartItems: CartItem[];
@@ -43,6 +43,7 @@ const ShoppingCartDesktopTable: React.FC<Props> = ({ cartItems, className }) => 
           {cartItems.map((item) => {
             const attributes = buildAttributes(item);
             const hasDiscount = !!(item.originalPrice && item.originalPrice > item.price);
+            const imageUrl = resolveCartItemImage(item.image);
 
             return (
               <tr
@@ -60,11 +61,7 @@ const ShoppingCartDesktopTable: React.FC<Props> = ({ cartItems, className }) => 
                       className="relative h-[72px] w-[72px] flex-shrink-0 overflow-hidden rounded-2xl border border-slate-100"
                     >
                       <Image
-                        src={
-                          item.image.startsWith("http")
-                            ? item.image
-                            : `${IMAGE_BASE_URL}${item.image}`
-                        }
+                        src={imageUrl}
                         alt={item.name}
                         fill
                         loader={imageLoader}

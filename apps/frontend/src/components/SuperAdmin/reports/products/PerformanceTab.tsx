@@ -5,7 +5,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useQueryState } from "nuqs";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import SuperAdminPagination from "@/components/SuperAdmin/Pagination";
-import { useReportFilters } from "./useReportFilters";
 import ProductDrawer from "./ProductDrawer";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
@@ -14,6 +13,7 @@ import {
   buildPerformanceUrl,
   downloadProductReportCsv,
   type ProductPerformanceRow,
+  type ProductReportFilters,
 } from "@/services/super-admin/reports/products";
 
 const STATUS_FA: Record<string, string> = {
@@ -69,8 +69,15 @@ const COL_LABELS: Record<ColKey, string> = {
   stock: "موجودی",
 };
 
-export default function PerformanceTab() {
-  const { filters, start, end } = useReportFilters();
+export default function PerformanceTab({
+  filters,
+  start,
+  end,
+}: {
+  filters: ProductReportFilters;
+  start: string;
+  end: string;
+}) {
   const [sort, setSort] = useQueryState("psort", { defaultValue: "gross:desc" });
   const [page] = useQueryState("page", { defaultValue: "1" });
   const [pageSize, setPageSize] = useQueryState("pageSize", { defaultValue: "25" });

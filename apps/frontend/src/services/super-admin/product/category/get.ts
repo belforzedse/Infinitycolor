@@ -23,6 +23,21 @@ export interface CategoryDetail {
         };
       } | null;
     };
+    MegaMenuImage?: {
+      data?: {
+        id: number;
+        attributes?: {
+          url?: string;
+          alternativeText?: string | null;
+          formats?: {
+            thumbnail?: { url?: string };
+            small?: { url?: string };
+            medium?: { url?: string };
+            large?: { url?: string };
+          } | null;
+        };
+      } | null;
+    };
     parent?: {
       data: {
         id: number;
@@ -39,7 +54,7 @@ export interface CategoryDetail {
 export const getCategoryById = async (
   id: string | number,
 ): Promise<CategoryDetail> => {
-  const endpoint = `${ENDPOINTS.PRODUCT.CATEGORY}/${id}?populate[0]=parent&populate[1]=Image`;
+  const endpoint = `${ENDPOINTS.PRODUCT.CATEGORY}/${id}?populate[0]=parent&populate[1]=Image&populate[2]=MegaMenuImage`;
   const response = await apiClient.get<CategoryDetail>(endpoint);
   return response.data;
 };

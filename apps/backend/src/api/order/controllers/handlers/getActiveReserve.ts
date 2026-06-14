@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 /** Context shape for getActiveReserve: state and methods used by the handler. */
 export type GetActiveReserveContext = {
@@ -20,13 +21,8 @@ export async function getActiveReserveHandler(
   | { data: { reserveGroupId: string; reserveExpiresAt: unknown; orders: unknown[]; orderCount: number }; error?: never }
   | { data: null; error: { message: string; details?: unknown } }
 > {
-  const { user } = ctx.state;
-  if (!user?.id) {
-    ctx.unauthorized("Unauthorized");
-    return { data: null };
-  }
-
-  const userId = user.id;
+  const userId = await resolveCustomerTargetUserId(ctx, strapi);
+  if (!userId) return { data: null };
 
   try {
     const now = new Date();
