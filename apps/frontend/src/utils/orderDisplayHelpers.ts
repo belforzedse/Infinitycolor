@@ -84,9 +84,9 @@ export function mapOrderToDisplayProps(
     | null
     | undefined;
   const coverImage = product?.cover_image ?? product?.CoverImage;
-  const image = coverImage?.url
-    ? `${context.imageBaseUrl}${coverImage.url}`
-    : context.placeholderImage;
+  // Pass the relative cover url through; imageLoader/resolveSafeImageSrc resolves it
+  // against the trusted origin (avoids double-slash / wrong-host from naive concatenation).
+  const image = coverImage?.url ?? context.placeholderImage;
   const category =
     firstItem?.product_variation?.product?.Title ??
     firstItem?.ProductTitle ??

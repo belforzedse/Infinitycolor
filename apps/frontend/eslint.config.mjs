@@ -5,6 +5,9 @@ import reactHooks from "eslint-plugin-react-hooks";
 import tailwind from "eslint-plugin-tailwindcss";
 
 const eslintConfig = [
+  {
+    ignores: ["coverage/**", ".next/**", "out/**"],
+  },
   ...nextCoreWebVitals,
   ...nextTypescript,
   {

@@ -16,9 +16,11 @@ type Props = {
   apiUrl: string;
   itemName?: string;
   payloadFormatter?: (removedAt: string | null) => Record<string, unknown>;
+  testIdPrefix?: string;
 };
 
 export default function RemoveActionButton(props: Props) {
+  const { testIdPrefix } = props;
   const { isRemoved, id, apiUrl, itemName = "محصول", payloadFormatter } = props;
   const [, setRefresh] = useAtom(refreshTable);
   const { isStoreManager } = useCurrentUser();
@@ -102,12 +104,16 @@ export default function RemoveActionButton(props: Props) {
             icon={<UndoIcon />}
             onClick={handleRestore}
             disabled={isDeleting}
+            testId={testIdPrefix ? `${testIdPrefix}-restore` : undefined}
+            dataAttributes={{ id }}
           />
           <SuperAdminTableCellActionButton
             variant="secondary"
             icon={<TrashIcon />}
             onClick={handlePermanentDeleteClick}
             disabled={isDeleting}
+            testId={testIdPrefix ? `${testIdPrefix}-hard-delete` : undefined}
+            dataAttributes={{ id }}
           />
         </div>
 
@@ -143,6 +149,8 @@ export default function RemoveActionButton(props: Props) {
       icon={<RecycleIcon />}
       onClick={handleDelete}
       disabled={isDeleting}
+      testId={testIdPrefix ? `${testIdPrefix}-soft-delete` : undefined}
+      dataAttributes={{ id }}
     />
   );
 }

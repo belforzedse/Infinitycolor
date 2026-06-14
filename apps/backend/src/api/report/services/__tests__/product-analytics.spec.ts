@@ -12,8 +12,13 @@ import {
   clampPage,
   irrToToman,
   serializeProductRow,
+  gatewayLabelFa,
+  withShares,
+  gatewayBreakdownQuery,
+  shippingBreakdownQuery,
   PERFORMANCE_SORT_COLUMNS,
   MAX_PAGE_SIZE,
+  type ResolvedJoins,
 } from "../product-analytics";
 
 describe("product-analytics pure helpers", () => {
@@ -221,6 +226,83 @@ describe("product-analytics pure helpers", () => {
         reserved_stock: 0,
       });
       expect(row.net).toBe(0);
+    });
+  });
+
+  describe("gatewayLabelFa", () => {
+    it("maps known enum values to Persian labels", () => {
+      expect(gatewayLabelFa("Mellat")).toBe("ملت");
+      expect(gatewayLabelFa("ZarinPal")).toBe("زرین‌پال");
+      expect(gatewayLabelFa("Wallet")).toBe("کیف پول");
+      expect(gatewayLabelFa("SnappPay")).toBe("اسنپ‌پی");
+      expect(gatewayLabelFa("SamanKish")).toBe("سامان");
+    });
+
+    it("groups null / empty / Unknown under نامشخص", () => {
+      expect(gatewayLabelFa(null)).toBe("نامشخص");
+      expect(gatewayLabelFa(undefined)).toBe("نامشخص");
+      expect(gatewayLabelFa("")).toBe("نامشخص");
+      expect(gatewayLabelFa("Unknown")).toBe("نامشخص");
+    });
+
+    it("falls back to the raw value for an unrecognised gateway", () => {
+      expect(gatewayLabelFa("NewGateway")).toBe("NewGateway");
+    });
+  });
+
+  describe("withShares", () => {
+    it("annotates each row with its percentage share of the keyed total", () => {
+      const rows = withShares([{ total: 75 }, { total: 25 }], "total");
+      expect(rows[0].sharePct).toBe(75);
+      expect(rows[1].sharePct).toBe(25);
+    });
+
+    it("returns null share when the total is zero (no divide-by-zero)", () => {
+      const rows = withShares([{ total: 0 }, { total: 0 }], "total");
+      expect(rows[0].sharePct).toBeNull();
+      expect(rows[1].sharePct).toBeNull();
+    });
+
+    it("rounds shares to two decimals", () => {
+      const rows = withShares([{ total: 1 }, { total: 2 }], "total");
+      expect(rows[0].sharePct).toBe(33.33);
+      expect(rows[1].sharePct).toBe(66.67);
+    });
+  });
+
+  describe("breakdown query builders", () => {
+    // Minimal joins stub — the breakdown queries only read orderToContract /
+    // contractToTx (via paidOrdersCte) and orderToShipping.
+    const joins = {
+      orderToContract: "JOIN contracts c ON c.order_id = o.id",
+      contractToTx: "JOIN contract_transactions ct ON ct.contract_id = c.id",
+      orderToShipping: "LEFT JOIN shippings s ON s.id = o.shipping_id",
+    } as unknown as ResolvedJoins;
+
+    it("gateway query reuses the paid_orders definition and groups by gateway", () => {
+      const sql = gatewayBreakdownQuery(joins);
+      expect(sql).toContain("paid_orders");
+      expect(sql).toContain("payment_gateway");
+      expect(sql).toMatch(/GROUP BY/i);
+      // attributes settlement per order (no double counting across gateways)
+      expect(sql).toContain("SUM(po.settled_irr)");
+    });
+
+    it("shipping query sums the stored shipping_cost, not product subtotal", () => {
+      const sql = shippingBreakdownQuery(joins);
+      expect(sql).toContain("paid_orders");
+      expect(sql).toContain("SUM(o.shipping_cost)");
+      expect(sql).toContain("s.title");
+      expect(sql).toContain("__UNKNOWN__");
+    });
+
+    it("shipping query degrades gracefully when the shipping relation is unresolved", () => {
+      const sql = shippingBreakdownQuery({
+        ...joins,
+        orderToShipping: "",
+      } as unknown as ResolvedJoins);
+      expect(sql).toContain("NULL::text");
+      expect(sql).toContain("__UNKNOWN__");
     });
   });
 });

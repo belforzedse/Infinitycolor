@@ -34,6 +34,7 @@ $env:E2E_CUSTOMER_PHONE = "+989000000101"
 $env:E2E_CUSTOMER_PASSWORD = "E2eCustomer!123"
 $env:E2E_ADMIN_PHONE = "+989000000201"
 $env:E2E_ADMIN_PASSWORD = "E2eAdmin!123"
+$env:E2E_JWT_SECRET = "your-local-backend-jwt-secret"
 ```
 
 Use `localhost` for the frontend in local Next dev. Next 16 blocks dev/HMR resources
@@ -65,7 +66,7 @@ By default, global setup waits for `/_health` and runs:
 pnpm --filter @repo/backend seed:e2e
 ```
 
-The seed command creates deterministic storefront fixtures plus local-only E2E customer/admin users. It also gives the E2E customer a seeded cart with the smoke product so authenticated checkout validation does not depend on an extra add-to-cart step. Playwright uses the seeded user ids and local `JWT_SECRET` to generate storage state under `apps/e2e/.auth/`, avoiding login rate-limit flake during repeated smoke runs. That directory is ignored by git and must not be uploaded as a CI artifact.
+The seed command creates deterministic storefront fixtures plus local-only E2E customer/admin users. It also gives the E2E customer a seeded cart with the smoke product so authenticated checkout validation does not depend on an extra add-to-cart step. Playwright uses the seeded user ids and `E2E_JWT_SECRET` (or local backend `JWT_SECRET`) to generate storage state under `apps/e2e/.auth/`, avoiding login rate-limit flake during repeated smoke runs. That directory is ignored by git and must not be uploaded as a CI artifact.
 
 If a frontend dev server is already running, seed before starting it or restart the frontend after
 seeding so server-side product data is not stale. Redis endpoint cache clearing is opt-in:
@@ -117,4 +118,4 @@ These paths are ignored by git. Do not store `.env` files, storage state, tokens
 
 ## CI Status
 
-`.gitlab-ci.yml` is intentionally unchanged in Phase 1. After local smoke passes, add a separate CI mini-plan before introducing a GitLab `test` or `verify` stage.
+`.gitlab-ci.yml` includes a non-blocking `e2e:smoke` job for the `dev` branch. The job runs against an isolated Postgres/Redis/backend service stack and starts the frontend from source so `NEXT_PUBLIC_*` values point at the throwaway backend.

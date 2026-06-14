@@ -186,7 +186,13 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
         "product-review": ["submitReview", "getUserReviews"],
       },
       "api::order": {
-        order: ["getMyOrders", "getMyOrderDetail", "checkPaymentStatus", "getActiveReserve"],
+        order: [
+          "getMyOrders",
+          "getMyOrderDetail",
+          "checkPaymentStatus",
+          "getActiveReserve",
+          "releaseReserve",
+        ],
       },
       "api::local-user-address": {
         "local-user-address": [
@@ -286,6 +292,76 @@ const STORE_MANAGER_RESTRICTED_CONTROLLERS: RestrictedController[] = [
 ];
 
 const EDITOR_RESTRICTED_CONTROLLERS: RestrictedController[] = [
+  {
+    typeKey: "api::product",
+    controller: "product",
+    allowActions: [...READ_ACTIONS, "search"],
+  },
+  {
+    typeKey: "api::product-category",
+    controller: "product-category",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-category-content",
+    controller: "product-category-content",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-faq",
+    controller: "product-faq",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-size-helper",
+    controller: "product-size-helper",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-tag",
+    controller: "product-tag",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-variation",
+    controller: "product-variation",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-variation-color",
+    controller: "product-variation-color",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-variation-model",
+    controller: "product-variation-model",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-variation-size",
+    controller: "product-variation-size",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-stock",
+    controller: "product-stock",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-review",
+    controller: "product-review",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-review-reply",
+    controller: "product-review-reply",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-review-like",
+    controller: "product-review-like",
+    allowActions: READ_ACTIONS,
+  },
   { typeKey: "api::post", controller: "post", allowActions: READ_ACTIONS },
   { typeKey: "api::post-comment", controller: "post-comment", allowActions: READ_ACTIONS },
   { typeKey: "api::post-like", controller: "post-like", allowActions: [] },
@@ -293,48 +369,33 @@ const EDITOR_RESTRICTED_CONTROLLERS: RestrictedController[] = [
   { typeKey: "api::post-comment-like", controller: "post-comment-like", allowActions: [] },
 ];
 
-// Founder = operational admin. Baseline mirrors store-manager product/category/blog/report
-// restrictions, PLUS harder blocks: no discount, settings writes, FAQ edit, user management,
-// admin-activity, or commerce-maintenance. Founders keep orders, products (no hard delete),
-// carts, shipping, stories, and the product-sales report (gated in the report controller).
-const FOUNDER_RESTRICTED_CONTROLLERS: RestrictedController[] = [
-  // Reports are gated in the report controller (routes use auth scope []), but disable the
-  // content-API actions too for defense-in-depth.
-  { typeKey: "api::report", controller: "report", allowActions: [] },
-  // Discount management fully hidden (no read either).
-  { typeKey: "api::discount", controller: "discount", allowActions: [] },
-  // Settings/customization: read-only (find) so shared site config still loads; no writes.
-  { typeKey: "api::settings", controller: "settings", allowActions: ["find"] },
-  // Customization writes to these content types too - keep read-only for Founders.
-  { typeKey: "api::site-identity", controller: "site-identity", allowActions: ["find"] },
-  { typeKey: "api::navigation", controller: "navigation", allowActions: ["find"] },
-  { typeKey: "api::footer", controller: "footer", allowActions: ["find"] },
-  // FAQ edit blocked - read only.
-  { typeKey: "api::faq-category", controller: "faq-category", allowActions: READ_ACTIONS },
-  { typeKey: "api::faq-question", controller: "faq-question", allowActions: READ_ACTIONS },
-  { typeKey: "api::site-faq", controller: "site-faq", allowActions: ["find"] },
-  // Blog read-only (like normal users).
-  { typeKey: "api::blog-post", controller: "blog-post", allowActions: READ_ACTIONS },
-  { typeKey: "api::blog-category", controller: "blog-category", allowActions: READ_ACTIONS },
-  { typeKey: "api::blog-tag", controller: "blog-tag", allowActions: READ_ACTIONS },
-  { typeKey: "api::blog-author", controller: "blog-author", allowActions: READ_ACTIONS },
-  { typeKey: "api::blog-comment", controller: "blog-comment", allowActions: READ_ACTIONS },
-  // User management fully blocked (stricter than store-manager, which keeps read).
-  { typeKey: "plugin::users-permissions", controller: "user", allowActions: [] },
-  // Admin / user activity reports blocked (order-specific logs use a separate gated endpoint).
-  { typeKey: "api::admin-activity", controller: "admin-activity", allowActions: [] },
-  { typeKey: "api::user-activity", controller: "user-activity", allowActions: [] },
-  // Destructive maintenance blocked.
-  { typeKey: "api::commerce-maintenance", controller: "commerce-maintenance", allowActions: [] },
-  // Products: manage but no permanent delete (mirror store-manager).
-  {
-    typeKey: "api::product",
-    controller: "product",
-    allowActions: ["find", "findOne", "create", "update", "search"],
-  },
-  // Categories: read-only (mirror store-manager); create/update/delete are superadmin-only.
-  { typeKey: "api::product-category", controller: "product-category", allowActions: [...READ_ACTIONS] },
-];
+const FOUNDER_REPORT_ACTIONS = [
+  "productSales",
+  "productOverview",
+  "productTrends",
+  "productPerformance",
+  "productInventory",
+  "productDetail",
+  "productExport",
+] as const;
+
+// Founder is store-manager-plus, not near-superadmin: it keeps store-manager restrictions
+// but allows order-scoped audit logs and the sales-reporting workspace.
+const FOUNDER_RESTRICTED_CONTROLLERS: RestrictedController[] =
+  STORE_MANAGER_RESTRICTED_CONTROLLERS.map((restriction) => {
+    if (
+      restriction.typeKey === "api::admin-activity" &&
+      restriction.controller === "admin-activity"
+    ) {
+      return { ...restriction, allowActions: ["findOrderActivities"] };
+    }
+
+    if (restriction.typeKey === "api::report" && restriction.controller === "report") {
+      return { ...restriction, allowActions: FOUNDER_REPORT_ACTIONS };
+    }
+
+    return restriction;
+  });
 
 /**
  * Determines whether a role permission spec grants all permissions.
@@ -484,6 +545,10 @@ function applyRestrictedControllers(
     });
   });
 }
+
+export const __rolePermissionTestUtils = {
+  getDefaultPermissions,
+};
 
 async function assignRolePermissions(strapi: Strapi, role: { id: number; name: string; type?: string | null }) {
   const roleType = role?.type;
@@ -755,7 +820,7 @@ export default {
           },
           {
             name: "Founder",
-            description: "Operational admin: orders & sales, no sensitive config (customization, blog, FAQ, settings, discounts, traffic/admin-activity reports, user management)",
+            description: "Store manager plus founder-specific operational access, without superadmin-only destructive actions",
             type: "founder",
           },
           { name: "Customer", description: "End customer role", type: "customer" },

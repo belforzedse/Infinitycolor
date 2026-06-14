@@ -4,6 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 export default factories.createCoreController(
   "api::product-like.product-like",
@@ -17,9 +18,8 @@ export default factories.createCoreController(
           return ctx.badRequest("Product ID is required");
         }
 
-        // Resolve legacy local-user id from plugin user
-        const pluginUserId = ctx.state.user?.id;
-        if (!pluginUserId) return ctx.unauthorized("Authentication required");
+        const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!pluginUserId) return;
 
         // Check if product exists
         const product = await strapi.entityService.findOne("api::product.product", productId);
@@ -67,9 +67,8 @@ export default factories.createCoreController(
 
     async getUserLikes(ctx) {
       try {
-        // Resolve legacy local-user id from plugin user
-        const pluginUserId = ctx.state.user?.id;
-        if (!pluginUserId) return ctx.unauthorized("Authentication required");
+        const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!pluginUserId) return;
 
         // Query parameters for pagination
         const { page = 1, pageSize = 25 } = ctx.query;

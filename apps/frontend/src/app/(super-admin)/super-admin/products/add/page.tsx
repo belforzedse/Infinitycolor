@@ -97,6 +97,7 @@ export default function AddProductsPage() {
           <button
             className="w-full rounded-xl border-2 border-slate-300 bg-slate-300/40 px-5 py-2 text-sm text-slate-500 hover:bg-slate-300/80 hover:text-slate-800 md:w-fit"
             onClick={() => router.push("/super-admin/products")}
+            data-testid="admin-product-cancel"
           >
             بیخیال شدن
           </button>
@@ -104,6 +105,7 @@ export default function AddProductsPage() {
           <button
             onClick={handleCreateProduct}
             className="w-full rounded-xl border-2 border-infinity-primary-lighter/60 bg-infinity-primary/10 px-5 py-2 text-sm text-infinity-primary-darker hover:bg-infinity-primary/80 hover:text-white md:w-fit"
+            data-testid="admin-product-save"
           >
             ذخیره
           </button>

@@ -117,7 +117,13 @@ export const columns: ColumnDef<Product>[] = [
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
+          <div
+            className="flex flex-col gap-2"
+            data-testid="admin-product-row"
+            data-product-id={row.original?.id}
+            data-product-title={row.original?.attributes?.Title}
+            data-product-sku={row.original?.attributes?.product_variations?.data?.[0]?.attributes?.SKU}
+          >
             <span className="text-xs !leading-none text-foreground-primary">
               {row.original?.attributes?.Title}
             </span>
@@ -247,12 +253,15 @@ export const columns: ColumnDef<Product>[] = [
             isRemoved={!!row.original?.attributes?.removedAt}
             id={row.original?.id.toString()}
             apiUrl={"/products"}
+            testIdPrefix="admin-product"
           />
 
           <SuperAdminTableCellActionButton
             variant="secondary"
             icon={<DuplicateIcon />}
             onClick={() => handleDuplicateProduct(row.original.id)}
+            testId="admin-product-duplicate"
+            dataAttributes={{ id: row.original.id }}
             text="دوبل کردن"
           />
 
@@ -260,6 +269,8 @@ export const columns: ColumnDef<Product>[] = [
             variant="secondary"
             icon={<EditIcon />}
             path={`/super-admin/products/${row.original.id}`}
+            testId="admin-product-edit"
+            dataAttributes={{ id: row.original.id }}
             text="ویرایش"
           />
         </div>

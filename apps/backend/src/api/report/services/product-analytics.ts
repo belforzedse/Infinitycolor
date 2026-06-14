@@ -175,6 +175,42 @@ export function irrToToman(irr: number | null | undefined): number {
   return (Number(irr) || 0) / 10;
 }
 
+/**
+ * Persian display labels for the `orders.payment_gateway` enum. Legacy / missing
+ * values (null, "", "Unknown") fall under "نامشخص"; any unknown value falls back to
+ * its raw string so a newly-added gateway still renders something meaningful.
+ */
+export const GATEWAY_LABELS_FA: Record<string, string> = {
+  Unknown: "نامشخص",
+  Wallet: "کیف پول",
+  Mellat: "ملت",
+  SnappPay: "اسنپ‌پی",
+  SamanKish: "سامان",
+  ZarinPal: "زرین‌پال",
+};
+
+export function gatewayLabelFa(value: string | null | undefined): string {
+  const v = (value ?? "").trim();
+  if (!v) return GATEWAY_LABELS_FA.Unknown;
+  return GATEWAY_LABELS_FA[v] ?? v;
+}
+
+/**
+ * Annotate each row with its `sharePct` of the summed `key` value (rounded to 2dp).
+ * `null` when the total is 0 so the UI shows "—" instead of a misleading 0%/NaN.
+ */
+export function withShares<T extends Record<string, any>>(
+  rows: T[],
+  key: keyof T,
+): Array<T & { sharePct: number | null }> {
+  const total = rows.reduce((sum, r) => sum + (Number(r[key]) || 0), 0);
+  return rows.map((r) => ({
+    ...r,
+    sharePct:
+      total > 0 ? Number((((Number(r[key]) || 0) / total) * 100).toFixed(2)) : null,
+  }));
+}
+
 /** Shape a raw performance SQL row into the API payload (pure; unit-tested). */
 export interface RawPerformanceRow {
   product_variation_id: number | null;
@@ -295,6 +331,8 @@ export interface ResolvedJoins {
   variationToStock: string;
   /** products p -> product_categories pc (LEFT); category title expression. */
   productToCategory: { join: string; titleExpr: string };
+  /** orders o -> shippings s (LEFT). Empty string when the relation can't be resolved. */
+  orderToShipping: string;
 }
 
 let cachedJoins: Promise<ResolvedJoins> | null = null;
@@ -480,6 +518,24 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       productToCategory = { join: "", titleExpr: "NULL::text" };
     }
 
+    // orders -> shippings (owning FK is on the order side; deleted/legacy = null)
+    let orderToShipping = "";
+    try {
+      orderToShipping = await resolveRelation(knex, {
+        ownerIdCol: "order_id",
+        targetIdCol: "shipping_id",
+        ownerAlias: "o",
+        targetTable: "shippings",
+        targetAlias: "s",
+        directFkTable: "orders",
+        directFkCandidates: ["shipping_id", "shipping"],
+        directFkOn: "owner",
+        join: "LEFT JOIN",
+      });
+    } catch {
+      orderToShipping = "";
+    }
+
     return {
       oiToOrder,
       oiToVariation,
@@ -488,6 +544,7 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       variationToProduct,
       variationToStock,
       productToCategory,
+      orderToShipping,
     };
   })();
   return cachedJoins;
@@ -528,6 +585,49 @@ export function paidOrdersCte(joins: ResolvedJoins): string {
       GROUP BY o.id, o.date, o.applied_discount_amount
       HAVING SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END) > 0
     )
+  `;
+}
+
+/**
+ * Sales grouped by the order's own payment gateway, reusing the canonical
+ * `paid_orders` definition. One row per gateway with the order count and the net
+ * successful settlement (IRR; divide by 10 for Toman). Attributing each order to a
+ * single `orders.payment_gateway` value guarantees no order is double-counted.
+ * Bindings: [start, end] (consumed by the embedded paid_orders CTE).
+ */
+export function gatewayBreakdownQuery(joins: ResolvedJoins): string {
+  return `
+    WITH ${paidOrdersCte(joins)}
+    SELECT
+      COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown') AS gateway,
+      COUNT(*)::bigint AS orders_count,
+      COALESCE(SUM(po.settled_irr), 0)::numeric AS settled_irr
+    FROM paid_orders po
+    JOIN orders o ON o.id = po.order_id
+    GROUP BY COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown')
+    ORDER BY settled_irr DESC
+  `;
+}
+
+/**
+ * Shipping revenue grouped by shipping method, reusing the canonical `paid_orders`
+ * definition. Uses the stored `orders.shipping_cost` (Toman) snapshot — NOT product
+ * subtotal. Orders with no resolvable shipping method group under the `__UNKNOWN__`
+ * sentinel (the controller maps it to "نامشخص"). Bindings: [start, end].
+ */
+export function shippingBreakdownQuery(joins: ResolvedJoins): string {
+  const titleExpr = joins.orderToShipping ? "s.title" : "NULL::text";
+  return `
+    WITH ${paidOrdersCte(joins)}
+    SELECT
+      COALESCE(NULLIF(${titleExpr}, ''), '__UNKNOWN__') AS method,
+      COUNT(*)::bigint AS orders_count,
+      COALESCE(SUM(o.shipping_cost), 0)::bigint AS shipping_total
+    FROM paid_orders po
+    JOIN orders o ON o.id = po.order_id
+    ${joins.orderToShipping}
+    GROUP BY COALESCE(NULLIF(${titleExpr}, ''), '__UNKNOWN__')
+    ORDER BY shipping_total DESC
   `;
 }
 

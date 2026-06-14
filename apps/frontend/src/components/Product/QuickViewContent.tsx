@@ -44,7 +44,8 @@ export default function QuickViewContent({
       const coverMime = CoverImage.data.attributes.mime;
       // Only include images in QuickView for performance (videos can be viewed in full PDP)
       if (coverMime?.startsWith("image/")) {
-        images.push(resolveAssetUrl(CoverImage.data.attributes.url));
+        const resolvedUrl = resolveAssetUrl(CoverImage.data.attributes.url);
+        if (resolvedUrl) images.push(resolvedUrl);
       }
     }
 
@@ -53,7 +54,8 @@ export default function QuickViewContent({
       for (const media of Media.data) {
         const mediaMime = media.attributes?.mime;
         if (media.attributes?.url && mediaMime?.startsWith("image/")) {
-          images.push(resolveAssetUrl(media.attributes.url));
+          const resolvedUrl = resolveAssetUrl(media.attributes.url);
+          if (resolvedUrl) images.push(resolvedUrl);
         }
       }
     }

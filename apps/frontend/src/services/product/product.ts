@@ -611,35 +611,37 @@ export const formatGalleryAssets = (product: ProductDetail) => {
 
     // Only add valid image or video types
     if (isVideo || isImage) {
-      // Get thumbnail URL - for videos, try previewUrl or generate from video
-      let thumbnailUrl = "";
-      if (isVideo) {
-        // For videos, try previewUrl first (Strapi may generate this)
-        if (coverImage.attributes.previewUrl) {
-          thumbnailUrl = resolveAssetUrl(coverImage.attributes.previewUrl);
-        } else if (coverImage.attributes.formats?.thumbnail?.url) {
-          thumbnailUrl = resolveAssetUrl(coverImage.attributes.formats.thumbnail.url);
+      const srcUrl = resolveAssetUrl(coverImage.attributes.url);
+      if (srcUrl) {
+        // Get thumbnail URL - for videos, try previewUrl first (Strapi may generate this)
+        let thumbnailUrl = "";
+        if (isVideo) {
+          if (coverImage.attributes.previewUrl) {
+            thumbnailUrl = resolveAssetUrl(coverImage.attributes.previewUrl);
+          } else if (coverImage.attributes.formats?.thumbnail?.url) {
+            thumbnailUrl = resolveAssetUrl(coverImage.attributes.formats.thumbnail.url);
+          } else {
+            // Use the video URL itself - browser will show first frame as poster
+            thumbnailUrl = srcUrl;
+          }
         } else {
-          // Use the video URL itself - browser will show first frame as poster
-          thumbnailUrl = resolveAssetUrl(coverImage.attributes.url);
+          // For images, use thumbnail format
+          if (coverImage.attributes.formats?.thumbnail?.url) {
+            thumbnailUrl = resolveAssetUrl(coverImage.attributes.formats.thumbnail.url);
+          } else {
+            // Fallback to full image URL
+            thumbnailUrl = srcUrl;
+          }
         }
-      } else {
-        // For images, use thumbnail format
-        if (coverImage.attributes.formats?.thumbnail?.url) {
-          thumbnailUrl = resolveAssetUrl(coverImage.attributes.formats.thumbnail.url);
-        } else {
-          // Fallback to full image URL
-          thumbnailUrl = resolveAssetUrl(coverImage.attributes.url);
-        }
-      }
 
-      assets.push({
-        id: coverImage.id.toString(),
-        type: isVideo ? ("video" as const) : ("image" as const),
-        src: resolveAssetUrl(coverImage.attributes.url),
-        thumbnail: thumbnailUrl,
-        alt: coverImage.attributes.alternativeText || product.attributes.Title,
-      });
+        assets.push({
+          id: coverImage.id.toString(),
+          type: isVideo ? ("video" as const) : ("image" as const),
+          src: srcUrl,
+          thumbnail: thumbnailUrl || srcUrl,
+          alt: coverImage.attributes.alternativeText || product.attributes.Title,
+        });
+      }
     }
   }
 
@@ -651,6 +653,9 @@ export const formatGalleryAssets = (product: ProductDetail) => {
 
       // Only add valid image or video types
       if (isImage || isVideo) {
+        const srcUrl = resolveAssetUrl(media.attributes.url);
+        if (!srcUrl) return;
+
         // Get thumbnail URL - for videos, try previewUrl or generate from video
         let thumbnailUrl = "";
         if (isVideo) {
@@ -661,7 +666,7 @@ export const formatGalleryAssets = (product: ProductDetail) => {
             thumbnailUrl = resolveAssetUrl(media.attributes.formats.thumbnail.url);
           } else {
             // Use the video URL itself - browser will show first frame as poster
-            thumbnailUrl = resolveAssetUrl(media.attributes.url);
+            thumbnailUrl = srcUrl;
           }
         } else {
           // For images, use thumbnail format
@@ -669,15 +674,15 @@ export const formatGalleryAssets = (product: ProductDetail) => {
             thumbnailUrl = resolveAssetUrl(media.attributes.formats.thumbnail.url);
           } else {
             // Fallback to full image URL
-            thumbnailUrl = resolveAssetUrl(media.attributes.url);
+            thumbnailUrl = srcUrl;
           }
         }
 
         assets.push({
           id: media.id.toString(),
           type: isVideo ? ("video" as const) : ("image" as const),
-          src: resolveAssetUrl(media.attributes.url),
-          thumbnail: thumbnailUrl,
+          src: srcUrl,
+          thumbnail: thumbnailUrl || srcUrl,
           alt: media.attributes.alternativeText || product.attributes.Title,
         });
       }

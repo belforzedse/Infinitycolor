@@ -72,13 +72,27 @@ const productHasDiscount = (product: any): boolean => {
   });
 };
 
-const HOMEPAGE_FETCH_OPTIONS = {
-  next: { revalidate: 90, tags: ["home-products"] },
+const homepageFetchOptions = (): RequestInit & {
+  next?: { revalidate: number; tags: string[] };
+} => ({
+  ...(shouldBypassHomepageFetchCache()
+    ? { cache: "no-store" as const }
+    : { next: { revalidate: 90, tags: ["home-products"] } }),
   headers: {
     "Content-Type": "application/json",
     Accept: "application/json",
     "Accept-Encoding": "gzip", // Explicitly request compression
   },
+});
+
+const shouldBypassHomepageFetchCache = () =>
+  process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE === "1" || process.env.E2E_SEED_MODE === "auto";
+
+const withHomepageCacheBust = (endpoint: string): string => {
+  if (!shouldBypassHomepageFetchCache()) return endpoint;
+  const separator = endpoint.includes("?") ? "&" : "?";
+  const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${endpoint}${separator}_e2e=${token}`;
 };
 
 const parseBatchedHomepageAllowlist = () => {
@@ -102,8 +116,8 @@ export const getBatchedHomepageSections = async (): Promise<BatchedHomepageSecti
 
   try {
     const response = await fetch(
-      `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.HOMEPAGE_SECTIONS}`,
-      HOMEPAGE_FETCH_OPTIONS,
+      `${getStrapiServerUrl()}${withHomepageCacheBust(ENDPOINTS.PRODUCT.HOMEPAGE_SECTIONS)}`,
+      homepageFetchOptions(),
     ).then((res) => res.json());
 
     const sections = (response as { data?: { sections?: unknown[] } })?.data?.sections ?? [];
@@ -147,9 +161,10 @@ export const getProductsByIds = async (ids: number[]): Promise<ProductCardProps[
     `pagination[limit]=${Math.max(ids.length, 20)}&` +
     `pagination[withCount]=false`;
   try {
-    const response = await fetch(`${getStrapiServerUrl()}${endpoint}`, HOMEPAGE_FETCH_OPTIONS).then((res) =>
-      res.json(),
-    );
+    const response = await fetch(
+      `${getStrapiServerUrl()}${withHomepageCacheBust(endpoint)}`,
+      homepageFetchOptions(),
+    ).then((res) => res.json());
     const rawList = (response as { data?: unknown[] })?.data ?? [];
     const withStock = (rawList as unknown[]).filter(productHasStock);
     const idToIndex = new Map(ids.map((id, i) => [id, i]));
@@ -188,8 +203,10 @@ export const getGifPromoProductsForSlot = async (
 
   try {
     const response = await fetch(
-      `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
-      HOMEPAGE_FETCH_OPTIONS,
+      `${getStrapiServerUrl()}${withHomepageCacheBust(
+        `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
+      )}`,
+      homepageFetchOptions(),
     ).then((res) => res.json());
 
     return formatProductsToCardProps((response as { data?: unknown[] })?.data ?? []).slice(0, 4);
@@ -222,8 +239,10 @@ export const getHomeSectionProducts = async (
 
   try {
     const response = await fetch(
-      `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
-      HOMEPAGE_FETCH_OPTIONS,
+      `${getStrapiServerUrl()}${withHomepageCacheBust(
+        `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
+      )}`,
+      homepageFetchOptions(),
     ).then((res) => res.json());
 
     return formatProductsToCardProps((response as { data?: unknown[] })?.data ?? []);
@@ -288,7 +307,10 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     const settingsPromise = settingsOverride
       ? Promise.resolve(settingsOverride)
       : getPublicSuperAdminSettings();
-    const batchPromise = fetch(`${getStrapiServerUrl()}${batchEndpoint}`, HOMEPAGE_FETCH_OPTIONS)
+    const batchPromise = fetch(
+      `${getStrapiServerUrl()}${withHomepageCacheBust(batchEndpoint)}`,
+      homepageFetchOptions(),
+    )
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) {
@@ -309,7 +331,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     // Start new products and curated discounted fetches in parallel
     const newPromise = curatedNewest
       ? getProductsByIds(settings.homeNewestProductIds)
-      : fetch(`${getStrapiServerUrl()}${newEndpoint}`, HOMEPAGE_FETCH_OPTIONS)
+      : fetch(`${getStrapiServerUrl()}${withHomepageCacheBust(newEndpoint)}`, homepageFetchOptions())
           .then(async (res) => {
             const data = await res.json();
             if (!res.ok) {

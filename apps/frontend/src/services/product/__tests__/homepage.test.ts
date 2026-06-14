@@ -2,6 +2,7 @@ import { API_BASE_URL } from "@/constants/api";
 import { PRODUCT_BOOST_KEYWORDS } from "@/constants/productKeywords";
 import {
   getFeaturedCategoryProductsByRating,
+  getBatchedHomepageSections,
   getGifPromoProducts,
   getGifPromoProductsForSlot,
   getHomepageSections,
@@ -14,6 +15,10 @@ global.fetch = mockFetch;
 describe("homepage service", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    delete process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE;
+    delete process.env.E2E_SEED_MODE;
+    delete process.env.HOME_BATCHED_SECTIONS_ENABLED;
+    delete process.env.HOME_BATCHED_SECTION_ALLOWLIST;
   });
 
   describe("getHomepageSections", () => {
@@ -54,6 +59,46 @@ describe("homepage service", () => {
         new: [],
         favorites: [],
       });
+    });
+
+    it("should opt out of the Next fetch cache during e2e seeding", async () => {
+      process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE = "1";
+      mockFetch
+        .mockResolvedValueOnce({
+          json: async () => ({ data: [] }),
+        })
+        .mockResolvedValueOnce({
+          json: async () => ({ data: [] }),
+        });
+
+      await getHomepageSections(defaultSettings());
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ cache: "no-store" }),
+      );
+      const [calledUrl] = mockFetch.mock.calls[0];
+      expect(new URL(calledUrl as string).searchParams.has("_e2e")).toBe(true);
+    });
+  });
+
+  describe("getBatchedHomepageSections", () => {
+    it("adds an e2e cache-busting query when homepage cache is disabled", async () => {
+      process.env.HOME_BATCHED_SECTIONS_ENABLED = "true";
+      process.env.HOME_BATCHED_SECTION_ALLOWLIST = "newest";
+      process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE = "1";
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({ data: { sections: [] } }),
+      });
+
+      await getBatchedHomepageSections();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [calledUrl, options] = mockFetch.mock.calls[0];
+      const url = new URL(calledUrl as string);
+      expect(`${url.origin}${url.pathname}`).toBe(`${API_BASE_URL}/products/homepage-sections`);
+      expect(url.searchParams.has("_e2e")).toBe(true);
+      expect(options).toEqual(expect.objectContaining({ cache: "no-store" }));
     });
   });
 

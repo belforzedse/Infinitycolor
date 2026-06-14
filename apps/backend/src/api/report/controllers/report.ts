@@ -3,7 +3,13 @@
  */
 
 import type { RoleName } from "../../../utils/roles";
-import { ROLE_NAMES, roleIsAllowed, fetchUserWithRole } from "../../../utils/roles";
+import {
+  MANAGEMENT_ROLES,
+  ROLE_NAMES,
+  STORE_MANAGER_PLUS_ROLES,
+  roleIsAllowed,
+  fetchUserWithRole,
+} from "../../../utils/roles";
 import { parsePositiveInt } from "../../../utils/parsePositiveInt";
 import {
   getMatomoRealtimePayload,
@@ -31,6 +37,15 @@ const TRAFFIC_REALTIME_CACHE_TTL_MS = parsePositiveInt(
 );
 const trafficCache = new Map<string, { expiresAt: number; payload: any }>();
 
+const PRODUCT_REPORT_ROLES: RoleName[] = [
+  ROLE_NAMES.SUPERADMIN,
+  ROLE_NAMES.STORE_MANAGER,
+  ROLE_NAMES.FOUNDER,
+];
+
+const PRODUCT_REPORT_ACCESS_MESSAGE =
+  "Access denied - Superadmin, Store manager or Founder role required";
+
 function parseDate(value?: string, fallbackDays = 30): Date {
   if (!value) {
     const d = new Date();
@@ -41,11 +56,7 @@ function parseDate(value?: string, fallbackDays = 30): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
-async function ensureRoleAccess(
-  ctx: any,
-  allowedRoles: RoleName[],
-  errorMessage: string,
-) {
+async function ensureRoleAccess(ctx: any, allowedRoles: RoleName[], errorMessage: string) {
   const userId = ctx.state?.user?.id;
   const user = await fetchUserWithRole(strapi, userId);
   if (!user || !roleIsAllowed(user.role?.name, allowedRoles)) {
@@ -184,9 +195,7 @@ async function computeProductPeriod(
 
 /** Attach cover-image URLs to performance rows (one query for the visible page). */
 async function attachCoverImages(rows: productAnalytics.ProductPerformanceRow[]) {
-  const ids = Array.from(
-    new Set(rows.map((r) => r.productId).filter((id): id is number => !!id)),
-  );
+  const ids = Array.from(new Set(rows.map((r) => r.productId).filter((id): id is number => !!id)));
   if (ids.length === 0) return rows;
   try {
     const products = (await strapi.entityService.findMany("api::product.product" as any, {
@@ -208,11 +217,7 @@ async function attachCoverImages(rows: productAnalytics.ProductPerformanceRow[])
 export default {
   async liquidity(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
-      );
+      const user = await ensureRoleAccess(ctx, STORE_MANAGER_PLUS_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
@@ -283,20 +288,17 @@ export default {
       let ordersItemsLink: string | undefined;
       const ordersItemsLinksRes = await knex.raw(
         `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_name LIKE '%order%item%links%'`
+         WHERE table_schema = 'public' AND table_name LIKE '%order%item%links%'`,
       );
-      const ordersItemsLinks =
-        ordersItemsLinksRes.rows || ordersItemsLinksRes[0] || [];
+      const ordersItemsLinks = ordersItemsLinksRes.rows || ordersItemsLinksRes[0] || [];
       for (const row of ordersItemsLinks) {
         const t = String(row.table_name);
         const colsRes = await knex.raw(
           `SELECT column_name FROM information_schema.columns WHERE table_name = ?`,
-          [t]
+          [t],
         );
         const cols = new Set(
-          (colsRes.rows || colsRes[0] || []).map((r: any) =>
-            String(r.column_name)
-          )
+          (colsRes.rows || colsRes[0] || []).map((r: any) => String(r.column_name)),
         );
         if (cols.has("order_id") && cols.has("order_item_id")) {
           ordersItemsLink = t;
@@ -312,14 +314,14 @@ export default {
       } else {
         // Fallback to direct FK on order_items (order_id or "order")
         const fkCheck = await knex.raw(
-          `SELECT column_name FROM information_schema.columns WHERE table_name = 'order_items' AND column_name IN ('order_id','order')`
+          `SELECT column_name FROM information_schema.columns WHERE table_name = 'order_items' AND column_name IN ('order_id','order')`,
         );
         const fkRows = fkCheck.rows || fkCheck[0] || [];
         const fkName = fkRows.find((r: any) => r.column_name === "order_id")
           ? "order_id"
           : fkRows.find((r: any) => r.column_name === "order")
-          ? '"order"'
-          : "order_id";
+            ? '"order"'
+            : "order_id";
         ordersItemsJoinSql = `
           FROM order_items oi
           JOIN orders o ON o.id = oi.${fkName}
@@ -331,7 +333,7 @@ export default {
       let selectProductVariationId = "NULL AS product_variation_id";
       const oiPvLinksRes = await knex.raw(
         `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_name LIKE '%order%item%product%variation%links%'`
+         WHERE table_schema = 'public' AND table_name LIKE '%order%item%product%variation%links%'`,
       );
       const oiPvLinks = oiPvLinksRes.rows || oiPvLinksRes[0] || [];
       let oiPvLink: string | undefined;
@@ -339,12 +341,10 @@ export default {
         const t = String(row.table_name);
         const colsRes = await knex.raw(
           `SELECT column_name FROM information_schema.columns WHERE table_name = ?`,
-          [t]
+          [t],
         );
         const cols = new Set(
-          (colsRes.rows || colsRes[0] || []).map((r: any) =>
-            String(r.column_name)
-          )
+          (colsRes.rows || colsRes[0] || []).map((r: any) => String(r.column_name)),
         );
         if (cols.has("order_item_id") && cols.has("product_variation_id")) {
           oiPvLink = t;
@@ -360,12 +360,11 @@ export default {
       } else {
         // Fallback to direct FK if present
         const hasPvColRes = await knex.raw(
-          `SELECT 1 FROM information_schema.columns WHERE table_name = 'order_items' AND column_name = 'product_variation_id'`
+          `SELECT 1 FROM information_schema.columns WHERE table_name = 'order_items' AND column_name = 'product_variation_id'`,
         );
         const hasPvCol = (hasPvColRes.rows || hasPvColRes[0] || []).length > 0;
         if (hasPvCol) {
-          selectProductVariationId =
-            "oi.product_variation_id AS product_variation_id";
+          selectProductVariationId = "oi.product_variation_id AS product_variation_id";
         }
       }
 
@@ -382,21 +381,15 @@ export default {
               `SELECT column_name FROM information_schema.columns WHERE table_name = ?`,
               [tableName],
             );
-            const cols = (colsRes.rows || colsRes[0] || []).map((r: any) =>
-              String(r.column_name),
-            );
+            const cols = (colsRes.rows || colsRes[0] || []).map((r: any) => String(r.column_name));
             const orderFk =
               cols.find((c: string) => c === "order_id") ||
               cols.find((c: string) => c.endsWith("order_id")) ||
-              cols.find(
-                (c: string) => c.startsWith("order") && c.endsWith("_id"),
-              );
+              cols.find((c: string) => c.startsWith("order") && c.endsWith("_id"));
             const contractFk =
               cols.find((c: string) => c === "contract_id") ||
               cols.find((c: string) => c.endsWith("contract_id")) ||
-              cols.find(
-                (c: string) => c.startsWith("contract") && c.endsWith("_id"),
-              );
+              cols.find((c: string) => c.startsWith("contract") && c.endsWith("_id"));
 
             if (orderFk && contractFk) {
               return `
@@ -412,8 +405,8 @@ export default {
           const contractOrderFkRes = await knex.raw(
             `SELECT column_name FROM information_schema.columns WHERE table_name = 'contracts'`,
           );
-          const cols = (contractOrderFkRes.rows || contractOrderFkRes[0] || []).map(
-            (r: any) => String(r.column_name),
+          const cols = (contractOrderFkRes.rows || contractOrderFkRes[0] || []).map((r: any) =>
+            String(r.column_name),
           );
           const orderFkColumn =
             cols.find((c) => c === "order_id") ||
@@ -438,24 +431,20 @@ export default {
         );
       };
 
-      const { join: paidOrdersContractJoin, source: contractJoinSource } =
-        await detectJoin();
+      const { join: paidOrdersContractJoin, source: contractJoinSource } = await detectJoin();
 
       const detectContractTxJoin = async () => {
         const contractTxFkRes = await knex.raw(
           `SELECT column_name FROM information_schema.columns WHERE table_name = 'contract_transactions'`,
         );
-        const contractTxColumns =
-          (contractTxFkRes.rows || contractTxFkRes[0] || []).map((r: any) =>
-            String(r.column_name),
-          );
+        const contractTxColumns = (contractTxFkRes.rows || contractTxFkRes[0] || []).map((r: any) =>
+          String(r.column_name),
+        );
 
         const directFk =
           contractTxColumns.find((c) => c === "contract_id") ||
           contractTxColumns.find((c) => c === "contract") ||
-          contractTxColumns.find(
-            (c) => c.startsWith("contract") && c.endsWith("_id"),
-          );
+          contractTxColumns.find((c) => c.startsWith("contract") && c.endsWith("_id"));
         if (directFk) {
           return {
             join: `JOIN contract_transactions ct ON ct.${directFk} = c.id`,
@@ -475,23 +464,16 @@ export default {
             `SELECT column_name FROM information_schema.columns WHERE table_name = ?`,
             [tableName],
           );
-          const cols = (colsRes.rows || colsRes[0] || []).map((r: any) =>
-            String(r.column_name),
-          );
+          const cols = (colsRes.rows || colsRes[0] || []).map((r: any) => String(r.column_name));
           const contractFk =
             cols.find((c: string) => c === "contract_id") ||
             cols.find((c: string) => c.endsWith("contract_id")) ||
-            cols.find(
-              (c: string) => c.startsWith("contract") && c.endsWith("_id"),
-            );
+            cols.find((c: string) => c.startsWith("contract") && c.endsWith("_id"));
           const txFk =
             cols.find((c: string) => c === "contract_transaction_id") ||
             cols.find((c: string) => c.endsWith("contract_transaction_id")) ||
             cols.find((c: string) => c === "transaction_id") ||
-            cols.find(
-              (c: string) =>
-                c.startsWith("contract_transaction") && c.endsWith("_id"),
-            );
+            cols.find((c: string) => c.startsWith("contract_transaction") && c.endsWith("_id"));
           if (contractFk && txFk) {
             return {
               join: `
@@ -508,10 +490,8 @@ export default {
         );
       };
 
-      const {
-        join: contractTransactionsJoin,
-        source: contractTransactionsJoinSource,
-      } = await detectContractTxJoin();
+      const { join: contractTransactionsJoin, source: contractTransactionsJoinSource } =
+        await detectContractTxJoin();
 
       const paidOrdersCte = `
         WITH paid_orders AS (
@@ -589,33 +569,26 @@ export default {
         String(ctx.query.debug || "") === "1";
       if (wantsDebug) {
         // Orders in range
-        const [ordersCountRes, joinCountRes, settledMetaRes] = await Promise.all(
-          [
-            knex.raw(
-              `SELECT COUNT(*)::bigint AS c FROM orders o WHERE o.date BETWEEN ? AND ?`,
-              [start, end],
-            ),
-            knex.raw(
-              `SELECT COUNT(*)::bigint AS c ${ordersItemsJoinSql} WHERE o.date BETWEEN ? AND ?`,
-              [start, end],
-            ),
-            knex.raw(
-              `${paidOrdersCte}
+        const [ordersCountRes, joinCountRes, settledMetaRes] = await Promise.all([
+          knex.raw(`SELECT COUNT(*)::bigint AS c FROM orders o WHERE o.date BETWEEN ? AND ?`, [
+            start,
+            end,
+          ]),
+          knex.raw(
+            `SELECT COUNT(*)::bigint AS c ${ordersItemsJoinSql} WHERE o.date BETWEEN ? AND ?`,
+            [start, end],
+          ),
+          knex.raw(
+            `${paidOrdersCte}
                SELECT COUNT(*)::bigint AS orders, COALESCE(SUM(settled_amount_irr)::bigint, 0) AS total_amount_irr
                FROM paid_orders`,
-              [start, end],
-            ),
-          ],
-        );
+            [start, end],
+          ),
+        ]);
 
-        const ordersCount = Number(
-          (ordersCountRes.rows || ordersCountRes[0])[0]?.c || 0,
-        );
-        const joinCount = Number(
-          (joinCountRes.rows || joinCountRes[0])[0]?.c || 0,
-        );
-        const settledMetaRow =
-          (settledMetaRes.rows || settledMetaRes[0])[0] || {};
+        const ordersCount = Number((ordersCountRes.rows || ordersCountRes[0])[0]?.c || 0);
+        const joinCount = Number((joinCountRes.rows || joinCountRes[0])[0]?.c || 0);
+        const settledMetaRow = (settledMetaRes.rows || settledMetaRes[0])[0] || {};
         const settledOrders = Number(settledMetaRow.orders || 0);
         const totalSettledIrr = Number(settledMetaRow.total_amount_irr || 0);
 
@@ -626,10 +599,9 @@ export default {
             end,
             ordersInRange: ordersCount,
             orderItemsJoinedCount: joinCount,
-             settledOrders,
-             settlementCoverage:
-               ordersCount > 0 ? settledOrders / ordersCount : 0,
-             settledAmountToman: totalSettledIrr / 10,
+            settledOrders,
+            settlementCoverage: ordersCount > 0 ? settledOrders / ordersCount : 0,
+            settledAmountToman: totalSettledIrr / 10,
             joinSource: contractJoinSource,
             contractTransactionsJoinSource,
           },
@@ -647,8 +619,8 @@ export default {
     try {
       const user = await ensureRoleAccess(
         ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
+        STORE_MANAGER_PLUS_ROLES,
+        PRODUCT_REPORT_ACCESS_MESSAGE,
       );
       if (!user) return;
 
@@ -661,32 +633,25 @@ export default {
       let txGatewayJoin = `LEFT JOIN payment_gateways pg ON ct.payment_gateway_id = pg.id`;
       const txGwLinkRes = await knex.raw(
         `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_name LIKE '%contract%transaction%payment%gateway%links%'`
+         WHERE table_schema = 'public' AND table_name LIKE '%contract%transaction%payment%gateway%links%'`,
       );
       const txGwLinks = txGwLinkRes.rows || txGwLinkRes[0] || [];
       if (Array.isArray(txGwLinks) && txGwLinks.length > 0) {
         const link = String(txGwLinks[0].table_name);
         const colsRes = await knex.raw(
           `SELECT column_name FROM information_schema.columns WHERE table_name = ?`,
-          [link]
+          [link],
         );
-        const cols = (colsRes.rows || colsRes[0] || []).map((r: any) =>
-          String(r.column_name)
-        );
+        const cols = (colsRes.rows || colsRes[0] || []).map((r: any) => String(r.column_name));
         const contractTxFk =
           cols.find((c: string) => c === "contract_transaction_id") ||
           cols.find((c: string) => c.endsWith("contract_transaction_id")) ||
-          cols.find(
-            (c: string) =>
-              c.startsWith("contract_transaction") && c.endsWith("_id")
-          ) ||
+          cols.find((c: string) => c.startsWith("contract_transaction") && c.endsWith("_id")) ||
           "contract_transaction_id";
         const gatewayFk =
           cols.find((c: string) => c === "payment_gateway_id") ||
           cols.find((c: string) => c.endsWith("payment_gateway_id")) ||
-          cols.find(
-            (c: string) => c.startsWith("payment_gateway") && c.endsWith("_id")
-          ) ||
+          cols.find((c: string) => c.startsWith("payment_gateway") && c.endsWith("_id")) ||
           "payment_gateway_id";
 
         txGatewayJoin = `
@@ -849,12 +814,7 @@ export default {
 
       // Defense-in-depth: although writes are now gated to management roles, keep the role filter
       // so any legacy/non-admin rows are excluded from the report.
-      const allowedRoles = [
-        ROLE_NAMES.SUPERADMIN,
-        ROLE_NAMES.STORE_MANAGER,
-        ROLE_NAMES.EDITOR,
-      ];
-      filters.PerformedByRole = { $in: allowedRoles };
+      filters.PerformedByRole = { $in: MANAGEMENT_ROLES };
 
       const manualActivities = await strapi.entityService.findMany(
         "api::manual-admin-activity.manual-admin-activity" as any,
@@ -874,39 +834,35 @@ export default {
         { filters },
       );
 
-      const data = (Array.isArray(manualActivities) ? manualActivities : []).map(
-        (log: any) => {
-          const actor = log.performed_by;
-          return {
-            id: log.id,
-            ResourceType: log.ResourceType || "Admin",
-            Action: log.Action,
-            Title: log.Title,
-            Message: log.Message,
-            MessageEn: log.MessageEn,
-            Severity: log.Severity,
-            Changes: log.Changes,
-            PerformedByName:
-              log.PerformedByName ||
-              actor?.username ||
-              actor?.email ||
-              actor?.phone ||
-              (actor?.id ? `User ${actor.id}` : "System"),
-            PerformedByRole:
-              log.PerformedByRole ||
-              actor?.role?.name ||
-              (actor ? "Unknown" : "System"),
-            Description: log.Description,
-            Metadata: log.Metadata,
-            IP: log.IP,
-            UserAgent: log.UserAgent,
-            ResourceId: log.ResourceId,
-            createdAt: log.createdAt,
-            updatedAt: log.updatedAt,
-            performed_by: actor,
-          };
-        },
-      );
+      const data = (Array.isArray(manualActivities) ? manualActivities : []).map((log: any) => {
+        const actor = log.performed_by;
+        return {
+          id: log.id,
+          ResourceType: log.ResourceType || "Admin",
+          Action: log.Action,
+          Title: log.Title,
+          Message: log.Message,
+          MessageEn: log.MessageEn,
+          Severity: log.Severity,
+          Changes: log.Changes,
+          PerformedByName:
+            log.PerformedByName ||
+            actor?.username ||
+            actor?.email ||
+            actor?.phone ||
+            (actor?.id ? `User ${actor.id}` : "System"),
+          PerformedByRole:
+            log.PerformedByRole || actor?.role?.name || (actor ? "Unknown" : "System"),
+          Description: log.Description,
+          Metadata: log.Metadata,
+          IP: log.IP,
+          UserAgent: log.UserAgent,
+          ResourceId: log.ResourceId,
+          createdAt: log.createdAt,
+          updatedAt: log.updatedAt,
+          performed_by: actor,
+        };
+      });
 
       // Distinct admins who have activity in the date range, so the frontend admin filter lists
       // every admin (not just those on the current page) and can key options by user id.
@@ -919,7 +875,7 @@ export default {
           const rows = await knex("manual_admin_activities as m")
             .leftJoin(`${linkTable} as l`, "l.manual_admin_activity_id", "m.id")
             .whereBetween("m.created_at", [start.toISOString(), end.toISOString()])
-            .whereIn("m.performed_by_role", allowedRoles)
+            .whereIn("m.performed_by_role", MANAGEMENT_ROLES)
             .distinct(
               "l.user_id as id",
               "m.performed_by_name as name",
@@ -1004,9 +960,7 @@ export default {
             actor?.phone ||
             (actor?.id ? `User ${actor.id}` : "System"),
           PerformedByRole:
-            log.PerformedByRole ||
-            actor?.role?.name ||
-            (actor ? "Unknown" : "System"),
+            log.PerformedByRole || actor?.role?.name || (actor ? "Unknown" : "System"),
           Description: log.Description,
           Metadata: log.Metadata,
           IP: log.IP,
@@ -1028,11 +982,7 @@ export default {
 
   async productOverview(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
-      );
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1098,13 +1048,65 @@ export default {
     }
   },
 
+  async productBreakdown(ctx) {
+    try {
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      if (!user) return;
+
+      const { start, end } = parseProductRange(ctx);
+      const knex = strapi.db.connection;
+      const joins = await PA.resolveJoins(knex);
+
+      const [gatewayRes, shippingRes] = await Promise.all([
+        knex.raw(PA.gatewayBreakdownQuery(joins), [start, end]),
+        knex.raw(PA.shippingBreakdownQuery(joins), [start, end]),
+      ]);
+
+      // Sales by payment gateway (settlement is IRR -> Toman; attach share of total).
+      const gatewayBase = rowsOf(gatewayRes).map((r: any) => ({
+        gateway: String(r.gateway || "Unknown"),
+        label: PA.gatewayLabelFa(r.gateway),
+        ordersCount: Number(r.orders_count || 0),
+        total: Math.round(PA.irrToToman(Number(r.settled_irr || 0))),
+      }));
+      const gateways = PA.withShares(gatewayBase, "total");
+
+      // Shipping revenue by method (shipping_cost already stored in Toman).
+      const shippingMethods = rowsOf(shippingRes).map((r: any) => {
+        const raw = String(r.method || "__UNKNOWN__");
+        return {
+          method: raw === "__UNKNOWN__" ? "نامشخص" : raw,
+          ordersCount: Number(r.orders_count || 0),
+          total: Number(r.shipping_total || 0),
+        };
+      });
+
+      const gatewaySales = gateways.reduce((sum, g) => sum + g.total, 0);
+      const shippingRevenue = shippingMethods.reduce((sum, s) => sum + s.total, 0);
+      const ordersCount = gateways.reduce((sum, g) => sum + g.ordersCount, 0);
+
+      ctx.body = {
+        data: {
+          range: { start, end },
+          currency: "Toman",
+          totals: { gatewaySales, shippingRevenue, ordersCount },
+          gateways,
+          shippingMethods,
+          notes: {
+            gatewaySales:
+              "مبلغ تسویه‌شده هر درگاه بر مبنای «سفارش‌های پرداخت‌شده، خالص از مرجوعی» است و شامل هزینه ارسال نیز می‌شود.",
+            shippingRevenue: "درآمد ارسال بر مبنای هزینه ارسال ثبت‌شده روی سفارش است (نه فروش محصول).",
+          },
+        },
+      };
+    } catch (error) {
+      ctx.badRequest(error.message, { data: { success: false } });
+    }
+  },
+
   async productTrends(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
-      );
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1167,20 +1169,14 @@ export default {
 
   async productPerformance(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
-      );
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
       // SuperAdminTable sends pagination[page]; Strapi's qs parser nests it under
       // ctx.query.pagination. Accept the nested form, the bracket-literal, or flat.
       const pag = (ctx.query.pagination as any) || {};
-      const page = PA.clampPage(
-        pag.page ?? ctx.query["pagination[page]"] ?? ctx.query.page,
-      );
+      const page = PA.clampPage(pag.page ?? ctx.query["pagination[page]"] ?? ctx.query.page);
       const pageSize = PA.clampPageSize(
         pag.pageSize ?? ctx.query["pagination[pageSize]"] ?? ctx.query.pageSize,
       );
@@ -1209,8 +1205,7 @@ export default {
       }
       const stockStatus = ctx.query.stockStatus as string;
       if (stockStatus === "out") where.push(`COALESCE(ps.count, 0) <= 0`);
-      else if (stockStatus === "low")
-        where.push(`(ps.count > 0 AND ps.count <= ${threshold})`);
+      else if (stockStatus === "low") where.push(`(ps.count > 0 AND ps.count <= ${threshold})`);
       else if (stockStatus === "in") where.push(`ps.count > ${threshold}`);
 
       const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -1253,11 +1248,7 @@ export default {
 
   async productExport(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
-      );
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1347,10 +1338,7 @@ export default {
       // UTF-8 BOM so Excel renders Persian correctly.
       const csv = "﻿" + lines.join("\r\n");
       ctx.set("Content-Type", "text/csv; charset=utf-8");
-      ctx.set(
-        "Content-Disposition",
-        `attachment; filename="product-report-${Date.now()}.csv"`,
-      );
+      ctx.set("Content-Disposition", `attachment; filename="product-report-${Date.now()}.csv"`);
       ctx.body = csv;
     } catch (error) {
       ctx.badRequest(error.message, { data: { success: false } });
@@ -1359,11 +1347,7 @@ export default {
 
   async productDetail(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
-      );
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const productId = Number(ctx.query.productId);
@@ -1494,11 +1478,7 @@ export default {
 
   async productInventory(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER],
-        "Access denied - Superadmin or Store manager role required",
-      );
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);

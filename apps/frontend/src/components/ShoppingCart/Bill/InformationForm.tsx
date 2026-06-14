@@ -306,7 +306,7 @@ function ShoppingCartBillInformationForm({ register, errors, control, setValue }
           />
         </div>
       </div>
-      <div className="relative">
+      <div className="relative" data-testid="checkout-address-select">
         <Controller
           name="address"
           control={control}

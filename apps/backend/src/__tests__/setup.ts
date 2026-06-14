@@ -23,8 +23,13 @@ process.env.SNAPPAY_USERNAME = 'test-snappay-username';
 process.env.SNAPPAY_PASSWORD = 'test-snappay-password';
 process.env.SNAPPAY_RETURN_URL = 'https://api.test.invalid/api/orders/payment-callback';
 
-process.env.IP_PANEL_API_URL = 'https://test-sms.example.com'; // Mock SMS gateway
+process.env.SMS_ENABLED = 'false';
+process.env.IP_PANEL_API_BASE_URL = 'https://edge.ippanel.com/v1';
+process.env.IP_PANEL_PATTERN_ENDPOINT = '/api/send';
+process.env.IP_PANEL_API_URL = ''; // Optional full endpoint override
 process.env.IP_PANEL_API_KEY = 'test-api-key';
+process.env.IP_PANEL_PATTERN_CODE = 'test-pattern-code';
+process.env.IP_PANEL_SENDER = '+983000505';
 
 process.env.JWT_SECRET = 'test-jwt-secret-key-for-testing';
 process.env.REDIS_URL = 'redis://localhost:6379';

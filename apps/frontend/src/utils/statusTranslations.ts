@@ -1,4 +1,5 @@
 import { PersianOrderStatus } from "@/constants/enums";
+import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
 
 export type StatusTone = "info" | "success" | "warning" | "danger";
 
@@ -84,21 +85,6 @@ const ORDER_LOG_TRANSLATIONS: Array<{ key: string; label: string }> = [
   { key: "contract created", label: "قرارداد ایجاد شد" },
   { key: "contract failed", label: "قرارداد با خطا مواجه شد" },
 ];
-
-const PAYMENT_GATEWAY_MAP: Record<string, string> = {
-  wallet: "کیف پول",
-  "wallet gateway": "کیف پول",
-  "wallet payment": "کیف پول",
-  mellat: "بانک ملت",
-  "mellat bank": "بانک ملت",
-  "beh pardakht": "بانک ملت",
-  "snapp pay": "پرداخت اقساطی اسنپ‌پی",
-  snappay: "پرداخت اقساطی اسنپ‌پی",
-  "snapp pay installment": "پرداخت اقساطی اسنپ‌پی",
-  samankish: "درگاه پرداخت سامان‌کیش",
-  saman: "درگاه پرداخت سامان‌کیش",
-  "saman kish": "درگاه پرداخت سامان‌کیش",
-};
 
 const GENERIC_TRANSLATIONS: Record<string, string> = {
   pending: "در انتظار",
@@ -201,8 +187,5 @@ export const translateBackendValue = (value?: string | null): string => {
   return value;
 };
 
-export const translatePaymentGateway = (value?: string | null): string => {
-  if (!value) return "نامشخص";
-  const normalized = normalizeKey(value);
-  return PAYMENT_GATEWAY_MAP[normalized] ?? value;
-};
+export const translatePaymentGateway = (value?: string | null): string =>
+  getPaymentGatewayLabel(value);

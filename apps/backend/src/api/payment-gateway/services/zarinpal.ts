@@ -32,6 +32,7 @@ type ZarinPalVerifyParams = {
 };
 
 const REQUEST_ENDPOINT = "/pg/v4/payment/request.json";
+const E2E_SANDBOX_MERCHANT_ID = "00000000-0000-0000-0000-000000000000";
 
 const isTruthyEnv = (value?: string): boolean =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -51,6 +52,9 @@ const normalizeMobile = (raw?: string): string | undefined => {
   return undefined;
 };
 
+const isLocalCallbackUrl = (value?: string): boolean =>
+  /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(String(value || "").trim());
+
 const sanitizeGatewayResponse = (value: unknown) => {
   if (!value || typeof value !== "object") return value;
   const clone = JSON.parse(JSON.stringify(value));
@@ -66,11 +70,6 @@ const parseGatewayError = (error: any) => ({
 
 export default ({ strapi }: { strapi: Strapi }) => ({
   getConfig(): ZarinPalConfig {
-    const merchantId = String(process.env.ZARINPAL_MERCHANT_ID || "").trim();
-    if (!merchantId) {
-      throw new Error("ZarinPal merchant ID is not configured");
-    }
-
     const baseUrl = (process.env.URL || "").trim().replace(/\/$/, "");
     const callbackUrl = String(
       process.env.ZARINPAL_CALLBACK_URL ||
@@ -81,9 +80,18 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       throw new Error("ZarinPal callback URL is not configured");
     }
 
+    const deterministic =
+      isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) || isLocalCallbackUrl(callbackUrl);
+    const merchantId =
+      String(process.env.ZARINPAL_MERCHANT_ID || "").trim() ||
+      (deterministic ? E2E_SANDBOX_MERCHANT_ID : "");
+    if (!merchantId) {
+      throw new Error("ZarinPal merchant ID is not configured");
+    }
+
     return {
       merchantId,
-      sandbox: isTruthyEnv(process.env.ZARINPAL_SANDBOX),
+      sandbox: deterministic || isTruthyEnv(process.env.ZARINPAL_SANDBOX),
       callbackUrl,
       currency: normalizeCurrency(process.env.ZARINPAL_CURRENCY),
     };
@@ -116,11 +124,35 @@ export default ({ strapi }: { strapi: Strapi }) => ({
     const client = this.createClient(config);
     const amount = this.amountForGateway(params.amountToman, config.currency);
     this.assertValidAmount(amount, config.currency);
+    strapi.log.info(
+      `[${requestId}] ZarinPal config resolved merchantIdLength=${config.merchantId.length} sandbox=${config.sandbox} callbackIsLocal=${isLocalCallbackUrl(config.callbackUrl)} e2eDeterministic=${isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC)}`,
+    );
+
+    if (
+      isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) ||
+      isLocalCallbackUrl(config.callbackUrl)
+    ) {
+      const authority = `E2E-${params.orderId}-${requestId}`;
+      return {
+        success: true,
+        authority,
+        refId: authority,
+        redirectUrl: client.payments.getRedirectUrl(authority),
+        requestId,
+        amount,
+        currency: config.currency,
+        gatewayResponse: {
+          deterministic: true,
+          sandbox: config.sandbox,
+        },
+      };
+    }
 
     const mobile = normalizeMobile(params.mobile);
     const description =
       params.description || `Payment for Infinity order #${params.orderId}`;
     const payload: Record<string, unknown> = {
+      merchant_id: config.merchantId,
       amount,
       currency: config.currency,
       callback_url: config.callbackUrl,

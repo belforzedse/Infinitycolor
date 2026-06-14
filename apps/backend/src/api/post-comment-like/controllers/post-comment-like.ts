@@ -4,7 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { fetchUserWithRole } from "../../../utils/roles";
+import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../utils/roles";
 import { resolveUserDisplayName } from "../../../utils/blog-helpers";
 
 function getPositiveInt(value: unknown, fallback: number): number {
@@ -20,10 +20,8 @@ export default factories.createCoreController("api::post-comment-like.post-comme
         return ctx.badRequest("Comment ID is required");
       }
 
-      const pluginUserId = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("Authentication required");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       const comment = await strapi.entityService.findOne("api::post-comment.post-comment", commentId, {
         populate: ["user", "post"],
@@ -83,10 +81,8 @@ export default factories.createCoreController("api::post-comment-like.post-comme
 
   async getUserLikes(ctx) {
     try {
-      const pluginUserId = ctx.state.user?.id;
-      if (!pluginUserId) {
-        return ctx.unauthorized("Authentication required");
-      }
+      const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!pluginUserId) return;
 
       const page = getPositiveInt(ctx.query?.page, 1);
       const pageSize = getPositiveInt(ctx.query?.pageSize, 100);

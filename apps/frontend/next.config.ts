@@ -1,5 +1,7 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import path from "path";
+import { getNextImageRemotePatterns } from "./src/utils/imageSecurity";
+import { getSecurityHeaders } from "./src/utils/securityHeaders";
 
 /**
  * Load build version from generated JSON file
@@ -31,6 +33,15 @@ const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: ["@repo/api", "@repo/brand", "@repo/fonts", "@repo/social-posts", "@repo/story-rail"],
   reactStrictMode: true,
+  poweredByHeader: false,
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: getSecurityHeaders(),
+      },
+    ];
+  },
   // Allow sitemap and other static generation to run longer during build (default 60s)
   staticPageGenerationTimeout: 180,
   compiler: {
@@ -47,11 +58,7 @@ const nextConfig = {
     minimumCacheTTL: 60 * 60 * 24 * 30,
     dangerouslyAllowSVG: false,
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
-    // Allow images from any host (http/https)
-    remotePatterns: [
-      { protocol: "https", hostname: "**" },
-      { protocol: "http", hostname: "**" },
-    ],
+    remotePatterns: getNextImageRemotePatterns(),
   },
   experimental: {
     optimizePackageImports: ["@heroicons/react", "lucide-react", "react-icons", "framer-motion"],

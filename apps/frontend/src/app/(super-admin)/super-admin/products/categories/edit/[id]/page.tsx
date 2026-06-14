@@ -12,6 +12,31 @@ import type { CategoryData } from "@/services/super-admin/product/category/creat
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import CategoryAppearancePanel, { type CategoryImageValue } from "../../CategoryAppearancePanel";
 
+const getCategoryImageValue = (
+  imageData?: {
+    id?: number;
+    attributes?: {
+      url?: string;
+      formats?: {
+        thumbnail?: { url?: string };
+        small?: { url?: string };
+        medium?: { url?: string };
+        large?: { url?: string };
+      } | null;
+    };
+  } | null,
+): CategoryImageValue | undefined => {
+  const imageAttributes = imageData?.attributes;
+  const imageUrl =
+    imageAttributes?.url ||
+    imageAttributes?.formats?.large?.url ||
+    imageAttributes?.formats?.medium?.url ||
+    imageAttributes?.formats?.small?.url ||
+    imageAttributes?.formats?.thumbnail?.url;
+
+  return imageUrl && imageData?.id ? { id: imageData.id, url: imageUrl } : undefined;
+};
+
 export default function EditCategoryPage() {
   const router = useRouter();
   const { roleName } = useCurrentUser();
@@ -31,6 +56,7 @@ export default function EditCategoryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [categoryImage, setCategoryImage] = useState<CategoryImageValue | undefined>();
+  const [megaMenuImage, setMegaMenuImage] = useState<CategoryImageValue | undefined>();
 
   useEffect(() => {
     if (!categoryId) return;
@@ -99,17 +125,8 @@ export default function EditCategoryPage() {
             : new Date(),
         });
 
-        const imageData = payload.attributes?.Image?.data;
-        const imageAttributes = imageData?.attributes;
-        const imageUrl =
-          imageAttributes?.url ||
-          imageAttributes?.formats?.large?.url ||
-          imageAttributes?.formats?.medium?.url ||
-          imageAttributes?.formats?.small?.url ||
-          imageAttributes?.formats?.thumbnail?.url;
-        setCategoryImage(
-          imageUrl && imageData?.id ? { id: imageData.id, url: imageUrl } : undefined,
-        );
+        setCategoryImage(getCategoryImageValue(payload.attributes?.Image?.data));
+        setMegaMenuImage(getCategoryImageValue(payload.attributes?.MegaMenuImage?.data));
       } catch (error: any) {
         if (!isMounted) return;
 
@@ -155,6 +172,7 @@ export default function EditCategoryPage() {
       Title: title,
       Slug: slug,
       Image: categoryImage?.id ?? null,
+      MegaMenuImage: megaMenuImage?.id ?? null,
     };
 
     if (formData.Parent) {
@@ -205,7 +223,19 @@ export default function EditCategoryPage() {
       data={initialData}
       onSubmit={handleSubmit}
       customSidebar={
-        <CategoryAppearancePanel image={categoryImage} onImageChange={setCategoryImage} />
+        <div className="flex flex-col gap-4">
+          <CategoryAppearancePanel image={categoryImage} onImageChange={setCategoryImage} />
+          <CategoryAppearancePanel
+            image={megaMenuImage}
+            onImageChange={setMegaMenuImage}
+            title="تصویر مگامنو دسکتاپ"
+            previewAlt="تصویر مگامنو دسته‌بندی"
+            uploadLabel="بارگذاری تصویر مگامنو"
+            successMessage="تصویر مگامنو با موفقیت بارگذاری شد"
+            errorMessage="خطا در آپلود تصویر مگامنو"
+            aspectClassName="aspect-[363/430]"
+          />
+        </div>
       }
     />
   );

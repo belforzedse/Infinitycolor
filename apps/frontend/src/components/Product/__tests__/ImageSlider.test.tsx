@@ -16,14 +16,14 @@ jest.mock("@/utils/imageLoader", () => ({
 }));
 
 describe("ImageSlider", () => {
-  const mockImages = ["/image1.jpg", "/image2.jpg", "/image3.jpg"];
+  const mockImages = ["/images/image1.jpg", "/images/image2.jpg", "/images/image3.jpg"];
 
   it("should render only the cover (first) image", () => {
     render(<ImageSlider images={mockImages} title="Test Product" />);
 
     const images = screen.getAllByTestId("blur-image");
     expect(images).toHaveLength(1);
-    expect(images[0]).toHaveAttribute("data-src", "/image1.jpg");
+    expect(images[0]).toHaveAttribute("data-src", "/images/image1.jpg");
   });
 
   it("should render image alt text as product title", () => {

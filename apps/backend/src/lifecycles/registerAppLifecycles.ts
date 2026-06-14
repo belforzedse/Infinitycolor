@@ -5,6 +5,11 @@ import { resolveAuditActor } from "../utils/audit";
 import { logAdminEvent, logOrderEvent } from "../utils/eventLogger";
 import { scheduleHomeProductsRevalidation } from "../utils/homepageRevalidation";
 import { asEntityId } from "../utils/lastEdited";
+import {
+  notifyOrderCreatedSms,
+  notifyOrderStatusSms,
+  notifyShipmentTrackingSms,
+} from "../services/sms";
 
 type AuditAction = "Create" | "Update" | "Delete";
 
@@ -126,6 +131,13 @@ function registerOrderLifecycle(strapi: Strapi) {
         }
       }
 
+      void notifyOrderCreatedSms(strapi as any, Number(result.id)).catch((smsError) => {
+        strapi.log.error("Failed to queue order-created SMS", {
+          orderId: result.id,
+          error: (smsError as Error)?.message || smsError,
+        });
+      });
+
       if (actor.userId && actor.label) {
         await logAdminEvent(strapi as any, {
           category: "Action",
@@ -159,6 +171,7 @@ function registerOrderLifecycle(strapi: Strapi) {
             "ShippingCost",
             "Description",
             "Note",
+            "ShippingBarcode",
           ],
           populate: {
             user: true,
@@ -189,6 +202,7 @@ function registerOrderLifecycle(strapi: Strapi) {
             "ShippingCost",
             "Description",
             "Note",
+            "ShippingBarcode",
           ],
           populate: { user: true, contract: true, shipping: true },
         }
@@ -238,6 +252,15 @@ function registerOrderLifecycle(strapi: Strapi) {
 
       const oldStatus = previous?.Status;
       const newStatus = (current as any)?.Status;
+      const trackingChange = changes.ShippingBarcode as
+        | { from?: unknown; to?: unknown }
+        | undefined;
+      const trackingCode =
+        trackingChange?.to !== undefined && trackingChange.to !== null
+          ? String(trackingChange.to)
+          : (current as any)?.ShippingBarcode
+          ? String((current as any).ShippingBarcode)
+          : undefined;
 
       if (oldStatus !== newStatus && newStatus && orderUserId) {
         await logOrderEvent(strapi as any, {
@@ -262,7 +285,6 @@ function registerOrderLifecycle(strapi: Strapi) {
           const normalizedStatus = newStatus?.toLowerCase();
 
           if (normalizedStatus === "shipment" && activityService?.logOrderShipped) {
-            const trackingCode = changes?.ShippingBarcode || changes?.barcode || undefined;
             await activityService.logOrderShipped(orderUserId, result.id, trackingCode);
           } else if (normalizedStatus === "done" && activityService?.logOrderDelivered) {
             await activityService.logOrderDelivered(orderUserId, result.id);
@@ -279,6 +301,37 @@ function registerOrderLifecycle(strapi: Strapi) {
             error: (activityError as Error).message,
           });
         }
+
+        void notifyOrderStatusSms(strapi as any, {
+          orderId: Number(result.id),
+          oldStatus,
+          newStatus,
+          trackingCode,
+          reason:
+            typeof changes?.Description?.to === "string"
+              ? changes.Description.to
+              : typeof changes?.Note?.to === "string"
+              ? changes.Note.to
+              : undefined,
+        }).catch((smsError) => {
+          strapi.log.error("Failed to queue order-status SMS", {
+            orderId: result.id,
+            oldStatus,
+            newStatus,
+            error: (smsError as Error)?.message || smsError,
+          });
+        });
+      } else if (trackingChange?.to && newStatus === "Shipment" && orderUserId) {
+        void notifyShipmentTrackingSms(strapi as any, {
+          orderId: Number(result.id),
+          trackingCode: String(trackingChange.to),
+        }).catch((smsError) => {
+          strapi.log.error("Failed to queue shipment tracking SMS", {
+            orderId: result.id,
+            trackingCode: String(trackingChange.to),
+            error: (smsError as Error)?.message || smsError,
+          });
+        });
       }
 
       if (actor.userId && actor.label && Object.keys(changes).length > 0) {

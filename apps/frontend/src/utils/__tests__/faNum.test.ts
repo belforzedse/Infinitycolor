@@ -1,6 +1,26 @@
-import { faNum } from "../faNum";
+import { faNum, normalizeDigits } from "../faNum";
 
 describe("Farsi Number utilities", () => {
+  describe("normalizeDigits", () => {
+    it("converts Persian digits to ASCII", () => {
+      expect(normalizeDigits("۱۲۳۴۵۶۷۸۹۰")).toBe("1234567890");
+    });
+
+    it("converts Arabic-Indic digits to ASCII", () => {
+      expect(normalizeDigits("١٢٣٤٥٦٧٨٩٠")).toBe("1234567890");
+    });
+
+    it("preserves ASCII digits and separators", () => {
+      expect(normalizeDigits("1,234")).toBe("1,234");
+      expect(normalizeDigits("۱٬۲۳۴")).toBe("1٬234");
+    });
+
+    it("leaves non-digit characters untouched", () => {
+      expect(normalizeDigits("abc")).toBe("abc");
+      expect(normalizeDigits("")).toBe("");
+    });
+  });
+
   describe("faNum", () => {
     it("formats numbers with Farsi locale", () => {
       expect(faNum(1234)).toBe("۱٬۲۳۴");

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { getSecurityHeaderEntries } from './src/utils/securityHeaders';
 
 export const LEGACY_REDIRECT_STATUS = 301;
 
@@ -20,6 +21,10 @@ const PRIVATE_ROUTE_PREFIXES = [
 const PDP_REDIRECT_TIMEOUT_MS = 1500;
 const WOO_VARIATION_PARAM_NAMES = new Set(['رنگ', 'سایز', 'طرح']);
 const RETIRED_LEGACY_PATHS = new Set(['/offer/best-sellers', '/offer/week-style']);
+const SECURITY_RESPONSE_HEADERS = [
+  ['X-DNS-Prefetch-Control', 'on'],
+  ...getSecurityHeaderEntries(),
+] as const;
 type LegacyRedirectSourceUrl = Pick<URL, 'href' | 'pathname' | 'search' | 'searchParams'>;
 
 function safeDecodeURIComponent(value: string) {
@@ -205,23 +210,23 @@ function isPrivateRoute(pathname: string) {
   );
 }
 
+export function applySecurityHeaders(response: NextResponse) {
+  for (const [key, value] of SECURITY_RESPONSE_HEADERS) {
+    response.headers.set(key, value);
+  }
+
+  return response;
+}
+
+function redirectWithSecurityHeaders(url: URL, status: number) {
+  return applySecurityHeaders(NextResponse.redirect(url, status));
+}
+
 export default async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Security headers for SEO and performance
-  const response = NextResponse.next();
-
-  // Add security and performance headers
-  response.headers.set('X-DNS-Prefetch-Control', 'on');
-  response.headers.set('X-Frame-Options', 'SAMEORIGIN');
-  response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-  // Permissions-Policy (formerly Feature-Policy) - safe security improvement
-  response.headers.set(
-    'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=(), interest-cohort=()'
-  );
+  const response = applySecurityHeaders(NextResponse.next());
 
   if (isPrivateRoute(pathname)) {
     response.headers.set('Cache-Control', 'no-store, max-age=0');
@@ -241,7 +246,7 @@ export default async function middleware(request: NextRequest) {
 
   const legacyRedirectUrl = getLegacyRedirectUrl(request.nextUrl);
   if (legacyRedirectUrl) {
-    return NextResponse.redirect(legacyRedirectUrl, LEGACY_REDIRECT_STATUS);
+    return redirectWithSecurityHeaders(legacyRedirectUrl, LEGACY_REDIRECT_STATUS);
   }
 
   if (isRetiredLegacyPath(pathname) || isWordPressInternalPath(pathname)) {
@@ -252,7 +257,7 @@ export default async function middleware(request: NextRequest) {
   if (pathname !== '/' && pathname.endsWith('/')) {
     const url = request.nextUrl.clone();
     url.pathname = pathname.slice(0, -1);
-    return NextResponse.redirect(url, LEGACY_REDIRECT_STATUS);
+    return redirectWithSecurityHeaders(url, LEGACY_REDIRECT_STATUS);
   }
 
   // Clean up empty category parameter in PLP - redirect /plp?category= to /plp
@@ -264,7 +269,7 @@ export default async function middleware(request: NextRequest) {
     if (category !== null && category.trim() === '') {
       const url = request.nextUrl.clone();
       url.searchParams.delete('category');
-      return NextResponse.redirect(url, LEGACY_REDIRECT_STATUS); // Permanent redirect to clean URL
+      return redirectWithSecurityHeaders(url, LEGACY_REDIRECT_STATUS); // Permanent redirect to clean URL
     }
   }
 
@@ -302,7 +307,7 @@ export default async function middleware(request: NextRequest) {
           if (slug) {
             const url = request.nextUrl.clone();
             url.pathname = `/pdp/${slug}`;
-            return NextResponse.redirect(url, LEGACY_REDIRECT_STATUS); // Permanent redirect
+            return redirectWithSecurityHeaders(url, LEGACY_REDIRECT_STATUS); // Permanent redirect
           }
         }
       } catch (error) {
@@ -318,7 +323,7 @@ export default async function middleware(request: NextRequest) {
   // if (hostname.startsWith('www.')) {
   //   const url = request.nextUrl.clone();
   //   url.hostname = hostname.replace('www.', '');
-  //   return NextResponse.redirect(url, 301);
+  //   return redirectWithSecurityHeaders(url, 301);
   // }
 
   return response;

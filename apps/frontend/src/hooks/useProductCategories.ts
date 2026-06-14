@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
-import { getProductCategories, type ProductCategorySummary } from "@/services/product/categories";
+import {
+  getNavbarProductCategories,
+  getProductCategories,
+  type ProductCategorySummary,
+} from "@/services/product/categories";
 
 interface UseProductCategoriesOptions {
   parentOnly?: boolean;
   mainOnly?: boolean;
   /** When true, only categories marked as featured in Strapi (carousel / bottom nav sheet). */
   featuredOnly?: boolean;
+  /** When true, fetch direct children for desktop megamenu links. */
+  includeChildren?: boolean;
+  /** When true, read categories assigned to the Navigation single type. */
+  navbarAssignedOnly?: boolean;
   /** When provided, only categories whose name includes one of these substrings are returned. */
   allowedNameSubstrings?: readonly string[];
   initial?: ProductCategorySummary[];
@@ -20,6 +28,8 @@ const getCategoryCacheKey = (options: Omit<UseProductCategoriesOptions, "initial
     parentOnly: options.parentOnly ?? false,
     mainOnly: options.mainOnly ?? false,
     featuredOnly: options.featuredOnly ?? null,
+    includeChildren: options.includeChildren ?? false,
+    navbarAssignedOnly: options.navbarAssignedOnly ?? false,
     allowedNameSubstrings: options.allowedNameSubstrings ?? [],
   });
 
@@ -28,11 +38,20 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
     parentOnly = false,
     mainOnly = false,
     featuredOnly,
+    includeChildren,
+    navbarAssignedOnly,
     allowedNameSubstrings,
     initial,
     enabled = true,
   } = options;
-  const cacheKey = getCategoryCacheKey({ parentOnly, mainOnly, featuredOnly, allowedNameSubstrings });
+  const cacheKey = getCategoryCacheKey({
+    parentOnly,
+    mainOnly,
+    featuredOnly,
+    includeChildren,
+    navbarAssignedOnly,
+    allowedNameSubstrings,
+  });
   const cached = categoryDataCache.get(cacheKey);
   const [categories, setCategories] = useState<ProductCategorySummary[]>(initial ?? cached ?? []);
   const [isLoading, setIsLoading] = useState(enabled && !initial && !cached);
@@ -53,12 +72,15 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
         setIsLoading(true);
         let request = categoryRequestCache.get(cacheKey);
         if (!request) {
-          request = getProductCategories({
-            parentOnly,
-            mainOnly,
-            featuredOnly,
-            allowedNameSubstrings,
-          });
+          request = navbarAssignedOnly
+            ? getNavbarProductCategories({ includeChildren })
+            : getProductCategories({
+                parentOnly,
+                mainOnly,
+                featuredOnly,
+                includeChildren,
+                allowedNameSubstrings,
+              });
           categoryRequestCache.set(cacheKey, request);
         }
         const data = await request;
@@ -79,7 +101,17 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
     return () => {
       isMounted = false;
     };
-  }, [initial, enabled, cacheKey, parentOnly, mainOnly, featuredOnly, allowedNameSubstrings]);
+  }, [
+    initial,
+    enabled,
+    cacheKey,
+    parentOnly,
+    mainOnly,
+    featuredOnly,
+    includeChildren,
+    navbarAssignedOnly,
+    allowedNameSubstrings,
+  ]);
 
   return { categories, isLoading };
 };

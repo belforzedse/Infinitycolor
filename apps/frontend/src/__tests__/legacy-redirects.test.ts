@@ -1,18 +1,48 @@
 jest.mock("next/server", () => ({
   NextResponse: {
-    next: jest.fn(),
-    redirect: jest.fn(),
+    next: jest.fn(() => ({ headers: new Headers() })),
+    redirect: jest.fn((url: URL, status: number) => ({
+      headers: new Headers(),
+      status,
+      url,
+    })),
   },
 }));
 
 const {
+  default: middleware,
   getLegacyRedirectUrl,
   isRetiredLegacyPath,
   LEGACY_REDIRECT_STATUS,
 } = require("../../middleware");
+const { getSecurityHeaderEntries } = require("../utils/securityHeaders");
+
+const SECURITY_HEADER_EXPECTATIONS = [
+  ["X-DNS-Prefetch-Control", "on"],
+  ...getSecurityHeaderEntries(),
+] as const;
 
 function legacyTarget(path: string) {
   return getLegacyRedirectUrl(new URL(path, "https://infinitycolor.co"));
+}
+
+function nextUrl(path: string) {
+  const url = new URL(path, "https://infinitycolor.co");
+  url.clone = () => nextUrl(url.pathname + url.search);
+
+  return url;
+}
+
+function mockRequest(path: string) {
+  return {
+    nextUrl: nextUrl(path),
+  };
+}
+
+function expectSecurityHeaders(headers: Headers) {
+  for (const [key, value] of SECURITY_HEADER_EXPECTATIONS) {
+    expect(headers.get(key)).toBe(value);
+  }
 }
 
 describe("legacy WooCommerce redirects", () => {
@@ -74,5 +104,27 @@ describe("legacy WooCommerce redirects", () => {
 
     expect(target).toBeNull();
     expect(isRetiredLegacyPath("/offer/best-sellers/")).toBe(true);
+  });
+});
+
+describe("middleware security headers", () => {
+  it("adds baseline security headers to pass-through responses", async () => {
+    const response = await middleware(mockRequest("/"));
+
+    expectSecurityHeaders(response.headers);
+  });
+
+  it("adds baseline security headers to legacy redirect responses", async () => {
+    const response = await middleware(mockRequest("/shop/pants/page/2/"));
+
+    expect(response.status).toBe(LEGACY_REDIRECT_STATUS);
+    expectSecurityHeaders(response.headers);
+  });
+
+  it("adds baseline security headers to canonical redirect responses", async () => {
+    const response = await middleware(mockRequest("/faq/"));
+
+    expect(response.status).toBe(LEGACY_REDIRECT_STATUS);
+    expectSecurityHeaders(response.headers);
   });
 });

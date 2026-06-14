@@ -117,6 +117,9 @@ function SidebarNav({
             <Link
               key={item.id}
               href={item.href ? item.href : ""}
+              data-testid="super-admin-sidebar-item"
+              data-sidebar-id={item.id}
+              data-sidebar-href={item.href ?? ""}
               onClick={() => onNavigate?.()}
               className={clsx(
                 "relative mb-2 flex items-center justify-between rounded-lg px-2 py-1.5 transition-colors duration-150",
@@ -152,6 +155,9 @@ function SidebarNav({
             <div
               role="button"
               tabIndex={0}
+              data-testid="super-admin-sidebar-item"
+              data-sidebar-id={item.id}
+              data-sidebar-href={item.href ?? ""}
               className={clsx(
                 "relative mb-2 flex items-center justify-between rounded-lg px-2 py-1.5",
                 "cursor-pointer transition-colors duration-150",
@@ -243,6 +249,9 @@ function SidebarNav({
                     <Fragment key={child.id}>
                       <Link
                         href={child.href}
+                        data-testid="super-admin-sidebar-child"
+                        data-sidebar-id={child.id}
+                        data-sidebar-href={child.href}
                         onClick={(e) => {
                           e.stopPropagation();
                           onNavigate?.();

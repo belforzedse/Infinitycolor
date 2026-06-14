@@ -26,6 +26,8 @@ const CustomRadioGroup: React.FC<CustomRadioGroupProps> = ({
       {options.map((option) => (
         <label
           key={option.id}
+          data-testid="checkout-shipping-option"
+          data-shipping-id={option.value}
           className={`flex w-full items-center gap-1 rounded-lg bg-white px-4 py-3 transition-all duration-200 ${
             value === option.value ? "ring-1 ring-infinity-primary" : ""
           } ${

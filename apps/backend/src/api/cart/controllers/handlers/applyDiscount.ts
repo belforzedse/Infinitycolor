@@ -1,10 +1,13 @@
 import { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
-  const { user } = ctx.state;
   const { code, shippingId, shippingCost } = ctx.request.body || {};
 
   try {
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
+
     if (!code || typeof code !== "string") {
       return ctx.badRequest("Discount code is required", {
         data: { success: false, error: "missing_code" },
@@ -13,7 +16,7 @@ export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
 
     // Load user's current cart with items
     const cartService = strapi.service("api::cart.cart");
-    const cart = await cartService.getUserCart(user.id);
+    const cart = await cartService.getUserCart(userId);
     if (!cart?.cart_items?.length) {
       return ctx.badRequest("Cart is empty", {
         data: { success: false, error: "empty_cart" },

@@ -83,6 +83,35 @@ export interface ProductPerformanceResult {
   };
 }
 
+export interface GatewayBreakdownRow {
+  /** Raw enum value (e.g. "Mellat", "ZarinPal", "Unknown"). */
+  gateway: string;
+  /** Persian display label. */
+  label: string;
+  ordersCount: number;
+  /** Net successful settlement in Toman. */
+  total: number;
+  /** Share of total gateway settlement (%), or null when total is 0. */
+  sharePct: number | null;
+}
+
+export interface ShippingBreakdownRow {
+  /** Shipping method title, or "نامشخص" for missing/legacy values. */
+  method: string;
+  ordersCount: number;
+  /** Total shipping fee earned in Toman (from order.ShippingCost). */
+  total: number;
+}
+
+export interface ProductBreakdown {
+  range: { start: string; end: string };
+  currency: string;
+  totals: { gatewaySales: number; shippingRevenue: number; ordersCount: number };
+  gateways: GatewayBreakdownRow[];
+  shippingMethods: ShippingBreakdownRow[];
+  notes: Record<string, string>;
+}
+
 export interface ProductReportFilters {
   start?: string;
   end?: string;

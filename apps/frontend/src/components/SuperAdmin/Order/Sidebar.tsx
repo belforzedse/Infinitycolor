@@ -7,6 +7,7 @@ import { translateOrderLogMessage } from "@/utils/statusTranslations";
 import SuperAdminOrderLogs from "./SuperAdminOrderLogs";
 import { type OrderTimelineEvent } from "@/components/User/Orders/Detail/OrderTimeline";
 import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 import toast from "react-hot-toast";
 
 interface SuperAdminOrderSidebarProps {
@@ -27,10 +28,12 @@ type OrderLog = {
 export default function SuperAdminOrderSidebar({
   orderData,
   selectedItems = [],
-  shippingBarcode
+  shippingBarcode,
 }: SuperAdminOrderSidebarProps = {}) {
   const router = useRouter();
   const { id } = useParams();
+  const { user, isLoading: isUserLoading, isStoreManager } = useCurrentUser();
+  const canViewOrderLogs = !isUserLoading && !!user && !isStoreManager;
   const [formData, setFormData] = useState({
     message: "",
     type: "sms",
@@ -39,12 +42,9 @@ export default function SuperAdminOrderSidebar({
   const [logsLoading, setLogsLoading] = useState(false);
   const [activeLogTab, setActiveLogTab] = useState<"events" | "audit">("events");
   const [readableEventCount, setReadableEventCount] = useState(0);
-  const handleReadableEventsChange = useCallback(
-    (events: OrderTimelineEvent[]) => {
-      setReadableEventCount(events.length);
-    },
-    [],
-  );
+  const handleReadableEventsChange = useCallback((events: OrderTimelineEvent[]) => {
+    setReadableEventCount(events.length);
+  }, []);
 
   const timelineOrderId = orderData?.id ?? (id ? Number(id) : undefined);
   const [showBarcodeDialog, setShowBarcodeDialog] = useState(false);
@@ -53,7 +53,11 @@ export default function SuperAdminOrderSidebar({
 
   useEffect(() => {
     const fetchLogs = async () => {
-      if (!id) return;
+      if (!id || !canViewOrderLogs) {
+        setOrderLogs([]);
+        setLogsLoading(false);
+        return;
+      }
       try {
         setLogsLoading(true);
         const res = await apiClient.get(
@@ -67,7 +71,7 @@ export default function SuperAdminOrderSidebar({
       }
     };
     fetchLogs();
-  }, [id]);
+  }, [id, canViewOrderLogs]);
 
   useEffect(() => {
     setReadableEventCount(0);
@@ -109,34 +113,34 @@ export default function SuperAdminOrderSidebar({
 
     // Create a temporary order object in Strapi format for the Invoice component
     const tempOrder = {
-      id: 'temp-preview',
+      id: "temp-preview",
       attributes: {
         Date: orderData.orderDate?.toISOString() || new Date().toISOString(),
         createdAt: new Date().toISOString(),
-        Description: orderData.description || '',
+        Description: orderData.description || "",
         ShippingCost: orderData.shipping || 0,
         user: {
           data: {
             attributes: {
-              Phone: orderData.phoneNumber || '',
+              Phone: orderData.phoneNumber || "",
               user_info: {
                 data: {
                   attributes: {
-                    FirstName: orderData.userName?.split(' ')[0] || '',
-                    LastName: orderData.userName?.split(' ').slice(1).join(' ') || '',
-                  }
-                }
-              }
-            }
-          }
+                    FirstName: orderData.userName?.split(" ")[0] || "",
+                    LastName: orderData.userName?.split(" ").slice(1).join(" ") || "",
+                  },
+                },
+              },
+            },
+          },
         },
         delivery_address: {
           data: {
             attributes: {
-              FullAddress: orderData.address || '',
-              PostalCode: orderData.postalCode || '',
-            }
-          }
+              FullAddress: orderData.address || "",
+              PostalCode: orderData.postalCode || "",
+            },
+          },
         },
         order_items: {
           data: selectedItems.map((item, index) => ({
@@ -146,36 +150,36 @@ export default function SuperAdminOrderSidebar({
               PerAmount: item.price,
               ProductTitle: item.productName,
               ProductSKU: item.productCode,
-            }
-          }))
+            },
+          })),
         },
         contract: {
           data: {
             attributes: {
-              Amount: orderData.total || 0
-            }
-          }
-        }
-      }
+              Amount: orderData.total || 0,
+            },
+          },
+        },
+      },
     };
 
     // Store temp order data in sessionStorage
-    sessionStorage.setItem('tempPreInvoiceOrder', JSON.stringify(tempOrder));
+    sessionStorage.setItem("tempPreInvoiceOrder", JSON.stringify(tempOrder));
 
     // Open print page with pre-invoice flag
     const printUrl = `/super-admin/orders/print/temp-preview?type=pre-invoice`;
     try {
-      const printWindow = window.open(printUrl, '_blank', 'noopener,noreferrer');
+      const printWindow = window.open(printUrl, "_blank", "noopener,noreferrer");
       if (!printWindow) {
-        toast.error('لطفا اجازه باز کردن پنجره جدید را بدهید');
+        toast.error("لطفا اجازه باز کردن پنجره جدید را بدهید");
       }
     } catch (error) {
-      toast.error('خطا در باز کردن پیش‌فاکتور');
+      toast.error("خطا در باز کردن پیش‌فاکتور");
     }
 
     // Clean up after a delay
     setTimeout(() => {
-      sessionStorage.removeItem('tempPreInvoiceOrder');
+      sessionStorage.removeItem("tempPreInvoiceOrder");
     }, 10000);
   };
 
@@ -185,7 +189,7 @@ export default function SuperAdminOrderSidebar({
       <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
         <div className="flex flex-col gap-2">
           <div className="flex flex-col">
-            <span className="text-lg text-foreground-primary">ارسال اعلان به مشتری</span>
+            <span className="text-foreground-primary text-lg">ارسال اعلان به مشتری</span>
 
             <span className="text-sm text-neutral-400">
               ارسال پیامک به شماره {orderData?.phoneNumber || "---"}
@@ -194,7 +198,7 @@ export default function SuperAdminOrderSidebar({
 
           <div className="w-full overflow-hidden rounded-lg border border-neutral-200">
             <select
-              className={`text-sm w-full border-l-[20px] border-transparent px-5 py-3`}
+              className={`w-full border-l-[20px] border-transparent px-5 py-3 text-sm`}
               value={formData.type}
               onChange={(e) => {
                 setFormData({
@@ -211,7 +215,7 @@ export default function SuperAdminOrderSidebar({
           <textarea
             rows={3}
             placeholder="متن اعلان"
-            className={`text-sm w-full rounded-lg border border-neutral-200 px-5 py-2`}
+            className={`w-full rounded-lg border border-neutral-200 px-5 py-2 text-sm`}
             value={formData.message}
             onChange={(e) => {
               setFormData({
@@ -241,7 +245,7 @@ export default function SuperAdminOrderSidebar({
                 toast.error("خطا در ارسال پیام");
               }
             }}
-            className="flex items-center gap-1 rounded-md bg-actions-primary px-2 py-1 hover:brightness-110 transition-colors"
+            className="flex items-center gap-1 rounded-md bg-actions-primary px-2 py-1 transition-colors hover:brightness-110"
           >
             <span className="text-sm text-white">ارسال پیام</span>
 
@@ -253,7 +257,7 @@ export default function SuperAdminOrderSidebar({
       <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
         <div className="flex flex-col gap-2">
           <div className="flex flex-col">
-            <span className="text-lg text-foreground-primary">فاکتور</span>
+            <span className="text-foreground-primary text-lg">فاکتور</span>
 
             <span className="text-sm text-neutral-400">شماره فاکتور: 841649</span>
           </div>
@@ -305,10 +309,10 @@ export default function SuperAdminOrderSidebar({
           </div>
 
           {/* Anipo Barcode Button - Full Width */}
-          <div className="flex w-full mt-2">
+          <div className="mt-2 flex w-full">
             {hasBarcode ? (
               <button
-                className="flex w-full items-center justify-center gap-1 rounded-md bg-green-50 py-1.5 text-green-600 cursor-default"
+                className="flex w-full cursor-default items-center justify-center gap-1 rounded-md bg-green-50 py-1.5 text-green-600"
                 type="button"
                 disabled
               >
@@ -336,7 +340,7 @@ export default function SuperAdminOrderSidebar({
                   }
                 }}
                 disabled={isGenerating}
-                className="flex w-full items-center justify-center gap-1 rounded-md bg-orange-50 py-1.5 text-orange-600 hover:bg-orange-100 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-1 rounded-md bg-orange-50 py-1.5 text-orange-600 transition-colors hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
                 type="button"
               >
                 <svg
@@ -358,90 +362,90 @@ export default function SuperAdminOrderSidebar({
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
-        <div className="flex items-center justify-between">
-          <span className="text-lg text-foreground-primary">اعلانات سفارش</span>
-        </div>
+      {canViewOrderLogs && (
+        <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
+          <div className="flex items-center justify-between">
+            <span className="text-foreground-primary text-lg">اعلانات سفارش</span>
+          </div>
 
-        {/* Tabs for Events and Audit Logs */}
-        <div className="flex gap-2 border-b border-neutral-200">
-          <button
-            type="button"
-            onClick={() => setActiveLogTab("events")}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeLogTab === "events"
-                ? "border-b-2 border-infinity-primary text-infinity-primary"
-                : "text-neutral-500 hover:text-neutral-700"
-            }`}
-          >
-            رویدادها ({readableEventCount})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveLogTab("audit")}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeLogTab === "audit"
-                ? "border-b-2 border-infinity-primary text-infinity-primary"
-                : "text-neutral-500 hover:text-neutral-700"
-            }`}
-          >
-            لاگ‌های فنی ({orderLogs.length})
-          </button>
-        </div>
+          {/* Tabs for Events and Audit Logs */}
+          <div className="flex gap-2 border-b border-neutral-200">
+            <button
+              type="button"
+              onClick={() => setActiveLogTab("events")}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeLogTab === "events"
+                  ? "border-b-2 border-infinity-primary text-infinity-primary"
+                  : "text-neutral-500 hover:text-neutral-700"
+              }`}
+            >
+              رویدادها ({readableEventCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveLogTab("audit")}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeLogTab === "audit"
+                  ? "border-b-2 border-infinity-primary text-infinity-primary"
+                  : "text-neutral-500 hover:text-neutral-700"
+              }`}
+            >
+              لاگ‌های فنی ({orderLogs.length})
+            </button>
+          </div>
 
-        {activeLogTab === "events" ? (
-          <SuperAdminOrderLogs
-            orderId={timelineOrderId}
-            hideHeader
-            onEventsChange={handleReadableEventsChange}
-          />
-        ) : (
-          <>
-            {logsLoading ? (
-              <div className="text-sm text-neutral-400">در حال بارگذاری...</div>
-            ) : orderLogs.length === 0 ? (
-              <div className="text-sm text-neutral-400">اعلانی ثبت نشده است</div>
-            ) : (
-              <div className="flex flex-col gap-3 max-h-[400px] overflow-y-auto">
-                {orderLogs.map((log, index) => {
-                  const date = new Date(log.attributes.createdAt);
-                  const formattedDate = date.toLocaleDateString("fa-IR", {
-                    year: "numeric",
-                    month: "2-digit",
-                    day: "2-digit",
-                  });
-                  const formattedTime = date.toLocaleTimeString("fa-IR", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  });
-                  const isEven = index % 2 === 0;
+          {activeLogTab === "events" ? (
+            <SuperAdminOrderLogs
+              orderId={timelineOrderId}
+              hideHeader
+              onEventsChange={handleReadableEventsChange}
+            />
+          ) : (
+            <>
+              {logsLoading ? (
+                <div className="text-sm text-neutral-400">در حال بارگذاری...</div>
+              ) : orderLogs.length === 0 ? (
+                <div className="text-sm text-neutral-400">اعلانی ثبت نشده است</div>
+              ) : (
+                <div className="flex max-h-[400px] flex-col gap-3 overflow-y-auto">
+                  {orderLogs.map((log, index) => {
+                    const date = new Date(log.attributes.createdAt);
+                    const formattedDate = date.toLocaleDateString("fa-IR", {
+                      year: "numeric",
+                      month: "2-digit",
+                      day: "2-digit",
+                    });
+                    const formattedTime = date.toLocaleTimeString("fa-IR", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    });
+                    const isEven = index % 2 === 0;
 
-                  return (
-                    <div
-                      key={log.id}
-                      className={`rounded-lg p-3 ${
-                        isEven ? "bg-blue-50" : "bg-purple-50"
-                      }`}
-                    >
-                      <div className="text-sm text-foreground-primary mb-1">
-                        {translateOrderLogMessage(log.attributes.Description) || "ثبت رویداد"}
+                    return (
+                      <div
+                        key={log.id}
+                        className={`rounded-lg p-3 ${isEven ? "bg-blue-50" : "bg-purple-50"}`}
+                      >
+                        <div className="text-foreground-primary mb-1 text-sm">
+                          {translateOrderLogMessage(log.attributes.Description) || "ثبت رویداد"}
+                        </div>
+                        {log.attributes.Changes && (
+                          <pre className="mb-1 mt-1 whitespace-pre-wrap break-all text-xs text-neutral-500">
+                            {JSON.stringify(log.attributes.Changes, null, 2)}
+                          </pre>
+                        )}
+                        <div className="mt-1 text-xs text-neutral-500">
+                          {formattedDate} در {formattedTime}
+                        </div>
                       </div>
-                      {log.attributes.Changes && (
-                        <pre className="mt-1 whitespace-pre-wrap break-all text-xs text-neutral-500 mb-1">
-                          {JSON.stringify(log.attributes.Changes, null, 2)}
-                        </pre>
-                      )}
-                      <div className="text-xs text-neutral-500 mt-1">
-                        {formattedDate} در {formattedTime}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
-      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <AnipoBarcodeDialog
         isOpen={showBarcodeDialog}

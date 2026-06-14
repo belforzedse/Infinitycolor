@@ -4,7 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import { STORE_MANAGER_PLUS_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
 
 export default factories.createCoreController("api::faq-category.faq-category" as any, ({ strapi }) => ({
   async getActorRoleName(userId?: number, fallback?: any): Promise<string | null> {
@@ -23,7 +23,7 @@ export default factories.createCoreController("api::faq-category.faq-category" a
     // Allow API tokens (no user) or users with proper roles
     if (user) {
       const actorRoleName: string | null = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, ["Superadmin", "Store manager"])) {
+      if (!roleIsAllowed(actorRoleName, STORE_MANAGER_PLUS_ROLES)) {
         return ctx.forbidden("You don't have permission to create FAQ categories");
       }
     }
@@ -39,7 +39,7 @@ export default factories.createCoreController("api::faq-category.faq-category" a
     // Allow API tokens (no user) or users with proper roles
     if (user) {
       const actorRoleName: string | null = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, ["Superadmin", "Store manager"])) {
+      if (!roleIsAllowed(actorRoleName, STORE_MANAGER_PLUS_ROLES)) {
         return ctx.forbidden("You don't have permission to update FAQ categories");
       }
     }
@@ -52,7 +52,7 @@ export default factories.createCoreController("api::faq-category.faq-category" a
   async delete(ctx) {
     const user = ctx.state.user;
     const actorRoleName: string | null = await this.getActorRoleName(user?.id, user);
-    if (!user || !roleIsAllowed(actorRoleName, ["Superadmin", "Store manager"])) {
+    if (!user || !roleIsAllowed(actorRoleName, STORE_MANAGER_PLUS_ROLES)) {
       return ctx.forbidden("You don't have permission to delete FAQ categories");
     }
     

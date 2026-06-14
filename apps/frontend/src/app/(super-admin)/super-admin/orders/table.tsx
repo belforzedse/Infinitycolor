@@ -87,7 +87,16 @@ export const columns: ColumnDef<Order>[] = [
     accessorKey: "id",
     header: "سفارش",
     cell: ({ row }) => {
-      return <span className="text-sm text-foreground-primary">#{row.original.id}</span>;
+      return (
+        <span
+          className="text-sm text-foreground-primary"
+          data-testid="admin-order-row"
+          data-order-id={row.original.id}
+          data-order-status={row.original.attributes.Status}
+        >
+          #{row.original.id}
+        </span>
+      );
     },
   },
   {

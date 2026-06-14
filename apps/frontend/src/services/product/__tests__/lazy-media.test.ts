@@ -45,6 +45,29 @@ describe("lazy media helpers", () => {
     expect(urls[1]).toContain("/uploads/gallery-2.webp");
   });
 
+  it("filters blocked external image urls from lazy media", () => {
+    const urls = extractLazySecondaryMediaUrls({
+      attributes: {
+        CoverImage: {
+          data: {
+            attributes: {
+              url: "/uploads/cover.webp",
+            },
+          },
+        },
+        Media: {
+          data: [
+            { attributes: { url: "https://external-domain.example/gallery.webp", mime: "image/webp" } },
+            { attributes: { url: "/uploads/gallery-1.webp", mime: "image/webp" } },
+          ],
+        },
+      },
+    });
+
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain("/uploads/gallery-1.webp");
+  });
+
   it("enforces limit when returning lazy secondary media", async () => {
     mockedGetPublic.mockResolvedValueOnce({
       data: [

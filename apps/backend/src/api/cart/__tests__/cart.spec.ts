@@ -71,6 +71,63 @@ describe('Cart Operations - Real Handlers', () => {
       expect(result.data.cart_item.Count).toBe(count);
     });
 
+    it('should let a founder add an item to a targeted customer cart', async () => {
+      const actorId = 1;
+      const targetUserId = 22;
+      const productVariationId = 5;
+      const count = 2;
+
+      const cart = mockCart({ id: 30, user: { id: targetUserId } });
+      cartService.getUserCart.mockResolvedValue(cart);
+      cartService.addCartItem.mockResolvedValue({
+        success: true,
+        data: {
+          cart_item: mockCartItem({
+            id: 11,
+            Count: count,
+            product_variation: { id: productVariationId },
+          }),
+        },
+      });
+
+      const ctx = mockContext({
+        request: { body: { productVariationId, count, userId: targetUserId } },
+        state: {
+          user: {
+            id: actorId,
+            role: { name: 'Founder', type: 'founder' },
+          },
+        },
+      });
+
+      const handler = addItemHandler(mockStrapi);
+      const result = await handler(ctx);
+
+      expect(cartService.getUserCart).toHaveBeenCalledWith(targetUserId);
+      expect(cartService.addCartItem).toHaveBeenCalledWith(cart.id, productVariationId, count);
+      expect(result.data.cart_item.Count).toBe(count);
+    });
+
+    it('should not let a customer add an item to another customer cart', async () => {
+      const ctx = mockContext({
+        request: { body: { productVariationId: 5, count: 1, userId: 22 } },
+        state: {
+          user: {
+            id: 1,
+            role: { name: 'Customer', type: 'customer' },
+          },
+        },
+      });
+
+      const handler = addItemHandler(mockStrapi);
+      const result = await handler(ctx);
+
+      expect(result).toBeUndefined();
+      expect(ctx.status).toBe(403);
+      expect(cartService.getUserCart).not.toHaveBeenCalled();
+      expect(cartService.addCartItem).not.toHaveBeenCalled();
+    });
+
     it('should reject when count is zero - REAL validation', async () => {
       const ctx = mockContext({
         request: { body: { productVariationId: 1, count: 0 } },

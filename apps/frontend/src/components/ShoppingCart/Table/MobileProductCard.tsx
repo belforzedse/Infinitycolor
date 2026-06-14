@@ -5,8 +5,8 @@ import Image from "next/image";
 import imageLoader from "@/utils/imageLoader";
 import ShoppingCartQuantityControl from "../QuantityControl";
 import type { CartItem } from "@/contexts/CartContext";
-import { IMAGE_BASE_URL } from "@/constants/api";
 import { faNum } from "@/utils/faNum";
+import { resolveCartItemImage } from "../cartItemImage";
 
 interface Props {
   cartItem: CartItem;
@@ -47,6 +47,7 @@ export default function ShoppingCartMobileProductCard({ cartItem }: Props) {
     cartItem.originalPrice && cartItem.originalPrice > cartItem.price
       ? cartItem.originalPrice
       : undefined;
+  const imageUrl = resolveCartItemImage(cartItem.image);
 
   return (
     <div
@@ -64,11 +65,7 @@ export default function ShoppingCartMobileProductCard({ cartItem }: Props) {
         <div className="col-span-3 flex min-w-0 items-center gap-2 px-3 py-2">
           <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl">
             <Image
-              src={
-                cartItem.image.startsWith("http")
-                  ? cartItem.image
-                  : `${IMAGE_BASE_URL}${cartItem.image}`
-              }
+              src={imageUrl}
               alt={cartItem.name}
               fill
               className="h-full w-full object-cover"

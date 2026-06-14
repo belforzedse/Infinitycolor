@@ -182,18 +182,21 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           <button
             className="w-full rounded-xl border-2 border-slate-300 bg-slate-300/40 px-3 py-2 text-sm text-slate-500 hover:bg-slate-300/80 hover:text-slate-800 md:w-fit md:px-5"
             onClick={() => router.push("/super-admin/products")}
+            data-testid="admin-product-cancel"
           >
             بیخیال شدن
           </button>
           <button
             onClick={handleDuplicateProduct}
             className="w-full rounded-xl border-2 border-blue-200 bg-blue-500/10 px-3 py-2 text-sm text-blue-500 hover:bg-blue-500/80 hover:text-white md:w-fit md:px-5"
+            data-testid="admin-product-detail-duplicate"
           >
             کپی محصول
           </button>
           <button
             onClick={handleUpdateProduct}
             className="w-full rounded-xl border-2 border-infinity-primary-lighter/60 bg-infinity-primary/10 px-3 py-2 text-sm text-infinity-primary-darker hover:bg-infinity-primary/80 hover:text-white md:w-fit md:px-5"
+            data-testid="admin-product-save"
           >
             ذخیره
           </button>
