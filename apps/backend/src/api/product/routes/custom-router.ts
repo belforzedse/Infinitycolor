@@ -2,6 +2,36 @@ export default {
   routes: [
     {
       method: "GET",
+      path: "/products/searchwise-feed",
+      handler: "product.searchwiseFeed",
+      config: {
+        auth: false,
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
+      method: "GET",
+      path: "/products/searchwise-feed/items",
+      handler: "product.searchwiseFeedItems",
+      config: {
+        auth: false,
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
+      method: "GET",
+      path: "/products/searchwise-feed/items/:idOrSlug",
+      handler: "product.searchwiseFeedItem",
+      config: {
+        auth: false,
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
+      method: "GET",
       path: "/products/search",
       handler: "product.search",
       config: {
