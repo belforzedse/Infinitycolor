@@ -75,7 +75,7 @@ const productHasDiscount = (product: any): boolean => {
 const homepageFetchOptions = (): RequestInit & {
   next?: { revalidate: number; tags: string[] };
 } => ({
-  ...(process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE === "1" || process.env.E2E_SEED_MODE === "auto"
+  ...(shouldBypassHomepageFetchCache()
     ? { cache: "no-store" as const }
     : { next: { revalidate: 90, tags: ["home-products"] } }),
   headers: {
@@ -84,6 +84,16 @@ const homepageFetchOptions = (): RequestInit & {
     "Accept-Encoding": "gzip", // Explicitly request compression
   },
 });
+
+const shouldBypassHomepageFetchCache = () =>
+  process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE === "1" || process.env.E2E_SEED_MODE === "auto";
+
+const withHomepageCacheBust = (endpoint: string): string => {
+  if (!shouldBypassHomepageFetchCache()) return endpoint;
+  const separator = endpoint.includes("?") ? "&" : "?";
+  const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${endpoint}${separator}_e2e=${token}`;
+};
 
 const parseBatchedHomepageAllowlist = () => {
   const raw = process.env.HOME_BATCHED_SECTION_ALLOWLIST || "";
@@ -106,7 +116,7 @@ export const getBatchedHomepageSections = async (): Promise<BatchedHomepageSecti
 
   try {
     const response = await fetch(
-      `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.HOMEPAGE_SECTIONS}`,
+      `${getStrapiServerUrl()}${withHomepageCacheBust(ENDPOINTS.PRODUCT.HOMEPAGE_SECTIONS)}`,
       homepageFetchOptions(),
     ).then((res) => res.json());
 
@@ -151,9 +161,10 @@ export const getProductsByIds = async (ids: number[]): Promise<ProductCardProps[
     `pagination[limit]=${Math.max(ids.length, 20)}&` +
     `pagination[withCount]=false`;
   try {
-    const response = await fetch(`${getStrapiServerUrl()}${endpoint}`, homepageFetchOptions()).then((res) =>
-      res.json(),
-    );
+    const response = await fetch(
+      `${getStrapiServerUrl()}${withHomepageCacheBust(endpoint)}`,
+      homepageFetchOptions(),
+    ).then((res) => res.json());
     const rawList = (response as { data?: unknown[] })?.data ?? [];
     const withStock = (rawList as unknown[]).filter(productHasStock);
     const idToIndex = new Map(ids.map((id, i) => [id, i]));
@@ -192,7 +203,9 @@ export const getGifPromoProductsForSlot = async (
 
   try {
     const response = await fetch(
-      `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
+      `${getStrapiServerUrl()}${withHomepageCacheBust(
+        `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
+      )}`,
       homepageFetchOptions(),
     ).then((res) => res.json());
 
@@ -226,7 +239,9 @@ export const getHomeSectionProducts = async (
 
   try {
     const response = await fetch(
-      `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
+      `${getStrapiServerUrl()}${withHomepageCacheBust(
+        `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`,
+      )}`,
       homepageFetchOptions(),
     ).then((res) => res.json());
 
@@ -292,7 +307,10 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     const settingsPromise = settingsOverride
       ? Promise.resolve(settingsOverride)
       : getPublicSuperAdminSettings();
-    const batchPromise = fetch(`${getStrapiServerUrl()}${batchEndpoint}`, homepageFetchOptions())
+    const batchPromise = fetch(
+      `${getStrapiServerUrl()}${withHomepageCacheBust(batchEndpoint)}`,
+      homepageFetchOptions(),
+    )
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) {
@@ -313,7 +331,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     // Start new products and curated discounted fetches in parallel
     const newPromise = curatedNewest
       ? getProductsByIds(settings.homeNewestProductIds)
-      : fetch(`${getStrapiServerUrl()}${newEndpoint}`, homepageFetchOptions())
+      : fetch(`${getStrapiServerUrl()}${withHomepageCacheBust(newEndpoint)}`, homepageFetchOptions())
           .then(async (res) => {
             const data = await res.json();
             if (!res.ok) {
