@@ -320,6 +320,38 @@ async function insertLink(client, table, data) {
   );
 }
 
+async function seedHomepageNewestSettings(client, productId, now) {
+  if (!(await tableExists(client, "site_settings"))) return;
+
+  const meta = await tableMeta(client, "site_settings");
+  const available = new Set(meta.map((column) => column.column_name));
+  if (!available.has("home_newest_product_ids")) return;
+
+  const payload = JSON.stringify([productId]);
+  const existing = await client.query(`SELECT id FROM site_settings ORDER BY id ASC LIMIT 1`);
+  const updatedAtClause = available.has("updated_at") ? `, updated_at = $2` : "";
+
+  if (existing.rowCount > 0) {
+    const params = available.has("updated_at")
+      ? [payload, now, existing.rows[0].id]
+      : [payload, existing.rows[0].id];
+    const idParam = available.has("updated_at") ? "$3" : "$2";
+    await client.query(
+      `UPDATE site_settings
+       SET home_newest_product_ids = $1${updatedAtClause}
+       WHERE id = ${idParam}`,
+      params,
+    );
+    return;
+  }
+
+  await insertRow(client, "site_settings", {
+    home_newest_product_ids: payload,
+    created_at: now,
+    updated_at: now,
+  });
+}
+
 async function idsBySource(client, table) {
   if (!(await tableExists(client, table))) return [];
   const result = await client.query(
@@ -831,6 +863,7 @@ async function seed(client) {
     created_at: now,
     updated_at: now,
   });
+  await seedHomepageNewestSettings(client, product.id, now);
 
   await insertLink(client, "products_product_main_category_links", {
     product_id: product.id,
