@@ -43,6 +43,18 @@ const category = {
       isMainCategory: false,
       featured: false,
     },
+    {
+      id: 3,
+      name: "شال",
+      slug: "shawls-and-scarves",
+      imageUrl: null,
+      imageAlt: "شال",
+      megaMenuImageUrl: null,
+      megaMenuImageAlt: "شال",
+      parentId: 1,
+      isMainCategory: false,
+      featured: false,
+    },
   ],
 };
 
@@ -76,6 +88,9 @@ describe("PLPHeaderDesktopNav", () => {
 
     expect(screen.getByTestId("desktop-mega-menu")).toBeInTheDocument();
     expect(screen.getByTestId("desktop-mega-menu-backdrop")).toBeInTheDocument();
+    expect(screen.getByTestId("desktop-mega-menu-links")).toHaveClass("grid-cols-3");
+    expect(screen.getByTestId("desktop-mega-menu-links")).toHaveClass("overflow-visible");
+    expect(screen.getByTestId("desktop-mega-menu-links")).not.toHaveClass("overflow-y-auto");
     expect(screen.getByRole("link", { name: "پیراهن" })).toHaveAttribute(
       "href",
       "/plp/category/dress",

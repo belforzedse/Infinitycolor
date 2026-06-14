@@ -27,7 +27,7 @@ export default function DesktopMegaMenu({ category, onLinkClick }: Props) {
   const children = category.children ?? [];
   const banner = getBannerImage(category);
   const menuItems = children.length > 0 ? children : [category];
-  const gridColumnsClass = menuItems.length > 1 ? "grid-cols-2" : "grid-cols-1";
+  const gridColumnsClass = menuItems.length > 1 ? "grid-cols-3" : "grid-cols-1";
 
   return (
     <div
@@ -55,8 +55,9 @@ export default function DesktopMegaMenu({ category, onLinkClick }: Props) {
             </div>
 
             <div
+              data-testid="desktop-mega-menu-links"
               className={[
-                "grid max-h-[430px] min-w-0 flex-1 auto-rows-[41px] gap-x-6 gap-y-[21px] overflow-y-auto overflow-x-hidden pb-1",
+                "grid min-w-0 flex-1 auto-rows-[41px] gap-x-4 gap-y-[21px] overflow-visible pb-1",
                 gridColumnsClass,
               ].join(" ")}
             >
