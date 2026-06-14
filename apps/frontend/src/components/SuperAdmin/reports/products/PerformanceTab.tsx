@@ -11,7 +11,7 @@ import { priceFormatter } from "@/utils/price";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import {
   buildPerformanceUrl,
-  downloadProductReportCsv,
+  downloadProductReportExcel,
   type ProductPerformanceRow,
   type ProductReportFilters,
 } from "@/services/super-admin/reports/products";
@@ -96,10 +96,10 @@ export default function PerformanceTab({
   const handleExport = async () => {
     try {
       setExporting(true);
-      await downloadProductReportCsv(filters, { key: sortKey, direction: sortDir });
+      await downloadProductReportExcel(filters, { key: sortKey, direction: sortDir });
     } catch {
       // surfaced by alert to keep parity with existing export UX
-      alert("خطا در دریافت خروجی CSV");
+      alert("خطا در دریافت خروجی اکسل");
     } finally {
       setExporting(false);
     }
@@ -266,7 +266,7 @@ export default function PerformanceTab({
             disabled={exporting}
             className="h-10 rounded-lg bg-green-600 px-4 text-sm font-medium text-white hover:bg-green-700 disabled:bg-neutral-400"
           >
-            {exporting ? "در حال آماده‌سازی..." : "خروجی CSV"}
+            {exporting ? "در حال آماده‌سازی..." : "خروجی اکسل"}
           </button>
         </div>
       </div>

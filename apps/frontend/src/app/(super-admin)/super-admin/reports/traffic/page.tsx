@@ -10,6 +10,7 @@ import type { MetricDelta, TrafficDashboard, TrafficRealtime } from "@/types/sup
 import { getTrafficDashboard, getTrafficRealtime } from "@/services/super-admin/reports/traffic";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateFunnelStep } from "@/utils/statusTranslations";
+import { exportExcel } from "@/utils/exportExcel";
 
 const ResponsiveContainer = dynamic(() => import("recharts").then((m) => m.ResponsiveContainer), { ssr: false });
 const LineChart = dynamic(() => import("recharts").then((m) => m.LineChart), { ssr: false });
@@ -100,21 +101,39 @@ function formatFunnelStep(step: TrafficDashboard["funnel"][number]["step"]): str
   return translateFunnelStep(step) || step;
 }
 
-function downloadCsv(filename: string, columns: string[], rows: Array<Array<string | number>>) {
-  const escape = (v: string | number) => {
-    const raw = String(v ?? "");
-    const s = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const lines = [columns.map(escape).join(",")];
-  rows.forEach((row) => lines.push(row.map(escape).join(",")));
-  const csv = "﻿" + lines.join("\r\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(link.href);
+// Sheet names can't exceed 31 chars or contain []*?/\: — keep it safe.
+function safeSheetName(name: string): string {
+  return name.replace(/[[\]*?/\\:]/g, " ").trim().slice(0, 31) || "گزارش";
+}
+
+// Export a simple (columns + rows) table as a beautifully-formatted .xlsx.
+// Numeric columns (every present value is a number) get right alignment and a
+// thousands separator so Excel can sum/sort them.
+async function downloadTableExcel(
+  filename: string,
+  sheetName: string,
+  columns: string[],
+  rows: Array<Array<string | number>>,
+) {
+  const isNumeric = columns.map((_, c) =>
+    rows.some((r) => typeof r[c] === "number") &&
+    rows.every((r) => r[c] == null || typeof r[c] === "number"),
+  );
+  const excelColumns = columns.map((header, c) => ({
+    header,
+    key: `c${c}`,
+    ...(isNumeric[c] ? { numFmt: "#,##0" } : {}),
+  }));
+  const excelRows = rows.map((row) =>
+    row.reduce<Record<string, string | number>>((acc, value, c) => {
+      acc[`c${c}`] = value;
+      return acc;
+    }, {}),
+  );
+  await exportExcel({
+    filename,
+    sheets: [{ name: safeSheetName(sheetName), columns: excelColumns, rows: excelRows }],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -829,10 +848,10 @@ function DataTable({
         {csvName && rows.length > 0 ? (
           <button
             type="button"
-            onClick={() => downloadCsv(`${csvName}.csv`, columns, rows)}
+            onClick={() => downloadTableExcel(csvName, title, columns, rows)}
             className="text-xs rounded-lg border border-neutral-200 px-2 py-1 text-neutral-500 transition hover:bg-neutral-50"
           >
-            خروجی CSV
+            خروجی اکسل
           </button>
         ) : null}
       </div>

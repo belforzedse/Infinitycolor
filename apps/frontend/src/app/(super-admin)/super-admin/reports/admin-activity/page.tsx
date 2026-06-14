@@ -24,6 +24,7 @@ import {
   formatActivityIp,
 } from "@/utils/adminActivityLabels";
 import clsx from "clsx";
+import { exportExcel } from "@/utils/exportExcel";
 
 // Helper to determine if a delete is soft or hard
 function isSoftDelete(activity: AdminActivityLog): boolean {
@@ -70,79 +71,56 @@ export default function AdminActivityReportPage() {
     }
 
     try {
-      let XLSX;
-      try {
-        XLSX = await import("xlsx");
-      } catch {
-        try {
-          XLSX = (await import("xlsx")).default;
-        } catch {
-          throw new Error("xlsx package not found");
-        }
-      }
-
       // Prepare data for Excel export
       const exportData = data.map((row, index) => ({
-        رتبه: index + 1,
-        "نام ادمین": row.PerformedByName || row.performed_by?.username || row.performed_by?.email || row.performed_by?.phone || "نامشخص",
-        "نقش ادمین": translateActivityRole(row.PerformedByRole) || row.PerformedByRole || "نامشخص",
-        "نوع گزارش": translateResourceType(row.ResourceType),
-        "نوع فعالیت": translateAction(row.Action),
-        "عنوان": activityTitle(row),
-        "آدرس IP": row.IP || "",
-        "تاریخ و زمان": formatActivityDateTime(row.createdAt),
+        rank: index + 1,
+        admin: row.PerformedByName || row.performed_by?.username || row.performed_by?.email || row.performed_by?.phone || "نامشخص",
+        role: translateActivityRole(row.PerformedByRole) || row.PerformedByRole || "نامشخص",
+        resource: translateResourceType(row.ResourceType),
+        action: translateAction(row.Action),
+        title: activityTitle(row),
+        ip: row.IP || "",
+        datetime: formatActivityDateTime(row.createdAt),
       }));
 
-      // Create worksheet
-      const ws = XLSX.utils.json_to_sheet(exportData);
+      const filenameDate = (d: Date) => d.toLocaleDateString("fa-IR").replace(/\//g, "-");
 
-      // Set column widths
-      ws["!cols"] = [
-        { wch: 8 },   // رتبه
-        { wch: 20 },  // نام ادمین
-        { wch: 15 },  // نقش ادمین
-        { wch: 15 },  // نوع گزارش
-        { wch: 15 },  // نوع فعالیت
-        { wch: 30 },  // توضیحات
-        { wch: 18 },  // آدرس IP
-        { wch: 20 },  // تاریخ و زمان
-      ];
-
-      // Create workbook
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "گزارش فعالیت ادمین");
-
-      // Add metadata sheet
-      const metaData = [
-        { شرح: "تاریخ شروع", مقدار: startDate.toLocaleDateString("fa-IR") },
-        { شرح: "تاریخ پایان", مقدار: endDate.toLocaleDateString("fa-IR") },
-        {
-          شرح: "تاریخ تهیه گزارش",
-          مقدار: new Date().toLocaleDateString("fa-IR"),
-        },
-        { شرح: "تعداد فعالیت‌ها", مقدار: String(data.length) },
-      ];
-
-      const metaWs = XLSX.utils.json_to_sheet(metaData);
-      metaWs["!cols"] = [{ wch: 20 }, { wch: 30 }];
-      XLSX.utils.book_append_sheet(wb, metaWs, "اطلاعات گزارش");
-
-      // Generate filename
-      const filename = `گزارش-فعالیت-ادمین-${startDate.toLocaleDateString("fa-IR").replace(/\//g, "-")}-تا-${endDate.toLocaleDateString("fa-IR").replace(/\//g, "-")}.xlsx`;
-
-      // Download file
-      XLSX.writeFile(wb, filename);
-
-      alert("فایل Excel با موفقیت ایجاد شد!");
+      await exportExcel({
+        filename: `گزارش-فعالیت-ادمین-${filenameDate(startDate)}-تا-${filenameDate(endDate)}`,
+        sheets: [
+          {
+            name: "گزارش فعالیت ادمین",
+            columns: [
+              { header: "رتبه", key: "rank", width: 8, numFmt: "#,##0" },
+              { header: "نام ادمین", key: "admin", width: 20 },
+              { header: "نقش ادمین", key: "role", width: 15 },
+              { header: "نوع گزارش", key: "resource", width: 15 },
+              { header: "نوع فعالیت", key: "action", width: 15 },
+              { header: "عنوان", key: "title", width: 30 },
+              { header: "آدرس IP", key: "ip", width: 18 },
+              { header: "تاریخ و زمان", key: "datetime", width: 20 },
+            ],
+            rows: exportData,
+          },
+          {
+            name: "اطلاعات گزارش",
+            columns: [
+              { header: "شرح", key: "label", width: 20 },
+              { header: "مقدار", key: "value", width: 30 },
+            ],
+            rows: [
+              { label: "تاریخ شروع", value: startDate.toLocaleDateString("fa-IR") },
+              { label: "تاریخ پایان", value: endDate.toLocaleDateString("fa-IR") },
+              { label: "تاریخ تهیه گزارش", value: new Date().toLocaleDateString("fa-IR") },
+              { label: "تعداد فعالیت‌ها", value: String(data.length) },
+            ],
+          },
+        ],
+      });
     } catch (error: unknown) {
       console.error("Error exporting to Excel:", error);
-
-      if (error instanceof Error && error.message.includes("xlsx package not found")) {
-        alert("پکیج xlsx یافت نشد. لطفاً دستور زیر را اجرا کنید:\nnpm install xlsx");
-      } else {
-        const friendlyError = getUserFacingErrorMessage(error, "خطا در ایجاد فایل Excel");
-        alert(`خطا در ایجاد فایل Excel: ${friendlyError}`);
-      }
+      const friendlyError = getUserFacingErrorMessage(error, "خطا در ایجاد فایل Excel");
+      alert(`خطا در ایجاد فایل Excel: ${friendlyError}`);
     }
   }, []);
 
