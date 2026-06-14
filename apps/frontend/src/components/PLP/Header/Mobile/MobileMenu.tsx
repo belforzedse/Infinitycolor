@@ -220,7 +220,7 @@ export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
   return (
     <Dialog
       static
-      open={menuState !== "closed"}
+      open
       as="div"
       className="relative z-[1400]"
       onClose={requestClose}
