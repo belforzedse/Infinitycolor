@@ -65,6 +65,7 @@ export default defineConfig({
           NEXT_PUBLIC_API_BASE_URL: strapiApiURL(),
           NEXT_PUBLIC_IMAGE_BASE_URL: strapiOrigin(),
           STRAPI_INTERNAL_URL: strapiApiURL(),
+          STRAPI_BUILD_TIME_URL: strapiApiURL(),
         },
       }
     : undefined,
