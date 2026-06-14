@@ -1,4 +1,5 @@
 import { getAuditContext } from "./audit-context";
+import { getClientIp, getUserAgent } from "./getClientIp";
 
 type EventContext = {
   state?: { user?: any };
@@ -72,16 +73,10 @@ export const resolveAuditActor = (event?: LifecycleEvent): AuditActorInfo => {
 
   const userId = normalizeUserId(user?.id ?? user);
   const label = extractLabel(user) || (userId ? `User ${userId}` : null);
-  const rawIp =
-    requestCtx?.request?.ip ||
-    requestCtx?.request?.header?.["x-forwarded-for"] ||
-    requestCtx?.request?.headers?.["x-forwarded-for"] ||
-    null;
-  const ip = typeof rawIp === "string" ? rawIp.split(",")[0].trim() : null;
-  const userAgent =
-    requestCtx?.request?.header?.["user-agent"] ||
-    requestCtx?.request?.headers?.["user-agent"] ||
-    null;
+  // Use the centralized, proxy-aware helper so the real client IP is captured (not the
+  // nginx→Strapi hop). `requestCtx` is the Koa context from `strapi.requestContext`.
+  const ip = getClientIp(requestCtx as any);
+  const userAgent = getUserAgent(requestCtx as any);
 
   return {
     userId,

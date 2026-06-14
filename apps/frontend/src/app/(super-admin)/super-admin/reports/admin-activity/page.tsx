@@ -12,22 +12,18 @@ import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { faNum } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import ChevronDownIcon from "@/components/SuperAdmin/Layout/Icons/ChevronDownIcon";
+import {
+  ACTION_LABELS_FA,
+  RESOURCE_TYPE_LABELS_FA,
+  translateAction,
+  translateResourceType,
+  getActionBadgeClass,
+  translateActivityRole,
+  summarizeActivity,
+  formatActivityDateTime,
+  formatActivityIp,
+} from "@/utils/adminActivityLabels";
 import clsx from "clsx";
-
-// Translation helpers for Persian
-const actionTypeMap: Record<string, string> = {
-  Create: "ایجاد",
-  Update: "بروزرسانی",
-  Delete: "حذف کامل",
-  "Delete-Soft": "حذف نرم",
-  Publish: "انتشار",
-  Unpublish: "برداشتن انتشار",
-  Adjust: "تنظیم",
-  Import: "ورود گروهی",
-  Refund: "بازپرداخت",
-  StatusChange: "تغییر وضعیت",
-  Other: "سایر",
-};
 
 // Helper to determine if a delete is soft or hard
 function isSoftDelete(activity: AdminActivityLog): boolean {
@@ -39,38 +35,9 @@ function isSoftDelete(activity: AdminActivityLog): boolean {
   return !!activity.Metadata?.isSoftDelete;
 }
 
-const logTypeMap: Record<string, string> = {
-  Order: "سفارش",
-  Product: "محصول",
-  User: "کاربر",
-  Contract: "قرارداد",
-  Discount: "تخفیف",
-  Stock: "موجودی",
-  Admin: "ادمین",
-  Other: "سایر",
-};
-
-const descriptionMap: Record<string, string> = {
-  // Orders
-  "Order created": "سفارش ایجاد شد",
-  "Order updated": "سفارش بروزرسانی شد",
-  "Order deleted": "سفارش حذف شد",
-  // Products
-  "Product created": "محصول ایجاد شد",
-  "Product updated": "محصول بروزرسانی شد",
-  "Product deleted": "محصول حذف شد",
-  // Users
-  "Local user created": "کاربر ایجاد شد",
-  "Local user updated": "کاربر بروزرسانی شد",
-  "Local user deleted": "کاربر حذف شد",
-  // Contracts
-  "Contract created": "قرارداد ایجاد شد",
-  "Contract updated": "قرارداد بروزرسانی شد",
-  "Contract deleted": "قرارداد حذف شد",
-};
-
-function translateDescription(description: string): string {
-  return descriptionMap[description] || description;
+// Headline for a row: prefer the backend Persian Title/Message, then a derived summary.
+function activityTitle(activity: AdminActivityLog): string {
+  return summarizeActivity(activity);
 }
 
 interface CollapsedGroup {
@@ -118,12 +85,12 @@ export default function AdminActivityReportPage() {
       const exportData = data.map((row, index) => ({
         رتبه: index + 1,
         "نام ادمین": row.PerformedByName || row.performed_by?.username || row.performed_by?.email || row.performed_by?.phone || "نامشخص",
-        "نقش ادمین": row.PerformedByRole || "نامشخص",
-        "نوع گزارش": logTypeMap[row.ResourceType] || row.ResourceType || "نامشخص",
-        "نوع فعالیت": actionTypeMap[row.Action] || row.Action || "نامشخص",
-        "عنوان": row.Title || translateDescription(row.Description || ""),
+        "نقش ادمین": translateActivityRole(row.PerformedByRole) || row.PerformedByRole || "نامشخص",
+        "نوع گزارش": translateResourceType(row.ResourceType),
+        "نوع فعالیت": translateAction(row.Action),
+        "عنوان": activityTitle(row),
         "آدرس IP": row.IP || "",
-        "تاریخ و زمان": new Date(row.createdAt).toLocaleString("fa-IR"),
+        "تاریخ و زمان": formatActivityDateTime(row.createdAt),
       }));
 
       // Create worksheet
@@ -303,26 +270,15 @@ export default function AdminActivityReportPage() {
     });
   };
 
+  // Soft deletes get the dedicated label/colour; everything else uses the shared maps.
   const getActionDisplay = (activity: AdminActivityLog): string => {
-    if (activity.Action === "Delete") {
-      return isSoftDelete(activity) ? actionTypeMap["Delete-Soft"] : actionTypeMap["Delete"];
-    }
-    return actionTypeMap[activity.Action] || activity.Action;
+    if (activity.Action === "Delete" && isSoftDelete(activity)) return ACTION_LABELS_FA["Delete-Soft"];
+    return translateAction(activity.Action);
   };
 
-  const getActionBadgeClass = (activity: AdminActivityLog): string => {
-    if (activity.Action === "Delete") {
-      return isSoftDelete(activity)
-        ? "bg-orange-100 text-orange-700"
-        : "bg-red-100 text-red-700";
-    }
-    if (activity.Action === "Create") {
-      return "bg-green-100 text-green-700";
-    }
-    if (activity.Action === "Update") {
-      return "bg-yellow-100 text-yellow-700";
-    }
-    return "bg-gray-100 text-gray-700";
+  const rowActionBadgeClass = (activity: AdminActivityLog): string => {
+    if (activity.Action === "Delete" && isSoftDelete(activity)) return getActionBadgeClass("Delete-Soft");
+    return getActionBadgeClass(activity.Action);
   };
 
   const uniqueAdmins = new Set(
@@ -376,16 +332,16 @@ export default function AdminActivityReportPage() {
                   className="w-full px-3 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-infinity-primary focus:border-transparent transition-all"
                 >
                   <option value="">همه</option>
-                  <option value="Create">{actionTypeMap["Create"]}</option>
-                  <option value="Update">{actionTypeMap["Update"]}</option>
-                  <option value="Delete">{actionTypeMap["Delete"]}</option>
-                  <option value="Publish">{actionTypeMap["Publish"]}</option>
-                  <option value="Unpublish">{actionTypeMap["Unpublish"]}</option>
-                  <option value="Adjust">{actionTypeMap["Adjust"]}</option>
-                  <option value="StatusChange">{actionTypeMap["StatusChange"]}</option>
-                  <option value="Refund">{actionTypeMap["Refund"]}</option>
-                  <option value="Import">{actionTypeMap["Import"]}</option>
-                  <option value="Other">{actionTypeMap["Other"]}</option>
+                  <option value="Create">{ACTION_LABELS_FA["Create"]}</option>
+                  <option value="Update">{ACTION_LABELS_FA["Update"]}</option>
+                  <option value="Delete">{ACTION_LABELS_FA["Delete"]}</option>
+                  <option value="Publish">{ACTION_LABELS_FA["Publish"]}</option>
+                  <option value="Unpublish">{ACTION_LABELS_FA["Unpublish"]}</option>
+                  <option value="Adjust">{ACTION_LABELS_FA["Adjust"]}</option>
+                  <option value="StatusChange">{ACTION_LABELS_FA["StatusChange"]}</option>
+                  <option value="Refund">{ACTION_LABELS_FA["Refund"]}</option>
+                  <option value="Import">{ACTION_LABELS_FA["Import"]}</option>
+                  <option value="Other">{ACTION_LABELS_FA["Other"]}</option>
                 </select>
               </div>
               <div className="flex flex-col gap-2">
@@ -396,14 +352,14 @@ export default function AdminActivityReportPage() {
                   className="w-full px-3 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-infinity-primary focus:border-transparent transition-all"
                 >
                   <option value="All">همه</option>
-                  <option value="Order">{logTypeMap["Order"]}</option>
-                  <option value="Product">{logTypeMap["Product"]}</option>
-                  <option value="User">{logTypeMap["User"]}</option>
-                  <option value="Contract">{logTypeMap["Contract"]}</option>
-                  <option value="Discount">{logTypeMap["Discount"]}</option>
-                  <option value="Stock">{logTypeMap["Stock"]}</option>
-                  <option value="Admin">{logTypeMap["Admin"]}</option>
-                  <option value="Other">{logTypeMap["Other"]}</option>
+                  <option value="Order">{RESOURCE_TYPE_LABELS_FA["Order"]}</option>
+                  <option value="Product">{RESOURCE_TYPE_LABELS_FA["Product"]}</option>
+                  <option value="User">{RESOURCE_TYPE_LABELS_FA["User"]}</option>
+                  <option value="Contract">{RESOURCE_TYPE_LABELS_FA["Contract"]}</option>
+                  <option value="Discount">{RESOURCE_TYPE_LABELS_FA["Discount"]}</option>
+                  <option value="Stock">{RESOURCE_TYPE_LABELS_FA["Stock"]}</option>
+                  <option value="Admin">{RESOURCE_TYPE_LABELS_FA["Admin"]}</option>
+                  <option value="Other">{RESOURCE_TYPE_LABELS_FA["Other"]}</option>
                 </select>
               </div>
             </div>
@@ -604,7 +560,7 @@ export default function AdminActivityReportPage() {
                           ? `${faNum(group.activities.length)} تا عملیات${Object.entries(actionCounts)
                               .filter(([_, count]) => count > 0)
                               .map(([action, count]) => {
-                                const actionName = action === "Delete-Soft" ? "حذف نرم" : actionTypeMap[action] || action;
+                                const actionName = action === "Delete-Soft" ? "حذف نرم" : ACTION_LABELS_FA[action] || action;
                                 return `${faNum(count)} تا ${actionName}`;
                               })
                               .join("، ")}`
@@ -623,7 +579,7 @@ export default function AdminActivityReportPage() {
                                   onClick={() => toggleGroup(group.id)}
                                 >
                                   <td className="px-6 py-3 text-sm text-neutral-600">
-                                    {new Date(group.startTime).toLocaleString("fa-IR")}
+                                    {formatActivityDateTime(group.startTime)}
                                     <span className="mr-2 text-xs text-neutral-400">
                                       تا {new Date(group.endTime).toLocaleString("fa-IR", { hour: "2-digit", minute: "2-digit" })}
                                     </span>
@@ -633,7 +589,7 @@ export default function AdminActivityReportPage() {
                                   </td>
                                   <td className="px-6 py-3 text-sm">
                                     <span className="inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
-                                      {group.adminRole}
+                                      {translateActivityRole(group.adminRole) || group.adminRole}
                                     </span>
                                   </td>
                                   <td className="px-6 py-3 text-sm text-neutral-600" colSpan={4}>
@@ -657,7 +613,7 @@ export default function AdminActivityReportPage() {
                                                 {group.activities.map((activity, index) => {
                                                   const adminName = getAdminName(activity) || "نامشخص";
                                                   const adminRole = activity.PerformedByRole || activity.adminRole || "-";
-                                                  const title = activity.Title || translateDescription(activity.Description || "");
+                                                  const title = activityTitle(activity);
                                                   const timestamp = activity.timestamp || activity.createdAt;
 
                                                   return (
@@ -666,21 +622,21 @@ export default function AdminActivityReportPage() {
                                                       className="border-b border-neutral-100 last:border-b-0 hover:bg-neutral-100"
                                                     >
                                                       <td className="px-4 py-3 text-sm text-neutral-600">
-                                                        {new Date(timestamp).toLocaleString("fa-IR")}
+                                                        {formatActivityDateTime(timestamp)}
                                                       </td>
                                                       <td className="px-4 py-3 text-sm font-medium text-neutral-700">
                                                         {adminName}
                                                       </td>
                                                       <td className="px-4 py-3 text-sm">
                                                         <span className="inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
-                                                          {adminRole}
+                                                          {translateActivityRole(adminRole) || adminRole}
                                                         </span>
                                                       </td>
                                                       <td className="px-4 py-3 text-sm text-neutral-600">
-                                                        {logTypeMap[activity.ResourceType] || activity.ResourceType}
+                                                        {translateResourceType(activity.ResourceType)}
                                                       </td>
                                                       <td className="px-4 py-3 text-sm">
-                                                        <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${getActionBadgeClass(activity)}`}>
+                                                        <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${rowActionBadgeClass(activity)}`}>
                                                           {getActionDisplay(activity)}
                                                         </span>
                                                       </td>
@@ -693,7 +649,7 @@ export default function AdminActivityReportPage() {
                                                         </Link>
                                                       </td>
                                                       <td className="px-4 py-3 text-xs text-neutral-500">
-                                                        {activity.IP || "-"}
+                                                        {formatActivityIp(activity.IP)}
                                                       </td>
                                                     </tr>
                                                   );
@@ -711,27 +667,27 @@ export default function AdminActivityReportPage() {
                               group.activities.map((activity) => {
                                 const adminName = getAdminName(activity) || "نامشخص";
                                 const adminRole = activity.PerformedByRole || activity.adminRole || "-";
-                                const title = activity.Title || translateDescription(activity.Description || "");
+                                const title = activityTitle(activity);
                                 const timestamp = activity.timestamp || activity.createdAt;
 
                                 return (
                                   <tr key={activity.id} className="border-b border-neutral-100 hover:bg-neutral-50">
                                     <td className="px-6 py-3 text-sm text-neutral-600">
-                                      {new Date(timestamp).toLocaleString("fa-IR")}
+                                      {formatActivityDateTime(timestamp)}
                                     </td>
                                     <td className="px-6 py-3 text-sm font-medium text-neutral-700">
                                       {adminName}
                                     </td>
                                     <td className="px-6 py-3 text-sm">
                                       <span className="inline-block rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
-                                        {adminRole}
+                                        {translateActivityRole(adminRole) || adminRole}
                                       </span>
                                     </td>
                                     <td className="px-6 py-3 text-sm text-neutral-600">
-                                      {logTypeMap[activity.ResourceType] || activity.ResourceType}
+                                      {translateResourceType(activity.ResourceType)}
                                     </td>
                                     <td className="px-6 py-3 text-sm">
-                                      <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${getActionBadgeClass(activity)}`}>
+                                      <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${rowActionBadgeClass(activity)}`}>
                                         {getActionDisplay(activity)}
                                       </span>
                                     </td>
@@ -744,7 +700,7 @@ export default function AdminActivityReportPage() {
                                       </Link>
                                     </td>
                                     <td className="px-6 py-3 text-xs text-neutral-500">
-                                      {activity.IP || "-"}
+                                      {formatActivityIp(activity.IP)}
                                     </td>
                                   </tr>
                                 );

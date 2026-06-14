@@ -115,4 +115,26 @@ describe("logAdminOrderFieldUpdate", () => {
     expect(result).toBe(false);
     expect(strapi.entityService.create).not.toHaveBeenCalled();
   });
+
+  it("redacts sensitive keys from metadata before persisting", async () => {
+    const strapi = createStrapiMock();
+
+    await logAdminOrderCreate(
+      strapi as any,
+      77,
+      7,
+      // Simulate a sensitive value slipping into metadata.
+      { type: "Manual", token: "super-secret", nested: { password: "p" } } as any,
+      null,
+      null,
+      "Superadmin",
+    );
+
+    const payload = strapi.entityService.create.mock.calls[0][1];
+    expect(payload.data.Metadata).toEqual({
+      type: "Manual",
+      token: "[redacted]",
+      nested: { password: "[redacted]" },
+    });
+  });
 });

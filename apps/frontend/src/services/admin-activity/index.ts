@@ -40,6 +40,8 @@ export interface AdminActivity {
   Metadata?: Record<string, unknown> | null;
   PerformedByName?: string;
   PerformedByRole?: string;
+  IP?: string;
+  UserAgent?: string;
   performed_by?: {
     id: number;
     username?: string;

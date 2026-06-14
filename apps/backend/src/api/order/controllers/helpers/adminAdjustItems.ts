@@ -2,6 +2,7 @@ import type { Strapi } from "@strapi/strapi";
 import { computeTotals } from "../../../cart/services/lib/financials";
 import { mapToSnappayCategory } from "../../../payment-gateway/services/snappay-category-mapper";
 import { logAdminOrderEdit } from "../../../../utils/adminActivity";
+import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
 import { releaseReservedStockAtomic } from "../../../cart/services/lib/stock";
 import { roleIsAllowed, OPERATIONAL_ROLES } from "../../../../utils/roles";
 
@@ -564,8 +565,8 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
 
       // Log admin activity
       try {
-        const ip = ctx.request?.ip || ctx.ip || null;
-        const userAgent = ctx.request?.headers?.["user-agent"] || ctx.headers?.["user-agent"] || null;
+        const ip = getClientIp(ctx);
+        const userAgent = getUserAgent(ctx);
 
         await logAdminOrderEdit(
           strapi,

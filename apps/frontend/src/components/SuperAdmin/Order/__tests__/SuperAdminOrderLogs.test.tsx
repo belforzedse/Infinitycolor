@@ -13,7 +13,7 @@ describe("SuperAdminOrderLogs (Events tab)", () => {
     jest.clearAllMocks();
   });
 
-  it("renders an activity entry with actor, summary and a before/after diff", async () => {
+  it("renders an activity entry with actor, summary, IP and a readable before/after diff", async () => {
     mockGet.mockResolvedValue({
       data: [
         {
@@ -26,6 +26,7 @@ describe("SuperAdminOrderLogs (Events tab)", () => {
           Changes: { Status: { from: "Paying", to: "Started" } },
           PerformedByName: "علی رضایی",
           PerformedByRole: "Superadmin",
+          IP: "203.0.113.9",
           createdAt: "2025-01-01T10:00:00.000Z",
         },
       ],
@@ -37,11 +38,40 @@ describe("SuperAdminOrderLogs (Events tab)", () => {
       expect(screen.getByText("وضعیت سفارش تغییر کرد")).toBeInTheDocument();
     });
 
-    // Actor name + translated role
+    // Actor name + translated role (canonical roleLabels.ts)
     expect(screen.getByText(/علی رضایی/)).toBeInTheDocument();
-    expect(screen.getByText(/مدیر کل/)).toBeInTheDocument();
-    // Field label translated + translated before/after status values
-    expect(screen.getByText(/وضعیت:/)).toBeInTheDocument();
+    expect(screen.getByText(/سوپر ادمین/)).toBeInTheDocument();
+    // Field label translated + translated before/after status values (no raw JSON)
+    expect(screen.getByText(/وضعیت سفارش:/)).toBeInTheDocument();
+    expect(screen.getByText("در حال پرداخت")).toBeInTheDocument();
+    expect(screen.getByText("ثبت شده")).toBeInTheDocument();
+    // Real client IP is shown
+    expect(screen.getByText("203.0.113.9")).toBeInTheDocument();
+  });
+
+  it("renders an old/raw row (no Title, unknown field) without crashing", async () => {
+    mockGet.mockResolvedValue({
+      data: [
+        {
+          id: 9,
+          ResourceType: "Order",
+          ResourceId: "7",
+          Action: "Update",
+          // No Title/Message; unknown field key → must fall back gracefully.
+          Changes: { LegacyField: { from: "a", to: "b" } },
+          createdAt: "2025-01-01T10:00:00.000Z",
+        },
+      ],
+    });
+
+    render(<SuperAdminOrderLogs orderId={7} />);
+
+    await waitFor(() => {
+      // Derived headline from action + resource; raw key used as its own label.
+      expect(screen.getByText(/LegacyField:/)).toBeInTheDocument();
+    });
+    // No raw JSON braces leaked into the UI.
+    expect(screen.queryByText(/[{}]/)).not.toBeInTheDocument();
   });
 
   it("invokes the events-change callback with the activity count", async () => {
