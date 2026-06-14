@@ -14,6 +14,7 @@ describe("product-category main category lifecycle rules", () => {
           parent: 10,
           isMainCategory: true,
           Image: { any: "value" },
+          MegaMenuImage: { any: "banner" },
           Color: "#f8fafc",
         },
       },
@@ -23,6 +24,7 @@ describe("product-category main category lifecycle rules", () => {
 
     expect(event.params.data.isMainCategory).toBe(false);
     expect(event.params.data.Image).toBeNull();
+    expect(event.params.data.MegaMenuImage).toEqual({ any: "banner" });
     expect(event.params.data.Color).toBeNull();
   });
 
@@ -33,6 +35,7 @@ describe("product-category main category lifecycle rules", () => {
           parent: { connect: [{ id: 11 }] },
           isMainCategory: true,
           Image: { any: "value" },
+          MegaMenuImage: { any: "banner" },
           Color: "#f8fafc",
         },
       },
@@ -42,6 +45,7 @@ describe("product-category main category lifecycle rules", () => {
 
     expect(event.params.data.isMainCategory).toBe(false);
     expect(event.params.data.Image).toBeNull();
+    expect(event.params.data.MegaMenuImage).toEqual({ any: "banner" });
     expect(event.params.data.Color).toBeNull();
     expect(mockStrapi.entityService.findOne).not.toHaveBeenCalled();
   });

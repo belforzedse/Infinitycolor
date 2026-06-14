@@ -112,7 +112,7 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
       {/* Safe area white bar for standalone mode */}
       {isStandalone && (
         <div
-          className="fixed left-0 right-0 top-0 z-[60] bg-background"
+          className="fixed left-0 right-0 top-0 z-[100] bg-background"
           data-safe-area-top
           style={{ height: "env(safe-area-inset-top)" }}
         />
@@ -126,7 +126,7 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
         پرش به محتوا
       </a>
       <header
-        className={`allow-overflow sticky z-50 transform border-t-0 transition-all duration-200 ${
+        className={`allow-overflow sticky z-[90] transform border-t-0 transition-all duration-200 ${
           scrolled
             ? "bg-white/45 shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-white/35"
             : "bg-white/55 backdrop-blur-md supports-[backdrop-filter]:bg-white/40"

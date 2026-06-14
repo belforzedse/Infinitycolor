@@ -23,6 +23,9 @@ html {
   --infinity-primary-dark: #33415e;
   --infinity-primary-light: #566d97;
   --infinity-primary-lighter: #aebfdb;
+  --ease-butter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-velvet: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-crystal: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 body {
@@ -525,6 +528,94 @@ textarea:focus-visible {
   }
 }
 
+@keyframes storefront-mega-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes storefront-mega-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes storefront-mega-panel-in {
+  from {
+    clip-path: inset(0 0 100% 0 round 0 0 24px 24px);
+    opacity: 0;
+    transform: translate3d(0, -10px, 0) scaleY(0.985);
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 0 0 24px 24px);
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scaleY(1);
+  }
+}
+
+@keyframes storefront-mega-panel-out {
+  from {
+    clip-path: inset(0 0 0 0 round 0 0 24px 24px);
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scaleY(1);
+  }
+  to {
+    clip-path: inset(0 0 100% 0 round 0 0 24px 24px);
+    opacity: 0;
+    transform: translate3d(0, -8px, 0) scaleY(0.99);
+  }
+}
+
+@keyframes storefront-mobile-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes storefront-mobile-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes storefront-mobile-panel-in {
+  from {
+    clip-path: inset(0 0 100% 0 round 0 0 18px 18px);
+    opacity: 0;
+    transform: translate3d(0, -16px, 0) scale(0.992);
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 0 0 18px 18px);
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes storefront-mobile-panel-out {
+  from {
+    clip-path: inset(0 0 0 0 round 0 0 18px 18px);
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    clip-path: inset(0 0 100% 0 round 0 0 18px 18px);
+    opacity: 0;
+    transform: translate3d(0, -10px, 0) scale(0.995);
+  }
+}
+
 @layer utilities {
   /* Tap highlight tint for mobile */
   * {
@@ -553,6 +644,86 @@ textarea:focus-visible {
       box-shadow 220ms var(--ease-butter, cubic-bezier(0.16, 1, 0.3, 1)),
       border-color 200ms var(--ease-butter, cubic-bezier(0.16, 1, 0.3, 1)),
       filter 180ms var(--ease-butter, cubic-bezier(0.16, 1, 0.3, 1));
+  }
+
+  .storefront-mega-backdrop[data-state="open"] {
+    animation: storefront-mega-backdrop-in 180ms var(--ease-butter) both;
+  }
+
+  .storefront-mega-backdrop[data-state="closed"] {
+    animation: storefront-mega-backdrop-out 150ms var(--ease-crystal) both;
+  }
+
+  .storefront-mega-panel {
+    transform-origin: top center;
+    will-change: clip-path, opacity, transform;
+  }
+
+  .storefront-mega-panel[data-state="open"] {
+    animation: storefront-mega-panel-in 240ms var(--ease-butter) both;
+  }
+
+  .storefront-mega-panel[data-state="closed"] {
+    animation: storefront-mega-panel-out 170ms var(--ease-crystal) both;
+  }
+
+  .storefront-mobile-menu-backdrop[data-state="open"] {
+    animation: storefront-mobile-backdrop-in 180ms var(--ease-butter) both;
+  }
+
+  .storefront-mobile-menu-backdrop[data-state="closed"] {
+    animation: storefront-mobile-backdrop-out 150ms var(--ease-crystal) both;
+  }
+
+  .storefront-mobile-menu-panel {
+    transform-origin: top center;
+    will-change: clip-path, opacity, transform;
+  }
+
+  .storefront-mobile-menu-panel[data-state="open"] {
+    animation: storefront-mobile-panel-in 230ms var(--ease-butter) both;
+  }
+
+  .storefront-mobile-menu-panel[data-state="closed"] {
+    animation: storefront-mobile-panel-out 170ms var(--ease-crystal) both;
+  }
+
+  .storefront-mobile-category-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows 210ms var(--ease-butter),
+      opacity 150ms var(--ease-crystal);
+  }
+
+  .storefront-mobile-category-panel[data-state="open"] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
+  .storefront-mobile-category-panel-inner {
+    transform: translate3d(0, -6px, 0);
+    transition: transform 190ms var(--ease-butter);
+    will-change: transform;
+  }
+
+  .storefront-mobile-category-panel[data-state="open"] .storefront-mobile-category-panel-inner {
+    transform: translate3d(0, 0, 0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .storefront-mega-backdrop,
+    .storefront-mega-panel,
+    .storefront-mobile-menu-backdrop,
+    .storefront-mobile-menu-panel {
+      animation-duration: 1ms !important;
+    }
+
+    .storefront-mobile-category-panel,
+    .storefront-mobile-category-panel-inner {
+      transition-duration: 1ms !important;
+    }
   }
   @media (hover: hover) {
     .interactive-card:hover {
