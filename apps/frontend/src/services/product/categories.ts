@@ -1,4 +1,9 @@
-import { API_BASE_URL, getStrapiServerUrl, CHECKOUT_REQUEST_TIMEOUT_MS, ENDPOINTS } from "@/constants/api";
+import {
+  API_BASE_URL,
+  getStrapiServerUrl,
+  CHECKOUT_REQUEST_TIMEOUT_MS,
+  ENDPOINTS,
+} from "@/constants/api";
 import logger from "@/utils/logger";
 import { resolveAssetUrl } from "@/utils/resolveAssetUrl";
 import fetchWithTimeout from "@/utils/fetchWithTimeout";
@@ -92,6 +97,9 @@ export interface FetchProductCategoriesOptions {
   revalidate?: number;
 }
 
+const SERVER_CATEGORY_PAGE_SIZE = 100;
+const SERVER_CATEGORY_MAX_PAGES = 50;
+
 const resolveCategoryImage = (image?: CategoryImageField | null) => {
   const attrs = image?.data?.attributes;
   if (!attrs) {
@@ -126,8 +134,15 @@ function dedupeCategoriesById(categories: ProductCategorySummary[]): ProductCate
 export async function getProductCategories(
   options: FetchProductCategoriesOptions = {},
 ): Promise<ProductCategorySummary[]> {
+  const isServerSide = typeof window === "undefined";
+  const shouldFetchAllServerPages = isServerSide && options.limit === undefined;
   const params = new URLSearchParams();
-  params.set("pagination[limit]", String(options.limit ?? -1));
+  if (shouldFetchAllServerPages) {
+    params.set("pagination[page]", "1");
+    params.set("pagination[pageSize]", String(SERVER_CATEGORY_PAGE_SIZE));
+  } else {
+    params.set("pagination[limit]", String(options.limit ?? -1));
+  }
   params.set("sort", options.sort || "Title:asc");
   params.append("fields[0]", "Title");
   params.append("fields[1]", "Slug");
@@ -146,20 +161,18 @@ export async function getProductCategories(
   if (options.parentsWithChildrenOnly) {
     params.append("populate[2]", "children");
   }
-  if (typeof window !== "undefined") {
+  if (!isServerSide) {
     params.append("_skip_global_loader", "1");
   }
 
   // Use internal URL for server-side fetches to bypass TLS/DNS overhead
-  const baseUrl = typeof window === "undefined" ? getStrapiServerUrl() : API_BASE_URL;
-  const url = `${baseUrl}${ENDPOINTS.PRODUCT.CATEGORY}?${params.toString()}`;
+  const baseUrl = isServerSide ? getStrapiServerUrl() : API_BASE_URL;
+  const buildUrl = () => `${baseUrl}${ENDPOINTS.PRODUCT.CATEGORY}?${params.toString()}`;
 
   // Server-side: when revalidate is set, use cacheable fetch so Next.js Data Cache is used.
   // Client-side or when cache is explicitly set: respect options.cache (default no-store for fresh data).
   const useCacheable =
-    typeof window === "undefined" &&
-    typeof options.revalidate === "number" &&
-    options.cache !== "no-store";
+    isServerSide && typeof options.revalidate === "number" && options.cache !== "no-store";
 
   const requestInit: RequestInit & { next?: { revalidate: number } } = {
     headers: {
@@ -170,42 +183,69 @@ export async function getProductCategories(
     cache: useCacheable ? "default" : (options.cache ?? "no-store"),
   };
 
-  if (typeof window === "undefined" && typeof options.revalidate === "number") {
+  if (isServerSide && typeof options.revalidate === "number") {
     requestInit.next = { revalidate: options.revalidate };
   }
 
   try {
-    if (typeof window === "undefined") {
+    if (isServerSide) {
       logger.info("[ProductCategories] Fetching categories", {
-        url: url.replace(baseUrl, "[BASE_URL]"),
+        url: buildUrl().replace(baseUrl, "[BASE_URL]"),
         parentOnly: !!parentOnly,
         mainOnly: !!options.mainOnly,
         parentsWithChildrenOnly: !!options.parentsWithChildrenOnly,
+        paginated: shouldFetchAllServerPages,
       });
     }
 
-    const response =
-      typeof window === "undefined"
+    const fetchCategoryJson = async () => {
+      const url = buildUrl();
+      const response = isServerSide
         ? await fetch(url, requestInit)
         : await fetchWithTimeout(url, {
             ...requestInit,
             timeoutMs: CHECKOUT_REQUEST_TIMEOUT_MS,
           });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "Unknown error");
-      if (typeof window === "undefined") {
-        logger.error("[ProductCategories] Failed to fetch categories", {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorText,
-        });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "Unknown error");
+        if (isServerSide) {
+          logger.error("[ProductCategories] Failed to fetch categories", {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorText,
+            url: url.replace(baseUrl, "[BASE_URL]"),
+          });
+        }
+        return null;
       }
-      return [];
-    }
 
-    const json = await response.json();
-    const items: RawProductCategory[] = Array.isArray(json?.data) ? json.data : [];
+      return response.json();
+    };
+
+    let items: RawProductCategory[] = [];
+    if (shouldFetchAllServerPages) {
+      for (
+        let page = 1, pageCount = 1;
+        page <= pageCount && page <= SERVER_CATEGORY_MAX_PAGES;
+        page += 1
+      ) {
+        params.set("pagination[page]", String(page));
+        const json = await fetchCategoryJson();
+        if (!json) return [];
+
+        const pageItems: RawProductCategory[] = Array.isArray(json?.data) ? json.data : [];
+        items = items.concat(pageItems);
+
+        const pagination = json?.meta?.pagination;
+        const nextPageCount = Number(pagination?.pageCount);
+        pageCount = Number.isFinite(nextPageCount) && nextPageCount > 0 ? nextPageCount : page;
+      }
+    } else {
+      const json = await fetchCategoryJson();
+      if (!json) return [];
+      items = Array.isArray(json?.data) ? json.data : [];
+    }
 
     const mapped = items
       .map((item) => {
