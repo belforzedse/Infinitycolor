@@ -9,6 +9,17 @@ import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 const FRONTEND_BASE =
   process.env.FRONTEND_URL || "https://infinitycolor.co";
+
+let lastSaleOrderTimestamp = 0;
+
+function generateWalletSaleOrderId(): string {
+  const now = Date.now();
+  lastSaleOrderTimestamp =
+    now <= lastSaleOrderTimestamp ? lastSaleOrderTimestamp + 1 : now;
+  const randomSuffix = Math.floor(Math.random() * 900) + 100; // 3 digits
+  return `${lastSaleOrderTimestamp}${randomSuffix}`;
+}
+
 export default factories.createCoreController(
   "api::wallet-topup.wallet-topup",
   ({ strapi }: { strapi: Strapi }) => ({
@@ -21,8 +32,7 @@ export default factories.createCoreController(
         const amountIrr = Number(amount);
         if (!amountIrr || amountIrr <= 0) return ctx.badRequest("amount is required (IRR)");
 
-        const randomSuffix = Math.floor(Math.random() * 900) + 100; // 3 digits
-        const saleOrderId = `${Date.now()}${randomSuffix}`;
+        const saleOrderId = generateWalletSaleOrderId();
 
         const topup = await strapi.entityService.create("api::wallet-topup.wallet-topup", {
           data: {
