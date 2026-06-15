@@ -312,6 +312,9 @@ export default function PDPHeroInfo(props: Props) {
   };
 
   const currentVariation = getCurrentVariation();
+  const showSizeSelector = sizes.length > 1;
+  const showColorSelector = colors.length > 1;
+  const hasVisibleVariationSelectors = showSizeSelector || showColorSelector || models.length > 0;
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-5 md:max-w-[400px] tablet:max-w-[500px] lg:max-w-[688px]">
@@ -366,33 +369,41 @@ export default function PDPHeroInfo(props: Props) {
 
       <Price price={currentPrice} discountPrice={currentDiscountPrice} hasStock={hasStock} />
 
-      <div className="h-[1px] bg-slate-100" />
+      {hasVisibleVariationSelectors && (
+        <>
+          <div className="h-[1px] bg-slate-100" />
 
-      <div className="flex flex-col gap-7">
-        <Size
-          sizes={sizes}
-          onSizeChange={handleSizeChange}
-          selectedSize={selectedSize}
-          disabledSizeIds={disabledSizes}
-          sizeHelper={productData?.attributes?.product_size_helper?.data}
-        />
+          <div className="flex flex-col gap-7">
+            {showSizeSelector && (
+              <Size
+                sizes={sizes}
+                onSizeChange={handleSizeChange}
+                selectedSize={selectedSize}
+                disabledSizeIds={disabledSizes}
+                sizeHelper={productData?.attributes?.product_size_helper?.data}
+              />
+            )}
 
-        <Color
-          colors={colors}
-          onColorChange={handleColorChange}
-          selectedColor={selectedColor}
-          disabledColorIds={disabledColors}
-        />
+            {showColorSelector && (
+              <Color
+                colors={colors}
+                onColorChange={handleColorChange}
+                selectedColor={selectedColor}
+                disabledColorIds={disabledColors}
+              />
+            )}
 
-        {models.length > 0 && (
-          <Model
-            models={models}
-            onModelChange={handleModelChange}
-            selectedModel={selectedModel}
-            disabledModelIds={disabledModels}
-          />
-        )}
-      </div>
+            {models.length > 0 && (
+              <Model
+                models={models}
+                onModelChange={handleModelChange}
+                selectedModel={selectedModel}
+                disabledModelIds={disabledModels}
+              />
+            )}
+          </div>
+        </>
+      )}
 
       <div className="h-[1px] bg-slate-100" />
 

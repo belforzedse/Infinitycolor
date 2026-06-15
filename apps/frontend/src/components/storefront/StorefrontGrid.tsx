@@ -11,11 +11,11 @@ type StorefrontGridProps = HTMLAttributes<HTMLDivElement> & {
 const variantClasses: Record<StorefrontGridVariant, string> = {
   /** Homepage / full-width product rails */
   products:
-    "grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-3 xl:grid-cols-4",
+    "grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 3xl:gap-5 4xl:grid-cols-6",
   /** PLP main column (280px sidebar on md+) */
-  plp: "grid min-w-0 grid-cols-2 gap-2 md:grid-cols-2 md:gap-4 lg:grid-cols-2 xl:grid-cols-3",
+  plp: "grid min-w-0 grid-cols-2 gap-2 md:grid-cols-2 md:gap-4 lg:grid-cols-2 xl:grid-cols-3 3xl:grid-cols-4 3xl:gap-5 4xl:grid-cols-5",
   categories:
-    "grid min-w-0 grid-cols-3 gap-4 md:grid-cols-4 min-[900px]:grid-cols-5 xl:grid-cols-6",
+    "grid min-w-0 grid-cols-3 gap-4 md:grid-cols-4 min-[900px]:grid-cols-5 xl:grid-cols-6 3xl:grid-cols-7 4xl:grid-cols-8",
   cards: "grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3",
 };
 

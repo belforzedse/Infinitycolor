@@ -68,7 +68,7 @@ function HomeOffersList({
 
 function ProductCardsSkeleton({ count = 8 }: { count?: number }) {
   return (
-    <div className="grid min-w-0 grid-cols-2 gap-4 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div className="grid min-w-0 grid-cols-2 gap-4 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 3xl:gap-5 4xl:grid-cols-6">
       {[...Array(count)].map((_, index) => (
         <div key={index} className="space-y-3">
           <SkeletonMedia aspect="250 / 270" className="rounded-lg" />
@@ -107,7 +107,7 @@ function NewestSectionSkeleton() {
         ))}
       </div>
 
-      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0">
+      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 4xl:px-20">
         <div className="w-full min-w-0 space-y-10">
           <SkeletonText className="h-8 w-48" />
           <ProductCardsSkeleton />
@@ -171,7 +171,7 @@ async function NewestSection({
         ))}
       </div>
 
-      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0">
+      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 4xl:px-20">
         <div className="w-full min-w-0">
           <div className="hidden space-y-10 md:block">
             <Reveal variant="fade-up" duration={700}>

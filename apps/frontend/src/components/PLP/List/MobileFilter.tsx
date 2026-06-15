@@ -9,9 +9,10 @@ import { Fragment, useEffect, useState } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { useQueryStates } from "nuqs";
 import { plpQueryOptions, plpQueryParsers } from "@/components/PLP/queryState";
+import type { ProductCategorySummary } from "@/services/product/categories";
 
 interface MobileFilterProps {
-  categories?: Array<{ id: string; title: string }>;
+  categories?: ProductCategorySummary[];
   isLoadingCategories?: boolean;
   selectedCategory?: string;
 }
@@ -116,7 +117,7 @@ export default function PLPListMobileFilter({
                   >
                     <PLPButton
                       text="اعمال فیلتر ها"
-                      className="!text-base flex w-full items-center justify-center bg-infinity-primary text-white"
+                      className="flex w-full items-center justify-center bg-infinity-primary !text-base text-white"
                       onClick={handleClose}
                     />
                   </footer>

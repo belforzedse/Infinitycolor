@@ -2,8 +2,11 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import MobileMenu from "../MobileMenu";
 import { useProductCategories } from "@/hooks/useProductCategories";
 
+const pushMock = jest.fn();
+
 jest.mock("next/navigation", () => ({
   usePathname: () => "/",
+  useRouter: () => ({ push: pushMock }),
 }));
 
 jest.mock("@/hooks/useProductCategories", () => ({
@@ -126,5 +129,71 @@ describe("MobileMenu", () => {
       "href",
       "/plp/category/bags",
     );
+  });
+
+  describe("inline search", () => {
+    const mockSearchResponse = (items: unknown[]) => {
+      global.fetch = jest.fn().mockResolvedValue({
+        json: async () => ({ data: items }),
+      }) as unknown as typeof fetch;
+    };
+
+    it("shows product results and hides the menu while searching", async () => {
+      mockSearchResponse([
+        {
+          id: 101,
+          attributes: { Slug: "blue-bag", Title: "کیف آبی", Price: 200000, IsAvailable: true },
+        },
+      ]);
+
+      render(<MobileMenu isOpen onClose={jest.fn()} />);
+      await screen.findByRole("button", { name: "بالاتنه" });
+
+      const input = screen.getByLabelText("جستجوی محصولات");
+      fireEvent.change(input, { target: { value: "کیف" } });
+
+      // Menu items are hidden as soon as a query is present.
+      expect(
+        screen.queryByRole("navigation", { name: "منوی موبایل فروشگاه" }),
+      ).not.toBeInTheDocument();
+
+      // Debounced product result renders.
+      const result = await screen.findByRole("option");
+      expect(result).toHaveAttribute("title", "کیف آبی");
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/products/search?q=%DA%A9%DB%8C%D9%81"),
+        expect.objectContaining({ cache: "no-store" }),
+      );
+    });
+
+    it("restores the menu when the search field is cleared", async () => {
+      mockSearchResponse([
+        { id: 101, attributes: { Slug: "blue-bag", Title: "کیف آبی", Price: 200000 } },
+      ]);
+
+      render(<MobileMenu isOpen onClose={jest.fn()} />);
+      await screen.findByRole("button", { name: "بالاتنه" });
+
+      const input = screen.getByLabelText("جستجوی محصولات");
+      fireEvent.change(input, { target: { value: "کیف" } });
+      await screen.findByRole("option");
+
+      fireEvent.click(screen.getByRole("button", { name: "پاک کردن جستجو" }));
+
+      expect(await screen.findByRole("button", { name: "بالاتنه" })).toBeInTheDocument();
+      expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    });
+
+    it("shows a friendly empty state when there are no results", async () => {
+      mockSearchResponse([]);
+
+      render(<MobileMenu isOpen onClose={jest.fn()} />);
+      await screen.findByRole("button", { name: "بالاتنه" });
+
+      const input = screen.getByLabelText("جستجوی محصولات");
+      fireEvent.change(input, { target: { value: "qqq" } });
+
+      expect(await screen.findByText("موردی یافت نشد")).toBeInTheDocument();
+    });
   });
 });

@@ -4,6 +4,7 @@ import { ENDPOINTS } from "@/lib/api-endpoints";
 import { handleAuthErrors } from "@/utils/auth";
 
 const POST_LIKE_TIMEOUT_MS = 15000;
+const SKIP_GLOBAL_LOADER_HEADER = "x-skip-global-loader";
 
 export type TogglePostLikeResult = {
   isLiked: boolean;
@@ -13,6 +14,13 @@ function authHeaders(): Record<string, string> | undefined {
   const accessToken =
     typeof window !== "undefined" ? window.localStorage.getItem("accessToken") : null;
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+}
+
+function postLikeHeaders(): Record<string, string> {
+  return {
+    [SKIP_GLOBAL_LOADER_HEADER]: "1",
+    ...(authHeaders() ?? {}),
+  };
 }
 
 function relationId(raw: unknown): string | null {
@@ -57,7 +65,7 @@ export function hasAccessToken(): boolean {
 export async function getLikedPostIds(): Promise<Set<string>> {
   try {
     const response = await apiClient.get<unknown>(ENDPOINTS.POST_LIKES.USER_LIKES, {
-      headers: authHeaders(),
+      headers: postLikeHeaders(),
       cache: "no-store",
       timeout: POST_LIKE_TIMEOUT_MS,
       retries: 0,
@@ -76,7 +84,7 @@ export async function togglePostLike(postId: string | number): Promise<TogglePos
       ENDPOINTS.POST_LIKES.TOGGLE,
       { postId },
       {
-        headers: authHeaders(),
+        headers: postLikeHeaders(),
         cache: "no-store",
         timeout: POST_LIKE_TIMEOUT_MS,
         retries: 0,

@@ -5,7 +5,8 @@ import ChatIcon from "../../Icons/ChatIcon";
 import HeartIcon from "../../Icons/HeartIcon";
 import ShareIcon from "../../Icons/ShareIcon";
 import BasketIcon from "../../Icons/BasketIcon";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import Select from "@/components/Kits/Form/Select";
 import useProductLike from "@/hooks/useProductLike";
 import useAddToCart from "@/hooks/useAddToCart";
@@ -14,6 +15,11 @@ import toast from "react-hot-toast";
 import logger from "@/utils/logger";
 import { scrollIntoViewWithOffset } from "@/utils/scroll";
 import { trackMatomoEvent } from "@/lib/analytics/matomo";
+
+const ShareModal = dynamic(() => import("@/components/Product/ShareModal"), {
+  ssr: false,
+  loading: () => null,
+});
 
 const options = [
   { id: 1, name: "۱ عدد" },
@@ -87,8 +93,7 @@ export default function PDPHeroInfoAction({
   hasStock = true,
   currentVariation,
 }: PDPHeroInfoActionProps) {
-  const [showShareToast, setShowShareToast] = useState(false);
-  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [isShareOpen, setIsShareOpen] = useState(false);
   const [isClientMounted, setIsClientMounted] = useState(false);
 
   // Initialize product like hook
@@ -184,39 +189,13 @@ export default function PDPHeroInfoAction({
     addToCart(requestedQuantity);
   };
 
-  // Handle share button click
-  /**
-   * Handles sharing product URL via clipboard
-   * Shows toast notification on success
-   */
   const handleShare = () => {
-    const currentUrl = window.location.href;
-
-    // Use the clipboard API
-    navigator.clipboard
-      .writeText(currentUrl)
-      .then(() => {
-        trackMatomoEvent({
-          category: "engagement",
-          action: "share_product",
-          name: `${productId}:${name}`,
-        });
-        // Show toast message
-        setShowShareToast(true);
-
-        // Clear previous timeout if exists
-        if (toastTimeoutRef.current) {
-          clearTimeout(toastTimeoutRef.current);
-        }
-
-        // Hide toast after 3 seconds
-        toastTimeoutRef.current = setTimeout(() => {
-          setShowShareToast(false);
-        }, 3000);
-      })
-      .catch((error) => {
-        console.error("Failed to copy URL:", error);
-      });
+    trackMatomoEvent({
+      category: "engagement",
+      action: "share_product",
+      name: `${productId}:${name}`,
+    });
+    setIsShareOpen(true);
   };
 
   // Handle scroll to comments
@@ -250,15 +229,6 @@ export default function PDPHeroInfoAction({
   // Clean up timeout on component unmount
   useEffect(() => {
     setIsClientMounted(true);
-  }, []);
-
-  // Clean up timeout on component unmount
-  useEffect(() => {
-    return () => {
-      if (toastTimeoutRef.current) {
-        clearTimeout(toastTimeoutRef.current);
-      }
-    };
   }, []);
 
   // Handle quantity change
@@ -313,6 +283,10 @@ export default function PDPHeroInfoAction({
   const currentOption = dynamicOptions.find((opt) => opt.id === quantity) || null;
   const isCartActionReady = isClientMounted && isCartReady;
   const isCartActionPending = isClientMounted && !isCartReady;
+  const productNumericId = Number.parseInt(productId, 10);
+  const variantLabel = [color, size, model].filter(Boolean).join(" / ");
+  const iconButtonClass =
+    "flex h-[46px] flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white text-neutral-800 transition-colors hover:border-infinity-primary-lighter hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 md:w-[46px] md:flex-auto";
 
   return (
     <div
@@ -322,15 +296,17 @@ export default function PDPHeroInfoAction({
     >
       <div className="flex w-full items-center gap-3 md:w-auto">
         <button
-          className="flex h-12 flex-1 items-center justify-center rounded-xl shadow-md md:w-12 md:flex-auto"
+          type="button"
+          className={iconButtonClass}
           onClick={handleShare}
-          aria-label="کپی لینک محصول"
+          aria-label="اشتراک‌گذاری محصول"
         >
           <ShareIcon />
         </button>
 
         <button
-          className="flex h-12 flex-1 items-center justify-center rounded-xl shadow-md md:w-12 md:flex-auto"
+          type="button"
+          className={iconButtonClass}
           onClick={handleScrollToComments}
           aria-label="مشاهده نظرات"
         >
@@ -338,7 +314,8 @@ export default function PDPHeroInfoAction({
         </button>
 
         <button
-          className={`flex h-12 flex-1 items-center justify-center rounded-xl shadow-md md:w-12 md:flex-auto ${
+          type="button"
+          className={`${iconButtonClass} ${
             isLoading ? "cursor-wait opacity-50" : ""
           }`}
           onClick={handleToggleLike}
@@ -352,17 +329,19 @@ export default function PDPHeroInfoAction({
       <div className="flex w-full flex-1 gap-3">
         {!hasStock ? (
           <Button
-            className="text-base flex flex-1 cursor-not-allowed items-center justify-center rounded-xl bg-gray-400 py-3 text-white"
+            className="text-base flex h-[46px] flex-1 cursor-not-allowed items-center justify-center rounded-xl bg-gray-400 py-0 text-white"
             text="ناموجود"
             disabled={true}
           />
         ) : (
           <>
             <Button
-              className={`text-base flex flex-1 items-center justify-center rounded-xl bg-actions-primary py-3 !text-gray-100 ${
-                isAdding || isCartActionPending ? "cursor-wait opacity-50" : ""
-              }`}
-              text={isInCart ? "مشاهده سبد خرید" : "افزودن به سبد خرید"}
+              className={`text-base flex h-[46px] flex-1 items-center justify-center rounded-xl py-0 ${
+                isInCart
+                  ? "border-2 border-infinity-primary bg-infinity-primary-lighter/20 !text-infinity-primary-dark"
+                  : "bg-actions-primary !text-gray-100"
+              } ${isAdding || isCartActionPending ? "cursor-wait opacity-50" : ""}`}
+              text={isInCart ? "در سبد خرید (مشاهده)" : "افزودن به سبد خرید"}
               variant="primary"
               testId="pdp-add-to-cart"
               leftIcon={<BasketIcon />}
@@ -377,6 +356,7 @@ export default function PDPHeroInfoAction({
             />
             <Select
               className="w-[126px]"
+              selectButtonClassName="h-[46px] py-0"
               options={dynamicOptions}
               value={currentOption}
               onChange={handleQuantityChange}
@@ -386,10 +366,19 @@ export default function PDPHeroInfoAction({
         )}
       </div>
 
-      {showShareToast && (
-        <div className="text-sm absolute -top-12 left-1/2 -translate-x-1/2 transform rounded-lg bg-black bg-opacity-80 px-4 py-2 text-white">
-          لینک کپی شد
-        </div>
+      {isShareOpen && (
+        <ShareModal
+          open={isShareOpen}
+          onOpenChange={setIsShareOpen}
+          product={{
+            id: Number.isFinite(productNumericId) ? productNumericId : 0,
+            title: name,
+            imageUrl: image,
+            price: originalPrice ?? price,
+            discountPrice: originalPrice ? price : undefined,
+            variantLabel: variantLabel || undefined,
+          }}
+        />
       )}
     </div>
   );

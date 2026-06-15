@@ -52,6 +52,8 @@ interface CartContextType {
   /** False until the first client-side cart init (token + API or localStorage) completes. */
   isCartReady: boolean;
   checkCartStock: () => Promise<boolean>;
+  /** Re-fetch the cart from the server (no-op for guest carts). */
+  refreshCart: () => Promise<void>;
   migrateLocalCartToApi: () => Promise<void>;
 }
 
@@ -761,6 +763,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     isLoading,
     isCartReady,
     checkCartStock,
+    refreshCart: async () => {
+      if (isLoggedIn) await fetchUserCart();
+    },
     migrateLocalCartToApi,
   };
 

@@ -137,9 +137,9 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
   return (
     <div
       ref={scrollContainerRef}
-      className="relative h-auto w-full overflow-x-auto xl:h-[calc((112px*5/4*4)+(0.5rem*3))] xl:max-h-[calc(100vh-var(--header-offset,88px)-1rem)] xl:w-[112px] xl:overflow-y-auto xl:overflow-x-hidden [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain]"
+      className="relative h-auto w-full overflow-x-auto px-1 py-1 xl:h-[calc((112px*5/4*4)+(0.5rem*3)+0.5rem)] xl:max-h-[calc(100vh-var(--header-offset,88px)-1rem)] xl:w-[120px] xl:overflow-y-auto xl:overflow-x-hidden [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain]"
     >
-      <div className="flex min-w-max flex-row-reverse flex-nowrap xl:flex-wrap gap-2 xl:w-full xl:flex-col xl:min-w-0">
+      <div className="flex min-w-max flex-row-reverse flex-nowrap gap-2 xl:w-full xl:min-w-0 xl:flex-col xl:flex-wrap">
         {assets.map((asset, index) => (
           <div
             key={asset.id}
@@ -148,15 +148,15 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
               setSelectedImage(asset.id);
             }}
             onMouseEnter={() => preloadSrc(asset.src)}
-            className={`relative aspect-[4/5] w-[84px] flex-shrink-0 cursor-pointer overflow-hidden rounded-2xl md:w-[112px] ${
+            className={`relative aspect-[4/5] w-[84px] flex-shrink-0 cursor-pointer overflow-visible rounded-2xl p-0.5 transition-shadow md:w-[112px] ${
               asset.id === selectedImage
-                ? "ring-2 ring-infinity-primary shadow-lg"
+                ? "ring-2 ring-infinity-primary"
                 : "ring-1 ring-black/10"
             }`}
           >
             <div className={`relative h-full w-full ${
               asset.id === selectedImage ? "opacity-60" : "opacity-100"
-            }`}>
+            } overflow-hidden rounded-[14px]`}>
               <Image
                 fill
                 src={asset.thumbnail.trim() || "/images/cart/empty-cart.png"}
@@ -175,7 +175,7 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
             </div>
 
             {asset.type === "video" && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                 <div className="group/video-thumb flex items-center justify-center transition-all duration-300">
                   <div className="absolute h-12 w-12 rounded-full bg-white/95 backdrop-blur-sm shadow-lg ring-2 ring-infinity-primary-lighter/50 transition-all duration-300 group-hover/video-thumb:scale-110 group-hover/video-thumb:ring-infinity-primary-light/70 group-hover/video-thumb:shadow-xl" />
                   <svg
@@ -192,14 +192,11 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
         ))}
       </div>
 
-      {/* Blur */}
+      {/* Fade */}
       {showBlur && (
         <div
-          className="bottom-0 left-0 hidden h-[71px] w-[40px] xl:sticky xl:left-0 xl:block xl:w-full"
-          style={{
-            background: "linear-gradient(181.25deg, rgba(255, 255, 255, 0) 44.29%, #FFFFFF 85.78%)",
-            backdropFilter: "blur(4px)",
-          }}
+          className="pointer-events-none bottom-0 left-0 hidden h-16 w-full bg-gradient-to-b from-white/0 via-white/70 to-white opacity-100 transition-opacity duration-200 xl:sticky xl:block"
+          aria-hidden="true"
         />
       )}
     </div>

@@ -161,6 +161,42 @@ describe("ProductCard", () => {
     expect(link).toHaveAttribute("href", "/pdp/123");
   });
 
+  it("should mark mobile product-card navigation for top scroll", () => {
+    const matchMedia = jest.fn().mockReturnValue({ matches: true });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: matchMedia,
+    });
+    window.sessionStorage.clear();
+
+    render(<ProductCard {...mockProps} id={123} />);
+
+    const link = screen.getByTestId("product-card-link");
+    link.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(link);
+
+    expect(matchMedia).toHaveBeenCalledWith("(max-width: 767px)");
+    expect(window.sessionStorage.getItem("pdp-scroll-top-from-product-card")).toBe("1");
+  });
+
+  it("should not mark desktop product-card navigation for top scroll", () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: jest.fn().mockReturnValue({ matches: false }),
+    });
+    window.sessionStorage.clear();
+
+    render(<ProductCard {...mockProps} id={123} />);
+
+    const link = screen.getByTestId("product-card-link");
+    link.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(link);
+
+    expect(window.sessionStorage.getItem("pdp-scroll-top-from-product-card")).toBeNull();
+  });
+
   it("should render ImageSlider with correct props", () => {
     render(<ProductCard {...mockProps} priority={true} />);
 

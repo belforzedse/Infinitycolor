@@ -8,6 +8,10 @@ import ShoppingCartBillDeliveryForm from "./DeliveryForm";
 import ShoppingCartBillDiscountCoupon from "./DiscountCoupon";
 import ShoppingCartBillPaymentGateway from "./PaymentGateway";
 import ReserveShipping from "./ReserveShipping";
+import StockAdjustmentDialog, {
+  type StockAdjustedRow,
+  type StockRemovedRow,
+} from "./StockAdjustmentDialog";
 import { CheckoutProgress } from "../CheckoutProgress";
 import { orderIdAtom, orderNumberAtom, submitOrderStepAtom } from "@/atoms/Order";
 import { useAtom, useAtomValue } from "jotai";
@@ -45,6 +49,12 @@ function ShoppingCartBillForm({}: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitInProgressRef = React.useRef(false);
+  // Holds checkout stock changes awaiting the shopper's acknowledgement (C1).
+  const [stockAdjustment, setStockAdjustment] = useState<{
+    adjusted: StockAdjustedRow[];
+    removed: StockRemovedRow[];
+    data: FormData;
+  } | null>(null);
   const [_submitOrderStep, setSubmitOrderStep] = useAtom(submitOrderStepAtom);
   const [_, setOrderId] = useAtom(orderIdAtom);
   const [__, setOrderNumber] = useAtom(orderNumberAtom);
@@ -136,6 +146,7 @@ function ShoppingCartBillForm({}: Props) {
       }
     | undefined
   >(undefined);
+  const [discountPreviewLoading, setDiscountPreviewLoading] = useState(false);
   const [walletBalanceIrr, setWalletBalanceIrr] = useState<number>(0);
   const [reserveShipping, setReserveShipping] = useState(false);
   const [activeReserve, setActiveReserve] = useState<{
@@ -144,7 +155,7 @@ function ShoppingCartBillForm({}: Props) {
     orderCount: number;
   } | null>(null);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
-  const { totalPrice, totalItems, clearCart } = useCart();
+  const { totalPrice, totalItems, clearCart, cartItems, openDrawer, refreshCart } = useCart();
   const selectableGateways = useMemo(
     () => availableGateways.filter((gw) => gw !== "snappay" || snappEligible),
     [availableGateways, snappEligible],
@@ -226,13 +237,17 @@ function ShoppingCartBillForm({}: Props) {
     );
   }, [selectableGateways]);
 
-  // Refresh discount preview when code or shipping changes (stable deps)
+  // Refresh discount preview when code or shipping changes (stable deps).
+  // Also re-validates a code restored from localStorage: if it is no longer
+  // valid (expired/used), it is dropped and the shopper is told (M4) so the
+  // displayed total never silently assumes a discount the backend will reject.
   useEffect(() => {
     const run = async () => {
       if (!discountCode) {
         setDiscountPreview(undefined);
         return;
       }
+      setDiscountPreviewLoading(true);
       try {
         const res = await CartService.applyDiscount({
           code: discountCode,
@@ -241,10 +256,19 @@ function ShoppingCartBillForm({}: Props) {
         });
         if (res?.success) {
           setDiscountPreview({ discount: res.discount, summary: res.summary });
+        } else {
+          setDiscountPreview(undefined);
+          setDiscountCode(undefined);
+          try {
+            localStorage.removeItem("discountCode");
+          } catch {}
+          toast.error("کد تخفیف شما دیگر معتبر نیست و حذف شد");
         }
       } catch (e) {
         const errorMsg = getUserFacingErrorMessage(e, "خطا در اعمال کد تخفیف. دوباره تلاش کنید.");
         console.error("applyDiscount failed:", errorMsg, e);
+      } finally {
+        setDiscountPreviewLoading(false);
       }
     };
     run();
@@ -329,7 +353,23 @@ function ShoppingCartBillForm({}: Props) {
     });
   };
 
-  const onSubmit = async (data: FormData) => {
+  // Resolve a human product name for a stock-change entry. Prefer the backend
+  // title, then the (still-current) cart snapshot, then a generic fallback —
+  // the backend `message` is English so it is never shown to the user.
+  const resolveStockItemName = (it: {
+    cartItemId: number;
+    productVariationId: number;
+    productTitle?: string;
+  }): string => {
+    if (it.productTitle) return it.productTitle;
+    const byCartItem = cartItems.find((ci) => ci.cartItemId === String(it.cartItemId));
+    if (byCartItem?.name) return byCartItem.name;
+    const byVariation = cartItems.find((ci) => ci.variationId === String(it.productVariationId));
+    if (byVariation?.name) return byVariation.name;
+    return "این کالا";
+  };
+
+  const submitOrder = async (data: FormData, skipStockCheck: boolean) => {
     setError(null);
 
     const selectedAddressId = data.address?.id ? Number(data.address.id) : undefined;
@@ -403,16 +443,31 @@ function ShoppingCartBillForm({}: Props) {
         value: totalPrice,
       });
 
-      const stockValid = await CartService.checkCartStock();
+      if (!skipStockCheck) {
+        const stockValid = await CartService.checkCartStock();
 
-      if (!stockValid.valid) {
-        if (stockValid.cartIsEmpty) {
-          setError("سبد خرید شما خالی است");
-          return;
-        }
+        if (!stockValid.valid) {
+          if (stockValid.cartIsEmpty) {
+            setError("سبد خرید شما خالی است");
+            return;
+          }
 
-        if (stockValid.itemsAdjusted?.length || stockValid.itemsRemoved?.length) {
-          toast.error("برخی از کالاهای سبد خرید شما به دلیل موجودی تغییر کرده‌اند");
+          const adjusted: StockAdjustedRow[] = (stockValid.itemsAdjusted ?? []).map((it) => ({
+            name: resolveStockItemName(it),
+            requested: it.requested,
+            newQuantity: it.newQuantity,
+          }));
+          const removed: StockRemovedRow[] = (stockValid.itemsRemoved ?? []).map((it) => ({
+            name: resolveStockItemName(it),
+          }));
+
+          if (adjusted.length || removed.length) {
+            // Reconcile the on-page totals with the server-corrected cart, then
+            // pause and require the shopper to acknowledge the changes (C1).
+            await refreshCart();
+            setStockAdjustment({ adjusted, removed, data });
+            return;
+          }
         }
       }
 
@@ -652,6 +707,21 @@ function ShoppingCartBillForm({}: Props) {
     }
   };
 
+  const onSubmit = (data: FormData) => submitOrder(data, false);
+
+  const handleStockConfirm = () => {
+    if (!stockAdjustment) return;
+    const { data } = stockAdjustment;
+    setStockAdjustment(null);
+    // Cart already reconciled with the server; skip the re-check and finalize.
+    void submitOrder(data, true);
+  };
+
+  const handleStockCancel = () => {
+    setStockAdjustment(null);
+    openDrawer();
+  };
+
   const requiredAmountIrr = totalToman * 10;
   const submitOrderStep = useAtomValue(submitOrderStepAtom);
 
@@ -699,13 +769,33 @@ function ShoppingCartBillForm({}: Props) {
       /> */}
       {error && (
         <div
-          className="rounded-lg bg-red-50 p-3 text-red-600"
+          className="flex flex-col gap-2 rounded-lg bg-red-50 p-3 text-red-600 sm:flex-row sm:items-center sm:justify-between"
           role="alert"
           data-testid="checkout-form-error"
         >
-          {error}
+          <span>{error}</span>
+          {error !== EMPTY_CART_ERROR && (
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              disabled={isSubmitting}
+              data-testid="checkout-error-retry"
+              className="shrink-0 self-start rounded-lg border border-red-300 bg-white px-4 py-1.5 text-sm text-red-600 hover:bg-red-100 disabled:opacity-50 sm:self-auto"
+            >
+              تلاش دوباره
+            </button>
+          )}
         </div>
       )}
+
+      <StockAdjustmentDialog
+        isOpen={!!stockAdjustment}
+        adjusted={stockAdjustment?.adjusted ?? []}
+        removed={stockAdjustment?.removed ?? []}
+        onConfirm={handleStockConfirm}
+        onCancel={handleStockCancel}
+        isSubmitting={isSubmitting}
+      />
 
       {activeReserve && mergeChoice === null && (
         <div className="rounded-lg border border-infinity-primary-lighter/60 bg-infinity-primary-lighter/50 p-4">
@@ -766,6 +856,8 @@ function ShoppingCartBillForm({}: Props) {
                 setValue={setValue}
                 selectedShipping={watchShippingMethod}
                 discountPreview={discountPreview}
+                discountCode={discountCode}
+                previewLoading={discountPreviewLoading}
               />
               {(mergeChoice === "new" || !activeReserve) && (
                 <ReserveShipping checked={reserveShipping} onChange={setReserveShipping} />

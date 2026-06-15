@@ -83,13 +83,19 @@ export interface CartStockCheckResponse {
     requested: number;
     available: number;
     newQuantity: number;
+    /** Backend-provided product title (present for some cases; may be missing). */
+    productTitle?: string;
+    /** English diagnostic message from the backend — do not show to users. */
     message: string;
   }>;
   itemsRemoved?: Array<{
     cartItemId: number;
     productVariationId: number;
-    requested: number;
-    available: number;
+    requested?: number;
+    available?: number;
+    /** Backend-provided product title (present for some removal reasons). */
+    productTitle?: string;
+    /** English diagnostic message from the backend — do not show to users. */
     message: string;
   }>;
   cart?: CartResponse;

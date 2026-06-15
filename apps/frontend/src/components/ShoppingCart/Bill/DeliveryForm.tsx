@@ -27,6 +27,10 @@ type Props = {
       taxPercent: number;
     };
   };
+  /** The applied discount code, shown alongside the discount line. */
+  discountCode?: string;
+  /** True while the discount/total is being recomputed on the server. */
+  previewLoading?: boolean;
 };
 
 function ShoppingCartBillDeliveryForm({
@@ -34,6 +38,8 @@ function ShoppingCartBillDeliveryForm({
   setValue,
   selectedShipping,
   discountPreview,
+  discountCode,
+  previewLoading,
 }: Props) {
   const { totalPrice, subtotalBeforeDiscount, cartDiscountTotal, openDrawer } = useCart();
   const [, _setSubmitOrderStep] = useAtom(submitOrderStepAtom);
@@ -129,7 +135,12 @@ function ShoppingCartBillDeliveryForm({
 
         {discountAmount > 0 && (
           <div className="flex items-center justify-between">
-            <span className="text-sm text-neutral-600 lg:text-base">تخفیف</span>
+            <span className="text-sm text-neutral-600 lg:text-base">
+              تخفیف
+              {discountCode ? (
+                <span className="mr-1 text-xs text-neutral-500">({discountCode})</span>
+              ) : null}
+            </span>
             <span className="text-sm text-green-600 lg:text-base">
               -{discountAmount.toLocaleString()} تومان
             </span>
@@ -154,7 +165,19 @@ function ShoppingCartBillDeliveryForm({
 
         <div className="flex items-center justify-between pt-2">
           <span className="text-lg text-neutral-800 lg:text-xl">قابل پرداخت</span>
-          <span className="text-2xl text-infinity-primary">{finalTotal.toLocaleString()} تومان</span>
+          {previewLoading ? (
+            <span
+              className="flex items-center gap-2 text-sm text-neutral-500"
+              data-testid="checkout-total-loading"
+            >
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary" />
+              در حال محاسبه...
+            </span>
+          ) : (
+            <span className="text-2xl text-infinity-primary">
+              {finalTotal.toLocaleString()} تومان
+            </span>
+          )}
         </div>
 
         {effectiveShipping > 0 && (

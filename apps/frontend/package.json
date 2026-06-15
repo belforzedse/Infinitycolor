@@ -34,6 +34,7 @@
     "@dnd-kit/utilities": "3.2.2",
     "@fortedigital/nextjs-cache-handler": "3.0.0",
     "@headlessui/react": "2.2.1",
+    "@lottiefiles/dotlottie-react": "^0.19.4",
     "@repo/api": "workspace:*",
     "@repo/brand": "workspace:*",
     "@repo/fonts": "workspace:*",
