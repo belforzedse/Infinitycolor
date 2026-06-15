@@ -36,7 +36,6 @@ export default function PaymentMethodsPage() {
       hasAddButton
       addButtonText="ثبت درگاه جدید"
       addButtonPath="/super-admin/payment-methods/add"
-      hasFilterButton
       hasRecycleBin
     >
       <SuperAdminTable

@@ -20,6 +20,12 @@ export default function ShippingProvincesPage() {
           {
             id: "[Title]",
             title: "عنوان",
+            type: "text",
+          },
+          {
+            id: "[createdAt]",
+            title: "تاریخ ایجاد",
+            type: "date",
           },
         ]}
       >

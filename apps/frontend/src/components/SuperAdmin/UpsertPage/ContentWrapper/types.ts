@@ -49,6 +49,7 @@ export type StandardField<T> = {
     }>
   >;
   placeholder?: string;
+  maxLength?: number;
   termTags?: Array<{
     label: string;
     value: string;

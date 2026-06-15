@@ -19,6 +19,13 @@ import { useQueryState } from "nuqs";
 import ReportTableSkeleton from "@/components/Skeletons/ReportTableSkeleton";
 import { apiCache } from "@/lib/api-cache";
 import { AnimatedTableRow } from "./AnimatedTableRow";
+import {
+  buildSuperAdminTableRequestUrl,
+  parseAdvancedFiltersParam,
+  serializeAdvancedFiltersParam,
+  useAdvancedFilterFields,
+  type AdvancedFilterItem,
+} from "./advancedFilters";
 
 declare module "@tanstack/table-core" {
   interface ColumnMeta<TData, TValue> {
@@ -63,12 +70,6 @@ interface TableProps<TData, TValue> {
 
 // Strapi-like response meta is returned by our ApiClient as ApiResponse<T>
 
-type FilterItem = {
-  field: string;
-  operator: string;
-  value: string | number | boolean;
-};
-
 export const refreshTable = atom(true);
 
 export function SuperAdminTable<TData, TValue>({
@@ -87,10 +88,11 @@ export function SuperAdminTable<TData, TValue>({
   onBulkAction,
   clientSort,
 }: TableProps<TData, TValue>) {
-  const [filter] = useQueryState("filter", {
+  const filterFields = useAdvancedFilterFields();
+  const [filter] = useQueryState<AdvancedFilterItem[]>("filter", {
     defaultValue: [],
-    parse: (value) => JSON.parse(decodeURIComponent(value || "[]")),
-    serialize: (value) => encodeURIComponent(JSON.stringify(value || [])),
+    parse: parseAdvancedFiltersParam,
+    serialize: serializeAdvancedFiltersParam,
   });
 
   const [, setTotalSize] = useQueryState("totalSize", {
@@ -129,28 +131,15 @@ export function SuperAdminTable<TData, TValue>({
 
   const requestUrl = useMemo(() => {
     if (!url) return null;
-    let apiUrl = url;
-    const hasQueryParams = url.includes("?");
-    let separator = hasQueryParams ? "&" : "?";
 
-    apiUrl = `${apiUrl}${separator}pagination[page]=${page}&pagination[pageSize]=${pageSize}`;
-    separator = "&";
-
-    if (Array.isArray(filter) && filter.length > 0) {
-      const filters = filter as unknown as FilterItem[];
-      const filterParams = filters
-        .map((item) => {
-          const { field, operator, value } = item || ({} as FilterItem);
-          if (!field || !operator || value === undefined || value === null) return "";
-          return `filters${field}[${operator}]=${encodeURIComponent(String(value))}`;
-        })
-        .filter(Boolean)
-        .join("&");
-      if (filterParams) apiUrl = `${apiUrl}${separator}${filterParams}`;
-    }
-
-    return apiUrl;
-  }, [url, page, pageSize, filter]);
+    return buildSuperAdminTableRequestUrl({
+      url,
+      page,
+      pageSize,
+      filters: filter,
+      filterFields,
+    });
+  }, [url, page, pageSize, filter, filterFields]);
 
   const lastUrlRef = useRef<string | null>(null);
 
@@ -546,17 +535,17 @@ export function SuperAdminTable<TData, TValue>({
                 <>
                   {table.getRowModel().rows.map((row) => {
                     const resolvedKey = resolveRowKey(row.original as TData);
-                  const rowKey = resolvedKey || String(row.id); // fallback avoids empty/unstable keys
-                  const isNew = rowKey ? newlyAddedIds.has(rowKey) : false;
+                    const rowKey = resolvedKey || String(row.id); // fallback avoids empty/unstable keys
+                    const isNew = rowKey ? newlyAddedIds.has(rowKey) : false;
 
-                  return (
-                    <AnimatedTableRow
-                      key={rowKey}
-                      rowKey={rowKey}
-                      isNew={isNew}
-                      isPageTransitioning={isPageTransitioning}
-                      draggable={draggable}
-                      onDragStart={() => handleDragStart(row)}
+                    return (
+                      <AnimatedTableRow
+                        key={rowKey}
+                        rowKey={rowKey}
+                        isNew={isNew}
+                        isPageTransitioning={isPageTransitioning}
+                        draggable={draggable}
+                        onDragStart={() => handleDragStart(row)}
                         onDragOver={(e) => handleDragOver(e, row)}
                         onDrop={(e) => handleDrop(e, row)}
                         className={twMerge(

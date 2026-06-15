@@ -25,7 +25,7 @@ export default function AttributesPage() {
   }, [roleName, router]);
 
   return (
-    <ContentWrapper title="ویژگی‌ها" hasFilterButton hasPagination>
+    <ContentWrapper title="ویژگی‌ها" hasPagination>
       <SuperAdminTable
         columns={columns}
         data={demoData}

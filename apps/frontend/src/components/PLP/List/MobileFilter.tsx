@@ -32,7 +32,7 @@ export default function PLPListMobileFilter({
   const handleOpen = () => setIsOpen(true);
 
   const handleAvailabilityChange = (checked: boolean) => {
-    void setQuery({ available: checked ? "true" : null });
+    void setQuery({ available: checked ? "true" : null, page: 1 });
   };
 
   useEffect(() => {

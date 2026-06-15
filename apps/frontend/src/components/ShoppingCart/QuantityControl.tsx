@@ -13,9 +13,11 @@ type Props = {
 };
 
 function ShoppingCartQuantityControl({ itemId, quantity }: Props) {
-  const { updateQuantity, removeFromCart } = useCart();
+  const { updateQuantity, removeFromCart, isLoading } = useCart();
 
   const handleQuantityChange = (id: string, change: number) => {
+    if (isLoading) return;
+
     if (change === 0) {
       removeFromCart(id);
     } else {
@@ -34,7 +36,9 @@ function ShoppingCartQuantityControl({ itemId, quantity }: Props) {
           onClick={() => handleQuantityChange(itemId, 1)}
           data-testid="cart-quantity-increase"
           aria-label="Increase cart item quantity"
-          className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 lg:h-8 lg:w-8"
+          disabled={isLoading}
+          aria-disabled={isLoading}
+          className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 lg:h-8 lg:w-8"
         >
           <PlusIcon />
         </button>
@@ -43,7 +47,9 @@ function ShoppingCartQuantityControl({ itemId, quantity }: Props) {
           onClick={() => handleQuantityChange(itemId, -1)}
           data-testid="cart-quantity-decrease"
           aria-label="Decrease cart item quantity"
-          className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 lg:h-8 lg:w-8"
+          disabled={isLoading}
+          aria-disabled={isLoading}
+          className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 lg:h-8 lg:w-8"
         >
           <MinusIcon />
         </button>
@@ -52,7 +58,9 @@ function ShoppingCartQuantityControl({ itemId, quantity }: Props) {
         onClick={() => handleQuantityChange(itemId, 0)}
         data-testid="cart-item-remove"
         aria-label="Remove cart item"
-        className="flex items-center justify-center text-rose-500"
+        disabled={isLoading}
+        aria-disabled={isLoading}
+        className="flex items-center justify-center text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <TrashIcon className="h-5 w-5" />
       </button>

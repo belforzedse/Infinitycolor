@@ -7,6 +7,7 @@
 jest.mock('@strapi/strapi', () => ({
   factories: {
     createCoreController: (_uid: string, extension: any) => (params: any) => extension(params),
+    createCoreService: () => ({}),
   },
 }));
 
@@ -20,6 +21,82 @@ describe('Wallet Operations - Real Implementation', () => {
   let mellatService: any;
   let walletModule: any;
   let topupModule: any;
+
+  const installTopupTransactionMocks = ({
+    topup,
+    wallet,
+    existingTransactions = [],
+  }: {
+    topup: any;
+    wallet: any;
+    existingTransactions?: any[];
+  }) => {
+    const walletQuery = mockStrapi.db.query('api::local-user-wallet.local-user-wallet');
+    const topupQuery = mockStrapi.db.query('api::wallet-topup.wallet-topup');
+    const transactionQuery = mockStrapi.db.query(
+      'api::local-user-wallet-transaction.local-user-wallet-transaction'
+    );
+    const transactions = existingTransactions;
+    let transactionQueue = Promise.resolve();
+
+    walletQuery.findOne.mockResolvedValue(wallet);
+
+    transactionQuery.findOne.mockImplementation(async ({ where }: any) =>
+      transactions.find((tx: any) => tx.ReferenceId === where.ReferenceId) || null
+    );
+
+    transactionQuery.create.mockImplementation(async ({ data }: any) => {
+      if (transactions.some((tx: any) => tx.ReferenceId === data.ReferenceId)) {
+        const error: any = new Error('duplicate key value violates unique constraint');
+        error.code = '23505';
+        throw error;
+      }
+
+      const created = { id: transactions.length + 1, ...data };
+      transactions.push(created);
+      return created;
+    });
+
+    topupQuery.update.mockImplementation(async ({ data }: any) => {
+      Object.assign(topup, data);
+      return topup;
+    });
+
+    mockStrapi.db.transaction.mockImplementation((callback: any) => {
+      const run = async () => {
+        const trx = {
+          raw: jest.fn(async (sql: string, bindings: any[]) => {
+            if (sql.includes('FROM wallet_topups')) {
+              return {
+                rows: [
+                  {
+                    id: topup.id,
+                    amount: topup.Amount,
+                    status: topup.Status,
+                    sale_reference_id: topup.SaleReferenceId,
+                  },
+                ],
+              };
+            }
+
+            if (sql.includes('UPDATE local_user_wallets')) {
+              wallet.Balance += Number(bindings[0]);
+              return { rows: [{ id: wallet.id, balance: wallet.Balance }] };
+            }
+
+            return { rows: [] };
+          }),
+        };
+
+        return callback({ trx });
+      };
+
+      transactionQueue = transactionQueue.then(run, run);
+      return transactionQueue;
+    });
+
+    return { transactions, walletQuery, topupQuery, transactionQuery };
+  };
 
   beforeAll(async () => {
     // Dynamic imports
@@ -66,9 +143,19 @@ describe('Wallet Operations - Real Implementation', () => {
     // Mock queries
     const walletQuery = {
       findOne: jest.fn(),
+      create: jest.fn(),
       update: jest.fn(),
     };
     mock.registerQuery('api::local-user-wallet.local-user-wallet', walletQuery);
+
+    mock.registerQuery('api::wallet-topup.wallet-topup', {
+      update: jest.fn(),
+    });
+
+    mock.registerQuery('api::local-user-wallet-transaction.local-user-wallet-transaction', {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn(),
+    });
 
     // Mock config
     mockStrapi.config = {
@@ -430,12 +517,19 @@ describe('Wallet Operations - Real Implementation', () => {
         success: true,
       });
 
-      // Mock wallet query
-      const walletQuery = mockStrapi.db.query('api::local-user-wallet.local-user-wallet');
-      walletQuery.findOne.mockResolvedValue({
-        id: 10,
-        Balance: 500000,
-        user: 1,
+      installTopupTransactionMocks({
+        topup: {
+          id: 100,
+          SaleOrderId: saleOrderId,
+          Amount: 1000000,
+          Status: 'Pending',
+          user: { id: 1 },
+        },
+        wallet: {
+          id: 10,
+          Balance: 500000,
+          user: 1,
+        },
       });
 
       const ctx = mockContext({
@@ -465,6 +559,128 @@ describe('Wallet Operations - Real Implementation', () => {
           orderId: saleOrderId,
         })
       );
+      expect(mellatService.settleTransaction.mock.calls[0][0]).not.toHaveProperty(
+        'allowResCode45Success'
+      );
+    });
+
+    it('should credit wallet only once when the same callback is replayed', async () => {
+      const saleOrderId = '1234567890123';
+      const saleReferenceId = 'REPLAY-REF-1';
+      const topup = {
+        id: 101,
+        SaleOrderId: saleOrderId,
+        Amount: 1000000,
+        Status: 'Pending',
+        user: { id: 1 },
+      };
+      const wallet = { id: 10, Balance: 500000, user: 1 };
+      const { transactionQuery, topupQuery } = installTopupTransactionMocks({
+        topup,
+        wallet,
+      });
+
+      mockStrapi.entityService.findMany.mockResolvedValue([topup]);
+      mellatService.verifyTransaction.mockResolvedValue({ success: true });
+      mellatService.settleTransaction.mockResolvedValue({ success: true });
+
+      const callbackBody = {
+        ResCode: '0',
+        SaleOrderId: saleOrderId,
+        SaleReferenceId: saleReferenceId,
+      };
+      const ctx1 = mockContext({ request: { body: callbackBody } });
+      const ctx2 = mockContext({ request: { body: callbackBody } });
+
+      await topupController.paymentCallback(ctx1);
+      await topupController.paymentCallback(ctx2);
+
+      expect(wallet.Balance).toBe(1500000);
+      expect(transactionQuery.create).toHaveBeenCalledTimes(1);
+      expect(topupQuery.update).toHaveBeenCalledTimes(1);
+      expect(mellatService.verifyTransaction).toHaveBeenCalledTimes(1);
+      expect(mellatService.settleTransaction).toHaveBeenCalledTimes(1);
+      expect(ctx1.redirect).toHaveBeenCalledWith(expect.stringContaining('status=success'));
+      expect(ctx2.redirect).toHaveBeenCalledWith(expect.stringContaining('status=success'));
+    });
+
+    it('should credit wallet only once for concurrent callbacks', async () => {
+      const saleOrderId = '1234567890124';
+      const saleReferenceId = 'CONCURRENT-REF-1';
+      const topup = {
+        id: 102,
+        SaleOrderId: saleOrderId,
+        Amount: 1000000,
+        Status: 'Pending',
+        user: { id: 1 },
+      };
+      const wallet = { id: 10, Balance: 500000, user: 1 };
+      const { transactionQuery, topupQuery } = installTopupTransactionMocks({
+        topup,
+        wallet,
+      });
+
+      mockStrapi.entityService.findMany.mockResolvedValue([topup]);
+      mellatService.verifyTransaction.mockResolvedValue({ success: true });
+      mellatService.settleTransaction.mockResolvedValue({ success: true });
+
+      const callbackBody = {
+        ResCode: '0',
+        SaleOrderId: saleOrderId,
+        SaleReferenceId: saleReferenceId,
+      };
+      const ctx1 = mockContext({ request: { body: callbackBody } });
+      const ctx2 = mockContext({ request: { body: callbackBody } });
+
+      await Promise.all([
+        topupController.paymentCallback(ctx1),
+        topupController.paymentCallback(ctx2),
+      ]);
+
+      expect(wallet.Balance).toBe(1500000);
+      expect(transactionQuery.create).toHaveBeenCalledTimes(1);
+      expect(topupQuery.update).toHaveBeenCalledTimes(1);
+      expect(mellatService.verifyTransaction).toHaveBeenCalledTimes(1);
+      expect(mellatService.settleTransaction).toHaveBeenCalledTimes(1);
+      expect(ctx1.redirect).toHaveBeenCalledWith(expect.stringContaining('status=success'));
+      expect(ctx2.redirect).toHaveBeenCalledWith(expect.stringContaining('status=success'));
+    });
+
+    it('should short-circuit existing wallet transaction before gateway calls', async () => {
+      const saleOrderId = '1234567890125';
+      const saleReferenceId = 'EXISTING-REF-1';
+      const topup = {
+        id: 103,
+        SaleOrderId: saleOrderId,
+        Amount: 1000000,
+        Status: 'Pending',
+        user: { id: 1 },
+      };
+      const { transactionQuery } = installTopupTransactionMocks({
+        topup,
+        wallet: { id: 10, Balance: 500000, user: 1 },
+        existingTransactions: [{ id: 99, ReferenceId: saleReferenceId }],
+      });
+
+      mockStrapi.entityService.findMany.mockResolvedValue([topup]);
+
+      const ctx = mockContext({
+        request: {
+          body: {
+            ResCode: '0',
+            SaleOrderId: saleOrderId,
+            SaleReferenceId: saleReferenceId,
+          },
+        },
+      });
+
+      await topupController.paymentCallback(ctx);
+
+      expect(mockStrapi.db.transaction).not.toHaveBeenCalled();
+      expect(transactionQuery.create).not.toHaveBeenCalled();
+      expect(mellatService.verifyTransaction).not.toHaveBeenCalled();
+      expect(mellatService.settleTransaction).not.toHaveBeenCalled();
+      expect(ctx.redirect).toHaveBeenCalledWith(expect.stringContaining('status=success'));
     });
   });
 

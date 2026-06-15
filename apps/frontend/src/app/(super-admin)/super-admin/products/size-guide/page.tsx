@@ -32,7 +32,10 @@ export default function SizeGuidePage() {
       apiUrl={ENDPOINTS.PRODUCT.SIZE_HELPER}
       isRecycleBinOpen={isRecycleBinOpen}
       setIsRecycleBinOpen={setIsRecycleBinOpen}
-      filterOptions={[{ id: "[Title]", title: "نام" }]}
+      filterOptions={[
+        { id: "[Title]", title: "نام", type: "text" },
+        { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
+      ]}
     >
       <SuperAdminTable
         _removeActions

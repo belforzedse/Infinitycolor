@@ -303,6 +303,7 @@ function ShoppingCartBillInformationForm({ register, errors, control, setValue }
             pattern="^[0-9]{11}$"
             disabled={!isEditingPhone}
             maxLength={11}
+            inputMode="numeric"
           />
         </div>
       </div>

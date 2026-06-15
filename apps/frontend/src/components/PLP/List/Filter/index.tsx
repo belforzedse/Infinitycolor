@@ -84,7 +84,7 @@ export default function Filter({
   // Availability filter handler
   const handleAvailabilityChange = useCallback(
     (checked: boolean) => {
-      void setQuery({ available: checked ? "true" : null });
+      void setQuery({ available: checked ? "true" : null, page: 1 });
     },
     [setQuery],
   );
@@ -93,6 +93,7 @@ export default function Filter({
   const handlePriceChange = useCallback(
     (min: number, max: number) => {
       void setQuery({
+        page: 1,
         minPrice: min.toString(),
         maxPrice: max.toString(),
       });

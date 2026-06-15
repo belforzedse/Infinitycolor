@@ -16,6 +16,13 @@ import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useEditorRedirect } from "@/hooks/useEditorRedirect";
+import {
+  buildAdvancedFiltersQuery,
+  parseAdvancedFiltersParam,
+  serializeAdvancedFiltersParam,
+  type AdvancedFilterField,
+  type AdvancedFilterItem,
+} from "@/components/SuperAdmin/Table/advancedFilters";
 
 type ProductSort =
   | "last-edited"
@@ -25,6 +32,36 @@ type ProductSort =
   | "stock-desc"
   | "sales-asc"
   | "sales-desc";
+
+const PRODUCT_FILTER_OPTIONS: AdvancedFilterField[] = [
+  { id: "[Title]", title: "نام محصول", type: "text" },
+  { id: "[Slug]", title: "نامک", type: "text" },
+  {
+    id: "[Status]",
+    title: "وضعیت محصول",
+    type: "select",
+    options: [
+      { id: "Active", title: "فعال" },
+      { id: "InActive", title: "غیرفعال" },
+    ],
+  },
+  {
+    id: "[ProductType]",
+    title: "نوع محصول",
+    type: "select",
+    options: [
+      { id: "Simple", title: "ساده" },
+      { id: "Variable", title: "متغیر" },
+    ],
+  },
+  { id: "[product_main_category][Title]", title: "دسته‌بندی اصلی", type: "text" },
+  { id: "[product_variations][SKU]", title: "SKU", type: "text" },
+  { id: "[product_variations][Price]", title: "قیمت", type: "number" },
+  { id: "[product_variations][DiscountPrice]", title: "قیمت تخفیف", type: "number" },
+  { id: "[product_variations][product_stock][Count]", title: "موجودی", type: "number" },
+  { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
+  { id: "[LastEditedByAdminAt]", title: "آخرین ویرایش", type: "date" },
+];
 
 export default function ProductsPage() {
   useFreshDataOnPageLoad();
@@ -41,6 +78,11 @@ export default function ProductsPage() {
   } | null>(null);
   const [sort, setSort] = useState<ProductSort>("last-edited");
   const [page] = useQueryState("page", { defaultValue: "1" });
+  const [advancedFilter] = useQueryState<AdvancedFilterItem[]>("filter", {
+    defaultValue: [],
+    parse: parseAdvancedFiltersParam,
+    serialize: serializeAdvancedFiltersParam,
+  });
   const [pageSize] = useQueryState("pageSize", { defaultValue: "25" });
   const [, setTotalSize] = useQueryState<number>("totalSize", {
     defaultValue: 0,
@@ -56,6 +98,10 @@ export default function ProductsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [refresh, setRefresh] = useAtom(refreshTable);
+  const advancedFilterQuery = useMemo(
+    () => buildAdvancedFiltersQuery(advancedFilter, PRODUCT_FILTER_OPTIONS),
+    [advancedFilter],
+  );
 
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {
@@ -93,6 +139,10 @@ export default function ProductsPage() {
         `&populate[1]=product_variations.product_stock` +
         `&populate[2]=product_main_category`;
 
+      if (advancedFilterQuery) {
+        endpoint += `&${advancedFilterQuery}`;
+      }
+
       if (debouncedSearchQuery.trim()) {
         endpoint += `&filters[Title][$containsi]=${encodeURIComponent(debouncedSearchQuery.trim())}`;
       }
@@ -106,10 +156,7 @@ export default function ProductsPage() {
       current += 1;
     }
     return items;
-  }, [
-    isRecycleBinOpen,
-    debouncedSearchQuery,
-  ]);
+  }, [isRecycleBinOpen, debouncedSearchQuery, advancedFilterQuery]);
 
   const buildStockIndex = useCallback(async () => {
     if (buildingIndex) return; // Prevent concurrent builds
@@ -149,6 +196,8 @@ export default function ProductsPage() {
     setBuildingIndex(true);
     try {
       const rows = await getProductSales({});
+      const allowedProducts = await getAllProductsLite();
+      const allowedProductIds = new Set(allowedProducts.map((product: any) => Number(product.id)));
       // Aggregate by product via mapping variation -> product (batched)
       const varIds = rows.map((r: any) => r.productVariationId);
       const chunk = 200;
@@ -174,7 +223,7 @@ export default function ProductsPage() {
       const productSales: Record<number, number> = {};
       rows.forEach((r: any) => {
         const pid = varToProduct[r.productVariationId];
-        if (!pid) return;
+        if (!pid || !allowedProductIds.has(pid)) return;
         productSales[pid] = (productSales[pid] || 0) + Number(r.totalCount || 0);
       });
       const ids = Object.entries(productSales)
@@ -187,7 +236,7 @@ export default function ProductsPage() {
     } finally {
       setBuildingIndex(false);
     }
-  }, [sort, isRecycleBinOpen, setTotalSize, buildingIndex]);
+  }, [sort, isRecycleBinOpen, setTotalSize, buildingIndex, getAllProductsLite]);
 
   // Build global sorted index for stock/sales
   useEffect(() => {
@@ -209,7 +258,16 @@ export default function ProductsPage() {
     if (refresh) {
       setRefresh(false);
     }
-  }, [buildSalesIndex, buildStockIndex, sort, debouncedSearchQuery, isRecycleBinOpen, buildingIndex, refresh, setRefresh]);
+  }, [
+    buildSalesIndex,
+    buildStockIndex,
+    sort,
+    debouncedSearchQuery,
+    isRecycleBinOpen,
+    buildingIndex,
+    refresh,
+    setRefresh,
+  ]);
 
   // Fetch current page data when using custom index
   useEffect(() => {
@@ -266,9 +324,12 @@ export default function ProductsPage() {
               for (const variation of product.attributes.product_variations.data) {
                 if (variation.attributes.product_stock?.data?.id) {
                   try {
-                    await apiClient.put(`/product-stocks/${variation.attributes.product_stock.data.id}`, {
-                      data: { Count: 0 },
-                    });
+                    await apiClient.put(
+                      `/product-stocks/${variation.attributes.product_stock.data.id}`,
+                      {
+                        data: { Count: 0 },
+                      },
+                    );
                     removedStockCount++;
                   } catch (error) {
                     console.error(`Failed to remove stock for variation ${variation.id}:`, error);
@@ -286,9 +347,7 @@ export default function ProductsPage() {
             const deletionTime = new Date().toISOString();
 
             // Show progress toast
-            const progressToast = toast.loading(
-              `در حال حذف ${selectedProducts.length} محصول...`
-            );
+            const progressToast = toast.loading(`در حال حذف ${selectedProducts.length} محصول...`);
 
             for (const product of selectedProducts) {
               try {
@@ -315,9 +374,7 @@ export default function ProductsPage() {
             }
 
             if (failedIds.length > 0) {
-              toast.error(
-                `خطا در حذف ${failedIds.length} محصول. لطفا دوباره سعی کنید.`
-              );
+              toast.error(`خطا در حذف ${failedIds.length} محصول. لطفا دوباره سعی کنید.`);
             }
 
             // Refresh table after deletions
@@ -334,7 +391,7 @@ export default function ProductsPage() {
 
             // Show progress toast
             const progressToast = toast.loading(
-              `در حال بازیابی ${selectedProducts.length} محصول...`
+              `در حال بازیابی ${selectedProducts.length} محصول...`,
             );
 
             for (const product of selectedProducts) {
@@ -362,9 +419,7 @@ export default function ProductsPage() {
             }
 
             if (failedIds.length > 0) {
-              toast.error(
-                `خطا در بازیابی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`
-              );
+              toast.error(`خطا در بازیابی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`);
             }
 
             // Refresh table after restores
@@ -396,9 +451,12 @@ export default function ProductsPage() {
                 for (const variation of product.attributes.product_variations.data) {
                   if (variation.attributes.product_stock?.data?.id) {
                     try {
-                      await apiClient.put(`/product-stocks/${variation.attributes.product_stock.data.id}`, {
-                        data: { Count: newStock },
-                      });
+                      await apiClient.put(
+                        `/product-stocks/${variation.attributes.product_stock.data.id}`,
+                        {
+                          data: { Count: newStock },
+                        },
+                      );
                       updatedStockCount++;
                     } catch (error) {
                       console.error(`Failed to update stock for variation ${variation.id}:`, error);
@@ -492,6 +550,7 @@ export default function ProductsPage() {
       hasAddButton
       addButtonText="محصول جدید"
       hasFilterButton
+      filterOptions={PRODUCT_FILTER_OPTIONS}
       hasPagination
       addButtonPath="/super-admin/products/add"
       hasRecycleBin
@@ -504,7 +563,7 @@ export default function ProductsPage() {
           <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
             <label className="text-sm text-neutral-600">مرتب‌سازی:</label>
             <select
-              className="text-sm h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 sm:w-auto sm:min-w-48"
+              className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 text-sm sm:w-auto sm:min-w-48"
               value={sort}
               onChange={(e) => setSort(e.target.value as ProductSort)}
             >
@@ -525,7 +584,7 @@ export default function ProductsPage() {
             <input
               type="text"
               placeholder="جستجو در عنوان محصولات..."
-              className="text-sm h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 pr-8"
+              className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 pr-8 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               inputMode="search"
@@ -546,13 +605,13 @@ export default function ProductsPage() {
                 setSearchQuery("");
                 setDebouncedSearchQuery("");
               }}
-              className="text-sm self-start text-neutral-500 hover:text-neutral-700 sm:self-auto"
+              className="self-start text-sm text-neutral-500 hover:text-neutral-700 sm:self-auto"
             >
               پاک کردن
             </button>
           )}
           {debouncedSearchQuery && (
-            <span className="text-xs break-words text-green-600">
+            <span className="break-words text-xs text-green-600">
               نتایج برای: &quot;{debouncedSearchQuery}&quot;
             </span>
           )}
@@ -592,7 +651,7 @@ export default function ProductsPage() {
       ) : (
         <div>
           {buildingIndex && (
-            <div className="text-sm mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
               در حال محاسبه مرتب‌سازی سراسری؛ لطفاً صبر کنید…
             </div>
           )}
@@ -633,7 +692,7 @@ export default function ProductsPage() {
 
           // Show progress toast
           const progressToast = toast.loading(
-            `در حال حذف دائمی ${selectedProducts.length} محصول...`
+            `در حال حذف دائمی ${selectedProducts.length} محصول...`,
           );
 
           for (const product of selectedProducts) {
@@ -659,9 +718,7 @@ export default function ProductsPage() {
           }
 
           if (failedIds.length > 0) {
-            toast.error(
-              `خطا در حذف دائمی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`
-            );
+            toast.error(`خطا در حذف دائمی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`);
           }
 
           // Refresh table after deletions

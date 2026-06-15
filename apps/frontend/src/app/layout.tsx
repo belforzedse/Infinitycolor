@@ -144,10 +144,6 @@ export default async function RootLayout({
         <link rel="preconnect" href={API_BASE_DOMAIN} crossOrigin="anonymous" />
         <link rel="preconnect" href={IMAGE_BASE_URL || API_BASE_DOMAIN} crossOrigin="anonymous" />
 
-        {/* Prefetch likely next-page resources - lower priority */}
-        <link rel="prefetch" href="/plp" as="document" />
-        <link rel="prefetch" href="/blog" as="document" />
-
         {/* OpenSearch descriptor for browser search integration */}
         <link
           rel="search"

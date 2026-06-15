@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import { usePathname } from "next/navigation";
+import toast from "react-hot-toast";
 import { CartService } from "@/services";
 import { IMAGE_BASE_URL } from "@/constants/api";
 import notify from "@/utils/notify";
@@ -559,6 +560,35 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const showRemoveUndoToast = (removedItem: CartItem) => {
+    return toast.custom(
+      (t) => (
+        <div
+          dir="rtl"
+          className={`flex max-w-sm items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-right shadow-lg transition duration-200 ${
+            t.visible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+          }`}
+        >
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-neutral-800">کالا از سبد خرید حذف شد</p>
+            <p className="mt-1 truncate text-xs text-neutral-500">{removedItem.name}</p>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-lg bg-infinity-primary px-3 py-1.5 text-xs font-medium text-white transition hover:bg-infinity-primary/90"
+            onClick={() => {
+              toast.dismiss(t.id);
+              void addToCart(removedItem);
+            }}
+          >
+            برگرداندن
+          </button>
+        </div>
+      ),
+      { duration: 8000 },
+    );
+  };
+
   const removeFromCart = async (id: string) => {
     if (isLoggedIn) {
       // Optimistic update: remove item from cart immediately
@@ -574,6 +604,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
       // Remove item optimistically
       setCartItems((prev) => prev.filter((item) => item.id !== id && item.cartItemId !== id));
+      const undoToastId = showRemoveUndoToast(item);
       trackMatomoEvent({
         category: "ecommerce",
         action: "remove_from_cart",
@@ -597,6 +628,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         }, `remove-${cartItemId}`);
       } catch (error) {
         console.error("Failed to remove item from cart:", error);
+        toast.dismiss(undoToastId);
 
         await fetchUserCart();
         notify.error("حذف کالا از سبد خرید با خطا مواجه شد");
@@ -609,6 +641,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const existing = cartItems.find((item) => item.id === id);
       setCartItems((prev) => prev.filter((item) => item.id !== id));
       if (existing) {
+        showRemoveUndoToast(existing);
         trackMatomoEvent({
           category: "ecommerce",
           action: "remove_from_cart",

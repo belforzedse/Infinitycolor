@@ -21,6 +21,23 @@ export default function GeneralDiscountsPage() {
       addButtonText={canManageDiscounts ? "تخفیف جدید" : undefined}
       addButtonPath={canManageDiscounts ? "/super-admin/general-discounts/add" : undefined}
       hasFilterButton
+      filterOptions={[
+        { id: "[id]", title: "شناسه", type: "number" },
+        {
+          id: "[Type]",
+          title: "نوع قانون",
+          type: "select",
+          options: [
+            { id: "Cash", title: "ثابت" },
+            { id: "Discount", title: "درصدی" },
+          ],
+        },
+        { id: "[Amount]", title: "میزان قانون", type: "number" },
+        { id: "[LimitAmount]", title: "محدودیت مبلغ", type: "number" },
+        { id: "[StartDate]", title: "تاریخ شروع", type: "date" },
+        { id: "[EndDate]", title: "تاریخ انقضا", type: "date" },
+        { id: "[IsActive]", title: "فعال", type: "boolean" },
+      ]}
       hasRecycleBin
       isRecycleBinOpen={isRecycleBinOpen}
       setIsRecycleBinOpen={setIsRecycleBinOpen}
@@ -36,11 +53,7 @@ export default function GeneralDiscountsPage() {
             : "/general-discounts?filters[removedAt][$null]=true"
         }
         mobileTable={(data) => (
-          <MobileTable
-            data={data}
-            canManageDiscounts={canManageDiscounts}
-            columns={columns}
-          />
+          <MobileTable data={data} canManageDiscounts={canManageDiscounts} columns={columns} />
         )}
       />
     </ContentWrapper>

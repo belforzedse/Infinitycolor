@@ -107,6 +107,7 @@ export default function FieldRenderer<T>({
           onChange={(value) => updateFormData(field.name, value)}
           readOnly={isReadOnly}
           rows={field.rows}
+          maxLength={field.maxLength}
         />
       );
     },

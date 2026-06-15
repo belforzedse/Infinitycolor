@@ -17,6 +17,11 @@ export default function ShippingAreasPage() {
         hasAddButton
         addButtonText="افزودن منطقه جدید"
         hasFilterButton
+        filterOptions={[
+          { id: "[Title]", title: "عنوان", type: "text" },
+          { id: "[Description]", title: "توضیحات", type: "text" },
+          { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
+        ]}
         hasRecycleBin
       >
         <SuperAdminTable

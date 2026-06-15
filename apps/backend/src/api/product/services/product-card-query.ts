@@ -1,7 +1,6 @@
 import { PRODUCT_STOCK_POPULATE_FIELDS } from "../../cart/services/lib/stock";
 import {
   buildProductAvailabilityExistsSql,
-  buildProductDisplayPriceSql,
   getProductAvailabilityJoinContext,
 } from "../../../utils/productAvailability";
 
@@ -45,6 +44,12 @@ export type FindProductCardsParams = {
   filters?: Record<string, unknown>;
   sort?: unknown;
   availability?: unknown;
+  price?: {
+    min?: unknown;
+    max?: unknown;
+  };
+  hasDiscount?: unknown;
+  requireCoverImage?: unknown;
   pagination?: {
     page?: number | string;
     pageSize?: number | string;
@@ -138,6 +143,97 @@ const STOCK_COLUMN_MAP: Record<string, string> = {
   ReservedCount: "reserved_count",
 };
 
+const VARIATION_RELATION_COLUMN_MAP: Record<string, Record<string, string>> = {
+  product_variation_size: {
+    id: "id",
+    Title: "title",
+  },
+  product_variation_color: {
+    id: "id",
+    Title: "title",
+    ColorCode: "color_code",
+  },
+  product_variation_model: {
+    id: "id",
+    Title: "title",
+  },
+};
+
+const VARIATION_RELATION_TABLE_MAP: Record<string, string> = {
+  product_variation_size: "product_variation_sizes",
+  product_variation_color: "product_variation_colors",
+  product_variation_model: "product_variation_models",
+};
+
+const PRODUCT_BOOST_KEYWORDS: readonly string[] = [
+  "G",
+  "G0020",
+  "W0069",
+  "W0043",
+  "W0039",
+  "W0096",
+  "W002",
+  "W0042",
+  "W0018",
+  "W0036",
+  "W009",
+  "W0010",
+  "W0035",
+  "G0015",
+  "G0018",
+  "W0030",
+  "G004",
+  "G005",
+  "G006",
+  "G003",
+  "G007",
+  "W0022",
+  "W0029",
+  "G0017",
+  "W0025",
+  "W0014",
+  "W0033",
+  "G0023",
+  "G0024",
+  "G0013",
+  "W0012",
+  "W0027",
+  "W008",
+  "W0024",
+  "W0031",
+  "W004",
+  "W0015",
+  "G002",
+  "W0076",
+  "W0087",
+  "W0089",
+  "G009",
+  "G0011",
+  "G0019",
+  "G0030",
+  "G0021",
+  "G008",
+  "G0022",
+  "G0035",
+  "G0031",
+  "G0036",
+  "W007",
+  "G001",
+  "W0058",
+  "G0014",
+  "G0029",
+  "G0039",
+  "G0038",
+  "W005",
+  "W0032",
+  "W0038",
+  "W0080",
+  "G0028",
+  "G00101",
+  "G0098",
+  "G0096",
+];
+
 const toArray = (value: unknown): unknown[] => {
   if (Array.isArray(value)) return value;
   if (typeof value === "string" && value.includes(",")) {
@@ -150,6 +246,121 @@ const parseBooleanString = (value: unknown): boolean | undefined => {
   if (value === true || value === "true" || value === 1 || value === "1") return true;
   if (value === false || value === "false" || value === 0 || value === "0") return false;
   return undefined;
+};
+
+const toFiniteNumber = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+export const isEnabledCardParam = (value: unknown): boolean =>
+  value === true || value === "true" || value === 1 || value === "1";
+
+export function parseCardPriceFilter(price: FindProductCardsParams["price"]) {
+  if (!price || typeof price !== "object") return {};
+  return {
+    min: toFiniteNumber(price.min),
+    max: toFiniteNumber(price.max),
+  };
+}
+
+type JoinTableInfo = {
+  table: string;
+  joinColumn: string;
+  inverseColumn: string;
+};
+
+const readJoinTable = (
+  metadata: any,
+  attributeName: string,
+  fallback: JoinTableInfo,
+): JoinTableInfo => {
+  const joinTable = metadata?.attributes?.[attributeName]?.joinTable;
+  return {
+    table: joinTable?.name || fallback.table,
+    joinColumn: joinTable?.joinColumn?.name || fallback.joinColumn,
+    inverseColumn: joinTable?.inverseJoinColumn?.name || fallback.inverseColumn,
+  };
+};
+
+const getVariationRelationJoinInfo = (
+  strapi: any,
+  relation: string,
+): JoinTableInfo => {
+  const variationMetadata = strapi?.db?.metadata?.get?.(
+    "api::product-variation.product-variation",
+  );
+  const suffix = relation.replace(/^product_variation_/, "");
+  return readJoinTable(variationMetadata, relation, {
+    table: `product_variations_product_variation_${suffix}_links`,
+    joinColumn: "product_variation_id",
+    inverseColumn: `product_variation_${suffix}_id`,
+  });
+};
+
+const getGeneralDiscountVariationJoinInfo = (strapi: any): JoinTableInfo => {
+  const discountMetadata = strapi?.db?.metadata?.get?.("api::general-discount.general-discount");
+  return readJoinTable(discountMetadata, "product_variations", {
+    table: "general_discounts_product_variations_links",
+    joinColumn: "general_discount_id",
+    inverseColumn: "product_variation_id",
+  });
+};
+
+const buildProductCardDisplayPriceSql = (
+  knex: any,
+  strapi: any,
+  productAlias = "p",
+): any => {
+  const ctx = getProductAvailabilityJoinContext(strapi);
+  const discountJoin = getGeneralDiscountVariationJoinInfo(strapi);
+
+  return knex.raw(
+    `(
+      SELECT MIN(
+        CASE
+          WHEN COALESCE(gd.amount, 0)::numeric > 0
+          THEN GREATEST(
+            0,
+            ROUND(COALESCE(pv.price, 0)::numeric * (1 - COALESCE(gd.amount, 0)::numeric / 100))
+          )
+          WHEN COALESCE(pv.discount_price, 0)::numeric > 0
+            AND COALESCE(pv.discount_price, 0)::numeric < COALESCE(pv.price, 0)::numeric
+          THEN COALESCE(pv.discount_price, 0)::numeric
+          ELSE COALESCE(pv.price, 0)::numeric
+        END
+      )
+      FROM ?? AS pv
+      INNER JOIN ?? AS pv_product_link
+        ON pv_product_link.?? = pv.id
+      LEFT JOIN (
+        SELECT ?? AS product_variation_id, MAX(COALESCE(gd.amount, 0)) AS amount
+        FROM ?? AS gd_pv_link
+        INNER JOIN ?? AS gd
+          ON gd.id = ??
+        WHERE gd.removed_at IS NULL
+          AND COALESCE(gd.amount, 0) > 0
+        GROUP BY ??
+      ) AS gd
+        ON gd.product_variation_id = pv.id
+      WHERE pv_product_link.?? = ??.id
+        AND pv.is_published = TRUE
+        AND COALESCE(pv.price, 0)::numeric > 0
+    )`,
+    [
+      "product_variations",
+      ctx.productVariationProductLinkTable,
+      ctx.productVariationProductJoinColumn,
+      `gd_pv_link.${discountJoin.inverseColumn}`,
+      discountJoin.table,
+      "general_discounts",
+      `gd_pv_link.${discountJoin.joinColumn}`,
+      `gd_pv_link.${discountJoin.inverseColumn}`,
+      ctx.productVariationProductInverseColumn,
+      productAlias,
+    ],
+  );
 };
 
 const addScalarCondition = (
@@ -204,6 +415,30 @@ const addScalarCondition = (
   }
 
   query.where(qualifiedColumn, condition);
+};
+
+const applyVariationRelationFilter = (
+  query: any,
+  strapi: any,
+  relation: string,
+  filter: Record<string, unknown>,
+) => {
+  const relatedTable = VARIATION_RELATION_TABLE_MAP[relation];
+  const columnMap = VARIATION_RELATION_COLUMN_MAP[relation];
+  if (!relatedTable || !columnMap) return;
+
+  const join = getVariationRelationJoinInfo(strapi, relation);
+  const linkAlias = `${relation}_link`;
+  const relatedAlias = `${relation}_entity`;
+
+  query
+    .innerJoin(`${join.table} as ${linkAlias}`, `${linkAlias}.${join.joinColumn}`, "pv.id")
+    .innerJoin(`${relatedTable} as ${relatedAlias}`, `${relatedAlias}.id`, `${linkAlias}.${join.inverseColumn}`);
+
+  for (const [field, condition] of Object.entries(filter)) {
+    const column = columnMap[field];
+    if (column) addScalarCondition(query, `${relatedAlias}.${column}`, condition);
+  }
 };
 
 const applyCategoryFilter = (
@@ -273,6 +508,16 @@ const applyVariationFilter = (
 
       const column = VARIATION_COLUMN_MAP[field];
       if (column) addScalarCondition(this, `pv.${column}`, condition);
+
+      if (
+        (field === "product_variation_size" ||
+          field === "product_variation_color" ||
+          field === "product_variation_model") &&
+        condition &&
+        typeof condition === "object"
+      ) {
+        applyVariationRelationFilter(this, strapi, field, condition as Record<string, unknown>);
+      }
     }
   });
 };
@@ -348,6 +593,73 @@ const applyAvailabilityOnlyFilter = (knex: any, query: any, strapi: any, availab
   query.whereRaw(buildProductAvailabilityExistsSql(knex, ctx, "p").toQuery());
 };
 
+const applyDisplayPriceFilter = (
+  knex: any,
+  query: any,
+  strapi: any,
+  price: FindProductCardsParams["price"],
+) => {
+  const { min, max } = parseCardPriceFilter(price);
+  if (min === undefined && max === undefined) return;
+
+  const priceSql = buildProductCardDisplayPriceSql(knex, strapi, "p").toQuery();
+
+  query.whereRaw(`${priceSql} IS NOT NULL`);
+  if (min !== undefined) query.whereRaw(`${priceSql} >= ?`, [min]);
+  if (max !== undefined) query.whereRaw(`${priceSql} <= ?`, [max]);
+};
+
+const applyRequireCoverImageFilter = (query: any, requireCoverImage: unknown) => {
+  if (!isEnabledCardParam(requireCoverImage)) return;
+
+  query.whereExists(function coverImageExists(this: any) {
+    this.select(1)
+      .from("files_related_morphs as frm")
+      .innerJoin("files as f", "f.id", "frm.file_id")
+      .whereRaw("frm.related_id = p.id")
+      .where("frm.related_type", "api::product.product")
+      .where("frm.field", "CoverImage")
+      .whereNotNull("f.url");
+  });
+};
+
+const applyDiscountOnlyFilter = (
+  knex: any,
+  query: any,
+  strapi: any,
+  hasDiscount: unknown,
+) => {
+  if (!isEnabledCardParam(hasDiscount)) return;
+
+  const ctx = getProductAvailabilityJoinContext(strapi);
+  const discountJoin = getGeneralDiscountVariationJoinInfo(strapi);
+
+  query.whereExists(function discountExists(this: any) {
+    this.select(knex.raw("1"))
+      .from("product_variations as pv")
+      .innerJoin(
+        `${ctx.productVariationProductLinkTable} as pv_product_link`,
+        `pv_product_link.${ctx.productVariationProductJoinColumn}`,
+        "pv.id",
+      )
+      .whereRaw(`pv_product_link.${ctx.productVariationProductInverseColumn} = p.id`)
+      .where("pv.is_published", true)
+      .whereRaw("COALESCE(pv.price, 0)::numeric > 0")
+      .where(function discountPredicate(this: any) {
+        this.whereRaw(
+          "COALESCE(pv.discount_price, 0)::numeric > 0 AND COALESCE(pv.discount_price, 0)::numeric < COALESCE(pv.price, 0)::numeric",
+        ).orWhereExists(function generalDiscountExists(this: any) {
+          this.select(knex.raw("1"))
+            .from(`${discountJoin.table} as gd_pv_link`)
+            .innerJoin("general_discounts as gd", "gd.id", `gd_pv_link.${discountJoin.joinColumn}`)
+            .whereRaw(`gd_pv_link.${discountJoin.inverseColumn} = pv.id`)
+            .whereRaw("COALESCE(gd.amount, 0) > 0")
+            .whereNull("gd.removed_at");
+        });
+      });
+  });
+};
+
 const applySearchFilter = (query: any, q: unknown) => {
   if (typeof q !== "string" || q.trim() === "") return;
   const term = `%${q.trim()}%`;
@@ -364,6 +676,7 @@ const applyAvailabilityAwareOrder = (
   query: any,
   strapi: any,
   sortKey: string | undefined,
+  hasDiscount: unknown,
 ) => {
   const ctx = getProductAvailabilityJoinContext(strapi);
   const availabilitySql = buildProductAvailabilityExistsSql(knex, ctx, "p");
@@ -372,9 +685,16 @@ const applyAvailabilityAwareOrder = (
   const normalized = sortKey?.trim() || "createdAt:desc";
   const [rawField, rawDirection] = normalized.split(":");
   const direction = rawDirection === "asc" ? "asc" : "desc";
+  const shouldBoostKeywords = sortKey?.trim() === "createdAt:desc" || isEnabledCardParam(hasDiscount);
+
+  if (shouldBoostKeywords && PRODUCT_BOOST_KEYWORDS.length > 0) {
+    const clauses = PRODUCT_BOOST_KEYWORDS.map(() => "LOWER(p.title) LIKE LOWER(?)").join(" OR ");
+    const bindings = PRODUCT_BOOST_KEYWORDS.map((keyword) => `%${keyword}%`);
+    query.orderByRaw(`CASE WHEN (${clauses}) THEN 0 ELSE 1 END ASC`, bindings);
+  }
 
   if (rawField === "Price" || rawField === "price") {
-    const priceSql = buildProductDisplayPriceSql(knex, ctx, "p");
+    const priceSql = buildProductCardDisplayPriceSql(knex, strapi, "p");
     query.orderByRaw(`${priceSql.toQuery()} ${direction.toUpperCase()} NULLS LAST`);
   } else if (rawField === "LastEditedByAdminAt") {
     // Dedicated "last edited by admin" sort: products never edited by an admin have a NULL
@@ -400,11 +720,14 @@ export async function findOrderedProductIds(strapi: any, params: OrderedProductI
     applyProductFilters(knex, query, strapi, filters);
     applySearchFilter(query, params.q);
     applyAvailabilityOnlyFilter(knex, query, strapi, params.availability);
+    applyDisplayPriceFilter(knex, query, strapi, params.price);
+    applyDiscountOnlyFilter(knex, query, strapi, params.hasDiscount);
+    applyRequireCoverImageFilter(query, params.requireCoverImage);
     return query;
   };
 
   const idQuery = buildBaseQuery().select("p.id");
-  applyAvailabilityAwareOrder(knex, idQuery, strapi, sortKey);
+  applyAvailabilityAwareOrder(knex, idQuery, strapi, sortKey, params.hasDiscount);
   idQuery.limit(limit).offset(start);
 
   const countQuery = buildBaseQuery().countDistinct({ total: "p.id" }).first();

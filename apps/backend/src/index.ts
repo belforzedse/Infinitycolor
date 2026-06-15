@@ -14,6 +14,7 @@ import localUserOverride from "./api/local-user/documentation/1.0.0/overrides/lo
 import productLifeCycles from "./api/product/lifecycles";
 import productVariationLifeCycles from "./api/product-variation/lifecycles";
 import { ensureIranLocations } from "./jobs/ensureLocations";
+import { ensureBackgroundJobLocksTable } from "./jobs/backgroundJobRunner";
 import { startExpireStockReservationsJob } from "./jobs/expireStockReservations";
 import { startExpireReserveOrdersJob } from "./jobs/expireReserveOrders";
 import { startFlushViewCountersJob } from "./jobs/flushViewCounters";
@@ -678,6 +679,12 @@ export default {
       strapi.log.error("Failed to ensure province/city seed", err);
     });
     if (shouldStartBackgroundJobs()) {
+      // Belt-and-suspenders: ensure the distributed-lock table exists before starting
+      // jobs. The migration that creates it can be recorded-but-rolled-back when multiple
+      // instances race migrations on boot, which silently disables every background job.
+      ensureBackgroundJobLocksTable(strapi).catch((error) => {
+        strapi.log.error("Failed to ensure background_job_locks table", error);
+      });
       try {
         startExpireStockReservationsJob(strapi);
       } catch (error) {

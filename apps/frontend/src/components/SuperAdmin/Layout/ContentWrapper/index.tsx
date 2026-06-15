@@ -3,6 +3,10 @@
 import Desktop from "./Desktop";
 import Mobile from "./Mobile";
 import Tablet from "./Tablet";
+import {
+  AdvancedFilterFieldsProvider,
+  type AdvancedFilterField,
+} from "@/components/SuperAdmin/Table/advancedFilters";
 
 type Props = {
   children: React.ReactNode;
@@ -17,25 +21,24 @@ type Props = {
   apiUrl?: string;
   totalPages?: number;
   isRecycleBinOpen?: boolean;
-  filterOptions?: {
-    id: number | string;
-    title: string;
-  }[];
+  filterOptions?: AdvancedFilterField[];
   setIsRecycleBinOpen?: (isRecycleBinOpen: boolean) => void;
 };
 
 export default function ContentWrapper(props: Props) {
   return (
-    <div className="w-full">
-      <div className="block md:hidden">
-        <Mobile {...props} />
+    <AdvancedFilterFieldsProvider value={props.filterOptions ?? []}>
+      <div className="w-full">
+        <div className="block md:hidden">
+          <Mobile {...props} />
+        </div>
+        <div className="hidden md:block lg:hidden">
+          <Tablet {...props} />
+        </div>
+        <div className="hidden lg:block">
+          <Desktop {...props} />
+        </div>
       </div>
-      <div className="hidden md:block lg:hidden">
-        <Tablet {...props} />
-      </div>
-      <div className="hidden lg:block">
-        <Desktop {...props} />
-      </div>
-    </div>
+    </AdvancedFilterFieldsProvider>
   );
 }

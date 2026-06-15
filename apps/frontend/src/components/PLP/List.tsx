@@ -14,7 +14,6 @@ import { useQueryStates } from "nuqs";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SORT_LABELS } from "./sortOptions";
-import { hasAvailableStock, productTitleHasG } from "@/utils/product";
 import { useSidebarProducts } from "@/hooks/useSidebarProducts";
 import PLPDesktopList from "./List/PLPDesktopList";
 import PLPMobileList from "./List/PLPMobileList";
@@ -80,18 +79,7 @@ export default function PLPList({
     return () => window.removeEventListener("resize", checkDesktop);
   }, []);
 
-  // Helper function to check if product has an image
-  const hasImage = (product: PLPProduct): boolean => {
-    return !!(
-      product.attributes?.CoverImage?.data?.attributes?.url || product.attributes?.CoverImage?.data
-    );
-  };
-
-  // Filter initial products to only include those with images
-  const filteredInitialProducts = useMemo(
-    () => initialProducts.filter(hasImage),
-    [initialProducts],
-  );
+  const products = initialProducts;
 
   const [categoryOptions, setCategoryOptions] = useState<ProductCategorySummary[]>([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(false);
@@ -121,79 +109,8 @@ export default function PLPList({
     fetchCategories();
   }, [allCategoriesProp]);
 
-  // Memoize expensive filtering operations
-  const validProducts = useMemo(
-    () =>
-      filteredInitialProducts.filter((product) => {
-        try {
-          // Basic product structure validation
-          const hasCompactProjection = product?.attributes?.Price !== undefined;
-          if (!hasCompactProjection && !product?.attributes?.product_variations?.data) {
-            return false;
-          }
-
-          // Check if any variation has a valid price
-          const hasValidPrice = hasCompactProjection
-            ? Number(product.attributes.Price) > 0
-            : product.attributes.product_variations!.data!.some((variation) => {
-                if (!variation?.attributes?.Price) return false;
-                const price = parseInt(variation.attributes.Price);
-                return !isNaN(price) && price > 0;
-              });
-
-          // If showAvailableOnly is true, check if any variation is published AND has stock
-          if (available === "true") {
-            const hasInStockVariation =
-              typeof product.attributes.IsAvailable === "boolean"
-                ? product.attributes.IsAvailable
-                : hasAvailableStock(product);
-            if (!(hasValidPrice && hasInStockVariation)) return false;
-          } else if (!hasValidPrice) {
-            return false;
-          }
-
-          // Discount-only filter
-          if (discountOnly === "true") {
-            const hasDiscount = hasCompactProjection
-              ? Number(product.attributes.Discount ?? 0) > 0 ||
-                (Number(product.attributes.DiscountPrice ?? 0) > 0 &&
-                  Number(product.attributes.DiscountPrice) < Number(product.attributes.Price))
-              : product.attributes.product_variations!.data!.some((variation) => {
-                  if (!variation?.attributes) return false;
-
-                  // Check for general_discounts first
-                  const generalDiscounts = variation.attributes.general_discounts?.data;
-                  if (
-                    generalDiscounts &&
-                    Array.isArray(generalDiscounts) &&
-                    generalDiscounts.length > 0
-                  ) {
-                    return true;
-                  }
-
-                  // Fallback to DiscountPrice field
-                  const price = parseFloat(variation.attributes.Price || "0");
-                  const discountPrice = variation.attributes.DiscountPrice
-                    ? parseFloat(variation.attributes.DiscountPrice)
-                    : null;
-                  return (
-                    discountPrice && !isNaN(discountPrice) && !isNaN(price) && discountPrice < price
-                  );
-                });
-            if (!hasDiscount) return false;
-          }
-
-          return true;
-        } catch (error) {
-          console.warn("Error filtering product:", error, product);
-          return false;
-        }
-      }),
-    [filteredInitialProducts, available, discountOnly],
-  );
-
   const { sidebarProducts, mappedDiscountedSidebar, mappedSuggestedSidebar } = useSidebarProducts({
-    validProducts,
+    validProducts: products,
     discountedSidebarProducts,
     suggestedSidebarProducts,
   });
@@ -215,18 +132,6 @@ export default function PLPList({
     </>
   );
 
-  // When discount filter is active (تخفیف های وسوسه انگیز PLP), sort products with G in title first
-  const displayProducts = useMemo(() => {
-    if (discountOnly !== "true") return validProducts;
-    return [...validProducts].sort((a, b) => {
-      const aHasG = productTitleHasG(a);
-      const bHasG = productTitleHasG(b);
-      if (aHasG && !bHasG) return -1;
-      if (!aHasG && bHasG) return 1;
-      return 0;
-    });
-  }, [validProducts, discountOnly]);
-
   const selectedCategoryTitle = useMemo(() => {
     if (!initialCategory) return null;
 
@@ -235,7 +140,7 @@ export default function PLPList({
     );
     if (option) return option.name || option.slug || String(option.id);
 
-    const dynamicMatch = validProducts.find(
+    const dynamicMatch = products.find(
       (product) =>
         product.attributes.product_main_category?.data?.attributes?.Slug === initialCategory ||
         product.attributes.product_main_category?.data?.attributes?.Title === initialCategory,
@@ -246,7 +151,7 @@ export default function PLPList({
     }
 
     return initialCategory.replace(/[-_]/g, " ");
-  }, [initialCategory, categoryOptions, validProducts]);
+  }, [initialCategory, categoryOptions, products]);
 
   const activeFilters = useMemo(() => {
     const filters: Array<{ key: string; label: string; onRemove: () => void }> = [];
@@ -493,7 +398,7 @@ export default function PLPList({
             </div>
           )}
 
-          {validProducts.length === 0 ? (
+          {products.length === 0 ? (
             <NoData category={initialCategory} searchQuery={searchQuery} />
           ) : (
             <>
@@ -501,8 +406,8 @@ export default function PLPList({
                 <ProductResultsSkeleton />
               ) : (
                 <>
-                  <PLPDesktopList products={displayProducts} includeMedia={isDesktop} />
-                  <PLPMobileList products={displayProducts} />
+                  <PLPDesktopList products={products} includeMedia={isDesktop} />
+                  <PLPMobileList products={products} />
                 </>
               )}
 

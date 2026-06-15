@@ -9,6 +9,7 @@ import FilterButton from "./Button/Filter";
 import { apiClient } from "@/services";
 import { refreshTable } from "../../Table";
 import { useAtom } from "jotai";
+import type { AdvancedFilterField } from "@/components/SuperAdmin/Table/advancedFilters";
 
 type Props = {
   children: React.ReactNode;
@@ -24,10 +25,7 @@ type Props = {
   apiUrl?: string;
   isRecycleBinOpen?: boolean;
   setIsRecycleBinOpen?: (isRecycleBinOpen: boolean) => void;
-  filterOptions?: {
-    id: number | string;
-    title: string;
-  }[];
+  filterOptions?: AdvancedFilterField[];
 };
 
 export default function SuperAdminLayoutContentWrapperDesktop(props: Props) {
@@ -81,7 +79,9 @@ export default function SuperAdminLayoutContentWrapperDesktop(props: Props) {
     <>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="text-2xl lg:text-3xl text-[#202224]">{isRecycleBinOpen ? "زباله‌دان" : title}</span>
+          <span className="text-2xl text-[#202224] lg:text-3xl">
+            {isRecycleBinOpen ? "زباله‌دان" : title}
+          </span>
 
           {titleSuffixComponent}
         </div>
@@ -98,7 +98,7 @@ export default function SuperAdminLayoutContentWrapperDesktop(props: Props) {
 
           {hasAddButton && <AddButton text={addButtonText ?? ""} path={addButtonPath ?? "#"} />}
 
-          {hasFilterButton && (
+          {hasFilterButton && !!filterOptions?.length && (
             <FilterButton
               isFilterOpen={isFilterOpen}
               setFilterIsOpen={setFilterIsOpen}
@@ -114,7 +114,7 @@ export default function SuperAdminLayoutContentWrapperDesktop(props: Props) {
       )}
       <div className="card mt-3 p-4 md:p-5 lg:p-7">{children}</div>
       {hasPagination && (
-        <div className="sticky bottom-2  z-30 mt-4 flex justify-center">
+        <div className="sticky bottom-2 z-30 mt-4 flex justify-center">
           <div className="rounded-3xl border border-gray-200/70 bg-slate-700/10 px-4 py-3 shadow-sm backdrop-blur-2xl supports-[backdrop-filter]:backdrop-blur-lg">
             <SuperAdminPagination
               currentPage={currentPage}

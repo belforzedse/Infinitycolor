@@ -47,14 +47,27 @@ export default function UsersPage() {
         {
           id: "[user_info][FirstName]",
           title: "نام",
+          type: "text",
         },
         {
           id: "[user_info][LastName]",
           title: "نام خانوادگی",
+          type: "text",
         },
         {
           id: "[phone]",
           title: "شماره تلفن",
+          type: "text",
+        },
+        {
+          id: "[blocked]",
+          title: "مسدود شده",
+          type: "boolean",
+        },
+        {
+          id: "[confirmed]",
+          title: "تایید شده",
+          type: "boolean",
         },
       ]}
     >
@@ -65,7 +78,7 @@ export default function UsersPage() {
             <input
               type="text"
               placeholder="جستجو در نام، نام خانوادگی، شماره تلفن..."
-              className="text-sm w-80 rounded-lg border border-neutral-300 px-3 py-1 pr-8"
+              className="w-80 rounded-lg border border-neutral-300 px-3 py-1 pr-8 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -120,7 +133,7 @@ export default function UsersPage() {
 
               // Priority 1: First word in FirstName AND second word in LastName (exact order)
               baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstName}`;
-              baseUrl += `&filters[$or][${orIndex-1}][$and][1][user_info][LastName][$containsi]=${lastName}`;
+              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastName}`;
 
               // Priority 2: Exact phrase in FirstName (in case someone has compound first name)
               const encodedPhrase = encodeURIComponent(searchTerm);
@@ -135,14 +148,14 @@ export default function UsersPage() {
               const word3 = encodeURIComponent(searchWords[2]);
 
               // Priority 1: First word in FirstName AND (second + third) words in LastName
-              const lastNameCombined = encodeURIComponent(searchWords.slice(1).join(' '));
+              const lastNameCombined = encodeURIComponent(searchWords.slice(1).join(" "));
               baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${word1}`;
-              baseUrl += `&filters[$or][${orIndex-1}][$and][1][user_info][LastName][$containsi]=${lastNameCombined}`;
+              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastNameCombined}`;
 
               // Priority 2: (First + second) words in FirstName AND third word in LastName
-              const firstNameCombined = encodeURIComponent(searchWords.slice(0, 2).join(' '));
+              const firstNameCombined = encodeURIComponent(searchWords.slice(0, 2).join(" "));
               baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstNameCombined}`;
-              baseUrl += `&filters[$or][${orIndex-1}][$and][1][user_info][LastName][$containsi]=${word3}`;
+              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${word3}`;
 
               // Priority 3: Exact phrase in FirstName
               const encodedPhrase = encodeURIComponent(searchTerm);
@@ -160,16 +173,16 @@ export default function UsersPage() {
 
               // Priority 2: First word in FirstName, rest in LastName
               const firstName = encodeURIComponent(searchWords[0]);
-              const lastName = encodeURIComponent(searchWords.slice(1).join(' '));
+              const lastName = encodeURIComponent(searchWords.slice(1).join(" "));
               baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstName}`;
-              baseUrl += `&filters[$or][${orIndex-1}][$and][1][user_info][LastName][$containsi]=${lastName}`;
+              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastName}`;
 
               // Priority 3: First half in FirstName, second half in LastName
               const midPoint = Math.ceil(searchWords.length / 2);
-              const firstHalf = encodeURIComponent(searchWords.slice(0, midPoint).join(' '));
-              const secondHalf = encodeURIComponent(searchWords.slice(midPoint).join(' '));
+              const firstHalf = encodeURIComponent(searchWords.slice(0, midPoint).join(" "));
+              const secondHalf = encodeURIComponent(searchWords.slice(midPoint).join(" "));
               baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstHalf}`;
-              baseUrl += `&filters[$or][${orIndex-1}][$and][1][user_info][LastName][$containsi]=${secondHalf}`;
+              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${secondHalf}`;
 
               // Priority 4: Phone number search
               baseUrl += `&filters[$or][${orIndex++}][phone][$containsi]=${encodedPhrase}`;
