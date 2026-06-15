@@ -314,6 +314,9 @@ export default factories.createCoreController(
           filters: restQuery.filters,
           sort: restQuery.sort,
           availability: restQuery.availability,
+          price: restQuery.price,
+          hasDiscount: restQuery.hasDiscount,
+          requireCoverImage: restQuery.requireCoverImage,
           pagination: restQuery.pagination,
         });
       }

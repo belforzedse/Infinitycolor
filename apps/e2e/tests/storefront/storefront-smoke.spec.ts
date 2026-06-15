@@ -80,6 +80,39 @@ test.describe("storefront smoke", () => {
     runtime.assertClean();
   });
 
+  test("@smoke PLP URL filters and sort persist across reload and history", async ({
+    page,
+  }) => {
+    const runtime = await prepareStorefrontPage(page);
+    const filteredUrl =
+      `/plp/category/${E2E_CATEGORY_SLUG}?available=true&minPrice=1&maxPrice=999999999&sort=price%3Aasc`;
+    const alternateUrl = `/plp/category/${E2E_CATEGORY_SLUG}?available=true&sort=createdAt%3Adesc`;
+
+    await page.goto(filteredUrl);
+    await expect(page).toHaveURL(/available=true/);
+    await expect(page).toHaveURL(/minPrice=1/);
+    await expect(page).toHaveURL(/maxPrice=999999999/);
+    await expect(page).toHaveURL(/sort=price%3Aasc/);
+
+    const seededProductLink = page.locator(visibleSeededProductLinkSelector).first();
+    await expect(seededProductLink).toBeVisible({ timeout: 30_000 });
+
+    await page.reload();
+    await expect(page).toHaveURL(/sort=price%3Aasc/);
+    await expect(page.locator(visibleSeededProductLinkSelector).first()).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await page.goto(alternateUrl);
+    await expect(page).toHaveURL(/sort=createdAt%3Adesc/);
+    await page.goBack();
+    await expect(page).toHaveURL(/sort=price%3Aasc/);
+    await page.goForward();
+    await expect(page).toHaveURL(/sort=createdAt%3Adesc/);
+
+    runtime.assertClean();
+  });
+
   test("@smoke desktop full product card quick view opens and links to the PDP", async ({
     page,
   }) => {

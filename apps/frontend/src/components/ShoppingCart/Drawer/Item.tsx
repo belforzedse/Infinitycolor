@@ -13,13 +13,15 @@ interface CartDrawerItemProps {
 }
 
 export default function CartDrawerItem({ item }: CartDrawerItemProps) {
-  const { updateQuantity, removeFromCart } = useCart();
+  const { updateQuantity, removeFromCart, isLoading } = useCart();
 
   const handleIncrement = () => {
+    if (isLoading) return;
     updateQuantity(item.id, item.quantity + 1);
   };
 
   const handleDecrement = () => {
+    if (isLoading) return;
     if (item.quantity > 1) {
       updateQuantity(item.id, item.quantity - 1);
     } else {
@@ -28,6 +30,7 @@ export default function CartDrawerItem({ item }: CartDrawerItemProps) {
   };
 
   const handleRemove = () => {
+    if (isLoading) return;
     removeFromCart(item.id);
   };
 
@@ -85,7 +88,10 @@ export default function CartDrawerItem({ item }: CartDrawerItemProps) {
         <div className="flex items-center gap-2">
           <button
             onClick={handleIncrement}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800"
+            disabled={isLoading}
+            aria-disabled={isLoading}
+            aria-label="افزایش تعداد کالا"
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <PlusIcon />
           </button>
@@ -94,13 +100,22 @@ export default function CartDrawerItem({ item }: CartDrawerItemProps) {
 
           <button
             onClick={handleDecrement}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800"
+            disabled={isLoading}
+            aria-disabled={isLoading}
+            aria-label="کاهش تعداد کالا"
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <MinusIcon />
           </button>
         </div>
 
-        <button onClick={handleRemove} className="flex items-center gap-1 text-rose-500">
+        <button
+          onClick={handleRemove}
+          disabled={isLoading}
+          aria-disabled={isLoading}
+          aria-label="حذف کالا از سبد خرید"
+          className="flex items-center gap-1 text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
           <span className="text-xs">حذف</span>
           <TrashIcon className="h-4 w-4" />
         </button>

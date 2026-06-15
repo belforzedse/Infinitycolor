@@ -3,10 +3,8 @@ import { ENDPOINTS, IMAGE_BASE_URL, getStrapiServerUrl } from "@/constants/api";
 import { SITE_NAME, SITE_URL } from "@/config/site";
 import type { PLPPagination } from "@/components/PLP/types";
 import type { Variation } from "@/types/Product";
-import { computeDiscountForVariation } from "@/utils/discounts";
 import fetchWithTimeout from "@/utils/fetchWithTimeout";
 import logger from "@/utils/logger";
-import { getProductCreatedAt, parseStockCount, productTitleHasG } from "@/utils/product";
 import { getCategoryAndDescendantSlugs } from "@/utils/category-descendants";
 import { getValidatedCategoryCached, type CategoryData } from "@/utils/category-validation";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
@@ -109,9 +107,11 @@ const cardToSmallCard = (product: ReturnType<typeof formatProductsToCardProps>[n
 });
 
 export function parsePLPQuery(params: { [key: string]: string | string[] | undefined }): PLPQuery {
+  const parsedPage = typeof params.page === "string" ? parseInt(params.page, 10) : 1;
+
   return {
     category: typeof params.category === "string" ? params.category : undefined,
-    page: typeof params.page === "string" ? parseInt(params.page, 10) || 1 : 1,
+    page: Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1,
     available: typeof params.available === "string" ? params.available === "true" : false,
     minPrice: typeof params.minPrice === "string" ? params.minPrice : undefined,
     maxPrice: typeof params.maxPrice === "string" ? params.maxPrice : undefined,
@@ -125,6 +125,83 @@ export function parsePLPQuery(params: { [key: string]: string | string[] | undef
     hasDiscount:
       typeof params.hasDiscount === "string" ? params.hasDiscount === "true" : undefined,
   };
+}
+
+const appendIndexedInFilter = (
+  params: URLSearchParams,
+  prefix: string,
+  values: string[],
+) => {
+  values.forEach((value, index) => {
+    params.append(`${prefix}[$in][${index}]`, value);
+  });
+};
+
+export function buildPLPProductsQuery(
+  query: PLPQuery,
+  categorySlugs: string[] = [],
+  pageSize = 30,
+): URLSearchParams {
+  const queryParams = new URLSearchParams();
+  let andIndex = 0;
+
+  const nextAnd = () => andIndex++;
+
+  queryParams.append("view", "card");
+  queryParams.append("pagination[page]", String(query.page));
+  queryParams.append("pagination[pageSize]", String(pageSize));
+  queryParams.append("requireCoverImage", "true");
+
+  queryParams.append(`filters[$and][${nextAnd()}][Status][$eq]`, "Active");
+  queryParams.append(`filters[$and][${nextAnd()}][removedAt][$null]`, "true");
+
+  const variationIndex = nextAnd();
+  queryParams.append(`filters[$and][${variationIndex}][product_variations][IsPublished][$eq]`, "true");
+  queryParams.append(`filters[$and][${variationIndex}][product_variations][Price][$gt]`, "0");
+
+  if (categorySlugs.length > 0) {
+    const categoryIndex = nextAnd();
+    appendIndexedInFilter(
+      queryParams,
+      `filters[$and][${categoryIndex}][$or][0][product_main_category][Slug]`,
+      categorySlugs,
+    );
+    appendIndexedInFilter(
+      queryParams,
+      `filters[$and][${categoryIndex}][$or][1][product_other_categories][Slug]`,
+      categorySlugs,
+    );
+  }
+
+  if (query.search) {
+    const searchIndex = nextAnd();
+    queryParams.append(`filters[$and][${searchIndex}][$or][0][Title][$containsi]`, query.search);
+    queryParams.append(`filters[$and][${searchIndex}][$or][1][Description][$containsi]`, query.search);
+  }
+
+  if (query.available) {
+    queryParams.append("availability", "available");
+  }
+  if (query.minPrice) {
+    queryParams.append("price[min]", query.minPrice);
+  }
+  if (query.maxPrice) {
+    queryParams.append("price[max]", query.maxPrice);
+  }
+  if (query.hasDiscount) {
+    queryParams.append("hasDiscount", "true");
+  }
+  if (query.size) {
+    queryParams.append(
+      `filters[$and][${nextAnd()}][product_variations][product_variation_size][Title][$eq]`,
+      query.size,
+    );
+  }
+  if (query.sort) {
+    queryParams.append("sort[0]", query.sort);
+  }
+
+  return queryParams;
 }
 
 export async function getPLPCategoryContext(
@@ -251,83 +328,6 @@ function normalizeProduct(raw: any): PLPProduct | null {
   } as PLPProduct;
 }
 
-function hasImage(product: PLPProduct): boolean {
-  return !!(
-    product.attributes.CoverImage?.data?.attributes?.url ||
-    product.attributes.CoverImage?.data
-  );
-}
-
-function hasValidPrice(product: PLPProduct): boolean {
-  if (product.attributes.Price !== undefined && product.attributes.Price !== null) {
-    return Number(product.attributes.Price) > 0;
-  }
-
-  return Boolean(
-    product.attributes.product_variations?.data?.some((variation) => {
-      const price = variation.attributes.Price;
-      return price && Number(price) > 0;
-    }),
-  );
-}
-
-function hasStock(product: PLPProduct): boolean {
-  if (typeof product.attributes.IsAvailable === "boolean") {
-    return product.attributes.IsAvailable;
-  }
-
-  return Boolean(
-    product.attributes.product_variations?.data?.some((variation) => {
-      if (!variation.attributes?.IsPublished) return false;
-      const stockCount = variation.attributes.product_stock?.data?.attributes?.Count;
-      return parseStockCount(stockCount) > 0;
-    }),
-  );
-}
-
-function hasDiscountedVariation(product: PLPProduct): boolean {
-  const attrs = product.attributes;
-  const price = Number(attrs.Price ?? 0);
-  const discountPrice = Number(attrs.DiscountPrice ?? 0);
-  const discount = Number(attrs.Discount ?? 0);
-  if (discount > 0) return true;
-  if (price > 0 && discountPrice > 0 && discountPrice < price) return true;
-
-  return Boolean(
-    product.attributes.product_variations?.data?.some((variation: any) => {
-      if (!variation?.attributes?.IsPublished) return false;
-      const stockCount = variation.attributes.product_stock?.data?.attributes?.Count;
-      if (parseStockCount(stockCount) <= 0) return false;
-      const price = parseFloat(variation.attributes.Price || "0");
-      const generalDiscounts = variation.attributes.general_discounts?.data;
-      if (generalDiscounts && generalDiscounts.length > 0) return true;
-      const discountPrice = variation.attributes.DiscountPrice
-        ? parseFloat(variation.attributes.DiscountPrice)
-        : null;
-      return discountPrice !== null && discountPrice < price;
-    }),
-  );
-}
-
-function getMinVariationPrice(product: PLPProduct): number {
-  const compactDiscountPrice = Number(product.attributes.DiscountPrice ?? 0);
-  const compactPrice = Number(product.attributes.Price ?? 0);
-  if (compactDiscountPrice > 0) return compactDiscountPrice;
-  if (compactPrice > 0) return compactPrice;
-
-  const variations = product.attributes.product_variations?.data || [];
-  let minPrice = Infinity;
-  for (const variation of variations) {
-    if (!variation.attributes.IsPublished) continue;
-    const stockCount = variation.attributes.product_stock?.data?.attributes?.Count;
-    if (parseStockCount(stockCount) <= 0) continue;
-    const discountResult = computeDiscountForVariation(variation.attributes);
-    const finalPrice = discountResult?.finalPrice || Number(variation.attributes.Price) || 0;
-    if (finalPrice > 0 && finalPrice < minPrice) minPrice = finalPrice;
-  }
-  return minPrice === Infinity ? 0 : minPrice;
-}
-
 export async function getPLPProducts(
   query: PLPQuery,
   categorySlugs?: string[],
@@ -335,53 +335,7 @@ export async function getPLPProducts(
 ): Promise<PLPProductsResult> {
   const strapiBase = getStrapiServerUrl();
   const baseUrl = `${strapiBase}/products`;
-  const queryParams = new URLSearchParams();
-
-  queryParams.append("view", "card");
-  queryParams.append("pagination[page]", String(query.page));
-  queryParams.append("pagination[pageSize]", String(pageSize));
-  queryParams.append("filters[Status][$eq]", "Active");
-  queryParams.append("filters[removedAt][$null]", "true");
-  queryParams.append("filters[product_variations][Price][$gt]", "0");
-
-  if (categorySlugs && categorySlugs.length > 0) {
-    categorySlugs.forEach((slug, i) => {
-      queryParams.append(`filters[product_main_category][Slug][$in][${i}]`, slug);
-    });
-  }
-
-  if (query.search) {
-    queryParams.append("filters[$or][0][Title][$containsi]", query.search);
-    queryParams.append("filters[$or][1][Description][$containsi]", query.search);
-  }
-
-  if (query.minPrice) {
-    queryParams.append("filters[product_variations][Price][$gte]", query.minPrice);
-  }
-  if (query.maxPrice) {
-    queryParams.append("filters[product_variations][Price][$lte]", query.maxPrice);
-  }
-  if (query.available) {
-    queryParams.append("filters[product_variations][product_stock][Count][$gt]", "0");
-  }
-  if (query.size) {
-    queryParams.append("filters[product_variations][Size][$eq]", query.size);
-  }
-  if (query.material) {
-    queryParams.append("filters[product_variations][Material][$eq]", query.material);
-  }
-  if (query.season) {
-    queryParams.append("filters[product_variations][Season][$eq]", query.season);
-  }
-  if (query.gender) {
-    queryParams.append("filters[product_variations][Gender][$eq]", query.gender);
-  }
-  if (query.usage) {
-    queryParams.append("filters[product_variations][Usage][$eq]", query.usage);
-  }
-  if (query.sort && query.sort !== "price:asc" && query.sort !== "price:desc") {
-    queryParams.append("sort[0]", query.sort);
-  }
+  const queryParams = buildPLPProductsQuery(query, categorySlugs, pageSize);
 
   const url = `${baseUrl}?${queryParams.toString()}`;
   let response: Response;
@@ -415,63 +369,13 @@ export async function getPLPProducts(
       .map(normalizeProduct)
       .filter((product): product is PLPProduct => Boolean(product));
 
-    const filteredProducts = rawProducts.filter((product) => {
-      if (!hasImage(product)) return false;
-      if (!hasValidPrice(product)) return false;
-      if (query.available && !hasStock(product)) return false;
-      if (query.hasDiscount && !hasDiscountedVariation(product)) return false;
-      return true;
-    });
-
-    filteredProducts.sort((a, b) => {
-      const aHasStock = hasStock(a);
-      const bHasStock = hasStock(b);
-      if (query.sort === "createdAt:desc") {
-        const aHasG = productTitleHasG(a);
-        const bHasG = productTitleHasG(b);
-        if (aHasG && !bHasG) return -1;
-        if (!aHasG && bHasG) return 1;
-        if (aHasStock && !bHasStock) return -1;
-        if (!aHasStock && bHasStock) return 1;
-        return getProductCreatedAt(b) - getProductCreatedAt(a);
-      }
-      if (query.hasDiscount) {
-        const aHasG = productTitleHasG(a);
-        const bHasG = productTitleHasG(b);
-        if (aHasG && !bHasG) return -1;
-        if (!aHasG && bHasG) return 1;
-      }
-      if (aHasStock && !bHasStock) return -1;
-      if (!aHasStock && bHasStock) return 1;
-      return 0;
-    });
-
-    if (query.sort === "price:asc" || query.sort === "price:desc") {
-      filteredProducts.sort((a, b) => {
-        const aHasStock = hasStock(a);
-        const bHasStock = hasStock(b);
-        if (aHasStock && !bHasStock) return -1;
-        if (!aHasStock && bHasStock) return 1;
-        const priceA = getMinVariationPrice(a);
-        const priceB = getMinVariationPrice(b);
-        return query.sort === "price:asc" ? priceA - priceB : priceB - priceA;
-      });
-    }
-
-    if (rawProducts.length > 0 && filteredProducts.length === 0) {
-      logger.warn("[PLP] All products filtered out", {
-        rawCount: rawProducts.length,
-        categorySlugs: categorySlugs?.slice(0, 3),
-      });
-    }
-
     const meta = data.meta?.pagination;
-    const total = typeof meta?.total === "number" ? meta.total : filteredProducts.length;
+    const total = typeof meta?.total === "number" ? meta.total : rawProducts.length;
     const pageCount =
       typeof meta?.pageCount === "number" ? meta.pageCount : Math.ceil(total / pageSize);
 
     return {
-      products: filteredProducts,
+      products: rawProducts,
       pagination: {
         page: query.page,
         pageSize,

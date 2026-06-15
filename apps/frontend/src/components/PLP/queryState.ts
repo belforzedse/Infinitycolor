@@ -16,5 +16,5 @@ export const plpQueryParsers = {
 
 export const plpQueryOptions = {
   shallow: false,
-  history: "replace" as const,
+  history: "push" as const,
 } as const;
