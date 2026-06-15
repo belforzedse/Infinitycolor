@@ -2,19 +2,15 @@
  * messaging service
  */
 
-import { sendPatternSms } from "../../../services/sms";
+import { sendLegacyOtpSms } from "../../../services/sms";
 
 export default () => ({
   async sendSMS(ctx, { phone, message, isOTP = true }) {
     try {
       if (isOTP) {
-        const result = await sendPatternSms({
-          type: "otp",
+        const result = await sendLegacyOtpSms({
           phone,
-          params: {
-            code: message,
-            "verification-code": message,
-          },
+          code: message,
           logger: strapi.log,
         });
         if (!result.ok) {

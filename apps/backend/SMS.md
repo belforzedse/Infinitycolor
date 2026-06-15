@@ -12,7 +12,9 @@ IPPanel Edge API currently documents SMS sending under:
 
 The request body uses `sending_type: "pattern"`, `from_number`, `code`, a single-item `recipients` array, and `params` for pattern variables.
 
-`IP_PANEL_API_BASE_URL` and `IP_PANEL_PATTERN_ENDPOINT` are preferred because they make future endpoint changes small. `IP_PANEL_API_URL` is still supported as an optional full URL override for legacy or emergency migrations.
+Order lifecycle SMS uses `IP_PANEL_API_BASE_URL` and `IP_PANEL_PATTERN_ENDPOINT` because they make future Edge endpoint changes small. `IP_PANEL_API_URL` is still supported as an optional full URL override for order notifications only.
+
+OTP SMS intentionally uses the legacy IPPanel endpoint hardcoded in `src/services/sms/ippanel.ts`: `https://api2.ippanel.com/api/v1/sms/pattern/normal/send`. It sends the legacy body shape with the `apiKey` header and does not read `IP_PANEL_API_URL`.
 
 ## Environment
 

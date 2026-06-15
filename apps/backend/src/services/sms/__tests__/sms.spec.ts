@@ -1,7 +1,12 @@
 import { RedisClient } from "../../../index";
 import { loadSmsConfig } from "../config";
 import { buildSmsIdempotencyKey } from "../idempotency";
-import { buildPatternPayload, sendPatternSms } from "../ippanel";
+import {
+  buildLegacyOtpPayload,
+  buildPatternPayload,
+  sendLegacyOtpSms,
+  sendPatternSms,
+} from "../ippanel";
 import {
   buildOrderNotificationParams,
   formatCancellationReasonForSms,
@@ -92,6 +97,24 @@ describe("sms service", () => {
     });
   });
 
+  it("builds the legacy IPPanel OTP payload", () => {
+    expect(
+      buildLegacyOtpPayload({
+        sender: "+983000505",
+        patternCode: "otp-pattern",
+        recipient: "+989123456789",
+        code: "123456",
+      }),
+    ).toEqual({
+      recipient: "+989123456789",
+      code: "otp-pattern",
+      sender: "+983000505",
+      variable: {
+        "verification-code": "123456",
+      },
+    });
+  });
+
   it("does not call fetch when SMS is disabled", async () => {
     const result = await sendPatternSms({
       type: "otp",
@@ -139,6 +162,47 @@ describe("sms service", () => {
           code: "pattern",
           recipients: ["+989123456789"],
           params: { code: "پرداخت", orderId: "42" },
+        }),
+      }),
+    );
+  });
+
+  it("sends OTP through the legacy IPPanel endpoint with apiKey header", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      createResponse(200, {
+        success: true,
+        messageId: 1123594209,
+      }),
+    );
+
+    const result = await sendLegacyOtpSms({
+      phone: "09123456789",
+      code: "123456",
+      config: loadSmsConfig({
+        SMS_ENABLED: "true",
+        IP_PANEL_API_URL: "https://edge-override.example.test/api/send",
+        IP_PANEL_API_KEY: "secret-key",
+        IP_PANEL_PATTERN_CODE: "otp-pattern",
+        IP_PANEL_SENDER: "+983000505",
+      }),
+    });
+
+    expect(result).toMatchObject({ ok: true, messageId: 1123594209 });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api2.ippanel.com/api/v1/sms/pattern/normal/send",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apiKey: "secret-key",
+        },
+        body: JSON.stringify({
+          recipient: "+989123456789",
+          code: "otp-pattern",
+          sender: "+983000505",
+          variable: {
+            "verification-code": "123456",
+          },
         }),
       }),
     );
