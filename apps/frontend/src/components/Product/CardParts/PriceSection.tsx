@@ -32,7 +32,7 @@ export const PriceSection: FC<PriceSectionProps> = ({
         ) : (
           <div className="flex min-w-0 flex-row flex-wrap items-center justify-start gap-2 text-left md:group-hover:justify-center md:group-hover:gap-3 md:group-focus-within:justify-center md:group-focus-within:gap-3">
             {hasDiscount && discountPrice && (
-              <span className="truncate whitespace-nowrap text-base text-infinity-primary md:group-hover:text-lg md:group-hover:text-white md:group-focus-within:text-lg md:group-focus-within:text-white">
+              <span className="truncate whitespace-nowrap text-base text-infinity-primary 3xl:text-lg md:group-hover:text-lg md:group-hover:text-white md:group-focus-within:text-lg md:group-focus-within:text-white">
                 {faNum(discountPrice)} تومان
               </span>
             )}
@@ -41,7 +41,7 @@ export const PriceSection: FC<PriceSectionProps> = ({
               className={`min-w-0 truncate ${
                 hasDiscount
                   ? "text-xs text-neutral-400 line-through md:group-hover:text-sm md:group-hover:text-infinity-primary-lighter md:group-hover:no-underline md:group-focus-within:text-sm md:group-focus-within:text-infinity-primary-lighter md:group-focus-within:no-underline"
-                  : "whitespace-nowrap text-base text-neutral-800 md:group-hover:text-lg md:group-hover:text-white md:group-focus-within:text-lg md:group-focus-within:text-white"
+                  : "whitespace-nowrap text-base text-neutral-800 3xl:text-lg md:group-hover:text-lg md:group-hover:text-white md:group-focus-within:text-lg md:group-focus-within:text-white"
               }`}
             >
               {faNum(price)} تومان

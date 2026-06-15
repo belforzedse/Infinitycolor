@@ -6,7 +6,8 @@ export type StorefrontContainerProps = HTMLAttributes<HTMLDivElement> & {
   disablePadding?: boolean;
 };
 
-export const STOREFRONT_CONTAINER_CLASS = "mx-auto w-full max-w-[1360px] px-2 sm:px-5 lg:px-[60px]";
+export const STOREFRONT_CONTAINER_CLASS =
+  "mx-auto w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] px-2 sm:px-5 lg:px-[60px] 4xl:px-20";
 
 export function StorefrontContainer({
   children,
@@ -17,8 +18,8 @@ export function StorefrontContainer({
   return (
     <div
       className={cn(
-        "mx-auto w-full max-w-[1360px]",
-        disablePadding ? null : "px-2 sm:px-5 lg:px-[60px]",
+        "mx-auto w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px]",
+        disablePadding ? null : "px-2 sm:px-5 lg:px-[60px] 4xl:px-20",
         className,
       )}
       {...props}

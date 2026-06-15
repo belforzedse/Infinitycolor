@@ -7,19 +7,14 @@ import PLPFilterBox from "@/components/Kits/PLP/FilterBox";
 import { useQueryStates } from "nuqs";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getProductCategories } from "@/services/product/categories";
+import { getProductCategories, type ProductCategorySummary } from "@/services/product/categories";
 import { SORT_OPTIONS } from "@/components/PLP/sortOptions";
 import { plpQueryOptions, plpQueryParsers } from "@/components/PLP/queryState";
 import { getCategoryPlpHrefWithQuery } from "@/utils/plpRoutes";
 
-interface Category {
-  id: string;
-  title: string;
-}
-
 interface FilterProps {
   showAvailableOnly?: boolean;
-  categories?: Category[];
+  categories?: ProductCategorySummary[];
   isLoadingCategories?: boolean;
   selectedCategory?: string;
   /** Hide availability toggle (e.g. mobile drawer shows it in the toolbar). */
@@ -38,7 +33,7 @@ export default function Filter({
   const router = useRouter();
   const searchParams = useSearchParams();
   // State for categories
-  const [localCategories, setLocalCategories] = useState<Category[]>([]);
+  const [localCategories, setLocalCategories] = useState<ProductCategorySummary[]>([]);
   const [isFetchingCategories, setIsFetchingCategories] = useState(!categoriesProp);
 
   // Fetch categories on component mount
@@ -54,12 +49,7 @@ export default function Filter({
         setIsFetchingCategories(true);
         const categories = await getProductCategories({ sort: "Title:asc" });
         if (!isMounted) return;
-        setLocalCategories(
-          categories.map((cat) => ({
-            id: cat.slug || String(cat.id),
-            title: cat.name || cat.slug || String(cat.id),
-          })),
-        );
+        setLocalCategories(categories);
       } catch (error) {
         console.error("Error fetching categories:", error);
         if (!isMounted) return;
@@ -124,18 +114,41 @@ export default function Filter({
     void setQuery({ page: 1, sort: null });
   }, [setQuery]);
 
+  // Whether any resettable filter is active (category is route-based and kept).
+  const hasActiveFilters =
+    available === "true" || !!minPrice || !!maxPrice || !!sort;
+
+  const handleClearAllFilters = useCallback(() => {
+    void setQuery({
+      page: 1,
+      available: null,
+      minPrice: null,
+      maxPrice: null,
+      sort: null,
+    });
+  }, [setQuery]);
+
   const resolvedCategories = categoriesProp ?? localCategories;
-  const resolvedIsLoading = categoriesProp ? isLoadingCategoriesProp ?? false : isFetchingCategories;
+  const resolvedIsLoading = categoriesProp
+    ? (isLoadingCategoriesProp ?? false)
+    : isFetchingCategories;
 
   return (
     <div className="flex flex-col gap-3">
+      {hasActiveFilters && (
+        <button
+          type="button"
+          onClick={handleClearAllFilters}
+          data-testid="plp-clear-filters"
+          className="self-start rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-infinity-primary transition hover:bg-infinity-primary-lighter/20"
+        >
+          حذف همه فیلترها
+        </button>
+      )}
       <PLPListFilterCategory
         value={selectedCategory || ""}
         title="دسته بندی محصولات"
-        filterOptions={resolvedCategories.map((cat) => ({
-          id: cat.id,
-          title: cat.title,
-        }))}
+        categories={resolvedCategories}
         onOptionSelect={(optionId: string | number) => handleCategorySelect(optionId.toString())}
         isLoading={resolvedIsLoading}
       />
@@ -180,7 +193,7 @@ export default function Filter({
             <button
               type="button"
               onClick={handleSortClear}
-              className="text-xs text-right text-infinity-primary underline-offset-2 hover:text-infinity-primary-dark"
+              className="text-right text-xs text-infinity-primary underline-offset-2 hover:text-infinity-primary-dark"
             >
               حذف مرتب‌سازی
             </button>

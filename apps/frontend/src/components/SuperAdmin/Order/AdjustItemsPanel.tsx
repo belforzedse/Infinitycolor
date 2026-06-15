@@ -351,10 +351,30 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
               <div className="w-full max-w-md rounded-lg bg-white p-6">
                 <h3 className="mb-4 text-lg font-semibold">تأیید تغییرات</h3>
-                <p className="mb-6 text-slate-700">
+                <p className="mb-4 text-slate-700">
                   آیا از اعمال این تغییرات اطمینان دارید؟ این عملیات غیرقابل
                   برگشت است.
                 </p>
+                {preview && (
+                  isSnappPayOrder ? (
+                    <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                      این سفارش با SnappPay پرداخت شده است؛ بازگشت وجه به کیف پول انجام نمی‌شود و
+                      تغییرات نزد SnappPay به‌روزرسانی می‌گردد.
+                    </div>
+                  ) : (
+                    <div
+                      className="mb-6 flex items-center justify-between rounded-lg border border-green-300 bg-green-50 p-4"
+                      data-testid="adjust-refund-callout"
+                    >
+                      <span className="text-sm font-semibold text-green-900">
+                        مبلغ بازگشت به کیف پول مشتری:
+                      </span>
+                      <span className="text-xl font-bold text-green-700">
+                        {preview.refundToman.toLocaleString("fa-IR")} تومان
+                      </span>
+                    </div>
+                  )
+                )}
                 <div className="flex justify-end gap-3">
                   <button
                     onClick={() => setShowConfirm(false)}

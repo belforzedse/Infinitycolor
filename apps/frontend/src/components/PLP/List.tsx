@@ -93,18 +93,13 @@ export default function PLPList({
     [initialProducts],
   );
 
-  const [categoryOptions, setCategoryOptions] = useState<Array<{ id: string; title: string }>>([]);
+  const [categoryOptions, setCategoryOptions] = useState<ProductCategorySummary[]>([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(false);
 
   // When server passed allCategories (e.g. category PLP), use them for filter and skip client fetch.
   useEffect(() => {
     if (allCategoriesProp.length > 0) {
-      setCategoryOptions(
-        allCategoriesProp.map((cat) => ({
-          id: cat.slug || String(cat.id),
-          title: cat.name || cat.slug || String(cat.id),
-        })),
-      );
+      setCategoryOptions(allCategoriesProp);
       return;
     }
     const fetchCategories = async () => {
@@ -115,12 +110,7 @@ export default function PLPList({
           setCategoryOptions([]);
           return;
         }
-        setCategoryOptions(
-          categories.map((cat) => ({
-            id: cat.slug || String(cat.id),
-            title: cat.name || cat.slug || String(cat.id),
-          })),
-        );
+        setCategoryOptions(categories);
       } catch (error) {
         console.error("[PLP] Error fetching categories:", error);
         setCategoryOptions([]);
@@ -240,8 +230,10 @@ export default function PLPList({
   const selectedCategoryTitle = useMemo(() => {
     if (!initialCategory) return null;
 
-    const option = categoryOptions.find((item) => item.id === initialCategory);
-    if (option) return option.title;
+    const option = categoryOptions.find(
+      (item) => item.slug === initialCategory || String(item.id) === initialCategory,
+    );
+    if (option) return option.name || option.slug || String(option.id);
 
     const dynamicMatch = validProducts.find(
       (product) =>
@@ -502,7 +494,7 @@ export default function PLPList({
           )}
 
           {validProducts.length === 0 ? (
-            <NoData category={initialCategory} />
+            <NoData category={initialCategory} searchQuery={searchQuery} />
           ) : (
             <>
               {isPagePending ? (

@@ -25,7 +25,7 @@ export default function InfinitygramSectionSkeleton() {
       className="overflow-hidden bg-[#252220]"
       aria-busy="true"
     >
-      <div className="mx-auto w-full max-w-[1360px] px-2 py-8 sm:px-5 lg:px-[60px] lg:py-10">
+      <div className="mx-auto w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] px-2 py-8 sm:px-5 lg:px-[60px] lg:py-10 4xl:px-20">
         <div className="mb-6 flex items-center justify-between gap-4">
           <div className="skeleton-shimmer h-8 w-64 rounded-md bg-white/15" />
           <div className="hidden h-5 w-36 rounded-md bg-white/10 sm:block" />

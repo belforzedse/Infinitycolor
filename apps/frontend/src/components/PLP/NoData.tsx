@@ -6,10 +6,13 @@ import { useEffect, useState } from "react";
 
 interface NoDataProps {
   category?: string;
+  /** When the empty result is from a text search, echo the term back. */
+  searchQuery?: string;
 }
 
-export default function NoData({ category }: NoDataProps) {
+export default function NoData({ category, searchQuery }: NoDataProps) {
   const [categoryTitle, setCategoryTitle] = useState("محصولات");
+  const isSearch = !!searchQuery?.trim();
 
   useEffect(() => {
     if (category) {
@@ -44,10 +47,17 @@ export default function NoData({ category }: NoDataProps) {
         </svg>
       </div>
       <h2 className="text-2xl mb-2 font-bold text-gray-800">محصولی یافت نشد</h2>
-      <p className="mb-8 max-w-md text-gray-600">
-        متأسفانه در حال حاضر هیچ {categoryTitle} در این دسته‌بندی موجود نیست. لطفاً بعداً دوباره
-        بررسی کنید یا به صفحه اصلی برگردید.
-      </p>
+      {isSearch ? (
+        <p className="mb-8 max-w-md text-gray-600" data-testid="nodata-search-message">
+          نتیجه‌ای برای «{searchQuery}» پیدا نشد. املای عبارت را بررسی کنید، فیلترها را حذف کنید یا
+          عبارت کوتاه‌تری را امتحان کنید.
+        </p>
+      ) : (
+        <p className="mb-8 max-w-md text-gray-600">
+          متأسفانه در حال حاضر هیچ {categoryTitle} در این دسته‌بندی موجود نیست. لطفاً بعداً دوباره
+          بررسی کنید یا به صفحه اصلی برگردید.
+        </p>
+      )}
       <div className="flex flex-col gap-4 sm:flex-row">
         <Link
           href="/"

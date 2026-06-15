@@ -712,6 +712,30 @@ textarea:focus-visible {
     transform: translate3d(0, 0, 0);
   }
 
+  .pdp-faq-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows 210ms var(--ease-butter),
+      opacity 150ms var(--ease-crystal);
+  }
+
+  .pdp-faq-panel[data-state="open"] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
+  .pdp-faq-panel-inner {
+    transform: translate3d(0, -6px, 0);
+    transition: transform 190ms var(--ease-butter);
+    will-change: transform;
+  }
+
+  .pdp-faq-panel[data-state="open"] .pdp-faq-panel-inner {
+    transform: translate3d(0, 0, 0);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .storefront-mega-backdrop,
     .storefront-mega-panel,
@@ -721,7 +745,9 @@ textarea:focus-visible {
     }
 
     .storefront-mobile-category-panel,
-    .storefront-mobile-category-panel-inner {
+    .storefront-mobile-category-panel-inner,
+    .pdp-faq-panel,
+    .pdp-faq-panel-inner {
       transition-duration: 1ms !important;
     }
   }

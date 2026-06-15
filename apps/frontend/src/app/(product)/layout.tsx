@@ -8,6 +8,7 @@ import dynamic from "next/dynamic";
 import { useOptionalCart } from "@/contexts/CartContext";
 import React, { Suspense } from "react";
 import ScrollToTop from "@/components/ScrollToTop";
+import { usePathname } from "next/navigation";
 
 const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), {
   ssr: false,
@@ -16,6 +17,7 @@ const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), {
 export default function ProductLayout({ children }: { children: React.ReactNode }) {
   const cart = useOptionalCart();
   const isDrawerOpen = cart?.isDrawerOpen ?? false;
+  const pathname = usePathname();
   const [scrolled, setScrolled] = React.useState(false);
   const [showHeader, setShowHeader] = React.useState(true);
   const lastScrollY = React.useRef(0);
@@ -81,6 +83,30 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
   React.useEffect(() => {
     updateHeaderOffset();
   }, [showHeader, updateHeaderOffset]);
+
+  React.useEffect(() => {
+    if (!pathname.startsWith("/pdp/")) return;
+
+    let shouldScrollTop = false;
+    try {
+      shouldScrollTop =
+        window.sessionStorage.getItem("pdp-scroll-top-from-product-card") === "1";
+      if (shouldScrollTop) {
+        window.sessionStorage.removeItem("pdp-scroll-top-from-product-card");
+      }
+    } catch {
+      shouldScrollTop = true;
+    }
+
+    if (!shouldScrollTop) return;
+
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    });
+  }, [pathname]);
+
   const headerStyle = !showHeader
     ? { borderBottomWidth: 0, borderBottomColor: "transparent", boxShadow: "none" }
     : undefined;

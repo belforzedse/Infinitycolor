@@ -83,7 +83,7 @@ export default function InfinitygramSectionClient({ posts }: InfinitygramSection
       aria-labelledby="home-infinitygram-heading"
       className="overflow-hidden bg-[#252220] text-white"
     >
-      <div className="mx-auto w-full max-w-[1360px] px-2 py-8 sm:px-5 lg:px-[60px] lg:py-10">
+      <div className="mx-auto w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] px-2 py-8 sm:px-5 lg:px-[60px] lg:py-10 4xl:px-20">
         <div className="mb-6 flex items-center justify-between gap-4">
           <h2
             id="home-infinitygram-heading"

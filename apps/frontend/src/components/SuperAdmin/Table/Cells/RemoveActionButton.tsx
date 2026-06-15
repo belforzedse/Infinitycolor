@@ -27,6 +27,7 @@ export default function RemoveActionButton(props: Props) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showActionDialog, setShowActionDialog] = useState(false);
   const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showPermissionDenied, setShowPermissionDenied] = useState(false);
 
   const buildPayload = (removedAt: string | null) => {
@@ -50,6 +51,7 @@ export default function RemoveActionButton(props: Props) {
     } finally {
       setIsDeleting(false);
       setShowActionDialog(false);
+      setShowRestoreConfirm(false);
     }
   };
 
@@ -102,7 +104,7 @@ export default function RemoveActionButton(props: Props) {
           <SuperAdminTableCellActionButton
             variant="primary"
             icon={<UndoIcon />}
-            onClick={handleRestore}
+            onClick={() => setShowRestoreConfirm(true)}
             disabled={isDeleting}
             testId={testIdPrefix ? `${testIdPrefix}-restore` : undefined}
             dataAttributes={{ id }}
@@ -116,6 +118,17 @@ export default function RemoveActionButton(props: Props) {
             dataAttributes={{ id }}
           />
         </div>
+
+        {/* Confirmation dialog for restore */}
+        <ConfirmDialog
+          isOpen={showRestoreConfirm}
+          title="بازیابی"
+          description={`این ${itemName} دوباره فعال و در فروشگاه نمایش داده می‌شود. ادامه می‌دهید؟`}
+          confirmText="بله، بازیابی کن"
+          cancelText="انصراف"
+          onConfirm={handleRestore}
+          onCancel={() => setShowRestoreConfirm(false)}
+        />
 
         {/* Confirmation dialog for permanent delete */}
         <ConfirmDialog

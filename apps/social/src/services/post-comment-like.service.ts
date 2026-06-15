@@ -4,6 +4,7 @@ import { ENDPOINTS } from "@/lib/api-endpoints";
 import { handleAuthErrors } from "@/utils/auth";
 
 const COMMENT_LIKE_TIMEOUT_MS = 15000;
+const SKIP_GLOBAL_LOADER_HEADER = "x-skip-global-loader";
 
 export type TogglePostCommentLikeResult = {
   isLiked: boolean;
@@ -13,6 +14,13 @@ function authHeaders(): Record<string, string> | undefined {
   const accessToken =
     typeof window !== "undefined" ? window.localStorage.getItem("accessToken") : null;
   return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+}
+
+function postCommentLikeHeaders(): Record<string, string> {
+  return {
+    [SKIP_GLOBAL_LOADER_HEADER]: "1",
+    ...(authHeaders() ?? {}),
+  };
 }
 
 export function hasAccessToken(): boolean {
@@ -57,7 +65,7 @@ function readRows(response: unknown): unknown[] {
 export async function getLikedPostCommentIds(): Promise<Set<string>> {
   try {
     const response = await apiClient.get<unknown>(ENDPOINTS.POST_COMMENT_LIKES.USER_LIKES, {
-      headers: authHeaders(),
+      headers: postCommentLikeHeaders(),
       cache: "no-store",
       timeout: COMMENT_LIKE_TIMEOUT_MS,
       retries: 0,
@@ -78,7 +86,7 @@ export async function togglePostCommentLike(
       ENDPOINTS.POST_COMMENT_LIKES.TOGGLE,
       { commentId },
       {
-        headers: authHeaders(),
+        headers: postCommentLikeHeaders(),
         cache: "no-store",
         timeout: COMMENT_LIKE_TIMEOUT_MS,
         retries: 0,

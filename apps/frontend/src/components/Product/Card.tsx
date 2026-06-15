@@ -174,6 +174,18 @@ const ProductCard: FC<ProductCardProps> = ({
     void preloadQuickView(id);
   }, [maybeLoadSecondaryMedia, id]);
 
+  const handleProductLinkClick = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (!("matchMedia" in window)) return;
+    if (!window.matchMedia("(max-width: 767px)").matches) return;
+
+    try {
+      window.sessionStorage.setItem("pdp-scroll-top-from-product-card", "1");
+    } catch {
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
   return (
     <>
       <article
@@ -189,6 +201,7 @@ const ProductCard: FC<ProductCardProps> = ({
       >
         <Link
           href={productUrl}
+          onClick={handleProductLinkClick}
           className="block rounded-3xl focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
           data-testid="product-card-link"
           aria-label={`مشاهده جزئیات ${title}`}

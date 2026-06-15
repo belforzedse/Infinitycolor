@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import MobileMenu from "./MobileMenu";
-import MobileSearch from "./MobileSearch";
 import CartIcon from "../../Icons/CartIcon";
 import MenuIcon from "../../Icons/MenuIcon";
 import { StorefrontLogo } from "@repo/brand";
@@ -16,21 +15,12 @@ type Props = object;
 
 export default function PLPMobileHeader({}: Props) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const { totalItems, openDrawer } = useCart();
   const isCartShellReady = useCartShellReady();
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
   const [isStandalone, setIsStandalone] = useState(false);
   const pathname = usePathname();
   const backFallbackHref = getMobileBackFallbackHref(pathname);
-
-  const openSearch = (event?: React.SyntheticEvent) => {
-    if (event) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    window.setTimeout(() => setIsSearchOpen(true), 0);
-  };
 
   useEffect(() => {
     if (typeof window !== "undefined" && "matchMedia" in window) {
@@ -111,13 +101,7 @@ export default function PLPMobileHeader({}: Props) {
         </div>
       </div>
 
-      <MobileMenu
-        isOpen={isMenuOpen}
-        onClose={() => setIsMenuOpen(false)}
-        onSearchClick={openSearch}
-      />
-
-      <MobileSearch isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
+      <MobileMenu isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
     </>
   );
 }

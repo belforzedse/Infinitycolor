@@ -2,14 +2,17 @@
 
 import { Dialog } from "@headlessui/react";
 import { ChevronDown, Search, X } from "lucide-react";
-import { type AnimationEvent, useEffect, useMemo, useState } from "react";
+import { type AnimationEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useProductCategories } from "@/hooks/useProductCategories";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
 import type { ProductCategorySummary } from "@/services/product/categories";
+import { buildMobileCategoryGroups } from "@/utils/categoryGroups";
 import { useCart } from "@/contexts/CartContext";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
+import { API_BASE_URL, IMAGE_BASE_URL } from "@/constants/api";
+import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
 import ShoppingCartIcon from "@/components/PLP/Icons/ShoppingCartIcon";
 import UserProfileIcon from "@/components/PLP/Icons/UserProfileIcon";
@@ -18,7 +21,6 @@ import SaleBadgeIcon from "../SaleBadgeIcon";
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onSearchClick?: () => void;
 }
 
 type MobileNavItem =
@@ -42,115 +44,17 @@ type MobileNavItem =
       categories: ProductCategorySummary[];
     };
 
-type MobileCategoryGroupDefinition = {
-  key: string;
-  label: string;
-  terms: readonly string[];
+type SearchSuggestion = {
+  id: number;
+  slug?: string;
+  Title: string;
+  Price?: number;
+  DiscountPrice?: number;
+  Discount?: number;
+  category?: string;
+  image?: string;
+  isAvailable?: boolean;
 };
-
-const MOBILE_CATEGORY_GROUPS: readonly MobileCategoryGroupDefinition[] = [
-  {
-    key: "upper-body",
-    label: "بالاتنه",
-    terms: [
-      "مانتو",
-      "coat-and-mantle",
-      "شومیز",
-      "paperback-and-tonic",
-      "پیراهن",
-      "shirt",
-    ],
-  },
-  {
-    key: "lower-body",
-    label: "پایین‌تنه",
-    terms: ["شلوار", "pants", "دامن", "skirt"],
-  },
-  {
-    key: "shoes-accessories",
-    label: "کفش و اکسسوری",
-    terms: [
-      "انواع کفش",
-      "کفش",
-      "shoes",
-      "شال",
-      "shawls-and-scarves",
-      "جوراب",
-      "socks",
-    ],
-  },
-  {
-    key: "mens-clothing",
-    label: "لباس مردانه",
-    terms: [
-      "لباس مردانه",
-      "مردانه",
-      "mens-clothing",
-      "men-clothing",
-      "mens",
-    ],
-  },
-  {
-    key: "other-clothing",
-    label: "سایر لباس‌ها",
-    terms: [
-      "لباس‌های زمستانه",
-      "لباس زمستانه",
-      "winter",
-      "لباس زیر",
-      "under-wear",
-      "راحتی",
-      "house-dress",
-    ],
-  },
-];
-
-const FALLBACK_MOBILE_CATEGORY_GROUP_KEY = "other-clothing";
-
-const normalizeCategoryText = (value: string) =>
-  value
-    .trim()
-    .toLocaleLowerCase("fa-IR")
-    .replace(/\u200c/g, " ")
-    .replace(/\s+/g, " ");
-
-function categoryMatchesGroup(
-  category: ProductCategorySummary,
-  group: MobileCategoryGroupDefinition,
-) {
-  const name = normalizeCategoryText(category.name);
-  const slug = normalizeCategoryText(category.slug);
-
-  return group.terms.some((term) => {
-    const normalizedTerm = normalizeCategoryText(term);
-    return (
-      name === normalizedTerm ||
-      name.includes(normalizedTerm) ||
-      slug === normalizedTerm ||
-      slug.includes(normalizedTerm)
-    );
-  });
-}
-
-function buildMobileCategoryGroups(categories: ProductCategorySummary[]) {
-  const grouped = new Map<string, ProductCategorySummary[]>(
-    MOBILE_CATEGORY_GROUPS.map((group) => [group.key, []]),
-  );
-
-  for (const category of categories) {
-    const matchingGroup =
-      MOBILE_CATEGORY_GROUPS.find((group) => categoryMatchesGroup(category, group)) ??
-      MOBILE_CATEGORY_GROUPS.find((group) => group.key === FALLBACK_MOBILE_CATEGORY_GROUP_KEY);
-
-    if (!matchingGroup) continue;
-    grouped.get(matchingGroup.key)?.push(category);
-  }
-
-  return MOBILE_CATEGORY_GROUPS.map((group) => ({
-    ...group,
-    categories: grouped.get(group.key) ?? [],
-  })).filter((group) => group.categories.length > 0);
-}
 
 function MobileMenuSkeleton() {
   return (
@@ -163,11 +67,38 @@ function MobileMenuSkeleton() {
   );
 }
 
-export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
+function MobileSearchSkeleton() {
+  return (
+    <div className="space-y-2 py-1" dir="rtl">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div key={index} className="flex items-center gap-3 p-3">
+          <div className="skeleton-shimmer h-12 w-12 rounded-xl" />
+          <div className="flex-1 space-y-2">
+            <div className="skeleton-shimmer-light h-3 w-2/3 rounded" />
+            <div className="skeleton-shimmer-light h-3 w-1/3 rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function MobileMenu({ isOpen, onClose }: Props) {
   const pathname = usePathname();
+  const router = useRouter();
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
   const [expandedCategoryId, setExpandedCategoryId] = useState<number | null>(null);
   const [menuState, setMenuState] = useState<"closed" | "open" | "closing">("closed");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const trimmedQuery = searchQuery.trim();
+  const hasQuery = trimmedQuery.length > 0;
+  const isSearchActive = trimmedQuery.length >= 2;
   const { totalItems, openDrawer } = useCart();
   const isCartShellReady = useCartShellReady();
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
@@ -213,8 +144,88 @@ export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
     if (menuState === "closed") {
       setExpandedGroupKey(null);
       setExpandedCategoryId(null);
+      setSearchQuery("");
+      setSuggestions([]);
+      setSearchLoading(false);
+      setSearchError(false);
     }
   }, [menuState]);
+
+  // Debounced inline product search. Mirrors the suggestion fetch used by
+  // MobileSearch (same endpoint, 2-char minimum, 300ms debounce, abortable).
+  useEffect(() => {
+    if (menuState === "closed") return;
+
+    let active = true;
+    const controller = new AbortController();
+    const q = trimmedQuery;
+
+    if (q.length < 2) {
+      setSuggestions([]);
+      setSearchLoading(false);
+      setSearchError(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    setSearchError(false);
+
+    const timer = setTimeout(async () => {
+      try {
+        const url = `${API_BASE_URL}/products/search?q=${encodeURIComponent(q)}&page=1&pageSize=6&view=suggestion&_skip_global_loader=1`;
+        const res = await fetch(url, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (!active) return;
+        const json = await res.json();
+        const items: SearchSuggestion[] = (json?.data || []).map(
+          (i: { id: number; attributes?: Record<string, unknown>; Title?: string }) => {
+            const attrs = (i.attributes ? i.attributes : i) as Record<string, unknown>;
+            const cover = attrs?.CoverImage as
+              | {
+                  url?: string;
+                  formats?: { thumbnail?: { url?: string }; small?: { url?: string } };
+                  data?: { attributes?: { url?: string } };
+                }
+              | undefined;
+            const imagePath =
+              cover?.formats?.thumbnail?.url ??
+              cover?.url ??
+              cover?.data?.attributes?.url ??
+              undefined;
+            return {
+              id: i.id,
+              slug: (attrs?.Slug as string | undefined) ?? undefined,
+              Title: (attrs?.Title as string) ?? i.Title ?? "",
+              Price: (attrs?.Price as number | undefined) ?? undefined,
+              DiscountPrice: (attrs?.DiscountPrice as number | undefined) ?? undefined,
+              Discount: (attrs?.Discount as number | undefined) ?? undefined,
+              category:
+                (attrs?.product_main_category as { Title?: string } | undefined)?.Title ?? undefined,
+              image: imagePath ? `${IMAGE_BASE_URL}${imagePath}` : undefined,
+              isAvailable: (attrs?.IsAvailable as boolean | undefined) ?? true,
+            };
+          },
+        );
+        setSuggestions(items);
+        setSearchError(false);
+      } catch (error) {
+        if (!active || (error as Error)?.name === "AbortError") return;
+        setSuggestions([]);
+        setSearchError(true);
+      } finally {
+        if (active) setSearchLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [trimmedQuery, menuState, retryNonce]);
 
   const requestClose = () => {
     setMenuState("closing");
@@ -232,9 +243,28 @@ export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
     return decodeURI(pathname) === decodeURI(pathOnly);
   };
 
-  const handleSearchClick = () => {
+  const getSearchHref = (term: string) => {
+    const basePath = pathname.startsWith("/plp/category/") ? pathname : "/plp";
+    return `${basePath}?search=${encodeURIComponent(term)}`;
+  };
+
+  const handleSearchSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!isSearchActive) return;
     onClose();
-    window.setTimeout(() => onSearchClick?.(), 0);
+    router.push(getSearchHref(trimmedQuery));
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery("");
+    setSuggestions([]);
+    setSearchError(false);
+    searchInputRef.current?.focus();
+  };
+
+  const handleSuggestionClick = (suggestion: SearchSuggestion) => {
+    onClose();
+    router.push(`/pdp/${suggestion.slug || suggestion.id}`);
   };
 
   const handleCartClick = () => {
@@ -408,6 +438,79 @@ export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
     );
   };
 
+  const renderSearchResults = () => {
+    if (trimmedQuery.length < 2) {
+      return (
+        <div className="px-1 py-6 text-center text-sm text-neutral-400" dir="rtl">
+          حداقل ۲ حرف وارد کنید
+        </div>
+      );
+    }
+
+    if (searchLoading) {
+      return <MobileSearchSkeleton />;
+    }
+
+    if (searchError) {
+      return (
+        <div className="flex flex-col items-center gap-3 px-1 py-6 text-center" dir="rtl">
+          <p className="text-sm text-neutral-500">جستجو با خطا مواجه شد.</p>
+          <button
+            type="button"
+            onClick={() => setRetryNonce((n) => n + 1)}
+            className="pressable rounded-full bg-infinity-primary-lighter/30 px-4 py-2 text-sm font-medium text-infinity-primary-darker transition-colors hover:bg-infinity-primary-lighter/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2"
+          >
+            تلاش دوباره
+          </button>
+        </div>
+      );
+    }
+
+    if (suggestions.length === 0) {
+      return (
+        <div className="px-1 py-6 text-center text-sm text-neutral-500" dir="rtl">
+          موردی یافت نشد
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className="overflow-hidden rounded-2xl border border-stone-100 bg-white"
+        dir="rtl"
+        role="listbox"
+        aria-label="نتایج جستجوی محصولات"
+      >
+        {suggestions.map((suggestion, index) => (
+          <SearchSuggestionCard
+            key={suggestion.id}
+            id={suggestion.id}
+            title={suggestion.Title}
+            price={suggestion.Price}
+            discountPrice={suggestion.DiscountPrice}
+            discount={suggestion.Discount}
+            category={suggestion.category}
+            image={suggestion.image}
+            isAvailable={suggestion.isAvailable}
+            query={trimmedQuery}
+            index={index}
+            onClick={() => handleSuggestionClick(suggestion)}
+          />
+        ))}
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            router.push(getSearchHref(trimmedQuery));
+          }}
+          className="pressable block w-full border-t border-stone-100 bg-transparent px-3 py-2.5 text-right text-xs font-medium text-infinity-primary-dark transition-colors hover:bg-stone-50"
+        >
+          مشاهده همه نتایج
+        </button>
+      </div>
+    );
+  };
+
   if (menuState === "closed") return null;
 
   return (
@@ -433,78 +536,103 @@ export default function MobileMenu({ isOpen, onClose, onSearchClick }: Props) {
           >
             <Dialog.Title className="sr-only">منوی فروشگاه</Dialog.Title>
 
-            <div className="flex min-h-[4.25rem] items-center gap-2 px-5 py-2" dir="ltr">
-              <button
-                type="button"
-                onClick={handleCartClick}
-                className="pressable relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-infinity-primary text-white transition-colors hover:bg-infinity-primary-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                aria-label="Cart"
-              >
-                <ShoppingCartIcon className="h-5 w-5 [&_path]:stroke-white" />
-                {visibleTotalItems > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-infinity-primary-dark px-1 text-[10px] font-medium leading-none text-white">
-                    {visibleTotalItems > 9 ? "9+" : visibleTotalItems}
-                  </span>
-                )}
-              </button>
-
-              <Link
-                href="/orders"
-                onClick={onClose}
-                className="pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-neutral-700 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                dir="rtl"
-              >
-                <OrderTrackingIcon className="h-4 w-4 shrink-0" />
-                <span>پیگیری سفارش</span>
-              </Link>
-
-              <div className="ml-auto flex items-center gap-2">
-                <Link
-                  href="/auth/login"
-                  onClick={onClose}
-                  className="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                  aria-label="Login"
-                >
-                  <UserProfileIcon className="h-4 w-4" />
-                </Link>
-
+            <div className="sticky top-0 z-20 rounded-b-none border-b border-stone-100/80 bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
+              <div className="flex min-h-[4.25rem] items-center gap-2 px-5 py-2" dir="ltr">
                 <button
                   type="button"
-                  onClick={requestClose}
-                  className="pressable flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                  aria-label="Close menu"
+                  onClick={handleCartClick}
+                  className="pressable relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-infinity-primary text-white transition-colors hover:bg-infinity-primary-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                  aria-label="Cart"
                 >
-                  <X className="h-5 w-5" aria-hidden="true" />
+                  <ShoppingCartIcon className="h-5 w-5 [&_path]:stroke-white" />
+                  {visibleTotalItems > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full border border-white bg-infinity-primary-dark px-1 text-[10px] font-medium leading-none text-white">
+                      {visibleTotalItems > 9 ? "9+" : visibleTotalItems}
+                    </span>
+                  )}
                 </button>
+
+                <Link
+                  href="/orders"
+                  onClick={onClose}
+                  className="pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-neutral-700 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                  dir="rtl"
+                >
+                  <OrderTrackingIcon className="h-4 w-4 shrink-0" />
+                  <span>پیگیری سفارش</span>
+                </Link>
+
+                <div className="ml-auto flex items-center gap-2">
+                  <Link
+                    href="/auth/login"
+                    onClick={onClose}
+                    className="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                    aria-label="Login"
+                  >
+                    <UserProfileIcon className="h-4 w-4" />
+                  </Link>
+
+                  <button
+                    type="button"
+                    onClick={requestClose}
+                    className="pressable flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                    aria-label="Close menu"
+                  >
+                    <X className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="px-5 pb-3">
+                <form onSubmit={handleSearchSubmit} className="relative" dir="rtl">
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    inputMode="search"
+                    enterKeyHint="search"
+                    aria-label="جستجوی محصولات"
+                    placeholder="دنبال چی می‌گردی؟"
+                    dir="rtl"
+                    className="h-9 w-full border-b border-stone-100 bg-transparent pl-8 pr-0 text-[16px] leading-6 text-neutral-800 placeholder:text-neutral-400 focus:border-infinity-primary focus:outline-none"
+                  />
+                  {hasQuery ? (
+                    <button
+                      type="button"
+                      onClick={handleClearSearch}
+                      aria-label="پاک کردن جستجو"
+                      className="pressable absolute left-0 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-neutral-400 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary"
+                    >
+                      <X className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  ) : (
+                    <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2">
+                      <Search className="h-5 w-5 text-infinity-primary" aria-hidden="true" />
+                    </span>
+                  )}
+                </form>
               </div>
             </div>
 
-            <div className="px-5 pb-5">
-              <button
-                type="button"
-                onClick={handleSearchClick}
-                className="pressable mb-3 flex h-9 w-full items-center justify-between border-b border-stone-100 bg-white px-0 text-sm text-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-              >
-                <span>دنبال چی می‌گردی؟</span>
-                <Search className="h-5 w-5 text-infinity-primary" aria-hidden="true" />
-              </button>
-
-              <nav
-                className="space-y-2"
-                aria-label="منوی موبایل فروشگاه"
-              >
-                {loading ? (
-                  <MobileMenuSkeleton />
-                ) : (
-                  menuItems.map((item) =>
-                    item.type === "category"
-                      ? renderCategory(item)
-                      : item.type === "category-group"
-                        ? renderCategoryGroup(item)
-                        : renderLink(item),
-                  )
-                )}
-              </nav>
+            <div className="px-5 pb-5 pt-3">
+              {hasQuery ? (
+                renderSearchResults()
+              ) : (
+                <nav className="space-y-2" aria-label="منوی موبایل فروشگاه">
+                  {loading ? (
+                    <MobileMenuSkeleton />
+                  ) : (
+                    menuItems.map((item) =>
+                      item.type === "category"
+                        ? renderCategory(item)
+                        : item.type === "category-group"
+                          ? renderCategoryGroup(item)
+                          : renderLink(item),
+                    )
+                  )}
+                </nav>
+              )}
             </div>
           </div>
         </Dialog.Panel>

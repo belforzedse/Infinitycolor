@@ -1,5 +1,5 @@
 "use client";
-import { use, useEffect, useMemo, useRef } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import SetDetails from "@/components/Product/add/SetCategory/SetCategory";
 import Tabs from "@/components/Kits/Tabs";
 import type { TabItem } from "@/types/Tabs";
@@ -20,6 +20,7 @@ import { useProductTag } from "@/hooks/product/useTag";
 import logger from "@/utils/logger";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import toast from "react-hot-toast";
+import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 
 export default function EditProductsPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -30,6 +31,14 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   const { fetchAllCategories } = useProductCategory();
   const { handleFetchTags } = useProductTag();
   const sizeGuideRef = useRef<SizeGuideHandle | null>(null);
+  // Snapshot of the product as last loaded/saved, used to detect unsaved edits (H3).
+  const savedSnapshotRef = useRef<string | null>(null);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [showDuplicateConfirm, setShowDuplicateConfirm] = useState(false);
+
+  const isDirty = () =>
+    savedSnapshotRef.current !== null &&
+    JSON.stringify(productData) !== savedSnapshotRef.current;
 
   // Redirect editors away from product pages
   useEffect(() => {
@@ -64,7 +73,9 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
       try {
         // Force fresh data fetch - no cache
         const result = await getProduct(id, getProductParams);
-        setProductData(transformToProductData(result.data.attributes));
+        const loaded = transformToProductData(result.data.attributes);
+        setProductData(loaded);
+        savedSnapshotRef.current = JSON.stringify(loaded);
       } catch (error: any) {
         if (process.env.NODE_ENV !== "production") {
           logger.error("error in fetching product", { error });
@@ -80,6 +91,19 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
     fetchAllCategories();
     handleFetchTags();
   }, [fetchAllCategories, handleFetchTags]);
+
+  // Warn before a full page unload (refresh/close/external nav) when there are
+  // unsaved edits. In-app navigation via the Cancel button is guarded separately.
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!isDirty()) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productData]);
 
   const handleUpdateProduct = async () => {
     const loadingToast = toast.loading("در حال ذخیره...");
@@ -102,11 +126,15 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         // Refresh product data to reflect changes (especially for image deletion)
         try {
           const refreshedResult = await getProduct(id, getProductParams);
-          setProductData(transformToProductData(refreshedResult.data.attributes));
+          const refreshed = transformToProductData(refreshedResult.data.attributes);
+          setProductData(refreshed);
+          savedSnapshotRef.current = JSON.stringify(refreshed);
           toast.dismiss(loadingToast);
           toast.success("محصول با موفقیت ذخیره شد");
         } catch (refreshError) {
-          // Even if refresh fails, the update was successful
+          // Even if refresh fails, the update was successful — treat the current
+          // in-memory state as saved so we don't show a false unsaved-changes warning.
+          savedSnapshotRef.current = JSON.stringify(productData);
           toast.dismiss(loadingToast);
           toast.success("محصول با موفقیت ذخیره شد");
           console.error("Error refreshing product data:", refreshError);
@@ -125,6 +153,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   };
 
   const handleDuplicateProduct = async () => {
+    setShowDuplicateConfirm(false);
     try {
       const result = await duplicateProduct(id);
       if (result.success && result.newProductId) {
@@ -133,6 +162,19 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
     } catch (error) {
       console.error("Error duplicating product:", error);
     }
+  };
+
+  const handleCancel = () => {
+    if (isDirty()) {
+      setShowLeaveConfirm(true);
+      return;
+    }
+    router.push("/super-admin/products");
+  };
+
+  const confirmLeave = () => {
+    setShowLeaveConfirm(false);
+    router.push("/super-admin/products");
   };
 
   const isSimpleProduct = productData.ProductType === "Simple";
@@ -158,6 +200,24 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="flex w-full grid-cols-3 flex-col gap-4 pb-32 lg:grid">
+      <ConfirmDialog
+        isOpen={showLeaveConfirm}
+        title="تغییرات ذخیره‌نشده"
+        description="تغییراتی که ذخیره نکرده‌اید از بین می‌رود. آیا می‌خواهید بدون ذخیره خارج شوید؟"
+        confirmText="خروج بدون ذخیره"
+        cancelText="ماندن در صفحه"
+        onConfirm={confirmLeave}
+        onCancel={() => setShowLeaveConfirm(false)}
+      />
+      <ConfirmDialog
+        isOpen={showDuplicateConfirm}
+        title="کپی محصول"
+        description="یک نسخه جدید از این محصول ساخته می‌شود و به صفحه آن منتقل می‌شوید. ادامه می‌دهید؟"
+        confirmText="بله، کپی کن"
+        cancelText="انصراف"
+        onConfirm={handleDuplicateProduct}
+        onCancel={() => setShowDuplicateConfirm(false)}
+      />
       <div className="order-2 flex flex-col gap-4 lg:order-1">
         <IndexPhotoUploader isEditMode />
         {!isSimpleProduct && <PublishAllVariations productId={Number(id)} />}
@@ -181,13 +241,13 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         <div className="pointer-events-auto grid w-full max-w-lg grid-cols-3 gap-2 rounded-3xl border border-slate-200 bg-white/85 px-4 py-2.5 shadow-lg backdrop-blur-lg md:ml-16 md:flex md:w-fit md:max-w-2xl md:items-center md:justify-end md:bg-white/10">
           <button
             className="w-full rounded-xl border-2 border-slate-300 bg-slate-300/40 px-3 py-2 text-sm text-slate-500 hover:bg-slate-300/80 hover:text-slate-800 md:w-fit md:px-5"
-            onClick={() => router.push("/super-admin/products")}
+            onClick={handleCancel}
             data-testid="admin-product-cancel"
           >
             بیخیال شدن
           </button>
           <button
-            onClick={handleDuplicateProduct}
+            onClick={() => setShowDuplicateConfirm(true)}
             className="w-full rounded-xl border-2 border-blue-200 bg-blue-500/10 px-3 py-2 text-sm text-blue-500 hover:bg-blue-500/80 hover:text-white md:w-fit md:px-5"
             data-testid="admin-product-detail-duplicate"
           >

@@ -1,18 +1,19 @@
 "use client";
 
 import ChevronDownIcon from "@/components/Search/Icons/ChevronDownIcon";
+import type { ProductCategorySummary } from "@/services/product/categories";
+import {
+  buildGroupedCategorySections,
+  type GroupedCategoryOption,
+  type GroupedCategorySection,
+} from "@/utils/categoryGroups";
 import { normalizeDigits } from "@/utils/faNum";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-
-interface CategoryOption {
-  id: string | number;
-  title: string;
-}
 
 interface Props {
   title: string;
   value: string;
-  filterOptions: CategoryOption[];
+  categories: ProductCategorySummary[];
   onOptionSelect?: (optionId: string | number) => void;
   isLoading?: boolean;
   placeholder?: string;
@@ -26,33 +27,69 @@ function normalizeForSearch(text: string): string {
 const PLPListFilterCategory = ({
   title,
   value,
-  filterOptions,
+  categories,
   onOptionSelect,
   isLoading = false,
   placeholder = "انتخاب دسته بندی",
 }: Props) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedOption, setSelectedOption] = useState<CategoryOption>(
-    filterOptions[0] || { id: "", title: "" },
-  );
+  const [expandedSectionKeys, setExpandedSectionKeys] = useState<Set<string>>(new Set());
+  const [selectedOptionOverride, setSelectedOptionOverride] =
+    useState<GroupedCategoryOption | null>(null);
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
   const [search, setSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setSelectedOption(
-      filterOptions.find((option) => option.id === value) || {
-        id: "",
-        title: "",
-      },
-    );
-  }, [value, filterOptions]);
+  const sections = useMemo(() => buildGroupedCategorySections(categories), [categories]);
+  const allOptions = useMemo(() => sections.flatMap((section) => section.options), [sections]);
 
-  const visibleOptions = useMemo(() => {
+  const selectedOption = useMemo(
+    () =>
+      selectedOptionOverride ??
+      allOptions.find((option) => option.id === value || String(option.categoryId) === value) ??
+      null,
+    [allOptions, selectedOptionOverride, value],
+  );
+
+  const selectedSectionKey = useMemo(() => {
+    if (!selectedOption) return null;
+    return (
+      sections.find((section) =>
+        section.options.some((option) => option.categoryId === selectedOption.categoryId),
+      )?.key ?? null
+    );
+  }, [sections, selectedOption]);
+
+  const filteredSections = useMemo(() => {
     const q = normalizeForSearch(search);
-    if (!q) return filterOptions;
-    return filterOptions.filter((option) => normalizeForSearch(option.title).includes(q));
-  }, [filterOptions, search]);
+    if (!q) return sections;
+
+    return sections
+      .map((section) => ({
+        ...section,
+        options: section.options.filter((option) => {
+          const searchableText = [option.title, option.parentTitle, section.title]
+            .filter(Boolean)
+            .join(" ");
+          return normalizeForSearch(searchableText).includes(q);
+        }),
+      }))
+      .filter((section) => section.options.length > 0);
+  }, [sections, search]);
+
+  const hasSearch = normalizeForSearch(search).length > 0;
+
+  const visibleOptions = useMemo(
+    () =>
+      filteredSections.flatMap((section) =>
+        hasSearch || expandedSectionKeys.has(section.key) ? section.options : [],
+      ),
+    [expandedSectionKeys, filteredSections, hasSearch],
+  );
+
+  useEffect(() => {
+    setSelectedOptionOverride(null);
+  }, [value, categories]);
 
   // Focus the search box when the dropdown opens for type-ahead.
   useEffect(() => {
@@ -61,14 +98,45 @@ const PLPListFilterCategory = ({
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || sections.length === 0) return;
+
+    setExpandedSectionKeys((current) => {
+      if (current.size > 0) return current;
+      return new Set([selectedSectionKey ?? sections[0].key]);
+    });
+  }, [isOpen, sections, selectedSectionKey]);
+
+  useEffect(() => {
+    if (!selectedSectionKey) return;
+    setExpandedSectionKeys((current) => {
+      if (current.has(selectedSectionKey)) return current;
+      const next = new Set(current);
+      next.add(selectedSectionKey);
+      return next;
+    });
+  }, [selectedSectionKey]);
+
   const closeDropdown = () => {
     setIsOpen(false);
     setFocusedIndex(-1);
     setSearch("");
   };
 
-  const handleOptionClick = (option: CategoryOption) => {
-    setSelectedOption(option);
+  const toggleSection = (section: GroupedCategorySection) => {
+    setExpandedSectionKeys((current) => {
+      const next = new Set(current);
+      if (next.has(section.key)) {
+        next.delete(section.key);
+      } else {
+        next.add(section.key);
+      }
+      return next;
+    });
+  };
+
+  const handleOptionClick = (option: GroupedCategoryOption) => {
+    setSelectedOptionOverride(option);
     onOptionSelect?.(option.id);
     closeDropdown();
   };
@@ -108,7 +176,7 @@ const PLPListFilterCategory = ({
   return (
     <div className="rtl rounded-2xl bg-stone-50 p-4">
       <div className="flex items-center justify-between pb-3">
-        <h3 className="text-primary text-sm">{title}</h3>
+        <h3 className="text-sm text-primary">{title}</h3>
       </div>
 
       <div className="mt-3">
@@ -126,7 +194,6 @@ const PLPListFilterCategory = ({
             ) : selectedOption?.title ? (
               <span className="text-gray-800">{selectedOption.title}</span>
             ) : (
-              // Placeholder shown when no category is selected
               <span className="text-gray-400">{placeholder}</span>
             )}
           </span>
@@ -148,28 +215,74 @@ const PLPListFilterCategory = ({
               onKeyDown={handleSearchKeyDown}
               placeholder="جستجوی دسته بندی"
               aria-label="جستجوی دسته بندی"
-              className="text-xs mb-2 w-full rounded-lg bg-stone-50 px-2 py-1.5 text-right text-gray-800 placeholder:text-gray-400 focus:outline-none"
+              className="mb-2 w-full rounded-lg bg-stone-50 px-2 py-1.5 text-right text-xs text-gray-800 placeholder:text-gray-400 focus:outline-none"
             />
-            {visibleOptions.length === 0 ? (
-              <p className="text-xs px-2 py-1.5 text-right text-gray-400">دسته بندی‌ای یافت نشد</p>
+            {filteredSections.length === 0 ? (
+              <p className="px-2 py-1.5 text-right text-xs text-gray-400">دسته بندی‌ای یافت نشد</p>
             ) : (
-              <ul className="max-h-60 space-y-2 overflow-y-auto" role="listbox" aria-label={title}>
-                {visibleOptions.map((option, idx) => (
-                  <li key={option.id}>
-                    <button
-                      onClick={() => handleOptionClick(option)}
-                      onMouseEnter={() => setFocusedIndex(idx)}
-                      className={`text-xs w-full rounded-lg px-2 py-1.5 text-right transition-colors hover:bg-stone-50 ${
-                        selectedOption.id === option.id ? "text-primary bg-stone-50" : "text-gray-800"
-                      } ${focusedIndex === idx ? "ring-primary/30 ring-2" : ""}`}
-                      role="option"
-                      aria-selected={selectedOption.id === option.id}
-                      tabIndex={-1}
-                    >
-                      {option.title}
-                    </button>
-                  </li>
-                ))}
+              <ul className="max-h-72 space-y-2 overflow-y-auto" role="listbox" aria-label={title}>
+                {filteredSections.map((section) => {
+                  const isExpanded = hasSearch || expandedSectionKeys.has(section.key);
+
+                  return (
+                    <li key={section.key} className="rounded-lg bg-stone-50/70">
+                      <button
+                        type="button"
+                        aria-expanded={isExpanded}
+                        onClick={() => {
+                          if (!hasSearch) toggleSection(section);
+                        }}
+                        className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-right text-xs font-semibold text-gray-800 transition-colors hover:bg-stone-100"
+                      >
+                        <span className="truncate">{section.title}</span>
+                        <ChevronDownIcon
+                          className={`h-5 w-5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                        />
+                      </button>
+
+                      {isExpanded && (
+                        <ul className="space-y-1 px-1 pb-2" role="group" aria-label={section.title}>
+                          {section.options.map((option) => {
+                            const optionIndex = visibleOptions.findIndex(
+                              (item) => item.categoryId === option.categoryId,
+                            );
+                            const isSelected = selectedOption?.categoryId === option.categoryId;
+                            const isFocused = focusedIndex === optionIndex;
+
+                            return (
+                              <li key={option.categoryId}>
+                                <button
+                                  onClick={() => handleOptionClick(option)}
+                                  onMouseEnter={() => setFocusedIndex(optionIndex)}
+                                  className={`w-full rounded-lg px-2 py-1.5 text-right text-xs transition-colors hover:bg-white ${
+                                    isSelected ? "bg-white text-primary" : "text-gray-800"
+                                  } ${isFocused ? "ring-2 ring-primary/30" : ""}`}
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  tabIndex={-1}
+                                >
+                                  <span
+                                    className="block truncate"
+                                    style={{ paddingRight: `${option.depth * 0.75}rem` }}
+                                  >
+                                    {option.title}
+                                  </span>
+                                  {hasSearch && (option.parentTitle || section.title) && (
+                                    <span className="mt-0.5 block truncate text-[10px] text-gray-400">
+                                      {[section.title, option.parentTitle]
+                                        .filter(Boolean)
+                                        .join(" / ")}
+                                    </span>
+                                  )}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

@@ -258,6 +258,45 @@ export function SocialPostCard({
       ? "(max-width: 1024px) 100vw, 383px"
       : "(max-width: 640px) 48vw, (max-width: 1024px) 33vw, 383px"
     : `${widthPx}px`;
+  const mediaShellClassName = clsx(
+    "relative isolate block overflow-hidden rounded-[20px] bg-zinc-100",
+    href &&
+      "cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400/70",
+    mediaClassName,
+  );
+  const mediaAriaLabel =
+    linkAriaLabel ??
+    (imageAlt ? `مشاهده پست ${imageAlt}` : "مشاهده پست");
+  const mediaContent = (
+    <>
+      {isVideoMedia(activeMedia) ? (
+        <video
+          src={activeMedia.url}
+          className="h-full w-full object-cover"
+          muted
+          playsInline
+          preload="metadata"
+          aria-label={activeMedia.alternativeText || imageAlt || "ویدیوی پست"}
+        />
+      ) : (
+        <CardImage
+          src={activeMedia.url || imageSrc}
+          alt={activeMedia.alternativeText || imageAlt}
+          sizes={imageSizes}
+          unoptimized={(activeMedia.url || imageSrc).startsWith("data:")}
+        />
+      )}
+      <div
+        className="pointer-events-none absolute inset-0 rounded-[20px] bg-black/20 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
+        aria-hidden
+      />
+      {overlay != null ? (
+        <div className="pointer-events-none absolute left-3 top-2 z-10">
+          {overlay}
+        </div>
+      ) : null}
+    </>
+  );
 
   return (
     <article
@@ -269,52 +308,22 @@ export function SocialPostCard({
       style={articleStyle}
       data-variant={variant}
     >
-      <div
-        className={clsx(
-          "relative isolate overflow-hidden rounded-[20px] bg-zinc-100",
-          mediaClassName,
-        )}
-        style={mediaStyle}
-      >
-        {href ? (
-          <Link
-            href={href}
-            target={linkTarget}
-            rel={linkRel}
-            className="absolute inset-0 z-[1] rounded-[20px] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400/70"
-            aria-label={
-              linkAriaLabel ??
-              (imageAlt ? `مشاهده پست ${imageAlt}` : "مشاهده پست")
-            }
-          />
-        ) : null}
-        {isVideoMedia(activeMedia) ? (
-          <video
-            src={activeMedia.url}
-            className="h-full w-full object-cover"
-            muted
-            playsInline
-            preload="metadata"
-            aria-label={activeMedia.alternativeText || imageAlt || "ویدیوی پست"}
-          />
-        ) : (
-          <CardImage
-            src={activeMedia.url || imageSrc}
-            alt={activeMedia.alternativeText || imageAlt}
-            sizes={imageSizes}
-            unoptimized={(activeMedia.url || imageSrc).startsWith("data:")}
-          />
-        )}
-        <div
-          className="pointer-events-none absolute inset-0 rounded-[20px] bg-black/20 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
-          aria-hidden
-        />
-        {overlay != null ? (
-          <div className="pointer-events-none absolute left-3 top-2 z-10">
-            {overlay}
-          </div>
-        ) : null}
-      </div>
+      {href ? (
+        <Link
+          href={href}
+          target={linkTarget}
+          rel={linkRel}
+          className={mediaShellClassName}
+          style={mediaStyle}
+          aria-label={mediaAriaLabel}
+        >
+          {mediaContent}
+        </Link>
+      ) : (
+        <div className={mediaShellClassName} style={mediaStyle}>
+          {mediaContent}
+        </div>
+      )}
 
       <div
         dir="ltr"

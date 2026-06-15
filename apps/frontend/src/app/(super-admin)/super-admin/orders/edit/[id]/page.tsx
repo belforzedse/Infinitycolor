@@ -15,6 +15,12 @@ import { ProductCoverImage } from "@/types/Product";
 import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
 import { unwrapCollection, unwrapEntity } from "@/utils/strapi";
 import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
+import { translateOrderStatus } from "@/utils/statusTranslations";
+import ConfirmDialog from "@/components/Kits/ConfirmDialog";
+
+// Status targets that are effectively irreversible (or trigger customer-facing
+// notifications / refunds) and therefore warrant an explicit extra warning.
+const IRREVERSIBLE_STATUSES = new Set(["Shipment", "Done", "Cancelled", "Returned"]);
 
 type OrderResponse = {
   id: string;
@@ -151,6 +157,14 @@ export default function EditOrderPage() {
   const { id } = useParams();
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isPageVisibleRef = useRef(true);
+  // Holds an edit awaiting status-change confirmation (H1). `resolve` lets the
+  // generic upsert wrapper's submit promise settle on confirm or cancel.
+  const [pendingStatusChange, setPendingStatusChange] = useState<{
+    formData: SuperAdminOrderDetail;
+    fromStatus?: string;
+    toStatus?: string;
+    resolve: () => void;
+  } | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -372,6 +386,52 @@ export default function EditOrderPage() {
     };
   }, [id]);
 
+  const performOrderUpdate = async (formData: SuperAdminOrderDetail) => {
+    try {
+      await apiClient.put(`/orders/${id}`, {
+        data: {
+          Status: formData.orderStatus,
+          Description: formData.description,
+          Note: formData.note,
+        },
+      });
+      toast.success("سفارش با موفقیت ویرایش شد");
+      // Reflect the saved status so a subsequent edit compares against fresh data.
+      await load();
+    } catch (err) {
+      toast.error("خطایی رخ داده است");
+    }
+  };
+
+  const handleOrderSubmit = (formData: SuperAdminOrderDetail) => {
+    const fromStatus = data?.orderStatus;
+    const toStatus = formData.orderStatus;
+    const statusChanged = !!toStatus && toStatus !== fromStatus;
+
+    // Any status change is gated behind an explicit confirmation (H1) — it can
+    // trigger customer notifications, refunds, or an irreversible state.
+    if (statusChanged) {
+      return new Promise<void>((resolve) => {
+        setPendingStatusChange({ formData, fromStatus, toStatus, resolve });
+      });
+    }
+    return performOrderUpdate(formData);
+  };
+
+  const confirmStatusChange = async () => {
+    if (!pendingStatusChange) return;
+    const { formData, resolve } = pendingStatusChange;
+    await performOrderUpdate(formData);
+    resolve();
+    setPendingStatusChange(null);
+  };
+
+  const cancelStatusChange = () => {
+    // Settle the submit promise without saving so the wrapper clears its loading state.
+    pendingStatusChange?.resolve();
+    setPendingStatusChange(null);
+  };
+
   if (loading) {
     return <div>Loading...</div>;
   }
@@ -380,28 +440,34 @@ export default function EditOrderPage() {
     return <div>Error: {error}</div>;
   }
 
+  const isIrreversibleTarget = !!pendingStatusChange?.toStatus
+    && IRREVERSIBLE_STATUSES.has(pendingStatusChange.toStatus);
+  const statusChangeDescription = pendingStatusChange
+    ? `وضعیت سفارش از «${translateOrderStatus(pendingStatusChange.fromStatus)}» به «${translateOrderStatus(
+        pendingStatusChange.toStatus,
+      )}» تغییر می‌کند.${
+        isIrreversibleTarget
+          ? " این تغییر ممکن است غیرقابل بازگشت باشد و به مشتری اطلاع‌رسانی شود. لطفاً مطمئن شوید."
+          : ""
+      }`
+    : "";
+
   return (
     <>
       {data && <AdjustItemsPanel order={data} onSuccess={load} />}
+      <ConfirmDialog
+        isOpen={!!pendingStatusChange}
+        title="تغییر وضعیت سفارش"
+        description={statusChangeDescription}
+        confirmText="تایید و ذخیره"
+        cancelText="انصراف"
+        onConfirm={confirmStatusChange}
+        onCancel={cancelStatusChange}
+      />
       <UpsertPageContentWrapper<SuperAdminOrderDetail>
         config={config}
         data={data}
-        onSubmit={async (data) => {
-          apiClient
-            .put(`/orders/${id}`, {
-              data: {
-                Status: data.orderStatus,
-                Description: data.description,
-                Note: data.note,
-              },
-            })
-            .then((res) => {
-              toast.success("سفارش با موفقیت ویرایش شد");
-            })
-            .catch((err) => {
-              toast.error("خطایی رخ داده است");
-            });
-        }}
+        onSubmit={handleOrderSubmit}
         footer={
           <>
             <Footer order={data} onReload={load} />
