@@ -21,14 +21,27 @@ export default function ShippingPage() {
         isRecycleBinOpen={isRecycleBinOpen}
         setIsRecycleBinOpen={setIsRecycleBinOpen}
         apiUrl="/shippings"
+        hasFilterButton
         filterOptions={[
           {
             id: "[Title]",
             title: "عنوان",
+            type: "text",
           },
           {
             id: "[Price]",
             title: "هزینه",
+            type: "number",
+          },
+          {
+            id: "[IsActive]",
+            title: "فعال",
+            type: "boolean",
+          },
+          {
+            id: "[createdAt]",
+            title: "تاریخ ایجاد",
+            type: "date",
           },
         ]}
       >

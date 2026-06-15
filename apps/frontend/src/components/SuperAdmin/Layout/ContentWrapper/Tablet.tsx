@@ -9,6 +9,7 @@ import FilterButton from "./Button/Filter";
 import { apiClient } from "@/services";
 import { refreshTable } from "../../Table";
 import { useAtom } from "jotai";
+import type { AdvancedFilterField } from "@/components/SuperAdmin/Table/advancedFilters";
 
 type Props = {
   children: React.ReactNode;
@@ -24,10 +25,7 @@ type Props = {
   apiUrl?: string;
   isRecycleBinOpen?: boolean;
   setIsRecycleBinOpen?: (isRecycleBinOpen: boolean) => void;
-  filterOptions?: {
-    id: number | string;
-    title: string;
-  }[];
+  filterOptions?: AdvancedFilterField[];
 };
 
 export default function SuperAdminLayoutContentWrapperTablet(props: Props) {
@@ -98,7 +96,7 @@ export default function SuperAdminLayoutContentWrapperTablet(props: Props) {
 
           {hasAddButton && <AddButton text={addButtonText ?? ""} path={addButtonPath ?? "#"} />}
 
-          {hasFilterButton && (
+          {hasFilterButton && !!filterOptions?.length && (
             <FilterButton
               isFilterOpen={isFilterOpen}
               setFilterIsOpen={setFilterIsOpen}

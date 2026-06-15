@@ -4,6 +4,26 @@
  */
 
 import { mockProductVariation } from '../../../__tests__/mocks/factories';
+import { decrementStockAtomic, reserveStockAtomic } from '../../cart/services/lib/stock';
+
+jest.mock('../../../utils/homepageRevalidation', () => ({
+  scheduleHomeProductsRevalidation: jest.fn(),
+}));
+
+/**
+ * Builds a strapi mock that simulates the atomic-stock SQL boundary: `rows` is what the
+ * guarded UPDATE ... RETURNING returns (an empty array means the guard rejected the
+ * mutation), and `stockOnMiss` is the row the fallback findOne returns for the error path.
+ */
+function createStockStrapi(rows: any[], stockOnMiss: any = null) {
+  return {
+    log: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
+    db: {
+      connection: { raw: jest.fn().mockResolvedValue({ rows }) },
+      query: jest.fn(() => ({ findOne: jest.fn().mockResolvedValue(stockOnMiss) })),
+    },
+  } as any;
+}
 
 describe('Product Variations & Stock Management', () => {
   const mockStrapi = global.strapi;
@@ -161,71 +181,33 @@ describe('Product Variations & Stock Management', () => {
     });
   });
 
-  describe('Stock Decrement', () => {
-    it('should decrement stock on successful order', () => {
-      const initialStock = 100;
-      const orderedQuantity = 5;
-      const remainingStock = initialStock - orderedQuantity;
+  describe('Stock Decrement (atomic)', () => {
+    it('decrements stock on a successful order', async () => {
+      const strapi = createStockStrapi([{ count: 95 }]);
 
-      expect(remainingStock).toBe(95);
+      const res = await decrementStockAtomic(strapi, 1, 5);
+
+      expect(res).toEqual({ success: true, newCount: 95 });
     });
 
-    it('should create stock log entry', () => {
-      const stockLog = {
-        product_stock: { id: 1 },
-        Action: 'Decremented',
-        PreviousQuantity: 100,
-        NewQuantity: 95,
-        Quantity: 5,
-        reason: 'Order finalization',
-        order: { id: 100 },
-      };
+    it('prevents decrementing below zero when stock is insufficient', async () => {
+      // The guarded UPDATE matches no row; fallback reports the shortfall.
+      const strapi = createStockStrapi([], { Count: 5, reservedCount: 0 });
 
-      expect(stockLog.PreviousQuantity - stockLog.Quantity).toBe(stockLog.NewQuantity);
-      expect(stockLog.order.id).toBe(100);
+      const res = await decrementStockAtomic(strapi, 1, 10);
+
+      expect(res.success).toBe(false);
+      expect(res.error).toMatch(/Insufficient stock/);
     });
 
-    it('should not double-decrement on duplicate callback', () => {
-      let stock = 100;
-      const callbackId = 'REF-123';
+    it('does not double-decrement on a duplicate callback (second guarded UPDATE is a no-op)', async () => {
+      // First callback decrements; the second finds insufficient remaining and is rejected,
+      // proving the SQL guard (not app bookkeeping) blocks the double decrement.
+      const first = createStockStrapi([{ count: 0 }]);
+      expect((await decrementStockAtomic(first, 1, 5)).success).toBe(true);
 
-      // First callback
-      stock -= 5;
-      expect(stock).toBe(95);
-
-      // Duplicate callback (should be ignored)
-      // stock would remain 95, not decrement again
-      expect(stock).toBe(95);
-    });
-
-    it('should handle decrementing from multiple items', () => {
-      const stocks = [
-        { variation: 1, initial: 100, order: 5 },
-        { variation: 2, initial: 50, order: 10 },
-        { variation: 3, initial: 30, order: 3 },
-      ];
-
-      stocks.forEach((s) => {
-        expect(s.initial - s.order).toBeGreaterThanOrEqual(0);
-      });
-    });
-
-    it('should prevent decrementing if insufficient stock', () => {
-      const stock = 5;
-      const requestedQuantity = 10;
-      const canDecrement = stock >= requestedQuantity;
-
-      expect(canDecrement).toBe(false);
-    });
-
-    it('should rollback stock if order fails', () => {
-      let stock = 100;
-      stock -= 5; // Decrement
-      expect(stock).toBe(95);
-
-      // Order fails
-      stock += 5; // Rollback
-      expect(stock).toBe(100);
+      const second = createStockStrapi([], { Count: 0, reservedCount: 0 });
+      expect((await decrementStockAtomic(second, 1, 5)).success).toBe(false);
     });
   });
 
@@ -305,39 +287,32 @@ describe('Product Variations & Stock Management', () => {
     });
   });
 
-  describe('Stock Validation', () => {
-    it('should validate stock before order placement', () => {
-      const requestedQuantity = 5;
-      const availableStock = 10;
+  describe('Stock Validation / oversell prevention (atomic)', () => {
+    it('reserves stock when availability allows', async () => {
+      const strapi = createStockStrapi([{ reserved_count: 5 }]);
 
-      const isValid = availableStock >= requestedQuantity;
-      expect(isValid).toBe(true);
+      const res = await reserveStockAtomic(strapi, 1, 5);
+
+      expect(res).toEqual({ success: true, newReservedCount: 5 });
     });
 
-    it('should reject order if stock insufficient', () => {
-      const requestedQuantity = 50;
-      const availableStock = 10;
+    it('rejects a reservation that would exceed available stock', async () => {
+      const strapi = createStockStrapi([], { Count: 10, reservedCount: 10 });
 
-      const canFulfill = availableStock >= requestedQuantity;
-      expect(canFulfill).toBe(false);
+      const res = await reserveStockAtomic(strapi, 1, 1);
+
+      expect(res.success).toBe(false);
+      expect(res.error).toMatch(/Insufficient stock for reservation/);
     });
 
-    it('should handle concurrent orders for same variation', () => {
-      const stock = 10;
-      const order1Qty = 5;
-      const order2Qty = 5;
+    it('cannot oversell the last unit between two concurrent buyers', async () => {
+      // Buyer A wins the last unit: guard matches a row.
+      const winner = createStockStrapi([{ reserved_count: 1 }]);
+      expect((await reserveStockAtomic(winner, 1, 1)).success).toBe(true);
 
-      let remaining = stock;
-
-      remaining -= order1Qty;
-      expect(remaining).toBe(5);
-
-      remaining -= order2Qty;
-      expect(remaining).toBe(0);
-
-      // Order 3 would fail
-      const canPlaceOrder3 = remaining >= 1;
-      expect(canPlaceOrder3).toBe(false);
+      // Buyer B loses: the guarded UPDATE (count - reserved_count >= qty) matches nothing.
+      const loser = createStockStrapi([], { Count: 1, reservedCount: 1 });
+      expect((await reserveStockAtomic(loser, 1, 1)).success).toBe(false);
     });
   });
 
@@ -389,25 +364,20 @@ describe('Product Variations & Stock Management', () => {
     });
   });
 
-  describe('Error Handling', () => {
-    it('should handle database errors on stock update', () => {
-      (mockStrapi.db.query as any).mockImplementation(() => ({
-        update: jest.fn().mockRejectedValue(new Error('DB error')),
-      }));
+  describe('Error Handling (atomic)', () => {
+    it('returns a structured failure when the SQL boundary throws', async () => {
+      const strapi = {
+        log: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
+        db: {
+          connection: { raw: jest.fn().mockRejectedValue(new Error('DB error')) },
+          query: jest.fn(() => ({ findOne: jest.fn().mockResolvedValue(null) })),
+        },
+      } as any;
 
-      expect(mockStrapi.db.query).toBeDefined();
-    });
+      const res = await decrementStockAtomic(strapi, 1, 5);
 
-    it('should handle concurrent stock updates', () => {
-      // Race condition: both try to decrement same stock
-      const stock = 10;
-      const attempt1 = stock - 5;
-      const attempt2 = stock - 3;
-
-      // Without proper locking, stock could go negative
-      // Database should prevent this with constraints
-      expect(attempt1).toBeGreaterThanOrEqual(0);
-      expect(attempt2).toBeGreaterThanOrEqual(0);
+      expect(res.success).toBe(false);
+      expect(res.error).toMatch(/Database error: DB error/);
     });
   });
 });

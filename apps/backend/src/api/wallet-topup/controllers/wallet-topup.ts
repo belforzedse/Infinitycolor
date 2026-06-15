@@ -5,10 +5,48 @@
 
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
+import { creditWalletBalanceAtomic } from "../../local-user-wallet/services/local-user-wallet";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
 
 const FRONTEND_BASE =
   process.env.FRONTEND_URL || "https://infinitycolor.co";
+
+const WALLET_TRANSACTION_UID =
+  "api::local-user-wallet-transaction.local-user-wallet-transaction";
+const WALLET_TOPUP_UID = "api::wallet-topup.wallet-topup";
+
+async function findWalletCreditByReference(
+  strapi: Strapi,
+  referenceId: string,
+  trx?: any
+) {
+  if (!referenceId) return null;
+  return strapi.db.query(WALLET_TRANSACTION_UID).findOne({
+    where: { ReferenceId: referenceId },
+    select: ["id"],
+    transacting: trx,
+  } as any);
+}
+
+async function lockWalletTopupForUpdate(strapi: Strapi, topupId: number, trx: any) {
+  const runner = trx?.raw ? trx : strapi.db.connection;
+  const result = await runner.raw(
+    `SELECT id, amount, status, sale_reference_id
+     FROM wallet_topups
+     WHERE id = ?
+     FOR UPDATE`,
+    [topupId]
+  );
+  return (result.rows || [])[0] || null;
+}
+
+function isUniqueConstraintError(error: any) {
+  return (
+    error?.code === "23505" ||
+    /unique|duplicate/i.test(String(error?.message || "")) ||
+    /unique|duplicate/i.test(String(error?.details || ""))
+  );
+}
 
 let lastSaleOrderTimestamp = 0;
 
@@ -108,11 +146,19 @@ export default factories.createCoreController(
 
     async paymentCallback(ctx) {
       const { ResCode, SaleOrderId, SaleReferenceId } = (ctx.request as any).body || {};
+      const saleOrderId = String(SaleOrderId ?? "").trim();
+      const saleReferenceId = String(SaleReferenceId ?? "").trim();
 
       try {
+        if (!saleOrderId) {
+          return ctx.redirect(
+            `${FRONTEND_BASE}/wallet?status=failure&reason=invalid_callback`
+          );
+        }
+
         const topups = (await strapi.entityService.findMany(
-          "api::wallet-topup.wallet-topup",
-          { filters: { SaleOrderId: String(SaleOrderId) }, limit: 1, populate: { user: true } }
+          WALLET_TOPUP_UID,
+          { filters: { SaleOrderId: saleOrderId }, limit: 1, populate: { user: true } }
         )) as any[];
         const topup = topups?.[0];
 
@@ -122,17 +168,13 @@ export default factories.createCoreController(
           );
         }
 
-        if (topup.Status === "Success") {
-          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=success`);
-        }
-
         const paymentService = strapi.service("api::payment-gateway.mellat-v3");
 
         const resCode = String(ResCode ?? "").trim();
         if (resCode !== "0") {
           try {
             await strapi.entityService.update(
-              "api::wallet-topup.wallet-topup",
+              WALLET_TOPUP_UID,
               topup.id,
               { data: { Status: "Failed" } }
             );
@@ -151,22 +193,103 @@ export default factories.createCoreController(
           );
         }
 
-        // Verify transaction - MUST succeed
-        const verifyResult = await paymentService.verifyTransaction({
-          orderId: String(SaleOrderId || ""),
-          saleOrderId: String(SaleOrderId || ""),
-          saleReferenceId: String(SaleReferenceId || ""),
+        if (!saleReferenceId) {
+          return ctx.redirect(
+            `${FRONTEND_BASE}/wallet?status=failure&reason=invalid_callback`
+          );
+        }
+
+        if (await findWalletCreditByReference(strapi, saleReferenceId)) {
+          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=success`);
+        }
+
+        const result = await strapi.db.transaction(async ({ trx }) => {
+          const lockedTopup = await lockWalletTopupForUpdate(strapi, topup.id, trx);
+          if (!lockedTopup) {
+            return { status: "not_found" };
+          }
+
+          if (await findWalletCreditByReference(strapi, saleReferenceId, trx)) {
+            return { status: "success" };
+          }
+
+          const lockedStatus = lockedTopup.status ?? lockedTopup.Status;
+          if (lockedStatus === "Success") {
+            return { status: "success" };
+          }
+
+          const verifyResult = await paymentService.verifyTransaction({
+            orderId: saleOrderId,
+            saleOrderId,
+            saleReferenceId,
+          });
+
+          if (!verifyResult?.success) {
+            return { status: "verify_failed", verifyResult };
+          }
+
+          const settleResult = await paymentService.settleTransaction({
+            orderId: saleOrderId,
+            saleOrderId,
+            saleReferenceId,
+          });
+
+          if (!settleResult?.success) {
+            return { status: "settle_failed", settleResult };
+          }
+
+          const amount = Number(lockedTopup.amount ?? lockedTopup.Amount ?? topup.Amount);
+          const userId = Number(topup.user?.id);
+          const walletResult = await creditWalletBalanceAtomic(
+            strapi,
+            userId,
+            amount,
+            trx
+          );
+
+          if (!walletResult.success || !walletResult.walletId) {
+            throw new Error(walletResult.error || "Failed to credit wallet");
+          }
+
+          await strapi.db.query(WALLET_TRANSACTION_UID).create({
+            data: {
+              Amount: amount,
+              Type: "Add",
+              Date: new Date(),
+              Cause: "Wallet Topup",
+              ReferenceId: saleReferenceId,
+              user_wallet: walletResult.walletId,
+            },
+            transacting: trx,
+          } as any);
+
+          await strapi.db.query(WALLET_TOPUP_UID).update({
+            where: { id: topup.id },
+            data: {
+              Status: "Success",
+              SaleReferenceId: saleReferenceId,
+            },
+            transacting: trx,
+          } as any);
+
+          return { status: "success" };
         });
 
-        if (!verifyResult?.success) {
+        if (result?.status === "not_found") {
+          return ctx.redirect(
+            `${FRONTEND_BASE}/wallet?status=failure&reason=not_found`
+          );
+        }
+
+        if (result?.status === "verify_failed") {
           strapi.log.error("Wallet topup verify failed", {
             topupId: topup.id,
-            saleOrderId: String(SaleOrderId || ""),
-            verifyResult,
+            saleOrderId,
+            verifyResult: result.verifyResult,
           });
           try {
             await strapi.entityService.update(
-              "api::wallet-topup.wallet-topup",
+              WALLET_TOPUP_UID,
               topup.id,
               { data: { Status: "Failed" } }
             );
@@ -181,23 +304,15 @@ export default factories.createCoreController(
           );
         }
 
-        // Settle transaction - MUST succeed
-        const settleResult = await paymentService.settleTransaction({
-          orderId: String(SaleOrderId || ""),
-          saleOrderId: String(SaleOrderId || ""),
-          saleReferenceId: String(SaleReferenceId || ""),
-          allowResCode45Success: true,
-        });
-
-        if (!settleResult?.success) {
+        if (result?.status === "settle_failed") {
           strapi.log.error("Wallet topup settle failed", {
             topupId: topup.id,
-            saleOrderId: String(SaleOrderId || ""),
-            settleResult,
+            saleOrderId,
+            settleResult: result.settleResult,
           });
           try {
             await strapi.entityService.update(
-              "api::wallet-topup.wallet-topup",
+              WALLET_TOPUP_UID,
               topup.id,
               { data: { Status: "Failed" } }
             );
@@ -212,63 +327,16 @@ export default factories.createCoreController(
           );
         }
 
-        // Fetch or create wallet
-        let wallet = await strapi.db
-          .query("api::local-user-wallet.local-user-wallet")
-          .findOne({ where: { user: topup.user.id } });
-
-        if (!wallet) {
-          wallet = await strapi.entityService.create(
-            "api::local-user-wallet.local-user-wallet",
-            { data: { user: topup.user.id, Balance: 0 } }
-          );
-        }
-
-        // Update wallet balance
-        const newBalance = (wallet.Balance || 0) + topup.Amount;
-        await strapi.entityService.update(
-          "api::local-user-wallet.local-user-wallet",
-          wallet.id,
-          { data: { Balance: newBalance, LastTransactionDate: new Date() } }
-        );
-
-        // Create transaction record
-        await strapi.entityService.create(
-          "api::local-user-wallet-transaction.local-user-wallet-transaction",
-          {
-            data: {
-              Amount: topup.Amount,
-              Type: "Add",
-              Date: new Date(),
-              Cause: "Wallet Topup",
-              ReferenceId: String(SaleReferenceId || ""),
-              user_wallet: wallet.id,
-            },
-          }
-        );
-
-        // Mark topup as Success
-        try {
-          await strapi.entityService.update(
-            "api::wallet-topup.wallet-topup",
-            topup.id,
-            {
-              data: {
-                Status: "Success",
-                SaleReferenceId: String(SaleReferenceId || ""),
-              },
-            }
-          );
-        } catch (e) {
-          strapi.log.error("Failed to update wallet topup as Success", {
-            topupId: topup.id,
-            saleOrderId: String(SaleOrderId || ""),
-            error: (e as any)?.message || String(e),
-          });
-        }
-
         return ctx.redirect(`${FRONTEND_BASE}/wallet?status=success`);
       } catch (error) {
+        if (
+          saleReferenceId &&
+          isUniqueConstraintError(error) &&
+          (await findWalletCreditByReference(strapi, saleReferenceId))
+        ) {
+          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=success`);
+        }
+
         return ctx.redirect(
           `${FRONTEND_BASE}/wallet?status=failure&reason=internal`
         );

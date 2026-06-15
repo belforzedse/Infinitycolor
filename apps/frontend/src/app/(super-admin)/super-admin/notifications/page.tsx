@@ -37,13 +37,16 @@ export default function Page() {
     <ContentWrapper
       title="نوتیفیکیشن ها"
       hasRecycleBin
-      hasFilterButton
       hasPagination
       hasAddButton
       addButtonText="ثبت اعلان جدید"
       addButtonPath="/super-admin/notifications/add"
     >
-      <SuperAdminTable columns={columns} data={data} mobileTable={(rows) => <MobileTable data={rows ?? []} />} />
+      <SuperAdminTable
+        columns={columns}
+        data={data}
+        mobileTable={(rows) => <MobileTable data={rows ?? []} />}
+      />
     </ContentWrapper>
   );
 }

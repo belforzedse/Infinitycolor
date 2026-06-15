@@ -13,10 +13,21 @@ export default function CartsPage() {
       hasFilterButton
       hasPagination
       filterOptions={[
-        { id: "[user][user_info][FirstName]", title: "نام فرد" },
-        { id: "[user][user_info][LastName]", title: "نام خانوادگی فرد" },
-        { id: "[user][user_info][Phone]", title: "شماره تماس فرد" },
-        { id: "[createdAt]", title: "تاریخ ایجاد" },
+        { id: "[user][user_info][FirstName]", title: "نام فرد", type: "text" },
+        { id: "[user][user_info][LastName]", title: "نام خانوادگی فرد", type: "text" },
+        { id: "[user][phone]", title: "شماره تماس فرد", type: "text" },
+        {
+          id: "[Status]",
+          title: "وضعیت سبد",
+          type: "select",
+          options: [
+            { id: "Pending", title: "در انتظار" },
+            { id: "Payment", title: "پرداخت" },
+            { id: "Left", title: "رها شده" },
+            { id: "Empty", title: "خالی" },
+          ],
+        },
+        { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
       ]}
     >
       <SuperAdminTable

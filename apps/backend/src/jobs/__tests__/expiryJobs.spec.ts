@@ -143,6 +143,26 @@ describe("expiry jobs", () => {
     expect(contractQuery.update).not.toHaveBeenCalled();
   });
 
+  it("never cancels or logs a paid/consumed order picked up at the boundary", async () => {
+    const { strapi, orderQuery, contractQuery, orderLogQuery } = createMockStrapi();
+    strapi.entityService.findMany.mockResolvedValue([{ id: 12 }]);
+    // releaseOrderReservation reports skipped because the order is no longer "Reserved"
+    // (e.g. it was just paid and consumed) — the guarded transition matched 0 rows.
+    mockedReleaseOrderReservation.mockResolvedValue({ success: true, skipped: true });
+
+    const result = await runExpireStockReservationsTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+      graceSeconds: 0,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.stats.skipped).toBe(1);
+    expect(result.stats.processed).toBe(0);
+    expect(orderQuery.update).not.toHaveBeenCalled();
+    expect(contractQuery.update).not.toHaveBeenCalled();
+    expect(orderLogQuery.create).not.toHaveBeenCalled();
+  });
+
   it("skips overlapping stock-expiry runs in the same process", async () => {
     const { strapi } = createMockStrapi();
     let resolveFindMany: (value: unknown[]) => void = () => undefined;

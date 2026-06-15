@@ -20,11 +20,9 @@ export default function ShippingCitiesPage() {
   const router = useRouter();
 
   useEffect(() => {
-    apiClient
-      .get(`/shipping-provinces?pagination[page]=1&pagination[pageSize]=100`)
-      .then((res) => {
-        setProvinces((res as any).data as Province[]);
-      });
+    apiClient.get(`/shipping-provinces?pagination[page]=1&pagination[pageSize]=100`).then((res) => {
+      setProvinces((res as any).data as Province[]);
+    });
   }, []);
 
   return (
@@ -39,6 +37,17 @@ export default function ShippingCitiesPage() {
           {
             id: "[Title]",
             title: "عنوان",
+            type: "text",
+          },
+          {
+            id: "[Code]",
+            title: "کد شهر",
+            type: "text",
+          },
+          {
+            id: "[createdAt]",
+            title: "تاریخ ایجاد",
+            type: "date",
           },
         ]}
         titleSuffixComponent={

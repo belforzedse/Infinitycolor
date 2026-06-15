@@ -59,9 +59,7 @@ export default function OrdersPage() {
       if (actionId.startsWith("status-")) {
         const statusKey = actionId.replace("status-", "") as OrderLifecycleStatus;
         try {
-          await Promise.all(
-            selectedRows.map((row) => changeOrderStatus(row.id, statusKey)),
-          );
+          await Promise.all(selectedRows.map((row) => changeOrderStatus(row.id, statusKey)));
           toast.success(
             `${selectedRows.length} سفارش به وضعیت ${ORDER_STATUS_LABELS[statusKey]} منتقل شد.`,
           );
@@ -79,16 +77,27 @@ export default function OrdersPage() {
     <ContentWrapper
       title="سفارشات"
       filterOptions={[
-        { id: "[id]", title: "شماره سفارش" },
-        { id: "[contract][Amount]", title: "مبلغ" },
+        { id: "[id]", title: "شماره سفارش", type: "number" },
+        {
+          id: "[Status]",
+          title: "وضعیت سفارش",
+          type: "select",
+          options: ORDER_STATUSES.map((status) => ({
+            id: status,
+            title: ORDER_STATUS_LABELS[status],
+          })),
+        },
+        { id: "[contract][Amount]", title: "مبلغ", type: "number" },
         {
           id: "[contract][external_id]",
           title: "شماره تراکنش (Transaction ID)",
+          type: "text",
         },
-        { id: "[Description]", title: "توضیحات" },
-        { id: "[user][user_info][FirstName]", title: "نام" },
-        { id: "[user][user_info][LastName]", title: "نام خانوادگی" },
-        { id: "[user][Phone]", title: "شماره تلفن" },
+        { id: "[Description]", title: "توضیحات", type: "text" },
+        { id: "[user][user_info][FirstName]", title: "نام", type: "text" },
+        { id: "[user][user_info][LastName]", title: "نام خانوادگی", type: "text" },
+        { id: "[user][phone]", title: "شماره تلفن", type: "text" },
+        { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
       ]}
       hasAddButton
       addButtonText="افزودن سفارش جدید"
@@ -100,7 +109,7 @@ export default function OrdersPage() {
         <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
           <label className="text-sm text-neutral-600">مرتب‌سازی:</label>
           <select
-            className="text-sm h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 sm:w-auto sm:min-w-40"
+            className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 text-sm sm:w-auto sm:min-w-40"
             value={sort}
             onChange={(e) => setSort(e.target.value as "last-edited" | "newest" | "oldest")}
           >
@@ -115,7 +124,7 @@ export default function OrdersPage() {
             <input
               type="text"
               placeholder="جستجو شماره تراکنش اسنپ! پی ..."
-              className="text-sm h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 pr-8"
+              className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 pr-8 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               inputMode="search"
@@ -133,13 +142,13 @@ export default function OrdersPage() {
                 setSearchQuery("");
                 setDebouncedSearchQuery("");
               }}
-              className="text-sm self-start text-neutral-500 hover:text-neutral-700 sm:self-auto"
+              className="self-start text-sm text-neutral-500 hover:text-neutral-700 sm:self-auto"
             >
               پاک کردن
             </button>
           )}
           {debouncedSearchQuery && (
-            <span className="text-xs break-words text-green-600">
+            <span className="break-words text-xs text-green-600">
               نتایج برای: &quot;{debouncedSearchQuery}&quot;
             </span>
           )}
@@ -158,8 +167,7 @@ export default function OrdersPage() {
               : sort === "newest"
                 ? "createdAt:desc"
                 : "createdAt:asc";
-          const base =
-            `/orders?sort[0]=${sortQuery}&populate[0]=user&populate[1]=contract&populate[2]=user.user_info&populate[3]=contract`;
+          const base = `/orders?sort[0]=${sortQuery}&populate[0]=user&populate[1]=contract&populate[2]=user.user_info&populate[3]=contract`;
 
           if (debouncedSearchQuery.trim()) {
             return (

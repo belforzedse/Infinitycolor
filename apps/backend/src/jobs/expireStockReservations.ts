@@ -215,7 +215,7 @@ export async function runExpireStockReservationsTick(
     incrementMetric(strapi, "expire_stock_reservations_failures_total");
   }
 
-  if (consecutiveFailures === MAX_CONSECUTIVE_FAILURES) {
+  if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
     incrementMetric(strapi, "expire_stock_reservations_failure_threshold_total");
     strapi.log.warn("expireStockReservations consecutive failure threshold exceeded", {
       consecutiveFailures,

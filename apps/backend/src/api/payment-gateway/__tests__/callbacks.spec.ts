@@ -1,5 +1,6 @@
 import { verifyPaymentHandler } from "../../order/controllers/helpers/payment";
 import { decrementStockAtomic } from "../../cart/services/lib/stock";
+import { consumeOrderReservation } from "../../../utils/stockReservations";
 
 jest.mock("../../cart/services/lib/stock", () => ({
   decrementStockAtomic: jest.fn().mockResolvedValue({ success: true }),
@@ -632,6 +633,56 @@ describe("verifyPaymentHandler", () => {
     );
     expect(ctx.redirect).toHaveBeenCalledWith(
       "https://infinitycolor.co/payment/failure?orderId=704&error=Authority+invalid",
+    );
+  });
+
+  it("does not finalize a ZarinPal order when the reservation expired before settlement", async () => {
+    const { strapi, registerService, getDbQuery } = createStrapiMock();
+    registerService("api::payment-gateway.zarinpal", {
+      verifyPayment: jest.fn().mockResolvedValue({
+        success: true,
+        alreadyVerified: false,
+        code: 100,
+        refId: "ZP-REF-EXP",
+        gatewayResponse: { data: { code: 100 } },
+      }),
+    });
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: 905,
+        Status: "Pending",
+        Amount: 20_000,
+        contract: { id: 805, Amount: 20_000, order: { id: 705 } },
+      },
+    ]);
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValue({
+      id: 705,
+      Status: "Paying",
+      ReservationStatus: "Reserved",
+      contract: { id: 805, Amount: 20_000 },
+    });
+    // Reservation lapsed and was already released by the expiry job before the callback.
+    (consumeOrderReservation as jest.Mock).mockResolvedValueOnce({
+      success: false,
+      expired: true,
+      errors: [{ error: "Reservation expired" }],
+    });
+
+    const ctx = createCtx({
+      request: { query: { Authority: "AUTH-EXP", Status: "OK" } },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    // Critical: the order must NOT be transitioned to "Started" (the Started write goes
+    // through db.query(...).update inside the finalize transaction).
+    expect(getDbQuery("api::order.order").update).not.toHaveBeenCalled();
+    // The shopper is routed to the issue page, never /payment/success.
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      expect.stringContaining("/payment/issue"),
+    );
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      expect.stringContaining("code=stock_decrement_failed"),
     );
   });
 });

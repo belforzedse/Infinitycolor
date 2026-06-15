@@ -230,6 +230,15 @@ export const createStrapiMock = () => {
     service: jest.fn((uid: string) => serviceMap[uid]),
     db: {
       query: jest.fn((uid: string) => queryMap[uid]),
+      transaction: jest.fn(async (callback: any) => {
+        const trx = {
+          raw: jest.fn().mockResolvedValue({ rows: [] }),
+        };
+        return callback({ trx });
+      }),
+      connection: {
+        raw: jest.fn().mockResolvedValue({ rows: [] }),
+      },
     },
     // Provide strapi.query alias used by controllers
     query: jest.fn((uid: string) => queryMap[uid]),
