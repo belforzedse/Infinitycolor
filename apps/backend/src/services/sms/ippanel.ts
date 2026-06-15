@@ -3,11 +3,20 @@ import { normalizeIranMobile } from "./phone";
 import { maskPhone, maskSecret } from "./redaction";
 import type { SmsNotificationType, SmsPatternParams, SmsSendResult, StrapiSmsLogger } from "./types";
 
+const LEGACY_OTP_API_URL = "https://api2.ippanel.com/api/v1/sms/pattern/normal/send";
+
 export type PatternSmsInput = {
   type: SmsNotificationType;
   phone: string;
   params: SmsPatternParams;
   patternCode?: string;
+  logger?: StrapiSmsLogger;
+  config?: SmsConfig;
+};
+
+export type LegacyOtpSmsInput = {
+  phone: string;
+  code: string | number;
   logger?: StrapiSmsLogger;
   config?: SmsConfig;
 };
@@ -33,6 +42,22 @@ export function buildPatternPayload(input: {
     code: input.patternCode,
     recipients: [input.recipient],
     params: sanitizePatternParams(input.params),
+  };
+}
+
+export function buildLegacyOtpPayload(input: {
+  sender: string;
+  patternCode: string;
+  recipient: string;
+  code: string | number;
+}) {
+  return {
+    recipient: input.recipient,
+    code: input.patternCode,
+    sender: input.sender,
+    variable: {
+      "verification-code": String(input.code),
+    },
   };
 }
 
@@ -144,6 +169,98 @@ export async function sendPatternSms(input: PatternSmsInput): Promise<SmsSendRes
   } catch (error) {
     logger?.warn?.("[sms] IPPanel request failed", {
       type: input.type,
+      recipient: maskPhone(recipient),
+      error: (error as Error)?.name === "AbortError" ? "timeout" : (error as Error)?.message,
+    });
+    return {
+      ok: false,
+      reason: (error as Error)?.name === "AbortError" ? "timeout" : "request_failed",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function sendLegacyOtpSms(input: LegacyOtpSmsInput): Promise<SmsSendResult> {
+  const logger = input.logger;
+  const config = input.config || loadSmsConfig();
+
+  if (!config.enabled) {
+    logger?.debug?.("[sms] skipped OTP because SMS is disabled");
+    return { ok: false, skipped: true, disabled: true, reason: "disabled" };
+  }
+
+  const recipient = normalizeIranMobile(input.phone);
+  if (!recipient) {
+    logger?.warn?.("[sms] skipped invalid OTP recipient", {
+      recipient: maskPhone(input.phone),
+    });
+    return { ok: false, skipped: true, reason: "invalid_phone" };
+  }
+
+  const patternCode = getPatternCode(config, "otp");
+  if (!config.apiKey || !config.sender || !patternCode) {
+    logger?.error?.("[sms] missing legacy IPPanel OTP configuration", {
+      hasApiKey: !!config.apiKey,
+      apiKey: config.apiKey ? maskSecret(config.apiKey) : undefined,
+      hasSender: !!config.sender,
+      hasPatternCode: !!patternCode,
+    });
+    return { ok: false, skipped: true, reason: "missing_config" };
+  }
+
+  const payload = buildLegacyOtpPayload({
+    sender: config.sender,
+    patternCode,
+    recipient,
+    code: input.code,
+  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  try {
+    const response = await fetch(LEGACY_OTP_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apiKey: config.apiKey,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const { raw, parsed } = await parseResponseBody(response);
+    const ok = providerSucceeded(response.status, parsed);
+    const result: SmsSendResult = {
+      ok,
+      status: response.status,
+      messageId: extractMessageId(parsed),
+      providerCode: parsed?.meta?.message_code,
+      providerMessage: parsed?.meta?.message,
+    };
+
+    const logContext = {
+      type: "otp",
+      status: response.status,
+      recipient: maskPhone(recipient),
+      patternCode,
+      messageId: result.messageId,
+      providerCode: result.providerCode,
+      providerMessage: result.providerMessage,
+    };
+
+    if (ok) {
+      logger?.info?.("[sms] IPPanel legacy OTP SMS sent", logContext);
+    } else {
+      logger?.warn?.("[sms] IPPanel legacy OTP SMS failed", {
+        ...logContext,
+        body: parsed || raw.slice(0, 500),
+      });
+    }
+
+    return result;
+  } catch (error) {
+    logger?.warn?.("[sms] IPPanel legacy OTP request failed", {
       recipient: maskPhone(recipient),
       error: (error as Error)?.name === "AbortError" ? "timeout" : (error as Error)?.message,
     });
