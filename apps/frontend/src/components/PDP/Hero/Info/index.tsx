@@ -312,9 +312,11 @@ export default function PDPHeroInfo(props: Props) {
   };
 
   const currentVariation = getCurrentVariation();
-  const showSizeSelector = sizes.length > 1;
+  const showSizeGuide = true;
+  const showSizeSelector = sizes.length > 0;
   const showColorSelector = colors.length > 1;
-  const hasVisibleVariationSelectors = showSizeSelector || showColorSelector || models.length > 0;
+  const hasVisibleVariationSelectors =
+    showSizeGuide || showSizeSelector || showColorSelector || models.length > 0;
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-5 md:max-w-[400px] tablet:max-w-[500px] lg:max-w-[688px]">
@@ -374,13 +376,14 @@ export default function PDPHeroInfo(props: Props) {
           <div className="h-[1px] bg-slate-100" />
 
           <div className="flex flex-col gap-7">
-            {showSizeSelector && (
+            {showSizeGuide && (
               <Size
                 sizes={sizes}
                 onSizeChange={handleSizeChange}
                 selectedSize={selectedSize}
                 disabledSizeIds={disabledSizes}
                 sizeHelper={productData?.attributes?.product_size_helper?.data}
+                showSizeOptions={showSizeSelector}
               />
             )}
 

@@ -109,4 +109,34 @@ describe("PDPHeroInfo selection logic", () => {
     // Expect some UI update, e.g., the Action component has updated props (hard to inspect here), so ensure no crash
     expect(true).toBe(true);
   });
+
+  test("shows size guide button even when product has no sizes", () => {
+    render(
+      <PDPHeroInfo
+        {...baseProps}
+        sizes={[]}
+        colors={[]}
+        models={[]}
+        productData={makeProductData([])}
+      />,
+    );
+
+    expect(screen.getByTestId("pdp-size-guide-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("pdp-size-option")).not.toBeInTheDocument();
+  });
+
+  test("shows size and model selectors when each has one item", () => {
+    render(
+      <PDPHeroInfo
+        {...baseProps}
+        sizes={[{ id: "1", title: "S", variations: [] }]}
+        colors={[]}
+        models={[{ id: "100", title: "A" }]}
+        productData={makeProductData([])}
+      />,
+    );
+
+    expect(screen.getByTestId("pdp-size-option")).toBeInTheDocument();
+    expect(screen.getByTestId("pdp-model-option")).toBeInTheDocument();
+  });
 });
