@@ -69,5 +69,13 @@ export default {
         auth: { scope: [] },
       },
     },
+    {
+      method: "POST",
+      path: "/carts/shipping-options",
+      handler: "cart.shippingOptions",
+      config: {
+        auth: { scope: [] },
+      },
+    },
   ],
 };

@@ -3,7 +3,8 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.spec.ts', '**/__tests__/**/*.test.ts'],
-  testPathIgnorePatterns: ['setup.ts', 'factories.ts'],
+  // Exclude the real-DB integration layer (jest.integration.config.js) and its support files.
+  testPathIgnorePatterns: ['setup.ts', 'factories.ts', '\\.int\\.spec\\.ts$', '/__tests__/integration/'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   coverageProvider: 'v8',
   coverageReporters: ['text', 'json', 'json-summary', 'lcov', 'cobertura'],

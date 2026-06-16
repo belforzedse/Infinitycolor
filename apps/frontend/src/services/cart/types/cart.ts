@@ -114,7 +114,6 @@ export interface UpdateItemRequest {
 
 export interface FinalizeCartRequest {
   shipping?: number;
-  shippingCost?: number;
   description?: string;
   note?: string;
   callbackURL?: string;

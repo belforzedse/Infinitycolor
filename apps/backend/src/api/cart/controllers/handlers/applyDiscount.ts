@@ -2,7 +2,7 @@ import { Strapi } from "@strapi/strapi";
 import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
 export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
-  const { code, shippingId, shippingCost } = ctx.request.body || {};
+  const { code, shippingId, addressId, addressPayload } = ctx.request.body || {};
 
   try {
     const userId = await resolveCustomerTargetUserId(ctx, strapi);
@@ -32,8 +32,17 @@ export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
       subtotal += Number(price) * count;
     }
 
-    // Optional shipping cost to preview total
-    const finalShipping = shippingCost ? Number(shippingCost) : 0;
+    let finalShipping = 0;
+    if (shippingId) {
+      const shippingService = strapi.service("api::shipping.shipping");
+      const selectedShipping = await shippingService.calculateMethodForCart(
+        userId,
+        shippingId,
+        { addressId, addressPayload },
+        { cart }
+      );
+      finalShipping = Number(selectedShipping?.price || 0);
+    }
 
     // Validate the coupon against Discount model
     const matching = await strapi.entityService.findMany(

@@ -16,6 +16,30 @@
       "type": "string",
       "required": true
     },
+    "Code": {
+      "type": "uid",
+      "targetField": "Title"
+    },
+    "Description": {
+      "type": "text"
+    },
+    "SortOrder": {
+      "type": "integer",
+      "default": 0
+    },
+    "EstimatedDeliveryText": {
+      "type": "string"
+    },
+    "Icon": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "Rules": {
+      "type": "json"
+    },
     "Price": {
       "type": "integer",
       "min": 0

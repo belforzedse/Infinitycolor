@@ -2,17 +2,19 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import CategoryCard from "@/components/Categories/CategoryCard";
 import HomeIcon from "./Icons/HomeIcon";
 import CategoryIcon from "./Icons/CategoryIcon";
 import BasketIcon from "./Icons/BasketIcon";
 import ProfileIcon from "./Icons/ProfileIcon";
+import AccountAccessMenu from "@/components/PLP/Header/AccountAccessMenu";
 import { useCart } from "@/contexts/CartContext";
 import { hapticButton } from "@/utils/haptics";
 import { ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS } from "@/constants/categories";
 import { useProductCategories } from "@/hooks/useProductCategories";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 const INFINITY_MARK_SRC = "/Infinity.svg";
 
@@ -68,33 +70,17 @@ function NavTabLink({
 
 const PLPBottomNavigation = () => {
   const pathname = usePathname();
-  const router = useRouter();
   const { totalItems } = useCart();
   const isCartShellReady = useCartShellReady();
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
+  const { isAuthenticated } = useCurrentUser();
   const { categories, isLoading: isLoadingCategories } = useProductCategories({
     mainOnly: true,
     featuredOnly: true,
     allowedNameSubstrings: ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS,
   });
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isCategoriesMounted, setIsCategoriesMounted] = useState(false);
   const [isCategoriesVisible, setIsCategoriesVisible] = useState(false);
-
-  useEffect(() => {
-    const accessToken = localStorage.getItem("accessToken");
-    setIsAuthenticated(!!accessToken);
-  }, []);
-
-  const handleProfileClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault();
-    hapticButton();
-    if (isAuthenticated) {
-      router.push("/account");
-    } else {
-      router.push("/auth");
-    }
-  };
 
   const handleCategoriesClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
@@ -122,7 +108,6 @@ const PLPBottomNavigation = () => {
     };
   }, [isCategoriesMounted]);
 
-  const profileHref = isAuthenticated ? "/account" : "/auth";
   const isHomeActive = pathname === "/";
   const isCartActive = pathname === "/cart";
   const isProfileActive = isAuthenticated
@@ -131,10 +116,7 @@ const PLPBottomNavigation = () => {
 
   return (
     <>
-      <div
-        data-bottom-nav
-        className="pointer-events-none fixed inset-x-0 bottom-0 z-30 lg:hidden"
-      >
+      <div data-bottom-nav className="pointer-events-none fixed inset-x-0 bottom-0 z-30 lg:hidden">
         <div className="pointer-events-auto mx-5 mb-3 pb-[env(safe-area-inset-bottom)]">
           <nav
             aria-label="ناوبری اصلی"
@@ -142,15 +124,24 @@ const PLPBottomNavigation = () => {
             dir="ltr"
           >
             <div className="flex h-16 w-full flex-row items-center justify-between gap-[33px]">
-              <NavTabLink
-                href={profileHref}
-                active={isProfileActive}
-                inactiveIconClassName="text-[#A49BA0]"
-                ariaLabel="حساب کاربری"
-                onClick={handleProfileClick}
-              >
-                <ProfileIcon className="shrink-0 stroke-current" />
-              </NavTabLink>
+              <AccountAccessMenu
+                triggerAriaLabel="Account"
+                triggerClassName={cx(
+                  "flex h-8 w-6 flex-col items-center justify-end gap-2",
+                  isProfileActive ? "text-infinity-primary" : "text-[#A49BA0]",
+                )}
+                triggerContent={
+                  <>
+                    <ProfileIcon className="shrink-0 stroke-current" />
+                    <TabIndicator active={isProfileActive} />
+                  </>
+                }
+                ariaCurrent={isProfileActive ? "page" : undefined}
+                menuPosition="top"
+                menuAlign="center"
+                onNavigate={hapticButton}
+                onTriggerClick={hapticButton}
+              />
 
               <NavTabLink
                 href="/cart"

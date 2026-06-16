@@ -60,5 +60,65 @@ describe("finalizeToOrder handler - inline billing address", () => {
       }),
     });
   });
-});
 
+  it("passes backend-calculated shipping cost to cart finalization", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const finalizeCartToOrder = jest.fn(async () => ({
+      success: false,
+      message: "stop-before-payment",
+    }));
+
+    strapi.entityService.findOne = (jest.fn((uid: string) => {
+      if (uid === "api::shipping.shipping") return { id: 1, Title: "Mock Shipping" };
+      if (uid === "api::local-user-address.local-user-address") {
+        return {
+          id: 5,
+          user: { id: 1 },
+          shipping_city: { id: 10 },
+        };
+      }
+      return null;
+    }) as any);
+
+    registerService("api::shipping.shipping", {
+      calculateMethodForCart: jest.fn(async () => ({
+        id: 1,
+        code: "dynamic-method",
+        title: "Dynamic Method",
+        price: 25000,
+      })),
+    });
+    registerService("api::cart.cart", {
+      finalizeCartToOrder,
+    });
+
+    const handler = finalizeToOrderHandler(strapi as any);
+    const ctx = createCtx({
+      request: {
+        body: {
+          shipping: 1,
+          shippingCost: 999999,
+          addressId: 5,
+        },
+      },
+      state: { user: { id: 1 } },
+    });
+
+    await expect(handler(ctx)).rejects.toMatchObject({
+      status: 400,
+      payload: expect.objectContaining({
+        data: expect.objectContaining({ success: false }),
+      }),
+    });
+
+    expect(finalizeCartToOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        shippingId: 1,
+        shippingCost: 25000,
+        shippingMethodCode: "dynamic-method",
+        shippingMethodTitle: "Dynamic Method",
+      }),
+    );
+  });
+});

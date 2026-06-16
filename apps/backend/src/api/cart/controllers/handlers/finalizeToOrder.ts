@@ -16,7 +16,6 @@ import {
 export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
   const {
     shipping,
-    shippingCost,
     description,
     note,
     callbackURL,
@@ -39,7 +38,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
 
     let resolvedAddressId = addressId;
     let resolvedShippingId = shipping;
-    let resolvedShippingCost = shippingCost;
+    let resolvedShippingCost = 0;
+    let shippingSnapshot: { code?: string; title?: string } = {};
     let reserveOrderData: {
       reserveGroupId: string;
       reserveExpiresAt: Date;
@@ -68,6 +68,10 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       resolvedAddressId = parent.delivery_address?.id ?? parent.delivery_address;
       resolvedShippingId = parent.shipping?.id ?? parent.shipping;
       resolvedShippingCost = 0;
+      shippingSnapshot = {
+        code: parent.ShippingMethodCode || parent.shipping?.Code,
+        title: parent.ShippingMethodTitle || parent.shipping?.Title,
+      };
       reserveOrderData = {
         reserveGroupId: parent.reserveGroupId,
         reserveExpiresAt: new Date(parent.reserveExpiresAt),
@@ -245,9 +249,41 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       }
     }
 
+    if (!reserveOrderData) {
+      try {
+        const shippingService = strapi.service("api::shipping.shipping");
+        const calculatedShipping = await shippingService.calculateMethodForCart(
+          user.id,
+          resolvedShippingId,
+          { addressId: resolvedAddressId }
+        );
+        resolvedShippingCost = Number(calculatedShipping.price || 0);
+        shippingSnapshot = {
+          code: calculatedShipping.code,
+          title: calculatedShipping.title,
+        };
+      } catch (err: any) {
+        strapi.log.warn("Shipping method validation failed during finalize", {
+          userId: user.id,
+          shippingId: resolvedShippingId,
+          addressId: resolvedAddressId,
+          error: err?.message || err,
+        });
+        return ctx.badRequest("Selected shipping method is not available", {
+          data: {
+            success: false,
+            errorCode: err?.message || "INVALID_SHIPPING",
+            message: "Selected shipping method is not available",
+          },
+        });
+      }
+    }
+
     const shippingData: Record<string, unknown> = {
       shippingId: resolvedShippingId,
       shippingCost: resolvedShippingCost,
+      shippingMethodCode: shippingSnapshot.code,
+      shippingMethodTitle: shippingSnapshot.title,
       description,
       note,
       addressId: resolvedAddressId,

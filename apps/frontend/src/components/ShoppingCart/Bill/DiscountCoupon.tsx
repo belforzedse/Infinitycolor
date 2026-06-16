@@ -3,6 +3,7 @@ import Input from "@/components/Kits/Form/Input";
 import GiftIcon from "@/components/ShoppingCart/Icons/GiftIcon";
 import React, { useState } from "react";
 import { CartService } from "@/services";
+import type { ShippingAddressContext } from "@/services/shipping";
 import toast from "react-hot-toast";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 
@@ -18,7 +19,7 @@ type DiscountSummary = {
 type Props = {
   onApplied?: (code: string, preview: { discount: number; summary: DiscountSummary }) => void;
   shippingId?: number;
-  shippingCost?: number;
+  addressContext?: ShippingAddressContext;
   appliedCode?: string;
   onRemove?: () => void;
 };
@@ -26,7 +27,7 @@ type Props = {
 function ShoppingCartBillDiscountCoupon({
   onApplied,
   shippingId,
-  shippingCost,
+  addressContext,
   appliedCode,
   onRemove,
 }: Props) {
@@ -43,7 +44,7 @@ function ShoppingCartBillDiscountCoupon({
       const res = await CartService.applyDiscount({
         code: code.trim(),
         shippingId,
-        shippingCost,
+        ...addressContext,
       });
       if (res?.success) {
         toast.success("کد تخفیف اعمال شد");

@@ -616,6 +616,28 @@ textarea:focus-visible {
   }
 }
 
+@keyframes storefront-account-menu-in {
+  from {
+    clip-path: inset(0 0 22% 0 round 999px);
+    opacity: 0;
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 999px);
+    opacity: 1;
+  }
+}
+
+@keyframes storefront-account-menu-item-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
 @layer utilities {
   /* Tap highlight tint for mobile */
   * {
@@ -688,6 +710,20 @@ textarea:focus-visible {
     animation: storefront-mobile-panel-out 170ms var(--ease-crystal) both;
   }
 
+  .storefront-account-menu {
+    transform-origin: top center;
+    will-change: clip-path, opacity;
+    animation: storefront-account-menu-in 170ms var(--ease-butter) both;
+  }
+
+  .storefront-account-menu-item {
+    animation: storefront-account-menu-item-in 180ms var(--ease-butter) both;
+  }
+
+  .storefront-account-menu-item:nth-child(2) {
+    animation-delay: 35ms;
+  }
+
   .storefront-mobile-category-panel {
     display: grid;
     grid-template-rows: 0fr;
@@ -740,8 +776,11 @@ textarea:focus-visible {
     .storefront-mega-backdrop,
     .storefront-mega-panel,
     .storefront-mobile-menu-backdrop,
-    .storefront-mobile-menu-panel {
+    .storefront-mobile-menu-panel,
+    .storefront-account-menu,
+    .storefront-account-menu-item {
       animation-duration: 1ms !important;
+      animation-delay: 0ms !important;
     }
 
     .storefront-mobile-category-panel,

@@ -12,6 +12,7 @@ import { removeItemHandler } from "./handlers/removeItem";
 import { checkStockHandler } from "./handlers/checkStock";
 import { finalizeToOrderHandler } from "./handlers/finalizeToOrder";
 import { shippingPreviewHandler } from "./handlers/shippingPreview";
+import { shippingOptionsHandler } from "./handlers/shippingOptions";
 
 export default factories.createCoreController(
   "api::cart.cart",
@@ -46,6 +47,10 @@ export default factories.createCoreController(
 
     async shippingPreview(ctx) {
       return shippingPreviewHandler(strapi)(ctx);
+    },
+
+    async shippingOptions(ctx) {
+      return shippingOptionsHandler(strapi)(ctx);
     },
   })
 );

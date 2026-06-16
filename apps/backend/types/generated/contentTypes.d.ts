@@ -1726,6 +1726,8 @@ export interface ApiOrderOrder extends Schema.CollectionType {
         number
       > &
       Attribute.DefaultTo<0>;
+    ShippingMethodCode: Attribute.String;
+    ShippingMethodTitle: Attribute.String;
     ShippingPostPrice: Attribute.Integer &
       Attribute.SetMinMax<
         {
@@ -2998,10 +3000,14 @@ export interface ApiShippingShipping extends Schema.CollectionType {
     draftAndPublish: false;
   };
   attributes: {
+    Code: Attribute.UID<"api::shipping.shipping", "Title">;
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<"api::shipping.shipping", "oneToOne", "admin::user"> &
       Attribute.Private;
+    Description: Attribute.Text;
     discounts: Attribute.Relation<"api::shipping.shipping", "manyToMany", "api::discount.discount">;
+    EstimatedDeliveryText: Attribute.String;
+    Icon: Attribute.Media<"images">;
     IsActive: Attribute.Boolean;
     orders: Attribute.Relation<"api::shipping.shipping", "oneToMany", "api::order.order">;
     Price: Attribute.Integer &
@@ -3012,6 +3018,8 @@ export interface ApiShippingShipping extends Schema.CollectionType {
         number
       >;
     removedAt: Attribute.Date;
+    Rules: Attribute.JSON;
+    SortOrder: Attribute.Integer & Attribute.DefaultTo<0>;
     Title: Attribute.String & Attribute.Required;
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<"api::shipping.shipping", "oneToOne", "admin::user"> &

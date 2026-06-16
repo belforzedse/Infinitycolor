@@ -1,12 +1,12 @@
 import React from "react";
-import type { ShippingMethod } from "@/services/shipping";
+import type { ShippingOption } from "@/services/shipping";
 
 interface CustomRadioGroupProps {
   options: {
     id: string;
     content: React.ReactNode;
     value: string;
-    method?: ShippingMethod;
+    method?: ShippingOption;
   }[];
   value: string;
   onChange: (value: string) => void;

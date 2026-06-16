@@ -90,6 +90,12 @@
       "min": 0,
       "default": 0
     },
+    "ShippingMethodCode": {
+      "type": "string"
+    },
+    "ShippingMethodTitle": {
+      "type": "string"
+    },
     "ShippingBarcode": {
       "type": "string"
     },

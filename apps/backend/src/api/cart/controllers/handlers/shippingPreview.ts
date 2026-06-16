@@ -1,18 +1,44 @@
 import { Strapi } from "@strapi/strapi";
+import { resolveCustomerTargetUserId } from "../../../../utils/roles";
 
-/**
- * Shipping preview calls Anipo which is now fully disabled.
- * Keep the handler but short-circuit so the endpoint does nothing.
- */
 export const shippingPreviewHandler = (strapi: Strapi) => async (ctx: any) => {
-  strapi.log.warn(
-    "[anipo] shipping-preview endpoint disabled (no automatic Anipo lookups)"
-  );
-  ctx.body = {
-    success: true,
-    shipping: null,
-    message: "Shipping preview disabled",
-  };
+  const { shippingId, addressId, addressPayload } = ctx.request.body || {};
+
+  try {
+    const userId = await resolveCustomerTargetUserId(ctx, strapi);
+    if (!userId) return;
+
+    const shippingService = strapi.service("api::shipping.shipping");
+    if (shippingId) {
+      const method = await shippingService.calculateMethodForCart(userId, shippingId, {
+        addressId,
+        addressPayload,
+      });
+      ctx.body = {
+        success: true,
+        shipping: method.price,
+        method,
+      };
+      return;
+    }
+
+    const methods = await shippingService.getAvailableMethodsForCart(userId, {
+      addressId,
+      addressPayload,
+    });
+    ctx.body = {
+      success: true,
+      shipping: null,
+      methods,
+    };
+  } catch (error: any) {
+    return ctx.badRequest("Shipping preview could not be calculated", {
+      data: {
+        success: false,
+        errorCode: error?.message || "SHIPPING_PREVIEW_FAILED",
+      },
+    });
+  }
 };
 
 /*

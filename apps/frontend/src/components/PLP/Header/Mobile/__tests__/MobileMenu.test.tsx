@@ -108,6 +108,10 @@ describe("MobileMenu", () => {
     fireEvent.click(coatButton);
 
     expect(coatButton).toHaveAttribute("aria-expanded", "true");
+    expect(within(upperBodyGroup).getByRole("link", { name: "مشاهده همه مانتو‌ها" })).toHaveAttribute(
+      "href",
+      "/plp/category/coat-and-mantle",
+    );
     expect(within(upperBodyGroup).getByRole("link", { name: "مانتو کتی" })).toHaveAttribute(
       "href",
       "/plp/category/coat-blazer",

@@ -1,3 +1,5 @@
+import EditIcon from "@/components/SuperAdmin/Layout/Icons/EditIcon";
+import SuperAdminTableCellActionButton from "@/components/SuperAdmin/Table/Cells/ActionButton";
 import SuperAdminTableCellFullDate from "@/components/SuperAdmin/Table/Cells/FullDate";
 import RemoveActionButton from "@/components/SuperAdmin/Table/Cells/RemoveActionButton";
 import SuperAdminTableCellSimplePrice from "@/components/SuperAdmin/Table/Cells/SimplePrice";
@@ -6,11 +8,14 @@ import MobileTableRowBox from "@/components/SuperAdmin/Table/Mobile/Row/Box";
 import { priceFormatter } from "@/utils/price";
 import type { ColumnDef } from "@tanstack/react-table";
 
-// This is a sample data type. Modify according to your needs
 export type Shipping = {
   id: string;
   attributes: {
     Title: string;
+    Code?: string;
+    Description?: string;
+    SortOrder?: number;
+    EstimatedDeliveryText?: string;
     Price: number;
     IsActive: boolean;
     removedAt: string | null;
@@ -25,12 +30,24 @@ export const columns: ColumnDef<Shipping>[] = [
     header: "روش ارسال",
   },
   {
+    accessorKey: "attributes.Code",
+    header: "کد",
+  },
+  {
     accessorKey: "attributes.Price",
-    header: "هزینه",
+    header: "هزینه پایه",
     cell: ({ row }) => {
       const price = row.original?.attributes?.Price as number;
       return <SuperAdminTableCellSimplePrice price={price} />;
     },
+  },
+  {
+    accessorKey: "attributes.SortOrder",
+    header: "ترتیب",
+  },
+  {
+    accessorKey: "attributes.EstimatedDeliveryText",
+    header: "زمان تحویل",
   },
   {
     accessorKey: "attributes.createdAt",
@@ -64,16 +81,16 @@ export const columns: ColumnDef<Shipping>[] = [
       return (
         <div className="flex flex-row-reverse items-center gap-3 p-1">
           <RemoveActionButton
-            apiUrl={`/shippings/${row.original?.id}`}
+            apiUrl="/shippings"
             isRemoved={row.original?.attributes?.removedAt !== null}
             id={row.original?.id}
           />
 
-          {/* <SuperAdminTableCellActionButton
+          <SuperAdminTableCellActionButton
             variant="secondary"
             icon={<EditIcon />}
-            path={`/super-admin/shipping/${row.original?.id}`}
-          /> */}
+            path={`/super-admin/shipping/edit/${row.original?.id}`}
+          />
         </div>
       );
     },
@@ -98,15 +115,19 @@ export const MobileTable = ({ data }: Props) => {
             header={
               <>
                 <div className="flex w-full items-center justify-between rounded-[4px] bg-stone-50 px-2 py-1">
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-1">
                     <span className="text-xs text-neutral-400">
                       {priceFormatter(row?.attributes?.Price, "تومان")}
                     </span>
-                    <span className="text-xs text-neutral-400">|</span>
-                    <span className="text-xs text-neutral-400">ارسال سریع</span>
+                    {row?.attributes?.Code && (
+                      <>
+                        <span className="text-xs text-neutral-400">|</span>
+                        <span className="text-xs text-neutral-400">{row.attributes.Code}</span>
+                      </>
+                    )}
                     <span className="text-xs text-neutral-400">|</span>
                     <span className="text-sm text-neutral-800">
-                      فعال در {row?.attributes?.Title}
+                      {row?.attributes?.IsActive ? "فعال" : "غیرفعال"}
                     </span>
                   </div>
 

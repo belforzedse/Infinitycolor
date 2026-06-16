@@ -17,7 +17,7 @@ import { orderIdAtom, orderNumberAtom, submitOrderStepAtom } from "@/atoms/Order
 import { useAtom, useAtomValue } from "jotai";
 import { SubmitOrderStep } from "@/types/Order";
 import { useRouter } from "next/navigation";
-import type { ShippingMethod } from "@/services/shipping";
+import type { ShippingAddressContext, ShippingOption } from "@/services/shipping";
 import { CartService, OrderService } from "@/services";
 import { DEFAULT_CHECKOUT_GATEWAYS, type CheckoutGatewayCode } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
@@ -39,7 +39,7 @@ export type FormData = {
   fullAddress: string;
   addressDescription?: string;
   saveAddress: boolean;
-  shippingMethod: ShippingMethod | null;
+  shippingMethod: ShippingOption | null;
   notes?: string;
 };
 
@@ -118,10 +118,14 @@ function ShoppingCartBillForm({}: Props) {
   const watchFullAddress = watch("fullAddress");
   const watchSaveAddress = watch("saveAddress");
   const shippingId = watchShippingMethod ? Number(watchShippingMethod.id) : undefined;
-  const shippingCost = watchShippingMethod
-    ? Number(watchShippingMethod.attributes?.Price || 0)
-    : undefined;
+  const shippingCost = watchShippingMethod ? Number(watchShippingMethod.price || 0) : undefined;
   const addressId = watchAddress ? Number(watchAddress?.id) : undefined;
+  const shippingAddressContext = useMemo<ShippingAddressContext | undefined>(() => {
+    if (addressId) return { addressId };
+    const inlineCityId = watchCity?.id ? Number(watchCity.id) : undefined;
+    if (inlineCityId) return { addressPayload: { shipping_city: inlineCityId } };
+    return undefined;
+  }, [addressId, watchCity?.id]);
 
   // Gateway selection state
   const [gateway, setGateway] = useState<CheckoutGatewayCode>("samankish");
@@ -252,7 +256,7 @@ function ShoppingCartBillForm({}: Props) {
         const res = await CartService.applyDiscount({
           code: discountCode,
           shippingId,
-          shippingCost,
+          ...shippingAddressContext,
         });
         if (res?.success) {
           setDiscountPreview({ discount: res.discount, summary: res.summary });
@@ -272,7 +276,7 @@ function ShoppingCartBillForm({}: Props) {
       }
     };
     run();
-  }, [discountCode, shippingId, shippingCost]);
+  }, [discountCode, shippingId, shippingAddressContext]);
 
   // Re-check SnappPay eligibility when shipping, discount, or merge choice changes
   // In merge mode we don't have shippingId (shipping comes from parent order), so allow eligibility check by amount only
@@ -493,7 +497,6 @@ function ShoppingCartBillForm({}: Props) {
           }
         : {
             shipping: Number(data.shippingMethod!.id),
-            shippingCost: Number(data.shippingMethod!.attributes.Price),
             note: data.notes || undefined,
             callbackURL: "/orders/payment-callback",
             addressId: selectedAddressId,
@@ -858,6 +861,7 @@ function ShoppingCartBillForm({}: Props) {
                 discountPreview={discountPreview}
                 discountCode={discountCode}
                 previewLoading={discountPreviewLoading}
+                addressContext={shippingAddressContext}
               />
               {(mergeChoice === "new" || !activeReserve) && (
                 <ReserveShipping checked={reserveShipping} onChange={setReserveShipping} />
@@ -866,9 +870,7 @@ function ShoppingCartBillForm({}: Props) {
           )}
           <ShoppingCartBillDiscountCoupon
             shippingId={watchShippingMethod ? Number(watchShippingMethod.id) : undefined}
-            shippingCost={
-              watchShippingMethod ? Number(watchShippingMethod.attributes?.Price || 0) : undefined
-            }
+            addressContext={shippingAddressContext}
             onApplied={(code, preview) => {
               setDiscountCode(code);
               setDiscountPreview(preview);

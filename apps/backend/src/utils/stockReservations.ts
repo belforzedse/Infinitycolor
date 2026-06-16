@@ -155,7 +155,14 @@ const transitionReservationStatus = async (
   const bindings: any[] = [next, orderId];
 
   if (requireNotExpired) {
-    clauses.push("reserved_until >= NOW()");
+    // Compare against a bound JS Date, NOT SQL NOW(). `reserved_until` is a Strapi
+    // `datetime` → pg `timestamp without time zone` (naive), while NOW() is
+    // `timestamptz`; `reserved_until >= NOW()` forces a session-timezone-dependent
+    // implicit cast that misclassifies near-boundary values. A bound Date is
+    // serialized the same way the value was written (and matches how the expiry
+    // job filters with entityService `$lt`), making the comparison tz-consistent.
+    clauses.push("reserved_until >= ?");
+    bindings.push(new Date());
   }
   if (options?.requireOrderStatus) {
     clauses.push("status = ?");

@@ -13,6 +13,9 @@ const fs = require('fs');
 const http = require('http');
 const EventEmitter = require('events');
 const axios = require('axios');
+const { spawn } = require('child_process');
+const { ENV_CONFIG } = require('../woocommerce-importer/catalog/config');
+const { CatalogRunStore, RESUMABLE_STATUSES } = require('../woocommerce-importer/catalog/lib/runStore');
 
 // Create app
 const app = express();
@@ -25,6 +28,7 @@ let clients = [];
 // Event emitter for import events
 class ImportEventBus extends EventEmitter {}
 const importEvents = new ImportEventBus();
+const activeCatalogResumes = new Set();
 
 // Import history storage
 const HISTORY_FILE = path.join(__dirname, '../import-tracking/dashboard-history.json');
@@ -71,6 +75,16 @@ function getImportHistory() {
   } catch (error) {
     return [];
   }
+}
+
+function catalogRunStoreForEnv(environment = 'local') {
+  const envConfig = ENV_CONFIG[environment];
+  if (!envConfig) {
+    const error = new Error(`Unknown environment: ${environment}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return new CatalogRunStore(path.resolve(__dirname, '../woocommerce-importer', envConfig.trackingDir));
 }
 
 // Middleware
@@ -255,6 +269,98 @@ app.get('/api/stats', (req, res) => {
     lastImport: history[0]?.timestamp || null
   };
   res.json(stats);
+});
+
+app.get('/api/catalog/runs', (req, res) => {
+  try {
+    const environment = req.query.env || 'local';
+    const store = catalogRunStoreForEnv(environment);
+    const statuses = req.query.resumable === 'true' ? Array.from(RESUMABLE_STATUSES) : undefined;
+    const limit = Number.parseInt(req.query.limit || '50', 10);
+    res.json({
+      environment,
+      runs: store.listRuns({ statuses }).slice(0, Number.isFinite(limit) ? limit : 50),
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+app.get('/api/catalog/runs/:runId', (req, res) => {
+  try {
+    const environment = req.query.env || 'local';
+    const store = catalogRunStoreForEnv(environment);
+    res.json(store.getRun(req.params.runId));
+  } catch (error) {
+    res.status(error.statusCode || 404).json({ error: error.message });
+  }
+});
+
+app.post('/api/catalog/runs/:runId/cancel', (req, res) => {
+  try {
+    const environment = req.query.env || req.body?.env || 'local';
+    const store = catalogRunStoreForEnv(environment);
+    const run = store.requestCancel(req.params.runId);
+    broadcastEvent({ type: 'catalog:cancel-requested', runId: req.params.runId, environment, timestamp: new Date().toISOString() });
+    res.json(store.summarize(run));
+  } catch (error) {
+    res.status(error.statusCode || 404).json({ error: error.message });
+  }
+});
+
+app.post('/api/catalog/runs/:runId/pause', (req, res) => {
+  try {
+    const environment = req.query.env || req.body?.env || 'local';
+    const store = catalogRunStoreForEnv(environment);
+    const run = store.requestPause(req.params.runId);
+    broadcastEvent({ type: 'catalog:pause-requested', runId: req.params.runId, environment, timestamp: new Date().toISOString() });
+    res.json(store.summarize(run));
+  } catch (error) {
+    res.status(error.statusCode || 404).json({ error: error.message });
+  }
+});
+
+app.post('/api/catalog/runs/:runId/resume', (req, res) => {
+  const environment = req.query.env || req.body?.env || 'local';
+  const retryFailed = req.query.retryFailed === 'true' || req.body?.retryFailed !== false;
+  const key = `${environment}:${req.params.runId}`;
+  if (activeCatalogResumes.has(key)) {
+    return res.status(409).json({ error: 'Resume already active for this run' });
+  }
+
+  try {
+    catalogRunStoreForEnv(environment).getRun(req.params.runId);
+    activeCatalogResumes.add(key);
+    const cliPath = path.resolve(__dirname, '../woocommerce-importer/catalog/cli.js');
+    const args = [cliPath, 'resume', req.params.runId, '--env', environment];
+    if (retryFailed) args.push('--retry-failed');
+    const child = spawn(process.execPath, args, {
+      cwd: path.resolve(__dirname, '../woocommerce-importer'),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    broadcastEvent({ type: 'catalog:resume-started', runId: req.params.runId, environment, pid: child.pid, timestamp: new Date().toISOString() });
+    child.stdout.on('data', (chunk) => {
+      broadcastEvent({ type: 'catalog:log', stream: 'stdout', runId: req.params.runId, message: chunk.toString(), timestamp: new Date().toISOString() });
+    });
+    child.stderr.on('data', (chunk) => {
+      broadcastEvent({ type: 'catalog:log', stream: 'stderr', runId: req.params.runId, message: chunk.toString(), timestamp: new Date().toISOString() });
+    });
+    child.on('close', (code) => {
+      activeCatalogResumes.delete(key);
+      broadcastEvent({ type: 'catalog:resume-finished', runId: req.params.runId, environment, code, timestamp: new Date().toISOString() });
+    });
+    child.on('error', (error) => {
+      activeCatalogResumes.delete(key);
+      broadcastEvent({ type: 'catalog:resume-error', runId: req.params.runId, environment, error: error.message, timestamp: new Date().toISOString() });
+    });
+
+    res.json({ status: 'resume started', runId: req.params.runId, environment, pid: child.pid });
+  } catch (error) {
+    activeCatalogResumes.delete(key);
+    res.status(error.statusCode || 404).json({ error: error.message });
+  }
 });
 
 // Serve index.html for all other routes (SPA)

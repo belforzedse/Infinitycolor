@@ -160,6 +160,7 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
           "applyDiscount",
           "finalizeToOrder",
           "shippingPreview",
+          "shippingOptions",
         ],
       },
       "api::product-like": {
@@ -673,6 +674,16 @@ export default {
           },
         });
       }
+    }
+
+    // Opt-in escape hatch for integration tests: skip the idempotent app-level
+    // seeding (Iran locations, role/permission assignment, settings/identity/FAQ,
+    // category migrations) and background jobs. These are safe to skip in a fresh
+    // test DB and dominate boot time (~minutes of per-role permission writes).
+    // Default (unset) behavior is unchanged in dev/staging/production.
+    if (process.env.SKIP_BOOTSTRAP_SEED === "true") {
+      strapi.log.info("SKIP_BOOTSTRAP_SEED=true — skipping app seeding/jobs (test mode)");
+      return;
     }
 
     ensureIranLocations(strapi).catch((err) => {

@@ -9,6 +9,7 @@ import PageContainer from "@/components/layout/PageContainer";
 import { normalizeUserInfo, type ProductReview } from "@/services/product/product-review.service";
 import Link from "next/link";
 import type { Metadata } from "next";
+import { cache } from "react";
 import { IMAGE_BASE_URL, ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
 import { SITE_NAME } from "@/config/site";
 import logger from "@/utils/logger";
@@ -23,6 +24,8 @@ import {
   getRelatedProductsByOtherCategories,
 } from "@/services/product/product";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
+
+const PDP_REVALIDATE_SECONDS = 30;
 
 type ProductLookupResult = {
   product: ProductDetail | null;
@@ -202,6 +205,10 @@ const fetchPdpProduct = async (
   return { product: normalizeProductDetail(data?.data), errorDetails: { endpoint: apiUrl } };
 };
 
+const getCachedPdpProduct = cache((decodedSlug: string) =>
+  fetchPdpProduct(decodedSlug, PDP_REVALIDATE_SECONDS),
+);
+
 /**
  * Generate static params for popular products to pre-render at build time
  * Pre-generates top 200 products (newest, highest rated)
@@ -282,7 +289,7 @@ export async function generateMetadata({
   const requestedUrl = `${SITE_URL}/pdp/${slug}`;
 
   try {
-    const lookup = await fetchPdpProduct(decodedSlug, 3600);
+    const lookup = await getCachedPdpProduct(decodedSlug);
     if (lookup.product && isActiveProduct(lookup.product)) {
       product = lookup.product;
     } else if (lookup.errorDetails?.status) {
@@ -430,7 +437,7 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
       hasApiBaseUrl: !!strapiBaseUrl,
     });
 
-    const lookup = await fetchPdpProduct(decodedSlug, 30);
+    const lookup = await getCachedPdpProduct(decodedSlug);
     errorDetails = {
       ...errorDetails,
       ...lookup.errorDetails,
