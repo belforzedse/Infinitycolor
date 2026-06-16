@@ -8,7 +8,7 @@ import { NuqsAdapter } from "nuqs/adapters/next";
 import { CartProvider } from "@/contexts/CartContext";
 import Providers from "./Providers";
 import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts";
-import { DebugPanel } from "@/components/Debug";
+import DevOnlyDebugPanel from "@/components/Debug/DevOnlyDebugPanel";
 import { NavigationProgress } from "@repo/ui/navigation-progress";
 import { OrganizationSchema } from "@/components/SEO/OrganizationSchema";
 import { IMAGE_BASE_URL } from "@/constants/api";
@@ -205,7 +205,7 @@ export default async function RootLayout({
             style: { zIndex: 2147483647 },
           }}
         />
-        <DebugPanel />
+        <DevOnlyDebugPanel />
       </body>
     </html>
   );
