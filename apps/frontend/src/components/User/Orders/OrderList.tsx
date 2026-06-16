@@ -139,7 +139,7 @@ export default function OrderList({ className = "" }: OrderListProps) {
           <div className="mt-4 border-t border-gray-200 pt-4">
             <div className="text-sm mb-2 flex justify-between">
               <span>روش ارسال:</span>
-              <span>{order.shipping.Title}</span>
+              <span>{order.ShippingMethodTitle || order.shipping?.Title || "روش ارسال ثبت نشده"}</span>
             </div>
             <div className="text-sm mb-2 flex justify-between">
               <span>هزینه ارسال:</span>

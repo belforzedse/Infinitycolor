@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { CatalogEngine, sortCategoriesByHierarchy } = require("../engine");
+const { CatalogRunStore } = require("../lib/runStore");
 const products = require("../fixtures/products.json");
 const variations = require("../fixtures/variations.json");
 
@@ -225,4 +226,159 @@ test("onlyExisting scopes skip entities that were never imported", async () => {
   const report = await engine.runSync({ scope: "stock" });
   assert.equal(engine._calls.stockUpserts.length, 0);
   assert.equal(report.entities.products.skipped, 3); // all products skipped (not imported)
+});
+
+test("sync can start after a Woo external id for old-run continuation", async () => {
+  const engine = makeEngine({ products: [products[0], products[1]] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+
+  const report = await engine.runSync({
+    scope: "no-media",
+    startAfterExternalId: products[0].id,
+    runStore: store,
+    runId: "tracked-start-after",
+  });
+
+  const productUpserts = engine._calls.upserts.filter((call) => call.endpoint === "/products");
+  assert.equal(report.entities.products.skipped, 1);
+  assert.equal(report.entities.products.created, 1);
+  assert.deepEqual(productUpserts.map((call) => call.externalId), [String(products[1].id)]);
+  assert.equal(store.getRun("tracked-start-after").options.startAfterExternalId, products[0].id);
+});
+
+test("tracked sync: records a completed run with per-item state", async () => {
+  const engine = makeEngine({ products: [products[0]] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+
+  const report = await engine.runSync({ scope: "no-media", runStore: store, runId: "tracked-success" });
+  const run = store.getRun("tracked-success");
+
+  assert.equal(report.hasFailures(), false);
+  assert.equal(run.status, "completed");
+  assert.equal(run.items["category:5"].status, "completed");
+  assert.equal(run.items["product:101"].status, "completed");
+  assert.equal(run.items["variation:201"].status, "completed");
+  assert.equal(run.items["stock:201"].status, "completed");
+  assert.equal(run.totals.failedItems, 0);
+});
+
+test("tracked categories: interrupted run resumes without reprocessing completed items", async () => {
+  const engine = makeEngine({ products: [] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+  let checks = 0;
+
+  await assert.rejects(
+    () => engine.runSync({
+      scope: "categories",
+      runStore: store,
+      runId: "tracked-interrupted",
+      shouldCancel: async () => {
+        checks += 1;
+        return checks > 1;
+      },
+    }),
+    /cancel/,
+  );
+
+  const interrupted = store.getRun("tracked-interrupted");
+  assert.equal(interrupted.status, "cancelled");
+  assert.equal(interrupted.items["category:5"].status, "completed");
+  assert.equal(engine._calls.upserts.filter((call) => call.endpoint === "/product-categories").length, 1);
+
+  const resumed = makeEngine({ products: [] });
+  resumed.config.duplicateTracking.storageDir = engine.config.duplicateTracking.storageDir;
+  resumed.config.catalog.trackingDirAbs = engine.config.catalog.trackingDirAbs;
+  await resumed.runSync({ runStore: store, runId: "tracked-interrupted", resume: true });
+
+  const categoryUpserts = resumed._calls.upserts.filter((call) => call.endpoint === "/product-categories");
+  assert.equal(categoryUpserts.length, 1);
+  assert.equal(categoryUpserts[0].externalId, "9");
+  assert.equal(store.getRun("tracked-interrupted").status, "completed");
+});
+
+test("tracked sync: failed rows are inspectable and retryFailed retries them", async () => {
+  const brokenProduct = { ...products[2], price: "", regular_price: "", sale_price: "" };
+  const fixedProduct = { ...products[2], price: "120000", regular_price: "120000" };
+  const engine = makeEngine({ products: [brokenProduct] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+
+  const first = await engine.runSync({ scope: "no-media", runStore: store, runId: "tracked-retry" });
+  assert.equal(first.hasFailures(), true);
+  assert.equal(store.getRun("tracked-retry").status, "resumable");
+  assert.equal(store.getRun("tracked-retry").items["variation:103"].status, "failed");
+
+  const retryEngine = makeEngine({ products: [fixedProduct] });
+  retryEngine.config.duplicateTracking.storageDir = engine.config.duplicateTracking.storageDir;
+  retryEngine.config.catalog.trackingDirAbs = engine.config.catalog.trackingDirAbs;
+  const second = await retryEngine.runSync({
+    runStore: store,
+    runId: "tracked-retry",
+    resume: true,
+    retryFailed: true,
+  });
+
+  assert.equal(second.hasFailures(), false);
+  assert.equal(store.getRun("tracked-retry").items["variation:103"].status, "completed");
+  assert.equal(store.getRun("tracked-retry").status, "completed");
+});
+
+test("tracked sync: duplicate source rows are skipped by stable product key", async () => {
+  const engine = makeEngine({ products: [products[0], products[0]] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+
+  const report = await engine.runSync({ scope: "no-media", runStore: store, runId: "tracked-duplicates" });
+
+  assert.equal(report.entities.products.created, 1);
+  assert.equal(report.entities.products.skipped, 1);
+  assert.equal(engine._calls.upserts.filter((call) => call.endpoint === "/products").length, 1);
+});
+
+test("tracked sync: concurrent lock protection rejects a second worker", () => {
+  const engine = makeEngine({ products: [] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+  store.createRun({
+    runId: "tracked-lock",
+    command: "sync:categories",
+    environment: "local",
+    strapiBaseUrl: "http://localhost:1337/api",
+    options: { scope: "categories", dryRun: false, limit: "all" },
+  });
+  const token = store.acquireLock("tracked-lock");
+
+  assert.throws(() => store.acquireLock("tracked-lock"), /already locked/);
+  store.releaseLock("tracked-lock", token);
+});
+
+test("tracked sync: stale running locks are treated as resumable", () => {
+  const engine = makeEngine({ products: [] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs, { lockStaleMs: 1 });
+  store.createRun({
+    runId: "tracked-stale-running",
+    command: "sync:no-media",
+    environment: "local",
+    strapiBaseUrl: "http://localhost:1337/api",
+    options: { scope: "no-media", dryRun: false, limit: "all" },
+  });
+  const token = store.acquireLock("tracked-stale-running");
+  store.updateRun("tracked-stale-running", (run) => {
+    run.lock.heartbeatAt = "2000-01-01T00:00:00.000Z";
+    return run;
+  });
+
+  assert.equal(store.isResumable(store.getRun("tracked-stale-running")), true);
+  assert.ok(store.listRuns({ statuses: ["resumable"] }).some((run) => run.id === "tracked-stale-running"));
+  store.releaseLock("tracked-stale-running", token);
+});
+
+test("tracked sync: validation errors mark item failed without killing the run", async () => {
+  const engine = makeEngine({ products: [{ ...products[0], id: 999, name: "" }] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+
+  const report = await engine.runSync({ scope: "no-media", runStore: store, runId: "tracked-validation" });
+  const run = store.getRun("tracked-validation");
+
+  assert.equal(report.entities.products.failed, 1);
+  assert.equal(run.status, "resumable");
+  assert.equal(run.items["product:999"].status, "failed");
+  assert.match(run.items["product:999"].error, /missing name/);
 });

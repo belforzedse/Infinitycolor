@@ -3,7 +3,7 @@ import Link from "next/link";
 import ShoppingCartIcon from "@/components/PLP/Icons/ShoppingCartIcon";
 import WalletIcon from "@/components/PLP/Icons/WalletIcon";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
-import UserProfileIcon from "@/components/PLP/Icons/UserProfileIcon";
+import AccountAccessMenu from "@/components/PLP/Header/AccountAccessMenu";
 import { useCart } from "@/contexts/CartContext";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
 
@@ -55,13 +55,12 @@ const PLPDesktopHeaderActions = ({}: Props) => {
 
       <div className="h-[20.5px] w-px bg-slate-200" aria-hidden />
 
-      <Link
-        href="/auth/login"
-        aria-label="ورود"
-        className="pressable text-slate-400 transition-all duration-200 hover:scale-105 hover:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-95"
-      >
-        <UserProfileIcon className="h-6 w-6" />
-      </Link>
+      <AccountAccessMenu
+        triggerAriaLabel="Account"
+        triggerClassName="pressable text-slate-400 transition-all duration-200 hover:scale-105 hover:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-95"
+        triggerIconClassName="h-6 w-6"
+        menuAlign="center"
+      />
     </div>
   );
 };

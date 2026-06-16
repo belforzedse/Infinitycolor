@@ -68,7 +68,10 @@ describe("consumeOrderReservation", () => {
     expect(mockedConsume).toHaveBeenCalledWith(strapi, 5, 2, trx);
     // The transition only fires for a still-reserved, not-yet-expired order.
     expect(trx.raw.mock.calls[0][0]).toMatch(/reservation_status = 'Reserved'/);
-    expect(trx.raw.mock.calls[0][0]).toMatch(/reserved_until >= NOW\(\)/);
+    // Not-yet-expired guard is bound as a JS Date (tz-safe), not SQL NOW():
+    // `reserved_until` is a pg `timestamp` (no tz) and NOW() is timestamptz.
+    expect(trx.raw.mock.calls[0][0]).toMatch(/reserved_until >= \?/);
+    expect(trx.raw.mock.calls[0][1].some((b: unknown) => b instanceof Date)).toBe(true);
   });
 
   it("refuses and reports expired when the reservation already lapsed (success after expiry)", async () => {

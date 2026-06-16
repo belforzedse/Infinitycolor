@@ -36,6 +36,28 @@ test("buildCustomRunOpts parses numeric limits", () => {
   assert.equal(opts.skipMedia, true);
 });
 
+test("buildCustomRunOpts parses start-after external id", () => {
+  const { buildCustomRunOpts } = require("../tui");
+  const opts = buildCustomRunOpts({
+    scope: "no-media",
+    dryRun: "n",
+    skipMedia: "n",
+    limit: "",
+    startAfterExternalId: "1218153",
+  });
+  assert.equal(opts.startAfterExternalId, 1218153);
+});
+
+test("buildCustomRunOpts rejects bad start-after external ids", () => {
+  const { buildCustomRunOpts } = require("../tui");
+  for (const startAfterExternalId of ["0", "-1", "abc", "1.5"]) {
+    assert.throws(
+      () => buildCustomRunOpts({ scope: "full", dryRun: "y", skipMedia: "n", limit: "", startAfterExternalId }),
+      /Start-after external id must be a positive integer/,
+    );
+  }
+});
+
 test("buildCustomRunOpts rejects bad limits", () => {
   const { buildCustomRunOpts } = require("../tui");
   for (const limit of ["0", "-1", "abc", "1.5"]) {

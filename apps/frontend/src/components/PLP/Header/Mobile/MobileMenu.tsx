@@ -15,7 +15,7 @@ import { API_BASE_URL, IMAGE_BASE_URL } from "@/constants/api";
 import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
 import ShoppingCartIcon from "@/components/PLP/Icons/ShoppingCartIcon";
-import UserProfileIcon from "@/components/PLP/Icons/UserProfileIcon";
+import AccountAccessMenu from "@/components/PLP/Header/AccountAccessMenu";
 import SaleBadgeIcon from "../SaleBadgeIcon";
 
 interface Props {
@@ -54,6 +54,14 @@ type SearchSuggestion = {
   category?: string;
   image?: string;
   isAvailable?: boolean;
+};
+
+const getViewAllCategoryLabel = (label: string) => {
+  const trimmed = label.trim();
+  if (!trimmed) return "مشاهده همه";
+  const normalized = trimmed.replace(/\u200c/g, " ");
+  const isPlural = /(^|\s)ها$/.test(normalized) || /های$/.test(normalized);
+  return `مشاهده همه ${trimmed}${isPlural ? "" : "‌ها"}`;
 };
 
 function MobileMenuSkeleton() {
@@ -203,7 +211,8 @@ export default function MobileMenu({ isOpen, onClose }: Props) {
               DiscountPrice: (attrs?.DiscountPrice as number | undefined) ?? undefined,
               Discount: (attrs?.Discount as number | undefined) ?? undefined,
               category:
-                (attrs?.product_main_category as { Title?: string } | undefined)?.Title ?? undefined,
+                (attrs?.product_main_category as { Title?: string } | undefined)?.Title ??
+                undefined,
               image: imagePath ? `${IMAGE_BASE_URL}${imagePath}` : undefined,
               isAvailable: (attrs?.IsAvailable as boolean | undefined) ?? true,
             };
@@ -364,6 +373,17 @@ export default function MobileMenu({ isOpen, onClose }: Props) {
           data-state={isExpanded ? "open" : "closed"}
         >
           <div className="storefront-mobile-category-panel-inner min-h-0 overflow-hidden">
+            <Link
+              href={item.href}
+              onClick={onClose}
+              aria-current={isActiveHref(item.href) ? "page" : undefined}
+              className={[
+                "block border-t border-stone-100 bg-infinity-primary-lighter/20 px-3 py-3 text-right text-sm font-semibold text-infinity-primary-dark transition-colors hover:bg-infinity-primary-lighter/35 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-infinity-primary",
+                isActiveHref(item.href) ? "text-infinity-primary" : "",
+              ].join(" ")}
+            >
+              <span className="block truncate">{getViewAllCategoryLabel(item.label)}</span>
+            </Link>
             {children.map((child) => (
               <Link
                 key={child.id}
@@ -563,14 +583,13 @@ export default function MobileMenu({ isOpen, onClose }: Props) {
                 </Link>
 
                 <div className="ml-auto flex items-center gap-2">
-                  <Link
-                    href="/auth/login"
-                    onClick={onClose}
-                    className="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-                    aria-label="Login"
-                  >
-                    <UserProfileIcon className="h-4 w-4" />
-                  </Link>
+                  <AccountAccessMenu
+                    triggerAriaLabel="Account"
+                    triggerClassName="pressable flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-neutral-600 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                    triggerIconClassName="h-4 w-4"
+                    menuAlign="center"
+                    onNavigate={onClose}
+                  />
 
                   <button
                     type="button"

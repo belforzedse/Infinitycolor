@@ -18,6 +18,9 @@ export default function ShippingPage() {
       <ContentWrapper
         title="روش های حمل و نقل"
         hasRecycleBin
+        hasAddButton
+        addButtonText="افزودن روش ارسال"
+        addButtonPath="/super-admin/shipping/add"
         isRecycleBinOpen={isRecycleBinOpen}
         setIsRecycleBinOpen={setIsRecycleBinOpen}
         apiUrl="/shippings"

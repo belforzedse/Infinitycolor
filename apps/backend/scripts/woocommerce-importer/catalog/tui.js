@@ -28,6 +28,7 @@ try {
 const { buildConfig } = require("./config");
 const { CatalogEngine } = require("./engine");
 const { PRESETS, SCOPES, resolvePreset } = require("./lib/presets");
+const { CatalogRunStore, RESUMABLE_STATUSES } = require("./lib/runStore");
 const Logger = require("../utils/Logger");
 
 const OrderImporter = require("../importers/OrderImporter");
@@ -62,17 +63,33 @@ function parseLimitInput(value) {
   return parsed;
 }
 
-function buildCustomRunOpts({ scope, dryRun, skipMedia, limit }) {
+function parseOptionalPositiveIntegerInput(value, label) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+  const parsed = Number(String(value).trim());
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer or blank.`);
+  }
+  return parsed;
+}
+
+function buildCustomRunOpts({ scope, dryRun, skipMedia, limit, startAfterExternalId }) {
   const resolvedScope = String(scope || "").trim();
   if (!SCOPES.includes(resolvedScope)) {
     throw new Error(`Invalid scope: ${scope}. Use one of: ${SCOPES.join(", ")}`);
   }
-  return {
+  const opts = {
     scope: resolvedScope,
     dryRun: parseBooleanInput(dryRun, true),
     skipMedia: parseBooleanInput(skipMedia, false),
     limit: parseLimitInput(limit),
   };
+  const parsedStartAfter = parseOptionalPositiveIntegerInput(startAfterExternalId, "Start-after external id");
+  if (parsedStartAfter !== undefined) {
+    opts.startAfterExternalId = parsedStartAfter;
+  }
+  return opts;
 }
 
 function prompt(rl, question) {
@@ -136,7 +153,8 @@ function createRuntime(environment) {
   config.logging.level = process.env.IMPORT_LOG_LEVEL || config.logging.level || "info";
   const logger = new Logger(config.logging);
   const engine = new CatalogEngine(config, logger, { environment });
-  return { environment, config, logger, engine };
+  const runStore = new CatalogRunStore(config.catalog.trackingDirAbs);
+  return { environment, config, logger, engine, runStore };
 }
 
 async function selectEnvironment(rl) {
@@ -216,6 +234,9 @@ async function confirmLiveRun(rl, runtime, runOpts) {
   console.log(`  Strapi URL:  ${runtime.config.strapi.baseUrl}`);
   console.log(`  Scope:       ${runOpts.scope}`);
   console.log(`  Limit:       ${runOpts.limit === Infinity ? "all" : runOpts.limit}`);
+  if (runOpts.startAfterExternalId) {
+    console.log(`  Start after: ${runOpts.startAfterExternalId}`);
+  }
   const confirm = await prompt(rl, `Type "${runOpts.scope}" to confirm: `);
   if (confirm !== runOpts.scope) {
     console.log("Run cancelled.");
@@ -244,7 +265,7 @@ async function runCatalogPreset(rl, runtime, presetId) {
     }
   }
 
-  const report = await runtime.engine.runSync(runOpts);
+  const report = await runtime.engine.runSync({ ...runOpts, runStore: runtime.runStore });
   printReportSummary(runtime.config, report);
   await pause(rl);
 }
@@ -255,7 +276,8 @@ async function runCustomCatalog(rl, runtime) {
   const dryRun = await prompt(rl, "Dry run? (y/n, default: y): ");
   const skipMedia = await prompt(rl, "Skip media? (y/n, default: n): ");
   const limit = await prompt(rl, "Limit products (blank = all): ");
-  const runOpts = buildCustomRunOpts({ scope, dryRun, skipMedia, limit });
+  const startAfterExternalId = await prompt(rl, "Start after Woo external_id/id (blank = beginning): ");
+  const runOpts = buildCustomRunOpts({ scope, dryRun, skipMedia, limit, startAfterExternalId });
 
   const confirmed = await confirmLiveRun(rl, runtime, runOpts);
   if (!confirmed) {
@@ -263,7 +285,76 @@ async function runCustomCatalog(rl, runtime) {
     return;
   }
 
-  const report = await runtime.engine.runSync(runOpts);
+  const report = await runtime.engine.runSync({ ...runOpts, runStore: runtime.runStore });
+  printReportSummary(runtime.config, report);
+  await pause(rl);
+}
+
+function printRunLine(run) {
+  const failures = typeof run.failures === "number" ? run.failures : run.failures?.length || 0;
+  console.log(
+    `  ${run.id} | ${run.status} | ${run.scope || run.options?.scope || "?"} | ` +
+      `failures=${failures} | updated=${run.updatedAt}`,
+  );
+}
+
+function listResumableRuns(runtime) {
+  return runtime.runStore.listRuns({ statuses: Array.from(RESUMABLE_STATUSES) });
+}
+
+async function viewRuns(rl, runtime) {
+  const runs = runtime.runStore.listRuns().slice(0, 20);
+  console.log("\nCatalog runs");
+  if (runs.length === 0) {
+    console.log("  none");
+  } else {
+    runs.forEach(printRunLine);
+  }
+  await pause(rl);
+}
+
+async function viewRunDetail(rl, runtime) {
+  const runId = await prompt(rl, "Run id: ");
+  if (!runId) return;
+  const run = runtime.runStore.getRun(runId);
+  console.log(JSON.stringify(run, null, 2));
+  await pause(rl);
+}
+
+async function resumeCatalogRun(rl, runtime) {
+  const runs = listResumableRuns(runtime);
+  console.log("\nResumable catalog runs");
+  if (runs.length === 0) {
+    console.log("  none");
+    await pause(rl);
+    return;
+  }
+  runs.slice(0, 20).forEach((run, index) => {
+    console.log(`  ${index + 1}. ${run.id} | ${run.status} | scope=${run.scope} | failures=${run.failures}`);
+  });
+  const choice = await prompt(rl, "Choose run number or paste run id: ");
+  const selected = runs[Number(choice) - 1] || runs.find((run) => run.id === choice);
+  if (!selected) {
+    console.log("Run not found.");
+    await pause(rl);
+    return;
+  }
+  const retryFailed = await askBoolean(rl, "Retry failed rows? (y/n, default: y): ", true);
+  const confirmed = await confirmLiveRun(rl, runtime, {
+    scope: selected.scope,
+    dryRun: selected.dryRun,
+    limit: selected.limit,
+  });
+  if (!confirmed) {
+    await pause(rl);
+    return;
+  }
+  const report = await runtime.engine.runSync({
+    runStore: runtime.runStore,
+    runId: selected.id,
+    resume: true,
+    retryFailed,
+  });
   printReportSummary(runtime.config, report);
   await pause(rl);
 }
@@ -439,6 +530,9 @@ function renderMenu() {
   for (const item of [
     ["Change environment", { type: "change-env" }],
     ["View last report / status", { type: "status" }],
+    ["List catalog runs", { type: "runs" }],
+    ["View catalog run detail", { type: "run-detail" }],
+    ["Resume catalog run", { type: "resume-run" }],
     ["Exit", { type: "exit" }],
   ]) {
     add("utilities", item[0], item[1]);
@@ -469,6 +563,15 @@ async function dispatchAction(rl, runtimeRef, action) {
       break;
     case "status":
       await viewStatus(rl, runtimeRef.current);
+      break;
+    case "runs":
+      await viewRuns(rl, runtimeRef.current);
+      break;
+    case "run-detail":
+      await viewRunDetail(rl, runtimeRef.current);
+      break;
+    case "resume-run":
+      await resumeCatalogRun(rl, runtimeRef.current);
       break;
     case "exit":
       return false;

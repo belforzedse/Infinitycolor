@@ -169,6 +169,14 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
               readOnly: true,
             },
             {
+              name: "shippingMethod",
+              type: "copy-text",
+              label: "روش ارسال",
+              colSpan: 6,
+              mobileColSpan: 12,
+              readOnly: true,
+            },
+            {
               name: "shipping",
               type: "copy-text",
               label: "هزینه ارسال",

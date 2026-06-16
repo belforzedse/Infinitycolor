@@ -4,7 +4,7 @@
 
 import { factories } from "@strapi/strapi";
 import { getOrCreateUserCart } from "./lib/get-user-cart";
-import { resolveShippingCost, createOrderAndItems } from "./lib/order";
+import { createOrderAndItems } from "./lib/order";
 import {
   computeCouponDiscount,
   findFirstActiveGeneralDiscount,
@@ -143,15 +143,11 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           throw new Error("INVALID_RESERVATION: Reservation date must be in the future");
         }
 
-        // Resolve base shipping cost (merge orders pay 0; will be replaced by Anipo for non-4)
+        // Shipping is calculated and validated in the checkout controller.
         let finalShippingCost =
           shippingData.reserveOrderData?.isMerge === true
             ? 0
-            : await resolveShippingCost(
-                strapi as any,
-                shippingData.shippingId,
-                shippingData.shippingCost
-              );
+            : Math.max(0, Math.round(Number(shippingData.shippingCost || 0)));
 
         // Reserve order fields: new reserve or merge into existing
         let reserveGroupId: string | undefined;
@@ -197,7 +193,11 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           shippingData.addressId,
           reservation,
           trx,
-          isReserveOrder ? { reserveGroupId, reserveExpiresAt } : undefined
+          isReserveOrder ? { reserveGroupId, reserveExpiresAt } : undefined,
+          {
+            code: shippingData.shippingMethodCode,
+            title: shippingData.shippingMethodTitle,
+          }
         );
 
         strapi.log.info("Order and items created successfully", {

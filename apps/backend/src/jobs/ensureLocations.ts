@@ -3,7 +3,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 type CityPayload = { province: string; cities: string[] };
-type ShippingSeed = { Title: string; Price: number; IsActive?: boolean | null };
+type ShippingSeed = {
+  Title: string;
+  Price: number;
+  IsActive?: boolean | null;
+  Code?: string;
+  SortOrder?: number;
+  Description?: string;
+  EstimatedDeliveryText?: string;
+  localOnly?: boolean;
+};
 
 const DEFAULT_SHIPPINGS: ShippingSeed[] = [
   { Title: "ارسال با پست", Price: 69000, IsActive: true },
@@ -11,6 +20,67 @@ const DEFAULT_SHIPPINGS: ShippingSeed[] = [
   { Title: "ارسال با پیک", Price: 25000, IsActive: true },
   { Title: "دریافت حضوری", Price: 0, IsActive: true },
 ];
+
+type ShippingBackfillContext = {
+  golestanProvinceId?: number;
+  gorganCityId?: number;
+};
+
+function getShippingDefaults(seed: ShippingSeed, context: ShippingBackfillContext) {
+  const price = Number(seed.Price || 0);
+  const base = {
+    Code: seed.Code,
+    SortOrder: seed.SortOrder ?? 0,
+    Description: seed.Description,
+    EstimatedDeliveryText: seed.EstimatedDeliveryText,
+    Rules: [] as any[],
+  };
+
+  if (price === 69000) {
+    return {
+      ...base,
+      Code: seed.Code || "post",
+      SortOrder: seed.SortOrder ?? 10,
+      EstimatedDeliveryText: seed.EstimatedDeliveryText || "تحویل با پست",
+    };
+  }
+  if (price === 79000) {
+    return {
+      ...base,
+      Code: seed.Code || "tipax",
+      SortOrder: seed.SortOrder ?? 20,
+      EstimatedDeliveryText: seed.EstimatedDeliveryText || "تحویل با تیپاکس",
+    };
+  }
+
+  const localRule = {
+    id: price === 0 ? "pickup-gorgan-golestan" : "local-courier-gorgan-golestan",
+    title: "گرگان و استان گلستان",
+    active: true,
+    priority: 100,
+    price,
+    provinceIds: context.golestanProvinceId ? [context.golestanProvinceId] : [],
+    cityIds: context.gorganCityId ? [context.gorganCityId] : [],
+  };
+
+  if (price === 25000) {
+    return {
+      ...base,
+      Code: seed.Code || "local-courier",
+      SortOrder: seed.SortOrder ?? 5,
+      EstimatedDeliveryText: seed.EstimatedDeliveryText || "ویژه گرگان و گلستان",
+      Rules: [localRule],
+    };
+  }
+
+  return {
+    ...base,
+    Code: seed.Code || "pickup",
+    SortOrder: seed.SortOrder ?? 30,
+    EstimatedDeliveryText: seed.EstimatedDeliveryText || "ویژه گرگان و گلستان",
+    Rules: [localRule],
+  };
+}
 
 export async function ensureIranLocations(strapi: Strapi) {
   try {
@@ -152,32 +222,86 @@ export async function ensureIranLocations(strapi: Strapi) {
       strapi.log.info("↷ Skipped province/city seed (already present and FORCE_RESEED not set)");
     }
 
-    if (shouldSeedShippings) {
-      const existingShippings = await strapi.db.query("api::shipping.shipping").findMany({
-        select: ["Title"],
-      });
-      const existingTitles = new Set(
-        (existingShippings || []).map((s: { Title?: string }) => (s?.Title || "").trim()),
-      );
+    const golestanProvince = await strapi.db.query("api::shipping-province.shipping-province").findOne({
+      where: { Title: "گلستان" },
+    });
+    const gorganCity = golestanProvince
+      ? await strapi.db.query("api::shipping-city.shipping-city").findOne({
+          where: { Title: "گرگان", shipping_province: golestanProvince.id },
+        })
+      : null;
+    const shippingBackfillContext: ShippingBackfillContext = {
+      golestanProvinceId: golestanProvince?.id,
+      gorganCityId: gorganCity?.id,
+    };
 
-      let createdCount = 0;
-      for (const seed of DEFAULT_SHIPPINGS) {
-        const normalized = (seed.Title || "").trim();
-        if (!normalized || existingTitles.has(normalized)) continue;
+    const existingShippings = await strapi.db.query("api::shipping.shipping").findMany({
+      select: [
+        "id",
+        "Title",
+        "Code",
+        "Description",
+        "SortOrder",
+        "EstimatedDeliveryText",
+        "Rules",
+      ],
+    });
+    const existingByTitle = new Map(
+      (existingShippings || []).map((s: { Title?: string }) => [(s?.Title || "").trim(), s]),
+    );
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    for (const seed of DEFAULT_SHIPPINGS) {
+      const normalized = (seed.Title || "").trim();
+      if (!normalized) continue;
+
+      const defaults = getShippingDefaults(seed, shippingBackfillContext);
+      const existing = existingByTitle.get(normalized) as any;
+      if (!existing) {
         await strapi.entityService.create("api::shipping.shipping", {
           data: {
             Title: normalized,
             Price: seed.Price,
             IsActive: seed.IsActive ?? true,
             removedAt: null,
+            Code: defaults.Code,
+            SortOrder: defaults.SortOrder,
+            Description: defaults.Description,
+            EstimatedDeliveryText: defaults.EstimatedDeliveryText,
+            Rules: defaults.Rules,
           },
         });
         createdCount += 1;
+        continue;
       }
-      strapi.log.info("✓ Seeded shipping methods: added %d new entries", createdCount);
-    } else {
-      strapi.log.info("↷ Skipped shipping seed (existing shippings found and FORCE_RESEED not set)");
+
+      const data: Record<string, unknown> = {};
+      if (!existing.Code && defaults.Code) data.Code = defaults.Code;
+      if (
+        (existing.SortOrder === null || existing.SortOrder === undefined || Number(existing.SortOrder) === 0) &&
+        defaults.SortOrder
+      ) {
+        data.SortOrder = defaults.SortOrder;
+      }
+      if (!existing.Description && defaults.Description) data.Description = defaults.Description;
+      if (!existing.EstimatedDeliveryText && defaults.EstimatedDeliveryText) {
+        data.EstimatedDeliveryText = defaults.EstimatedDeliveryText;
+      }
+      if ((!Array.isArray(existing.Rules) || existing.Rules.length === 0) && defaults.Rules.length > 0) {
+        data.Rules = defaults.Rules;
+      }
+
+      if (Object.keys(data).length > 0) {
+        await strapi.entityService.update("api::shipping.shipping", existing.id, { data });
+        updatedCount += 1;
+      }
     }
+    strapi.log.info(
+      "✓ Shipping methods ready: created=%d backfilled=%d",
+      createdCount,
+      updatedCount,
+    );
 
     const totalProvinces = shouldSeedLocations ? provinceIdMap.size : provinceCount;
     strapi.log.info(

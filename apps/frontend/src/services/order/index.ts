@@ -106,6 +106,8 @@ export interface Order {
   Date: string;
   Type: string;
   ShippingCost: number;
+  ShippingMethodCode?: string | null;
+  ShippingMethodTitle?: string | null;
   ShippingBarcode?: string;
   isReserveOrder?: boolean;
   reserveExpiresAt?: string | null;
@@ -122,11 +124,11 @@ export interface Order {
     LastName?: string;
   } | null;
   order_items: OrderItem[];
-  shipping: {
+  shipping?: {
     id: number;
     Title: string;
     Price: number;
-  };
+  } | null;
   contract?: {
     Amount?: number;
     DiscountAmount?: number;

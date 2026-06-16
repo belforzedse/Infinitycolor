@@ -1,13 +1,13 @@
 import { apiClient } from "../index";
 import { unwrap } from "./helpers/response";
+import type { ShippingAddressContext } from "../shipping";
 
 type DiscountPayload =
   | string
-  | {
+  | ({
       code: string;
       shippingId?: number;
-      shippingCost?: number;
-    };
+    } & ShippingAddressContext);
 
 interface DiscountResponse {
   success: boolean;

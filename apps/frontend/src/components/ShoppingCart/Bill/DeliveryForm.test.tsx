@@ -12,6 +12,7 @@ async function renderForm(ui: React.ReactElement) {
 jest.mock("@/contexts/CartContext", () => ({
   useCart: () => ({
     totalPrice: 100_000,
+    totalItems: 2,
     subtotalBeforeDiscount: 100_000,
     cartDiscountTotal: 0,
     openDrawer: jest.fn(),
@@ -19,7 +20,7 @@ jest.mock("@/contexts/CartContext", () => ({
 }));
 
 jest.mock("@/services/shipping", () => ({
-  getShippingMethods: jest.fn().mockResolvedValue([]),
+  getAvailableShippingOptions: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock("./DeliveryOptions", () => ({

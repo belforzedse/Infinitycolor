@@ -58,7 +58,16 @@ const createCtx = (overrides: Partial<any> = {}) => {
 
 // Minimal Strapi mock with registries so tests can attach per-UID services/queries.
 const createStrapiMock = () => {
-  const serviceMap: Record<string, any> = {};
+  const serviceMap: Record<string, any> = {
+    "api::shipping.shipping": {
+      calculateMethodForCart: jest.fn(async (_userId: number, shippingId: number | string) => ({
+        id: Number(shippingId),
+        code: `shipping-${shippingId}`,
+        title: "Test Shipping",
+        price: 0,
+      })),
+    },
+  };
   const queryMap: Record<string, any> = {};
   const strapi: any = {
     log: {

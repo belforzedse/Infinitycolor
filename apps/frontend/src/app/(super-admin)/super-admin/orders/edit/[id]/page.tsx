@@ -31,6 +31,8 @@ type OrderResponse = {
     Date: string;
     Status: string;
     ShippingCost: number;
+    ShippingMethodCode?: string;
+    ShippingMethodTitle?: string;
     ShippingBarcode?: string;
     ShippingPostPrice?: number;
     ShippingTax?: number;
@@ -279,7 +281,11 @@ export default function EditOrderPage() {
           .join(" - ");
 
         const shippingEntity = unwrapEntity((normalizedOrder as any).shipping);
-        const shippingMethod = shippingEntity?.Name || shippingEntity?.Title || undefined;
+        const shippingMethod =
+          normalizedOrder?.ShippingMethodTitle ||
+          shippingEntity?.Name ||
+          shippingEntity?.Title ||
+          undefined;
 
         const txList = contractTransactions || [];
         const lastTx = txList[txList.length - 1];

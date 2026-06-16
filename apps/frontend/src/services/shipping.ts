@@ -7,9 +7,38 @@ export interface ShippingMethod {
     Title: string;
     Price: number;
     IsActive: boolean;
+    Code?: string;
+    Description?: string;
+    SortOrder?: number;
+    EstimatedDeliveryText?: string;
+    Rules?: unknown;
     createdAt: string;
     updatedAt: string;
   };
+}
+
+export type ShippingAddressContext = {
+  addressId?: number;
+  addressPayload?: {
+    shipping_city?: number;
+  };
+};
+
+export interface ShippingOption {
+  id: number;
+  code: string;
+  title: string;
+  description?: string;
+  estimatedDeliveryText?: string;
+  price: number;
+  basePrice: number;
+  sortOrder: number;
+  icon?: unknown;
+  matchedRule?: {
+    id?: string;
+    title?: string;
+    priority?: number;
+  } | null;
 }
 
 export interface ShippingMethodsResponse {
@@ -70,6 +99,27 @@ export const getShippingMethods = async (
     return response.data as ShippingMethod[];
   } catch (error) {
     console.error("Error fetching shipping methods:", error);
+    throw error;
+  }
+};
+
+export const getAvailableShippingOptions = async (
+  context?: ShippingAddressContext,
+): Promise<ShippingOption[]> => {
+  try {
+    const response = await apiClient.post<{
+      data?: { success?: boolean; methods?: ShippingOption[] };
+      success?: boolean;
+      methods?: ShippingOption[];
+    }>("/carts/shipping-options", context || {}, {
+      timeout: CHECKOUT_REQUEST_TIMEOUT_MS,
+      retries: CHECKOUT_MAX_RETRIES,
+    });
+    const payload = response?.data as any;
+    const methods = payload?.methods || payload?.data?.methods || [];
+    return Array.isArray(methods) ? methods : [];
+  } catch (error) {
+    console.error("Error fetching available shipping options:", error);
     throw error;
   }
 };

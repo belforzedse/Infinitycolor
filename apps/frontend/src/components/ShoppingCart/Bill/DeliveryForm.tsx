@@ -7,15 +7,16 @@ import { submitOrderStepAtom } from "@/atoms/Order";
 import DisclosureItem from "@/components/Kits/Disclosure";
 import ShoppingCartBillDeliveryOptions from "./DeliveryOptions";
 import { useCart } from "@/contexts/CartContext";
-import type { ShippingMethod } from "@/services/shipping";
-import { getShippingMethods } from "@/services/shipping";
+import type { ShippingAddressContext, ShippingOption } from "@/services/shipping";
+import { getAvailableShippingOptions } from "@/services/shipping";
 import type { Control, UseFormSetValue } from "react-hook-form";
 import type { FormData } from "./index";
 
 type Props = {
   control: Control<FormData>;
   setValue: UseFormSetValue<FormData>;
-  selectedShipping: ShippingMethod | null;
+  selectedShipping: ShippingOption | null;
+  addressContext?: ShippingAddressContext;
   discountPreview?: {
     discount: number;
     summary: {
@@ -37,18 +38,19 @@ function ShoppingCartBillDeliveryForm({
   control,
   setValue,
   selectedShipping,
+  addressContext,
   discountPreview,
   discountCode,
   previewLoading,
 }: Props) {
-  const { totalPrice, subtotalBeforeDiscount, cartDiscountTotal, openDrawer } = useCart();
+  const { totalPrice, totalItems, subtotalBeforeDiscount, cartDiscountTotal, openDrawer } = useCart();
   const [, _setSubmitOrderStep] = useAtom(submitOrderStepAtom);
-  const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
+  const [shippingMethods, setShippingMethods] = useState<ShippingOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Calculate totals (prefer backend preview when available)
-  const shippingCost = selectedShipping?.attributes.Price || 0;
+  const shippingCost = selectedShipping?.price || 0;
   const subtotal = discountPreview?.summary?.subtotal ?? subtotalBeforeDiscount;
   const discountAmount = discountPreview?.discount ?? cartDiscountTotal;
   const taxAmount = discountPreview?.summary?.tax ?? 0;
@@ -56,17 +58,26 @@ function ShoppingCartBillDeliveryForm({
   const finalTotal =
     discountPreview?.summary?.total ??
     Math.max(0, subtotal - discountAmount + taxAmount + effectiveShipping);
+  const addressContextKey = JSON.stringify(addressContext || {});
+  const hasAddressContext = Boolean(addressContext?.addressId || addressContext?.addressPayload?.shipping_city);
 
   useEffect(() => {
     const fetchShippingMethods = async () => {
+      if (!hasAddressContext) {
+        setShippingMethods([]);
+        setValue("shippingMethod", null);
+        setError(null);
+        return;
+      }
+
       try {
         setLoading(true);
         setError(null);
-        const methods = await getShippingMethods({
-          isActive: true,
-          sort: "Price:asc",
-        });
+        const methods = await getAvailableShippingOptions(addressContext);
         setShippingMethods(methods);
+        if (selectedShipping && !methods.some((method) => method.id === selectedShipping.id)) {
+          setValue("shippingMethod", null);
+        }
 
         // No default selection - let user choose explicitly
       } catch (err) {
@@ -78,7 +89,7 @@ function ShoppingCartBillDeliveryForm({
     };
 
     fetchShippingMethods();
-  }, []);
+  }, [addressContextKey, hasAddressContext, selectedShipping, setValue, totalItems, totalPrice]);
 
   return (
     <div className="flex flex-col gap-5 rounded-2xl bg-stone-50 p-5">
@@ -110,8 +121,8 @@ function ShoppingCartBillDeliveryForm({
         ) : (
           <ShoppingCartBillDeliveryOptions
             shippingMethods={shippingMethods}
-            setValue={setValue}
             control={control}
+            disabled={!hasAddressContext}
           />
         )}
       </DisclosureItem>

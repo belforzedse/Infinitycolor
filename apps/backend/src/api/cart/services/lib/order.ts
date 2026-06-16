@@ -14,9 +14,6 @@ export const resolveShippingCost = async (
   shippingId?: number,
   providedCost?: number
 ) => {
-  // If excluded method (id=4), price is 0 regardless
-  if (shippingId && Number(shippingId) === 4) return 0;
-
   const cost = providedCost ? parseInt(String(providedCost)) : 0;
   if (cost || !shippingId) return cost;
   const shipping = await strapi.entityService.findOne(
@@ -37,7 +34,8 @@ export const createOrderAndItems = async (
   deliveryAddressId?: number,
   reservation?: { status: "Reserved"; until: Date },
   trx?: any,
-  reserveData?: { reserveGroupId: string; reserveExpiresAt: Date }
+  reserveData?: { reserveGroupId: string; reserveExpiresAt: Date },
+  shippingSnapshot?: { code?: unknown; title?: unknown }
 ) => {
   // Validate cart items before proceeding
   if (!cart.cart_items || cart.cart_items.length === 0) {
@@ -148,6 +146,8 @@ if (reservation) {
     Type: "Automatic" as OrderType,
     shipping: shippingId,
     ShippingCost: finalShippingCost,
+    ShippingMethodCode: shippingSnapshot?.code ? String(shippingSnapshot.code) : undefined,
+    ShippingMethodTitle: shippingSnapshot?.title ? String(shippingSnapshot.title) : undefined,
     Description: description || "",
     Note: note || "",
     delivery_address: deliveryAddressId || undefined,

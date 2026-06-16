@@ -21,7 +21,7 @@ const formatAddress = (order: Order) => {
 };
 
 export default function ShippingInfoCard({ order }: ShippingInfoCardProps) {
-  const shippingTitle = order.shipping?.Title || "روش ارسال انتخاب نشده";
+  const shippingTitle = order.ShippingMethodTitle || order.shipping?.Title || "روش ارسال انتخاب نشده";
   const addressText = formatAddress(order);
 
   return (
