@@ -1,5 +1,6 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import path from "path";
+import { legacyRedirects } from "./redirects";
 import { getNextImageRemotePatterns } from "./src/utils/imageSecurity";
 import { getSecurityHeaders } from "./src/utils/securityHeaders";
 
@@ -45,6 +46,9 @@ const nextConfig = {
         headers: getSecurityHeaders(),
       },
     ];
+  },
+  async redirects() {
+    return legacyRedirects;
   },
   // Allow sitemap and other static generation to run longer during build (default 60s)
   staticPageGenerationTimeout: 180,
