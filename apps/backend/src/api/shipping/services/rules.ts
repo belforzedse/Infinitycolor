@@ -11,6 +11,8 @@ export type ShippingRule = {
   maxWeight?: number | null;
   provinceIds?: number[];
   cityIds?: number[];
+  excludedProvinceIds?: number[];
+  excludedCityIds?: number[];
   roleTypes?: string[];
   productIds?: number[];
   categoryIds?: number[];
@@ -50,6 +52,8 @@ const NUMBER_FIELDS: Array<keyof ShippingRule> = [
 const ID_ARRAY_FIELDS: Array<keyof ShippingRule> = [
   "provinceIds",
   "cityIds",
+  "excludedProvinceIds",
+  "excludedCityIds",
   "productIds",
   "categoryIds",
 ];
@@ -162,6 +166,20 @@ export const shippingRuleMatches = (
   }
   if (hasRestriction(rule.cityIds)) {
     if (!context.cityId || !rule.cityIds?.includes(Number(context.cityId))) return false;
+  }
+  if (
+    hasRestriction(rule.excludedProvinceIds) &&
+    context.provinceId &&
+    rule.excludedProvinceIds?.includes(Number(context.provinceId))
+  ) {
+    return false;
+  }
+  if (
+    hasRestriction(rule.excludedCityIds) &&
+    context.cityId &&
+    rule.excludedCityIds?.includes(Number(context.cityId))
+  ) {
+    return false;
   }
   if (hasRestriction(rule.productIds) && !intersects(rule.productIds || [], context.productIds)) {
     return false;

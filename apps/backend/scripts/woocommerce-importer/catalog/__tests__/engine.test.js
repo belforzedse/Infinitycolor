@@ -370,6 +370,36 @@ test("tracked sync: stale running locks are treated as resumable", () => {
   store.releaseLock("tracked-stale-running", token);
 });
 
+test("run store retries transient Windows rename locks", () => {
+  const engine = makeEngine({ products: [] });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+  const originalRenameSync = fs.renameSync;
+  let attempts = 0;
+  fs.renameSync = (from, to) => {
+    if (String(to).endsWith("catalog-runs.json") && attempts < 2) {
+      attempts += 1;
+      const error = new Error("operation not permitted");
+      error.code = "EPERM";
+      throw error;
+    }
+    return originalRenameSync(from, to);
+  };
+  try {
+    store.createRun({
+      runId: "tracked-rename-retry",
+      command: "sync:no-media",
+      environment: "local",
+      strapiBaseUrl: "http://localhost:1337/api",
+      options: { scope: "no-media", dryRun: false, limit: "all" },
+    });
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+
+  assert.equal(attempts, 2);
+  assert.equal(store.getRun("tracked-rename-retry").id, "tracked-rename-retry");
+});
+
 test("tracked sync: validation errors mark item failed without killing the run", async () => {
   const engine = makeEngine({ products: [{ ...products[0], id: 999, name: "" }] });
   const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);

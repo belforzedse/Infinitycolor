@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { UserCog } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import UserProfileIcon from "@/components/PLP/Icons/UserProfileIcon";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
@@ -17,6 +17,7 @@ interface AccountAccessMenuProps {
   menuPosition?: MenuPosition;
   menuAlign?: MenuAlign;
   ariaCurrent?: "page";
+  openOnHover?: boolean;
   onNavigate?: () => void;
   onTriggerClick?: () => void;
 }
@@ -40,22 +41,46 @@ export default function AccountAccessMenu({
   menuPosition = "bottom",
   menuAlign = "center",
   ariaCurrent,
+  openOnHover = false,
   onNavigate,
   onTriggerClick,
 }: AccountAccessMenuProps) {
   const { isAuthenticated, isAdmin, isLoading } = useCurrentUser();
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canOpenAdminMenu = !isLoading && isAuthenticated && isAdmin;
   const fallbackHref = isAuthenticated ? "/account" : "/auth/login";
   const fallbackLabel = isAuthenticated ? "Account" : "Login";
   const content = triggerContent ?? <UserProfileIcon className={triggerIconClassName} />;
+  const clearCloseTimeout = useCallback(() => {
+    if (!closeTimeoutRef.current) return;
+    clearTimeout(closeTimeoutRef.current);
+    closeTimeoutRef.current = null;
+  }, []);
+  const openMenu = useCallback(() => {
+    clearCloseTimeout();
+    setIsOpen(true);
+  }, [clearCloseTimeout]);
+  const closeMenu = useCallback(() => {
+    clearCloseTimeout();
+    setIsOpen(false);
+  }, [clearCloseTimeout]);
+  const scheduleCloseMenu = useCallback(() => {
+    clearCloseTimeout();
+    closeTimeoutRef.current = setTimeout(() => {
+      closeTimeoutRef.current = null;
+      setIsOpen(false);
+    }, 140);
+  }, [clearCloseTimeout]);
+
+  useEffect(() => clearCloseTimeout, [clearCloseTimeout]);
 
   useEffect(() => {
     if (!canOpenAdminMenu) {
-      setIsOpen(false);
+      closeMenu();
     }
-  }, [canOpenAdminMenu]);
+  }, [canOpenAdminMenu, closeMenu]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -63,12 +88,12 @@ export default function AccountAccessMenu({
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && rootRef.current?.contains(target)) return;
-      setIsOpen(false);
+      closeMenu();
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setIsOpen(false);
+        closeMenu();
       }
     };
 
@@ -78,10 +103,10 @@ export default function AccountAccessMenu({
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen]);
+  }, [closeMenu, isOpen]);
 
   const handleNavigate = () => {
-    setIsOpen(false);
+    closeMenu();
     onNavigate?.();
   };
 
@@ -100,7 +125,17 @@ export default function AccountAccessMenu({
   }
 
   return (
-    <div ref={rootRef} className="relative inline-flex">
+    <div
+      ref={rootRef}
+      className="relative inline-flex"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && rootRef.current?.contains(nextTarget)) return;
+        closeMenu();
+      }}
+      onPointerEnter={openOnHover ? openMenu : undefined}
+      onPointerLeave={openOnHover ? scheduleCloseMenu : undefined}
+    >
       <button
         type="button"
         aria-label={triggerAriaLabel}
@@ -109,8 +144,13 @@ export default function AccountAccessMenu({
         aria-current={ariaCurrent}
         onClick={() => {
           onTriggerClick?.();
+          if (openOnHover) {
+            openMenu();
+            return;
+          }
           setIsOpen((current) => !current);
         }}
+        onFocus={openOnHover ? openMenu : undefined}
         className={triggerClassName}
       >
         {content}
@@ -121,7 +161,7 @@ export default function AccountAccessMenu({
           role="menu"
           aria-label="Account destinations"
           className={[
-            "absolute z-[1500] flex w-11 flex-col items-center gap-1 rounded-full border border-stone-200 bg-white p-1 shadow-[0_10px_30px_rgba(15,23,42,0.18)]",
+            "storefront-account-menu absolute z-[1500] flex w-11 flex-col items-center gap-1 rounded-full border border-stone-200 bg-white p-1 shadow-[0_10px_30px_rgba(15,23,42,0.18)]",
             positionClassNames[menuPosition],
             alignClassNames[menuAlign],
           ].join(" ")}
@@ -132,7 +172,7 @@ export default function AccountAccessMenu({
             aria-label="Account"
             title="Account"
             onClick={handleNavigate}
-            className="pressable flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+            className="pressable storefront-account-menu-item flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
           >
             <UserProfileIcon className="h-5 w-5" />
           </Link>
@@ -142,7 +182,7 @@ export default function AccountAccessMenu({
             aria-label="Super admin"
             title="Super admin"
             onClick={handleNavigate}
-            className="pressable flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+            className="pressable storefront-account-menu-item flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
           >
             <UserCog className="h-5 w-5" aria-hidden="true" />
           </Link>

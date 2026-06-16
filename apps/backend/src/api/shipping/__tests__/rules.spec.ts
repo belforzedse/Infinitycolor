@@ -50,6 +50,48 @@ describe("shipping rules", () => {
     expect(result.matchedRule?.id).toBe("local");
   });
 
+  it("rejects excluded province and city restrictions", () => {
+    const result = evaluateShippingMethod(
+      {
+        Price: 79000,
+        Rules: [
+          {
+            id: "blocked-location",
+            active: true,
+            excludedProvinceIds: [1],
+            excludedCityIds: [10],
+            price: 25000,
+          },
+        ],
+      },
+      baseContext,
+    );
+
+    expect(result.eligible).toBe(false);
+  });
+
+  it("keeps methods eligible when excluded locations do not match", () => {
+    const result = evaluateShippingMethod(
+      {
+        Price: 79000,
+        Rules: [
+          {
+            id: "other-location-block",
+            active: true,
+            excludedProvinceIds: [2],
+            excludedCityIds: [20],
+            price: 25000,
+          },
+        ],
+      },
+      baseContext,
+    );
+
+    expect(result.eligible).toBe(true);
+    expect(result.price).toBe(25000);
+    expect(result.matchedRule?.id).toBe("other-location-block");
+  });
+
   it("rejects methods when active rules exist but none match", () => {
     const result = evaluateShippingMethod(
       {

@@ -60,6 +60,7 @@ const PLPDesktopHeaderActions = ({}: Props) => {
         triggerClassName="pressable text-slate-400 transition-all duration-200 hover:scale-105 hover:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-95"
         triggerIconClassName="h-6 w-6"
         menuAlign="center"
+        openOnHover
       />
     </div>
   );

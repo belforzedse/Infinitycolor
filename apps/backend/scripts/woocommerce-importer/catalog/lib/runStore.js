@@ -35,7 +35,28 @@ function atomicWriteJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
-  fs.renameSync(tmp, filePath);
+  const retryableCodes = new Set(["EACCES", "EBUSY", "EPERM"]);
+  let lastError = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      fs.renameSync(tmp, filePath);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!retryableCodes.has(error.code)) {
+        throw error;
+      }
+      // Windows can briefly lock recently written JSON files. Keep this path
+      // synchronous so callers never observe a half-written run state.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(1000, 25 * (attempt + 1)));
+    }
+  }
+  try {
+    fs.unlinkSync(tmp);
+  } catch {
+    /* best effort cleanup */
+  }
+  throw lastError;
 }
 
 function readJson(filePath, fallback) {

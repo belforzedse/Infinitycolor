@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import AccountAccessMenu from "../AccountAccessMenu";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
@@ -25,9 +25,19 @@ const mockCurrentUser = (overrides: Partial<ReturnType<typeof useCurrentUser>> =
 const renderAccountMenu = () =>
   render(<AccountAccessMenu triggerAriaLabel="Account" triggerClassName="account-trigger" />);
 
+const renderHoverAccountMenu = () =>
+  render(
+    <AccountAccessMenu
+      triggerAriaLabel="Account"
+      triggerClassName="account-trigger"
+      openOnHover
+    />,
+  );
+
 describe("AccountAccessMenu", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
   });
 
   it("links logged-out users to login", () => {
@@ -65,6 +75,71 @@ describe("AccountAccessMenu", () => {
       "href",
       "/super-admin",
     );
+  });
+
+  it("opens the admin widget on hover when hover mode is enabled", () => {
+    mockCurrentUser({
+      user: { id: 1, isAdmin: true, roleName: "SuperAdmin" } as never,
+      isAuthenticated: true,
+      isAdmin: true,
+    });
+
+    renderHoverAccountMenu();
+
+    expect(screen.queryByRole("menu", { name: "Account destinations" })).not.toBeInTheDocument();
+
+    const trigger = screen.getByRole("button", { name: "Account" });
+    fireEvent.pointerEnter(trigger.parentElement as Element);
+
+    expect(screen.getByRole("menu", { name: "Account destinations" })).toBeInTheDocument();
+  });
+
+  it("closes the hover admin widget when the pointer leaves", async () => {
+    mockCurrentUser({
+      user: { id: 1, isAdmin: true, roleName: "SuperAdmin" } as never,
+      isAuthenticated: true,
+      isAdmin: true,
+    });
+
+    renderHoverAccountMenu();
+
+    const trigger = screen.getByRole("button", { name: "Account" });
+    const root = trigger.parentElement as Element;
+
+    fireEvent.pointerEnter(root);
+    expect(screen.getByRole("menu", { name: "Account destinations" })).toBeInTheDocument();
+
+    fireEvent.pointerLeave(root);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menu", { name: "Account destinations" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the hover admin widget open while the pointer crosses into the menu", () => {
+    jest.useFakeTimers();
+    mockCurrentUser({
+      user: { id: 1, isAdmin: true, roleName: "SuperAdmin" } as never,
+      isAuthenticated: true,
+      isAdmin: true,
+    });
+
+    renderHoverAccountMenu();
+
+    const trigger = screen.getByRole("button", { name: "Account" });
+    const root = trigger.parentElement as Element;
+
+    fireEvent.pointerEnter(root);
+    const menu = screen.getByRole("menu", { name: "Account destinations" });
+
+    fireEvent.pointerLeave(root);
+    fireEvent.pointerEnter(menu);
+
+    act(() => {
+      jest.advanceTimersByTime(160);
+    });
+
+    expect(screen.getByRole("menu", { name: "Account destinations" })).toBeInTheDocument();
   });
 
   it("closes the admin widget on outside click", async () => {

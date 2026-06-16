@@ -19,6 +19,7 @@ export type Factories = ReturnType<typeof makeFactories>;
 export function makeFactories(strapi: any) {
   // Deletion order: children first, then parents.
   const created: Ref[] = [];
+  const createdOrderIds: number[] = [];
   const track = (uid: string, id: number) => {
     created.push({ uid, id });
     return id;
@@ -103,8 +104,14 @@ export function makeFactories(strapi: any) {
     status?: "Pending" | "Success" | "Failed";
     type?: string;
     step?: number;
+    trackId?: string;
+    gatewayAuthority?: string;
+    gatewayStatus?: string;
+    gatewayResponse?: Record<string, unknown>;
     externalId?: string;
+    externalSource?: string;
     gatewayRefId?: string;
+    paymentGatewayId?: number;
   }) {
     const row = await q("api::contract-transaction.contract-transaction").create({
       data: {
@@ -113,13 +120,32 @@ export function makeFactories(strapi: any) {
         Step: opts.step ?? 1,
         Status: opts.status ?? "Pending",
         ...(opts.contractId ? { contract: opts.contractId } : {}),
+        ...(opts.trackId ? { TrackId: opts.trackId } : {}),
+        ...(opts.gatewayAuthority ? { GatewayAuthority: opts.gatewayAuthority } : {}),
+        ...(opts.gatewayStatus ? { GatewayStatus: opts.gatewayStatus } : {}),
+        ...(opts.gatewayResponse ? { GatewayResponse: opts.gatewayResponse } : {}),
         ...(opts.externalId ? { external_id: opts.externalId } : {}),
+        external_source: opts.externalSource ?? TEST_PREFIX,
         ...(opts.gatewayRefId ? { GatewayRefId: opts.gatewayRefId } : {}),
-        external_source: TEST_PREFIX,
+        ...(opts.paymentGatewayId ? { payment_gateway: opts.paymentGatewayId } : {}),
         Date: new Date().toISOString(),
       },
     });
     track("api::contract-transaction.contract-transaction", row.id);
+    return row;
+  }
+
+  async function createPaymentGateway(
+    opts: { title?: string; description?: string; isActive?: boolean } = {},
+  ) {
+    const row = await q("api::payment-gateway.payment-gateway").create({
+      data: {
+        Title: opts.title ?? `${TEST_PREFIX}payment-gateway`,
+        Description: opts.description ?? "Integration test payment gateway",
+        IsActive: opts.isActive ?? true,
+      },
+    });
+    track("api::payment-gateway.payment-gateway", row.id);
     return row;
   }
 
@@ -149,6 +175,7 @@ export function makeFactories(strapi: any) {
       },
     });
     track("api::order.order", row.id);
+    createdOrderIds.push(row.id);
     return row;
   }
 
@@ -211,6 +238,89 @@ export function makeFactories(strapi: any) {
     return { order, items };
   }
 
+  /**
+   * Mirrors the shape created after checkout gateway initiation: a Paying order
+   * with reserved stock, a Toman contract, and a pending gateway transaction
+   * whose Amount is stored in IRR.
+   */
+  async function createPayableOrder(opts: {
+    amountToman?: number;
+    authority?: string;
+    gateway?: "ZarinPal" | "SamanKish" | "Mellat" | "SnappPay";
+    transactionStatus?: "Pending" | "Success" | "Failed";
+    items?: Array<{ count: number; stockCount: number; stockReserved?: number; perAmount?: number }>;
+    reservedUntil?: Date;
+    reservationStatus?: string;
+    orderStatus?: string;
+  } = {}) {
+    const amountToman = opts.amountToman ?? 100000;
+    const gateway = opts.gateway ?? "ZarinPal";
+    const authority = opts.authority ?? uniq();
+    const gatewayEntity = await createPaymentGateway({
+      title: `${TEST_PREFIX}${gateway}`,
+      description: `${TEST_PREFIX}${gateway} integration gateway`,
+    });
+    const contract = await createContract({
+      amount: amountToman,
+      status: "Not Ready",
+      type: "Cash",
+    });
+    const { order, items } = await createReservedOrder({
+      contractId: contract.id,
+      items: opts.items ?? [{ count: 2, stockCount: 10, stockReserved: 2, perAmount: amountToman / 2 }],
+      reservedUntil: opts.reservedUntil,
+    });
+
+    if ((opts.orderStatus && opts.orderStatus !== "Paying") || opts.reservationStatus) {
+      await q("api::order.order").update({
+        where: { id: order.id },
+        data: {
+          ...(opts.orderStatus ? { Status: opts.orderStatus } : {}),
+          ...(opts.reservationStatus ? { ReservationStatus: opts.reservationStatus } : {}),
+        },
+      });
+    }
+
+    await q("api::order.order").update({
+      where: { id: order.id },
+      data: {
+        PaymentGateway: gateway,
+        external_source: gateway,
+        external_id: authority,
+      },
+    });
+    await q("api::contract.contract").update({
+      where: { id: contract.id },
+      data: {
+        external_source: gateway,
+        external_id: authority,
+      },
+    });
+
+    const transaction = await createContractTransaction({
+      contractId: contract.id,
+      amount: amountToman * 10,
+      status: opts.transactionStatus ?? "Pending",
+      trackId: authority,
+      gatewayAuthority: authority,
+      gatewayStatus: "REQUESTED",
+      gatewayResponse: { integrationTest: true },
+      externalId: authority,
+      externalSource: gateway,
+      paymentGatewayId: gatewayEntity.id,
+    });
+
+    return {
+      amountToman,
+      authority,
+      gatewayEntity,
+      contract,
+      order: await getOrder(order.id),
+      transaction,
+      items,
+    };
+  }
+
   async function getStock(stockId: number) {
     return q("api::product-stock.product-stock").findOne({ where: { id: stockId } });
   }
@@ -219,7 +329,39 @@ export function makeFactories(strapi: any) {
     return q("api::order.order").findOne({ where: { id: orderId } });
   }
 
+  async function getContract(contractId: number) {
+    return q("api::contract.contract").findOne({ where: { id: contractId } });
+  }
+
+  async function getContractTransaction(transactionId: number) {
+    return q("api::contract-transaction.contract-transaction").findOne({ where: { id: transactionId } });
+  }
+
+  async function getContractTransactions(contractId: number) {
+    return q("api::contract-transaction.contract-transaction").findMany({
+      where: { contract: { id: contractId } },
+      orderBy: { Date: "asc" },
+    });
+  }
+
+  async function getOrderLogs(orderId: number) {
+    return q("api::order-log.order-log").findMany({
+      where: { order: { id: orderId } },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
   async function cleanup() {
+    if (createdOrderIds.length > 0) {
+      try {
+        await q("api::order-log.order-log").deleteMany({
+          where: { order: { id: { $in: createdOrderIds } } },
+        });
+      } catch {
+        /* best effort: disposable DB */
+      }
+    }
+
     for (let i = created.length - 1; i >= 0; i--) {
       const { uid, id } = created[i];
       try {
@@ -229,6 +371,7 @@ export function makeFactories(strapi: any) {
       }
     }
     created.length = 0;
+    createdOrderIds.length = 0;
   }
 
   return {
@@ -237,11 +380,17 @@ export function makeFactories(strapi: any) {
     createUser,
     createContract,
     createContractTransaction,
+    createPaymentGateway,
     createOrder,
     createOrderItem,
     createReservedOrder,
+    createPayableOrder,
     getStock,
     getOrder,
+    getContract,
+    getContractTransaction,
+    getContractTransactions,
+    getOrderLogs,
     cleanup,
   };
 }

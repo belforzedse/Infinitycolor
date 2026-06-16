@@ -20,6 +20,8 @@ type ShippingRule = {
   maxWeight?: number | null;
   provinceIds: number[];
   cityIds: number[];
+  excludedProvinceIds: number[];
+  excludedCityIds: number[];
   productIds: number[];
   categoryIds: number[];
   roleTypes: string[];
@@ -63,6 +65,8 @@ const emptyRule = (): ShippingRule => ({
   maxWeight: null,
   provinceIds: [],
   cityIds: [],
+  excludedProvinceIds: [],
+  excludedCityIds: [],
   productIds: [],
   categoryIds: [],
   roleTypes: [],
@@ -575,6 +579,18 @@ export default function ShippingMethodForm({ mode, id }: Props) {
                   endpoint="/shipping-cities"
                   value={rule.cityIds}
                   onChange={(cityIds) => updateRule(index, { cityIds })}
+                />
+                <EntitySelector
+                  label="استان‌های غیر مجاز"
+                  endpoint="/shipping-provinces"
+                  value={rule.excludedProvinceIds}
+                  onChange={(excludedProvinceIds) => updateRule(index, { excludedProvinceIds })}
+                />
+                <EntitySelector
+                  label="شهرهای غیر مجاز"
+                  endpoint="/shipping-cities"
+                  value={rule.excludedCityIds}
+                  onChange={(excludedCityIds) => updateRule(index, { excludedCityIds })}
                 />
                 <EntitySelector
                   label="محصولات مجاز"
