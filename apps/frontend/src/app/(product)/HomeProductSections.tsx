@@ -7,6 +7,7 @@ import OffersListHomePageServerShell from "@/components/PDP/OffersListHomePageSe
 import Reveal from "@/components/Reveal";
 import HomePromoBanners, { type HomePromoBanner } from "@/components/Home/PromoBanners";
 import HomeGifPromoSection from "@/components/Home/HomeGifPromoSection";
+import DiscountedShowcase from "@/components/Home/DiscountedShowcase";
 import {
   getBatchedHomepageSections,
   getHomepageSections,
@@ -52,6 +53,10 @@ function HomeOffersList({
   products: ProductCardProps[];
   hideBottomViewMore?: boolean;
 }) {
+  if (sectionId === "discounted") {
+    return <DiscountedShowcase products={products} />;
+  }
+
   const Component = shouldUseProductServerShell(sectionId)
     ? OffersListHomePageServerShell
     : OffersListHomePage;

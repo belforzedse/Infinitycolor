@@ -14,7 +14,6 @@ import {
   buildCollectionItems,
   buildPLPPageCopy,
   getPLPCategoryContext,
-  getPLPHeroProducts,
   getPLPProducts,
   parsePLPQuery,
 } from "@/services/product/plp";
@@ -55,9 +54,7 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
     );
   }
 
-  const categoryContext = categorySlug
-    ? await getPLPCategoryContext(categorySlug)
-    : undefined;
+  const categoryContext = categorySlug ? await getPLPCategoryContext(categorySlug) : undefined;
 
   if (categorySlug && !categoryContext) {
     logger.warn(`[PLP] Invalid or non-existent category requested: ${categorySlug}`);
@@ -65,9 +62,6 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
   }
 
   const resolvedCategoryContext = categoryContext ?? undefined;
-  const heroProductsPromise = !query.search
-    ? getPLPHeroProducts(resolvedCategoryContext?.slug)
-    : Promise.resolve([]);
   const { products, pagination } = await getPLPProducts(
     query,
     resolvedCategoryContext?.categorySlugs,
@@ -89,16 +83,11 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
 
   const { pageName, pageDescription, url } = buildPLPPageCopy(query, resolvedCategoryContext);
   const collectionItems = buildCollectionItems(products);
-  const heroProducts = await heroProductsPromise;
 
   return (
     <PageContainer className="space-y-6 pb-20 pt-6">
       {query.search ? (
-        <SiteSearchTracker
-          query={query.search}
-          resultCount={pagination.total}
-          page={query.page}
-        />
+        <SiteSearchTracker query={query.search} resultCount={pagination.total} page={query.page} />
       ) : null}
       {resolvedCategoryContext?.slug ? (
         <CustomDimensionTracker dimension="categoryId" value={resolvedCategoryContext.slug} />
@@ -114,13 +103,7 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
         />
       )}
 
-      {!query.search && (
-        <PLPHeroBanner
-          category={resolvedCategoryContext?.slug}
-          initialTitle={resolvedCategoryContext?.title}
-          initialProducts={heroProducts}
-        />
-      )}
+      {!query.search && <PLPHeroBanner initialTitle={resolvedCategoryContext?.title} />}
 
       <Suspense fallback={<ProductListSkeleton />}>
         <PLPList
