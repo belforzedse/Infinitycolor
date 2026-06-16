@@ -29,7 +29,8 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  const productsPerPage = windowWidth >= 1920 ? 4 : windowWidth >= 1280 ? 3 : 2;
+  const productsPerPage =
+    windowWidth >= 2560 ? 5 : windowWidth >= 1920 ? 4 : windowWidth >= 1280 ? 3 : 2;
   const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
   const startIndex = currentPage * productsPerPage;
   const currentProducts = products.slice(startIndex, startIndex + productsPerPage);
@@ -150,7 +151,7 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
           </div>
         )}
 
-        <div className="hidden items-center gap-4 lg:grid lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5">
+        <div className="hidden items-center gap-4 lg:grid lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6">
           <div className="flex h-full min-w-0 flex-col items-center justify-center gap-5 text-center">
             <h2
               className="w-max max-w-full text-right font-peyda text-[46px] font-medium leading-[1.08] text-white"

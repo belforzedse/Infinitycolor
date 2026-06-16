@@ -29,7 +29,7 @@ export default function OffersListHomePageServerShell({
   products,
   hideBottomViewMore = false,
 }: Props) {
-  const currentProducts = products.slice(0, 4);
+  const currentProducts = products.slice(0, 6);
   const plpHref = getPlpHref(title);
 
   return (
