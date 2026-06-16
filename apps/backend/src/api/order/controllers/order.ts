@@ -25,6 +25,47 @@ import {
 // purpose: anything not listed here (tokens, payment internals, relations) is never diffed/logged.
 const AUDITED_ORDER_FIELDS = ["Status", "Note", "Description", "ShippingCost"] as const;
 
+const ORDER_DETAIL_DEFAULT_PAGE = 1;
+const ORDER_DETAIL_DEFAULT_PAGE_SIZE = 50;
+const ORDER_DETAIL_MAX_PAGE_SIZE = 100;
+
+const readQueryValue = (value: unknown): string | undefined => {
+  if (Array.isArray(value)) return readQueryValue(value[0]);
+  if (value === undefined || value === null) return undefined;
+  return String(value);
+};
+
+const parsePositiveInt = (value: unknown, fallback: number) => {
+  const parsed = Number.parseInt(readQueryValue(value) || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const hasQueryParam = (query: Record<string, unknown>, key: string) =>
+  Object.prototype.hasOwnProperty.call(query, key);
+
+const parseDetailPagination = (
+  query: Record<string, unknown>,
+  pageKey: string,
+  pageSizeKey: string,
+) => {
+  const enabled = hasQueryParam(query, pageKey) || hasQueryParam(query, pageSizeKey);
+  if (!enabled) return null;
+
+  const page = parsePositiveInt(query[pageKey], ORDER_DETAIL_DEFAULT_PAGE);
+  const requestedPageSize = parsePositiveInt(query[pageSizeKey], ORDER_DETAIL_DEFAULT_PAGE_SIZE);
+  const pageSize = Math.min(requestedPageSize, ORDER_DETAIL_MAX_PAGE_SIZE);
+  const offset = (page - 1) * pageSize;
+
+  return { page, pageSize, offset };
+};
+
+const buildPaginationMeta = (page: number, pageSize: number, total: number) => ({
+  page,
+  pageSize,
+  pageCount: Math.ceil(total / pageSize),
+  total,
+});
+
 export default factories.createCoreController(
   "api::order.order",
   ({ strapi }: { strapi: Strapi }) => ({
@@ -418,6 +459,14 @@ export default factories.createCoreController(
           });
         }
 
+        const query = (ctx.query || {}) as Record<string, unknown>;
+        const logsPagination = parseDetailPagination(query, "logsPage", "logsPageSize");
+        const transactionsPagination = parseDetailPagination(
+          query,
+          "transactionsPage",
+          "transactionsPageSize",
+        );
+
         const order = await strapi.db.query("api::order.order").findOne({
           where: { id: orderId, user: { id: userId } },
         populate: {
@@ -443,16 +492,18 @@ export default factories.createCoreController(
                 },
               },
             },
-            contract: {
-              populate: {
-                contract_transactions: {
+            contract: transactionsPagination
+              ? true
+              : {
                   populate: {
-                    payment_gateway: true,
+                    contract_transactions: {
+                      populate: {
+                        payment_gateway: true,
+                      },
+                      orderBy: { Date: "asc" },
+                    },
                   },
-                  orderBy: { Date: "asc" },
                 },
-              },
-            },
           user: {
             fields: ["id", "phone", "username", "email"],
           },
@@ -465,18 +516,63 @@ export default factories.createCoreController(
           });
         }
 
-        const orderLogs = await strapi.db.query("api::order-log.order-log").findMany({
+        const orderLogQuery: any = {
           where: { order: { id: orderId } },
           orderBy: { createdAt: "asc" },
-        });
+        };
+        let orderLogsMeta;
+        if (logsPagination) {
+          orderLogQuery.limit = logsPagination.pageSize;
+          orderLogQuery.offset = logsPagination.offset;
+          const total = await strapi.db.query("api::order-log.order-log").count({
+            where: { order: { id: orderId } },
+          });
+          orderLogsMeta = {
+            pagination: buildPaginationMeta(
+              logsPagination.page,
+              logsPagination.pageSize,
+              total,
+            ),
+          };
+        }
+        const orderLogs = await strapi.db.query("api::order-log.order-log").findMany(orderLogQuery);
 
-        const contractTransactions = order.contract?.contract_transactions ?? [];
+        let contractTransactions = order.contract?.contract_transactions ?? [];
+        let contractTransactionsMeta;
+        const contractId =
+          typeof order.contract === "object" && order.contract?.id
+            ? Number(order.contract.id)
+            : Number(order.contract);
+        if (transactionsPagination && contractId) {
+          const transactionWhere = { contract: { id: contractId } };
+          const total = await strapi.db
+            .query("api::contract-transaction.contract-transaction")
+            .count({ where: transactionWhere });
+          contractTransactions = await strapi.db
+            .query("api::contract-transaction.contract-transaction")
+            .findMany({
+              where: transactionWhere,
+              populate: { payment_gateway: true },
+              orderBy: { Date: "asc" },
+              limit: transactionsPagination.pageSize,
+              offset: transactionsPagination.offset,
+            });
+          contractTransactionsMeta = {
+            pagination: buildPaginationMeta(
+              transactionsPagination.page,
+              transactionsPagination.pageSize,
+              total,
+            ),
+          };
+        }
 
         return {
           data: {
             ...order,
             contract_transactions: contractTransactions,
             orderLogs,
+            ...(orderLogsMeta ? { orderLogsMeta } : {}),
+            ...(contractTransactionsMeta ? { contractTransactionsMeta } : {}),
           },
         };
       } catch (error) {

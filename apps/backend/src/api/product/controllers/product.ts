@@ -154,10 +154,40 @@ const PRODUCT_POPULATE = {
   },
 } as const;
 
+const PRODUCT_SHELL_POPULATE = {
+  CoverImage: true,
+  Media: true,
+  Files: true,
+  product_main_category: true,
+  product_other_categories: true,
+  product_tags: true,
+  product_variations: {
+    populate: {
+      product_variation_color: true,
+      product_variation_size: true,
+      product_variation_model: true,
+      product_stock: true,
+    },
+  },
+  product_faqs: true,
+  product_size_helper: {
+    populate: {
+      Image: true,
+    },
+  },
+} as const;
+
+function getProductPopulateForView(view: unknown) {
+  return String(view || "").trim().toLowerCase() === "shell"
+    ? PRODUCT_SHELL_POPULATE
+    : PRODUCT_POPULATE;
+}
+
 async function findProductBySlugInternal(
   strapi: any,
   decodedSlug: string,
   isAdmin: boolean,
+  populate: typeof PRODUCT_POPULATE | typeof PRODUCT_SHELL_POPULATE = PRODUCT_POPULATE,
 ): Promise<any | null> {
   const filters: any = {
     Slug: decodedSlug,
@@ -170,7 +200,7 @@ async function findProductBySlugInternal(
 
   let products = await strapi.entityService.findMany("api::product.product", {
     filters,
-    populate: PRODUCT_POPULATE,
+    populate,
     pagination: { limit: 1 },
   });
 
@@ -199,7 +229,7 @@ async function findProductBySlugInternal(
 
         const foundProducts = await strapi.entityService.findMany("api::product.product", {
           filters: foundFilters,
-          populate: PRODUCT_POPULATE,
+          populate,
           pagination: { limit: 1 },
         });
         product = (foundProducts as unknown[])[0] || null;
@@ -233,7 +263,7 @@ async function findProductBySlugInternal(
 
       const productsById = await strapi.entityService.findMany("api::product.product", {
         filters: idFilters,
-        populate: PRODUCT_POPULATE,
+        populate,
         pagination: { limit: 1 },
       });
 
@@ -603,6 +633,7 @@ export default factories.createCoreController(
         const user = ctx.state.user;
         const isAdmin = isAdminUser(user);
         const bypassCache = shouldBypassEndpointCache(ctx.request?.headers as Record<string, unknown>) || isAdmin;
+        const populate = getProductPopulateForView(ctx.query?.view);
 
         const cacheKey = buildCacheKey({
           routeId: "product.by-slug",
@@ -621,7 +652,7 @@ export default factories.createCoreController(
             shouldCacheValue: (value) => Boolean((value as any)?.data),
           },
           async () => {
-            const product = await findProductBySlugInternal(strapi, decodedSlug, isAdmin);
+            const product = await findProductBySlugInternal(strapi, decodedSlug, isAdmin, populate);
             if (!product) {
               return null;
             }

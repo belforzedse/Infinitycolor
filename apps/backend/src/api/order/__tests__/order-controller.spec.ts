@@ -6,6 +6,19 @@
 
 import { createCtx, createStrapiMock } from "../../../__tests__/helpers/test-utils";
 
+jest.mock("@strapi/strapi", () => ({
+  factories: {
+    createCoreController: (_uid: string, builder: any) =>
+      builder({ strapi: (global as any).__orderControllerStrapi }),
+  },
+}));
+
+function loadOrderController(strapi: any) {
+  jest.resetModules();
+  (global as any).__orderControllerStrapi = strapi;
+  return require("../controllers/order").default;
+}
+
 describe("Order Controller", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -513,6 +526,198 @@ describe("Order Controller", () => {
         message: "Order not found",
         status: 404,
       });
+    });
+
+    it("should preserve unpaginated order logs and transactions when no detail pagination is requested", async () => {
+      const { strapi, registerQuery } = createStrapiMock();
+      const order = {
+        id: 50,
+        Status: "Started",
+        user: { id: 8 },
+        contract: {
+          id: 10,
+          contract_transactions: [
+            { id: 1, Date: new Date("2024-01-01") },
+            { id: 2, Date: new Date("2024-01-02") },
+          ],
+        },
+        order_items: [],
+      };
+      const orderLogs = [
+        { id: 1, Description: "Order created", createdAt: new Date("2024-01-01T10:00:00Z") },
+        { id: 2, Description: "Payment success", createdAt: new Date("2024-01-01T10:05:00Z") },
+      ];
+      const orderFindOne = jest.fn().mockResolvedValue(order);
+      const orderLogFindMany = jest.fn().mockResolvedValue(orderLogs);
+      const orderLogCount = jest.fn();
+
+      registerQuery("api::order.order", { findOne: orderFindOne });
+      registerQuery("api::order-log.order-log", {
+        count: orderLogCount,
+        findMany: orderLogFindMany,
+      });
+      registerQuery("api::contract-transaction.contract-transaction", {
+        count: jest.fn(),
+        findMany: jest.fn(),
+      });
+
+      const controller = loadOrderController(strapi);
+      const ctx = createCtx({
+        params: { id: "50" },
+        query: {},
+        state: { user: { id: 8 } },
+      });
+
+      const result = await controller.getMyOrderDetail(ctx);
+
+      expect(orderFindOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 50, user: { id: 8 } },
+          populate: expect.objectContaining({
+            contract: {
+              populate: {
+                contract_transactions: {
+                  populate: { payment_gateway: true },
+                  orderBy: { Date: "asc" },
+                },
+              },
+            },
+          }),
+        }),
+      );
+      expect(orderLogFindMany).toHaveBeenCalledWith({
+        where: { order: { id: 50 } },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(orderLogCount).not.toHaveBeenCalled();
+      expect(result.data.contract_transactions).toHaveLength(2);
+      expect(result.data.orderLogs).toHaveLength(2);
+      expect(result.data.orderLogsMeta).toBeUndefined();
+      expect(result.data.contractTransactionsMeta).toBeUndefined();
+    });
+
+    it("should page order logs and contract transactions when detail pagination is requested", async () => {
+      const { strapi, registerQuery } = createStrapiMock();
+      const order = {
+        id: 50,
+        Status: "Started",
+        user: { id: 8 },
+        contract: { id: 10 },
+        order_items: [],
+      };
+      const pagedLogs = [
+        { id: 2, Description: "Payment success", createdAt: new Date("2024-01-01T10:05:00Z") },
+      ];
+      const pagedTransactions = [
+        { id: 5, Date: new Date("2024-01-05"), payment_gateway: { id: 1, Title: "ZarinPal" } },
+        { id: 6, Date: new Date("2024-01-06"), payment_gateway: { id: 1, Title: "ZarinPal" } },
+      ];
+      const orderFindOne = jest.fn().mockResolvedValue(order);
+      const orderLogCount = jest.fn().mockResolvedValue(3);
+      const orderLogFindMany = jest.fn().mockResolvedValue(pagedLogs);
+      const transactionCount = jest.fn().mockResolvedValue(7);
+      const transactionFindMany = jest.fn().mockResolvedValue(pagedTransactions);
+
+      registerQuery("api::order.order", { findOne: orderFindOne });
+      registerQuery("api::order-log.order-log", {
+        count: orderLogCount,
+        findMany: orderLogFindMany,
+      });
+      registerQuery("api::contract-transaction.contract-transaction", {
+        count: transactionCount,
+        findMany: transactionFindMany,
+      });
+
+      const controller = loadOrderController(strapi);
+      const ctx = createCtx({
+        params: { id: "50" },
+        query: {
+          logsPage: "2",
+          logsPageSize: "1",
+          transactionsPage: "3",
+          transactionsPageSize: "2",
+        },
+        state: { user: { id: 8 } },
+      });
+
+      const result = await controller.getMyOrderDetail(ctx);
+
+      expect(orderFindOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 50, user: { id: 8 } },
+          populate: expect.objectContaining({ contract: true }),
+        }),
+      );
+      expect(orderLogCount).toHaveBeenCalledWith({
+        where: { order: { id: 50 } },
+      });
+      expect(orderLogFindMany).toHaveBeenCalledWith({
+        where: { order: { id: 50 } },
+        orderBy: { createdAt: "asc" },
+        limit: 1,
+        offset: 1,
+      });
+      expect(transactionCount).toHaveBeenCalledWith({
+        where: { contract: { id: 10 } },
+      });
+      expect(transactionFindMany).toHaveBeenCalledWith({
+        where: { contract: { id: 10 } },
+        populate: { payment_gateway: true },
+        orderBy: { Date: "asc" },
+        limit: 2,
+        offset: 4,
+      });
+      expect(result.data.orderLogs).toEqual(pagedLogs);
+      expect(result.data.contract_transactions).toEqual(pagedTransactions);
+      expect(result.data.orderLogsMeta.pagination).toEqual({
+        page: 2,
+        pageSize: 1,
+        pageCount: 3,
+        total: 3,
+      });
+      expect(result.data.contractTransactionsMeta.pagination).toEqual({
+        page: 3,
+        pageSize: 2,
+        pageCount: 4,
+        total: 7,
+      });
+    });
+
+    it("should not query detail logs or transactions before order ownership is proven", async () => {
+      const { strapi, registerQuery } = createStrapiMock();
+      const orderFindOne = jest.fn().mockResolvedValue(null);
+      const orderLogFindMany = jest.fn();
+      const transactionFindMany = jest.fn();
+
+      registerQuery("api::order.order", { findOne: orderFindOne });
+      registerQuery("api::order-log.order-log", {
+        count: jest.fn(),
+        findMany: orderLogFindMany,
+      });
+      registerQuery("api::contract-transaction.contract-transaction", {
+        count: jest.fn(),
+        findMany: transactionFindMany,
+      });
+
+      const controller = loadOrderController(strapi);
+      const ctx = createCtx({
+        params: { id: "50" },
+        query: { logsPage: "1", transactionsPage: "1" },
+        state: { user: { id: 8 } },
+      });
+
+      await expect(controller.getMyOrderDetail(ctx)).rejects.toMatchObject({
+        message: "Order not found",
+        status: 400,
+      });
+      expect(ctx.notFound).toHaveBeenCalledWith("Order not found", {
+        data: { success: false, error: "NOT_FOUND" },
+      });
+      expect(orderFindOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 50, user: { id: 8 } } }),
+      );
+      expect(orderLogFindMany).not.toHaveBeenCalled();
+      expect(transactionFindMany).not.toHaveBeenCalled();
     });
   });
 
