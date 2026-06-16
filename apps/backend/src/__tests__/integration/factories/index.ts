@@ -248,6 +248,7 @@ export function makeFactories(strapi: any) {
     authority?: string;
     gateway?: "ZarinPal" | "SamanKish" | "Mellat" | "SnappPay";
     transactionStatus?: "Pending" | "Success" | "Failed";
+    userId?: number;
     items?: Array<{ count: number; stockCount: number; stockReserved?: number; perAmount?: number }>;
     reservedUntil?: Date;
     reservationStatus?: string;
@@ -256,6 +257,7 @@ export function makeFactories(strapi: any) {
     const amountToman = opts.amountToman ?? 100000;
     const gateway = opts.gateway ?? "ZarinPal";
     const authority = opts.authority ?? uniq();
+    const userId = opts.userId ?? (await createUser()).id;
     const gatewayEntity = await createPaymentGateway({
       title: `${TEST_PREFIX}${gateway}`,
       description: `${TEST_PREFIX}${gateway} integration gateway`,
@@ -264,8 +266,10 @@ export function makeFactories(strapi: any) {
       amount: amountToman,
       status: "Not Ready",
       type: "Cash",
+      userId,
     });
     const { order, items } = await createReservedOrder({
+      userId,
       contractId: contract.id,
       items: opts.items ?? [{ count: 2, stockCount: 10, stockReserved: 2, perAmount: amountToman / 2 }],
       reservedUntil: opts.reservedUntil,
@@ -313,6 +317,7 @@ export function makeFactories(strapi: any) {
     return {
       amountToman,
       authority,
+      userId,
       gatewayEntity,
       contract,
       order: await getOrder(order.id),

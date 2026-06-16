@@ -317,6 +317,81 @@ describe('Cart Operations - Real Handlers', () => {
       expect(result.data.summary.total).toBe(240000); // 300000 - 60000
     });
 
+    it('should reuse the already-loaded cart when calculating selected shipping', async () => {
+      const userId = 1;
+      const discountCode = 'SAVE20';
+      const cart = mockCart({
+        id: 1,
+        user: { id: userId },
+        cart_items: [
+          mockCartItem({
+            Count: 2,
+            product_variation: {
+              Price: 150000,
+              DiscountPrice: null,
+              product: { id: 1 },
+            },
+          }),
+        ],
+      });
+
+      cartService.getUserCart.mockResolvedValue(cart);
+      mockStrapi.entityService.findMany.mockResolvedValue([
+        mockDiscount({
+          id: 1,
+          Code: discountCode,
+          Type: 'Discount',
+          Amount: 20,
+          IsActive: true,
+          LimitUsage: 100,
+          UsedTimes: 50,
+        }),
+      ]);
+
+      const shippingService = {
+        calculateMethodForCart: jest.fn(async (_userId, _shippingId, _addressContext, options) => {
+          if (!options?.cart) {
+            await cartService.getUserCart(_userId);
+          }
+          return { id: 7, price: 50000 };
+        }),
+      };
+      const snappayService = {
+        eligible: jest.fn().mockResolvedValue({
+          successful: true,
+          response: { eligible: true },
+        }),
+      };
+      registerService('api::shipping.shipping', shippingService);
+      registerService('api::payment-gateway.snappay', snappayService);
+
+      const ctx = mockContext({
+        request: {
+          body: {
+            code: discountCode,
+            shippingId: 7,
+            addressId: 10,
+          },
+        },
+        state: { user: mockUser({ id: userId }) },
+      });
+
+      const handler = applyDiscountHandler(mockStrapi);
+      const result = await handler(ctx);
+
+      expect(cartService.getUserCart).toHaveBeenCalledTimes(1);
+      expect(shippingService.calculateMethodForCart).toHaveBeenCalledWith(
+        userId,
+        7,
+        { addressId: 10, addressPayload: undefined },
+        { cart },
+      );
+      expect(result.data.summary.subtotal).toBe(300000);
+      expect(result.data.summary.shipping).toBe(50000);
+      expect(result.data.discount).toBe(60000);
+      expect(result.data.summary.total).toBe(290000);
+    });
+
     it('should reject expired discount code - REAL validation', async () => {
       const userId = 1;
       cartService.getUserCart.mockResolvedValue(

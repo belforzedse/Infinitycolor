@@ -38,7 +38,8 @@ export const applyDiscountHandler = (strapi: Strapi) => async (ctx: any) => {
       const selectedShipping = await shippingService.calculateMethodForCart(
         userId,
         shippingId,
-        { addressId, addressPayload }
+        { addressId, addressPayload },
+        { cart }
       );
       finalShipping = Number(selectedShipping?.price || 0);
     }

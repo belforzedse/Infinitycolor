@@ -16,6 +16,11 @@ type AddressContext = {
   } | null;
 };
 
+type ShippingCalculationOptions = {
+  cart?: any;
+  context?: ShippingContext;
+};
+
 const normalizeId = (value: unknown): number | undefined => {
   const numeric = Number(value);
   return Number.isInteger(numeric) && numeric > 0 ? numeric : undefined;
@@ -58,9 +63,17 @@ export default factories.createCoreService("api::shipping.shipping", ({ strapi }
     return super.update(entityId, params);
   },
 
-  async getShippingContext(userId: number, addressContext: AddressContext = {}): Promise<ShippingContext> {
+  async getShippingContext(
+    userId: number,
+    addressContext: AddressContext = {},
+    options: ShippingCalculationOptions = {},
+  ): Promise<ShippingContext> {
+    if (options.context) {
+      return options.context;
+    }
+
     const cartService = strapi.service("api::cart.cart");
-    const cart = await cartService.getUserCart(userId);
+    const cart = options.cart ?? (await cartService.getUserCart(userId));
 
     let subtotal = 0;
     let quantity = 0;
@@ -158,8 +171,12 @@ export default factories.createCoreService("api::shipping.shipping", ({ strapi }
     };
   },
 
-  async getAvailableMethodsForCart(userId: number, addressContext: AddressContext = {}) {
-    const context = await this.getShippingContext(userId, addressContext);
+  async getAvailableMethodsForCart(
+    userId: number,
+    addressContext: AddressContext = {},
+    options: ShippingCalculationOptions = {},
+  ) {
+    const context = await this.getShippingContext(userId, addressContext, options);
     const methods: any[] = await strapi.entityService.findMany(
       "api::shipping.shipping",
       {
@@ -185,15 +202,16 @@ export default factories.createCoreService("api::shipping.shipping", ({ strapi }
   async calculateMethodForCart(
     userId: number,
     shippingId: number | string,
-    addressContext: AddressContext = {}
+    addressContext: AddressContext = {},
+    options: ShippingCalculationOptions = {},
   ) {
     const normalizedShippingId = normalizeId(shippingId);
     if (!normalizedShippingId) {
       throw new Error("SHIPPING_REQUIRED");
     }
 
-    const options = await this.getAvailableMethodsForCart(userId, addressContext);
-    const selected = options.find((method: any) => Number(method.id) === normalizedShippingId);
+    const availableMethods = await this.getAvailableMethodsForCart(userId, addressContext, options);
+    const selected = availableMethods.find((method: any) => Number(method.id) === normalizedShippingId);
     if (!selected) {
       throw new Error("INVALID_SHIPPING");
     }

@@ -3,6 +3,10 @@ import path from "path";
 import { getNextImageRemotePatterns } from "./src/utils/imageSecurity";
 import { getSecurityHeaders } from "./src/utils/securityHeaders";
 
+const withBundleAnalyzer = require("@next/bundle-analyzer")({
+  enabled: process.env.ANALYZE === "true",
+});
+
 /**
  * Load build version from generated JSON file
  * This version is used for cache invalidation and is injected as NEXT_PUBLIC_BUILD_VERSION
@@ -75,6 +79,6 @@ const nextConfig = {
       : undefined,
   cacheMaxMemorySize: 256 * 1024 * 1024, // 256MB in-memory cache per instance
 };
-module.exports = withSentryConfig(nextConfig, {
+module.exports = withSentryConfig(withBundleAnalyzer(nextConfig), {
   silent: !process.env.CI,
 });
