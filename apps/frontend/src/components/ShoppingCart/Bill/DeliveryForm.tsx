@@ -1,7 +1,7 @@
 "use client";
 
 import ChevronLeftIcon from "@/components/Product/Icons/ChevronLeftIcon";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom } from "jotai";
 import { submitOrderStepAtom } from "@/atoms/Order";
 import DisclosureItem from "@/components/Kits/Disclosure";
@@ -11,6 +11,38 @@ import type { ShippingAddressContext, ShippingOption } from "@/services/shipping
 import { getAvailableShippingOptions } from "@/services/shipping";
 import type { Control, UseFormSetValue } from "react-hook-form";
 import type { FormData } from "./index";
+
+const buildAddressContextKey = (context?: ShippingAddressContext) => {
+  if (context?.addressId) return `address:${context.addressId}`;
+  const cityId = context?.addressPayload?.shipping_city;
+  return cityId ? `city:${cityId}` : "none";
+};
+
+const buildCartSignature = (
+  cartItems: Array<{
+    cartItemId?: string;
+    id?: string;
+    variationId?: string;
+    quantity?: number;
+    price?: number;
+  }>,
+  totalItems: number,
+  totalPrice: number,
+) => {
+  const itemKey = cartItems
+    .map((item) =>
+      [
+        item.cartItemId || item.id || "",
+        item.variationId || "",
+        Number(item.quantity || 0),
+        Number(item.price || 0),
+      ].join(":"),
+    )
+    .sort()
+    .join("|");
+
+  return `${totalItems}:${Math.round(totalPrice)}:${itemKey}`;
+};
 
 type Props = {
   control: Control<FormData>;
@@ -43,11 +75,19 @@ function ShoppingCartBillDeliveryForm({
   discountCode,
   previewLoading,
 }: Props) {
-  const { totalPrice, totalItems, subtotalBeforeDiscount, cartDiscountTotal, openDrawer } = useCart();
+  const {
+    totalPrice,
+    totalItems,
+    subtotalBeforeDiscount,
+    cartDiscountTotal,
+    openDrawer,
+    cartItems = [],
+  } = useCart();
   const [, _setSubmitOrderStep] = useAtom(submitOrderStepAtom);
   const [shippingMethods, setShippingMethods] = useState<ShippingOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestSeqRef = useRef(0);
 
   // Calculate totals (prefer backend preview when available)
   const shippingCost = selectedShipping?.price || 0;
@@ -58,38 +98,55 @@ function ShoppingCartBillDeliveryForm({
   const finalTotal =
     discountPreview?.summary?.total ??
     Math.max(0, subtotal - discountAmount + taxAmount + effectiveShipping);
-  const addressContextKey = JSON.stringify(addressContext || {});
+  const addressContextKey = useMemo(() => buildAddressContextKey(addressContext), [addressContext]);
+  const cartSignature = useMemo(
+    () => buildCartSignature(cartItems, totalItems, totalPrice),
+    [cartItems, totalItems, totalPrice],
+  );
   const hasAddressContext = Boolean(addressContext?.addressId || addressContext?.addressPayload?.shipping_city);
 
   useEffect(() => {
     const fetchShippingMethods = async () => {
       if (!hasAddressContext) {
+        requestSeqRef.current += 1;
         setShippingMethods([]);
         setValue("shippingMethod", null);
         setError(null);
+        setLoading(false);
         return;
       }
+
+      const requestSeq = requestSeqRef.current + 1;
+      requestSeqRef.current = requestSeq;
 
       try {
         setLoading(true);
         setError(null);
         const methods = await getAvailableShippingOptions(addressContext);
+        if (requestSeqRef.current !== requestSeq) return;
         setShippingMethods(methods);
-        if (selectedShipping && !methods.some((method) => method.id === selectedShipping.id)) {
-          setValue("shippingMethod", null);
-        }
-
         // No default selection - let user choose explicitly
       } catch (err) {
+        if (requestSeqRef.current !== requestSeq) return;
         console.error("Failed to fetch shipping methods:", err);
         setError("خطا در دریافت روش‌های ارسال");
       } finally {
-        setLoading(false);
+        if (requestSeqRef.current === requestSeq) {
+          setLoading(false);
+        }
       }
     };
 
     fetchShippingMethods();
-  }, [addressContextKey, hasAddressContext, selectedShipping, setValue, totalItems, totalPrice]);
+  }, [addressContextKey, cartSignature, hasAddressContext, setValue]);
+
+  useEffect(() => {
+    if (!selectedShipping) return;
+    if (shippingMethods.length === 0) return;
+    if (!shippingMethods.some((method) => method.id === selectedShipping.id)) {
+      setValue("shippingMethod", null);
+    }
+  }, [selectedShipping, setValue, shippingMethods]);
 
   return (
     <div className="flex flex-col gap-5 rounded-2xl bg-stone-50 p-5">

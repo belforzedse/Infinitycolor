@@ -28,6 +28,16 @@ export const columns: ColumnDef<Shipping>[] = [
   {
     accessorKey: "attributes.Title",
     header: "روش ارسال",
+    cell: ({ row }) => (
+      <span
+        data-testid="admin-shipping-row"
+        data-id={row.original?.id}
+        data-shipping-title={row.original?.attributes?.Title}
+        data-shipping-code={row.original?.attributes?.Code}
+      >
+        {row.original?.attributes?.Title}
+      </span>
+    ),
   },
   {
     accessorKey: "attributes.Code",
@@ -84,12 +94,16 @@ export const columns: ColumnDef<Shipping>[] = [
             apiUrl="/shippings"
             isRemoved={row.original?.attributes?.removedAt !== null}
             id={row.original?.id}
+            itemName="روش ارسال"
+            testIdPrefix="admin-shipping"
           />
 
           <SuperAdminTableCellActionButton
             variant="secondary"
             icon={<EditIcon />}
             path={`/super-admin/shipping/edit/${row.original?.id}`}
+            testId="admin-shipping-edit"
+            dataAttributes={{ id: row.original?.id }}
           />
         </div>
       );

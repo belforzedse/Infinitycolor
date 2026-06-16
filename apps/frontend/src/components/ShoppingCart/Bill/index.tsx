@@ -45,10 +45,58 @@ export type FormData = {
 
 type Props = Record<string, never>;
 
+const buildAddressContextKey = (context?: ShippingAddressContext) => {
+  if (context?.addressId) return `address:${context.addressId}`;
+  const cityId = context?.addressPayload?.shipping_city;
+  return cityId ? `city:${cityId}` : "none";
+};
+
+const buildCartSignature = (
+  cartItems: Array<{
+    cartItemId?: string;
+    id?: string;
+    variationId?: string;
+    quantity?: number;
+    price?: number;
+  }>,
+  totalItems: number,
+  totalPrice: number,
+) => {
+  const itemKey = cartItems
+    .map((item) =>
+      [
+        item.cartItemId || item.id || "",
+        item.variationId || "",
+        Number(item.quantity || 0),
+        Number(item.price || 0),
+      ].join(":"),
+    )
+    .sort()
+    .join("|");
+
+  return `${totalItems}:${Math.round(totalPrice)}:${itemKey}`;
+};
+
+const buildDiscountPreviewKey = ({
+  code,
+  shippingId,
+  addressContextKey,
+  cartSignature,
+}: {
+  code?: string;
+  shippingId?: number;
+  addressContextKey: string;
+  cartSignature: string;
+}) => `${String(code || "").trim()}:${shippingId || "none"}:${addressContextKey}:${cartSignature}`;
+
 function ShoppingCartBillForm({}: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitInProgressRef = React.useRef(false);
+  const lastDiscountPreviewKeyRef = React.useRef<string | null>(null);
+  const discountPreviewSeqRef = React.useRef(0);
+  const lastSnappEligibilityKeyRef = React.useRef<string | null>(null);
+  const snappEligibilitySeqRef = React.useRef(0);
   // Holds checkout stock changes awaiting the shopper's acknowledgement (C1).
   const [stockAdjustment, setStockAdjustment] = useState<{
     adjusted: StockAdjustedRow[];
@@ -169,6 +217,24 @@ function ShoppingCartBillForm({}: Props) {
   const discountToman = discountPreview?.discount ?? 0;
   const subtotalToman = totalPrice;
   const totalToman = Math.max(0, Math.round(subtotalToman - discountToman + shippingToman));
+  const addressContextKey = useMemo(
+    () => buildAddressContextKey(shippingAddressContext),
+    [shippingAddressContext],
+  );
+  const cartSignature = useMemo(
+    () => buildCartSignature(cartItems, totalItems, totalPrice),
+    [cartItems, totalItems, totalPrice],
+  );
+  const discountPreviewKey = useMemo(
+    () =>
+      buildDiscountPreviewKey({
+        code: discountCode,
+        shippingId,
+        addressContextKey,
+        cartSignature,
+      }),
+    [addressContextKey, cartSignature, discountCode, shippingId],
+  );
 
   // Persist/restore discount code
   useEffect(() => {
@@ -248,9 +314,17 @@ function ShoppingCartBillForm({}: Props) {
   useEffect(() => {
     const run = async () => {
       if (!discountCode) {
+        discountPreviewSeqRef.current += 1;
         setDiscountPreview(undefined);
+        lastDiscountPreviewKeyRef.current = null;
         return;
       }
+      if (lastDiscountPreviewKeyRef.current === discountPreviewKey && discountPreview) {
+        return;
+      }
+      const requestSeq = discountPreviewSeqRef.current + 1;
+      discountPreviewSeqRef.current = requestSeq;
+      const requestKey = discountPreviewKey;
       setDiscountPreviewLoading(true);
       try {
         const res = await CartService.applyDiscount({
@@ -258,52 +332,75 @@ function ShoppingCartBillForm({}: Props) {
           shippingId,
           ...shippingAddressContext,
         });
+        if (discountPreviewSeqRef.current !== requestSeq) return;
         if (res?.success) {
           setDiscountPreview({ discount: res.discount, summary: res.summary });
+          lastDiscountPreviewKeyRef.current = requestKey;
         } else {
           setDiscountPreview(undefined);
           setDiscountCode(undefined);
+          lastDiscountPreviewKeyRef.current = null;
           try {
             localStorage.removeItem("discountCode");
           } catch {}
           toast.error("کد تخفیف شما دیگر معتبر نیست و حذف شد");
         }
       } catch (e) {
+        if (discountPreviewSeqRef.current !== requestSeq) return;
         const errorMsg = getUserFacingErrorMessage(e, "خطا در اعمال کد تخفیف. دوباره تلاش کنید.");
         console.error("applyDiscount failed:", errorMsg, e);
       } finally {
-        setDiscountPreviewLoading(false);
+        if (discountPreviewSeqRef.current === requestSeq) {
+          setDiscountPreviewLoading(false);
+        }
       }
     };
     run();
-  }, [discountCode, shippingId, shippingAddressContext]);
+  }, [discountCode, discountPreview, discountPreviewKey, shippingId, shippingAddressContext]);
 
   // Re-check SnappPay eligibility when shipping, discount, or merge choice changes
   // In merge mode we don't have shippingId (shipping comes from parent order), so allow eligibility check by amount only
   useEffect(() => {
     const run = async () => {
+      let requestSeq = 0;
+
       try {
         const isMergeMode = mergeChoice === "merge";
+        const eligibilityKey = `${isMergeMode ? "merge" : "new"}:${Math.round(totalToman)}`;
         if (!isMergeMode && !shippingId) {
+          snappEligibilitySeqRef.current += 1;
+          lastSnappEligibilityKeyRef.current = null;
           setSnappEligible(false);
           setSnappTitle(undefined);
           setSnappDescription(undefined);
           return;
         }
         if (totalToman <= 0) {
+          snappEligibilitySeqRef.current += 1;
+          lastSnappEligibilityKeyRef.current = null;
           setSnappEligible(false);
           setSnappTitle(undefined);
           setSnappDescription(undefined);
           return;
         }
+        if (lastSnappEligibilityKeyRef.current === eligibilityKey) {
+          return;
+        }
 
+        requestSeq = snappEligibilitySeqRef.current + 1;
+        snappEligibilitySeqRef.current = requestSeq;
         const res = await CartService.getSnappEligible({
           amount: totalToman,
         });
+        if (snappEligibilitySeqRef.current !== requestSeq) return;
+        lastSnappEligibilityKeyRef.current = eligibilityKey;
         setSnappEligible(!!res.eligible);
         setSnappTitle(res.title);
         setSnappDescription(res.description);
       } catch {
+        if (requestSeq > 0 && snappEligibilitySeqRef.current !== requestSeq) return;
+
+        lastSnappEligibilityKeyRef.current = null;
         setSnappEligible(false);
         setSnappTitle(undefined);
         setSnappDescription(undefined);
@@ -872,11 +969,18 @@ function ShoppingCartBillForm({}: Props) {
             shippingId={watchShippingMethod ? Number(watchShippingMethod.id) : undefined}
             addressContext={shippingAddressContext}
             onApplied={(code, preview) => {
+              lastDiscountPreviewKeyRef.current = buildDiscountPreviewKey({
+                code,
+                shippingId,
+                addressContextKey,
+                cartSignature,
+              });
               setDiscountCode(code);
               setDiscountPreview(preview);
             }}
             appliedCode={discountCode}
             onRemove={() => {
+              lastDiscountPreviewKeyRef.current = null;
               setDiscountCode(undefined);
               setDiscountPreview(undefined);
               try {

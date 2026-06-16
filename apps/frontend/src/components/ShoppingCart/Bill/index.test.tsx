@@ -1,19 +1,35 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import ShoppingCartBillForm from ".";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
+import { CartService } from "@/services";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
 }));
 
+let mockCartState = {
+  totalPrice: 100_000,
+  totalItems: 1,
+  cartItems: [
+    {
+      id: "1",
+      cartItemId: "10",
+      variationId: "100",
+      quantity: 1,
+      price: 100_000,
+    },
+  ],
+};
+
 jest.mock("@/contexts/CartContext", () => ({
   useCart: () => ({
-    totalPrice: 100_000,
-    totalItems: 1,
+    ...mockCartState,
     clearCart: jest.fn(),
+    openDrawer: jest.fn(),
+    refreshCart: jest.fn(),
   }),
 }));
 
@@ -49,12 +65,53 @@ jest.mock("./InformationForm", () => ({
 
 jest.mock("./DeliveryForm", () => ({
   __esModule: true,
-  default: () => <div data-testid="checkout-delivery-form" />,
+  default: ({ setValue }: any) => (
+    <div data-testid="checkout-delivery-form">
+      <button
+        type="button"
+        data-testid="select-shipping"
+        onClick={() =>
+          setValue("shippingMethod", {
+            id: 7,
+            code: "post",
+            title: "Post",
+            price: 20_000,
+            basePrice: 20_000,
+            sortOrder: 1,
+          })
+        }
+      >
+        select shipping
+      </button>
+    </div>
+  ),
 }));
 
 jest.mock("./DiscountCoupon", () => ({
   __esModule: true,
-  default: () => <div data-testid="checkout-discount-coupon" />,
+  default: ({ onApplied }: any) => (
+    <div data-testid="checkout-discount-coupon">
+      <button
+        type="button"
+        data-testid="apply-discount"
+        onClick={() =>
+          onApplied?.("SUMMER", {
+            discount: 10_000,
+            summary: {
+              subtotal: 100_000,
+              eligibleSubtotal: 100_000,
+              tax: 0,
+              shipping: 0,
+              total: 90_000,
+              taxPercent: 0,
+            },
+          })
+        }
+      >
+        apply discount
+      </button>
+    </div>
+  ),
 }));
 
 jest.mock("./PaymentGateway", () => ({
@@ -71,6 +128,34 @@ describe("ShoppingCartBillForm auth gate", () => {
   beforeEach(() => {
     localStorage.clear();
     window.history.pushState({}, "", "/checkout");
+    mockCartState = {
+      totalPrice: 100_000,
+      totalItems: 1,
+      cartItems: [
+        {
+          id: "1",
+          cartItemId: "10",
+          variationId: "100",
+          quantity: 1,
+          price: 100_000,
+        },
+      ],
+    };
+    jest.clearAllMocks();
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["samankish"]);
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: false });
+    (CartService.applyDiscount as jest.Mock).mockResolvedValue({
+      success: true,
+      discount: 10_000,
+      summary: {
+        subtotal: 100_000,
+        eligibleSubtotal: 100_000,
+        tax: 0,
+        shipping: 0,
+        total: 90_000,
+        taxPercent: 0,
+      },
+    });
   });
 
   it("keeps the auth gate during initial token hydration and reveals the form once auth loading settles", async () => {
@@ -96,5 +181,108 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(screen.queryByTestId("checkout-auth-gate")).not.toBeInTheDocument();
     });
     expect(screen.getByTestId("checkout-submit")).toBeVisible();
+  });
+
+  it("does not duplicate an already-applied discount preview from the coupon component", async () => {
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+
+    fireEvent.click(screen.getByTestId("apply-discount"));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(CartService.applyDiscount).not.toHaveBeenCalled();
+  });
+
+  it("revalidates an applied discount once when the cart signature changes", async () => {
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    const { rerender } = render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+
+    fireEvent.click(screen.getByTestId("apply-discount"));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(CartService.applyDiscount).not.toHaveBeenCalled();
+
+    mockCartState = {
+      totalPrice: 150_000,
+      totalItems: 1,
+      cartItems: [
+        {
+          id: "1",
+          cartItemId: "10",
+          variationId: "100",
+          quantity: 1,
+          price: 150_000,
+        },
+      ],
+    };
+
+    rerender(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(CartService.applyDiscount).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not duplicate SnappPay eligibility for the same payable total and mode", async () => {
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    const { rerender } = render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+
+    fireEvent.click(screen.getByTestId("select-shipping"));
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
   });
 });

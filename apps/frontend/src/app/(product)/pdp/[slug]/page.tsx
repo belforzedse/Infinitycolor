@@ -6,10 +6,10 @@ import OffersListHomePage from "@/components/PDP/OffersListHomePage";
 import FavoriteIcon from "@/components/PDP/Icons/FavoriteIcon";
 import PDPComment from "@/components/PDP/Comment";
 import PageContainer from "@/components/layout/PageContainer";
-import { normalizeUserInfo, type ProductReview } from "@/services/product/product-review.service";
+import { productReviewService, type ProductReview } from "@/services/product/product-review.service";
 import Link from "next/link";
 import type { Metadata } from "next";
-import { cache } from "react";
+import { cache, Suspense } from "react";
 import { IMAGE_BASE_URL, ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
 import { SITE_NAME } from "@/config/site";
 import logger from "@/utils/logger";
@@ -26,6 +26,9 @@ import {
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
 
 const PDP_REVALIDATE_SECONDS = 30;
+const PDP_PRODUCT_SHELL_QUERY = "view=shell";
+const PDP_ID_FALLBACK_POPULATE_QUERY =
+  "populate[0]=CoverImage&populate[1]=Media&populate[2]=product_main_category&populate[3]=product_tags&populate[4]=product_variations&populate[5]=product_variations.product_stock&populate[6]=product_variations.product_variation_color&populate[7]=product_variations.product_variation_size&populate[8]=product_variations.product_variation_model&populate[9]=product_other_categories&populate[10]=product_size_helper&populate[11]=Files&populate[12]=product_faqs";
 
 type ProductLookupResult = {
   product: ProductDetail | null;
@@ -177,7 +180,7 @@ const fetchPdpProduct = async (
 ): Promise<ProductLookupResult> => {
   const strapiBaseUrl = getStrapiServerUrl();
   const encodedSlug = encodeURIComponent(decodedSlug);
-  const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/by-slug/${encodedSlug}`;
+  const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/by-slug/${encodedSlug}?${PDP_PRODUCT_SHELL_QUERY}`;
   const apiUrl = `${strapiBaseUrl}${endpoint}`;
 
   const response = await fetch(apiUrl, {
@@ -208,6 +211,150 @@ const fetchPdpProduct = async (
 const getCachedPdpProduct = cache((decodedSlug: string) =>
   fetchPdpProduct(decodedSlug, PDP_REVALIDATE_SECONDS),
 );
+
+async function PDPRelatedProductsSection({
+  mainCategoryId,
+  otherCategoryIds,
+  productId,
+}: {
+  mainCategoryId: string;
+  otherCategoryIds: string[];
+  productId: string;
+}) {
+  let sameMainCategoryProducts: any[] = [];
+  let otherCategoriesProducts: any[] = [];
+
+  try {
+    const results = await Promise.allSettled([
+      getRelatedProductsByMainCategory(mainCategoryId, productId),
+      getRelatedProductsByOtherCategories(otherCategoryIds, productId),
+    ]);
+
+    if (results[0].status === "fulfilled") {
+      sameMainCategoryProducts = results[0].value;
+    } else {
+      logger.error("Error fetching main category products", {
+        error: String(results[0].reason),
+      });
+    }
+
+    if (results[1].status === "fulfilled") {
+      otherCategoriesProducts = results[1].value;
+    } else {
+      logger.error("Error fetching other categories products", {
+        error: String(results[1].reason),
+      });
+    }
+  } catch (error) {
+    logger.error("Error fetching related products", { error: String(error) });
+  }
+
+  if (sameMainCategoryProducts.length === 0 && otherCategoriesProducts.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {sameMainCategoryProducts.length > 0 && (
+        <OffersListHomePage
+          icon={<FavoriteIcon />}
+          title="شاید بپسندید"
+          products={sameMainCategoryProducts}
+        />
+      )}
+
+      {otherCategoriesProducts.length > 0 && (
+        <OffersListHomePage
+          icon={<FavoriteIcon />}
+          title="محصولات مشابه"
+          products={otherCategoriesProducts}
+        />
+      )}
+    </>
+  );
+}
+
+async function PDPReviewsSection({
+  productId,
+  productData,
+  productTitle,
+  productUrl,
+  averageRating,
+  reviewCount,
+}: {
+  productId: string;
+  productData: ProductDetail;
+  productTitle: string;
+  productUrl: string;
+  averageRating: number;
+  reviewCount: number;
+}) {
+  let productReviews: ProductReview[] = [];
+
+  if (productId) {
+    try {
+      const response = await productReviewService.getProductReviews(productId, {
+        page: 1,
+        pageSize: 10,
+        sort: "createdAt:desc",
+      });
+      productReviews = response.data || [];
+    } catch (error) {
+      logger.error("Error fetching product reviews", { productId, error: String(error) });
+    }
+  }
+
+  return (
+    <>
+      {reviewCount > 0 && averageRating > 0 && (
+        <ReviewSchema
+          productName={productTitle}
+          productUrl={productUrl}
+          averageRating={averageRating}
+          reviewCount={reviewCount}
+          reviews={productReviews}
+        />
+      )}
+
+      <PDPComment
+        productId={productId}
+        productReviews={productReviews}
+        rating={averageRating}
+        rateCount={reviewCount}
+        productData={productData}
+      />
+    </>
+  );
+}
+
+function RelatedProductsFallback() {
+  return (
+    <div className="flex min-h-[360px] flex-col gap-4" dir="rtl" aria-hidden="true">
+      <div className="h-8 w-48 animate-pulse rounded bg-slate-100" />
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="h-72 animate-pulse rounded-lg bg-slate-100" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReviewsFallback() {
+  return (
+    <div className="min-h-[420px] rounded-lg bg-slate-50 p-5" dir="rtl" aria-hidden="true">
+      <div className="mb-5 h-8 w-56 animate-pulse rounded bg-slate-100" />
+      <div className="grid gap-4 md:grid-cols-[1fr_386px]">
+        <div className="space-y-4">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="h-28 animate-pulse rounded-lg bg-white" />
+          ))}
+        </div>
+        <div className="h-64 animate-pulse rounded-lg bg-white" />
+      </div>
+    </div>
+  );
+}
 
 /**
  * Generate static params for popular products to pre-render at build time
@@ -502,8 +649,8 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
     if (isNumericSlug && !productData) {
       logger.info("[PDP] Attempting ID-based fallback", { decodedSlug });
       try {
-        // Server-safe fetch with same populate parameters as getProductById
-        const fallbackEndpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/${decodedSlug}?populate[0]=CoverImage&populate[1]=Media&populate[2]=product_main_category&populate[3]=product_reviews&populate[4]=product_tags&populate[5]=product_variations&populate[6]=product_variations.product_stock&populate[7]=product_variations.product_variation_color&populate[8]=product_variations.product_variation_size&populate[9]=product_variations.product_variation_model&populate[10]=product_other_categories&populate[11]=product_size_helper&populate[12]=product_reviews.user&populate[13]=product_reviews.user.user_info&populate[14]=product_reviews.product_review_replies&populate[15]=product_reviews.product_review_replies.user&populate[16]=product_reviews.product_review_replies.user.user_info`;
+        // Server-safe fetch with the same shell fields used by the slug lookup.
+        const fallbackEndpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/${decodedSlug}?${PDP_ID_FALLBACK_POPULATE_QUERY}`;
         const fallbackUrl = `${strapiBaseUrl}${fallbackEndpoint}`;
 
         const fallbackResponse = await fetch(fallbackUrl, {
@@ -596,80 +743,6 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
       ?.map((cat) => cat.id?.toString())
       .filter(Boolean) || [];
 
-  // Fetch related products from same main category and other categories
-  let sameMainCategoryProducts: any[] = [];
-  let otherCategoriesProducts: any[] = [];
-
-  try {
-    // Use Promise.all but handle potential errors for each promise separately
-    const results = await Promise.allSettled([
-      getRelatedProductsByMainCategory(mainCategoryId, productId),
-      getRelatedProductsByOtherCategories(otherCategoryIds, productId),
-    ]);
-
-    if (results[0].status === "fulfilled") {
-      sameMainCategoryProducts = results[0].value;
-    } else {
-      logger.error("Error fetching main category products", {
-        error: String(results[0].reason),
-      });
-    }
-
-    if (results[1].status === "fulfilled") {
-      otherCategoriesProducts = results[1].value;
-    } else {
-      logger.error("Error fetching other categories products", {
-        error: String(results[1].reason),
-      });
-    }
-  } catch (error) {
-    logger.error("Error fetching related products", { error: String(error) });
-  }
-
-  // Format product reviews data for the component
-  const productReviews: ProductReview[] =
-    productData.attributes.product_reviews?.data
-      ?.filter((review: any) => {
-        const attrs = review.attributes || {};
-        return attrs.Status === "Accepted" && !attrs.removedAt;
-      })
-      .map((review: any) => {
-        const attrs = review.attributes || {};
-        const rawUserInfo = attrs.user?.data?.attributes?.user_info;
-        const normalizedUserInfo = normalizeUserInfo(rawUserInfo);
-
-        // Basic normalization to match ProductReview interface
-        return {
-          id: review.id,
-          Content: attrs.Content || "",
-          Status: attrs.Status || "Accepted",
-          Date: attrs.Date || attrs.createdAt,
-          Rate: attrs.Rate || 0,
-          LikeCounts: attrs.LikeCounts || 0,
-          DislikeCounts: attrs.DislikeCounts || 0,
-          user: attrs.user?.data
-            ? {
-                id: attrs.user.data.id,
-                ...attrs.user.data.attributes,
-                user_info: normalizedUserInfo,
-              }
-            : attrs.user,
-          product_review_replies:
-            attrs.product_review_replies?.data?.map((reply: any) => ({
-              id: reply.id,
-              ...reply.attributes,
-              user: reply.attributes?.user?.data
-                ? {
-                    id: reply.attributes.user.data.id,
-                    ...reply.attributes.user.data.attributes,
-                  }
-                : reply.attributes?.user,
-            })) || [],
-          createdAt: attrs.createdAt,
-          updatedAt: attrs.updatedAt,
-        };
-      }) || [];
-
   const breadcrumbItems = [
     {
       label: "صفحه اصلی",
@@ -687,7 +760,7 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
   const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
   const productUrl = `${SITE_URL}/pdp/${slug}`;
   const averageRating = productData.attributes.AverageRating || 0;
-  const reviewCount = productData.attributes.RatingCount || productReviews.length;
+  const reviewCount = productData.attributes.RatingCount || 0;
   const variationPrices =
     productData.attributes.product_variations?.data
       ?.map((variation: any) => {
@@ -708,15 +781,6 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
         price={minVisiblePrice}
       />
       {productData && <ProductSchema product={productData} slug={slug} />}
-      {productReviews.length > 0 && (
-        <ReviewSchema
-          productName={productTitle}
-          productUrl={productUrl}
-          averageRating={averageRating}
-          reviewCount={reviewCount}
-          reviews={productReviews}
-        />
-      )}
       <BreadcrumbSchema breadcrumbs={breadcrumbItems} />
 
       <div className="flex flex-col gap-3">
@@ -725,31 +789,24 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
         <Hero productData={productData} productId={productId} />
       </div>
 
-      {/* Other Products in the same main category */}
-      {sameMainCategoryProducts.length > 0 && (
-        <OffersListHomePage
-          icon={<FavoriteIcon />}
-          title="شاید بپسندید"
-          products={sameMainCategoryProducts}
+      <Suspense fallback={<RelatedProductsFallback />}>
+        <PDPRelatedProductsSection
+          mainCategoryId={mainCategoryId}
+          otherCategoryIds={otherCategoryIds}
+          productId={productId}
         />
-      )}
+      </Suspense>
 
-      {/* Other Products in other categories */}
-      {otherCategoriesProducts.length > 0 && (
-        <OffersListHomePage
-          icon={<FavoriteIcon />}
-          title="محصولات مشابه"
-          products={otherCategoriesProducts}
+      <Suspense fallback={<ReviewsFallback />}>
+        <PDPReviewsSection
+          productId={productId}
+          productData={productData}
+          productTitle={productTitle}
+          productUrl={productUrl}
+          averageRating={averageRating}
+          reviewCount={reviewCount}
         />
-      )}
-
-      <PDPComment
-        productId={productId}
-        productReviews={productReviews}
-        rating={productData.attributes.AverageRating || 0}
-        rateCount={productData.attributes.RatingCount || 0}
-        productData={productData}
-      />
+      </Suspense>
 
       {/* <PDPHeroInfoFAQItem
         title="عنوان توضیحات سئو در این قسمت قرار می گیرد"

@@ -145,12 +145,16 @@ const ActionsCell = ({ row }: { row: Row<User> }) => {
           id={row.original.id.toString()}
           apiUrl={"/users"}
           payloadFormatter={(removedAt) => ({ removedAt })}
+          itemName="کاربر"
+          testIdPrefix="admin-user"
         />
 
         <SuperAdminTableCellActionButton
           variant="secondary"
           icon={<EditIcon />}
           path={`/super-admin/users/edit/${row.original.id}`}
+          testId="admin-user-edit"
+          dataAttributes={{ id: row.original.id }}
         />
 
         <SuperAdminTableCellActionButton
@@ -207,7 +211,16 @@ export const columns: ColumnDef<User>[] = [
   {
     accessorKey: "phone",
     header: "شماره تلفن",
-    cell: ({ row }) => row.original.phone ?? "-",
+    cell: ({ row }) => (
+      <span
+        data-testid="admin-user-row"
+        data-id={row.original.id}
+        data-user-phone={row.original.phone ?? ""}
+        data-user-username={row.original.username ?? ""}
+      >
+        {row.original.phone ?? "-"}
+      </span>
+    ),
   },
   {
     accessorKey: "user_info",

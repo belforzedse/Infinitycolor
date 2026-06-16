@@ -84,6 +84,15 @@ export const createColumns = (canManageDiscounts: boolean): ColumnDef<Coupon>[] 
   {
     accessorKey: "attributes.Code",
     header: "کد",
+    cell: ({ row }) => (
+      <span
+        data-testid="admin-coupon-row"
+        data-id={row.original?.id}
+        data-coupon-code={row.original?.attributes?.Code}
+      >
+        {row.original?.attributes?.Code}
+      </span>
+    ),
   },
   {
     accessorKey: "attributes.Type",
@@ -201,12 +210,16 @@ export const createColumns = (canManageDiscounts: boolean): ColumnDef<Coupon>[] 
             id={row.original.id}
             isRemoved={!!row.original?.attributes?.removedAt}
             apiUrl={`/discounts`}
+            itemName="کد تخفیف"
+            testIdPrefix="admin-coupon"
           />
 
           <SuperAdminTableCellActionButton
             variant="secondary"
             path={`/super-admin/coupons/edit/${row.original.id}`}
             icon={<EditIcon />}
+            testId="admin-coupon-edit"
+            dataAttributes={{ id: row.original.id }}
           />
         </div>
       );

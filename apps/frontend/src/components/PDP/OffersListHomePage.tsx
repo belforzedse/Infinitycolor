@@ -40,6 +40,8 @@ export default function OffersListHomePage(props: Props) {
 
   // Align with StorefrontGrid `products` variant column counts
   const getProductsPerPage = () => {
+    if (windowWidth >= 2560) return 6;
+    if (windowWidth >= 1920) return 5;
     if (windowWidth >= 1280) return 4;
     if (windowWidth >= 1024) return 3;
     if (windowWidth >= 768) return 2;

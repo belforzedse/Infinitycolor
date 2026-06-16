@@ -36,3 +36,18 @@ export const E2E_ADMIN_CATEGORY_UPDATED_SLUG = "e2e-admin-crud-category-updated"
 // Runtime entities created by admin CRUD specs are always named with this prefix
 // so cleanup can find and remove them even when a test fails midway.
 export const E2E_RUNTIME_PREFIX = "E2E_DO_NOT_USE_";
+
+// Slug/code-safe variant of the runtime prefix for fields constrained to
+// lowercase-dash codes (shipping Code is a uid; coupon Code is a plain string).
+// Stays filter-findable via filters[Code][$startsWith].
+export const E2E_RUNTIME_CODE_PREFIX = "e2e-do-not-use-";
+
+// Canonical Persian gateway display labels. Used by admin/order regression specs
+// to guard against the recurring "gateway names not Persian" bug.
+export const E2E_GATEWAY_PERSIAN_LABELS = {
+  zarinpal: "زرین پال",
+  mellat: "بانک ملت",
+  snapppay: "اسنپ! پی",
+  samankish: "سامان کیش",
+  wallet: "کیف پول",
+} as const;
