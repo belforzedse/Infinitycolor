@@ -75,7 +75,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isCartReady, setIsCartReady] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !!localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  });
+  const cartInitGenerationRef = useRef(0);
   const pathname = usePathname();
 
   // Read login state on client after hydration to avoid SSR mismatch
@@ -106,17 +110,34 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    let cancelled = false;
+    const generation = ++cartInitGenerationRef.current;
+    const CART_INIT_TIMEOUT_MS = 20_000;
 
     const initializeCart = async () => {
       const loggedIn = !!localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
 
       try {
         if (loggedIn) {
-          // checkCartStock() will call fetchUserCart() if items were removed/adjusted
-          const isValid = await checkCartStock();
-          if (isValid) {
-            await fetchUserCart();
+          setIsLoading(true);
+          try {
+            await Promise.race([
+              (async () => {
+                await CartService.checkCartStock().catch((error) => {
+                  console.error("Failed to check cart stock:", error);
+                });
+                await fetchUserCart();
+              })(),
+              new Promise<never>((_, reject) =>
+                setTimeout(
+                  () => reject(new Error("Cart initialization timed out")),
+                  CART_INIT_TIMEOUT_MS,
+                ),
+              ),
+            ]);
+          } catch (error) {
+            console.error("Logged-in cart initialization failed:", error);
+          } finally {
+            setIsLoading(false);
           }
         } else {
           const storedCart = localStorage.getItem("cart");
@@ -139,17 +160,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } finally {
-        if (!cancelled) {
+        if (generation === cartInitGenerationRef.current) {
           setIsCartReady(true);
         }
       }
     };
 
     void initializeCart();
-
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run when login mode changes; cart helpers are stable for the session
   }, [isLoggedIn]);
 

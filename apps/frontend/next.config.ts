@@ -50,6 +50,23 @@ const nextConfig = {
   async redirects() {
     return legacyRedirects;
   },
+  async rewrites() {
+    const proxyTarget = process.env.E2E_API_PROXY_TARGET?.trim().replace(/\/$/, "");
+    if (!proxyTarget) {
+      return [];
+    }
+
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${proxyTarget}/api/:path*`,
+      },
+      {
+        source: "/uploads/:path*",
+        destination: `${proxyTarget}/uploads/:path*`,
+      },
+    ];
+  },
   // Allow sitemap and other static generation to run longer during build (default 60s)
   staticPageGenerationTimeout: 180,
   compiler: {
