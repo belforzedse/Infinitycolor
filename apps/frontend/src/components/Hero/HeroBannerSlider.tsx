@@ -155,8 +155,10 @@ export default function HeroBannerSlider({
               width={HERO_DESKTOP_WIDTH}
               height={HERO_DESKTOP_HEIGHT}
               href={activeSlide.link?.href}
-              priority={index === 0}
-              loading={index === 0 ? undefined : "lazy"}
+              // Only the mobile image gets `priority` (preload) so mobile never downloads
+              // this 1360px desktop asset. Desktop still loads it eagerly on the first slide.
+              priority={false}
+              loading={index === 0 ? "eager" : "lazy"}
               sizes={HERO_DESKTOP_SIZES}
               className="block h-full w-full object-cover"
               quality={90}

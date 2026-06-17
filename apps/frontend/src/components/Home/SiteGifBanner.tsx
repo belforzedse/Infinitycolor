@@ -1,5 +1,10 @@
 import Link from "next/link";
-import { SITE_GIF_ASPECT_CLASS, normalizeSiteGifImageUrl } from "@/constants/site-gif";
+import {
+  SITE_GIF_ASPECT_CLASS,
+  SITE_GIF_DESKTOP_HEIGHT,
+  SITE_GIF_DESKTOP_WIDTH,
+  normalizeSiteGifImageUrl,
+} from "@/constants/site-gif";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { cn } from "@/lib/utils";
 
@@ -45,9 +50,13 @@ export default function SiteGifBanner({
     <img
       src={resolvedSrc}
       alt={alt}
+      width={SITE_GIF_DESKTOP_WIDTH}
+      height={SITE_GIF_DESKTOP_HEIGHT}
       className="h-full w-full object-cover"
+      // Eager so the animated banner shows immediately, but LOW fetch priority so it
+      // never outranks the hero image (the real LCP) for bandwidth on slow connections.
       loading="eager"
-      fetchPriority="high"
+      fetchPriority="low"
       decoding="async"
     />
   );
