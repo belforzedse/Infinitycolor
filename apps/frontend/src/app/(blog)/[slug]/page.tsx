@@ -6,7 +6,8 @@ import BlogPostDetail from "@/components/Blog/BlogPostDetail";
 import BlogComments from "@/components/Blog/BlogComments";
 import { blogService, BlogTag } from "@/services/blog/blog.service";
 import { generateBlogPostMetadata, generateJSONLD } from "@/utils/seo";
-import { IMAGE_BASE_URL, getStrapiServerUrl } from "@/constants/api";
+import { getStrapiServerUrl } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { User, FolderOpen, Tag } from "lucide-react";
 import { resolveBlogAuthorDisplayName } from "@/utils/blogAuthorName";
 import logger from "@/utils/logger";
@@ -395,8 +396,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
 
   const getAvatarUrl = (url?: string) => {
     if (!url) return null;
-    if (url.startsWith("http")) return url;
-    return `${IMAGE_BASE_URL}${url}`;
+    return resolveAssetUrl(url) || null;
   };
 
   const authorDisplayName = resolveBlogAuthorDisplayName(post.blog_author);

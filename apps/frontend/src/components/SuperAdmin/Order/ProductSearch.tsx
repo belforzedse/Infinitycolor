@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState } from "react";
 import { apiClient } from "@/services";
-import { API_BASE_URL, IMAGE_BASE_URL, ENDPOINTS } from "@/constants/api";
+import { API_BASE_URL, ENDPOINTS } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchIcon from "@/components/Search/Icons/SearchIcon";
 
 export type ProductVariation = {
@@ -134,14 +135,14 @@ const ProductSearch: React.FC<ProductSearchProps> = ({
             // Strapi v4 format
             const strapiImg = img.data.attributes;
             const thumb = strapiImg.formats?.thumbnail?.url || strapiImg.formats?.small?.url;
-            imageUrl = thumb ? `${IMAGE_BASE_URL}${thumb}` : `${IMAGE_BASE_URL}${strapiImg.url}`;
+            imageUrl = resolveAssetUrl(thumb || strapiImg.url) || undefined;
           } else if (img?.formats) {
             // Direct format object
             const thumb = img.formats.thumbnail?.url || img.formats.small?.url;
-            imageUrl = thumb ? `${IMAGE_BASE_URL}${thumb}` : (img.url ? `${IMAGE_BASE_URL}${img.url}` : undefined);
+            imageUrl = resolveAssetUrl(thumb || img.url) || undefined;
           } else if (img?.url) {
             // Direct URL
-            imageUrl = `${IMAGE_BASE_URL}${img.url}`;
+            imageUrl = resolveAssetUrl(img.url) || undefined;
           }
 
           // Calculate price from variations and normalize variation structure

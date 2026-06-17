@@ -11,7 +11,8 @@ import type { ProductCategorySummary } from "@/services/product/categories";
 import { buildMobileCategoryGroups } from "@/utils/categoryGroups";
 import { useCart } from "@/contexts/CartContext";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
-import { API_BASE_URL, IMAGE_BASE_URL } from "@/constants/api";
+import { API_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
 import ShoppingCartIcon from "@/components/PLP/Icons/ShoppingCartIcon";
@@ -224,7 +225,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
               category:
                 (attrs?.product_main_category as { Title?: string } | undefined)?.Title ??
                 undefined,
-              image: imagePath ? `${IMAGE_BASE_URL}${imagePath}` : undefined,
+              image: imagePath ? resolveAssetUrl(imagePath) || undefined : undefined,
               isAvailable: (attrs?.IsAvailable as boolean | undefined) ?? true,
             };
           },

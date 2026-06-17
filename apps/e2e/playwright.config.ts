@@ -4,6 +4,28 @@ import { storefrontBaseURL, strapiApiURL, strapiOrigin } from "./helpers/env";
 const isCI = !!process.env.CI;
 const webServerCommand = process.env.E2E_WEB_SERVER_COMMAND?.trim();
 
+function resolveWebServerApiEnv(): Record<string, string> {
+  const storefrontOrigin = storefrontBaseURL().replace(/\/$/, "");
+  const proxyTarget = process.env.E2E_API_PROXY_TARGET?.trim();
+
+  if (proxyTarget) {
+    return {
+      E2E_API_PROXY_TARGET: proxyTarget.replace(/\/$/, ""),
+      NEXT_PUBLIC_API_BASE_URL: `${storefrontOrigin}/api`,
+      NEXT_PUBLIC_IMAGE_BASE_URL: storefrontOrigin,
+      STRAPI_INTERNAL_URL: strapiApiURL(),
+      STRAPI_BUILD_TIME_URL: strapiApiURL(),
+    };
+  }
+
+  return {
+    NEXT_PUBLIC_API_BASE_URL: strapiApiURL(),
+    NEXT_PUBLIC_IMAGE_BASE_URL: strapiOrigin(),
+    STRAPI_INTERNAL_URL: strapiApiURL(),
+    STRAPI_BUILD_TIME_URL: strapiApiURL(),
+  };
+}
+
 export default defineConfig({
   testDir: "./tests",
   outputDir: "test-results",
@@ -62,10 +84,7 @@ export default defineConfig({
             process.env.HOME_PRODUCT_SERVER_SHELL_SECTION ?? "newest",
           E2E_DISABLE_HOMEPAGE_FETCH_CACHE:
             process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE ?? "1",
-          NEXT_PUBLIC_API_BASE_URL: strapiApiURL(),
-          NEXT_PUBLIC_IMAGE_BASE_URL: strapiOrigin(),
-          STRAPI_INTERNAL_URL: strapiApiURL(),
-          STRAPI_BUILD_TIME_URL: strapiApiURL(),
+          ...resolveWebServerApiEnv(),
         },
       }
     : undefined,

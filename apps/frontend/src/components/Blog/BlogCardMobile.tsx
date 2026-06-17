@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Calendar, LayoutGrid } from "lucide-react";
 import BlurImage from "@/components/ui/BlurImage";
 import imageLoader from "@/utils/imageLoader";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import type { BlogPost } from "@/services/blog/blog.service";
 import { resolveBlogAuthorDisplayName } from "@/utils/blogAuthorName";
 
@@ -26,8 +26,7 @@ const BlogCardMobile: React.FC<BlogCardMobileProps> = ({
       post.FeaturedImage.formats?.small?.url ||
       post.FeaturedImage.url;
     if (!url) return null;
-    if (url.startsWith("http")) return url;
-    return `${IMAGE_BASE_URL}${url}`;
+    return resolveAssetUrl(url) || null;
   };
 
   const imageUrl = getImageUrl();

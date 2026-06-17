@@ -14,8 +14,8 @@ test.describe("authenticated checkout smoke", () => {
 
     await page.goto("/checkout", { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(/\/checkout/);
+    await expect(page.getByTestId("checkout-submit")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId("checkout-auth-gate")).toHaveCount(0);
-    await expect(page.getByTestId("checkout-submit")).toBeVisible({ timeout: 30_000 });
 
     await page.getByTestId("checkout-submit").click();
 

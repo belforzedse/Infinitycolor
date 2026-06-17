@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import ProductSearch, { type Product } from "@/components/SuperAdmin/Order/ProductSearch";
 import { Button } from "@/components/ui/Button";
 import Image from "next/image";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 export type ProductSummary = {
   id: number;
@@ -37,7 +37,7 @@ function getImageUrl(product: Product): string | undefined {
   const attrs = img?.data?.attributes ?? img;
   const thumb = attrs?.formats?.thumbnail?.url ?? attrs?.formats?.small?.url;
   const url = thumb ?? attrs?.url ?? img?.url;
-  return url ? (url.startsWith("http") ? url : `${IMAGE_BASE_URL}${url}`) : undefined;
+  return url ? resolveAssetUrl(url) || undefined : undefined;
 }
 
 export default function HomepageProductPicker({

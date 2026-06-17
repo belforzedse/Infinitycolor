@@ -1,6 +1,6 @@
 import { apiClient } from "../index";
 import { getActiveReserve, releaseReserve } from "./reserve";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 // Simple cache implementation for orders
 class OrderCache {
@@ -396,8 +396,7 @@ export const getOrderDetail = async (orderId: number): Promise<Order> => {
  */
 const getFullImageUrl = (url: string): string => {
   if (!url) return "";
-  if (url.startsWith("http")) return url;
-  return `${IMAGE_BASE_URL}${url}`;
+  return resolveAssetUrl(url);
 };
 
 // Export all functions as a service object

@@ -12,7 +12,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { blogService, BlogPost, BlogCategory, BlogTag } from "@/services/blog/blog.service";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 interface BlogListProps {
   posts?: BlogPost[];
@@ -75,8 +75,7 @@ const BlogList: React.FC<BlogListProps> = ({
       post.FeaturedImage.formats?.small?.url ||
       post.FeaturedImage.url;
     if (!url) return null;
-    if (url.startsWith("http")) return url;
-    return `${IMAGE_BASE_URL}${url}`;
+    return resolveAssetUrl(url) || null;
   };
 
   if (loading) {

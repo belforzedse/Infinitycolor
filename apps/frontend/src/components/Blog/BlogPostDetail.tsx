@@ -14,7 +14,7 @@ import {
   Copy,
 } from "lucide-react";
 import { BlogPost } from "@/services/blog/blog.service";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { resolveBlogAuthorDisplayName } from "@/utils/blogAuthorName";
 import BlogContentRenderer from "./BlogContentRenderer";
 
@@ -30,14 +30,12 @@ const BlogPostDetail: React.FC<BlogPostDetailProps> = ({ post }) => {
       post.FeaturedImage.formats?.medium?.url ||
       post.FeaturedImage.url;
     if (!url) return null;
-    if (url.startsWith("http")) return url;
-    return `${IMAGE_BASE_URL}${url}`;
+    return resolveAssetUrl(url) || null;
   };
 
   const getAvatarUrl = (url?: string) => {
     if (!url) return null;
-    if (url.startsWith("http")) return url;
-    return `${IMAGE_BASE_URL}${url}`;
+    return resolveAssetUrl(url) || null;
   };
 
   const handleShare = async () => {

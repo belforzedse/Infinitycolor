@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { ENDPOINTS, IMAGE_BASE_URL, getStrapiServerUrl } from "@/constants/api";
+import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { SITE_NAME, SITE_URL } from "@/config/site";
 import type { PLPPagination } from "@/components/PLP/types";
 import type { Variation } from "@/types/Product";
@@ -471,7 +472,7 @@ export function buildCollectionItems(products: PLPProduct[]) {
       cover?.formats?.small?.url ||
       cover?.formats?.thumbnail?.url ||
       cover?.url;
-    const imageUrl = coverUrl ? `${IMAGE_BASE_URL}${coverUrl}` : undefined;
+    const imageUrl = coverUrl ? resolveAssetUrl(coverUrl) || undefined : undefined;
     const productSlug = product.attributes.Slug || product.id.toString();
 
     return {

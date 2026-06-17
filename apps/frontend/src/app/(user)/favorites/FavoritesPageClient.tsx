@@ -6,7 +6,7 @@ import ProductSmallCard from "@/components/Product/SmallCard";
 import { calculateUniqueColorsCount, getUniqueColorCodes } from "@/services/product/product";
 import type { ProductLike } from "@/services/product/product-like";
 import ProductLikeService from "@/services/product/product-like";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import UserContainer from "@/components/layout/UserContainer";
 import AccountQuickLinks from "@/components/User/Account/QuickLinks";
 import { likedProductsAtom } from "@/hooks/useProductLike";
@@ -93,7 +93,7 @@ export default function FavoritesPage() {
       "/images/placeholders/product-placeholder.png";
 
     if (productImage && productImage.startsWith("/") && !productImage.startsWith("/images")) {
-      productImage = `${IMAGE_BASE_URL}${productImage}`;
+      productImage = resolveAssetUrl(productImage) || productImage;
     }
 
     const title =

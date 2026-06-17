@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { usePathname } from "next/navigation";
 import toast from "react-hot-toast";
 import { CartService } from "@/services";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import notify from "@/utils/notify";
 import { cartRequestQueue } from "@/utils/requestQueue";
 import { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
@@ -75,7 +75,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isCartReady, setIsCartReady] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !!localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  });
+  const cartInitGenerationRef = useRef(0);
   const pathname = usePathname();
 
   // Read login state on client after hydration to avoid SSR mismatch
@@ -106,17 +110,34 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    let cancelled = false;
+    const generation = ++cartInitGenerationRef.current;
+    const CART_INIT_TIMEOUT_MS = 20_000;
 
     const initializeCart = async () => {
       const loggedIn = !!localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
 
       try {
         if (loggedIn) {
-          // checkCartStock() will call fetchUserCart() if items were removed/adjusted
-          const isValid = await checkCartStock();
-          if (isValid) {
-            await fetchUserCart();
+          setIsLoading(true);
+          try {
+            await Promise.race([
+              (async () => {
+                await CartService.checkCartStock().catch((error) => {
+                  console.error("Failed to check cart stock:", error);
+                });
+                await fetchUserCart();
+              })(),
+              new Promise<never>((_, reject) =>
+                setTimeout(
+                  () => reject(new Error("Cart initialization timed out")),
+                  CART_INIT_TIMEOUT_MS,
+                ),
+              ),
+            ]);
+          } catch (error) {
+            console.error("Logged-in cart initialization failed:", error);
+          } finally {
+            setIsLoading(false);
           }
         } else {
           const storedCart = localStorage.getItem("cart");
@@ -139,17 +160,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } finally {
-        if (!cancelled) {
+        if (generation === cartInitGenerationRef.current) {
           setIsCartReady(true);
         }
       }
     };
 
     void initializeCart();
-
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run when login mode changes; cart helpers are stable for the session
   }, [isLoggedIn]);
 
@@ -174,15 +191,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const getImageUrl = (coverImage: any): string => {
         if (!coverImage) return "";
 
-        // If medium format is available, use it, otherwise use the original
+        // If medium format is available, use it, otherwise use the original.
+        // resolveAssetUrl resolves relative/absolute Strapi uploads and applies
+        // the media CDN origin when configured.
         const imageUrl = coverImage.formats?.medium?.url || coverImage.url;
-
-        // Make sure the URL starts with the IMAGE_BASE_URL
-        if (imageUrl.startsWith("http")) {
-          return imageUrl; // Already a full URL
-        } else {
-          return `${IMAGE_BASE_URL}${imageUrl}`; // Add base URL
-        }
+        return resolveAssetUrl(imageUrl);
       };
 
       const parseNumericValue = (value: unknown): number | undefined => {

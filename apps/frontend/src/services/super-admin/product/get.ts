@@ -1,5 +1,6 @@
 import { apiClient } from "@/services";
-import { ENDPOINTS, IMAGE_BASE_URL } from "@/constants/api";
+import { ENDPOINTS } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import type { ApiResponse } from "@/types/api";
 import { paramCreator } from "@/utils/paramCreator";
 import type { TagAttributes } from "./tag/get";
@@ -124,7 +125,7 @@ export async function getProductSummariesByIds(ids: number[]): Promise<ProductSu
     const cover = attrs.CoverImage as CoverImageField | undefined;
     if (cover?.data?.attributes?.url) {
       const url = cover.data.attributes.url;
-      image = url.startsWith("http") ? url : `${IMAGE_BASE_URL}${url}`;
+      image = resolveAssetUrl(url) || undefined;
     }
     return { id, title, image, order: idToIndex.get(id) ?? 0 };
   });

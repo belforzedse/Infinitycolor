@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { blogService } from '@/services/blog/blog.service';
-import { IMAGE_BASE_URL } from '@/constants/api';
+import resolveAssetUrl from '@/utils/resolveAssetUrl';
 import { SITE_NAME, SITE_URL } from '@/config/site';
 
 export async function GET(request: Request) {
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     ${posts
       .map((post) => {
         const imageUrl = post.FeaturedImage?.url
-          ? `${IMAGE_BASE_URL}${post.FeaturedImage.url}`
+          ? resolveAssetUrl(post.FeaturedImage.url) || undefined
           : undefined;
         const pubDate = post.PublishedAt
           ? new Date(post.PublishedAt).toUTCString()

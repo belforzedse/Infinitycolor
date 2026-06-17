@@ -16,7 +16,7 @@ import {
   Check,
 } from "lucide-react";
 import { blogService, BlogAuthor } from "@/services/blog/blog.service";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useRouter } from "next/navigation";
 
@@ -166,8 +166,7 @@ export default function BlogAuthorsPage() {
 
   const getAvatarUrl = (avatar?: { url: string }) => {
     if (!avatar?.url) return null;
-    if (avatar.url.startsWith("http")) return avatar.url;
-    return `${IMAGE_BASE_URL}${avatar.url}`;
+    return resolveAssetUrl(avatar.url) || null;
   };
 
   const baseColumns = [

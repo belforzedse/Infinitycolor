@@ -1,6 +1,7 @@
 import { PRODUCT_BOOST_KEYWORDS } from "@/constants/productKeywords";
 import { computeDiscountForVariation } from "@/utils/discounts";
 import type { DiscountVariationInput } from "@/utils/discounts";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 interface ImageAttributes {
   url?: string;
@@ -104,21 +105,20 @@ const isVariationInStock = (variation?: ProductVariation): boolean => {
 /**
  * Formats product image URLs from Strapi attributes
  * Filters out videos to maintain performance in product listings
+ * URLs are resolved (and CDN-routed when configured) via resolveAssetUrl.
  * @param product Product object with attributes
  * @param includeMedia Whether to include additional media images (usually for desktop)
- * @param baseUrl Base URL for images
  * @returns Array of filtered image URLs (videos excluded for performance)
  */
 export function getProductImages(
   product: Product,
-  includeMedia: boolean,
-  baseUrl: string
+  includeMedia: boolean
 ): string[] {
   // Only include CoverImage if it's an image (exclude videos for PLP performance)
   const coverImage = product.attributes?.CoverImage?.data?.attributes;
   const coverImageUrl =
     coverImage?.url && coverImage?.mime?.startsWith("image/")
-      ? `${baseUrl}${coverImage.url}`
+      ? resolveAssetUrl(coverImage.url)
       : "";
 
   const mediaImages =
@@ -127,7 +127,7 @@ export function getProductImages(
           .filter(
             (m: MediaItem) => m.attributes?.mime?.startsWith("image/") && m.attributes?.url
           )
-          .map((m: MediaItem) => `${baseUrl}${m.attributes?.url}`)
+          .map((m: MediaItem) => resolveAssetUrl(m.attributes?.url))
           .filter((url): url is string => Boolean(url))
           .slice(0, 3)
       : [];

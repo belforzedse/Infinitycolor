@@ -9,6 +9,7 @@ type ImagePolicyOptions = {
   production?: boolean;
   imageBaseUrl?: string;
   apiBaseUrl?: string;
+  mediaCdnUrl?: string;
   allowDevLocal?: boolean;
 };
 
@@ -144,11 +145,40 @@ function getApiBaseUrl(options?: ImagePolicyOptions): string {
   );
 }
 
+function getMediaCdnUrl(options?: ImagePolicyOptions): string {
+  return options?.mediaCdnUrl ?? process.env.NEXT_PUBLIC_MEDIA_CDN_URL ?? "";
+}
+
+/**
+ * Optional CDN origin (e.g. https://cdn.infinitycolor.co) used to serve Strapi
+ * `/uploads` media. Returns null when unset or not a safe trusted origin, so all
+ * existing behavior is preserved when no CDN is configured.
+ */
+function getMediaCdnOrigin(options?: ImagePolicyOptions): URL | null {
+  const origin = toOriginUrl(getMediaCdnUrl(options));
+  if (!origin || !isAllowedTrustedOrigin(origin, options)) return null;
+  return origin;
+}
+
+/**
+ * Rewrite an already-validated `/uploads` URL to the CDN origin when configured.
+ * Only `/uploads/*` paths are rewritten; local public assets and `data:` URLs
+ * never reach here with an upload path, so they are left untouched.
+ */
+function applyMediaCdn(url: URL, options?: ImagePolicyOptions): string {
+  const cdn = getMediaCdnOrigin(options);
+  if (!cdn || !hasAllowedUploadPath(url)) return url.toString();
+  return new URL(`${url.pathname}${url.search}${url.hash}`, cdn.origin).toString();
+}
+
 export function getTrustedImageOrigins(options?: ImagePolicyOptions): URL[] {
   const production = isProduction(options);
   const configuredOrigins = [
     toOriginUrl(stripApiSuffix(getImageBaseUrl(options))),
     toOriginUrl(stripApiSuffix(getApiBaseUrl(options))),
+    // Trust the CDN origin so already-CDN upload URLs validate and the Next.js
+    // image allowlist (remotePatterns) includes the CDN host.
+    getMediaCdnOrigin(options),
     ...(!production ? DEV_LOCAL_IMAGE_ORIGINS.map(toOriginUrl) : []),
   ].filter((url): url is URL => Boolean(url));
 
@@ -224,7 +254,7 @@ export function resolveSafeImageSrc(src?: string | null, options?: ImagePolicyOp
     if (!url || !hasAllowedUploadPath(url)) return "";
 
     const trustedOrigins = getTrustedImageOrigins(options);
-    return trustedOrigins.some((origin) => sameOrigin(url, origin)) ? url.toString() : "";
+    return trustedOrigins.some((origin) => sameOrigin(url, origin)) ? applyMediaCdn(url, options) : "";
   }
 
   const normalizedPath = raw.startsWith("/") ? raw : `/${raw}`;
@@ -234,7 +264,7 @@ export function resolveSafeImageSrc(src?: string | null, options?: ImagePolicyOp
     if (!origin) return "";
 
     const url = new URL(normalizedPath, origin.origin);
-    return hasAllowedUploadPath(url) ? url.toString() : "";
+    return hasAllowedUploadPath(url) ? applyMediaCdn(url, options) : "";
   }
 
   if (raw.startsWith("/") && isLocalPublicAssetPath(normalizedPath)) {

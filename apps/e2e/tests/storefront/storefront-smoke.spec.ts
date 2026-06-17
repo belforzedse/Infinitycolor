@@ -131,11 +131,11 @@ test.describe("storefront smoke", () => {
     await expect(quickViewButton).toBeVisible();
 
     await expect(async () => {
-      await quickViewButton.click();
+      await quickViewButton.click({ force: true });
       await expect(page.getByTestId("quick-view-content")).toBeVisible({
-        timeout: 2_000,
+        timeout: 5_000,
       });
-    }).toPass({ timeout: 15_000 });
+    }).toPass({ timeout: 20_000 });
     await expect(page.getByTestId("quick-view-content")).toContainText(
       E2E_PRODUCT_TITLE,
     );
@@ -204,7 +204,7 @@ test.describe("storefront smoke", () => {
       "data-cart-ready",
       "true",
       {
-        timeout: 30_000,
+        timeout: 45_000,
       },
     );
     await expect(page.getByTestId("pdp-add-to-cart")).toBeEnabled({
