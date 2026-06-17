@@ -43,7 +43,7 @@ describe("imageLoader", () => {
 
     expect(url.pathname).toBe("/_next/image");
     expect(url.searchParams.get("url")).toBe("/images/image.jpg");
-    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("w")).toBe("828");
     expect(url.searchParams.get("q")).toBe("90");
   });
 
@@ -71,7 +71,7 @@ describe("imageLoader", () => {
     const url = parseResult(result);
 
     expect(url.searchParams.get("url")).toBe("https://api.infinitycolor.co/uploads/image.jpg");
-    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("w")).toBe("828");
   });
 
   it("should reject arbitrary external absolute URLs", () => {
@@ -90,7 +90,7 @@ describe("imageLoader", () => {
     const url = parseResult(result);
 
     expect(url.searchParams.get("url")).toBe("https://cdn.example.com/uploads/image.jpg");
-    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("w")).toBe("828");
   });
 
   it("routes relative uploads through the media CDN when configured", () => {
@@ -111,7 +111,7 @@ describe("imageLoader", () => {
     const url = parseResult(result);
 
     expect(url.searchParams.get("url")).toBe("/images/image.jpg?existing=param");
-    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("w")).toBe("828");
   });
 
   it("should reject unrecognized relative sources instead of treating them as remote images", () => {
@@ -128,22 +128,32 @@ describe("imageLoader", () => {
 
     expect(url.pathname).toBe("/_next/image");
     expect(url.searchParams.get("url")).toBe("/images/image.jpg?existing=param");
-    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("w")).toBe("828");
   });
 
   it("should handle different width values", () => {
     const result1 = imageLoader({ src: "/images/image.jpg", width: 400 });
     const result2 = imageLoader({ src: "/images/image.jpg", width: 1920 });
 
-    expect(parseResult(result1).searchParams.get("w")).toBe("400");
+    expect(parseResult(result1).searchParams.get("w")).toBe("640");
     expect(parseResult(result2).searchParams.get("w")).toBe("1920");
+  });
+
+  it("should snap unsupported widths up to configured Next image widths", () => {
+    const invalidDesktopWidth = imageLoader({ src: "/images/image.jpg", width: 2568 });
+    const invalidHeroWidth = imageLoader({ src: "/images/image.jpg", width: 1208 });
+    const smallAvatarWidth = imageLoader({ src: "/images/image.jpg", width: 74 });
+
+    expect(parseResult(invalidDesktopWidth).searchParams.get("w")).toBe("3840");
+    expect(parseResult(invalidHeroWidth).searchParams.get("w")).toBe("1920");
+    expect(parseResult(smallAvatarWidth).searchParams.get("w")).toBe("96");
   });
 
   it("should convert width to string", () => {
     const result = imageLoader({ src: "/images/image.jpg", width: 800 });
     const url = parseResult(result);
 
-    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("w")).toBe("828");
     expect(result).not.toContain("w=[object");
   });
 });

@@ -19,6 +19,24 @@ const DEFAULT_PRODUCTION_IMAGE_BASE_URL = "https://api.infinitycolor.co";
 const DEFAULT_DEVELOPMENT_IMAGE_BASE_URL = "http://localhost:1337";
 const LOCAL_URL_BASE = "https://new.infinitycolor.local";
 const IMAGE_UPLOAD_PATH_PREFIX = "/uploads/";
+const NEXT_IMAGE_WIDTHS = [
+  16,
+  32,
+  48,
+  64,
+  96,
+  128,
+  256,
+  384,
+  640,
+  750,
+  828,
+  1080,
+  1200,
+  1920,
+  2048,
+  3840,
+] as const;
 const NEXT_IMAGE_QUALITIES = [50, 60, 70, 75, 90, 95, 100] as const;
 
 const DEV_LOCAL_IMAGE_ORIGINS = ["http://localhost:1337", "http://127.0.0.1:1337"];
@@ -299,7 +317,8 @@ export function getNextImageQuality(quality?: number | null): number {
 }
 
 function getNextImageWidth(width?: number | null): number {
-  return typeof width === "number" && Number.isFinite(width) && width > 0 ? Math.round(width) : 1920;
+  const requested = typeof width === "number" && Number.isFinite(width) && width > 0 ? Math.ceil(width) : 1920;
+  return NEXT_IMAGE_WIDTHS.find((candidate) => candidate >= requested) ?? NEXT_IMAGE_WIDTHS[NEXT_IMAGE_WIDTHS.length - 1];
 }
 
 export function buildOptimizedImageUrl(
