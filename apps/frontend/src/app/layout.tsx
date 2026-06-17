@@ -6,6 +6,7 @@ import "../styles/components.css";
 import "./globals.css";
 import { NuqsAdapter } from "nuqs/adapters/next";
 import { CartProvider } from "@/contexts/CartContext";
+import { MobileMenuProvider } from "@/contexts/MobileMenuContext";
 import Providers from "./Providers";
 import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts";
 import DevOnlyDebugPanel from "@/components/Debug/DevOnlyDebugPanel";
@@ -189,13 +190,15 @@ export default async function RootLayout({
 
         <SiteIdentityProvider identity={identity}>
           <CartProvider>
-            <NuqsAdapter>
-              <Providers>
-                <Suspense fallback={null}>
-                  <div id="main-content">{children}</div>
-                </Suspense>
-              </Providers>
-            </NuqsAdapter>
+            <MobileMenuProvider>
+              <NuqsAdapter>
+                <Providers>
+                  <Suspense fallback={null}>
+                    <div id="main-content">{children}</div>
+                  </Suspense>
+                </Providers>
+              </NuqsAdapter>
+            </MobileMenuProvider>
           </CartProvider>
         </SiteIdentityProvider>
         <Toaster

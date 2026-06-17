@@ -13,7 +13,7 @@ import {
   getGifPromoPreviewProducts,
   getProductSummariesByIds,
 } from "@/services/super-admin/product/get";
-import { fetchFeaturedCategoryOptions } from "@/app/(super-admin)/super-admin/settings/customization/featured-category/config";
+import { fetchCategoryDropdownOptions } from "@/services/super-admin/product/category/getDropdownOptions";
 import type {
   HomeGifPromoAssignment,
   SuperAdminSettings,
@@ -115,7 +115,7 @@ export default function GifPromoProductsPage() {
     try {
       const [loadedSettings, loadedCategories] = await Promise.all([
         getSuperAdminSettings(),
-        fetchFeaturedCategoryOptions(""),
+        fetchCategoryDropdownOptions(""),
       ]);
       setSettings(loadedSettings);
       setCategoryOptions(loadedCategories);

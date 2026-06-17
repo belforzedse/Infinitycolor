@@ -26,6 +26,7 @@ interface Product {
   id: number;
   attributes: {
     Title: string;
+    Slug?: string;
     RatingCount: number | null;
     SeenCount?: number | null;
     CoverImage?: {

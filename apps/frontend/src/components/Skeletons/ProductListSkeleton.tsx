@@ -18,20 +18,18 @@ function DesktopProductResultsSkeleton() {
 
 function MobileProductResultsSkeleton() {
   return (
-    <div className="flex flex-col gap-3">
-      {[...Array(6)].map((_, i) => (
+    <div className="grid grid-cols-2 gap-2">
+      {[...Array(8)].map((_, i) => (
         <div
           key={i}
-          className="flex gap-3 rounded-2xl border border-zinc-100 bg-white p-3 shadow-sm"
+          className="flex flex-col gap-1 rounded-2xl border border-slate-100 bg-white p-1"
         >
-          <SkeletonBlock className="h-28 w-24 shrink-0 rounded-2xl" />
-          <div className="flex flex-1 flex-col justify-between py-1">
-            <div className="space-y-2">
-              <SkeletonText tone="light" className="h-4 w-3/4" />
-              <SkeletonText tone="light" className="h-4 w-1/2" />
-            </div>
-            <SkeletonBlock tone="light" className="h-8 w-28 rounded-full" />
+          <SkeletonMedia aspect="3 / 4" className="rounded-xl" />
+          <div className="space-y-1 px-1 py-1">
+            <SkeletonText tone="light" className="h-3 w-2/3" />
+            <SkeletonText tone="light" className="h-4 w-full" />
           </div>
+          <SkeletonBlock tone="light" className="min-h-[43px] rounded-[14px]" />
         </div>
       ))}
     </div>
@@ -75,7 +73,7 @@ export default function ProductListSkeleton() {
         </div>
       </div>
 
-      {/* Mobile list skeleton */}
+      {/* Mobile grid skeleton */}
       <div className="md:hidden">
         <MobileProductResultsSkeleton />
       </div>
