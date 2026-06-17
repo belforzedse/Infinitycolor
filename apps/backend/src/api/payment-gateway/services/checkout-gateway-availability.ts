@@ -38,7 +38,6 @@ const resolveZarinPalCallbackUrl = (): string => {
  * ZarinPal is additive and OFF by default: it only becomes available once the
  * merchant credential is configured via env. Local deterministic E2E/dev
  * callbacks are also treated as configured because they never touch ZarinPal.
- * A payment-gateway DB row may still disable it with IsActive=false.
  */
 const isZarinPalConfigured = (): boolean =>
   Boolean(String(process.env.ZARINPAL_MERCHANT_ID || "").trim()) ||
@@ -73,11 +72,8 @@ const resolveGatewayAvailabilityMap = async (
 ): Promise<Map<CheckoutGatewayCode, boolean>> => {
   const availability = new Map<CheckoutGatewayCode, boolean>();
   for (const gateway of SUPPORTED_CHECKOUT_GATEWAYS) {
-    availability.set(gateway.code, true);
+    availability.set(gateway.code, false);
   }
-  // ZarinPal defaults to OFF unless its merchant credential is configured.
-  // (A DB row may still turn it off below, but never on without env config.)
-  availability.set("zarinpal", isZarinPalConfigured());
 
   try {
     const rows = (await strapi.entityService.findMany(
@@ -91,10 +87,12 @@ const resolveGatewayAvailabilityMap = async (
     for (const row of rows || []) {
       const mappedCode = mapGatewayTitleToCode(row?.Title);
       if (!mappedCode || !SUPPORTED_CODES.has(mappedCode)) continue;
+      if (row?.IsActive !== true) continue;
 
-      if (row?.IsActive === false) {
-        availability.set(mappedCode, false);
-      }
+      availability.set(
+        mappedCode,
+        mappedCode === "zarinpal" ? isZarinPalConfigured() : true,
+      );
     }
 
     return availability;
@@ -102,7 +100,7 @@ const resolveGatewayAvailabilityMap = async (
     strapi.log.error("resolveGatewayAvailabilityMap: failed to fetch payment gateways", {
       error,
     });
-    return availability;
+    return new Map<CheckoutGatewayCode, boolean>();
   }
 };
 
@@ -111,7 +109,7 @@ export const getAvailableCheckoutGateways = async (
 ): Promise<CheckoutGatewayItem[]> => {
   const availability = await resolveGatewayAvailabilityMap(strapi);
   return SUPPORTED_CHECKOUT_GATEWAYS.filter(
-    (gateway) => availability.get(gateway.code) !== false,
+    (gateway) => availability.get(gateway.code) === true,
   );
 };
 
@@ -135,5 +133,5 @@ export const isCheckoutGatewayEnabled = async (
   gatewayCode: CheckoutGatewayCode,
 ): Promise<boolean> => {
   const availability = await resolveGatewayAvailabilityMap(strapi);
-  return availability.get(gatewayCode) !== false;
+  return availability.get(gatewayCode) === true;
 };

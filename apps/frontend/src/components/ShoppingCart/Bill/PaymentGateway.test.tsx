@@ -56,12 +56,14 @@ describe("ShoppingCartBillPaymentGateway", () => {
     expect(screen.queryByTestId("payment-gateway-snappay")).not.toBeInTheDocument();
   });
 
-  it("renders without availableGateways and shows default gateways", () => {
+  it("renders no gateway cards when availableGateways is omitted", () => {
     expect(() => {
       render(<ShoppingCartBillPaymentGateway selected="samankish" onChange={onChange} />);
     }).not.toThrow();
 
-    expect(screen.getByTestId("payment-gateway-samankish")).toBeInTheDocument();
+    expect(screen.queryByTestId("payment-gateway-samankish")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("payment-gateway-mellat")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("payment-gateway-wallet")).not.toBeInTheDocument();
   });
 
   it("selects ZarinPal when the user clicks its gateway option", async () => {

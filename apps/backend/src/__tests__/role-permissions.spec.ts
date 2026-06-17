@@ -101,6 +101,15 @@ function createActionTree() {
         },
       },
     },
+    "api::local-user-wallet": {
+      controllers: {
+        "local-user-wallet": {
+          getCurrentUserWallet: action(),
+          adminGetUserWallet: action(),
+          adminAdjustWallet: action(),
+        },
+      },
+    },
   };
 }
 
@@ -192,5 +201,37 @@ describe("role permission templates", () => {
     expect(founder["api::product-category"].controllers["product-category"].deleteWithReassign.enabled).toBe(false);
     expect(founder["plugin::users-permissions"].controllers.user.find.enabled).toBe(true);
     expect(founder["plugin::users-permissions"].controllers.user.update.enabled).toBe(false);
+  });
+
+  it("restricts admin wallet management to superadmin only", () => {
+    const walletCtrl = (tree: any) =>
+      tree["api::local-user-wallet"].controllers["local-user-wallet"];
+
+    const storeManager = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "store-manager",
+    );
+    const founder = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "founder",
+    );
+    const editor = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "editor",
+    );
+    const superadmin = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "superadmin",
+    );
+
+    // Non-superadmin management roles are denied the admin wallet actions.
+    for (const tree of [storeManager, founder, editor]) {
+      expect(walletCtrl(tree).adminAdjustWallet.enabled).toBe(false);
+      expect(walletCtrl(tree).adminGetUserWallet.enabled).toBe(false);
+    }
+
+    // Superadmin (full access) keeps them.
+    expect(walletCtrl(superadmin).adminAdjustWallet.enabled).toBe(true);
+    expect(walletCtrl(superadmin).adminGetUserWallet.enabled).toBe(true);
   });
 });

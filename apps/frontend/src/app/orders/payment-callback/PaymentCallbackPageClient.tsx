@@ -1,8 +1,10 @@
 "use client";
 
 import React, { Suspense, useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OrderService } from "@/services";
+import { StorefrontContainer } from "@/components/storefront";
 import {
   orderIdAtom,
   orderNumberAtom,
@@ -180,20 +182,63 @@ function PaymentCallbackContent() {
   ]);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center">
-      {loading ? (
-        <div className="p-10 text-center" data-testid="payment-callback-loading">
-          <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
-          <p className="text-lg">در حال بررسی وضعیت پرداخت...</p>
-          <p className="text-sm mt-2 text-gray-500">لطفا صفحه را نبندید</p>
-        </div>
-      ) : error ? (
-        <div className="p-10 text-center" data-testid="payment-callback-error">
-          <div className="text-xl mb-4 text-red-500">خطا در پردازش پرداخت</div>
-          <p className="text-gray-700">{error}</p>
-        </div>
-      ) : null}
-    </div>
+    <StorefrontContainer className="py-10" dir="rtl">
+      <div className="mx-auto max-w-2xl rounded-lg bg-white p-8 shadow-md">
+        {loading ? (
+          <div
+            className="flex flex-col items-center text-center"
+            data-testid="payment-callback-loading"
+          >
+            <div className="flex h-40 items-center justify-center">
+              <div className="h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
+            </div>
+            <p className="text-lg">در حال بررسی وضعیت پرداخت...</p>
+            <p className="text-sm mt-2 text-gray-500">لطفا صفحه را نبندید</p>
+          </div>
+        ) : error ? (
+          <div
+            className="flex flex-col items-center text-center"
+            data-testid="payment-callback-error"
+          >
+            <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-red-100">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-10 w-10 text-red-500"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </div>
+
+            <h1 className="text-2xl mb-4 font-bold text-red-600">خطا در پردازش پرداخت</h1>
+
+            <p className="mb-6 text-gray-700">{error}</p>
+
+            <div className="flex w-full max-w-xs flex-col gap-4 sm:flex-row">
+              <Link
+                href="/cart"
+                className="rounded-lg bg-infinity-primary px-6 py-3 text-center text-white transition-colors hover:bg-infinity-primary"
+              >
+                بازگشت به سبد خرید
+              </Link>
+              <Link
+                href="/"
+                className="rounded-lg bg-gray-100 px-6 py-3 text-center text-gray-800 transition-colors hover:bg-gray-200"
+              >
+                بازگشت به فروشگاه
+              </Link>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </StorefrontContainer>
   );
 }
 
@@ -201,12 +246,16 @@ export default function PaymentCallback() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen flex-col items-center justify-center">
-          <div className="p-10 text-center">
-            <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
-            <p className="text-lg">در حال بارگذاری...</p>
+        <StorefrontContainer className="py-10">
+          <div className="mx-auto max-w-2xl rounded-lg bg-white p-8 shadow-md">
+            <div className="flex flex-col items-center text-center">
+              <div className="flex h-40 items-center justify-center">
+                <div className="h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
+              </div>
+              <p className="text-lg">در حال بارگذاری...</p>
+            </div>
           </div>
-        </div>
+        </StorefrontContainer>
       }
     >
       <PaymentCallbackContent />

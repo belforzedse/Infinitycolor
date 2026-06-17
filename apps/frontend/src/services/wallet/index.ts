@@ -75,5 +75,44 @@ export const getWalletTransactions = async (walletId: number): Promise<WalletTra
   return res as any;
 };
 
-const WalletService = { getMyWallet, startTopup, getWalletTransactions };
+export interface AdminWalletResponse {
+  success: boolean;
+  data?: {
+    balanceIrr: number;
+    balanceToman: number;
+    changed?: boolean;
+  };
+  errorCode?: string;
+  message?: string;
+}
+
+export type WalletAdjustMode = "credit" | "debit" | "set";
+
+export const adminGetUserWallet = async (
+  userId: number,
+): Promise<AdminWalletResponse> => {
+  const res = await apiClient.get<AdminWalletResponse>(
+    `/local-user-wallet/admin/${userId}`,
+  );
+  return res as any;
+};
+
+export const adminAdjustWallet = async (
+  userId: number,
+  payload: { mode: WalletAdjustMode; amountToman: number; reason: string },
+): Promise<AdminWalletResponse> => {
+  const res = await apiClient.post<AdminWalletResponse>(
+    "/local-user-wallet/admin/adjust",
+    { userId, ...payload },
+  );
+  return res as any;
+};
+
+const WalletService = {
+  getMyWallet,
+  startTopup,
+  getWalletTransactions,
+  adminGetUserWallet,
+  adminAdjustWallet,
+};
 export default WalletService;

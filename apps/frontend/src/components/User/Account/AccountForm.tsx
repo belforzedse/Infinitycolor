@@ -8,6 +8,10 @@ import useUser from "@/hooks/useUser";
 import { updateProfile } from "@/services/user/updateProfile";
 import { toast } from "react-hot-toast";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import {
+  jalaliBirthDateToGregorianDate,
+  parseStoredBirthDateToJalaliParts,
+} from "@/utils/birthDate";
 interface AccountFormData {
   firstName: string;
   lastName: string;
@@ -19,30 +23,8 @@ interface AccountFormData {
   gender: "male" | "female" | "";
 }
 
-const parseBirthDate = (value?: string | null) => {
-  if (!value) {
-    return { birthYear: "", birthMonth: "", birthDay: "" };
-  }
-
-  const digits = value.split(/[^\d]/).filter(Boolean);
-  if (digits.length === 3) {
-    if (digits[0].length === 4) {
-      return { birthYear: digits[0], birthMonth: digits[1], birthDay: digits[2] };
-    }
-    if (digits[2].length === 4) {
-      return { birthYear: digits[2], birthMonth: digits[1], birthDay: digits[0] };
-    }
-  }
-
-  return { birthYear: "", birthMonth: "", birthDay: "" };
-};
-
 const formatBirthDate = (year: string, month: string, day: string): string | null => {
-  if (!year || !month || !day) return null;
-  const y = year.padStart(4, "0");
-  const m = month.padStart(2, "0");
-  const d = day.padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return jalaliBirthDateToGregorianDate(year, month, day);
 };
 
 export default function AccountForm() {
@@ -68,7 +50,9 @@ export default function AccountForm() {
   // Update form when user data is loaded
   useEffect(() => {
     if (userData) {
-      const { birthYear, birthMonth, birthDay } = parseBirthDate(userData.BirthDate);
+      const { birthYear, birthMonth, birthDay } = parseStoredBirthDateToJalaliParts(
+        userData.BirthDate,
+      );
       setFormData({
         firstName: userData.FirstName || "",
         lastName: userData.LastName || "",

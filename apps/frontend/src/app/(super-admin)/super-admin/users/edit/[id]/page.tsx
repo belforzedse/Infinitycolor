@@ -9,6 +9,12 @@ import UserService from "@/services/user";
 import { apiClient } from "@/services";
 import { getUserActivities, UserActivity } from "@/services/user-activity";
 import Link from "next/link";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
+import WalletAdjustCard from "./WalletAdjustCard";
+import {
+  formatBirthDateValueForStorage,
+  parseStoredBirthDateToDate,
+} from "@/utils/birthDate";
 
 export type User = {
   id: string;
@@ -29,6 +35,8 @@ export type User = {
 
 export default function Page() {
   const { id } = useParams<{ id: string }>();
+  const { roleName } = useCurrentUser();
+  const isSuperadmin = (roleName ?? "").toLowerCase() === "superadmin";
   const [userData, setUserData] = useState<User | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +56,7 @@ export default function Page() {
         const formattedData: User = {
           id: _user.id.toString(),
           bio: userInfo.Bio || "",
-          birthDate: userInfo.BirthDate ? new Date(userInfo.BirthDate) : new Date(),
+          birthDate: parseStoredBirthDateToDate(userInfo.BirthDate),
           createdAt: _user.createdAt ? new Date(_user.createdAt) : new Date(),
           gender: userInfo.Sex ? "male" : "female",
           firstname: userInfo.FirstName || "",
@@ -107,24 +115,7 @@ export default function Page() {
         config={config}
         data={userData}
         onSubmit={async (data) => {
-          // Format birthdate as YYYY-MM-DD string if provided
-          // Normalize birthDate by treating it as either a Date or a string/number
-          let birthDateString: string | undefined;
-          if (data.birthDate) {
-            // Create a Date object if not already a Date instance
-            const birthDate = data.birthDate instanceof Date 
-              ? data.birthDate 
-              : new Date(data.birthDate);
-            
-            // Check that the resulting Date is valid (not NaN)
-            if (!isNaN(birthDate.getTime())) {
-              const year = birthDate.getFullYear();
-              const month = String(birthDate.getMonth() + 1).padStart(2, "0");
-              const day = String(birthDate.getDate()).padStart(2, "0");
-              birthDateString = `${year}-${month}-${day}`;
-            }
-            // If invalid, birthDateString remains undefined so payload omits it
-          }
+          const birthDateString = formatBirthDateValueForStorage(data.birthDate);
 
           const localPayload = {
             firstName: data.firstname,
@@ -154,6 +145,9 @@ export default function Page() {
           }
         }}
       />
+
+      {/* Wallet Editor (Superadmin only) */}
+      {isSuperadmin && id && <WalletAdjustCard userId={Number(id)} />}
 
       {/* User Activities Section */}
       <div className="rounded-2xl bg-white p-6">

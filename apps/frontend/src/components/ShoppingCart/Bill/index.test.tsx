@@ -116,7 +116,13 @@ jest.mock("./DiscountCoupon", () => ({
 
 jest.mock("./PaymentGateway", () => ({
   __esModule: true,
-  default: () => <div data-testid="checkout-payment-gateway" />,
+  default: ({ availableGateways }: any) => (
+    <div data-testid="checkout-payment-gateway">
+      <span data-testid="checkout-payment-gateway-count">
+        {availableGateways?.length ?? 0}
+      </span>
+    </div>
+  ),
 }));
 
 jest.mock("./ReserveShipping", () => ({
@@ -284,5 +290,30 @@ describe("ShoppingCartBillForm auth gate", () => {
       await Promise.resolve();
     });
     expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no gateway options and blocks submit when no backend gateways are active", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue([]);
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-payment-gateway-count")).toHaveTextContent("0");
+    });
+
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).not.toHaveBeenCalled();
+    });
+    expect(CartService.checkCartStock).not.toHaveBeenCalled();
   });
 });

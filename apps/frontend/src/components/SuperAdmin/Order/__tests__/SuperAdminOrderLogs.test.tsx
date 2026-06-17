@@ -4,6 +4,7 @@ import { getOrderAdminActivities } from "@/services/admin-activity";
 
 jest.mock("@/services/admin-activity", () => ({
   getOrderAdminActivities: jest.fn(),
+  getProductAdminActivities: jest.fn(),
 }));
 
 const mockGet = getOrderAdminActivities as jest.MockedFunction<typeof getOrderAdminActivities>;

@@ -302,12 +302,12 @@ describe("CartService", () => {
       expect(result).toEqual(["samankish", "mellat", "wallet"]);
     });
 
-    it("falls back to default gateway list when request fails", async () => {
+    it("returns no gateways when request fails", async () => {
       mockGet.mockRejectedValueOnce(new Error("Network Error"));
 
       const result = await CartService.getAvailableGateways();
 
-      expect(result).toEqual(["samankish", "mellat", "snappay", "wallet"]);
+      expect(result).toEqual([]);
     });
   });
 

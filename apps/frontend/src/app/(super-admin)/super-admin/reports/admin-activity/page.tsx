@@ -59,6 +59,9 @@ export default function AdminActivityReportPage() {
   const [selectedUser, setSelectedUser] = useState<string>("");
   const [selectedActionType, setSelectedActionType] = useState<string>("");
   const [selectedLogType, setSelectedLogType] = useState<string>("All");
+  const [resourceSearch, setResourceSearch] = useState("");
+  const [debouncedResourceSearch, setDebouncedResourceSearch] = useState("");
+  const [resourceScope, setResourceScope] = useState<"all" | "order" | "product">("all");
   const [adminUsers, setAdminUsers] = useState<AdminActivityAdmin[]>([]);
   const [showSystemActivities, setShowSystemActivities] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -142,6 +145,13 @@ export default function AdminActivityReportPage() {
     return isValid(nd) ? nd : prev;
   };
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedResourceSearch(resourceSearch.trim());
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [resourceSearch]);
+
   // Fetch data
   useEffect(() => {
     setLoading(true);
@@ -151,6 +161,8 @@ export default function AdminActivityReportPage() {
       performedBy: selectedUser ? Number(selectedUser) : undefined,
       logType: selectedLogType !== "All" ? selectedLogType : undefined,
       actionType: selectedActionType || undefined,
+      resourceSearch: debouncedResourceSearch || undefined,
+      resourceScope,
       page: 1,
       pageSize: 100,
     })
@@ -169,7 +181,15 @@ export default function AdminActivityReportPage() {
         alert(`خطا در بارگذاری گزارش: ${friendlyError}`);
       })
       .finally(() => setLoading(false));
-  }, [startISO, endISO, selectedUser, selectedActionType, selectedLogType]);
+  }, [
+    startISO,
+    endISO,
+    selectedUser,
+    selectedActionType,
+    selectedLogType,
+    debouncedResourceSearch,
+    resourceScope,
+  ]);
 
   const getAdminName = (activity: any) =>
     activity.PerformedByName ||
@@ -338,6 +358,31 @@ export default function AdminActivityReportPage() {
                   <option value="Stock">{RESOURCE_TYPE_LABELS_FA["Stock"]}</option>
                   <option value="Admin">{RESOURCE_TYPE_LABELS_FA["Admin"]}</option>
                   <option value="Other">{RESOURCE_TYPE_LABELS_FA["Other"]}</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,2fr)_minmax(180px,1fr)]">
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-neutral-600">جستجوی محصول / سفارش</label>
+                <input
+                  value={resourceSearch}
+                  onChange={(e) => setResourceSearch(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 transition-all focus:border-transparent focus:ring-2 focus:ring-infinity-primary"
+                  inputMode="search"
+                  enterKeyHint="search"
+                  placeholder="نام محصول، SKU، شماره سفارش یا بارکد"
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-neutral-600">محدوده جستجو</label>
+                <select
+                  value={resourceScope}
+                  onChange={(e) => setResourceScope(e.target.value as "all" | "order" | "product")}
+                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 transition-all focus:border-transparent focus:ring-2 focus:ring-infinity-primary"
+                >
+                  <option value="all">همه</option>
+                  <option value="order">سفارش‌ها</option>
+                  <option value="product">محصول‌ها</option>
                 </select>
               </div>
             </div>
