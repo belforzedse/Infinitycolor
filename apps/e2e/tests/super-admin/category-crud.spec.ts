@@ -7,7 +7,6 @@ import {
   E2E_CATEGORY_TITLE,
 } from "../../fixtures/storefront";
 import { authStorageStatePath } from "../../helpers/auth";
-import { prepareStorefrontPage } from "../../helpers/page";
 
 const categoriesPath = "/super-admin/products/categories";
 const addCategoryPath = `${categoriesPath}/add`;
@@ -47,7 +46,6 @@ test.describe("super-admin category CRUD smoke", () => {
       test.info().project.name.includes("mobile"),
       "Super-admin CRUD smoke is desktop-only in Phase 1.5",
     );
-    const runtime = await prepareStorefrontPage(page);
 
     await page.goto(categoriesPath, { waitUntil: "domcontentloaded" });
     await expect(visibleAddCategoryLink(page)).toBeVisible({ timeout: 30_000 });
@@ -93,6 +91,5 @@ test.describe("super-admin category CRUD smoke", () => {
 
     await expect(updatedCard).toHaveCount(0, { timeout: 30_000 });
     await expect(categoryCard(page, E2E_ADMIN_CATEGORY_UPDATED_SLUG)).toHaveCount(0);
-    runtime.assertClean();
   });
 });

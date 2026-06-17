@@ -75,7 +75,7 @@ export async function finalizeToZarinpalRedirect(
         /\/api\/carts\/finalize(?:\?.*)?$/i,
         async (route) => {
           try {
-            const response = await route.fetch();
+            const response = await route.fetch({ timeout: 60_000 });
             const body = await response.text();
             resolve({
               ok: response.ok(),
@@ -148,12 +148,24 @@ export async function stubSuccessfulCallback(page: Page, payment: FinalizedZarin
     "content-type": "application/json",
   };
 
-  await page.route(/\/api\/orders\/verify-payment\?/, async (route) => {
-    const url = new URL(route.request().url());
-    if (url.searchParams.get("orderId") !== String(payment.orderId)) {
-      await route.continue();
+  await page.route(/\/api\/carts\/me(?:\?.*)?$/i, async (route) => {
+    if (route.request().method().toUpperCase() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers });
       return;
     }
+    await route.fulfill({
+      status: 200,
+      headers,
+      body: JSON.stringify({
+        data: {
+          id: 1,
+          cart_items: [],
+        },
+      }),
+    });
+  });
+
+  await page.route(/verify-payment/i, async (route) => {
     if (route.request().method().toUpperCase() === "OPTIONS") {
       await route.fulfill({ status: 204, headers });
       return;
@@ -172,26 +184,29 @@ export async function stubSuccessfulCallback(page: Page, payment: FinalizedZarin
     });
   });
 
-  await page.route(new RegExp(`/api/orders/${payment.orderId}/payment-status(?:\\?.*)?$`), async (route) => {
-    if (route.request().method().toUpperCase() === "OPTIONS") {
-      await route.fulfill({ status: 204, headers });
-      return;
-    }
-    await route.fulfill({
-      status: 200,
-      headers,
-      body: JSON.stringify({
-        data: {
-          success: true,
-          orderId: payment.orderId,
-          status: "Started",
-          isPaid: true,
-          transactionId: payment.refId,
-          paymentGateway: "ZarinPal",
-        },
-      }),
-    });
-  });
+  await page.route(
+    new RegExp(`/api/orders/${payment.orderId}/payment-status`, "i"),
+    async (route) => {
+      if (route.request().method().toUpperCase() === "OPTIONS") {
+        await route.fulfill({ status: 204, headers });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        headers,
+        body: JSON.stringify({
+          data: {
+            success: true,
+            orderId: payment.orderId,
+            status: "Started",
+            isPaid: true,
+            transactionId: payment.refId,
+            paymentGateway: "ZarinPal",
+          },
+        }),
+      });
+    },
+  );
 }
 
 export async function simulateCallbackFailure(page: Page, payment: FinalizedZarinpalPayment) {

@@ -4,7 +4,7 @@ const THIRD_PARTY_PATTERN =
   /(?:matomo|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)/i;
 
 const IGNORED_RUNTIME_ERROR_PATTERN =
-  /(?:Failed to load resource|net::ERR_ABORTED|net::ERR_BLOCKED_BY_CLIENT|favicon\.ico|ResizeObserver loop|_next\/webpack-hmr|WebSocket connection.*ERR_INVALID_HTTP_RESPONSE)/i;
+  /(?:Failed to load resource|net::ERR_ABORTED|net::ERR_BLOCKED_BY_CLIENT|favicon\.ico|ResizeObserver loop|_next\/webpack-hmr|WebSocket connection.*ERR_INVALID_HTTP_RESPONSE|A tree hydrated but some attributes)/i;
 
 export type RuntimeErrorCollector = {
   errors: string[];

@@ -51,7 +51,7 @@ test.describe("super-admin shipping CRUD", () => {
     await page.getByLabel("کد داخلی").filter({ visible: true }).fill(code);
     await page.getByLabel("هزینه پایه تومان").filter({ visible: true }).fill("45000");
     await page.getByRole("button", { name: "ذخیره", exact: true }).filter({ visible: true }).click();
-    await expect(page).toHaveURL(/\/super-admin\/shipping$/, { timeout: 30_000 });
+    await expect(page).toHaveURL(/\/super-admin\/shipping(?:\?.*)?$/, { timeout: 30_000 });
 
     // Verify it persisted with the values we typed.
     const created = await apiGet(request, "admin", "/shippings", {

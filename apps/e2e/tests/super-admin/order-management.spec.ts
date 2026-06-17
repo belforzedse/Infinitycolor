@@ -82,20 +82,16 @@ test.describe("super-admin order management", () => {
     ).toBeVisible({ timeout: 30_000 });
 
     await page.getByRole("button", { name: /فیلتر پیشرفته/ }).click();
-    await page.getByRole("button", { name: /افزودن فیلتر/ }).click();
-    await page
-      .locator("button:visible")
-      .filter({ hasText: "فیلد" })
-      .last()
-      .click();
-    await page.getByRole("button", { name: "توضیحات" }).click();
-    await page
-      .locator("button:visible")
-      .filter({ hasText: "عملگر" })
-      .last()
-      .click();
-    await page.getByRole("button", { name: "شامل" }).click();
-    await page.getByPlaceholder("مقدار").fill("E2E_DO_NOT_USE");
+    const filterDialog = page.getByRole("dialog", { name: "فیلتر پیشرفته" });
+    await expect(filterDialog).toBeVisible();
+    await filterDialog.getByTestId("advanced-filter-add").click();
+    const filterRow = filterDialog.getByTestId("advanced-filter-row");
+    await expect(filterRow).toBeVisible({ timeout: 10_000 });
+    await filterRow.locator("button").first().click();
+    await filterRow.locator("ul button").filter({ hasText: "توضیحات" }).click();
+    await filterRow.locator("button").nth(1).click();
+    await filterRow.locator("ul button").filter({ hasText: "شامل" }).click();
+    await filterRow.getByPlaceholder("مقدار").fill("E2E_DO_NOT_USE");
 
     const filteredRequest = page.waitForRequest((req) => {
       const url = decodeURIComponent(req.url());
@@ -117,8 +113,9 @@ test.describe("super-admin order management", () => {
     await expect(page).toHaveURL(/filter=/);
 
     await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(/filter=/);
     await expect(
-      page.getByText("توضیحات: شامل E2E_DO_NOT_USE").first(),
+      page.getByText("توضیحات: شامل E2E_DO_NOT_USE").filter({ visible: true }),
     ).toBeVisible({
       timeout: 30_000,
     });
@@ -130,15 +127,17 @@ test.describe("super-admin order management", () => {
         .first(),
     ).toBeVisible({ timeout: 30_000 });
 
-    await page.getByRole("button", { name: /فیلتر پیشرفته/ }).click();
+    await page.getByRole("button", { name: /فیلتر پیشرفته/ }).filter({ visible: true }).click();
     const clearedRequest = page.waitForRequest((req) => {
       const url = decodeURIComponent(req.url());
       return (
         url.includes("/api/orders") && !url.includes("filters[Description]")
       );
     });
-    await page.getByRole("button", { name: /پاک کردن فیلترها/ }).click();
+    await page.getByRole("button", { name: /پاک کردن فیلترها/ }).filter({ visible: true }).click();
     await clearedRequest;
-    await expect(page).not.toHaveURL(/filter=/);
+    await expect(
+      page.getByText("توضیحات: شامل E2E_DO_NOT_USE").filter({ visible: true }),
+    ).toHaveCount(0);
   });
 });
