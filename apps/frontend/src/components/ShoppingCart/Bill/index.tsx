@@ -19,7 +19,7 @@ import { SubmitOrderStep } from "@/types/Order";
 import { useRouter } from "next/navigation";
 import type { ShippingAddressContext, ShippingOption } from "@/services/shipping";
 import { CartService, OrderService } from "@/services";
-import { DEFAULT_CHECKOUT_GATEWAYS, type CheckoutGatewayCode } from "@/services/cart/types/cart";
+import { type CheckoutGatewayCode } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
 import WalletService from "@/services/wallet";
 import { useCart } from "@/contexts/CartContext";
@@ -177,9 +177,7 @@ function ShoppingCartBillForm({}: Props) {
 
   // Gateway selection state
   const [gateway, setGateway] = useState<CheckoutGatewayCode>("samankish");
-  const [availableGateways, setAvailableGateways] = useState<CheckoutGatewayCode[]>([
-    ...DEFAULT_CHECKOUT_GATEWAYS,
-  ]);
+  const [availableGateways, setAvailableGateways] = useState<CheckoutGatewayCode[]>([]);
   const [snappEligible, setSnappEligible] = useState<boolean>(false); // Start as not eligible
   const [snappTitle, setSnappTitle] = useState<string | undefined>(undefined);
   const [snappDescription, setSnappDescription] = useState<string | undefined>(undefined);
@@ -285,7 +283,7 @@ function ShoppingCartBillForm({}: Props) {
         const gateways = await CartService.getAvailableGateways();
         setAvailableGateways(gateways);
       } catch {
-        setAvailableGateways([...DEFAULT_CHECKOUT_GATEWAYS]);
+        setAvailableGateways([]);
       }
     };
 

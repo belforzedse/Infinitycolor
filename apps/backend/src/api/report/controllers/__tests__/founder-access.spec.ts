@@ -52,6 +52,37 @@ function mockStrapiForRole(roleName: string) {
   };
 }
 
+function mockStrapiForAdminActivitySearch() {
+  const entityFindMany = jest
+    .fn()
+    .mockResolvedValueOnce([{ id: 12 }])
+    .mockResolvedValueOnce([{ id: 77 }])
+    .mockResolvedValueOnce([{ id: 88 }])
+    .mockResolvedValueOnce([]);
+  const entityCount = jest.fn().mockResolvedValue(0);
+
+  (global as any).strapi = {
+    query: () => ({
+      findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Superadmin" } }),
+    }),
+    entityService: {
+      findMany: entityFindMany,
+      count: entityCount,
+    },
+    db: {
+      connection: Object.assign(jest.fn(), {
+        schema: { hasTable: jest.fn().mockResolvedValue(false) },
+        raw: jest.fn().mockResolvedValue({ rows: [] }),
+      }),
+    },
+    log: {
+      warn: jest.fn(),
+    },
+  };
+
+  return { entityFindMany, entityCount };
+}
+
 describe("report controller - Founder access", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -119,5 +150,48 @@ describe("report controller - Founder access", () => {
     await controller.productSales(ctx);
 
     expect(ctx.forbidden).toHaveBeenCalled();
+  });
+
+  it("filters admin activity by product search and related order ids", async () => {
+    const { entityFindMany } = mockStrapiForAdminActivitySearch();
+    const controller = loadController();
+    const ctx = createCtx({
+      query: {
+        start: "2026-01-01",
+        end: "2026-01-31",
+        resourceSearch: "SKU-100",
+        resourceScope: "all",
+      },
+    });
+
+    await controller.adminActivity(ctx);
+
+    expect(entityFindMany).toHaveBeenNthCalledWith(
+      1,
+      "api::product.product",
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          $or: expect.arrayContaining([
+            { product_variations: { SKU: { $containsi: "SKU-100" } } },
+          ]),
+        }),
+      }),
+    );
+    expect(entityFindMany).toHaveBeenNthCalledWith(
+      4,
+      "api::manual-admin-activity.manual-admin-activity",
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          $and: [
+            {
+              $or: [
+                { ResourceType: "Order", ResourceId: { $in: ["77", "88"] } },
+                { ResourceType: "Product", ResourceId: { $in: ["12"] } },
+              ],
+            },
+          ],
+        }),
+      }),
+    );
   });
 });

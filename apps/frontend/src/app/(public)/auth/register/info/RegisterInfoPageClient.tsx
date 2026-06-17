@@ -13,6 +13,7 @@ import toast from "react-hot-toast";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
+import { jalaliBirthDateToGregorianDate } from "@/utils/birthDate";
 
 interface FormData {
   firstName: string;
@@ -70,11 +71,7 @@ export default function RegisterInfoPage() {
   };
 
   const formatBirthDate = (year: string, month: string, day: string): string => {
-    // Format Persian date as yyyy-MM-dd (keep Persian year, no conversion)
-    const y = year.padStart(4, "0");
-    const m = month.padStart(2, "0");
-    const d = day.padStart(2, "0");
-    return `${y}-${m}-${d}`;
+    return jalaliBirthDateToGregorianDate(year, month, day) || "";
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

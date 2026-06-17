@@ -8,6 +8,7 @@ import SuperAdminTableCellSwitch from "@/components/SuperAdmin/Table/Cells/Switc
 import MobileTableRowBox from "@/components/SuperAdmin/Table/Mobile/Row/Box";
 import { apiClient } from "@/services";
 import { translatePluginRoleLabel } from "@/constants/roleLabels";
+import { rialToToman } from "@/utils/price";
 import type { ColumnDef, Row } from "@tanstack/react-table";
 import { useAtom } from "jotai";
 import { useState } from "react";
@@ -94,7 +95,8 @@ const StatusCell = ({ row }: { row: Row<User> }) => {
 
 const WalletCell = ({ row }: { row: Row<User> }) => {
   const walletData = row.original.user_wallet ?? null;
-  const walletBalance = Number(walletData?.Balance ?? 0);
+  // Balance is stored in Rial; SimplePrice labels values as Toman, so convert first.
+  const walletBalance = rialToToman(walletData?.Balance ?? 0);
 
   return (
     <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-1">
@@ -292,13 +294,14 @@ export const MobileTable = ({ data }: Props) => {
 
               <div className="text-xs flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-slate-700">
                 <SuperAdminTableCellSimplePrice
-                  price={Number(row.user_wallet?.Balance ?? 0)}
+                  price={rialToToman(row.user_wallet?.Balance ?? 0)}
                   inverse
                 />
               </div>
             </div>
           }
           headTitle={row.phone || "-"}
+          actions={<ActionsCell row={{ original: rowWithStringId } as Row<User>} />}
         />
         );
       })}

@@ -29,6 +29,12 @@ function visibleSidebarParent(page: Page, id: string) {
     .first();
 }
 
+async function expectVisibleSidebarParent(page: Page, id: string) {
+  const item = visibleSidebarParent(page, id);
+  await item.scrollIntoViewIfNeeded();
+  await expect(item).toBeVisible({ timeout: 30_000 });
+}
+
 test.describe("admin area access matrix (shipping / discounts / users)", () => {
   test.beforeEach(async ({}, testInfo) => {
     testInfo.skip(
@@ -45,10 +51,10 @@ test.describe("admin area access matrix (shipping / discounts / users)", () => {
       request,
     }) => {
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(visibleSidebarParent(page, "shipping")).toBeVisible({ timeout: 30_000 });
-      await expect(visibleSidebarParent(page, "discounts")).toBeVisible();
-      await expect(visibleSidebarParent(page, "users")).toBeVisible();
-      await expect(visibleSidebarParent(page, "reports")).toBeVisible();
+      await expectVisibleSidebarParent(page, "shipping");
+      await expectVisibleSidebarParent(page, "discounts");
+      await expectVisibleSidebarParent(page, "users");
+      await expectVisibleSidebarParent(page, "reports");
 
       await expectApiOk(await apiGet(request, "admin", "/users"), "superadmin users list");
     });
@@ -62,9 +68,10 @@ test.describe("admin area access matrix (shipping / discounts / users)", () => {
       request,
     }) => {
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(visibleSidebarParent(page, "shipping")).toBeVisible({ timeout: 30_000 });
+      await expectVisibleSidebarParent(page, "shipping");
       await expect(sidebarParent(page, "discounts")).toHaveCount(0);
       await expect(sidebarParent(page, "users")).toHaveCount(0);
+      await expectVisibleSidebarParent(page, "reports");
       await expect(visibleSidebarParent(page, "reports")).toHaveAttribute(
         "data-sidebar-href",
         "/super-admin/reports/product-sales",
@@ -90,7 +97,7 @@ test.describe("admin area access matrix (shipping / discounts / users)", () => {
       page,
     }) => {
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(visibleSidebarParent(page, "discounts")).toBeVisible({ timeout: 30_000 });
+      await expectVisibleSidebarParent(page, "discounts");
       await expect(sidebarParent(page, "shipping")).toHaveCount(0);
       await expect(sidebarParent(page, "users")).toHaveCount(0);
       await expect(sidebarParent(page, "reports")).toHaveCount(0);
@@ -104,7 +111,7 @@ test.describe("admin area access matrix (shipping / discounts / users)", () => {
       page,
     }) => {
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(visibleSidebarParent(page, "blog-posts")).toBeVisible({ timeout: 30_000 });
+      await expectVisibleSidebarParent(page, "blog-posts");
       await expect(sidebarParent(page, "shipping")).toHaveCount(0);
       await expect(sidebarParent(page, "discounts")).toHaveCount(0);
       await expect(sidebarParent(page, "users")).toHaveCount(0);

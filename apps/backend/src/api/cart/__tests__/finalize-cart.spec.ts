@@ -78,7 +78,12 @@ const createStrapiMock = () => {
     },
     entityService: {
       findOne: jest.fn(),
-      findMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([
+        { Title: "Wallet", IsActive: true },
+        { Title: "Mellat", IsActive: true },
+        { Title: "Saman", IsActive: true },
+        { Title: "SnappPay", IsActive: true },
+      ]),
       create: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue(null),
     },

@@ -1,5 +1,5 @@
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor, screen } from "@testing-library/react";
 import { useCart } from "@/contexts/CartContext";
 import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
 
@@ -173,6 +173,19 @@ describe("PaymentCallback page", () => {
         onceKey: "payment-callback-error:unknown:MISSING_PARAMS",
       }),
     );
+  });
+
+  it("renders the styled loading card while verification is in flight", async () => {
+    // Keep verification pending so the loading state stays mounted.
+    verifyPaymentMock.mockReturnValue(new Promise(() => {}));
+
+    render(<PaymentCallback />);
+
+    const loading = await screen.findByTestId("payment-callback-loading");
+    expect(loading).toBeInTheDocument();
+    expect(loading).toHaveTextContent("در حال بررسی وضعیت پرداخت...");
+    // Spinner is present inside the card.
+    expect(loading.querySelector(".animate-spin")).not.toBeNull();
   });
 
   it("routes to failure and tracks a stable error code when verification throws", async () => {

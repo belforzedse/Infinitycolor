@@ -73,15 +73,17 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
 
   useEffect(() => {
     if (isFilterOpen) {
-      setDraft(filter);
-      requestAnimationFrame(() => {
-        const dialog = dialogRef.current;
-        if (!dialog) return;
-        const focusable = dialog.querySelector<HTMLElement>(
-          "button:not([disabled]), [href], input:not([disabled]):not([type='hidden']), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-        );
-        (focusable ?? dialog).focus();
-      });
+      if (!wasOpenRef.current) {
+        setDraft(filter);
+        requestAnimationFrame(() => {
+          const dialog = dialogRef.current;
+          if (!dialog) return;
+          const focusable = dialog.querySelector<HTMLElement>(
+            "button:not([disabled]), [href], input:not([disabled]):not([type='hidden']), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+          );
+          (focusable ?? dialog).focus();
+        });
+      }
     } else if (wasOpenRef.current) {
       triggerRef.current?.focus();
     }
@@ -216,6 +218,7 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
               return (
                 <div
                   key={index}
+                  data-testid="advanced-filter-row"
                   className="grid grid-cols-1 gap-1.5 rounded-xl border border-slate-100 bg-slate-50/60 p-2 sm:grid-cols-[1fr_1fr_1.1fr_auto] sm:items-center"
                 >
                   <SuperAdminTableSelect
@@ -307,6 +310,7 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <button
                 type="button"
+                data-testid="advanced-filter-add"
                 className="flex h-9 items-center justify-center gap-1 rounded-md border border-actions-primary bg-white px-2 text-actions-primary sm:h-8"
                 onClick={() => {
                   setDraft((prev) => [...prev, { ...EMPTY_FILTER }]);

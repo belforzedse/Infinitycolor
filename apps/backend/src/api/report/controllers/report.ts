@@ -21,6 +21,7 @@ import * as productAnalytics from "../services/product-analytics";
 import { buildStyledWorkbook, WorkbookColumn } from "../../../utils/styledWorkbook";
 
 type Interval = "day" | "week" | "month";
+type AdminActivityResourceScope = "all" | "order" | "product";
 
 function isForceFresh(value: unknown): boolean {
   if (typeof value !== "string") return false;
@@ -89,6 +90,137 @@ function setTrafficCache(key: string, payload: any, ttlMs: number) {
     expiresAt: Date.now() + ttlMs,
     payload,
   });
+}
+
+const normalizeResourceScope = (value: unknown): AdminActivityResourceScope => {
+  const normalized = String(value || "all").trim().toLowerCase();
+  if (normalized === "order" || normalized === "product") return normalized;
+  return "all";
+};
+
+const uniqueStrings = (values: Array<string | number | null | undefined>) =>
+  Array.from(
+    new Set(
+      values
+        .filter((value) => value !== null && value !== undefined && String(value).trim())
+        .map((value) => String(value).trim()),
+    ),
+  );
+
+const numericSearchId = (value: string): number | null => {
+  if (!/^\d+$/.test(value)) return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+};
+
+async function resolveAdminActivityResourceIds(
+  search: string,
+  scope: AdminActivityResourceScope,
+): Promise<{ orderIds: string[]; productIds: string[] }> {
+  const term = search.trim();
+  if (!term) return { orderIds: [], productIds: [] };
+
+  const id = numericSearchId(term);
+  let productIds: string[] = [];
+  let orderIds: string[] = [];
+
+  if (scope === "all" || scope === "product") {
+    const productOr: any[] = [
+      { Title: { $containsi: term } },
+      { Slug: { $containsi: term } },
+      { external_id: { $containsi: term } },
+      { product_variations: { SKU: { $containsi: term } } },
+    ];
+    if (id) productOr.unshift({ id: { $eq: id } });
+
+    const products = (await strapi.entityService.findMany("api::product.product" as any, {
+      filters: { $or: productOr },
+      fields: ["id"],
+      pagination: { page: 1, pageSize: 100 },
+    })) as Array<{ id?: number | string }> | null;
+
+    productIds = uniqueStrings((products || []).map((product) => product.id));
+    if (id) productIds = uniqueStrings([String(id), ...productIds]);
+  }
+
+  if (scope === "all" || scope === "order") {
+    const orderOr: any[] = [
+      { external_id: { $containsi: term } },
+      { ShippingBarcode: { $containsi: term } },
+      { order_items: { ProductTitle: { $containsi: term } } },
+      { order_items: { ProductSKU: { $containsi: term } } },
+    ];
+    if (id) orderOr.unshift({ id: { $eq: id } });
+    if (productIds.length > 0) {
+      orderOr.push({
+        order_items: {
+          product_variation: {
+            product: {
+              id: { $in: productIds.map(Number).filter((value) => Number.isFinite(value)) },
+            },
+          },
+        },
+      });
+    }
+
+    const orders = (await strapi.entityService.findMany("api::order.order" as any, {
+      filters: { $or: orderOr },
+      fields: ["id"],
+      pagination: { page: 1, pageSize: 200 },
+    })) as Array<{ id?: number | string }> | null;
+
+    orderIds = uniqueStrings((orders || []).map((order) => order.id));
+    if (id) orderIds = uniqueStrings([String(id), ...orderIds]);
+  }
+
+  if ((scope === "all" || scope === "product") && productIds.length > 0) {
+    const ordersForProducts = (await strapi.entityService.findMany("api::order.order" as any, {
+      filters: {
+        order_items: {
+          product_variation: {
+            product: {
+              id: { $in: productIds.map(Number).filter((value) => Number.isFinite(value)) },
+            },
+          },
+        },
+      },
+      fields: ["id"],
+      pagination: { page: 1, pageSize: 200 },
+    })) as Array<{ id?: number | string }> | null;
+    orderIds = uniqueStrings([...orderIds, ...(ordersForProducts || []).map((order) => order.id)]);
+  }
+
+  return { orderIds, productIds };
+}
+
+async function applyAdminActivityResourceSearch(filters: any, ctx: any) {
+  const resourceSearch = String(ctx.query.resourceSearch || "").trim();
+  if (!resourceSearch) return;
+
+  const resourceScope = normalizeResourceScope(ctx.query.resourceScope);
+  const { orderIds, productIds } = await resolveAdminActivityResourceIds(
+    resourceSearch,
+    resourceScope,
+  );
+
+  const resourceFilters: any[] = [];
+  if (resourceScope === "all" || resourceScope === "order" || orderIds.length > 0) {
+    if (orderIds.length > 0) {
+      resourceFilters.push({ ResourceType: "Order", ResourceId: { $in: orderIds } });
+    }
+  }
+  if (resourceScope === "all" || resourceScope === "product") {
+    if (productIds.length > 0) {
+      resourceFilters.push({ ResourceType: "Product", ResourceId: { $in: productIds } });
+    }
+  }
+
+  if (resourceFilters.length === 0) {
+    filters.ResourceId = "__no_matching_resource__";
+    return;
+  }
+
+  filters.$and = [...(filters.$and || []), { $or: resourceFilters }];
 }
 
 async function getOrderStats(start: Date, end: Date) {
@@ -816,6 +948,8 @@ export default {
       // Defense-in-depth: although writes are now gated to management roles, keep the role filter
       // so any legacy/non-admin rows are excluded from the report.
       filters.PerformedByRole = { $in: MANAGEMENT_ROLES };
+
+      await applyAdminActivityResourceSearch(filters, ctx);
 
       const manualActivities = await strapi.entityService.findMany(
         "api::manual-admin-activity.manual-admin-activity" as any,

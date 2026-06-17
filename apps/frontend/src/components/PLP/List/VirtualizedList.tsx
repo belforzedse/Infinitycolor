@@ -26,6 +26,7 @@ interface Product {
   id: number;
   attributes: {
     Title: string;
+    Slug?: string;
     RatingCount: number | null;
     SeenCount?: number | null;
     CoverImage?: {
@@ -138,6 +139,7 @@ export default function VirtualizedList({
 
       return {
         id: product.id,
+        slug: product.attributes.Slug,
         title: product.attributes.Title,
         category: product.attributes.product_main_category?.data?.attributes?.Title || "",
         price,
@@ -165,6 +167,7 @@ export default function VirtualizedList({
         <ProductCard
           key={product.id}
           id={product.id}
+          slug={product.slug}
           images={product.images}
           category={product.category}
           title={product.title}
@@ -191,6 +194,7 @@ export default function VirtualizedList({
         <ProductSmallCard
           key={product.id}
           id={product.id}
+          slug={product.slug}
           title={product.title}
           category={product.category}
           likedCount={product.seenCount}

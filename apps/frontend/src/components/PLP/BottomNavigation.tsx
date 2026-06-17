@@ -4,12 +4,13 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import CategoryCard from "@/components/Categories/CategoryCard";
-import HomeIcon from "./Icons/HomeIcon";
 import CategoryIcon from "./Icons/CategoryIcon";
+import SearchIcon from "./Icons/SearchIcon";
 import BasketIcon from "./Icons/BasketIcon";
 import ProfileIcon from "./Icons/ProfileIcon";
 import AccountAccessMenu from "@/components/PLP/Header/AccountAccessMenu";
 import { useCart } from "@/contexts/CartContext";
+import { useMobileMenu } from "@/contexts/MobileMenuContext";
 import { hapticButton } from "@/utils/haptics";
 import { ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS } from "@/constants/categories";
 import { useProductCategories } from "@/hooks/useProductCategories";
@@ -70,6 +71,7 @@ function NavTabLink({
 
 const PLPBottomNavigation = () => {
   const pathname = usePathname();
+  const { openMenu } = useMobileMenu();
   const { totalItems } = useCart();
   const isCartShellReady = useCartShellReady();
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
@@ -87,6 +89,12 @@ const PLPBottomNavigation = () => {
     hapticButton();
     setIsCategoriesMounted(true);
     requestAnimationFrame(() => setIsCategoriesVisible(true));
+  };
+
+  const handleSearchClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    hapticButton();
+    openMenu({ focusSearch: true });
   };
 
   const closeCategories = () => {
@@ -108,7 +116,6 @@ const PLPBottomNavigation = () => {
     };
   }, [isCategoriesMounted]);
 
-  const isHomeActive = pathname === "/";
   const isCartActive = pathname === "/cart";
   const isProfileActive = isAuthenticated
     ? pathname === "/account" || pathname.startsWith("/account/")
@@ -186,12 +193,13 @@ const PLPBottomNavigation = () => {
               </NavTabLink>
 
               <NavTabLink
-                href="/"
-                active={isHomeActive}
+                href="#"
+                active={false}
                 inactiveIconClassName="text-[#A3A3A3]"
-                ariaLabel="خانه"
+                ariaLabel="جستجو"
+                onClick={handleSearchClick}
               >
-                <HomeIcon className="shrink-0 stroke-current" />
+                <SearchIcon className="shrink-0 stroke-current" />
               </NavTabLink>
             </div>
           </nav>

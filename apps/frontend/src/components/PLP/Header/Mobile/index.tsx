@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import MobileMenu from "./MobileMenu";
 import CartIcon from "../../Icons/CartIcon";
 import MenuIcon from "../../Icons/MenuIcon";
 import { StorefrontLogo } from "@repo/brand";
 import { useCart } from "@/contexts/CartContext";
+import { useMobileMenu } from "@/contexts/MobileMenuContext";
 import { usePathname } from "next/navigation";
 import MobileBackButton from "@/components/MobileBackButton";
 import { getMobileBackFallbackHref } from "@/utils/mobileBackNavigation";
@@ -14,7 +14,7 @@ import { useCartShellReady } from "@/hooks/useCartShellReady";
 type Props = object;
 
 export default function PLPMobileHeader({}: Props) {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const { openMenu } = useMobileMenu();
   const { totalItems, openDrawer } = useCart();
   const isCartShellReady = useCartShellReady();
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
@@ -87,7 +87,7 @@ export default function PLPMobileHeader({}: Props) {
           {/* Physical RIGHT: menu + optional back button */}
           <div className="relative z-10 ml-auto flex items-center gap-2">
             <button
-              onClick={() => setIsMenuOpen(true)}
+              onClick={() => openMenu()}
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-neutral-700 transition-colors hover:bg-neutral-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-infinity-primary"
               aria-label="فهرست"
             >
@@ -100,8 +100,6 @@ export default function PLPMobileHeader({}: Props) {
           </div>
         </div>
       </div>
-
-      <MobileMenu isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
     </>
   );
 }

@@ -95,8 +95,31 @@ export async function getOrderAdminActivities(
   };
 }
 
+export async function getProductAdminActivities(
+  productId: string | number,
+  params?: AdminActivityQueryParams,
+): Promise<AdminActivityResponse> {
+  if (!productId) {
+    throw new Error("productId is required");
+  }
+
+  const queryParams = new URLSearchParams();
+  if (params?.page) queryParams.append("page", String(params.page));
+  if (params?.pageSize) queryParams.append("pageSize", String(params.pageSize));
+
+  const queryString = queryParams.toString();
+  const url = `/admin-activities/product/${productId}${queryString ? `?${queryString}` : ""}`;
+
+  const res = await apiClient.get<AdminActivity[]>(url);
+  return {
+    data: (res?.data as AdminActivity[]) ?? [],
+    meta: (res as { meta?: AdminActivityResponse["meta"] })?.meta,
+  };
+}
+
 const AdminActivityService = {
   getOrderAdminActivities,
+  getProductAdminActivities,
 };
 
 export default AdminActivityService;

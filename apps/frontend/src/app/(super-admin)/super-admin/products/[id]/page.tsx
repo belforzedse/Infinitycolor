@@ -21,6 +21,7 @@ import logger from "@/utils/logger";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import toast from "react-hot-toast";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
+import SuperAdminActivityLogs from "@/components/SuperAdmin/Activity/SuperAdminActivityLogs";
 
 export default function EditProductsPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -224,6 +225,12 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         {/* <SetPrice />
         <SetStatus /> */}
         <SetDetails isEditMode />
+        <SuperAdminActivityLogs
+          resourceType="product"
+          resourceId={id}
+          pageSize={20}
+          title="رویدادهای محصول"
+        />
       </div>
       <div className="order-1 col-span-2 h-fit flex-1 lg:order-2">
         <Tabs tabs={tabs} tabsClassName="!bg-transparent">

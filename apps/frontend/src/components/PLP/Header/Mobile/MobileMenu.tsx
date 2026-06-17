@@ -21,6 +21,7 @@ import SaleBadgeIcon from "../SaleBadgeIcon";
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  focusSearchOnOpen?: boolean;
 }
 
 type MobileNavItem =
@@ -91,7 +92,7 @@ function MobileSearchSkeleton() {
   );
 }
 
-export default function MobileMenu({ isOpen, onClose }: Props) {
+export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false }: Props) {
   const pathname = usePathname();
   const router = useRouter();
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
@@ -147,6 +148,16 @@ export default function MobileMenu({ isOpen, onClose }: Props) {
 
     setMenuState((current) => (current === "closed" ? "closed" : "closing"));
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !focusSearchOnOpen || menuState !== "open") return;
+
+    const timer = window.setTimeout(() => {
+      searchInputRef.current?.focus({ preventScroll: false });
+    }, 150);
+
+    return () => window.clearTimeout(timer);
+  }, [focusSearchOnOpen, isOpen, menuState]);
 
   useEffect(() => {
     if (menuState === "closed") {
@@ -602,7 +613,7 @@ export default function MobileMenu({ isOpen, onClose }: Props) {
                 </div>
               </div>
 
-              <div className="px-5 pb-3">
+              <div className="px-5 pb-3" data-mobile-menu-search>
                 <form onSubmit={handleSearchSubmit} className="relative" dir="rtl">
                   <input
                     ref={searchInputRef}

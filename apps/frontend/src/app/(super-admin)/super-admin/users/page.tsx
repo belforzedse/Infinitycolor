@@ -7,12 +7,14 @@ import { ENDPOINTS } from "@/constants/api";
 import { useEffect, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
+import { buildManagerRoleFilterQuery } from "@/constants/roleLabels";
 
 export default function UsersPage() {
   useFreshDataOnPageLoad();
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [managerRolesOnly, setManagerRolesOnly] = useState(false);
 
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {
@@ -105,6 +107,15 @@ export default function UsersPage() {
             </span>
           )}
         </div>
+        <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-neutral-600">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={managerRolesOnly}
+            onChange={(e) => setManagerRolesOnly(e.target.checked)}
+          />
+          فقط نقش‌های مدیریتی
+        </label>
       </div>
       <SuperAdminTable
         _removeActions
@@ -187,6 +198,11 @@ export default function UsersPage() {
               // Priority 4: Phone number search
               baseUrl += `&filters[$or][${orIndex++}][phone][$containsi]=${encodedPhrase}`;
             }
+          }
+
+          // Restrict to management/staff roles (by plugin role name)
+          if (managerRolesOnly) {
+            baseUrl += `&${buildManagerRoleFilterQuery()}`;
           }
 
           return baseUrl;

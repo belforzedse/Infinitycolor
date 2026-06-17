@@ -199,5 +199,21 @@ describe("MobileMenu", () => {
 
       expect(await screen.findByText("موردی یافت نشد")).toBeInTheDocument();
     });
+
+    it("focuses the search field when opened with focusSearchOnOpen", async () => {
+      jest.useFakeTimers();
+
+      render(<MobileMenu isOpen focusSearchOnOpen onClose={jest.fn()} />);
+      await screen.findByRole("button", { name: "بالاتنه" });
+
+      const input = screen.getByLabelText("جستجوی محصولات");
+      expect(input).not.toHaveFocus();
+
+      jest.advanceTimersByTime(150);
+
+      expect(input).toHaveFocus();
+
+      jest.useRealTimers();
+    });
   });
 });

@@ -1,15 +1,11 @@
 import React, { useState } from "react";
 import Image from "next/image";
 import classNames from "classnames";
-import {
-  DEFAULT_CHECKOUT_GATEWAYS,
-  type CheckoutGatewayCode,
-} from "@/services/cart/types/cart";
+import { type CheckoutGatewayCode } from "@/services/cart/types/cart";
 
 interface Props {
   selected: CheckoutGatewayCode;
   onChange: (gw: CheckoutGatewayCode) => void;
-  /** When omitted, falls back to DEFAULT_CHECKOUT_GATEWAYS. */
   availableGateways?: CheckoutGatewayCode[];
   snappEligible?: boolean;
   snappTitle?: string;
@@ -21,7 +17,7 @@ interface Props {
 function ShoppingCartBillPaymentGateway({
   selected,
   onChange,
-  availableGateways = DEFAULT_CHECKOUT_GATEWAYS,
+  availableGateways = [],
   snappEligible = false,
   snappTitle,
   snappDescription,

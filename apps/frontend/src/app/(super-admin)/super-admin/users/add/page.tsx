@@ -10,6 +10,7 @@ import { useSetAtom } from "jotai";
 import { apiCache } from "@/lib/api-cache";
 import toast from "react-hot-toast";
 import type { User } from "../edit/[id]/page";
+import { formatBirthDateValueForStorage } from "@/utils/birthDate";
 
 export default function AddUserPage() {
   const router = useRouter();
@@ -37,14 +38,7 @@ export default function AddUserPage() {
     try {
       setIsLoading(true);
 
-      // Format birthdate as YYYY-MM-DD string if provided
-      let birthDateString: string | undefined;
-      if (data.birthDate && data.birthDate instanceof Date) {
-        const year = data.birthDate.getFullYear();
-        const month = String(data.birthDate.getMonth() + 1).padStart(2, "0");
-        const day = String(data.birthDate.getDate()).padStart(2, "0");
-        birthDateString = `${year}-${month}-${day}`;
-      }
+      const birthDateString = formatBirthDateValueForStorage(data.birthDate);
 
       const result = await createUser({
         firstName: data.firstname,

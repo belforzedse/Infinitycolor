@@ -68,6 +68,8 @@ export async function getAdminActivity(params: {
   performedBy?: string | number;
   logType?: string;
   actionType?: string;
+  resourceSearch?: string;
+  resourceScope?: "all" | "order" | "product";
   page?: number;
   pageSize?: number;
 }): Promise<AdminActivityResponse> {
@@ -77,6 +79,8 @@ export async function getAdminActivity(params: {
     performedBy: params.performedBy,
     log_type: params.logType,
     action_type: params.actionType,
+    resourceSearch: params.resourceSearch,
+    resourceScope: params.resourceScope,
     page: params.page,
     pageSize: params.pageSize,
   });

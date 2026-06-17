@@ -3,7 +3,6 @@ import type {
   CartStockCheckResponse,
   CheckoutGatewayCode,
 } from "./types/cart";
-import { DEFAULT_CHECKOUT_GATEWAYS } from "./types/cart";
 import { unwrap } from "./helpers/response";
 import { CHECKOUT_MAX_RETRIES, CHECKOUT_REQUEST_TIMEOUT_MS } from "@/constants/api";
 
@@ -104,6 +103,6 @@ export const getAvailableGateways = async (): Promise<CheckoutGatewayCode[]> => 
 
     return gatewayCodes;
   } catch {
-    return [...DEFAULT_CHECKOUT_GATEWAYS];
+    return [];
   }
 };

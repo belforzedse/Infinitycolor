@@ -27,7 +27,7 @@ describe("payment-gateway.availableGateways", () => {
     process.env = originalEnv;
   });
 
-  it("returns all supported gateways when no backend rows exist", async () => {
+  it("returns no gateways when no backend rows exist", async () => {
     const { strapi } = createStrapiMock();
     (strapi.entityService.findMany as jest.Mock).mockResolvedValue([]);
     const controller = controllerFactory({ strapi });
@@ -35,23 +35,15 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({
-      data: {
-        gateways: [
-          { code: "samankish", title: "سامان‌کیش" },
-          { code: "mellat", title: "بانک ملت" },
-          { code: "snappay", title: "پرداخت اقساطی اسنپ‌پی" },
-          { code: "wallet", title: "کیف پول" },
-        ],
-      },
-    });
+    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
   });
 
-  it("excludes explicitly disabled gateways", async () => {
+  it("returns only explicitly active mapped gateways", async () => {
     const { strapi } = createStrapiMock();
     (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
       { Title: "SnappPay", IsActive: false },
       { Title: "Saman Kish", IsActive: true },
+      { Title: "Wallet", IsActive: true },
     ]);
     const controller = controllerFactory({ strapi });
     const ctx = mockContext({});
@@ -61,9 +53,8 @@ describe("payment-gateway.availableGateways", () => {
     expect(ctx.send).toHaveBeenCalledWith({
       data: {
         gateways: [
-          { code: "samankish", title: "سامان‌کیش" },
-          { code: "mellat", title: "بانک ملت" },
-          { code: "wallet", title: "کیف پول" },
+          expect.objectContaining({ code: "samankish" }),
+          expect.objectContaining({ code: "wallet" }),
         ],
       },
     });
@@ -72,8 +63,35 @@ describe("payment-gateway.availableGateways", () => {
   it("ignores unknown gateway titles", async () => {
     const { strapi } = createStrapiMock();
     (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
-      { Title: "Unknown Gateway", IsActive: false },
-      { Title: "Another Gateway", IsActive: false },
+      { Title: "Unknown Gateway", IsActive: true },
+      { Title: "Another Gateway", IsActive: true },
+    ]);
+    const controller = controllerFactory({ strapi });
+    const ctx = mockContext({});
+
+    await controller.availableGateways(ctx);
+
+    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+  });
+
+  it("keeps ZarinPal hidden when active but not configured", async () => {
+    const { strapi } = createStrapiMock();
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
+      { Title: "ZarinPal", IsActive: true },
+    ]);
+    const controller = controllerFactory({ strapi });
+    const ctx = mockContext({});
+
+    await controller.availableGateways(ctx);
+
+    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+  });
+
+  it("includes ZarinPal only when active and configured", async () => {
+    process.env.URL = "http://localhost:1337";
+    const { strapi } = createStrapiMock();
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
+      { Title: "ZarinPal", IsActive: true },
     ]);
     const controller = controllerFactory({ strapi });
     const ctx = mockContext({});
@@ -82,35 +100,19 @@ describe("payment-gateway.availableGateways", () => {
 
     expect(ctx.send).toHaveBeenCalledWith({
       data: {
-        gateways: [
-          { code: "samankish", title: "سامان‌کیش" },
-          { code: "mellat", title: "بانک ملت" },
-          { code: "snappay", title: "پرداخت اقساطی اسنپ‌پی" },
-          { code: "wallet", title: "کیف پول" },
-        ],
+        gateways: [expect.objectContaining({ code: "zarinpal" })],
       },
     });
   });
 
-  it("includes ZarinPal for local deterministic callbacks", async () => {
-    process.env.URL = "http://localhost:1337";
+  it("returns no gateways when gateway rows cannot be loaded", async () => {
     const { strapi } = createStrapiMock();
-    (strapi.entityService.findMany as jest.Mock).mockResolvedValue([]);
+    (strapi.entityService.findMany as jest.Mock).mockRejectedValue(new Error("db down"));
     const controller = controllerFactory({ strapi });
     const ctx = mockContext({});
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({
-      data: {
-        gateways: [
-          { code: "samankish", title: "سامان‌کیش" },
-          { code: "mellat", title: "بانک ملت" },
-          { code: "zarinpal", title: "زرین‌پال" },
-          { code: "snappay", title: "پرداخت اقساطی اسنپ‌پی" },
-          { code: "wallet", title: "کیف پول" },
-        ],
-      },
-    });
+    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
   });
 });
