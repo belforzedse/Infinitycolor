@@ -19,6 +19,14 @@ export const IMAGE_BASE_URL =
   process.env.NEXT_PUBLIC_IMAGE_BASE_URL || DEFAULT_IMAGE_BASE_URL;
 
 /**
+ * Optional CDN origin for Strapi `/uploads` media (e.g. https://cdn.infinitycolor.co).
+ * Empty string when unset — media then falls back to IMAGE_BASE_URL. The actual
+ * URL rewriting lives in the frontend image resolver (utils/imageSecurity.ts),
+ * which reads NEXT_PUBLIC_MEDIA_CDN_URL directly; this export is for discoverability.
+ */
+export const MEDIA_CDN_URL = process.env.NEXT_PUBLIC_MEDIA_CDN_URL || "";
+
+/**
  * Internal Strapi URL for server-side calls at runtime (e.g. in Docker).
  */
 export const STRAPI_INTERNAL_URL =

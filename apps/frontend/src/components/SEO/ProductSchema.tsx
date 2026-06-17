@@ -1,5 +1,5 @@
 import { ProductDetail } from "@/services/product/product";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { safeJsonLd } from "@/utils/seo";
 
 interface ProductSchemaProps {
@@ -61,7 +61,7 @@ export function ProductSchema({ product, slug }: ProductSchemaProps) {
   const rawDescription = product?.attributes?.Description || title;
   const description = stripHTML(rawDescription);
   const imageUrl = product?.attributes?.CoverImage?.data?.attributes?.url
-    ? `${IMAGE_BASE_URL}${product.attributes.CoverImage.data.attributes.url}`
+    ? resolveAssetUrl(product.attributes.CoverImage.data.attributes.url) || undefined
     : undefined;
 
   // Get price info from variations if available

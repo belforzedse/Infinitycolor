@@ -108,4 +108,65 @@ describe("imageSecurity", () => {
     ).toBe("https://api.infinitycolor.co/uploads/cover.webp?w=800&q=75&f=avif");
     expect(buildOptimizedImageUrl("https://external-domain.example/cover.webp", 800, 75, productionOptions)).toBe("");
   });
+
+  describe("media CDN routing", () => {
+    const cdnOptions = {
+      ...productionOptions,
+      mediaCdnUrl: "https://cdn.infinitycolor.co",
+    };
+
+    it.each([null, undefined, ""])("returns empty string for %p", (value) => {
+      expect(resolveSafeImageSrc(value, cdnOptions)).toBe("");
+    });
+
+    it("rewrites relative /uploads paths to the CDN origin", () => {
+      expect(resolveSafeImageSrc("/uploads/a.jpg", cdnOptions)).toBe(
+        "https://cdn.infinitycolor.co/uploads/a.jpg",
+      );
+    });
+
+    it("rewrites absolute Strapi upload URLs to the CDN origin", () => {
+      expect(resolveSafeImageSrc("https://api.infinitycolor.co/uploads/a.jpg", cdnOptions)).toBe(
+        "https://cdn.infinitycolor.co/uploads/a.jpg",
+      );
+    });
+
+    it("leaves already-CDN upload URLs unchanged", () => {
+      expect(resolveSafeImageSrc("https://cdn.infinitycolor.co/uploads/a.jpg", cdnOptions)).toBe(
+        "https://cdn.infinitycolor.co/uploads/a.jpg",
+      );
+    });
+
+    it("still rejects unrelated external URLs", () => {
+      expect(resolveSafeImageSrc("https://external-site.com/image.jpg", cdnOptions)).toBe("");
+    });
+
+    it("does not rewrite non-upload Strapi API URLs", () => {
+      expect(resolveSafeImageSrc("https://api.infinitycolor.co/admin/logo.png", cdnOptions)).toBe("");
+    });
+
+    it("optimizes CDN-routed upload URLs", () => {
+      expect(buildOptimizedImageUrl("/uploads/cover.webp", 800, 75, cdnOptions)).toBe(
+        "https://cdn.infinitycolor.co/uploads/cover.webp?w=800&q=75&f=avif",
+      );
+    });
+
+    it("adds the CDN host to the Next.js remote patterns", () => {
+      expect(getNextImageRemotePatterns(cdnOptions)).toContainEqual({
+        protocol: "https",
+        hostname: "cdn.infinitycolor.co",
+        port: "",
+        pathname: "/uploads/**",
+      });
+    });
+
+    it("preserves origin behavior when no CDN is configured", () => {
+      expect(resolveSafeImageSrc("/uploads/a.jpg", productionOptions)).toBe(
+        "https://api.infinitycolor.co/uploads/a.jpg",
+      );
+      expect(resolveSafeImageSrc("https://api.infinitycolor.co/uploads/a.jpg", productionOptions)).toBe(
+        "https://api.infinitycolor.co/uploads/a.jpg",
+      );
+    });
+  });
 });

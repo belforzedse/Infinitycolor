@@ -1,13 +1,13 @@
 import Image from "next/image";
 import type { Order, OrderItem } from "@/services/order";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { faNum } from "@/utils/faNum";
 
 const getItemImage = (item: OrderItem) => {
   const product = item.product_variation?.product as any;
   const directUrl = product?.cover_image?.url || product?.CoverImage?.url;
   if (!directUrl) return "";
-  return directUrl.startsWith("http") ? directUrl : `${IMAGE_BASE_URL}${directUrl}`;
+  return resolveAssetUrl(directUrl);
 };
 
 const getVariationSummary = (item: OrderItem) => {

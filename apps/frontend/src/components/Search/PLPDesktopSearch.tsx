@@ -3,7 +3,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import SearchIcon from "./Icons/SearchIcon";
-import { API_BASE_URL, IMAGE_BASE_URL, ENDPOINTS } from "@/constants/api";
+import { API_BASE_URL, ENDPOINTS } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchSuggestionCard from "./SearchSuggestionCard";
 // Site search is tracked natively on the results page (PLP), where the real
 // result count is known — see components/Analytics/SiteSearchTracker.
@@ -117,9 +118,9 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
           const thumb = img?.formats?.thumbnail?.url || img?.formats?.small?.url;
           const original = img?.url || img?.data?.attributes?.url;
           const imageUrl = thumb
-            ? `${IMAGE_BASE_URL}${thumb}`
+            ? resolveAssetUrl(thumb) || undefined
             : original
-              ? `${IMAGE_BASE_URL}${original}`
+              ? resolveAssetUrl(original) || undefined
               : undefined;
 
           // Category title from possible shapes

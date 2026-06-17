@@ -2,7 +2,8 @@
 import { useEffect, useState, useRef, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { API_BASE_URL, IMAGE_BASE_URL } from "@/constants/api";
+import { API_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import { getDeviceInfo } from "@/utils/device-detection";
 // Site search is tracked natively on the results page (PLP), where the real
@@ -143,11 +144,11 @@ export default function MobileSearch({ isOpen, onClose }: Props) {
             Discount: (attrs as Record<string, unknown>)?.Discount as number | undefined ?? undefined,
             category: ((attrs as Record<string, unknown>)?.product_main_category as { Title?: string } | undefined)?.Title ?? undefined,
             image: ((attrs as Record<string, unknown>)?.CoverImage as { url?: string; formats?: { thumbnail?: { url?: string }; small?: { url?: string } }; data?: { attributes?: { url?: string } } } | undefined)?.formats?.thumbnail?.url
-              ? `${IMAGE_BASE_URL}${((attrs as Record<string, unknown>)?.CoverImage as { formats?: { thumbnail?: { url?: string } } })?.formats?.thumbnail?.url}`
+              ? resolveAssetUrl(((attrs as Record<string, unknown>)?.CoverImage as { formats?: { thumbnail?: { url?: string } } })?.formats?.thumbnail?.url) || undefined
               : ((attrs as Record<string, unknown>)?.CoverImage as { url?: string; data?: { attributes?: { url?: string } } } | undefined)?.url
-                ? `${IMAGE_BASE_URL}${((attrs as Record<string, unknown>)?.CoverImage as { url?: string })?.url}`
+                ? resolveAssetUrl(((attrs as Record<string, unknown>)?.CoverImage as { url?: string })?.url) || undefined
                 : ((attrs as Record<string, unknown>)?.CoverImage as { data?: { attributes?: { url?: string } } } | undefined)?.data?.attributes?.url
-                  ? `${IMAGE_BASE_URL}${((attrs as Record<string, unknown>)?.CoverImage as { data?: { attributes?: { url?: string } } })?.data?.attributes?.url}`
+                  ? resolveAssetUrl(((attrs as Record<string, unknown>)?.CoverImage as { data?: { attributes?: { url?: string } } })?.data?.attributes?.url) || undefined
                 : undefined,
             isAvailable: (attrs as Record<string, unknown>)?.IsAvailable as boolean ?? true,
           };

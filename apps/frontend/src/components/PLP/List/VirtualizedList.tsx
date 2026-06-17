@@ -5,7 +5,7 @@ import type { ListChildComponentProps } from "react-window";
 import ProductCard from "@/components/Product/Card";
 import ProductSmallCard from "@/components/Product/SmallCard";
 import { calculateUniqueColorsCount, getUniqueColorCodes } from "@/services/product/product";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { getProductImages } from "@/utils/product";
 import dynamic from "next/dynamic";
 
@@ -149,9 +149,9 @@ export default function VirtualizedList({
         colorsCount: calculateUniqueColorsCount(product.attributes.product_variations?.data || []),
         colorCodes: getUniqueColorCodes(product.attributes.product_variations?.data || []),
         image: product.attributes.CoverImage?.data?.attributes?.url
-          ? `${IMAGE_BASE_URL}${product.attributes.CoverImage.data.attributes.url}`
+          ? resolveAssetUrl(product.attributes.CoverImage.data.attributes.url)
           : "",
-        images: getProductImages(product, !isMobileView, IMAGE_BASE_URL),
+        images: getProductImages(product, !isMobileView),
         isAvailable,
       };
     });

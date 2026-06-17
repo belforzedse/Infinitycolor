@@ -10,7 +10,8 @@ import { productReviewService, type ProductReview } from "@/services/product/pro
 import Link from "next/link";
 import type { Metadata } from "next";
 import { cache, Suspense } from "react";
-import { IMAGE_BASE_URL, ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
+import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { SITE_NAME } from "@/config/site";
 import logger from "@/utils/logger";
 import { translateErrorMessage } from "@/lib/errorTranslations";
@@ -465,7 +466,7 @@ export async function generateMetadata({
       ? truncate(descRaw, 160)
       : `خرید ${titleRaw || "محصول"} از ${SITE_NAME}`;
     const imageUrl = product.attributes?.CoverImage?.data?.attributes?.url
-      ? `${IMAGE_BASE_URL}${product.attributes.CoverImage.data.attributes.url}`
+      ? resolveAssetUrl(product.attributes.CoverImage.data.attributes.url) || undefined
       : undefined;
 
     // Get price info for OpenGraph

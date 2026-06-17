@@ -8,7 +8,7 @@ import { config } from "./config";
 import Sidebar from "@/components/SuperAdmin/Order/Sidebar";
 import { useState, useEffect, useRef } from "react";
 import { apiClient } from "@/services";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { useParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { ProductCoverImage } from "@/types/Product";
@@ -231,9 +231,7 @@ export default function EditOrderPage() {
           // Construct image URL properly
           let imageUrl = "";
           if (thumbnailUrl) {
-            imageUrl = thumbnailUrl.startsWith("http")
-              ? thumbnailUrl
-              : `${IMAGE_BASE_URL}${thumbnailUrl}`;
+            imageUrl = resolveAssetUrl(thumbnailUrl);
           }
 
           return {

@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { usePathname } from "next/navigation";
 import toast from "react-hot-toast";
 import { CartService } from "@/services";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import notify from "@/utils/notify";
 import { cartRequestQueue } from "@/utils/requestQueue";
 import { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
@@ -191,15 +191,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const getImageUrl = (coverImage: any): string => {
         if (!coverImage) return "";
 
-        // If medium format is available, use it, otherwise use the original
+        // If medium format is available, use it, otherwise use the original.
+        // resolveAssetUrl resolves relative/absolute Strapi uploads and applies
+        // the media CDN origin when configured.
         const imageUrl = coverImage.formats?.medium?.url || coverImage.url;
-
-        // Make sure the URL starts with the IMAGE_BASE_URL
-        if (imageUrl.startsWith("http")) {
-          return imageUrl; // Already a full URL
-        } else {
-          return `${IMAGE_BASE_URL}${imageUrl}`; // Add base URL
-        }
+        return resolveAssetUrl(imageUrl);
       };
 
       const parseNumericValue = (value: unknown): number | undefined => {
