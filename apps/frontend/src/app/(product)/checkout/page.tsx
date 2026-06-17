@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { SITE_URL } from "@/config/site";
 import CheckoutPageClient from "./CheckoutPageClient";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export const metadata: Metadata = {
   title: "تسویه حساب",
   description: "اطلاعات ارسال و پرداخت خود را برای نهایی‌سازی سفارش تکمیل کنید.",

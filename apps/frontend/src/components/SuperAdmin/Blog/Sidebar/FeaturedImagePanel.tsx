@@ -5,6 +5,7 @@ import { ImageIcon, Plus, X } from "lucide-react";
 import { IMAGE_BASE_URL } from "@/constants/api";
 import { uploadFile } from "@/services/super-admin/files/upload";
 import toast from "react-hot-toast";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 export interface FeaturedImageValue {
   id?: number;
@@ -61,10 +62,13 @@ export default function FeaturedImagePanel({
   };
 
   const getImageUrl = (url: string) => {
-    if (url.startsWith("http") || url.startsWith("blob:")) return url;
+    if (url.startsWith("blob:")) return url;
+    const resolvedUrl = resolveAssetUrl(url);
+    if (resolvedUrl) return resolvedUrl;
+    if (url.startsWith("http")) return url.trim().replace(/\s+/g, "");
     const base = IMAGE_BASE_URL.replace(/\/+$/, "");
-    const path = url.startsWith("/") ? url : `/${url}`;
-    return `${base}${path}`;
+    const path = url.trim().replace(/^\/+/, "");
+    return `${base}/${path}`;
   };
 
   return (

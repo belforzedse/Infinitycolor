@@ -19,6 +19,7 @@ const DEFAULT_PRODUCTION_IMAGE_BASE_URL = "https://api.infinitycolor.co";
 const DEFAULT_DEVELOPMENT_IMAGE_BASE_URL = "http://localhost:1337";
 const LOCAL_URL_BASE = "https://new.infinitycolor.local";
 const IMAGE_UPLOAD_PATH_PREFIX = "/uploads/";
+const NEXT_IMAGE_QUALITIES = [50, 60, 70, 75, 90, 95, 100] as const;
 
 const DEV_LOCAL_IMAGE_ORIGINS = ["http://localhost:1337", "http://127.0.0.1:1337"];
 
@@ -47,6 +48,16 @@ function toUrl(raw?: string | null): URL | null {
   } catch {
     return null;
   }
+}
+
+function normalizeImageInput(raw?: string | null): string {
+  const trimmed = raw?.trim() ?? "";
+  if (!trimmed) return "";
+  if (/^data:image\//i.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed) || trimmed.includes("/uploads/") || /^uploads\//i.test(trimmed)) {
+    return trimmed.replace(/\s+/g, "");
+  }
+  return trimmed;
 }
 
 function toOriginUrl(raw?: string | null): URL | null {
@@ -243,7 +254,7 @@ export function isAllowedImageUrl(src?: string | null, options?: ImagePolicyOpti
 }
 
 export function resolveSafeImageSrc(src?: string | null, options?: ImagePolicyOptions): string {
-  const raw = src?.trim();
+  const raw = normalizeImageInput(src);
   if (!raw) return "";
 
   if (/^data:image\//i.test(raw)) return raw;
@@ -278,11 +289,17 @@ export function resolveSafeImageSrc(src?: string | null, options?: ImagePolicyOp
   return "";
 }
 
-function appendImageParams(url: URL, width: number, quality: number): string {
-  url.searchParams.set("w", String(width));
-  url.searchParams.set("q", String(quality));
-  url.searchParams.set("f", "avif");
-  return url.toString();
+export function getNextImageQuality(quality?: number | null): number {
+  const requested = typeof quality === "number" && Number.isFinite(quality) ? quality : 75;
+  return NEXT_IMAGE_QUALITIES.reduce((closest, candidate) => {
+    const currentDistance = Math.abs(candidate - requested);
+    const closestDistance = Math.abs(closest - requested);
+    return currentDistance < closestDistance ? candidate : closest;
+  }, NEXT_IMAGE_QUALITIES[0]);
+}
+
+function getNextImageWidth(width?: number | null): number {
+  return typeof width === "number" && Number.isFinite(width) && width > 0 ? Math.round(width) : 1920;
 }
 
 export function buildOptimizedImageUrl(
@@ -294,14 +311,9 @@ export function buildOptimizedImageUrl(
   const safeSrc = resolveSafeImageSrc(src, options);
   if (!safeSrc || safeSrc.startsWith("data:")) return safeSrc;
 
-  if (safeSrc.startsWith("/")) {
-    const url = new URL(safeSrc, LOCAL_URL_BASE);
-    url.searchParams.set("w", String(width));
-    url.searchParams.set("q", String(quality));
-    url.searchParams.set("f", "avif");
-    return `${url.pathname}${url.search}`;
-  }
-
-  const url = toUrl(safeSrc);
-  return url ? appendImageParams(url, width, quality) : "";
+  const url = new URL("/_next/image", LOCAL_URL_BASE);
+  url.searchParams.set("url", safeSrc);
+  url.searchParams.set("w", String(getNextImageWidth(width)));
+  url.searchParams.set("q", String(getNextImageQuality(quality)));
+  return `${url.pathname}${url.search}`;
 }

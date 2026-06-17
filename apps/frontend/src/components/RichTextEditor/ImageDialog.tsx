@@ -9,6 +9,7 @@ import type { UploadedImage } from "@/services/super-admin/files/upload";
 import { listFiles } from "@/services/super-admin/files/list";
 import { uploadFile } from "@/services/super-admin/files/upload";
 import { toast } from "react-hot-toast";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 export interface ImageFormValues {
   src: string;
@@ -40,10 +41,13 @@ const resolveImageUrl = (file: UploadedImage): string => {
     return "";
   }
 
-  if (file.url.startsWith("http")) {
-    return file.url;
-  }
-  return `${IMAGE_BASE_URL}${file.url}`;
+  const resolvedUrl = resolveAssetUrl(file.url);
+  if (resolvedUrl) return resolvedUrl;
+  if (file.url.startsWith("http")) return file.url.trim().replace(/\s+/g, "");
+
+  const base = IMAGE_BASE_URL.replace(/\/+$/, "");
+  const path = file.url.trim().replace(/^\/+/, "");
+  return `${base}/${path}`;
 };
 
 const ImageDialog: React.FC<ImageDialogProps> = ({
@@ -182,7 +186,11 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
       <div className="grid max-h-[320px] grid-cols-2 gap-3 overflow-y-auto md:grid-cols-3">
         {mediaItems.map((file) => {
           const preview = file.formats?.thumbnail?.url ?? file.url;
-          const previewUrl = preview.startsWith("http") ? preview : `${IMAGE_BASE_URL}${preview}`;
+          const previewUrl =
+            resolveAssetUrl(preview) ||
+            (preview.startsWith("http")
+              ? preview.trim().replace(/\s+/g, "")
+              : `${IMAGE_BASE_URL.replace(/\/+$/, "")}/${preview.trim().replace(/^\/+/, "")}`);
           const isSelected = selectedMediaId === file.id;
 
           return (

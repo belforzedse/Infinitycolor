@@ -1,5 +1,7 @@
+import dynamic from "next/dynamic";
 import { getSocialFeedPosts } from "@repo/social-posts";
-import InfinitygramSectionClient from "./InfinitygramSectionClient";
+
+const InfinitygramSectionClient = dynamic(() => import("./InfinitygramSectionClient"));
 
 const HOME_INFINITYGRAM_LIMIT = 6;
 

@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import type { StoryRailProps, StoryRailStory } from "./types";
 import { StoriesAvatarList } from "./StoriesAvatarList";
-import { StoriesViewerModal } from "./StoriesViewerModal";
 import { sortStoriesNewestFirst } from "./story-utils";
+
+const StoriesViewerModal = lazy(() =>
+  import("./StoriesViewerModal").then((module) => ({ default: module.StoriesViewerModal })),
+);
 
 function joinClasses(...classes: Array<string | undefined | false>): string {
   return classes.filter(Boolean).join(" ");
@@ -110,17 +113,19 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
       </section>
 
       {viewerOpen ? (
-        <StoriesViewerModal
-          stories={orderedStories}
-          seenIds={seenIds}
-          isOpen={viewerOpen}
-          initialIndex={activeIndex}
-          onClose={handleClose}
-          onStoryView={handleStoryView}
-          resolveMediaUrl={resolveMediaUrl}
-          unavailableText={unavailableText}
-          classNames={viewerClassNames}
-        />
+        <Suspense fallback={null}>
+          <StoriesViewerModal
+            stories={orderedStories}
+            seenIds={seenIds}
+            isOpen={viewerOpen}
+            initialIndex={activeIndex}
+            onClose={handleClose}
+            onStoryView={handleStoryView}
+            resolveMediaUrl={resolveMediaUrl}
+            unavailableText={unavailableText}
+            classNames={viewerClassNames}
+          />
+        </Suspense>
       ) : null}
     </>
   );

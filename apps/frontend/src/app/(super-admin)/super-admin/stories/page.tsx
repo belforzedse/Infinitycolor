@@ -10,15 +10,11 @@ import { storyService } from "@/services/story/story.service";
 import type { Story } from "@/types/story";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { translateErrorMessage, extractErrorMessage } from "@/lib/errorTranslations";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 function resolveMediaUrl(url?: string): string | undefined {
   if (!url) return undefined;
-  if (url.startsWith("http")) return url;
-  const base = (IMAGE_BASE_URL || "").replace(/\/+$/, "");
-  const path = url.replace(/^\/+/, "");
-  if (!base) return `/${path}`;
-  return `${base}/${path}`;
+  return resolveAssetUrl(url) || url.trim().replace(/\s+/g, "");
 }
 
 function formatDate(iso?: string): string {

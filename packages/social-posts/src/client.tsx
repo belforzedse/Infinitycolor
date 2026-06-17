@@ -275,7 +275,8 @@ export function SocialPostCard({
           className="h-full w-full object-cover"
           muted
           playsInline
-          preload="metadata"
+          preload="none"
+          poster={imageSrc}
           aria-label={activeMedia.alternativeText || imageAlt || "ویدیوی پست"}
         />
       ) : (

@@ -12,25 +12,43 @@ type DiscountedShowcaseProps = {
   products: ProductCardProps[];
 };
 
+type ProductsPerPage = 2 | 3 | 4 | 5;
+
+const PRODUCT_PAGE_BREAKPOINTS: Array<{ query: string; count: ProductsPerPage }> = [
+  { query: "(min-width: 2560px)", count: 5 },
+  { query: "(min-width: 1920px)", count: 4 },
+  { query: "(min-width: 1280px)", count: 3 },
+];
+
+function getProductsPerPageFromViewport(): ProductsPerPage {
+  const match = PRODUCT_PAGE_BREAKPOINTS.find((breakpoint) =>
+    window.matchMedia(breakpoint.query).matches,
+  );
+  return match?.count ?? 2;
+}
+
 export default function DiscountedShowcase({ products }: DiscountedShowcaseProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(0);
-  const [windowWidth, setWindowWidth] = useState(1440);
+  const [productsPerPage, setProductsPerPage] = useState<ProductsPerPage>(3);
   const [isAnimating, setIsAnimating] = useState(false);
 
   useEffect(() => {
-    const handleResize = () => {
-      setWindowWidth(window.innerWidth);
+    const mediaQueries = PRODUCT_PAGE_BREAKPOINTS.map((breakpoint) =>
+      window.matchMedia(breakpoint.query),
+    );
+    const handleBreakpointChange = () => {
+      setProductsPerPage(getProductsPerPageFromViewport());
       setCurrentPage(0);
     };
 
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    handleBreakpointChange();
+    mediaQueries.forEach((query) => query.addEventListener("change", handleBreakpointChange));
+    return () => {
+      mediaQueries.forEach((query) => query.removeEventListener("change", handleBreakpointChange));
+    };
   }, []);
 
-  const productsPerPage =
-    windowWidth >= 2560 ? 5 : windowWidth >= 1920 ? 4 : windowWidth >= 1280 ? 3 : 2;
   const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
   const startIndex = currentPage * productsPerPage;
   const currentProducts = products.slice(startIndex, startIndex + productsPerPage);

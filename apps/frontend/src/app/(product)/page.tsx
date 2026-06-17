@@ -7,7 +7,7 @@ import { ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS } from "@/constants/categorie
 import { getProductCategories } from "@/services/product/categories";
 import { blogService } from "@/services/blog/blog.service";
 import { getActiveStories } from "@/services/story/story.service";
-import { BlogCarousel } from "@/components/Blog";
+import BlogCarousel from "@/components/Blog/BlogCarousel";
 import StoriesRail from "@/components/Home/StoriesRail";
 import HeroBannerSlider from "@/components/Hero/HeroBannerSlider";
 import { mapCmsHeroSliderToBannerSlides } from "@/components/Hero/config/fromCms";

@@ -1,7 +1,6 @@
 import { safeJsonLd } from "@/utils/seo";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
-const IMAGE_BASE_URL = process.env.NEXT_PUBLIC_IMAGE_BASE_URL || "https://api.infinitycolor.co";
 
 interface OrganizationSchemaProps {
   /** Site/brand name. Falls back to the historical hardcoded value. */
@@ -20,6 +19,8 @@ interface OrganizationSchemaProps {
 const DEFAULT_ORG_NAME = "فروشگاه پوشاک اینفینیتی";
 const DEFAULT_ORG_DESCRIPTION =
   "پوشاک اینفینیتی با عرضه پوشاک با بهترین قیمت و کیفیت همیشه سعی کرده است تا بهترین ها را برای شما به ارمغان بیاورد!";
+
+type JsonLdObject = Record<string, unknown>;
 
 export function OrganizationSchema({
   name,
@@ -45,7 +46,7 @@ export function OrganizationSchema({
   }
 
   // Build contact points array
-  const contactPoints: any[] = [
+  const contactPoints: JsonLdObject[] = [
     {
       "@type": "ContactPoint",
       contactType: "Customer Service",
@@ -66,7 +67,7 @@ export function OrganizationSchema({
   }
 
   // Build address object
-  const address: any = {
+  const address: JsonLdObject = {
     "@type": "PostalAddress",
     addressCountry: "IR",
     addressLocality: "گرگان",
@@ -81,7 +82,7 @@ export function OrganizationSchema({
     address.postalCode = postalCode;
   }
 
-  const schema: any = {
+  const schema: JsonLdObject = {
     "@context": "https://schema.org",
     "@type": "Organization",
     name: name?.trim() || DEFAULT_ORG_NAME,

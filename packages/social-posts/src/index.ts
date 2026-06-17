@@ -1,4 +1,4 @@
-import { getStrapiServerUrl, IMAGE_BASE_URL } from "@repo/api/config";
+import { getStrapiServerUrl, IMAGE_BASE_URL, MEDIA_CDN_URL } from "@repo/api/config";
 
 export type PostCardVariant = "xl" | "sm" | "mobile-lg" | "mobile-sm";
 export type DesktopPostCardVariant = "xl" | "sm";
@@ -63,12 +63,53 @@ export type GetSocialFeedPostsOptions = {
   revalidate?: number;
 };
 
+function getOrigin(raw?: string): URL | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed.replace(/\/api\/?$/i, ""));
+  } catch {
+    return null;
+  }
+}
+
+function isSameOrigin(left: URL, right: URL): boolean {
+  return left.protocol === right.protocol && left.hostname === right.hostname && left.port === right.port;
+}
+
+function applyMediaCdn(url: URL): string {
+  if (!url.pathname.startsWith("/uploads/")) return url.toString();
+
+  const cdnOrigin = getOrigin(MEDIA_CDN_URL);
+  if (!cdnOrigin) return url.toString();
+
+  return new URL(`${url.pathname}${url.search}${url.hash}`, cdnOrigin.origin).toString();
+}
+
 export function strapiMediaUrl(relativeOrAbsolute: string | undefined): string | null {
   if (!relativeOrAbsolute?.trim()) return null;
-  const u = relativeOrAbsolute.trim();
-  if (u.startsWith("http://") || u.startsWith("https://")) return u;
-  const base = IMAGE_BASE_URL.replace(/\/$/, "");
-  return `${base}${u.startsWith("/") ? u : `/${u}`}`;
+  const u = relativeOrAbsolute.trim().replace(/\s+/g, "");
+  const imageOrigin = getOrigin(IMAGE_BASE_URL);
+  const cdnOrigin = getOrigin(MEDIA_CDN_URL);
+
+  if (u.startsWith("http://") || u.startsWith("https://")) {
+    try {
+      const url = new URL(u);
+      const isTrustedUpload =
+        url.pathname.startsWith("/uploads/") &&
+        ((imageOrigin && isSameOrigin(url, imageOrigin)) ||
+          (cdnOrigin && isSameOrigin(url, cdnOrigin)));
+      return isTrustedUpload ? applyMediaCdn(url) : url.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  const base = imageOrigin ?? getOrigin(IMAGE_BASE_URL.replace(/\/$/, ""));
+  if (!base) return u.startsWith("/") ? u : `/${u}`;
+
+  const path = u.startsWith("/") ? u : `/${u}`;
+  return applyMediaCdn(new URL(path, base.origin));
 }
 
 function readAttrs(entry: unknown): Record<string, unknown> {

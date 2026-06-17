@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import AccountPageClient from "./AccountPageClient";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export const metadata: Metadata = {
   title: "حساب من",
   description: "اطلاعات حساب، سفارش‌ها و تنظیمات شخصی خود را مدیریت کنید.",

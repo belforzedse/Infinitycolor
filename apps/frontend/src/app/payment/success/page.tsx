@@ -2,6 +2,9 @@ import type { Metadata } from 'next';
 import { SITE_URL } from '@/config/site';
 import PaymentSuccessPageClient from './PaymentSuccessPageClient';
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export const metadata: Metadata = {
   title: "پرداخت موفق",
   description: "نتیجه پرداخت شما ثبت شد. می‌توانید جزئیات سفارش را مشاهده کنید.",

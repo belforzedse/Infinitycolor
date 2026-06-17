@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 /**
  * Sanitizes user-controlled strings for safe JSON-LD injection
@@ -33,6 +34,18 @@ export function safeJsonLd(json: object): string {
  * Ensures valid absolute URLs in all environments
  */
 function buildImageUrl(imagePath: string, config: SEOConfig): string {
+  const trimmedPath = imagePath.trim();
+  const resolvedAssetUrl = resolveAssetUrl(trimmedPath);
+  if (resolvedAssetUrl) {
+    return resolvedAssetUrl.startsWith("/")
+      ? `${config.siteUrl.replace(/\/$/, "")}${resolvedAssetUrl}`
+      : resolvedAssetUrl;
+  }
+
+  if (/^https?:\/\//i.test(trimmedPath)) {
+    return trimmedPath.replace(/\s+/g, "");
+  }
+
   // Use IMAGE_BASE_URL if available, otherwise fallback to siteUrl
   const baseUrl = process.env.NEXT_PUBLIC_IMAGE_BASE_URL || config.siteUrl;
 
@@ -40,7 +53,7 @@ function buildImageUrl(imagePath: string, config: SEOConfig): string {
   const cleanBase = baseUrl.replace(/\/$/, '');
 
   // Ensure image path starts with a slash
-  const cleanPath = imagePath.startsWith('/') ? imagePath : `/${imagePath}`;
+  const cleanPath = trimmedPath.startsWith('/') ? trimmedPath : `/${trimmedPath}`;
 
   return `${cleanBase}${cleanPath}`;
 }
