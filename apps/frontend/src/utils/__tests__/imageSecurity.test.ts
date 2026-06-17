@@ -117,10 +117,28 @@ describe("imageSecurity", () => {
 
     expect(url.pathname).toBe("/_next/image");
     expect(url.searchParams.get("url")).toBe("https://api.infinitycolor.co/uploads/cover.webp");
-    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("w")).toBe("828");
     expect(url.searchParams.get("q")).toBe("75");
     expect(url.searchParams.has("f")).toBe(false);
     expect(buildOptimizedImageUrl("https://external-domain.example/cover.webp", 800, 75, productionOptions)).toBe("");
+  });
+
+  it("snaps unsupported optimizer widths up to configured Next image widths", () => {
+    expect(
+      parseOptimizerUrl(
+        buildOptimizedImageUrl("https://api.infinitycolor.co/uploads/cover.webp", 2568, 75, productionOptions),
+      ).searchParams.get("w"),
+    ).toBe("3840");
+    expect(
+      parseOptimizerUrl(
+        buildOptimizedImageUrl("https://api.infinitycolor.co/uploads/cover.webp", 1208, 75, productionOptions),
+      ).searchParams.get("w"),
+    ).toBe("1920");
+    expect(
+      parseOptimizerUrl(
+        buildOptimizedImageUrl("https://api.infinitycolor.co/uploads/cover.webp", 74, 75, productionOptions),
+      ).searchParams.get("w"),
+    ).toBe("96");
   });
 
   describe("media CDN routing", () => {
@@ -172,7 +190,7 @@ describe("imageSecurity", () => {
 
       expect(url.pathname).toBe("/_next/image");
       expect(url.searchParams.get("url")).toBe("https://cdn.infinitycolor.co/uploads/cover.webp");
-      expect(url.searchParams.get("w")).toBe("800");
+      expect(url.searchParams.get("w")).toBe("828");
       expect(url.searchParams.get("q")).toBe("75");
       expect(url.searchParams.has("f")).toBe(false);
     });
