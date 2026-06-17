@@ -12,7 +12,7 @@ import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts";
 import DevOnlyDebugPanel from "@/components/Debug/DevOnlyDebugPanel";
 import { NavigationProgress } from "@repo/ui/navigation-progress";
 import { OrganizationSchema } from "@/components/SEO/OrganizationSchema";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import { IMAGE_BASE_URL, MEDIA_CDN_URL } from "@/constants/api";
 import { SITE_URL } from "@/config/site";
 import { getSiteIdentity, resolveSiteName } from "@/services/site-identity";
 import { SiteIdentityProvider } from "@/components/providers/SiteIdentityProvider";
@@ -120,6 +120,32 @@ export default async function RootLayout({
     ? process.env.NEXT_PUBLIC_API_BASE_URL.replace(/\/api$/, "")
     : defaultApiBaseDomain;
 
+  // Distinct cross-origins to warm early. `new URL(x).origin` strips any trailing
+  // slash/path, fixing the malformed/duplicate preconnect hrefs Lighthouse flagged.
+  const toOrigin = (value?: string | null): string | null => {
+    if (!value) return null;
+    try {
+      return new URL(value).origin;
+    } catch {
+      return null;
+    }
+  };
+
+  const apiOrigin = toOrigin(API_BASE_DOMAIN);
+  const imageOrigin = toOrigin(IMAGE_BASE_URL) ?? apiOrigin;
+  const mediaCdnOrigin = toOrigin(MEDIA_CDN_URL); // e.g. https://cdn.infinitycolor.co (serves the GIF + images)
+
+  // API uses CORS fetches → preconnect WITH crossOrigin.
+  const corsPreconnectOrigins = Array.from(new Set([apiOrigin].filter(Boolean))) as string[];
+  // Image/CDN origins serve no-cors <img> (incl. the animated GIF banner) → preconnect
+  // WITHOUT crossOrigin, else the warmed connection can't be reused by the image request.
+  const mediaPreconnectOrigins = (
+    Array.from(new Set([imageOrigin, mediaCdnOrigin].filter(Boolean))) as string[]
+  ).filter((origin) => !corsPreconnectOrigins.includes(origin));
+  const dnsPrefetchOrigins = Array.from(
+    new Set([apiOrigin, imageOrigin, mediaCdnOrigin].filter(Boolean)),
+  ) as string[];
+
   return (
     <html
       lang="fa"
@@ -134,16 +160,22 @@ export default async function RootLayout({
 
         {/* Critical Peyda Fanum preloads are emitted by next/font (`peydaFanum` in @repo/fonts). */}
 
-        {/* DNS prefetch for external domains - API first for critical requests */}
-        <link rel="dns-prefetch" href={API_BASE_DOMAIN} />
-        <link rel="dns-prefetch" href={IMAGE_BASE_URL || API_BASE_DOMAIN} />
+        {/* DNS prefetch for all API/media origins + external social domains. */}
+        {dnsPrefetchOrigins.map((origin) => (
+          <link key={`dns-${origin}`} rel="dns-prefetch" href={origin} />
+        ))}
         <link rel="dns-prefetch" href="https://www.instagram.com" />
         <link rel="dns-prefetch" href="https://www.telegram.org" />
 
-        {/* Preconnect to API for faster requests - critical for initial load */}
-        {/* Establishes early connection (DNS + TCP + TLS) for faster API requests */}
-        <link rel="preconnect" href={API_BASE_DOMAIN} crossOrigin="anonymous" />
-        <link rel="preconnect" href={IMAGE_BASE_URL || API_BASE_DOMAIN} crossOrigin="anonymous" />
+        {/* Preconnect (DNS + TCP + TLS) so the first API/media request starts sooner. */}
+        {/* API uses CORS fetches → crossOrigin. */}
+        {corsPreconnectOrigins.map((origin) => (
+          <link key={`pc-cors-${origin}`} rel="preconnect" href={origin} crossOrigin="anonymous" />
+        ))}
+        {/* Media/CDN serves no-cors <img> (incl. the animated GIF banner) → no crossOrigin. */}
+        {mediaPreconnectOrigins.map((origin) => (
+          <link key={`pc-${origin}`} rel="preconnect" href={origin} />
+        ))}
 
         {/* OpenSearch descriptor for browser search integration */}
         <link

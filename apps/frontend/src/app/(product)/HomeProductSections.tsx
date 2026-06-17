@@ -178,19 +178,11 @@ async function NewestSection({
 
       <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 4xl:px-20">
         <div className="w-full min-w-0">
-          <div className="hidden space-y-10 md:block">
+          {/* Single render: OffersListHomePage adapts to mobile (scroll) vs desktop (grid)
+              internally, so the previous hidden md:block / md:hidden split hydrated every
+              ProductCard twice. */}
+          <div className="space-y-10">
             <Reveal variant="fade-up" duration={700}>
-              <HomeOffersList
-                sectionId="newest"
-                hideBottomViewMore
-                icon={<NewIcon />}
-                title="جدیدترین ها"
-                products={newProducts}
-              />
-            </Reveal>
-          </div>
-          <div className="space-y-10 md:hidden">
-            <Reveal variant="blur-up" duration={1500}>
               <HomeOffersList
                 sectionId="newest"
                 hideBottomViewMore
@@ -220,26 +212,15 @@ async function FavoritesSection({
 
   return (
     <section className="space-y-10">
-      <div className="hidden md:block">
-        <Reveal variant="fade-up" duration={700}>
-          <HomeOffersList
-            sectionId="favorites"
-            icon={<NewIcon />}
-            title="محبوب ترین ها"
-            products={favorites}
-          />
-        </Reveal>
-      </div>
-      <div className="md:hidden">
-        <Reveal variant="blur-up" duration={1500}>
-          <HomeOffersList
-            sectionId="favorites"
-            icon={<NewIcon />}
-            title="محبوب ترین ها"
-            products={favorites}
-          />
-        </Reveal>
-      </div>
+      {/* Single render (see NewestSection) — avoids double ProductCard hydration. */}
+      <Reveal variant="fade-up" duration={700}>
+        <HomeOffersList
+          sectionId="favorites"
+          icon={<NewIcon />}
+          title="محبوب ترین ها"
+          products={favorites}
+        />
+      </Reveal>
     </section>
   );
 }
