@@ -7,7 +7,7 @@ import { StoryRail as SharedStoryRail } from "@repo/story-rail";
 import type { Story } from "@/types/story";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useStoriesSeenState } from "@/hooks/useStoriesSeenState";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 const INFINITYGRAM_URL = "https://infinitygram.co";
 
@@ -16,11 +16,7 @@ interface StoriesRailProps {
 }
 
 function buildMediaUrl(url: string): string {
-  if (url.startsWith("http")) return url;
-  const base = (IMAGE_BASE_URL || "").replace(/\/+$/, "");
-  const path = url.replace(/^\/+/, "");
-  if (!base) return `/${path}`;
-  return `${base}/${path}`;
+  return resolveAssetUrl(url);
 }
 
 export default function StoriesRail({ stories }: StoriesRailProps) {

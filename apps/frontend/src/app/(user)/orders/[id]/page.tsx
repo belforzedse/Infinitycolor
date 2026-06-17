@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import OrderDetailPageClient from "@/components/User/Orders/Detail/OrderDetailPageClient";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 interface OrderDetailPageProps {
   params: Promise<{ id: string }>;
 }

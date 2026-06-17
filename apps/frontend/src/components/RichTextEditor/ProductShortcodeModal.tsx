@@ -15,6 +15,7 @@ import BlogProductCarousel from "@/components/Blog/BlogProductCarousel";
 import { extractProductSlugsFromUrls } from "@/utils/blogShortcodes";
 import { Search, Check, Link as LinkIcon } from "lucide-react";
 import { faNum } from "@/utils/faNum";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 interface ProductShortcodeModalProps {
   isOpen: boolean;
@@ -256,8 +257,10 @@ const ProductShortcodeModal: React.FC<ProductShortcodeModalProps> = ({
     if (!coverImage) return "";
     const url = coverImage.formats?.thumbnail?.url || coverImage.attributes?.url || coverImage.url;
     if (!url) return "";
-    if (url.startsWith("http")) return url;
-    return `${IMAGE_BASE_URL}${url}`;
+    const resolvedUrl = resolveAssetUrl(url);
+    if (resolvedUrl) return resolvedUrl;
+    if (url.startsWith("http")) return url.trim().replace(/\s+/g, "");
+    return `${IMAGE_BASE_URL.replace(/\/+$/, "")}/${url.trim().replace(/^\/+/, "")}`;
   };
 
   const getProductTitle = (product: ProductSearchItem): string => {

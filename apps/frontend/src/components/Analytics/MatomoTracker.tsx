@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Script from "next/script";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useAtomValue } from "jotai";
 import { currentUserAtom } from "@/lib/atoms/auth";
@@ -17,6 +18,7 @@ import {
 
 const DEFAULT_MATOMO_URL = "https://analytics.infinitycolor.co";
 const DEFAULT_MATOMO_SITE_ID = "1";
+type MatomoCommand = [string, ...unknown[]];
 
 function trimTrailingSlash(value: string) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
@@ -50,6 +52,7 @@ export function MatomoTracker() {
   const currentUser = useAtomValue(currentUserAtom);
   const lastTrackedPathRef = useRef<string>("");
   const previousUrlRef = useRef<string>("");
+  const [shouldLoadScript, setShouldLoadScript] = useState(false);
 
   const baseUrl = trimTrailingSlash(
     (process.env.NEXT_PUBLIC_MATOMO_URL || DEFAULT_MATOMO_URL).trim(),
@@ -66,11 +69,14 @@ export function MatomoTracker() {
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return;
     const win = window as Window & {
-      _paq?: Array<[string, ...any[]]>;
+      _paq?: MatomoCommand[];
       __matomoInitialized?: boolean;
     };
 
-    if (win.__matomoInitialized) return;
+    if (win.__matomoInitialized) {
+      setShouldLoadScript(!document.querySelector(`script[data-matomo-site-id="${siteId}"]`));
+      return;
+    }
     win._paq = win._paq || [];
     // Matomo SPA pattern: configure the tracker once; route changes send the
     // page views explicitly (we never push trackPageView here, so the initial
@@ -81,17 +87,8 @@ export function MatomoTracker() {
     win._paq.push(["enableHeartBeatTimer"]);
     syncMatomoConsentState(getAnalyticsConsent());
 
-    const selector = `script[data-matomo-site-id="${siteId}"]`;
-    if (!document.querySelector(selector)) {
-      const script = document.createElement("script");
-      script.async = true;
-      script.defer = true;
-      script.src = `${baseUrl}/matomo.js`;
-      script.setAttribute("data-matomo-site-id", siteId);
-      document.head.appendChild(script);
-    }
-
     win.__matomoInitialized = true;
+    setShouldLoadScript(true);
   }, [baseUrl, siteId, enabled]);
 
   // 2) Send exactly one page view per real navigation, after the new route's
@@ -110,7 +107,7 @@ export function MatomoTracker() {
     let raf2 = 0;
     const raf1 = window.requestAnimationFrame(() => {
       raf2 = window.requestAnimationFrame(() => {
-        const win = window as Window & { _paq?: Array<[string, ...any[]]> };
+        const win = window as Window & { _paq?: MatomoCommand[] };
         if (!win._paq) return;
         win._paq.push(["setCustomDimension", CUSTOM_DIMENSIONS.pageType, pageType]);
         trackPageView({
@@ -146,7 +143,7 @@ export function MatomoTracker() {
   // 4) User identity lifecycle — opaque internal id only, reset on logout.
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return;
-    const win = window as Window & { _paq?: Array<[string, ...any[]]> };
+    const win = window as Window & { _paq?: MatomoCommand[] };
     if (!win._paq) return;
     const userId = (currentUser as { id?: number | string } | null)?.id;
     if (userId) {
@@ -158,5 +155,13 @@ export function MatomoTracker() {
     }
   }, [currentUser, enabled]);
 
-  return null;
+  if (!enabled || !shouldLoadScript) return null;
+
+  return (
+    <Script
+      src={`${baseUrl}/matomo.js`}
+      strategy="lazyOnload"
+      data-matomo-site-id={siteId}
+    />
+  );
 }

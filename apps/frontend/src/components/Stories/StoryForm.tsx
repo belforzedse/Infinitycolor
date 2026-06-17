@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { Upload, X, ToggleLeft, ToggleRight } from "lucide-react";
 import type { StoryMediaType, CreateStoryData } from "@/types/story";
 import { uploadFile } from "@/services/super-admin/files/upload";
-import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 export interface StoryFormValues {
   Title: string;
@@ -92,16 +92,14 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
 
   function fullUrl(url?: string, version?: string) {
     if (!url) return undefined;
+    const resolvedUrl = resolveAssetUrl(url);
     const appendVersion = (value: string) => {
       if (!version) return value;
       const separator = value.includes("?") ? "&" : "?";
       return `${value}${separator}v=${encodeURIComponent(version)}`;
     };
-    if (url.startsWith("http")) return appendVersion(url);
-    const base = (IMAGE_BASE_URL || "").replace(/\/+$/, "");
-    const path = url.replace(/^\/+/, "");
-    if (!base) return appendVersion(`/${path}`);
-    return appendVersion(`${base}/${path}`);
+    if (resolvedUrl) return appendVersion(resolvedUrl);
+    return appendVersion(url.trim().replace(/\s+/g, ""));
   }
 
   return (

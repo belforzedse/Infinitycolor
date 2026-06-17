@@ -2,6 +2,11 @@ import imageLoader from "../imageLoader";
 
 describe("imageLoader", () => {
   const originalEnv = process.env.NEXT_PUBLIC_IMAGE_BASE_URL;
+  const originalCdnEnv = process.env.NEXT_PUBLIC_MEDIA_CDN_URL;
+
+  function parseResult(value: string): URL {
+    return new URL(value, "https://new.infinitycolor.local");
+  }
 
   afterEach(() => {
     // Restore properly: assigning `undefined` to a process.env key coerces it to
@@ -11,6 +16,11 @@ describe("imageLoader", () => {
       delete process.env.NEXT_PUBLIC_IMAGE_BASE_URL;
     } else {
       process.env.NEXT_PUBLIC_IMAGE_BASE_URL = originalEnv;
+    }
+    if (originalCdnEnv === undefined) {
+      delete process.env.NEXT_PUBLIC_MEDIA_CDN_URL;
+    } else {
+      process.env.NEXT_PUBLIC_MEDIA_CDN_URL = originalCdnEnv;
     }
   });
 
@@ -27,23 +37,28 @@ describe("imageLoader", () => {
     expect(result).toBe("");
   });
 
-  it("should add width and quality parameters", () => {
+  it("should route through the Next image optimizer with width and quality parameters", () => {
     const result = imageLoader({ src: "/images/image.jpg", width: 800, quality: 90 });
+    const url = parseResult(result);
 
-    expect(result).toContain("w=800");
-    expect(result).toContain("q=90");
+    expect(url.pathname).toBe("/_next/image");
+    expect(url.searchParams.get("url")).toBe("/images/image.jpg");
+    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("q")).toBe("90");
   });
 
   it("should use default quality of 70", () => {
     const result = imageLoader({ src: "/images/image.jpg", width: 800 });
+    const url = parseResult(result);
 
-    expect(result).toContain("q=70");
+    expect(url.searchParams.get("q")).toBe("70");
   });
 
-  it("should add avif format parameter", () => {
+  it("should not add fake CDN format parameters", () => {
     const result = imageLoader({ src: "/images/image.jpg", width: 800 });
+    const url = parseResult(result);
 
-    expect(result).toContain("f=avif");
+    expect(url.searchParams.has("f")).toBe(false);
   });
 
   it("should handle trusted absolute Strapi upload URLs", () => {
@@ -53,9 +68,10 @@ describe("imageLoader", () => {
       src: "https://api.infinitycolor.co/uploads/image.jpg",
       width: 800,
     });
+    const url = parseResult(result);
 
-    expect(result).toContain("https://api.infinitycolor.co/uploads/image.jpg");
-    expect(result).toContain("w=800");
+    expect(url.searchParams.get("url")).toBe("https://api.infinitycolor.co/uploads/image.jpg");
+    expect(url.searchParams.get("w")).toBe("800");
   });
 
   it("should reject arbitrary external absolute URLs", () => {
@@ -71,9 +87,20 @@ describe("imageLoader", () => {
     process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://cdn.example.com";
 
     const result = imageLoader({ src: "/uploads/image.jpg", width: 800 });
+    const url = parseResult(result);
 
-    expect(result).toContain("https://cdn.example.com/uploads/image.jpg");
-    expect(result).toContain("w=800");
+    expect(url.searchParams.get("url")).toBe("https://cdn.example.com/uploads/image.jpg");
+    expect(url.searchParams.get("w")).toBe("800");
+  });
+
+  it("routes relative uploads through the media CDN when configured", () => {
+    process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://api.infinitycolor.co";
+    process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
+
+    const result = imageLoader({ src: "/uploads/image.jpg", width: 800 });
+    const url = parseResult(result);
+
+    expect(url.searchParams.get("url")).toBe("https://cdn.infinitycolor.co/uploads/image.jpg");
   });
 
   it("should handle local public URLs with existing query parameters", () => {
@@ -81,9 +108,10 @@ describe("imageLoader", () => {
       src: "/images/image.jpg?existing=param",
       width: 800,
     });
+    const url = parseResult(result);
 
-    expect(result).toContain("existing=param");
-    expect(result).toContain("w=800");
+    expect(url.searchParams.get("url")).toBe("/images/image.jpg?existing=param");
+    expect(url.searchParams.get("w")).toBe("800");
   });
 
   it("should reject unrecognized relative sources instead of treating them as remote images", () => {
@@ -96,23 +124,26 @@ describe("imageLoader", () => {
   it("should use & for URLs with existing params in fallback", () => {
     const urlWithParams = "/images/image.jpg?existing=param";
     const result = imageLoader({ src: urlWithParams, width: 800, quality: 90 });
+    const url = parseResult(result);
 
-    // Should either use proper URL parsing or fallback with &
-    expect(result).toMatch(/[?&]w=800/);
+    expect(url.pathname).toBe("/_next/image");
+    expect(url.searchParams.get("url")).toBe("/images/image.jpg?existing=param");
+    expect(url.searchParams.get("w")).toBe("800");
   });
 
   it("should handle different width values", () => {
     const result1 = imageLoader({ src: "/images/image.jpg", width: 400 });
     const result2 = imageLoader({ src: "/images/image.jpg", width: 1920 });
 
-    expect(result1).toContain("w=400");
-    expect(result2).toContain("w=1920");
+    expect(parseResult(result1).searchParams.get("w")).toBe("400");
+    expect(parseResult(result2).searchParams.get("w")).toBe("1920");
   });
 
   it("should convert width to string", () => {
     const result = imageLoader({ src: "/images/image.jpg", width: 800 });
+    const url = parseResult(result);
 
-    expect(result).toContain("w=800");
+    expect(url.searchParams.get("w")).toBe("800");
     expect(result).not.toContain("w=[object");
   });
 });

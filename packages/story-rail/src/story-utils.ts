@@ -40,23 +40,33 @@ export function isVideoStory(story: StoryRailStory): boolean {
   return mime ? mime.startsWith("video/") : isSupportedVideoUrl(mediaUrl);
 }
 
+function getPreviewImageUrl(media?: StoryRailStory["Media"]): string | undefined {
+  return (
+    media?.formats?.thumbnail?.url ||
+    media?.formats?.small?.url ||
+    media?.formats?.medium?.url ||
+    media?.url
+  );
+}
+
 export function getStoryRailPreview(
   story: StoryRailStory,
   resolveMediaUrl: ResolveStoryMediaUrl,
 ): StoryRailPreview {
-  if (story.Thumbnail?.url) {
-    return { mode: "image", url: resolveMediaUrl(story.Thumbnail.url) };
+  const thumbnailUrl = getPreviewImageUrl(story.Thumbnail);
+  if (thumbnailUrl) {
+    return { mode: "image", url: resolveMediaUrl(thumbnailUrl) };
   }
 
   const mediaUrl = story.Media?.url;
   if (!mediaUrl) return { mode: "empty" };
 
   if (story.MediaType === "video" && isVideoStory(story)) {
-    return { mode: "video", src: resolveMediaUrl(mediaUrl) };
+    return { mode: "empty" };
   }
 
   if (story.MediaType === "image" && isImageStory(story)) {
-    return { mode: "image", url: resolveMediaUrl(mediaUrl) };
+    return { mode: "image", url: resolveMediaUrl(getPreviewImageUrl(story.Media) ?? mediaUrl) };
   }
 
   return { mode: "empty" };

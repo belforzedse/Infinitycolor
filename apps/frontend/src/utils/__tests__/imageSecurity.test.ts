@@ -12,6 +12,10 @@ describe("imageSecurity", () => {
     apiBaseUrl: "https://api.infinitycolor.co/api",
   };
 
+  function parseOptimizerUrl(value: string): URL {
+    return new URL(value, "https://new.infinitycolor.local");
+  }
+
   it("builds strict production Next.js remote patterns for Strapi uploads only", () => {
     const patterns = getNextImageRemotePatterns(productionOptions);
 
@@ -102,10 +106,20 @@ describe("imageSecurity", () => {
     expect(resolveSafeImageSrc("//external-domain.example/image.jpg", productionOptions)).toBe("");
   });
 
-  it("adds image optimization params only to allowed sources", () => {
-    expect(
-      buildOptimizedImageUrl("https://api.infinitycolor.co/uploads/cover.webp", 800, 75, productionOptions),
-    ).toBe("https://api.infinitycolor.co/uploads/cover.webp?w=800&q=75&f=avif");
+  it("builds Next optimizer URLs only for allowed sources", () => {
+    const result = buildOptimizedImageUrl(
+      "https://api.infinitycolor.co/uploads/cover.webp",
+      800,
+      75,
+      productionOptions,
+    );
+    const url = parseOptimizerUrl(result);
+
+    expect(url.pathname).toBe("/_next/image");
+    expect(url.searchParams.get("url")).toBe("https://api.infinitycolor.co/uploads/cover.webp");
+    expect(url.searchParams.get("w")).toBe("800");
+    expect(url.searchParams.get("q")).toBe("75");
+    expect(url.searchParams.has("f")).toBe(false);
     expect(buildOptimizedImageUrl("https://external-domain.example/cover.webp", 800, 75, productionOptions)).toBe("");
   });
 
@@ -131,6 +145,12 @@ describe("imageSecurity", () => {
       );
     });
 
+    it("normalizes whitespace in malformed Strapi upload URLs before CDN routing", () => {
+      expect(resolveSafeImageSrc("https://api.infinitycolor.co /uploads/a.webp", cdnOptions)).toBe(
+        "https://cdn.infinitycolor.co/uploads/a.webp",
+      );
+    });
+
     it("leaves already-CDN upload URLs unchanged", () => {
       expect(resolveSafeImageSrc("https://cdn.infinitycolor.co/uploads/a.jpg", cdnOptions)).toBe(
         "https://cdn.infinitycolor.co/uploads/a.jpg",
@@ -143,12 +163,18 @@ describe("imageSecurity", () => {
 
     it("does not rewrite non-upload Strapi API URLs", () => {
       expect(resolveSafeImageSrc("https://api.infinitycolor.co/admin/logo.png", cdnOptions)).toBe("");
+      expect(resolveSafeImageSrc("https://api.infinitycolor.co/api/products", cdnOptions)).toBe("");
     });
 
-    it("optimizes CDN-routed upload URLs", () => {
-      expect(buildOptimizedImageUrl("/uploads/cover.webp", 800, 75, cdnOptions)).toBe(
-        "https://cdn.infinitycolor.co/uploads/cover.webp?w=800&q=75&f=avif",
-      );
+    it("optimizes CDN-routed upload URLs through Next image optimizer", () => {
+      const result = buildOptimizedImageUrl("/uploads/cover.webp", 800, 75, cdnOptions);
+      const url = parseOptimizerUrl(result);
+
+      expect(url.pathname).toBe("/_next/image");
+      expect(url.searchParams.get("url")).toBe("https://cdn.infinitycolor.co/uploads/cover.webp");
+      expect(url.searchParams.get("w")).toBe("800");
+      expect(url.searchParams.get("q")).toBe("75");
+      expect(url.searchParams.has("f")).toBe(false);
     });
 
     it("adds the CDN host to the Next.js remote patterns", () => {

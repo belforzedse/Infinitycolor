@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { IMAGE_BASE_URL } from "@/constants/api";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 interface VideoPreviewModalProps {
   videoUrl: string;
@@ -12,21 +13,21 @@ interface VideoPreviewModalProps {
 const resolveSrc = (preview: string): string => {
   if (!preview) return "";
   const trimmed = preview.trim();
-  if (
-    trimmed.startsWith("http://") ||
-    trimmed.startsWith("https://") ||
-    trimmed.startsWith("blob:") ||
-    trimmed.startsWith("data:")
-  ) {
+  if (trimmed.startsWith("blob:") || trimmed.startsWith("data:")) {
     return trimmed;
   }
-  if (trimmed.startsWith("/")) {
-    return `${IMAGE_BASE_URL}${trimmed}`;
+  const resolvedAssetUrl = resolveAssetUrl(trimmed);
+  if (resolvedAssetUrl) {
+    return resolvedAssetUrl;
+  }
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed.replace(/\s+/g, "");
   }
   try {
     return new URL(trimmed, IMAGE_BASE_URL).toString();
   } catch {
-    return `${IMAGE_BASE_URL}${trimmed.startsWith("/") ? trimmed : `/${trimmed}`}`;
+    const base = IMAGE_BASE_URL.replace(/\/+$/, "");
+    return `${base}${trimmed.startsWith("/") ? trimmed : `/${trimmed}`}`;
   }
 };
 

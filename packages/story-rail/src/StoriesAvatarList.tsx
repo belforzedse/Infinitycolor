@@ -80,7 +80,7 @@ function StoryAvatarRing({
         src={preview.src}
         muted
         playsInline
-        preload="metadata"
+        preload="none"
         className="h-full w-full rounded-full object-cover"
         aria-hidden="true"
         tabIndex={-1}
@@ -155,7 +155,7 @@ function StoryMobileCardInner<TStory extends StoryRailStory>({
           src={preview.src}
           muted
           playsInline
-          preload="metadata"
+          preload="none"
           className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${coverMutedClass}`}
           aria-hidden="true"
           tabIndex={-1}
