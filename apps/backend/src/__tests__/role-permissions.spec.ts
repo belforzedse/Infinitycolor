@@ -146,10 +146,36 @@ describe("role permission templates", () => {
         .enabled,
     ).toBe(false);
     expect(
+      storeManager["api::admin-activity"].controllers["admin-activity"]
+        .findProductActivities.enabled,
+    ).toBe(false);
+    expect(
       storeManager["api::admin-activity"].controllers["admin-activity"].findReport.enabled,
     ).toBe(false);
     expect(storeManager["api::report"].controllers.report.productSales.enabled).toBe(false);
     expect(storeManager["api::report"].controllers.report.trafficDashboard.enabled).toBe(false);
+  });
+
+  it("lets manager-plus roles edit products without opening product activity logs", () => {
+    const storeManager = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "store-manager",
+    );
+    const founder = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "founder",
+    );
+
+    for (const tree of [storeManager, founder]) {
+      const product = tree["api::product"].controllers.product;
+      expect(product.findOne.enabled).toBe(true);
+      expect(product.update.enabled).toBe(true);
+      expect(product.delete.enabled).toBe(false);
+      expect(
+        tree["api::admin-activity"].controllers["admin-activity"].findProductActivities
+          .enabled,
+      ).toBe(false);
+    }
   });
 
   it("allows founders to read order-scoped admin activity but not standalone activity reports", () => {
