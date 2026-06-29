@@ -42,6 +42,23 @@ function fingerprint(value) {
   return crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
+/**
+ * True when an existing Strapi product already has BOTH a cover image and a
+ * non-empty media gallery. Tolerant of Strapi v4 relation shapes
+ * (`{ data: {...} }` / `{ data: [...] }`) and raw values. Used by the `full-sync`
+ * scope to decide whether media import can be safely skipped.
+ *
+ * @param {{ attributes?: object } | object} existing index entry
+ */
+function productHasMedia(existing) {
+  const attrs = existing?.attributes ?? existing ?? {};
+  const cover = attrs.CoverImage?.data ?? attrs.CoverImage;
+  const gallery = attrs.Media?.data ?? attrs.Media;
+  const hasCover = Array.isArray(cover) ? cover.length > 0 : Boolean(cover);
+  const hasGallery = Array.isArray(gallery) ? gallery.length > 0 : Boolean(gallery);
+  return hasCover && hasGallery;
+}
+
 function isRunControlError(error) {
   return error?.code === "CATALOG_RUN_CANCELLED" || error?.code === "CATALOG_RUN_PAUSED";
 }
@@ -352,12 +369,17 @@ class CatalogEngine {
   async syncProducts(report, dryRun, flags, limit = Infinity, runContext = null, options = {}) {
     this.logger.info("Phase: products + variations");
     if (runContext) runContext.store.setCurrentStep(runContext.runId, "products");
+    // In "preserve" media mode we need to know whether each existing product
+    // already has media, so populate (id-only) the cover/gallery relations.
+    const productIndexParams = flags.mediaPolicy === "preserve"
+      ? { "populate[CoverImage][fields][0]": "id", "populate[Media][fields][0]": "id" }
+      : {};
     const ctx = {
       report,
       dryRun,
       flags,
       runContext,
-      productIndex: await this.repo.buildExternalIndex("/products"),
+      productIndex: await this.repo.buildExternalIndex("/products", productIndexParams),
       variationIndex: await this.repo.buildExternalIndex("/product-variations"),
       stockIndex: await this.repo.buildExternalIndex("/product-stocks"),
     };
@@ -469,15 +491,25 @@ class CatalogEngine {
 
     // Media — attach only when ids are present (never null existing media on failure).
     if (flags.media && !dryRun && productStrapiId && productStrapiId > 0) {
-      const { coverId, galleryIds, counts } = await this.media.syncProductMedia(wcProduct);
-      report.mediaUploaded(counts.uploaded);
-      report.mediaReused(counts.reused);
-      report.mediaFailed(counts.failed);
-      const update = {};
-      if (coverId) update.CoverImage = coverId;
-      if (galleryIds.length > 0) update.Media = galleryIds;
-      if (Object.keys(update).length > 0) {
-        await this.repo.http.put(`/products/${productStrapiId}`, { data: update });
+      // "preserve" policy (full-sync): leave existing media untouched when a product
+      // already has both a cover and a gallery; otherwise import (new products and
+      // products missing a cover or gallery get backfilled).
+      if (flags.mediaPolicy === "preserve" && existing && productHasMedia(existing)) {
+        report.mediaSkippedExisting();
+        this.logger.info(`🖼️  media preserved — product ${wcProduct.id} already has cover + gallery`);
+      } else {
+        const { coverId, galleryIds, counts } = await this.media.syncProductMedia(wcProduct);
+        report.mediaUploaded(counts.uploaded);
+        report.mediaReused(counts.reused);
+        report.mediaFailed(counts.failed);
+        const update = {};
+        if (coverId) update.CoverImage = coverId;
+        if (galleryIds.length > 0) update.Media = galleryIds;
+        if (Object.keys(update).length > 0) {
+          await this.repo.http.put(`/products/${productStrapiId}`, { data: update });
+        } else {
+          this.logger.info(`ℹ️  no media available in WooCommerce for product ${wcProduct.id}`);
+        }
       }
     }
 

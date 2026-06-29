@@ -221,6 +221,71 @@ test("media scope: attaches media to existing products, creates nothing", async 
   assert.equal(report.media.reused, 6);
 });
 
+test("full-sync: existing product with cover + gallery keeps its media (no media write)", async () => {
+  const engine = makeEngine({ products: [products[0]] }); // product 101
+  // Existing product already has BOTH a cover and a gallery.
+  engine.repo.buildExternalIndex = async (endpoint) => {
+    const map = new Map();
+    if (endpoint === "/products") {
+      map.set("101", { id: 10101, attributes: { CoverImage: { data: { id: 1 } }, Media: { data: [{ id: 2 }] } } });
+    }
+    return map;
+  };
+  let mediaCalls = 0;
+  engine.media.syncProductMedia = async () => {
+    mediaCalls += 1;
+    return { coverId: 7, galleryIds: [8, 9], counts: { uploaded: 3, reused: 0, failed: 0 } };
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "full-sync" });
+
+  assert.equal(mediaCalls, 0, "media import must be skipped");
+  assert.equal(engine._calls.puts.filter((p) => p.url.startsWith("/products/")).length, 0);
+  assert.equal(report.media.skippedExisting, 1);
+  assert.equal(report.media.uploaded, 0);
+  // Product fields are still refreshed.
+  assert.equal(engine._calls.upserts.filter((u) => u.endpoint === "/products").length, 1);
+});
+
+test("full-sync: existing product missing the gallery gets media backfilled", async () => {
+  const engine = makeEngine({ products: [products[0]] });
+  engine.repo.buildExternalIndex = async (endpoint) => {
+    const map = new Map();
+    if (endpoint === "/products") {
+      map.set("101", { id: 10101, attributes: { CoverImage: { data: { id: 1 } }, Media: { data: [] } } });
+    }
+    return map;
+  };
+  engine.media.syncProductMedia = async () => ({ coverId: 7, galleryIds: [8, 9], counts: { uploaded: 3, reused: 0, failed: 0 } });
+
+  const report = await engine.runSync({ dryRun: false, scope: "full-sync" });
+
+  const productPuts = engine._calls.puts.filter((p) => p.url.startsWith("/products/"));
+  assert.equal(productPuts.length, 1);
+  assert.equal(productPuts[0].url, "/products/10101");
+  assert.equal(productPuts[0].body.data.CoverImage, 7);
+  assert.deepEqual(productPuts[0].body.data.Media, [8, 9]);
+  assert.equal(report.media.skippedExisting, 0);
+  assert.equal(report.media.uploaded, 3);
+});
+
+test("full-sync: new product is created and its media imported", async () => {
+  const engine = makeEngine({ products: [products[0]] });
+  engine.repo.buildExternalIndex = async () => new Map(); // nothing exists yet
+  engine.media.syncProductMedia = async () => ({ coverId: 7, galleryIds: [8, 9], counts: { uploaded: 3, reused: 0, failed: 0 } });
+
+  const report = await engine.runSync({ dryRun: false, scope: "full-sync" });
+
+  // Product created via upsert (stub returns id = externalId + 10000).
+  assert.equal(engine._calls.upserts.filter((u) => u.endpoint === "/products").length, 1);
+  const productPuts = engine._calls.puts.filter((p) => p.url.startsWith("/products/"));
+  assert.equal(productPuts.length, 1);
+  assert.equal(productPuts[0].url, "/products/10101");
+  assert.deepEqual(productPuts[0].body.data.Media, [8, 9]);
+  assert.equal(report.media.skippedExisting, 0);
+  assert.equal(report.media.uploaded, 3);
+});
+
 test("onlyExisting scopes skip entities that were never imported", async () => {
   const engine = makeEngine({ withExisting: false }); // nothing exists
   const report = await engine.runSync({ scope: "stock" });

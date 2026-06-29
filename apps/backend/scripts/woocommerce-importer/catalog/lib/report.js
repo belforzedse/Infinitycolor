@@ -37,7 +37,7 @@ class ImportReport {
       attributes: emptyCounters(),
       sizeHelpers: emptyCounters(),
     };
-    this.media = { uploaded: 0, reused: 0, failed: 0 };
+    this.media = { uploaded: 0, reused: 0, failed: 0, skippedExisting: 0 };
     /** @type {Array<{ entity:string, wcId:any, stage:string, error:string }>} */
     this.failures = [];
   }
@@ -72,6 +72,10 @@ class ImportReport {
   mediaFailed(n = 1) {
     this.media.failed += n;
   }
+  /** Media left untouched because the product already had a cover + gallery (full-sync). */
+  mediaSkippedExisting(n = 1) {
+    this.media.skippedExisting += n;
+  }
 
   durationMs() {
     return Date.now() - this.startedAt;
@@ -102,7 +106,8 @@ class ImportReport {
       );
     }
     this.logger.info(
-      `media        uploaded=${this.media.uploaded} reused=${this.media.reused} failed=${this.media.failed}`,
+      `media        uploaded=${this.media.uploaded} reused=${this.media.reused} ` +
+        `skipped=${this.media.skippedExisting} failed=${this.media.failed}`,
     );
     this.logger.info(`duration     ${seconds}s`);
 

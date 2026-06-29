@@ -168,8 +168,11 @@ export default function EditOrderPage() {
     resolve: () => void;
   } | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  const load = (options: { silent?: boolean } = {}) => {
+    const { silent = false } = options;
+    if (!silent) {
+      setLoading(true);
+    }
     // Add cache-busting timestamp to ensure fresh data
     const cacheBuster = `_t=${Date.now()}`;
     const query = [
@@ -309,6 +312,7 @@ export default function EditOrderPage() {
         const userName =
           (userInfo?.FirstName || "") + " " + (userInfo?.LastName || "");
 
+        setError(null);
         setData({
           id: Number((normalizedOrder as any).id),
           createdAt: new Date(
@@ -353,12 +357,22 @@ export default function EditOrderPage() {
         });
       })
       .catch((err) => {
+        if (silent) {
+          return;
+        }
+
         setError(err.response?.data?.error || "error");
         toast.error("خطایی رخ داده است");
       })
       .finally(() => {
-        setLoading(false);
+        if (!silent) {
+          setLoading(false);
+        }
       });
+  };
+
+  const refreshAfterOrderAction = () => {
+    void load({ silent: true });
   };
 
   useEffect(() => {
@@ -401,7 +415,7 @@ export default function EditOrderPage() {
       });
       toast.success("سفارش با موفقیت ویرایش شد");
       // Reflect the saved status so a subsequent edit compares against fresh data.
-      await load();
+      await load({ silent: true });
     } catch (err) {
       toast.error("خطایی رخ داده است");
     }
@@ -458,7 +472,7 @@ export default function EditOrderPage() {
 
   return (
     <>
-      {data && <AdjustItemsPanel order={data} onSuccess={load} />}
+      {data && <AdjustItemsPanel order={data} onSuccess={refreshAfterOrderAction} />}
       <ConfirmDialog
         isOpen={!!pendingStatusChange}
         title="تغییر وضعیت سفارش"
@@ -474,7 +488,7 @@ export default function EditOrderPage() {
         onSubmit={handleOrderSubmit}
         footer={
           <>
-            <Footer order={data} onReload={load} />
+            <Footer order={data} onReload={refreshAfterOrderAction} />
             {data?.id ? <GatewayLogs orderId={data.id} /> : null}
           </>
         }

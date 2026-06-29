@@ -10,20 +10,32 @@
  * WooCommerce is always the read-only source of truth; no scope ever writes to WC.
  */
 
-const SCOPES = ["full", "no-media", "categories", "stock", "price", "media"];
+const SCOPES = ["full", "full-sync", "no-media", "categories", "stock", "price", "media"];
 
 /**
  * Resolve a scope to concrete phase flags.
+ *
+ * `mediaPolicy` is only present on scopes that need special media handling. When
+ * absent (every legacy scope) the engine treats it as "always" — i.e. the media
+ * phase re-attaches CoverImage/Media as before. "preserve" means: import & attach
+ * media only for products that don't already have both a cover and a gallery.
+ *
  * @param {string} scope
  * @param {{ skipMedia?: boolean }} [opts]
  * @returns {{ categories:boolean, products:boolean, variations:boolean, stock:boolean,
- *   media:boolean, onlyExisting:boolean, variationFields:"all"|"price-only"|"none" }}
+ *   media:boolean, onlyExisting:boolean, variationFields:"all"|"price-only"|"none",
+ *   mediaPolicy?:"always"|"preserve" }}
  */
 function resolveScope(scope, opts = {}) {
   const skipMedia = Boolean(opts.skipMedia);
   switch (scope) {
     case "full":
       return f({ categories: true, products: true, variations: true, stock: true, media: !skipMedia, variationFields: "all" });
+    case "full-sync":
+      return f({
+        categories: true, products: true, variations: true, stock: true,
+        media: !skipMedia, variationFields: "all", mediaPolicy: "preserve",
+      });
     case "no-media":
       return f({ categories: true, products: true, variations: true, stock: true, media: false, variationFields: "all" });
     case "categories":
@@ -65,6 +77,7 @@ function needsProductLoop(flags) {
  */
 const PRESETS = [
   { id: "full", label: "Full Sync", description: "Categories + products + variations + stock + media", run: { scope: "full" }, confirm: true },
+  { id: "full-sync", label: "Full Sync — Safe Media", description: "Full sync; imports media only for products missing a cover or gallery", run: { scope: "full-sync" }, confirm: true },
   { id: "no-media", label: "Full Sync — No Media", description: "Everything except image/video upload (fast)", run: { scope: "no-media" }, confirm: true },
   { id: "dry-run", label: "Catalog Dry-Run", description: "Preview a full sync — no writes", run: { scope: "full", dryRun: true }, confirm: false },
   { id: "stock", label: "Stock Sync", description: "Refresh stock Count for existing variations only", run: { scope: "stock" }, confirm: true },
