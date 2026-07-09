@@ -147,13 +147,13 @@ async function main() {
   program.name("catalog").description("WooCommerce → Strapi catalog importer (idempotent)");
 
   commonOptions(program.command("dry-run").description("Preview without writing"))
-    .option("--scope <name>", "full | no-media | categories | stock | price | media", "full")
+    .option("--scope <name>", "full | full-sync | no-media | categories | stock | price | media", "full")
     .option("--skip-media", "Skip media upload")
     .option("--start-after-external-id <id>", "Skip Woo products with id/external_id <= this value")
     .action((opts) => run("dry-run", opts));
 
   commonOptions(program.command("sync").description("Apply catalog sync"))
-    .option("--scope <name>", "full | no-media | categories | stock | price | media", "full")
+    .option("--scope <name>", "full | full-sync | no-media | categories | stock | price | media", "full")
     .option("--skip-media", "Skip media upload")
     .option("--run-id <id>", "Optional stable run id for tracking/resume")
     .option("--start-after-external-id <id>", "Skip Woo products with id/external_id <= this value")

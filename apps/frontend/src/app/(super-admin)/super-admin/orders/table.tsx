@@ -149,14 +149,7 @@ export const columns: ColumnDef<Order>[] = [
             status === "Cancelled" && "bg-red-600",
           )}
         >
-          <span className="text-xs text-white">
-            {status === "Paying" && "در حال پرداخت"}
-            {status === "Started" && "درحال پردازش"}
-            {status === "Shipment" && "در حال ارسال"}
-            {status === "Done" && "تکمیل شده"}
-            {status === "Returned" && "مرجوع شده"}
-            {status === "Cancelled" && "لغو شده"}
-          </span>
+          <span className="text-xs text-white">{translateOrderStatus(status)}</span>
         </div>
       );
     },

@@ -29,6 +29,12 @@ import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateErrorMessage } from "@/lib/errorTranslations";
 
+// Reserve ("ارسال رزروی" / 48h) is hidden from the storefront for now. Flip this
+// flag to re-enable the reserve checkout flow. While disabled we never fetch an
+// active reserve, never render the reserve UI, and never attach reserve data on
+// submit, so checkout always proceeds as a normal (non-reserve) order.
+const RESERVE_FEATURE_ENABLED = false;
+
 export type FormData = {
   fullName: string;
   phoneNumber: string;
@@ -178,7 +184,7 @@ function ShoppingCartBillForm({}: Props) {
   // Gateway selection state
   const [gateway, setGateway] = useState<CheckoutGatewayCode>("samankish");
   const [availableGateways, setAvailableGateways] = useState<CheckoutGatewayCode[]>([]);
-  const [snappEligible, setSnappEligible] = useState<boolean>(false); // Start as not eligible
+  const [snappEligible, setSnappEligible] = useState<boolean | undefined>(undefined);
   const [snappTitle, setSnappTitle] = useState<string | undefined>(undefined);
   const [snappDescription, setSnappDescription] = useState<string | undefined>(undefined);
   const [discountCode, setDiscountCode] = useState<string | undefined>(undefined);
@@ -251,6 +257,7 @@ function ShoppingCartBillForm({}: Props) {
 
   useEffect(() => {
     const loadActiveReserve = async () => {
+      if (!RESERVE_FEATURE_ENABLED) return;
       if (!currentUser) return;
       try {
         const res = await OrderService.getActiveReserve();
@@ -368,7 +375,7 @@ function ShoppingCartBillForm({}: Props) {
         if (!isMergeMode && !shippingId) {
           snappEligibilitySeqRef.current += 1;
           lastSnappEligibilityKeyRef.current = null;
-          setSnappEligible(false);
+          setSnappEligible(undefined);
           setSnappTitle(undefined);
           setSnappDescription(undefined);
           return;
@@ -376,7 +383,7 @@ function ShoppingCartBillForm({}: Props) {
         if (totalToman <= 0) {
           snappEligibilitySeqRef.current += 1;
           lastSnappEligibilityKeyRef.current = null;
-          setSnappEligible(false);
+          setSnappEligible(undefined);
           setSnappTitle(undefined);
           setSnappDescription(undefined);
           return;
@@ -399,7 +406,7 @@ function ShoppingCartBillForm({}: Props) {
         if (requestSeq > 0 && snappEligibilitySeqRef.current !== requestSeq) return;
 
         lastSnappEligibilityKeyRef.current = null;
-        setSnappEligible(false);
+        setSnappEligible(undefined);
         setSnappTitle(undefined);
         setSnappDescription(undefined);
       }
@@ -895,7 +902,7 @@ function ShoppingCartBillForm({}: Props) {
         isSubmitting={isSubmitting}
       />
 
-      {activeReserve && mergeChoice === null && (
+      {RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && (
         <div className="rounded-lg border border-infinity-primary-lighter/60 bg-infinity-primary-lighter/50 p-4">
           <p className="mb-3 text-sm font-medium text-neutral-800">
             شما یک سفارش رزروی فعال دارید ({activeReserve.orderCount} سفارش). آیا می‌خواهید به آن
@@ -958,7 +965,7 @@ function ShoppingCartBillForm({}: Props) {
                 previewLoading={discountPreviewLoading}
                 addressContext={shippingAddressContext}
               />
-              {(mergeChoice === "new" || !activeReserve) && (
+              {RESERVE_FEATURE_ENABLED && (mergeChoice === "new" || !activeReserve) && (
                 <ReserveShipping checked={reserveShipping} onChange={setReserveShipping} />
               )}
             </>

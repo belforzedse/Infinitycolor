@@ -53,4 +53,5 @@ export const ORDER_STATUS = [
   { key: OrderStatus.Processing, value: PersianOrderStatus.INPROGRESS },
   { key: OrderStatus.Delivered, value: PersianOrderStatus.DELIVERED },
   { key: OrderStatus.Cancelled, value: PersianOrderStatus.CANCELLED },
+  { key: "MANUAL", value: PersianOrderStatus.MANUAL },
 ];

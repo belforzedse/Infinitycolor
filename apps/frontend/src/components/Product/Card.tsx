@@ -232,11 +232,12 @@ const ProductCard: FC<ProductCardProps> = ({
                 <DiscountBadge discount={saleDiscountPercent} />
               </div>
 
+              {/* Color palette hidden on mobile (shown from md up) */}
               <ColorSwatches
                 colorCodes={colorCodes}
                 colorsCount={colorsCount}
                 size="sm"
-                className="absolute bottom-2 right-2"
+                className="absolute bottom-2 right-2 max-md:!hidden"
               />
             </div>
 

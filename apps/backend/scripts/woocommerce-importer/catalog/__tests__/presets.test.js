@@ -2,7 +2,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { resolveScope, resolvePreset, needsProductLoop, PRESETS } = require("../lib/presets");
+const { resolveScope, resolvePreset, needsProductLoop, PRESETS, SCOPES } = require("../lib/presets");
 
 test("resolveScope: full enables everything (media unless skipped)", () => {
   assert.deepEqual(resolveScope("full"), {
@@ -10,6 +10,25 @@ test("resolveScope: full enables everything (media unless skipped)", () => {
     onlyExisting: false, variationFields: "all",
   });
   assert.equal(resolveScope("full", { skipMedia: true }).media, false);
+  // Legacy scopes carry no mediaPolicy → engine treats it as "always".
+  assert.equal(resolveScope("full").mediaPolicy, undefined);
+});
+
+test("resolveScope: full-sync is a full sync that preserves existing media", () => {
+  const f = resolveScope("full-sync");
+  assert.equal(f.categories, true);
+  assert.equal(f.products, true);
+  assert.equal(f.variations, true);
+  assert.equal(f.stock, true);
+  assert.equal(f.media, true);
+  assert.equal(f.variationFields, "all");
+  assert.equal(f.mediaPolicy, "preserve");
+  // --skip-media still wins.
+  assert.equal(resolveScope("full-sync", { skipMedia: true }).media, false);
+});
+
+test("SCOPES includes full-sync", () => {
+  assert.ok(SCOPES.includes("full-sync"));
 });
 
 test("resolveScope: no-media never uploads media", () => {

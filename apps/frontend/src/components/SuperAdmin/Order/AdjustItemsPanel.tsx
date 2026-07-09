@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { SuperAdminOrderDetail } from "@/types/super-admin/order";
 import {
   previewAdjustItems,
@@ -30,6 +30,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [forceEdit, setForceEdit] = useState(false);
   const [voidLoading, setVoidLoading] = useState(false);
+  const applyInFlightRef = useRef(false);
 
   // Check if this is a SnappPay order (has transaction ID and payment token)
   const isSnappPayOrder = Boolean(order.transactionId && order.paymentToken);
@@ -127,7 +128,8 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   };
 
   const handleApply = async () => {
-    if (!preview) return;
+    if (!preview || applyInFlightRef.current) return;
+    applyInFlightRef.current = true;
 
     const items: ItemAdjustment[] = order.items
       .filter((it) => quantities[it.id] !== it.quantity)
@@ -169,13 +171,32 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
       setPreview(null);
       onSuccess();
     } catch (error: any) {
-      const rawError = error.response?.data?.error;
-      if (typeof rawError === "string" && rawError.startsWith("SNAPPAY_")) {
+      const responseData = error.response?.data;
+      const rawError = responseData?.data?.error ?? responseData?.error;
+      const errorCode = responseData?.data?.code ?? responseData?.code;
+      const errorMessage =
+        typeof rawError === "string"
+          ? rawError
+          : typeof rawError?.message === "string"
+            ? rawError.message
+            : undefined;
+
+      if (
+        errorCode === "RATE_LIMITED" ||
+        (typeof errorMessage === "string" &&
+          errorMessage.startsWith("SNAPPAY_RATE_LIMIT"))
+      ) {
+        onSuccess();
+        return;
+      }
+
+      if (typeof errorMessage === "string" && errorMessage.startsWith("SNAPPAY_")) {
         toast.error("به‌روزرسانی SnappPay با خطا روبه‌رو شد؛ لطفاً وضعیت پرداخت را بررسی کنید.");
       } else {
-        toast.error(rawError || "خطا در اعمال تغییرات");
+        toast.error(errorMessage || "خطا در اعمال تغییرات");
       }
     } finally {
+      applyInFlightRef.current = false;
       setLoading(false);
     }
   };

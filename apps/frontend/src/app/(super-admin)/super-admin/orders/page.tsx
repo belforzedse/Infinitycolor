@@ -4,6 +4,7 @@ import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import { MobileTable, columns, bulkPrintOrders, Order } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { useEffect, useState, useMemo, useCallback } from "react";
+import { useQueryState } from "nuqs";
 import { useDebouncedCallback } from "use-debounce";
 import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
 import { useAtom } from "jotai";
@@ -16,9 +17,45 @@ import {
   OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
 
+// Server-side category tabs. Buckets map to the real backend Status enum
+// (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
+// the Manual order Type, so manual orders still appear in their status bucket too.
+const ORDER_TABS: { key: string; label: string; filter: string }[] = [
+  { key: "all", label: "همه", filter: "" },
+  {
+    key: "inprogress",
+    label: "در حال انجام",
+    filter:
+      "&filters[Status][$in][0]=Paying&filters[Status][$in][1]=Started&filters[Status][$in][2]=Shipment",
+  },
+  { key: "completed", label: "تکمیل شده", filter: "&filters[Status][$eq]=Done" },
+  {
+    key: "cancelled",
+    label: "لغو شده یا ناموفق",
+    filter: "&filters[Status][$in][0]=Returned&filters[Status][$in][1]=Cancelled",
+  },
+  { key: "manual", label: "سفارش‌های دستی", filter: "&filters[Type][$eq]=Manual" },
+];
+
 export default function OrdersPage() {
   useFreshDataOnPageLoad();
   const [, setRefresh] = useAtom(refreshTable);
+  const [activeTab, setActiveTab] = useState("all");
+  const [, setPage] = useQueryState("page", { defaultValue: "1" });
+
+  const handleTabChange = useCallback(
+    (tabKey: string) => {
+      setActiveTab(tabKey);
+      // Reset to the first page so a filtered result set never lands on an empty page.
+      void setPage("1");
+    },
+    [setPage],
+  );
+
+  const tabFilter = useMemo(
+    () => ORDER_TABS.find((tab) => tab.key === activeTab)?.filter ?? "",
+    [activeTab],
+  );
   const [sort, setSort] = useState<"last-edited" | "newest" | "oldest">("last-edited");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -90,7 +127,7 @@ export default function OrdersPage() {
         { id: "[contract][Amount]", title: "مبلغ", type: "number" },
         {
           id: "[contract][external_id]",
-          title: "شماره تراکنش (Transaction ID)",
+          title: "ایدی تراکنش اسنپ پی",
           type: "text",
         },
         { id: "[Description]", title: "توضیحات", type: "text" },
@@ -105,6 +142,25 @@ export default function OrdersPage() {
       hasFilterButton
       hasPagination
     >
+      <div className="mb-3 flex flex-wrap gap-2" dir="rtl">
+        {ORDER_TABS.map((tab) => {
+          const isActive = tab.key === activeTab;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => handleTabChange(tab.key)}
+              className={
+                isActive
+                  ? "rounded-lg bg-actions-primary px-4 py-2 text-sm font-medium text-white"
+                  : "rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm text-neutral-600 transition-colors hover:bg-neutral-50"
+              }
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
       <div className="mb-3 flex flex-col gap-3 rounded-2xl bg-white/70 p-3 md:flex-row md:flex-wrap md:items-center md:bg-transparent md:p-0">
         <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
           <label className="text-sm text-neutral-600">مرتب‌سازی:</label>
@@ -119,11 +175,11 @@ export default function OrdersPage() {
           </select>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-          <label className="text-sm text-neutral-600">جستجوی شماره تراکنش:</label>
+          <label className="text-sm text-neutral-600">جستجوی ایدی تراکنش اسنپ پی:</label>
           <div className="relative w-full sm:w-80">
             <input
               type="text"
-              placeholder="جستجو شماره تراکنش اسنپ! پی ..."
+              placeholder="جستجوی ایدی تراکنش اسنپ پی ..."
               className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 pr-8 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -167,7 +223,7 @@ export default function OrdersPage() {
               : sort === "newest"
                 ? "createdAt:desc"
                 : "createdAt:asc";
-          const base = `/orders?sort[0]=${sortQuery}&populate[0]=user&populate[1]=contract&populate[2]=user.user_info&populate[3]=contract`;
+          const base = `/orders?sort[0]=${sortQuery}&populate[0]=user&populate[1]=contract&populate[2]=user.user_info&populate[3]=contract${tabFilter}`;
 
           if (debouncedSearchQuery.trim()) {
             return (

@@ -51,7 +51,14 @@ class StrapiRepo {
     for (const entity of entities) {
       const externalId = entity.attributes?.external_id ?? entity.external_id;
       if (externalId !== undefined && externalId !== null && externalId !== "") {
-        index.set(externalId.toString(), entity);
+        const key = externalId.toString();
+        if (index.has(key)) {
+          // external_id is meant to be unique; a duplicate means an ambiguous match.
+          // Keep the first seen and warn rather than silently picking one to update.
+          this.logger?.warn?.(`⚠️ ambiguous external_id ${key} on ${endpoint} (ids ${index.get(key).id}, ${entity.id}); using ${index.get(key).id}`);
+        } else {
+          index.set(key, entity);
+        }
       }
     }
     return index;
