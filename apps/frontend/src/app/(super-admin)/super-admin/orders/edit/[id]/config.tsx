@@ -65,29 +65,20 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
               label: "وضعیت سفارش",
               colSpan: 4,
               mobileColSpan: 12,
+              // Collapsed to the 4-bucket scheme used everywhere. Cancelling is handled by the
+              // prominent «لغو سفارش» action (which also refunds/restocks); this maps to the raw
+              // Cancelled status for a plain status change.
               options: [
                 {
-                  label: "در حال پرداخت",
-                  value: "Paying",
-                },
-                {
-                  label: "شروع شده",
+                  label: "در حال انجام",
                   value: "Started",
-                },
-                {
-                  label: "در حال ارسال",
-                  value: "Shipment",
                 },
                 {
                   label: "تکمیل شده",
                   value: "Done",
                 },
                 {
-                  label: "مرجوع شده",
-                  value: "Returned",
-                },
-                {
-                  label: "لغو شده",
+                  label: "لغو شده یا ناموفق",
                   value: "Cancelled",
                 },
               ],
@@ -155,7 +146,7 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
             {
               name: "transactionId",
               type: "copy-text",
-              label: "شماره تراکنش (Transaction ID)",
+              label: "ایدی تراکنش اسنپ پی",
               colSpan: 6,
               mobileColSpan: 12,
               readOnly: true,
@@ -163,7 +154,7 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
             {
               name: "paymentToken",
               type: "copy-text",
-              label: "توکن پرداخت SnappPay",
+              label: "توکن پرداخت اسنپ پی",
               colSpan: 6,
               mobileColSpan: 12,
               readOnly: true,
