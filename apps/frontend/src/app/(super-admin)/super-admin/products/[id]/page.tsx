@@ -22,6 +22,7 @@ import { useCurrentUser } from "@/hooks/useCurrentUser";
 import toast from "react-hot-toast";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import ProductActivityLogs from "@/components/SuperAdmin/Activity/ProductActivityLogs";
+import ProductDisplayDateCard from "@/components/SuperAdmin/Product/ProductDisplayDateCard";
 
 export default function EditProductsPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -36,6 +37,8 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   const savedSnapshotRef = useRef<string | null>(null);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [showDuplicateConfirm, setShowDuplicateConfirm] = useState(false);
+  // Raw LastEditedByAdminAt used to seed the display-date picker (admin reorder control).
+  const [displayDate, setDisplayDate] = useState<string | null>(null);
 
   const isDirty = () =>
     savedSnapshotRef.current !== null &&
@@ -76,6 +79,10 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         const result = await getProduct(id, getProductParams);
         const loaded = transformToProductData(result.data.attributes);
         setProductData(loaded);
+        setDisplayDate(
+          (result.data.attributes as { LastEditedByAdminAt?: string | null })
+            .LastEditedByAdminAt ?? null,
+        );
         savedSnapshotRef.current = JSON.stringify(loaded);
       } catch (error: any) {
         if (process.env.NODE_ENV !== "production") {
@@ -225,6 +232,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         {/* <SetPrice />
         <SetStatus /> */}
         <SetDetails isEditMode />
+        <ProductDisplayDateCard productId={id} initialDate={displayDate} />
         <ProductActivityLogs
           productId={id}
           pageSize={20}

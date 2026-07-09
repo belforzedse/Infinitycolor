@@ -36,7 +36,7 @@ export const FloatingActions: FC<FloatingActionsProps> = ({
         type="button"
         onClick={onToggleLike}
         data-testid="product-card-favorite"
-        className={`${buttonBaseClass} relative z-30 ${
+        className={`${buttonBaseClass} relative z-30 max-md:!hidden ${
           isLikeLoading ? "cursor-wait opacity-50" : "opacity-100"
         }`}
         disabled={isLikeLoading}
@@ -65,7 +65,7 @@ export const FloatingActions: FC<FloatingActionsProps> = ({
         type="button"
         onClick={onShare}
         data-testid="product-card-share"
-        className={`${buttonBaseClass} z-10 ${revealClass} md:-translate-y-4 md:group-hover:translate-y-0 md:group-focus-within:translate-y-0`}
+        className={`${buttonBaseClass} z-10 ${revealClass} md:-translate-y-4 md:group-focus-within:translate-y-0 md:group-hover:translate-y-0`}
         aria-label="اشتراک‌گذاری"
       >
         <ShuffleIcon className="h-4 w-4 text-white" />

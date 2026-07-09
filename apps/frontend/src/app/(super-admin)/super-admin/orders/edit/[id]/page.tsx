@@ -4,6 +4,7 @@ import UpsertPageContentWrapper from "@/components/SuperAdmin/UpsertPage/Content
 import Footer from "@/components/SuperAdmin/Order/SummaryFooter";
 import GatewayLogs from "@/components/SuperAdmin/Order/GatewayLogs";
 import AdjustItemsPanel from "@/components/SuperAdmin/Order/AdjustItemsPanel";
+import OrderStatusActions from "@/components/SuperAdmin/Order/OrderStatusActions";
 import { config } from "./config";
 import Sidebar from "@/components/SuperAdmin/Order/Sidebar";
 import { useState, useEffect, useRef } from "react";
@@ -472,6 +473,7 @@ export default function EditOrderPage() {
 
   return (
     <>
+      {data && <OrderStatusActions order={data} onSuccess={refreshAfterOrderAction} />}
       {data && <AdjustItemsPanel order={data} onSuccess={refreshAfterOrderAction} />}
       <ConfirmDialog
         isOpen={!!pendingStatusChange}

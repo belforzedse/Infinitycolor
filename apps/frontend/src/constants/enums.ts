@@ -7,9 +7,10 @@ enum OrderStatus {
 }
 
 enum PersianOrderStatus {
-  INPROGRESS = "جاری",
-  DELIVERED = "تحویل داده شده",
-  CANCELLED = "لغو شده",
+  INPROGRESS = "در حال انجام",
+  DELIVERED = "تکمیل شده",
+  CANCELLED = "لغو شده یا ناموفق",
+  MANUAL = "سفارش‌های دستی",
 }
 
 enum PaymentMethod {

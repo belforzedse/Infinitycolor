@@ -121,30 +121,22 @@ export default function OrdersTabs() {
   // Group orders by status
   const ordersByStatus = useMemo(() => {
     const filtered = orders.filter(matchesSearch);
+    // Bucket by the backend Status (Paying/Started/Shipment/Done/Returned/Cancelled)
+    // via the shared category mapper so the tabs always reflect the real backend
+    // values. «سفارش‌های دستی» is the Manual order Type (orthogonal to status), so a
+    // manual order still appears in its matching status bucket too.
     return {
       "همه سفارش‌ها": filtered,
       [PersianOrderStatus.INPROGRESS]: filtered.filter(
-        (order) =>
-          order.Status === "Paying" ||
-          order.Status === "Started" ||
-          order.Status === "Processing" ||
-          order.Status === "Shipment" ||
-          order.Status === "PROCESSING" ||
-          order.Status === "SHIPPED" ||
-          order.Status === "جاری",
+        (order) => getOrderStatusCategory(order.Status) === PersianOrderStatus.INPROGRESS,
       ),
       [PersianOrderStatus.DELIVERED]: filtered.filter(
-        (order) =>
-          order.Status === "Done" ||
-          order.Status === "DELIVERED" ||
-          order.Status === "تحویل داده شده",
+        (order) => getOrderStatusCategory(order.Status) === PersianOrderStatus.DELIVERED,
       ),
       [PersianOrderStatus.CANCELLED]: filtered.filter(
-        (order) =>
-          order.Status === "Cancelled" ||
-          order.Status === "CANCELLED" ||
-          order.Status === "لغو شده",
+        (order) => getOrderStatusCategory(order.Status) === PersianOrderStatus.CANCELLED,
       ),
+      [PersianOrderStatus.MANUAL]: filtered.filter((order) => order.Type === "Manual"),
     };
   }, [orders, matchesSearch]);
 
