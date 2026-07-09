@@ -12,10 +12,9 @@ import { refreshTable } from "@/components/SuperAdmin/Table";
 import toast from "react-hot-toast";
 import {
   changeOrderStatus,
-  ORDER_STATUS_LABELS,
-  ORDER_STATUSES,
   OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
+import { translateOrderStatus } from "@/utils/statusTranslations";
 
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
@@ -35,6 +34,13 @@ const ORDER_TABS: { key: string; label: string; filter: string }[] = [
     filter: "&filters[Status][$in][0]=Returned&filters[Status][$in][1]=Cancelled",
   },
   { key: "manual", label: "سفارش‌های دستی", filter: "&filters[Type][$eq]=Manual" },
+];
+
+// Bulk status changes offered on the orders list, using the 4-bucket labels.
+const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
+  { status: "Started", label: "در حال انجام" },
+  { status: "Done", label: "تکمیل شده" },
+  { status: "Cancelled", label: "لغو شده یا ناموفق" },
 ];
 
 export default function OrdersPage() {
@@ -78,9 +84,9 @@ export default function OrdersPage() {
   }, [debouncedSearch]);
 
   const bulkOptions = useMemo(() => {
-    const statusOptions = ORDER_STATUSES.map((status) => ({
+    const statusOptions = BULK_STATUS_OPTIONS.map(({ status, label }) => ({
       id: `status-${status}`,
-      title: `وضعیت ${ORDER_STATUS_LABELS[status]}`,
+      title: `تغییر وضعیت به «${label}»`,
     }));
 
     return [{ id: "print", title: "پرینت دسته‌ای" }, ...statusOptions];
@@ -98,7 +104,7 @@ export default function OrdersPage() {
         try {
           await Promise.all(selectedRows.map((row) => changeOrderStatus(row.id, statusKey)));
           toast.success(
-            `${selectedRows.length} سفارش به وضعیت ${ORDER_STATUS_LABELS[statusKey]} منتقل شد.`,
+            `${selectedRows.length} سفارش به وضعیت «${translateOrderStatus(statusKey)}» منتقل شد.`,
           );
           setRefresh(true);
         } catch (error) {
@@ -115,15 +121,6 @@ export default function OrdersPage() {
       title="سفارشات"
       filterOptions={[
         { id: "[id]", title: "شماره سفارش", type: "number" },
-        {
-          id: "[Status]",
-          title: "وضعیت سفارش",
-          type: "select",
-          options: ORDER_STATUSES.map((status) => ({
-            id: status,
-            title: ORDER_STATUS_LABELS[status],
-          })),
-        },
         { id: "[contract][Amount]", title: "مبلغ", type: "number" },
         {
           id: "[contract][external_id]",

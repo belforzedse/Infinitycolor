@@ -1,5 +1,5 @@
 import { faNum } from "./faNum";
-import { translateOrderStatus } from "./statusTranslations";
+import { translateOrderStatus, translatePaymentStatus } from "./statusTranslations";
 import { translatePluginRoleLabel } from "@/constants/roleLabels";
 import { formatFaDateTime, formatFaRelativeDateTime } from "./formatFaRelativeDateTime";
 
@@ -130,9 +130,15 @@ export const translateFieldLabel = (key: string): string => {
  * Render a single before/after value for display. Status values are translated, amount fields are
  * formatted with Persian digits, null/empty becomes «—», objects become a compact string.
  */
+/** Hard cap so a stray object/large blob in a change value can never break the page layout. */
+const MAX_VALUE_LEN = 120;
+const clamp = (text: string): string =>
+  text.length > MAX_VALUE_LEN ? `${text.slice(0, MAX_VALUE_LEN)}…` : text;
+
 export const formatChangeValue = (field: string, value: unknown): string => {
   if (value === null || value === undefined || value === "") return "—";
-  if (field === "Status" || field === "PaymentStatus") return translateOrderStatus(String(value));
+  if (field === "Status") return translateOrderStatus(String(value));
+  if (field === "PaymentStatus") return translatePaymentStatus(String(value));
   if (typeof value === "boolean") return value ? "بله" : "خیر";
 
   const isNumeric =
@@ -141,14 +147,12 @@ export const formatChangeValue = (field: string, value: unknown): string => {
     return faNum(Number(value));
   }
 
+  // Never dump a raw object/JSON blob into the timeline — it overflows and breaks the page.
+  // Objects and arrays are summarised, and every value is length-capped as a final guard.
   if (typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
+    return Array.isArray(value) ? `${faNum(value.length)} مورد` : "(مقدار به‌روزرسانی شد)";
   }
-  return String(value);
+  return clamp(String(value));
 };
 
 /* --------------------------------------------------------------- summaries */

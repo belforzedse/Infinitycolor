@@ -22,6 +22,20 @@ const getStatusClassName = (status?: string) => {
   }
 };
 
+const getStatusBgClassName = (status?: string) => {
+  const tone = getOrderStatusMeta(status).tone;
+  switch (tone) {
+    case "success":
+      return "bg-green-600";
+    case "warning":
+      return "bg-amber-600";
+    case "danger":
+      return "bg-red-600";
+    default:
+      return "bg-blue-600";
+  }
+};
+
 export type Order = {
   id: string;
   attributes: {
@@ -140,13 +154,8 @@ export const columns: ColumnDef<Order>[] = [
       return (
         <div
           className={twMerge(
-            "flex h-[29px] w-[92px] items-center justify-center rounded-md",
-            status === "Paying" && "bg-blue-600",
-            status === "Started" && "bg-yellow-600",
-            status === "Shipment" && "bg-indigo-600",
-            status === "Done" && "bg-green-600",
-            status === "Returned" && "bg-orange-600",
-            status === "Cancelled" && "bg-red-600",
+            "flex h-[29px] min-w-[92px] items-center justify-center rounded-md px-2",
+            getStatusBgClassName(status),
           )}
         >
           <span className="text-xs text-white">{translateOrderStatus(status)}</span>

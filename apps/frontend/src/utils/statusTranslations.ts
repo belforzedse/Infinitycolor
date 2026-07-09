@@ -13,25 +13,29 @@ const normalizeKey = (value?: string | null) => {
   return value.toString().trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
 };
 
+// Order statuses collapse into the 4 storefront buckets everywhere they are shown.
+const IN_PROGRESS_LABEL = "در حال انجام";
+const COMPLETED_LABEL = "تکمیل شده";
+const CANCELLED_LABEL = "لغو شده یا ناموفق";
 const ORDER_STATUS_MAP: Record<string, StatusMeta> = {
-  paying: { label: "در حال پرداخت", tone: "warning" },
-  "paying offline": { label: "در حال پرداخت", tone: "warning" },
-  started: { label: "ثبت شده", tone: "info" },
-  pending: { label: "در انتظار", tone: "info" },
-  processing: { label: "در حال پردازش", tone: "info" },
-  "in progress": { label: "در حال پردازش", tone: "info" },
-  shipment: { label: "در حال ارسال", tone: "warning" },
-  shipped: { label: "ارسال شده", tone: "warning" },
-  delivery: { label: "در حال تحویل", tone: "warning" },
-  delivered: { label: "تحویل شده", tone: "success" },
-  done: { label: "تکمیل شده", tone: "success" },
-  completed: { label: "تکمیل شده", tone: "success" },
-  success: { label: "موفق", tone: "success" },
-  cancelled: { label: "لغو شده", tone: "danger" },
-  canceled: { label: "لغو شده", tone: "danger" },
-  returned: { label: "مرجوع شده", tone: "danger" },
-  failed: { label: "ناموفق", tone: "danger" },
-  refund: { label: "بازپرداخت شده", tone: "info" },
+  paying: { label: IN_PROGRESS_LABEL, tone: "info" },
+  "paying offline": { label: IN_PROGRESS_LABEL, tone: "info" },
+  started: { label: IN_PROGRESS_LABEL, tone: "info" },
+  pending: { label: IN_PROGRESS_LABEL, tone: "info" },
+  processing: { label: IN_PROGRESS_LABEL, tone: "info" },
+  "in progress": { label: IN_PROGRESS_LABEL, tone: "info" },
+  shipment: { label: IN_PROGRESS_LABEL, tone: "info" },
+  shipped: { label: IN_PROGRESS_LABEL, tone: "info" },
+  delivery: { label: IN_PROGRESS_LABEL, tone: "info" },
+  delivered: { label: COMPLETED_LABEL, tone: "success" },
+  done: { label: COMPLETED_LABEL, tone: "success" },
+  completed: { label: COMPLETED_LABEL, tone: "success" },
+  success: { label: COMPLETED_LABEL, tone: "success" },
+  cancelled: { label: CANCELLED_LABEL, tone: "danger" },
+  canceled: { label: CANCELLED_LABEL, tone: "danger" },
+  returned: { label: CANCELLED_LABEL, tone: "danger" },
+  failed: { label: CANCELLED_LABEL, tone: "danger" },
+  refund: { label: CANCELLED_LABEL, tone: "danger" },
 };
 
 const PAYMENT_STATUS_MAP: Record<string, StatusMeta> = {
@@ -115,15 +119,34 @@ const getMeta = (map: Record<string, StatusMeta>, value?: string | null): Status
   return map[normalized] ?? { label: value, tone: "info" };
 };
 
+const DELIVERED_KEYS = ["done", "delivered", "completed", "success", "تحویل داده شده"];
+const CANCELLED_KEYS = [
+  "cancelled",
+  "canceled",
+  "returned",
+  "failed",
+  "refund",
+  "refunded",
+  "لغو شده",
+];
+
+// Every raw backend status collapses into one of the 4 storefront buckets, so an order's
+// status reads the same everywhere (admin table, order edit, logs, order detail) instead of
+// the confusing granular values (شروع شده/ثبت شده/در حال ارسال…). Tone drives the badge colour.
+const ORDER_CATEGORY_META: Record<PersianOrderStatus, StatusMeta> = {
+  [PersianOrderStatus.INPROGRESS]: { label: PersianOrderStatus.INPROGRESS, tone: "info" },
+  [PersianOrderStatus.DELIVERED]: { label: PersianOrderStatus.DELIVERED, tone: "success" },
+  [PersianOrderStatus.CANCELLED]: { label: PersianOrderStatus.CANCELLED, tone: "danger" },
+  [PersianOrderStatus.MANUAL]: { label: PersianOrderStatus.MANUAL, tone: "info" },
+};
+
 export const getOrderStatusMeta = (status?: string | null): StatusMeta => {
-  return getMeta(ORDER_STATUS_MAP, status);
+  if (!status) return { label: "نامشخص", tone: "info" };
+  return ORDER_CATEGORY_META[getOrderStatusCategory(status)];
 };
 
 export const translateOrderStatus = (status?: string | null): string =>
   getOrderStatusMeta(status).label;
-
-const DELIVERED_KEYS = ["done", "delivered", "completed", "success", "تحویل داده شده"];
-const CANCELLED_KEYS = ["cancelled", "canceled", "returned", "failed", "لغو شده"];
 
 /** Maps raw backend order Status to the UI category enum (tabs / row display). */
 export const getOrderStatusCategory = (status?: string | null): PersianOrderStatus => {

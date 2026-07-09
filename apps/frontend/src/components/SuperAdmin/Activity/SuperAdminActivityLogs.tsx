@@ -137,7 +137,7 @@ export default function SuperAdminActivityLogs({
                       {changes.map((change) => (
                         <li
                           key={change.key}
-                          className="rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-600"
+                          className="min-w-0 break-words rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-600 [overflow-wrap:anywhere]"
                         >
                           <span className="font-medium text-slate-700">{change.label}:</span>{" "}
                           <span className="text-slate-400">از</span>{" "}
