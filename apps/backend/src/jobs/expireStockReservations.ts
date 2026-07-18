@@ -9,7 +9,6 @@ import {
 const MAX_CONSECUTIVE_FAILURES = 5;
 let consecutiveFailures = 0;
 const JOB_NAME = "expireStockReservations";
-const DEFAULT_LOCK_TTL_MS = 5 * 60 * 1000;
 
 const incrementMetric = (
   strapi: Strapi,
@@ -37,7 +36,6 @@ type ExpireStockReservationsOptions = {
   batchSize?: number;
   now?: Date;
   graceSeconds?: number;
-  lockTtlMs?: number;
 };
 
 async function expireStockReservationsBatch(
@@ -189,12 +187,9 @@ export async function runExpireStockReservationsTick(
         60
     ) || 0
   );
-  const lockTtlMs = Math.max(30_000, options.lockTtlMs ?? DEFAULT_LOCK_TTL_MS);
-
   const result = await runBackgroundJob({
     strapi,
     jobName: JOB_NAME,
-    lockTtlMs,
     run: () =>
       expireStockReservationsBatch(strapi, {
         batchSize,

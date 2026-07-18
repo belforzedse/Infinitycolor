@@ -164,6 +164,17 @@ const FIXTURE = {
       roleName: "Customer",
       externalId: "e2e-storefront:user:customer",
     },
+    // A second, unrelated Customer used to assert cross-user ownership scoping
+    // (BOLA regression coverage) on address / wallet-transaction endpoints.
+    customerB: {
+      phone: envOrDefault("E2E_CUSTOMER_B_PHONE", "+989000000109"),
+      password: envOrDefault("E2E_CUSTOMER_B_PASSWORD", "E2eCustomerB!123"),
+      email: "e2e.customerb@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "CustomerB",
+      roleName: "Customer",
+      externalId: "e2e-storefront:user:customer-b",
+    },
     admin: {
       phone: envOrDefault("E2E_ADMIN_PHONE", "+989000000201"),
       password: envOrDefault("E2E_ADMIN_PASSWORD", "E2eAdmin!123"),
@@ -418,7 +429,11 @@ async function deleteBySource(client, table) {
 
 async function e2eUserIds(client) {
   if (!(await tableExists(client, "users"))) return [];
-  const fixturePhones = [FIXTURE.auth.customer.phone, FIXTURE.auth.admin.phone];
+  const fixturePhones = [
+    FIXTURE.auth.customer.phone,
+    FIXTURE.auth.customerB.phone,
+    FIXTURE.auth.admin.phone,
+  ];
   const result = await client.query(
     `SELECT id FROM users
      WHERE external_source = $1
@@ -514,6 +529,20 @@ async function teardownUserData(client, userIds) {
     "user_id",
     userIds,
   );
+  const walletTransactionIds = await idsFromLink(
+    client,
+    "local_user_wallet_transactions_user_wallet_links",
+    "local_user_wallet_transaction_id",
+    "local_user_wallet_id",
+    walletIds,
+  );
+  await deleteWhereIn(
+    client,
+    "local_user_wallet_transactions_user_wallet_links",
+    "local_user_wallet_transaction_id",
+    walletTransactionIds,
+  );
+  await deleteWhereIn(client, "local_user_wallet_transactions", "id", walletTransactionIds);
   await deleteWhereIn(client, "local_user_infos_user_links", "user_id", userIds);
   await deleteWhereIn(client, "local_user_infos", "id", infoIds);
   await deleteWhereIn(client, "local_user_wallets_user_links", "user_id", userIds);
@@ -746,6 +775,7 @@ async function seedUser(client, userDef, now) {
 
 async function seedUsers(client, now) {
   const customer = await seedUser(client, FIXTURE.auth.customer, now);
+  const customerB = await seedUser(client, FIXTURE.auth.customerB, now);
   const admin = await seedUser(client, FIXTURE.auth.admin, now);
 
   // Role-specific users power the permission/CRUD suites. They are optional so a
@@ -768,7 +798,38 @@ async function seedUsers(client, now) {
     optionalRoles[key] = await seedUser(client, userDef, now);
   }
 
-  return { customer, admin, ...optionalRoles };
+  return { customer, customerB, admin, ...optionalRoles };
+}
+
+async function walletIdForUser(client, userId) {
+  const result = await client.query(
+    `SELECT local_user_wallet_id AS id FROM local_user_wallets_user_links WHERE user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  const walletId = Number(result.rows[0]?.id);
+  if (!Number.isFinite(walletId)) {
+    throw new Error(`No wallet found for seeded user ${userId}`);
+  }
+  return walletId;
+}
+
+async function seedWalletTransaction(client, walletId, now) {
+  const transaction = await insertRow(client, "local_user_wallet_transactions", {
+    amount: "500000",
+    type: "Add",
+    date: now,
+    cause: "E2E fixture top-up",
+    reference_id: `${TAG}:wallet-transaction:${walletId}`,
+    note: "e2e",
+    description: "E2E seeded wallet transaction",
+    created_at: now,
+    updated_at: now,
+  });
+  await insertLink(client, "local_user_wallet_transactions_user_wallet_links", {
+    local_user_wallet_transaction_id: transaction.id,
+    local_user_wallet_id: walletId,
+  });
+  return { id: transaction.id };
 }
 
 async function firstShippingCityId(client) {
@@ -1019,6 +1080,13 @@ async function seed(client) {
   const users = await seedUsers(client, now);
   const customerCart = await seedCustomerCart(client, users.customer.id, variations[0].id, now);
   const customerAddress = await seedCustomerAddress(client, users.customer.id, now);
+
+  // Customer B owns her own address + wallet transaction, unrelated to the primary
+  // customer above, so permission specs can assert cross-user access is denied.
+  const customerBAddress = await seedCustomerAddress(client, users.customerB.id, now);
+  const customerBWalletId = await walletIdForUser(client, users.customerB.id);
+  const customerBTransaction = await seedWalletTransaction(client, customerBWalletId, now);
+
   const shippingIds = await seedShippingMethods(client, now);
 
   const paymentVariationIndex = FIXTURE.variations.findIndex(
@@ -1038,6 +1106,9 @@ async function seed(client) {
     customerUserId: users.customer.id,
     customerCartId: customerCart.id,
     customerAddressId: customerAddress.id,
+    customerBUserId: users.customerB.id,
+    customerBAddressId: customerBAddress.id,
+    customerBWalletTransactionId: customerBTransaction.id,
     shippingIds,
     adminUserId: users.admin.id,
     founderUserId: users.founder ? users.founder.id : null,

@@ -123,7 +123,7 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
       )}
       {transactionId && paymentGateway === "SnappPay" && (
         <div className="text-sm mt-1 text-gray-600">
-          <span className="ml-1 font-medium">ID تراکنش اسنپ‌پی:</span>
+          <span className="ml-1 font-medium">ایدی تراکنش اسنپ پی:</span>
           <span className="text-gray-800">{transactionId}</span>
         </div>
       )}

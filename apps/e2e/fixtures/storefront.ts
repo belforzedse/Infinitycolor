@@ -9,6 +9,10 @@ export const E2E_UPLOAD_FIXTURE_FILE = "Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp"
 
 export const E2E_DEFAULT_CUSTOMER_PHONE = "+989000000101";
 export const E2E_DEFAULT_CUSTOMER_PASSWORD = "E2eCustomer!123";
+// A second, unrelated Customer used to assert cross-user ownership scoping (BOLA
+// regression coverage) - see FIXTURE.auth.customerB in seed-e2e-storefront.js.
+export const E2E_DEFAULT_CUSTOMER_B_PHONE = "+989000000109";
+export const E2E_DEFAULT_CUSTOMER_B_PASSWORD = "E2eCustomerB!123";
 export const E2E_DEFAULT_ADMIN_PHONE = "+989000000201";
 export const E2E_DEFAULT_ADMIN_PASSWORD = "E2eAdmin!123";
 

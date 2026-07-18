@@ -4,10 +4,12 @@ import AdjustItemsPanel from "../AdjustItemsPanel";
 
 const previewAdjustItems = jest.fn();
 const adjustItems = jest.fn();
+const cancelOrder = jest.fn();
 
 jest.mock("@/services/super-admin/orders/adjustItems", () => ({
   previewAdjustItems: (...args: unknown[]) => previewAdjustItems(...args),
   adjustItems: (...args: unknown[]) => adjustItems(...args),
+  cancelOrder: (...args: unknown[]) => cancelOrder(...args),
   voidShippingBarcode: jest.fn(),
 }));
 

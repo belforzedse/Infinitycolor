@@ -4,6 +4,7 @@ import React, { useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useAtom } from "jotai";
+import { useSearchParams } from "next/navigation";
 import { orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
 import { trackMatomoEvent } from "@/lib/analytics/matomo";
@@ -13,15 +14,21 @@ export default function OrderSuccess() {
   const [orderId] = useAtom(orderIdAtom);
   const [orderNumber] = useAtom(orderNumberAtom);
   const [transactionId] = useAtom(transactionIdAtom);
+  const searchParams = useSearchParams();
+  const orderIdParam = searchParams.get("orderId");
+  const transactionIdParam = searchParams.get("transactionId");
+  const resolvedOrderId = orderId ?? (orderIdParam ? Number(orderIdParam) : null);
+  const resolvedOrderNumber = orderNumber ?? (orderIdParam || "");
+  const resolvedTransactionId = transactionId ?? transactionIdParam;
 
   useEffect(() => {
-    if (!orderId) return;
+    if (!resolvedOrderId) return;
     trackMatomoEvent({
       category: "checkout",
       action: "order_success_page_view",
-      onceKey: `order-success-page:${orderId}`,
+      onceKey: `order-success-page:${resolvedOrderId}`,
     });
-  }, [orderId]);
+  }, [resolvedOrderId]);
 
   return (
     <StorefrontContainer className="py-10">
@@ -44,23 +51,25 @@ export default function OrderSuccess() {
               از خرید شما متشکریم! سفارش شما با موفقیت ثبت شده و در حال پردازش است.
             </p>
             <p className="text-sm">
-              شماره سفارش: <span className="font-semibold">{orderNumber}</span>
+              شماره سفارش: <span className="font-semibold">{resolvedOrderNumber || "-"}</span>
             </p>
-            <p className="text-sm">
-              شناسه سفارش: <span className="font-semibold">{orderId}</span>
-            </p>
-            {transactionId && (
+            {resolvedOrderId && (
               <p className="text-sm">
-                ID تراکنش: <span className="font-semibold">{transactionId}</span>
+                شناسه سفارش: <span className="font-semibold">{resolvedOrderId}</span>
+              </p>
+            )}
+            {resolvedTransactionId && (
+              <p className="text-sm">
+                ایدی تراکنش اسنپ پی: <span className="font-semibold">{resolvedTransactionId}</span>
               </p>
             )}
 
-            {orderId && <PaymentStatus orderId={orderId} />}
+            {resolvedOrderId && <PaymentStatus orderId={resolvedOrderId} />}
           </div>
 
           <div className="flex w-full max-w-xs flex-col gap-4 sm:flex-row">
             <Link
-              href="/orders"
+              href={resolvedOrderId ? `/orders/${resolvedOrderId}` : "/orders"}
               className="rounded-lg bg-infinity-primary px-6 py-3 text-center text-white transition-colors hover:bg-infinity-primary"
             >
               پیگیری سفارش

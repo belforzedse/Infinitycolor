@@ -168,19 +168,31 @@ export interface ActivityChange {
  */
 export const summarizeChange = (field: string, change: ActivityChange): string => {
   const label = translateFieldLabel(field);
+  const hasFrom = change.from !== null && change.from !== undefined && change.from !== "";
   if (field === "Status") {
     return `وضعیت سفارش از «${formatChangeValue("Status", change.from)}» به «${formatChangeValue(
       "Status",
       change.to,
     )}» تغییر کرد`;
   }
+  if (field === "PaymentStatus") {
+    return `وضعیت پرداخت به «${formatChangeValue("PaymentStatus", change.to)}» تغییر کرد`;
+  }
+  if (field === "PaymentGateway") return "درگاه پرداخت تغییر کرد";
   if (field === "ShippingMethod") return "روش ارسال تغییر کرد";
-  if (field === "ShippingBarcode") return "بارکد ارسال تغییر کرد";
-  if (AMOUNT_FIELDS.has(field)) return "مبلغ سفارش اصلاح شد";
-  if (field === "Note" || field === "Description") return "اطلاعات سفارش به‌روزرسانی شد";
+  if (field === "ShippingBarcode") {
+    const toPresent = change.to !== null && change.to !== undefined && change.to !== "";
+    return toPresent ? "بارکد ارسال ثبت شد" : "بارکد ارسال حذف شد";
+  }
+  if (AMOUNT_FIELDS.has(field)) {
+    const toPresent = change.to !== null && change.to !== undefined && change.to !== "";
+    if (!toPresent) return `${label} حذف شد`;
+    return `${label} به ${formatChangeValue(field, change.to)} تومان تغییر کرد`;
+  }
+  if (field === "Note" || field === "Description")
+    return hasFrom ? "یادداشت/توضیحات سفارش ویرایش شد" : "یادداشت/توضیحات سفارش ثبت شد";
   if (field === "CustomerName" || field === "CustomerPhone" || field === "Address")
     return "اطلاعات مشتری به‌روزرسانی شد";
-  if (field === "PaymentStatus" || field === "PaymentGateway") return "اطلاعات پرداخت ویرایش شد";
   if (ITEM_COUNT_RE.test(field) || field === "ItemsRemoved") return "اقلام سفارش تغییر کرد";
   return `${label} تغییر کرد`;
 };

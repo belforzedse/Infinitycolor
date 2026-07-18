@@ -116,7 +116,7 @@ function PaymentFailureContent() {
                 </p>
                 {transactionId && (
                   <p className="text-gray-700">
-                    <span className="font-medium">شماره تراکنش اسنپ‌پی:</span>
+                    <span className="font-medium">ایدی تراکنش اسنپ پی:</span>
                     <span className="mr-2 font-semibold text-orange-700 break-all">
                       {transactionId}
                     </span>

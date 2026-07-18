@@ -20,7 +20,6 @@ import {
 } from "../../../api/cart/services/lib/stock";
 import { consumeOrderReservation, releaseOrderReservation } from "../../../utils/stockReservations";
 import { runExpireStockReservationsTick } from "../../../jobs/expireStockReservations";
-import { ensureBackgroundJobLocksTable } from "../../../jobs/backgroundJobRunner";
 import { setupStrapi, teardownStrapi, getStrapi } from "../strapiInstance";
 import { makeFactories, type Factories } from "../factories";
 
@@ -31,7 +30,6 @@ const minutes = (n: number) => n * 60 * 1000;
 
 beforeAll(async () => {
   strapi = await setupStrapi();
-  await ensureBackgroundJobLocksTable(strapi);
 });
 
 afterAll(async () => {
@@ -80,6 +78,23 @@ describe("reserveStockAtomic", () => {
     const final = await f.getStock(stock.id);
     expect(Number(final.reservedCount)).toBeLessThanOrEqual(Number(final.Count));
     expect(Number(final.reservedCount)).toBe(4);
+  });
+
+  it("allows only one buyer to reserve the last unit", async () => {
+    const stock = await f.createStock({ count: 1, reserved: 0 });
+
+    const results = await Promise.all([
+      reserveStockAtomic(strapi, stock.id, 1),
+      reserveStockAtomic(strapi, stock.id, 1),
+    ]);
+
+    expect(results.filter((result) => result.success)).toHaveLength(1);
+    expect(results.filter((result) => !result.success)).toHaveLength(1);
+    expect(results.find((result) => !result.success)?.error).toMatch(/insufficient/i);
+
+    const final = await f.getStock(stock.id);
+    expect(Number(final.Count)).toBe(1);
+    expect(Number(final.reservedCount)).toBe(1);
   });
 });
 

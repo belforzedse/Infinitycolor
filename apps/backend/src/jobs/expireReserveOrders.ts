@@ -7,12 +7,10 @@ import {
 const MAX_CONSECUTIVE_FAILURES = 5;
 let consecutiveFailures = 0;
 const JOB_NAME = "expireReserveOrders";
-const DEFAULT_LOCK_TTL_MS = 10 * 60 * 1000;
 
 type ExpireReserveOrdersOptions = {
   batchSize?: number;
   now?: Date;
-  lockTtlMs?: number;
 };
 
 async function expireReserveOrdersBatch(
@@ -87,12 +85,9 @@ export async function runExpireReserveOrdersTick(
     1,
     Number(options.batchSize ?? process.env.RESERVE_ORDER_EXPIRY_BATCH_SIZE ?? 100) || 100
   );
-  const lockTtlMs = Math.max(30_000, options.lockTtlMs ?? DEFAULT_LOCK_TTL_MS);
-
   const result = await runBackgroundJob({
     strapi,
     jobName: JOB_NAME,
-    lockTtlMs,
     run: () =>
       expireReserveOrdersBatch(strapi, {
         batchSize,

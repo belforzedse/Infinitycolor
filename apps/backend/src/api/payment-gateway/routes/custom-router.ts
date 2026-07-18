@@ -2,6 +2,17 @@
  * Custom router for payment gateway APIs
  */
 
+import { ROLE_NAMES } from "../../../utils/roles";
+
+const superadminOnlyPolicy = [
+  {
+    name: "global::role-based",
+    config: {
+      roles: [ROLE_NAMES.SUPERADMIN],
+    },
+  },
+];
+
 export default {
   routes: [
     {
@@ -17,8 +28,8 @@ export default {
       path: "/payment-gateway/test-mellat",
       handler: "payment-gateway.testMellat",
       config: {
-        auth: false,
-        policies: [],
+        auth: { scope: [] },
+        policies: superadminOnlyPolicy,
         middlewares: [],
       },
     },
@@ -27,8 +38,8 @@ export default {
       path: "/payment-gateway/test-mellat-v2",
       handler: "payment-gateway.testMellatV2",
       config: {
-        auth: false,
-        policies: [],
+        auth: { scope: [] },
+        policies: superadminOnlyPolicy,
         middlewares: [],
       },
     },
@@ -37,8 +48,8 @@ export default {
       path: "/payment-gateway/test-mellat-v3",
       handler: "payment-gateway.testMellatV3",
       config: {
-        auth: false,
-        policies: [],
+        auth: { scope: [] },
+        policies: superadminOnlyPolicy,
         middlewares: [],
       },
     },
@@ -47,8 +58,8 @@ export default {
       path: "/payment-gateway/test-snappay",
       handler: "payment-gateway.testSnappPay",
       config: {
-        auth: false,
-        policies: [],
+        auth: { scope: [] },
+        policies: superadminOnlyPolicy,
         middlewares: [],
       },
     },

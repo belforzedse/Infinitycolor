@@ -60,6 +60,7 @@ type SeedSummary = {
   productSlug?: string;
   homepageNewestProductIds?: number[];
   customerUserId?: number;
+  customerBUserId?: number;
   adminUserId?: number;
   founderUserId?: number;
   storeManagerUserId?: number;
@@ -68,6 +69,7 @@ type SeedSummary = {
 
 const SEED_SUMMARY_USER_KEY: Record<E2EAuthRole, keyof SeedSummary> = {
   customer: "customerUserId",
+  "customer-b": "customerBUserId",
   admin: "adminUserId",
   founder: "founderUserId",
   "store-manager": "storeManagerUserId",

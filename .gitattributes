@@ -1,0 +1,29 @@
+* text=auto eol=lf
+
+# Windows command scripts require CRLF when executed by cmd.exe.
+*.bat text eol=crlf
+
+# Keep binary assets byte-for-byte unchanged during normalization.
+*.7z binary
+*.avi binary
+*.eot binary
+*.gif binary
+*.gz binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.mov binary
+*.mp3 binary
+*.mp4 binary
+*.otf binary
+*.pdf binary
+*.png binary
+*.pyc binary
+*.tar binary
+*.ttf binary
+*.wav binary
+*.webm binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.zip binary

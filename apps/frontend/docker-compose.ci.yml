@@ -1,4 +1,4 @@
-# CI/GitLab override for main compose: use registry.cyandm.org instead of ghcr.io.
+# CI/GitLab override for main compose: force app services to use the GitLab registry.
 # Used by .gitlab-ci.yml deploy. REGISTRY_IMAGE_BASE is set on the server (e.g. registry.cyandm.org/bel4/infinity).
 # Usage: docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.scale.yml -f docker-compose.scale.ci.yml --env-file ... up -d
 

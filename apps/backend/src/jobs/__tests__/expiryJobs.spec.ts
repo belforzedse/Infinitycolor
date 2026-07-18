@@ -190,19 +190,23 @@ describe("expiry jobs", () => {
     await first;
   });
 
-  it("skips work when another instance owns the distributed lock", async () => {
+  it("does not use the legacy DB lock for stock-expiry runs", async () => {
     process.env.DATABASE_CLIENT = "postgres";
     const { strapi } = createMockStrapi();
-    strapi.db.connection.raw.mockResolvedValueOnce({ rows: [] });
+    strapi.entityService.findMany.mockResolvedValue([]);
 
     const result = await runExpireStockReservationsTick(strapi, {
       now: new Date("2026-05-30T12:00:00.000Z"),
       graceSeconds: 0,
     });
 
-    expect(result.status).toBe("skipped");
-    expect(result.status === "skipped" ? result.skippedReason : undefined).toBe("distributed_lock");
-    expect(strapi.entityService.findMany).not.toHaveBeenCalled();
+    expect(result.status).toBe("completed");
+    const rawArgs = strapi.db.connection.raw.mock.calls.flat();
+    expect(
+      rawArgs.some(
+        (argument) => typeof argument === "string" && argument.includes("background_job_locks")
+      )
+    ).toBe(false);
   });
 
   it("releases the in-process guard after DB errors", async () => {

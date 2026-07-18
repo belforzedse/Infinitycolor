@@ -2,6 +2,7 @@
 
 import React, { useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useAtom } from "jotai";
 import { orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
@@ -12,15 +13,21 @@ export default function OrderFailure() {
   const [orderId] = useAtom(orderIdAtom);
   const [orderNumber] = useAtom(orderNumberAtom);
   const [transactionId] = useAtom(transactionIdAtom);
+  const searchParams = useSearchParams();
+  const orderIdParam = searchParams.get("orderId");
+  const transactionIdParam = searchParams.get("transactionId");
+  const resolvedOrderId = orderId ?? (orderIdParam ? Number(orderIdParam) : null);
+  const resolvedOrderNumber = orderNumber ?? (orderIdParam || "");
+  const resolvedTransactionId = transactionId ?? transactionIdParam;
 
   useEffect(() => {
-    if (!orderId) return;
+    if (!resolvedOrderId) return;
     trackMatomoEvent({
       category: "checkout",
       action: "order_failure_page_view",
-      onceKey: `order-failure-page:${orderId}`,
+      onceKey: `order-failure-page:${resolvedOrderId}`,
     });
-  }, [orderId]);
+  }, [resolvedOrderId]);
 
   return (
     <StorefrontContainer className="py-10">
@@ -49,23 +56,23 @@ export default function OrderFailure() {
             <p className="mb-2">
               متاسفانه، پرداخت شما با مشکل مواجه شد و سفارش شما تکمیل نشده است.
             </p>
-            {orderNumber && (
+            {resolvedOrderNumber && (
               <p className="text-sm">
-                شماره سفارش: <span className="font-semibold">{orderNumber}</span>
+                شماره سفارش: <span className="font-semibold">{resolvedOrderNumber}</span>
               </p>
             )}
-            {orderId && (
+            {resolvedOrderId && (
               <p className="text-sm">
-                شناسه سفارش: <span className="font-semibold">{orderId}</span>
+                شناسه سفارش: <span className="font-semibold">{resolvedOrderId}</span>
               </p>
             )}
-            {transactionId && (
+            {resolvedTransactionId && (
               <p className="text-sm">
-                ID تراکنش: <span className="font-semibold">{transactionId}</span>
+                ایدی تراکنش اسنپ پی: <span className="font-semibold">{resolvedTransactionId}</span>
               </p>
             )}
 
-            {orderId && <PaymentStatus orderId={orderId} />}
+            {resolvedOrderId && <PaymentStatus orderId={resolvedOrderId} />}
           </div>
 
           <div className="flex w-full max-w-xs flex-col gap-4 sm:flex-row">
