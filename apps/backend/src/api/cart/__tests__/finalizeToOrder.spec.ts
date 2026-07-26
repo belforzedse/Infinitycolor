@@ -8,7 +8,7 @@ describe("finalizeToOrder handler - inline billing address", () => {
     const handler = finalizeToOrderHandler(strapi as any);
 
     const ctx = createCtx({
-      request: { body: { shipping: 1, shippingCost: 0 } },
+      request: { body: { shipping: 1, shippingCost: 0, gateway: "snappay" } },
       state: { user: { id: 1 } },
     });
 
@@ -48,6 +48,7 @@ describe("finalizeToOrder handler - inline billing address", () => {
             FullAddress: "Test address",
             save: false,
           },
+          gateway: "snappay",
         },
       },
       state: { user: { id: 1 } },
@@ -99,6 +100,7 @@ describe("finalizeToOrder handler - inline billing address", () => {
           shipping: 1,
           shippingCost: 999999,
           addressId: 5,
+          gateway: "snappay",
         },
       },
       state: { user: { id: 1 } },

@@ -12,6 +12,11 @@ import type { IntegrationDbConnection } from "./env";
 const FORBIDDEN_HOST_SUBSTRINGS = ["infinity-postgres", "infinity.rgbgroup", "rgbgroup.ir", "arvan"];
 const FORBIDDEN_DB_NAMES = ["prod", "production", "dev", "staging", "infinity_db", "infinity"];
 
+const isConfiguredTestcontainersDockerHost = (host: string): boolean =>
+  host === "docker" &&
+  String(process.env.DOCKER_HOST || "").trim().toLowerCase() === "tcp://docker:2375" &&
+  String(process.env.TESTCONTAINERS_HOST_OVERRIDE || "").trim().toLowerCase() === "docker";
+
 const looksLikeLoopbackHost = (host: string) => {
   const h = host.trim().toLowerCase();
   return (
@@ -20,6 +25,9 @@ const looksLikeLoopbackHost = (host: string) => {
     h === "::1" ||
     h === "0.0.0.0" ||
     h === "host.docker.internal" ||
+    // GitLab's DinD service is the Testcontainers daemon and mapped-container host.
+    // Accept the alias only when both Docker/Testcontainers variables prove that setup.
+    isConfiguredTestcontainersDockerHost(h) ||
     // Docker bridge / private container IPs are acceptable for a disposable container.
     /^172\.(1[6-9]|2\d|3[01])\./.test(h) ||
     /^10\./.test(h) ||

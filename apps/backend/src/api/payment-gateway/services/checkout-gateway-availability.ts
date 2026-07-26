@@ -44,6 +44,24 @@ const isZarinPalConfigured = (): boolean =>
   isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) ||
   isLocalUrl(resolveZarinPalCallbackUrl());
 
+const hasNonEmptyEnv = (...keys: string[]): boolean =>
+  keys.every((key) => Boolean(String(process.env[key] || "").trim()));
+
+const isGatewayConfigured = (code: CheckoutGatewayCode): boolean => {
+  switch (code) {
+    case "samankish":
+      return hasNonEmptyEnv("SAMAN_TERMINAL_ID", "SAMAN_USERNAME", "SAMAN_PASSWORD");
+    case "mellat":
+      return hasNonEmptyEnv("MELLAT_TERMINAL_ID", "MELLAT_USERNAME", "MELLAT_PASSWORD");
+    case "snappay":
+      return hasNonEmptyEnv("SNAPPAY_CLIENT_SECRET", "SNAPPAY_PASSWORD");
+    case "zarinpal":
+      return isZarinPalConfigured();
+    case "wallet":
+      return true;
+  }
+};
+
 const SUPPORTED_CODES = new Set<CheckoutGatewayCode>(
   SUPPORTED_CHECKOUT_GATEWAYS.map((gateway) => gateway.code),
 );
@@ -89,10 +107,7 @@ const resolveGatewayAvailabilityMap = async (
       if (!mappedCode || !SUPPORTED_CODES.has(mappedCode)) continue;
       if (row?.IsActive !== true) continue;
 
-      availability.set(
-        mappedCode,
-        mappedCode === "zarinpal" ? isZarinPalConfigured() : true,
-      );
+      availability.set(mappedCode, isGatewayConfigured(mappedCode));
     }
 
     return availability;

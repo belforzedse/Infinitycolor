@@ -26,6 +26,7 @@ module.exports = {
       tsconfig: {
         esModuleInterop: true,
         allowSyntheticDefaultImports: true,
+        isolatedModules: true,
         types: ['jest', 'node'],
       },
     }],

@@ -171,7 +171,20 @@ const mockedEnsurePaymentGateway = ensurePaymentGateway as jest.MockedFunction<
 >;
 
 describe("finalizeToOrderHandler", () => {
+  const originalEnv = process.env;
+
   beforeEach(() => {
+    process.env = {
+      ...originalEnv,
+      MELLAT_TERMINAL_ID: "test-terminal",
+      MELLAT_USERNAME: "test-user",
+      MELLAT_PASSWORD: "test-password",
+      SAMAN_TERMINAL_ID: "test-terminal",
+      SAMAN_USERNAME: "test-user",
+      SAMAN_PASSWORD: "test-password",
+      SNAPPAY_CLIENT_SECRET: "test-secret",
+      SNAPPAY_PASSWORD: "test-password",
+    };
     jest.clearAllMocks();
     mockedClaimPaymentAttempt.mockResolvedValue(true);
     mockedFindPaymentAttempt.mockResolvedValue(null);
@@ -183,6 +196,10 @@ describe("finalizeToOrderHandler", () => {
     });
     mockedCancelOrderAndRelease.mockResolvedValue(undefined);
     mockedEnsurePaymentGateway.mockResolvedValue(undefined as any);
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   it("rejects the request when required shipping data is missing", async () => {

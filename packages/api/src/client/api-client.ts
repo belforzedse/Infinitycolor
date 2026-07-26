@@ -183,15 +183,22 @@ export class ApiClient {
       productData && typeof productData === "object" && "errorCode" in productData
         ? String((productData as { errorCode?: unknown }).errorCode || "") || undefined
         : undefined;
-    return {
+    const error: ApiError = {
       message: data.error?.message || data.message || this.errorMessages.DEFAULT,
       status,
       errors: data.errors,
-      error: data.error || data,
-      details,
-      data: productData,
-      errorCode,
     };
+
+    // Keep the established error shape for ordinary auth/network failures.
+    // Recovery-only fields are added only when the backend actually supplied
+    // them, so callers doing exact comparisons do not receive meaningless
+    // `undefined` properties or an empty raw error object.
+    if (status === 400) error.error = data.error || data;
+    if (details !== undefined) error.details = details;
+    if (productData !== undefined) error.data = productData;
+    if (errorCode !== undefined) error.errorCode = errorCode;
+
+    return error;
   }
 
   private async parseResponseData(response: Response): Promise<unknown> {
