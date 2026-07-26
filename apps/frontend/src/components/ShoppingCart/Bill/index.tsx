@@ -95,6 +95,18 @@ const buildDiscountPreviewKey = ({
   cartSignature: string;
 }) => `${String(code || "").trim()}:${shippingId || "none"}:${addressContextKey}:${cartSignature}`;
 
+const getOrCreateCheckoutAttemptId = (quoteHash: string) => {
+  const existingAttempt = window.localStorage.getItem("pendingCheckoutAttemptId");
+  const existingQuote = window.localStorage.getItem("pendingCheckoutQuoteHash");
+  if (existingAttempt && existingQuote === quoteHash) return existingAttempt;
+
+  const attemptId = globalThis.crypto?.randomUUID?.() ||
+    `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  window.localStorage.setItem("pendingCheckoutAttemptId", attemptId);
+  window.localStorage.setItem("pendingCheckoutQuoteHash", quoteHash);
+  return attemptId;
+};
+
 function ShoppingCartBillForm({}: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +217,10 @@ function ShoppingCartBillForm({}: Props) {
   const [discountPreviewLoading, setDiscountPreviewLoading] = useState(false);
   const [walletBalanceIrr, setWalletBalanceIrr] = useState<number>(0);
   const [reserveShipping, setReserveShipping] = useState(false);
+  const [reviewedServerQuote, setReviewedServerQuote] = useState<{
+    quoteHash: string;
+    total: number;
+  } | null>(null);
   const [activeReserve, setActiveReserve] = useState<{
     reserveGroupId: string;
     reserveExpiresAt: string;
@@ -239,6 +255,10 @@ function ShoppingCartBillForm({}: Props) {
       }),
     [addressContextKey, cartSignature, discountCode, shippingId],
   );
+
+  useEffect(() => {
+    setReviewedServerQuote(null);
+  }, [cartSignature, discountPreviewKey, gateway, mergeChoice]);
 
   // Persist/restore discount code
   useEffect(() => {
@@ -609,7 +629,35 @@ function ShoppingCartBillForm({}: Props) {
             reserveShipping: reserveShipping || undefined,
           };
 
-      const cartResponse = await CartService.finalizeCart(finalizeData as any);
+      let checkoutAttemptId: string | undefined;
+      let cartResponse;
+      if (gateway === "snappay") {
+        // Preserve the established SnappPay request contract exactly.
+        cartResponse = await CartService.finalizeCart(finalizeData as any);
+      } else {
+        const quote = await CartService.getCheckoutQuote(finalizeData as any);
+        const quoteTotal = Number(quote.financialSummary?.total || 0);
+        const shopperVisibleTotal = isMergeMode
+          ? Math.max(0, Math.round(totalPrice - discountToman))
+          : totalToman;
+        const quoteWasReviewed = reviewedServerQuote?.quoteHash === quote.quoteHash &&
+          reviewedServerQuote.total === quoteTotal;
+
+        if (quoteTotal !== shopperVisibleTotal && !quoteWasReviewed) {
+          setReviewedServerQuote({ quoteHash: quote.quoteHash, total: quoteTotal });
+          setError(
+            `مبلغ نهایی توسط فروشگاه به ${quoteTotal.toLocaleString("fa-IR")} تومان به‌روزرسانی شد. لطفاً مبلغ را بررسی و دوباره ثبت سفارش را انتخاب کنید.`,
+          );
+          return;
+        }
+
+        checkoutAttemptId = getOrCreateCheckoutAttemptId(quote.quoteHash);
+        cartResponse = await CartService.finalizeCart({
+          ...finalizeData,
+          attemptId: checkoutAttemptId,
+          quoteHash: quote.quoteHash,
+        } as any);
+      }
 
       if (!cartResponse.success) {
         console.error("❌ Cart finalization failed:", cartResponse);
@@ -625,6 +673,15 @@ function ShoppingCartBillForm({}: Props) {
         if (errorCode) {
           trackCheckoutError(String(errorCode));
           switch (errorCode) {
+            case "PAYMENT_IN_PROGRESS":
+              displayError = "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
+              break;
+            case "PAYMENT_INITIATION_FAILED":
+            case "WALLET_DEBIT_FAILED":
+              displayError = "شروع پرداخت کامل نشد. می‌توانید دوباره تلاش کنید.";
+              localStorage.removeItem("pendingCheckoutAttemptId");
+              localStorage.removeItem("pendingCheckoutQuoteHash");
+              break;
             case "CART_EMPTY":
               displayError = "سبد خرید شما خالی است";
               break;
@@ -706,6 +763,12 @@ function ShoppingCartBillForm({}: Props) {
         toast.success("در حال انتقال به درگاه پرداخت...");
         localStorage.setItem("pendingOrderId", cartResponse.orderId.toString());
         localStorage.setItem("pendingRefId", cartResponse.refId || "");
+        if (checkoutAttemptId) {
+          localStorage.setItem(
+            "pendingPaymentAttemptId",
+            cartResponse.attemptId || checkoutAttemptId,
+          );
+        }
 
         // Handle different gateway redirect methods
         if (gateway === "mellat" && cartResponse.refId) {
@@ -733,6 +796,8 @@ function ShoppingCartBillForm({}: Props) {
           });
           // Wallet flow returns no redirect; just move to success
           await clearCartSafely();
+          localStorage.removeItem("pendingCheckoutAttemptId");
+          localStorage.removeItem("pendingCheckoutQuoteHash");
           setSubmitOrderStep(SubmitOrderStep.Success);
           router.push("/orders/success");
         }
@@ -744,6 +809,10 @@ function ShoppingCartBillForm({}: Props) {
           value: totalPrice,
         });
         await clearCartSafely();
+        if (gateway !== "snappay") {
+          localStorage.removeItem("pendingCheckoutAttemptId");
+          localStorage.removeItem("pendingCheckoutQuoteHash");
+        }
         setSubmitOrderStep(SubmitOrderStep.Success);
         router.push("/orders/success");
       }
@@ -754,15 +823,46 @@ function ShoppingCartBillForm({}: Props) {
       // Extract error information from the error object
       let displayError = "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.";
 
-      // Check if error response has structured data
-      if (err.response?.data) {
-        const responseData = err.response.data;
-        const errorCode = responseData.errorCode;
-        const errorMessage = responseData.message;
+      // The shared fetch client exposes Strapi product details on `data`;
+      // retain the Axios fallback for older callers during migration.
+      const responseData =
+        err?.data || err?.details?.data || err?.response?.data || null;
+      if (responseData) {
+        const errorCode = err?.errorCode || responseData.errorCode;
+        const errorMessage = responseData.message || err?.message;
 
         if (errorCode) {
           trackCheckoutError(String(errorCode));
           switch (errorCode) {
+            case "CHECKOUT_QUOTE_CHANGED": {
+              const nextTotal = Number(responseData.quote?.financialSummary?.total || 0);
+              if (nextTotal > 0 && responseData.quote?.quoteHash) {
+                setReviewedServerQuote({
+                  quoteHash: String(responseData.quote.quoteHash),
+                  total: nextTotal,
+                });
+              }
+              displayError = nextTotal > 0
+                ? `مبلغ نهایی به ${nextTotal.toLocaleString("fa-IR")} تومان تغییر کرده است. لطفاً دوباره تلاش کنید.`
+                : "قیمت یا موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.";
+              window.localStorage.removeItem("pendingCheckoutAttemptId");
+              window.localStorage.removeItem("pendingCheckoutQuoteHash");
+              break;
+            }
+            case "CHECKOUT_ATTEMPT_CONFLICT":
+              displayError = "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.";
+              window.localStorage.removeItem("pendingCheckoutAttemptId");
+              window.localStorage.removeItem("pendingCheckoutQuoteHash");
+              break;
+            case "PAYMENT_IN_PROGRESS":
+              displayError = "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
+              break;
+            case "PAYMENT_INITIATION_FAILED":
+            case "WALLET_DEBIT_FAILED":
+              displayError = "شروع پرداخت کامل نشد. می‌توانید دوباره تلاش کنید.";
+              window.localStorage.removeItem("pendingCheckoutAttemptId");
+              window.localStorage.removeItem("pendingCheckoutQuoteHash");
+              break;
             case "CART_EMPTY":
               displayError = "سبد خرید شما خالی است";
               break;

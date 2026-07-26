@@ -26,9 +26,14 @@ type PendingAction =
 // backend Status; the bucket labels match the storefront categories.
 const STATUS_ACTIONS: { status: OrderLifecycleStatus; label: string; bucket: PersianOrderStatus }[] =
   [
-    { status: "Started", label: "در حال انجام", bucket: PersianOrderStatus.INPROGRESS },
+    { status: "Shipment", label: "تحویل به ارسال", bucket: PersianOrderStatus.INPROGRESS },
     { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.DELIVERED },
   ];
+
+const LEGACY_SNAPPAY_STATUS_ACTIONS: typeof STATUS_ACTIONS = [
+  { status: "Started", label: "در حال انجام", bucket: PersianOrderStatus.INPROGRESS },
+  { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.DELIVERED },
+];
 
 export default function OrderStatusActions({ order, onSuccess }: Props) {
   const [pending, setPending] = useState<PendingAction>(null);
@@ -47,7 +52,7 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
     setLoading(true);
     try {
       if (pending.kind === "status") {
-        await changeOrderStatus(String(order.id), pending.status);
+        await changeOrderStatus(String(order.id), pending.status, isSnappPayOrder);
         toast.success(`وضعیت سفارش به «${pending.label}» تغییر کرد`);
       } else {
         await cancelOrder(order.id);
@@ -90,13 +95,18 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        {STATUS_ACTIONS.map((action) => {
-          const isCurrent = currentBucket === action.bucket;
+        {(isSnappPayOrder ? LEGACY_SNAPPAY_STATUS_ACTIONS : STATUS_ACTIONS).map((action) => {
+          const isCurrent = isSnappPayOrder
+            ? currentBucket === action.bucket
+            : order.orderStatus === action.status;
+          const isAllowed = isSnappPayOrder ||
+            (order.orderStatus === "Started" && action.status === "Shipment") ||
+            (order.orderStatus === "Shipment" && action.status === "Done");
           return (
             <button
               key={action.status}
               type="button"
-              disabled={loading || isCurrent}
+              disabled={loading || isCurrent || !isAllowed}
               onClick={() => setPending({ kind: "status", status: action.status, label: action.label })}
               className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               title={isCurrent ? "سفارش هم‌اکنون در این وضعیت است" : undefined}

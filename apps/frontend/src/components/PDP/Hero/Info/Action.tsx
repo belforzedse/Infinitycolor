@@ -56,6 +56,7 @@ interface PDPHeroInfoActionProps {
   size?: string;
   model?: string;
   variationId?: string;
+  productSlug?: string;
   hasStock?: boolean;
   currentVariation?: any; // Add current variation data
 }
@@ -90,6 +91,7 @@ export default function PDPHeroInfoAction({
   size,
   model,
   variationId,
+  productSlug,
   hasStock = true,
   currentVariation,
 }: PDPHeroInfoActionProps) {
@@ -114,6 +116,7 @@ export default function PDPHeroInfoAction({
     size,
     model,
     variationId,
+    productSlug,
   });
 
   // Get available stock count for current variation

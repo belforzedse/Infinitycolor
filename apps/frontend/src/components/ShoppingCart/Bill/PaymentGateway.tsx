@@ -202,6 +202,7 @@ function ShoppingCartBillPaymentGateway({
               onClick={() => !wallet.disabled && onChange(wallet.id)}
               data-testid="payment-gateway-wallet"
               data-disabled={wallet.disabled ? "true" : "false"}
+              data-selected={selected === wallet.id ? "true" : "false"}
               onMouseEnter={() => setWalletHovered(true)}
               onMouseLeave={() => setWalletHovered(false)}
               className={classNames(

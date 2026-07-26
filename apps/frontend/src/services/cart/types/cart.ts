@@ -1,6 +1,14 @@
 import type { ImageResponse, ProductCategory } from "./media";
+import type {
+  CheckoutGatewayCode as SharedCheckoutGatewayCode,
+  CheckoutQuoteRequest as SharedCheckoutQuoteRequest,
+  CheckoutQuoteResponse as SharedCheckoutQuoteResponse,
+  FinalizeCartRequest as SharedFinalizeCartRequest,
+  FinalizeCartResponse as SharedFinalizeCartResponse,
+  GuestCartMergeResponse as SharedGuestCartMergeResponse,
+} from "@repo/api/commerce";
 
-export type CheckoutGatewayCode = "samankish" | "snappay" | "wallet" | "mellat" | "zarinpal";
+export type CheckoutGatewayCode = SharedCheckoutGatewayCode;
 
 export const DEFAULT_CHECKOUT_GATEWAYS: CheckoutGatewayCode[] = [
   "samankish",
@@ -112,44 +120,11 @@ export interface UpdateItemRequest {
   count: number;
 }
 
-export interface FinalizeCartRequest {
-  shipping?: number;
-  description?: string;
-  note?: string;
-  callbackURL?: string;
-  addressId?: number;
-  addressPayload?: {
-    shipping_city: number;
-    PostalCode: string;
-    FullAddress: string;
-    Description?: string;
-    save?: boolean;
-  };
-  gateway?: CheckoutGatewayCode;
-  mobile?: string;
-  discountCode?: string;
-  reserveShipping?: boolean;
-  reserveGroupId?: string;
-}
-
-export interface FinalizeCartResponse {
-  success: boolean;
-  message: string;
-  orderId: number;
-  contractId?: number;
-  redirectUrl?: string;
-  refId?: string;
-  financialSummary?: {
-    subtotal: number;
-    discount: number;
-    tax: number;
-    shipping: number;
-    total: number;
-  };
-  requestId?: string;
-  reserveGroupId?: string;
-  reserveExpiresAt?: string;
-}
+export type FinalizeCartRequest = SharedFinalizeCartRequest;
+export type GuestCartMergeResponse = SharedGuestCartMergeResponse;
+export type CheckoutQuoteRequest = SharedCheckoutQuoteRequest;
+export type CheckoutQuoteResponse = SharedCheckoutQuoteResponse;
+export type FinalizeCartResponse = SharedFinalizeCartResponse;
 
 export interface ActiveReserveResponse {
   data: {

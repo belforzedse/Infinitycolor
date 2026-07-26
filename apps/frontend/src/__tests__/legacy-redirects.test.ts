@@ -16,6 +16,7 @@ const {
   LEGACY_REDIRECT_STATUS,
 } = require("../../middleware");
 const { getSecurityHeaderEntries } = require("../utils/securityHeaders");
+const { legacyRedirects } = require("../../redirects");
 
 const SECURITY_HEADER_EXPECTATIONS = [
   ["X-DNS-Prefetch-Control", "on"],
@@ -90,6 +91,33 @@ describe("legacy WooCommerce redirects", () => {
 
     expect(target?.pathname).toBe("/faq");
     expect(target?.search).toBe("");
+  });
+
+  it.each([
+    "/orders/payment-callback?ResNum=51&RefNum=abc",
+    "/orders/success?orderId=42",
+    "/orders/failure?error=failed",
+    "/payment/success?orderId=42",
+  ])(
+    "leaves the established payment result route unchanged: %s",
+    (path) => {
+      expect(legacyTarget(path)).toBeNull();
+    },
+  );
+
+  it("does not register framework redirects for the established payment result pages", () => {
+    const paymentResultSources = new Set([
+      "/orders/success",
+      "/orders/failure",
+      "/payment/success",
+      "/payment/failure",
+      "/payment/cancelled",
+      "/payment/issue",
+      "/orders/payment-callback",
+    ]);
+
+    expect(legacyRedirects.filter((entry: { source: string }) => paymentResultSources.has(entry.source)))
+      .toEqual([]);
   });
 
   it("redirects nested blog categories to blog category filters", () => {

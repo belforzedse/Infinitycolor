@@ -152,7 +152,7 @@ describe("User Addresses Service", () => {
 
       const result = await updateUserAddress(1, validAddress);
 
-      expect(apiClient.put).toHaveBeenCalledWith("/local-user-addresses/1", validAddress, {
+      expect(apiClient.put).toHaveBeenCalledWith("/local-user-addresses/1", { data: validAddress }, {
         headers: {
           Authorization: `Bearer ${mockToken}`,
         },

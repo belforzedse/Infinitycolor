@@ -68,6 +68,12 @@ const parseGatewayError = (error: any) => ({
   data: sanitizeGatewayResponse(error?.response?.data),
 });
 
+const isAmbiguousVerificationFailure = (error: any): boolean => {
+  const status = Number(error?.response?.status);
+  if (!error?.response) return true;
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+};
+
 export default ({ strapi }: { strapi: Strapi }) => ({
   getConfig(): ZarinPalConfig {
     const baseUrl = (process.env.URL || "").trim().replace(/\/$/, "");
@@ -256,9 +262,11 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       };
     } catch (error: any) {
       const details = parseGatewayError(error);
+      const ambiguous = isAmbiguousVerificationFailure(error);
       strapi.log.error(`[${requestId}] ZarinPal verification error`, details);
       return {
         success: false,
+        ambiguous,
         code: Number(error?.response?.data?.data?.code ?? -999),
         requestId,
         amount,

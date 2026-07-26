@@ -37,7 +37,7 @@ describe("translateFieldLabel", () => {
 
 describe("formatChangeValue", () => {
   it("translates status values", () => {
-    expect(formatChangeValue("Status", "delivered")).toBe("تحویل شده");
+    expect(formatChangeValue("Status", "delivered")).toBe("تحویل داده شده");
   });
 
   it("formats amount fields with Persian digits", () => {
@@ -51,20 +51,20 @@ describe("formatChangeValue", () => {
 
   it("handles booleans and objects without crashing", () => {
     expect(formatChangeValue("Flag", true)).toBe("بله");
-    expect(formatChangeValue("Obj", { a: 1 })).toBe('{"a":1}');
+    expect(formatChangeValue("Obj", { a: 1 })).toBe("(مقدار به‌روزرسانی شد)");
   });
 });
 
 describe("summarizeChange", () => {
   it("produces a meaningful status sentence", () => {
     expect(summarizeChange("Status", { from: "paying", to: "started" })).toBe(
-      "وضعیت سفارش از «در حال پرداخت» به «ثبت شده» تغییر کرد",
+      "وضعیت سفارش از «در انتظار پرداخت» به «در حال پردازش» تغییر کرد",
     );
   });
 
   it("produces dedicated messages for shipping / amount / customer fields", () => {
     expect(summarizeChange("ShippingMethod", {})).toBe("روش ارسال تغییر کرد");
-    expect(summarizeChange("ShippingCost", {})).toBe("مبلغ سفارش اصلاح شد");
+    expect(summarizeChange("ShippingCost", {})).toBe("هزینه ارسال حذف شد");
     expect(summarizeChange("CustomerPhone", {})).toBe("اطلاعات مشتری به‌روزرسانی شد");
   });
 
@@ -81,7 +81,7 @@ describe("summarizeActivity", () => {
   it("derives from a single change when no title/message", () => {
     expect(
       summarizeActivity({ Changes: { Status: { from: "paying", to: "started" } } }),
-    ).toBe("وضعیت سفارش از «در حال پرداخت» به «ثبت شده» تغییر کرد");
+    ).toBe("وضعیت سفارش از «در انتظار پرداخت» به «در حال پردازش» تغییر کرد");
   });
 
   it("derives from action + resource as the last resort", () => {

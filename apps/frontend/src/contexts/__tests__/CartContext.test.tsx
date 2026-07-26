@@ -70,6 +70,28 @@ function CartProbe() {
   );
 }
 
+function VariantCartProbe() {
+  const { cartItems, addToCart } = useCart();
+  const addVariant = (variationId: string) =>
+    addToCart({
+      ...cartItem,
+      id: `product-1-${variationId}`,
+      variationId,
+      color: variationId,
+    });
+
+  return (
+    <div>
+      <span data-testid="variant-cart-count">{cartItems.length}</span>
+      <span data-testid="variant-cart-lines">
+        {cartItems.map((item) => `${item.variationId}:${item.quantity}`).join("|")}
+      </span>
+      <button type="button" onClick={() => addVariant("variation-1")}>add first</button>
+      <button type="button" onClick={() => addVariant("variation-2")}>add second</button>
+    </div>
+  );
+}
+
 describe("CartProvider remove undo", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -104,5 +126,48 @@ describe("CartProvider remove undo", () => {
 
     expect(mockToastDismiss).toHaveBeenCalledWith("toast-id");
     await waitFor(() => expect(screen.getByTestId("cart-count")).toHaveTextContent("1"));
+  });
+});
+
+describe("CartProvider variant identity", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("keeps different variants of the same product as separate guest-cart lines", async () => {
+    render(
+      <CartProvider>
+        <VariantCartProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("variant-cart-count")).toHaveTextContent("0"));
+    fireEvent.click(screen.getByText("add first"));
+    fireEvent.click(screen.getByText("add second"));
+
+    await waitFor(() => expect(screen.getByTestId("variant-cart-count")).toHaveTextContent("2"));
+    expect(screen.getByTestId("variant-cart-lines")).toHaveTextContent(
+      "variation-1:1|variation-2:1",
+    );
+  });
+
+  it("increments only the matching variant", async () => {
+    render(
+      <CartProvider>
+        <VariantCartProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("variant-cart-count")).toHaveTextContent("0"));
+    fireEvent.click(screen.getByText("add first"));
+    fireEvent.click(screen.getByText("add second"));
+    fireEvent.click(screen.getByText("add first"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("variant-cart-lines")).toHaveTextContent(
+        "variation-1:2|variation-2:1",
+      );
+    });
   });
 });

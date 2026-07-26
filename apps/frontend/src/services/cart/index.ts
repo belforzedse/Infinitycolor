@@ -1,6 +1,6 @@
 import { getUserCart } from "./base";
-import { addItemToCart, updateCartItem, removeCartItem, finalizeCart } from "./mutations";
-import { checkCartStock, getAvailableGateways, getSnappEligible, getShippingPreview } from "./queries";
+import { addItemToCart, updateCartItem, removeCartItem, finalizeCart, mergeGuestCart } from "./mutations";
+import { checkCartStock, getAvailableGateways, getCheckoutQuote, getSnappEligible, getShippingPreview } from "./queries";
 import { applyDiscount } from "./discount";
 import type {
   CartResponse,
@@ -82,10 +82,12 @@ export type { FinalizeCartRequest, FinalizeCartResponse };
 export {
   getUserCart,
   addItemToCart,
+  mergeGuestCart,
   updateCartItem,
   removeCartItem,
   checkCartStock,
   getAvailableGateways,
+  getCheckoutQuote,
   finalizeCart,
   getSnappEligible,
   getShippingPreview,
@@ -96,10 +98,12 @@ export {
 const CartService = {
   getUserCart,
   addItemToCart,
+  mergeGuestCart,
   updateCartItem,
   removeCartItem,
   checkCartStock,
   getAvailableGateways,
+  getCheckoutQuote,
   finalizeCart,
   getSnappEligible,
   getShippingPreview,

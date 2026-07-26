@@ -252,6 +252,16 @@ describe("Product Service Helpers", () => {
 
       expect(hasStockForVariation(variation)).toBe(true);
     });
+
+    it("subtracts stock reserved by active checkout attempts", () => {
+      const product = createMockProduct();
+      const variation = product.attributes.product_variations.data[0];
+      variation.attributes.product_stock!.data.attributes.reservedCount = 9;
+
+      expect(getAvailableStockCount(variation)).toBe(1);
+      expect(hasStockForVariation(variation, 1)).toBe(true);
+      expect(hasStockForVariation(variation, 2)).toBe(false);
+    });
   });
 
   describe("getInitialPdpSelection", () => {

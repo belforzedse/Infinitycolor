@@ -1,6 +1,10 @@
 import { verifyPaymentHandler } from "../../order/controllers/helpers/payment";
 import { decrementStockAtomic } from "../../cart/services/lib/stock";
 import { consumeOrderReservation } from "../../../utils/stockReservations";
+import {
+  settleZarinPalPayment,
+  ZarinPalSettlementError,
+} from "../../order/controllers/helpers/zarinpalSettlement";
 
 jest.mock("../../cart/services/lib/stock", () => ({
   decrementStockAtomic: jest.fn().mockResolvedValue({ success: true }),
@@ -10,6 +14,27 @@ jest.mock("../../../utils/stockReservations", () => ({
   consumeOrderReservation: jest.fn().mockResolvedValue({ success: true }),
   releaseOrderReservation: jest.fn().mockResolvedValue({ success: true }),
 }));
+
+jest.mock("../../order/controllers/helpers/zarinpalSettlement", () => {
+  class MockZarinPalSettlementError extends Error {
+    constructor(
+      public readonly code: string,
+      message: string,
+    ) {
+      super(message);
+      this.name = "ZarinPalSettlementError";
+    }
+  }
+  return {
+    settleZarinPalPayment: jest.fn(),
+    ZarinPalSettlementError: MockZarinPalSettlementError,
+  };
+});
+
+const mockedSettleZarinPalPayment = settleZarinPalPayment as jest.MockedFunction<
+  typeof settleZarinPalPayment
+>;
+const originalFrontendBaseUrl = process.env.FRONTEND_BASE_URL;
 
 type StrapiMockHelpers = ReturnType<typeof createStrapiMock>;
 
@@ -83,6 +108,20 @@ const createStrapiMock = () => {
 describe("verifyPaymentHandler", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.FRONTEND_BASE_URL = "https://infinitycolor.co";
+    mockedSettleZarinPalPayment.mockResolvedValue({
+      success: true,
+      replayed: false,
+      finalReference: "ZP-REF-1",
+    });
+  });
+
+  afterAll(() => {
+    if (originalFrontendBaseUrl === undefined) {
+      delete process.env.FRONTEND_BASE_URL;
+    } else {
+      process.env.FRONTEND_BASE_URL = originalFrontendBaseUrl;
+    }
   });
 
   it("cancels the order and redirects when Mellat reports a failure", async () => {
@@ -395,7 +434,7 @@ describe("verifyPaymentHandler", () => {
     await verifyPaymentHandler(strapi as any, ctx);
 
     expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/success?orderId=701",
+      "https://infinitycolor.co/payment/result?resultHint=success&orderId=701",
     );
     expect(strapi.service).not.toHaveBeenCalledWith("api::payment-gateway.zarinpal");
   });
@@ -453,7 +492,7 @@ describe("verifyPaymentHandler", () => {
       },
     );
     expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/cancelled?orderId=702&error=NOK&reason=user-cancelled",
+      "https://infinitycolor.co/payment/result?resultHint=cancelled&orderId=702&error=NOK&reason=user-cancelled",
     );
   });
 
@@ -474,12 +513,12 @@ describe("verifyPaymentHandler", () => {
 
     expect(strapi.entityService.findMany).toHaveBeenCalledTimes(3);
     expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/failure?error=ZarinPal+transaction+not+found",
+      "https://infinitycolor.co/payment/result?resultHint=failure&error=ZarinPal+transaction+not+found",
     );
   });
 
   it("verifies a successful ZarinPal callback, finalizes records, and redirects", async () => {
-    const { strapi, registerService, getDbQuery } = createStrapiMock();
+    const { strapi, registerService } = createStrapiMock();
     const zarinpalService = {
       verifyPayment: jest.fn().mockResolvedValue({
         success: true,
@@ -534,32 +573,16 @@ describe("verifyPaymentHandler", () => {
       authority: "AUTH-OK",
       amountToman: 25_000,
     });
-    expect(decrementStockAtomic).toHaveBeenCalledWith(strapi, 305, 2);
-    expect(strapi.db.transaction).toHaveBeenCalledTimes(1);
-    expect(getDbQuery("api::order.order").update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 703 },
-        data: {
-          Status: "Started",
-          external_source: "ZarinPal",
-          external_id: "ZP-REF-1",
-        },
+    expect(mockedSettleZarinPalPayment).toHaveBeenCalledWith(strapi, {
+      orderId: 703,
+      contractId: 803,
+      contractTransactionId: 903,
+      authority: "AUTH-OK",
+      verification: expect.objectContaining({
+        success: true,
+        refId: "ZP-REF-1",
       }),
-    );
-    expect(getDbQuery("api::contract-transaction.contract-transaction").update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 903 },
-        data: expect.objectContaining({
-          Status: "Success",
-          TrackId: "AUTH-OK",
-          GatewayAuthority: "AUTH-OK",
-          GatewayRefId: "ZP-REF-1",
-          GatewayStatus: "VERIFIED",
-          external_id: "ZP-REF-1",
-          external_source: "ZarinPal",
-        }),
-      }),
-    );
+    });
     expect(strapi.entityService.create).toHaveBeenCalledWith(
       "api::order-log.order-log",
       expect.objectContaining({
@@ -575,7 +598,7 @@ describe("verifyPaymentHandler", () => {
       }),
     );
     expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/success?orderId=703&transactionId=ZP-REF-1",
+      "https://infinitycolor.co/payment/result?resultHint=success&orderId=703&transactionId=ZP-REF-1",
     );
   });
 
@@ -632,12 +655,12 @@ describe("verifyPaymentHandler", () => {
       }),
     );
     expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/failure?orderId=704&error=Authority+invalid",
+      "https://infinitycolor.co/payment/result?resultHint=failure&orderId=704&error=Authority+invalid",
     );
   });
 
   it("does not finalize a ZarinPal order when the reservation expired before settlement", async () => {
-    const { strapi, registerService, getDbQuery } = createStrapiMock();
+    const { strapi, registerService } = createStrapiMock();
     registerService("api::payment-gateway.zarinpal", {
       verifyPayment: jest.fn().mockResolvedValue({
         success: true,
@@ -661,12 +684,12 @@ describe("verifyPaymentHandler", () => {
       ReservationStatus: "Reserved",
       contract: { id: 805, Amount: 20_000 },
     });
-    // Reservation lapsed and was already released by the expiry job before the callback.
-    (consumeOrderReservation as jest.Mock).mockResolvedValueOnce({
-      success: false,
-      expired: true,
-      errors: [{ error: "Reservation expired" }],
-    });
+    mockedSettleZarinPalPayment.mockRejectedValueOnce(
+      new ZarinPalSettlementError(
+        "ZARINPAL_LOCAL_STATE_CONFLICT",
+        "Reservation expired",
+      ),
+    );
 
     const ctx = createCtx({
       request: { query: { Authority: "AUTH-EXP", Status: "OK" } },
@@ -674,15 +697,62 @@ describe("verifyPaymentHandler", () => {
 
     await verifyPaymentHandler(strapi as any, ctx);
 
-    // Critical: the order must NOT be transitioned to "Started" (the Started write goes
-    // through db.query(...).update inside the finalize transaction).
-    expect(getDbQuery("api::order.order").update).not.toHaveBeenCalled();
-    // The shopper is routed to the issue page, never /payment/success.
+    // The shopper is routed to the canonical issue state, never success.
     expect(ctx.redirect).toHaveBeenCalledWith(
-      expect.stringContaining("/payment/issue"),
+      expect.stringContaining("/payment/result?resultHint=issue"),
     );
     expect(ctx.redirect).toHaveBeenCalledWith(
-      expect.stringContaining("code=stock_decrement_failed"),
+      expect.stringContaining("code=zarinpal_local_state_conflict"),
+    );
+  });
+
+  it("keeps the order payable when ZarinPal verification is ambiguous", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    registerService("api::payment-gateway.zarinpal", {
+      verifyPayment: jest.fn().mockResolvedValue({
+        success: false,
+        ambiguous: true,
+        error: "socket timeout",
+        gatewayResponse: { status: 504 },
+      }),
+    });
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: 906,
+        Status: "Pending",
+        Amount: 30_000,
+        contract: { id: 806, Amount: 30_000, order: { id: 706 } },
+      },
+    ]);
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValueOnce({
+      id: 706,
+      Status: "Paying",
+      ReservationStatus: "Reserved",
+      contract: { id: 806, Amount: 30_000 },
+    });
+
+    const ctx = createCtx({
+      request: { query: { Authority: "AUTH-UNKNOWN", Status: "OK" } },
+    });
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(strapi.entityService.update).toHaveBeenCalledWith(
+      "api::contract-transaction.contract-transaction",
+      906,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          GatewayStatus: "VERIFICATION_AMBIGUOUS",
+        }),
+      }),
+    );
+    expect(strapi.entityService.update).not.toHaveBeenCalledWith(
+      "api::order.order",
+      706,
+      expect.objectContaining({ data: expect.objectContaining({ Status: "Cancelled" }) }),
+    );
+    expect(mockedSettleZarinPalPayment).not.toHaveBeenCalled();
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/result?resultHint=issue&orderId=706&code=zarinpal_verification_ambiguous",
     );
   });
 });

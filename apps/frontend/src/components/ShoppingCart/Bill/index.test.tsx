@@ -39,6 +39,7 @@ jest.mock("@/services", () => ({
     getSnappEligible: jest.fn().mockResolvedValue({ eligible: false }),
     applyDiscount: jest.fn(),
     checkCartStock: jest.fn().mockResolvedValue({ valid: true }),
+    getCheckoutQuote: jest.fn(),
     finalizeCart: jest.fn(),
   },
   OrderService: {
@@ -60,7 +61,20 @@ jest.mock("@/lib/analytics/matomo", () => ({
 
 jest.mock("./InformationForm", () => ({
   __esModule: true,
-  default: () => <div data-testid="checkout-information-form" />,
+  default: ({ setValue }: any) => (
+    <div data-testid="checkout-information-form">
+      <button
+        type="button"
+        data-testid="select-checkout-customer"
+        onClick={() => {
+          setValue("phoneNumber", "09123456789");
+          setValue("address", { id: 5, label: "Test address" });
+        }}
+      >
+        select customer
+      </button>
+    </div>
+  ),
 }));
 
 jest.mock("./DeliveryForm", () => ({
@@ -116,11 +130,23 @@ jest.mock("./DiscountCoupon", () => ({
 
 jest.mock("./PaymentGateway", () => ({
   __esModule: true,
-  default: ({ availableGateways }: any) => (
-    <div data-testid="checkout-payment-gateway">
+  default: ({ availableGateways, onChange, snappEligible }: any) => (
+    <div
+      data-testid="checkout-payment-gateway"
+      data-snapp-eligible={String(snappEligible)}
+    >
       <span data-testid="checkout-payment-gateway-count">
         {availableGateways?.length ?? 0}
       </span>
+      {availableGateways?.includes("snappay") && (
+        <button
+          type="button"
+          data-testid="select-snappay"
+          onClick={() => onChange("snappay")}
+        >
+          select SnappPay
+        </button>
+      )}
     </div>
   ),
 }));
@@ -315,5 +341,56 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(CartService.finalizeCart).not.toHaveBeenCalled();
     });
     expect(CartService.checkCartStock).not.toHaveBeenCalled();
+  });
+
+  it("submits SnappPay through the established payload without a quote or attempt", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: false,
+      message: "stop-after-request",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
+        "data-snapp-eligible",
+        "true",
+      );
+    });
+    fireEvent.click(screen.getByTestId("select-snappay"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+    });
+    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+    expect(CartService.finalizeCart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shipping: 7,
+        addressId: 5,
+        gateway: "snappay",
+        callbackURL: "/orders/payment-callback",
+        mobile: "09123456789",
+      }),
+    );
+    const submitted = (CartService.finalizeCart as jest.Mock).mock.calls[0][0];
+    expect(submitted).not.toHaveProperty("attemptId");
+    expect(submitted).not.toHaveProperty("quoteHash");
   });
 });

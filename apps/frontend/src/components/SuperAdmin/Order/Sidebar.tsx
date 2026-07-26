@@ -34,10 +34,6 @@ export default function SuperAdminOrderSidebar({
   const { id } = useParams();
   const { user, isLoading: isUserLoading, isStoreManager } = useCurrentUser();
   const canViewOrderLogs = !isUserLoading && !!user && !isStoreManager;
-  const [formData, setFormData] = useState({
-    message: "",
-    type: "sms",
-  });
   const [orderLogs, setOrderLogs] = useState<OrderLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [activeLogTab, setActiveLogTab] = useState<"events" | "audit">("events");
@@ -185,75 +181,6 @@ export default function SuperAdminOrderSidebar({
 
   return (
     <div className="sticky top-5 flex flex-col gap-3">
-      {/* Notification to User */}
-      <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-col">
-            <span className="text-foreground-primary text-lg">ارسال اعلان به مشتری</span>
-
-            <span className="text-sm text-neutral-400">
-              ارسال پیامک به شماره {orderData?.phoneNumber || "---"}
-            </span>
-          </div>
-
-          <div className="w-full overflow-hidden rounded-lg border border-neutral-200">
-            <select
-              className={`w-full border-l-[20px] border-transparent px-5 py-3 text-sm`}
-              value={formData.type}
-              onChange={(e) => {
-                setFormData({
-                  ...formData,
-                  type: e.target.value,
-                });
-              }}
-            >
-              <option value="sms">پیامک</option>
-              {/* <option value="email">ایمیل</option> */}
-            </select>
-          </div>
-
-          <textarea
-            rows={3}
-            placeholder="متن اعلان"
-            className={`w-full rounded-lg border border-neutral-200 px-5 py-2 text-sm`}
-            value={formData.message}
-            onChange={(e) => {
-              setFormData({
-                ...formData,
-                message: e.target.value,
-              });
-            }}
-          />
-        </div>
-
-        <div className="mt-3 flex justify-end">
-          <button
-            onClick={async () => {
-              if (!formData.message.trim()) {
-                toast.error("لطفا متن پیام را وارد کنید");
-                return;
-              }
-              if (!orderData?.phoneNumber) {
-                toast.error("شماره تماس مشتری موجود نیست");
-                return;
-              }
-              try {
-                // TODO: Implement actual SMS/notification API call
-                toast.success("پیام با موفقیت ارسال شد");
-                setFormData({ ...formData, message: "" });
-              } catch (error) {
-                toast.error("خطا در ارسال پیام");
-              }
-            }}
-            className="flex items-center gap-1 rounded-md bg-actions-primary px-2 py-1 transition-colors hover:brightness-110"
-          >
-            <span className="text-sm text-white">ارسال پیام</span>
-
-            <SendIcon />
-          </button>
-        </div>
-      </div>
-
       <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
         <div className="flex flex-col gap-2">
           <div className="flex flex-col">
@@ -365,7 +292,7 @@ export default function SuperAdminOrderSidebar({
       {canViewOrderLogs && (
         <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
           <div className="flex items-center justify-between">
-            <span className="text-foreground-primary text-lg">اعلانات سفارش</span>
+            <span className="text-foreground-primary text-lg">رویدادهای سفارش و پیامک</span>
           </div>
 
           {/* Tabs for Events and Audit Logs */}
@@ -405,7 +332,7 @@ export default function SuperAdminOrderSidebar({
               {logsLoading ? (
                 <div className="text-sm text-neutral-400">در حال بارگذاری...</div>
               ) : orderLogs.length === 0 ? (
-                <div className="text-sm text-neutral-400">اعلانی ثبت نشده است</div>
+                <div className="text-sm text-neutral-400">لاگی ثبت نشده است</div>
               ) : (
                 <div className="flex max-h-[400px] flex-col gap-3 overflow-y-auto">
                   {orderLogs.map((log, index) => {
@@ -454,21 +381,6 @@ export default function SuperAdminOrderSidebar({
         loading={isGenerating}
       />
     </div>
-  );
-}
-
-function SendIcon() {
-  return (
-    <svg width="12" height="13" viewBox="0 0 12 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M7.46041 10.0894L9.95991 3.34685C10.1459 2.84435 9.65691 2.35535 9.15441 2.54135L2.40891 5.04285C1.83141 5.25685 1.87691 6.08785 2.47391 6.23785L5.50741 6.99985L6.26491 10.0238C6.41441 10.6213 7.24591 10.6674 7.46041 10.0894V10.0894Z"
-        stroke="white"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }
 

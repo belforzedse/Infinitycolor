@@ -16,6 +16,11 @@ import { addCartItemOp } from "./ops/addCartItem";
 import { updateCartItemOp } from "./ops/updateCartItem";
 import { removeCartItemOp } from "./ops/removeCartItem";
 import { checkCartStockOp } from "./ops/checkCartStock";
+import { createCheckoutQuote, type CheckoutQuote } from "./lib/checkout-quote";
+import {
+  createPaymentAttempt,
+  findPaymentAttempt,
+} from "../../payment-attempt/services/payment-attempt";
 
 export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   async getUserCart(userId: number) {
@@ -90,6 +95,55 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   },
 
   async finalizeCartToOrder(userId: number, shippingData: any) {
+    const gateway = String(shippingData?.gateway || "").trim().toLowerCase();
+    const managesPaymentAttempt = gateway !== "" && gateway !== "snappay";
+    const attemptId = String(shippingData?.attemptId || "").trim();
+    const expectedQuoteHash = String(shippingData?.quoteHash || "").trim();
+
+    // SnappPay deliberately remains on the established checkout contract.
+    // Durable quote/attempt semantics apply only to the other gateways.
+    if (managesPaymentAttempt) {
+      if (!attemptId || attemptId.length > 128) {
+        return {
+          success: false,
+          status: 400,
+          errorCode: "CHECKOUT_ATTEMPT_REQUIRED",
+          message: "Checkout attempt id is required",
+        };
+      }
+      if (!expectedQuoteHash) {
+        return {
+          success: false,
+          status: 400,
+          errorCode: "CHECKOUT_QUOTE_REQUIRED",
+          message: "Checkout quote is required",
+        };
+      }
+
+      const replay = await findPaymentAttempt(strapi as any, userId, attemptId);
+      if (replay) {
+        if (
+          String(replay.quoteHash) !== expectedQuoteHash ||
+          String(replay.Gateway) !== gateway
+        ) {
+          return {
+            success: false,
+            status: 409,
+            errorCode: "CHECKOUT_ATTEMPT_CONFLICT",
+            message: "شناسه پرداخت قبلاً برای پیش‌فاکتور دیگری استفاده شده است",
+          };
+        }
+        return {
+          success: true,
+          replayed: true,
+          order: replay.order,
+          contract: replay.contract,
+          paymentAttempt: replay,
+          financialSummary: replay.quoteSnapshot?.financialSummary,
+        };
+      }
+    }
+
     // First check stock
     const stockCheck = await this.checkCartStock(userId);
 
@@ -109,9 +163,57 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       return { success: false, message: "Cannot create order from empty cart" };
     }
 
+    let checkoutQuote: CheckoutQuote | null = null;
+    if (managesPaymentAttempt) {
+      checkoutQuote = await createCheckoutQuote(strapi as any, userId, {
+        cart,
+        shippingId: shippingData.shippingId,
+        shippingCost: shippingData.shippingCost,
+        discountCode: shippingData.discountCode,
+        gateway,
+        reserveGroupId: shippingData.reserveGroupId,
+      });
+      if (checkoutQuote.quoteHash !== expectedQuoteHash) {
+        return {
+          success: false,
+          status: 409,
+          errorCode: "CHECKOUT_QUOTE_CHANGED",
+          message: "قیمت یا موجودی سبد خرید تغییر کرده است",
+          quote: checkoutQuote,
+        };
+      }
+    }
+
     try {
       // Start transaction to ensure all operations succeed or fail together
       const result = await strapi.db.transaction(async ({ trx }) => {
+        if (managesPaymentAttempt) {
+          const replay = await findPaymentAttempt(
+            strapi as any,
+            userId,
+            attemptId,
+            trx,
+          );
+          if (replay) {
+            if (
+              String(replay.quoteHash) !== expectedQuoteHash ||
+              String(replay.Gateway) !== gateway
+            ) {
+              throw new Error(
+                "CHECKOUT_ATTEMPT_CONFLICT: Attempt id was already used for another quote",
+              );
+            }
+            return {
+              success: true,
+              replayed: true,
+              order: replay.order,
+              contract: replay.contract,
+              paymentAttempt: replay,
+              financialSummary: replay.quoteSnapshot?.financialSummary,
+            };
+          }
+        }
+
         // Using enum values explicitly
         type OrderStatus =
           | "Paying"
@@ -317,11 +419,12 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         }
         */
 
-        let discountAmount = 0;
-        let discountCode: string | undefined;
-        let appliedGeneralDiscountId: number | undefined;
+        let discountAmount = checkoutQuote?.financialSummary.discount || 0;
+        let discountCode: string | undefined = checkoutQuote?.discountCode;
+        let appliedGeneralDiscountId: number | undefined =
+          checkoutQuote?.appliedGeneralDiscountId;
 
-        if (shippingData?.discountCode) {
+        if (!checkoutQuote && shippingData?.discountCode) {
           discountCode = String(shippingData.discountCode);
           try {
             discountAmount = await computeCouponDiscount(
@@ -340,7 +443,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         }
 
         // If no coupon applied, find active general discounts
-        if (!discountAmount) {
+        if (!checkoutQuote && !discountAmount) {
           const generalDiscounts = await findFirstActiveGeneralDiscount(
             strapi as any
           );
@@ -361,11 +464,8 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           }
         }
 
-        const totals = computeTotals(
-          subtotal,
-          discountAmount,
-          finalShippingCost
-        );
+        const totals = checkoutQuote?.financialSummary ||
+          computeTotals(subtotal, discountAmount, finalShippingCost);
 
         const contract = await createContract(
           strapi as any,
@@ -395,6 +495,24 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           ...(trx ? { transacting: trx } : {}),
         });
 
+        const paymentAttempt = managesPaymentAttempt
+          ? await createPaymentAttempt(
+              strapi as any,
+              {
+                attemptId,
+                quoteHash: expectedQuoteHash,
+                quoteSnapshot: checkoutQuote,
+                Status: "Created",
+                Gateway: gateway,
+                Amount: Math.round(totals.total * 10),
+                user: userId,
+                order: order.id,
+                contract: contract.id,
+              },
+              trx,
+            )
+          : undefined;
+
         // Note: Do not clear the cart here. Cart will be cleared only after
         // a successful payment gateway request in the controller.
 
@@ -402,12 +520,35 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           success: true,
           order,
           contract,
+          paymentAttempt,
           financialSummary: totals,
         };
       });
 
       return result;
     } catch (error: any) {
+      if (managesPaymentAttempt) {
+        const replay = await findPaymentAttempt(
+          strapi as any,
+          userId,
+          attemptId,
+        ).catch(() => null);
+        if (
+          replay &&
+          String(replay.quoteHash) === expectedQuoteHash &&
+          String(replay.Gateway) === gateway
+        ) {
+          return {
+            success: true,
+            replayed: true,
+            order: replay.order,
+            contract: replay.contract,
+            paymentAttempt: replay,
+            financialSummary: replay.quoteSnapshot?.financialSummary,
+          };
+        }
+      }
+
       // Enhanced error logging with full context
       const errorContext = {
         userId,

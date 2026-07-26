@@ -20,6 +20,11 @@ export interface ApiError {
   status: number;
   errors?: Record<string, string[]>;
   error?: unknown;
+  /** Strapi/Koa structured error details, preserved for product recovery UI. */
+  details?: unknown;
+  /** Product payload supplied through ctx.badRequest/conflict helpers. */
+  data?: unknown;
+  errorCode?: string;
 }
 
 export interface ApiRequestOptions {

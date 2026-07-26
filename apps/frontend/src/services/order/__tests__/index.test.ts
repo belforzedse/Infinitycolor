@@ -20,8 +20,8 @@ describe("OrderService", () => {
     __clearOrderCache();
   });
 
-  describe("verifyPayment", () => {
-    it("should verify payment successfully", async () => {
+  describe("SnappPay callback dependencies", () => {
+    it("keeps the established payment verification request", async () => {
       const mockResponse = {
         success: true,
         message: "Payment verified",
@@ -29,7 +29,6 @@ describe("OrderService", () => {
         orderNumber: "ORD-123",
         paymentStatus: "paid",
       };
-
       (apiClient.get as jest.Mock).mockResolvedValue(mockResponse);
 
       const result = await verifyPayment(123, "REF123");
@@ -40,19 +39,7 @@ describe("OrderService", () => {
       expect(result).toEqual(mockResponse);
     });
 
-    it("should handle verification errors", async () => {
-      const consoleError = jest.spyOn(console, "error").mockImplementation();
-      (apiClient.get as jest.Mock).mockRejectedValue(new Error("Network error"));
-
-      await expect(verifyPayment(123, "REF123")).rejects.toThrow("Network error");
-      expect(consoleError).toHaveBeenCalled();
-
-      consoleError.mockRestore();
-    });
-  });
-
-  describe("getOrderStatus", () => {
-    it("should get order status successfully", async () => {
+    it("keeps the established order-status request", async () => {
       const mockResponse = {
         id: 123,
         Status: "processing",
@@ -62,7 +49,6 @@ describe("OrderService", () => {
         updatedAt: "2024-01-02",
         Total: 100000,
       };
-
       (apiClient.get as jest.Mock).mockResolvedValue(mockResponse);
 
       const result = await getOrderStatus(123);

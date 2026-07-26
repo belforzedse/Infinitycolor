@@ -38,6 +38,15 @@ export default {
       },
     },
     {
+      method: "POST",
+      path: "/orders/:id/payment-reconcile",
+      handler: "order.reconcilePayment",
+      config: {
+        auth: { scope: [] },
+        middlewares: ["api::order.payment-reconcile-throttle"],
+      },
+    },
+    {
       method: "GET",
       path: "/orders/my-orders",
       handler: "order.getMyOrders",
@@ -73,6 +82,14 @@ export default {
       method: "POST",
       path: "/orders/:id/admin/adjust-items",
       handler: "order.adminAdjustItems",
+      config: {
+        auth: { scope: [] },
+      },
+    },
+    {
+      method: "POST",
+      path: "/orders/:id/admin/transition",
+      handler: "order.adminTransition",
       config: {
         auth: { scope: [] },
       },

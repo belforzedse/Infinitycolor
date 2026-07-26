@@ -14,8 +14,10 @@ import type { ApiCache } from "../cache/api-cache";
 interface ErrorResponse {
   message?: string;
   errors?: Record<string, string[]>;
+  data?: unknown;
   error?: {
     message?: string;
+    details?: unknown;
   };
 }
 
@@ -172,10 +174,23 @@ export class ApiClient {
   }
 
   private handleError(status: number, data: ErrorResponse): ApiError {
+    const details = data.error?.details;
+    const productData =
+      details && typeof details === "object" && "data" in details
+        ? (details as { data?: unknown }).data
+        : data.data;
+    const errorCode =
+      productData && typeof productData === "object" && "errorCode" in productData
+        ? String((productData as { errorCode?: unknown }).errorCode || "") || undefined
+        : undefined;
     return {
       message: data.error?.message || data.message || this.errorMessages.DEFAULT,
       status,
       errors: data.errors,
+      error: data.error || data,
+      details,
+      data: productData,
+      errorCode,
     };
   }
 
@@ -363,16 +378,6 @@ export class ApiClient {
       const responseData = await this.parseResponseData(response);
 
       if (!response.ok) {
-        if (response.status === 400) {
-          const parsed = responseData as { error?: { message?: string } };
-          const error: ApiError = {
-            status: response.status,
-            message: parsed.error?.message || this.errorMessages.DEFAULT,
-            error: parsed.error || responseData,
-          };
-          throw error;
-        }
-
         const error = this.handleError(response.status, responseData as ErrorResponse);
 
         if (!options?.suppressAuthRedirect) {

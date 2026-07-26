@@ -12,6 +12,13 @@ import {
   isCheckoutGatewayEnabled,
   normalizeCheckoutGatewayCode,
 } from "../../../payment-gateway/services/checkout-gateway-availability";
+import {
+  claimPaymentAttemptForInitiation,
+  findPaymentAttempt,
+  paymentAttemptResponse,
+  updatePaymentAttempt,
+} from "../../../payment-attempt/services/payment-attempt";
+import { settleOrderWithWallet } from "./wallet-settlement";
 
 export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
   const {
@@ -26,6 +33,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     discountCode,
     reserveShipping,
     reserveGroupId,
+    attemptId,
+    quoteHash,
   } = ctx.request.body;
 
   let user = ctx.state.user;
@@ -34,6 +43,26 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     if (!targetUserId) return;
     if (Number(user?.id) !== targetUserId) {
       user = (await fetchUserWithRole(strapi, targetUserId)) || { id: targetUserId };
+    }
+
+    const requestedGateway = String(gateway || "mellat").toLowerCase();
+    const selectedGateway =
+      normalizeCheckoutGatewayCode(requestedGateway) || "mellat";
+    const managesPaymentAttempt = selectedGateway !== "snappay";
+    const normalizedAttemptId = String(attemptId || "").trim();
+    const normalizedQuoteHash = String(quoteHash || "").trim();
+
+    if (managesPaymentAttempt) {
+      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway);
+      if (!gatewayEnabled) {
+        return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
+          data: {
+            success: false,
+            errorCode: "PAYMENT_GATEWAY_DISABLED",
+            gateway: selectedGateway,
+          },
+        });
+      }
     }
 
     let resolvedAddressId = addressId;
@@ -279,6 +308,19 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       }
     }
 
+    if (managesPaymentAttempt) {
+      if (!normalizedAttemptId || normalizedAttemptId.length > 128) {
+        return ctx.badRequest("شناسه تلاش پرداخت الزامی است", {
+          data: { success: false, errorCode: "CHECKOUT_ATTEMPT_REQUIRED" },
+        });
+      }
+      if (!normalizedQuoteHash) {
+        return ctx.badRequest("پیش‌فاکتور پرداخت الزامی است", {
+          data: { success: false, errorCode: "CHECKOUT_QUOTE_REQUIRED" },
+        });
+      }
+    }
+
     const shippingData: Record<string, unknown> = {
       shippingId: resolvedShippingId,
       shippingCost: resolvedShippingCost,
@@ -290,6 +332,13 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       discountCode,
       reserveShipping: !!reserveShipping,
       reserveGroupId: reserveGroupId || undefined,
+      ...(managesPaymentAttempt
+        ? {
+            gateway: selectedGateway,
+            attemptId: normalizedAttemptId,
+            quoteHash: normalizedQuoteHash,
+          }
+        : {}),
     };
     if (reserveOrderData) {
       shippingData.reserveOrderData = reserveOrderData;
@@ -299,9 +348,20 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const result = await cartService.finalizeCartToOrder(user.id, shippingData);
 
     if (!result.success) {
+      if (result.status === 409) {
+        return ctx.conflict(result.message, {
+          data: {
+            success: false,
+            errorCode: result.errorCode,
+            message: result.message,
+            quote: result.quote,
+          },
+        });
+      }
       return ctx.badRequest(result.message, {
         data: {
           success: false,
+          errorCode: result.errorCode,
           message: result.message,
           itemsRemoved: result.itemsRemoved,
           itemsAdjusted: result.itemsAdjusted,
@@ -313,6 +373,15 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const order = result.order;
     const contract = result.contract;
     const financialSummary = result.financialSummary;
+    const paymentAttempt = result.paymentAttempt;
+
+    if (
+      managesPaymentAttempt &&
+      result.replayed &&
+      paymentAttempt?.Status !== "Created"
+    ) {
+      return { data: paymentAttemptResponse(paymentAttempt) };
+    }
 
     let totalAmount = contract.Amount || 0;
 
@@ -324,19 +393,17 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       callbackURL: callbackURL || "/orders/payment-callback",
     });
 
-    const requestedGateway = String(gateway || "mellat").toLowerCase();
-    const selectedGateway =
-      normalizeCheckoutGatewayCode(requestedGateway) || "mellat";
-
-    const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway);
-    if (!gatewayEnabled) {
-      return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
-        data: {
-          success: false,
-          errorCode: "PAYMENT_GATEWAY_DISABLED",
-          gateway: selectedGateway,
-        },
-      });
+    if (!managesPaymentAttempt) {
+      const gatewayEnabled = await isCheckoutGatewayEnabled(strapi, selectedGateway);
+      if (!gatewayEnabled) {
+        return ctx.badRequest("درگاه پرداخت انتخاب‌شده غیرفعال است.", {
+          data: {
+            success: false,
+            errorCode: "PAYMENT_GATEWAY_DISABLED",
+            gateway: selectedGateway,
+          },
+        });
+      }
     }
 
     const paymentGatewayLabel =
@@ -367,258 +434,80 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       });
     }
 
-    // Wallet payment path (full wallet only)
-    if (selectedGateway === "wallet") {
-      // Compute total amount from contract (toman -> IRR inside wallet storage uses IRR)
-      const totalToman = Math.round(contract.Amount || 0);
-      const totalIrr = totalToman * 10;
-
-      // Import atomic wallet deduction helper
-      const { deductWalletBalanceAtomic } = await import(
-        "../../../local-user-wallet/services/local-user-wallet"
-      );
-
-      // Atomically deduct wallet balance (prevents race conditions)
-      const walletResult = await deductWalletBalanceAtomic(
+    if (managesPaymentAttempt && selectedGateway !== "wallet") {
+      const claimed = await claimPaymentAttemptForInitiation(
         strapi,
-        user.id,
-        totalIrr
+        Number(paymentAttempt.id),
       );
+      if (!claimed) {
+        const currentAttempt = await findPaymentAttempt(
+          strapi,
+          Number(user.id),
+          normalizedAttemptId,
+        );
+        return {
+          data: paymentAttemptResponse(currentAttempt || paymentAttempt),
+        };
+      }
+      paymentAttempt.Status = "Pending";
+    }
 
-      if (!walletResult.success) {
-        strapi.log.warn("Wallet payment failed", {
-          userId: user.id,
-          orderId: order.id,
-          amountRequired: totalIrr,
-          error: walletResult.error,
+    // Wallet settlement is one database transaction: debit, ledgers, stock,
+    // order, contract, and durable attempt either all commit or all roll back.
+    if (selectedGateway === "wallet") {
+      try {
+        const settlement = await settleOrderWithWallet(strapi, {
+          userId: Number(user.id),
+          orderId: Number(order.id),
+          contractId: Number(contract.id),
+          paymentAttemptId: Number(paymentAttempt.id),
+          attemptId: normalizedAttemptId,
+          totalToman: Number(financialSummary?.total || contract.Amount || 0),
+          discountToman: Number(financialSummary?.discount || 0),
         });
-
-        // Cancel + release reservation (we haven't delivered anything yet)
+        await cartService.clearCart(user.id);
+        return {
+          data: {
+            success: true,
+            message: "Order paid via wallet.",
+            orderId: order.id,
+            contractId: contract.id,
+            redirectUrl: "",
+            refId: settlement.reference,
+            financialSummary,
+            requestId: settlement.reference,
+            attemptId: normalizedAttemptId,
+            paymentStatus: "Succeeded",
+            ...(order.reserveGroupId && { reserveGroupId: order.reserveGroupId }),
+            ...(order.reserveExpiresAt && { reserveExpiresAt: order.reserveExpiresAt }),
+          },
+        };
+      } catch (error: any) {
+        const message = String(error?.message || "Wallet payment failed");
+        await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
+          Status: "Failed",
+          failureCode: message.split(":")[0] || "WALLET_PAYMENT_FAILED",
+          failureMessage: message,
+          resolvedAt: new Date(),
+        }).catch(() => undefined);
         await cancelOrderAndRelease(
           strapi,
           order.id,
           contract.id,
           user.id,
           "wallet_payment_failed",
-          { createAuditLogs: true }
+          { createAuditLogs: true },
         );
-
-        return ctx.badRequest(walletResult.error || "Wallet balance is insufficient", {
+        return ctx.badRequest("موجودی کیف پول کافی نیست یا پرداخت کامل نشد", {
           data: {
             success: false,
-            error: "insufficient_wallet",
-            message: walletResult.error,
+            errorCode: message.split(":")[0] || "WALLET_PAYMENT_FAILED",
+            message,
+            orderId: order.id,
+            attemptId: normalizedAttemptId,
           },
         });
       }
-
-      strapi.log.info("Wallet balance deducted successfully", {
-        userId: user.id,
-        orderId: order.id,
-        amountDeducted: totalIrr,
-        newBalance: walletResult.newBalance,
-        walletId: walletResult.walletId,
-      });
-
-      // Transaction record (Minus)
-      let walletDebitTx: any = null;
-      try {
-        walletDebitTx = await strapi.entityService.create(
-          "api::local-user-wallet-transaction.local-user-wallet-transaction",
-          {
-            data: {
-              Amount: totalIrr,
-              Type: "Minus",
-              Date: new Date(),
-              Cause: "Order Payment",
-              ReferenceId: String(order.id),
-              user_wallet: walletResult.walletId,
-            },
-          }
-        );
-      } catch (error) {
-        strapi.log.error("Failed to persist wallet transaction entry", error);
-      }
-
-      // Persist contract transaction as settled (wallet)
-      let walletGateway: any = null;
-      try {
-        walletGateway = await ensurePaymentGateway(strapi, "Wallet", {
-          Description: "Infinity wallet balance",
-        });
-      } catch (error) {
-        strapi.log.error("Failed to ensure wallet payment gateway", error);
-      }
-
-      const discountIrr = Math.round(Number(financialSummary?.discount || 0) * 10);
-      const walletReference = walletDebitTx?.id
-        ? `wallet-tx-${walletDebitTx.id}`
-        : `wallet-${order.id}`;
-
-      try {
-        const contractTransactionData: any = {
-          Type: "Gateway",
-          Amount: totalIrr,
-          DiscountAmount: discountIrr,
-          Step: 1,
-          Status: "Success",
-          TrackId: walletReference,
-          external_id: walletReference,
-          external_source: "Wallet",
-          contract: contract.id,
-          Date: new Date(),
-        };
-        if (walletGateway?.id) {
-          contractTransactionData.payment_gateway = walletGateway.id;
-        }
-
-        await strapi.entityService.create(
-          "api::contract-transaction.contract-transaction",
-          {
-            data: contractTransactionData,
-          }
-        );
-      } catch (error) {
-        strapi.log.error("Failed to persist wallet contract transaction", error);
-      }
-
-      // Mark contract as confirmed
-      try {
-        await strapi.entityService.update("api::contract.contract", contract.id, {
-          data: {
-            Status: "Confirmed",
-            external_source: "Wallet",
-            external_id: walletReference,
-          },
-        });
-      } catch (error) {
-        strapi.log.error("Failed to confirm contract for wallet payment", error);
-      }
-
-      // Immediately mark order as paid (Started) and decrement stock (wallet is instant-settlement)
-      try {
-        const orderWithItems = await strapi.entityService.findOne(
-          "api::order.order",
-          order.id,
-          {
-            populate: {
-              order_items: {
-                populate: {
-                  product_variation: { populate: { product_stock: true } },
-                },
-              },
-            },
-          }
-        );
-
-        // Import atomic stock decrement helper
-        const { decrementStockAtomic } = await import(
-          "../../services/lib/stock"
-        );
-
-        const stockErrors: any[] = [];
-        for (const it of orderWithItems?.order_items || []) {
-          const v = it?.product_variation;
-          if (v?.product_stock?.id && typeof it?.Count === "number") {
-            const stockId = v.product_stock.id as number;
-            const quantity = Number(it.Count || 0);
-
-            // Use atomic decrement to prevent race conditions
-            const result = await decrementStockAtomic(strapi, stockId, quantity);
-
-            if (!result.success) {
-              stockErrors.push({
-                stockId,
-                quantity,
-                error: result.error,
-                variationId: v.id,
-                productTitle: v.product?.Title,
-              });
-              strapi.log.error("Failed to decrement stock atomically", {
-                orderId: order.id,
-                stockId,
-                quantity,
-                error: result.error,
-              });
-            } else {
-              strapi.log.info("Stock decremented successfully", {
-                orderId: order.id,
-                stockId,
-                quantity,
-                newCount: result.newCount,
-              });
-            }
-          }
-        }
-
-        // If any stock decrements failed, log it but don't block the order
-        // (wallet has already been charged at this point)
-        if (stockErrors.length > 0) {
-          strapi.log.error(
-            "Some stock decrements failed for wallet payment - manual intervention may be required",
-            {
-              orderId: order.id,
-              errors: stockErrors,
-            }
-          );
-
-          // Create order log for tracking
-          await strapi.entityService.create("api::order-log.order-log", {
-            data: {
-              order: order.id,
-              Action: "Update",
-              Description: "Stock decrement failures detected",
-              Changes: { stockErrors: JSON.parse(JSON.stringify(stockErrors)) },
-            },
-          });
-        }
-      } catch (e) {
-        strapi.log.error("Failed to decrement stock for wallet payment", e);
-      }
-
-      try {
-        await strapi.entityService.update("api::order.order", order.id, {
-          data: { Status: "Started" },
-        });
-      } catch (e) {
-        strapi.log.error(
-          "Failed to update order status to Started (wallet)",
-          e
-        );
-      }
-
-      // Write order-log
-      try {
-        await strapi.entityService.create("api::order-log.order-log", {
-          data: {
-            order: order.id,
-            Action: "Update",
-            Description: "Wallet payment success (instant settlement)",
-            Changes: { method: "wallet" },
-          },
-        });
-      } catch {}
-
-      try {
-        await cartService.clearCart(user.id);
-      } catch (err) {
-        strapi.log.error("Failed to clear cart after wallet payment", err);
-      }
-
-      return {
-        data: {
-          success: true,
-          message: "Order paid via wallet.",
-          orderId: order.id,
-          contractId: contract.id,
-          redirectUrl: "",
-          refId: "",
-          financialSummary: financialSummary,
-          requestId: "wallet",
-          ...(order.reserveGroupId && { reserveGroupId: order.reserveGroupId }),
-          ...(order.reserveExpiresAt && { reserveExpiresAt: order.reserveExpiresAt }),
-        },
-      };
     }
 
     let paymentResult: any = null;
@@ -660,7 +549,9 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     } else {
       paymentResult = await requestMellatPayment(strapi, {
         orderId: order.id,
-        amount: totalAmount * 10,
+        // Contract amounts are stored in toman; mellat-v3 performs the single
+        // required toman-to-rial conversion at the provider boundary.
+        amount: totalAmount,
         userId: user.id,
         callbackURL: callbackURL,
         contractId: contract.id,
@@ -678,6 +569,15 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       const reqId = paymentResult?.requestId;
       const errMsg = paymentResult?.error || "Payment gateway error";
       const detailed = paymentResult?.detailedError || {};
+      if (managesPaymentAttempt && paymentAttempt?.id) {
+        await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
+          Status: "Failed",
+          failureCode: "PAYMENT_INITIATION_FAILED",
+          failureMessage: errMsg,
+          providerResponse: detailed,
+          resolvedAt: new Date(),
+        });
+      }
       try {
         await strapi.entityService.create("api::order-log.order-log", {
           data: {
@@ -727,6 +627,19 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       refId: paymentResult.refId,
     });
 
+    if (managesPaymentAttempt && paymentAttempt?.id) {
+      await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
+        Status: "Redirected",
+        providerReference: String(paymentResult.refId || paymentResult.requestId || ""),
+        redirectUrl: paymentResult.redirectUrl,
+        providerResponse: {
+          requestId: paymentResult.requestId,
+          refId: paymentResult.refId,
+        },
+        redirectedAt: new Date(),
+      });
+    }
+
     try {
       await strapi.entityService.create("api::order-log.order-log", {
         data: {
@@ -756,6 +669,12 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         refId: paymentResult.refId,
         financialSummary: financialSummary,
         requestId: paymentResult.requestId,
+        ...(managesPaymentAttempt
+          ? {
+              attemptId: normalizedAttemptId,
+              paymentStatus: "Redirected",
+            }
+          : {}),
         ...(order.reserveGroupId && { reserveGroupId: order.reserveGroupId }),
         ...(order.reserveExpiresAt && { reserveExpiresAt: order.reserveExpiresAt }),
       },

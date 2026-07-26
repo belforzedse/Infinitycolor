@@ -25,7 +25,8 @@ const runRaw = (strapi: Strapi, trx: any, sql: string, bindings: unknown[]) => {
 export async function deductWalletBalanceAtomic(
   strapi: Strapi,
   userId: number,
-  amountIrr: number
+  amountIrr: number,
+  trx?: any,
 ): Promise<WalletBalanceResult> {
   try {
     const amount = Number(amountIrr);
@@ -36,7 +37,11 @@ export async function deductWalletBalanceAtomic(
     // First, get wallet ID for the user
     const wallet = await strapi.db
       .query("api::local-user-wallet.local-user-wallet")
-      .findOne({ where: { user: userId }, select: ["id"] });
+      .findOne({
+        where: { user: userId },
+        select: ["id"],
+        ...(trx ? { transacting: trx } : {}),
+      } as any);
 
     if (!wallet) {
       return { success: false, error: "Wallet not found for user" };
@@ -47,7 +52,7 @@ export async function deductWalletBalanceAtomic(
     // So "Balance" becomes "balance" and "LastTransactionDate" becomes "last_transaction_date"
     const result = await runRaw(
       strapi,
-      undefined,
+      trx,
       `UPDATE local_user_wallets
        SET balance = balance - ?,
            last_transaction_date = NOW()
@@ -60,10 +65,12 @@ export async function deductWalletBalanceAtomic(
     const rows = result.rows || [];
     if (rows.length === 0) {
       // No rows updated means insufficient balance
-      const currentWallet = await strapi.entityService.findOne(
-        "api::local-user-wallet.local-user-wallet",
-        wallet.id
-      );
+      const currentWallet = await strapi.db
+        .query("api::local-user-wallet.local-user-wallet")
+        .findOne({
+          where: { id: wallet.id },
+          ...(trx ? { transacting: trx } : {}),
+        } as any);
 
       return {
         success: false,

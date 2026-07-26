@@ -163,6 +163,7 @@ const FIXTURE = {
       lastName: "Customer",
       roleName: "Customer",
       externalId: "e2e-storefront:user:customer",
+      walletBalanceIrr: 50_000_000,
     },
     // A second, unrelated Customer used to assert cross-user ownership scoping
     // (BOLA regression coverage) on address / wallet-transaction endpoints.
@@ -218,6 +219,10 @@ const FIXTURE = {
   adminCategory: {
     slug: ADMIN_CATEGORY_SLUG_PREFIX,
     updatedSlug: `${ADMIN_CATEGORY_SLUG_PREFIX}-updated`,
+  },
+  gateway: {
+    title: "Wallet",
+    description: `${TAG}:gateway:wallet`,
   },
 };
 
@@ -461,6 +466,38 @@ async function teardownUserData(client, userIds) {
   await deleteWhereIn(client, "carts_user_links", "user_id", userIds);
   await deleteWhereIn(client, "carts", "id", cartIds);
 
+  const guestMergeIds = await idsFromLink(
+    client,
+    "guest_cart_merges_user_links",
+    "guest_cart_merge_id",
+    "user_id",
+    userIds,
+  );
+  await deleteWhereIn(client, "guest_cart_merges_user_links", "user_id", userIds);
+  await deleteWhereIn(client, "guest_cart_merges", "id", guestMergeIds);
+
+  const paymentAttemptIds = await idsFromLink(
+    client,
+    "payment_attempts_user_links",
+    "payment_attempt_id",
+    "user_id",
+    userIds,
+  );
+  await deleteWhereIn(
+    client,
+    "payment_attempts_order_links",
+    "payment_attempt_id",
+    paymentAttemptIds,
+  );
+  await deleteWhereIn(
+    client,
+    "payment_attempts_contract_links",
+    "payment_attempt_id",
+    paymentAttemptIds,
+  );
+  await deleteWhereIn(client, "payment_attempts_user_links", "user_id", userIds);
+  await deleteWhereIn(client, "payment_attempts", "id", paymentAttemptIds);
+
   const orderIds = await idsFromLink(client, "orders_user_links", "order_id", "user_id", userIds);
   const orderItemIds = await idsFromLink(
     client,
@@ -480,7 +517,16 @@ async function teardownUserData(client, userIds) {
   );
   await deleteWhereIn(client, "order_items_order_links", "order_item_id", orderItemIds);
   await deleteWhereIn(client, "order_items", "id", orderItemIds);
+  const orderLogIds = await idsFromLink(
+    client,
+    "order_logs_order_links",
+    "order_log_id",
+    "order_id",
+    orderIds,
+  );
+  await deleteWhereIn(client, "order_logs_performed_by_links", "order_log_id", orderLogIds);
   await deleteWhereIn(client, "order_logs_order_links", "order_id", orderIds);
+  await deleteWhereIn(client, "order_logs", "id", orderLogIds);
   await deleteWhereIn(client, "orders_contract_links", "order_id", orderIds);
   await deleteWhereIn(client, "orders_delivery_address_links", "order_id", orderIds);
   await deleteWhereIn(client, "orders_shipping_links", "order_id", orderIds);
@@ -494,7 +540,21 @@ async function teardownUserData(client, userIds) {
     "user_id",
     userIds,
   );
+  const contractTransactionIds = await idsFromLink(
+    client,
+    "contract_transactions_contract_links",
+    "contract_transaction_id",
+    "contract_id",
+    contractIds,
+  );
+  await deleteWhereIn(
+    client,
+    "contract_transactions_payment_gateway_links",
+    "contract_transaction_id",
+    contractTransactionIds,
+  );
   await deleteWhereIn(client, "contract_transactions_contract_links", "contract_id", contractIds);
+  await deleteWhereIn(client, "contract_transactions", "id", contractTransactionIds);
   await deleteWhereIn(client, "contract_logs_contract_links", "contract_id", contractIds);
   await deleteWhereIn(client, "contracts_local_user_links", "user_id", userIds);
   await deleteWhereIn(client, "contracts", "id", contractIds);
@@ -605,6 +665,13 @@ async function deleteShippingMethod(client) {
   await deleteWhereIn(client, "shippings", "id", shippingIds);
 }
 
+async function deleteSeededPaymentGateways(client) {
+  if (!(await tableExists(client, "payment_gateways"))) return;
+  await client.query(`DELETE FROM payment_gateways WHERE description = $1`, [
+    FIXTURE.gateway.description,
+  ]);
+}
+
 async function teardown(client) {
   const userIds = await e2eUserIds(client);
   const productIds = await idsBySource(client, "products");
@@ -617,6 +684,7 @@ async function teardown(client) {
 
   await teardownUserData(client, userIds);
   await deleteShippingMethod(client);
+  await deleteSeededPaymentGateways(client);
   await deleteAdminCrudCategories(client);
   await deleteWhereIn(client, "files_related_morphs", "related_id", productIds);
   await deleteWhereIn(client, "files_related_morphs", "file_id", fileIds);
@@ -759,7 +827,7 @@ async function seedUser(client, userDef, now) {
   });
 
   const wallet = await insertRow(client, "local_user_wallets", {
-    balance: "0",
+    balance: String(userDef.walletBalanceIrr || 0),
     last_transaction_date: now,
     description: "E2E fixture wallet",
     created_at: now,
@@ -852,6 +920,28 @@ async function seedShippingMethods(client, now) {
     ids.push(shipping.id);
   }
   return ids;
+}
+
+async function seedPaymentGateway(client, now) {
+  if (!(await tableExists(client, "payment_gateways"))) {
+    throw new Error("Table not found: payment_gateways");
+  }
+  const existing = await client.query(
+    `SELECT id FROM payment_gateways WHERE lower(title) = lower($1) LIMIT 1`,
+    [FIXTURE.gateway.title],
+  );
+  if (existing.rowCount > 0) {
+    throw new Error(
+      `E2E wallet gateway conflicts with existing payment gateway id ${existing.rows[0].id}`,
+    );
+  }
+  return insertRow(client, "payment_gateways", {
+    title: FIXTURE.gateway.title,
+    description: FIXTURE.gateway.description,
+    is_active: true,
+    created_at: now,
+    updated_at: now,
+  });
 }
 
 async function seedCustomerAddress(client, userId, now) {
@@ -1088,6 +1178,7 @@ async function seed(client) {
   const customerBTransaction = await seedWalletTransaction(client, customerBWalletId, now);
 
   const shippingIds = await seedShippingMethods(client, now);
+  const paymentGateway = await seedPaymentGateway(client, now);
 
   const paymentVariationIndex = FIXTURE.variations.findIndex(
     (variation) => variation.sku === "E2E-STOREFRONT-PAY",
@@ -1110,6 +1201,7 @@ async function seed(client) {
     customerBAddressId: customerBAddress.id,
     customerBWalletTransactionId: customerBTransaction.id,
     shippingIds,
+    paymentGatewayId: paymentGateway.id,
     adminUserId: users.admin.id,
     founderUserId: users.founder ? users.founder.id : null,
     storeManagerUserId: users.storeManager ? users.storeManager.id : null,

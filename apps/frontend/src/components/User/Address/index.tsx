@@ -1,14 +1,17 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAtom } from "jotai";
 import AddressCard from "./AddressCard";
 import UserService from "@/services/user";
 import AddAddress from "./AddAddress";
 import { addressesAtom, addressesLoadingAtom, addressesErrorAtom } from "@/atoms/addressesAtom";
+import type { UserAddress } from "@/services/user/addresses";
+import { toast } from "react-hot-toast";
 
 const AddressContainer = () => {
   const [addresses, setAddresses] = useAtom(addressesAtom);
   const [loading, setLoading] = useAtom(addressesLoadingAtom);
   const [error, setError] = useAtom(addressesErrorAtom);
+  const [editingAddress, setEditingAddress] = useState<UserAddress | null>(null);
 
   const fetchAddresses = async () => {
     try {
@@ -40,7 +43,7 @@ const AddressContainer = () => {
       console.error("Failed to delete address:", err);
       // Revert on error
       setAddresses(previousAddresses);
-      alert("خطا در حذف آدرس");
+      toast.error("خطا در حذف آدرس");
     }
   };
 
@@ -77,9 +80,7 @@ const AddressContainer = () => {
             address={`${address.FullAddress} - ${address.shipping_city.Title}, ${address.shipping_city.shipping_province.Title}`}
             postalCode={address.PostalCode}
             description={address.Description}
-            onEdit={() => {
-              /* Will be implemented later */
-            }}
+            onEdit={() => setEditingAddress(address)}
             onDelete={() => handleDelete(address.id)}
           />
         ))}
@@ -97,6 +98,18 @@ const AddressContainer = () => {
       <div className="flex justify-end">
         <AddAddress onAddressAdded={handleAddressAdded} />
       </div>
+      <AddAddress
+        showButton={false}
+        isOpen={editingAddress !== null}
+        editingAddress={editingAddress}
+        onOpenChange={(open) => {
+          if (!open) setEditingAddress(null);
+        }}
+        onAddressAdded={async () => {
+          await handleAddressAdded();
+          setEditingAddress(null);
+        }}
+      />
       {renderAddresses()}
     </div>
   );

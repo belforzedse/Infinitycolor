@@ -33,9 +33,12 @@ test.describe("Zarinpal CI-safe payment", () => {
       waitUntil: "domcontentloaded",
     });
 
-    await expect(page).toHaveURL(/\/orders\/success/, { timeout: 30_000 });
+    await expect(page).toHaveURL(new RegExp(`/payment/result\\?.*orderId=${payment.orderId}`), {
+      timeout: 30_000,
+    });
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("order-payment-success")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("payment-result")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "پرداخت با موفقیت ثبت شد" })).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("pendingOrderId")))
       .toBeNull();

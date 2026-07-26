@@ -37,12 +37,16 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   // Check if this is a SnappPay order (has transaction ID and payment token)
   const isSnappPayOrder = Boolean(order.transactionId && order.paymentToken);
   const willCancelOrder = preview
-    ? order.items.every((item) => {
-        const changedItem = preview.changes.find(
-          (change) => change.orderItemId === item.id
-        );
-        return (changedItem?.newCount ?? item.quantity) === 0;
-      })
+    ? isSnappPayOrder
+      ? order.items.every((item) => {
+          const changedItem = preview.changes.find(
+            (change) => change.orderItemId === item.id
+          );
+          return (changedItem?.newCount ?? item.quantity) === 0;
+        })
+      : order.items.every(
+          (item) => (quantities[item.id] ?? item.quantity) === 0
+        )
     : false;
   const primaryActionText = willCancelOrder ? "لغو سفارش" : "ثبت تغییرات";
   const modalTitle = willCancelOrder ? "تأیید لغو سفارش" : "تأیید تغییرات";

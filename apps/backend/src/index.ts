@@ -161,6 +161,8 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
           "removeItem",
           "checkStock",
           "applyDiscount",
+          "mergeGuestCart",
+          "checkoutQuote",
           "finalizeToOrder",
           "shippingPreview",
           "shippingOptions",
@@ -184,6 +186,15 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       "api::notification": {
         notification: ["listMine", "unreadCount", "markAllRead", "markRead"],
       },
+      "api::user-activity": {
+        "user-activity": [
+          "findUserActivities",
+          "findUserActivitiesByUserId",
+          "unreadCount",
+          "markRead",
+          "markAllRead",
+        ],
+      },
       "api::product-stock": {
         "product-stock": READ_ACTIONS,
       },
@@ -195,6 +206,7 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
           "getMyOrders",
           "getMyOrderDetail",
           "checkPaymentStatus",
+          "reconcilePayment",
           "getActiveReserve",
           "releaseReserve",
         ],

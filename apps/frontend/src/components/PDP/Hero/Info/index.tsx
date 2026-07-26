@@ -182,24 +182,6 @@ export default function PDPHeroInfo(props: Props) {
 
   // moved useEffect that initializes variation details to below
 
-  // Handle size change
-  const handleSizeChange = (sizeId: string) => {
-    setSelectedSize(sizeId);
-    updateVariationDetails(selectedColor, sizeId, selectedModel);
-  };
-
-  // Handle color change
-  const handleColorChange = (colorId: string) => {
-    setSelectedColor(colorId);
-    updateVariationDetails(colorId, selectedSize, selectedModel);
-  };
-
-  // Handle model change
-  const handleModelChange = (modelId: string) => {
-    setSelectedModel(modelId);
-    updateVariationDetails(selectedColor, selectedSize, modelId);
-  };
-
   // Update variation details based on selected properties
   const updateVariationDetails = useCallback(
     (colorId: string, sizeId: string, modelId: string) => {
@@ -277,6 +259,41 @@ export default function PDPHeroInfo(props: Props) {
     [productData, product.price, product.discountPrice, product.discount],
   );
 
+  const selectPurchasableOption = useCallback(
+    (dimension: "color" | "size" | "model", optionId: string) => {
+      const variations = productData?.attributes?.product_variations?.data || [];
+      const candidates = variations.filter((variation) => {
+        if (variation.attributes.IsPublished !== true || !hasStockForVariation(variation, 1)) {
+          return false;
+        }
+        const ids = getVariationRelationIds(variation);
+        return ids[`${dimension}Id` as "colorId" | "sizeId" | "modelId"] === optionId;
+      });
+
+      const best = candidates
+        .map((variation) => {
+          const ids = getVariationRelationIds(variation);
+          const score =
+            (dimension !== "color" && ids.colorId === selectedColor ? 1 : 0) +
+            (dimension !== "size" && ids.sizeId === selectedSize ? 1 : 0) +
+            (dimension !== "model" && ids.modelId === selectedModel ? 1 : 0);
+          return { variation, ids, score };
+        })
+        .sort((a, b) => b.score - a.score)[0];
+
+      if (!best) return;
+      setSelectedColor(best.ids.colorId);
+      setSelectedSize(best.ids.sizeId);
+      setSelectedModel(best.ids.modelId);
+      updateVariationDetails(best.ids.colorId, best.ids.sizeId, best.ids.modelId);
+    },
+    [productData, selectedColor, selectedSize, selectedModel, updateVariationDetails],
+  );
+
+  const handleSizeChange = (sizeId: string) => selectPurchasableOption("size", sizeId);
+  const handleColorChange = (colorId: string) => selectPurchasableOption("color", colorId);
+  const handleModelChange = (modelId: string) => selectPurchasableOption("model", modelId);
+
   // Sync price/stock with the first in-stock variation (matches product card availability)
   useEffect(() => {
     if (!productData?.attributes?.product_variations?.data?.length) return;
@@ -307,8 +324,7 @@ export default function PDPHeroInfo(props: Props) {
       );
     }
 
-    // Return default variation if no specific one is selected
-    return productData.attributes.product_variations.data[0];
+    return null;
   };
 
   const currentVariation = getCurrentVariation();
@@ -422,6 +438,7 @@ export default function PDPHeroInfo(props: Props) {
         size={selectedSizeObj?.title}
         model={selectedModelObj?.title}
         variationId={currentVariationId}
+        productSlug={productData?.attributes?.Slug || productId}
         hasStock={hasStock}
         currentVariation={currentVariation}
       />

@@ -81,6 +81,17 @@ export interface PLPProductsResult {
   pagination: PLPPagination;
 }
 
+export class PLPProductsError extends Error {
+  constructor(
+    message: string,
+    public readonly code: "FETCH_FAILED" | "API_ERROR" | "INVALID_RESPONSE",
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = "PLPProductsError";
+  }
+}
+
 const PLP_HERO_KEYWORDS = [
   "\u06a9\u06cc\u0641",
   "\u06a9\u0641\u0634",
@@ -353,7 +364,7 @@ export async function getPLPProducts(
       error: String(error),
       urlHint: baseUrl,
     });
-    return { products: [], pagination: { page: query.page, pageSize, pageCount: 0, total: 0 } };
+    throw new PLPProductsError("Unable to load products", "FETCH_FAILED");
   }
 
   if (!response.ok) {
@@ -362,11 +373,14 @@ export async function getPLPProducts(
       url: (response.url || url).replace(/\?.*/, "?..."),
       error: (data as { error?: { message?: string } })?.error?.message ?? String(data),
     });
-    return { products: [], pagination: { page: query.page, pageSize, pageCount: 0, total: 0 } };
+    throw new PLPProductsError("Products service returned an error", "API_ERROR", response.status);
   }
 
   try {
-    const rawProducts = (Array.isArray(data?.data) ? data.data : [])
+    if (!Array.isArray(data?.data)) {
+      throw new PLPProductsError("Products response is invalid", "INVALID_RESPONSE");
+    }
+    const rawProducts = data.data
       .map(normalizeProduct)
       .filter((product): product is PLPProduct => Boolean(product));
 
@@ -385,8 +399,9 @@ export async function getPLPProducts(
       },
     };
   } catch (error) {
+    if (error instanceof PLPProductsError) throw error;
     logger.error("[PLP] Error parsing or filtering products", { error: String(error) });
-    return { products: [], pagination: { page: query.page, pageSize, pageCount: 0, total: 0 } };
+    throw new PLPProductsError("Products response could not be read", "INVALID_RESPONSE");
   }
 }
 

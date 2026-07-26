@@ -132,4 +132,20 @@ describe("ShoppingCartBillPaymentGateway", () => {
 
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("marks an affordable selected wallet option", () => {
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="wallet"
+        onChange={onChange}
+        availableGateways={["wallet"]}
+        walletBalanceIrr={50_000}
+        requiredAmountIrr={10_000}
+      />,
+    );
+
+    const wallet = screen.getByTestId("payment-gateway-wallet");
+    expect(wallet).toHaveAttribute("data-disabled", "false");
+    expect(wallet).toHaveAttribute("data-selected", "true");
+  });
 });

@@ -101,11 +101,17 @@ export const ORDER_STATUS_LABELS: Record<OrderLifecycleStatus, string> = {
 export const changeOrderStatus = async (
   orderId: string,
   status: OrderLifecycleStatus,
+  preserveLegacySnappPayFlow = false,
 ) => {
-  const response = await apiClient.put(`/orders/${orderId}`, {
-    data: {
-      Status: status,
-    },
+  if (preserveLegacySnappPayFlow) {
+    const response = await apiClient.put(`/orders/${orderId}`, {
+      data: { Status: status },
+    });
+    return (response as any).data;
+  }
+
+  const response = await apiClient.post(`/orders/${orderId}/admin/transition`, {
+    status,
   });
   return (response as any).data;
 };

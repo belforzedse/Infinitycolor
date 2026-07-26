@@ -1085,6 +1085,41 @@ export interface ApiGeneralDiscountGeneralDiscount extends Schema.CollectionType
   };
 }
 
+export interface ApiGuestCartMergeGuestCartMerge extends Schema.CollectionType {
+  collectionName: "guest_cart_merges";
+  info: {
+    displayName: "Guest cart merge";
+    pluralName: "guest-cart-merges";
+    singularName: "guest-cart-merge";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::guest-cart-merge.guest-cart-merge",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    MergeId: Attribute.String & Attribute.Required & Attribute.Unique;
+    Result: Attribute.JSON & Attribute.Required;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::guest-cart-merge.guest-cart-merge",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    user: Attribute.Relation<
+      "api::guest-cart-merge.guest-cart-merge",
+      "manyToOne",
+      "plugin::users-permissions.user"
+    >;
+  };
+}
+
 export interface ApiLocalUserAddressLocalUserAddress extends Schema.CollectionType {
   collectionName: "local_user_addresses";
   info: {
@@ -1761,6 +1796,75 @@ export interface ApiOrderOrder extends Schema.CollectionType {
     updatedBy: Attribute.Relation<"api::order.order", "oneToOne", "admin::user"> &
       Attribute.Private;
     user: Attribute.Relation<"api::order.order", "manyToOne", "plugin::users-permissions.user">;
+  };
+}
+
+export interface ApiPaymentAttemptPaymentAttempt extends Schema.CollectionType {
+  collectionName: "payment_attempts";
+  info: {
+    description: "Durable checkout and provider-payment attempt state";
+    displayName: "Payment Attempt";
+    pluralName: "payment-attempts";
+    singularName: "payment-attempt";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    Amount: Attribute.BigInteger &
+      Attribute.Required &
+      Attribute.SetMinMax<
+        {
+          min: "0";
+        },
+        string
+      >;
+    attemptId: Attribute.String & Attribute.Required & Attribute.Unique;
+    contract: Attribute.Relation<
+      "api::payment-attempt.payment-attempt",
+      "manyToOne",
+      "api::contract.contract"
+    >;
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::payment-attempt.payment-attempt",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    failureCode: Attribute.String;
+    failureMessage: Attribute.Text;
+    Gateway: Attribute.String & Attribute.Required;
+    lastReconciledAt: Attribute.DateTime;
+    order: Attribute.Relation<
+      "api::payment-attempt.payment-attempt",
+      "manyToOne",
+      "api::order.order"
+    >;
+    providerReference: Attribute.String;
+    providerResponse: Attribute.JSON;
+    quoteHash: Attribute.String & Attribute.Required;
+    quoteSnapshot: Attribute.JSON & Attribute.Required;
+    redirectedAt: Attribute.DateTime;
+    redirectUrl: Attribute.Text;
+    resolvedAt: Attribute.DateTime;
+    Status: Attribute.Enumeration<
+      ["Created", "Redirected", "Pending", "Succeeded", "Failed", "Cancelled", "Unknown", "Expired"]
+    > &
+      Attribute.Required &
+      Attribute.DefaultTo<"Created">;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::payment-attempt.payment-attempt",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    user: Attribute.Relation<
+      "api::payment-attempt.payment-attempt",
+      "manyToOne",
+      "plugin::users-permissions.user"
+    >;
   };
 }
 
@@ -3683,6 +3787,7 @@ declare module "@strapi/types" {
       "api::faq-question.faq-question": ApiFaqQuestionFaqQuestion;
       "api::footer.footer": ApiFooterFooter;
       "api::general-discount.general-discount": ApiGeneralDiscountGeneralDiscount;
+      "api::guest-cart-merge.guest-cart-merge": ApiGuestCartMergeGuestCartMerge;
       "api::local-user-address.local-user-address": ApiLocalUserAddressLocalUserAddress;
       "api::local-user-info.local-user-info": ApiLocalUserInfoLocalUserInfo;
       "api::local-user-log.local-user-log": ApiLocalUserLogLocalUserLog;
@@ -3697,6 +3802,7 @@ declare module "@strapi/types" {
       "api::order-item.order-item": ApiOrderItemOrderItem;
       "api::order-log.order-log": ApiOrderLogOrderLog;
       "api::order.order": ApiOrderOrder;
+      "api::payment-attempt.payment-attempt": ApiPaymentAttemptPaymentAttempt;
       "api::payment-gateway.payment-gateway": ApiPaymentGatewayPaymentGateway;
       "api::post-bookmark.post-bookmark": ApiPostBookmarkPostBookmark;
       "api::post-comment-like.post-comment-like": ApiPostCommentLikePostCommentLike;

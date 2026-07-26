@@ -1,0 +1,92 @@
+{
+  "kind": "collectionType",
+  "collectionName": "payment_attempts",
+  "info": {
+    "singularName": "payment-attempt",
+    "pluralName": "payment-attempts",
+    "displayName": "Payment Attempt",
+    "description": "Durable checkout and provider-payment attempt state"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "attemptId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "quoteHash": {
+      "type": "string",
+      "required": true
+    },
+    "quoteSnapshot": {
+      "type": "json",
+      "required": true
+    },
+    "Status": {
+      "type": "enumeration",
+      "enum": [
+        "Created",
+        "Redirected",
+        "Pending",
+        "Succeeded",
+        "Failed",
+        "Cancelled",
+        "Unknown",
+        "Expired"
+      ],
+      "default": "Created",
+      "required": true
+    },
+    "Gateway": {
+      "type": "string",
+      "required": true
+    },
+    "Amount": {
+      "type": "biginteger",
+      "required": true,
+      "min": "0"
+    },
+    "providerReference": {
+      "type": "string"
+    },
+    "redirectUrl": {
+      "type": "text"
+    },
+    "failureCode": {
+      "type": "string"
+    },
+    "failureMessage": {
+      "type": "text"
+    },
+    "providerResponse": {
+      "type": "json"
+    },
+    "redirectedAt": {
+      "type": "datetime"
+    },
+    "resolvedAt": {
+      "type": "datetime"
+    },
+    "lastReconciledAt": {
+      "type": "datetime"
+    },
+    "user": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "order": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::order.order"
+    },
+    "contract": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::contract.contract"
+    }
+  }
+}

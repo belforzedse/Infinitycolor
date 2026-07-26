@@ -10,6 +10,7 @@ jest.mock("@strapi/strapi", () => ({
   factories: {
     createCoreController: (_uid: string, builder: any) =>
       builder({ strapi: (global as any).__orderControllerStrapi }),
+    createCoreService: jest.fn(() => ({})),
   },
 }));
 
@@ -718,6 +719,62 @@ describe("Order Controller", () => {
       );
       expect(orderLogFindMany).not.toHaveBeenCalled();
       expect(transactionFindMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("update payment-provider compatibility", () => {
+    it("preserves the established generic status update for SnappPay orders", async () => {
+      const { strapi, registerQuery } = createStrapiMock();
+      registerQuery("api::order.order", {
+        findOne: jest.fn().mockResolvedValue({
+          id: 81,
+          Status: "Paying",
+          PaymentGateway: "SnappPay",
+        }),
+      });
+      const controller = loadOrderController(strapi);
+      const coreUpdate = jest.fn().mockResolvedValue({ data: { id: 81 } });
+      Object.setPrototypeOf(controller, { update: coreUpdate });
+      const ctx = createCtx({
+        params: { id: "81" },
+        request: { body: { data: { Status: "Started" } } },
+        state: { user: {} },
+      });
+
+      const result = await controller.update(ctx);
+
+      expect(coreUpdate).toHaveBeenCalledWith(ctx);
+      expect(result).toEqual({ data: { id: 81 } });
+      expect(ctx.badRequest).not.toHaveBeenCalled();
+    });
+
+    it("requires the guarded transition endpoint for non-SnappPay status updates", async () => {
+      const { strapi, registerQuery } = createStrapiMock();
+      registerQuery("api::order.order", {
+        findOne: jest.fn().mockResolvedValue({
+          id: 82,
+          Status: "Started",
+          PaymentGateway: "Mellat",
+        }),
+      });
+      const controller = loadOrderController(strapi);
+      const coreUpdate = jest.fn();
+      Object.setPrototypeOf(controller, { update: coreUpdate });
+      const ctx = createCtx({
+        params: { id: "82" },
+        request: { body: { data: { Status: "Done" } } },
+        state: { user: {} },
+      });
+
+      await expect(controller.update(ctx)).rejects.toMatchObject({
+        status: 400,
+        payload: expect.objectContaining({
+          data: expect.objectContaining({
+            errorCode: "ORDER_STATUS_TRANSITION_REQUIRED",
+          }),
+        }),
+      });
+      expect(coreUpdate).not.toHaveBeenCalled();
     });
   });
 

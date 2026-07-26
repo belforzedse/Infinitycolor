@@ -69,7 +69,15 @@ const TransactionList = ({
               className="font-medium text-foreground-primary"
             />
             <span className="text-xs text-slate-500">
-              {transaction.Type === "Gateway" ? "پرداخت آنلاین" : "پرداخت دستی"}
+              {transaction.Type === "Gateway"
+                ? "پرداخت آنلاین"
+                : transaction.Type === "Return" && transaction.external_source === "WalletCredit"
+                  ? "اعتبار کیف پول بابت لغو سفارش"
+                  : transaction.Type === "Return"
+                    ? "بازگشت وجه"
+                    : transaction.Type === "Manual"
+                      ? "پرداخت دستی"
+                      : "تراکنش مالی"}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs">

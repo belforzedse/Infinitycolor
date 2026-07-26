@@ -36,6 +36,17 @@ export interface CartItem {
   sku?: string;
 }
 
+const cartLineMatches = (existing: CartItem, incoming: CartItem) => {
+  if (existing.variationId || incoming.variationId) {
+    return Boolean(
+      existing.variationId &&
+        incoming.variationId &&
+        String(existing.variationId) === String(incoming.variationId),
+    );
+  }
+  return existing.id === incoming.id;
+};
+
 interface CartContextType {
   cartItems: CartItem[];
   isDrawerOpen: boolean;
@@ -335,6 +346,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             color: variation.product_variation_color?.Title,
             size: variation.product_variation_size?.Title,
             model: variation.product_variation_model?.Title,
+            sku: variation.SKU,
           };
         })
         .filter((item) => item !== null);
@@ -422,8 +434,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       console.warn("Unable to parse local cart during migration:", error);
     }
 
-    localStorage.removeItem("cart");
-
     if (!localCartItems.length) return;
 
     try {
@@ -431,7 +441,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
       const deduped = new Map<string, CartItem>();
       for (const item of localCartItems) {
-        const key = `${item.variationId}-${item.sku}-${item.id}`;
+        const key = item.variationId || item.id;
         const existing = deduped.get(key);
         if (existing) {
           existing.quantity += item.quantity;
@@ -440,17 +450,28 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      for (const item of Array.from(deduped.values())) {
-        if (!item.variationId) continue;
-
-        try {
-          await CartService.addItemToCart(Number(item.variationId), item.quantity);
-        } catch (error) {
-          const variationLabel = item.sku || item.name || item.variationId;
-          console.warn(`Failed to migrate cart item (${variationLabel}):`, error);
-        }
+      const mergeItems = Array.from(deduped.values())
+        .filter((item) => item.variationId && Number.isInteger(Number(item.variationId)))
+        .map((item) => ({ productVariationId: Number(item.variationId), quantity: item.quantity }));
+      if (!mergeItems.length) return;
+      let mergeId = localStorage.getItem("guestCartMergeId");
+      if (!mergeId) {
+        mergeId = globalThis.crypto?.randomUUID?.() || `merge-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        localStorage.setItem("guestCartMergeId", mergeId);
       }
-
+      const result = await CartService.mergeGuestCart(mergeId, mergeItems);
+      localStorage.removeItem("cart");
+      localStorage.removeItem("guestCartMergeId");
+      if (result.adjusted.length || result.rejected.length) {
+        const affected = result.adjusted.length + result.rejected.length;
+        notify.error(`موجودی ${affected} مورد از سبد تغییر کرده بود؛ سبد با موجودی فعلی هماهنگ شد`);
+      } else {
+        notify.success("سبد خرید مهمان به حساب شما منتقل شد");
+      }
+      await fetchUserCart();
+    } catch (error) {
+      console.error("Guest cart merge failed; local cart was preserved:", error);
+      notify.error("انتقال سبد مهمان کامل نشد؛ کالاهای شما حفظ شده‌اند و می‌توانید دوباره تلاش کنید");
       await fetchUserCart();
     } finally {
       setIsLoading(false);
@@ -472,7 +493,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       let itemWasAdded = false;
 
       setCartItems((prev) => {
-        const existingItemIndex = prev.findIndex((item) => item.slug === newItem.slug);
+        const existingItemIndex = prev.findIndex((item) => cartLineMatches(item, newItem));
 
         if (existingItemIndex !== -1) {
           // Update quantity if item exists
@@ -501,7 +522,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         if (!isOnline()) {
           // Queue for offline processing
           queueAction({
-            id: `add-${newItem.slug}-${Date.now()}`,
+            id: `add-${newItem.variationId || newItem.id}-${Date.now()}`,
             type: "cart-add",
             payload: {
               variationId: newItem.variationId,
@@ -527,7 +548,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             value: newItem.price * newItem.quantity,
           });
           hapticSuccess();
-        }, `add-${newItem.slug}`);
+        }, `add-${newItem.variationId || newItem.id}`);
       } catch (error: any) {
         console.error("Failed to add item to cart:", error);
 
@@ -548,7 +569,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     } else {
       // Local storage implementation (no queue needed for guest users)
       setCartItems((prev) => {
-        const existingItemIndex = prev.findIndex((item) => item.slug === newItem.slug);
+        const existingItemIndex = prev.findIndex((item) => cartLineMatches(item, newItem));
 
         if (existingItemIndex !== -1) {
           const updatedItems = [...prev];

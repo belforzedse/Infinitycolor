@@ -15,11 +15,16 @@ import { getActiveReserveHandler } from "./handlers/getActiveReserve";
 import { releaseReserveHandler } from "./handlers/releaseReserve";
 import { logAdminOrderCreate, logAdminOrderFieldUpdate } from "../../../utils/adminActivity";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
+import { adminTransitionOrderHandler } from "./helpers/adminTransition";
 import {
   STORE_MANAGER_PLUS_ROLES,
   resolveCustomerTargetUserId,
   roleIsAllowed,
 } from "../../../utils/roles";
+import {
+  findOrderPaymentAttempt,
+  reconcileOrderPaymentAttempt,
+} from "../../payment-attempt/services/payment-attempt";
 
 // Business fields captured as admin activity on a generic `PUT /orders/:id` edit. Whitelisted on
 // purpose: anything not listed here (tokens, payment internals, relations) is never diffed/logged.
@@ -226,16 +231,31 @@ export default factories.createCoreController(
     async update(ctx) {
       const { id } = ctx.params;
       const requestData = (ctx.request?.body as any)?.data ?? {};
+      const requestsStatusChange = Object.prototype.hasOwnProperty.call(
+        requestData,
+        "Status",
+      );
 
       // Snapshot the whitelisted fields before the write so we can diff afterwards.
       let before: Record<string, any> | null = null;
       try {
         before = await strapi.db.query("api::order.order").findOne({
           where: { id },
-          select: AUDITED_ORDER_FIELDS as unknown as string[],
+          select: [...AUDITED_ORDER_FIELDS, "PaymentGateway"],
         });
       } catch (e) {
         before = null;
+      }
+
+      // Keep the established SnappPay administration contract unchanged. The
+      // stricter lifecycle endpoint applies only to the other payment methods.
+      if (requestsStatusChange && before?.PaymentGateway !== "SnappPay") {
+        return ctx.badRequest("Use the order transition or cancellation operation", {
+          data: {
+            success: false,
+            errorCode: "ORDER_STATUS_TRANSITION_REQUIRED",
+          },
+        });
       }
 
       const response = await super.update(ctx);
@@ -288,6 +308,10 @@ export default factories.createCoreController(
       return adminCancelOrderHandler(strapi as any, ctx);
     },
 
+    async adminTransition(ctx) {
+      return adminTransitionOrderHandler(strapi as any, ctx);
+    },
+
     async adminVoidBarcode(ctx) {
       return adminVoidBarcodeHandler(strapi as any, ctx);
     },
@@ -308,7 +332,7 @@ export default factories.createCoreController(
           populate: {
             contract: {
               populate: {
-                contract_transactions: true,
+                contract_transactions: { populate: { payment_gateway: true } },
               },
             },
           },
@@ -326,13 +350,15 @@ export default factories.createCoreController(
           );
         }
 
-        let transactionId: string | undefined;
+        // SnappPay is intentionally kept on its established status contract.
+        // Do not run the newer payment-attempt reconciliation path for it.
         if (order.PaymentGateway === "SnappPay") {
           const contract = order.contract as any;
+          let transactionId: string | undefined;
           if (contract && typeof contract === "object") {
-            transactionId =
-              (contract.external_id ? String(contract.external_id) : undefined) ||
-              undefined;
+            transactionId = contract.external_id
+              ? String(contract.external_id)
+              : undefined;
 
             if (!transactionId) {
               const txList = Array.isArray(contract.contract_transactions)
@@ -347,16 +373,63 @@ export default factories.createCoreController(
               }
             }
           }
+
+          return {
+            data: {
+              success: true,
+              orderId: order.id,
+              status: order.Status,
+              isPaid: ["Started", "Shipment", "Done"].includes(order.Status),
+              paymentGateway: order.PaymentGateway || "Unknown",
+              transactionId,
+            },
+          };
         }
+
+        const attempt = await reconcileOrderPaymentAttempt(strapi as any, order);
+        const contract = order.contract as any;
+        const txList = Array.isArray(contract?.contract_transactions)
+          ? contract.contract_transactions
+          : [];
+        const latestTx = [...txList].reverse().find((tx: any) => tx?.Status !== "Failed") ||
+          [...txList].reverse()[0];
+        const transactionId =
+          attempt?.providerReference ||
+          latestTx?.GatewayRefId ||
+          latestTx?.external_id ||
+          latestTx?.TrackId ||
+          contract?.external_id ||
+          undefined;
+        const paymentStatus = attempt?.Status ||
+          (["Started", "Shipment", "Done"].includes(order.Status)
+            ? "Succeeded"
+            : order.Status === "Cancelled"
+            ? "Failed"
+            : "Unknown");
+        const isPaid = paymentStatus === "Succeeded";
+        const canRetry = ["Failed", "Cancelled", "Expired"].includes(paymentStatus);
 
         return {
           data: {
             success: true,
             orderId: order.id,
             status: order.Status,
-            isPaid: ["Started", "Shipment", "Done"].includes(order.Status),
+            paymentStatus,
+            isPaid,
             paymentGateway: order.PaymentGateway || "Unknown",
             transactionId,
+            attemptId: attempt?.attemptId,
+            amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,
+            canRetry,
+            nextAction: isPaid
+              ? "view_order"
+              : canRetry
+              ? "return_to_cart"
+              : "recheck",
+            failureCode: attempt?.failureCode || undefined,
+            failureMessage: attempt?.failureMessage || undefined,
+            lastReconciledAt: attempt?.lastReconciledAt || undefined,
+            authoritative: true,
           },
         };
       } catch (error) {
@@ -367,6 +440,10 @@ export default factories.createCoreController(
           },
         });
       }
+    },
+
+    async reconcilePayment(ctx) {
+      return this.checkPaymentStatus(ctx);
     },
 
     async getActiveReserve(ctx) {

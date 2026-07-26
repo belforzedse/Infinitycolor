@@ -51,7 +51,7 @@ test.describe("super-admin order management", () => {
       new RegExp(`/super-admin/orders/edit/${order.orderId}$`),
     );
 
-    await updateOrderStatus(request, order.orderId, "Started");
+    await updateOrderStatus(request, order.orderId, "Shipment");
 
     const response = await apiGet(request, "admin", `/orders/${order.orderId}`);
     await expectApiOk(response, "read updated runtime order");
@@ -59,7 +59,7 @@ test.describe("super-admin order management", () => {
       data?: { Status?: string; attributes?: { Status?: string } };
     };
     expect(payload.data?.attributes?.Status ?? payload.data?.Status).toBe(
-      "Started",
+      "Shipment",
     );
   });
 

@@ -406,10 +406,15 @@ export default function EditOrderPage() {
   }, [id]);
 
   const performOrderUpdate = async (formData: SuperAdminOrderDetail) => {
+    const preserveLegacySnappPayFlow = Boolean(
+      data?.transactionId && data?.paymentToken,
+    );
     try {
       await apiClient.put(`/orders/${id}`, {
         data: {
-          Status: formData.orderStatus,
+          ...(preserveLegacySnappPayFlow
+            ? { Status: formData.orderStatus }
+            : {}),
           Description: formData.description,
           Note: formData.note,
         },
@@ -470,6 +475,25 @@ export default function EditOrderPage() {
           : ""
       }`
     : "";
+  const preserveLegacySnappPayFlow = Boolean(
+    data?.transactionId && data?.paymentToken,
+  );
+  const pageConfig = preserveLegacySnappPayFlow
+    ? {
+        ...config,
+        config: config.config.map((group) => ({
+          ...group,
+          sections: group.sections.map((section) => ({
+            ...section,
+            fields: section.fields.map((field) =>
+              "name" in field && field.name === "orderStatus"
+                ? { ...field, readOnly: false }
+                : field,
+            ),
+          })),
+        })),
+      }
+    : config;
 
   return (
     <>
@@ -485,7 +509,7 @@ export default function EditOrderPage() {
         onCancel={cancelStatusChange}
       />
       <UpsertPageContentWrapper<SuperAdminOrderDetail>
-        config={config}
+        config={pageConfig}
         data={data}
         onSubmit={handleOrderSubmit}
         footer={

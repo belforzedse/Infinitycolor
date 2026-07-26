@@ -44,8 +44,8 @@ describe("SuperAdminOrderLogs (Events tab)", () => {
     expect(screen.getByText(/سوپر ادمین/)).toBeInTheDocument();
     // Field label translated + translated before/after status values (no raw JSON)
     expect(screen.getByText(/وضعیت سفارش:/)).toBeInTheDocument();
-    expect(screen.getByText("در حال پرداخت")).toBeInTheDocument();
-    expect(screen.getByText("ثبت شده")).toBeInTheDocument();
+    expect(screen.getByText("در انتظار پرداخت")).toBeInTheDocument();
+    expect(screen.getByText("در حال پردازش")).toBeInTheDocument();
     // Real client IP is shown
     expect(screen.getByText("203.0.113.9")).toBeInTheDocument();
   });

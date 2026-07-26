@@ -39,7 +39,7 @@ export type RuntimeProductFixture = {
 
 export type RuntimeOrderFixture = {
   orderId: number;
-  initialStatus: "Paying";
+  initialStatus: "Started";
 };
 
 function uniqueSuffix() {
@@ -173,19 +173,19 @@ export async function updateRuntimeVariationStock(
 export async function updateOrderStatus(
   request: APIRequestContext,
   orderId: number,
-  status: "Paying" | "Started" | "Shipment" | "Done" | "Returned" | "Cancelled",
+  status: "Shipment" | "Done",
 ) {
-  const response = await apiPut(request, "admin", `/orders/${orderId}`, {
-    data: { Status: status },
+  const response = await apiPost(request, "admin", `/orders/${orderId}/admin/transition`, {
+    status,
   });
-  await expectApiOk(response, `update order ${orderId}`);
+  await expectApiOk(response, `transition order ${orderId} to ${status}`);
 }
 
 export async function createRuntimeOrder(request: APIRequestContext): Promise<RuntimeOrderFixture> {
   const response = await apiPost(request, "admin", "/orders", {
     data: {
       Date: new Date().toISOString(),
-      Status: "Paying",
+      Status: "Started",
       Type: "Manual",
       Description: `${E2E_RUNTIME_PREFIX}manual order`,
       external_source: E2E_SOURCE,
@@ -196,7 +196,7 @@ export async function createRuntimeOrder(request: APIRequestContext): Promise<Ru
   const payload = (await response.json()) as { data?: { id: number } };
   const orderId = Number(payload.data?.id);
   expect(orderId, "created order id").toBeGreaterThan(0);
-  return { orderId, initialStatus: "Paying" };
+  return { orderId, initialStatus: "Started" };
 }
 
 export async function cleanupRuntimeOrders(request: APIRequestContext) {

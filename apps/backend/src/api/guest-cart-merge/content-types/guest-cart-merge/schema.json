@@ -1,0 +1,19 @@
+{
+  "kind": "collectionType",
+  "collectionName": "guest_cart_merges",
+  "info": {
+    "singularName": "guest-cart-merge",
+    "pluralName": "guest-cart-merges",
+    "displayName": "Guest cart merge"
+  },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "MergeId": { "type": "string", "required": true, "unique": true },
+    "Result": { "type": "json", "required": true },
+    "user": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    }
+  }
+}

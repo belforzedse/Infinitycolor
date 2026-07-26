@@ -13,29 +13,29 @@ const normalizeKey = (value?: string | null) => {
   return value.toString().trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
 };
 
-// Order statuses collapse into the 4 storefront buckets everywhere they are shown.
+// Customer-facing lifecycle labels remain granular while tabs continue to use
+// the broader in-progress/completed/cancelled categories below.
 const IN_PROGRESS_LABEL = "در حال انجام";
 const COMPLETED_LABEL = "تکمیل شده";
-const CANCELLED_LABEL = "لغو شده یا ناموفق";
 const ORDER_STATUS_MAP: Record<string, StatusMeta> = {
-  paying: { label: IN_PROGRESS_LABEL, tone: "info" },
-  "paying offline": { label: IN_PROGRESS_LABEL, tone: "info" },
-  started: { label: IN_PROGRESS_LABEL, tone: "info" },
+  paying: { label: "در انتظار پرداخت", tone: "warning" },
+  "paying offline": { label: "در انتظار ثبت پرداخت", tone: "warning" },
+  started: { label: "در حال پردازش", tone: "info" },
   pending: { label: IN_PROGRESS_LABEL, tone: "info" },
   processing: { label: IN_PROGRESS_LABEL, tone: "info" },
   "in progress": { label: IN_PROGRESS_LABEL, tone: "info" },
-  shipment: { label: IN_PROGRESS_LABEL, tone: "info" },
-  shipped: { label: IN_PROGRESS_LABEL, tone: "info" },
-  delivery: { label: IN_PROGRESS_LABEL, tone: "info" },
-  delivered: { label: COMPLETED_LABEL, tone: "success" },
-  done: { label: COMPLETED_LABEL, tone: "success" },
+  shipment: { label: "ارسال شده", tone: "info" },
+  shipped: { label: "ارسال شده", tone: "info" },
+  delivery: { label: "در حال تحویل", tone: "info" },
+  delivered: { label: "تحویل داده شده", tone: "success" },
+  done: { label: "تحویل داده شده", tone: "success" },
   completed: { label: COMPLETED_LABEL, tone: "success" },
   success: { label: COMPLETED_LABEL, tone: "success" },
-  cancelled: { label: CANCELLED_LABEL, tone: "danger" },
-  canceled: { label: CANCELLED_LABEL, tone: "danger" },
-  returned: { label: CANCELLED_LABEL, tone: "danger" },
-  failed: { label: CANCELLED_LABEL, tone: "danger" },
-  refund: { label: CANCELLED_LABEL, tone: "danger" },
+  cancelled: { label: "لغو شده", tone: "danger" },
+  canceled: { label: "لغو شده", tone: "danger" },
+  returned: { label: "مرجوع شده", tone: "danger" },
+  failed: { label: "ناموفق", tone: "danger" },
+  refund: { label: "بازپرداخت شده", tone: "info" },
 };
 
 const PAYMENT_STATUS_MAP: Record<string, StatusMeta> = {
@@ -130,19 +130,11 @@ const CANCELLED_KEYS = [
   "لغو شده",
 ];
 
-// Every raw backend status collapses into one of the 4 storefront buckets, so an order's
-// status reads the same everywhere (admin table, order edit, logs, order detail) instead of
-// the confusing granular values (شروع شده/ثبت شده/در حال ارسال…). Tone drives the badge colour.
-const ORDER_CATEGORY_META: Record<PersianOrderStatus, StatusMeta> = {
-  [PersianOrderStatus.INPROGRESS]: { label: PersianOrderStatus.INPROGRESS, tone: "info" },
-  [PersianOrderStatus.DELIVERED]: { label: PersianOrderStatus.DELIVERED, tone: "success" },
-  [PersianOrderStatus.CANCELLED]: { label: PersianOrderStatus.CANCELLED, tone: "danger" },
-  [PersianOrderStatus.MANUAL]: { label: PersianOrderStatus.MANUAL, tone: "info" },
-};
-
+// Tabs and grouped lists use broader categories; display surfaces use the
+// granular ORDER_STATUS_MAP so customers can tell paid, shipped, and delivered
+// orders apart.
 export const getOrderStatusMeta = (status?: string | null): StatusMeta => {
-  if (!status) return { label: "نامشخص", tone: "info" };
-  return ORDER_CATEGORY_META[getOrderStatusCategory(status)];
+  return getMeta(ORDER_STATUS_MAP, status);
 };
 
 export const translateOrderStatus = (status?: string | null): string =>

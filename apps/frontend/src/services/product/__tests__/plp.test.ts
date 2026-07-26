@@ -1,4 +1,10 @@
-import { buildPLPProductsQuery, parsePLPQuery, type PLPQuery } from "../plp";
+jest.mock("@/utils/fetchWithTimeout", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
+
+import fetchWithTimeout from "@/utils/fetchWithTimeout";
+import { buildPLPProductsQuery, getPLPProducts, parsePLPQuery, type PLPQuery } from "../plp";
 
 const paramsObject = (params: URLSearchParams) =>
   Array.from(params.entries()).reduce<Record<string, string[]>>((acc, [key, value]) => {
@@ -70,5 +76,26 @@ describe("PLP query helpers", () => {
     expect(serialized).not.toContain("Season");
     expect(serialized).not.toContain("Gender");
     expect(serialized).not.toContain("Usage");
+  });
+});
+
+describe("PLP product failures", () => {
+  const query: PLPQuery = { page: 1, available: false };
+
+  it("does not represent a network failure as an empty catalog", async () => {
+    (fetchWithTimeout as jest.Mock).mockRejectedValueOnce(new Error("offline"));
+
+    await expect(getPLPProducts(query)).rejects.toMatchObject({ code: "FETCH_FAILED" });
+  });
+
+  it("does not represent a backend rejection as no results", async () => {
+    (fetchWithTimeout as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      url: "http://backend/products",
+      json: jest.fn().mockResolvedValue({ error: { message: "unavailable" } }),
+    });
+
+    await expect(getPLPProducts(query)).rejects.toMatchObject({ code: "API_ERROR", status: 503 });
   });
 });

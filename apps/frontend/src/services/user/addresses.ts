@@ -143,7 +143,7 @@ export const updateUserAddress = async (
   }
 
   try {
-    const response = await apiClient.put(`/local-user-addresses/${id}`, address, {
+    const response = await apiClient.put(`/local-user-addresses/${id}`, { data: address }, {
       headers: {
         Authorization: `Bearer ${token}`,
       },

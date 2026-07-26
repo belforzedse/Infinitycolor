@@ -340,4 +340,49 @@ describe("sms service", () => {
     );
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("persists a customer-visible notification outcome for operational follow-up", async () => {
+    process.env.SMS_ENABLED = "false";
+    const createOrderLog = jest.fn().mockResolvedValue({ id: 1 });
+    const strapi: any = {
+      log: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+      entityService: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 11,
+          Status: "Shipment",
+          user: { id: 6, phone: "09123456789" },
+          contract: { Amount: 2000 },
+        }),
+      },
+      db: {
+        query: jest.fn(() => ({ create: createOrderLog })),
+      },
+    };
+
+    await expect(notifyOrderStatusSms(strapi, {
+      orderId: 11,
+      oldStatus: "Started",
+      newStatus: "Shipment",
+      trackingCode: "TRACK-11",
+    })).resolves.toMatchObject({
+      ok: false,
+      skipped: true,
+      disabled: true,
+      reason: "disabled",
+    });
+
+    expect(createOrderLog).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        order: 11,
+        Description: "Customer SMS delivery outcome",
+        Changes: expect.objectContaining({
+          channel: "sms",
+          type: "shipped",
+          outcome: "skipped",
+          reason: "disabled",
+          recipient: "091****6789",
+        }),
+      }),
+    });
+  });
 });

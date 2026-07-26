@@ -3,9 +3,9 @@ import { expect, type Page } from "@playwright/test";
 const THIRD_PARTY_HOST_PATTERN =
   /(?:matomo|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)/i;
 
-function isThirdPartyRequest(url: string): boolean {
+function isThirdPartyRequest(url: string | URL): boolean {
   try {
-    const { hostname } = new URL(url);
+    const { hostname } = typeof url === "string" ? new URL(url) : url;
     if (hostname === "localhost" || hostname === "127.0.0.1") {
       return false;
     }
