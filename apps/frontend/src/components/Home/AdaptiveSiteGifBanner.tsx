@@ -1,77 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import SiteGifBanner, { type SiteGifBannerProps } from "./SiteGifBanner";
-import {
-  noteEnhancementLoaded,
-  useAdaptiveHydrated,
-  useAdaptiveQuality,
-} from "@/lib/adaptive-quality";
-import {
-  SITE_GIF_ASPECT_CLASS,
-  SITE_GIF_DESKTOP_HEIGHT,
-  SITE_GIF_DESKTOP_WIDTH,
-} from "@/constants/site-gif";
-import { cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
-import { scheduleAfterCriticalLoad } from "@/lib/adaptive-quality/after-critical-load";
-
-function isExternalHref(href: string): boolean {
-  return /^https?:\/\//i.test(href);
-}
+import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
+import { useEffect } from "react";
 
 export default function AdaptiveSiteGifBanner(props: SiteGifBannerProps) {
-  const hydrated = useAdaptiveHydrated();
-  const quality = useAdaptiveQuality();
-  const [criticalLoadComplete, setCriticalLoadComplete] = useState(false);
-  const showAnimated = hydrated && criticalLoadComplete && quality.media !== "economy";
-
-  useEffect(() => scheduleAfterCriticalLoad(() => setCriticalLoadComplete(true)), []);
+  const hasAnimatedGif = props.enabled && Boolean(props.imageUrl?.trim());
 
   useEffect(() => {
-    if (showAnimated) noteEnhancementLoaded("optional-gif");
-  }, [showAnimated]);
+    if (hasAnimatedGif) noteEnhancementLoaded("optional-gif");
+  }, [hasAnimatedGif]);
 
-  if (!props.enabled || !props.imageUrl?.trim()) return null;
-  if (showAnimated) return <SiteGifBanner {...props} />;
-
-  const label = props.altText?.trim() || "پیشنهاد ویژه اینفینیتی";
-  const href = props.linkHref?.trim();
-  const shell = (
-    <div
-      role="img"
-      aria-label={label}
-      className="flex h-full w-full items-center justify-center bg-gradient-to-l from-slate-100 to-stone-50 px-4 text-center text-sm font-medium text-slate-600"
-    >
-      {label}
-    </div>
-  );
-  const content = href ? (
-    isExternalHref(href) ? (
-      <a href={href} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
-        {shell}
-      </a>
-    ) : (
-      <Link href={href} className="block h-full w-full">
-        {shell}
-      </Link>
-    )
-  ) : (
-    shell
-  );
-
-  return (
-    <div
-      className={cn("w-full overflow-hidden rounded-xl", SITE_GIF_ASPECT_CLASS, props.className)}
-      style={{
-        maxWidth: props.previewMode === "mobile" ? "390px" : undefined,
-      }}
-      data-aq-optional-media="gif-shell"
-    >
-      <span className="sr-only">
-        {SITE_GIF_DESKTOP_WIDTH} × {SITE_GIF_DESKTOP_HEIGHT}
-      </span>
-      {content}
-    </div>
-  );
+  return <SiteGifBanner {...props} />;
 }

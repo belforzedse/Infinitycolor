@@ -53,8 +53,8 @@ export default function SiteGifBanner({
       width={SITE_GIF_DESKTOP_WIDTH}
       height={SITE_GIF_DESKTOP_HEIGHT}
       className="h-full w-full object-cover"
-      // The adaptive wrapper inserts this only after the critical load. Keep
-      // native lazy loading for editor/preview call sites that render it directly.
+      // Native GIF animation is tier-independent; lazy loading only defers
+      // off-screen transfer and never replaces the GIF with a static shell.
       loading="lazy"
       fetchPriority="low"
       decoding="async"

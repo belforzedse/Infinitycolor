@@ -18,7 +18,7 @@ const product = (id: number): ProductCardProps => ({
 });
 
 describe("HomeGifPromoSection", () => {
-  it("renders two independent GIF slots and compact cards", () => {
+  it("always renders two animated GIF sources without adaptive shells", () => {
     const { container } = render(
       <HomeGifPromoSection
         slots={[
@@ -41,6 +41,7 @@ describe("HomeGifPromoSection", () => {
     expect(images).toHaveLength(2);
     expect(images[0]).toHaveAttribute("src", expect.stringContaining("/uploads/slot-1.gif"));
     expect(images[1]).toHaveAttribute("src", expect.stringContaining("/uploads/slot-2.gif"));
+    expect(container.querySelector("[data-aq-optional-media='gif-shell']")).toBeNull();
   });
 
   it("suppresses incomplete slots", () => {

@@ -292,12 +292,15 @@ zoom state. Observers disconnect on tier/route/unmount.
 
 ### GIF, social, and stories
 
-Economy renders semantic linked/text shells and does not attach optional GIF,
-video, or social preview sources. The top animated GIF waits until the critical
-window/LCP load is complete even at richer tiers. Infinitygram's media package
+Enabled storefront GIFs are tier-independent: the top banner and merchandising
+GIF slots keep their native animated image sources in Safe/Economy/Minimal and
+are never replaced with adaptive text shells or unloaded on downgrade. Native
+lazy loading may defer an off-screen transfer, but once the GIF enters loading
+range it animates normally. Economy still avoids attaching optional video and
+social preview sources until explicit interaction. Infinitygram's media package
 waits for both eligibility and a near-viewport intersection; its linked shell
-remains SSR-visible. Explicit interaction may attach a requested medium. Story
-avatars and links remain; the existing viewer stays interaction-lazy.
+remains SSR-visible. Story avatars and links remain; the existing viewer stays
+interaction-lazy.
 
 ## Telemetry
 
@@ -425,7 +428,7 @@ it:
 | critical decoded font bytes       | 742,080     | 41,724      | 700,356 fewer       |
 | total critical decoded bytes      | 2,678,518   | 1,972,948   | 705,570 fewer       |
 | critical decoded script bytes     | 1,389,327   | 1,389,295   | effectively stable |
-| pre-load optional GIF/Lottie work | not allowed | none seen   | gate satisfied      |
+| pre-load optional Lottie work     | not allowed | none seen   | gate satisfied      |
 
 This is local request/byte evidence, not a claim about field LCP or wall-clock
 latency. Candidate and physical-device measurements remain required.

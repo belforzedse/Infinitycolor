@@ -300,7 +300,7 @@ async function requestedForbiddenChunks(requests: Request[]) {
 
 function isOptionalMediaRequest(url: string) {
   return (
-    /\.(?:gif|mp4|webm|mov)(?:[?#]|$)/i.test(url) ||
+    /\.(?:mp4|webm|mov)(?:[?#]|$)/i.test(url) ||
     /\/animations\/infloading\.json(?:[?#]|$)/i.test(url) ||
     /_skip_global_loader=1.*populate%5BMedia%5D|populate\[Media\]/i.test(url)
   );
@@ -339,10 +339,9 @@ test.describe("automatic adaptive quality", () => {
     await expect(
       page.locator('[data-aq-hero="standard"] picture img'),
     ).toHaveCount(1);
-    const optionalShells = page.locator("[data-aq-optional-media='gif-shell']");
-    if ((await optionalShells.count()) > 0) {
-      await expect(optionalShells.first()).toBeAttached();
-    }
+    await expect(
+      page.locator("[data-aq-optional-media='gif-shell']"),
+    ).toHaveCount(0);
     await expect(page.locator("video[src]")).toHaveCount(0);
 
     await expect
@@ -811,6 +810,31 @@ test.describe("automatic adaptive quality", () => {
         }
       }),
     ).toBeNull();
+  });
+});
+
+test.describe("adaptive quality authentication isolation", () => {
+  test("logged-out account navigation redirects before account HTML renders", async ({
+    page,
+  }) => {
+    await page.context().clearCookies();
+    await page.addInitScript(() => {
+      localStorage.removeItem("accessToken");
+    });
+
+    const response = await page.goto("/account?tab=profile", {
+      waitUntil: "domcontentloaded",
+    });
+    const currentUrl = new URL(page.url());
+    const accountRequest = response?.request().redirectedFrom();
+    const accountResponse = await accountRequest?.response();
+
+    expect(currentUrl.pathname).toBe("/auth");
+    expect(currentUrl.searchParams.get("redirect")).toBe(
+      "/account?tab=profile",
+    );
+    expect(accountResponse?.status()).toBe(307);
+    await expect(page.locator(".public-layout")).toHaveCount(0);
   });
 });
 
