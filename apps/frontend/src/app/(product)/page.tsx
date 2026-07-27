@@ -28,7 +28,6 @@ import InfinitygramSection, {
   InfinitygramSectionSkeleton,
 } from "@/components/Home/InfinitygramSection";
 import { SkeletonBlock, SkeletonMedia, SkeletonText } from "@repo/ui/skeleton";
-import type { SuperAdminSettings } from "@/types/super-admin/settings";
 
 export const metadata: Metadata = {
   title: {
@@ -150,7 +149,7 @@ async function ProductSectionsBlock({
   homepageSettings,
   promoBanners,
 }: {
-  homepageSettings: SuperAdminSettings;
+  homepageSettings: Awaited<ReturnType<typeof getPublicSuperAdminSettings>>;
   promoBanners: HomePromoBanner[];
 }) {
   return <HomeProductSections homepageSettings={homepageSettings} promoBanners={promoBanners} />;

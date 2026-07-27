@@ -2,14 +2,10 @@
 
 import Link from "next/link";
 import { type FC, useState, useMemo, useCallback, useEffect, useRef } from "react";
-import dynamic from "next/dynamic";
 import useProductLike from "@/hooks/useProductLike";
 import { getLazySecondaryMediaByProductId } from "@/services/product/product";
 import { computeSaleDiscountPercent } from "@/utils/discounts";
-import {
-  noteEnhancementLoaded,
-  useAdaptiveQuality,
-} from "@/lib/adaptive-quality";
+import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
 
 // Components
 import ImageSlider from "./ImageSlider";
@@ -22,23 +18,21 @@ import {
   FloatingActions,
 } from "./CardParts";
 
-// Heavy modals are rendered only after explicit interaction. Declaring a dynamic
-// boundary alone is not enough if it is mounted for every card during page load.
-const QuickViewModal = dynamic(() => import("./QuickViewModal"), {
-  ssr: false,
-  loading: () => null,
-});
+type QuickViewModalComponent = (typeof import("./QuickViewModal"))["default"];
+type ShareModalComponent = (typeof import("./ShareModal"))["default"];
 
-// Warm the Quick View cache on hover so data is ready before the click.
-const preloadQuickView = (productId: number) =>
-  import("./QuickViewModal").then(({ preloadQuickViewProduct }) =>
-    preloadQuickViewProduct(productId),
-  );
+let quickViewModulePromise: Promise<typeof import("./QuickViewModal")> | null = null;
+let shareModulePromise: Promise<typeof import("./ShareModal")> | null = null;
 
-const ShareModal = dynamic(() => import("./ShareModal"), {
-  ssr: false,
-  loading: () => null,
-});
+function loadQuickViewModule() {
+  quickViewModulePromise ??= import("./QuickViewModal");
+  return quickViewModulePromise;
+}
+
+function loadShareModule() {
+  shareModulePromise ??= import("./ShareModal");
+  return shareModulePromise;
+}
 
 export interface ProductCardProps {
   images: string[];
@@ -75,6 +69,8 @@ const ProductCard: FC<ProductCardProps> = ({
   // State
   const [isQuickViewOpen, setIsQuickViewOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [QuickViewModal, setQuickViewModal] = useState<QuickViewModalComponent | null>(null);
+  const [ShareModal, setShareModal] = useState<ShareModalComponent | null>(null);
   const [enrichedImages, setEnrichedImages] = useState(images);
   const hasRequestedLazyMedia = useRef(false);
   const quality = useAdaptiveQuality();
@@ -126,6 +122,9 @@ const ProductCard: FC<ProductCardProps> = ({
     e.stopPropagation();
     noteEnhancementLoaded("quick-view");
     setIsQuickViewOpen(true);
+    void loadQuickViewModule()
+      .then((module) => setQuickViewModal(() => module.default))
+      .catch(() => setIsQuickViewOpen(false));
   }, []);
 
   const handleShare = useCallback((e: React.MouseEvent) => {
@@ -133,6 +132,9 @@ const ProductCard: FC<ProductCardProps> = ({
     e.stopPropagation();
     noteEnhancementLoaded("share");
     setIsShareOpen(true);
+    void loadShareModule()
+      .then((module) => setShareModal(() => module.default))
+      .catch(() => setIsShareOpen(false));
   }, []);
 
   const handleToggleLike = useCallback(
@@ -177,13 +179,11 @@ const ProductCard: FC<ProductCardProps> = ({
 
   const handleInteractionIntent = useCallback(() => {
     if (quality.rendering === "safe" || quality.media === "economy") return;
-    // Standard may pre-warm Quick View on pointer/keyboard intent.
-    void preloadQuickView(id);
     if (quality.media === "high") {
       noteEnhancementLoaded("secondary-media");
       void maybeLoadSecondaryMedia();
     }
-  }, [id, maybeLoadSecondaryMedia, quality.media, quality.rendering]);
+  }, [maybeLoadSecondaryMedia, quality.media, quality.rendering]);
 
   const handleProductLinkClick = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -274,7 +274,7 @@ const ProductCard: FC<ProductCardProps> = ({
         />
       </article>
 
-      {isQuickViewOpen && (
+      {isQuickViewOpen && QuickViewModal && (
         <QuickViewModal
           isOpen={isQuickViewOpen}
           onClose={() => setIsQuickViewOpen(false)}
@@ -282,7 +282,7 @@ const ProductCard: FC<ProductCardProps> = ({
         />
       )}
 
-      {isShareOpen && (
+      {isShareOpen && ShareModal && (
         <ShareModal
           open={isShareOpen}
           onOpenChange={setIsShareOpen}

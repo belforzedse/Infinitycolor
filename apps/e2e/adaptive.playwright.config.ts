@@ -23,12 +23,14 @@ export default defineConfig({
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1440, height: 1100 },
+        serviceWorkers: "block",
       },
     },
     {
       name: "chromium-mobile",
       use: {
         ...devices["Pixel 7"],
+        serviceWorkers: "block",
       },
     },
     {
@@ -36,6 +38,7 @@ export default defineConfig({
       use: {
         ...devices["Desktop Firefox"],
         viewport: { width: 1440, height: 1100 },
+        serviceWorkers: "block",
       },
     },
     {
@@ -43,6 +46,7 @@ export default defineConfig({
       use: {
         ...devices["Desktop Safari"],
         viewport: { width: 1440, height: 1100 },
+        serviceWorkers: "block",
       },
     },
   ],

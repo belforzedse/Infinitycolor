@@ -89,26 +89,28 @@ for this feature. It does not classify or start adaptive observers.
 
 ## Initial classification
 
-The neutral starting state is Standard/Standard/Standard. Enhanced is never
-selected from static hints.
+Policy `1.2.0` is strong-first. A generic or unknown browser starts at
+Standard/Standard/Standard, which preserves the complete essential carousel,
+catalog, form, and commerce behavior. Static memory/core hints never
+pre-downgrade it. A UA report on the explicit high-end admission list starts at
+Enhanced/High/Enhanced before hydration; real runtime jank can immediately
+begin stepping it down.
 
-| Signal                                   | Constraint                     |
-| ---------------------------------------- | ------------------------------ |
-| `prefers-reduced-motion: reduce`         | Motion Minimal                 |
-| `prefers-reduced-transparency: reduce`   | opaque/non-blurred surfaces    |
-| `saveData === true`                      | Media Economy                  |
-| `slow-2g`, `2g`, or `3g`                 | Media Economy                  |
-| memory at most 2 GiB                     | Rendering Safe, Motion Minimal |
-| logical cores at most 2                  | Rendering Safe, Motion Minimal |
-| memory at most 4 GiB and cores at most 4 | Rendering Safe, Motion Minimal |
-| missing/invalid/unsupported value        | ignored; remains neutral       |
-| valid session constraint                 | component-wise clamp           |
+| Signal                                 | Constraint                                     |
+| -------------------------------------- | ---------------------------------------------- |
+| admitted high-end legacy UA            | Enhanced/High/Enhanced                         |
+| `prefers-reduced-motion: reduce`       | Motion Minimal                                 |
+| `prefers-reduced-transparency: reduce` | opaque/non-blurred surfaces                    |
+| `saveData === true`                    | Media Economy                                  |
+| `slow-2g`, `2g`, or `3g`               | Media Economy                                  |
+| memory/core hints                      | ignored for initial classification and maximum |
+| missing/invalid/unsupported value      | ignored; remains Standard                      |
+| valid session constraint               | component-wise clamp                           |
 
-No user agent, browser name, model, mobile/desktop label, GPU string, or
-fingerprint-like score participates in initial classification or runtime
-downgrade. After hydration, the separately documented promotion admission gate
-may inspect the UA-reported device family/model. It can only authorize the
-existing smooth-window proof; it cannot select a tier directly.
+The UA admission is a small allowlist, not a capability score or a security
+boundary. No browser name, desktop/mobile label, GPU string, or broad
+fingerprint-like score is used. Raw UA/model and hardware/network values are
+never persisted or emitted.
 
 ## Persistence and privacy
 
@@ -151,20 +153,23 @@ oscillate above a demonstrated constraint.
 
 ## Promotion
 
-Promotion is enabled, but only for a UA-admitted high-end device candidate. The
-UA match is necessary and never sufficient. Every admitted session must also
-complete:
+Promotion is enabled only for a UA-admitted high-end device candidate. An
+explicit high-end legacy UA starts at peak immediately under the strong-first
+policy. This includes Safari's generic `iPhone` family token because Safari
+does not expose the exact model. If runtime evidence shows that device is not
+smooth, normal downgrade and session constraints take precedence.
+
+A reduced Android UA that hides its model may become eligible only after its
+UA-CH model matches the allowlist and the session completes:
 
 - three consecutive smooth observation windows;
 - at least two route generations;
 - no downgrade or severe event in the session.
 
-One promotion applies on the next route, in Rendering, Media, Motion order.
-Safe never jumps directly to Enhanced, and current accessibility/network or
-hardware constraints remain maximums. A runtime downgrade or severe event makes
-promotion unreachable for the rest of the session. This lets a qualifying
-device reach Enhanced/High/Enhanced over successive smooth route commits while
-preserving immediate downgrade.
+One later promotion applies on the next route, in Rendering, Media, Motion
+order. Safe never jumps directly to Enhanced, and current
+accessibility/network constraints remain maximums. A runtime downgrade or
+severe event makes later promotion unreachable for the rest of the session.
 
 The conservative admission list, reviewed on 2026-07-27, is:
 
@@ -185,11 +190,11 @@ admission is a performance optimization rather than a security boundary.
 
 Safari does not expose an iPhone model in its UA and Safari 26 freezes the
 reported iOS token. Therefore the site cannot truthfully distinguish an iPhone
-13 Pro Max from another iPhone by UA. The `iPhone` family is admitted as the
-Apple candidate and live smoothness proof decides whether promotion proceeds.
-Apple documents the iPhone 13 Pro Max as an A15 device with a six-core CPU and
-120 Hz ProMotion display; the generic Safari UA is the reason the exact model
-cannot be asserted.
+13 Pro Max from another iPhone by UA. The `iPhone` family starts at peak, while
+the live runtime observer is the guardrail that lowers a device which cannot
+sustain it. Apple documents the iPhone 13 Pro Max as an A15 device with a
+six-core CPU and 120 Hz ProMotion display; the generic Safari UA is the reason
+the exact model cannot be asserted.
 
 Primary references used for the list and detection contract:
 
@@ -212,20 +217,25 @@ family are never persisted or included in Matomo payloads.
 ## Rendering and motion mapping
 
 Safe and reduced-transparency styling uses opaque surfaces and removes
-backdrop/SVG displacement filters, animated background blobs, large decorative
-shadows/gradients, hover lift, and permanent `will-change`.
+backdrop/SVG displacement filters, animated background work, large decorative
+shadows, hover lift, and permanent `will-change`. The full-width
+`جدیدترین ها` color haze is a required static backdrop at every tier.
 
 Minimal Motion disables decorative animation while retaining focus,
 loading/progress, validation, menus/modals, and confirmation feedback. It is not
 a blanket `transition: none`.
 
-`Reveal` is visible in SSR, no-JS, missing-IntersectionObserver, and Minimal
-states. Standard uses a bounded IntersectionObserver/CSS transform. Every
-observer disconnects on route/tier change and unmount.
+JavaScript is a storefront requirement. The governor reduces JavaScript and
+media intensity; it does not maintain a separate no-JavaScript application.
+`Reveal` is visible in SSR, the first hydration render,
+missing-IntersectionObserver, and Minimal states. Standard uses a bounded
+IntersectionObserver/CSS transform. Every observer disconnects on route/tier
+change and unmount.
 
-`content-visibility:auto` plus `contain-intrinsic-size` is limited to measured
-below-fold home merchandising sections. It is not used on PLP, PDP, cart,
-checkout, sticky filters, or anchor/focus targets.
+`content-visibility:auto` is currently disabled for home merchandising because
+paint containment clipped the intentional full-viewport newest/discounted
+backgrounds on both desktop and mobile. It must not be reintroduced around a
+full-bleed, anchor/focus, PLP, PDP, cart, checkout, or sticky-filter subtree.
 
 ## Chunk and media mapping
 
@@ -246,16 +256,17 @@ Home rails and PLP render one responsive list/grid. The current 30-item PLP is
 not virtualized. Filters, sorting, URL state, pagination, links, prices,
 availability, and wishlist behavior remain tier-independent.
 
-Quick View and Share mount only after opening. Standard may prewarm Quick View
-on mouse/focus intent. High media may prewarm secondary media. Safe/Economy is
-click-only and has no touch-hover speculation.
+Quick View and Share imports are reached only after the corresponding explicit
+click. High media may prewarm secondary product media from mouse/focus intent.
+Safe/Economy is click-only and has no touch-hover speculation.
 
 ### Loaders and glass
 
-An accessible CSS spinner is universal. dotLottie loads only with Enhanced
-Rendering and Motion; downgrade stops the instance and conditional unmount lets
-the React package destroy it. Blog `GlassSurface` and its SVG/ResizeObserver
-work mount only in Enhanced and normal-transparency state.
+An accessible CSS spinner is universal. The dotLottie package and JSON are
+imported only while an Enhanced/Enhanced loader is actually visible; downgrade
+stops the instance and conditional unmount lets the package destroy it. Blog
+`GlassSurface` and its SVG/ResizeObserver work mount only in Enhanced and
+normal-transparency state.
 
 ### PDP media
 
@@ -275,10 +286,11 @@ zoom state. Observers disconnect on tier/route/unmount.
 ### GIF, social, and stories
 
 Economy renders semantic linked/text shells and does not attach optional GIF,
-video, or social preview sources. Explicit interaction may attach the requested
-medium. Infinitygram uses one responsive post tree instead of duplicate
-mobile/desktop trees. Story avatars and links remain; the existing viewer stays
-interaction-lazy.
+video, or social preview sources. The top animated GIF waits until the critical
+window/LCP load is complete even at richer tiers. Infinitygram's media package
+waits for both eligibility and a near-viewport intersection; its linked shell
+remains SSR-visible. Explicit interaction may attach a requested medium. Story
+avatars and links remain; the existing viewer stays interaction-lazy.
 
 ## Telemetry
 
@@ -352,8 +364,8 @@ The dedicated Playwright config builds and runs with `next start`, compiles a
 test-only adapter, and gates Chromium desktop/mobile, Firefox, and WebKit. It
 does not reuse the legacy helper that ignores hydration attribute errors. The
 suite captures attributes at bootstrap assignment, checks one hero/LCP tree,
-forbidden Safe media/chunks against built chunk content, no-JS visibility,
-keyboard semantics, missing/blocked APIs, reduced preferences, test Enhanced,
+forbidden Safe media/chunks against built chunk content, first-hydration
+visibility, keyboard semantics, missing/blocked APIs, reduced preferences, test Enhanced,
 runtime downgrade persistence, high-end-only promotion, narrow mobile
 footer/nav geometry, admin exclusion, SnappPay failure isolation, and downgrade
 during payment submit/redirect/callback/result.
@@ -394,6 +406,23 @@ The pre-change local production build used Next 16.2.4:
 Selected manifests were preserved outside the worktree for same-session
 comparison. This is build evidence, not field performance proof.
 
+The same-session cold, service-worker-free home trace on the local production
+server found the critical font waterfall was the clearest network regression.
+Switching only the storefront to non-preloaded font declarations preserved the
+same families and weights while letting each face load when CSS actually uses
+it:
+
+| Local cold home trace             | Before      | After       | Change             |
+| --------------------------------- | ----------- | ----------- | ------------------ |
+| critical font requests            | 13          | 1           | 12 fewer            |
+| critical decoded font bytes       | 742,080     | 41,724      | 700,356 fewer       |
+| total critical decoded bytes      | 2,678,518   | 1,972,948   | 705,570 fewer       |
+| critical decoded script bytes     | 1,389,327   | 1,389,295   | effectively stable |
+| pre-load optional GIF/Lottie work | not allowed | none seen   | gate satisfied      |
+
+This is local request/byte evidence, not a claim about field LCP or wall-clock
+latency. Candidate and physical-device measurements remain required.
+
 The following route/device matrix must be populated from a candidate deployment
 before public launch. Record Next-16.2.12-only results separately from
 adaptive-feature results.
@@ -417,7 +446,7 @@ substitute.
 ## Release gates and operations
 
 Block release for any commerce parity failure, hydration warning, forbidden Safe
-request, duplicate hero/LCP request, inaccessible/no-JS content, or leaked
+request, duplicate hero/LCP request, inaccessible content, or leaked
 observer/timer/player.
 
 After launch, redeploy force-safe and investigate when adaptive JS/hydration
@@ -466,7 +495,8 @@ artifact rollback and is not appropriate for an active payment defect.
 ## Known limitations and launch blockers
 
 - Exact iPhone model detection is impossible from Safari's generic iPhone UA;
-  Apple promotion therefore uses family admission plus live smoothness proof.
+  Apple therefore starts the admitted iPhone family at peak and relies on live
+  runtime downgrade rather than pretending to identify the model.
 - The high-end Android list is intentionally conservative and needs periodic
   primary-source maintenance as vendors add model identifiers.
 - Network/device hints are not universal; absence is neutral by design.

@@ -169,20 +169,6 @@ export function getAdaptiveQualityBootstrapScript(): string {
         }
       };
       const connection = n.connection || n.mozConnection || n.webkitConnection;
-      const memory =
-        typeof n.deviceMemory === "number" &&
-        Number.isFinite(n.deviceMemory) &&
-        n.deviceMemory > 0 &&
-        n.deviceMemory <= 64
-          ? n.deviceMemory
-          : undefined;
-      const cores =
-        typeof n.hardwareConcurrency === "number" &&
-        Number.isInteger(n.hardwareConcurrency) &&
-        n.hardwareConcurrency > 0 &&
-        n.hardwareConcurrency <= 256
-          ? n.hardwareConcurrency
-          : undefined;
       const reducedMotion = mediaMatch("(prefers-reduced-motion: reduce)");
       const reducedTransparency = mediaMatch(
         "(prefers-reduced-transparency: reduce)"
@@ -196,47 +182,32 @@ export function getAdaptiveQualityBootstrapScript(): string {
         effectiveType === "slow-2g" ||
         effectiveType === "2g" ||
         effectiveType === "3g";
+      const userAgent =
+        typeof n.userAgent === "string" ? n.userAgent.slice(0, 512) : "";
+      const highEndUserAgent =
+        /\\biPhone\\b/i.test(userAgent) ||
+        (
+          /\\bAndroid\\b/i.test(userAgent) &&
+          /\\b(?:Pixel (?:8|9|10) Pro(?: XL| Fold)?|SM-S(?:91[168]|92[168]|93[168]|948)[A-Z0-9]*|Galaxy S(?:23|24|25)(?:\\+| Plus| Ultra)?|Galaxy S26 Ultra|SM-F(?:731|741|766|946|956|966)[A-Z0-9]*|Galaxy Z (?:Flip|Fold)(?:5|6|7)|OnePlus(?: |-)(?:12|13)(?:R)?|CPH(?:2581|2583|2653)|Xiaomi (?:14|15) Ultra)\\b/i.test(userAgent)
+        );
 
-      let constraint = {
-        rendering: "standard",
-        media: "standard",
-        motion: "standard"
-      };
+      let constraint = highEndUserAgent
+        ? {
+            rendering: "enhanced",
+            media: "high",
+            motion: "enhanced"
+          }
+        : {
+            rendering: "standard",
+            media: "standard",
+            motion: "standard"
+          };
       let maximum = {
         rendering: "enhanced",
         media: "high",
         motion: "enhanced"
       };
-      let reasons = [];
-
-      if (memory !== undefined && memory <= 2) {
-        constraint.rendering = "safe";
-        constraint.motion = "minimal";
-        maximum.rendering = "safe";
-        maximum.motion = "minimal";
-        reasons.push("low-memory");
-      }
-      if (cores !== undefined && cores <= 2) {
-        constraint.rendering = "safe";
-        constraint.motion = "minimal";
-        maximum.rendering = "safe";
-        maximum.motion = "minimal";
-        reasons.push("low-cores");
-      }
-      if (
-        memory !== undefined &&
-        cores !== undefined &&
-        memory <= 4 &&
-        cores <= 4 &&
-        memory > 2 &&
-        cores > 2
-      ) {
-        constraint.rendering = "safe";
-        constraint.motion = "minimal";
-        maximum.rendering = "safe";
-        maximum.motion = "minimal";
-        reasons.push("combined-capacity");
-      }
+      let reasons = highEndUserAgent ? ["promotion"] : [];
       if (saveData || slowConnection) maximum.media = "economy";
       if (reducedMotion) maximum.motion = "minimal";
 

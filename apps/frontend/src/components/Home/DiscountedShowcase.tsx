@@ -21,8 +21,8 @@ const PRODUCT_PAGE_BREAKPOINTS: Array<{ query: string; count: ProductsPerPage }>
 ];
 
 function getProductsPerPageFromViewport(): ProductsPerPage {
-  const match = PRODUCT_PAGE_BREAKPOINTS.find((breakpoint) =>
-    window.matchMedia(breakpoint.query).matches,
+  const match = PRODUCT_PAGE_BREAKPOINTS.find(
+    (breakpoint) => window.matchMedia(breakpoint.query).matches,
   );
   return match?.count ?? 2;
 }
@@ -70,7 +70,8 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
   return (
     <section
       dir="rtl"
-      className="relative left-1/2 right-1/2 -mx-[50vw] w-screen overflow-hidden bg-[#1E2850]"
+      data-home-full-bleed="discounted"
+      className="home-full-bleed overflow-hidden bg-[#1E2850]"
     >
       <style jsx>{`
         @keyframes fadeInUp {
@@ -159,13 +160,12 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
           </div>
 
           {products.map((product, index) => {
-            const visibleOnDesktop =
-              index >= startIndex && index < startIndex + productsPerPage;
+            const visibleOnDesktop = index >= startIndex && index < startIndex + productsPerPage;
             return (
               <div
                 key={product.id}
                 data-product-card-slide
-                className={`aq-decorative-motion w-[calc(50%-0.1875rem)] shrink-0 snap-start transition-transform duration-200 ease-out lg:min-w-0 lg:w-auto lg:snap-none lg:hover:-translate-y-1 lg:hover:scale-[1.02] ${
+                className={`aq-decorative-motion w-[calc(50%-0.1875rem)] shrink-0 snap-start transition-transform duration-200 ease-out lg:w-auto lg:min-w-0 lg:snap-none lg:hover:-translate-y-1 lg:hover:scale-[1.02] ${
                   visibleOnDesktop ? "lg:block" : "lg:hidden"
                 }`}
                 style={{

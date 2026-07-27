@@ -21,15 +21,15 @@ import type { SuperAdminSettings } from "@/types/super-admin/settings";
 import type { ProductCardProps } from "@/components/Product/Card";
 
 const NEWEST_BACKGROUND_ELLIPSES = [
-  "right-[-8%] top-[-18%] h-[230px] w-[390px] bg-[#E2EBFE] motion-safe:animate-[newest-ellipse-float-a_6.5s_ease-in-out_infinite] md:h-[300px] md:w-[520px]",
-  "right-[22%] top-[8%] h-[180px] w-[320px] bg-[#E2EBFE] motion-safe:animate-[newest-ellipse-float-b_7.25s_ease-in-out_infinite] md:h-[240px] md:w-[430px]",
-  "left-[18%] bottom-[-24%] h-[220px] w-[410px] bg-[#E2EBFE] motion-safe:animate-[newest-ellipse-float-c_6.75s_ease-in-out_infinite] md:h-[290px] md:w-[560px]",
-  "right-[6%] bottom-[-16%] h-[210px] w-[360px] bg-[#FFFEED] motion-safe:animate-[newest-ellipse-float-b_7.75s_ease-in-out_infinite] md:h-[280px] md:w-[500px]",
-  "left-[36%] top-[-20%] h-[190px] w-[340px] bg-[#FFFEED] motion-safe:animate-[newest-ellipse-float-c_6.25s_ease-in-out_infinite] md:h-[260px] md:w-[460px]",
-  "left-[-10%] top-[18%] h-[240px] w-[420px] bg-[#FFFEED] motion-safe:animate-[newest-ellipse-float-a_8.25s_ease-in-out_infinite] md:h-[320px] md:w-[570px]",
-  "left-[-4%] bottom-[8%] h-[190px] w-[340px] bg-[#FFF3E3] motion-safe:animate-[newest-ellipse-float-c_7.5s_ease-in-out_infinite] md:h-[270px] md:w-[470px]",
-  "left-[46%] bottom-[-20%] h-[200px] w-[380px] bg-[#FFF3E3] motion-safe:animate-[newest-ellipse-float-a_6.85s_ease-in-out_infinite] md:h-[280px] md:w-[520px]",
-  "right-[44%] top-[30%] h-[170px] w-[310px] bg-[#FFF3E3] motion-safe:animate-[newest-ellipse-float-b_7s_ease-in-out_infinite] md:h-[230px] md:w-[440px]",
+  "right-[-8%] top-[-18%] h-[230px] w-[390px] bg-[#E2EBFE] md:h-[300px] md:w-[520px]",
+  "right-[22%] top-[8%] h-[180px] w-[320px] bg-[#E2EBFE] md:h-[240px] md:w-[430px]",
+  "left-[18%] bottom-[-24%] h-[220px] w-[410px] bg-[#E2EBFE] md:h-[290px] md:w-[560px]",
+  "right-[6%] bottom-[-16%] h-[210px] w-[360px] bg-[#FFFEED] md:h-[280px] md:w-[500px]",
+  "left-[36%] top-[-20%] h-[190px] w-[340px] bg-[#FFFEED] md:h-[260px] md:w-[460px]",
+  "left-[-10%] top-[18%] h-[240px] w-[420px] bg-[#FFFEED] md:h-[320px] md:w-[570px]",
+  "left-[-4%] bottom-[8%] h-[190px] w-[340px] bg-[#FFF3E3] md:h-[270px] md:w-[470px]",
+  "left-[46%] bottom-[-20%] h-[200px] w-[380px] bg-[#FFF3E3] md:h-[280px] md:w-[520px]",
+  "right-[44%] top-[30%] h-[170px] w-[310px] bg-[#FFF3E3] md:h-[230px] md:w-[440px]",
 ] as const;
 
 type HomepageSectionsPromise = ReturnType<typeof getHomepageSections>;
@@ -96,24 +96,17 @@ function ProductRailSectionSkeleton() {
 
 function NewestSectionSkeleton() {
   return (
-    <section
-      aria-hidden="true"
-      className="relative left-1/2 right-1/2 -mx-[50vw] w-screen overflow-hidden"
-    >
+    <section aria-hidden="true" className="home-full-bleed overflow-hidden">
       <div
         aria-hidden="true"
-        data-adaptive-decorative="rich"
         className="pointer-events-none absolute inset-[-160px] z-0 overflow-hidden blur-[74.5px]"
       >
         {NEWEST_BACKGROUND_ELLIPSES.map((ellipseClass, index) => (
-          <span
-            key={index}
-            className={`absolute rounded-full opacity-[0.45] ${ellipseClass}`}
-          />
+          <span key={index} className={`absolute rounded-full opacity-[0.45] ${ellipseClass}`} />
         ))}
       </div>
 
-      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 4xl:px-20">
+      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20">
         <div className="w-full min-w-0 space-y-10">
           <SkeletonText className="h-8 w-48" />
           <ProductCardsSkeleton />
@@ -133,7 +126,7 @@ function GifPromoSectionSkeleton() {
             className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(190px,42vw)_minmax(0,1fr)] lg:grid-cols-[329.5px_1fr]"
           >
             <SkeletonBlock className="min-h-[360px] w-full rounded-[24px] sm:min-h-[480px] lg:h-[564px] lg:min-h-0" />
-            <div className="grid min-w-0 grid-cols-1 gap-3 xs:grid-cols-2 sm:grid-cols-1 lg:h-full lg:content-between lg:gap-0">
+            <div className="xs:grid-cols-2 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-1 lg:h-full lg:content-between lg:gap-0">
               {[...Array(4)].map((_, productIndex) => (
                 <SkeletonBlock
                   key={productIndex}
@@ -163,22 +156,20 @@ async function NewestSection({
   return (
     <section
       data-home-section="newest-products"
-      className="relative left-1/2 right-1/2 -mx-[50vw] w-screen overflow-hidden"
+      data-home-full-bleed="newest"
+      className="home-full-bleed overflow-hidden"
     >
       <div
         aria-hidden="true"
-        data-adaptive-decorative="rich"
+        data-newest-static-backdrop
         className="pointer-events-none absolute inset-[-160px] z-0 overflow-hidden blur-[74.5px]"
       >
         {NEWEST_BACKGROUND_ELLIPSES.map((ellipseClass, index) => (
-          <span
-            key={index}
-            className={`aq-decorative-motion absolute rounded-full opacity-[0.85] ${ellipseClass}`}
-          />
+          <span key={index} className={`absolute rounded-full opacity-[0.85] ${ellipseClass}`} />
         ))}
       </div>
 
-      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 4xl:px-20">
+      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20">
         <div className="w-full min-w-0">
           {/* Single render: OffersListHomePage adapts to mobile (scroll) vs desktop (grid)
               internally, so the previous hidden md:block / md:hidden split hydrated every
@@ -213,7 +204,7 @@ async function FavoritesSection({
   if (favorites.length === 0) return null;
 
   return (
-    <section className="aq-home-deferred space-y-10">
+    <section className="space-y-10">
       {/* Single render (see NewestSection) — avoids double ProductCard hydration. */}
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
@@ -240,7 +231,7 @@ async function DiscountedSection({
   if (discounted.length === 0) return null;
 
   return (
-    <section className="aq-home-deferred">
+    <section>
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
           sectionId="discounted"
@@ -275,7 +266,6 @@ async function GifPromoSection({
   return (
     <Reveal variant="fade-up" duration={700}>
       <HomeGifPromoSection
-        className="aq-home-deferred"
         slots={[
           {
             id: "slot-1",
@@ -307,7 +297,7 @@ async function CustomSection({
   if (customSectionProducts.length === 0) return null;
 
   return (
-    <section className="aq-home-deferred">
+    <section>
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
           sectionId="custom"
@@ -329,11 +319,12 @@ async function WeeklyPicksSection({
 }) {
   const batchedSections = await batchedSectionsPromise;
   const weeklyPicksProducts =
-    pickBatchedHomepageSection(batchedSections, "weeklyPicks") ?? (await getProductsByIds(productIds));
+    pickBatchedHomepageSection(batchedSections, "weeklyPicks") ??
+    (await getProductsByIds(productIds));
   if (weeklyPicksProducts.length === 0) return null;
 
   return (
-    <section className="aq-home-deferred">
+    <section>
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
           sectionId="weeklyPicks"
@@ -360,7 +351,7 @@ async function EveryoneFollowsSection({
   if (everyoneFollowsProducts.length === 0) return null;
 
   return (
-    <section className="aq-home-deferred">
+    <section>
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
           sectionId="everyoneFollows"
@@ -431,7 +422,7 @@ export default function HomeProductSections({
       )}
 
       {hasPromoBanners && (
-        <section className="aq-home-deferred">
+        <section>
           <Reveal variant="fade-up" duration={700}>
             <HomePromoBanners banners={promoBanners ?? []} />
           </Reveal>

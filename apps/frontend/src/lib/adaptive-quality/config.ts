@@ -11,7 +11,7 @@ const parseRolloutPercent = (value: string | undefined) => {
 };
 
 export const ADAPTIVE_QUALITY_SCHEMA = 1 as const;
-export const ADAPTIVE_QUALITY_POLICY_VERSION = "1.1.0";
+export const ADAPTIVE_QUALITY_POLICY_VERSION = "1.2.0";
 export const ADAPTIVE_QUALITY_STORAGE_KEY = "infinity:adaptive-quality:v1";
 export const ADAPTIVE_QUALITY_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 

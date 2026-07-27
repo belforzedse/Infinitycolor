@@ -96,45 +96,6 @@ textarea:focus-visible {
   }
 }
 
-@keyframes newest-ellipse-float-a {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
-  }
-  35% {
-    transform: translate3d(168px, -112px, 0) rotate(11deg) scale(1.12);
-  }
-  70% {
-    transform: translate3d(-132px, 98px, 0) rotate(-10deg) scale(0.92);
-  }
-}
-
-@keyframes newest-ellipse-float-b {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
-  }
-  40% {
-    transform: translate3d(-154px, -104px, 0) rotate(-12deg) scale(1.12);
-  }
-  75% {
-    transform: translate3d(146px, 122px, 0) rotate(10deg) scale(0.91);
-  }
-}
-
-@keyframes newest-ellipse-float-c {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
-  }
-  30% {
-    transform: translate3d(112px, 156px, 0) rotate(-10deg) scale(0.91);
-  }
-  65% {
-    transform: translate3d(-148px, -102px, 0) rotate(13deg) scale(1.14);
-  }
-}
-
 /* Custom Scrollbar Styles */
 * {
   scrollbar-width: thin;
@@ -202,8 +163,17 @@ textarea:focus-visible {
   }
 }
 
-/* Automatic adaptive quality. The no-attribute/no-JS baseline stays visible and semantic. */
+/* Automatic adaptive quality. The pre-bootstrap baseline stays visible and semantic. */
 @layer components {
+  .home-full-bleed {
+    position: relative;
+    left: 50%;
+    right: 50%;
+    width: calc(100vw + 24px);
+    margin-right: calc(-50vw - 12px);
+    margin-left: calc(-50vw - 12px);
+  }
+
   .aq-reveal {
     opacity: 1;
     filter: none;
@@ -268,18 +238,15 @@ textarea:focus-visible {
   html[data-aq-scope="storefront"][data-aq-transparency="reduced"]
     :where(.glass-surface, .glass-panel, .glass-chip, .glass-pill),
   html[data-aq-scope="storefront"][data-aq-rendering="safe"] [data-adaptive-surface],
-  html[data-aq-scope="storefront"][data-aq-transparency="reduced"]
-    [data-adaptive-surface] {
+  html[data-aq-scope="storefront"][data-aq-transparency="reduced"] [data-adaptive-surface] {
     background: rgb(255 255 255 / 0.98) !important;
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
     box-shadow: 0 1px 3px rgb(15 23 42 / 0.08) !important;
   }
 
-  html[data-aq-scope="storefront"][data-aq-rendering="safe"]
-    [class*="backdrop-blur"],
-  html[data-aq-scope="storefront"][data-aq-transparency="reduced"]
-    [class*="backdrop-blur"] {
+  html[data-aq-scope="storefront"][data-aq-rendering="safe"] [class*="backdrop-blur"],
+  html[data-aq-scope="storefront"][data-aq-transparency="reduced"] [class*="backdrop-blur"] {
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
   }
@@ -354,11 +321,6 @@ textarea:focus-visible {
       filter: none;
       transform: none;
     }
-  }
-
-  .aq-home-deferred {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 720px;
   }
 }
 

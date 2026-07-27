@@ -53,9 +53,9 @@ export default function SiteGifBanner({
       width={SITE_GIF_DESKTOP_WIDTH}
       height={SITE_GIF_DESKTOP_HEIGHT}
       className="h-full w-full object-cover"
-      // Eager so the animated banner shows immediately, but LOW fetch priority so it
-      // never outranks the hero image (the real LCP) for bandwidth on slow connections.
-      loading="eager"
+      // The adaptive wrapper inserts this only after the critical load. Keep
+      // native lazy loading for editor/preview call sites that render it directly.
+      loading="lazy"
       fetchPriority="low"
       decoding="async"
     />

@@ -1,12 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import Link from "next/link";
-import {
-  SocialPostCard,
-  SocialPostOverlayBadge,
-} from "@repo/social-posts/client";
-import type { PostCardVariant } from "@repo/social-posts/client";
 import type { SocialFeedPost } from "@repo/social-posts";
 import {
   noteEnhancementLoaded,
@@ -28,52 +23,15 @@ function hrefForPost(slug: string) {
   return `${INFINITYGRAM_URL}/post/${encodeURIComponent(slug)}`;
 }
 
-function cellClass(post: SocialFeedPost) {
-  return post.desktopVariant === "xl"
-    ? "col-span-2 row-span-2"
-    : "col-span-1 row-span-1";
-}
-
-function PostCard({
-  post,
-  variant,
-  className,
-}: {
-  post: SocialFeedPost;
-  variant: PostCardVariant;
-  className?: string;
-}) {
-  return (
-    <SocialPostCard
-      variant={variant}
-      widthMode="fluid"
-      fluidMaxWidth="none"
-      className={className}
-      imageSrc={post.imageSrc}
-      imageAlt={post.imageAlt}
-      previewMedia={post.previewMedia}
-      likesCount={post.likesCount}
-      commentsCount={post.commentsCount}
-      href={hrefForPost(post.slug)}
-      linkTarget={EXTERNAL_LINK_PROPS.target}
-      linkRel={EXTERNAL_LINK_PROPS.rel}
-      linkAriaLabel={`مشاهده پست ${post.title || post.imageAlt}`}
-      actionTone="light"
-      overlay={
-        post.overlay != null ? (
-          <SocialPostOverlayBadge type={post.overlay} />
-        ) : undefined
-      }
-    />
-  );
-}
-
-export default function InfinitygramSectionClient({
-  posts,
-}: InfinitygramSectionClientProps) {
+export default function InfinitygramSectionClient({ posts }: InfinitygramSectionClientProps) {
+  const sectionRef = useRef<HTMLElement>(null);
   const hydrated = useAdaptiveHydrated();
   const quality = useAdaptiveQuality();
-  const showSocialMedia = hydrated && quality.media !== "economy";
+  const [nearViewport, setNearViewport] = useState(false);
+  const [RichPosts, setRichPosts] = useState<ComponentType<{
+    posts: readonly SocialFeedPost[];
+  }> | null>(null);
+  const richMediaEligible = hydrated && nearViewport && quality.media !== "economy";
   let xlCount = 0;
   let smCount = 0;
   const visiblePosts = posts.filter((post) => {
@@ -89,11 +47,43 @@ export default function InfinitygramSectionClient({
   });
 
   useEffect(() => {
-    if (showSocialMedia) noteEnhancementLoaded("social-media");
-  }, [showSocialMedia]);
+    const section = sectionRef.current;
+    if (!section) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setNearViewport(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        setNearViewport(true);
+        observer.disconnect();
+      },
+      { rootMargin: "400px 0px" },
+    );
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!richMediaEligible || RichPosts) return;
+    let cancelled = false;
+    import("./InfinitygramRichPosts")
+      .then((module) => {
+        if (cancelled) return;
+        setRichPosts(() => module.default);
+        noteEnhancementLoaded("social-media");
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [RichPosts, richMediaEligible]);
 
   return (
     <section
+      ref={sectionRef}
       dir="rtl"
       aria-labelledby="home-infinitygram-heading"
       className="overflow-hidden bg-[#252220] text-white"
@@ -124,25 +114,8 @@ export default function InfinitygramSectionClient({
           </Link>
         </div>
 
-        {showSocialMedia ? (
-          <div
-            className="grid w-full min-w-0 grid-flow-dense grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
-            dir="ltr"
-          >
-            {visiblePosts.map((post) => (
-              <div
-                key={post.id}
-                className={`${cellClass(post)} flex min-w-0 justify-center`}
-                dir="ltr"
-              >
-                <PostCard
-                  post={post}
-                  variant={post.desktopVariant}
-                  className="w-full"
-                />
-              </div>
-            ))}
-          </div>
+        {richMediaEligible && RichPosts ? (
+          <RichPosts posts={visiblePosts} />
         ) : (
           <ul
             className="grid w-full min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"

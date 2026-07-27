@@ -8,7 +8,7 @@ import { NuqsAdapter } from "nuqs/adapters/next";
 import { CartProvider } from "@/contexts/CartContext";
 import { MobileMenuProvider } from "@/contexts/MobileMenuContext";
 import Providers from "./Providers";
-import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts";
+import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts/storefront";
 import DevOnlyDebugPanel from "@/components/Debug/DevOnlyDebugPanel";
 import { NavigationProgress } from "@repo/ui/navigation-progress";
 import { OrganizationSchema } from "@/components/SEO/OrganizationSchema";

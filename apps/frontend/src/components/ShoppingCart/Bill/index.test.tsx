@@ -5,6 +5,7 @@ import ShoppingCartBillForm from ".";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
 import { CartService } from "@/services";
+import WalletService from "@/services/wallet";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
@@ -213,6 +214,24 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(screen.queryByTestId("checkout-auth-gate")).not.toBeInTheDocument();
     });
     expect(screen.getByTestId("checkout-submit")).toBeVisible();
+  });
+
+  it("does not request protected checkout data before redirecting an anonymous shopper", async () => {
+    const store = createStore();
+    store.set(currentUserAtom, null);
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-auth-gate")).toBeInTheDocument();
+    });
+    expect(CartService.getAvailableGateways).not.toHaveBeenCalled();
+    expect(WalletService.getMyWallet).not.toHaveBeenCalled();
   });
 
   it("does not duplicate an already-applied discount preview from the coupon component", async () => {

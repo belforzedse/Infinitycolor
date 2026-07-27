@@ -130,6 +130,8 @@ function ShoppingCartBillForm({}: Props) {
   const [hasRedirected, setHasRedirected] = useState(false);
   const [hasAccessToken, setHasAccessToken] = useState(false);
   const [isAuthTokenReady, setIsAuthTokenReady] = useState(false);
+  const canLoadProtectedCheckoutData =
+    isAuthTokenReady && Boolean(currentUser || hasAccessToken);
 
   // Check authentication on mount - redirect to login if not authenticated.
   // Wait for global auth loading to finish so we don't redirect while user is still being fetched
@@ -305,6 +307,11 @@ function ShoppingCartBillForm({}: Props) {
   }, [currentUser]);
 
   useEffect(() => {
+    if (!canLoadProtectedCheckoutData) {
+      setAvailableGateways([]);
+      return;
+    }
+
     const loadAvailableGateways = async () => {
       try {
         const gateways = await CartService.getAvailableGateways();
@@ -315,7 +322,7 @@ function ShoppingCartBillForm({}: Props) {
     };
 
     loadAvailableGateways();
-  }, []);
+  }, [canLoadProtectedCheckoutData]);
 
   useEffect(() => {
     setError((prev) =>
@@ -436,6 +443,11 @@ function ShoppingCartBillForm({}: Props) {
 
   // Load wallet balance once
   useEffect(() => {
+    if (!canLoadProtectedCheckoutData) {
+      setWalletBalanceIrr(0);
+      return;
+    }
+
     const run = async () => {
       try {
         const res = await WalletService.getMyWallet();
@@ -443,7 +455,7 @@ function ShoppingCartBillForm({}: Props) {
       } catch {}
     };
     run();
-  }, []);
+  }, [canLoadProtectedCheckoutData]);
 
   // Validate cart has items and total price on mount
   const EMPTY_GATEWAYS_ERROR = "در حال حاضر هیچ درگاه پرداختی فعال نیست";

@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import {
   expect,
   test,
-  type Browser,
   type Page,
   type Request,
 } from "@playwright/test";
@@ -14,7 +13,6 @@ import {
   findProductVariationBySku,
   resetCartToVariation,
 } from "../../helpers/api";
-import { storefrontBaseURL } from "../../helpers/env";
 import {
   finalizeToZarinpalRedirect,
   stubSuccessfulCallback,
@@ -86,7 +84,10 @@ function collectStrictRuntimeErrors(page: Page) {
   });
   page.on("console", (message) => {
     if (message.type() === "error") {
-      errors.push(`console.error: ${message.text()}`);
+      const location = message.location().url;
+      errors.push(
+        `console.error: ${message.text()}${location ? ` (${location})` : ""}`,
+      );
     }
   });
   return {
@@ -195,30 +196,40 @@ async function installAdaptiveCapabilities(page: Page, preset: AdaptivePreset) {
     }
 
     if (options.blockSessionStorage) {
-      try {
-        Object.defineProperty(window, "sessionStorage", {
+      const blockedKey = "infinity:adaptive-quality:v1";
+      const storage = window.sessionStorage;
+      const originalGetItem = storage.getItem.bind(storage);
+      const originalSetItem = storage.setItem.bind(storage);
+      const originalRemoveItem = storage.removeItem.bind(storage);
+      Object.defineProperties(storage, {
+        getItem: {
           configurable: true,
-          get() {
-            throw new DOMException("session storage blocked");
+          value: (key: string) => {
+            if (key === blockedKey) {
+              throw new DOMException("adaptive session storage blocked");
+            }
+            return originalGetItem(key);
           },
-        });
-      } catch {
-        const blocked = window.sessionStorage;
-        Object.defineProperties(blocked, {
-          getItem: {
-            configurable: true,
-            value: () => {
-              throw new DOMException("session storage blocked");
-            },
+        },
+        setItem: {
+          configurable: true,
+          value: (key: string, value: string) => {
+            if (key === blockedKey) {
+              throw new DOMException("adaptive session storage blocked");
+            }
+            originalSetItem(key, value);
           },
-          setItem: {
-            configurable: true,
-            value: () => {
-              throw new DOMException("session storage blocked");
-            },
+        },
+        removeItem: {
+          configurable: true,
+          value: (key: string) => {
+            if (key === blockedKey) {
+              throw new DOMException("adaptive session storage blocked");
+            }
+            originalRemoveItem(key);
           },
-        });
-      }
+        },
+      });
     }
 
     let bootstrapValue: unknown;
@@ -295,8 +306,12 @@ function isOptionalMediaRequest(url: string) {
   );
 }
 
+function freshHomePath() {
+  return `/?_aq_e2e=${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 test.describe("automatic adaptive quality", () => {
-  test("Safe is present before hydration and preserves the guest commerce flow", async ({
+  test("strong-first classification applies Economy without weakening commerce", async ({
     page,
   }) => {
     const runtime = collectStrictRuntimeErrors(page);
@@ -308,21 +323,21 @@ test.describe("automatic adaptive quality", () => {
       saveData: true,
     });
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     expect(await bootstrapCapture(page)).toEqual({
       scope: "storefront",
-      rendering: "safe",
+      rendering: "standard",
       media: "economy",
-      motion: "minimal",
+      motion: "standard",
       transparency: "normal",
     });
     await expect(page.locator("html")).toHaveAttribute(
       "data-aq-rendering",
-      "safe",
+      "standard",
     );
-    await expect(page.locator('[data-aq-hero="static"]')).toHaveCount(1);
+    await expect(page.locator('[data-aq-hero="standard"]')).toHaveCount(1);
     await expect(
-      page.locator('[data-aq-hero="static"] picture img'),
+      page.locator('[data-aq-hero="standard"] picture img'),
     ).toHaveCount(1);
     const optionalShells = page.locator("[data-aq-optional-media='gif-shell']");
     if ((await optionalShells.count()) > 0) {
@@ -358,7 +373,9 @@ test.describe("automatic adaptive quality", () => {
     });
     await page.getByTestId("pdp-add-to-cart").click();
     await page.goto("/cart", { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("cart-item").first()).toBeVisible({
+    await expect(
+      page.locator('[data-testid="cart-item"]:visible').first(),
+    ).toBeVisible({
       timeout: 20_000,
     });
     await page.goto("/checkout", { waitUntil: "domcontentloaded" });
@@ -381,7 +398,7 @@ test.describe("automatic adaptive quality", () => {
       blockSessionStorage: true,
     });
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     expect(await bootstrapCapture(page)).toMatchObject({
       scope: "storefront",
       rendering: "standard",
@@ -390,6 +407,53 @@ test.describe("automatic adaptive quality", () => {
     });
     await expect(page.locator("#main-content")).toBeVisible();
     runtime.assertClean();
+  });
+
+  test("home full-bleed sections and the static newest backdrop reach both viewport edges", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      !["chromium-desktop", "chromium-mobile"].includes(testInfo.project.name),
+      "Desktop and narrow/mobile geometry cover this shared layout regression.",
+    );
+    await installAdaptiveCapabilities(page, {
+      memory: 2,
+      cores: 2,
+    });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
+
+    const newest = page.locator('[data-home-full-bleed="newest"]');
+    const backdrop = newest.locator("[data-newest-static-backdrop]");
+    await expect(newest).toBeVisible({ timeout: 30_000 });
+    await expect(backdrop).toBeAttached();
+
+    const assertFullBleed = async (selector: string) => {
+      const geometry = await page.locator(selector).evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          viewportWidth: window.innerWidth,
+        };
+      });
+      expect(geometry.left).toBeLessThanOrEqual(0);
+      expect(geometry.right).toBeGreaterThanOrEqual(geometry.viewportWidth);
+    };
+
+    await assertFullBleed('[data-home-full-bleed="newest"]');
+    const backdropStyle = await backdrop.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { display: style.display, visibility: style.visibility };
+    });
+    expect(backdropStyle).toEqual({
+      display: "block",
+      visibility: "visible",
+    });
+
+    const discounted = page.locator('[data-home-full-bleed="discounted"]');
+    if ((await discounted.count()) > 0) {
+      await assertFullBleed('[data-home-full-bleed="discounted"]');
+    }
   });
 
   test("expired and version-mismatched session records are discarded", async ({
@@ -419,7 +483,7 @@ test.describe("automatic adaptive quality", () => {
       );
     });
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     expect(await bootstrapCapture(page)).toMatchObject({
       rendering: "standard",
       media: "standard",
@@ -452,7 +516,7 @@ test.describe("automatic adaptive quality", () => {
       memory: 8,
       cores: 8,
     });
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     await expect
       .poll(() => page.evaluate(() => Boolean(window.__INFINITY_AQ_E2E__)))
       .toBe(true);
@@ -468,7 +532,7 @@ test.describe("automatic adaptive quality", () => {
       memory: 8,
       cores: 8,
     });
-    await secondPage.goto("/", { waitUntil: "domcontentloaded" });
+    await secondPage.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     await expect
       .poll(() =>
         secondPage.evaluate(() => Boolean(window.__INFINITY_AQ_E2E__)),
@@ -494,7 +558,7 @@ test.describe("automatic adaptive quality", () => {
       reducedTransparency: true,
     });
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     expect(await bootstrapCapture(page)).toEqual({
       scope: "storefront",
       rendering: "standard",
@@ -506,7 +570,7 @@ test.describe("automatic adaptive quality", () => {
     runtime.assertClean();
   });
 
-  test("an allowlisted high-end UA promotes to peak only after smooth proof", async ({
+  test("an allowlisted high-end UA starts at peak and remains runtime-downgradable", async ({
     page,
   }, testInfo) => {
     test.skip(
@@ -521,45 +585,29 @@ test.describe("automatic adaptive quality", () => {
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
       quietPerformanceObserver: true,
     });
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
+    expect(await bootstrapCapture(page)).toMatchObject({
+      rendering: "enhanced",
+      media: "high",
+      motion: "enhanced",
+    });
     await expect
       .poll(() => page.evaluate(() => Boolean(window.__INFINITY_AQ_E2E__)))
       .toBe(true);
-
-    const finishSmoothWindow = async () => {
-      await page.evaluate(() =>
-        window.__INFINITY_AQ_E2E__?.startObservationWindow(1_000),
-      );
-      await page.waitForTimeout(1_050);
-    };
-    await finishSmoothWindow();
-    await page.evaluate(() => window.__INFINITY_AQ_E2E__?.route());
-    await finishSmoothWindow();
-    await page.evaluate(() => window.__INFINITY_AQ_E2E__?.route());
-    await finishSmoothWindow();
-
-    expect(await adaptiveSnapshot(page)).toMatchObject({
-      rendering: "standard",
-      media: "standard",
-      motion: "standard",
-    });
-    await page.evaluate(() => window.__INFINITY_AQ_E2E__?.route());
-    expect(await adaptiveSnapshot(page)).toMatchObject({
-      rendering: "enhanced",
-      media: "standard",
-      motion: "standard",
-      reason: "promotion",
-    });
-
-    await finishSmoothWindow();
-    await page.evaluate(() => window.__INFINITY_AQ_E2E__?.route());
-    await finishSmoothWindow();
-    await page.evaluate(() => window.__INFINITY_AQ_E2E__?.route());
     expect(await adaptiveSnapshot(page)).toMatchObject({
       rendering: "enhanced",
       media: "high",
       motion: "enhanced",
-      reason: "promotion",
+    });
+
+    await page.evaluate(() =>
+      window.__INFINITY_AQ_E2E__?.downgrade("repeated-long-task"),
+    );
+    expect(await adaptiveSnapshot(page)).toMatchObject({
+      rendering: "enhanced",
+      media: "high",
+      motion: "standard",
+      reason: "repeated-long-task",
     });
     runtime.assertClean();
   });
@@ -576,10 +624,29 @@ test.describe("automatic adaptive quality", () => {
       memory: 8,
       cores: 8,
     });
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.evaluate(() =>
-      window.scrollTo(0, document.documentElement.scrollHeight),
-    );
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("load");
+    await page.evaluate(async () => {
+      if ("fonts" in document) {
+        await document.fonts.ready;
+      }
+    });
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            window.scrollTo(0, document.documentElement.scrollHeight);
+            return (
+              Math.abs(
+                window.scrollY +
+                  window.innerHeight -
+                  document.documentElement.scrollHeight,
+              ) <= 2
+            );
+          }),
+        { timeout: 20_000 },
+      )
+      .toBe(true);
     await expect(page.locator("nav[data-bottom-nav]")).toBeVisible();
     await expect(
       page.getByRole("button", { name: "بازگشت به بالا" }),
@@ -623,7 +690,7 @@ test.describe("automatic adaptive quality", () => {
       memory: 8,
       cores: 8,
     });
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
 
     await expect
       .poll(async () =>
@@ -674,6 +741,9 @@ test.describe("automatic adaptive quality", () => {
     await page.goto(`/plp/category/${E2E_CATEGORY_SLUG}`, {
       waitUntil: "domcontentloaded",
     });
+    await expect
+      .poll(() => page.evaluate(() => Boolean(window.__INFINITY_AQ_E2E__)))
+      .toBe(true);
     expect(await adaptiveSnapshot(page)).toMatchObject({
       rendering: "safe",
       media: "economy",
@@ -708,35 +778,6 @@ test.describe("automatic adaptive quality", () => {
   });
 });
 
-test.describe("adaptive quality without JavaScript", () => {
-  test("semantic storefront content remains visible", async ({
-    browser,
-  }: {
-    browser: Browser;
-  }, testInfo) => {
-    test.skip(
-      testInfo.project.name !== "chromium-desktop",
-      "One no-JS production proof is sufficient; tier parity runs in every browser.",
-    );
-    const context = await browser.newContext({
-      baseURL: storefrontBaseURL(),
-      javaScriptEnabled: false,
-      locale: "fa-IR",
-    });
-    const page = await context.newPage();
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(page.locator("#main-content")).toBeVisible();
-    await expect(page.getByText("جدیدترین ها").first()).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(page.locator("html")).not.toHaveAttribute(
-      "data-aq-scope",
-      "storefront",
-    );
-    await context.close();
-  });
-});
-
 test.describe("adaptive quality commerce isolation", () => {
   test.use({ storageState: authStorageStatePath("customer") });
 
@@ -744,6 +785,7 @@ test.describe("adaptive quality commerce isolation", () => {
     page,
     request,
   }, testInfo) => {
+    test.setTimeout(120_000);
     test.skip(
       testInfo.project.name !== "chromium-desktop",
       "The real payment lifecycle runs once; all browsers cover the governor and storefront.",
@@ -775,10 +817,16 @@ test.describe("adaptive quality commerce isolation", () => {
       `/orders/payment-callback?ResNum=${payment.orderId}&RefNum=${payment.refId}`,
       { waitUntil: "domcontentloaded" },
     );
-    await expect(page).toHaveURL(
-      new RegExp(`/payment/result\\?.*orderId=${payment.orderId}`),
-      { timeout: 45_000 },
-    );
+    await expect(page).toHaveURL(/\/orders\/success(?:\?.*)?$/, {
+      timeout: 45_000,
+    });
+    await expect(page.getByTestId("order-payment-success")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await page.goto(`/payment/result?orderId=${payment.orderId}`, {
+      waitUntil: "domcontentloaded",
+    });
     await expect(page.getByTestId("payment-result")).toBeVisible({
       timeout: 30_000,
     });

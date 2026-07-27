@@ -1,13 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import PDPHeroInfoAction from "../Action";
 
-jest.mock("next/dynamic", () => ({
+jest.mock("@/components/Product/ShareModal", () => ({
   __esModule: true,
-  default: () => {
-    const DynamicComponent = ({ open }: { open: boolean }) =>
-      open ? <div data-testid="share-modal-stub" /> : null;
-    return DynamicComponent;
-  },
+  default: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="share-modal-stub" /> : null,
 }));
 
 jest.mock("@/hooks/useProductLike", () => ({
@@ -62,7 +59,7 @@ jest.mock("../../../Icons/BasketIcon", () => ({
 }));
 
 describe("PDPHeroInfoAction", () => {
-  it("opens the share modal instead of copying immediately", () => {
+  it("opens the share modal instead of copying immediately", async () => {
     render(
       <PDPHeroInfoAction
         productId="123"
@@ -76,6 +73,8 @@ describe("PDPHeroInfoAction", () => {
 
     fireEvent.click(screen.getByTestId("share-icon").closest("button")!);
 
-    expect(screen.getByTestId("share-modal-stub")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("share-modal-stub")).toBeInTheDocument(),
+    );
   });
 });

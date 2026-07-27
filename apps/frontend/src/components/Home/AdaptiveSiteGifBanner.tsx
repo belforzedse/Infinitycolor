@@ -13,7 +13,8 @@ import {
   SITE_GIF_DESKTOP_WIDTH,
 } from "@/constants/site-gif";
 import { cn } from "@/lib/utils";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { scheduleAfterCriticalLoad } from "@/lib/adaptive-quality/after-critical-load";
 
 function isExternalHref(href: string): boolean {
   return /^https?:\/\//i.test(href);
@@ -22,7 +23,10 @@ function isExternalHref(href: string): boolean {
 export default function AdaptiveSiteGifBanner(props: SiteGifBannerProps) {
   const hydrated = useAdaptiveHydrated();
   const quality = useAdaptiveQuality();
-  const showAnimated = hydrated && quality.media !== "economy";
+  const [criticalLoadComplete, setCriticalLoadComplete] = useState(false);
+  const showAnimated = hydrated && criticalLoadComplete && quality.media !== "economy";
+
+  useEffect(() => scheduleAfterCriticalLoad(() => setCriticalLoadComplete(true)), []);
 
   useEffect(() => {
     if (showAnimated) noteEnhancementLoaded("optional-gif");
@@ -44,12 +48,7 @@ export default function AdaptiveSiteGifBanner(props: SiteGifBannerProps) {
   );
   const content = href ? (
     isExternalHref(href) ? (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block h-full w-full"
-      >
+      <a href={href} target="_blank" rel="noopener noreferrer" className="block h-full w-full">
         {shell}
       </a>
     ) : (
@@ -63,14 +62,9 @@ export default function AdaptiveSiteGifBanner(props: SiteGifBannerProps) {
 
   return (
     <div
-      className={cn(
-        "w-full overflow-hidden rounded-xl",
-        SITE_GIF_ASPECT_CLASS,
-        props.className,
-      )}
+      className={cn("w-full overflow-hidden rounded-xl", SITE_GIF_ASPECT_CLASS, props.className)}
       style={{
-        maxWidth:
-          props.previewMode === "mobile" ? "390px" : undefined,
+        maxWidth: props.previewMode === "mobile" ? "390px" : undefined,
       }}
       data-aq-optional-media="gif-shell"
     >
@@ -81,4 +75,3 @@ export default function AdaptiveSiteGifBanner(props: SiteGifBannerProps) {
     </div>
   );
 }
-

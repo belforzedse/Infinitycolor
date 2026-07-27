@@ -220,10 +220,16 @@ const FIXTURE = {
     slug: ADMIN_CATEGORY_SLUG_PREFIX,
     updatedSlug: `${ADMIN_CATEGORY_SLUG_PREFIX}-updated`,
   },
-  gateway: {
-    title: "Wallet",
-    description: `${TAG}:gateway:wallet`,
-  },
+  gateways: [
+    {
+      title: "Wallet",
+      description: `${TAG}:gateway:wallet`,
+    },
+    {
+      title: "ZarinPal",
+      description: `${TAG}:gateway:zarinpal`,
+    },
+  ],
 };
 
 function dbClient() {
@@ -336,6 +342,31 @@ async function insertLink(client, table, data) {
   );
 }
 
+async function seedNavigationSingleton(client, productCategoryId, now) {
+  if (
+    !(await tableExists(client, "navigations")) ||
+    !(await tableExists(client, "navigations_product_categories_links"))
+  ) {
+    return null;
+  }
+
+  const existing = await client.query(`SELECT id FROM navigations ORDER BY id ASC LIMIT 1`);
+  const navigation =
+    existing.rows[0] ||
+    (await insertRow(client, "navigations", {
+      created_at: now,
+      updated_at: now,
+    }));
+
+  await insertLink(client, "navigations_product_categories_links", {
+    navigation_id: navigation.id,
+    product_category_id: productCategoryId,
+    product_category_order: 1,
+  });
+
+  return navigation.id;
+}
+
 async function seedHomepageNewestSettings(client, productId, now) {
   if (!(await tableExists(client, "site_settings"))) return [];
 
@@ -386,6 +417,78 @@ async function seedHomepageNewestSettings(client, productId, now) {
   );
   console.log(`[seed:e2e] Curated homepage newest product ids: [${productId}].`);
   return [productId];
+}
+
+async function seedAdaptiveHeroSettings(client, now) {
+  if (!(await tableExists(client, "site_settings"))) return false;
+
+  const meta = await tableMeta(client, "site_settings");
+  const available = new Map(meta.map((column) => [column.column_name, column]));
+  const requiredColumns = [
+    "home_hero_slider_draft",
+    "home_hero_slider_published",
+    "home_hero_slider_meta",
+  ];
+  if (requiredColumns.some((column) => !available.has(column))) return false;
+
+  const existing = await client.query(`SELECT id FROM site_settings ORDER BY id ASC LIMIT 1`);
+  if (existing.rowCount === 0) return false;
+
+  const payload = {
+    version: 3,
+    autoplayIntervalMs: 600000,
+    slides: [
+      {
+        id: "e2e-adaptive-hero",
+        imageUrl: `/uploads/${FIXTURE_UPLOAD_FILE}`,
+        imageAlt: "E2E adaptive quality hero",
+        mobileImageUrl: `/uploads/${FIXTURE_UPLOAD_FILE}`,
+        mobileImageAlt: "E2E adaptive quality hero",
+        link: {
+          type: "internal",
+          href: `/pdp/${FIXTURE.product.slug}`,
+        },
+        isActive: true,
+        autoplayEligible: false,
+        order: 0,
+        schedule: {
+          timezone: "Asia/Tehran",
+        },
+        tracking: {
+          campaign: "e2e-adaptive-quality",
+          source: "e2e",
+          medium: "test",
+          content: "hero",
+          custom: {},
+        },
+      },
+    ],
+  };
+  const publishedMeta = {
+    version: 3,
+    publishedAt: now.toISOString(),
+    publishedBy: null,
+  };
+  const values = [payload, payload, publishedMeta].map(JSON.stringify);
+  const casts = requiredColumns.map((column) =>
+    available.get(column)?.data_type === "json" ? "::json" : "::jsonb",
+  );
+  const updatedAtClause = available.has("updated_at") ? ", updated_at = $4" : "";
+  const params = available.has("updated_at")
+    ? [...values, now, existing.rows[0].id]
+    : [...values, existing.rows[0].id];
+  const idParam = available.has("updated_at") ? "$5" : "$4";
+
+  await client.query(
+    `UPDATE site_settings
+     SET home_hero_slider_draft = $1${casts[0]},
+         home_hero_slider_published = $2${casts[1]},
+         home_hero_slider_meta = $3${casts[2]}${updatedAtClause}
+     WHERE id = ${idParam}`,
+    params,
+  );
+  console.log("[seed:e2e] Published deterministic adaptive-quality hero.");
+  return true;
 }
 
 async function idsBySource(client, table) {
@@ -667,8 +770,8 @@ async function deleteShippingMethod(client) {
 
 async function deleteSeededPaymentGateways(client) {
   if (!(await tableExists(client, "payment_gateways"))) return;
-  await client.query(`DELETE FROM payment_gateways WHERE description = $1`, [
-    FIXTURE.gateway.description,
+  await client.query(`DELETE FROM payment_gateways WHERE description = ANY($1::text[])`, [
+    FIXTURE.gateways.map((gateway) => gateway.description),
   ]);
 }
 
@@ -922,26 +1025,33 @@ async function seedShippingMethods(client, now) {
   return ids;
 }
 
-async function seedPaymentGateway(client, now) {
+async function seedPaymentGateways(client, now) {
   if (!(await tableExists(client, "payment_gateways"))) {
     throw new Error("Table not found: payment_gateways");
   }
-  const existing = await client.query(
-    `SELECT id FROM payment_gateways WHERE lower(title) = lower($1) LIMIT 1`,
-    [FIXTURE.gateway.title],
-  );
-  if (existing.rowCount > 0) {
-    throw new Error(
-      `E2E wallet gateway conflicts with existing payment gateway id ${existing.rows[0].id}`,
+
+  const gateways = [];
+  for (const gateway of FIXTURE.gateways) {
+    const existing = await client.query(
+      `SELECT id FROM payment_gateways WHERE lower(title) = lower($1) LIMIT 1`,
+      [gateway.title],
+    );
+    if (existing.rowCount > 0) {
+      throw new Error(
+        `E2E ${gateway.title} gateway conflicts with existing payment gateway id ${existing.rows[0].id}`,
+      );
+    }
+    gateways.push(
+      await insertRow(client, "payment_gateways", {
+        title: gateway.title,
+        description: gateway.description,
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      }),
     );
   }
-  return insertRow(client, "payment_gateways", {
-    title: FIXTURE.gateway.title,
-    description: FIXTURE.gateway.description,
-    is_active: true,
-    created_at: now,
-    updated_at: now,
-  });
+  return gateways;
 }
 
 async function seedCustomerAddress(client, userId, now) {
@@ -1017,6 +1127,7 @@ async function seed(client) {
     created_at: now,
     updated_at: now,
   });
+  await seedNavigationSingleton(client, category.id, now);
 
   const product = await insertRow(client, "products", {
     title: FIXTURE.product.title,
@@ -1035,6 +1146,7 @@ async function seed(client) {
     updated_at: now,
   });
   const homepageNewestProductIds = await seedHomepageNewestSettings(client, product.id, now);
+  await seedAdaptiveHeroSettings(client, now);
 
   await insertLink(client, "products_product_main_category_links", {
     product_id: product.id,
@@ -1178,7 +1290,7 @@ async function seed(client) {
   const customerBTransaction = await seedWalletTransaction(client, customerBWalletId, now);
 
   const shippingIds = await seedShippingMethods(client, now);
-  const paymentGateway = await seedPaymentGateway(client, now);
+  const paymentGateways = await seedPaymentGateways(client, now);
 
   const paymentVariationIndex = FIXTURE.variations.findIndex(
     (variation) => variation.sku === "E2E-STOREFRONT-PAY",
@@ -1201,7 +1313,8 @@ async function seed(client) {
     customerBAddressId: customerBAddress.id,
     customerBWalletTransactionId: customerBTransaction.id,
     shippingIds,
-    paymentGatewayId: paymentGateway.id,
+    paymentGatewayId: paymentGateways[0].id,
+    zarinpalPaymentGatewayId: paymentGateways[1].id,
     adminUserId: users.admin.id,
     founderUserId: users.founder ? users.founder.id : null,
     storeManagerUserId: users.storeManager ? users.storeManager.id : null,

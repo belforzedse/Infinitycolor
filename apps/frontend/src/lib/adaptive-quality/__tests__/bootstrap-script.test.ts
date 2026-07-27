@@ -1,8 +1,5 @@
 import { getAdaptiveQualityBootstrapScript } from "../bootstrap-script";
-import {
-  ADAPTIVE_QUALITY_POLICY_VERSION,
-  ADAPTIVE_QUALITY_STORAGE_KEY,
-} from "../config";
+import { ADAPTIVE_QUALITY_POLICY_VERSION, ADAPTIVE_QUALITY_STORAGE_KEY } from "../config";
 
 type HintOverrides = {
   memory?: number;
@@ -11,18 +8,20 @@ type HintOverrides = {
   reducedTransparency?: boolean;
   saveData?: boolean;
   effectiveType?: string;
+  userAgent?: string;
 };
+
+const DEFAULT_USER_AGENT = navigator.userAgent;
 
 function installHints(overrides: HintOverrides = {}) {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: (query: string) => ({
-      matches:
-        query.includes("reduced-motion")
-          ? Boolean(overrides.reducedMotion)
-          : query.includes("reduced-transparency")
-            ? Boolean(overrides.reducedTransparency)
-            : false,
+      matches: query.includes("reduced-motion")
+        ? Boolean(overrides.reducedMotion)
+        : query.includes("reduced-transparency")
+          ? Boolean(overrides.reducedTransparency)
+          : false,
       media: query,
       onchange: null,
       addEventListener: jest.fn(),
@@ -47,6 +46,10 @@ function installHints(overrides: HintOverrides = {}) {
       effectiveType: overrides.effectiveType,
     },
   });
+  Object.defineProperty(navigator, "userAgent", {
+    configurable: true,
+    value: overrides.userAgent ?? DEFAULT_USER_AGENT,
+  });
 }
 
 function runBootstrap() {
@@ -70,7 +73,7 @@ describe("adaptive quality pre-hydration bootstrap", () => {
     jest.restoreAllMocks();
   });
 
-  it("classifies and writes root attributes synchronously", () => {
+  it("keeps hardware hints strong while applying explicit preferences synchronously", () => {
     installHints({
       memory: 2,
       cores: 2,
@@ -80,15 +83,15 @@ describe("adaptive quality pre-hydration bootstrap", () => {
     runBootstrap();
     expect(document.documentElement.dataset).toMatchObject({
       aqScope: "storefront",
-      aqRendering: "safe",
+      aqRendering: "standard",
       aqMedia: "economy",
-      aqMotion: "minimal",
+      aqMotion: "standard",
       aqTransparency: "reduced",
     });
     expect(window.__INFINITY_AQ_BOOTSTRAP__).toMatchObject({
-      rendering: "safe",
+      rendering: "standard",
       media: "economy",
-      motion: "minimal",
+      motion: "standard",
       reducedTransparency: true,
       policyVersion: ADAPTIVE_QUALITY_POLICY_VERSION,
     });
@@ -101,6 +104,25 @@ describe("adaptive quality pre-hydration bootstrap", () => {
       rendering: "standard",
       media: "standard",
       motion: "standard",
+    });
+  });
+
+  it("starts an admitted iPhone at peak before hydration", () => {
+    installHints({
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+    });
+    runBootstrap();
+    expect(window.__INFINITY_AQ_BOOTSTRAP__).toMatchObject({
+      rendering: "enhanced",
+      media: "high",
+      motion: "enhanced",
+      reason: "promotion",
+    });
+    expect(document.documentElement.dataset).toMatchObject({
+      aqRendering: "enhanced",
+      aqMedia: "high",
+      aqMotion: "enhanced",
     });
   });
 

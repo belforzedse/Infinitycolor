@@ -31,20 +31,6 @@ const RENDERING_ORDER: RenderingTier[] = ["safe", "standard", "enhanced"];
 const MEDIA_ORDER: MediaTier[] = ["economy", "standard", "high"];
 const MOTION_ORDER: MotionTier[] = ["minimal", "standard", "enhanced"];
 
-const isValidDeviceMemory = (value: number | undefined): value is number =>
-  typeof value === "number" &&
-  Number.isFinite(value) &&
-  value > 0 &&
-  value <= 64;
-
-const isValidLogicalCoreCount = (
-  value: number | undefined,
-): value is number =>
-  typeof value === "number" &&
-  Number.isInteger(value) &&
-  value > 0 &&
-  value <= 256;
-
 export function clampConstraint(
   value: AdaptiveQualityConstraint,
   maximum: AdaptiveQualityConstraint,
@@ -58,9 +44,7 @@ export function clampConstraint(
         )
       ],
     media:
-      MEDIA_ORDER[
-        Math.min(MEDIA_ORDER.indexOf(value.media), MEDIA_ORDER.indexOf(maximum.media))
-      ],
+      MEDIA_ORDER[Math.min(MEDIA_ORDER.indexOf(value.media), MEDIA_ORDER.indexOf(maximum.media))],
     motion:
       MOTION_ORDER[
         Math.min(MOTION_ORDER.indexOf(value.motion), MOTION_ORDER.indexOf(maximum.motion))
@@ -71,33 +55,9 @@ export function clampConstraint(
 export function getAdaptiveCapabilityMaximum(
   capabilities: AdaptiveCapabilities,
 ): AdaptiveQualityConstraint {
-  const memory = isValidDeviceMemory(capabilities.deviceMemory)
-    ? capabilities.deviceMemory
-    : undefined;
-  const cores = isValidLogicalCoreCount(capabilities.hardwareConcurrency)
-    ? capabilities.hardwareConcurrency
-    : undefined;
-  const lowMemory = memory !== undefined && memory <= 2;
-  const lowCores = cores !== undefined && cores <= 2;
-  const combinedLowCapacity =
-    memory !== undefined &&
-    cores !== undefined &&
-    memory <= 4 &&
-    cores <= 4;
+  const maximum: AdaptiveQualityConstraint = { ...COMPATIBILITY_CONSTRAINT };
 
-  const maximum: AdaptiveQualityConstraint =
-    lowMemory || lowCores || combinedLowCapacity
-      ? {
-      rendering: "safe",
-      media: "high",
-      motion: "minimal",
-        }
-      : { ...COMPATIBILITY_CONSTRAINT };
-
-  if (
-    capabilities.saveData ||
-    isSlowConnection(capabilities.effectiveType)
-  ) {
+  if (capabilities.saveData || isSlowConnection(capabilities.effectiveType)) {
     maximum.media = "economy";
   }
 
@@ -113,34 +73,6 @@ export function classifyAdaptiveQuality(
 ): InitialAdaptiveClassification {
   let constraint: AdaptiveQualityConstraint = { ...STANDARD_CONSTRAINT };
   const reasons: AdaptiveQualityReason[] = [];
-  const memory = isValidDeviceMemory(capabilities.deviceMemory)
-    ? capabilities.deviceMemory
-    : undefined;
-  const cores = isValidLogicalCoreCount(capabilities.hardwareConcurrency)
-    ? capabilities.hardwareConcurrency
-    : undefined;
-
-  if (memory !== undefined && memory <= 2) {
-    constraint = { ...constraint, rendering: "safe", motion: "minimal" };
-    reasons.push("low-memory");
-  }
-
-  if (cores !== undefined && cores <= 2) {
-    constraint = { ...constraint, rendering: "safe", motion: "minimal" };
-    reasons.push("low-cores");
-  }
-
-  if (
-    memory !== undefined &&
-    cores !== undefined &&
-    memory <= 4 &&
-    cores <= 4 &&
-    memory > 2 &&
-    cores > 2
-  ) {
-    constraint = { ...constraint, rendering: "safe", motion: "minimal" };
-    reasons.push("combined-capacity");
-  }
 
   if (persistedConstraint) {
     const clamped = clampConstraint(constraint, persistedConstraint);
@@ -261,11 +193,7 @@ export function promoteConstraint(
 }
 
 export function isSlowConnection(effectiveType?: string): boolean {
-  return (
-    effectiveType === "slow-2g" ||
-    effectiveType === "2g" ||
-    effectiveType === "3g"
-  );
+  return effectiveType === "slow-2g" || effectiveType === "2g" || effectiveType === "3g";
 }
 
 export function isAdaptiveConstraint(value: unknown): value is AdaptiveQualityConstraint {
