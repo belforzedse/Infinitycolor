@@ -153,14 +153,6 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
               readOnly: true,
             },
             {
-              name: "paymentToken",
-              type: "copy-text",
-              label: "توکن پرداخت اسنپ پی",
-              colSpan: 6,
-              mobileColSpan: 12,
-              readOnly: true,
-            },
-            {
               name: "shippingMethod",
               type: "copy-text",
               label: "روش ارسال",

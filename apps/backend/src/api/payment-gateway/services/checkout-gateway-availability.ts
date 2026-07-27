@@ -54,7 +54,19 @@ const isGatewayConfigured = (code: CheckoutGatewayCode): boolean => {
     case "mellat":
       return hasNonEmptyEnv("MELLAT_TERMINAL_ID", "MELLAT_USERNAME", "MELLAT_PASSWORD");
     case "snappay":
-      return hasNonEmptyEnv("SNAPPAY_CLIENT_SECRET", "SNAPPAY_PASSWORD");
+      return (
+        isTruthyEnv(process.env.SNAPPAY_HARDENED_INITIATION_ENABLED) &&
+        hasNonEmptyEnv(
+          "SNAPPAY_BASE_URL",
+          "SNAPPAY_CLIENT_ID",
+          "SNAPPAY_CLIENT_SECRET",
+          "SNAPPAY_USERNAME",
+          "SNAPPAY_PASSWORD",
+          "SNAPPAY_RETURN_URL",
+          "PAYMENT_TOKEN_ENCRYPTION_KEY",
+          "PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION",
+        )
+      );
     case "zarinpal":
       return isZarinPalConfigured();
     case "wallet":
@@ -72,11 +84,25 @@ const normalizeText = (value: unknown): string =>
     .toLowerCase()
     .replace(/\s+/g, " ");
 
+/**
+ * SnappPay is stored in two forms in this codebase: the canonical checkout
+ * code (`snappay`) and the provider/display name (`SnappPay`). Lowercasing the
+ * latter produces `snapppay`, so a direct lowercase equality check is unsafe.
+ */
+export const isSnappayGatewayValue = (value: unknown): boolean => {
+  const normalized = normalizeText(value).replace(/[\s!_-]+/g, "");
+  return (
+    normalized === "snappay" ||
+    normalized === "snapppay" ||
+    normalized.includes("اسنپ")
+  );
+};
+
 const mapGatewayTitleToCode = (title: unknown): CheckoutGatewayCode | null => {
   const normalized = normalizeText(title);
   if (!normalized) return null;
 
-  if (normalized.includes("snapp") || normalized.includes("اسنپ")) return "snappay";
+  if (isSnappayGatewayValue(normalized)) return "snappay";
   if (normalized.includes("zarin") || normalized.includes("زرین")) return "zarinpal";
   if (normalized.includes("saman") || normalized.includes("سامان")) return "samankish";
   if (normalized.includes("mellat") || normalized.includes("ملت")) return "mellat";
@@ -136,7 +162,7 @@ export const normalizeCheckoutGatewayCode = (
 
   if (normalized === "saman" || normalized === "samankish") return "samankish";
   if (normalized === "mellat") return "mellat";
-  if (normalized === "snappay") return "snappay";
+  if (isSnappayGatewayValue(normalized)) return "snappay";
   if (normalized === "wallet") return "wallet";
   if (normalized === "zarinpal" || normalized === "zarin-pal") return "zarinpal";
 

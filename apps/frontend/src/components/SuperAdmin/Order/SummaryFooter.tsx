@@ -140,15 +140,6 @@ export default function SuperAdminOrderSummaryFooter({
             {priceFormatter(order.total, " تومان")}
           </p>
         </div>
-        {order.paymentToken ? (
-          <div className="flex items-center gap-3">
-            <p className="text-sm text-slate-500">توکن پرداخت اسنپ پی</p>
-            <div className="flex-1 h-[1px] border-t border-slate-300 border-dashed"></div>
-            <p className="text-base font-mono text-foreground-primary ltr">
-              {order.paymentToken}
-            </p>
-          </div>
-        ) : null}
       </div>
 
       <div className="mt-8 p-4 flex justify-between items-center border-slate-100 border rounded-xl bg-slate-50">

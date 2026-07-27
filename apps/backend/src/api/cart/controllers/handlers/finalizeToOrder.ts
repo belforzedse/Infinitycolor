@@ -2,16 +2,16 @@ import { Strapi } from "@strapi/strapi";
 import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../../utils/roles";
 import {
   cancelOrderAndRelease,
-  ensurePaymentGateway,
   requestMellatPayment,
   requestSamanPayment,
-  requestSnappPayment,
   requestZarinPalPayment,
 } from "./gateway-helpers";
 import {
   isCheckoutGatewayEnabled,
   normalizeCheckoutGatewayCode,
 } from "../../../payment-gateway/services/checkout-gateway-availability";
+import { decryptSnappaySecret } from "../../../payment-gateway/services/snappay-security";
+import { redactSensitive } from "../../../../utils/redactSensitive";
 import {
   claimPaymentAttemptForInitiation,
   findPaymentAttempt,
@@ -48,7 +48,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const requestedGateway = String(gateway || "mellat").toLowerCase();
     const selectedGateway =
       normalizeCheckoutGatewayCode(requestedGateway) || "mellat";
-    const managesPaymentAttempt = selectedGateway !== "snappay";
+    const managesPaymentAttempt = true;
     const normalizedAttemptId = String(attemptId || "").trim();
     const normalizedQuoteHash = String(quoteHash || "").trim();
 
@@ -375,12 +375,53 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const financialSummary = result.financialSummary;
     const paymentAttempt = result.paymentAttempt;
 
+    if (!paymentAttempt?.id) {
+      return ctx.badRequest("رکورد تلاش پرداخت یافت نشد", {
+        data: {
+          success: false,
+          errorCode: "PAYMENT_ATTEMPT_MISSING",
+        },
+      });
+    }
+
     if (
-      managesPaymentAttempt &&
       result.replayed &&
-      paymentAttempt?.Status !== "Created"
+      String(paymentAttempt.Status || "") !== "Created"
     ) {
       return { data: paymentAttemptResponse(paymentAttempt) };
+    }
+
+    let snappayCallbackNonce = String(result.snappayCallbackNonce || "");
+    if (
+      result.replayed &&
+      selectedGateway === "snappay" &&
+      !snappayCallbackNonce
+    ) {
+      try {
+        snappayCallbackNonce = decryptSnappaySecret(
+          String(paymentAttempt.callbackNonceCiphertext || ""),
+        );
+      } catch {
+        await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
+          Status: "Unknown",
+          failureCode: "SNAPPAY_CALLBACK_NONCE_UNRECOVERABLE",
+          failureMessage:
+            "SnappPay callback correlation secret could not be recovered",
+          nextAction: "manual_review",
+        }).catch(() => undefined);
+        ctx.status = 202;
+        return {
+          data: {
+            success: false,
+            message: "شروع پرداخت نیازمند بررسی است",
+            errorCode: "PAYMENT_UNKNOWN",
+            orderId: order.id,
+            contractId: contract.id,
+            attemptId: normalizedAttemptId,
+            paymentStatus: "Unknown",
+          },
+        };
+      }
     }
 
     let totalAmount = contract.Amount || 0;
@@ -416,12 +457,6 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         : selectedGateway === "wallet"
         ? "Wallet"
         : "Mellat";
-    const baseUrl = process.env.URL || "https://api.infinitycolor.co/";
-    const serverBaseUrl = `${baseUrl.replace(/\/$/, "")}/api`;
-    const absoluteCallback = `${serverBaseUrl}${
-      (callbackURL || "/orders/payment-callback").startsWith("/") ? "" : "/"
-    }${callbackURL || "/orders/payment-callback"}`;
-
     try {
       await strapi.entityService.update("api::order.order", order.id, {
         data: { PaymentGateway: paymentGatewayLabel },
@@ -513,20 +548,58 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     let paymentResult: any = null;
 
     if (selectedGateway === "snappay") {
-      const { response, paymentResult: pr } = await requestSnappPayment(
-        strapi,
-        ctx,
-        {
-          order,
-          contract,
-          financialSummary,
-          userId: user.id,
+      const callbackNonce = snappayCallbackNonce;
+      if (!callbackNonce) {
+        await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
+          Status: "Unknown",
+          failureCode: "SNAPPAY_CALLBACK_NONCE_MISSING",
+          failureMessage: "SnappPay initialization could not be resumed safely",
+          nextAction: "manual_review",
+        });
+        ctx.status = 202;
+        return {
+          data: {
+            success: false,
+            message: "شروع پرداخت نیازمند بررسی است",
+            errorCode: "PAYMENT_UNKNOWN",
+            orderId: order.id,
+            contractId: contract.id,
+            attemptId: normalizedAttemptId,
+            paymentStatus: "Unknown",
+          },
+        };
+      }
+      const initiation = await strapi
+        .service("api::payment-gateway.snappay-orchestrator")
+        .initiate({
+          paymentAttemptId: Number(paymentAttempt.id),
+          callbackNonce,
           mobile,
-          absoluteCallback,
-        }
-      );
-      if (response) return response;
-      paymentResult = pr;
+        });
+      if (!initiation.success) {
+        if (initiation.status === "Unknown") ctx.status = 202;
+        return {
+          data: {
+            success: false,
+            message: initiation.message || "شروع پرداخت اسنپ‌پی انجام نشد",
+            errorCode:
+              initiation.errorCode ||
+              (initiation.status === "Unknown"
+                ? "PAYMENT_UNKNOWN"
+                : "PAYMENT_INITIATION_FAILED"),
+            orderId: order.id,
+            contractId: contract.id,
+            attemptId: normalizedAttemptId,
+            paymentStatus: initiation.status,
+          },
+        };
+      }
+      paymentResult = {
+        success: true,
+        refId: initiation.transactionId,
+        requestId: initiation.transactionId,
+        redirectUrl: initiation.redirectUrl,
+      };
     } else if (selectedGateway === "samankish") {
       const { paymentResult: pr } = await requestSamanPayment(strapi, {
         order,
@@ -623,7 +696,9 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     strapi.log.info(`Payment successful for Order ${order.id}:`, {
-      redirectUrl: paymentResult.redirectUrl,
+      ...(selectedGateway === "snappay"
+        ? { hasRedirectUrl: Boolean(paymentResult.redirectUrl) }
+        : { redirectUrl: paymentResult.redirectUrl }),
       refId: paymentResult.refId,
     });
 
@@ -649,7 +724,9 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           Changes: {
             requestId: paymentResult.requestId,
             refId: paymentResult.refId,
-            redirectUrl: paymentResult.redirectUrl,
+            ...(selectedGateway === "snappay"
+              ? { hasRedirectUrl: Boolean(paymentResult.redirectUrl) }
+              : { redirectUrl: paymentResult.redirectUrl }),
           },
         },
       });
@@ -684,7 +761,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       message: error.message,
       stack: error.stack,
       userId: user?.id,
-      requestBody: ctx.request.body,
+      requestBody: redactSensitive(ctx.request.body),
     });
     if (error?.status) {
       // Convert structured errors to ctx.badRequest() format per payment error guideline

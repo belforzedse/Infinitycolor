@@ -2,9 +2,18 @@ import { describe, it, expect, jest } from "@jest/globals";
 import { finalizeToOrderHandler } from "../controllers/handlers/finalizeToOrder";
 import { createCtx, createStrapiMock } from "../../../__tests__/helpers/test-utils";
 
+const enableSnappayGateway = (strapi: any) => {
+  strapi.entityService.findMany = jest
+    .fn()
+    .mockResolvedValue([
+      { Title: "SnappPay", IsActive: true },
+    ]);
+};
+
 describe("finalizeToOrder handler - inline billing address", () => {
   it("rejects when no addressId or addressPayload is provided", async () => {
     const { strapi } = createStrapiMock();
+    enableSnappayGateway(strapi);
     const handler = finalizeToOrderHandler(strapi as any);
 
     const ctx = createCtx({
@@ -22,6 +31,7 @@ describe("finalizeToOrder handler - inline billing address", () => {
 
   it("rejects inline address with invalid postal code", async () => {
     const { strapi, registerService } = createStrapiMock();
+    enableSnappayGateway(strapi);
 
     // Minimal shipping + city mocks for validation steps
     strapi.entityService.findOne = (jest.fn((uid: string) => {
@@ -64,6 +74,7 @@ describe("finalizeToOrder handler - inline billing address", () => {
 
   it("passes backend-calculated shipping cost to cart finalization", async () => {
     const { strapi, registerService } = createStrapiMock();
+    enableSnappayGateway(strapi);
     const finalizeCartToOrder = jest.fn(async () => ({
       success: false,
       message: "stop-before-payment",
@@ -101,6 +112,8 @@ describe("finalizeToOrder handler - inline billing address", () => {
           shippingCost: 999999,
           addressId: 5,
           gateway: "snappay",
+          attemptId: "attempt-shipping-1",
+          quoteHash: "quote-shipping-1",
         },
       },
       state: { user: { id: 1 } },

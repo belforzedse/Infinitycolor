@@ -4,7 +4,6 @@ import {
   ensurePaymentGateway,
   requestMellatPayment,
   requestSamanPayment,
-  requestSnappPayment,
 } from "../controllers/handlers/gateway-helpers";
 import { settleOrderWithWallet } from "../controllers/handlers/wallet-settlement";
 import {
@@ -12,13 +11,13 @@ import {
   findPaymentAttempt,
   updatePaymentAttempt,
 } from "../../payment-attempt/services/payment-attempt";
+import { encryptSnappaySecret } from "../../payment-gateway/services/snappay-security";
 
 jest.mock("../controllers/handlers/gateway-helpers", () => ({
   cancelOrderAndRelease: jest.fn().mockResolvedValue(undefined),
   ensurePaymentGateway: jest.fn().mockResolvedValue(undefined),
   requestMellatPayment: jest.fn(),
   requestSamanPayment: jest.fn(),
-  requestSnappPayment: jest.fn(),
   requestZarinPalPayment: jest.fn(),
 }));
 
@@ -145,9 +144,6 @@ const mockEntityFindOne = (
 const mockedRequestMellatPayment = requestMellatPayment as jest.MockedFunction<
   typeof requestMellatPayment
 >;
-const mockedRequestSnappPayment = requestSnappPayment as jest.MockedFunction<
-  typeof requestSnappPayment
->;
 const mockedRequestSamanPayment = requestSamanPayment as jest.MockedFunction<
   typeof requestSamanPayment
 >;
@@ -206,7 +202,12 @@ describe("finalizeToOrderHandler", () => {
     const { strapi } = createStrapiMock();
     const handler = finalizeToOrderHandler(strapi);
     const ctx = createCtx({
-      request: { body: { addressId: 10 } },
+      request: {
+        body: {
+          addressId: 10,
+          paymentToken: "must-never-reach-logs",
+        },
+      },
     });
 
     await expect(handler(ctx)).rejects.toMatchObject({
@@ -221,6 +222,14 @@ describe("finalizeToOrderHandler", () => {
       }),
     );
     expect(strapi.entityService.findOne).not.toHaveBeenCalled();
+    expect(strapi.log.error).toHaveBeenCalledWith(
+      "Error in finalizeToOrder:",
+      expect.objectContaining({
+        requestBody: expect.objectContaining({
+          paymentToken: "[redacted]",
+        }),
+      }),
+    );
   });
 
   it("rejects the request when the shipping method cannot be found", async () => {
@@ -297,7 +306,6 @@ describe("finalizeToOrderHandler", () => {
       }),
     );
 
-    expect(mockedRequestSnappPayment).not.toHaveBeenCalled();
     expect(mockedRequestSamanPayment).not.toHaveBeenCalled();
     expect(mockedRequestMellatPayment).not.toHaveBeenCalled();
   });
@@ -740,16 +748,31 @@ describe("finalizeToOrderHandler", () => {
     expect(mockedRequestMellatPayment).not.toHaveBeenCalled();
   });
 
-  it("returns gateway-provided response for SnappPay", async () => {
+  it("initiates SnappPay through the hardened orchestrator", async () => {
     const { strapi, registerService } = createStrapiMock();
+    const initiate = jest.fn().mockResolvedValue({
+      success: true,
+      status: "Redirected",
+      redirectUrl: "https://snapp.test",
+      transactionId: "ABC1234567",
+    });
     const finalizeCartToOrder = jest.fn().mockResolvedValue({
       success: true,
       order: { id: 60 },
       contract: { id: 70, Amount: 200_000 },
       financialSummary: { payable: 200_000 },
+      paymentAttempt: {
+        id: 1060,
+        attemptId: "checkout-attempt",
+        Status: "Created",
+      },
+      snappayCallbackNonce: "abcdefghijklmnopqrstuv",
     });
     registerService("api::cart.cart", {
       finalizeCartToOrder,
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", {
+      initiate,
     });
 
   mockEntityFindOne(strapi, {
@@ -760,11 +783,6 @@ describe("finalizeToOrderHandler", () => {
       user: { id: 1 },
     }),
   });
-
-    mockedRequestSnappPayment.mockResolvedValue({
-      response: { data: { redirectUrl: "https://snapp.test" } },
-      paymentResult: undefined,
-    } as any);
 
     const ctx = createCtx({
       request: {
@@ -779,19 +797,176 @@ describe("finalizeToOrderHandler", () => {
     const handler = finalizeToOrderHandler(strapi);
     const response = await handler(ctx);
 
-    expect(response).toEqual({ data: { redirectUrl: "https://snapp.test" } });
-    expect(mockedRequestSnappPayment).toHaveBeenCalledWith(
-      strapi,
-      ctx,
+    expect(response.data).toEqual(
       expect.objectContaining({
-        order: { id: 60 },
-        contract: { id: 70, Amount: 200_000 },
+        success: true,
+        orderId: 60,
+        contractId: 70,
+        redirectUrl: "https://snapp.test",
+        refId: "ABC1234567",
+        requestId: "ABC1234567",
+        attemptId: "checkout-attempt",
+        paymentStatus: "Redirected",
+      }),
+    );
+    expect(initiate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentAttemptId: 1060,
+        callbackNonce: "abcdefghijklmnopqrstuv",
       }),
     );
     const snappCheckoutData = finalizeCartToOrder.mock.calls[0][1];
-    expect(snappCheckoutData).not.toHaveProperty("gateway");
-    expect(snappCheckoutData).not.toHaveProperty("attemptId");
-    expect(snappCheckoutData).not.toHaveProperty("quoteHash");
-    expect(mockedClaimPaymentAttempt).not.toHaveBeenCalled();
+    expect(snappCheckoutData).toEqual(
+      expect.objectContaining({
+        gateway: "snappay",
+        attemptId: "checkout-attempt",
+        quoteHash: "checkout-quote",
+      }),
+    );
+    expect(mockedClaimPaymentAttempt).toHaveBeenCalledWith(strapi, 1060);
+    const successLog = (strapi.log.info as jest.Mock).mock.calls.find(
+      ([message]) => String(message).includes("Payment successful"),
+    );
+    expect(successLog?.[1]).toEqual(
+      expect.objectContaining({
+        hasRedirectUrl: true,
+        refId: "ABC1234567",
+      }),
+    );
+    expect(successLog?.[1]).not.toHaveProperty("redirectUrl");
+    const auditLog = (strapi.entityService.create as jest.Mock).mock.calls.find(
+      ([uid, payload]) =>
+        uid === "api::order-log.order-log" &&
+        String(payload?.data?.Description || "").includes(
+          "Gateway payment request initiated",
+        ),
+    );
+    expect(auditLog?.[1]?.data?.Changes).not.toHaveProperty("redirectUrl");
+    expect(auditLog?.[1]?.data?.Changes).toEqual(
+      expect.objectContaining({ hasRedirectUrl: true }),
+    );
+  });
+
+  it("resumes an uninitiated SnappPay replay with the encrypted callback nonce", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const callbackNonce = "abcdefghijklmnopqrstuv";
+    const initiate = jest.fn().mockResolvedValue({
+      success: true,
+      status: "Redirected",
+      redirectUrl: "https://snapp.test/recovered",
+      transactionId: "RECOV12345",
+    });
+    registerService("api::cart.cart", {
+      finalizeCartToOrder: jest.fn().mockResolvedValue({
+        success: true,
+        replayed: true,
+        order: { id: 61 },
+        contract: { id: 71, Amount: 200_000 },
+        financialSummary: { payable: 200_000 },
+        paymentAttempt: {
+          id: 1061,
+          attemptId: "checkout-attempt",
+          Status: "Created",
+          callbackNonceCiphertext: encryptSnappaySecret(callbackNonce),
+        },
+      }),
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", {
+      initiate,
+    });
+    mockEntityFindOne(strapi, {
+      "api::shipping.shipping": () => ({ id: 5 }),
+      "api::local-user-address.local-user-address": () => ({
+        id: 6,
+        shipping_city: {},
+        user: { id: 1 },
+      }),
+    });
+
+    const response = await finalizeToOrderHandler(strapi)(
+      createCtx({
+        request: {
+          body: {
+            shipping: 5,
+            addressId: 6,
+            gateway: "snappay",
+          },
+        },
+      }),
+    );
+
+    expect(initiate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentAttemptId: 1061,
+        callbackNonce,
+      }),
+    );
+    expect(response.data).toEqual(
+      expect.objectContaining({
+        success: true,
+        redirectUrl: "https://snapp.test/recovered",
+        paymentStatus: "Redirected",
+      }),
+    );
+  });
+
+  it("fails closed when an uninitiated SnappPay replay nonce cannot be decrypted", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const initiate = jest.fn();
+    registerService("api::cart.cart", {
+      finalizeCartToOrder: jest.fn().mockResolvedValue({
+        success: true,
+        replayed: true,
+        order: { id: 62 },
+        contract: { id: 72, Amount: 200_000 },
+        financialSummary: { payable: 200_000 },
+        paymentAttempt: {
+          id: 1062,
+          attemptId: "checkout-attempt",
+          Status: "Created",
+          callbackNonceCiphertext: "invalid",
+        },
+      }),
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", {
+      initiate,
+    });
+    mockEntityFindOne(strapi, {
+      "api::shipping.shipping": () => ({ id: 5 }),
+      "api::local-user-address.local-user-address": () => ({
+        id: 6,
+        shipping_city: {},
+        user: { id: 1 },
+      }),
+    });
+    const ctx = createCtx({
+      request: {
+        body: {
+          shipping: 5,
+          addressId: 6,
+          gateway: "snappay",
+        },
+      },
+    });
+
+    const response = await finalizeToOrderHandler(strapi)(ctx);
+
+    expect(initiate).not.toHaveBeenCalled();
+    expect(mockedUpdatePaymentAttempt).toHaveBeenCalledWith(
+      strapi,
+      1062,
+      expect.objectContaining({
+        Status: "Unknown",
+        failureCode: "SNAPPAY_CALLBACK_NONCE_UNRECOVERABLE",
+        nextAction: "manual_review",
+      }),
+    );
+    expect(ctx.status).toBe(202);
+    expect(response.data).toEqual(
+      expect.objectContaining({
+        success: false,
+        paymentStatus: "Unknown",
+      }),
+    );
   });
 });

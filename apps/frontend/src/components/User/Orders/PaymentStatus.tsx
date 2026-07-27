@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { OrderService } from "@/services";
 import { translateOrderStatus } from "@/utils/statusTranslations";
 import PaymentGatewayBadge from "@/components/PaymentGateway/PaymentGatewayBadge";
+import { resolvePaymentGateway } from "@/utils/paymentGateways";
 
 interface PaymentStatusProps {
   orderId: number;
@@ -29,7 +30,10 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
         setOrderStatus(response.status);
         const gateway = response.paymentGateway ?? null;
         setPaymentGateway(gateway);
-        if (gateway === "SnappPay" && response.transactionId) {
+        if (
+          resolvePaymentGateway(gateway)?.key === "snappay" &&
+          response.transactionId
+        ) {
           setTransactionId(String(response.transactionId));
         } else {
           setTransactionId(null);
@@ -121,7 +125,8 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
           <PaymentGatewayBadge gateway={paymentGateway} className="text-gray-800" />
         </div>
       )}
-      {transactionId && paymentGateway === "SnappPay" && (
+      {transactionId &&
+        resolvePaymentGateway(paymentGateway)?.key === "snappay" && (
         <div className="text-sm mt-1 text-gray-600">
           <span className="ml-1 font-medium">ایدی تراکنش اسنپ پی:</span>
           <span className="text-gray-800">{transactionId}</span>
@@ -130,4 +135,3 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
     </div>
   );
 }
-

@@ -5,6 +5,28 @@ jest.mock("@strapi/strapi", () => ({
 }));
 
 import { createStrapiMock, mockContext } from "../../../__tests__/mocks/factories";
+import {
+  isSnappayGatewayValue,
+  normalizeCheckoutGatewayCode,
+} from "../services/checkout-gateway-availability";
+
+describe("SnappPay gateway normalization", () => {
+  it.each([
+    "snappay",
+    "SnappPay",
+    "SNAPPAY",
+    "Snapp! Pay",
+    "اسنپ‌پی",
+  ])("recognizes the stored/provider variant %s", (value) => {
+    expect(isSnappayGatewayValue(value)).toBe(true);
+    expect(normalizeCheckoutGatewayCode(value)).toBe("snappay");
+  });
+
+  it("does not classify unrelated providers as SnappPay", () => {
+    expect(isSnappayGatewayValue("Saman Kish")).toBe(false);
+    expect(isSnappayGatewayValue("wallet")).toBe(false);
+  });
+});
 
 describe("payment-gateway.availableGateways", () => {
   let controllerFactory: any;

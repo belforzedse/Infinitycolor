@@ -27,13 +27,15 @@ export async function startMaintenanceScheduler(): Promise<void> {
 
   const healthTimer = setInterval(async () => {
     try {
-      const [commerceCounts, analyticsCounts] = await Promise.all([
+      const [commerceCounts, analyticsCounts, paymentCounts] = await Promise.all([
         queues.commerce.getJobCounts("waiting", "active", "delayed", "failed"),
         queues.analytics.getJobCounts("waiting", "active", "delayed", "failed"),
+        queues.payments.getJobCounts("waiting", "active", "delayed", "failed"),
       ]);
       console.info("[BullMQ] maintenance queue health", {
         commerce: commerceCounts,
         analytics: analyticsCounts,
+        payments: paymentCounts,
       });
     } catch (error) {
       console.error("[BullMQ] failed to read maintenance queue health", error);
@@ -43,7 +45,11 @@ export async function startMaintenanceScheduler(): Promise<void> {
   const shutdown = async () => {
     clearInterval(reassertTimer);
     clearInterval(healthTimer);
-    await Promise.allSettled([queues.commerce.close(), queues.analytics.close()]);
+    await Promise.allSettled([
+      queues.commerce.close(),
+      queues.analytics.close(),
+      queues.payments.close(),
+    ]);
     process.exit(0);
   };
   process.once("SIGTERM", () => void shutdown());

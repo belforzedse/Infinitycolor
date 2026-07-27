@@ -6,6 +6,14 @@ export default {
   routes: [
     {
       method: "POST",
+      path: "/orders/snappay/callback",
+      handler: "order.snappayCallback",
+      config: {
+        auth: false,
+      },
+    },
+    {
+      method: "POST",
       path: "/orders/payment-callback",
       handler: "order.verifyPayment",
       config: {
@@ -98,6 +106,22 @@ export default {
       method: "POST",
       path: "/orders/:id/admin/cancel",
       handler: "order.adminCancel",
+      config: {
+        auth: { scope: [] },
+      },
+    },
+    {
+      method: "GET",
+      path: "/orders/:id/admin/payment-operations/:operationId",
+      handler: "order.adminPaymentOperation",
+      config: {
+        auth: { scope: [] },
+      },
+    },
+    {
+      method: "POST",
+      path: "/orders/:id/admin/snappay-token/reveal",
+      handler: "order.adminRevealSnappayToken",
       config: {
         auth: { scope: [] },
       },

@@ -54,16 +54,6 @@ export default {
       },
     },
     {
-      method: "POST",
-      path: "/payment-gateway/test-snappay",
-      handler: "payment-gateway.testSnappPay",
-      config: {
-        auth: { scope: [] },
-        policies: superadminOnlyPolicy,
-        middlewares: [],
-      },
-    },
-    {
       method: "GET",
       path: "/payment-gateway/snapp-eligible",
       handler: "payment-gateway.snappEligible",

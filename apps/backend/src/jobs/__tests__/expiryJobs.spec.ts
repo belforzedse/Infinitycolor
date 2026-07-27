@@ -23,6 +23,12 @@ function createMockStrapi() {
   const orderLogQuery = {
     create: jest.fn(),
   };
+  const paymentAttemptQuery = {
+    findOne: jest.fn().mockResolvedValue(null),
+  };
+  const snappayOrchestrator = {
+    reconcileOrder: jest.fn().mockResolvedValue(undefined),
+  };
 
   const trx = {
     raw: jest.fn(),
@@ -47,9 +53,18 @@ function createMockStrapi() {
         if (uid === "api::order.order") return orderQuery;
         if (uid === "api::contract.contract") return contractQuery;
         if (uid === "api::order-log.order-log") return orderLogQuery;
+        if (uid === "api::payment-attempt.payment-attempt") {
+          return paymentAttemptQuery;
+        }
         throw new Error(`Unexpected uid: ${uid}`);
       }),
     },
+    service: jest.fn((uid: string) => {
+      if (uid === "api::payment-gateway.snappay-orchestrator") {
+        return snappayOrchestrator;
+      }
+      throw new Error(`Unexpected service uid: ${uid}`);
+    }),
     metrics: {
       increment: jest.fn(),
     },
@@ -60,6 +75,8 @@ function createMockStrapi() {
     orderQuery,
     contractQuery,
     orderLogQuery,
+    paymentAttemptQuery,
+    snappayOrchestrator,
   };
 }
 
@@ -161,6 +178,46 @@ describe("expiry jobs", () => {
     expect(orderQuery.update).not.toHaveBeenCalled();
     expect(contractQuery.update).not.toHaveBeenCalled();
     expect(orderLogQuery.create).not.toHaveBeenCalled();
+  });
+
+  it("defers expiry and reconciles an active SnappPay attempt", async () => {
+    const {
+      strapi,
+      orderQuery,
+      paymentAttemptQuery,
+      snappayOrchestrator,
+    } = createMockStrapi();
+    strapi.entityService.findMany.mockResolvedValue([{ id: 13 }]);
+    paymentAttemptQuery.findOne.mockResolvedValue({
+      id: 113,
+      attemptId: "snappay-attempt-13",
+      Status: "Unknown",
+    });
+    orderQuery.update.mockResolvedValue({ id: 13 });
+
+    const result = await runExpireStockReservationsTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+      graceSeconds: 0,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.stats.skipped).toBe(1);
+    expect(result.stats.processed).toBe(0);
+    expect(orderQuery.update).toHaveBeenCalledWith({
+      where: {
+        id: 13,
+        Status: "Paying",
+        ReservationStatus: "Reserved",
+      },
+      data: {
+        ReservedUntil: new Date("2026-05-30T12:05:00.000Z"),
+      },
+    });
+    expect(snappayOrchestrator.reconcileOrder).toHaveBeenCalledWith(
+      13,
+      "reservation_expiry",
+    );
+    expect(mockedReleaseOrderReservation).not.toHaveBeenCalled();
   });
 
   it("skips overlapping stock-expiry runs in the same process", async () => {

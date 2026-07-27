@@ -129,7 +129,7 @@ describe("adminTransitionOrderHandler", () => {
     expect(raw).not.toHaveBeenCalled();
   });
 
-  it("does not apply the new lifecycle transition path to SnappPay orders", async () => {
+  it("uses the standard post-settlement fulfilment lifecycle for SnappPay", async () => {
     const { strapi, ctx, raw } = createHarness(
       "Started",
       "Store manager",
@@ -138,19 +138,15 @@ describe("adminTransitionOrderHandler", () => {
 
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
-    expect(ctx.conflict).toHaveBeenCalledWith(
-      "Use the established SnappPay order update flow",
-      expect.objectContaining({
-        data: expect.objectContaining({
-          errorCode: "SNAPPAY_LEGACY_FLOW_REQUIRED",
-        }),
-      }),
+    expect(raw).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE orders SET status = ?"),
+      ["Shipment", 44, "Started"],
     );
-    expect(result).toEqual(expect.objectContaining({
-      payload: expect.objectContaining({ data: expect.any(Object) }),
-    }));
-    expect(raw).not.toHaveBeenCalled();
-    expect(mockedAudit).not.toHaveBeenCalled();
-    expect(mockedNotify).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      data: { success: true, orderId: 44, status: "Shipment" },
+    });
+    expect(ctx.conflict).not.toHaveBeenCalled();
+    expect(mockedAudit).toHaveBeenCalled();
+    expect(mockedNotify).toHaveBeenCalled();
   });
 });

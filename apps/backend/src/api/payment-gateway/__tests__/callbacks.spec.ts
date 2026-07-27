@@ -225,32 +225,22 @@ describe("verifyPaymentHandler", () => {
     );
   });
 
-  it("rejects SnappPay callback without a payment token", async () => {
+  it("rejects legacy SnappPay input on the shared callback endpoint", async () => {
     const { strapi, registerService } = createStrapiMock();
-    registerService("api::payment-gateway.snappay", {
+    const legacyService = {
+      status: jest.fn(),
       verify: jest.fn(),
       settle: jest.fn(),
       revert: jest.fn(),
-    });
-
-    (strapi.entityService.findMany as jest.Mock).mockImplementation(
-      async (uid: string, params: any) => {
-        if (
-          uid === "api::contract-transaction.contract-transaction" &&
-          params.filters?.contract
-        ) {
-          return [];
-        }
-        return [];
-      },
-    );
-
+    };
+    registerService("api::payment-gateway.snappay", legacyService);
     const ctx = createCtx({
       request: {
         body: {
           state: "OK",
-          transactionId: "SN-1",
-          OrderId: "600",
+          transactionId: "SN-LEGACY",
+          paymentToken: "must-not-be-accepted",
+          OrderId: "700",
         },
       },
     });
@@ -258,155 +248,19 @@ describe("verifyPaymentHandler", () => {
     await verifyPaymentHandler(strapi as any, ctx);
 
     expect(ctx.badRequest).toHaveBeenCalledWith(
-      "Missing payment token for SnappPay",
-      expect.objectContaining({
-        data: expect.objectContaining({ error: "Missing paymentToken" }),
-      }),
-    );
-  });
-
-  it("verifies and settles a SnappPay callback successfully", async () => {
-    const { strapi, registerService } = createStrapiMock();
-    const snappayService = {
-      status: jest
-        .fn()
-        .mockResolvedValueOnce({
-          successful: true,
-          response: { status: "VERIFY_PENDING", transactionId: "SN-OK" },
-        })
-        .mockResolvedValueOnce({
-          successful: true,
-          response: { status: "SETTLED", transactionId: "SN-OK" },
-        }),
-      verify: jest.fn().mockResolvedValue({ successful: true }),
-      settle: jest.fn().mockResolvedValue({ successful: true }),
-      revert: jest.fn(),
-    };
-    registerService("api::payment-gateway.snappay", snappayService);
-
-    (strapi.entityService.findOne as jest.Mock).mockImplementation(
-      async (uid: string) => {
-        if (uid === "api::order.order") {
-          return {
-            id: 700,
-            order_items: [
-              {
-                Count: 1,
-                product_variation: {
-                  product_stock: { id: 301, Count: 5 },
-                },
-              },
-            ],
-          };
-        }
-        return null;
-      },
-    );
-
-    const ctx = createCtx({
-      request: {
-        body: {
-          OrderId: "700",
-          state: "OK",
-          transactionId: "SN-OK",
-          paymentToken: "PT-OK",
+      "SnappPay callback endpoint has changed",
+      {
+        data: {
+          success: false,
+          errorCode: "SNAPPAY_LEGACY_CALLBACK_DISABLED",
         },
       },
-    });
-
-    await verifyPaymentHandler(strapi as any, ctx);
-
-    expect(snappayService.status).toHaveBeenCalledTimes(2);
-    expect(snappayService.verify).toHaveBeenCalledWith("PT-OK");
-    expect(snappayService.settle).toHaveBeenCalledWith("PT-OK");
-
-    expect(decrementStockAtomic).toHaveBeenCalledWith(strapi, 301, 1);
-    expect(strapi.entityService.update).toHaveBeenCalledWith(
-      "api::order.order",
-      700,
-      { data: { Status: "Started" } },
     );
-    expect(strapi.entityService.create).toHaveBeenCalledWith(
-      "api::order-log.order-log",
-      expect.objectContaining({
-        data: expect.objectContaining({
-          order: 700,
-          Description: expect.stringContaining("SnappPay verify+settle succeeded"),
-        }),
-      }),
-    );
-    expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/success?orderId=700&transactionId=SN-OK",
-    );
-  });
-
-  it("uses status fallback when SnappPay verify fails but status is VERIFY", async () => {
-    const { strapi, registerService } = createStrapiMock();
-    const snappayService = {
-      status: jest
-        .fn()
-        .mockResolvedValueOnce({
-          successful: true,
-          response: { status: "VERIFY_PENDING", transactionId: "SN-FB" },
-        })
-        .mockResolvedValueOnce({
-          successful: true,
-          response: { status: "VERIFY", transactionId: "SN-FB" },
-        })
-        .mockResolvedValueOnce({
-          successful: true,
-          response: { status: "SETTLED", transactionId: "SN-FB" },
-        }),
-      verify: jest.fn().mockResolvedValue({
-        successful: false,
-        errorData: { message: "timeout" },
-      }),
-      settle: jest.fn().mockResolvedValue({ successful: true }),
-      revert: jest.fn(),
-    };
-    registerService("api::payment-gateway.snappay", snappayService);
-
-    (strapi.entityService.findOne as jest.Mock).mockImplementation(async (uid: string) => {
-      if (uid === "api::order.order") {
-        return {
-          id: 701,
-          order_items: [
-            {
-              Count: 1,
-              product_variation: {
-                product_stock: { id: 302, Count: 5 },
-              },
-            },
-          ],
-        };
-      }
-      return null;
-    });
-
-    const ctx = createCtx({
-      request: {
-        body: {
-          OrderId: "701",
-          state: "OK",
-          transactionId: "SN-FB",
-          paymentToken: "PT-FB",
-        },
-      },
-    });
-
-    await verifyPaymentHandler(strapi as any, ctx);
-
-    expect(snappayService.verify).toHaveBeenCalledWith("PT-FB");
-    expect(snappayService.settle).toHaveBeenCalledWith("PT-FB");
-    expect(snappayService.status).toHaveBeenCalledTimes(3);
-    expect(strapi.entityService.update).toHaveBeenCalledWith(
-      "api::order.order",
-      701,
-      { data: { Status: "Started" } },
-    );
-    expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/success?orderId=701&transactionId=SN-FB",
-    );
+    expect(legacyService.status).not.toHaveBeenCalled();
+    expect(legacyService.verify).not.toHaveBeenCalled();
+    expect(legacyService.settle).not.toHaveBeenCalled();
+    expect(legacyService.revert).not.toHaveBeenCalled();
+    expect(decrementStockAtomic).not.toHaveBeenCalled();
   });
 
   it("redirects to success when a ZarinPal callback was already processed", async () => {

@@ -1,6 +1,7 @@
 import {
   claimPaymentAttemptForInitiation,
   paymentAttemptResponse,
+  reconcileOrderPaymentAttempt,
 } from "../services/payment-attempt";
 
 describe("payment attempt initiation", () => {
@@ -48,5 +49,31 @@ describe("payment attempt initiation", () => {
       redirectUrl: "https://bank.example/start",
       refId: "provider-ref",
     }));
+  });
+
+  it("never infers a SnappPay settlement from legacy order status", async () => {
+    const update = jest.fn();
+    const attempt = {
+      id: 17,
+      attemptId: "attempt-17",
+      Gateway: "SnappPay",
+      Status: "Pending",
+    };
+    const strapi = {
+      db: {
+        query: jest.fn(() => ({
+          findOne: jest.fn().mockResolvedValue(attempt),
+          update,
+        })),
+      },
+    } as any;
+
+    await expect(
+      reconcileOrderPaymentAttempt(strapi, {
+        id: 31,
+        Status: "Started",
+      }),
+    ).resolves.toBe(attempt);
+    expect(update).not.toHaveBeenCalled();
   });
 });

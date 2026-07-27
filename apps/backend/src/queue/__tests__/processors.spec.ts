@@ -8,19 +8,32 @@ jest.mock("../../jobs/expireStockReservations", () => ({
 jest.mock("../../jobs/expireReserveOrders", () => ({
   runExpireReserveOrdersTick: jest.fn(),
 }));
+jest.mock("../../api/payment-gateway/services/snappay-orchestrator", () => ({
+  processSnappayOperation: jest.fn(),
+  sweepSnappayOperations: jest.fn(),
+}));
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
 import { runExpireStockReservationsTick } from "../../jobs/expireStockReservations";
 import {
   ANALYTICS_MAINTENANCE_JOBS,
   COMMERCE_MAINTENANCE_JOBS,
+  SNAPPAY_PAYMENT_JOBS,
 } from "../contracts";
 import { processMaintenanceJob } from "../processors";
+import {
+  processSnappayOperation,
+  sweepSnappayOperations,
+} from "../../api/payment-gateway/services/snappay-orchestrator";
 
 const mockedRunExpireStockReservationsTick =
   runExpireStockReservationsTick as jest.MockedFunction<typeof runExpireStockReservationsTick>;
 const mockedRunExpireReserveOrdersTick =
   runExpireReserveOrdersTick as jest.MockedFunction<typeof runExpireReserveOrdersTick>;
+const mockedProcessSnappayOperation =
+  processSnappayOperation as jest.MockedFunction<typeof processSnappayOperation>;
+const mockedSweepSnappayOperations =
+  sweepSnappayOperations as jest.MockedFunction<typeof sweepSnappayOperations>;
 
 function createMockStrapi() {
   const viewService = {
@@ -74,6 +87,46 @@ describe("queue processors", () => {
 
     expect(strapi.service).toHaveBeenCalledWith("api::product-view.product-view");
     expect(viewService.flushQueuedCounters).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches durable SnappPay operations by database id", async () => {
+    const strapi = createMockStrapi();
+    mockedProcessSnappayOperation.mockResolvedValue({ status: "completed" });
+
+    await processMaintenanceJob(strapi, {
+      name: SNAPPAY_PAYMENT_JOBS.operation,
+      data: { operationId: 42, retryCount: 0 },
+    } as any);
+
+    expect(mockedProcessSnappayOperation).toHaveBeenCalledWith(strapi, 42);
+  });
+
+  it("dispatches the SnappPay recovery sweep", async () => {
+    const strapi = createMockStrapi();
+    mockedSweepSnappayOperations.mockResolvedValue({
+      queued: 0,
+      health: {
+        verifiedUnsettledOver15m: 0,
+        manualReview: 0,
+      },
+    });
+
+    await processMaintenanceJob(strapi, {
+      name: SNAPPAY_PAYMENT_JOBS.sweep,
+      data: {},
+    } as any);
+
+    expect(mockedSweepSnappayOperations).toHaveBeenCalledWith(strapi);
+  });
+
+  it("rejects malformed SnappPay operation ids without provider work", async () => {
+    await expect(
+      processMaintenanceJob(createMockStrapi(), {
+        name: SNAPPAY_PAYMENT_JOBS.operation,
+        data: { operationId: "not-an-id" },
+      } as any),
+    ).rejects.toThrow("Invalid SnappPay operation id");
+    expect(mockedProcessSnappayOperation).not.toHaveBeenCalled();
   });
 
   it("fails unknown job names without retrying forever", async () => {

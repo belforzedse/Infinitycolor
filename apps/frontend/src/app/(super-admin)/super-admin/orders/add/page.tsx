@@ -54,7 +54,6 @@ export default function Page() {
     tax: 0,
     contractStatus: "Not Ready",
     total: 0,
-    paymentToken: null,
   });
 
   // Track which fields are auto-filled vs manually edited

@@ -10,6 +10,7 @@ import {
   findOrderPaymentAttempt,
   updatePaymentAttempt,
 } from "./payment-attempt-store";
+import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
 
 export type { PaymentAttemptStatus } from "@repo/api/commerce";
 
@@ -71,6 +72,11 @@ export async function reconcileOrderPaymentAttempt(
   if (!attempt) return null;
 
   const current = String(attempt.Status || "Created") as PaymentAttemptStatus;
+  // SnappPay is reconciled only against the provider-backed orchestrator.
+  // Never infer settlement from an order status written by the legacy flow.
+  if (isSnappayGatewayValue(attempt.Gateway)) {
+    return attempt;
+  }
   let next = current;
   const paidOrder = ["Started", "Shipment", "Done"].includes(String(order.Status));
   if (paidOrder) {

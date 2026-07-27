@@ -27,7 +27,6 @@ export interface SuperAdminOrderDetail {
   postalCode?: string;
   paymentGateway?: string;
   transactionId?: string;
-  paymentToken?: string | null;
   createdAt: Date;
   updatedAt: Date;
   contractStatus:

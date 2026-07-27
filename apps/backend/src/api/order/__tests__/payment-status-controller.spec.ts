@@ -134,7 +134,7 @@ describe("order.checkPaymentStatus", () => {
     );
   });
 
-  it("preserves the legacy SnappPay status response without payment-attempt reconciliation", async () => {
+  it("fails closed when a legacy SnappPay order has no authoritative attempt", async () => {
     const { controller, attemptFindOne, attemptUpdate } = loadController({
       id: 62,
       Status: "Started",
@@ -153,16 +153,27 @@ describe("order.checkPaymentStatus", () => {
 
     const result = await controller.checkPaymentStatus(ctx);
 
-    expect(attemptFindOne).not.toHaveBeenCalled();
+    expect(attemptFindOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { order: { id: 62 } } }),
+    );
     expect(attemptUpdate).not.toHaveBeenCalled();
     expect(result).toEqual({
       data: {
         success: true,
         orderId: 62,
         status: "Started",
-        isPaid: true,
+        paymentStatus: "Unknown",
+        isPaid: false,
         paymentGateway: "SnappPay",
         transactionId: "snapp-transaction-62",
+        attemptId: undefined,
+        amountIrr: undefined,
+        canRetry: false,
+        nextAction: "recheck",
+        failureCode: "SNAPPAY_ATTEMPT_NOT_FOUND",
+        failureMessage: "SnappPay payment requires reconciliation",
+        lastReconciledAt: undefined,
+        authoritative: false,
       },
     });
   });

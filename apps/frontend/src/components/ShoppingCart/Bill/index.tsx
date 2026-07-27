@@ -643,33 +643,29 @@ function ShoppingCartBillForm({}: Props) {
 
       let checkoutAttemptId: string | undefined;
       let cartResponse;
-      if (gateway === "snappay") {
-        // Preserve the established SnappPay request contract exactly.
-        cartResponse = await CartService.finalizeCart(finalizeData as any);
-      } else {
-        const quote = await CartService.getCheckoutQuote(finalizeData as any);
-        const quoteTotal = Number(quote.financialSummary?.total || 0);
-        const shopperVisibleTotal = isMergeMode
-          ? Math.max(0, Math.round(totalPrice - discountToman))
-          : totalToman;
-        const quoteWasReviewed = reviewedServerQuote?.quoteHash === quote.quoteHash &&
-          reviewedServerQuote.total === quoteTotal;
+      const quote = await CartService.getCheckoutQuote(finalizeData as any);
+      const quoteTotal = Number(quote.financialSummary?.total || 0);
+      const shopperVisibleTotal = isMergeMode
+        ? Math.max(0, Math.round(totalPrice - discountToman))
+        : totalToman;
+      const quoteWasReviewed = reviewedServerQuote?.quoteHash === quote.quoteHash &&
+        reviewedServerQuote.total === quoteTotal;
 
-        if (quoteTotal !== shopperVisibleTotal && !quoteWasReviewed) {
-          setReviewedServerQuote({ quoteHash: quote.quoteHash, total: quoteTotal });
-          setError(
-            `مبلغ نهایی توسط فروشگاه به ${quoteTotal.toLocaleString("fa-IR")} تومان به‌روزرسانی شد. لطفاً مبلغ را بررسی و دوباره ثبت سفارش را انتخاب کنید.`,
-          );
-          return;
-        }
-
-        checkoutAttemptId = getOrCreateCheckoutAttemptId(quote.quoteHash);
-        cartResponse = await CartService.finalizeCart({
-          ...finalizeData,
-          attemptId: checkoutAttemptId,
-          quoteHash: quote.quoteHash,
-        } as any);
+      if (quoteTotal !== shopperVisibleTotal && !quoteWasReviewed) {
+        setReviewedServerQuote({ quoteHash: quote.quoteHash, total: quoteTotal });
+        setError(
+          `مبلغ نهایی توسط فروشگاه به ${quoteTotal.toLocaleString("fa-IR")} تومان به‌روزرسانی شد. لطفاً مبلغ را بررسی و دوباره ثبت سفارش را انتخاب کنید.`,
+        );
+        return;
       }
+
+      checkoutAttemptId = getOrCreateCheckoutAttemptId(quote.quoteHash);
+      cartResponse = await CartService.finalizeCart({
+        ...finalizeData,
+        gateway,
+        attemptId: checkoutAttemptId,
+        quoteHash: quote.quoteHash,
+      } as any);
 
       if (!cartResponse.success) {
         console.error("❌ Cart finalization failed:", cartResponse);
@@ -687,6 +683,10 @@ function ShoppingCartBillForm({}: Props) {
           switch (errorCode) {
             case "PAYMENT_IN_PROGRESS":
               displayError = "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
+              break;
+            case "PAYMENT_UNKNOWN":
+              displayError =
+                "نتیجه شروع پرداخت هنوز مشخص نیست. برای جلوگیری از پرداخت تکراری، وضعیت سفارش را بررسی کنید.";
               break;
             case "PAYMENT_INITIATION_FAILED":
             case "WALLET_DEBIT_FAILED":

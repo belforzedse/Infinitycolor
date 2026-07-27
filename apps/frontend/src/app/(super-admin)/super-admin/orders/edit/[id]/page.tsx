@@ -291,13 +291,6 @@ export default function EditOrderPage() {
 
         const txList = contractTransactions || [];
         const lastTx = txList[txList.length - 1];
-        const lastSnappayTx = [...txList]
-          .reverse()
-          .find(
-            (tx) =>
-              (tx?.external_source || contract?.external_source) ===
-                "SnappPay" && tx?.TrackId,
-          );
         const rawPaymentGateway =
           unwrapEntity(lastTx?.payment_gateway)?.Title ||
           contract?.payment_gateway ||
@@ -308,7 +301,6 @@ export default function EditOrderPage() {
           : undefined;
         const transactionId =
           contract?.external_id || (normalizedOrder as any)?.external_id;
-        const paymentToken = lastSnappayTx?.TrackId;
 
         const userName =
           (userInfo?.FirstName || "") + " " + (userInfo?.LastName || "");
@@ -339,7 +331,6 @@ export default function EditOrderPage() {
           postalCode: addr?.PostalCode,
           paymentGateway,
           transactionId,
-          paymentToken,
           shipping: shippingCost,
           shippingMethod,
           userId: String(user?.id ?? (normalizedOrder as any)?.userId ?? ""),
@@ -406,15 +397,9 @@ export default function EditOrderPage() {
   }, [id]);
 
   const performOrderUpdate = async (formData: SuperAdminOrderDetail) => {
-    const preserveLegacySnappPayFlow = Boolean(
-      data?.transactionId && data?.paymentToken,
-    );
     try {
       await apiClient.put(`/orders/${id}`, {
         data: {
-          ...(preserveLegacySnappPayFlow
-            ? { Status: formData.orderStatus }
-            : {}),
           Description: formData.description,
           Note: formData.note,
         },
@@ -475,25 +460,7 @@ export default function EditOrderPage() {
           : ""
       }`
     : "";
-  const preserveLegacySnappPayFlow = Boolean(
-    data?.transactionId && data?.paymentToken,
-  );
-  const pageConfig = preserveLegacySnappPayFlow
-    ? {
-        ...config,
-        config: config.config.map((group) => ({
-          ...group,
-          sections: group.sections.map((section) => ({
-            ...section,
-            fields: section.fields.map((field) =>
-              "name" in field && field.name === "orderStatus"
-                ? { ...field, readOnly: false }
-                : field,
-            ),
-          })),
-        })),
-      }
-    : config;
+  const pageConfig = config;
 
   return (
     <>

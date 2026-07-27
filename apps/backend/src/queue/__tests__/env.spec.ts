@@ -16,6 +16,7 @@ describe("queue env", () => {
     delete process.env.QUEUE_REDIS_PASSWORD;
     delete process.env.QUEUE_PREFIX;
     delete process.env.WORKER_CONCURRENCY_COMMERCE;
+    delete process.env.WORKER_CONCURRENCY_PAYMENTS;
 
     const settings = getQueueSettings();
 
@@ -24,9 +25,11 @@ describe("queue env", () => {
     expect(settings.timezone).toBe("Asia/Tehran");
     expect(settings.concurrency.commerce).toBe(1);
     expect(settings.concurrency.analytics).toBe(1);
+    expect(settings.concurrency.payments).toBe(1);
     expect(settings.crons.stockReservationExpiry).toBe("*/1 * * * *");
     expect(settings.crons.reserveOrderExpiry).toBe("*/5 * * * *");
     expect(settings.crons.viewCounterFlush).toBe("*/1 * * * *");
+    expect(settings.crons.snappaySweep).toBe("*/1 * * * *");
   });
 
   it("parses queue Redis URL into BullMQ/ioredis connection options", () => {

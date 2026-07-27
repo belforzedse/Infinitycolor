@@ -40,6 +40,15 @@ export async function startMaintenanceWorkers(): Promise<void> {
         concurrency: settings.concurrency.analytics,
       }
     ),
+    new Worker(
+      QUEUE_NAMES.payments,
+      (job) => processMaintenanceJob(strapi, job),
+      {
+        connection,
+        prefix: settings.prefix,
+        concurrency: settings.concurrency.payments,
+      },
+    ),
   ];
 
   for (const worker of workers) {

@@ -723,7 +723,7 @@ describe("Order Controller", () => {
   });
 
   describe("update payment-provider compatibility", () => {
-    it("preserves the established generic status update for SnappPay orders", async () => {
+    it("requires guarded lifecycle operations for SnappPay status updates", async () => {
       const { strapi, registerQuery } = createStrapiMock();
       registerQuery("api::order.order", {
         findOne: jest.fn().mockResolvedValue({
@@ -741,11 +741,15 @@ describe("Order Controller", () => {
         state: { user: {} },
       });
 
-      const result = await controller.update(ctx);
-
-      expect(coreUpdate).toHaveBeenCalledWith(ctx);
-      expect(result).toEqual({ data: { id: 81 } });
-      expect(ctx.badRequest).not.toHaveBeenCalled();
+      await expect(controller.update(ctx)).rejects.toMatchObject({
+        status: 400,
+        payload: expect.objectContaining({
+          data: expect.objectContaining({
+            errorCode: "ORDER_STATUS_TRANSITION_REQUIRED",
+          }),
+        }),
+      });
+      expect(coreUpdate).not.toHaveBeenCalled();
     });
 
     it("requires the guarded transition endpoint for non-SnappPay status updates", async () => {

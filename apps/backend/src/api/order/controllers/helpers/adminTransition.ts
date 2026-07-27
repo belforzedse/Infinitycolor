@@ -33,14 +33,6 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
     populate: { user: { select: ["id"] } },
   });
   if (!order) return ctx.notFound("Order not found");
-  if (order.PaymentGateway === "SnappPay") {
-    return ctx.conflict("Use the established SnappPay order update flow", {
-      data: {
-        success: false,
-        errorCode: "SNAPPAY_LEGACY_FLOW_REQUIRED",
-      },
-    });
-  }
   if (order.Status === nextStatus) {
     return { data: { success: true, orderId, status: nextStatus, unchanged: true } };
   }

@@ -68,6 +68,50 @@ async function expireStockReservationsBatch(
 
     let shouldWriteExpiryLog = false;
     try {
+      const activeSnappayAttempt: any = await strapi.db
+        .query("api::payment-attempt.payment-attempt")
+        .findOne({
+          where: {
+            order: { id: orderId },
+            Gateway: "snappay",
+            Status: { $in: ["Redirected", "Pending", "Unknown"] },
+          },
+        } as any);
+      if (activeSnappayAttempt) {
+        const extendedUntil = new Date(options.now.getTime() + 5 * 60 * 1000);
+        await strapi.db.query("api::order.order").update({
+          where: {
+            id: orderId,
+            Status: "Paying",
+            ReservationStatus: "Reserved",
+          },
+          data: { ReservedUntil: extendedUntil },
+        } as any);
+        await strapi
+          .service("api::payment-gateway.snappay-orchestrator")
+          .reconcileOrder(orderId, "reservation_expiry")
+          .catch((error: any) => {
+            strapi.log.error(
+              "Failed to enqueue SnappPay reconciliation during reservation expiry",
+              {
+                orderId,
+                error: String(error?.message || error).slice(0, 300),
+              },
+            );
+          });
+        skipped += 1;
+        strapi.log.warn(
+          "Deferred reservation expiry for active SnappPay payment",
+          {
+            orderId,
+            attemptId: activeSnappayAttempt.attemptId,
+            paymentStatus: activeSnappayAttempt.Status,
+            extendedUntil: extendedUntil.toISOString(),
+          },
+        );
+        continue;
+      }
+
       await strapi.db.transaction(async ({ trx }) => {
         const rel = await releaseOrderReservation(
           strapi as any,

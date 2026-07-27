@@ -22,6 +22,12 @@ import {
   shouldRunWebBootstrapMaintenance,
   shouldStartInProcessBackgroundJobs,
 } from "./utils/processRole";
+import {
+  assertSnappayRuntimeConfig,
+  isSnappayHardenedInitiationEnabled,
+} from "./api/payment-gateway/services/snappay-orchestrator";
+import { backfillLegacySnappayAttempts } from "./api/payment-gateway/services/snappay-legacy-backfill";
+import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/snappay-database";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -655,7 +661,19 @@ export default {
    * This gives you an opportunity to set up your data model,
    * run jobs, or perform some special logic.
    */
-  bootstrap({ strapi }) {
+  async bootstrap({ strapi }) {
+    if (isSnappayHardenedInitiationEnabled()) {
+      assertSnappayRuntimeConfig();
+      await ensureSnappayDatabaseInvariants(strapi as any);
+      const legacyBackfill = await backfillLegacySnappayAttempts(
+        strapi as any,
+      );
+      strapi.log.info("Hardened SnappPay runtime configuration validated");
+      strapi.log.info("Legacy SnappPay recovery records checked", {
+        created: legacyBackfill.created,
+        skipped: legacyBackfill.skipped,
+      });
+    }
     registerAppLifecycles(strapi);
     strapi.db.lifecycles.subscribe(productLifeCycles);
     strapi.db.lifecycles.subscribe(productVariationLifeCycles);

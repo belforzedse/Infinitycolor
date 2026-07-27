@@ -14,13 +14,12 @@ describe("payment-gateway test-* routes", () => {
     String(route.path).startsWith("/payment-gateway/test-"),
   );
 
-  it("covers all four gateway test endpoints", () => {
-    expect(testRoutes).toHaveLength(4);
+  it("covers the three Mellat test endpoints", () => {
+    expect(testRoutes).toHaveLength(3);
     expect(testRoutes.map((route) => route.path).sort()).toEqual([
       "/payment-gateway/test-mellat",
       "/payment-gateway/test-mellat-v2",
       "/payment-gateway/test-mellat-v3",
-      "/payment-gateway/test-snappay",
     ]);
   });
 

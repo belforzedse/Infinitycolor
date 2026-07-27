@@ -362,9 +362,19 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(CartService.checkCartStock).not.toHaveBeenCalled();
   });
 
-  it("submits SnappPay through the established payload without a quote or attempt", async () => {
+  it("submits SnappPay only with a server quote and stable payment attempt", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:snappay-quote",
+      financialSummary: {
+        subtotal: 100_000,
+        discount: 0,
+        tax: 0,
+        shipping: 20_000,
+        total: 120_000,
+      },
+    });
     (CartService.finalizeCart as jest.Mock).mockResolvedValue({
       success: false,
       message: "stop-after-request",
@@ -398,18 +408,31 @@ describe("ShoppingCartBillForm auth gate", () => {
     await waitFor(() => {
       expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
     });
-    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+    expect(CartService.getCheckoutQuote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shipping: 7,
+        addressId: 5,
+        gateway: "snappay",
+        mobile: "09123456789",
+      }),
+    );
     expect(CartService.finalizeCart).toHaveBeenCalledWith(
       expect.objectContaining({
         shipping: 7,
         addressId: 5,
         gateway: "snappay",
-        callbackURL: "/orders/payment-callback",
         mobile: "09123456789",
+        quoteHash: "sha256:snappay-quote",
+        attemptId: expect.any(String),
       }),
     );
     const submitted = (CartService.finalizeCart as jest.Mock).mock.calls[0][0];
-    expect(submitted).not.toHaveProperty("attemptId");
-    expect(submitted).not.toHaveProperty("quoteHash");
+    expect(submitted.attemptId).toBeTruthy();
+    expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(
+      submitted.attemptId,
+    );
+    expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe(
+      "sha256:snappay-quote",
+    );
   });
 });

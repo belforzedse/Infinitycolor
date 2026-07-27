@@ -64,6 +64,33 @@
     "providerResponse": {
       "type": "json"
     },
+    "providerStatus": {
+      "type": "string"
+    },
+    "nextAction": {
+      "type": "string"
+    },
+    "nextActionAt": {
+      "type": "datetime"
+    },
+    "leaseUntil": {
+      "type": "datetime"
+    },
+    "leaseVersion": {
+      "type": "integer",
+      "default": 0
+    },
+    "callbackNonceHash": {
+      "type": "string",
+      "private": true
+    },
+    "callbackNonceCiphertext": {
+      "type": "text",
+      "private": true
+    },
+    "sideEffectsCompletedAt": {
+      "type": "datetime"
+    },
     "redirectedAt": {
       "type": "datetime"
     },

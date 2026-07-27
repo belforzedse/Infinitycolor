@@ -1,0 +1,92 @@
+{
+  "kind": "collectionType",
+  "collectionName": "payment_operations",
+  "info": {
+    "singularName": "payment-operation",
+    "pluralName": "payment-operations",
+    "displayName": "Payment Operation",
+    "description": "Durable provider operation and recovery lease"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "idempotencyKey": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "OperationType": {
+      "type": "enumeration",
+      "enum": [
+        "TOKEN",
+        "VERIFY",
+        "SETTLE",
+        "REVERT",
+        "CANCEL",
+        "UPDATE",
+        "RECONCILE",
+        "FINALIZE_EFFECTS"
+      ],
+      "required": true
+    },
+    "Status": {
+      "type": "enumeration",
+      "enum": [
+        "Queued",
+        "Processing",
+        "Succeeded",
+        "Failed",
+        "Unknown"
+      ],
+      "default": "Queued",
+      "required": true
+    },
+    "providerStatus": {
+      "type": "string"
+    },
+    "httpStatus": {
+      "type": "integer"
+    },
+    "providerCode": {
+      "type": "integer"
+    },
+    "retryCount": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
+    },
+    "nextRunAt": {
+      "type": "datetime"
+    },
+    "leaseUntil": {
+      "type": "datetime"
+    },
+    "failureMessage": {
+      "type": "text"
+    },
+    "metadata": {
+      "type": "json"
+    },
+    "attemptKey": {
+      "type": "integer",
+      "private": true
+    },
+    "payment_attempt": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::payment-attempt.payment-attempt"
+    },
+    "order": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::order.order"
+    },
+    "contract_transaction": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::contract-transaction.contract-transaction"
+    }
+  }
+}

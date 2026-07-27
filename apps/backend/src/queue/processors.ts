@@ -5,6 +5,7 @@ import { runExpireStockReservationsTick } from "../jobs/expireStockReservations"
 import {
   ANALYTICS_MAINTENANCE_JOBS,
   COMMERCE_MAINTENANCE_JOBS,
+  SNAPPAY_PAYMENT_JOBS,
   type MaintenanceJobData,
   type MaintenanceJobName,
 } from "./contracts";
@@ -24,6 +25,22 @@ export async function processMaintenanceJob(
       };
       await viewService.flushQueuedCounters();
       return { status: "completed" };
+    }
+    case SNAPPAY_PAYMENT_JOBS.operation: {
+      const operationId = Number((job as any)?.data?.operationId);
+      if (!Number.isInteger(operationId) || operationId <= 0) {
+        throw new UnrecoverableError("Invalid SnappPay operation id");
+      }
+      const { processSnappayOperation } = await import(
+        "../api/payment-gateway/services/snappay-orchestrator"
+      );
+      return processSnappayOperation(strapi, operationId);
+    }
+    case SNAPPAY_PAYMENT_JOBS.sweep: {
+      const { sweepSnappayOperations } = await import(
+        "../api/payment-gateway/services/snappay-orchestrator"
+      );
+      return sweepSnappayOperations(strapi);
     }
     default:
       throw new UnrecoverableError(`Unknown maintenance job: ${job.name}`);

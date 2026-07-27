@@ -1,6 +1,7 @@
 export const QUEUE_NAMES = {
   commerceMaintenance: "commerce-maintenance",
   analyticsMaintenance: "analytics-maintenance",
+  payments: "payments",
 } as const;
 
 export const COMMERCE_MAINTENANCE_JOBS = {
@@ -12,10 +13,16 @@ export const ANALYTICS_MAINTENANCE_JOBS = {
   viewCounterFlush: "viewCounters.flush",
 } as const;
 
+export const SNAPPAY_PAYMENT_JOBS = {
+  operation: "snappay.operation",
+  sweep: "snappay.sweep",
+} as const;
+
 export const MAINTENANCE_SCHEDULERS = {
   stockReservationExpiry: "sched:stockReservations.expire",
   reserveOrderExpiry: "sched:reserveOrders.expire",
   viewCounterFlush: "sched:viewCounters.flush",
+  snappaySweep: "sched:snappay.sweep",
 } as const;
 
 export type CommerceMaintenanceJobName =
@@ -26,4 +33,12 @@ export type AnalyticsMaintenanceJobName =
 
 export type MaintenanceJobName = CommerceMaintenanceJobName | AnalyticsMaintenanceJobName;
 
-export type MaintenanceJobData = Record<string, never>;
+export type SnappayPaymentJobName =
+  (typeof SNAPPAY_PAYMENT_JOBS)[keyof typeof SNAPPAY_PAYMENT_JOBS];
+
+export type MaintenanceJobData =
+  | Record<string, never>
+  | {
+      operationId: number;
+      retryCount: number;
+    };

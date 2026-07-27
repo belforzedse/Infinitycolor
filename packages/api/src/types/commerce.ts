@@ -48,10 +48,9 @@ export interface CheckoutQuoteResponse {
 }
 
 export interface FinalizeCartRequest extends CheckoutQuoteRequest {
-  /** Required for all gateways except the preserved legacy SnappPay flow. */
-  attemptId?: string;
-  /** Required for all gateways except the preserved legacy SnappPay flow. */
-  quoteHash?: string;
+  gateway: CheckoutGatewayCode;
+  attemptId: string;
+  quoteHash: string;
 }
 
 export interface FinalizeCartResponse {

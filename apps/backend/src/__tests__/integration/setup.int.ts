@@ -13,11 +13,19 @@
 process.env.MELLAT_TERMINAL_ID = process.env.MELLAT_TERMINAL_ID || "test-terminal-id";
 process.env.MELLAT_USERNAME = process.env.MELLAT_USERNAME || "test-username";
 process.env.MELLAT_PASSWORD = process.env.MELLAT_PASSWORD || "test-password";
-process.env.SNAPPAY_BASE_URL = process.env.SNAPPAY_BASE_URL || "https://snappay.test.invalid";
-process.env.SNAPPAY_CLIENT_ID = process.env.SNAPPAY_CLIENT_ID || "test-snappay-client-id";
-process.env.SNAPPAY_CLIENT_SECRET = process.env.SNAPPAY_CLIENT_SECRET || "test-snappay-secret";
-process.env.SNAPPAY_USERNAME = process.env.SNAPPAY_USERNAME || "test-snappay-username";
-process.env.SNAPPAY_PASSWORD = process.env.SNAPPAY_PASSWORD || "test-snappay-password";
+// Always overwrite inherited/local values: integration tests must never use
+// developer, staging, or production SnappPay endpoints or credentials.
+process.env.SNAPPAY_BASE_URL = "https://snappay.test.invalid";
+process.env.SNAPPAY_CLIENT_ID = "test-snappay-client-id";
+process.env.SNAPPAY_CLIENT_SECRET = "test-snappay-secret";
+process.env.SNAPPAY_USERNAME = "test-snappay-username";
+process.env.SNAPPAY_PASSWORD = "test-snappay-password";
+process.env.SNAPPAY_RETURN_URL =
+  "https://storefront.test.invalid/api/snapp/return";
+process.env.SNAPPAY_HARDENED_INITIATION_ENABLED = "true";
+process.env.PAYMENT_TOKEN_ENCRYPTION_KEY =
+  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+process.env.PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION = "test-v1";
 process.env.SMS_ENABLED = "false";
 process.env.ZARINPAL_MERCHANT_ID = process.env.ZARINPAL_MERCHANT_ID || "00000000-0000-0000-0000-000000000000";
 

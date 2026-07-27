@@ -71,6 +71,11 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
       gateway: selectedGateway,
       reserveGroupId,
     });
+    if (selectedGateway === "snappay") {
+      await strapi
+        .service("api::payment-gateway.snappay-orchestrator")
+        .checkEligibility(Math.round(quote.financialSummary.total * 10));
+    }
     ctx.body = { data: { success: true, ...quote } };
   } catch (error: any) {
     const [errorCode] = String(error?.message || "CHECKOUT_QUOTE_FAILED").split(":");

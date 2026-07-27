@@ -35,6 +35,18 @@ export function createMaintenanceQueues(settings: QueueSettings = getQueueSettin
       QUEUE_NAMES.analyticsMaintenance,
       sharedOptions
     ),
+    payments: new Queue<MaintenanceJobData, unknown, string>(
+      QUEUE_NAMES.payments,
+      {
+        ...sharedOptions,
+        defaultJobOptions: {
+          ...defaultMaintenanceJobOptions,
+          // Provider retries are persisted in payment_operations; BullMQ only
+          // transports a single leased execution.
+          attempts: 1,
+        },
+      },
+    ),
   };
 }
 

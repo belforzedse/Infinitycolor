@@ -34,6 +34,18 @@ describe("redactSensitive", () => {
     });
   });
 
+  it("redacts every SnappPay-namespaced configuration value", () => {
+    expect(
+      redactSensitive({
+        SNAPPAY_BASE_URL: "https://provider.example",
+        SNAPPAY_USERNAME: "merchant-user",
+      }),
+    ).toEqual({
+      SNAPPAY_BASE_URL: "[redacted]",
+      SNAPPAY_USERNAME: "[redacted]",
+    });
+  });
+
   it("leaves non-sensitive data untouched", () => {
     const input = { Status: { from: "Paying", to: "Started" }, count: 3 };
     expect(redactSensitive(input)).toEqual(input);
@@ -51,5 +63,16 @@ describe("redactSensitive", () => {
     const out = redactSensitive(obj);
     expect(out.token).toBe("[redacted]");
     expect(out.self).toBe("[circular]");
+  });
+
+  it("fails closed instead of returning uninspected deeply nested values", () => {
+    const deeplyNested: any = { paymentToken: "must-not-survive" };
+    for (let depth = 0; depth < 10; depth += 1) {
+      deeplyNested.wrapper = { ...deeplyNested };
+    }
+
+    const serialized = JSON.stringify(redactSensitive(deeplyNested));
+    expect(serialized).not.toContain("must-not-survive");
+    expect(serialized).toContain("[max-depth]");
   });
 });

@@ -67,6 +67,36 @@
     "VerifiedAt": {
       "type": "datetime"
     },
+    "PaymentTokenCiphertext": {
+      "type": "text",
+      "private": true
+    },
+    "PaymentTokenHash": {
+      "type": "string",
+      "private": true
+    },
+    "PaymentTokenKeyVersion": {
+      "type": "string",
+      "private": true
+    },
+    "SettledAt": {
+      "type": "datetime"
+    },
+    "RevertedAt": {
+      "type": "datetime"
+    },
+    "CancelledAt": {
+      "type": "datetime"
+    },
+    "LastReconciledAt": {
+      "type": "datetime"
+    },
+    "LastHttpStatus": {
+      "type": "integer"
+    },
+    "LastProviderCode": {
+      "type": "integer"
+    },
     "contract": {
       "type": "relation",
       "relation": "manyToOne",

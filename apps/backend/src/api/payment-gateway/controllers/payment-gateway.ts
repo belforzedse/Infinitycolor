@@ -8,6 +8,10 @@ import { computeCouponDiscount } from "../../cart/services/lib/discounts";
 import { Strapi } from "@strapi/strapi";
 import { getAvailableCheckoutGateways } from "../services/checkout-gateway-availability";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import {
+  assertSnappayRuntimeConfig,
+  isSnappayHardenedInitiationEnabled,
+} from "../services/snappay-orchestrator";
 
 export default factories.createCoreController(
   "api::payment-gateway.payment-gateway",
@@ -85,6 +89,15 @@ export default factories.createCoreController(
     // Compute SnappPay eligibility based on current cart and shipping
     async snappEligible(ctx) {
       try {
+        if (!isSnappayHardenedInitiationEnabled()) {
+          return ctx.send({
+            data: {
+              eligible: false,
+              message: "SnappPay checkout is temporarily unavailable",
+            },
+          });
+        }
+        assertSnappayRuntimeConfig();
         const userId = await resolveCustomerTargetUserId(ctx, strapi);
         if (!userId) return;
 
@@ -151,15 +164,7 @@ export default factories.createCoreController(
           const count = Number(item?.Count || 0);
           subtotal += Number(price) * count;
 
-          console.log(
-            `[ELIGIBLE CALC] VarID=${item?.product_variation?.id}, DiscountPrice=${
-              item?.product_variation?.DiscountPrice
-            }, Price=${item?.product_variation?.Price}, Count=${count}, ItemTotal=${
-              Number(price) * count
-            }`,
-          );
         }
-        console.log(`[ELIGIBLE CALC] Final subtotal=${subtotal}`);
 
         // Discounts: apply coupon first if provided, otherwise fallback to general discount
         let discountAmount = 0;
@@ -310,80 +315,6 @@ export default factories.createCoreController(
             stack: error.stack,
             timestamp: new Date().toISOString(),
             version: "v2",
-          },
-        });
-      }
-    },
-
-    // Test endpoint for SnappPay (eligible + token)
-    async testSnappPay(ctx) {
-      try {
-        const {
-          amountIRR = 4000,
-          mobile = "989121234567",
-          callbackURL = "/orders/payment-callback",
-        } = ctx.request.body || {};
-
-        const snappay = strapi.service("api::payment-gateway.snappay");
-
-        const eligible = await snappay.eligible(Number(amountIRR));
-
-        const serverBaseUrl = strapi.config.get(
-          "server.url",
-          "http://localhost:1337"
-        );
-        const absoluteCallback = `${serverBaseUrl}${
-          String(callbackURL).startsWith("/") ? "" : "/"
-        }${callbackURL}`;
-
-        const payload = {
-          amount: Number(amountIRR),
-          discountAmount: 0,
-          externalSourceAmount: 0,
-          mobile: String(mobile),
-          paymentMethodTypeDto: "INSTALLMENT" as const,
-          returnURL: absoluteCallback,
-          transactionId: `TEST${Date.now()}`.slice(0, 10),
-          cartList: [
-            {
-              cartId: 1,
-              cartItems: [
-                {
-                  amount: Number(amountIRR),
-                  category: "General",
-                  count: 1,
-                  id: 1,
-                  name: "Test Item",
-                  commissionType: 1,
-                },
-              ],
-              isShipmentIncluded: true,
-              isTaxIncluded: true,
-              taxAmount: 0,
-              shippingAmount: 0,
-              totalAmount: Number(amountIRR),
-            },
-          ],
-        } as any;
-
-        const tokenResp = await snappay.requestPaymentToken(payload);
-
-        return ctx.send({
-          data: {
-            success: true,
-            eligible,
-            tokenResp,
-          },
-        });
-      } catch (error) {
-        strapi.log.error("Error testing SnappPay:", {
-          message: error.message,
-          stack: error.stack,
-        });
-        return ctx.badRequest("SnappPay test failed", {
-          data: {
-            success: false,
-            error: error.message,
           },
         });
       }
