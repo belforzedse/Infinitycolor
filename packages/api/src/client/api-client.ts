@@ -258,9 +258,11 @@ export class ApiClient {
       url.searchParams.set("_cb", String(Date.now()));
     }
 
-    const urlString = url.toString();
-    const retries = options?.retries ?? this.retryConfig.maxRetries;
     const isGet = method.toUpperCase() === "GET";
+    const urlString = url.toString();
+    // Reads may be retried safely. Mutations default to one attempt because a
+    // lost response does not prove the server failed to apply the operation.
+    const retries = options?.retries ?? (isGet ? this.retryConfig.maxRetries : 0);
 
     const cache = this.apiCache;
     const cacheKey = cache ? cache.generateKey(method, urlString, data) : "";

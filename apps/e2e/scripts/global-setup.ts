@@ -67,6 +67,25 @@ type SeedSummary = {
   editorUserId?: number;
 };
 
+const AUTH_ROUTE_HINT_COOKIE = "infinity_route_hint";
+const AUTH_ROUTE_HINT_COOKIE_VALUE = "1";
+const AUTH_ROUTE_HINT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+
+function authRouteHintCookie() {
+  const storefrontUrl = new URL(storefrontBaseURL());
+
+  return {
+    name: AUTH_ROUTE_HINT_COOKIE,
+    value: AUTH_ROUTE_HINT_COOKIE_VALUE,
+    domain: storefrontUrl.hostname,
+    path: "/",
+    expires: Math.floor(Date.now() / 1000) + AUTH_ROUTE_HINT_MAX_AGE_SECONDS,
+    httpOnly: false,
+    secure: storefrontUrl.protocol === "https:",
+    sameSite: "Lax" as const,
+  };
+}
+
 const SEED_SUMMARY_USER_KEY: Record<E2EAuthRole, keyof SeedSummary> = {
   customer: "customerUserId",
   "customer-b": "customerBUserId",
@@ -237,7 +256,7 @@ async function writeAuthStorageStateFromToken(role: E2EAuthRole, token: string) 
     authStorageStatePath(role),
     JSON.stringify(
       {
-        cookies: [],
+        cookies: [authRouteHintCookie()],
         origins: [
           {
             origin: storefrontBaseURL(),
@@ -283,7 +302,7 @@ async function writeAuthStorageStateViaLogin(role: E2EAuthRole) {
     authStorageStatePath(role),
     JSON.stringify(
       {
-        cookies: [],
+        cookies: [authRouteHintCookie()],
         origins: [
           {
             origin: storefrontBaseURL(),

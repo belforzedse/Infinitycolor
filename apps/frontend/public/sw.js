@@ -1,32 +1,45 @@
 /**
- * Service Worker for Offline Cart Support
- * Caches cart data and API requests for offline availability
- * Syncs data when connection is restored
- * Uses build version for automatic cache invalidation on deployments
+ * Storefront service worker.
+ *
+ * Only public shell/static assets may be cached. Authenticated, account,
+ * commerce, and API traffic always stays on the browser/network path.
  */
 
-// Build version will be set via message from client
-let BUILD_VERSION = "v1-dev"; // Fallback version
+importScripts("/sw-version.js");
+
+const BUILD_VERSION = self.__INFINITY_BUILD_VERSION__ || "v1-dev";
 
 // Generate cache names with build version
 function getCacheNames() {
   return {
-    CART_CACHE: `cart-cache-v${BUILD_VERSION}`,
-    API_CACHE: `api-cache-v${BUILD_VERSION}`,
     RUNTIME_CACHE: `runtime-cache-v${BUILD_VERSION}`,
   };
 }
 
-// Cache strategies
-const CACHE_FIRST = "cache-first";
-const NETWORK_FIRST = "network-first";
-const NETWORK_ONLY = "network-only";
-
 // URLs to cache on install
 const URLS_TO_CACHE = ["/", "/offline.html", "/manifest.json"];
 
-// API routes that should be cached
-const CACHEABLE_API_ROUTES = ["/api/cart", "/api/products", "/api/categories"];
+const SENSITIVE_PATH_PREFIXES = [
+  "/api",
+  "/auth",
+  "/account",
+  "/addresses",
+  "/cart",
+  "/checkout",
+  "/favorites",
+  "/orders",
+  "/password",
+  "/payment",
+  "/privileges",
+  "/super-admin",
+  "/wallet",
+];
+
+function isSensitivePath(pathname) {
+  return SENSITIVE_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
 
 /**
  * Install event: cache essential files
@@ -58,8 +71,8 @@ self.addEventListener("install", (event) => {
  */
 async function deleteOldCaches() {
   try {
-    const { CART_CACHE, API_CACHE, RUNTIME_CACHE } = getCacheNames();
-    const currentCaches = [CART_CACHE, API_CACHE, RUNTIME_CACHE];
+    const { RUNTIME_CACHE } = getCacheNames();
+    const currentCaches = [RUNTIME_CACHE];
     
     const cacheNames = await caches.keys();
     const deletePromises = cacheNames
@@ -111,28 +124,19 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Skip service worker for auth endpoints - they need fresh data for role checks
-  // Also skip Next.js static assets - Next.js handles cache-busting with hashed filenames
-  // Skip Next.js image optimization - let Next.js handle image optimization
+  // Sensitive data and authorization-aware routes must never be intercepted,
+  // cached, replayed, or replaced with synthetic service-worker responses.
+  if (request.headers.has("Authorization") || isSensitivePath(url.pathname)) {
+    return;
+  }
+
+  // Next.js owns cache busting and image optimization for these assets.
   if (
-    url.pathname.includes("/auth/self") ||
     url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/_next/chunks/") ||
     url.pathname.startsWith("/_next/image")
   ) {
     // Let these requests pass through without service worker interception
-    return;
-  }
-
-  // Handle API cart requests with network-first strategy
-  if (url.pathname.includes("/api/cart") || url.pathname.includes("/cart")) {
-    event.respondWith(handleCartRequest(request));
-    return;
-  }
-
-  // Handle other API requests with network-first strategy to avoid stale data
-  if (url.pathname.includes("/api/")) {
-    event.respondWith(handleAPIRequest(request));
     return;
   }
 
@@ -145,72 +149,6 @@ self.addEventListener("fetch", (event) => {
   // Handle other requests with network-first strategy + offline fallback
   event.respondWith(handleGenericRequest(request));
 });
-
-/**
- * Handle cart API requests (network-first)
- * Try network first, fall back to cache
- */
-async function handleCartRequest(request) {
-  const { CART_CACHE } = getCacheNames();
-  try {
-    // Try network first
-    const response = await fetch(request);
-
-    // Cache successful responses
-    if (response.ok) {
-      const cache = await caches.open(CART_CACHE);
-      cache.put(request, response.clone());
-    }
-
-    return response;
-  } catch (error) {
-    // Network failed, try cache
-    console.log("[SW] Network failed, using cached cart data");
-    const cached = await caches.match(request);
-    if (cached) {
-      return cached;
-    }
-
-    // Return offline response
-    return new Response(JSON.stringify({ error: "Offline", data: null }), {
-      status: 503,
-      statusText: "Service Unavailable",
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-}
-/**
- * Handle API requests (network-first)
- * Use network first to avoid stale data, fall back to cache when offline
- */
-async function handleAPIRequest(request) {
-  const { API_CACHE } = getCacheNames();
-
-  try {
-    const response = await fetch(request);
-
-    // Cache successful responses
-    if (response.ok) {
-      const cache = await caches.open(API_CACHE);
-      cache.put(request, response.clone());
-    }
-
-    return response;
-  } catch (error) {
-    // Network failed, try cache
-    const cached = await caches.match(request);
-    if (cached) {
-      return cached;
-    }
-
-    // Return offline response
-    return new Response(JSON.stringify({ error: "Offline", data: null }), {
-      status: 503,
-      statusText: "Service Unavailable",
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-}
 
 /**
  * Handle static assets (cache-first with network fallback)
@@ -545,63 +483,10 @@ function isStaticAsset(pathname) {
 }
 
 /**
- * Handle background sync for queued requests
- * This syncs cart changes when connection is restored
- */
-self.addEventListener("sync", (event) => {
-  console.log("[SW] Background sync triggered:", event.tag);
-
-  if (event.tag === "sync-cart") {
-    event.waitUntil(syncCartData());
-  }
-});
-
-/**
- * Sync cart data with backend
- */
-async function syncCartData() {
-  try {
-    const { CART_CACHE } = getCacheNames();
-    const cache = await caches.open(CART_CACHE);
-    const cartRequest = new Request("/api/cart");
-    const cached = await cache.match(cartRequest);
-
-    if (cached) {
-      // Attempt to send queued changes to backend
-      console.log("[SW] Syncing cart data with backend...");
-      const response = await fetch("/api/cart/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (response.ok) {
-        // Clear the sync queue on success
-        await cache.delete(cartRequest);
-        console.log("[SW] Cart sync successful");
-      }
-    }
-  } catch (error) {
-    console.error("[SW] Cart sync failed:", error);
-    // Will retry on next sync event
-  }
-}
-
-/**
  * Handle messages from clients
  */
 self.addEventListener("message", (event) => {
   console.log("[SW] Message received:", event.data);
-
-  if (event.data && event.data.type === "SET_BUILD_VERSION") {
-    const oldVersion = BUILD_VERSION;
-    BUILD_VERSION = event.data.version || BUILD_VERSION;
-    console.log("[SW] Build version set:", BUILD_VERSION);
-    
-    // If version changed, delete old caches
-    if (oldVersion !== BUILD_VERSION) {
-      deleteOldCaches();
-    }
-  }
 
   if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
@@ -609,10 +494,6 @@ self.addEventListener("message", (event) => {
 
   if (event.data && event.data.type === "CLEAR_CACHE") {
     clearAllCaches();
-  }
-
-  if (event.data && event.data.type === "CACHE_URLS") {
-    cacheUrls(event.data.urls);
   }
 
   // Handle PWA mode status from client
@@ -644,17 +525,6 @@ self.addEventListener("message", (event) => {
 async function clearAllCaches() {
   const cacheNames = await caches.keys();
   return Promise.all(cacheNames.map((name) => caches.delete(name)));
-}
-
-/**
- * Cache specific URLs
- */
-async function cacheUrls(urls) {
-  const { RUNTIME_CACHE } = getCacheNames();
-  const cache = await caches.open(RUNTIME_CACHE);
-  return cache.addAll(urls).catch((err) => {
-    console.log("[SW] Failed to cache URLs:", err);
-  });
 }
 
 console.log("[SW] Service worker loaded");

@@ -9,6 +9,8 @@ import SuspenseLoader from "@/components/ui/SuspenseLoader";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { jotaiStore } from "@/lib/jotaiStore";
 import { StorefrontContainer } from "@/components/storefront";
+import { safeInternalRedirect } from "@/utils/authRedirect";
+import { setAuthRouteHint } from "@/utils/authRouteHint";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -29,7 +31,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     if (!token) return;
 
     // Get the redirect parameter if it exists
-    const redirectParam = searchParams.get("redirect");
+    const redirectTarget = safeInternalRedirect(searchParams.get("redirect"));
 
     // Redirect authenticated users based on role (or to the redirect URL if provided).
     // Set currentUserAtom so checkout (and other pages) see the user immediately and don't redirect back to auth.
@@ -37,8 +39,9 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       .then((me) => {
         jotaiStore.set(currentUserAtom, me);
         jotaiStore.set(userLoadingAtom, false);
-        if (redirectParam) {
-          router.replace(redirectParam);
+        setAuthRouteHint();
+        if (redirectTarget) {
+          router.replace(redirectTarget);
         } else if (me?.isAdmin) {
           router.replace("/super-admin");
         } else {

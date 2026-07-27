@@ -4,7 +4,7 @@ const createJestConfig = nextJest({ dir: "./" });
 
 const customJestConfig = {
   collectCoverageFrom: [
-    "middleware.ts",
+    "src/proxy.ts",
     "src/atoms/**/*.{ts,tsx}",
     "src/components/**/*.{ts,tsx}",
     "src/constants/**/*.{ts,tsx}",

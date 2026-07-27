@@ -9,16 +9,12 @@ import { useCheckPhoneNumber } from "@/hooks/useCheckPhoneNumber";
 import toast from "react-hot-toast";
 import { useEffect } from "react";
 import { useCart } from "@/contexts/CartContext";
-import {
-  currentUserAtom,
-  redirectUrlAtom,
-  userErrorAtom,
-  userLoadingAtom,
-} from "@/lib/atoms/auth";
+import { currentUserAtom, redirectUrlAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { setAccessToken } from "@/utils/accessToken";
 import { isProfileIncomplete } from "@/utils/profile";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
+import { safeInternalRedirect } from "@/utils/authRedirect";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,10 +28,7 @@ export default function LoginPage() {
 
   // Store redirect URL from query params into atom on page load
   useEffect(() => {
-    const redirect = searchParams.get("redirect");
-    if (redirect) {
-      setRedirectUrl(redirect);
-    }
+    setRedirectUrl(safeInternalRedirect(searchParams.get("redirect")));
   }, [searchParams, setRedirectUrl]);
 
   const handleLogin = async ({ verificationCode }: { verificationCode: string }) => {
@@ -100,7 +93,7 @@ export default function LoginPage() {
   }, [phoneNumber, router]);
 
   return (
-    <div className="mx-auto w/full">
+    <div className="mx-auto w-full">
       <AuthTitle subtitle={`لطفا کد ارسال شده به شماره همراه  ${phoneNumber} را وارد نمایید`}>
         ورود با رمز یکبار مصرف
       </AuthTitle>

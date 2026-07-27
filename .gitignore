@@ -146,6 +146,8 @@ nul
 
 # Generated files
 apps/frontend/src/constants/build-version.json
+apps/frontend/public/build-version.json
+apps/frontend/public/sw-version.js
 
 # Lock files (optional - uncomment to ignore)
 # yarn.lock

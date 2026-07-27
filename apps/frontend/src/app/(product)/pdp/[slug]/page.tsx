@@ -7,14 +7,13 @@ import FavoriteIcon from "@/components/PDP/Icons/FavoriteIcon";
 import PDPComment from "@/components/PDP/Comment";
 import PageContainer from "@/components/layout/PageContainer";
 import { productReviewService, type ProductReview } from "@/services/product/product-review.service";
-import Link from "next/link";
+import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { cache, Suspense } from "react";
 import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { SITE_NAME } from "@/config/site";
 import logger from "@/utils/logger";
-import { translateErrorMessage } from "@/lib/errorTranslations";
 import { ProductSchema } from "@/components/SEO/ProductSchema";
 import { BreadcrumbSchema } from "@/components/SEO/BreadcrumbSchema";
 import { ReviewSchema } from "@/components/SEO/ReviewSchema";
@@ -632,7 +631,7 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
   } catch (err: any) {
     errorDetails = {
       message: err?.message || String(err),
-      status: err?.status || (err as any)?.response?.status,
+      status: err?.status || (err as any)?.response?.status || errorDetails.status,
       endpoint:
         errorDetails.endpoint ||
         `${strapiBaseUrl}${ENDPOINTS.PRODUCT.PRODUCT}/by-slug/${encodeURIComponent(slug)}`,
@@ -692,36 +691,21 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
     }
   }
 
-  // If we still don't have product data, show error message with details in dev mode
+  // Missing/inactive products are durable 404s. Transport/server failures must
+  // reach the route boundary so the customer gets a retry action instead of a
+  // misleading "product not found" message.
   if (!productData || !productData.attributes) {
-    const isDev = process.env.NODE_ENV === "development";
+    const normalizedMessage = errorDetails.message?.toLowerCase() || "";
+    if (
+      errorDetails.status === 404 ||
+      normalizedMessage.includes("not found") ||
+      normalizedMessage.includes("inactive") ||
+      normalizedMessage.includes("removed")
+    ) {
+      notFound();
+    }
 
-    return (
-      <div className="flex flex-col items-center justify-center gap-8 p-10">
-        <h1 className="text-2xl font-bold">محصول مورد نظر یافت نشد</h1>
-        <p>لطفا محصول دیگری را انتخاب کنید یا به صفحه اصلی بازگردید.</p>
-        {isDev && errorDetails.message && (
-          <div className="mt-4 rounded-lg bg-red-50 p-4 text-left text-sm text-red-800">
-            <p className="font-semibold">Debug Info (Development Mode):</p>
-            <p>Original Slug: {slug}</p>
-            <p>Decoded Slug: {decodedSlug}</p>
-            <p>
-              Error:{" "}
-              {translateErrorMessage(
-                errorDetails.message,
-                "متأسفانه مشکلی پیش آمد. دوباره تلاش کنید.",
-              )}
-            </p>
-            {errorDetails.status && <p>Status: {errorDetails.status}</p>}
-            {errorDetails.endpoint && <p>Endpoint: {errorDetails.endpoint}</p>}
-            {strapiBaseUrl && <p>API Base URL: {strapiBaseUrl}</p>}
-          </div>
-        )}
-        <Link href="/" className="text-blue-500">
-          بازگشت به صفحه اصلی
-        </Link>
-      </div>
-    );
+    throw new Error("PRODUCT_DATA_UNAVAILABLE");
   }
 
   // Get category name from either Title or Name field (no fallback placeholder)

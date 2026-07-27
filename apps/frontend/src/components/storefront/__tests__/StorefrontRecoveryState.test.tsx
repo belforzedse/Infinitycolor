@@ -1,0 +1,63 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import StorefrontRecoveryState from "../StorefrontRecoveryState";
+
+const captureException = jest.fn();
+const setTag = jest.fn();
+
+jest.mock("@sentry/nextjs", () => ({
+  captureException: (...args: unknown[]) => captureException(...args),
+  withScope: (callback: (scope: { setTag: typeof setTag }) => void) =>
+    callback({ setTag }),
+}));
+
+describe("StorefrontRecoveryState", () => {
+  const originalDsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+
+  afterEach(() => {
+    process.env.NEXT_PUBLIC_SENTRY_DSN = originalDsn;
+    jest.clearAllMocks();
+  });
+
+  it("provides a focused, semantic recovery path", () => {
+    const retry = jest.fn();
+
+    render(
+      <StorefrontRecoveryState
+        surface="catalog"
+        title="بارگذاری کامل نشد"
+        message="دوباره تلاش کنید"
+        onRetry={retry}
+      />,
+    );
+
+    const alert = screen.getByRole("alert");
+    const heading = screen.getByRole("heading", { name: "بارگذاری کامل نشد" });
+    expect(alert).toHaveAttribute("dir", "rtl");
+    expect(heading).toHaveFocus();
+    expect(screen.getByRole("link", { name: "بازگشت به فروشگاه" })).toHaveAttribute(
+      "href",
+      "/",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "تلاش دوباره" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports only fixed diagnostic tags when monitoring is configured", () => {
+    process.env.NEXT_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
+    const error = Object.assign(new Error("private failure detail"), { digest: "digest-123" });
+
+    render(
+      <StorefrontRecoveryState
+        surface="account"
+        title="خطا"
+        message="دوباره تلاش کنید"
+        error={error}
+      />,
+    );
+
+    expect(setTag).toHaveBeenCalledWith("recovery_surface", "account");
+    expect(setTag).toHaveBeenCalledWith("next_error_digest", "digest-123");
+    expect(captureException).toHaveBeenCalledWith(error);
+  });
+});

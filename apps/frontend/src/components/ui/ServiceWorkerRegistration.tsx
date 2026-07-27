@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { BUILD_VERSION } from "@/constants/build";
 
 /**
  * Service Worker Registration Component
@@ -51,8 +50,9 @@ export default function ServiceWorkerRegistration() {
 
       console.log("[SW] Service worker registered successfully:", registration);
 
-      // Send build version to service worker
-      sendBuildVersion(registration);
+      if (registration.waiting && navigator.serviceWorker.controller) {
+        notifyUpdateAvailable();
+      }
 
       // Send PWA mode status to service worker (returns cleanup function)
       const pwaCleanup = sendPWAModeStatus(registration);
@@ -93,52 +93,6 @@ export default function ServiceWorkerRegistration() {
     } catch (error) {
       console.error("[SW] Failed to register service worker:", error);
       return undefined;
-    }
-  };
-
-  const sendBuildVersion = async (registration: ServiceWorkerRegistration) => {
-    try {
-      // Wait for service worker to be ready
-      if (registration.active) {
-        registration.active.postMessage({
-          type: "SET_BUILD_VERSION",
-          version: BUILD_VERSION,
-        });
-        console.log("[SW] Build version sent to service worker:", BUILD_VERSION);
-      } else if (registration.installing) {
-        // Capture installing worker reference before attaching listener
-        const installing = registration.installing;
-        installing.addEventListener("statechange", (e) => {
-          // Check event target's state instead of registration.installing which may be null
-          const target = e.target as ServiceWorker;
-          if (target?.state === "activated" && registration.active) {
-            registration.active.postMessage({
-              type: "SET_BUILD_VERSION",
-              version: BUILD_VERSION,
-            });
-            console.log("[SW] Build version sent to service worker:", BUILD_VERSION);
-          }
-        });
-      } else if (registration.waiting) {
-        registration.waiting.postMessage({
-          type: "SET_BUILD_VERSION",
-          version: BUILD_VERSION,
-        });
-        console.log("[SW] Build version sent to service worker:", BUILD_VERSION);
-      }
-
-      // Also listen for when service worker becomes ready
-      navigator.serviceWorker.ready.then((registration) => {
-        if (registration.active) {
-          registration.active.postMessage({
-            type: "SET_BUILD_VERSION",
-            version: BUILD_VERSION,
-          });
-          console.log("[SW] Build version sent to ready service worker:", BUILD_VERSION);
-        }
-      });
-    } catch (error) {
-      console.error("[SW] Failed to send build version:", error);
     }
   };
 
@@ -228,8 +182,7 @@ export default function ServiceWorkerRegistration() {
   };
 
   const notifyUpdateAvailable = () => {
-    // You can add a toast notification here
-    console.log("[SW] A new version of the app is available. Reload to update.");
+    window.dispatchEvent(new Event("infinity:app-update-available"));
   };
 
   return null; // This component doesn't render anything

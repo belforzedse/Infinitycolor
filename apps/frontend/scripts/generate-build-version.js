@@ -14,10 +14,15 @@ const { execSync } = require('child_process');
 
 const OUTPUT_DIR = path.resolve(__dirname, '../src/constants');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'build-version.json');
+const PUBLIC_DIR = path.resolve(__dirname, '../public');
+const PUBLIC_VERSION_FILE = path.join(PUBLIC_DIR, 'build-version.json');
+const PUBLIC_SW_VERSION_FILE = path.join(PUBLIC_DIR, 'sw-version.js');
 
-// Ensure output directory exists
-if (!fs.existsSync(OUTPUT_DIR)) {
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+// Ensure output directories exist
+for (const outputDirectory of [OUTPUT_DIR, PUBLIC_DIR]) {
+  if (!fs.existsSync(outputDirectory)) {
+    fs.mkdirSync(outputDirectory, { recursive: true });
+  }
 }
 
 function getGitCommitHash() {
@@ -77,46 +82,24 @@ function generateBuildVersion() {
     generatedAt: new Date().toISOString(),
   };
 
-  // Write to JSON file
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(versionData, null, 2) + "\n", "utf-8");
+  const serializedVersion = JSON.stringify(versionData, null, 2) + "\n";
+
+  // The application imports the internal copy, while the browser fetches the
+  // public copy and the service worker imports the tiny JavaScript assignment.
+  fs.writeFileSync(OUTPUT_FILE, serializedVersion, "utf-8");
+  fs.writeFileSync(PUBLIC_VERSION_FILE, serializedVersion, "utf-8");
+  fs.writeFileSync(
+    PUBLIC_SW_VERSION_FILE,
+    `self.__INFINITY_BUILD_VERSION__ = ${JSON.stringify(buildVersion)};\n`,
+    "utf-8",
+  );
 
   console.log(`[Build Version] Generated: ${buildVersion}`);
   console.log(`[Build Version] Written to: ${OUTPUT_FILE}`);
-
-  // Also inject BUILD_VERSION into service worker
-  injectBuildVersionIntoServiceWorker(buildVersion);
+  console.log(`[Build Version] Written to: ${PUBLIC_VERSION_FILE}`);
+  console.log(`[Build Version] Written to: ${PUBLIC_SW_VERSION_FILE}`);
 
   return buildVersion;
-}
-
-function injectBuildVersionIntoServiceWorker(buildVersion) {
-  const swPath = path.resolve(__dirname, "../public/sw.js");
-
-  if (!fs.existsSync(swPath)) {
-    console.warn("[Build Version] Warning: sw.js not found, skipping injection");
-    return;
-  }
-
-  try {
-    let swContent = fs.readFileSync(swPath, "utf-8");
-
-    // Replace either the tracked fallback or a value injected by an earlier
-    // local build. Keeping this idempotent ensures every deployment gets its
-    // own service-worker cache namespace.
-    const versionPattern =
-      /let BUILD_VERSION = ["'][^"']+["']; \/\/ (?:Fallback version|Injected at build time)/;
-    const replacement = `let BUILD_VERSION = "${buildVersion}"; // Injected at build time`;
-
-    if (versionPattern.test(swContent)) {
-      swContent = swContent.replace(versionPattern, replacement);
-      fs.writeFileSync(swPath, swContent, "utf-8");
-      console.log(`[Build Version] Injected into sw.js: ${buildVersion}`);
-    } else {
-      console.warn("[Build Version] Warning: Could not find BUILD_VERSION placeholder in sw.js");
-    }
-  } catch (error) {
-    console.warn("[Build Version] Warning: Could not inject version into sw.js:", error.message);
-  }
 }
 
 // Generate version if run directly

@@ -1,22 +1,19 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getSecurityHeaderEntries } from './src/utils/securityHeaders';
+import { getSecurityHeaderEntries } from './utils/securityHeaders';
+import {
+  AUTH_ROUTE_HINT_COOKIE,
+  AUTH_ROUTE_HINT_COOKIE_VALUE,
+} from './utils/authRouteHint';
+import {
+  isAuthRequiredRoute,
+  isPrivateRoute,
+} from './utils/routeAccessPolicy';
+
+export { isAuthRequiredRoute };
 
 export const LEGACY_REDIRECT_STATUS = 301;
-
-const PRIVATE_ROUTE_PREFIXES = [
-  '/account',
-  '/addresses',
-  '/cart',
-  '/checkout',
-  '/favorites',
-  '/orders',
-  '/password',
-  '/payment',
-  '/privileges',
-  '/super-admin',
-  '/wallet',
-];
+export const AUTH_REDIRECT_STATUS = 307;
 
 const PDP_REDIRECT_TIMEOUT_MS = 1500;
 const WOO_VARIATION_PARAM_NAMES = new Set(['رنگ', 'سایز', 'طرح']);
@@ -204,10 +201,19 @@ export function getLegacyRedirectUrl(sourceUrl: LegacyRedirectSourceUrl) {
   return null;
 }
 
-function isPrivateRoute(pathname: string) {
-  return PRIVATE_ROUTE_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
-  );
+function hasAuthRouteHint(request: NextRequest) {
+  return request.cookies.get(AUTH_ROUTE_HINT_COOKIE)?.value === AUTH_ROUTE_HINT_COOKIE_VALUE;
+}
+
+function getAuthRedirectUrl(request: NextRequest) {
+  const url = request.nextUrl.clone();
+  const requestedPath = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+
+  url.pathname = '/auth';
+  url.search = '';
+  url.searchParams.set('redirect', requestedPath);
+
+  return url;
 }
 
 export function applySecurityHeaders(response: NextResponse) {
@@ -222,7 +228,7 @@ function redirectWithSecurityHeaders(url: URL, status: number) {
   return applySecurityHeaders(NextResponse.redirect(url, status));
 }
 
-export default async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Security headers for SEO and performance
@@ -258,6 +264,18 @@ export default async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = pathname.slice(0, -1);
     return redirectWithSecurityHeaders(url, LEGACY_REDIRECT_STATUS);
+  }
+
+  // This is an optimistic routing gate only. Private APIs remain responsible
+  // for validating the bearer token and object-level authorization.
+  if (isAuthRequiredRoute(pathname) && !hasAuthRouteHint(request)) {
+    const redirectResponse = redirectWithSecurityHeaders(
+      getAuthRedirectUrl(request),
+      AUTH_REDIRECT_STATUS,
+    );
+    redirectResponse.headers.set('Cache-Control', 'no-store, max-age=0');
+    redirectResponse.headers.set('Vary', 'Cookie');
+    return redirectResponse;
   }
 
   // Clean up empty category parameter in PLP - redirect /plp?category= to /plp
@@ -330,7 +348,6 @@ export default async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  runtime: 'nodejs',
   matcher: [
     /*
      * Match all request paths except for the ones starting with:
@@ -344,4 +361,3 @@ export const config = {
     '/((?!api|_next/static|_next/image|favicon.ico).*)',
   ],
 };
-

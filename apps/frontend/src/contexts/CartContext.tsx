@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import toast from "react-hot-toast";
 import { CartService } from "@/services";
@@ -9,12 +9,7 @@ import notify from "@/utils/notify";
 import { cartRequestQueue } from "@/utils/requestQueue";
 import { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
-import {
-  queueAction,
-  removeQueuedAction,
-  setupOfflineQueueListener,
-  isOnline,
-} from "@/utils/offlineQueue";
+import { isOnline } from "@/utils/offlineQueue";
 import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
 
 export interface CartItem {
@@ -45,6 +40,40 @@ const cartLineMatches = (existing: CartItem, incoming: CartItem) => {
     );
   }
   return existing.id === incoming.id;
+};
+
+const isStoredCartItem = (value: unknown): value is CartItem => {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<CartItem>;
+  return (
+    typeof item.id === "string" &&
+    typeof item.name === "string" &&
+    typeof item.price === "number" &&
+    Number.isFinite(item.price) &&
+    typeof item.quantity === "number" &&
+    Number.isInteger(item.quantity) &&
+    item.quantity > 0
+  );
+};
+
+const readGuestCart = (): CartItem[] => {
+  try {
+    const raw = localStorage.getItem("cart");
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.every(isStoredCartItem)) {
+      localStorage.removeItem("cart");
+      return [];
+    }
+    return parsed;
+  } catch {
+    try {
+      localStorage.removeItem("cart");
+    } catch {
+      // Storage may be unavailable; an in-memory empty cart remains usable.
+    }
+    return [];
+  }
 };
 
 interface CartContextType {
@@ -86,10 +115,16 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isCartReady, setIsCartReady] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return !!localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  const [initializedMode, setInitializedMode] = useState<"guest" | "account" | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    } catch {
+      return null;
+    }
   });
+  const isLoggedIn = Boolean(authToken);
   const cartInitGenerationRef = useRef(0);
   const pathname = usePathname();
 
@@ -97,9 +132,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const readToken = () => localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    const readToken = () => {
+      try {
+        return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+      } catch {
+        return null;
+      }
+    };
     const updateLoginState = () => {
-      setIsLoggedIn(!!readToken());
+      setAuthToken(readToken());
     };
 
     updateLoginState();
@@ -123,12 +164,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     const generation = ++cartInitGenerationRef.current;
     const CART_INIT_TIMEOUT_MS = 20_000;
+    setIsCartReady(false);
+    setInitializedMode(null);
 
     const initializeCart = async () => {
-      const loggedIn = !!localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+      const loggedIn = Boolean(authToken);
 
       try {
         if (loggedIn) {
+          // Do not show or persist a previous identity's cart while the next
+          // authenticated cart is resolving.
+          setCartItems([]);
           setIsLoading(true);
           try {
             await Promise.race([
@@ -136,7 +182,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
                 await CartService.checkCartStock().catch((error) => {
                   console.error("Failed to check cart stock:", error);
                 });
-                await fetchUserCart();
+                await fetchUserCart(() => generation === cartInitGenerationRef.current);
               })(),
               new Promise<never>((_, reject) =>
                 setTimeout(
@@ -148,30 +194,25 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           } catch (error) {
             console.error("Logged-in cart initialization failed:", error);
           } finally {
-            setIsLoading(false);
-          }
-        } else {
-          const storedCart = localStorage.getItem("cart");
-          if (storedCart) {
-            try {
-              setCartItems(JSON.parse(storedCart) as CartItem[]);
-            } catch (error) {
-              console.error("Error parsing stored cart:", error);
-              localStorage.removeItem("cart");
+            if (generation === cartInitGenerationRef.current) {
+              setIsLoading(false);
             }
           }
+        } else {
+          setCartItems(readGuestCart());
         }
       } catch (error) {
         console.error("Failed to initialize cart:", error);
         if (loggedIn) {
           try {
-            await fetchUserCart();
+            await fetchUserCart(() => generation === cartInitGenerationRef.current);
           } catch (fetchError) {
             console.error("Failed to fetch cart after error:", fetchError);
           }
         }
       } finally {
         if (generation === cartInitGenerationRef.current) {
+          setInitializedMode(loggedIn ? "account" : "guest");
           setIsCartReady(true);
         }
       }
@@ -179,20 +220,22 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     void initializeCart();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run when login mode changes; cart helpers are stable for the session
-  }, [isLoggedIn]);
+  }, [authToken]);
 
   // Save cart to localStorage when it changes (only for non-logged in users)
   useEffect(() => {
-    if (!isCartReady) return;
+    if (!isCartReady || initializedMode !== "guest" || isLoggedIn) return;
 
-    if (!isLoggedIn) {
+    try {
       localStorage.setItem("cart", JSON.stringify(cartItems));
+    } catch {
+      // Keep the guest cart usable in memory when storage is unavailable.
     }
-  }, [cartItems, isLoggedIn, isCartReady]);
+  }, [cartItems, initializedMode, isLoggedIn, isCartReady]);
 
 
   // Fetch user's cart from API
-  const fetchUserCart = async () => {
+  const fetchUserCart = async (shouldApply: () => boolean = () => true) => {
     try {
       setIsLoading(true);
 
@@ -252,8 +295,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
       // Transform API cart format to local format
       const originalItemCount = data?.cart_items?.length || 0;
-      const transformedItems: CartItem[] = data?.cart_items
-        ?.map((item) => {
+      const transformedItems: CartItem[] = (data?.cart_items ?? [])
+        .map((item) => {
           const variation = item.product_variation;
           const product = variation?.product;
 
@@ -352,71 +395,28 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         .filter((item) => item !== null);
 
       // Notify user if items were removed due to missing data
-      if (transformedItems.length < originalItemCount && typeof window !== "undefined") {
+      if (
+        shouldApply() &&
+        transformedItems.length < originalItemCount &&
+        typeof window !== "undefined"
+      ) {
         const removedCount = originalItemCount - transformedItems.length;
         console.warn(
           `${removedCount} item(s) were removed from cart due to missing product data. They may have been deleted.`,
         );
       }
 
-      setCartItems(transformedItems);
+      if (shouldApply()) {
+        setCartItems(transformedItems);
+      }
     } catch (error) {
       console.error("Failed to fetch cart:", error);
     } finally {
-      setIsLoading(false);
+      if (shouldApply()) {
+        setIsLoading(false);
+      }
     }
   };
-
-  // Memoize the offline queue processor to avoid stale closures
-  const processOfflineQueue = useCallback(
-    async (action: {
-      id: string;
-      type: "cart-add" | "cart-remove" | "cart-update";
-      payload: unknown;
-    }) => {
-      if (action.type === "cart-add" && typeof action.payload === "object" && action.payload) {
-        const payload = action.payload as { variationId: string; quantity: number };
-        try {
-          await CartService.addItemToCart(Number(payload.variationId), payload.quantity);
-          await fetchUserCart();
-          removeQueuedAction(action.id);
-        } catch (error) {
-          throw error; // Re-throw to trigger retry logic
-        }
-      } else if (action.type === "cart-remove" && typeof action.payload === "string") {
-        try {
-          await CartService.removeCartItem(Number(action.payload));
-          await fetchUserCart();
-          removeQueuedAction(action.id);
-        } catch (error) {
-          throw error;
-        }
-      } else if (
-        action.type === "cart-update" &&
-        typeof action.payload === "object" &&
-        action.payload
-      ) {
-        const payload = action.payload as { cartItemId: string; quantity: number };
-        try {
-          await CartService.updateCartItem(Number(payload.cartItemId), payload.quantity);
-          await fetchUserCart();
-          removeQueuedAction(action.id);
-        } catch (error) {
-          throw error;
-        }
-      }
-    },
-    [fetchUserCart],
-  );
-
-  // Setup offline queue listener for cart actions
-  useEffect(() => {
-    if (!isLoggedIn) return;
-
-    const cleanup = setupOfflineQueueListener(processOfflineQueue);
-
-    return cleanup;
-  }, [isLoggedIn, processOfflineQueue]);
 
   // Function to migrate local cart to API when user logs in
   const pendingRemovals = useRef<Set<string>>(new Set());
@@ -488,6 +488,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const addToCart = async (newItem: CartItem) => {
     if (isLoggedIn) {
+      if (!isOnline()) {
+        notify.error("برای تغییر سبد حساب کاربری، اتصال اینترنت را برقرار کنید");
+        return;
+      }
+
       // Optimistic update: add item to cart immediately
       const previousCartItems = cartItems;
       let itemWasAdded = false;
@@ -515,29 +520,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         }
       });
 
-      // Queue API call in the background or add to offline queue
+      // Serialize the API mutation, but do not replay an ambiguous failure.
       try {
         setIsLoading(true);
-
-        if (!isOnline()) {
-          // Queue for offline processing
-          queueAction({
-            id: `add-${newItem.variationId || newItem.id}-${Date.now()}`,
-            type: "cart-add",
-            payload: {
-              variationId: newItem.variationId,
-              quantity: newItem.quantity,
-            },
-          });
-          trackFunnelStep("add_to_cart", {
-            label: newItem.name,
-            value: newItem.price * newItem.quantity,
-          });
-          hapticSuccess();
-          notify.success("کالا به سبد خرید اضافه شد (در صف آفلاین)");
-          setIsLoading(false);
-          return;
-        }
 
         await cartRequestQueue.enqueue(async () => {
           await CartService.addItemToCart(Number(newItem.variationId), newItem.quantity);
@@ -631,6 +616,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       // Find cart item ID from our local state that matches the item ID
       const item = cartItems.find((item) => item.id === id || item.cartItemId === id);
       if (!item) return;
+      if (!isOnline()) {
+        notify.error("برای تغییر سبد حساب کاربری، اتصال اینترنت را برقرار کنید");
+        return;
+      }
 
       const removalKey = item.cartItemId || item.id;
       if (!removalKey || pendingRemovals.current.has(removalKey)) return;
@@ -699,6 +688,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       // Find cart item ID from our local state that matches the item ID
       const item = cartItems.find((item) => item.id === id || item.cartItemId === id);
       if (!item) return;
+      if (!isOnline()) {
+        notify.error("برای تغییر سبد حساب کاربری، اتصال اینترنت را برقرار کنید");
+        return;
+      }
 
       // Update quantity optimistically
       setCartItems((prev) =>

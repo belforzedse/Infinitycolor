@@ -7,8 +7,8 @@ import dynamic from "next/dynamic";
 import { useCart } from "@/contexts/CartContext";
 import { useAccountFreshData } from "@/hooks/useAccountFreshData";
 import useUser from "@/hooks/useUser";
-import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { StorefrontContainer } from "@/components/storefront";
 import AdaptiveQualityBoundary from "@/components/AdaptiveQuality/AdaptiveQualityBoundary";
 
@@ -16,7 +16,7 @@ const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), {
   ssr: false,
 });
 
-export default function PublicLayout({ children }: { children: React.ReactNode }) {
+export default function AuthenticatedUserLayout({ children }: { children: React.ReactNode }) {
   // Enable automatic data refresh for account pages (15 second debounce)
   // This applies to /orders, /wallet, /addresses, /account, etc.
   useAccountFreshData();
@@ -24,44 +24,36 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
   const { userData, isLoading } = useUser();
   const router = useRouter();
   const pathname = usePathname();
-  const [isHydrated, setIsHydrated] = useState(false);
-
-  // Mark component as hydrated after first render to prevent hydration mismatches
-  useEffect(() => {
-    setIsHydrated(true);
-  }, []);
+  const searchParams = useSearchParams();
+  const search = searchParams.toString();
 
   useEffect(() => {
-    // Only run auth redirect logic after hydration is complete
-    if (!isHydrated) return;
-
     if (!isLoading && !userData) {
-      const target = `/auth?redirect=${encodeURIComponent(pathname)}`;
+      const requestedPath = `${pathname}${search ? `?${search}` : ""}`;
+      const target = `/auth?redirect=${encodeURIComponent(requestedPath)}`;
       router.replace(target);
     }
-  }, [isHydrated, isLoading, userData, router, pathname]);
+  }, [isLoading, userData, router, pathname, search]);
 
-  // During initial render (server + hydration), render the layout structure
-  // to prevent hydration mismatch. The useEffect above will handle redirects
-  // if the user is not authenticated after hydration.
-  // Only return null after we've confirmed no user (after hydration + effects run)
-  if (isHydrated && !isLoading && !userData) {
+  // Never expose the protected page shell while auth is unresolved or absent.
+  // This also covers stale/forged routing markers; API authorization remains authoritative.
+  if (isLoading || !userData) {
     return null;
   }
   return (
     <AdaptiveQualityBoundary>
       <div className="public-layout bg-white pt-5">
-      <StorefrontContainer>
-        <Header />
-        <ProfileCompletionBanner />
-      </StorefrontContainer>
+        <StorefrontContainer>
+          <Header />
+          <ProfileCompletionBanner />
+        </StorefrontContainer>
 
-      {children}
+        {children}
 
-      <Footer />
+        <Footer />
 
-      {/* Cart Drawer */}
-      {isDrawerOpen && <CartDrawer />}
+        {/* Cart Drawer */}
+        {isDrawerOpen && <CartDrawer />}
       </div>
     </AdaptiveQualityBoundary>
   );

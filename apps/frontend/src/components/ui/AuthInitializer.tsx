@@ -4,15 +4,25 @@ import { useEffect, useRef } from "react";
 import { useAtom } from "jotai";
 import { currentUserAtom, userLoadingAtom, userErrorAtom } from "@/lib/atoms/auth";
 import { addressesAtom, addressesLoadingAtom, addressesErrorAtom } from "@/atoms/addressesAtom";
-import { likedProductsAtom, likedProductsLoadedAtom, __resetUseProductLikeState } from "@/hooks/useProductLike";
-import { submitOrderStepAtom, orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
+import {
+  likedProductsAtom,
+  likedProductsLoadedAtom,
+  __resetUseProductLikeState,
+} from "@/hooks/useProductLike";
+import {
+  submitOrderStepAtom,
+  orderIdAtom,
+  orderNumberAtom,
+  transactionIdAtom,
+} from "@/atoms/Order";
 import { SubmitOrderStep } from "@/types/Order";
 import UserService from "@/services/user";
 import { __clearOrderCache } from "@/services/order";
 import { invalidateAddressCache } from "@/services/user/addresses";
 import { jotaiStore } from "@/lib/jotaiStore";
 import { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
-import { clearUserStorage } from "@/utils/logout";
+import { clearUserStorage } from "@/utils/userStorage";
+import { clearAuthRouteHint, setAuthRouteHint } from "@/utils/authRouteHint";
 
 /**
  * AuthInitializer Component
@@ -27,7 +37,7 @@ import { clearUserStorage } from "@/utils/logout";
  */
 export default function AuthInitializer() {
   const [user, setUser] = useAtom(currentUserAtom);
-  const [isLoading, setIsLoading] = useAtom(userLoadingAtom);
+  const [, setIsLoading] = useAtom(userLoadingAtom);
   const [, setError] = useAtom(userErrorAtom);
 
   // Track last known token to detect changes
@@ -66,6 +76,7 @@ export default function AuthInitializer() {
 
       // No token, no user to load
       if (!token) {
+        clearAuthRouteHint();
         lastTokenRef.current = null;
         setIsLoading(false);
         return;
@@ -108,15 +119,18 @@ export default function AuthInitializer() {
 
         const userData = await UserService.me();
         setUser(userData);
+        setAuthRouteHint();
       } catch (error) {
         const err = error instanceof Error ? error : new Error("Failed to fetch user");
         setError(err);
+        const errorRecord =
+          typeof error === "object" && error !== null
+            ? (error as Record<string, unknown>)
+            : null;
         const hasDetails =
           (error instanceof Error && error.message) ||
-          (typeof error === "object" &&
-            error !== null &&
-            ((("status" in error && typeof (error as any).status === "number") ||
-              ("message" in error && typeof (error as any).message === "string"))));
+          typeof errorRecord?.status === "number" ||
+          typeof errorRecord?.message === "string";
         if (hasDetails) {
           console.error("[AuthInitializer] Failed to load user:", error);
         }

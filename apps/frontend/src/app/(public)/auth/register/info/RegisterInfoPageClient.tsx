@@ -14,6 +14,7 @@ import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { jalaliBirthDateToGregorianDate } from "@/utils/birthDate";
+import { safeInternalRedirect } from "@/utils/authRedirect";
 
 interface FormData {
   firstName: string;
@@ -46,8 +47,7 @@ export default function RegisterInfoPage() {
 
   useEffect(() => {
     const paramsPhone = searchParams.get("phone");
-    const storedPhone =
-      typeof window !== "undefined" ? localStorage.getItem("pendingPhone") : null;
+    const storedPhone = typeof window !== "undefined" ? localStorage.getItem("pendingPhone") : null;
     const phoneToUse = paramsPhone || storedPhone;
 
     if (phoneToUse) {
@@ -102,18 +102,16 @@ export default function RegisterInfoPage() {
         }
 
         // If user came from login redirect (incomplete profile), send to their intended destination or account
-        const redirectParam = searchParams.get("redirect");
-        if (redirectParam && redirectParam.startsWith("/")) {
-          router.push(redirectParam);
+        const redirectTarget = safeInternalRedirect(searchParams.get("redirect"));
+        if (redirectTarget) {
+          router.push(redirectTarget);
         } else {
           router.push("/account");
         }
       }
     } catch (error: unknown) {
       console.error(error);
-      toast.error(
-        getUserFacingErrorMessage(error, "خطا در ثبت اطلاعات. لطفا دوباره تلاش کنید"),
-      );
+      toast.error(getUserFacingErrorMessage(error, "خطا در ثبت اطلاعات. لطفا دوباره تلاش کنید"));
     } finally {
       setIsLoading(false);
     }

@@ -10,11 +10,17 @@ jest.mock("next/server", () => ({
 }));
 
 const {
-  default: middleware,
+  AUTH_REDIRECT_STATUS,
   getLegacyRedirectUrl,
+  isAuthRequiredRoute,
   isRetiredLegacyPath,
   LEGACY_REDIRECT_STATUS,
-} = require("../../middleware");
+  proxy,
+} = require("../proxy");
+const {
+  AUTH_ROUTE_HINT_COOKIE,
+  AUTH_ROUTE_HINT_COOKIE_VALUE,
+} = require("../utils/authRouteHint");
 const { getSecurityHeaderEntries } = require("../utils/securityHeaders");
 const { legacyRedirects } = require("../../redirects");
 
@@ -34,9 +40,15 @@ function nextUrl(path: string) {
   return url;
 }
 
-function mockRequest(path: string) {
+function mockRequest(path: string, hasAuthMarker = false) {
   return {
     nextUrl: nextUrl(path),
+    cookies: {
+      get: (name: string) =>
+        hasAuthMarker && name === AUTH_ROUTE_HINT_COOKIE
+          ? { value: AUTH_ROUTE_HINT_COOKIE_VALUE }
+          : undefined,
+    },
   };
 }
 
@@ -98,12 +110,9 @@ describe("legacy WooCommerce redirects", () => {
     "/orders/success?orderId=42",
     "/orders/failure?error=failed",
     "/payment/success?orderId=42",
-  ])(
-    "leaves the established payment result route unchanged: %s",
-    (path) => {
-      expect(legacyTarget(path)).toBeNull();
-    },
-  );
+  ])("leaves the established payment result route unchanged: %s", (path) => {
+    expect(legacyTarget(path)).toBeNull();
+  });
 
   it("does not register framework redirects for the established payment result pages", () => {
     const paymentResultSources = new Set([
@@ -116,8 +125,9 @@ describe("legacy WooCommerce redirects", () => {
       "/orders/payment-callback",
     ]);
 
-    expect(legacyRedirects.filter((entry: { source: string }) => paymentResultSources.has(entry.source)))
-      .toEqual([]);
+    expect(
+      legacyRedirects.filter((entry: { source: string }) => paymentResultSources.has(entry.source)),
+    ).toEqual([]);
   });
 
   it("redirects nested blog categories to blog category filters", () => {
@@ -137,22 +147,70 @@ describe("legacy WooCommerce redirects", () => {
 
 describe("middleware security headers", () => {
   it("adds baseline security headers to pass-through responses", async () => {
-    const response = await middleware(mockRequest("/"));
+    const response = await proxy(mockRequest("/"));
 
     expectSecurityHeaders(response.headers);
   });
 
   it("adds baseline security headers to legacy redirect responses", async () => {
-    const response = await middleware(mockRequest("/shop/pants/page/2/"));
+    const response = await proxy(mockRequest("/shop/pants/page/2/"));
 
     expect(response.status).toBe(LEGACY_REDIRECT_STATUS);
     expectSecurityHeaders(response.headers);
   });
 
   it("adds baseline security headers to canonical redirect responses", async () => {
-    const response = await middleware(mockRequest("/faq/"));
+    const response = await proxy(mockRequest("/faq/"));
 
     expect(response.status).toBe(LEGACY_REDIRECT_STATUS);
     expectSecurityHeaders(response.headers);
+  });
+});
+
+describe("middleware authenticated route gate", () => {
+  it("redirects a logged-out account request before rendering the account route", async () => {
+    const response = await proxy(mockRequest("/account?tab=profile"));
+
+    expect(response.status).toBe(AUTH_REDIRECT_STATUS);
+    expect(response.url.pathname).toBe("/auth");
+    expect(response.url.searchParams.get("redirect")).toBe("/account?tab=profile");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    expect(response.headers.get("Vary")).toBe("Cookie");
+    expectSecurityHeaders(response.headers);
+  });
+
+  it("allows an account request with the optimistic route marker to continue", async () => {
+    const response = await proxy(mockRequest("/account", true));
+
+    expect(response.url).toBeUndefined();
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    expectSecurityHeaders(response.headers);
+  });
+
+  it.each([
+    "/account",
+    "/addresses/12",
+    "/checkout",
+    "/favorites",
+    "/orders",
+    "/orders/123",
+    "/password",
+    "/privileges",
+    "/super-admin/products",
+    "/wallet",
+  ])("classifies authenticated route %s", (path) => {
+    expect(isAuthRequiredRoute(path)).toBe(true);
+  });
+
+  it.each([
+    "/",
+    "/auth",
+    "/cart",
+    "/payment/result",
+    "/orders/payment-callback",
+    "/orders/success",
+    "/orders/failure",
+  ])("does not gate public or payment-recovery route %s", (path) => {
+    expect(isAuthRequiredRoute(path)).toBe(false);
   });
 });
