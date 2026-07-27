@@ -91,7 +91,10 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
         }
       `}</style>
 
-      <div className="mx-auto w-full max-w-[1360px] px-2 py-7 sm:px-5 md:py-9 lg:px-[60px] lg:py-[50px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20">
+      <div
+        data-home-contained-content="discounted"
+        className="mx-auto w-screen max-w-[1360px] px-2 py-7 sm:px-5 md:py-9 lg:px-[60px] lg:py-[50px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20"
+      >
         <div className="mb-4 flex items-center justify-between gap-4 lg:hidden">
           <h2 className="flex items-center gap-1 font-peyda text-xl font-medium text-white md:text-2xl">
             <span className="[filter:brightness(0)_invert(1)]" aria-hidden="true">

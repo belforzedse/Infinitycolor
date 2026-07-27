@@ -426,7 +426,7 @@ test.describe("automatic adaptive quality", () => {
     runtime.assertClean();
   });
 
-  test("home full-bleed sections and the static newest backdrop reach both viewport edges", async ({
+  test("home decorations bleed while section content remains contained", async ({
     page,
   }, testInfo) => {
     test.skip(
@@ -457,7 +457,24 @@ test.describe("automatic adaptive quality", () => {
       expect(geometry.right).toBeGreaterThanOrEqual(geometry.viewportWidth);
     };
 
+    const assertContentContained = async (selector: string) => {
+      const geometry = await page.locator(selector).evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          contentLeft: rect.left + Number.parseFloat(style.paddingLeft),
+          contentRight: rect.right - Number.parseFloat(style.paddingRight),
+          viewportWidth: window.innerWidth,
+        };
+      });
+      expect(geometry.contentLeft).toBeGreaterThanOrEqual(0);
+      expect(geometry.contentRight).toBeLessThanOrEqual(
+        geometry.viewportWidth,
+      );
+    };
+
     await assertFullBleed('[data-home-full-bleed="newest"]');
+    await assertContentContained('[data-home-contained-content="newest"]');
     const backdropStyle = await backdrop.evaluate((element) => {
       const style = getComputedStyle(element);
       return { display: style.display, visibility: style.visibility };
@@ -468,9 +485,11 @@ test.describe("automatic adaptive quality", () => {
     });
 
     const discounted = page.locator('[data-home-full-bleed="discounted"]');
-    if ((await discounted.count()) > 0) {
-      await assertFullBleed('[data-home-full-bleed="discounted"]');
-    }
+    await expect(discounted).toBeVisible({ timeout: 30_000 });
+    await assertFullBleed('[data-home-full-bleed="discounted"]');
+    await assertContentContained(
+      '[data-home-contained-content="discounted"]',
+    );
   });
 
   test("expired and version-mismatched session records are discarded", async ({

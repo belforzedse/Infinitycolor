@@ -106,7 +106,7 @@ function NewestSectionSkeleton() {
         ))}
       </div>
 
-      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20">
+      <div className="relative z-10 mx-auto flex min-h-[360px] w-screen max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20">
         <div className="w-full min-w-0 space-y-10">
           <SkeletonText className="h-8 w-48" />
           <ProductCardsSkeleton />
@@ -169,7 +169,10 @@ async function NewestSection({
         ))}
       </div>
 
-      <div className="relative z-10 mx-auto flex min-h-[360px] w-full max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20">
+      <div
+        data-home-contained-content="newest"
+        className="relative z-10 mx-auto flex min-h-[360px] w-screen max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20"
+      >
         <div className="w-full min-w-0">
           {/* Single render: OffersListHomePage adapts to mobile (scroll) vs desktop (grid)
               internally, so the previous hidden md:block / md:hidden split hydrated every

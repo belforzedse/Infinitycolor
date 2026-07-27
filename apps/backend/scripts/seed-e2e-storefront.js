@@ -367,7 +367,7 @@ async function seedNavigationSingleton(client, productCategoryId, now) {
   return navigation.id;
 }
 
-async function seedHomepageNewestSettings(client, productId, now) {
+async function seedHomepageProductSettings(client, productId, now) {
   if (!(await tableExists(client, "site_settings"))) return [];
 
   const meta = await tableMeta(client, "site_settings");
@@ -375,8 +375,21 @@ async function seedHomepageNewestSettings(client, productId, now) {
   if (!available.has("home_newest_product_ids")) return [];
 
   const payload = JSON.stringify([productId]);
-  const column = meta.find((item) => item.column_name === "home_newest_product_ids");
-  const jsonCast = column?.data_type === "json" ? "::json" : "::jsonb";
+  const newestColumn = meta.find((item) => item.column_name === "home_newest_product_ids");
+  const newestJsonCast = newestColumn?.data_type === "json" ? "::json" : "::jsonb";
+  const discountedColumn = meta.find(
+    (item) => item.column_name === "home_discounted_product_ids",
+  );
+  const discountedJsonCast =
+    discountedColumn?.data_type === "json" ? "::json" : "::jsonb";
+  const productIdAssignments = [
+    `home_newest_product_ids = $1${newestJsonCast}`,
+  ];
+  if (discountedColumn) {
+    productIdAssignments.push(
+      `home_discounted_product_ids = $1${discountedJsonCast}`,
+    );
+  }
   const existing = await client.query(`SELECT id FROM site_settings ORDER BY id ASC LIMIT 1`);
   const updatedAtClause = available.has("updated_at") ? `, updated_at = $2` : "";
 
@@ -387,17 +400,24 @@ async function seedHomepageNewestSettings(client, productId, now) {
     const idParam = available.has("updated_at") ? "$3" : "$2";
     await client.query(
       `UPDATE site_settings
-       SET home_newest_product_ids = $1${jsonCast}${updatedAtClause}
+       SET ${productIdAssignments.join(", ")}${updatedAtClause}
        WHERE id = ${idParam}`,
       params,
     );
-    console.log(`[seed:e2e] Curated homepage newest product ids: [${productId}].`);
+    console.log(
+      `[seed:e2e] Curated homepage newest and discounted product ids: [${productId}].`,
+    );
     return [productId];
   }
 
   const names = ["home_newest_product_ids"];
   const values = [payload];
-  const params = [`$1${jsonCast}`];
+  const params = [`$1${newestJsonCast}`];
+
+  if (discountedColumn) {
+    names.push("home_discounted_product_ids");
+    params.push(`$1${discountedJsonCast}`);
+  }
 
   if (available.has("created_at")) {
     names.push("created_at");
@@ -415,7 +435,9 @@ async function seedHomepageNewestSettings(client, productId, now) {
      VALUES (${params.join(", ")})`,
     values,
   );
-  console.log(`[seed:e2e] Curated homepage newest product ids: [${productId}].`);
+  console.log(
+    `[seed:e2e] Curated homepage newest and discounted product ids: [${productId}].`,
+  );
   return [productId];
 }
 
@@ -1145,7 +1167,7 @@ async function seed(client) {
     created_at: now,
     updated_at: now,
   });
-  const homepageNewestProductIds = await seedHomepageNewestSettings(client, product.id, now);
+  const homepageNewestProductIds = await seedHomepageProductSettings(client, product.id, now);
   await seedAdaptiveHeroSettings(client, now);
 
   await insertLink(client, "products_product_main_category_links", {
