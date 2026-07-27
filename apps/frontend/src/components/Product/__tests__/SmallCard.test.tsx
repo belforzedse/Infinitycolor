@@ -2,6 +2,12 @@ import React from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import ProductSmallCard, { type ProductSmallCardProps } from "../SmallCard";
 
+const mockNoteEnhancementLoaded = jest.fn();
+
+jest.mock("@/lib/adaptive-quality", () => ({
+  noteEnhancementLoaded: (...args: unknown[]) => mockNoteEnhancementLoaded(...args),
+}));
+
 jest.mock("next/dynamic", () => ({
   __esModule: true,
   default: () => {
@@ -59,6 +65,19 @@ jest.mock("@/hooks/useProductLike", () => ({
   })),
 }));
 
+jest.mock("../QuickViewModal", () => ({
+  __esModule: true,
+  default: ({ isOpen }: { isOpen: boolean; [key: string]: unknown }) =>
+    isOpen ? <div data-testid="quick-view-modal-stub" /> : null,
+  preloadQuickViewProduct: jest.fn(),
+}));
+
+jest.mock("../ShareModal", () => ({
+  __esModule: true,
+  default: ({ open }: { open: boolean; [key: string]: unknown }) =>
+    open ? <div data-testid="share-modal-stub" /> : null,
+}));
+
 const baseProps: ProductSmallCardProps = {
   id: 42,
   slug: "e2e-small-card",
@@ -82,12 +101,20 @@ describe("ProductSmallCard", () => {
     expect(within(card).getByTestId("product-small-card-menu")).toBeInTheDocument();
   });
 
-  it("opens the quick-view action from the sibling menu button", () => {
+  it("loads Quick View and Share after explicit menu actions", async () => {
     render(<ProductSmallCard {...baseProps} />);
 
     const card = screen.getByTestId("product-small-card");
     fireEvent.click(within(card).getByTestId("product-small-card-menu"));
+    fireEvent.click(within(card).getByTestId("product-small-card-quick-view"));
 
-    expect(within(card).getByTestId("product-small-card-quick-view")).toBeVisible();
+    expect(await within(card).findByTestId("quick-view-modal-stub")).toBeInTheDocument();
+
+    fireEvent.click(within(card).getByTestId("product-small-card-menu"));
+    fireEvent.click(within(card).getByRole("menuitem", { name: "اشتراک‌گذاری" }));
+
+    expect(await within(card).findByTestId("share-modal-stub")).toBeInTheDocument();
+    expect(mockNoteEnhancementLoaded).toHaveBeenCalledWith("quick-view");
+    expect(mockNoteEnhancementLoaded).toHaveBeenCalledWith("share");
   });
 });

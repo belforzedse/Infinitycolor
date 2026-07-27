@@ -64,6 +64,12 @@ jest.mock("../QuickViewModal", () => ({
   preloadQuickViewProduct: jest.fn(),
 }));
 
+jest.mock("../ShareModal", () => ({
+  __esModule: true,
+  default: ({ open }: { open: boolean; [key: string]: unknown }) =>
+    open ? <div data-testid="share-modal-stub" /> : null,
+}));
+
 describe("ProductCard", () => {
   const useProductLike = require("@/hooks/useProductLike").default;
   const getLazySecondaryMediaByProductId =
@@ -371,6 +377,28 @@ describe("ProductCard", () => {
     expect(getLazySecondaryMediaByProductId).not.toHaveBeenCalled();
   });
 
+  it("keeps explicit Quick View and Share functional in Safe", async () => {
+    mockUseAdaptiveQuality.mockReturnValue({
+      enabled: true,
+      rendering: "safe",
+      media: "economy",
+      motion: "minimal",
+      reducedTransparency: false,
+      reason: "force-safe",
+      routeGeneration: 0,
+    });
+
+    render(<ProductCard {...mockProps} />);
+
+    fireEvent.click(screen.getByTestId("product-card-quick-view"));
+    expect(await screen.findByTestId("quick-view-modal-stub")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("product-card-share"));
+    expect(await screen.findByTestId("share-modal-stub")).toBeInTheDocument();
+    expect(mockNoteEnhancementLoaded).toHaveBeenCalledWith("quick-view");
+    expect(mockNoteEnhancementLoaded).toHaveBeenCalledWith("share");
+  });
+
   it("should merge lazy-loaded images without duplicates", async () => {
     getLazySecondaryMediaByProductId.mockResolvedValue([
       "/images/image1.jpg",
@@ -387,9 +415,11 @@ describe("ProductCard", () => {
       expect(getLazySecondaryMediaByProductId).toHaveBeenCalledTimes(1);
     });
 
-    const slider = screen.getByTestId("image-slider");
-    expect(slider).toHaveAttribute("data-image-count", "2");
-    expect(slider).toHaveAttribute("data-images", "/images/image1.jpg,/images/image2.jpg");
+    await waitFor(() => {
+      const slider = screen.getByTestId("image-slider");
+      expect(slider).toHaveAttribute("data-image-count", "2");
+      expect(slider).toHaveAttribute("data-images", "/images/image1.jpg,/images/image2.jpg");
+    });
   });
 
   it("should keep original images when lazy media fetch fails", async () => {

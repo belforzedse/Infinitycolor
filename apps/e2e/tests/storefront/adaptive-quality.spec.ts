@@ -311,7 +311,7 @@ function freshHomePath() {
 }
 
 test.describe("automatic adaptive quality", () => {
-  test("strong-first classification applies Economy without weakening commerce", async ({
+  test("strong-first classification reaches full Safe without weakening commerce", async ({
     page,
   }) => {
     const runtime = collectStrictRuntimeErrors(page);
@@ -344,6 +344,23 @@ test.describe("automatic adaptive quality", () => {
       await expect(optionalShells.first()).toBeAttached();
     }
     await expect(page.locator("video[src]")).toHaveCount(0);
+
+    await expect
+      .poll(() => page.evaluate(() => Boolean(window.__INFINITY_AQ_E2E__)))
+      .toBe(true);
+    await page.evaluate(() =>
+      window.__INFINITY_AQ_E2E__?.setTier({
+        rendering: "safe",
+        media: "economy",
+        motion: "minimal",
+      }),
+    );
+    expect(await adaptiveSnapshot(page)).toMatchObject({
+      rendering: "safe",
+      media: "economy",
+      motion: "minimal",
+    });
+    await expect(page.locator('[data-aq-hero="static"]')).toHaveCount(1);
 
     const skipLink = page.locator('a[href="#main-content"]').first();
     await skipLink.focus();
@@ -781,7 +798,7 @@ test.describe("automatic adaptive quality", () => {
 test.describe("adaptive quality commerce isolation", () => {
   test.use({ storageState: authStorageStatePath("customer") });
 
-  test("downgrade during submit survives redirect, callback, and payment result", async ({
+  test("full Safe downgrade during submit survives redirect, callback, and payment result", async ({
     page,
     request,
   }, testInfo) => {
@@ -796,21 +813,36 @@ test.describe("adaptive quality commerce isolation", () => {
       cores: 8,
     });
     let submitNodeSurvived = false;
+    let submitTierReachedSafe = false;
     const payment = await finalizeToZarinpalRedirect(page, request, {
       onSubmitStarted: async () => {
-        submitNodeSurvived = await page.evaluate(() => {
+        const result = await page.evaluate(() => {
           const submit = document.querySelector(
             '[data-testid="checkout-submit"]',
           );
-          window.__INFINITY_AQ_E2E__?.downgrade("repeated-long-task");
-          return (
-            submit !== null &&
-            submit === document.querySelector('[data-testid="checkout-submit"]')
-          );
+          window.__INFINITY_AQ_E2E__?.setTier({
+            rendering: "safe",
+            media: "economy",
+            motion: "minimal",
+          });
+          const snapshot = window.__INFINITY_AQ_E2E__?.snapshot();
+          return {
+            sameNode:
+              submit !== null &&
+              submit ===
+                document.querySelector('[data-testid="checkout-submit"]'),
+            reachedSafe:
+              snapshot?.rendering === "safe" &&
+              snapshot.media === "economy" &&
+              snapshot.motion === "minimal",
+          };
         });
+        submitNodeSurvived = result.sameNode;
+        submitTierReachedSafe = result.reachedSafe;
       },
     });
     expect(submitNodeSurvived).toBe(true);
+    expect(submitTierReachedSafe).toBe(true);
 
     await stubSuccessfulCallback(page, payment);
     await page.goto(

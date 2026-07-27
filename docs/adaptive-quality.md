@@ -232,6 +232,13 @@ missing-IntersectionObserver, and Minimal states. Standard uses a bounded
 IntersectionObserver/CSS transform. Every observer disconnects on route/tier
 change and unmount.
 
+Safe/Economy/Minimal remains a fully interactive JavaScript storefront. It
+keeps the same responsive product-rail limits and pagination, navigation,
+variants, wishlist, forms, authentication, cart, checkout, callback, and
+payment-result controllers. Optional Quick View, Share, video, and rich media
+can defer their chunks until an explicit action, but the action remains
+available and functional in Safe.
+
 `content-visibility:auto` is currently disabled for home merchandising because
 paint containment clipped the intentional full-viewport newest/discounted
 backgrounds on both desktop and mobile. It must not be reintroduced around a
