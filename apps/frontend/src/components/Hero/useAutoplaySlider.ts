@@ -35,6 +35,7 @@ export function useAutoplaySlider({
 }: UseAutoplaySliderOptions): UseAutoplaySliderReturn {
   const [index, setIndex] = useState(0);
   const [playKey, setPlayKey] = useState(0);
+  const [isPageVisible, setIsPageVisible] = useState(true);
 
   const normalizedInterval =
     typeof autoplayInterval === "number"
@@ -86,13 +87,29 @@ export function useAutoplaySlider({
   }, [autoplayEligibility, index, slidesLength]);
 
   useEffect(() => {
-    if (slidesLength <= 1 || !hasEligibleAutoplaySlides) return;
+    const handleVisibilityChange = () => {
+      setIsPageVisible(document.visibilityState !== "hidden");
+    };
+    handleVisibilityChange();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    if (slidesLength <= 1 || !hasEligibleAutoplaySlides || !isPageVisible) return;
     const id = setInterval(() => {
       setIndex((i) => findNextAutoplayIndex(i));
       setPlayKey((k) => k + 1);
     }, normalizedInterval);
     return () => clearInterval(id);
-  }, [slidesLength, normalizedInterval, hasEligibleAutoplaySlides, findNextAutoplayIndex, playKey]);
+  }, [
+    slidesLength,
+    normalizedInterval,
+    hasEligibleAutoplaySlides,
+    findNextAutoplayIndex,
+    playKey,
+    isPageVisible,
+  ]);
 
   const next = useCallback(() => {
     if (slidesLength === 0) return;

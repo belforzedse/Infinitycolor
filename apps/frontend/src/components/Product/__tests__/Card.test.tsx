@@ -2,6 +2,15 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import ProductCard, { type ProductCardProps } from "../Card";
 import { faNum } from "@/utils/faNum";
 
+const mockUseAdaptiveQuality = jest.fn();
+const mockNoteEnhancementLoaded = jest.fn();
+
+jest.mock("@/lib/adaptive-quality", () => ({
+  useAdaptiveQuality: () => mockUseAdaptiveQuality(),
+  noteEnhancementLoaded: (...args: unknown[]) =>
+    mockNoteEnhancementLoaded(...args),
+}));
+
 jest.mock("next/dynamic", () => ({
   __esModule: true,
   default: () => {
@@ -46,9 +55,8 @@ jest.mock("../Icons/GridIcon", () => ({
   default: () => <div data-testid="grid-icon" />,
 }));
 
-// QuickViewModal is always mounted inside Card (unconditional render so the dynamic
-// import resolves at page load). Stub it out in Card unit tests — QuickView behavior
-// is covered by its own test suite.
+// QuickViewModal is mounted only after explicit interaction. Stub it out in Card
+// unit tests; Quick View behavior is covered by its own test suite.
 jest.mock("../QuickViewModal", () => ({
   __esModule: true,
   default: ({ isOpen }: { isOpen: boolean; [key: string]: unknown }) =>
@@ -73,6 +81,15 @@ describe("ProductCard", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseAdaptiveQuality.mockReturnValue({
+      enabled: true,
+      rendering: "enhanced",
+      media: "high",
+      motion: "enhanced",
+      reducedTransparency: false,
+      reason: "default",
+      routeGeneration: 0,
+    });
     useProductLike.mockReturnValue({
       isLiked: false,
       isLoading: false,
@@ -312,7 +329,7 @@ describe("ProductCard", () => {
     });
   });
 
-  it("should lazy-load secondary media on first touch intent", async () => {
+  it("should not speculate secondary media from touch intent", async () => {
     getLazySecondaryMediaByProductId.mockResolvedValue(["/images/image2.jpg"]);
     const { container } = render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
     const article = container.querySelector("article");
@@ -320,9 +337,38 @@ describe("ProductCard", () => {
     expect(article).toBeInTheDocument();
     fireEvent.touchStart(article!);
 
-    await waitFor(() => {
-      expect(getLazySecondaryMediaByProductId).toHaveBeenCalledTimes(1);
+    expect(getLazySecondaryMediaByProductId).not.toHaveBeenCalled();
+  });
+
+  it("does not prefetch secondary media in Standard or Safe", () => {
+    mockUseAdaptiveQuality.mockReturnValue({
+      enabled: true,
+      rendering: "standard",
+      media: "standard",
+      motion: "standard",
+      reducedTransparency: false,
+      reason: "default",
+      routeGeneration: 0,
     });
+    const { container, rerender } = render(
+      <ProductCard {...mockProps} images={["/images/image1.jpg"]} />,
+    );
+
+    fireEvent.mouseEnter(container.querySelector("article")!);
+    expect(getLazySecondaryMediaByProductId).not.toHaveBeenCalled();
+
+    mockUseAdaptiveQuality.mockReturnValue({
+      enabled: true,
+      rendering: "safe",
+      media: "economy",
+      motion: "minimal",
+      reducedTransparency: false,
+      reason: "force-safe",
+      routeGeneration: 0,
+    });
+    rerender(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
+    fireEvent.mouseEnter(container.querySelector("article")!);
+    expect(getLazySecondaryMediaByProductId).not.toHaveBeenCalled();
   });
 
   it("should merge lazy-loaded images without duplicates", async () => {

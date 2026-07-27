@@ -6,7 +6,7 @@
  */
 
 // Build version will be set via message from client
-let BUILD_VERSION = "80eda9c-1764496749208"; // Injected at build time
+let BUILD_VERSION = "v1-dev"; // Fallback version
 
 // Generate cache names with build version
 function getCacheNames() {

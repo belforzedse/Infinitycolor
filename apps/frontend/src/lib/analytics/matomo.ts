@@ -137,10 +137,14 @@ export function syncMatomoConsentState(consent: AnalyticsConsent) {
 
 function shouldSkipOnce(onceKey?: string): boolean {
   if (!onceKey || typeof window === "undefined") return false;
-  const key = `${ANALYTICS_ONCE_PREFIX}${onceKey}`;
-  if (sessionStorage.getItem(key) === "1") return true;
-  sessionStorage.setItem(key, "1");
-  return false;
+  try {
+    const key = `${ANALYTICS_ONCE_PREFIX}${onceKey}`;
+    if (sessionStorage.getItem(key) === "1") return true;
+    sessionStorage.setItem(key, "1");
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -193,14 +197,18 @@ export function trackMatomoEvent(params: {
   value?: number;
   onceKey?: string;
 }) {
-  if (shouldSkipOnce(params.onceKey)) return;
-  push([
-    "trackEvent",
-    params.category,
-    params.action,
-    params.name,
-    normalizeNumber(params.value),
-  ]);
+  try {
+    if (shouldSkipOnce(params.onceKey)) return;
+    push([
+      "trackEvent",
+      params.category,
+      params.action,
+      params.name,
+      normalizeNumber(params.value),
+    ]);
+  } catch {
+    // Analytics must never affect storefront or commerce behavior.
+  }
 }
 
 export function trackGoal(idGoal: number, value?: number): void {

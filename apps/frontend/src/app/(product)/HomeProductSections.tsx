@@ -102,6 +102,7 @@ function NewestSectionSkeleton() {
     >
       <div
         aria-hidden="true"
+        data-adaptive-decorative="rich"
         className="pointer-events-none absolute inset-[-160px] z-0 overflow-hidden blur-[74.5px]"
       >
         {NEWEST_BACKGROUND_ELLIPSES.map((ellipseClass, index) => (
@@ -166,12 +167,13 @@ async function NewestSection({
     >
       <div
         aria-hidden="true"
+        data-adaptive-decorative="rich"
         className="pointer-events-none absolute inset-[-160px] z-0 overflow-hidden blur-[74.5px]"
       >
         {NEWEST_BACKGROUND_ELLIPSES.map((ellipseClass, index) => (
           <span
             key={index}
-            className={`absolute rounded-full opacity-[0.85] will-change-transform ${ellipseClass}`}
+            className={`aq-decorative-motion absolute rounded-full opacity-[0.85] ${ellipseClass}`}
           />
         ))}
       </div>
@@ -211,7 +213,7 @@ async function FavoritesSection({
   if (favorites.length === 0) return null;
 
   return (
-    <section className="space-y-10">
+    <section className="aq-home-deferred space-y-10">
       {/* Single render (see NewestSection) — avoids double ProductCard hydration. */}
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
@@ -238,7 +240,7 @@ async function DiscountedSection({
   if (discounted.length === 0) return null;
 
   return (
-    <section>
+    <section className="aq-home-deferred">
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
           sectionId="discounted"
@@ -273,6 +275,7 @@ async function GifPromoSection({
   return (
     <Reveal variant="fade-up" duration={700}>
       <HomeGifPromoSection
+        className="aq-home-deferred"
         slots={[
           {
             id: "slot-1",
@@ -304,7 +307,7 @@ async function CustomSection({
   if (customSectionProducts.length === 0) return null;
 
   return (
-    <section>
+    <section className="aq-home-deferred">
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
           sectionId="custom"
@@ -330,7 +333,7 @@ async function WeeklyPicksSection({
   if (weeklyPicksProducts.length === 0) return null;
 
   return (
-    <section>
+    <section className="aq-home-deferred">
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
           sectionId="weeklyPicks"
@@ -357,7 +360,7 @@ async function EveryoneFollowsSection({
   if (everyoneFollowsProducts.length === 0) return null;
 
   return (
-    <section>
+    <section className="aq-home-deferred">
       <Reveal variant="fade-up" duration={700}>
         <HomeOffersList
           sectionId="everyoneFollows"
@@ -428,7 +431,7 @@ export default function HomeProductSections({
       )}
 
       {hasPromoBanners && (
-        <section>
+        <section className="aq-home-deferred">
           <Reveal variant="fade-up" duration={700}>
             <HomePromoBanners banners={promoBanners ?? []} />
           </Reveal>

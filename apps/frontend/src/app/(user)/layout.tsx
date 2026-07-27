@@ -10,6 +10,7 @@ import useUser from "@/hooks/useUser";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { StorefrontContainer } from "@/components/storefront";
+import AdaptiveQualityBoundary from "@/components/AdaptiveQuality/AdaptiveQualityBoundary";
 
 const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), {
   ssr: false,
@@ -48,7 +49,8 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
     return null;
   }
   return (
-    <div className="public-layout bg-white pt-5">
+    <AdaptiveQualityBoundary>
+      <div className="public-layout bg-white pt-5">
       <StorefrontContainer>
         <Header />
         <ProfileCompletionBanner />
@@ -60,6 +62,7 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
 
       {/* Cart Drawer */}
       {isDrawerOpen && <CartDrawer />}
-    </div>
+      </div>
+    </AdaptiveQualityBoundary>
   );
 }

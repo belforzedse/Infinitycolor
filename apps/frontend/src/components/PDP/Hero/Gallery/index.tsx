@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import ThumbnailList from "./ThumbnailList";
 import SingleImage from "./SingleImage";
+import {
+  noteEnhancementLoaded,
+  useAdaptiveQuality,
+} from "@/lib/adaptive-quality";
 
 type Props = {
   assets: {
@@ -18,6 +22,7 @@ export default function PDPHeroGallery(props: Props) {
   const { assets } = props;
 
   const [selectedImage, setSelectedImage] = useState<string>(assets[0]?.id ?? "");
+  const quality = useAdaptiveQuality();
 
   // Memoize a lookup map to avoid repeated finds
   const byId = useMemo(() => {
@@ -42,6 +47,7 @@ export default function PDPHeroGallery(props: Props) {
 
   // Preload neighbors for smoother transitions using intersection observer
   useEffect(() => {
+    if (quality.media !== "high") return;
     if (!selectedImage) return;
     const index = assets.findIndex((a) => a.id === selectedImage);
     if (index === -1) return;
@@ -55,7 +61,11 @@ export default function PDPHeroGallery(props: Props) {
     if (prev?.type === "image") imagesToPreload.push(prev.src);
 
     // Use intersection observer for progressive loading
-    if (imagesToPreload.length > 0 && galleryRef.current) {
+    if (
+      imagesToPreload.length > 0 &&
+      galleryRef.current &&
+      typeof IntersectionObserver !== "undefined"
+    ) {
       const observer = new IntersectionObserver(
         (entries) => {
           entries.forEach((entry) => {
@@ -67,6 +77,7 @@ export default function PDPHeroGallery(props: Props) {
                   img.src = src;
                 } catch {}
               });
+              noteEnhancementLoaded("secondary-media");
               // Unobserve after preloading to prevent redundant work
               observer.unobserve(entry.target);
             }
@@ -77,7 +88,7 @@ export default function PDPHeroGallery(props: Props) {
       observer.observe(galleryRef.current);
       return () => observer.disconnect();
     }
-  }, [selectedImage, assets]);
+  }, [selectedImage, assets, quality.media]);
 
   // Reset selection if assets change or are initially empty
   useEffect(() => {
@@ -121,6 +132,7 @@ export default function PDPHeroGallery(props: Props) {
         src={byId.get(selectedImage)?.src || ""}
         thumb={byId.get(selectedImage)?.thumbnail || ""}
         alt={byId.get(selectedImage)?.alt || ""}
+        priority={selectedImage === assets[0]?.id}
         goToNextImage={goToNextImage}
         goToPreviousImage={goToPreviousImage}
       />

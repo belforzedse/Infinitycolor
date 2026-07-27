@@ -6,6 +6,10 @@ import dynamic from "next/dynamic";
 import useProductLike from "@/hooks/useProductLike";
 import { getLazySecondaryMediaByProductId } from "@/services/product/product";
 import { computeSaleDiscountPercent } from "@/utils/discounts";
+import {
+  noteEnhancementLoaded,
+  useAdaptiveQuality,
+} from "@/lib/adaptive-quality";
 
 // Components
 import ImageSlider from "./ImageSlider";
@@ -18,8 +22,8 @@ import {
   FloatingActions,
 } from "./CardParts";
 
-// Lazy load heavy modals — resolved at card-mount time (page load) so the first
-// click opens immediately without waiting for a dynamic-import round-trip.
+// Heavy modals are rendered only after explicit interaction. Declaring a dynamic
+// boundary alone is not enough if it is mounted for every card during page load.
 const QuickViewModal = dynamic(() => import("./QuickViewModal"), {
   ssr: false,
   loading: () => null,
@@ -73,6 +77,7 @@ const ProductCard: FC<ProductCardProps> = ({
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [enrichedImages, setEnrichedImages] = useState(images);
   const hasRequestedLazyMedia = useRef(false);
+  const quality = useAdaptiveQuality();
 
   // Hooks
   const {
@@ -119,12 +124,14 @@ const ProductCard: FC<ProductCardProps> = ({
   const handleQuickView = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    noteEnhancementLoaded("quick-view");
     setIsQuickViewOpen(true);
   }, []);
 
   const handleShare = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    noteEnhancementLoaded("share");
     setIsShareOpen(true);
   }, []);
 
@@ -169,10 +176,14 @@ const ProductCard: FC<ProductCardProps> = ({
   }, [id, isAvailable, validImages.length]);
 
   const handleInteractionIntent = useCallback(() => {
-    void maybeLoadSecondaryMedia();
-    // Pre-warm the Quick View data cache so a subsequent click is instant.
+    if (quality.rendering === "safe" || quality.media === "economy") return;
+    // Standard may pre-warm Quick View on pointer/keyboard intent.
     void preloadQuickView(id);
-  }, [maybeLoadSecondaryMedia, id]);
+    if (quality.media === "high") {
+      noteEnhancementLoaded("secondary-media");
+      void maybeLoadSecondaryMedia();
+    }
+  }, [id, maybeLoadSecondaryMedia, quality.media, quality.rendering]);
 
   const handleProductLinkClick = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -197,7 +208,6 @@ const ProductCard: FC<ProductCardProps> = ({
         aria-label={`محصول ${title}`}
         onMouseEnter={handleInteractionIntent}
         onFocusCapture={handleInteractionIntent}
-        onTouchStart={handleInteractionIntent}
       >
         <Link
           href={productUrl}
@@ -264,13 +274,13 @@ const ProductCard: FC<ProductCardProps> = ({
         />
       </article>
 
-      {/* Modals — QuickViewModal is always mounted so the dynamic import resolves at
-          page load, not on first click. Modal renders null internally when isOpen=false. */}
-      <QuickViewModal
-        isOpen={isQuickViewOpen}
-        onClose={() => setIsQuickViewOpen(false)}
-        productId={id}
-      />
+      {isQuickViewOpen && (
+        <QuickViewModal
+          isOpen={isQuickViewOpen}
+          onClose={() => setIsQuickViewOpen(false)}
+          productId={id}
+        />
+      )}
 
       {isShareOpen && (
         <ShareModal

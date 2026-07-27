@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
 import ArrowLeftIcon from "@/components/PDP/Icons/ArrowLeftIcon";
 import OffIcon from "@/components/PDP/Icons/OffIcon";
@@ -28,10 +28,8 @@ function getProductsPerPageFromViewport(): ProductsPerPage {
 }
 
 export default function DiscountedShowcase({ products }: DiscountedShowcaseProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [productsPerPage, setProductsPerPage] = useState<ProductsPerPage>(3);
-  const [isAnimating, setIsAnimating] = useState(false);
 
   useEffect(() => {
     const mediaQueries = PRODUCT_PAGE_BREAKPOINTS.map((breakpoint) =>
@@ -51,9 +49,6 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
 
   const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
   const startIndex = currentPage * productsPerPage;
-  const currentProducts = products.slice(startIndex, startIndex + productsPerPage);
-  const visibleProducts =
-    currentProducts.length > 0 ? currentProducts : products.slice(0, productsPerPage);
 
   useEffect(() => {
     const maxPage = Math.max(0, totalPages - 1);
@@ -63,23 +58,11 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
   }, [currentPage, totalPages]);
 
   const goToNextProduct = () => {
-    if (currentPage > 0 && !isAnimating) {
-      setIsAnimating(true);
-      setTimeout(() => {
-        setCurrentPage(currentPage - 1);
-        setTimeout(() => setIsAnimating(false), 50);
-      }, 150);
-    }
+    if (currentPage > 0) setCurrentPage((page) => page - 1);
   };
 
   const goToPreviousProduct = () => {
-    if (currentPage < totalPages - 1 && !isAnimating) {
-      setIsAnimating(true);
-      setTimeout(() => {
-        setCurrentPage(currentPage + 1);
-        setTimeout(() => setIsAnimating(false), 50);
-      }, 150);
-    }
+    if (currentPage < totalPages - 1) setCurrentPage((page) => page + 1);
   };
 
   if (products.length === 0) return null;
@@ -108,49 +91,19 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
       `}</style>
 
       <div className="mx-auto w-full max-w-[1360px] px-2 py-7 sm:px-5 md:py-9 lg:px-[60px] lg:py-[50px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20">
-        <div className="lg:hidden">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <h2 className="flex items-center gap-1 font-peyda text-xl font-medium text-white md:text-2xl">
-              <span className="[filter:brightness(0)_invert(1)]" aria-hidden="true">
-                <OffIcon />
-              </span>
-              تخفیف‌های شگفت‌انگیز
-            </h2>
-            <Link
-              href="/plp?hasDiscount=true"
-              className="inline-flex items-center gap-1 text-sm font-medium text-white underline-offset-4 transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            >
-              <span>مشاهده همه</span>
-            </Link>
-          </div>
-
-          <div className="w-full overflow-hidden">
-            <div
-              ref={scrollRef}
-              className="scrollbar-hide smooth-scroll flex snap-x snap-mandatory gap-1.5 overflow-x-auto scroll-smooth transition-transform duration-300 ease-out"
-              style={{
-                WebkitOverflowScrolling: "touch",
-                scrollbarWidth: "none",
-                msOverflowStyle: "none",
-                width: "100%",
-                maxWidth: "none",
-              }}
-            >
-              {products.map((product, index) => (
-                <div
-                  key={product.id}
-                  data-product-card-slide
-                  className="w-[calc(50%-0.1875rem)] shrink-0 snap-start transition-transform duration-200 ease-out"
-                  style={{
-                    animationDelay: `${index * 60}ms`,
-                    animation: `fadeInUp 0.3s ease-out forwards ${index * 60}ms`,
-                  }}
-                >
-                  <ProductCard {...product} />
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="mb-4 flex items-center justify-between gap-4 lg:hidden">
+          <h2 className="flex items-center gap-1 font-peyda text-xl font-medium text-white md:text-2xl">
+            <span className="[filter:brightness(0)_invert(1)]" aria-hidden="true">
+              <OffIcon />
+            </span>
+            تخفیف‌های شگفت‌انگیز
+          </h2>
+          <Link
+            href="/plp?hasDiscount=true"
+            className="inline-flex items-center gap-1 text-sm font-medium text-white underline-offset-4 transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            <span>مشاهده همه</span>
+          </Link>
         </div>
 
         {totalPages > 1 && (
@@ -169,8 +122,15 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
           </div>
         )}
 
-        <div className="hidden items-center gap-4 lg:grid lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6">
-          <div className="flex h-full min-w-0 flex-col items-center justify-center gap-5 text-center">
+        <div
+          className="scrollbar-hide smooth-scroll flex snap-x snap-mandatory gap-1.5 overflow-x-auto lg:grid lg:snap-none lg:grid-cols-3 lg:items-center lg:gap-4 lg:overflow-visible xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6"
+          style={{
+            WebkitOverflowScrolling: "touch",
+            scrollbarWidth: "none",
+            msOverflowStyle: "none",
+          }}
+        >
+          <div className="hidden h-full min-w-0 flex-col items-center justify-center gap-5 text-center lg:flex">
             <h2
               className="w-max max-w-full text-right font-peyda text-[46px] font-medium leading-[1.08] text-white"
               dir="rtl"
@@ -198,16 +158,24 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
             </Link>
           </div>
 
-          {visibleProducts.map((product) => (
-            <div
-              key={product.id}
-              className={`min-w-0 transform transition-all duration-200 ease-out hover:-translate-y-1 hover:scale-[1.02] ${
-                isAnimating ? "scale-95 opacity-0" : "scale-100 opacity-100"
-              }`}
-            >
-              <ProductCard {...product} />
-            </div>
-          ))}
+          {products.map((product, index) => {
+            const visibleOnDesktop =
+              index >= startIndex && index < startIndex + productsPerPage;
+            return (
+              <div
+                key={product.id}
+                data-product-card-slide
+                className={`aq-decorative-motion w-[calc(50%-0.1875rem)] shrink-0 snap-start transition-transform duration-200 ease-out lg:min-w-0 lg:w-auto lg:snap-none lg:hover:-translate-y-1 lg:hover:scale-[1.02] ${
+                  visibleOnDesktop ? "lg:block" : "lg:hidden"
+                }`}
+                style={{
+                  animation: `fadeInUp 0.3s ease-out forwards ${index * 60}ms`,
+                }}
+              >
+                <ProductCard {...product} />
+              </div>
+            );
+          })}
         </div>
       </div>
     </section>

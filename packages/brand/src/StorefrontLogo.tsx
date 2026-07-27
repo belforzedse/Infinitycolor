@@ -37,7 +37,7 @@ export function StorefrontLogo({
         alt="Logo"
         width={intrinsicW}
         height={intrinsicH}
-        priority
+        preload
         sizes={fixed ? `${widthProp}px` : "(max-width: 768px) 150px, 210px"}
         style={
           fixed

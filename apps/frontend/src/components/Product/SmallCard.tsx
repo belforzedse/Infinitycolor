@@ -12,6 +12,7 @@ import useProductLike from "@/hooks/useProductLike";
 import clsx from "clsx";
 import { ImageCard, InfoCard, PriceCard } from "./CardParts";
 import { computeSaleDiscountPercent } from "@/utils/discounts";
+import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
 
 // Lazy load heavy modals
 const QuickViewModal = dynamic(() => import("./QuickViewModal"), {
@@ -115,6 +116,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsMenuOpen(false);
+    noteEnhancementLoaded("quick-view");
     setIsQuickViewOpen(true);
   }, []);
 
@@ -122,6 +124,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsMenuOpen(false);
+    noteEnhancementLoaded("share");
     setIsShareOpen(true);
   }, []);
 

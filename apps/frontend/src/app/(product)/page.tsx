@@ -23,7 +23,7 @@ import {
 } from "@/services/super-admin/settings/public";
 import HomeProductSections from "./HomeProductSections";
 import CategoryCarousel from "@/components/Categories/CategoryCarousel";
-import SiteGifBanner from "@/components/Home/SiteGifBanner";
+import AdaptiveSiteGifBanner from "@/components/Home/AdaptiveSiteGifBanner";
 import InfinitygramSection, {
   InfinitygramSectionSkeleton,
 } from "@/components/Home/InfinitygramSection";
@@ -244,7 +244,7 @@ export default async function Home() {
         {/* JSON-LD Organization Schema for SEO */}
         <OrganizationSchema />
 
-        <SiteGifBanner
+        <AdaptiveSiteGifBanner
           enabled={homepageSettings.siteGifEnabled}
           imageUrl={homepageSettings.siteGifImage}
           linkHref={homepageSettings.siteGifLinkHref}

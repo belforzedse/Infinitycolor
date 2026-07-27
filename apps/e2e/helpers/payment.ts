@@ -52,7 +52,10 @@ async function routeCheckoutGatewaysWithZarinpal(page: Page) {
 export async function finalizeToZarinpalRedirect(
   page: Page,
   request: APIRequestContext,
-  options: { mockGateway?: boolean } = {},
+  options: {
+    mockGateway?: boolean;
+    onSubmitStarted?: () => Promise<void> | void;
+  } = {},
 ): Promise<FinalizedZarinpalPayment> {
   if (options.mockGateway !== false) {
     await routeZarinpalPlaceholder(page);
@@ -94,7 +97,9 @@ export async function finalizeToZarinpalRedirect(
       .catch(reject);
   });
 
-  await page.getByTestId("checkout-submit").click();
+  const submitPromise = page.getByTestId("checkout-submit").click();
+  await options.onSubmitStarted?.();
+  await submitPromise;
   const finalizeCapture = await finalizeCapturePromise;
   if (!finalizeCapture.ok) {
     expect(

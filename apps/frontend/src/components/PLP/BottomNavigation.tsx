@@ -57,7 +57,7 @@ function NavTabLink({
       href={href}
       onClick={onClick}
       className={cx(
-        "flex h-8 w-6 flex-col items-center justify-end gap-2",
+        "flex h-8 w-6 flex-col items-center justify-end gap-2 justify-self-center",
         active ? "text-infinity-primary" : inactiveIconClassName,
       )}
       aria-label={ariaLabel}
@@ -123,32 +123,36 @@ const PLPBottomNavigation = () => {
 
   return (
     <>
-      <div data-bottom-nav className="pointer-events-none fixed inset-x-0 bottom-0 z-30 lg:hidden">
-        <div className="pointer-events-auto mx-5 mb-3 pb-[env(safe-area-inset-bottom)]">
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 lg:hidden">
+        <div className="pointer-events-auto mx-auto mb-3 max-w-[560px] px-3 pb-[env(safe-area-inset-bottom)] sm:px-5">
           <nav
+            data-bottom-nav
+            data-adaptive-surface
             aria-label="ناوبری اصلی"
-            className="flex flex-col items-start gap-[10px] rounded-[20px] bg-white px-[30px] pb-[5px] pt-[10px] shadow-[0_4px_19px_rgba(57,57,57,0.05)]"
+            className="flex w-full flex-col items-start gap-[10px] rounded-[20px] bg-white px-2 pb-[5px] pt-[10px] shadow-[0_4px_19px_rgba(57,57,57,0.05)] sm:px-6"
             dir="ltr"
           >
-            <div className="flex h-16 w-full flex-row items-center justify-between gap-[33px]">
-              <AccountAccessMenu
-                triggerAriaLabel="Account"
-                triggerClassName={cx(
-                  "flex h-8 w-6 flex-col items-center justify-end gap-2",
-                  isProfileActive ? "text-infinity-primary" : "text-[#A49BA0]",
-                )}
-                triggerContent={
-                  <>
-                    <ProfileIcon className="shrink-0 stroke-current" />
-                    <TabIndicator active={isProfileActive} />
-                  </>
-                }
-                ariaCurrent={isProfileActive ? "page" : undefined}
-                menuPosition="top"
-                menuAlign="center"
-                onNavigate={hapticButton}
-                onTriggerClick={hapticButton}
-              />
+            <div className="grid h-16 w-full grid-cols-[repeat(2,minmax(0,1fr))_4rem_repeat(2,minmax(0,1fr))] items-center">
+              <div className="flex justify-self-center">
+                <AccountAccessMenu
+                  triggerAriaLabel="Account"
+                  triggerClassName={cx(
+                    "flex h-8 w-6 flex-col items-center justify-end gap-2",
+                    isProfileActive ? "text-infinity-primary" : "text-[#A49BA0]",
+                  )}
+                  triggerContent={
+                    <>
+                      <ProfileIcon className="shrink-0 stroke-current" />
+                      <TabIndicator active={isProfileActive} />
+                    </>
+                  }
+                  ariaCurrent={isProfileActive ? "page" : undefined}
+                  menuPosition="top"
+                  menuAlign="center"
+                  onNavigate={hapticButton}
+                  onTriggerClick={hapticButton}
+                />
+              </div>
 
               <NavTabLink
                 href="/cart"
@@ -171,7 +175,7 @@ const PLPBottomNavigation = () => {
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="اینفینیتی‌گرام"
-                className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(180deg,#566D97_0%,#98BDFF_100%)] shadow-[0_0_5.8px_rgba(0,0,0,0.09)]"
+                className="flex size-16 shrink-0 items-center justify-center justify-self-center rounded-full bg-[linear-gradient(180deg,#566D97_0%,#98BDFF_100%)] shadow-[0_0_5.8px_rgba(0,0,0,0.09)]"
               >
                 <img
                   src={INFINITY_MARK_SRC}
@@ -217,6 +221,7 @@ const PLPBottomNavigation = () => {
             className={`luxury-glass-panel duration-250 max-h-[80vh] w-full max-w-screen-sm translate-y-0 rounded-t-2xl bg-white/80 p-4 shadow-2xl transition-transform ease-out ${
               isCategoriesVisible ? "translate-y-0" : "translate-y-full"
             }`}
+            data-adaptive-surface
             style={{ transitionDuration: "250ms" }}
             onClick={(e) => e.stopPropagation()}
           >

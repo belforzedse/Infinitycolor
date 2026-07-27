@@ -14,19 +14,31 @@ import {
 } from "react";
 import { useDrag } from "@use-gesture/react";
 import { hapticNavigation } from "@/utils/haptics";
-import { useInView } from "react-intersection-observer";
+import {
+  noteEnhancementLoaded,
+  useAdaptiveQuality,
+} from "@/lib/adaptive-quality";
 
 type Props = {
   type: "video" | "image";
   src: string;
   thumb?: string;
   alt?: string;
+  priority?: boolean;
   goToNextImage: () => void;
   goToPreviousImage: () => void;
 };
 
 export default function PDPHeroGallerySingleImage(props: Props) {
-  const { type, src, thumb, alt, goToNextImage, goToPreviousImage } = props;
+  const {
+    type,
+    src,
+    thumb,
+    alt,
+    priority = false,
+    goToNextImage,
+    goToPreviousImage,
+  } = props;
   const [isLoading, setIsLoading] = useState(true);
   const [broken, setBroken] = useState(false);
   const [zoomScale, setZoomScale] = useState(1);
@@ -42,7 +54,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   });
   const [zoomHintVisible, setZoomHintVisible] = useState(false);
   const hintTimerRef = useRef<number | null>(null);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const quality = useAdaptiveQuality();
   const lastTapRef = useRef<number>(0);
   const pinchState = useRef<{ active: boolean; startDistance: number; startScale: number }>({
     active: false,
@@ -50,13 +62,16 @@ export default function PDPHeroGallerySingleImage(props: Props) {
     startScale: 1,
   });
 
-  // Use intersection observer for video lazy loading
-  const { ref: videoIntersectionRef, inView } = useInView({
-    threshold: 0.1,
-    triggerOnce: true,
-  });
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [videoRequested, setVideoRequested] = useState(false);
+  const [videoInView, setVideoInView] = useState(false);
+  const allowsZoom = quality.media !== "economy";
+  const allowsRichZoom =
+    quality.media === "high" && quality.motion !== "minimal";
+  const shouldAttachVideoSource =
+    videoRequested ||
+    (quality.media !== "economy" && videoInView);
 
   const isDesktopZoom = () => {
     if (typeof window === "undefined") return false;
@@ -95,7 +110,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const showHint = () => {
-    if (!isDesktopZoom() || type === "video") return;
+    if (!allowsRichZoom || !isDesktopZoom() || type === "video") return;
     setZoomHintVisible(true);
     scheduleHintHide();
   };
@@ -109,7 +124,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
-    if (type === "video" || !isDesktopZoom()) return;
+    if (!allowsZoom || type === "video" || !isDesktopZoom()) return;
     const direction = Math.sign(event.deltaY) || 1;
     const zoomDelta = direction > 0 ? -0.12 : 0.12;
     const next = clampScale(zoomScale + zoomDelta);
@@ -135,7 +150,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleMouseMove = (event: MouseEvent<HTMLDivElement>) => {
-    if (type === "video") return;
+    if (!allowsZoom || type === "video") return;
 
     if (dragState.current.active) {
       const limits = getTranslateLimits();
@@ -152,7 +167,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleMouseDown = (event: MouseEvent<HTMLDivElement>) => {
-    if (type === "video" || zoomScale <= 1) return;
+    if (!allowsZoom || type === "video" || zoomScale <= 1) return;
     dragState.current = {
       active: true,
       startX: event.clientX,
@@ -184,20 +199,6 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-      setPrefersReducedMotion(mq.matches);
-      const handler = (event: MediaQueryListEvent) => setPrefersReducedMotion(event.matches);
-      if (mq.addEventListener) mq.addEventListener("change", handler);
-      else mq.addListener(handler);
-      return () => {
-        if (mq.removeEventListener) mq.removeEventListener("change", handler);
-        else mq.removeListener(handler);
-      };
-    }
-  }, []);
-
-  useEffect(() => {
     return () => {
       if (hintTimerRef.current) {
         window.clearTimeout(hintTimerRef.current);
@@ -218,8 +219,56 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   useEffect(() => {
     setIsLoading(true);
     setBroken(false);
+    setVideoRequested(false);
+    setVideoInView(false);
   }, [src, type]);
 
+  useEffect(() => {
+    if (
+      type !== "video" ||
+      quality.media === "economy" ||
+      !videoRef.current ||
+      typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVideoInView(true);
+        observer.disconnect();
+      },
+      { rootMargin: "160px", threshold: 0.1 },
+    );
+    observer.observe(videoRef.current);
+    return () => observer.disconnect();
+  }, [quality.media, src, type]);
+
+  useEffect(() => {
+    if (quality.media !== "economy") return;
+    setZoomScale(1);
+    setTranslate({ x: 0, y: 0 });
+    setTransformOrigin("50% 50%");
+    setZoomHintVisible(false);
+
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    setVideoRequested(false);
+    setVideoInView(false);
+    setIsVideoPlaying(false);
+  }, [quality.media]);
+
+  useEffect(() => {
+    if (!videoRequested || !videoRef.current) return;
+    noteEnhancementLoaded("optional-video");
+    void videoRef.current.play().catch(() => {
+      // The native controls remain available when autoplay policies reject play().
+    });
+  }, [videoRequested]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -273,7 +322,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (prefersReducedMotion) return;
+    if (!allowsRichZoom) return;
     if (event.touches.length === 2) {
       pinchState.current = {
         active: true,
@@ -284,7 +333,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (prefersReducedMotion) return;
+    if (!allowsRichZoom) return;
     if (pinchState.current.active && event.touches.length === 2) {
       const newDistance = distanceBetweenTouches(event.touches);
       const scaleFactor = newDistance / pinchState.current.startDistance;
@@ -307,7 +356,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
       pinchState.current.active = false;
     }
 
-    if (prefersReducedMotion) return;
+    if (!allowsRichZoom) return;
 
     // Double-tap to toggle zoom on mobile
     if (event.touches.length === 0 && event.changedTouches.length === 1 && !isDesktopZoom()) {
@@ -361,26 +410,25 @@ export default function PDPHeroGallerySingleImage(props: Props) {
             {/* Video player with luxury styling */}
             <div className="relative h-full w-full overflow-hidden rounded-3xl group/video-container">
               <video
-                ref={(node) => {
-                  videoRef.current = node;
-                  if (node) {
-                    videoIntersectionRef(node);
-                  }
-                }}
+                ref={videoRef}
                 className={`h-full w-full object-contain ${
                   isLoading ? "opacity-0" : "opacity-100"
                 }`}
-                src={inView ? src : undefined}
+                src={shouldAttachVideoSource ? src : undefined}
                 controls
                 loop
                 playsInline
-                preload={inView ? "metadata" : "none"}
+                preload={
+                  shouldAttachVideoSource && quality.media !== "economy"
+                    ? "metadata"
+                    : "none"
+                }
                 onLoadedData={() => setIsLoading(false)}
                 onCanPlay={() => setIsLoading(false)}
                 onError={() => setIsLoading(false)}
                 onPlay={() => setIsVideoPlaying(true)}
                 onPause={() => setIsVideoPlaying(false)}
-                poster={thumb || src}
+                poster={thumb || undefined}
               />
 
               {/* Luxury play overlay - functional play button */}
@@ -388,9 +436,18 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    videoRef.current?.play();
+                    if (!shouldAttachVideoSource) {
+                      setVideoRequested(true);
+                    } else {
+                      noteEnhancementLoaded("optional-video");
+                      void videoRef.current?.play();
+                    }
                   }}
-                  className="absolute inset-0 z-10 flex items-center justify-center pointer-events-auto opacity-0 transition-opacity duration-300 group-hover/video-container:opacity-100"
+                  className={`absolute inset-0 z-10 flex items-center justify-center pointer-events-auto transition-opacity duration-300 ${
+                    quality.media === "economy"
+                      ? "opacity-100"
+                      : "opacity-0 group-hover/video-container:opacity-100 focus-visible:opacity-100"
+                  }`}
                   aria-label="Play video"
                 >
                   <div className="group/video-play flex items-center justify-center">
@@ -430,6 +487,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                   </div>
                 ) : (
                   <>
+                    {quality.rendering !== "safe" && (
                     <div
                       aria-hidden="true"
                       className={`absolute inset-0 z-0 transition-opacity duration-300 ${
@@ -447,6 +505,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                           : { backgroundColor: "#f3f4f6" }
                       }
                     />
+                    )}
                     <Image
                       className={`h-full w-full object-contain transition-opacity duration-300 ${
                         isLoading ? "opacity-0" : "opacity-100"
@@ -462,7 +521,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                         setBroken(true);
                         setIsLoading(false);
                       }}
-                      priority={false}
+                      priority={priority}
                     />
                   </>
                 )}

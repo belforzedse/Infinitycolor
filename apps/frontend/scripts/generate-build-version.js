@@ -100,9 +100,11 @@ function injectBuildVersionIntoServiceWorker(buildVersion) {
   try {
     let swContent = fs.readFileSync(swPath, "utf-8");
 
-    // Replace the BUILD_VERSION fallback with the actual build version
-    // Match: let BUILD_VERSION = "v1-dev"; // Fallback version
-    const versionPattern = /let BUILD_VERSION = ["'][^"']+["']; \/\/ Fallback version/;
+    // Replace either the tracked fallback or a value injected by an earlier
+    // local build. Keeping this idempotent ensures every deployment gets its
+    // own service-worker cache namespace.
+    const versionPattern =
+      /let BUILD_VERSION = ["'][^"']+["']; \/\/ (?:Fallback version|Injected at build time)/;
     const replacement = `let BUILD_VERSION = "${buildVersion}"; // Injected at build time`;
 
     if (versionPattern.test(swContent)) {

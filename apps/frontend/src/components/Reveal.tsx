@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { useAdaptiveQuality } from "@/lib/adaptive-quality";
 
 type Variant = "fade-up" | "fade-in" | "fade-right" | "fade-left" | "zoom-in" | "blur-up";
 
@@ -25,38 +26,17 @@ export default function Reveal({
 }: RevealProps) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const [shown, setShown] = React.useState(false);
-  const [prefersReducedMotion, setPrefersReducedMotion] = React.useState(false);
+  const quality = useAdaptiveQuality();
 
   React.useEffect(() => {
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const legacyMediaQuery = mediaQuery as MediaQueryList & {
-      addListener?: (listener: (event: MediaQueryListEvent) => void) => void;
-      removeListener?: (listener: (event: MediaQueryListEvent) => void) => void;
-    };
-    const applyPreference = () => {
-      setPrefersReducedMotion(mediaQuery.matches);
-    };
-    const handleMediaChange = () => applyPreference();
-    const subscribe = () => {
-      if ("addEventListener" in mediaQuery) {
-        mediaQuery.addEventListener("change", handleMediaChange);
-        return () => mediaQuery.removeEventListener("change", handleMediaChange);
-      }
-      legacyMediaQuery.addListener?.(handleMediaChange as (event: MediaQueryListEvent) => void);
-      return () =>
-        legacyMediaQuery.removeListener?.(handleMediaChange as (event: MediaQueryListEvent) => void);
-    };
-    applyPreference();
-    const unsubscribe = subscribe();
-
     const el = ref.current;
-    if (!el) {
-      return unsubscribe;
-    }
-
-    if (mediaQuery.matches) {
+    if (!el) return;
+    if (
+      quality.motion === "minimal" ||
+      typeof IntersectionObserver === "undefined"
+    ) {
       setShown(true);
-      return unsubscribe;
+      return;
     }
 
     const observer = new IntersectionObserver(
@@ -74,40 +54,19 @@ export default function Reveal({
     observer.observe(el);
     return () => {
       observer.disconnect();
-      unsubscribe();
     };
-  }, [amount, once]);
-
-  const hiddenByVariant: Record<Variant, string> = {
-    "fade-up": "opacity-0 translate-y-4",
-    "fade-in": "opacity-0",
-    "fade-right": "opacity-0 -translate-x-4",
-    "fade-left": "opacity-0 translate-x-4",
-    "zoom-in": "opacity-0 scale-95",
-    "blur-up": "opacity-0 translate-y-4 blur-sm",
-  };
-
-  const shownByVariant: Record<Variant, string> = {
-    "fade-up": "opacity-100 translate-y-0",
-    "fade-in": "opacity-100",
-    "fade-right": "opacity-100 translate-x-0",
-    "fade-left": "opacity-100 translate-x-0",
-    "zoom-in": "opacity-100 scale-100",
-    "blur-up": "opacity-100 translate-y-0 blur-0",
-  };
+  }, [amount, once, quality.motion, quality.routeGeneration]);
 
   return (
     <div
       ref={ref}
-      className={[
-        className ?? "",
-        "transition-all ease-out will-change-transform motion-reduce:transform-none motion-reduce:blur-0 motion-reduce:transition-none",
-        shown ? shownByVariant[variant] : hiddenByVariant[variant],
-      ].join(" ")}
+      className={["aq-reveal", className ?? ""].join(" ")}
+      data-aq-reveal-state={shown ? "shown" : "hidden"}
+      data-aq-reveal-variant={variant}
       style={{
-        transitionDelay: prefersReducedMotion ? "0ms" : `${delay}ms`,
-        transitionDuration: prefersReducedMotion ? "0ms" : `${duration}ms`,
-      }}
+        "--aq-reveal-delay": `${delay}ms`,
+        "--aq-reveal-duration": `${duration}ms`,
+      } as React.CSSProperties}
     >
       {children}
     </div>

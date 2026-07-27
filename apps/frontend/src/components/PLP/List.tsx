@@ -16,7 +16,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { SORT_LABELS } from "./sortOptions";
 import { useSidebarProducts } from "@/hooks/useSidebarProducts";
 import PLPDesktopList from "./List/PLPDesktopList";
-import PLPMobileList from "./List/PLPMobileList";
 import type { PLPProduct, PLPPagination } from "./types";
 import { plpQueryOptions, plpQueryParsers } from "./queryState";
 import { getPlpHref } from "@/utils/plpRoutes";
@@ -67,17 +66,6 @@ export default function PLPList({
   } = query;
   const router = useRouter();
   const searchParams = useSearchParams();
-
-  const [isDesktop, setIsDesktop] = useState(false);
-
-  useEffect(() => {
-    const checkDesktop = () => {
-      setIsDesktop(window.innerWidth >= 768);
-    };
-    checkDesktop();
-    window.addEventListener("resize", checkDesktop);
-    return () => window.removeEventListener("resize", checkDesktop);
-  }, []);
 
   const products = initialProducts;
 
@@ -405,10 +393,7 @@ export default function PLPList({
               {isPagePending ? (
                 <ProductResultsSkeleton />
               ) : (
-                <>
-                  <PLPDesktopList products={products} includeMedia={isDesktop} />
-                  <PLPMobileList products={products} />
-                </>
+                <PLPDesktopList products={products} />
               )}
 
               {/* Pagination */}
