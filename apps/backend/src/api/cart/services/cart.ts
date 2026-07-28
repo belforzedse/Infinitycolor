@@ -22,7 +22,6 @@ import {
   findPaymentAttempt,
 } from "../../payment-attempt/services/payment-attempt";
 import {
-  encryptSnappaySecret,
   generateSnappayCallbackNonce,
   generateSnappayTransactionId,
   hashSnappayCallbackNonce,
@@ -249,12 +248,16 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           | "Cancelled";
         type ContractType = "Cash" | "Credit";
 
+        // Must exceed the longest gateway payment-session lifetime. If a
+        // reservation expires while the customer can still complete payment, the
+        // expiry job releases the stock and the subsequent successful charge has
+        // to be reversed. SAMAN_TOKEN_EXPIRY_MIN is 20, so 15 was under-set.
         const reservationTtlMinutes = Number(
-          process.env.STOCK_RESERVATION_TTL_MINUTES || 15
+          process.env.STOCK_RESERVATION_TTL_MINUTES || 30
         );
         const reservationTtlMs = Number.isFinite(reservationTtlMinutes)
           ? Math.max(1, reservationTtlMinutes) * 60 * 1000
-          : 15 * 60 * 1000;
+          : 30 * 60 * 1000;
         const reservedUntil = new Date(Date.now() + reservationTtlMs);
 
         // Validate reservation date is in the future
@@ -533,9 +536,9 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
                       callbackNonceHash: hashSnappayCallbackNonce(
                         snappayInitiation.callbackNonce,
                       ),
-                      callbackNonceCiphertext: encryptSnappaySecret(
-                        snappayInitiation.callbackNonce,
-                      ),
+                      // Kept so a replayed initiation can rebuild the same return
+                      // URL. Private in the schema, so it never leaves the server.
+                      callbackNonce: snappayInitiation.callbackNonce,
                     }
                   : {}),
               },

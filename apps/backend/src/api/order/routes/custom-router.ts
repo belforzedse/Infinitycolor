@@ -120,14 +120,6 @@ export default {
     },
     {
       method: "POST",
-      path: "/orders/:id/admin/snappay-token/reveal",
-      handler: "order.adminRevealSnappayToken",
-      config: {
-        auth: { scope: [] },
-      },
-    },
-    {
-      method: "POST",
       path: "/orders/:id/admin/void-barcode",
       handler: "order.adminVoidBarcode",
       config: {

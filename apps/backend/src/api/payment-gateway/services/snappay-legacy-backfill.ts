@@ -43,7 +43,7 @@ export async function backfillLegacySnappayAttempts(
       if (
         !order?.id ||
         !contract?.id ||
-        !transaction.PaymentTokenCiphertext ||
+        !String(transaction.TrackId || "").trim() ||
         !isValidSnappayTransactionId(transactionId)
       ) {
         skipped += 1;
@@ -52,9 +52,7 @@ export async function backfillLegacySnappayAttempts(
           {
             transactionRowId: transaction.id,
             orderId: order?.id,
-            hasEncryptedToken: Boolean(
-              transaction.PaymentTokenCiphertext,
-            ),
+            hasPaymentToken: Boolean(String(transaction.TrackId || "").trim()),
             hasValidTransactionId:
               isValidSnappayTransactionId(transactionId),
           },

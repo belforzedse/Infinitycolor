@@ -33,6 +33,7 @@ function createHarness() {
     raw: jest.fn().mockResolvedValue({ rows: [{ id: 1 }] }),
   };
   const strapi = {
+    log: { error: jest.fn(), warn: jest.fn(), info: jest.fn() },
     db: {
       transaction: jest.fn(async (callback: any) => callback({ trx })),
       query: jest.fn((uid: string) => {
@@ -41,6 +42,11 @@ function createHarness() {
         creates[uid] ||= jest.fn().mockResolvedValue({});
         return {
           findOne: jest.fn().mockResolvedValue(rows[uid]),
+          findMany: jest.fn().mockResolvedValue(
+            uid === "api::contract-transaction.contract-transaction"
+              ? [{ id: 44, Step: 1, Type: "Gateway" }]
+              : [],
+          ),
           update: updates[uid],
           delete: deletes[uid],
           create: creates[uid],
@@ -91,7 +97,7 @@ describe("SnappPay admin update finalization", () => {
   });
 
   it("keeps the order, attempt, and transaction amounts aligned after provider success", async () => {
-    const { strapi, updates } = createHarness();
+    const { strapi, updates, creates } = createHarness();
 
     await applySnappayAdminUpdate(strapi, ids, {
       changes: [
@@ -121,14 +127,33 @@ describe("SnappPay admin update finalization", () => {
     expect(updates["api::contract.contract"]).toHaveBeenCalledWith(
       expect.objectContaining({ data: { Amount: 110_000 } }),
     );
+    // The original charge is left intact and the reduction is recorded as a
+    // Return, matching every other gateway. Editing Amount down instead netted
+    // out by accident but left refund_irr at zero and retroactively changed what
+    // a past date range reported.
     expect(
       updates["api::contract-transaction.contract-transaction"],
     ).toHaveBeenCalledWith(
       expect.objectContaining({
+        data: expect.objectContaining({ GatewayStatus: "SETTLE" }),
+      }),
+    );
+    const txUpdateData =
+      updates["api::contract-transaction.contract-transaction"].mock.calls[0][0].data;
+    expect(txUpdateData).not.toHaveProperty("Amount");
+    expect(txUpdateData).not.toHaveProperty("DiscountAmount");
+
+    expect(
+      creates["api::contract-transaction.contract-transaction"],
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
         data: expect.objectContaining({
+          Type: "Return",
+          Status: "Success",
+          // 220,000 -> 110,000 Toman = 1,100,000 IRR returned.
           Amount: 1_100_000,
-          DiscountAmount: 100_000,
-          GatewayStatus: "SETTLE",
+          Step: 2,
+          contract: 33,
         }),
       }),
     );
@@ -137,5 +162,54 @@ describe("SnappPay admin update finalization", () => {
         data: expect.objectContaining({ Amount: 1_100_000 }),
       }),
     );
+  });
+
+  it("logs the returned stock, which the raw UPDATE bypasses", async () => {
+    const { strapi, creates } = createHarness();
+
+    await applySnappayAdminUpdate(strapi, ids, {
+      changes: [
+        { orderItemId: 71, oldCount: 2, newCount: 1, restockDelta: 1 },
+      ],
+      newTotalToman: 110_000,
+      newDiscountToman: 10_000,
+      newShippingToman: 20_000,
+      expectedOldTotalToman: 220_000,
+      reason: "One item unavailable",
+      actorId: 7,
+    });
+
+    // product-stock-log rows normally come from the product-stock lifecycle hook,
+    // which `UPDATE product_stocks SET count = count + ?` never triggers.
+    expect(creates["api::product-stock-log.product-stock-log"]).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          product_stock: 91,
+          Count: 1,
+          Type: "Add",
+        }),
+      }),
+    );
+  });
+
+  it("writes no Return transaction when the total does not change", async () => {
+    const { strapi, creates } = createHarness();
+
+    await applySnappayAdminUpdate(strapi, ids, {
+      changes: [
+        { orderItemId: 71, oldCount: 2, newCount: 2, restockDelta: 0 },
+      ],
+      newTotalToman: 220_000,
+      newDiscountToman: 0,
+      newShippingToman: 20_000,
+      expectedOldTotalToman: 220_000,
+      reason: "Metadata correction",
+      actorId: 7,
+    });
+
+    const returnCreates = (
+      creates["api::contract-transaction.contract-transaction"]?.mock.calls || []
+    ).filter(([arg]: any) => arg?.data?.Type === "Return");
+    expect(returnCreates).toHaveLength(0);
   });
 });

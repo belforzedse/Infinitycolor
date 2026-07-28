@@ -190,6 +190,41 @@ export async function finalizeSnappaySettlement(
   });
 }
 
+/**
+ * Records a stock movement that raw SQL would otherwise not produce.
+ *
+ * `product-stock-log` rows are normally created by the lifecycle hook on
+ * `api::product-stock.product-stock` updates (see registerAppLifecycles). The
+ * restock paths below deliberately use raw `UPDATE ... SET count = count + ?` so
+ * the increment is atomic, which bypasses the entity service and therefore the
+ * hook — leaving these movements missing from the audit trail that every other
+ * stock path records.
+ */
+async function logStockMovement(
+  strapi: Strapi,
+  trx: any,
+  input: { stockId: number; quantity: number; description: string },
+): Promise<void> {
+  try {
+    await strapi.db.query("api::product-stock-log.product-stock-log").create({
+      data: {
+        product_stock: input.stockId,
+        Count: input.quantity,
+        Type: "Add",
+        Description: input.description,
+      },
+      ...(trx ? { transacting: trx } : {}),
+    } as any);
+  } catch (error: any) {
+    // The stock movement itself already succeeded and is the thing that matters;
+    // losing its audit row must not roll back a settlement or a cancellation.
+    strapi.log.error("Failed to write SnappPay stock log", {
+      stockId: input.stockId,
+      error: String(error?.message || error).slice(0, 300),
+    });
+  }
+}
+
 async function restockConsumedOrder(
   strapi: Strapi,
   order: any,
@@ -209,6 +244,11 @@ async function restockConsumedOrder(
     if ((result?.rows || []).length !== 1) {
       throw new Error("SNAPPAY_RESTOCK_FAILED");
     }
+    await logStockMovement(strapi, trx, {
+      stockId,
+      quantity,
+      description: "SnappPay order cancelled; consumed stock returned",
+    });
   }
 }
 
@@ -507,6 +547,11 @@ export async function applySnappayAdminUpdate(
         if ((restocked?.rows || []).length !== 1) {
           throw new Error("SNAPPAY_ADMIN_UPDATE_RESTOCK_FAILED");
         }
+        await logStockMovement(strapi, trx, {
+          stockId,
+          quantity: change.restockDelta,
+          description: "SnappPay order adjusted by operator; stock returned",
+        });
       }
     }
 
@@ -523,18 +568,54 @@ export async function applySnappayAdminUpdate(
       data: { Amount: input.newTotalToman },
       ...(trx ? { transacting: trx } : {}),
     } as any);
+    // Record the reduction as a Return transaction rather than editing the
+    // original charge down.
+    //
+    // Every other gateway does this (see adminAdjustItems), and the reports'
+    // `paid_orders` CTE is built around it: Return rows subtract from
+    // `settled_irr` and are what `refund_irr` sums. Mutating `Amount` in place
+    // netted out correctly by accident but left the Refunds KPI reading zero,
+    // and — because order_items are rewritten in this same transaction — made a
+    // *past* date range report different numbers before and after an adjustment.
+    const refundIrr = Math.round(
+      (Number(input.expectedOldTotalToman) - Number(input.newTotalToman)) * 10,
+    );
     await strapi.db.query(
       "api::contract-transaction.contract-transaction",
     ).update({
       where: { id: ids.transactionRowId },
       data: {
-        Amount: Math.round(input.newTotalToman * 10),
-        DiscountAmount: Math.round(input.newDiscountToman * 10),
         GatewayStatus: "SETTLE",
         LastReconciledAt: new Date(),
       },
       ...(trx ? { transacting: trx } : {}),
     } as any);
+    if (refundIrr > 0) {
+      const siblings: any[] = await strapi.db
+        .query("api::contract-transaction.contract-transaction")
+        .findMany({
+          where: { contract: { id: ids.contractId } },
+          ...(trx ? { transacting: trx } : {}),
+        } as any);
+      const maxStep = siblings.reduce(
+        (max, tx) => Math.max(max, Number(tx?.Step || 0)),
+        0,
+      );
+      await strapi.db
+        .query("api::contract-transaction.contract-transaction")
+        .create({
+          data: {
+            Type: "Return",
+            Amount: refundIrr,
+            Step: maxStep + 1,
+            Status: "Success",
+            external_source: "SnappPay",
+            contract: ids.contractId,
+            Date: new Date(),
+          },
+          ...(trx ? { transacting: trx } : {}),
+        } as any);
+    }
     await strapi.db.query("api::payment-attempt.payment-attempt").update({
       where: { id: ids.attemptId },
       data: {

@@ -87,13 +87,6 @@ export function formatSnappayOperationFailure(
   return fallback;
 }
 
-export type SnappaySupportToken = {
-  paymentToken: string;
-  transactionId?: string | null;
-  providerStatus?: string | null;
-  fingerprint?: string | null;
-};
-
 export const previewAdjustItems = async (
   orderId: number,
   items: ItemAdjustment[]
@@ -153,16 +146,6 @@ export const waitForPaymentOperation = async (
     operation = await getPaymentOperation(orderId, operationId);
   }
   return operation;
-};
-
-export const revealSnappaySupportToken = async (
-  orderId: number,
-): Promise<SnappaySupportToken> => {
-  const response = await apiClient.post(
-    `/orders/${orderId}/admin/snappay-token/reveal`,
-    {},
-  );
-  return (response as any).data;
 };
 
 export const voidShippingBarcode = async (

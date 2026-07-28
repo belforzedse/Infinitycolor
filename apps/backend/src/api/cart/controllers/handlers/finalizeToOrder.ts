@@ -10,7 +10,6 @@ import {
   isCheckoutGatewayEnabled,
   normalizeCheckoutGatewayCode,
 } from "../../../payment-gateway/services/checkout-gateway-availability";
-import { decryptSnappaySecret } from "../../../payment-gateway/services/snappay-security";
 import { redactSensitive } from "../../../../utils/redactSensitive";
 import {
   claimPaymentAttemptForInitiation,
@@ -397,11 +396,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       selectedGateway === "snappay" &&
       !snappayCallbackNonce
     ) {
-      try {
-        snappayCallbackNonce = decryptSnappaySecret(
-          String(paymentAttempt.callbackNonceCiphertext || ""),
-        );
-      } catch {
+      snappayCallbackNonce = String(paymentAttempt.callbackNonce || "");
+      if (!snappayCallbackNonce) {
         await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
           Status: "Unknown",
           failureCode: "SNAPPAY_CALLBACK_NONCE_UNRECOVERABLE",

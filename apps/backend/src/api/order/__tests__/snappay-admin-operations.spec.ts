@@ -55,7 +55,7 @@ function snappayOrder() {
           Amount: 2_200_000,
           DiscountAmount: 0,
           external_source: "SnappPay",
-          PaymentTokenCiphertext: "encrypted.secret.only",
+          TrackId: "provider-payment-token",
         },
       ],
     },

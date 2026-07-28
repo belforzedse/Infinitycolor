@@ -63,8 +63,6 @@ const isGatewayConfigured = (code: CheckoutGatewayCode): boolean => {
           "SNAPPAY_USERNAME",
           "SNAPPAY_PASSWORD",
           "SNAPPAY_RETURN_URL",
-          "PAYMENT_TOKEN_ENCRYPTION_KEY",
-          "PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION",
         )
       );
     case "zarinpal":

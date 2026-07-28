@@ -11,10 +11,7 @@ import {
   type SnappayUpdateRequest,
 } from "./snappay";
 import {
-  decryptSnappaySecret,
   displaySnappayFingerprint,
-  encryptSnappaySecret,
-  getSnappayEncryptionMaterial,
   hashSnappayCallbackNonce,
   isValidSnappayCallbackNonce,
   isValidSnappayTransactionId,
@@ -108,7 +105,6 @@ export function getSnappayReturnUrl(callbackNonce: string): string {
 
 export function assertSnappayRuntimeConfig(): void {
   getSnappayConfig();
-  getSnappayEncryptionMaterial();
   // Validate the registered static URL without manufacturing a usable nonce.
   const returnUrl = new URL(required("SNAPPAY_RETURN_URL"));
   if (returnUrl.protocol !== "https:") {
@@ -116,7 +112,7 @@ export function assertSnappayRuntimeConfig(): void {
   }
 }
 
-function paymentResultUrl(orderId?: number, resultHint = "processing"): string {
+export function paymentResultUrl(orderId?: number, resultHint = "processing"): string {
   const base = String(
     process.env.FRONTEND_BASE_URL || process.env.FRONTEND_URL || "https://infinitycolor.co",
   ).replace(/\/$/, "");
@@ -704,9 +700,8 @@ export async function initiateSnappayPayment(
     };
   }
 
-  const material = getSnappayEncryptionMaterial();
-  const tokenHash = snappayTokenFingerprint(result.response.paymentToken, material);
-  const encryptedToken = encryptSnappaySecret(result.response.paymentToken, material);
+  const paymentToken = String(result.response.paymentToken);
+  const tokenHash = snappayTokenFingerprint(paymentToken);
   const now = new Date();
   await strapi.db.transaction(async ({ trx }) => {
     await trx.raw("SELECT id FROM contract_transactions WHERE id = ? FOR UPDATE", [
@@ -715,10 +710,9 @@ export async function initiateSnappayPayment(
     await strapi.db.query(TX_UID).update({
       where: { id: bundle.transaction.id },
       data: {
-        TrackId: null,
-        PaymentTokenCiphertext: encryptedToken,
-        PaymentTokenHash: tokenHash,
-        PaymentTokenKeyVersion: material.version,
+        // The provider token is stored as-is. It is not exposed to customers:
+        // order.ts strips TrackId from every SnappPay order response.
+        TrackId: paymentToken,
         GatewayStatus: "PENDING",
         GatewayResponse: {
           ...providerSummary(result),
@@ -1027,15 +1021,41 @@ function assertOperatorReason(reason: unknown): string {
   return value;
 }
 
-function assertOperatorBundle(bundle: AttemptBundle): void {
-  if (
-    bundle.attempt.Status !== "Succeeded" ||
-    bundle.attempt.providerStatus !== "SETTLE" ||
-    bundle.order.Status !== "Started" ||
-    bundle.order.ShippingBarcode
-  ) {
+/**
+ * True when automatic recovery has given up on this attempt and parked it for a
+ * human. `markManualReview` is the only writer of this state.
+ *
+ * Such an attempt has `nextActionAt: null`, so nothing will ever re-queue it —
+ * an operator is the only way forward. Both the operator guard below and the
+ * reservation-expiry job key off this so a parked attempt does not become a
+ * permanent inventory leak.
+ */
+export function isSnappayAttemptParkedForReview(attempt: any): boolean {
+  return String(attempt?.nextAction || "") === "manual_review";
+}
+
+function assertOperatorBundle(
+  bundle: AttemptBundle,
+  options: { allowParkedForReview?: boolean } = {},
+): void {
+  if (bundle.order.ShippingBarcode) {
     throw new Error("SNAPPAY_OPERATOR_STATE_INVALID");
   }
+
+  const settled =
+    bundle.attempt.Status === "Succeeded" &&
+    bundle.attempt.providerStatus === "SETTLE" &&
+    bundle.order.Status === "Started";
+  if (settled) return;
+
+  // Recovery path: automatic reconciliation exhausted itself and parked the
+  // attempt. Without this the operator got a 409 on both Cancel and Adjust, so a
+  // parked order held its stock reservation forever with no remedy in the UI.
+  if (options.allowParkedForReview && isSnappayAttemptParkedForReview(bundle.attempt)) {
+    return;
+  }
+
+  throw new Error("SNAPPAY_OPERATOR_STATE_INVALID");
 }
 
 export async function queueSnappayAdminCancel(
@@ -1052,7 +1072,9 @@ export async function queueSnappayAdminCancel(
     order: { id: input.orderId },
   });
   if (!bundle) throw new Error("SNAPPAY_ATTEMPT_NOT_FOUND");
-  assertOperatorBundle(bundle);
+  // Cancel is the operator's recovery tool, so it must also work on an attempt
+  // that automatic reconciliation parked for manual review.
+  assertOperatorBundle(bundle, { allowParkedForReview: true });
   const reason = assertOperatorReason(input.reason);
   const digest = stableDigest({
     orderId: input.orderId,
@@ -1191,6 +1213,41 @@ async function markOperationSucceeded(
   } as any);
 }
 
+/**
+ * Writes attempt state from a failure path, but never over a settled attempt.
+ *
+ * `finalizeAndComplete` mutates `bundle.attempt.Status` in memory *after* the
+ * settlement transaction commits, so a later failure handler cannot tell from the
+ * bundle whether money has already been captured. Anything after that commit can
+ * still throw, and the resulting retry / manual-review write used to stamp
+ * `Status: "Unknown"` over a paid, stock-consumed, `Started` order. That defeated
+ * the replay guard in `finalizeSnappaySettlement` and locked operators out via
+ * `assertOperatorBundle`.
+ *
+ * The `$ne` predicate makes the guard a property of the UPDATE itself, so it also
+ * holds against a concurrent writer rather than relying on a read-then-write.
+ */
+async function updateAttemptUnlessSettled(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const updated = await strapi.db.query(ATTEMPT_UID).update({
+    where: { id: bundle.attempt.id, Status: { $ne: "Succeeded" } },
+    data,
+  } as any);
+  if (!updated) {
+    strapi.log.warn(
+      "Refused to downgrade a settled SnappPay attempt from a failure path",
+      {
+        attemptId: bundle.attempt.attemptId,
+        orderId: bundle.order.id,
+        attemptedStatus: data.Status,
+      },
+    );
+  }
+}
+
 async function markManualReview(
   strapi: Strapi,
   operation: any,
@@ -1208,17 +1265,14 @@ async function markManualReview(
         failureMessage: message.slice(0, 500),
       },
     } as any),
-    strapi.db.query(ATTEMPT_UID).update({
-      where: { id: bundle.attempt.id },
-      data: {
-        Status: "Unknown",
-        nextAction: "manual_review",
-        nextActionAt: null,
-        failureCode: code,
-        failureMessage: message.slice(0, 500),
-        lastReconciledAt: new Date(),
-      },
-    } as any),
+    updateAttemptUnlessSettled(strapi, bundle, {
+      Status: "Unknown",
+      nextAction: "manual_review",
+      nextActionAt: null,
+      failureCode: code,
+      failureMessage: message.slice(0, 500),
+      lastReconciledAt: new Date(),
+    }),
   ]);
   strapi.log.error("SnappPay operation requires manual review", {
     operationId: operation.id,
@@ -1337,16 +1391,13 @@ async function scheduleOperationRetry(
         failureMessage: reason.slice(0, 500),
       },
     } as any),
-    strapi.db.query(ATTEMPT_UID).update({
-      where: { id: bundle.attempt.id },
-      data: {
-        Status: "Unknown",
-        nextAction: "reconcile",
-        nextActionAt: nextRunAt,
-        failureCode: "SNAPPAY_RECONCILIATION_PENDING",
-        failureMessage: reason.slice(0, 500),
-      },
-    } as any),
+    updateAttemptUnlessSettled(strapi, bundle, {
+      Status: "Unknown",
+      nextAction: "reconcile",
+      nextActionAt: nextRunAt,
+      failureCode: "SNAPPAY_RECONCILIATION_PENDING",
+      failureMessage: reason.slice(0, 500),
+    }),
   ]);
   await enqueueSnappayOperation(Number(operation.id), retryCount, delayMs).catch((error: any) => {
     strapi.log.error("Failed to enqueue delayed SnappPay retry", {
@@ -1383,7 +1434,20 @@ async function finalizeAndComplete(strapi: Strapi, operation: any, bundle: Attem
   await finalizeSnappaySettlement(strapi, idsFrom(bundle));
   bundle.attempt.Status = "Succeeded";
   await markOperationSucceeded(strapi, operation.id, "SETTLE");
-  await queueSideEffects(strapi, bundle);
+  // Money is captured and the order is Started at this point. Side effects
+  // (cart clear, Matomo revenue, activity log) are cosmetic by comparison and
+  // must never turn a completed settlement into a retry or a manual review.
+  // `sweepSnappaySideEffects` re-queues anything missed here, so swallowing is
+  // safe rather than lossy — including when the process dies mid-way.
+  try {
+    await queueSideEffects(strapi, bundle);
+  } catch (error: any) {
+    strapi.log.error("Failed to queue SnappPay side effects after settlement", {
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order.id,
+      error: String(error?.message || error).slice(0, 300),
+    });
+  }
 }
 
 async function cancelLocallyAndComplete(
@@ -1877,15 +1941,15 @@ export async function processSnappayOperation(
       return { status: "completed", replayed: true };
     }
 
-    const encryptedToken = String(bundle.transaction.PaymentTokenCiphertext || "");
-    if (!encryptedToken) {
+    const token = String(bundle.transaction.TrackId || "").trim();
+    if (!token) {
       if (operatorAction) {
         await markOperatorOperation(
           strapi,
           operation.id,
           "Unknown",
           "SNAPPAY_PAYMENT_TOKEN_MISSING",
-          "No encrypted provider token is available",
+          "No provider token is available",
         );
       } else {
         await markManualReview(
@@ -1893,12 +1957,11 @@ export async function processSnappayOperation(
           operation,
           bundle,
           "SNAPPAY_PAYMENT_TOKEN_MISSING",
-          "No encrypted provider token is available",
+          "No provider token is available",
         );
       }
       return { status: "unknown", reason: "token_missing" };
     }
-    const token = decryptSnappaySecret(encryptedToken);
     const adapter = createSnappayAdapter(strapi);
     const statusResult = await adapter.status(token);
     const providerStatus = normalizeSnappayProviderStatus(statusResult.response?.status);
@@ -2008,10 +2071,15 @@ export async function processSnappayOperation(
     )
       ? (String(operation.metadata.callbackState).toUpperCase() as SnappayCallbackState)
       : undefined;
+    const attemptCreatedAt = bundle.attempt.createdAt
+      ? new Date(bundle.attempt.createdAt).getTime()
+      : null;
     const action = decideSnappayRecovery({
       callbackState,
       providerStatus,
       providerCode: statusResult.diagnostic.providerCode || operation.providerCode,
+      attemptAgeMs:
+        attemptCreatedAt !== null ? Date.now() - attemptCreatedAt : null,
     });
     await executeRecoveryAction(strapi, operation, bundle, token, action);
     return { status: "completed", operationId, providerStatus, action };
@@ -2045,6 +2113,60 @@ export async function processSnappayOperation(
     }
     return { status: "retry_scheduled", operationId };
   }
+}
+
+/**
+ * Re-queues side effects for attempts that settled but never had them run.
+ *
+ * `finalizeAndComplete` commits the settlement, then queues a FINALIZE_EFFECTS
+ * operation in a separate step. Three things can strand that step: the enqueue
+ * throwing, the process dying in between, or the replay short-circuit in
+ * `processSnappayOperation` returning early for an already-Succeeded attempt.
+ * In every case the customer has paid but their cart is never cleared and the
+ * revenue is never reported.
+ *
+ * `runSnappaySideEffects` is idempotent on `sideEffectsCompletedAt`, and
+ * `createOrReuseOperation` is keyed on `effects:{attemptId}`, so re-queueing is
+ * safe to repeat.
+ */
+async function recoverOrphanedSideEffects(strapi: Strapi): Promise<number> {
+  let recovered = 0;
+  try {
+    const stranded: any[] = await strapi.db.query(ATTEMPT_UID).findMany({
+      where: {
+        Gateway: "snappay",
+        Status: "Succeeded",
+        sideEffectsCompletedAt: null,
+      },
+      orderBy: { updatedAt: "asc" },
+      limit: 50,
+    } as any);
+
+    for (const attempt of stranded || []) {
+      const bundle = await loadAttemptBundle(strapi, { id: attempt.id });
+      if (!bundle) continue;
+      try {
+        await queueSideEffects(strapi, bundle);
+        recovered += 1;
+      } catch (error: any) {
+        strapi.log.error("Failed to re-queue stranded SnappPay side effects", {
+          attemptId: attempt.attemptId,
+          error: String(error?.message || error).slice(0, 300),
+        });
+      }
+    }
+
+    if (recovered > 0) {
+      strapi.log.warn("Re-queued SnappPay side effects for settled attempts", {
+        count: recovered,
+      });
+    }
+  } catch (error: any) {
+    strapi.log.error("Failed to scan for stranded SnappPay side effects", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+  }
+  return recovered;
 }
 
 export async function sweepSnappayOperations(strapi: Strapi): Promise<{
@@ -2101,6 +2223,9 @@ export async function sweepSnappayOperations(strapi: Strapi): Promise<{
       error: String(error?.message || error).slice(0, 300),
     });
   }
+
+  await recoverOrphanedSideEffects(strapi);
+
   const rows: any[] = await strapi.db.query(OPERATION_UID).findMany({
     where: {
       $or: [

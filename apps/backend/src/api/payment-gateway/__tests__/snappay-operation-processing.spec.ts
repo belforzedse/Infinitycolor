@@ -9,10 +9,6 @@ jest.mock("../../../queue/snappay", () => ({
 jest.mock("../services/snappay", () => ({
   createSnappayAdapter: jest.fn(),
 }));
-jest.mock("../services/snappay-security", () => ({
-  ...jest.requireActual("../services/snappay-security"),
-  decryptSnappaySecret: jest.fn().mockReturnValue("decrypted-payment-token"),
-}));
 jest.mock("../services/snappay-category-mapper", () => ({
   mapToSnappayCategory: jest.fn().mockResolvedValue("OTHER"),
 }));
@@ -27,7 +23,7 @@ function createHarness(operationOverrides: Record<string, unknown> = {}) {
     id: 44,
     external_source: "SnappPay",
     external_id: "ABC1234567",
-    PaymentTokenCiphertext: "encrypted-token",
+    TrackId: "provider-payment-token",
     GatewayStatus: "REGISTERED",
   };
   const attempt = {
@@ -151,7 +147,9 @@ describe("SnappPay operation processing guards", () => {
     );
     expect(attemptQuery.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 11 },
+        // The $ne guard must be part of the UPDATE so it also holds against a
+        // concurrent settlement, not just a read-then-write.
+        where: { id: 11, Status: { $ne: "Succeeded" } },
         data: expect.objectContaining({
           Status: "Unknown",
           nextAction: "manual_review",
@@ -161,6 +159,28 @@ describe("SnappPay operation processing guards", () => {
       }),
     );
     expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+
+  it("never downgrades an already-settled attempt from a failure path", async () => {
+    const { strapi, attemptQuery } = createHarness({
+      retryCount: SNAPPAY_RECONCILIATION_DELAYS_MS.length,
+    });
+    // Simulate the guarded UPDATE matching no row because the attempt is settled.
+    attemptQuery.update.mockResolvedValue(null);
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: true,
+        response: { status: "REGISTERED" },
+        diagnostic: { endpoint: "status", httpStatus: 200, providerCode: 0 },
+      }),
+    } as any);
+
+    await processSnappayOperation(strapi, 88);
+
+    expect(strapi.log.warn).toHaveBeenCalledWith(
+      "Refused to downgrade a settled SnappPay attempt from a failure path",
+      expect.objectContaining({ attemptedStatus: "Unknown" }),
+    );
   });
 
   it("persists the provider and HTTP codes for a rejected admin update", async () => {

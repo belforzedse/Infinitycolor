@@ -291,6 +291,15 @@ export default function EditOrderPage() {
 
         const txList = contractTransactions || [];
         const lastTx = txList[txList.length - 1];
+        // SnappPay stores the provider payment token on the transaction's TrackId.
+        // Operators need it verbatim to raise tickets with SnappPay support.
+        const lastSnappayTx = [...txList]
+          .reverse()
+          .find(
+            (tx: any) =>
+              (tx?.external_source || contract?.external_source) ===
+                "SnappPay" && tx?.TrackId,
+          );
         const rawPaymentGateway =
           unwrapEntity(lastTx?.payment_gateway)?.Title ||
           contract?.payment_gateway ||
@@ -331,6 +340,7 @@ export default function EditOrderPage() {
           postalCode: addr?.PostalCode,
           paymentGateway,
           transactionId,
+          paymentToken: lastSnappayTx?.TrackId ?? null,
           shipping: shippingCost,
           shippingMethod,
           userId: String(user?.id ?? (normalizedOrder as any)?.userId ?? ""),

@@ -1,9 +1,6 @@
 import {
-  decryptSnappaySecret,
-  encryptSnappaySecret,
   generateSnappayCallbackNonce,
   generateSnappayTransactionId,
-  getSnappayDecryptionMaterial,
   hashSnappayCallbackNonce,
   isValidSnappayCallbackNonce,
   isValidSnappayTransactionId,
@@ -20,55 +17,15 @@ import {
   isSnappayReconciliationExhausted,
 } from "../services/snappay-orchestrator";
 
-const material = {
-  key: Buffer.alloc(32, 7),
-  version: "test-v1",
-};
-
 describe("SnappPay security primitives", () => {
-  it("encrypts authenticated provider tokens without storing plaintext", () => {
-    const encrypted = encryptSnappaySecret("provider-token", material);
-    expect(encrypted).not.toContain("provider-token");
-    expect(decryptSnappaySecret(encrypted, material)).toBe("provider-token");
-    expect(snappayTokenFingerprint("provider-token", material)).toMatch(/^[a-f0-9]{64}$/);
-  });
-
-  it("rejects ciphertext tampering", () => {
-    const encrypted = encryptSnappaySecret("provider-token", material);
-    const ciphertextStart = encrypted.lastIndexOf(".") + 1;
-    const replacement = encrypted[ciphertextStart] === "A" ? "B" : "A";
-    const tampered = `${encrypted.slice(0, ciphertextStart)}${replacement}${encrypted.slice(
-      ciphertextStart + 1,
-    )}`;
-
-    expect(tampered).not.toBe(encrypted);
-    expect(() => decryptSnappaySecret(tampered, material)).toThrow("SNAPPAY_SECRET_INVALID");
-  });
-
-  it("retains explicit old keys for in-flight token decryption during rotation", () => {
-    const oldMaterial = {
-      key: Buffer.alloc(32, 3),
-      version: "old-v1",
-    };
-    const encrypted = encryptSnappaySecret("in-flight-token", oldMaterial);
-    const selected = getSnappayDecryptionMaterial("old-v1", {
-      PAYMENT_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64"),
-      PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION: "current-v2",
-      PAYMENT_TOKEN_DECRYPTION_KEYS: JSON.stringify({
-        "old-v1": oldMaterial.key.toString("base64"),
-      }),
-    });
-
-    expect(decryptSnappaySecret(encrypted, selected)).toBe("in-flight-token");
-  });
-
-  it("fails closed when an encrypted token key version is unavailable", () => {
-    expect(() =>
-      getSnappayDecryptionMaterial("missing-v0", {
-        PAYMENT_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64"),
-        PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION: "current-v2",
-      }),
-    ).toThrow("SNAPPAY_SECRET_KEY_VERSION_UNKNOWN");
+  it("fingerprints a token stably and without key material", () => {
+    // Keyless on purpose: the previous implementation HMAC'd with the encryption
+    // key, so the fingerprint changed whenever the key rotated.
+    const first = snappayTokenFingerprint("provider-token");
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(snappayTokenFingerprint("provider-token")).toBe(first);
+    expect(snappayTokenFingerprint("other-token")).not.toBe(first);
+    expect(() => snappayTokenFingerprint("")).toThrow("SNAPPAY_SECRET_EMPTY");
   });
 
   it("generates provider-compatible stable identifiers and callback nonces", () => {
@@ -111,6 +68,54 @@ describe("SnappPay recovery policy", () => {
     expect(decideSnappayRecovery({ providerCode: 1007 })).toBe("MANUAL_REVIEW");
     expect(decideSnappayRecovery({ providerCode: 1051 })).toBe("FAIL_CONFIGURATION");
   });
+
+  describe("abandoned REGISTERED tokens", () => {
+    const abandonAfterMs = 30 * 60 * 1000;
+
+    it("keeps reconciling while the customer could still be paying", () => {
+      expect(
+        decideSnappayRecovery({
+          providerStatus: "REGISTERED",
+          attemptAgeMs: 5 * 60 * 1000,
+          abandonAfterMs,
+        }),
+      ).toBe("RECONCILE");
+    });
+
+    it("reverts an unpaid token once the checkout is abandoned", () => {
+      // No money was ever taken for a REGISTERED token, so there is nothing for a
+      // human to adjudicate — reverting releases the stock without manual review.
+      expect(
+        decideSnappayRecovery({
+          providerStatus: "REGISTERED",
+          attemptAgeMs: 31 * 60 * 1000,
+          abandonAfterMs,
+        }),
+      ).toBe("REVERT");
+    });
+
+    it("still reconciles an unreadable provider state regardless of age", () => {
+      // UNKNOWN means we could not observe the provider. Age must never turn that
+      // into an auto-cancel.
+      expect(
+        decideSnappayRecovery({
+          providerStatus: "garbage",
+          attemptAgeMs: 10 * 24 * 60 * 60 * 1000,
+          abandonAfterMs,
+        }),
+      ).toBe("RECONCILE");
+    });
+
+    it("does not treat a missing age as abandoned", () => {
+      expect(
+        decideSnappayRecovery({
+          providerStatus: "REGISTERED",
+          attemptAgeMs: null,
+          abandonAfterMs,
+        }),
+      ).toBe("RECONCILE");
+    });
+  });
 });
 
 describe("SnappPay runtime configuration", () => {
@@ -121,8 +126,6 @@ describe("SnappPay runtime configuration", () => {
     "SNAPPAY_USERNAME",
     "SNAPPAY_PASSWORD",
     "SNAPPAY_RETURN_URL",
-    "PAYMENT_TOKEN_ENCRYPTION_KEY",
-    "PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION",
   ] as const;
   const originalConfig = Object.fromEntries(configKeys.map((key) => [key, process.env[key]]));
 
@@ -133,8 +136,6 @@ describe("SnappPay runtime configuration", () => {
     process.env.SNAPPAY_USERNAME = "username";
     process.env.SNAPPAY_PASSWORD = "password";
     process.env.SNAPPAY_RETURN_URL = "https://storefront.test.invalid/api/snapp/return";
-    process.env.PAYMENT_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
-    process.env.PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION = "test-v1";
   });
 
   afterAll(() => {

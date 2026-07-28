@@ -67,18 +67,6 @@
     "VerifiedAt": {
       "type": "datetime"
     },
-    "PaymentTokenCiphertext": {
-      "type": "text",
-      "private": true
-    },
-    "PaymentTokenHash": {
-      "type": "string",
-      "private": true
-    },
-    "PaymentTokenKeyVersion": {
-      "type": "string",
-      "private": true
-    },
     "SettledAt": {
       "type": "datetime"
     },

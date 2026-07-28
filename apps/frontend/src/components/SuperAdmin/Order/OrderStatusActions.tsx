@@ -8,10 +8,8 @@ import {
   changeOrderStatus,
   cancelOrder,
   formatSnappayOperationFailure,
-  revealSnappaySupportToken,
   waitForPaymentOperation,
   type OrderLifecycleStatus,
-  type SnappaySupportToken,
 } from "@/services/super-admin/orders/adjustItems";
 import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTranslations";
 import { PersianOrderStatus } from "@/constants/enums";
@@ -39,9 +37,6 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
   const [pending, setPending] = useState<PendingAction>(null);
   const [loading, setLoading] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
-  const [supportToken, setSupportToken] =
-    useState<SnappaySupportToken | null>(null);
-  const [tokenLoading, setTokenLoading] = useState(false);
 
   const currentBucket = useMemo(
     () => getOrderStatusCategory(order.orderStatus),
@@ -50,29 +45,6 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
   const isSnappPayOrder =
     resolvePaymentGateway(order.paymentGateway)?.key === "snappay";
   const isCancelled = currentBucket === PersianOrderStatus.CANCELLED;
-
-  const revealSupportToken = async () => {
-    if (tokenLoading) return;
-    setTokenLoading(true);
-    try {
-      setSupportToken(await revealSnappaySupportToken(order.id));
-      toast.success("توکن اسنپ‌پی نمایش داده شد و این دسترسی ثبت شد.");
-    } catch {
-      toast.error("توکن اسنپ‌پی برای این سفارش در دسترس نیست.");
-    } finally {
-      setTokenLoading(false);
-    }
-  };
-
-  const copySupportToken = async () => {
-    if (!supportToken?.paymentToken) return;
-    try {
-      await navigator.clipboard.writeText(supportToken.paymentToken);
-      toast.success("توکن اسنپ‌پی کپی شد.");
-    } catch {
-      toast.error("کپی خودکار انجام نشد؛ توکن را دستی کپی کنید.");
-    }
-  };
 
   const runAction = async () => {
     if (!pending || loading) return;
@@ -198,70 +170,6 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
           لغو سفارش
         </button>
       </div>
-
-      {isSnappPayOrder ? (
-        <div className="mt-5 rounded-md border border-blue-200 bg-blue-50 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h4 className="font-semibold text-blue-950">
-                توکن پشتیبانی اسنپ‌پی
-              </h4>
-              <p className="mt-1 text-xs text-blue-800">
-                برای ارسال به پشتیبانی اسنپ‌پی، توکن را فقط هنگام نیاز نمایش
-                دهید. هر بار نمایش در گزارش فعالیت ثبت می‌شود.
-              </p>
-            </div>
-            {!supportToken ? (
-              <button
-                type="button"
-                disabled={tokenLoading}
-                onClick={revealSupportToken}
-                className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
-              >
-                {tokenLoading ? "در حال دریافت..." : "نمایش توکن"}
-              </button>
-            ) : null}
-          </div>
-
-          {supportToken ? (
-            <div className="mt-4 space-y-3">
-              <code
-                dir="ltr"
-                className="block select-all break-all rounded border border-blue-200 bg-white p-3 text-left text-sm text-slate-900"
-              >
-                {supportToken.paymentToken}
-              </code>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-blue-900">
-                {supportToken.transactionId ? (
-                  <span>شناسه تراکنش: {supportToken.transactionId}</span>
-                ) : null}
-                {supportToken.providerStatus ? (
-                  <span>وضعیت: {supportToken.providerStatus}</span>
-                ) : null}
-                {supportToken.fingerprint ? (
-                  <span>اثر انگشت: {supportToken.fingerprint}</span>
-                ) : null}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={copySupportToken}
-                  className="rounded-md bg-blue-700 px-3 py-2 text-sm text-white hover:bg-blue-800"
-                >
-                  کپی توکن
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSupportToken(null)}
-                  className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm text-blue-900"
-                >
-                  پنهان کردن
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
 
       <ConfirmDialog
         isOpen={!!pending}

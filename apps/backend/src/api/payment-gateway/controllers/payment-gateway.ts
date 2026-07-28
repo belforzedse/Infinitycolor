@@ -117,8 +117,66 @@ export default factories.createCoreController(
           (ctx.request.query?.discountCode as string | undefined) ||
           (ctx.request.body?.discountCode as string | undefined);
 
-        // If amount is provided directly from frontend (قابل پرداخت), use it directly
+        // If amount is provided directly from frontend (قابل پرداخت), use it —
+        // but only after bounding it against the caller's real cart.
+        //
+        // The storefront computes the payable total client-side (it holds the
+        // selected shipping and any discount preview), so the server cannot
+        // reproduce it from the cart alone and has to accept the value. Taking it
+        // unconditionally, however, turned this endpoint into an unmetered
+        // eligibility oracle: any authenticated user could loop arbitrary amounts
+        // and each call became an authenticated outbound request against our
+        // production SnappPay credentials. Requiring a non-empty cart and
+        // rejecting amounts the cart could not plausibly produce keeps the value
+        // tied to a real checkout without breaking the legitimate flow.
         if (amountTomanParam !== undefined) {
+          if (!Number.isFinite(amountTomanParam) || amountTomanParam <= 0) {
+            return ctx.send({
+              data: { eligible: false, message: "Invalid amount" },
+            });
+          }
+
+          const cartService = strapi.service("api::cart.cart");
+          const cart = await cartService.getUserCart(userId);
+          if (!cart?.cart_items?.length) {
+            return ctx.send({
+              data: { eligible: false, message: "Cart is empty" },
+            });
+          }
+
+          let cartSubtotal = 0;
+          for (const item of cart.cart_items) {
+            const price =
+              item?.product_variation?.DiscountPrice ??
+              item?.product_variation?.Price ??
+              0;
+            cartSubtotal += Number(price) * Number(item?.Count || 0);
+          }
+
+          // A discount can only lower the payable total, shipping can only raise
+          // it, so the cart subtotal plus the priciest shipping method is a hard
+          // upper bound on any legitimate payable amount.
+          const shippingMethods = await strapi.entityService.findMany(
+            "api::shipping.shipping",
+            { fields: ["Price"] } as any,
+          );
+          const maxShipping = (shippingMethods || []).reduce(
+            (max: number, method: any) => Math.max(max, Number(method?.Price || 0)),
+            0,
+          );
+          const upperBound = Math.round(cartSubtotal) + Math.round(maxShipping);
+
+          if (amountTomanParam > upperBound) {
+            strapi.log.warn("Rejected SnappPay eligibility amount above cart bound", {
+              userId,
+              amountToman: amountTomanParam,
+              upperBound,
+            });
+            return ctx.send({
+              data: { eligible: false, message: "Amount does not match the cart" },
+            });
+          }
+
           const amountIRR = Math.max(0, amountTomanParam) * 10;
 
           strapi.log.info("SnappPay eligible request (direct amount)", {

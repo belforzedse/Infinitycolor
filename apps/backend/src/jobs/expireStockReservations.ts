@@ -1,5 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
 import { releaseOrderReservation } from "../utils/stockReservations";
+import { isSnappayAttemptParkedForReview } from "../api/payment-gateway/services/snappay-orchestrator";
 import {
   type BackgroundJobStats,
   formatError,
@@ -9,6 +10,18 @@ import {
 const MAX_CONSECUTIVE_FAILURES = 5;
 let consecutiveFailures = 0;
 const JOB_NAME = "expireStockReservations";
+
+/**
+ * Hard ceiling on how long a single SnappPay attempt may keep deferring its stock
+ * reservation. The reconciliation ladder in snappay-state-machine.ts totals ~40h,
+ * so the default sits just past it: deferral must never outlive the recovery it
+ * is waiting for. Beyond this the reservation is released even if the provider
+ * state is still ambiguous — a paid-but-unreserved order is recoverable by an
+ * operator, whereas stock held forever is not.
+ */
+const SNAPPAY_DEFER_CEILING_HOURS = Number(
+  process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS || 48,
+);
 
 const incrementMetric = (
   strapi: Strapi,
@@ -77,7 +90,26 @@ async function expireStockReservationsBatch(
             Status: { $in: ["Redirected", "Pending", "Unknown"] },
           },
         } as any);
-      if (activeSnappayAttempt) {
+      // Only defer while recovery is genuinely still going to happen.
+      //
+      // Keying this on the Status enum alone was a permanent inventory leak:
+      // `markManualReview` parks an exhausted attempt as Status "Unknown" with
+      // nextActionAt null, which is inside the {Redirected,Pending,Unknown} set
+      // above, so the reservation was pushed out another 5 minutes every tick
+      // forever while the reconcile enqueue silently no-opped and the operator
+      // got a 409. Note we cannot key on `nextActionAt` being set either — a
+      // customer sitting on the SnappPay payment page is "await_callback" with a
+      // null nextActionAt, and releasing their stock mid-payment is worse still.
+      const parkedForReview = isSnappayAttemptParkedForReview(activeSnappayAttempt);
+      const attemptStartedAt = activeSnappayAttempt?.createdAt
+        ? new Date(activeSnappayAttempt.createdAt).getTime()
+        : null;
+      const deferCeiling = SNAPPAY_DEFER_CEILING_HOURS * 60 * 60 * 1000;
+      const exceededCeiling =
+        attemptStartedAt !== null &&
+        options.now.getTime() - attemptStartedAt > deferCeiling;
+
+      if (activeSnappayAttempt && !parkedForReview && !exceededCeiling) {
         const extendedUntil = new Date(options.now.getTime() + 5 * 60 * 1000);
         await strapi.db.query("api::order.order").update({
           where: {
@@ -110,6 +142,23 @@ async function expireStockReservationsBatch(
           },
         );
         continue;
+      }
+
+      if (activeSnappayAttempt) {
+        // Falling through to release. Surface it loudly: the money side of this
+        // attempt is unresolved and now needs a human.
+        incrementMetric(strapi, "snappay.reservation.released_unresolved");
+        strapi.log.error(
+          "Releasing stock reservation for an unresolved SnappPay payment",
+          {
+            orderId,
+            attemptId: activeSnappayAttempt.attemptId,
+            paymentStatus: activeSnappayAttempt.Status,
+            nextAction: activeSnappayAttempt.nextAction || null,
+            reason: parkedForReview ? "parked_for_manual_review" : "defer_ceiling_exceeded",
+            deferCeilingHours: SNAPPAY_DEFER_CEILING_HOURS,
+          },
+        );
       }
 
       await strapi.db.transaction(async ({ trx }) => {

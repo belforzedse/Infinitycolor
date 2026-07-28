@@ -11,7 +11,6 @@ import { snappayCallbackHandler } from "./helpers/snappayCallback";
 import { adminAdjustItemsHandler } from "./helpers/adminAdjustItems";
 import { adminCancelOrderHandler } from "./helpers/adminCancel";
 import { adminPaymentOperationHandler } from "./helpers/adminPaymentOperation";
-import { adminRevealSnappayTokenHandler } from "./helpers/adminSnappayToken";
 import { adminVoidBarcodeHandler } from "./helpers/adminVoidBarcode";
 import { decrementManualOrderStockHandler } from "./helpers/manualOrderStock";
 import { getActiveReserveHandler } from "./handlers/getActiveReserve";
@@ -156,29 +155,7 @@ export default factories.createCoreController(
         // Transform the response to match the frontend's expected structure
         // Check both order.user_info (legacy) and order.user.user_info (correct structure)
         const userInfo = order.user?.user_info || order.user_info;
-        const sanitizedContract = order.contract
-          ? {
-              ...order.contract,
-              contract_transactions: (
-                order.contract.contract_transactions || []
-              ).map((transaction) => {
-                const {
-                  PaymentTokenCiphertext: _ciphertext,
-                  PaymentTokenHash: _tokenHash,
-                  PaymentTokenKeyVersion: _keyVersion,
-                  ...safeTransaction
-                } = transaction;
-                const source = String(
-                  transaction?.external_source ||
-                    order.contract?.external_source ||
-                    "",
-                ).toLowerCase();
-                return isSnappayGatewayValue(source)
-                  ? { ...safeTransaction, TrackId: null }
-                  : safeTransaction;
-              }),
-            }
-          : order.contract;
+        const sanitizedContract = order.contract;
         const transformedOrder = {
           ...order,
           contract: sanitizedContract,
@@ -342,10 +319,6 @@ export default factories.createCoreController(
       return adminPaymentOperationHandler(strapi as any, ctx);
     },
 
-    async adminRevealSnappayToken(ctx) {
-      return adminRevealSnappayTokenHandler(strapi as any, ctx);
-    },
-
     async adminTransition(ctx) {
       return adminTransitionOrderHandler(strapi as any, ctx);
     },
@@ -399,9 +372,7 @@ export default factories.createCoreController(
           attempt?.providerReference ||
           latestTx?.GatewayRefId ||
           latestTx?.external_id ||
-          (isSnappayGatewayValue(order.PaymentGateway)
-            ? undefined
-            : latestTx?.TrackId) ||
+          latestTx?.TrackId ||
           contract?.external_id ||
           undefined;
         const isSnappay = isSnappayGatewayValue(order.PaymentGateway);

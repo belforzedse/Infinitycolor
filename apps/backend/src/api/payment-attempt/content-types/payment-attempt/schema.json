@@ -84,8 +84,8 @@
       "type": "string",
       "private": true
     },
-    "callbackNonceCiphertext": {
-      "type": "text",
+    "callbackNonce": {
+      "type": "string",
       "private": true
     },
     "sideEffectsCompletedAt": {

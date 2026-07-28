@@ -11,7 +11,6 @@ import {
   findPaymentAttempt,
   updatePaymentAttempt,
 } from "../../payment-attempt/services/payment-attempt";
-import { encryptSnappaySecret } from "../../payment-gateway/services/snappay-security";
 
 jest.mock("../controllers/handlers/gateway-helpers", () => ({
   cancelOrderAndRelease: jest.fn().mockResolvedValue(undefined),
@@ -847,7 +846,7 @@ describe("finalizeToOrderHandler", () => {
     );
   });
 
-  it("resumes an uninitiated SnappPay replay with the encrypted callback nonce", async () => {
+  it("resumes an uninitiated SnappPay replay with the stored callback nonce", async () => {
     const { strapi, registerService } = createStrapiMock();
     const callbackNonce = "abcdefghijklmnopqrstuv";
     const initiate = jest.fn().mockResolvedValue({
@@ -867,7 +866,7 @@ describe("finalizeToOrderHandler", () => {
           id: 1061,
           attemptId: "checkout-attempt",
           Status: "Created",
-          callbackNonceCiphertext: encryptSnappaySecret(callbackNonce),
+          callbackNonce,
         },
       }),
     });
@@ -924,7 +923,7 @@ describe("finalizeToOrderHandler", () => {
           id: 1062,
           attemptId: "checkout-attempt",
           Status: "Created",
-          callbackNonceCiphertext: "invalid",
+          callbackNonce: "",
         },
       }),
     });

@@ -1,40 +1,39 @@
 /**
- * Adds durable SnappPay state, encrypted-token storage, recovery operations,
- * and uniqueness guarantees for hardened (non-legacy) records.
+ * Adds durable SnappPay state, recovery operations, and uniqueness guarantees
+ * for hardened (non-legacy) records.
+ *
+ * The SnappPay payment token is stored as-is in `contract_transactions.track_id`.
+ * An earlier revision of this migration encrypted it into
+ * `payment_token_ciphertext` with a keyed fingerprint and a unique index; that was
+ * removed because the fingerprint was derived from the encryption key itself,
+ * which made key rotation break a unique index and let one duplicate row
+ * crash-loop every web instance on boot. See the follow-up migration
+ * `drop-snappay-token-encryption` for environments that already ran that version.
  */
-const { createCipheriv, createHmac, randomBytes } = require("node:crypto");
-
-function encryptionMaterial() {
-  const encoded = String(process.env.PAYMENT_TOKEN_ENCRYPTION_KEY || "").trim();
-  const version = String(process.env.PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION || "").trim();
-  const key = Buffer.from(encoded, "base64");
-  if (key.length !== 32 || !/^[A-Za-z0-9._-]{1,32}$/.test(version)) {
-    throw new Error(
-      "Legacy SnappPay tokens exist; configure a valid PAYMENT_TOKEN_ENCRYPTION_KEY and PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION before migrating",
-    );
-  }
-  return { key, version };
-}
-
-function encryptToken(token, material) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", material.key, iv);
-  const ciphertext = Buffer.concat([cipher.update(String(token), "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return [
-    material.version,
-    iv.toString("base64url"),
-    tag.toString("base64url"),
-    ciphertext.toString("base64url"),
-  ].join(".");
-}
-
-function tokenHash(token, material) {
-  return createHmac("sha256", material.key).update(String(token)).digest("hex");
-}
+/**
+ * Shared advisory-lock key for all SnappPay schema work. Any migration or
+ * boot-time DDL that touches these tables must take this same key so they cannot
+ * interleave across instances.
+ */
+const SNAPPAY_MIGRATION_LOCK_KEY = 827453100;
 
 module.exports = {
   async up(knex) {
+    // Serialize this migration across concurrently booting instances.
+    //
+    // All six web containers run migrations on boot. Strapi wraps each migration
+    // body in a transaction but records it in `strapi_migrations` on a *separate*
+    // connection, and that table has no unique constraint — so without a lock all
+    // six run `up()` at once, every one of them sees `hasColumn() === false`, and
+    // the losers die on `42701 column already exists`. This repo has already been
+    // bitten by that race (it silently dropped `background_job_locks`). Taking the
+    // lock first means the followers do their existence checks *after* the winner
+    // has committed, so they correctly skip.
+    //
+    // pg_advisory_xact_lock is released automatically when the wrapping
+    // transaction ends, so there is nothing to unlock on failure.
+    await knex.raw("SELECT pg_advisory_xact_lock(?)", [SNAPPAY_MIGRATION_LOCK_KEY]);
+
     const hasColumn = (table, column) => knex.schema.hasColumn(table, column);
     const hasPaymentAttempts = await knex.schema.hasTable("payment_attempts");
     const hasContractTransactions = await knex.schema.hasTable("contract_transactions");
@@ -47,7 +46,7 @@ module.exports = {
         leaseUntil: await hasColumn("payment_attempts", "lease_until"),
         leaseVersion: await hasColumn("payment_attempts", "lease_version"),
         callbackNonceHash: await hasColumn("payment_attempts", "callback_nonce_hash"),
-        callbackNonceCiphertext: await hasColumn("payment_attempts", "callback_nonce_ciphertext"),
+        callbackNonce: await hasColumn("payment_attempts", "callback_nonce"),
         sideEffectsCompletedAt: await hasColumn("payment_attempts", "side_effects_completed_at"),
       };
       await knex.schema.alterTable("payment_attempts", (table) => {
@@ -65,8 +64,8 @@ module.exports = {
         if (!columns.callbackNonceHash) {
           table.string("callback_nonce_hash", 64).nullable();
         }
-        if (!columns.callbackNonceCiphertext) {
-          table.text("callback_nonce_ciphertext").nullable();
+        if (!columns.callbackNonce) {
+          table.string("callback_nonce", 64).nullable();
         }
         if (!columns.sideEffectsCompletedAt) {
           table.timestamp("side_effects_completed_at", { useTz: true }).nullable();
@@ -76,9 +75,6 @@ module.exports = {
 
     if (hasContractTransactions) {
       const names = [
-        "payment_token_ciphertext",
-        "payment_token_hash",
-        "payment_token_key_version",
         "settled_at",
         "reverted_at",
         "cancelled_at",
@@ -91,15 +87,6 @@ module.exports = {
         present[name] = await hasColumn("contract_transactions", name);
       }
       await knex.schema.alterTable("contract_transactions", (table) => {
-        if (!present.payment_token_ciphertext) {
-          table.text("payment_token_ciphertext").nullable();
-        }
-        if (!present.payment_token_hash) {
-          table.string("payment_token_hash", 64).nullable();
-        }
-        if (!present.payment_token_key_version) {
-          table.string("payment_token_key_version", 32).nullable();
-        }
         if (!present.settled_at) {
           table.timestamp("settled_at", { useTz: true }).nullable();
         }
@@ -144,27 +131,7 @@ module.exports = {
       });
     }
 
-    if (hasContractTransactions) {
-      const legacyTokens = await knex("contract_transactions")
-        .select(["id", "track_id"])
-        .whereRaw("lower(external_source) = 'snappay'")
-        .whereNotNull("track_id");
-      if (legacyTokens.length > 0) {
-        const material = encryptionMaterial();
-        await knex.transaction(async (trx) => {
-          for (const row of legacyTokens) {
-            await trx("contract_transactions")
-              .where({ id: row.id })
-              .update({
-                payment_token_ciphertext: encryptToken(row.track_id, material),
-                payment_token_hash: tokenHash(row.track_id, material),
-                payment_token_key_version: material.version,
-                track_id: null,
-              });
-          }
-        });
-      }
-    }
+    // Legacy SnappPay tokens stay where they already are, in `track_id`.
 
     if (await knex.schema.hasTable("order_logs")) {
       const hasChanges = await hasColumn("order_logs", "changes");
@@ -241,17 +208,19 @@ module.exports = {
            AND external_id IS NOT NULL
            AND gateway_status IS NOT NULL`,
       );
-      await knex.raw(
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_transactions_snappay_token_hash
-         ON contract_transactions (payment_token_hash)
-         WHERE payment_token_hash IS NOT NULL`,
-      );
     }
     await knex.raw(
       `CREATE INDEX IF NOT EXISTS idx_payment_operations_due
        ON payment_operations (status, next_run_at, lease_until)
        WHERE status IN ('Queued', 'Processing', 'Unknown')`,
     );
+    // NOTE: idx_payment_operations_idempotency_key is deliberately NOT created
+    // here, even though down() drops it. This migration runs *before* Strapi's
+    // schema sync, and `idempotencyKey` is declared `"unique": true` in
+    // payment-operation/schema.json — so Strapi manages that uniqueness itself and
+    // tries to drop any same-named object it finds, which fails when the object is
+    // an index rather than a constraint. `ensureSnappayDatabaseInvariants` asserts
+    // the partial index after sync instead, which is the correct place for it.
   },
 
   async down(knex) {

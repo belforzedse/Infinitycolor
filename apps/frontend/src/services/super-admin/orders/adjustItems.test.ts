@@ -2,7 +2,6 @@ import { apiClient } from "@/services";
 import {
   changeOrderStatus,
   formatSnappayOperationFailure,
-  revealSnappaySupportToken,
 } from "./adjustItems";
 
 jest.mock("@/services", () => ({
@@ -76,21 +75,4 @@ describe("changeOrderStatus", () => {
     expect(apiClient.put).not.toHaveBeenCalled();
   });
 
-  it("reveals a SnappPay support token only through the explicit action", async () => {
-    (apiClient.post as jest.Mock).mockResolvedValue({
-      data: {
-        paymentToken: "support-token",
-        transactionId: "ABC1234567",
-      },
-    });
-
-    await expect(revealSnappaySupportToken(42)).resolves.toEqual({
-      paymentToken: "support-token",
-      transactionId: "ABC1234567",
-    });
-    expect(apiClient.post).toHaveBeenCalledWith(
-      "/orders/42/admin/snappay-token/reveal",
-      {},
-    );
-  });
 });

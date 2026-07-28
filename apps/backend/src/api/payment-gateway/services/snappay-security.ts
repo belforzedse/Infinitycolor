@@ -1,157 +1,20 @@
 import {
-  createCipheriv,
-  createDecipheriv,
   createHash,
-  createHmac,
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
 
-const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const TRANSACTION_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const TRANSACTION_FIRST_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-export type SnappayEncryptionMaterial = {
-  key: Buffer;
-  version: string;
-};
-
-function requiredEnv(env: NodeJS.ProcessEnv, name: string): string {
-  const value = String(env[name] || "").trim();
-  if (!value) {
-    throw new Error(`SNAPPAY_CONFIG_INVALID:${name} is required`);
-  }
-  return value;
-}
-
-export function getSnappayEncryptionMaterial(
-  env: NodeJS.ProcessEnv = process.env,
-): SnappayEncryptionMaterial {
-  const encoded = requiredEnv(env, "PAYMENT_TOKEN_ENCRYPTION_KEY");
-  const version = requiredEnv(env, "PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION");
-  const key = Buffer.from(encoded, "base64");
-  if (key.length !== 32) {
-    throw new Error(
-      "SNAPPAY_CONFIG_INVALID:PAYMENT_TOKEN_ENCRYPTION_KEY must decode to 32 bytes",
-    );
-  }
-  if (!/^[A-Za-z0-9._-]{1,32}$/.test(version)) {
-    throw new Error(
-      "SNAPPAY_CONFIG_INVALID:PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION is invalid",
-    );
-  }
-  return { key, version };
-}
-
-export function getSnappayDecryptionMaterial(
-  version: string,
-  env: NodeJS.ProcessEnv = process.env,
-): SnappayEncryptionMaterial {
-  const current = getSnappayEncryptionMaterial(env);
-  if (version === current.version) return current;
-
-  const serialized = String(
-    env.PAYMENT_TOKEN_DECRYPTION_KEYS || "",
-  ).trim();
-  if (!serialized) {
-    throw new Error("SNAPPAY_SECRET_KEY_VERSION_UNKNOWN");
-  }
-
-  let keyring: unknown;
-  try {
-    keyring = JSON.parse(serialized);
-  } catch {
-    throw new Error(
-      "SNAPPAY_CONFIG_INVALID:PAYMENT_TOKEN_DECRYPTION_KEYS must be valid JSON",
-    );
-  }
-  if (
-    !keyring ||
-    Array.isArray(keyring) ||
-    typeof keyring !== "object"
-  ) {
-    throw new Error(
-      "SNAPPAY_CONFIG_INVALID:PAYMENT_TOKEN_DECRYPTION_KEYS must be a version-to-base64 object",
-    );
-  }
-
-  const encoded = String(
-    (keyring as Record<string, unknown>)[version] || "",
-  ).trim();
-  const key = Buffer.from(encoded, "base64");
-  if (
-    !/^[A-Za-z0-9._-]{1,32}$/.test(version) ||
-    key.length !== 32
-  ) {
-    throw new Error("SNAPPAY_SECRET_KEY_VERSION_UNKNOWN");
-  }
-  return { key, version };
-}
-
-export function encryptSnappaySecret(
-  plaintext: string,
-  material: SnappayEncryptionMaterial = getSnappayEncryptionMaterial(),
-): string {
-  if (!plaintext) {
-    throw new Error("SNAPPAY_SECRET_EMPTY");
-  }
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(ENCRYPTION_ALGORITHM, material.key, iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext, "utf8"),
-    cipher.final(),
-  ]);
-  const tag = cipher.getAuthTag();
-  return [
-    material.version,
-    iv.toString("base64url"),
-    tag.toString("base64url"),
-    ciphertext.toString("base64url"),
-  ].join(".");
-}
-
-export function decryptSnappaySecret(
-  encrypted: string,
-  material?: SnappayEncryptionMaterial,
-): string {
-  const [version, ivEncoded, tagEncoded, ciphertextEncoded, extra] =
-    String(encrypted || "").split(".");
-  if (
-    extra !== undefined ||
-    !version ||
-    !ivEncoded ||
-    !tagEncoded ||
-    !ciphertextEncoded
-  ) {
-    throw new Error("SNAPPAY_SECRET_INVALID");
-  }
-  const resolvedMaterial =
-    material || getSnappayDecryptionMaterial(version);
-  if (version !== resolvedMaterial.version) {
-    throw new Error("SNAPPAY_SECRET_INVALID");
-  }
-  try {
-    const decipher = createDecipheriv(
-      ENCRYPTION_ALGORITHM,
-      resolvedMaterial.key,
-      Buffer.from(ivEncoded, "base64url"),
-    );
-    decipher.setAuthTag(Buffer.from(tagEncoded, "base64url"));
-    return Buffer.concat([
-      decipher.update(Buffer.from(ciphertextEncoded, "base64url")),
-      decipher.final(),
-    ]).toString("utf8");
-  } catch {
-    throw new Error("SNAPPAY_SECRET_INVALID");
-  }
-}
-
-export function snappayTokenFingerprint(
-  token: string,
-  material: SnappayEncryptionMaterial = getSnappayEncryptionMaterial(),
-): string {
+/**
+ * Stable, non-reversible short label for a SnappPay payment token, safe to put in
+ * logs and operator UI. Plain SHA-256 with no key material, so it does not change
+ * across deploys and needs no configuration.
+ */
+export function snappayTokenFingerprint(token: string): string {
   if (!token) throw new Error("SNAPPAY_SECRET_EMPTY");
-  return createHmac("sha256", material.key).update(token).digest("hex");
+  return createHash("sha256").update(token).digest("hex");
 }
 
 export function displaySnappayFingerprint(fingerprint: string): string {

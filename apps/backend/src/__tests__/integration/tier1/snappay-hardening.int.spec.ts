@@ -35,14 +35,11 @@ describe("SnappPay hardened persistence", () => {
              'lease_until',
              'lease_version',
              'callback_nonce_hash',
-             'callback_nonce_ciphertext',
+             'callback_nonce',
              'side_effects_completed_at'
            ))
            OR
            (table_name = 'contract_transactions' AND column_name IN (
-             'payment_token_ciphertext',
-             'payment_token_hash',
-             'payment_token_key_version',
              'settled_at',
              'reverted_at',
              'cancelled_at',
@@ -64,11 +61,8 @@ describe("SnappPay hardened persistence", () => {
         "payment_attempts.lease_until",
         "payment_attempts.lease_version",
         "payment_attempts.callback_nonce_hash",
-        "payment_attempts.callback_nonce_ciphertext",
+        "payment_attempts.callback_nonce",
         "payment_attempts.side_effects_completed_at",
-        "contract_transactions.payment_token_ciphertext",
-        "contract_transactions.payment_token_hash",
-        "contract_transactions.payment_token_key_version",
         "contract_transactions.settled_at",
         "contract_transactions.reverted_at",
         "contract_transactions.cancelled_at",
@@ -83,9 +77,12 @@ describe("SnappPay hardened persistence", () => {
     const transactionModel = strapi.getModel("api::contract-transaction.contract-transaction");
     const operationModel = strapi.getModel("api::payment-operation.payment-operation");
     expect(attemptModel.attributes.callbackNonceHash.private).toBe(true);
-    expect(attemptModel.attributes.callbackNonceCiphertext.private).toBe(true);
-    expect(transactionModel.attributes.PaymentTokenCiphertext.private).toBe(true);
-    expect(transactionModel.attributes.PaymentTokenHash.private).toBe(true);
+    expect(attemptModel.attributes.callbackNonce.private).toBe(true);
+    // The SnappPay payment token now lives in TrackId in the clear: it is not
+    // usable without our OAuth credentials, and operators need it verbatim for
+    // provider support tickets. The encryption columns are gone.
+    expect(transactionModel.attributes.PaymentTokenCiphertext).toBeUndefined();
+    expect(transactionModel.attributes.PaymentTokenHash).toBeUndefined();
     expect(operationModel.attributes.attemptKey.private).toBe(true);
   });
 
@@ -99,14 +96,12 @@ describe("SnappPay hardened persistence", () => {
            'idx_payment_attempts_snappay_due',
            'idx_payment_attempts_attempt_id',
            'idx_contract_transactions_snappay_transaction',
-           'idx_contract_transactions_snappay_token_hash',
            'idx_payment_operations_due',
            'idx_payment_operations_idempotency_key'
          )`,
     );
 
     expect(result.rows.map((row: any) => row.indexname).sort()).toEqual([
-      "idx_contract_transactions_snappay_token_hash",
       "idx_contract_transactions_snappay_transaction",
       "idx_payment_attempts_attempt_id",
       "idx_payment_attempts_snappay_due",

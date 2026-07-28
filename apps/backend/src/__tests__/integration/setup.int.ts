@@ -23,9 +23,6 @@ process.env.SNAPPAY_PASSWORD = "test-snappay-password";
 process.env.SNAPPAY_RETURN_URL =
   "https://storefront.test.invalid/api/snapp/return";
 process.env.SNAPPAY_HARDENED_INITIATION_ENABLED = "true";
-process.env.PAYMENT_TOKEN_ENCRYPTION_KEY =
-  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-process.env.PAYMENT_TOKEN_ENCRYPTION_KEY_VERSION = "test-v1";
 process.env.SMS_ENABLED = "false";
 process.env.ZARINPAL_MERCHANT_ID = process.env.ZARINPAL_MERCHANT_ID || "00000000-0000-0000-0000-000000000000";
 
