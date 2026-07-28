@@ -439,6 +439,98 @@ async function handleStockDecrementFailure(
   );
 }
 
+/**
+ * Records the settled Mellat transaction on the order's contract.
+ *
+ * Two things depend on this row existing:
+ *  - Product reports define a paid sale as `contract_transaction.Status='Success'`
+ *    (see `paidOrdersCte` in api/report/services/product-analytics.ts). Without a
+ *    row, Mellat sales are excluded from every report and Mellat is absent from
+ *    the gateway breakdown entirely.
+ *  - The callback idempotency check in `verifyPaymentHandler` looks for
+ *    `{ external_source: "Mellat", external_id: SaleReferenceId, Status: "Success" }`.
+ *    With no writer it could never match, so a replayed callback decremented stock
+ *    and consumed the discount a second time.
+ *
+ * Mirrors the SamanKish shape: find-or-create, then mark Success.
+ */
+async function recordMellatSettlement(
+  strapi: Strapi,
+  params: {
+    orderId: number;
+    contract: any;
+    saleReferenceId?: string | number;
+    refId?: string | number;
+  },
+): Promise<void> {
+  const { orderId, contract, saleReferenceId, refId } = params;
+  const contractId =
+    typeof contract === "object" && contract ? contract.id : contract;
+  if (!contractId) {
+    strapi.log.error("Cannot record Mellat settlement: order has no contract", {
+      orderId,
+    });
+    return;
+  }
+
+  const externalId = String(saleReferenceId ?? refId ?? "");
+  const trackId = String(refId ?? saleReferenceId ?? "");
+  const contractAmountIrr =
+    Math.round(Number(contract?.Amount ?? 0) as number) * 10;
+
+  try {
+    const existing = (await strapi.entityService.findMany(
+      "api::contract-transaction.contract-transaction",
+      {
+        filters: {
+          external_source: "Mellat",
+          external_id: externalId,
+        },
+        limit: 1,
+      },
+    )) as any[];
+
+    if (existing && existing.length > 0) {
+      await strapi.entityService.update(
+        "api::contract-transaction.contract-transaction",
+        existing[0].id,
+        {
+          data: {
+            Status: "Success",
+            TrackId: trackId,
+            Amount: contractAmountIrr || existing[0].Amount,
+          },
+        },
+      );
+      return;
+    }
+
+    await strapi.entityService.create(
+      "api::contract-transaction.contract-transaction",
+      {
+        data: {
+          Type: "Gateway",
+          Amount: contractAmountIrr,
+          DiscountAmount: 0,
+          Step: 1,
+          Status: "Success",
+          TrackId: trackId,
+          external_id: externalId,
+          external_source: "Mellat",
+          contract: contractId,
+          Date: new Date(),
+        },
+      },
+    );
+  } catch (err) {
+    strapi.log.error("Failed to record Mellat contract transaction", {
+      orderId,
+      externalId,
+      error: String((err as any)?.message || err).slice(0, 300),
+    });
+  }
+}
+
 export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
   // Mellat returns: ResCode, SaleOrderId, SaleReferenceId, RefId, OrderId
   const { ResCode, SaleOrderId, SaleReferenceId, RefId, OrderId } = (ctx.request as any).body || {};
@@ -1536,11 +1628,47 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           },
         });
 
+        const settledOrder = (await strapi.entityService.findOne(
+          "api::order.order",
+          orderId,
+          { populate: { contract: true } } as any,
+        )) as any;
+
+        // Record the settled transaction before anything that can fail, so a
+        // replayed callback is caught by the idempotency check above.
+        await recordMellatSettlement(strapi, {
+          orderId,
+          contract: settledOrder?.contract,
+          saleReferenceId: SaleReferenceId,
+          refId: RefId,
+        });
+
+        if (settledOrder?.contract) {
+          const settledContractId =
+            typeof settledOrder.contract === "object"
+              ? settledOrder.contract.id
+              : settledOrder.contract;
+          try {
+            await strapi.entityService.update(
+              "api::contract.contract",
+              settledContractId,
+              {
+                data: {
+                  Status: "Confirmed",
+                  external_source: "Mellat",
+                  external_id: String(SaleReferenceId ?? RefId ?? ""),
+                },
+              },
+            );
+          } catch (err) {
+            strapi.log.error("Failed to update contract for Mellat", err);
+          }
+        }
+
         // Increment discount usage counter if discount was applied
         try {
-          const orderWithDiscount = await strapi.entityService.findOne("api::order.order", orderId);
-          if (orderWithDiscount?.DiscountCode) {
-            await incrementDiscountUsageCounter(strapi, orderWithDiscount.DiscountCode, orderId);
+          if (settledOrder?.DiscountCode) {
+            await incrementDiscountUsageCounter(strapi, settledOrder.DiscountCode, orderId);
           }
         } catch (err) {
           strapi.log.error("Failed to increment discount for Mellat order", err);

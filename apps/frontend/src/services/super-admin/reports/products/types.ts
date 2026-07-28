@@ -88,7 +88,14 @@ export interface GatewayBreakdownRow {
   gateway: string;
   /** Persian display label. */
   label: string;
+  /** Orders that produced a successful settlement. */
   ordersCount: number;
+  /**
+   * All orders on this gateway in range, settled or not. When this is non-zero
+   * while `ordersCount` is 0, the gateway is not writing successful transactions
+   * and its revenue is missing from every report — see `dataQualityWarnings`.
+   */
+  totalOrdersCount: number;
   /** Net successful settlement in Toman. */
   total: number;
   /** Share of total gateway settlement (%), or null when total is 0. */
@@ -103,12 +110,24 @@ export interface ShippingBreakdownRow {
   total: number;
 }
 
+/**
+ * A report-integrity problem detected server-side. Rendered as a visible warning
+ * rather than letting the affected figure read as a confident zero.
+ */
+export interface DataQualityWarning {
+  code: string;
+  gateway: string;
+  message: string;
+  ordersCount: number;
+}
+
 export interface ProductBreakdown {
   range: { start: string; end: string };
   currency: string;
   totals: { gatewaySales: number; shippingRevenue: number; ordersCount: number };
   gateways: GatewayBreakdownRow[];
   shippingMethods: ShippingBreakdownRow[];
+  dataQualityWarnings?: DataQualityWarning[];
   notes: Record<string, string>;
 }
 

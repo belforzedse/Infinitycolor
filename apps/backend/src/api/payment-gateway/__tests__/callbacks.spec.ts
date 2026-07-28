@@ -172,6 +172,7 @@ describe("verifyPaymentHandler", () => {
 
     const orderWithItems = {
       id: 200,
+      contract: { id: 77, Amount: 120000 },
       order_items: [
         {
           Count: 2,
@@ -220,6 +221,63 @@ describe("verifyPaymentHandler", () => {
         }),
       }),
     );
+    // Without this row Mellat sales are invisible to every product report and
+    // the callback idempotency check can never match.
+    expect(strapi.entityService.create).toHaveBeenCalledWith(
+      "api::contract-transaction.contract-transaction",
+      expect.objectContaining({
+        data: expect.objectContaining({
+          Type: "Gateway",
+          Status: "Success",
+          Amount: 1200000,
+          external_source: "Mellat",
+          external_id: "REF-123",
+          contract: 77,
+        }),
+      }),
+    );
+    expect(strapi.entityService.update).toHaveBeenCalledWith(
+      "api::contract.contract",
+      77,
+      expect.objectContaining({
+        data: expect.objectContaining({ Status: "Confirmed", external_source: "Mellat" }),
+      }),
+    );
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/success?orderId=200",
+    );
+  });
+
+  it("redirects to success when a Mellat callback was already processed", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const mellatService = {
+      verifyTransaction: jest.fn(),
+      settleTransaction: jest.fn(),
+    };
+    registerService("api::payment-gateway.mellat-v3", mellatService);
+
+    // The settled transaction written by a previous callback.
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValueOnce([
+      { id: 900, external_source: "Mellat", external_id: "REF-123", Status: "Success" },
+    ]);
+
+    const ctx = createCtx({
+      request: {
+        body: {
+          ResCode: "0",
+          OrderId: "200",
+          SaleOrderId: "200",
+          SaleReferenceId: "REF-123",
+        },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    // Replay must be rejected before any money or stock movement.
+    expect(mellatService.verifyTransaction).not.toHaveBeenCalled();
+    expect(mellatService.settleTransaction).not.toHaveBeenCalled();
+    expect(decrementStockAtomic).not.toHaveBeenCalled();
     expect(ctx.redirect).toHaveBeenCalledWith(
       "https://infinitycolor.co/payment/success?orderId=200",
     );

@@ -9,44 +9,12 @@ import {
   queueSnappayAdminUpdate,
 } from "../../../payment-gateway/services/snappay-orchestrator";
 import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
+import { computePaidAmountToman } from "./paidAmount";
 
 type ItemAdjustment = {
   orderItemId: number;
   newCount?: number;
   remove?: boolean;
-};
-
-const computePaidAmountToman = (order: any): number => {
-  if (String(order?.Status) === "Paying") return 0;
-  const txList = order?.contract?.contract_transactions || [];
-  let paidIrr = 0;
-
-  if (Array.isArray(txList) && txList.length > 0) {
-    for (const tx of txList) {
-      const amountIrr = Number(tx?.Amount || 0);
-      if (!amountIrr) continue;
-      const discountIrr = Number(tx?.DiscountAmount || 0);
-      const type = String(tx?.Type || "").toLowerCase();
-      const status = String(tx?.Status || "").toLowerCase();
-
-      if (type === "gateway" && status !== "failed") {
-        paidIrr += amountIrr - discountIrr;
-      } else if (type === "return") {
-        paidIrr -= amountIrr;
-      }
-    }
-  } else {
-    const fallback = Number(order?.contract?.Amount || 0);
-    if (fallback > 0) {
-      return fallback;
-    }
-  }
-
-  const paidToman = Math.round(paidIrr / 10);
-  if (paidToman > 0) return paidToman;
-
-  const fallback = Number(order?.contract?.Amount || 0);
-  return Math.max(0, fallback);
 };
 
 export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {

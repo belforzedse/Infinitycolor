@@ -35,6 +35,7 @@ const STUB_JOINS = {
   variationToProduct: "JOIN products p ON true",
   variationToStock: "LEFT JOIN product_stocks ps ON true",
   productToCategory: { join: "LEFT JOIN product_categories pc ON true", titleExpr: "pc.title" },
+  orderToShipping: "LEFT JOIN shippings s ON true",
 };
 
 const PERIOD_ROW = {
@@ -69,6 +70,28 @@ const PERF_ROW = {
 };
 
 function rawRouter(sql: string) {
+  // Gateway breakdown: ZarinPal settled, Mellat took orders and settled none.
+  if (sql.includes("total_orders_count")) {
+    return {
+      rows: [
+        {
+          gateway: "ZarinPal",
+          orders_count: "4",
+          total_orders_count: "5",
+          settled_irr: "8000000",
+        },
+        {
+          gateway: "Mellat",
+          orders_count: "0",
+          total_orders_count: "12",
+          settled_irr: "0",
+        },
+      ],
+    };
+  }
+  if (sql.includes("SUM(o.shipping_cost)")) {
+    return { rows: [{ method: "__UNKNOWN__", orders_count: "4", shipping_total: "40000" }] };
+  }
   if (sql.includes("active_products")) return { rows: [INV_ROW] };
   if (sql.includes("SUM(line_gross) FROM itemized")) return { rows: [PERIOD_ROW] };
   if (sql.includes("FULL OUTER JOIN orders_b")) {
@@ -238,6 +261,52 @@ describe("product reporting endpoints", () => {
       expect(ctx.badRequest).toHaveBeenCalledWith("productId is required", {
         data: { success: false },
       });
+    });
+  });
+
+  describe("breakdown", () => {
+    const range = { start: "2026-01-01", end: "2026-01-31" };
+
+    it("keeps a gateway that settled nothing visible instead of dropping it", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: range });
+      await controller.productBreakdown(ctx);
+
+      const gateways = ctx.body.data.gateways;
+      expect(gateways.map((g: any) => g.gateway)).toEqual(["ZarinPal", "Mellat"]);
+      const mellat = gateways.find((g: any) => g.gateway === "Mellat");
+      // Visibly wrong — 12 orders, zero settled — rather than silently absent.
+      expect(mellat).toMatchObject({
+        ordersCount: 0,
+        totalOrdersCount: 12,
+        total: 0,
+      });
+    });
+
+    it("surfaces a data-quality warning for the unsettled gateway", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: range });
+      await controller.productBreakdown(ctx);
+
+      expect(ctx.body.data.dataQualityWarnings).toEqual([
+        expect.objectContaining({
+          code: "GATEWAY_NO_SETTLED_ORDERS",
+          gateway: "Mellat",
+          ordersCount: 12,
+        }),
+      ]);
+    });
+
+    it("binds the order-date window for both the CTE and the outer query", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: range });
+      await controller.productBreakdown(ctx);
+
+      const gatewayCall = (global as any).strapi.db.connection.raw.mock.calls.find(
+        ([sql]: [string]) => sql.includes("total_orders_count"),
+      );
+      expect(gatewayCall).toBeDefined();
+      expect(gatewayCall[1]).toHaveLength(4);
     });
   });
 });

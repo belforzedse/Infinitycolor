@@ -626,24 +626,15 @@ export default {
       const { join: contractTransactionsJoin, source: contractTransactionsJoinSource } =
         await detectContractTxJoin();
 
-      const paidOrdersCte = `
-        WITH paid_orders AS (
-          SELECT
-            o.id AS order_id,
-            SUM(
-              CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END
-            )::numeric AS settled_amount_irr
-          FROM orders o
-          ${paidOrdersContractJoin}
-          ${contractTransactionsJoin}
-          WHERE ct.status = 'Success'
-            AND o.date BETWEEN ? AND ?
-          GROUP BY o.id
-          HAVING SUM(
-            CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END
-          ) > 0
-        )
-      `;
+      // Single source of truth for "a paid sale". This used to be a second,
+      // divergent inline copy: fewer columns, GROUP BY o.id only, no refund or
+      // discount output, and a different revenue formula downstream. Two
+      // definitions of the same concept is how gateways quietly go missing from
+      // one report but not another.
+      const paidOrdersCte = `WITH ${PA.paidOrdersCte({
+        orderToContract: paidOrdersContractJoin,
+        contractToTx: contractTransactionsJoin,
+      } as any)}`;
 
       const query = `
         ${paidOrdersCte},
@@ -656,7 +647,7 @@ export default {
             oi.per_amount AS item_unit_amount,
             (oi.per_amount * oi.count)::numeric AS item_total_toman,
             o.id AS order_id,
-            po.settled_amount_irr,
+            po.settled_irr AS settled_amount_irr,
             SUM((oi.per_amount * oi.count)::numeric) OVER (PARTITION BY o.id) AS order_items_subtotal
           ${ordersItemsJoinSql}
           ${productVariationJoinSql}
@@ -713,7 +704,7 @@ export default {
           ),
           knex.raw(
             `${paidOrdersCte}
-               SELECT COUNT(*)::bigint AS orders, COALESCE(SUM(settled_amount_irr)::bigint, 0) AS total_amount_irr
+               SELECT COUNT(*)::bigint AS orders, COALESCE(SUM(settled_irr)::bigint, 0) AS total_amount_irr
                FROM paid_orders`,
             [start, end],
           ),
@@ -1193,18 +1184,21 @@ export default {
       const joins = await PA.resolveJoins(knex);
 
       const [gatewayRes, shippingRes] = await Promise.all([
-        knex.raw(PA.gatewayBreakdownQuery(joins), [start, end]),
+        knex.raw(PA.gatewayBreakdownQuery(joins), [start, end, start, end]),
         knex.raw(PA.shippingBreakdownQuery(joins), [start, end]),
       ]);
 
       // Sales by payment gateway (settlement is IRR -> Toman; attach share of total).
-      const gatewayBase = rowsOf(gatewayRes).map((r: any) => ({
+      const gatewayRows = rowsOf(gatewayRes);
+      const gatewayBase = gatewayRows.map((r: any) => ({
         gateway: String(r.gateway || "Unknown"),
         label: PA.gatewayLabelFa(r.gateway),
         ordersCount: Number(r.orders_count || 0),
+        totalOrdersCount: Number(r.total_orders_count || 0),
         total: Math.round(PA.irrToToman(Number(r.settled_irr || 0))),
       }));
       const gateways = PA.withShares(gatewayBase, "total");
+      const dataQualityWarnings = PA.gatewaySettlementWarnings(gatewayBase);
 
       // Shipping revenue by method (shipping_cost already stored in Toman).
       const shippingMethods = rowsOf(shippingRes).map((r: any) => {
@@ -1227,6 +1221,7 @@ export default {
           totals: { gatewaySales, shippingRevenue, ordersCount },
           gateways,
           shippingMethods,
+          dataQualityWarnings,
           notes: {
             gatewaySales:
               "مبلغ تسویه‌شده هر درگاه بر مبنای «سفارش‌های پرداخت‌شده، خالص از مرجوعی» است و شامل هزینه ارسال نیز می‌شود.",

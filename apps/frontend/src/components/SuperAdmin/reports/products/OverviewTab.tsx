@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import KpiCard from "./KpiCard";
 import { faNum } from "@/utils/faNum";
 import { getProductOverview, type ProductOverview } from "@/services/super-admin/reports/products";
+import ReportNotes from "./ReportNotes";
 
 export default function OverviewTab({ start, end }: { start: string; end: string }) {
   const [data, setData] = useState<ProductOverview | null>(null);
@@ -109,10 +110,9 @@ export default function OverviewTab({ start, end }: { start: string; end: string
       </div>
 
       {!loading && data && (
-        <p className="rounded-xl bg-amber-50 px-4 py-3 text-xs leading-6 text-amber-700">
-          {data.notes?.net} {data.notes?.refunds} ارقام به تومان و بر مبنای «سفارش‌های پرداخت‌شده،
-          خالص از مرجوعی» محاسبه شده‌اند.
-        </p>
+        <ReportNotes
+          note={`${data.notes?.net ?? ""} ${data.notes?.refunds ?? ""} ارقام به تومان و بر مبنای «سفارش‌های پرداخت‌شده، خالص از مرجوعی» محاسبه شده‌اند.`}
+        />
       )}
     </div>
   );

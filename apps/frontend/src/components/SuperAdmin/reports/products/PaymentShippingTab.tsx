@@ -9,6 +9,7 @@ import {
   getProductBreakdown,
   type ProductBreakdown,
 } from "@/services/super-admin/reports/products";
+import ReportNotes from "./ReportNotes";
 
 export default function PaymentShippingTab({ start, end }: { start: string; end: string }) {
   const [data, setData] = useState<ProductBreakdown | null>(null);
@@ -137,10 +138,10 @@ export default function PaymentShippingTab({ start, end }: { start: string; end:
       </BreakdownCard>
 
       {!loading && data && (
-        <p className="rounded-xl bg-amber-50 px-4 py-3 text-xs leading-6 text-amber-700">
-          {data.notes?.gatewaySales} {data.notes?.shippingRevenue} ارقام به تومان و بر مبنای
-          «سفارش‌های پرداخت‌شده» محاسبه شده‌اند.
-        </p>
+        <ReportNotes
+          warnings={data.dataQualityWarnings}
+          note={`${data.notes?.gatewaySales ?? ""} ${data.notes?.shippingRevenue ?? ""} ارقام به تومان و بر مبنای «سفارش‌های پرداخت‌شده» محاسبه شده‌اند.`}
+        />
       )}
     </div>
   );
