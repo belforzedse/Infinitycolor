@@ -35,9 +35,14 @@ describe("SnappPay security primitives", () => {
 
   it("rejects ciphertext tampering", () => {
     const encrypted = encryptSnappaySecret("provider-token", material);
-    expect(() => decryptSnappaySecret(`${encrypted.slice(0, -1)}A`, material)).toThrow(
-      "SNAPPAY_SECRET_INVALID",
-    );
+    const ciphertextStart = encrypted.lastIndexOf(".") + 1;
+    const replacement = encrypted[ciphertextStart] === "A" ? "B" : "A";
+    const tampered = `${encrypted.slice(0, ciphertextStart)}${replacement}${encrypted.slice(
+      ciphertextStart + 1,
+    )}`;
+
+    expect(tampered).not.toBe(encrypted);
+    expect(() => decryptSnappaySecret(tampered, material)).toThrow("SNAPPAY_SECRET_INVALID");
   });
 
   it("retains explicit old keys for in-flight token decryption during rotation", () => {
