@@ -1,3 +1,4 @@
+import { ADAPTIVE_QUALITY_POLICY_CONFIG } from "./config";
 import type {
   AdaptiveCapabilities,
   AdaptiveQualityConstraint,
@@ -44,74 +45,108 @@ export function clampConstraint(
         )
       ],
     media:
-      MEDIA_ORDER[Math.min(MEDIA_ORDER.indexOf(value.media), MEDIA_ORDER.indexOf(maximum.media))],
+      MEDIA_ORDER[
+        Math.min(
+          MEDIA_ORDER.indexOf(value.media),
+          MEDIA_ORDER.indexOf(maximum.media),
+        )
+      ],
     motion:
       MOTION_ORDER[
-        Math.min(MOTION_ORDER.indexOf(value.motion), MOTION_ORDER.indexOf(maximum.motion))
+        Math.min(
+          MOTION_ORDER.indexOf(value.motion),
+          MOTION_ORDER.indexOf(maximum.motion),
+        )
       ],
   };
 }
 
+/**
+ * Device admission is deliberately deterministic. A desktop reaches peak only
+ * when it has a fine primary pointer, hover, at least eight logical processors,
+ * and either an unavailable memory hint or a hint of at least 8 GiB.
+ */
+export function getAdaptiveDeviceBaseline(
+  capabilities: AdaptiveCapabilities,
+  admittedHighEndMobile = false,
+): AdaptiveQualityConstraint {
+  return isCapableDesktop(capabilities) || admittedHighEndMobile
+    ? { ...COMPATIBILITY_CONSTRAINT }
+    : { ...STANDARD_CONSTRAINT };
+}
+
+export function isCapableDesktop(capabilities: AdaptiveCapabilities): boolean {
+  const { minimumHardwareConcurrency, minimumDeviceMemory } =
+    ADAPTIVE_QUALITY_POLICY_CONFIG.desktop;
+  const cores = capabilities.hardwareConcurrency;
+  const memory = capabilities.deviceMemory;
+
+  return Boolean(
+    capabilities.finePointer === true &&
+      capabilities.hover === true &&
+      typeof cores === "number" &&
+      Number.isInteger(cores) &&
+      cores >= minimumHardwareConcurrency &&
+      (memory === undefined ||
+        (typeof memory === "number" &&
+          Number.isFinite(memory) &&
+          memory >= minimumDeviceMemory)),
+  );
+}
+
+/**
+ * This is the live preference/network overlay only. It is never persisted as
+ * the runtime constraint.
+ */
 export function getAdaptiveCapabilityMaximum(
   capabilities: AdaptiveCapabilities,
 ): AdaptiveQualityConstraint {
   const maximum: AdaptiveQualityConstraint = { ...COMPATIBILITY_CONSTRAINT };
 
-  if (capabilities.saveData || isSlowConnection(capabilities.effectiveType)) {
+  if (capabilities.saveData || isVerySlowConnection(capabilities.effectiveType)) {
     maximum.media = "economy";
+  } else if (capabilities.effectiveType === "3g") {
+    maximum.media = "standard";
   }
 
   if (capabilities.reducedMotion) maximum.motion = "minimal";
-
   return maximum;
 }
 
 export function classifyAdaptiveQuality(
   capabilities: AdaptiveCapabilities,
-  persistedConstraint?: AdaptiveQualityConstraint,
-  routeGeneration = 0,
+  options: {
+    persistedRuntimeConstraint?: AdaptiveQualityConstraint;
+    admittedHighEndMobile?: boolean;
+    routeGeneration?: number;
+  } = {},
 ): InitialAdaptiveClassification {
-  let constraint: AdaptiveQualityConstraint = { ...STANDARD_CONSTRAINT };
-  const reasons: AdaptiveQualityReason[] = [];
-
-  if (persistedConstraint) {
-    const clamped = clampConstraint(constraint, persistedConstraint);
-    if (
-      clamped.rendering !== constraint.rendering ||
-      clamped.media !== constraint.media ||
-      clamped.motion !== constraint.motion
-    ) {
-      reasons.push("session-constraint");
-    }
-    constraint = clamped;
-  }
-
+  const baselineConstraint = getAdaptiveDeviceBaseline(
+    capabilities,
+    options.admittedHighEndMobile,
+  );
+  const runtimeConstraint = options.persistedRuntimeConstraint
+    ? clampConstraint(baselineConstraint, options.persistedRuntimeConstraint)
+    : { ...baselineConstraint };
+  const runtimeConstrained = !areConstraintsEqual(
+    runtimeConstraint,
+    baselineConstraint,
+  );
   const snapshot = applyCurrentPreferences(
     {
       enabled: true,
-      ...constraint,
+      ...runtimeConstraint,
       reducedTransparency: false,
-      reason: reasons[0] || "default",
-      routeGeneration,
+      reason: runtimeConstrained ? "session-constraint" : "default",
+      routeGeneration: options.routeGeneration ?? 0,
     },
     capabilities,
   );
 
-  if (capabilities.reducedMotion) reasons.push("reduced-motion");
-  if (capabilities.reducedTransparency) reasons.push("reduced-transparency");
-  if (capabilities.saveData) reasons.push("save-data");
-  if (isSlowConnection(capabilities.effectiveType)) reasons.push("slow-connection");
-
-  const uniqueReasons = Array.from(new Set(reasons));
-  const persistedConstraintForSession = clampConstraint(constraint, snapshot);
-
   return {
-    constraint: persistedConstraintForSession,
-    snapshot: {
-      ...snapshot,
-      reason: uniqueReasons[0] || "default",
-    },
-    reasons: uniqueReasons.length ? uniqueReasons : ["default"],
+    baselineConstraint,
+    runtimeConstraint,
+    snapshot,
   };
 }
 
@@ -119,19 +154,28 @@ export function applyCurrentPreferences(
   snapshot: AdaptiveQualitySnapshot,
   capabilities: AdaptiveCapabilities,
 ): AdaptiveQualitySnapshot {
-  let next = snapshot;
+  const next = { ...snapshot };
   let reason = snapshot.reason;
 
   if (capabilities.reducedMotion) {
-    next = { ...next, motion: "minimal" };
+    next.motion = "minimal";
     reason = "reduced-motion";
   }
 
   if (capabilities.saveData) {
-    next = { ...next, media: "economy" };
+    next.media = "economy";
     reason = "save-data";
-  } else if (isSlowConnection(capabilities.effectiveType)) {
-    next = { ...next, media: "economy" };
+  } else if (isVerySlowConnection(capabilities.effectiveType)) {
+    next.media = "economy";
+    reason = "slow-connection";
+  } else if (capabilities.effectiveType === "3g") {
+    next.media =
+      MEDIA_ORDER[
+        Math.min(
+          MEDIA_ORDER.indexOf(next.media),
+          MEDIA_ORDER.indexOf("standard"),
+        )
+      ];
     reason = "slow-connection";
   }
 
@@ -141,7 +185,7 @@ export function applyCurrentPreferences(
 
   return {
     ...next,
-    reducedTransparency: Boolean(capabilities.reducedTransparency),
+    reducedTransparency: capabilities.reducedTransparency === true,
     reason,
   };
 }
@@ -192,8 +236,26 @@ export function promoteConstraint(
   return null;
 }
 
-export function isSlowConnection(effectiveType?: string): boolean {
-  return effectiveType === "slow-2g" || effectiveType === "2g" || effectiveType === "3g";
+export function isVerySlowConnection(effectiveType?: string): boolean {
+  return effectiveType === "slow-2g" || effectiveType === "2g";
+}
+
+export function areConstraintsEqual(
+  left: AdaptiveQualityConstraint,
+  right: AdaptiveQualityConstraint,
+): boolean {
+  return (
+    left.rendering === right.rendering &&
+    left.media === right.media &&
+    left.motion === right.motion
+  );
+}
+
+export function isConstraintBelow(
+  current: AdaptiveQualityConstraint,
+  maximum: AdaptiveQualityConstraint,
+): boolean {
+  return !areConstraintsEqual(clampConstraint(maximum, current), maximum);
 }
 
 export function isAdaptiveConstraint(value: unknown): value is AdaptiveQualityConstraint {

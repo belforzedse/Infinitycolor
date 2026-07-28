@@ -15,7 +15,7 @@ The launch configuration is:
 | `NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_RUNTIME_DOWNGRADE` | `true`       |
 | `NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_PROMOTION`         | `true`       |
 | `NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_TELEMETRY`         | `true`       |
-| `NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ROLLOUT_PERCENT`   | `100`        |
+| `NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ROLLOUT_PERCENT`   | `10`         |
 | `NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE`        | `false`      |
 
 These are build-time values. Changing one requires a new build and deployment,
@@ -89,35 +89,45 @@ for this feature. It does not classify or start adaptive observers.
 
 ## Initial classification
 
-Policy `1.2.0` is strong-first. A generic or unknown browser starts at
-Standard/Standard/Standard, which preserves the complete essential carousel,
-catalog, form, and commerce behavior. Static memory/core hints never
-pre-downgrade it. A UA report on the explicit high-end admission list starts at
-Enhanced/High/Enhanced before hydration; real runtime jank can immediately
-begin stepping it down.
+Policy `2.0.0` has three independent layers:
 
-| Signal                                 | Constraint                                     |
-| -------------------------------------- | ---------------------------------------------- |
-| admitted high-end legacy UA            | Enhanced/High/Enhanced                         |
-| `prefers-reduced-motion: reduce`       | Motion Minimal                                 |
-| `prefers-reduced-transparency: reduce` | opaque/non-blurred surfaces                    |
-| `saveData === true`                    | Media Economy                                  |
-| `slow-2g`, `2g`, or `3g`               | Media Economy                                  |
-| memory/core hints                      | ignored for initial classification and maximum |
-| missing/invalid/unsupported value      | ignored; remains Standard                      |
-| valid session constraint               | component-wise clamp                           |
+1. a deterministic device baseline;
+2. a temporary runtime constraint;
+3. reversible live preference/network overlays.
 
-The UA admission is a small allowlist, not a capability score or a security
-boundary. No browser name, desktop/mobile label, GPU string, or broad
-fingerprint-like score is used. Raw UA/model and hardware/network values are
-never persisted or emitted.
+A desktop starts Enhanced/High/Enhanced before hydration when
+`(hover: hover)` and `(pointer: fine)` match, `hardwareConcurrency >= 8`, and
+`deviceMemory` is either unavailable or at least 8. Unknown, weaker,
+touch-primary, and invalid reports start Standard/Standard/Standard. The
+researched high-end mobile allowlist remains a second peak-admission path.
+
+| Live signal                            | Effective constraint            |
+| -------------------------------------- | ------------------------------- |
+| `prefers-reduced-motion: reduce`       | Motion Minimal                  |
+| `prefers-reduced-transparency: reduce` | opaque/non-blurred styling only |
+| `saveData === true`                    | Media Economy                   |
+| `slow-2g` or `2g`                      | Media Economy                   |
+| `3g`                                   | Media Standard                  |
+| `4g`, unknown, or unsupported network  | no network cap                  |
+
+These live signals never mutate the stored runtime constraint. For example,
+`3g -> 4g` restores Media Standard to High immediately when the device/runtime
+ceiling permits it. No browser label, GPU string, or broad fingerprint-like
+score is used. Raw CPU, memory, pointer, network, UA, and model values are never
+persisted or emitted.
 
 ## Persistence and privacy
 
-`sessionStorage["infinity:adaptive-quality:v1"]` has a six-hour TTL and is
-guarded by `try/catch`. It contains only schema/policy/build versions, expiry,
-coarse tier constraint, fixed reasons, smooth-window counters, session
-downgrade/severe booleans, and a random anonymous rollout bucket from 0 through 9999.
+`sessionStorage["infinity:adaptive-quality:v2"]` is schema 2 and is guarded by
+`try/catch`. It contains only schema/policy/build versions, fixed `createdAt`
+and six-hour `expiresAt`, the anonymous rollout bucket, `runtimeConstraint`,
+`penaltyExpiresAt`, consecutive smooth-window count, last accepted bad-event
+timestamp, and one coarse reason.
+
+Ordinary writes preserve `createdAt` and `expiresAt`; they cannot slide the
+record lifetime forward. Runtime penalties expire 30 minutes after the last
+accepted bad event. The v1 key is ignored and removed after a successful v2
+bootstrap, so old permanent-lockout records cannot constrain v2.
 
 It never stores memory, core count, connection type, UA, UA-CH model, admitted
 device family, URL, frame/task history, product, order, user, or account data.
@@ -132,44 +142,44 @@ One hierarchy is active per window:
 2. otherwise Long Tasks;
 3. otherwise bounded `requestAnimationFrame`.
 
-There is one active observation window. It runs for eight seconds after
-hydration and each route commit, and five seconds after the first load of an
-enhancement family. rAF is capped at 240 samples and ignores the first ten.
-Hidden-tab work is stopped and hidden samples are discarded. Route generations
-cancel stale callbacks, observers, and timers. Reference counting makes
-start/stop idempotent under React Strict Mode.
+There is one continuous visible observation accumulator per route. Its initial
+window is eight seconds. An enhancement load extends that same window until
+five seconds after the load, capped at fifteen seconds from the active window
+start; collected samples and the observer are not replaced. rAF keeps a bounded
+rolling sample and ignores the first ten values per evaluation. Hidden,
+replaced, and unmounted windows do not count as smooth. Route generations cancel
+stale callbacks, observers, and timers. Reference counting makes start/stop
+idempotent under React Strict Mode.
 
 | Observer  | Repeated trigger                                                                                          | Severe trigger                                                |
 | --------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| LoAF      | three entries with duration at least 120 ms or blocking duration at least 50 ms within the bounded window | duration at least 300 ms or blocking duration at least 150 ms |
+| LoAF      | three entries with duration at least 120 ms or blocking duration at least 50 ms within the bounded window | blocking duration at least 150 ms                             |
 | Long Task | three entries at least 80 ms                                                                              | one entry at least 300 ms                                     |
 | rAF       | after warm-up, at least five visible deltas over 50 ms and p95 over 40 ms                                 | none                                                          |
 
-Each accepted trigger lowers one step in Motion, Media, Rendering order. A
-15-second cooldown follows. The current route never upgrades. New accessibility
-or Save-Data constraints apply immediately; removing them cannot enrich that
-route. The component-wise session maximum persists so a later route cannot
-oscillate above a demonstrated constraint.
+One LoAF with duration at least 300 ms but blocking duration below 150 ms is
+diagnostic evidence, not an immediate severe downgrade. Each accepted trigger
+lowers one step in Motion, Media, Rendering order and starts a 15-second
+cooldown. Any accepted issue resets recovery evidence and extends the temporary
+penalty, but no event creates a permanent session lock.
 
 ## Promotion
 
-Promotion is enabled only for a UA-admitted high-end device candidate. An
-explicit high-end legacy UA starts at peak immediately under the strong-first
-policy. This includes Safari's generic `iPhone` family token because Safari
-does not expose the exact model. If runtime evidence shows that device is not
-smooth, normal downgrade and session constraints take precedence.
+While the runtime constraint is below the device baseline, recovery windows run
+back-to-back on the same visible route. After two consecutive clean completed
+windows and at least 15 seconds since the last accepted issue, one axis promotes
+toward the baseline in Rendering, Media, Motion order. The counter resets and
+the process repeats until the baseline is reached. A route change is not
+required.
 
-A reduced Android UA that hides its model may become eligible only after its
-UA-CH model matches the allowlist and the session completes:
+Reduced Motion, Save Data, network, and transparency overlays remain
+authoritative during every recovery step, but they do not lower the stored
+runtime ceiling. Force-Safe overrides both downgrade and recovery.
 
-- three consecutive smooth observation windows;
-- at least two route generations;
-- no downgrade or severe event in the session.
-
-One later promotion applies on the next route, in Rendering, Media, Motion
-order. Safe never jumps directly to Enhanced, and current
-accessibility/network constraints remain maximums. A runtime downgrade or
-severe event makes later promotion unreachable for the rest of the session.
+An explicit high-end legacy mobile UA starts at peak immediately. A reduced
+Android UA that hides its model may upgrade its baseline only after its UA-CH
+model matches the allowlist; the high-entropy `model` value is not requested
+for desktop or full Android UAs.
 
 The conservative admission list, reviewed on 2026-07-27, is:
 
@@ -345,18 +355,20 @@ Allowed route groups are `home`, `plp`, `search`, `pdp`, `cart`, `checkout`,
 `auth`, `account`, `blog`, and `other`. Payment/callback/results map to
 `checkout`.
 
-| Event                                 | Sampling                  |
-| ------------------------------------- | ------------------------- |
-| `adaptive_quality/tier_change`        | 100%                      |
-| `adaptive_quality/route_summary`      | 25%; cart/checkout 100%   |
-| `adaptive_quality/promotion_eligible` | 100% of eligible sessions |
-| supported observer name/detail        | 1%                        |
-| Web Vitals                            | 25%; cart/checkout 100%   |
+| Event                            | Sampling                |
+| -------------------------------- | ----------------------- |
+| `adaptive_quality/tier_change`   | 100%                    |
+| `adaptive_quality/recovery_step` | 100%                    |
+| `adaptive_quality/route_summary` | 25%; cart/checkout 100% |
+| Web Vitals                       | 25%; cart/checkout 100% |
 
-Payloads contain final tiers, a coarse reason, aggregate sample/issue/severe
-counts, Web Vitals, and fixed enhancement-family names. They exclude pathnames,
-raw capabilities, raw timings/history, search text, product/order/payment/user
-IDs, and new Matomo custom dimensions.
+The `useReportWebVitals` callback identity is stable; current route/tier context
+is read through refs so route renders do not register duplicate reporters.
+Payloads contain only fixed route group, from/to tiers, observer kind, coarse
+transition reason, downgrade/recovery/overlay marker, aggregate
+sample/issue/severe counters, and Web Vitals. They exclude pathnames, raw
+capabilities/timing history, search text, product/order/payment/user IDs, and
+new Matomo custom dimensions.
 
 ## CSP and browser support
 
@@ -396,11 +408,13 @@ Acceptance includes:
 
 ## Automated gates
 
-Unit tests cover classifier neutrality and thresholds, accessibility/network
-constraints, persistence expiry/versioning/blocked storage/privacy, rollout
-buckets, researched UA admission and rejection, UA-CH denial/contradiction,
-promotion to peak, downgrade ordering/session carryover, bootstrap/admin
-exclusion, footer-control clearance, and controller cleanup.
+Unit tests cover the desktop capability matrix, touch/unknown/invalid fallback,
+reversible accessibility/network overlays, v1-to-v2 migration, fixed
+expiry/versioning/blocked storage/privacy, researched mobile UA admission and
+rejection, reduced-Android-only UA-CH access, LoAF blocking/repeated thresholds,
+same-route two-window recovery, hidden-window rejection, enhancement-window
+extension, penalty expiry, Force-Safe, bootstrap/controller parity, and stable
+consent-granted Web Vitals reporting.
 
 The dedicated Playwright config runs the production standalone output with a
 test-only adapter and gates Chromium desktop/mobile, Firefox, and WebKit. It
@@ -443,9 +457,10 @@ pnpm --filter @repo/backend test:integration
 git diff --check
 ```
 
-The GitLab `e2e:adaptive` job is blocking for `dev` and `main`. Performance
-artifacts remain non-blocking until thresholds are calibrated; browser and
-commerce parity are blocking immediately.
+The GitLab `e2e:adaptive`, `e2e:adaptive:parity`, and
+`e2e:adaptive:lowest` jobs are independently built and blocking for `dev` and
+`main`. Performance artifacts remain non-blocking until thresholds are
+calibrated; browser and commerce parity are blocking immediately.
 
 ## Baseline and measurement record
 
@@ -504,18 +519,21 @@ Block release for any commerce parity failure, hydration warning, forbidden Safe
 request, duplicate hero/LCP request, inaccessible content, or leaked
 observer/timer/player.
 
-After launch, redeploy force-safe and investigate when adaptive JS/hydration
-errors exceed 0.5% of route views for 15 minutes with at least 200 samples, or
-p75 LCP/INP regresses at least 15% or CLS rises 0.02 for two one-hour windows
-with enough samples.
+Roll out at 10% -> 25% -> 50% -> 100%, holding each stage for at least 24 hours
+and 1,000 eligible sessions. Stop expansion for any commerce/hydration failure,
+when more than 0.5% of capable desktops remain Safe after 60 clean seconds,
+when fewer than 95% of clean downgraded sessions recover within 60 seconds, or
+when route-group p75 LCP or INP regresses by more than 5%.
 
 Roll back immediately for an adaptive-caused checkout/payment/redirect defect,
 or checkout/payment failures rising by 0.5 percentage points or 20% relative for
 30 minutes with at least 50 attempts.
 
-Monitor continuously for 24 hours and review again at 72 hours: Web Vitals,
-JS/hydration failures, downgrade frequency/reasons, forbidden-resource leakage,
-add-to-cart/cart/checkout/payment errors, and conversion.
+Monitor continuously through each stage and review again at 72 hours: Web
+Vitals, JS/hydration failures, downgrade/recovery frequency, forbidden-resource
+leakage, add-to-cart/cart/checkout/payment errors, and conversion. Physical
+low-end Android, iPhone Safari, and capable Windows/Linux/macOS evidence is
+required before 100%.
 
 ## Exact rollback and cache procedure
 

@@ -3,125 +3,130 @@ import {
   classifyAdaptiveQuality,
   downgradeConstraint,
   getAdaptiveCapabilityMaximum,
+  getAdaptiveDeviceBaseline,
   promoteConstraint,
 } from "../policy";
 
-describe("adaptive quality policy", () => {
-  it("keeps missing and invalid hints neutral", () => {
-    expect(
-      classifyAdaptiveQuality({
-        deviceMemory: Number.NaN,
-        hardwareConcurrency: 0,
-      }).snapshot,
-    ).toMatchObject({
-      rendering: "standard",
-      media: "standard",
-      motion: "standard",
-      reason: "default",
+const capableDesktop = {
+  finePointer: true,
+  hover: true,
+  hardwareConcurrency: 8,
+  deviceMemory: 8,
+} as const;
+
+describe("adaptive quality v2 policy", () => {
+  it.each([
+    capableDesktop,
+    { ...capableDesktop, deviceMemory: undefined },
+    { ...capableDesktop, hardwareConcurrency: 16 },
+  ])("admits a capable desktop to peak", (capabilities) => {
+    expect(classifyAdaptiveQuality(capabilities)).toMatchObject({
+      baselineConstraint: {
+        rendering: "enhanced",
+        media: "high",
+        motion: "enhanced",
+      },
+      runtimeConstraint: {
+        rendering: "enhanced",
+        media: "high",
+        motion: "enhanced",
+      },
+      snapshot: {
+        rendering: "enhanced",
+        media: "high",
+        motion: "enhanced",
+        reason: "default",
+      },
     });
-    expect(
-      classifyAdaptiveQuality({
-        deviceMemory: 1_000,
-        hardwareConcurrency: 2.5,
-        effectiveType: "unknown",
-      }).snapshot,
-    ).toMatchObject({
+  });
+
+  it.each([
+    { ...capableDesktop, finePointer: false },
+    { ...capableDesktop, hover: false },
+    { ...capableDesktop, hardwareConcurrency: 7 },
+    { ...capableDesktop, deviceMemory: 4 },
+    { ...capableDesktop, hardwareConcurrency: Number.NaN },
+    { ...capableDesktop, deviceMemory: Number.NaN },
+    { finePointer: true, hover: true },
+    {},
+  ])("keeps weak, touch-primary, unknown, or invalid reports Standard", (capabilities) => {
+    expect(getAdaptiveDeviceBaseline(capabilities)).toEqual({
       rendering: "standard",
       media: "standard",
       motion: "standard",
     });
   });
 
-  it.each([
-    { deviceMemory: 2 },
-    { hardwareConcurrency: 2 },
-    { deviceMemory: 4, hardwareConcurrency: 4 },
-  ] as const)("starts strong instead of pre-downgrading from static hardware hints", (hints) => {
-    const result = classifyAdaptiveQuality(hints);
-    expect(result.constraint).toEqual({
-      rendering: "standard",
-      media: "standard",
-      motion: "standard",
-    });
-    expect(result.reasons).toEqual(["default"]);
-    expect(getAdaptiveCapabilityMaximum(hints)).toEqual({
+  it("preserves researched mobile admission independently of desktop hints", () => {
+    expect(getAdaptiveDeviceBaseline({ finePointer: false, hover: false }, true)).toEqual({
       rendering: "enhanced",
       media: "high",
       motion: "enhanced",
     });
   });
 
-  it("applies accessibility and network preferences without enriching", () => {
-    const result = classifyAdaptiveQuality({
-      reducedMotion: true,
-      reducedTransparency: true,
-      saveData: true,
-    });
-    expect(result.snapshot).toMatchObject({
-      rendering: "standard",
-      media: "economy",
-      motion: "minimal",
-      reducedTransparency: true,
-    });
-    expect(result.constraint).toEqual({
-      rendering: "standard",
-      media: "economy",
-      motion: "minimal",
-    });
-    expect(result.reasons).toEqual(
-      expect.arrayContaining(["reduced-motion", "reduced-transparency", "save-data"]),
-    );
-  });
-
-  it("treats 3g as Economy but ignores unknown connection labels", () => {
-    expect(
-      applyCurrentPreferences(
-        {
-          enabled: true,
+  it("keeps runtime penalties independent from live overlays", () => {
+    const result = classifyAdaptiveQuality(
+      {
+        ...capableDesktop,
+        effectiveType: "3g",
+        reducedMotion: true,
+      },
+      {
+        persistedRuntimeConstraint: {
           rendering: "standard",
           media: "standard",
           motion: "standard",
-          reducedTransparency: false,
-          reason: "default",
-          routeGeneration: 0,
         },
-        { effectiveType: "3g" },
-      ).media,
-    ).toBe("economy");
-    expect(classifyAdaptiveQuality({ effectiveType: "satellite" }).snapshot.media).toBe("standard");
-  });
-
-  it.each(["slow-2g", "2g", "3g"])("classifies %s as Economy", (effectiveType) => {
-    expect(classifyAdaptiveQuality({ effectiveType }).snapshot.media).toBe("economy");
-  });
-
-  it("component-wise clamps every axis to a persisted session maximum", () => {
-    const result = classifyAdaptiveQuality(
-      {
-        deviceMemory: 8,
-        hardwareConcurrency: 8,
-      },
-      {
-        rendering: "safe",
-        media: "economy",
-        motion: "minimal",
       },
     );
-    expect(result.constraint).toEqual({
-      rendering: "safe",
-      media: "economy",
+
+    expect(result.runtimeConstraint).toEqual({
+      rendering: "standard",
+      media: "standard",
+      motion: "standard",
+    });
+    expect(result.snapshot).toMatchObject({
+      rendering: "standard",
+      media: "standard",
       motion: "minimal",
     });
-    expect(result.reasons).toContain("session-constraint");
   });
 
-  it("keeps accessibility and network constraints in the promotion maximum", () => {
+  it("applies reversible network media caps", () => {
+    const peak = {
+      enabled: true,
+      rendering: "enhanced",
+      media: "high",
+      motion: "enhanced",
+      reducedTransparency: false,
+      reason: "default",
+      routeGeneration: 0,
+    } as const;
+
+    expect(applyCurrentPreferences(peak, { effectiveType: "slow-2g" }).media).toBe(
+      "economy",
+    );
+    expect(applyCurrentPreferences(peak, { effectiveType: "2g" }).media).toBe(
+      "economy",
+    );
+    expect(applyCurrentPreferences(peak, { effectiveType: "3g" }).media).toBe(
+      "standard",
+    );
+    expect(applyCurrentPreferences(peak, { effectiveType: "4g" }).media).toBe(
+      "high",
+    );
+    expect(applyCurrentPreferences(peak, { effectiveType: "satellite" }).media).toBe(
+      "high",
+    );
+  });
+
+  it("keeps Save Data and Reduced Motion authoritative", () => {
     expect(
       getAdaptiveCapabilityMaximum({
-        reducedMotion: true,
         saveData: true,
-        deviceMemory: 8,
-        hardwareConcurrency: 8,
+        reducedMotion: true,
+        effectiveType: "4g",
       }),
     ).toEqual({
       rendering: "enhanced",
@@ -130,35 +135,22 @@ describe("adaptive quality policy", () => {
     });
   });
 
-  it("downgrades one axis at a time in motion, media, rendering order", () => {
+  it("downgrades Motion, Media, Rendering and recovers in reverse order", () => {
     const first = downgradeConstraint({
-      rendering: "standard",
-      media: "standard",
-      motion: "standard",
+      rendering: "enhanced",
+      media: "high",
+      motion: "enhanced",
     });
     expect(first).toEqual({
-      rendering: "standard",
-      media: "standard",
-      motion: "minimal",
+      rendering: "enhanced",
+      media: "high",
+      motion: "standard",
     });
-    const second = downgradeConstraint(first!);
-    expect(second).toEqual({
-      rendering: "standard",
-      media: "economy",
-      motion: "minimal",
-    });
-    expect(downgradeConstraint(second!)).toEqual({
-      rendering: "safe",
-      media: "economy",
-      motion: "minimal",
-    });
-  });
 
-  it("promotes one axis at a time and respects a capacity maximum", () => {
     expect(
       promoteConstraint(
         { rendering: "safe", media: "economy", motion: "minimal" },
-        { rendering: "standard", media: "standard", motion: "minimal" },
+        { rendering: "enhanced", media: "high", motion: "enhanced" },
       ),
     ).toEqual({
       rendering: "standard",

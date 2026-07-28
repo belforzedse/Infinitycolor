@@ -182,6 +182,100 @@ async function assertSeededHomepageSection(seedSummary?: SeedSummary) {
   }
 }
 
+async function revalidateSeededStorefront(seedSummary?: SeedSummary) {
+  if (process.env.E2E_REVALIDATE_FRONTEND_AFTER_SEED !== "1") return;
+
+  const secret =
+    process.env.E2E_REVALIDATION_SECRET?.trim() ||
+    process.env.REVALIDATION_SECRET?.trim();
+  if (!secret) {
+    throw new Error(
+      "E2E_REVALIDATE_FRONTEND_AFTER_SEED requires E2E_REVALIDATION_SECRET or REVALIDATION_SECRET",
+    );
+  }
+
+  const productSlug = seedSummary?.productSlug?.trim();
+  const postRevalidation = async (body: Record<string, string>) => {
+    const response = await fetchWithTimeout(
+      new URL("/api/revalidate", storefrontBaseURL()).toString(),
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+      15_000,
+    );
+
+    if (!response.ok) {
+      const responseBody = await response.text().catch(() => "");
+      throw new Error(
+        `E2E storefront revalidation failed (${response.status} ${response.statusText}): ${responseBody}`,
+      );
+    }
+  };
+
+  await postRevalidation({ path: "/", type: "site-settings" });
+  await postRevalidation(
+    productSlug
+      ? { path: `/pdp/${productSlug}`, type: "product" }
+      : { path: "/", type: "home-products" },
+  );
+
+  if (!productSlug) return;
+
+  const deadline = Date.now() + 45_000;
+  let lastProbe = "no response";
+  while (Date.now() < deadline) {
+    const cacheBust = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      const [homeResponse, productResponse] = await Promise.all([
+        fetchWithTimeout(
+          new URL(`/?_e2e_revalidated=${cacheBust}`, storefrontBaseURL()).toString(),
+          { headers: { Accept: "text/html" }, cache: "no-store" },
+          15_000,
+        ),
+        fetchWithTimeout(
+          new URL(
+            `/pdp/${encodeURIComponent(productSlug)}?_e2e_revalidated=${cacheBust}`,
+            storefrontBaseURL(),
+          ).toString(),
+          { headers: { Accept: "text/html" }, cache: "no-store" },
+          15_000,
+        ),
+      ]);
+      const [homeHtml, productHtml] = await Promise.all([
+        homeResponse.text(),
+        productResponse.text(),
+      ]);
+      const homeReady =
+        homeResponse.ok &&
+        homeHtml.includes(`data-product-slug="${productSlug}"`) &&
+        homeHtml.includes('data-home-full-bleed="discounted"');
+      const productReady =
+        productResponse.ok &&
+        productHtml.includes("e2e-storefront-cover") &&
+        productHtml.includes("e2e-storefront-detail");
+
+      if (homeReady && productReady) return;
+      lastProbe =
+        `home=${homeResponse.status}/${homeReady ? "ready" : "stale"}, ` +
+        `product=${productResponse.status}/${productReady ? "ready" : "stale"}`;
+    } catch (error) {
+      lastProbe = error instanceof Error ? error.message : String(error);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error(
+    `E2E storefront did not expose the seeded home/PDP fixtures after revalidation: ${lastProbe}`,
+  );
+}
+
 async function readBackendEnvValue(name: string, aliases: string[] = []) {
   for (const envName of [...aliases, name]) {
     const existing = process.env[envName]?.trim();
@@ -348,6 +442,7 @@ export default async function globalSetup() {
     });
     seedSummary = parseSeedSummary(result.stdout);
     await assertSeededHomepageSection(seedSummary);
+    await revalidateSeededStorefront(seedSummary);
   }
 
   if (process.env.E2E_AUTH_MODE !== "skip") {

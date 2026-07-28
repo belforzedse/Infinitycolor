@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useReportWebVitals } from "next/web-vitals";
 import {
@@ -11,7 +17,6 @@ import {
 import {
   getAdaptiveObservationSummary,
   getAdaptiveRolloutBucket,
-  getLoadedEnhancements,
   useAdaptiveQuality,
 } from "@/lib/adaptive-quality";
 import type { AdaptiveQualityChange } from "@/lib/adaptive-quality";
@@ -23,18 +28,6 @@ import {
 } from "@/lib/analytics/matomo";
 
 const ROUTE_SUMMARY_DELAY_MS = 8_500;
-const ENHANCEMENT_FAMILIES = [
-  "hero-motion",
-  "carousel-motion",
-  "lottie-loader",
-  "quick-view",
-  "share",
-  "glass-surface",
-  "optional-gif",
-  "optional-video",
-  "secondary-media",
-  "social-media",
-] as const;
 type WebVitalsMetric = Parameters<
   Parameters<typeof useReportWebVitals>[0]
 >[0];
@@ -51,9 +44,8 @@ function tierName(value: {
   rendering: string;
   media: string;
   motion: string;
-  reason: string;
 }) {
-  return `r:${value.rendering}|m:${value.media}|o:${value.motion}|reason:${value.reason}`;
+  return `r:${value.rendering}|m:${value.media}|o:${value.motion}`;
 }
 
 function shouldSample(percent: number): boolean {
@@ -66,7 +58,7 @@ export default function AdaptiveQualityTelemetry() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const quality = useAdaptiveQuality();
-  const [consentGranted, setConsentGranted] = useState(false);
+  const [consentGranted, setConsentGranted] = useState(hasAnalyticsConsent);
   const routeGroup = useMemo(
     () =>
       getAdaptiveRouteGroup(
@@ -75,9 +67,13 @@ export default function AdaptiveQualityTelemetry() {
       ),
     [pathname, searchParams],
   );
+  const contextRef = useRef({ consentGranted, quality, routeGroup });
 
   useEffect(() => {
-    setConsentGranted(hasAnalyticsConsent());
+    contextRef.current = { consentGranted, quality, routeGroup };
+  }, [consentGranted, quality, routeGroup]);
+
+  useEffect(() => {
     const handleConsent = () => setConsentGranted(hasAnalyticsConsent());
     window.addEventListener(ANALYTICS_CONSENT_EVENT, handleConsent);
     return () =>
@@ -85,11 +81,11 @@ export default function AdaptiveQualityTelemetry() {
   }, []);
 
   useEffect(() => {
-    if (!ADAPTIVE_QUALITY_FLAGS.telemetry || !consentGranted || !quality.enabled) {
-      return;
-    }
+    if (!ADAPTIVE_QUALITY_FLAGS.telemetry || !consentGranted) return;
 
     const handleChange = (event: Event) => {
+      const context = contextRef.current;
+      if (!context.quality.enabled) return;
       const change = (event as CustomEvent<AdaptiveQualityChange>).detail;
       if (!change) return;
       const tierChanged =
@@ -100,35 +96,46 @@ export default function AdaptiveQualityTelemetry() {
           change.current.reducedTransparency;
       if (!tierChanged) return;
 
+      const marker =
+        change.reason === "promotion"
+          ? "recovery"
+          : change.reason === "reduced-motion" ||
+              change.reason === "reduced-transparency" ||
+              change.reason === "save-data" ||
+              change.reason === "slow-connection"
+            ? "overlay"
+            : "downgrade";
       trackMatomoEvent({
         category: "adaptive_quality",
         action: "tier_change",
-        name: `${routeGroup}|${tierName(change.current)}`,
+        name:
+          `${context.routeGroup}|from:${tierName(change.previous)}` +
+          `|to:${tierName(change.current)}|reason:${change.reason}` +
+          `|marker:${marker}`,
       });
     };
 
-    const handlePromotionEligible = () => {
+    const handleRecovery = () => {
+      const context = contextRef.current;
+      if (!context.quality.enabled) return;
       trackMatomoEvent({
         category: "adaptive_quality",
-        action: "promotion_eligible",
-        name: `${routeGroup}|${tierName(quality)}`,
-        onceKey: `aq-promotion-eligible-${quality.routeGeneration}`,
+        action: "recovery_step",
+        name: `${context.routeGroup}|to:${tierName(context.quality)}|marker:recovery`,
+        onceKey: `aq-recovery-${context.quality.routeGeneration}-${tierName(context.quality)}`,
       });
     };
 
     window.addEventListener(ADAPTIVE_QUALITY_EVENT, handleChange);
-    window.addEventListener(
-      ADAPTIVE_QUALITY_PROMOTION_EVENT,
-      handlePromotionEligible,
-    );
+    window.addEventListener(ADAPTIVE_QUALITY_PROMOTION_EVENT, handleRecovery);
     return () => {
       window.removeEventListener(ADAPTIVE_QUALITY_EVENT, handleChange);
       window.removeEventListener(
         ADAPTIVE_QUALITY_PROMOTION_EVENT,
-        handlePromotionEligible,
+        handleRecovery,
       );
     };
-  }, [consentGranted, quality, routeGroup]);
+  }, [consentGranted]);
 
   useEffect(() => {
     if (!ADAPTIVE_QUALITY_FLAGS.telemetry || !consentGranted || !quality.enabled) {
@@ -139,25 +146,17 @@ export default function AdaptiveQualityTelemetry() {
     if (!shouldSample(samplePercent)) return;
 
     const timeoutId = window.setTimeout(() => {
-      const loaded = getLoadedEnhancements();
-      const enhancementFlags = ENHANCEMENT_FAMILIES.map(
-        (family) => `${family}:${loaded.has(family) ? 1 : 0}`,
-      ).join(",");
       const observation = getAdaptiveObservationSummary();
-      const detailedObserver = shouldSample(1)
-        ? `|observer:${observation.observer}`
-        : "";
       trackMatomoEvent({
         category: "adaptive_quality",
         action: "route_summary",
         name:
           `${routeGroup}|${tierName(quality)}` +
+          `|observer:${observation.observer}` +
           `|samples:${observation.sampleCount}` +
           `|issues:${observation.issueCount}` +
-          `|severe:${observation.severeCount}` +
-          `|enh:${enhancementFlags}` +
-          detailedObserver,
-        value: Array.from(loaded).length,
+          `|severe:${observation.severeCount}`,
+        value: observation.issueCount,
         onceKey: `aq-route-${quality.routeGeneration}`,
       });
     }, ROUTE_SUMMARY_DELAY_MS);
@@ -165,32 +164,35 @@ export default function AdaptiveQualityTelemetry() {
     return () => window.clearTimeout(timeoutId);
   }, [consentGranted, quality, routeGroup]);
 
-  const reportWebVital = useCallback(
-    (metric: WebVitalsMetric) => {
-      if (
-        !ADAPTIVE_QUALITY_FLAGS.telemetry ||
-        !consentGranted ||
-        !quality.enabled ||
-        !shouldSample(
-          routeGroup === "cart" || routeGroup === "checkout" ? 100 : 25,
-        )
-      ) {
-        return;
-      }
-      const value =
-        metric.name === "CLS"
-          ? Math.round(metric.value * 1_000)
-          : Math.round(metric.value);
-      const detailed = shouldSample(1) ? `|rating:${metric.rating}` : "";
-      trackMatomoEvent({
-        category: "adaptive_quality",
-        action: `web_vital_${metric.name.toLowerCase()}`,
-        name: `${routeGroup}|${tierName(quality)}${detailed}`,
-        value,
-      });
-    },
-    [consentGranted, quality, routeGroup],
-  );
+  const reportWebVital = useCallback((metric: WebVitalsMetric) => {
+    const {
+      consentGranted: currentConsent,
+      quality: currentQuality,
+      routeGroup: currentRouteGroup,
+    } = contextRef.current;
+    if (
+      !ADAPTIVE_QUALITY_FLAGS.telemetry ||
+      !currentConsent ||
+      !currentQuality.enabled ||
+      !shouldSample(
+        currentRouteGroup === "cart" || currentRouteGroup === "checkout"
+          ? 100
+          : 25,
+      )
+    ) {
+      return;
+    }
+    const value =
+      metric.name === "CLS"
+        ? Math.round(metric.value * 1_000)
+        : Math.round(metric.value);
+    trackMatomoEvent({
+      category: "adaptive_quality",
+      action: `web_vital_${metric.name.toLowerCase()}`,
+      name: `${currentRouteGroup}|${tierName(currentQuality)}`,
+      value,
+    });
+  }, []);
 
   useReportWebVitals(reportWebVital);
   return null;

@@ -2,20 +2,28 @@ import {
   ADAPTIVE_QUALITY_BUILD_VERSION,
   ADAPTIVE_QUALITY_EVENT,
   ADAPTIVE_QUALITY_FLAGS,
+  ADAPTIVE_QUALITY_PENALTY_TTL_MS,
+  ADAPTIVE_QUALITY_POLICY_CONFIG,
   ADAPTIVE_QUALITY_POLICY_VERSION,
   ADAPTIVE_QUALITY_PROMOTION_EVENT,
   ADAPTIVE_QUALITY_SCHEMA,
+  ADAPTIVE_QUALITY_SESSION_TTL_MS,
 } from "./config";
-import { getNetworkConnection, readAdaptiveCapabilities, safeMediaQuery } from "./capabilities";
+import {
+  getNetworkConnection,
+  readAdaptiveCapabilities,
+  safeMediaQuery,
+} from "./capabilities";
 import {
   applyCurrentPreferences,
-  clampConstraint,
+  areConstraintsEqual,
   classifyAdaptiveQuality,
+  clampConstraint,
   COMPATIBILITY_CONSTRAINT,
   downgradeConstraint,
-  getAdaptiveCapabilityMaximum,
   isAdaptiveConstraint,
   isAdaptiveReason,
+  isConstraintBelow,
   promoteConstraint,
   SAFE_CONSTRAINT,
   STANDARD_CONSTRAINT,
@@ -24,10 +32,17 @@ import {
   createAdaptiveQualitySessionRecord,
   createRolloutBucket,
   readAdaptiveQualitySession,
+  removeLegacyAdaptiveQualitySessions,
   writeAdaptiveQualitySession,
 } from "./storage";
-import { applyAdaptiveQualityAttributes, clearAdaptiveQualityAttributes } from "./dom";
-import { resolveHighEndUserAgentAdmission } from "./high-end-user-agent";
+import {
+  applyAdaptiveQualityAttributes,
+  clearAdaptiveQualityAttributes,
+} from "./dom";
+import {
+  classifyHighEndUserAgent,
+  resolveHighEndUserAgentAdmission,
+} from "./high-end-user-agent";
 import type {
   AdaptiveQualityBootstrap,
   AdaptiveQualityChange,
@@ -43,9 +58,14 @@ import type {
   RenderingTier,
 } from "./types";
 
-const DEFAULT_OBSERVATION_WINDOW_MS = 8_000;
-const ENHANCEMENT_OBSERVATION_WINDOW_MS = 5_000;
-const DOWNGRADE_COOLDOWN_MS = 15_000;
+const {
+  initialWindowMs: DEFAULT_OBSERVATION_WINDOW_MS,
+  enhancementExtensionMs: ENHANCEMENT_OBSERVATION_WINDOW_MS,
+  maximumWindowMs: MAXIMUM_OBSERVATION_WINDOW_MS,
+  downgradeCooldownMs: DOWNGRADE_COOLDOWN_MS,
+  recoveryWindows: RECOVERY_WINDOWS,
+  minimumRecoveryDelayMs: MINIMUM_RECOVERY_DELAY_MS,
+} = ADAPTIVE_QUALITY_POLICY_CONFIG.observation;
 const MAX_RAF_SAMPLES = 240;
 const RAF_WARMUP_SAMPLES = 10;
 
@@ -70,15 +90,17 @@ let controllerCleanups: Array<() => void> = [];
 let observationCleanup: (() => void) | null = null;
 let observationFinalize: (() => void) | null = null;
 let observationTimeout = 0;
+let observationWindowStartedAt = 0;
+let observationDeadlineAt = 0;
 let currentWindowHadIssue = false;
 let lastDowngradeAt = Number.NEGATIVE_INFINITY;
-let sessionConstraint: AdaptiveQualityConstraint = { ...STANDARD_CONSTRAINT };
+let deviceBaseline: AdaptiveQualityConstraint = { ...STANDARD_CONSTRAINT };
+let runtimeConstraint: AdaptiveQualityConstraint = { ...STANDARD_CONSTRAINT };
 let sessionRecord: AdaptiveQualitySessionRecord | null = null;
 let rolloutBucket = 0;
-let pendingPromotion = false;
-let promotionEventSent = false;
-let promotionAdmission: "pending" | "eligible" | "ineligible" = "pending";
-let promotionAdmissionGeneration = 0;
+let mobileAdmissionEligible = false;
+let admissionGeneration = 0;
+let penaltyExpiryTimeout = 0;
 let loadedEnhancements = new Set<EnhancementFamily>();
 let observationSummary: AdaptiveObservationSummary = {
   observer: "none",
@@ -104,16 +126,14 @@ export function subscribe(listener: Listener): () => void {
 export function startAdaptiveQualityController(): () => void {
   resolveBootstrapSnapshot();
   controllerReferences += 1;
-  if (controllerReferences > 1) {
-    return releaseControllerReference;
-  }
-
+  if (controllerReferences > 1) return releaseControllerReference;
   if (!snapshot.enabled) return releaseControllerReference;
 
   applyAdaptiveQualityAttributes(snapshot);
   controllerCleanups = installPreferenceListeners();
   installE2EAdapter();
-  resolvePromotionAdmission();
+  resolveMobileAdmission();
+  schedulePenaltyExpiry();
 
   if (ADAPTIVE_QUALITY_FLAGS.runtimeDowngrade) {
     startAdaptiveObservationWindow(DEFAULT_OBSERVATION_WINDOW_MS);
@@ -126,7 +146,7 @@ export function notifyAdaptiveRoute(): void {
   resolveBootstrapSnapshot();
   if (!snapshot.enabled) return;
 
-  finishObservationWindow(false);
+  cancelObservationWindow(true);
   loadedEnhancements = new Set();
   observationSummary = {
     observer: "none",
@@ -134,40 +154,18 @@ export function notifyAdaptiveRoute(): void {
     issueCount: 0,
     severeCount: 0,
   };
-  const capabilities = readAdaptiveCapabilities();
-  const maximum = getAdaptiveCapabilityMaximum(capabilities);
-  let reason: AdaptiveQualityReason = snapshot.reason;
-
-  if (pendingPromotion && ADAPTIVE_QUALITY_FLAGS.promotion) {
-    const promoted = promoteConstraint(sessionConstraint, maximum);
-    if (promoted) {
-      sessionConstraint = promoted;
-      reason = "promotion";
-    }
-    pendingPromotion = false;
-  }
-
-  sessionConstraint = clampConstraint(sessionConstraint, maximum);
-  const next = applyCurrentPreferences(
-    {
-      enabled: true,
-      ...sessionConstraint,
-      reducedTransparency: false,
-      reason,
-      routeGeneration: snapshot.routeGeneration + 1,
-    },
-    capabilities,
-  );
-
-  updateSnapshot(next, next.reason);
-  persistSession([next.reason]);
+  expireRuntimePenaltyIfNeeded();
+  recomputeEffectiveSnapshot(snapshot.routeGeneration + 1);
+  persistSession();
 
   if (ADAPTIVE_QUALITY_FLAGS.runtimeDowngrade) {
     startAdaptiveObservationWindow(DEFAULT_OBSERVATION_WINDOW_MS);
   }
 }
 
-export function startAdaptiveObservationWindow(durationMs = DEFAULT_OBSERVATION_WINDOW_MS): void {
+export function startAdaptiveObservationWindow(
+  durationMs: number = DEFAULT_OBSERVATION_WINDOW_MS,
+): void {
   resolveBootstrapSnapshot();
   if (
     !snapshot.enabled ||
@@ -178,11 +176,22 @@ export function startAdaptiveObservationWindow(durationMs = DEFAULT_OBSERVATION_
     return;
   }
 
-  finishObservationWindow(false);
+  const duration = normalizeObservationDuration(durationMs);
+  if (observationCleanup) {
+    extendObservationDeadline(duration);
+    return;
+  }
+
   currentWindowHadIssue = false;
-  const duration = Math.max(1_000, Math.min(10_000, durationMs));
+  observationWindowStartedAt = Date.now();
+  observationDeadlineAt = Math.min(
+    observationWindowStartedAt + duration,
+    observationWindowStartedAt + MAXIMUM_OBSERVATION_WINDOW_MS,
+  );
   const supported =
-    typeof PerformanceObserver !== "undefined" ? PerformanceObserver.supportedEntryTypes || [] : [];
+    typeof PerformanceObserver !== "undefined"
+      ? PerformanceObserver.supportedEntryTypes || []
+      : [];
 
   if (supported.includes("long-animation-frame")) {
     observationCleanup = observeLongAnimationFrames();
@@ -192,12 +201,14 @@ export function startAdaptiveObservationWindow(durationMs = DEFAULT_OBSERVATION_
     observationCleanup = observeAnimationFrames();
   }
 
-  observationTimeout = window.setTimeout(() => {
-    finishObservationWindow(true);
-  }, duration);
+  scheduleObservationCompletion();
 }
 
 export function startEnhancementObservationWindow(): void {
+  if (observationCleanup) {
+    extendObservationDeadline(ENHANCEMENT_OBSERVATION_WINDOW_MS);
+    return;
+  }
   startAdaptiveObservationWindow(ENHANCEMENT_OBSERVATION_WINDOW_MS);
 }
 
@@ -232,11 +243,23 @@ export function isEnhancementEligible(
 
   return (
     (requirement.rendering === undefined ||
-      isTierAtLeast(value.rendering, requirement.rendering, ["safe", "standard", "enhanced"])) &&
+      isTierAtLeast(value.rendering, requirement.rendering, [
+        "safe",
+        "standard",
+        "enhanced",
+      ])) &&
     (requirement.media === undefined ||
-      isTierAtLeast(value.media, requirement.media, ["economy", "standard", "high"])) &&
+      isTierAtLeast(value.media, requirement.media, [
+        "economy",
+        "standard",
+        "high",
+      ])) &&
     (requirement.motion === undefined ||
-      isTierAtLeast(value.motion, requirement.motion, ["minimal", "standard", "enhanced"]))
+      isTierAtLeast(value.motion, requirement.motion, [
+        "minimal",
+        "standard",
+        "enhanced",
+      ]))
   );
 }
 
@@ -245,7 +268,8 @@ function resolveBootstrapSnapshot(): void {
   didResolveBootstrap = true;
 
   const path = window.location.pathname;
-  const excludedFromAdaptiveQuality = path === "/super-admin" || path.startsWith("/super-admin/");
+  const excludedFromAdaptiveQuality =
+    path === "/super-admin" || path.startsWith("/super-admin/");
 
   if (!ADAPTIVE_QUALITY_FLAGS.enabled || excludedFromAdaptiveQuality) {
     snapshot = {
@@ -269,18 +293,33 @@ function resolveBootstrapSnapshot(): void {
       reason: bootstrap.reason,
       routeGeneration: bootstrap.routeGeneration,
     };
-    sessionConstraint = bootstrap.constraint;
+    deviceBaseline = { ...bootstrap.baselineConstraint };
+    runtimeConstraint = { ...bootstrap.runtimeConstraint };
     rolloutBucket = bootstrap.rolloutBucket;
-    sessionRecord = readAdaptiveQualitySession();
+    sessionRecord =
+      readAdaptiveQualitySession() || sessionRecordFromBootstrap(bootstrap);
+    mobileAdmissionEligible = readLegacyMobileAdmission();
+    expireRuntimePenaltyIfNeeded();
     return;
   }
 
   sessionRecord = readAdaptiveQualitySession();
+  const now = Date.now();
   const capabilities = readAdaptiveCapabilities();
-  const classification = classifyAdaptiveQuality(capabilities, sessionRecord?.constraint);
+  mobileAdmissionEligible = readLegacyMobileAdmission();
+  const persistedRuntimeConstraint =
+    sessionRecord?.penaltyExpiresAt &&
+    sessionRecord.penaltyExpiresAt > now
+      ? sessionRecord.runtimeConstraint
+      : undefined;
+  const classification = classifyAdaptiveQuality(capabilities, {
+    persistedRuntimeConstraint,
+    admittedHighEndMobile: mobileAdmissionEligible,
+  });
   rolloutBucket = sessionRecord?.rolloutBucket ?? createRolloutBucket();
   const inCohort =
-    ADAPTIVE_QUALITY_FLAGS.forceSafe || rolloutBucket < ADAPTIVE_QUALITY_FLAGS.rolloutPercent * 100;
+    ADAPTIVE_QUALITY_FLAGS.forceSafe ||
+    rolloutBucket < ADAPTIVE_QUALITY_FLAGS.rolloutPercent * 100;
 
   if (!inCohort) {
     snapshot = {
@@ -293,9 +332,12 @@ function resolveBootstrapSnapshot(): void {
     return;
   }
 
-  sessionConstraint = ADAPTIVE_QUALITY_FLAGS.forceSafe
+  deviceBaseline = ADAPTIVE_QUALITY_FLAGS.forceSafe
     ? { ...SAFE_CONSTRAINT }
-    : classification.constraint;
+    : classification.baselineConstraint;
+  runtimeConstraint = ADAPTIVE_QUALITY_FLAGS.forceSafe
+    ? { ...SAFE_CONSTRAINT }
+    : classification.runtimeConstraint;
   snapshot = ADAPTIVE_QUALITY_FLAGS.forceSafe
     ? {
         enabled: true,
@@ -305,7 +347,7 @@ function resolveBootstrapSnapshot(): void {
         routeGeneration: 0,
       }
     : classification.snapshot;
-  persistSession(classification.reasons);
+  persistSession();
   applyAdaptiveQualityAttributes(snapshot);
 }
 
@@ -317,7 +359,13 @@ function isValidBootstrap(
       value.schema === ADAPTIVE_QUALITY_SCHEMA &&
       value.policyVersion === ADAPTIVE_QUALITY_POLICY_VERSION &&
       value.buildVersion === ADAPTIVE_QUALITY_BUILD_VERSION &&
+      typeof value.createdAt === "number" &&
+      Number.isFinite(value.createdAt) &&
       typeof value.expiresAt === "number" &&
+      Number.isFinite(value.expiresAt) &&
+      value.createdAt <= value.expiresAt &&
+      value.expiresAt ===
+        value.createdAt + ADAPTIVE_QUALITY_SESSION_TTL_MS &&
       value.expiresAt > Date.now() &&
       Number.isInteger(value.rolloutBucket) &&
       value.rolloutBucket >= 0 &&
@@ -327,103 +375,94 @@ function isValidBootstrap(
       Number.isInteger(value.routeGeneration) &&
       value.routeGeneration >= 0 &&
       isAdaptiveConstraint(value) &&
-      isAdaptiveConstraint(value.constraint) &&
-      isAdaptiveReason(value.reason) &&
-      Array.isArray(value.reasons) &&
-      value.reasons.every(isAdaptiveReason),
+      isAdaptiveConstraint(value.baselineConstraint) &&
+      isAdaptiveConstraint(value.runtimeConstraint) &&
+      isNullableTimestamp(value.penaltyExpiresAt) &&
+      Number.isInteger(value.consecutiveSmoothWindows) &&
+      value.consecutiveSmoothWindows >= 0 &&
+      isNullableTimestamp(value.lastBadAt) &&
+      isAdaptiveReason(value.lastReason) &&
+      isAdaptiveReason(value.reason),
   );
+}
+
+function sessionRecordFromBootstrap(
+  bootstrap: AdaptiveQualityBootstrap,
+): AdaptiveQualitySessionRecord {
+  return {
+    schema: ADAPTIVE_QUALITY_SCHEMA,
+    policyVersion: ADAPTIVE_QUALITY_POLICY_VERSION,
+    buildVersion: ADAPTIVE_QUALITY_BUILD_VERSION,
+    createdAt: bootstrap.createdAt,
+    expiresAt: bootstrap.expiresAt,
+    rolloutBucket: bootstrap.rolloutBucket,
+    runtimeConstraint: { ...bootstrap.runtimeConstraint },
+    penaltyExpiresAt: bootstrap.penaltyExpiresAt,
+    consecutiveSmoothWindows: bootstrap.consecutiveSmoothWindows,
+    lastBadAt: bootstrap.lastBadAt,
+    lastReason: bootstrap.lastReason,
+  };
 }
 
 function releaseControllerReference(): void {
   controllerReferences = Math.max(0, controllerReferences - 1);
   if (controllerReferences > 0) return;
 
-  finishObservationWindow(false);
-  promotionAdmissionGeneration += 1;
+  cancelObservationWindow(true);
+  admissionGeneration += 1;
+  clearPenaltyExpiryTimer();
   for (const cleanup of controllerCleanups.splice(0)) cleanup();
-  if (typeof window !== "undefined") {
-    delete window.__INFINITY_AQ_E2E__;
-  }
+  if (typeof window !== "undefined") delete window.__INFINITY_AQ_E2E__;
   clearAdaptiveQualityAttributes();
 }
 
 function installPreferenceListeners(): Array<() => void> {
   const cleanups: Array<() => void> = [];
-  const reducedMotion = safeMediaQuery("(prefers-reduced-motion: reduce)");
-  const reducedTransparency = safeMediaQuery("(prefers-reduced-transparency: reduce)");
+  const queries = [
+    safeMediaQuery("(prefers-reduced-motion: reduce)"),
+    safeMediaQuery("(prefers-reduced-transparency: reduce)"),
+  ];
 
-  if (reducedMotion) {
-    cleanups.push(
-      listenToMediaQuery(reducedMotion, () => {
-        if (!reducedMotion.matches || snapshot.motion === "minimal") return;
-        sessionConstraint = {
-          ...sessionConstraint,
-          motion: "minimal",
-        };
-        updateSnapshot(
-          { ...snapshot, motion: "minimal", reason: "reduced-motion" },
-          "reduced-motion",
-        );
-        persistSession(["reduced-motion"]);
-      }),
-    );
-  }
-
-  if (reducedTransparency) {
-    cleanups.push(
-      listenToMediaQuery(reducedTransparency, () => {
-        if (!reducedTransparency.matches || snapshot.reducedTransparency) return;
-        updateSnapshot(
-          {
-            ...snapshot,
-            reducedTransparency: true,
-            reason: "reduced-transparency",
-          },
-          "reduced-transparency",
-        );
-        persistSession(["reduced-transparency"]);
-      }),
-    );
+  for (const query of queries) {
+    if (query) {
+      cleanups.push(
+        listenToMediaQuery(query, () => {
+          recomputeEffectiveSnapshot(snapshot.routeGeneration);
+        }),
+      );
+    }
   }
 
   const connection = getNetworkConnection();
   if (connection) {
     const handleConnectionChange = () => {
-      const capabilities = readAdaptiveCapabilities();
-      if (
-        (capabilities.saveData ||
-          capabilities.effectiveType === "slow-2g" ||
-          capabilities.effectiveType === "2g" ||
-          capabilities.effectiveType === "3g") &&
-        snapshot.media !== "economy"
-      ) {
-        const reason = capabilities.saveData ? "save-data" : "slow-connection";
-        sessionConstraint = {
-          ...sessionConstraint,
-          media: "economy",
-        };
-        updateSnapshot({ ...snapshot, media: "economy", reason }, reason);
-        persistSession([reason]);
-      }
+      recomputeEffectiveSnapshot(snapshot.routeGeneration);
     };
     connection.addEventListener?.("change", handleConnectionChange);
-    cleanups.push(() => connection.removeEventListener?.("change", handleConnectionChange));
+    cleanups.push(() =>
+      connection.removeEventListener?.("change", handleConnectionChange),
+    );
   }
 
   const handleVisibilityChange = () => {
     if (document.visibilityState === "hidden") {
-      finishObservationWindow(false);
+      cancelObservationWindow(true);
     } else if (ADAPTIVE_QUALITY_FLAGS.runtimeDowngrade) {
       startAdaptiveObservationWindow(DEFAULT_OBSERVATION_WINDOW_MS);
     }
   };
   document.addEventListener("visibilitychange", handleVisibilityChange);
-  cleanups.push(() => document.removeEventListener("visibilitychange", handleVisibilityChange));
+  cleanups.push(() =>
+    document.removeEventListener("visibilitychange", handleVisibilityChange),
+  );
 
   return cleanups;
 }
 
-function listenToMediaQuery(mediaQuery: MediaQueryList, listener: () => void): () => void {
+function listenToMediaQuery(
+  mediaQuery: MediaQueryList,
+  listener: () => void,
+): () => void {
   if (typeof mediaQuery.addEventListener === "function") {
     mediaQuery.addEventListener("change", listener);
     return () => mediaQuery.removeEventListener("change", listener);
@@ -446,21 +485,34 @@ function observeLongAnimationFrames(): () => void {
     observationSummary.sampleCount += entries.length;
     for (const entry of entries) {
       const blockingDuration = entry.blockingDuration || 0;
-      if (entry.duration >= 300 || blockingDuration >= 150) {
+      if (
+        blockingDuration >=
+        ADAPTIVE_QUALITY_POLICY_CONFIG.loaf.severeBlockingDurationMs
+      ) {
         observationSummary.issueCount += 1;
         observationSummary.severeCount += 1;
-        currentWindowHadIssue = true;
-        requestDowngrade("severe-loaf", true);
+        currentWindowHadIssue =
+          requestDowngrade("severe-loaf", true) || currentWindowHadIssue;
         continue;
       }
-      if (entry.duration >= 120 || blockingDuration >= 50) {
+      if (
+        entry.duration >=
+        ADAPTIVE_QUALITY_POLICY_CONFIG.loaf.diagnosticDurationMs
+      ) {
         observationSummary.issueCount += 1;
+      }
+      if (
+        entry.duration >=
+          ADAPTIVE_QUALITY_POLICY_CONFIG.loaf.repeatedDurationMs ||
+        blockingDuration >=
+          ADAPTIVE_QUALITY_POLICY_CONFIG.loaf.repeatedBlockingDurationMs
+      ) {
         repeated += 1;
       }
     }
-    if (repeated >= 3) {
-      currentWindowHadIssue = true;
-      requestDowngrade("repeated-loaf", false);
+    if (repeated >= ADAPTIVE_QUALITY_POLICY_CONFIG.loaf.repeatedCount) {
+      currentWindowHadIssue =
+        requestDowngrade("repeated-loaf", false) || currentWindowHadIssue;
       repeated = 0;
     }
   });
@@ -486,8 +538,8 @@ function observeLongTasks(): () => void {
       if (entry.duration >= 300) {
         observationSummary.issueCount += 1;
         observationSummary.severeCount += 1;
-        currentWindowHadIssue = true;
-        requestDowngrade("severe-long-task", true);
+        currentWindowHadIssue =
+          requestDowngrade("severe-long-task", true) || currentWindowHadIssue;
         continue;
       }
       if (entry.duration >= 80) {
@@ -496,8 +548,8 @@ function observeLongTasks(): () => void {
       }
     }
     if (repeated >= 3) {
-      currentWindowHadIssue = true;
-      requestDowngrade("repeated-long-task", false);
+      currentWindowHadIssue =
+        requestDowngrade("repeated-long-task", false) || currentWindowHadIssue;
       repeated = 0;
     }
   });
@@ -516,26 +568,30 @@ function observeAnimationFrames(): () => void {
   setObservationKind("raf");
   let frameId = 0;
   let previousTime: number | null = null;
-  const deltas: number[] = [];
+  let deltas: number[] = [];
 
   const sample = (time: number) => {
-    if (document.visibilityState === "hidden") return;
-    if (previousTime !== null) deltas.push(time - previousTime);
-    previousTime = time;
-
-    if (deltas.length >= MAX_RAF_SAMPLES) {
-      evaluateAnimationFrames(deltas);
-      observationFinalize = null;
-      return;
+    if (document.visibilityState !== "hidden") {
+      if (previousTime !== null) {
+        deltas.push(time - previousTime);
+        if (deltas.length > MAX_RAF_SAMPLES) {
+          deltas = deltas.slice(-MAX_RAF_SAMPLES);
+        }
+      }
+      previousTime = time;
+    } else {
+      previousTime = null;
     }
     frameId = window.requestAnimationFrame(sample);
   };
 
   frameId = window.requestAnimationFrame(sample);
-  observationFinalize = () => evaluateAnimationFrames(deltas);
-  return () => {
-    window.cancelAnimationFrame(frameId);
+  observationFinalize = () => {
+    evaluateAnimationFrames(deltas);
+    deltas = [];
+    previousTime = null;
   };
+  return () => window.cancelAnimationFrame(frameId);
 }
 
 function evaluateAnimationFrames(allDeltas: number[]): void {
@@ -545,11 +601,12 @@ function evaluateAnimationFrames(allDeltas: number[]): void {
   observationSummary.sampleCount += deltas.length;
   observationSummary.issueCount += slowFrames;
   const sorted = [...deltas].sort((a, b) => a - b);
-  const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+  const p95 =
+    sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
 
   if (slowFrames >= 5 && p95 > 40) {
-    currentWindowHadIssue = true;
-    requestDowngrade("raf-jank", false);
+    currentWindowHadIssue =
+      requestDowngrade("raf-jank", false) || currentWindowHadIssue;
   }
 }
 
@@ -561,53 +618,81 @@ function setObservationKind(kind: AdaptiveObserverKind): void {
 
 function requestDowngrade(
   reason: AdaptiveQualityReason,
-  severe: boolean,
+  _severe: boolean,
   ignoreCooldown = false,
-): void {
-  if (!snapshot.enabled) return;
-  if (severe) {
-    sessionRecord =
-      sessionRecord ||
-      createAdaptiveQualitySessionRecord({
-        constraint: sessionConstraint,
-        rolloutBucket,
-      });
-    sessionRecord.sessionHadSevereEvent = true;
-    persistSession([reason]);
+): boolean {
+  if (!snapshot.enabled || ADAPTIVE_QUALITY_FLAGS.forceSafe) return false;
+
+  const performanceNow =
+    typeof performance === "undefined" ? Date.now() : performance.now();
+  if (
+    !ignoreCooldown &&
+    performanceNow - lastDowngradeAt < DOWNGRADE_COOLDOWN_MS
+  ) {
+    return false;
   }
 
-  const now = performance.now();
-  if (!ignoreCooldown && now - lastDowngradeAt < DOWNGRADE_COOLDOWN_MS) return;
-  const downgraded = downgradeConstraint(snapshot);
-  if (!downgraded) return;
+  const downgraded = downgradeConstraint(runtimeConstraint);
+  if (!downgraded) return false;
 
-  lastDowngradeAt = now;
-  sessionConstraint = clampConstraint(sessionConstraint, downgraded);
-  sessionRecord = {
-    ...(sessionRecord ||
-      createAdaptiveQualitySessionRecord({
-        constraint: sessionConstraint,
-        rolloutBucket,
-      })),
-    constraint: sessionConstraint,
-    smoothWindows: 0,
-    smoothRouteGenerations: 0,
-    sessionHadDowngrade: true,
-    sessionHadSevereEvent: severe || sessionRecord?.sessionHadSevereEvent === true,
-  };
+  const now = Date.now();
+  lastDowngradeAt = performanceNow;
+  runtimeConstraint = clampConstraint(deviceBaseline, downgraded);
+  sessionRecord = createAdaptiveQualitySessionRecord({
+    runtimeConstraint,
+    rolloutBucket,
+    previous: sessionRecord,
+    penaltyExpiresAt: now + ADAPTIVE_QUALITY_PENALTY_TTL_MS,
+    consecutiveSmoothWindows: 0,
+    lastBadAt: now,
+    lastReason: reason,
+  });
+  currentWindowHadIssue = true;
+  recomputeEffectiveSnapshot(snapshot.routeGeneration, reason);
+  persistSession();
+  schedulePenaltyExpiry();
 
-  updateSnapshot(
-    {
-      ...snapshot,
-      ...downgraded,
-      reason,
-    },
-    reason,
-  );
-  persistSession([reason]);
+  if (!observationCleanup && ADAPTIVE_QUALITY_FLAGS.runtimeDowngrade) {
+    startAdaptiveObservationWindow(DEFAULT_OBSERVATION_WINDOW_MS);
+  }
+  return true;
 }
 
-function updateSnapshot(next: AdaptiveQualitySnapshot, reason: AdaptiveQualityReason): void {
+function recomputeEffectiveSnapshot(
+  routeGeneration = snapshot.routeGeneration,
+  reasonOverride?: AdaptiveQualityReason,
+): void {
+  const capabilities = readAdaptiveCapabilities();
+  const reason =
+    reasonOverride ||
+    (isConstraintBelow(runtimeConstraint, deviceBaseline)
+      ? sessionRecord?.lastReason || "session-constraint"
+      : "default");
+  const next = ADAPTIVE_QUALITY_FLAGS.forceSafe
+    ? {
+        enabled: true,
+        ...SAFE_CONSTRAINT,
+        reducedTransparency: capabilities.reducedTransparency === true,
+        reason: "force-safe" as const,
+        routeGeneration,
+      }
+    : applyCurrentPreferences(
+        {
+          enabled: true,
+          ...runtimeConstraint,
+          reducedTransparency: false,
+          reason,
+          routeGeneration,
+        },
+        capabilities,
+      );
+  updateSnapshot(next, next.reason);
+}
+
+function updateSnapshot(
+  next: AdaptiveQualitySnapshot,
+  reason: AdaptiveQualityReason,
+): void {
   if (
     snapshot.enabled === next.enabled &&
     snapshot.rendering === next.rendering &&
@@ -627,116 +712,281 @@ function updateSnapshot(next: AdaptiveQualitySnapshot, reason: AdaptiveQualityRe
   subscribers.forEach((listener) => listener());
 
   if (typeof window !== "undefined") {
-    const detail: AdaptiveQualityChange = { previous, current: snapshot, reason };
+    const detail: AdaptiveQualityChange = {
+      previous,
+      current: snapshot,
+      reason,
+    };
     window.dispatchEvent(
-      new CustomEvent<AdaptiveQualityChange>(ADAPTIVE_QUALITY_EVENT, { detail }),
+      new CustomEvent<AdaptiveQualityChange>(ADAPTIVE_QUALITY_EVENT, {
+        detail,
+      }),
     );
   }
 }
 
-function finishObservationWindow(recordSmoothWindow: boolean): void {
-  if (typeof window !== "undefined" && observationTimeout) {
-    window.clearTimeout(observationTimeout);
-  }
-  observationTimeout = 0;
-  const finalize = observationFinalize;
-  observationFinalize = null;
-  if (recordSmoothWindow) finalize?.();
-  const cleanup = observationCleanup;
-  observationCleanup = null;
-  cleanup?.();
+function completeObservationWindow(): void {
+  if (!observationCleanup || !snapshot.enabled) return;
+  clearObservationCompletionTimer();
+  observationFinalize?.();
 
-  if (!recordSmoothWindow || !snapshot.enabled) return;
   sessionRecord =
     sessionRecord ||
     createAdaptiveQualitySessionRecord({
-      constraint: sessionConstraint,
+      runtimeConstraint,
       rolloutBucket,
     });
+
   if (currentWindowHadIssue) {
-    sessionRecord.smoothWindows = 0;
-    sessionRecord.smoothRouteGenerations = 0;
-    sessionRecord.lastSmoothRouteGeneration = 0;
-    persistSession();
-    return;
+    sessionRecord = createAdaptiveQualitySessionRecord({
+      runtimeConstraint,
+      rolloutBucket,
+      previous: sessionRecord,
+      consecutiveSmoothWindows: 0,
+    });
+  } else if (isConstraintBelow(runtimeConstraint, deviceBaseline)) {
+    const consecutiveSmoothWindows =
+      sessionRecord.consecutiveSmoothWindows + 1;
+    sessionRecord = createAdaptiveQualitySessionRecord({
+      runtimeConstraint,
+      rolloutBucket,
+      previous: sessionRecord,
+      consecutiveSmoothWindows,
+    });
+    maybeRecoverRuntimeConstraint();
+  } else {
+    sessionRecord = createAdaptiveQualitySessionRecord({
+      runtimeConstraint,
+      rolloutBucket,
+      previous: sessionRecord,
+      consecutiveSmoothWindows: 0,
+      penaltyExpiresAt: null,
+    });
   }
 
-  sessionRecord.smoothWindows += 1;
-  if (sessionRecord.lastSmoothRouteGeneration !== snapshot.routeGeneration) {
-    sessionRecord.smoothRouteGenerations += 1;
-    sessionRecord.lastSmoothRouteGeneration = snapshot.routeGeneration;
-  }
   persistSession();
+  currentWindowHadIssue = false;
 
-  queuePromotionIfEligible();
+  if (
+    isConstraintBelow(runtimeConstraint, deviceBaseline) &&
+    ADAPTIVE_QUALITY_FLAGS.runtimeDowngrade &&
+    document.visibilityState !== "hidden"
+  ) {
+    beginNextLogicalObservationWindow();
+  } else {
+    cancelObservationWindow();
+  }
 }
 
-function resolvePromotionAdmission(): void {
-  if (!ADAPTIVE_QUALITY_FLAGS.promotion || typeof window === "undefined") {
-    promotionAdmission = "ineligible";
+function maybeRecoverRuntimeConstraint(): void {
+  if (
+    !ADAPTIVE_QUALITY_FLAGS.promotion ||
+    !sessionRecord ||
+    sessionRecord.consecutiveSmoothWindows < RECOVERY_WINDOWS
+  ) {
     return;
   }
-
-  promotionAdmission = "pending";
-  const generation = ++promotionAdmissionGeneration;
-  void resolveHighEndUserAgentAdmission(window.navigator).then((decision) => {
-    if (generation !== promotionAdmissionGeneration || controllerReferences === 0) {
-      return;
-    }
-    promotionAdmission = decision.eligible ? "eligible" : "ineligible";
-    if (promotionAdmission === "eligible") {
-      queuePromotionIfEligible();
-    }
-  });
-}
-
-function queuePromotionIfEligible(): void {
+  const now = Date.now();
   if (
-    !sessionRecord ||
-    sessionRecord.smoothWindows < 3 ||
-    sessionRecord.smoothRouteGenerations < 2 ||
-    sessionRecord.sessionHadDowngrade ||
-    sessionRecord.sessionHadSevereEvent ||
-    promotionAdmission !== "eligible"
+    sessionRecord.lastBadAt !== null &&
+    now - sessionRecord.lastBadAt < MINIMUM_RECOVERY_DELAY_MS
   ) {
     return;
   }
 
-  pendingPromotion = true;
-  if (!promotionEventSent && typeof window !== "undefined") {
-    promotionEventSent = true;
+  const promoted = promoteConstraint(runtimeConstraint, deviceBaseline);
+  if (!promoted) return;
+
+  runtimeConstraint = promoted;
+  const fullyRecovered = areConstraintsEqual(runtimeConstraint, deviceBaseline);
+  sessionRecord = createAdaptiveQualitySessionRecord({
+    runtimeConstraint,
+    rolloutBucket,
+    previous: sessionRecord,
+    penaltyExpiresAt: fullyRecovered
+      ? null
+      : sessionRecord.penaltyExpiresAt,
+    consecutiveSmoothWindows: 0,
+    lastReason: "promotion",
+  });
+  recomputeEffectiveSnapshot(snapshot.routeGeneration, "promotion");
+  if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(ADAPTIVE_QUALITY_PROMOTION_EVENT));
   }
 }
 
-function persistSession(reasons: AdaptiveQualityReason[] = []): void {
-  if (typeof window === "undefined" || !snapshot.enabled) return;
-  const previous =
-    sessionRecord ||
-    readAdaptiveQualitySession() ||
-    createAdaptiveQualitySessionRecord({
-      constraint: sessionConstraint,
-      rolloutBucket: rolloutBucket || createRolloutBucket(),
-    });
+function beginNextLogicalObservationWindow(): void {
+  currentWindowHadIssue = false;
+  observationWindowStartedAt = Date.now();
+  observationDeadlineAt =
+    observationWindowStartedAt + DEFAULT_OBSERVATION_WINDOW_MS;
+  scheduleObservationCompletion();
+}
 
-  rolloutBucket = previous.rolloutBucket;
-  const persistedReasons = reasons.length
-    ? Array.from(new Set([...previous.reasons, ...reasons]))
-    : previous.reasons;
-  sessionRecord = {
-    ...createAdaptiveQualitySessionRecord({
-      constraint: sessionConstraint,
+function cancelObservationWindow(resetRecoveryEvidence = false): void {
+  clearObservationCompletionTimer();
+  const cleanup = observationCleanup;
+  observationCleanup = null;
+  observationFinalize = null;
+  cleanup?.();
+  observationWindowStartedAt = 0;
+  observationDeadlineAt = 0;
+  currentWindowHadIssue = false;
+  if (
+    resetRecoveryEvidence &&
+    sessionRecord &&
+    sessionRecord.consecutiveSmoothWindows > 0 &&
+    isConstraintBelow(runtimeConstraint, deviceBaseline)
+  ) {
+    sessionRecord = createAdaptiveQualitySessionRecord({
+      runtimeConstraint,
       rolloutBucket,
-      reasons: persistedReasons,
-      previous,
-    }),
-    smoothWindows: previous.smoothWindows,
-    smoothRouteGenerations: previous.smoothRouteGenerations,
-    lastSmoothRouteGeneration: previous.lastSmoothRouteGeneration,
-    sessionHadDowngrade: previous.sessionHadDowngrade,
-    sessionHadSevereEvent: previous.sessionHadSevereEvent,
-  };
-  writeAdaptiveQualitySession(sessionRecord);
+      previous: sessionRecord,
+      consecutiveSmoothWindows: 0,
+    });
+    persistSession();
+  }
+}
+
+function extendObservationDeadline(extensionMs: number): void {
+  if (!observationCleanup) return;
+  const maximumDeadline =
+    observationWindowStartedAt + MAXIMUM_OBSERVATION_WINDOW_MS;
+  observationDeadlineAt = Math.min(
+    maximumDeadline,
+    Math.max(observationDeadlineAt, Date.now() + extensionMs),
+  );
+  scheduleObservationCompletion();
+}
+
+function scheduleObservationCompletion(): void {
+  if (typeof window === "undefined" || !observationCleanup) return;
+  clearObservationCompletionTimer();
+  observationTimeout = window.setTimeout(
+    completeObservationWindow,
+    Math.max(0, observationDeadlineAt - Date.now()),
+  );
+}
+
+function clearObservationCompletionTimer(): void {
+  if (typeof window !== "undefined" && observationTimeout) {
+    window.clearTimeout(observationTimeout);
+  }
+  observationTimeout = 0;
+}
+
+function normalizeObservationDuration(durationMs: number): number {
+  if (!Number.isFinite(durationMs)) return DEFAULT_OBSERVATION_WINDOW_MS;
+  return Math.max(1_000, Math.min(MAXIMUM_OBSERVATION_WINDOW_MS, durationMs));
+}
+
+function resolveMobileAdmission(): void {
+  if (
+    !ADAPTIVE_QUALITY_FLAGS.promotion ||
+    ADAPTIVE_QUALITY_FLAGS.forceSafe ||
+    typeof window === "undefined"
+  ) {
+    return;
+  }
+
+  const generation = ++admissionGeneration;
+  void resolveHighEndUserAgentAdmission(window.navigator).then((decision) => {
+    if (
+      generation !== admissionGeneration ||
+      controllerReferences === 0 ||
+      !decision.eligible
+    ) {
+      return;
+    }
+    mobileAdmissionEligible = true;
+    const classification = classifyAdaptiveQuality(readAdaptiveCapabilities(), {
+      admittedHighEndMobile: true,
+    });
+    if (areConstraintsEqual(deviceBaseline, classification.baselineConstraint)) {
+      return;
+    }
+    deviceBaseline = classification.baselineConstraint;
+    runtimeConstraint = clampConstraint(deviceBaseline, runtimeConstraint);
+    persistSession();
+    if (!observationCleanup && ADAPTIVE_QUALITY_FLAGS.runtimeDowngrade) {
+      startAdaptiveObservationWindow(DEFAULT_OBSERVATION_WINDOW_MS);
+    }
+  });
+}
+
+function readLegacyMobileAdmission(): boolean {
+  try {
+    return classifyHighEndUserAgent({
+      userAgent: window.navigator.userAgent,
+    }).eligible;
+  } catch {
+    return false;
+  }
+}
+
+function expireRuntimePenaltyIfNeeded(now = Date.now()): void {
+  if (
+    !sessionRecord ||
+    sessionRecord.penaltyExpiresAt === null ||
+    sessionRecord.penaltyExpiresAt > now
+  ) {
+    return;
+  }
+
+  runtimeConstraint = { ...deviceBaseline };
+  sessionRecord = createAdaptiveQualitySessionRecord({
+    runtimeConstraint,
+    rolloutBucket,
+    previous: sessionRecord,
+    penaltyExpiresAt: null,
+    consecutiveSmoothWindows: 0,
+    lastReason: "promotion",
+  });
+  if (snapshot.enabled) {
+    recomputeEffectiveSnapshot(snapshot.routeGeneration, "promotion");
+  }
+  persistSession();
+  clearPenaltyExpiryTimer();
+}
+
+function schedulePenaltyExpiry(): void {
+  clearPenaltyExpiryTimer();
+  if (
+    typeof window === "undefined" ||
+    controllerReferences === 0 ||
+    !sessionRecord?.penaltyExpiresAt
+  ) {
+    return;
+  }
+  penaltyExpiryTimeout = window.setTimeout(
+    () => expireRuntimePenaltyIfNeeded(),
+    Math.max(0, sessionRecord.penaltyExpiresAt - Date.now()),
+  );
+}
+
+function clearPenaltyExpiryTimer(): void {
+  if (typeof window !== "undefined" && penaltyExpiryTimeout) {
+    window.clearTimeout(penaltyExpiryTimeout);
+  }
+  penaltyExpiryTimeout = 0;
+}
+
+function persistSession(): void {
+  if (typeof window === "undefined" || !snapshot.enabled) return;
+  const now = Date.now();
+  const previous =
+    sessionRecord && sessionRecord.expiresAt > now
+      ? sessionRecord
+      : readAdaptiveQualitySession(now);
+  sessionRecord = createAdaptiveQualitySessionRecord({
+    runtimeConstraint,
+    rolloutBucket,
+    previous,
+  });
+  rolloutBucket = sessionRecord.rolloutBucket;
+  if (writeAdaptiveQualitySession(sessionRecord)) {
+    removeLegacyAdaptiveQualitySessions();
+  }
 }
 
 function installE2EAdapter(): void {
@@ -747,18 +997,14 @@ function installE2EAdapter(): void {
     },
     setTier: (constraint) => {
       if (!isAdaptiveConstraint(constraint)) return;
-      sessionConstraint = { ...constraint };
-      updateSnapshot(
-        {
-          ...snapshot,
-          ...constraint,
-          enabled: true,
-          reason: "default",
-        },
-        "default",
-      );
+      runtimeConstraint = { ...constraint };
+      deviceBaseline = { ...COMPATIBILITY_CONSTRAINT };
+      recomputeEffectiveSnapshot(snapshot.routeGeneration, "default");
+      persistSession();
     },
-    startObservationWindow: (durationMs) => startAdaptiveObservationWindow(durationMs),
+    startObservationWindow: (durationMs) =>
+      startAdaptiveObservationWindow(durationMs),
+    completeObservationWindow,
     route: notifyAdaptiveRoute,
     snapshot: () => getSnapshot(),
   };
@@ -772,23 +1018,29 @@ function isTierAtLeast<T extends RenderingTier | MediaTier | MotionTier>(
   return order.indexOf(current) >= order.indexOf(required);
 }
 
+function isNullableTimestamp(value: unknown): value is number | null {
+  return (
+    value === null ||
+    (typeof value === "number" && Number.isFinite(value) && value >= 0)
+  );
+}
+
 export function __resetAdaptiveQualityForTesting(): void {
   if (process.env.NODE_ENV === "production") return;
-  finishObservationWindow(false);
+  cancelObservationWindow();
+  clearPenaltyExpiryTimer();
   for (const cleanup of controllerCleanups.splice(0)) cleanup();
   subscribers = new Set();
   snapshot = SERVER_SNAPSHOT;
   didResolveBootstrap = false;
   controllerReferences = 0;
-  currentWindowHadIssue = false;
   lastDowngradeAt = Number.NEGATIVE_INFINITY;
-  sessionConstraint = { ...STANDARD_CONSTRAINT };
+  deviceBaseline = { ...STANDARD_CONSTRAINT };
+  runtimeConstraint = { ...STANDARD_CONSTRAINT };
   sessionRecord = null;
   rolloutBucket = 0;
-  pendingPromotion = false;
-  promotionEventSent = false;
-  promotionAdmission = "pending";
-  promotionAdmissionGeneration += 1;
+  mobileAdmissionEligible = false;
+  admissionGeneration += 1;
   loadedEnhancements = new Set();
   observationSummary = {
     observer: "none",

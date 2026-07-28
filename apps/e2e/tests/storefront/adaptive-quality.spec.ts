@@ -1,12 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  expect,
-  test,
-  type Page,
-  type Request,
-} from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import {
   E2E_CATEGORY_SLUG,
   E2E_PRODUCT_SLUG,
@@ -56,6 +51,7 @@ declare global {
         motion: AdaptiveSnapshot["motion"];
       }) => void;
       startObservationWindow: (durationMs?: number) => void;
+      completeObservationWindow: () => void;
       route: () => void;
       snapshot: () => AdaptiveSnapshot;
     };
@@ -82,18 +78,38 @@ const forbiddenChunkMarkers = [
   { family: "glass-surface", markers: ["glass-filter-", "distortionScale"] },
 ] as const;
 
+const expectedHarnessConsoleErrors = [
+  "The Content Security Policy directive 'frame-ancestors' is ignored when delivered in a report-only policy.",
+  "was delivered in report-only mode, but does not specify a 'report-to'; the policy will have no effect.",
+  "Failed to preconnect to https://media.infinitycolor.test/. Error: Error resolving",
+] as const;
+
+const localRscAccessControlError =
+  /^\/(?:127\.0\.0\.1|localhost):\d+\/.*[?&]_rsc=.* due to access control checks\.$/;
+
 function collectStrictRuntimeErrors(page: Page) {
   const errors: string[] = [];
   page.on("pageerror", (error) => {
+    if (
+      page.context().browser()?.browserType().name() === "webkit" &&
+      localRscAccessControlError.test(error.message)
+    ) {
+      return;
+    }
     errors.push(`pageerror: ${error.message}`);
   });
   page.on("console", (message) => {
-    if (message.type() === "error") {
-      const location = message.location().url;
-      errors.push(
-        `console.error: ${message.text()}${location ? ` (${location})` : ""}`,
-      );
+    if (message.type() !== "error") return;
+
+    const text = message.text();
+    if (expectedHarnessConsoleErrors.some((marker) => text.includes(marker))) {
+      return;
     }
+
+    const location = message.location().url;
+    errors.push(
+      `console.error: ${text}${location ? ` (${location})` : ""}`,
+    );
   });
   return {
     errors,
@@ -184,6 +200,14 @@ async function installAdaptiveCapabilities(page: Page, preset: AdaptivePreset) {
       configurable: true,
       value: connection,
     });
+    (
+      window as Window & {
+        __AQ_CONNECTION__?: EventTarget & {
+          saveData?: boolean;
+          effectiveType?: string;
+        };
+      }
+    ).__AQ_CONNECTION__ = connection;
 
     if (options.quietPerformanceObserver) {
       class QuietPerformanceObserver {
@@ -201,7 +225,7 @@ async function installAdaptiveCapabilities(page: Page, preset: AdaptivePreset) {
     }
 
     if (options.blockSessionStorage) {
-      const blockedKey = "infinity:adaptive-quality:v1";
+      const blockedKey = "infinity:adaptive-quality:v2";
       const storage = window.sessionStorage;
       const originalGetItem = storage.getItem.bind(storage);
       const originalSetItem = storage.setItem.bind(storage);
@@ -320,6 +344,42 @@ test.describe("automatic adaptive quality", () => {
     await installLocalMediaFixture(page);
   });
 
+  test("capable desktop starts at peak before hydration without UA spoofing", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "chromium-desktop",
+      "One deterministic desktop project proves the capability baseline.",
+    );
+    await installAdaptiveCapabilities(page, {
+      memory: 8,
+      cores: 8,
+      effectiveType: "4g",
+    });
+
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
+
+    expect(await bootstrapCapture(page)).toEqual({
+      scope: "storefront",
+      rendering: "enhanced",
+      media: "high",
+      motion: "enhanced",
+      transparency: "normal",
+    });
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-aq-rendering",
+      "enhanced",
+    );
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-aq-media",
+      "high",
+    );
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-aq-motion",
+      "enhanced",
+    );
+  });
+
   test("strong-first classification reaches full Safe without weakening commerce", async ({
     page,
   }) => {
@@ -408,7 +468,9 @@ test.describe("automatic adaptive quality", () => {
     await expect
       .poll(() =>
         page.evaluate((title) => {
-          const cart = JSON.parse(localStorage.getItem("cart") || "[]") as Array<{
+          const cart = JSON.parse(
+            localStorage.getItem("cart") || "[]",
+          ) as Array<{
             name?: string;
             quantity?: number;
           }>;
@@ -431,6 +493,115 @@ test.describe("automatic adaptive quality", () => {
       requests.filter((request) => isOptionalMediaRequest(request.url())),
     ).toEqual([]);
     expect(await requestedForbiddenChunks(requests)).toEqual([]);
+    runtime.assertClean();
+  });
+
+  test("product-card hover glass and previews survive Safe quality", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "chromium-desktop",
+      "Desktop hover behavior only needs one deterministic production browser.",
+    );
+    const runtime = collectStrictRuntimeErrors(page);
+    await installAdaptiveCapabilities(page, {
+      memory: 2,
+      cores: 2,
+      saveData: true,
+      reducedTransparency: true,
+    });
+
+    await page.goto(`/plp/category/${E2E_CATEGORY_SLUG}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await expect
+      .poll(() => page.evaluate(() => Boolean(window.__INFINITY_AQ_E2E__)))
+      .toBe(true);
+    await page.evaluate(() =>
+      window.__INFINITY_AQ_E2E__?.setTier({
+        rendering: "safe",
+        media: "economy",
+        motion: "minimal",
+      }),
+    );
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-aq-rendering",
+      "safe",
+    );
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-aq-transparency",
+      "reduced",
+    );
+
+    const card = page
+      .locator(
+        `[data-testid="product-card"][data-product-slug="${E2E_PRODUCT_SLUG}"]:visible`,
+      )
+      .filter({ has: page.getByTestId("product-card-quick-view") })
+      .first();
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await card.hover();
+
+    await expect(card.getByTestId("product-card-quick-view")).toHaveCSS(
+      "opacity",
+      "1",
+    );
+    await expect(card.getByTestId("product-card-share")).toHaveCSS(
+      "opacity",
+      "1",
+    );
+    await expect
+      .poll(() =>
+        card.getByTestId("product-card-variation-overlay").evaluate((element) => {
+          const transform = getComputedStyle(element).transform;
+          if (transform === "none") return true;
+
+          const matrix = new DOMMatrixReadOnly(transform);
+          return (
+            matrix.is2D &&
+            matrix.a === 1 &&
+            matrix.b === 0 &&
+            matrix.c === 0 &&
+            matrix.d === 1 &&
+            matrix.e === 0 &&
+            matrix.f === 0
+          );
+        }),
+      )
+      .toBe(true);
+
+    const hoverStyles = await card.evaluate((element) => {
+      const styles = (selector: string) => {
+        const target = element.querySelector(selector);
+        if (!(target instanceof HTMLElement)) return null;
+        const computed = getComputedStyle(target);
+        return {
+          backdropFilter:
+            computed.backdropFilter ||
+            computed.getPropertyValue("-webkit-backdrop-filter"),
+          backgroundColor: computed.backgroundColor,
+          display: computed.display,
+          opacity: computed.opacity,
+          transform: computed.transform,
+        };
+      };
+
+      return {
+        favorite: styles('[data-testid="product-card-favorite"]'),
+        swatches: styles(".product-card-color-badge"),
+        variation: styles('[data-testid="product-card-variation-overlay"]'),
+      };
+    });
+
+    expect(hoverStyles.favorite?.backdropFilter).toContain("blur(3.65px)");
+    expect(hoverStyles.favorite?.backgroundColor).toContain("0.14");
+    expect(hoverStyles.swatches?.backdropFilter).toContain("blur(3.65px)");
+    expect(hoverStyles.swatches?.backgroundColor).toContain("0.14");
+    expect(hoverStyles.variation?.backdropFilter).toContain("blur(12px)");
+    expect(hoverStyles.variation?.display).toBe("block");
+    expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(
+      hoverStyles.variation?.transform,
+    );
     runtime.assertClean();
   });
 
@@ -495,9 +666,7 @@ test.describe("automatic adaptive quality", () => {
         };
       });
       expect(geometry.contentLeft).toBeGreaterThanOrEqual(0);
-      expect(geometry.contentRight).toBeLessThanOrEqual(
-        geometry.viewportWidth,
-      );
+      expect(geometry.contentRight).toBeLessThanOrEqual(geometry.viewportWidth);
     };
 
     await assertFullBleed('[data-home-full-bleed="newest"]');
@@ -514,14 +683,16 @@ test.describe("automatic adaptive quality", () => {
     const discounted = page.locator('[data-home-full-bleed="discounted"]');
     await expect(discounted).toBeVisible({ timeout: 30_000 });
     await assertFullBleed('[data-home-full-bleed="discounted"]');
-    await assertContentContained(
-      '[data-home-contained-content="discounted"]',
-    );
+    await assertContentContained('[data-home-contained-content="discounted"]');
   });
 
-  test("expired and version-mismatched session records are discarded", async ({
+  test("the supplied v1.2 Safe record is discarded and replaced by v2", async ({
     page,
-  }) => {
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "chromium-desktop",
+      "One capable desktop proves the cross-schema migration.",
+    );
     const runtime = collectStrictRuntimeErrors(page);
     await installAdaptiveCapabilities(page, {
       memory: 8,
@@ -532,43 +703,56 @@ test.describe("automatic adaptive quality", () => {
         "infinity:adaptive-quality:v1",
         JSON.stringify({
           schema: 1,
-          policyVersion: "stale-policy",
-          buildVersion: "stale-build",
-          expiresAt: Date.now() - 1,
-          rolloutBucket: 4,
+          policyVersion: "1.2.0",
+          buildVersion: "8a03fc7-1785240384007",
+          expiresAt: 1785263452859,
+          lastSmoothRouteGeneration: 17,
+          rolloutBucket: 7396,
           constraint: {
             rendering: "safe",
             media: "economy",
             motion: "minimal",
           },
-          reasons: ["session-constraint"],
+          reasons: ["default", "slow-connection", "severe-loaf"],
+          sessionHadDowngrade: true,
+          sessionHadSevereEvent: true,
+          smoothRouteGenerations: 1,
+          smoothWindows: 1,
         }),
       );
     });
 
     await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     expect(await bootstrapCapture(page)).toMatchObject({
-      rendering: "standard",
-      media: "standard",
-      motion: "standard",
+      rendering: "enhanced",
+      media: "high",
+      motion: "enhanced",
     });
     expect(
       await page.evaluate(() => {
+        const oldRecord = sessionStorage.getItem(
+          "infinity:adaptive-quality:v1",
+        );
         const record = JSON.parse(
-          sessionStorage.getItem("infinity:adaptive-quality:v1") || "{}",
+          sessionStorage.getItem("infinity:adaptive-quality:v2") || "{}",
         );
         return {
+          oldRecord,
           isFresh: record.expiresAt > Date.now(),
+          schema: record.schema,
           policyVersion: record.policyVersion,
-          constraint: record.constraint,
+          runtimeConstraint: record.runtimeConstraint,
         };
       }),
     ).toMatchObject({
+      oldRecord: null,
       isFresh: true,
-      constraint: {
-        rendering: "standard",
-        media: "standard",
-        motion: "standard",
+      schema: 2,
+      policyVersion: "2.0.0",
+      runtimeConstraint: {
+        rendering: "enhanced",
+        media: "high",
+        motion: "enhanced",
       },
     });
     runtime.assertClean();
@@ -576,8 +760,8 @@ test.describe("automatic adaptive quality", () => {
 
   test("session constraints remain isolated between tabs", async ({ page }) => {
     await installAdaptiveCapabilities(page, {
-      memory: 8,
-      cores: 8,
+      memory: 4,
+      cores: 4,
     });
     await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     await expect
@@ -592,8 +776,8 @@ test.describe("automatic adaptive quality", () => {
 
     const secondPage = await page.context().newPage();
     await installAdaptiveCapabilities(secondPage, {
-      memory: 8,
-      cores: 8,
+      memory: 4,
+      cores: 4,
     });
     await secondPage.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
     await expect
@@ -614,8 +798,8 @@ test.describe("automatic adaptive quality", () => {
   }) => {
     const runtime = collectStrictRuntimeErrors(page);
     await installAdaptiveCapabilities(page, {
-      memory: 8,
-      cores: 8,
+      memory: 4,
+      cores: 4,
       effectiveType: "3g",
       reducedMotion: true,
       reducedTransparency: true,
@@ -625,12 +809,100 @@ test.describe("automatic adaptive quality", () => {
     expect(await bootstrapCapture(page)).toEqual({
       scope: "storefront",
       rendering: "standard",
-      media: "economy",
+      media: "standard",
       motion: "minimal",
       transparency: "reduced",
     });
     await expect(page.locator('[data-aq-hero="standard"]')).toHaveCount(1);
     runtime.assertClean();
+  });
+
+  test("3g to 4g restores High media without mutating runtime storage", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "chromium-desktop",
+      "One capable desktop proves the reversible network overlay.",
+    );
+    await installAdaptiveCapabilities(page, {
+      memory: 8,
+      cores: 8,
+      effectiveType: "3g",
+      quietPerformanceObserver: true,
+    });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
+    await expect
+      .poll(() => page.evaluate(() => Boolean(window.__INFINITY_AQ_E2E__)))
+      .toBe(true);
+    expect(await adaptiveSnapshot(page)).toMatchObject({
+      rendering: "enhanced",
+      media: "standard",
+      motion: "enhanced",
+    });
+    const before = await page.evaluate(() =>
+      JSON.parse(
+        sessionStorage.getItem("infinity:adaptive-quality:v2") || "{}",
+      ),
+    );
+
+    await page.evaluate(() => {
+      const connection = (
+        window as Window & {
+          __AQ_CONNECTION__?: EventTarget & { effectiveType?: string };
+        }
+      ).__AQ_CONNECTION__;
+      if (!connection) throw new Error("test connection is unavailable");
+      connection.effectiveType = "4g";
+      connection.dispatchEvent(new Event("change"));
+    });
+
+    await expect
+      .poll(async () => (await adaptiveSnapshot(page)).media)
+      .toBe("high");
+    const after = await page.evaluate(() =>
+      JSON.parse(
+        sessionStorage.getItem("infinity:adaptive-quality:v2") || "{}",
+      ),
+    );
+    expect(after.runtimeConstraint).toEqual(before.runtimeConstraint);
+    expect(after.expiresAt).toBe(before.expiresAt);
+  });
+
+  test("two clean windows recover one runtime step on the same route", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "chromium-desktop",
+      "One deterministic desktop proves same-route recovery.",
+    );
+    await installAdaptiveCapabilities(page, {
+      memory: 8,
+      cores: 8,
+      effectiveType: "4g",
+      quietPerformanceObserver: true,
+    });
+    await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
+    await expect
+      .poll(() => page.evaluate(() => Boolean(window.__INFINITY_AQ_E2E__)))
+      .toBe(true);
+
+    await page.evaluate(() => {
+      const adapter = window.__INFINITY_AQ_E2E__;
+      adapter?.setTier({
+        rendering: "safe",
+        media: "economy",
+        motion: "minimal",
+      });
+      adapter?.completeObservationWindow();
+      adapter?.completeObservationWindow();
+    });
+
+    expect(await adaptiveSnapshot(page)).toMatchObject({
+      rendering: "standard",
+      media: "economy",
+      motion: "minimal",
+      reason: "promotion",
+    });
   });
 
   test("an allowlisted high-end UA starts at peak and remains runtime-downgradable", async ({
@@ -854,12 +1126,15 @@ test.describe("automatic adaptive quality", () => {
     expect(
       await page.evaluate(() => {
         try {
-          return sessionStorage.getItem("infinity:adaptive-quality:v1");
+          return [
+            sessionStorage.getItem("infinity:adaptive-quality:v1"),
+            sessionStorage.getItem("infinity:adaptive-quality:v2"),
+          ];
         } catch {
-          return null;
+          return [null, null];
         }
       }),
-    ).toBeNull();
+    ).toEqual([null, null]);
     await context.close();
   });
 });

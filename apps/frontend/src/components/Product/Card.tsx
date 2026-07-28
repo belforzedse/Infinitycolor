@@ -5,7 +5,7 @@ import { type FC, useState, useMemo, useCallback, useEffect, useRef } from "reac
 import useProductLike from "@/hooks/useProductLike";
 import { getLazySecondaryMediaByProductId } from "@/services/product/product";
 import { computeSaleDiscountPercent } from "@/utils/discounts";
-import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
+import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
 
 // Components
 import ImageSlider from "./ImageSlider";
@@ -73,7 +73,6 @@ const ProductCard: FC<ProductCardProps> = ({
   const [ShareModal, setShareModal] = useState<ShareModalComponent | null>(null);
   const [enrichedImages, setEnrichedImages] = useState(images);
   const hasRequestedLazyMedia = useRef(false);
-  const quality = useAdaptiveQuality();
 
   // Hooks
   const {
@@ -178,12 +177,9 @@ const ProductCard: FC<ProductCardProps> = ({
   }, [id, isAvailable, validImages.length]);
 
   const handleInteractionIntent = useCallback(() => {
-    if (quality.rendering === "safe" || quality.media === "economy") return;
-    if (quality.media === "high") {
-      noteEnhancementLoaded("secondary-media");
-      void maybeLoadSecondaryMedia();
-    }
-  }, [maybeLoadSecondaryMedia, quality.media, quality.rendering]);
+    noteEnhancementLoaded("secondary-media");
+    void maybeLoadSecondaryMedia();
+  }, [maybeLoadSecondaryMedia]);
 
   const handleProductLinkClick = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -208,6 +204,7 @@ const ProductCard: FC<ProductCardProps> = ({
         aria-label={`محصول ${title}`}
         onMouseEnter={handleInteractionIntent}
         onFocusCapture={handleInteractionIntent}
+        onTouchStart={handleInteractionIntent}
       >
         <Link
           href={productUrl}

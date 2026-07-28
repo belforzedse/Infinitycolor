@@ -262,15 +262,6 @@ textarea:focus-visible {
     display: none;
   }
 
-  html[data-aq-scope="storefront"][data-aq-rendering="safe"]
-    :where(.product-card-glass-chip, .product-card-color-badge),
-  html[data-aq-scope="storefront"][data-aq-transparency="reduced"]
-    :where(.product-card-glass-chip, .product-card-color-badge) {
-    background: rgb(15 23 42 / 0.72);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-
   html[data-aq-scope="storefront"]:not([data-aq-rendering="enhanced"])
     [data-adaptive-decorative="rich"],
   html[data-aq-scope="storefront"]:not([data-aq-motion="enhanced"])
@@ -416,6 +407,11 @@ textarea:focus-visible {
   -webkit-backdrop-filter: blur(3.65px);
   backdrop-filter: blur(3.65px);
   border-radius: 6px;
+}
+
+.product-card-variation-overlay {
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
 .glass-chip {

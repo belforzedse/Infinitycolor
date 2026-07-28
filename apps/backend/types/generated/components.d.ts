@@ -131,8 +131,8 @@ export interface IdentityStore extends Schema.Component {
     googleMapsLink: Attribute.String;
     name: Attribute.String;
     neshanLink: Attribute.String;
-    postalCode: Attribute.String;
     phones: Attribute.Component<"identity.phone", true>;
+    postalCode: Attribute.String;
     showInAbout: Attribute.Boolean & Attribute.DefaultTo<false>;
     showInFooter: Attribute.Boolean & Attribute.DefaultTo<true>;
     socialLinks: Attribute.Component<"identity.social-link", true>;

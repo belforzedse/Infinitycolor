@@ -56,6 +56,10 @@ const HIGH_END_ANDROID_RULES: ReadonlyArray<{
   },
 ];
 
+export const HIGH_END_ANDROID_PATTERN_SOURCE = HIGH_END_ANDROID_RULES.map(
+  ({ pattern }) => `(?:${pattern.source})`,
+).join("|");
+
 /**
  * This is an admission gate, not a capability score. A matching family still
  * has to pass the controller's live smoothness proof before it can promote.
@@ -109,6 +113,13 @@ export async function resolveHighEndUserAgentAdmission(
   const userAgent = navigatorValue.userAgent;
   const legacyDecision = classifyHighEndUserAgent({ userAgent });
   if (legacyDecision.eligible) return legacyDecision;
+  if (
+    typeof userAgent !== "string" ||
+    !/\bAndroid\b/i.test(userAgent) ||
+    !isReducedAndroidUserAgent(userAgent)
+  ) {
+    return NO_ADMISSION;
+  }
 
   const userAgentData = (navigatorValue as NavigatorWithUserAgentData).userAgentData;
   if (typeof userAgentData?.getHighEntropyValues !== "function") {
@@ -125,6 +136,15 @@ export async function resolveHighEndUserAgentAdmission(
   } catch {
     return NO_ADMISSION;
   }
+}
+
+function isReducedAndroidUserAgent(userAgent: string): boolean {
+  return (
+    /\bAndroid\b/i.test(userAgent) &&
+    /\(\s*Linux;\s*Android[^;)]*;\s*K(?:\s+Build\/[^)]*)?\)/i.test(
+      userAgent,
+    )
+  );
 }
 
 function normalizeReportedValue(value: unknown): string {

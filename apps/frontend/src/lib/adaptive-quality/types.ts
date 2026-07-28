@@ -46,37 +46,43 @@ export type AdaptiveCapabilities = {
   effectiveType?: string;
   deviceMemory?: number;
   hardwareConcurrency?: number;
+  finePointer?: boolean;
+  hover?: boolean;
 };
 
 export type InitialAdaptiveClassification = {
-  constraint: AdaptiveQualityConstraint;
+  baselineConstraint: AdaptiveQualityConstraint;
+  runtimeConstraint: AdaptiveQualityConstraint;
   snapshot: AdaptiveQualitySnapshot;
-  reasons: AdaptiveQualityReason[];
 };
 
 export type AdaptiveQualityBootstrap = AdaptiveQualitySnapshot & {
-  schema: 1;
+  schema: 2;
   policyVersion: string;
   buildVersion: string;
+  createdAt: number;
   expiresAt: number;
   rolloutBucket: number;
-  reasons: AdaptiveQualityReason[];
-  constraint: AdaptiveQualityConstraint;
+  baselineConstraint: AdaptiveQualityConstraint;
+  runtimeConstraint: AdaptiveQualityConstraint;
+  penaltyExpiresAt: number | null;
+  consecutiveSmoothWindows: number;
+  lastBadAt: number | null;
+  lastReason: AdaptiveQualityReason;
 };
 
 export type AdaptiveQualitySessionRecord = {
-  schema: 1;
+  schema: 2;
   policyVersion: string;
   buildVersion: string;
+  createdAt: number;
   expiresAt: number;
   rolloutBucket: number;
-  constraint: AdaptiveQualityConstraint;
-  reasons: AdaptiveQualityReason[];
-  smoothWindows: number;
-  smoothRouteGenerations: number;
-  lastSmoothRouteGeneration: number;
-  sessionHadDowngrade: boolean;
-  sessionHadSevereEvent: boolean;
+  runtimeConstraint: AdaptiveQualityConstraint;
+  penaltyExpiresAt: number | null;
+  consecutiveSmoothWindows: number;
+  lastBadAt: number | null;
+  lastReason: AdaptiveQualityReason;
 };
 
 export type EnhancementFamily =
@@ -107,6 +113,7 @@ declare global {
       downgrade: (reason?: AdaptiveQualityReason) => void;
       setTier: (constraint: AdaptiveQualityConstraint) => void;
       startObservationWindow: (durationMs?: number) => void;
+      completeObservationWindow: () => void;
       route: () => void;
       snapshot: () => AdaptiveQualitySnapshot;
     };

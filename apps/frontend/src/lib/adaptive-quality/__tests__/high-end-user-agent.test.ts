@@ -83,5 +83,31 @@ describe("high-end user-agent promotion admission", () => {
       eligible: false,
       source: "none",
     });
+    expect(
+      (
+        contradictory as Navigator & {
+          userAgentData: { getHighEntropyValues: jest.Mock };
+        }
+      ).userAgentData.getHighEntropyValues,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("requests high-entropy model data only for a reduced Android UA", async () => {
+    const desktopGetter = jest.fn().mockResolvedValue({ model: "Pixel 10 Pro" });
+    const fullAndroidGetter = jest
+      .fn()
+      .mockResolvedValue({ model: "Pixel 10 Pro" });
+
+    await resolveHighEndUserAgentAdmission({
+      userAgent: "Mozilla/5.0 (X11; Linux x86_64)",
+      userAgentData: { getHighEntropyValues: desktopGetter },
+    } as unknown as Navigator);
+    await resolveHighEndUserAgentAdmission({
+      userAgent: ANDROID_UA.replace("; K)", "; Pixel 8a)"),
+      userAgentData: { getHighEntropyValues: fullAndroidGetter },
+    } as unknown as Navigator);
+
+    expect(desktopGetter).not.toHaveBeenCalled();
+    expect(fullAndroidGetter).not.toHaveBeenCalled();
   });
 });

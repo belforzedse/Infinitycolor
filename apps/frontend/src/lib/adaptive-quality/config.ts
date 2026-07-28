@@ -10,10 +10,40 @@ const parseRolloutPercent = (value: string | undefined) => {
   return Math.min(100, Math.max(0, parsed));
 };
 
-export const ADAPTIVE_QUALITY_SCHEMA = 1 as const;
-export const ADAPTIVE_QUALITY_POLICY_VERSION = "1.2.0";
-export const ADAPTIVE_QUALITY_STORAGE_KEY = "infinity:adaptive-quality:v1";
+export const ADAPTIVE_QUALITY_SCHEMA = 2 as const;
+export const ADAPTIVE_QUALITY_POLICY_VERSION = "2.0.0";
+export const ADAPTIVE_QUALITY_STORAGE_KEY = "infinity:adaptive-quality:v2";
+export const ADAPTIVE_QUALITY_LEGACY_STORAGE_KEYS = [
+  "infinity:adaptive-quality:v1",
+] as const;
 export const ADAPTIVE_QUALITY_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
+export const ADAPTIVE_QUALITY_PENALTY_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Keep policy thresholds in one serializable object. The pre-hydration script
+ * embeds this object and the hydrated controller imports the same values.
+ */
+export const ADAPTIVE_QUALITY_POLICY_CONFIG = Object.freeze({
+  desktop: Object.freeze({
+    minimumHardwareConcurrency: 8,
+    minimumDeviceMemory: 8,
+  }),
+  observation: Object.freeze({
+    initialWindowMs: 8_000,
+    enhancementExtensionMs: 5_000,
+    maximumWindowMs: 15_000,
+    downgradeCooldownMs: 15_000,
+    recoveryWindows: 2,
+    minimumRecoveryDelayMs: 15_000,
+  }),
+  loaf: Object.freeze({
+    severeBlockingDurationMs: 150,
+    diagnosticDurationMs: 300,
+    repeatedDurationMs: 120,
+    repeatedBlockingDurationMs: 50,
+    repeatedCount: 3,
+  }),
+});
 
 export const ADAPTIVE_QUALITY_FLAGS = Object.freeze({
   enabled: parseBoolean(process.env.NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ENABLED, true),

@@ -1,5 +1,6 @@
 import {
   ADAPTIVE_QUALITY_BUILD_VERSION,
+  ADAPTIVE_QUALITY_LEGACY_STORAGE_KEYS,
   ADAPTIVE_QUALITY_POLICY_VERSION,
   ADAPTIVE_QUALITY_SCHEMA,
   ADAPTIVE_QUALITY_SESSION_TTL_MS,
@@ -18,44 +19,48 @@ function isValidRolloutBucket(value: unknown): value is number {
 
 export function readAdaptiveQualitySession(
   now = Date.now(),
-  storage: Storage | null =
-    typeof window === "undefined" ? null : window.sessionStorage,
+  storage?: Storage | null,
 ): AdaptiveQualitySessionRecord | null {
-  if (!storage) return null;
-
   try {
-    const raw = storage.getItem(ADAPTIVE_QUALITY_STORAGE_KEY);
+    const target = storage === undefined ? getSessionStorage() : storage;
+    if (!target) return null;
+    const raw = target.getItem(ADAPTIVE_QUALITY_STORAGE_KEY);
     if (!raw) return null;
     const value = JSON.parse(raw) as Partial<AdaptiveQualitySessionRecord>;
     if (
       value.schema !== ADAPTIVE_QUALITY_SCHEMA ||
       value.policyVersion !== ADAPTIVE_QUALITY_POLICY_VERSION ||
       value.buildVersion !== ADAPTIVE_QUALITY_BUILD_VERSION ||
+      typeof value.createdAt !== "number" ||
+      !Number.isFinite(value.createdAt) ||
       typeof value.expiresAt !== "number" ||
+      !Number.isFinite(value.expiresAt) ||
+      value.createdAt > value.expiresAt ||
+      value.expiresAt !== value.createdAt + ADAPTIVE_QUALITY_SESSION_TTL_MS ||
       value.expiresAt <= now ||
       !isValidRolloutBucket(value.rolloutBucket) ||
-      !isAdaptiveConstraint(value.constraint)
+      !isAdaptiveConstraint(value.runtimeConstraint) ||
+      !isNullableTimestamp(value.penaltyExpiresAt) ||
+      !isNullableTimestamp(value.lastBadAt) ||
+      !isAdaptiveReason(value.lastReason)
     ) {
       return null;
     }
-
-    const reasons = Array.isArray(value.reasons)
-      ? value.reasons.filter(isAdaptiveReason).slice(0, 8)
-      : [];
 
     return {
       schema: ADAPTIVE_QUALITY_SCHEMA,
       policyVersion: ADAPTIVE_QUALITY_POLICY_VERSION,
       buildVersion: ADAPTIVE_QUALITY_BUILD_VERSION,
+      createdAt: value.createdAt,
       expiresAt: value.expiresAt,
       rolloutBucket: value.rolloutBucket,
-      constraint: value.constraint,
-      reasons: reasons.length ? reasons : ["default"],
-      smoothWindows: normalizeCounter(value.smoothWindows),
-      smoothRouteGenerations: normalizeCounter(value.smoothRouteGenerations),
-      lastSmoothRouteGeneration: normalizeCounter(value.lastSmoothRouteGeneration),
-      sessionHadDowngrade: value.sessionHadDowngrade === true,
-      sessionHadSevereEvent: value.sessionHadSevereEvent === true,
+      runtimeConstraint: value.runtimeConstraint,
+      penaltyExpiresAt: value.penaltyExpiresAt,
+      consecutiveSmoothWindows: normalizeCounter(
+        value.consecutiveSmoothWindows,
+      ),
+      lastBadAt: value.lastBadAt,
+      lastReason: value.lastReason,
     };
   } catch {
     return null;
@@ -64,13 +69,12 @@ export function readAdaptiveQualitySession(
 
 export function writeAdaptiveQualitySession(
   record: AdaptiveQualitySessionRecord,
-  storage: Storage | null =
-    typeof window === "undefined" ? null : window.sessionStorage,
+  storage?: Storage | null,
 ): boolean {
-  if (!storage) return false;
-
   try {
-    storage.setItem(ADAPTIVE_QUALITY_STORAGE_KEY, JSON.stringify(record));
+    const target = storage === undefined ? getSessionStorage() : storage;
+    if (!target) return false;
+    target.setItem(ADAPTIVE_QUALITY_STORAGE_KEY, JSON.stringify(record));
     return true;
   } catch {
     return false;
@@ -78,31 +82,59 @@ export function writeAdaptiveQualitySession(
 }
 
 export function createAdaptiveQualitySessionRecord(options: {
-  constraint: AdaptiveQualityConstraint;
+  runtimeConstraint: AdaptiveQualityConstraint;
   rolloutBucket: number;
-  reasons?: AdaptiveQualityReason[];
   now?: number;
   previous?: AdaptiveQualitySessionRecord | null;
+  penaltyExpiresAt?: number | null;
+  consecutiveSmoothWindows?: number;
+  lastBadAt?: number | null;
+  lastReason?: AdaptiveQualityReason;
 }): AdaptiveQualitySessionRecord {
   const now = options.now ?? Date.now();
   const previous = options.previous;
-  const reasons: AdaptiveQualityReason[] =
-    options.reasons?.filter(isAdaptiveReason) ?? ["default"];
+  const createdAt = previous?.createdAt ?? now;
 
   return {
     schema: ADAPTIVE_QUALITY_SCHEMA,
     policyVersion: ADAPTIVE_QUALITY_POLICY_VERSION,
     buildVersion: ADAPTIVE_QUALITY_BUILD_VERSION,
-    expiresAt: now + ADAPTIVE_QUALITY_SESSION_TTL_MS,
+    createdAt,
+    expiresAt: previous?.expiresAt ?? createdAt + ADAPTIVE_QUALITY_SESSION_TTL_MS,
     rolloutBucket: normalizeRolloutBucket(options.rolloutBucket),
-    constraint: options.constraint,
-    reasons: Array.from(new Set(reasons)).slice(0, 8),
-    smoothWindows: previous?.smoothWindows ?? 0,
-    smoothRouteGenerations: previous?.smoothRouteGenerations ?? 0,
-    lastSmoothRouteGeneration: previous?.lastSmoothRouteGeneration ?? 0,
-    sessionHadDowngrade: previous?.sessionHadDowngrade ?? false,
-    sessionHadSevereEvent: previous?.sessionHadSevereEvent ?? false,
+    runtimeConstraint: options.runtimeConstraint,
+    penaltyExpiresAt:
+      options.penaltyExpiresAt === undefined
+        ? previous?.penaltyExpiresAt ?? null
+        : options.penaltyExpiresAt,
+    consecutiveSmoothWindows: normalizeCounter(
+      options.consecutiveSmoothWindows ??
+        previous?.consecutiveSmoothWindows ??
+        0,
+    ),
+    lastBadAt:
+      options.lastBadAt === undefined
+        ? previous?.lastBadAt ?? null
+        : options.lastBadAt,
+    lastReason:
+      options.lastReason && isAdaptiveReason(options.lastReason)
+        ? options.lastReason
+        : previous?.lastReason ?? "default",
   };
+}
+
+export function removeLegacyAdaptiveQualitySessions(
+  storage?: Storage | null,
+): void {
+  try {
+    const target = storage === undefined ? getSessionStorage() : storage;
+    if (!target) return;
+    for (const key of ADAPTIVE_QUALITY_LEGACY_STORAGE_KEYS) {
+      target.removeItem(key);
+    }
+  } catch {
+    // Storage is optional; bootstrap and hydration must remain non-fatal.
+  }
 }
 
 export function createRolloutBucket(): number {
@@ -125,4 +157,19 @@ function normalizeCounter(value: unknown): number {
 function normalizeRolloutBucket(value: number): number {
   if (!Number.isFinite(value)) return createRolloutBucket();
   return Math.min(9999, Math.max(0, Math.floor(value)));
+}
+
+function isNullableTimestamp(value: unknown): value is number | null {
+  return (
+    value === null ||
+    (typeof value === "number" && Number.isFinite(value) && value >= 0)
+  );
+}
+
+function getSessionStorage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.sessionStorage;
+  } catch {
+    return null;
+  }
 }

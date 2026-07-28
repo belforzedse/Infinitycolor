@@ -7,8 +7,7 @@ const mockNoteEnhancementLoaded = jest.fn();
 
 jest.mock("@/lib/adaptive-quality", () => ({
   useAdaptiveQuality: () => mockUseAdaptiveQuality(),
-  noteEnhancementLoaded: (...args: unknown[]) =>
-    mockNoteEnhancementLoaded(...args),
+  noteEnhancementLoaded: (...args: unknown[]) => mockNoteEnhancementLoaded(...args),
 }));
 
 jest.mock("next/dynamic", () => ({
@@ -290,7 +289,10 @@ describe("ProductCard", () => {
   });
 
   it("should lazy-load secondary images once on hover when initial image count is one", async () => {
-    getLazySecondaryMediaByProductId.mockResolvedValue(["/images/image2.jpg", "/images/image3.jpg"]);
+    getLazySecondaryMediaByProductId.mockResolvedValue([
+      "/images/image2.jpg",
+      "/images/image3.jpg",
+    ]);
     const { container } = render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
     const article = container.querySelector("article");
 
@@ -335,7 +337,7 @@ describe("ProductCard", () => {
     });
   });
 
-  it("should not speculate secondary media from touch intent", async () => {
+  it("should lazy-load secondary media from touch intent", async () => {
     getLazySecondaryMediaByProductId.mockResolvedValue(["/images/image2.jpg"]);
     const { container } = render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
     const article = container.querySelector("article");
@@ -343,10 +345,12 @@ describe("ProductCard", () => {
     expect(article).toBeInTheDocument();
     fireEvent.touchStart(article!);
 
-    expect(getLazySecondaryMediaByProductId).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(getLazySecondaryMediaByProductId).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it("does not prefetch secondary media in Standard or Safe", () => {
+  it("keeps the secondary-media hover preview in Standard and Safe", async () => {
     mockUseAdaptiveQuality.mockReturnValue({
       enabled: true,
       rendering: "standard",
@@ -356,13 +360,17 @@ describe("ProductCard", () => {
       reason: "default",
       routeGeneration: 0,
     });
-    const { container, rerender } = render(
+    const { container, unmount } = render(
       <ProductCard {...mockProps} images={["/images/image1.jpg"]} />,
     );
 
     fireEvent.mouseEnter(container.querySelector("article")!);
-    expect(getLazySecondaryMediaByProductId).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(getLazySecondaryMediaByProductId).toHaveBeenCalledTimes(1);
+    });
 
+    unmount();
+    getLazySecondaryMediaByProductId.mockClear();
     mockUseAdaptiveQuality.mockReturnValue({
       enabled: true,
       rendering: "safe",
@@ -372,9 +380,12 @@ describe("ProductCard", () => {
       reason: "force-safe",
       routeGeneration: 0,
     });
-    rerender(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
-    fireEvent.mouseEnter(container.querySelector("article")!);
-    expect(getLazySecondaryMediaByProductId).not.toHaveBeenCalled();
+    const safeRender = render(<ProductCard {...mockProps} images={["/images/image1.jpg"]} />);
+    fireEvent.mouseEnter(safeRender.container.querySelector("article")!);
+    await waitFor(() => {
+      expect(getLazySecondaryMediaByProductId).toHaveBeenCalledTimes(1);
+    });
+    expect(mockNoteEnhancementLoaded).toHaveBeenCalledWith("secondary-media");
   });
 
   it("keeps explicit Quick View and Share functional in Safe", async () => {
