@@ -1,6 +1,6 @@
 /**
- * Adds durable SnappPay state, recovery operations, and uniqueness guarantees
- * for hardened (non-legacy) records.
+ * Adds durable SnappPay state and recovery operations for hardened
+ * (non-legacy) records.
  *
  * The SnappPay payment token is stored as-is in `contract_transactions.track_id`.
  * An earlier revision of this migration encrypted it into
@@ -176,7 +176,7 @@ module.exports = {
                #- '{response,paymentToken}'
                #- '{access_token}'
            )::${responseType}
-           WHERE lower(external_source) = 'snappay'
+           WHERE lower(external_source) IN ('snappay', 'snapppay')
              AND gateway_response IS NOT NULL`,
         );
       }
@@ -184,29 +184,10 @@ module.exports = {
 
     if (hasPaymentAttempts) {
       await knex.raw(
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_attempts_attempt_id
-         ON payment_attempts (attempt_id)
-         WHERE attempt_id IS NOT NULL`,
-      );
-      await knex.raw(
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_attempts_snappay_transaction
-         ON payment_attempts (provider_reference)
-         WHERE lower(gateway) = 'snappay' AND provider_reference IS NOT NULL`,
-      );
-      await knex.raw(
         `CREATE INDEX IF NOT EXISTS idx_payment_attempts_snappay_due
          ON payment_attempts (next_action_at)
-         WHERE lower(gateway) = 'snappay'
-           AND status IN ('Pending', 'Redirected', 'Unknown')`,
-      );
-    }
-    if (hasContractTransactions) {
-      await knex.raw(
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_transactions_snappay_transaction
-         ON contract_transactions (external_id)
-         WHERE lower(external_source) = 'snappay'
-           AND external_id IS NOT NULL
-           AND gateway_status IS NOT NULL`,
+         WHERE lower(gateway) IN ('snappay', 'snapppay')
+         AND status IN ('Pending', 'Redirected', 'Unknown')`,
       );
     }
     await knex.raw(
@@ -214,13 +195,14 @@ module.exports = {
        ON payment_operations (status, next_run_at, lease_until)
        WHERE status IN ('Queued', 'Processing', 'Unknown')`,
     );
-    // NOTE: idx_payment_operations_idempotency_key is deliberately NOT created
-    // here, even though down() drops it. This migration runs *before* Strapi's
-    // schema sync, and `idempotencyKey` is declared `"unique": true` in
-    // payment-operation/schema.json — so Strapi manages that uniqueness itself and
-    // tries to drop any same-named object it finds, which fails when the object is
-    // an index rather than a constraint. `ensureSnappayDatabaseInvariants` asserts
-    // the partial index after sync instead, which is the correct place for it.
+    // Do not create manual UNIQUE indexes on Strapi-managed tables. During its
+    // next schema synchronization Strapi treats those indexes as constraints and
+    // issues `ALTER TABLE ... DROP CONSTRAINT`, which PostgreSQL rejects because
+    // a partial unique index is not a constraint. The post-sync invariant check
+    // reasserts `attemptId` and `idempotencyKey` as real table constraints.
+    // Provider-reference deduplication remains in the transactional application
+    // workflow and is backed by expression-only unique indexes after sync. Those
+    // expression indexes are not misclassified by Strapi's PostgreSQL inspector.
   },
 
   async down(knex) {

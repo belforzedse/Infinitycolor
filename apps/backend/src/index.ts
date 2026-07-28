@@ -662,9 +662,27 @@ export default {
    * run jobs, or perform some special logic.
    */
   async bootstrap({ strapi }) {
-    if (isSnappayHardenedInitiationEnabled()) {
+    const snappayHardenedInitiationEnabled = isSnappayHardenedInitiationEnabled();
+    if (snappayHardenedInitiationEnabled) {
       assertSnappayRuntimeConfig();
+    }
+
+    const databaseClient = String(
+      (strapi.db.connection as any)?.client?.config?.client || "",
+    ).toLowerCase();
+    if (
+      snappayHardenedInitiationEnabled ||
+      databaseClient.includes("pg") ||
+      databaseClient.includes("postgres")
+    ) {
+      // These constraints also protect the shared payment-attempt workflow when
+      // hardened SnappPay initiation is disabled, so keep them on every
+      // PostgreSQL boot. A non-Postgres database still fails closed if hardened
+      // initiation is explicitly enabled.
       await ensureSnappayDatabaseInvariants(strapi as any);
+    }
+
+    if (snappayHardenedInitiationEnabled) {
       const legacyBackfill = await backfillLegacySnappayAttempts(
         strapi as any,
       );
