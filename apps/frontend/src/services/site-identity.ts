@@ -27,14 +27,14 @@ export const DEFAULT_SITE_IDENTITY: SiteIdentity = {
   siteName: "فروشگاه پوشاک اینفینیتی",
   brandDescription:
     "پوشاک اینفینیتی با عرضه پوشاک با بهترین قیمت و کیفیت همیشه سعی کرده است تا بهترین ها را برای شما به ارمغان بیاورد!",
-  supportHours:
-    "شنبه تا پنج شنبه (غیر از روزهای تعطیل) از ساعت9 صبح الی 17 پاسخگوی شما هستیم.",
+  supportHours: "شنبه تا پنج شنبه (غیر از روزهای تعطیل) از ساعت9 صبح الی 17 پاسخگوی شما هستیم.",
   hasPhysicalStores: true,
   hasMultipleStores: true,
   stores: [
     {
       name: "گرگان",
-      address: "گلستان، گرگان، بلوار ناهارخوران، نبش عدالت ۶۸، کد پستی ۴۹۱۶۹۷۳۳۸۱",
+      address: "گلستان، گرگان، بلوار ناهارخوران، نبش عدالت ۶۸",
+      postalCode: "4916976618",
       phones: [{ label: "تلفن فروشگاه", number: "017-325-304-39" }],
       showInFooter: true,
       showInAbout: true,
@@ -103,6 +103,7 @@ function toStores(raw: any): IdentityStore[] {
   return raw.map((s) => ({
     name: s.name ?? undefined,
     address: s.address ?? undefined,
+    postalCode: s.postalCode ?? undefined,
     phones: toPhones(s.phones),
     wazeLink: s.wazeLink ?? undefined,
     neshanLink: s.neshanLink ?? undefined,
