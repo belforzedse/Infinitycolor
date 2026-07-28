@@ -724,6 +724,7 @@ export interface ApiContractTransactionContractTransaction extends Schema.Collec
   };
   attributes: {
     Amount: Attribute.BigInteger & Attribute.Required;
+    CancelledAt: Attribute.DateTime;
     contract: Attribute.Relation<
       "api::contract-transaction.contract-transaction",
       "manyToOne",
@@ -744,11 +745,16 @@ export interface ApiContractTransactionContractTransaction extends Schema.Collec
     GatewayRefId: Attribute.String;
     GatewayResponse: Attribute.JSON;
     GatewayStatus: Attribute.String;
+    LastHttpStatus: Attribute.Integer;
+    LastProviderCode: Attribute.Integer;
+    LastReconciledAt: Attribute.DateTime;
     payment_gateway: Attribute.Relation<
       "api::contract-transaction.contract-transaction",
       "manyToOne",
       "api::payment-gateway.payment-gateway"
     >;
+    RevertedAt: Attribute.DateTime;
+    SettledAt: Attribute.DateTime;
     Status: Attribute.Enumeration<["Pending", "Success", "Failed"]>;
     Step: Attribute.Integer &
       Attribute.Required &
@@ -1820,6 +1826,8 @@ export interface ApiPaymentAttemptPaymentAttempt extends Schema.CollectionType {
         string
       >;
     attemptId: Attribute.String & Attribute.Required & Attribute.Unique;
+    callbackNonce: Attribute.String & Attribute.Private;
+    callbackNonceHash: Attribute.String & Attribute.Private;
     contract: Attribute.Relation<
       "api::payment-attempt.payment-attempt",
       "manyToOne",
@@ -1836,6 +1844,10 @@ export interface ApiPaymentAttemptPaymentAttempt extends Schema.CollectionType {
     failureMessage: Attribute.Text;
     Gateway: Attribute.String & Attribute.Required;
     lastReconciledAt: Attribute.DateTime;
+    leaseUntil: Attribute.DateTime;
+    leaseVersion: Attribute.Integer & Attribute.DefaultTo<0>;
+    nextAction: Attribute.String;
+    nextActionAt: Attribute.DateTime;
     order: Attribute.Relation<
       "api::payment-attempt.payment-attempt",
       "manyToOne",
@@ -1843,11 +1855,13 @@ export interface ApiPaymentAttemptPaymentAttempt extends Schema.CollectionType {
     >;
     providerReference: Attribute.String;
     providerResponse: Attribute.JSON;
+    providerStatus: Attribute.String;
     quoteHash: Attribute.String & Attribute.Required;
     quoteSnapshot: Attribute.JSON & Attribute.Required;
     redirectedAt: Attribute.DateTime;
     redirectUrl: Attribute.Text;
     resolvedAt: Attribute.DateTime;
+    sideEffectsCompletedAt: Attribute.DateTime;
     Status: Attribute.Enumeration<
       ["Created", "Redirected", "Pending", "Succeeded", "Failed", "Cancelled", "Unknown", "Expired"]
     > &
@@ -1899,6 +1913,74 @@ export interface ApiPaymentGatewayPaymentGateway extends Schema.CollectionType {
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<
       "api::payment-gateway.payment-gateway",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+  };
+}
+
+export interface ApiPaymentOperationPaymentOperation extends Schema.CollectionType {
+  collectionName: "payment_operations";
+  info: {
+    description: "Durable provider operation and recovery lease";
+    displayName: "Payment Operation";
+    pluralName: "payment-operations";
+    singularName: "payment-operation";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    attemptKey: Attribute.Integer & Attribute.Private;
+    contract_transaction: Attribute.Relation<
+      "api::payment-operation.payment-operation",
+      "manyToOne",
+      "api::contract-transaction.contract-transaction"
+    >;
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::payment-operation.payment-operation",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    failureMessage: Attribute.Text;
+    httpStatus: Attribute.Integer;
+    idempotencyKey: Attribute.String & Attribute.Required & Attribute.Unique;
+    leaseUntil: Attribute.DateTime;
+    metadata: Attribute.JSON;
+    nextRunAt: Attribute.DateTime;
+    OperationType: Attribute.Enumeration<
+      ["TOKEN", "VERIFY", "SETTLE", "REVERT", "CANCEL", "UPDATE", "RECONCILE", "FINALIZE_EFFECTS"]
+    > &
+      Attribute.Required;
+    order: Attribute.Relation<
+      "api::payment-operation.payment-operation",
+      "manyToOne",
+      "api::order.order"
+    >;
+    payment_attempt: Attribute.Relation<
+      "api::payment-operation.payment-operation",
+      "manyToOne",
+      "api::payment-attempt.payment-attempt"
+    >;
+    providerCode: Attribute.Integer;
+    providerStatus: Attribute.String;
+    retryCount: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    Status: Attribute.Enumeration<["Queued", "Processing", "Succeeded", "Failed", "Unknown"]> &
+      Attribute.Required &
+      Attribute.DefaultTo<"Queued">;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::payment-operation.payment-operation",
       "oneToOne",
       "admin::user"
     > &
@@ -3804,6 +3886,7 @@ declare module "@strapi/types" {
       "api::order.order": ApiOrderOrder;
       "api::payment-attempt.payment-attempt": ApiPaymentAttemptPaymentAttempt;
       "api::payment-gateway.payment-gateway": ApiPaymentGatewayPaymentGateway;
+      "api::payment-operation.payment-operation": ApiPaymentOperationPaymentOperation;
       "api::post-bookmark.post-bookmark": ApiPostBookmarkPostBookmark;
       "api::post-comment-like.post-comment-like": ApiPostCommentLikePostCommentLike;
       "api::post-comment.post-comment": ApiPostCommentPostComment;
