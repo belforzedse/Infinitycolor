@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { SkeletonBlock, SkeletonMedia, SkeletonText } from "@repo/ui/skeleton";
 import NewIcon from "@/components/PDP/Icons/NewIcon";
 import OffIcon from "@/components/PDP/Icons/OffIcon";
@@ -152,6 +153,7 @@ async function NewestSection({
   const batchedSections = await batchedSectionsPromise;
   const batchedProducts = pickBatchedHomepageSection(batchedSections, "newest");
   const newProducts = batchedProducts ?? (await getSections()).new;
+  const isEmpty = newProducts.length === 0;
 
   return (
     <section
@@ -171,7 +173,11 @@ async function NewestSection({
 
       <div
         data-home-contained-content="newest"
-        className="relative z-10 mx-auto flex min-h-[360px] w-screen max-w-[1360px] items-center px-2 py-8 sm:px-5 md:min-h-[430px] md:py-10 lg:min-h-[510px] lg:px-[60px] lg:py-0 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20"
+        className={`relative z-10 mx-auto flex w-screen max-w-[1360px] items-center px-2 py-8 sm:px-5 md:py-10 lg:px-[60px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20 ${
+          isEmpty
+            ? "min-h-[240px] md:min-h-[280px] lg:min-h-[320px]"
+            : "min-h-[360px] md:min-h-[430px] lg:min-h-[510px] lg:py-0"
+        }`}
       >
         <div className="w-full min-w-0">
           {/* Single render: OffersListHomePage adapts to mobile (scroll) vs desktop (grid)
@@ -179,13 +185,39 @@ async function NewestSection({
               ProductCard twice. */}
           <div className="space-y-10">
             <Reveal variant="fade-up" duration={700}>
-              <HomeOffersList
-                sectionId="newest"
-                hideBottomViewMore
-                icon={<NewIcon />}
-                title="جدیدترین ها"
-                products={newProducts}
-              />
+              {isEmpty ? (
+                <div
+                  data-home-empty-state="newest-products"
+                  className="mx-auto flex max-w-xl flex-col items-center rounded-[24px] border border-white/70 bg-white/75 px-5 py-7 text-center shadow-sm sm:px-8"
+                >
+                  <span
+                    className="mb-3 inline-flex size-11 items-center justify-center rounded-full bg-infinity-primary-lighter/55 text-infinity-primary"
+                    aria-hidden="true"
+                  >
+                    <NewIcon />
+                  </span>
+                  <h2 className="font-peyda-fanum text-2xl font-medium text-infinity-primary">
+                    جدیدترین ها
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-gray-600">
+                    محصولات تازه در حال آماده‌سازی‌اند. مجموعه کامل فروشگاه همچنان در دسترس شماست.
+                  </p>
+                  <Link
+                    href="/plp"
+                    className="pressable mt-5 inline-flex min-h-11 items-center justify-center rounded-full bg-infinity-primary px-6 py-2 text-sm font-medium text-white outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2"
+                  >
+                    مشاهده همه محصولات
+                  </Link>
+                </div>
+              ) : (
+                <HomeOffersList
+                  sectionId="newest"
+                  hideBottomViewMore
+                  icon={<NewIcon />}
+                  title="جدیدترین ها"
+                  products={newProducts}
+                />
+              )}
             </Reveal>
           </div>
         </div>

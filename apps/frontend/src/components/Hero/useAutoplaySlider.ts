@@ -12,6 +12,9 @@ export interface UseAutoplaySliderOptions {
   autoplayInterval?: number;
   /** Per-slide eligibility for autoplay; when length matches slidesLength, only eligible slides advance */
   autoplayEligibility?: boolean[];
+  /** Optional shared state keeps the active slide stable while implementations switch. */
+  controlledIndex?: number;
+  onIndexChange?: React.Dispatch<React.SetStateAction<number>>;
 }
 
 export interface UseAutoplaySliderReturn {
@@ -32,8 +35,21 @@ export function useAutoplaySlider({
   slidesLength,
   autoplayInterval = DEFAULT_INTERVAL_MS,
   autoplayEligibility,
+  controlledIndex,
+  onIndexChange,
 }: UseAutoplaySliderOptions): UseAutoplaySliderReturn {
-  const [index, setIndex] = useState(0);
+  const [uncontrolledIndex, setUncontrolledIndex] = useState(0);
+  const index = controlledIndex ?? uncontrolledIndex;
+  const setIndex = useCallback<React.Dispatch<React.SetStateAction<number>>>(
+    (value) => {
+      if (onIndexChange) {
+        onIndexChange(value);
+      } else {
+        setUncontrolledIndex(value);
+      }
+    },
+    [onIndexChange],
+  );
   const [playKey, setPlayKey] = useState(0);
   const [isPageVisible, setIsPageVisible] = useState(true);
 
@@ -69,7 +85,7 @@ export function useAutoplaySlider({
       return;
     }
     setIndex((i) => (i >= slidesLength ? 0 : i));
-  }, [slidesLength]);
+  }, [setIndex, slidesLength]);
 
   useLayoutEffect(() => {
     if (slidesLength === 0) return;
@@ -84,7 +100,7 @@ export function useAutoplaySlider({
         setPlayKey((k) => k + 1);
       }
     }
-  }, [autoplayEligibility, index, slidesLength]);
+  }, [autoplayEligibility, index, setIndex, slidesLength]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -109,19 +125,20 @@ export function useAutoplaySlider({
     findNextAutoplayIndex,
     playKey,
     isPageVisible,
+    setIndex,
   ]);
 
   const next = useCallback(() => {
     if (slidesLength === 0) return;
     setIndex((i) => (i + 1) % slidesLength);
     setPlayKey((k) => k + 1);
-  }, [slidesLength]);
+  }, [setIndex, slidesLength]);
 
   const prev = useCallback(() => {
     if (slidesLength === 0) return;
     setIndex((i) => (i - 1 + slidesLength) % slidesLength);
     setPlayKey((k) => k + 1);
-  }, [slidesLength]);
+  }, [setIndex, slidesLength]);
 
   const goTo = useCallback(
     (i: number) => {
@@ -130,7 +147,7 @@ export function useAutoplaySlider({
       setIndex(clamped);
       setPlayKey((k) => k + 1);
     },
-    [slidesLength],
+    [setIndex, slidesLength],
   );
 
   return { index, setIndex, goTo, next, prev, playKey };

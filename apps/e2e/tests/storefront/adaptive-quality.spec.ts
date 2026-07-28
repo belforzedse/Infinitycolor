@@ -7,7 +7,11 @@ import {
   type Page,
   type Request,
 } from "@playwright/test";
-import { E2E_CATEGORY_SLUG, E2E_PRODUCT_SLUG } from "../../fixtures/storefront";
+import {
+  E2E_CATEGORY_SLUG,
+  E2E_PRODUCT_SLUG,
+  E2E_PRODUCT_TITLE,
+} from "../../fixtures/storefront";
 import { authStorageStatePath } from "../../helpers/auth";
 import {
   findProductVariationBySku,
@@ -17,6 +21,7 @@ import {
   finalizeToZarinpalRedirect,
   stubSuccessfulCallback,
 } from "../../helpers/payment";
+import { installLocalMediaFixture } from "../../helpers/local-media";
 
 type AdaptivePreset = {
   memory?: number;
@@ -311,6 +316,10 @@ function freshHomePath() {
 }
 
 test.describe("automatic adaptive quality", () => {
+  test.beforeEach(async ({ page }) => {
+    await installLocalMediaFixture(page);
+  });
+
   test("strong-first classification reaches full Safe without weakening commerce", async ({
     page,
   }) => {
@@ -339,6 +348,14 @@ test.describe("automatic adaptive quality", () => {
     await expect(
       page.locator('[data-aq-hero="standard"] picture img'),
     ).toHaveCount(1);
+    const standardProductRail = page
+      .locator('[data-aq-carousel="product-rail"]')
+      .first();
+    await expect(standardProductRail).toBeVisible({ timeout: 30_000 });
+    await expect(standardProductRail).toHaveAttribute(
+      "data-aq-carousel-motion",
+      "lightweight",
+    );
     await expect(
       page.locator("[data-aq-optional-media='gif-shell']"),
     ).toHaveCount(0);
@@ -359,7 +376,7 @@ test.describe("automatic adaptive quality", () => {
       media: "economy",
       motion: "minimal",
     });
-    await expect(page.locator('[data-aq-hero="static"]')).toHaveCount(1);
+    await expect(page.locator('[data-aq-hero="standard"]')).toHaveCount(1);
 
     const skipLink = page.locator('a[href="#main-content"]').first();
     await skipLink.focus();
@@ -369,11 +386,11 @@ test.describe("automatic adaptive quality", () => {
       waitUntil: "domcontentloaded",
     });
     const seededCards = page.locator(
-      `[data-testid="product-card"][data-product-slug="${E2E_PRODUCT_SLUG}"]`,
+      `[data-testid="product-card"][data-product-slug="${E2E_PRODUCT_SLUG}"]:visible`,
     );
-    await expect(seededCards).toHaveCount(1, { timeout: 30_000 });
+    await expect(seededCards.first()).toBeVisible({ timeout: 30_000 });
     await expect(
-      seededCards.getByRole("link", {
+      seededCards.first().getByRole("link", {
         name: /مشاهده جزئیات/,
       }),
     ).toBeVisible();
@@ -388,6 +405,17 @@ test.describe("automatic adaptive quality", () => {
       timeout: 30_000,
     });
     await page.getByTestId("pdp-add-to-cart").click();
+    await expect
+      .poll(() =>
+        page.evaluate((title) => {
+          const cart = JSON.parse(localStorage.getItem("cart") || "[]") as Array<{
+            name?: string;
+            quantity?: number;
+          }>;
+          return cart.find((item) => item.name === title)?.quantity ?? 0;
+        }, E2E_PRODUCT_TITLE),
+      )
+      .toBe(1);
     await page.goto("/cart", { waitUntil: "domcontentloaded" });
     await expect(
       page.locator('[data-testid="cart-item"]:visible').first(),
@@ -601,7 +629,7 @@ test.describe("automatic adaptive quality", () => {
       motion: "minimal",
       transparency: "reduced",
     });
-    await expect(page.locator('[data-aq-hero="static"]')).toHaveCount(1);
+    await expect(page.locator('[data-aq-hero="standard"]')).toHaveCount(1);
     runtime.assertClean();
   });
 
@@ -634,6 +662,19 @@ test.describe("automatic adaptive quality", () => {
       media: "high",
       motion: "enhanced",
     });
+    const richProductRail = page
+      .locator('[data-aq-carousel="product-rail"]')
+      .first();
+    await expect(richProductRail).toBeVisible({ timeout: 30_000 });
+    await expect(richProductRail).toHaveAttribute(
+      "data-aq-carousel-motion",
+      "legacy-rich",
+    );
+    expect(
+      await richProductRail
+        .locator("[data-aq-carousel-track]")
+        .evaluate((element) => getComputedStyle(element).transitionDuration),
+    ).toContain("0.3s");
 
     await page.evaluate(() =>
       window.__INFINITY_AQ_E2E__?.downgrade("repeated-long-task"),
@@ -644,6 +685,10 @@ test.describe("automatic adaptive quality", () => {
       motion: "standard",
       reason: "repeated-long-task",
     });
+    await expect(richProductRail).toHaveAttribute(
+      "data-aq-carousel-motion",
+      "lightweight",
+    );
     runtime.assertClean();
   });
 
@@ -788,8 +833,13 @@ test.describe("automatic adaptive quality", () => {
   });
 
   test("super-admin is excluded before storage and classification", async ({
-    page,
+    browser,
   }) => {
+    const context = await browser.newContext({
+      storageState: authStorageStatePath("admin"),
+    });
+    const page = await context.newPage();
+    await installLocalMediaFixture(page);
     await installAdaptiveCapabilities(page, {
       memory: 1,
       cores: 1,
@@ -810,6 +860,7 @@ test.describe("automatic adaptive quality", () => {
         }
       }),
     ).toBeNull();
+    await context.close();
   });
 });
 

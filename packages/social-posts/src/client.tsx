@@ -53,6 +53,8 @@ export type SocialPostCardProps = {
   mediaClassName?: string;
   linkAriaLabel?: string;
   actionTone?: SocialPostCardActionTone;
+  /** Keep the complete card layout while rendering moving media as its cover image. */
+  staticMedia?: boolean;
 };
 
 const ACTION_TEXT_CLASS =
@@ -76,12 +78,14 @@ function CardImage({
   sizes,
   className,
   unoptimized,
+  immediate,
 }: {
   src: string;
   alt: string;
   sizes: string;
   className?: string;
   unoptimized?: boolean;
+  immediate?: boolean;
 }) {
   const [loaded, setLoaded] = useState(false);
   return (
@@ -91,9 +95,16 @@ function CardImage({
       fill
       sizes={sizes}
       loading="lazy"
-      className={clsx("img-fx object-cover", loaded && "img-loaded", className)}
+      className={clsx(
+        "object-cover",
+        !immediate && "img-fx",
+        !immediate && loaded && "img-loaded",
+        className,
+      )}
       unoptimized={unoptimized}
-      onLoad={() => setLoaded(true)}
+      onLoad={() => {
+        if (!immediate) setLoaded(true);
+      }}
     />
   );
 }
@@ -170,6 +181,7 @@ export function SocialPostCard({
   mediaClassName,
   linkAriaLabel,
   actionTone = "default",
+  staticMedia = false,
 }: SocialPostCardProps) {
   const layout = POST_CARD_LAYOUTS[variant];
   const { widthPx, imageHeightPx, columnGapPx } = layout;
@@ -182,12 +194,13 @@ export function SocialPostCard({
         : fluidMaxWidthCapPx(variant)
     : null;
 
-  const activeMedia = previewMedia ?? {
+  const coverMedia = {
     id: "cover",
     url: imageSrc,
     alternativeText: imageAlt,
     mime: "image/*",
   };
+  const activeMedia = staticMedia ? coverMedia : (previewMedia ?? coverMedia);
   const likesLabel = formatCountLabel(likesCount);
   const commentsLabel = formatCountLabel(commentsCount);
   const isLightActionTone = actionTone === "light";
@@ -265,8 +278,7 @@ export function SocialPostCard({
     mediaClassName,
   );
   const mediaAriaLabel =
-    linkAriaLabel ??
-    (imageAlt ? `مشاهده پست ${imageAlt}` : "مشاهده پست");
+    linkAriaLabel ?? (imageAlt ? `مشاهده پست ${imageAlt}` : "مشاهده پست");
   const mediaContent = (
     <>
       {isVideoMedia(activeMedia) ? (
@@ -285,6 +297,7 @@ export function SocialPostCard({
           alt={activeMedia.alternativeText || imageAlt}
           sizes={imageSizes}
           unoptimized={(activeMedia.url || imageSrc).startsWith("data:")}
+          immediate={staticMedia}
         />
       )}
       <div
@@ -308,6 +321,7 @@ export function SocialPostCard({
       )}
       style={articleStyle}
       data-variant={variant}
+      data-social-post-media={staticMedia ? "static" : "rich"}
     >
       {href ? (
         <Link

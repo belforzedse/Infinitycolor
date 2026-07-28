@@ -1,23 +1,27 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, type Dispatch, type SetStateAction } from "react";
 import PaginationDesktop from "./PaginationDesktop";
 import ResponsiveHeroImage from "./ResponsiveHeroImage";
 import type { HeroSlideConfig } from "@/types/super-admin/heroSliderV3";
 
 export default function HeroStandardSlider({
   slides,
+  activeIndex,
+  onActiveIndexChange,
 }: {
   slides: HeroSlideConfig[];
+  activeIndex: number;
+  onActiveIndexChange: Dispatch<SetStateAction<number>>;
 }) {
-  const [index, setIndex] = useState(0);
+  const index = Math.min(activeIndex, Math.max(0, slides.length - 1));
   const activeSlide = slides[index] || slides[0];
   const next = useCallback(() => {
-    setIndex((current) => (current + 1) % slides.length);
-  }, [slides.length]);
+    onActiveIndexChange((current) => (current + 1) % slides.length);
+  }, [onActiveIndexChange, slides.length]);
   const previous = useCallback(() => {
-    setIndex((current) => (current - 1 + slides.length) % slides.length);
-  }, [slides.length]);
+    onActiveIndexChange((current) => (current - 1 + slides.length) % slides.length);
+  }, [onActiveIndexChange, slides.length]);
 
   if (!activeSlide) return null;
   const hasMultipleSlides = slides.length > 1;
@@ -36,7 +40,7 @@ export default function HeroStandardSlider({
           <PaginationDesktop
             total={slides.length}
             index={index}
-            onDotClick={setIndex}
+            onDotClick={onActiveIndexChange}
             onNext={next}
             onPrev={previous}
             className="pointer-events-auto bg-white/90 shadow-sm"

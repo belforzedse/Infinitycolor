@@ -3,6 +3,7 @@
 import Image from "next/image";
 import imageLoader from "@/utils/imageLoader";
 import { useRef, useEffect, useState, useCallback } from "react";
+import { useAdaptiveQuality } from "@/lib/adaptive-quality";
 
 type Props = {
   assets: {
@@ -19,6 +20,7 @@ type Props = {
 export default function PDPHeroGalleryThumbnailList(props: Props) {
   const { assets, selectedImage, setSelectedImage } = props;
   const [showBlur, setShowBlur] = useState(true);
+  const quality = useAdaptiveQuality();
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -31,61 +33,64 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
     } catch {}
   }, []);
 
-  const scrollToImage = (index: number) => {
-    if (!scrollContainerRef.current) return;
-    
-    const container = scrollContainerRef.current;
-    const isMobile = window.innerWidth < 900;
+  const scrollToImage = useCallback(
+    (index: number) => {
+      if (!scrollContainerRef.current) return;
 
-    // Find the actual DOM element for the thumbnail at this index
-    const thumbnailElements = container.querySelectorAll('[data-thumbnail-index]');
-    const targetElement = thumbnailElements[index] as HTMLElement;
-    
-    if (targetElement) {
-      // Use scrollIntoView which handles RTL automatically
-      targetElement.scrollIntoView({
-        behavior: "smooth",
-        block: isMobile ? "nearest" : "center",
-        inline: isMobile ? "center" : "nearest",
-      });
-    } else {
-      // Fallback to manual calculation if elements not found
-      const thumbnailWidth = 84;
-      const thumbnailHeight = 105;
-      const gap = 8;
-      const containerWidth = container.clientWidth;
-      const containerHeight = container.clientHeight;
+      const container = scrollContainerRef.current;
+      const isMobile = window.innerWidth < 900;
 
-      if (isMobile) {
-        const itemWidth = thumbnailWidth + gap;
-        const scrollPosition = index * itemWidth;
-        const centerOffset = (containerWidth - thumbnailWidth) / 2;
-        let targetScroll = scrollPosition - centerOffset;
-        const maxScroll = Math.max(0, container.scrollWidth - containerWidth);
-        targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+      // Find the actual DOM element for the thumbnail at this index
+      const thumbnailElements = container.querySelectorAll("[data-thumbnail-index]");
+      const targetElement = thumbnailElements[index] as HTMLElement;
 
-        const currentScroll = container.scrollLeft;
-        if (Math.abs(currentScroll - targetScroll) > 10) {
-          container.scrollTo({
-            left: targetScroll,
-            behavior: "smooth",
-          });
-        }
+      if (targetElement) {
+        // Use scrollIntoView which handles RTL automatically
+        targetElement.scrollIntoView({
+          behavior: quality.motion === "minimal" ? "auto" : "smooth",
+          block: isMobile ? "nearest" : "center",
+          inline: isMobile ? "center" : "nearest",
+        });
       } else {
-        const scrollPosition = index * (thumbnailHeight + gap);
-        const centerOffset = (containerHeight - thumbnailHeight) / 2;
-        const targetScroll = Math.max(0, scrollPosition - centerOffset);
+        // Fallback to manual calculation if elements not found
+        const thumbnailWidth = 84;
+        const thumbnailHeight = 105;
+        const gap = 8;
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
 
-        const currentScroll = container.scrollTop;
-        if (Math.abs(currentScroll - targetScroll) > 10) {
-          container.scrollTo({
-            top: targetScroll,
-            behavior: "smooth",
-          });
+        if (isMobile) {
+          const itemWidth = thumbnailWidth + gap;
+          const scrollPosition = index * itemWidth;
+          const centerOffset = (containerWidth - thumbnailWidth) / 2;
+          let targetScroll = scrollPosition - centerOffset;
+          const maxScroll = Math.max(0, container.scrollWidth - containerWidth);
+          targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+
+          const currentScroll = container.scrollLeft;
+          if (Math.abs(currentScroll - targetScroll) > 10) {
+            container.scrollTo({
+              left: targetScroll,
+              behavior: quality.motion === "minimal" ? "auto" : "smooth",
+            });
+          }
+        } else {
+          const scrollPosition = index * (thumbnailHeight + gap);
+          const centerOffset = (containerHeight - thumbnailHeight) / 2;
+          const targetScroll = Math.max(0, scrollPosition - centerOffset);
+
+          const currentScroll = container.scrollTop;
+          if (Math.abs(currentScroll - targetScroll) > 10) {
+            container.scrollTo({
+              top: targetScroll,
+              behavior: quality.motion === "minimal" ? "auto" : "smooth",
+            });
+          }
         }
       }
-    }
-  };
+    },
+    [quality.motion],
+  );
 
   const handleScroll = () => {
     if (scrollContainerRef.current) {
@@ -115,9 +120,10 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
     const scrollContainer = scrollContainerRef.current;
     if (scrollContainer) {
       scrollContainer.addEventListener("scroll", handleScroll);
-      handleScroll(); // Check initial state
+      const frameId = requestAnimationFrame(handleScroll);
 
       return () => {
+        cancelAnimationFrame(frameId);
         scrollContainer.removeEventListener("scroll", handleScroll);
       };
     }
@@ -132,31 +138,38 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
         scrollToImage(selectedIndex);
       });
     }
-  }, [selectedImage, assets]);
+  }, [selectedImage, assets, scrollToImage]);
 
   return (
     <div
       ref={scrollContainerRef}
-      className="relative h-auto w-full overflow-x-auto px-1 py-1 xl:h-[calc((112px*5/4*4)+(0.5rem*3)+0.5rem)] xl:max-h-[calc(100vh-var(--header-offset,88px)-1rem)] xl:w-[120px] xl:overflow-y-auto xl:overflow-x-hidden [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain]"
+      className="relative h-auto w-full overflow-x-auto px-1 py-1 [-webkit-overflow-scrolling:touch] [overscroll-behavior-x:contain] xl:h-[calc((112px*5/4*4)+(0.5rem*3)+0.5rem)] xl:max-h-[calc(100vh-var(--header-offset,88px)-1rem)] xl:w-[120px] xl:overflow-y-auto xl:overflow-x-hidden"
     >
       <div className="flex min-w-max flex-row-reverse flex-nowrap gap-2 xl:w-full xl:min-w-0 xl:flex-col xl:flex-wrap">
         {assets.map((asset, index) => (
-          <div
+          <button
+            type="button"
             key={asset.id}
             data-thumbnail-index={index}
+            aria-label={`نمایش ${asset.type === "video" ? "ویدیو" : "تصویر"} ${index + 1}: ${asset.alt}`}
+            aria-pressed={asset.id === selectedImage}
             onClick={() => {
               setSelectedImage(asset.id);
             }}
-            onMouseEnter={() => preloadSrc(asset.src)}
-            className={`relative aspect-[4/5] w-[84px] flex-shrink-0 cursor-pointer overflow-visible rounded-2xl p-0.5 transition-shadow md:w-[112px] ${
-              asset.id === selectedImage
-                ? "ring-2 ring-infinity-primary"
-                : "ring-1 ring-black/10"
+            onMouseEnter={() => {
+              if (quality.media === "high" && asset.type === "image") {
+                preloadSrc(asset.src);
+              }
+            }}
+            className={`relative aspect-[4/5] w-[84px] flex-shrink-0 cursor-pointer overflow-visible rounded-2xl p-0.5 transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 md:w-[112px] ${
+              asset.id === selectedImage ? "ring-2 ring-infinity-primary" : "ring-1 ring-black/10"
             }`}
           >
-            <div className={`relative h-full w-full ${
-              asset.id === selectedImage ? "opacity-60" : "opacity-100"
-            } overflow-hidden rounded-[14px]`}>
+            <div
+              className={`relative h-full w-full ${
+                asset.id === selectedImage ? "opacity-60" : "opacity-100"
+              } overflow-hidden rounded-[14px]`}
+            >
               <Image
                 fill
                 src={asset.thumbnail.trim() || "/images/cart/empty-cart.png"}
@@ -177,7 +190,7 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
             {asset.type === "video" && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                 <div className="group/video-thumb flex items-center justify-center transition-all duration-300">
-                  <div className="absolute h-12 w-12 rounded-full bg-white/95 backdrop-blur-sm shadow-lg ring-2 ring-infinity-primary-lighter/50 transition-all duration-300 group-hover/video-thumb:scale-110 group-hover/video-thumb:ring-infinity-primary-light/70 group-hover/video-thumb:shadow-xl" />
+                  <div className="absolute h-12 w-12 rounded-full bg-white/95 shadow-lg ring-2 ring-infinity-primary-lighter/50 backdrop-blur-sm transition-all duration-300 group-hover/video-thumb:scale-110 group-hover/video-thumb:shadow-xl group-hover/video-thumb:ring-infinity-primary-light/70" />
                   <svg
                     className="relative h-5 w-5 text-infinity-primary transition-transform duration-300 group-hover/video-thumb:scale-110"
                     fill="currentColor"
@@ -188,7 +201,7 @@ export default function PDPHeroGalleryThumbnailList(props: Props) {
                 </div>
               </div>
             )}
-          </div>
+          </button>
         ))}
       </div>
 

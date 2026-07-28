@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { useEffect } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import type { SocialFeedPost } from "@repo/social-posts";
-import {
-  noteEnhancementLoaded,
-  useAdaptiveHydrated,
-  useAdaptiveQuality,
-} from "@/lib/adaptive-quality";
+import InfinitygramRichPosts from "./InfinitygramRichPosts";
+import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
 
 type InfinitygramSectionClientProps = {
   posts: readonly SocialFeedPost[];
@@ -19,71 +17,23 @@ const EXTERNAL_LINK_PROPS = {
   rel: "noopener noreferrer",
 } as const;
 
-function hrefForPost(slug: string) {
-  return `${INFINITYGRAM_URL}/post/${encodeURIComponent(slug)}`;
-}
-
 export default function InfinitygramSectionClient({ posts }: InfinitygramSectionClientProps) {
-  const sectionRef = useRef<HTMLElement>(null);
-  const hydrated = useAdaptiveHydrated();
   const quality = useAdaptiveQuality();
-  const [nearViewport, setNearViewport] = useState(false);
-  const [RichPosts, setRichPosts] = useState<ComponentType<{
-    posts: readonly SocialFeedPost[];
-  }> | null>(null);
-  const richMediaEligible = hydrated && nearViewport && quality.media !== "economy";
-  let xlCount = 0;
-  let smCount = 0;
-  const visiblePosts = posts.filter((post) => {
-    if (post.desktopVariant === "xl" && xlCount < 2) {
-      xlCount += 1;
-      return true;
-    }
-    if (post.desktopVariant === "sm" && smCount < 4) {
-      smCount += 1;
-      return true;
-    }
-    return false;
+  const staticMedia = quality.media === "economy";
+  const visiblePosts = posts.filter((post, index) => {
+    const variantLimit = post.desktopVariant === "xl" ? 2 : 4;
+    const precedingVariantCount = posts
+      .slice(0, index + 1)
+      .filter((candidate) => candidate.desktopVariant === post.desktopVariant).length;
+    return precedingVariantCount <= variantLimit;
   });
 
   useEffect(() => {
-    const section = sectionRef.current;
-    if (!section) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setNearViewport(true);
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry.isIntersecting) return;
-        setNearViewport(true);
-        observer.disconnect();
-      },
-      { rootMargin: "400px 0px" },
-    );
-    observer.observe(section);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!richMediaEligible || RichPosts) return;
-    let cancelled = false;
-    import("./InfinitygramRichPosts")
-      .then((module) => {
-        if (cancelled) return;
-        setRichPosts(() => module.default);
-        noteEnhancementLoaded("social-media");
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [RichPosts, richMediaEligible]);
+    if (!staticMedia) noteEnhancementLoaded("social-media");
+  }, [staticMedia]);
 
   return (
     <section
-      ref={sectionRef}
       dir="rtl"
       aria-labelledby="home-infinitygram-heading"
       className="overflow-hidden bg-[#252220] text-white"
@@ -94,7 +44,7 @@ export default function InfinitygramSectionClient({ posts }: InfinitygramSection
             id="home-infinitygram-heading"
             className="flex items-center gap-2 text-right font-peyda-fanum text-3xl font-normal leading-[37px] text-white"
           >
-            <img
+            <Image
               src="/infinitygram-icon.svg"
               alt=""
               width={32}
@@ -114,31 +64,7 @@ export default function InfinitygramSectionClient({ posts }: InfinitygramSection
           </Link>
         </div>
 
-        {richMediaEligible && RichPosts ? (
-          <RichPosts posts={visiblePosts} />
-        ) : (
-          <ul
-            className="grid w-full min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
-            dir="ltr"
-            aria-label="پست‌های اینفینیتی‌گرام"
-          >
-            {visiblePosts.map((post) => (
-              <li key={post.id} className="min-w-0">
-                <Link
-                  href={hrefForPost(post.slug)}
-                  target={EXTERNAL_LINK_PROPS.target}
-                  rel={EXTERNAL_LINK_PROPS.rel}
-                  className="flex min-h-28 w-full items-end rounded-[20px] border border-white/25 bg-white/10 p-4 text-right font-peyda text-sm text-white outline-none transition-colors hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-                  aria-label={`مشاهده پست ${post.title || post.imageAlt}`}
-                >
-                  <span dir="rtl" className="line-clamp-2">
-                    {post.title || post.imageAlt || "مشاهده پست"}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
+        <InfinitygramRichPosts posts={visiblePosts} staticMedia={staticMedia} />
 
         <Link
           href={INFINITYGRAM_URL}

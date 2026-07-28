@@ -225,6 +225,21 @@ Minimal Motion disables decorative animation while retaining focus,
 loading/progress, validation, menus/modals, and confirmation feedback. It is not
 a blanket `transition: none`.
 
+For identical data, viewport, and UI state, the acceptance baseline is a frozen
+Enhanced frame. Safe/Economy/Minimal keeps the same sections, imagery, card
+counts, geometry, responsive composition, controls, and actions. It may replace
+autoplay with manual navigation, moving media with its poster, blur with an
+opaque/static surface, and decorative motion with its final state. Required
+layout, responsive scaling, pagination, zoom, and interaction JavaScript stays
+active at every tier.
+
+Enhanced is the compatibility-rich path, with commit `93c39b74` (the last
+pre-adaptive storefront baseline) serving as the behavioral reference. The
+governor may make its implementation conditional or lazy, but must not silently
+remove the baseline's visible motion, autoplay, hover feedback, or enabled
+media. The current hero transition and home product-rail page transition use
+the same timing/easing as that reference.
+
 JavaScript is a storefront requirement. The governor reduces JavaScript and
 media intensity; it does not maintain a separate no-JavaScript application.
 `Reveal` is visible in SSR, the first hydration render,
@@ -235,9 +250,10 @@ change and unmount.
 Safe/Economy/Minimal remains a fully interactive JavaScript storefront. It
 keeps the same responsive product-rail limits and pagination, navigation,
 variants, wishlist, forms, authentication, cart, checkout, callback, and
-payment-result controllers. Optional Quick View, Share, video, and rich media
-can defer their chunks until an explicit action, but the action remains
-available and functional in Safe.
+payment-result controllers. PDP zoom and Infinitygram's card/scaling layout
+remain active. Optional Quick View, Share, video, and moving-media code can
+defer until an explicit action, but the action remains available and functional
+in Safe.
 
 `content-visibility:auto` is currently disabled for home merchandising because
 paint containment clipped the intentional full-viewport newest/discounted
@@ -248,20 +264,32 @@ full-bleed, anchor/focus, PLP, PDP, cart, checkout, or sticky-filter subtree.
 
 ### Hero
 
-- SSR/Safe/Minimal: one linked static first slide plus semantic links to other
-  banner targets;
-- Standard: one responsive native/CSS-controlled slider without Motion;
+- SSR and first hydration: one linked responsive LCP image;
+- Standard/Safe/Minimal: the complete responsive native/CSS-controlled slider
+  with the same active image, pagination, links, dimensions, and shared active
+  index, without autoplay or Motion;
 - Enhanced: dynamically imported Motion slider using `LazyMotion`, asynchronous
-  `domAnimation`, `m`, `strict`, and `MotionConfig reducedMotion="user"`.
+  `domAnimation`, `m`, `strict`, and `MotionConfig reducedMotion="user"`. Once
+  hydration confirms Enhanced eligibility, this compatibility-rich chunk is
+  requested immediately rather than waiting for a later idle/LCP gate. The
+  complete native slider remains visible while that chunk loads.
 
 The responsive `<picture>` uses one discoverable LCP image; there are no
-simultaneous CSS-hidden mobile and desktop trees.
+simultaneous CSS-hidden mobile and desktop trees. Runtime tier changes preserve
+the active slide.
 
 ### Product rails and PLP
 
 Home rails and PLP render one responsive list/grid. The current 30-item PLP is
 not virtualized. Filters, sorting, URL state, pagination, links, prices,
 availability, and wishlist behavior remain tier-independent.
+
+Enhanced home product rails preserve the pre-adaptive page switch: the current
+cards fade/scale out for 150 ms, the page changes, and the next cards fade/scale
+in after a 50 ms handoff. Standard/Safe/Minimal commit the same page change
+immediately with no decorative delay. A downgrade or hidden-tab transition
+cancels timers, commits any pending page request, and restores an idle visible
+track so animation can never block product access.
 
 Quick View and Share imports are reached only after the corresponding explicit
 click. High media may prewarm secondary product media from mouse/focus intent.
@@ -285,10 +313,13 @@ discovery.
   `src` only after explicit play.
 - Standard: video source/metadata attaches only when the medium approaches the
   viewport.
-- High: adjacent image and richer zoom preloading are allowed.
+- High: adjacent image preloading is allowed.
 
-On downgrade to Economy, video pauses, removes `src`, calls `load()`, and resets
-zoom state. Observers disconnect on tier/route/unmount.
+Zoom, thumbnails, navigation, keyboard access, pointer interaction, and touch
+interaction stay available in Economy. Minimal Motion switches zoom/thumbnail
+movement immediately. A user-started video remains attached across a later
+downgrade; passive video attachment is still removed by the Economy render
+path. Observers disconnect on tier/route/unmount.
 
 ### GIF, social, and stories
 
@@ -296,10 +327,11 @@ Enabled storefront GIFs are tier-independent: the top banner and merchandising
 GIF slots keep their native animated image sources in Safe/Economy/Minimal and
 are never replaced with adaptive text shells or unloaded on downgrade. Native
 lazy loading may defer an off-screen transfer, but once the GIF enters loading
-range it animates normally. Economy still avoids attaching optional video and
-social preview sources until explicit interaction. Infinitygram's media package
-waits for both eligibility and a near-viewport intersection; its linked shell
-remains SSR-visible. Story avatars and links remain; the existing viewer stays
+range it animates normally. Infinitygram uses the same `SocialPostCard`
+components, images, variants, grid spans, and responsive scaling JavaScript at
+every tier. Economy supplies cover images to those cards instead of attaching
+video previews; higher media tiers may attach the preview with native
+`preload="none"`. Story avatars and links remain; the existing viewer stays
 interaction-lazy.
 
 ## Telemetry
@@ -370,15 +402,22 @@ buckets, researched UA admission and rejection, UA-CH denial/contradiction,
 promotion to peak, downgrade ordering/session carryover, bootstrap/admin
 exclusion, footer-control clearance, and controller cleanup.
 
-The dedicated Playwright config builds and runs with `next start`, compiles a
-test-only adapter, and gates Chromium desktop/mobile, Firefox, and WebKit. It
+The dedicated Playwright config runs the production standalone output with a
+test-only adapter and gates Chromium desktop/mobile, Firefox, and WebKit. It
 does not reuse the legacy helper that ignores hydration attribute errors. The
 suite captures attributes at bootstrap assignment, checks one hero/LCP tree,
 forbidden Safe media/chunks against built chunk content, first-hydration
-visibility, keyboard semantics, missing/blocked APIs, reduced preferences, test Enhanced,
-runtime downgrade persistence, high-end-only promotion, narrow mobile
-footer/nav geometry, admin exclusion, SnappPay failure isolation, and downgrade
-during payment submit/redirect/callback/result.
+visibility, keyboard semantics, missing/blocked APIs, reduced preferences, test
+Enhanced, runtime downgrade persistence, high-end-only promotion, narrow
+mobile footer/nav geometry, admin exclusion, SnappPay failure isolation, and
+downgrade during payment submit/redirect/callback/result.
+
+`e2e:adaptive:parity` compares a settled Enhanced home frame with
+Safe/Economy/Minimal at 390×844, 768×1024, 1280×800, and 1440×1100.
+`e2e:adaptive:lowest` is run against a build compiled with
+`NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE=true`; it covers home, PLP,
+PDP gallery/zoom, cart persistence, static media, hidden reveals, and a
+CPU-throttled/slower-network laptop flow.
 
 Required local/release commands:
 
@@ -391,7 +430,13 @@ pnpm --filter @repo/frontend build
 ANALYZE=true pnpm --filter @repo/frontend build
 pnpm --filter @repo/e2e check-types
 pnpm --filter @repo/e2e install:browsers
-E2E_WEB_SERVER_COMMAND='pnpm --filter @repo/frontend build && pnpm --filter @repo/frontend exec next start -p 2888' pnpm --filter @repo/e2e e2e:adaptive
+mkdir -p apps/frontend/.next/standalone/apps/frontend/public apps/frontend/.next/standalone/apps/frontend/.next/static
+cp -a apps/frontend/public/. apps/frontend/.next/standalone/apps/frontend/public/
+cp -a apps/frontend/.next/static/. apps/frontend/.next/standalone/apps/frontend/.next/static/
+E2E_WEB_SERVER_COMMAND='PORT=2888 HOSTNAME=127.0.0.1 node /absolute/repo/apps/frontend/.next/standalone/apps/frontend/server.js' pnpm --filter @repo/e2e e2e:adaptive
+E2E_WEB_SERVER_COMMAND='PORT=2888 HOSTNAME=127.0.0.1 node /absolute/repo/apps/frontend/.next/standalone/apps/frontend/server.js' pnpm --filter @repo/e2e e2e:adaptive:parity
+# Rebuild with NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE=true first.
+E2E_WEB_SERVER_COMMAND='PORT=2888 HOSTNAME=127.0.0.1 node /absolute/repo/apps/frontend/.next/standalone/apps/frontend/server.js' pnpm --filter @repo/e2e e2e:adaptive:lowest
 pnpm --filter @repo/e2e e2e:smoke
 pnpm --filter @repo/backend test:ci
 pnpm --filter @repo/backend test:integration
@@ -422,13 +467,13 @@ Switching only the storefront to non-preloaded font declarations preserved the
 same families and weights while letting each face load when CSS actually uses
 it:
 
-| Local cold home trace             | Before      | After       | Change             |
-| --------------------------------- | ----------- | ----------- | ------------------ |
-| critical font requests            | 13          | 1           | 12 fewer            |
-| critical decoded font bytes       | 742,080     | 41,724      | 700,356 fewer       |
-| total critical decoded bytes      | 2,678,518   | 1,972,948   | 705,570 fewer       |
-| critical decoded script bytes     | 1,389,327   | 1,389,295   | effectively stable |
-| pre-load optional Lottie work     | not allowed | none seen   | gate satisfied      |
+| Local cold home trace         | Before      | After     | Change             |
+| ----------------------------- | ----------- | --------- | ------------------ |
+| critical font requests        | 13          | 1         | 12 fewer           |
+| critical decoded font bytes   | 742,080     | 41,724    | 700,356 fewer      |
+| total critical decoded bytes  | 2,678,518   | 1,972,948 | 705,570 fewer      |
+| critical decoded script bytes | 1,389,327   | 1,389,295 | effectively stable |
+| pre-load optional Lottie work | not allowed | none seen | gate satisfied     |
 
 This is local request/byte evidence, not a claim about field LCP or wall-clock
 latency. Candidate and physical-device measurements remain required.

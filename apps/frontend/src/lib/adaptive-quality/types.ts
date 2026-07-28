@@ -81,6 +81,7 @@ export type AdaptiveQualitySessionRecord = {
 
 export type EnhancementFamily =
   | "hero-motion"
+  | "carousel-motion"
   | "lottie-loader"
   | "quick-view"
   | "share"

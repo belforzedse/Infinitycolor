@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
 import { StorefrontGrid } from "@/components/storefront";
+import { useAdaptiveCarouselTransition } from "@/hooks/useAdaptiveCarouselTransition";
+import { cn } from "@/lib/utils";
 import ArrowLeftIcon from "./Icons/ArrowLeftIcon";
 import PDPHeroNavigationButtons from "./NavigationButtons";
 
@@ -75,20 +77,28 @@ export default function OffersListHomePage({
 }: Props) {
   const productsPerPage = useProductsPerPage();
   const [currentPage, setCurrentPage] = useState(0);
+  const { cancelTransition, isAnimating, richTransition, transitionTo } =
+    useAdaptiveCarouselTransition(setCurrentPage);
   const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
   const safeCurrentPage = Math.min(currentPage, totalPages - 1);
   const startIndex = safeCurrentPage * productsPerPage;
   const currentProducts = products.slice(startIndex, startIndex + productsPerPage);
 
   useEffect(() => {
+    cancelTransition(false);
+    // The externally observed responsive page size defines a new page set.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCurrentPage(0);
-  }, [productsPerPage]);
+  }, [cancelTransition, productsPerPage]);
 
   useEffect(() => {
     if (currentPage !== safeCurrentPage) {
+      cancelTransition(false);
+      // Product updates can remove the active page; keep the index reachable.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCurrentPage(safeCurrentPage);
     }
-  }, [currentPage, safeCurrentPage]);
+  }, [cancelTransition, currentPage, safeCurrentPage]);
 
   function getPlpHref(): string {
     if (title.includes("تخفیف")) return "/plp?hasDiscount=true";
@@ -98,7 +108,13 @@ export default function OffersListHomePage({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-3">
+    <div
+      className="flex min-w-0 flex-col gap-3"
+      data-aq-carousel="product-rail"
+      data-aq-carousel-motion={richTransition ? "legacy-rich" : "lightweight"}
+      data-aq-carousel-phase={isAnimating ? "transitioning" : "idle"}
+      data-aq-carousel-page={safeCurrentPage + 1}
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-1">
           {icon}
@@ -109,12 +125,12 @@ export default function OffersListHomePage({
           {totalPages > 1 ? (
             <>
               <PDPHeroNavigationButtons
-                goToNextImage={() => setCurrentPage((page) => Math.max(0, page - 1))}
+                goToNextImage={() => transitionTo(Math.max(0, safeCurrentPage - 1))}
                 goToPreviousImage={() =>
-                  setCurrentPage((page) => Math.min(totalPages - 1, page + 1))
+                  transitionTo(Math.min(totalPages - 1, safeCurrentPage + 1))
                 }
-                nextDisabled={safeCurrentPage === 0}
-                previousDisabled={safeCurrentPage === totalPages - 1}
+                nextDisabled={safeCurrentPage === 0 || isAnimating}
+                previousDisabled={safeCurrentPage === totalPages - 1 || isAnimating}
                 nextLabel="صفحه قبلی محصولات"
                 previousLabel="صفحه بعدی محصولات"
               />
@@ -138,21 +154,35 @@ export default function OffersListHomePage({
         </div>
       </div>
 
-      <StorefrontGrid
-        variant="products"
-        data-aq-home-product-list
-        data-products-per-page={productsPerPage}
+      <div
+        className={cn(
+          "min-w-0",
+          richTransition && "aq-decorative-motion transform transition-all duration-300 ease-out",
+          richTransition && (isAnimating ? "scale-95 opacity-0" : "scale-100 opacity-100"),
+        )}
+        data-aq-carousel-track
       >
-        {currentProducts.map((product, index) => (
-          <div
-            key={product.id}
-            data-product-card-slide
-            className={`min-w-0 ${initialResponsiveVisibility(index)}`}
-          >
-            <ProductCard {...product} />
-          </div>
-        ))}
-      </StorefrontGrid>
+        <StorefrontGrid
+          variant="products"
+          data-aq-home-product-list
+          data-products-per-page={productsPerPage}
+        >
+          {currentProducts.map((product, index) => (
+            <div
+              key={product.id}
+              data-product-card-slide
+              className={cn(
+                "min-w-0",
+                initialResponsiveVisibility(index),
+                richTransition &&
+                  "aq-decorative-motion transform transition-all duration-200 ease-out hover:-translate-y-1 hover:scale-[1.02]",
+              )}
+            >
+              <ProductCard {...product} />
+            </div>
+          ))}
+        </StorefrontGrid>
+      </div>
 
       {!hideBottomViewMore && products.length > productsPerPage ? (
         <div className="mt-4 flex items-center justify-center md:mt-6">

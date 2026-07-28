@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { installLocalMediaFixture } from "./local-media";
 
 const THIRD_PARTY_HOST_PATTERN =
   /(?:matomo|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)/i;
@@ -26,6 +27,7 @@ export type RuntimeErrorCollector = {
 export async function prepareStorefrontPage(page: Page): Promise<RuntimeErrorCollector> {
   const errors: string[] = [];
 
+  await installLocalMediaFixture(page);
   await page.route((url) => isThirdPartyRequest(url), (route) => route.abort());
 
   await page.addInitScript(() => {

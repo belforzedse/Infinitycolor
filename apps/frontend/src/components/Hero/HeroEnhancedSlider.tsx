@@ -1,40 +1,31 @@
 "use client";
 
-import {
-  AnimatePresence,
-  LazyMotion,
-  MotionConfig,
-  m,
-  type PanInfo,
-} from "framer-motion";
+import { AnimatePresence, LazyMotion, MotionConfig, m, type PanInfo } from "framer-motion";
 import { useCallback, useEffect, useState } from "react";
 import PaginationDesktop from "./PaginationDesktop";
 import ResponsiveHeroImage from "./ResponsiveHeroImage";
 import { useAutoplaySlider } from "./useAutoplaySlider";
 import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
-import type { HeroSlideConfig } from "@/types/super-admin/heroSliderV3";
+import type { HeroSliderImplementationProps } from "./HeroBannerSlider";
 
-const loadMotionFeatures = () =>
-  import("./motion-features").then((module) => module.default);
+const loadMotionFeatures = () => import("./motion-features").then((module) => module.default);
 const SLIDE_SWIPE_THRESHOLD = 56;
 const SLIDE_SWIPE_VELOCITY = 420;
-
-type Props = {
-  slides: HeroSlideConfig[];
-  autoplayInterval?: number;
-  autoplayEligibility?: boolean[];
-};
 
 export default function HeroEnhancedSlider({
   slides,
   autoplayInterval,
   autoplayEligibility,
-}: Props) {
+  activeIndex,
+  onActiveIndexChange,
+}: HeroSliderImplementationProps) {
   const [slideDirection, setSlideDirection] = useState(1);
   const { index, goTo, next, prev } = useAutoplaySlider({
     slidesLength: slides.length,
     autoplayInterval,
     autoplayEligibility,
+    controlledIndex: activeIndex,
+    onIndexChange: onActiveIndexChange,
   });
   const hasMultipleSlides = slides.length > 1;
   const activeSlide = slides[index] || slides[0];
@@ -138,4 +129,3 @@ export default function HeroEnhancedSlider({
     </MotionConfig>
   );
 }
-

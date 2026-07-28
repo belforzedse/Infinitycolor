@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import HeroBannerSlider from "../HeroBannerSlider";
 import type { HeroSlideConfig } from "@/types/super-admin/heroSliderV3";
 import type { AdaptiveQualitySnapshot } from "@/lib/adaptive-quality";
@@ -59,9 +59,7 @@ describe("HeroBannerSlider adaptive gate", () => {
   });
 
   it("keeps one linked responsive LCP image for SSR and first hydration", () => {
-    const { container } = render(
-      <HeroBannerSlider slides={[slide("one"), slide("two")]} />,
-    );
+    const { container } = render(<HeroBannerSlider slides={[slide("one"), slide("two")]} />);
 
     expect(container.querySelector('[data-aq-hero="static"]')).toBeInTheDocument();
     expect(container.querySelectorAll("picture")).toHaveLength(1);
@@ -73,16 +71,14 @@ describe("HeroBannerSlider adaptive gate", () => {
 
   it("uses the native standard slider without mounting rich motion", () => {
     mockHydrated = true;
-    const { container } = render(
-      <HeroBannerSlider slides={[slide("one"), slide("two")]} />,
-    );
+    const { container } = render(<HeroBannerSlider slides={[slide("one"), slide("two")]} />);
 
     expect(container.querySelector('[data-aq-hero="standard"]')).toBeInTheDocument();
     expect(container.querySelector('[data-aq-hero="enhanced"]')).not.toBeInTheDocument();
     expect(container.querySelectorAll("picture")).toHaveLength(1);
   });
 
-  it("retains the static fallback until the eligible rich chunk resolves", async () => {
+  it("retains the complete standard slider until the eligible rich chunk resolves", async () => {
     mockHydrated = true;
     mockQuality = {
       ...mockQuality,
@@ -90,17 +86,13 @@ describe("HeroBannerSlider adaptive gate", () => {
       media: "high",
       motion: "enhanced",
     };
-    const { container } = render(
-      <HeroBannerSlider slides={[slide("one")]} />,
-    );
+    const { container } = render(<HeroBannerSlider slides={[slide("one")]} />);
 
-    expect(container.querySelector('[data-aq-hero="static"]')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByText("Enhanced hero")).toBeInTheDocument(),
-    );
+    expect(container.querySelector('[data-aq-hero="standard"]')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Enhanced hero")).toBeInTheDocument());
   });
 
-  it("never mounts the rich implementation in Safe or Minimal", async () => {
+  it("keeps every slide and manual control available in Safe or Minimal", async () => {
     mockHydrated = true;
     mockQuality = {
       ...mockQuality,
@@ -108,11 +100,12 @@ describe("HeroBannerSlider adaptive gate", () => {
       media: "economy",
       motion: "minimal",
     };
-    const { container } = render(
-      <HeroBannerSlider slides={[slide("one")]} />,
-    );
+    const { container } = render(<HeroBannerSlider slides={[slide("one"), slide("two")]} />);
 
-    expect(container.querySelector('[data-aq-hero="static"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-aq-hero="standard"]')).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go to slide 2" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Go to slide 2" }));
+    expect(container.querySelector('a[href="/plp?hero=two"]')).toBeInTheDocument();
     await Promise.resolve();
     expect(container.querySelector('[data-aq-hero="enhanced"]')).not.toBeInTheDocument();
   });

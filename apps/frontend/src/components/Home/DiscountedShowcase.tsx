@@ -7,6 +7,8 @@ import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
 import ArrowLeftIcon from "@/components/PDP/Icons/ArrowLeftIcon";
 import OffIcon from "@/components/PDP/Icons/OffIcon";
 import PDPHeroNavigationButtons from "@/components/PDP/NavigationButtons";
+import { useAdaptiveCarouselTransition } from "@/hooks/useAdaptiveCarouselTransition";
+import { cn } from "@/lib/utils";
 
 type DiscountedShowcaseProps = {
   products: ProductCardProps[];
@@ -30,12 +32,15 @@ function getProductsPerPageFromViewport(): ProductsPerPage {
 export default function DiscountedShowcase({ products }: DiscountedShowcaseProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const [productsPerPage, setProductsPerPage] = useState<ProductsPerPage>(3);
+  const { cancelTransition, isAnimating, richTransition, transitionTo } =
+    useAdaptiveCarouselTransition(setCurrentPage);
 
   useEffect(() => {
     const mediaQueries = PRODUCT_PAGE_BREAKPOINTS.map((breakpoint) =>
       window.matchMedia(breakpoint.query),
     );
     const handleBreakpointChange = () => {
+      cancelTransition(false);
       setProductsPerPage(getProductsPerPageFromViewport());
       setCurrentPage(0);
     };
@@ -45,7 +50,7 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
     return () => {
       mediaQueries.forEach((query) => query.removeEventListener("change", handleBreakpointChange));
     };
-  }, []);
+  }, [cancelTransition]);
 
   const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
   const startIndex = currentPage * productsPerPage;
@@ -53,16 +58,19 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
   useEffect(() => {
     const maxPage = Math.max(0, totalPages - 1);
     if (currentPage > maxPage) {
+      cancelTransition(false);
+      // Product updates can remove the active page; keep the index reachable.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCurrentPage(maxPage);
     }
-  }, [currentPage, totalPages]);
+  }, [cancelTransition, currentPage, totalPages]);
 
   const goToNextProduct = () => {
-    if (currentPage > 0) setCurrentPage((page) => page - 1);
+    if (currentPage > 0) transitionTo(currentPage - 1);
   };
 
   const goToPreviousProduct = () => {
-    if (currentPage < totalPages - 1) setCurrentPage((page) => page + 1);
+    if (currentPage < totalPages - 1) transitionTo(currentPage + 1);
   };
 
   if (products.length === 0) return null;
@@ -71,6 +79,10 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
     <section
       dir="rtl"
       data-home-full-bleed="discounted"
+      data-aq-carousel="discounted-products"
+      data-aq-carousel-motion={richTransition ? "legacy-rich" : "lightweight"}
+      data-aq-carousel-phase={isAnimating ? "transitioning" : "idle"}
+      data-aq-carousel-page={currentPage + 1}
       className="home-full-bleed overflow-hidden bg-[#1E2850]"
     >
       <style jsx>{`
@@ -116,6 +128,10 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
               <PDPHeroNavigationButtons
                 goToNextImage={goToNextProduct}
                 goToPreviousImage={goToPreviousProduct}
+                nextDisabled={currentPage === 0 || isAnimating}
+                previousDisabled={currentPage === totalPages - 1 || isAnimating}
+                nextLabel="صفحه قبلی محصولات تخفیف‌دار"
+                previousLabel="صفحه بعدی محصولات تخفیف‌دار"
               />
             </div>
             <div className="flex items-center gap-1 text-xs text-white/75">
@@ -128,6 +144,7 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
 
         <div
           className="scrollbar-hide smooth-scroll flex snap-x snap-mandatory gap-1.5 overflow-x-auto lg:grid lg:snap-none lg:grid-cols-3 lg:items-center lg:gap-4 lg:overflow-visible xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6"
+          data-aq-carousel-track
           style={{
             WebkitOverflowScrolling: "touch",
             scrollbarWidth: "none",
@@ -168,9 +185,14 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
               <div
                 key={product.id}
                 data-product-card-slide
-                className={`aq-decorative-motion w-[calc(50%-0.1875rem)] shrink-0 snap-start transition-transform duration-200 ease-out lg:w-auto lg:min-w-0 lg:snap-none lg:hover:-translate-y-1 lg:hover:scale-[1.02] ${
-                  visibleOnDesktop ? "lg:block" : "lg:hidden"
-                }`}
+                className={cn(
+                  "aq-decorative-motion w-[calc(50%-0.1875rem)] shrink-0 snap-start transition-transform duration-200 ease-out lg:w-auto lg:min-w-0 lg:snap-none lg:hover:-translate-y-1 lg:hover:scale-[1.02]",
+                  visibleOnDesktop ? "lg:block" : "lg:hidden",
+                  richTransition && "lg:transform lg:transition-all lg:duration-300 lg:ease-out",
+                  richTransition &&
+                    visibleOnDesktop &&
+                    (isAnimating ? "lg:scale-95 lg:opacity-0" : "lg:scale-100 lg:opacity-100"),
+                )}
                 style={{
                   animation: `fadeInUp 0.3s ease-out forwards ${index * 60}ms`,
                 }}

@@ -22,10 +22,12 @@ function PostCard({
   post,
   variant,
   className,
+  staticMedia,
 }: {
   post: SocialFeedPost;
   variant: PostCardVariant;
   className?: string;
+  staticMedia: boolean;
 }) {
   return (
     <SocialPostCard
@@ -43,20 +45,34 @@ function PostCard({
       linkRel={EXTERNAL_LINK_PROPS.rel}
       linkAriaLabel={`مشاهده پست ${post.title || post.imageAlt}`}
       actionTone="light"
+      staticMedia={staticMedia}
       overlay={post.overlay != null ? <SocialPostOverlayBadge type={post.overlay} /> : undefined}
     />
   );
 }
 
-export default function InfinitygramRichPosts({ posts }: { posts: readonly SocialFeedPost[] }) {
+export default function InfinitygramRichPosts({
+  posts,
+  staticMedia,
+}: {
+  posts: readonly SocialFeedPost[];
+  staticMedia: boolean;
+}) {
   return (
     <div
       className="grid w-full min-w-0 grid-flow-dense grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
       dir="ltr"
+      data-aq-infinitygram-layout="shared"
+      data-aq-infinitygram-media={staticMedia ? "static" : "rich"}
     >
       {posts.map((post) => (
         <div key={post.id} className={`${cellClass(post)} flex min-w-0 justify-center`} dir="ltr">
-          <PostCard post={post} variant={post.desktopVariant} className="w-full" />
+          <PostCard
+            post={post}
+            variant={post.desktopVariant}
+            className="w-full"
+            staticMedia={staticMedia}
+          />
         </div>
       ))}
     </div>

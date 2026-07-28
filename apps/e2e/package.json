@@ -11,6 +11,8 @@
     "e2e:payment": "playwright test --grep \"@payment\" --grep-invert \"@payment-live\"",
     "e2e:payment:live": "playwright test --grep \"@payment-live\"",
     "e2e:adaptive": "playwright test --config adaptive.playwright.config.ts",
+    "e2e:adaptive:parity": "playwright test --config static-parity.playwright.config.ts",
+    "e2e:adaptive:lowest": "playwright test --config forced-low.playwright.config.ts",
     "e2e:admin": "playwright test --grep \"@admin\"",
     "e2e:permissions": "playwright test --grep \"@permissions\"",
     "e2e:debug": "playwright test --debug",

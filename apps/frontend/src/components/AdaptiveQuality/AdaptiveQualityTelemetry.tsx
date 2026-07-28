@@ -25,6 +25,7 @@ import {
 const ROUTE_SUMMARY_DELAY_MS = 8_500;
 const ENHANCEMENT_FAMILIES = [
   "hero-motion",
+  "carousel-motion",
   "lottie-loader",
   "quick-view",
   "share",
