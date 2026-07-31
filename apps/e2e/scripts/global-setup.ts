@@ -219,6 +219,7 @@ async function revalidateSeededStorefront(seedSummary?: SeedSummary) {
   };
 
   await postRevalidation({ path: "/", type: "site-settings" });
+  await postRevalidation({ tag: "hero-slider", type: "hero-slider" });
   await postRevalidation(
     productSlug
       ? { path: `/pdp/${productSlug}`, type: "product" }
@@ -253,6 +254,7 @@ async function revalidateSeededStorefront(seedSummary?: SeedSummary) {
       ]);
       const homeReady =
         homeResponse.ok &&
+        homeHtml.includes('data-aq-hero="static"') &&
         homeHtml.includes(`data-product-slug="${productSlug}"`) &&
         homeHtml.includes('data-home-full-bleed="discounted"');
       const productReady =
