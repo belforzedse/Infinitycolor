@@ -84,15 +84,18 @@ const expectedHarnessConsoleErrors = [
   "Failed to preconnect to https://media.infinitycolor.test/. Error: Error resolving",
 ] as const;
 
-const localRscAccessControlError =
-  /^\/(?:127\.0\.0\.1|localhost):\d+\/.*[?&]_rsc=.* due to access control checks\.$/;
+// WebKit reports requests abandoned by a localhost page transition as page
+// errors. The commerce assertions below still fail on a real data or routing
+// regression; suppress only this engine-specific local harness diagnostic.
+const localWebkitNavigationAccessControlError =
+  /^\/(?:127\.0\.0\.1|localhost):\d+\/.* due to access control checks\.$/;
 
 function collectStrictRuntimeErrors(page: Page) {
   const errors: string[] = [];
   page.on("pageerror", (error) => {
     if (
       page.context().browser()?.browserType().name() === "webkit" &&
-      localRscAccessControlError.test(error.message)
+      localWebkitNavigationAccessControlError.test(error.message)
     ) {
       return;
     }
