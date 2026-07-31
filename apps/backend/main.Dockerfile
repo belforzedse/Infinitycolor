@@ -1,5 +1,5 @@
 # syntax=docker.arvancloud.ir/docker/dockerfile:1.7
-FROM docker.arvancloud.ir/node:20-alpine AS builder
+FROM docker.arvancloud.ir/library/node:20-alpine AS builder
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
@@ -23,7 +23,7 @@ RUN chmod +x /usr/local/bin/fallback-apk.sh /usr/local/bin/fallback-registry.sh
 
 # Arvan APK mirror + build deps required to compile sharp against Alpine's libvips
 # (avoids GitHub binary download which fails in CI due to network restrictions)
-RUN fallback-apk.sh build-base python3 vips-dev fftw-dev
+RUN /usr/local/bin/fallback-apk.sh build-base python3 vips-dev fftw-dev
 
 # node-gyp would otherwise download headers from unofficial-builds.nodejs.org (DNS failures in CI).
 # Official node:alpine already installs headers under /usr/local/include/node.
@@ -35,14 +35,14 @@ COPY apps/backend/package.json ./apps/backend/package.json
 COPY packages ./packages
 RUN --mount=type=cache,target=/root/.npm \
     --mount=type=cache,target=/root/.cache/node/corepack \
-    fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
+    /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm install --filter @repo/backend... --frozen-lockfile
 
 COPY apps/backend ./apps/backend
 WORKDIR /repo/apps/backend
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
     echo "starting strapi build at $(date -Iseconds)..." \
-    && fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
+    && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm run build \
     && echo "strapi build finished at $(date -Iseconds)"
 RUN echo "removing build artifacts..." \
@@ -51,7 +51,7 @@ RUN echo "removing build artifacts..." \
 WORKDIR /repo
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
     echo "starting pnpm deploy..." \
-    && fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
+    && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm --filter @repo/backend deploy --legacy --prod /app \
     && echo "pnpm deploy finished, copying build output..." \
     && mkdir -p /app/dist /app/build \
@@ -64,7 +64,7 @@ RUN --mount=type=cache,target=/root/.cache/node/corepack \
     && npm_config_platform=linux npm_config_arch=x64 npm_config_libc=musl pnpm rebuild sharp --unsafe-perm \
     && node -e "const sharp=require('sharp'); console.log('sharp-ok', process.platform, process.arch, sharp.versions);"
 
-FROM docker.arvancloud.ir/node:20-alpine AS runner
+FROM docker.arvancloud.ir/library/node:20-alpine AS runner
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
@@ -83,17 +83,17 @@ RUN chmod +x /usr/local/bin/fallback-apk.sh /usr/local/bin/fallback-registry.sh
 
 # su-exec so entrypoint can create uploads dir then run as node
 # Alpine default CDN (dl-cdn.alpinelinux.org) is often unreachable from same networks as Docker Hub; use Arvan APK mirror
-RUN fallback-apk.sh su-exec vips vips-dev
+RUN /usr/local/bin/fallback-apk.sh su-exec vips vips-dev
 # Prepare pnpm in the runner layer (builder corepack cache uses --mount=cache and is not COPY-able).
-RUN fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" pnpm --version \
+RUN /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" pnpm --version \
     && mkdir -p /home/node/.cache/node \
     && cp -a /root/.cache/node/corepack /home/node/.cache/node/ \
     && chown -R node:node /home/node/.cache
 
 WORKDIR /app
 
-COPY --from=builder /app /app
-RUN chmod +x /app/docker-entrypoint.sh && chown -R node:node /app
+COPY --from=builder --chown=node:node /app /app
+RUN chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 1337
 USER root

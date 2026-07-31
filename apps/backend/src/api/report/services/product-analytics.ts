@@ -590,23 +590,79 @@ export function paidOrdersCte(joins: ResolvedJoins): string {
 
 /**
  * Sales grouped by the order's own payment gateway, reusing the canonical
- * `paid_orders` definition. One row per gateway with the order count and the net
- * successful settlement (IRR; divide by 10 for Toman). Attributing each order to a
- * single `orders.payment_gateway` value guarantees no order is double-counted.
- * Bindings: [start, end] (consumed by the embedded paid_orders CTE).
+ * `paid_orders` definition. One row per gateway with the paid-order count, the net
+ * successful settlement (IRR; divide by 10 for Toman), and the *total* order count
+ * in range. Attributing each order to a single `orders.payment_gateway` value
+ * guarantees no order is double-counted.
+ *
+ * Rooted in `orders` with a LEFT JOIN, deliberately. This previously read
+ * `FROM paid_orders po JOIN orders o`, which meant a gateway with orders but no
+ * settled transaction produced **no row at all** — and `withShares` then computed
+ * percentages over only the surviving rows, so they summed to a confident 100%
+ * with the broken gateway simply absent. That is how a gateway that never wrote
+ * `contract_transaction.Status='Success'` stayed invisible. A gateway with orders
+ * now always appears, with `orders_count` 0 against a non-zero `total_orders_count`.
+ *
+ * Bindings: [start, end, start, end] — the embedded paid_orders CTE is declared
+ * first, so its window binds before the outer order-date window.
  */
 export function gatewayBreakdownQuery(joins: ResolvedJoins): string {
   return `
     WITH ${paidOrdersCte(joins)}
     SELECT
       COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown') AS gateway,
-      COUNT(*)::bigint AS orders_count,
+      COUNT(po.order_id)::bigint AS orders_count,
+      COUNT(*)::bigint AS total_orders_count,
       COALESCE(SUM(po.settled_irr), 0)::numeric AS settled_irr
-    FROM paid_orders po
-    JOIN orders o ON o.id = po.order_id
+    FROM orders o
+    LEFT JOIN paid_orders po ON po.order_id = o.id
+    WHERE o.date BETWEEN ? AND ?
     GROUP BY COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown')
     ORDER BY settled_irr DESC
   `;
+}
+
+export type GatewaySettlementRow = {
+  gateway: string;
+  label: string;
+  ordersCount: number;
+  totalOrdersCount: number;
+  total: number;
+};
+
+export type DataQualityWarning = {
+  code: string;
+  gateway: string;
+  message: string;
+  ordersCount: number;
+};
+
+/**
+ * Flags gateways that took orders in the range but settled none of them.
+ *
+ * Every product report defines a paid sale as `contract_transaction.Status =
+ * 'Success'`. A gateway whose settlement path never writes that row contributes
+ * zero to every metric — silently, and indistinguishably from "nobody used this
+ * gateway". Mellat did exactly this: it had no contract_transaction writer at all,
+ * so its revenue was absent from every report with nothing anywhere saying so.
+ *
+ * This is the generic detector for that class of bug. It is cheap because
+ * `gatewayBreakdownQuery` already returns both counts per gateway.
+ */
+export function gatewaySettlementWarnings(
+  rows: GatewaySettlementRow[],
+): DataQualityWarning[] {
+  return (rows || [])
+    .filter(
+      (row) =>
+        Number(row.totalOrdersCount) > 0 && Number(row.ordersCount) === 0,
+    )
+    .map((row) => ({
+      code: "GATEWAY_NO_SETTLED_ORDERS",
+      gateway: row.gateway,
+      ordersCount: Number(row.totalOrdersCount),
+      message: `درگاه «${row.label}» در این بازه ${row.totalOrdersCount} سفارش دارد اما هیچ تراکنش موفقی ثبت نکرده است؛ فروش این درگاه در گزارش‌ها دیده نمی‌شود.`,
+    }));
 }
 
 /**

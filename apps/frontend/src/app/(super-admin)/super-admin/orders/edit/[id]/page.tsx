@@ -291,10 +291,12 @@ export default function EditOrderPage() {
 
         const txList = contractTransactions || [];
         const lastTx = txList[txList.length - 1];
+        // SnappPay stores the provider payment token on the transaction's TrackId.
+        // Operators need it verbatim to raise tickets with SnappPay support.
         const lastSnappayTx = [...txList]
           .reverse()
           .find(
-            (tx) =>
+            (tx: any) =>
               (tx?.external_source || contract?.external_source) ===
                 "SnappPay" && tx?.TrackId,
           );
@@ -308,7 +310,6 @@ export default function EditOrderPage() {
           : undefined;
         const transactionId =
           contract?.external_id || (normalizedOrder as any)?.external_id;
-        const paymentToken = lastSnappayTx?.TrackId;
 
         const userName =
           (userInfo?.FirstName || "") + " " + (userInfo?.LastName || "");
@@ -339,7 +340,7 @@ export default function EditOrderPage() {
           postalCode: addr?.PostalCode,
           paymentGateway,
           transactionId,
-          paymentToken,
+          paymentToken: lastSnappayTx?.TrackId ?? null,
           shipping: shippingCost,
           shippingMethod,
           userId: String(user?.id ?? (normalizedOrder as any)?.userId ?? ""),
@@ -409,7 +410,6 @@ export default function EditOrderPage() {
     try {
       await apiClient.put(`/orders/${id}`, {
         data: {
-          Status: formData.orderStatus,
           Description: formData.description,
           Note: formData.note,
         },
@@ -470,6 +470,7 @@ export default function EditOrderPage() {
           : ""
       }`
     : "";
+  const pageConfig = config;
 
   return (
     <>
@@ -485,7 +486,7 @@ export default function EditOrderPage() {
         onCancel={cancelStatusChange}
       />
       <UpsertPageContentWrapper<SuperAdminOrderDetail>
-        config={config}
+        config={pageConfig}
         data={data}
         onSubmit={handleOrderSubmit}
         footer={

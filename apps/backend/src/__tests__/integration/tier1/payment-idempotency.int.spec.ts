@@ -6,6 +6,7 @@
  * reservation consume/release behavior are real.
  */
 import { verifyPaymentHandler } from "../../../api/order/controllers/helpers/payment";
+import { settleZarinPalPayment } from "../../../api/order/controllers/helpers/zarinpalSettlement";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 import { makeFactories, type Factories } from "../factories";
 
@@ -107,7 +108,7 @@ describe("ZarinPal payment callback idempotency", () => {
     expect(transaction.VerifiedAt).toBeTruthy();
     expect(Number(stock.Count)).toBe(8);
     expect(Number(stock.reservedCount)).toBe(0);
-    expect(latestRedirect(ctx)).toContain("/payment/success");
+    expect(latestRedirect(ctx)).toContain("/payment/result?resultHint=success");
     expect(latestRedirect(ctx)).toContain(`orderId=${payable.order.id}`);
     expect(latestRedirect(ctx)).toContain("transactionId=ZP_REF_SUCCESS");
   });
@@ -151,8 +152,79 @@ describe("ZarinPal payment callback idempotency", () => {
     expect(successTransactions).toHaveLength(1);
     expect(successTransactions[0].id).toBe(payable.transaction.id);
     expect(successTransactions[0].GatewayRefId).toBe("ZP_REF_DUPLICATE");
-    expect(latestRedirect(replayCtx)).toContain("/payment/success");
+    expect(latestRedirect(replayCtx)).toContain("/payment/result?resultHint=success");
     expect(latestRedirect(replayCtx)).toContain(`orderId=${payable.order.id}`);
+  });
+
+  it("serializes overlapping local settlements and consumes reserved stock once", async () => {
+    const payable = await f.createPayableOrder({
+      amountToman: 310000,
+      authority: "ZP_AUTH_CONCURRENT",
+      items: [{ count: 2, stockCount: 10, stockReserved: 2, perAmount: 155000 }],
+    });
+    const params = {
+      orderId: payable.order.id,
+      contractId: payable.contract.id,
+      contractTransactionId: payable.transaction.id,
+      authority: payable.authority,
+      verification: {
+        refId: "ZP_REF_CONCURRENT",
+        alreadyVerified: false,
+        gatewayResponse: { data: { code: 100, ref_id: "ZP_REF_CONCURRENT" } },
+      },
+    };
+
+    const [first, second] = await Promise.all([
+      settleZarinPalPayment(strapi, params),
+      settleZarinPalPayment(strapi, params),
+    ]);
+
+    expect([first.replayed, second.replayed].sort()).toEqual([false, true]);
+    const order = await f.getOrder(payable.order.id);
+    const transaction = await f.getContractTransaction(payable.transaction.id);
+    const stock = await f.getStock(payable.items[0].stockId);
+    expect(order.Status).toBe("Started");
+    expect(order.ReservationStatus).toBe("Consumed");
+    expect(transaction.Status).toBe("Success");
+    expect(Number(stock.Count)).toBe(8);
+    expect(Number(stock.reservedCount)).toBe(0);
+  });
+
+  it("rolls stock and reservation state back when final record persistence fails", async () => {
+    const payable = await f.createPayableOrder({
+      amountToman: 320000,
+      authority: "ZP_AUTH_ROLLBACK",
+      items: [{ count: 2, stockCount: 10, stockReserved: 2, perAmount: 160000 }],
+    });
+    const contractQuery = strapi.db.query("api::contract.contract");
+    jest.spyOn(contractQuery, "update").mockRejectedValueOnce(
+      new Error("forced contract persistence failure"),
+    );
+
+    await expect(
+      settleZarinPalPayment(strapi, {
+        orderId: payable.order.id,
+        contractId: payable.contract.id,
+        contractTransactionId: payable.transaction.id,
+        authority: payable.authority,
+        verification: {
+          refId: "ZP_REF_ROLLBACK",
+          alreadyVerified: false,
+          gatewayResponse: { data: { code: 100 } },
+        },
+      }),
+    ).rejects.toThrow("forced contract persistence failure");
+
+    const order = await f.getOrder(payable.order.id);
+    const contract = await f.getContract(payable.contract.id);
+    const transaction = await f.getContractTransaction(payable.transaction.id);
+    const stock = await f.getStock(payable.items[0].stockId);
+    expect(order.Status).toBe("Paying");
+    expect(order.ReservationStatus).toBe("Reserved");
+    expect(contract.Status).toBe("Not Ready");
+    expect(transaction.Status).not.toBe("Success");
+    expect(Number(stock.Count)).toBe(10);
+    expect(Number(stock.reservedCount)).toBe(2);
   });
 
   it("marks a verified gateway failure as failed, cancels records, and releases reserved stock", async () => {
@@ -187,7 +259,7 @@ describe("ZarinPal payment callback idempotency", () => {
     );
     expect(Number(stock.Count)).toBe(10);
     expect(Number(stock.reservedCount)).toBe(0);
-    expect(latestRedirect(ctx)).toContain("/payment/failure");
+    expect(latestRedirect(ctx)).toContain("/payment/result?resultHint=failure");
     expect(latestRedirect(ctx)).toContain(`orderId=${payable.order.id}`);
   });
 
@@ -220,7 +292,7 @@ describe("ZarinPal payment callback idempotency", () => {
     expect(transaction.GatewayStatus).toBe("NOK");
     expect(Number(stock.Count)).toBe(12);
     expect(Number(stock.reservedCount)).toBe(0);
-    expect(latestRedirect(ctx)).toContain("/payment/cancelled");
+    expect(latestRedirect(ctx)).toContain("/payment/result?resultHint=cancelled");
     expect(latestRedirect(ctx)).toContain(`orderId=${payable.order.id}`);
     expect(latestRedirect(ctx)).toContain("reason=user-cancelled");
   });

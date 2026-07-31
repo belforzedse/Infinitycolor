@@ -471,6 +471,37 @@ export const consumeReservedStockAtomic = async (
   }
 };
 
+/** Atomically restore sellable stock after an already-paid order is cancelled. */
+export const restoreStockAtomic = async (
+  strapi: Strapi,
+  stockId: number,
+  restoreBy: number,
+  trx?: any,
+): Promise<{ success: boolean; newCount?: number; error?: string }> => {
+  try {
+    const quantity = Number(restoreBy);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return { success: false, error: "Restore amount must be a positive integer" };
+    }
+    const result = await rawSql(
+      strapi,
+      `UPDATE product_stocks SET count = count + ? WHERE id = ? RETURNING count`,
+      [quantity, stockId],
+      trx,
+    );
+    const rows = result.rows || [];
+    if (!rows.length) return { success: false, error: "Stock record not found" };
+    scheduleHomeProductsRevalidation(
+      "stock-restore",
+      { stockId, restoreBy: quantity },
+      trx,
+    );
+    return { success: true, newCount: rows[0].count };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+};
+
 /**
  * Legacy non-atomic decrement - DEPRECATED
  * Use decrementStockAtomic instead to prevent race conditions

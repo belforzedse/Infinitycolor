@@ -1,0 +1,220 @@
+/**
+ * Adds durable SnappPay state and recovery operations for hardened
+ * (non-legacy) records.
+ *
+ * The SnappPay payment token is stored as-is in `contract_transactions.track_id`.
+ * An earlier revision of this migration encrypted it into
+ * `payment_token_ciphertext` with a keyed fingerprint and a unique index; that was
+ * removed because the fingerprint was derived from the encryption key itself,
+ * which made key rotation break a unique index and let one duplicate row
+ * crash-loop every web instance on boot. See the follow-up migration
+ * `drop-snappay-token-encryption` for environments that already ran that version.
+ */
+/**
+ * Shared advisory-lock key for all SnappPay schema work. Any migration or
+ * boot-time DDL that touches these tables must take this same key so they cannot
+ * interleave across instances.
+ */
+const SNAPPAY_MIGRATION_LOCK_KEY = 827453100;
+
+module.exports = {
+  async up(knex) {
+    // Serialize this migration across concurrently booting instances.
+    //
+    // All six web containers run migrations on boot. Strapi wraps each migration
+    // body in a transaction but records it in `strapi_migrations` on a *separate*
+    // connection, and that table has no unique constraint — so without a lock all
+    // six run `up()` at once, every one of them sees `hasColumn() === false`, and
+    // the losers die on `42701 column already exists`. This repo has already been
+    // bitten by that race (it silently dropped `background_job_locks`). Taking the
+    // lock first means the followers do their existence checks *after* the winner
+    // has committed, so they correctly skip.
+    //
+    // pg_advisory_xact_lock is released automatically when the wrapping
+    // transaction ends, so there is nothing to unlock on failure.
+    await knex.raw("SELECT pg_advisory_xact_lock(?)", [SNAPPAY_MIGRATION_LOCK_KEY]);
+
+    const hasColumn = (table, column) => knex.schema.hasColumn(table, column);
+    const hasPaymentAttempts = await knex.schema.hasTable("payment_attempts");
+    const hasContractTransactions = await knex.schema.hasTable("contract_transactions");
+
+    if (hasPaymentAttempts) {
+      const columns = {
+        providerStatus: await hasColumn("payment_attempts", "provider_status"),
+        nextAction: await hasColumn("payment_attempts", "next_action"),
+        nextActionAt: await hasColumn("payment_attempts", "next_action_at"),
+        leaseUntil: await hasColumn("payment_attempts", "lease_until"),
+        leaseVersion: await hasColumn("payment_attempts", "lease_version"),
+        callbackNonceHash: await hasColumn("payment_attempts", "callback_nonce_hash"),
+        callbackNonce: await hasColumn("payment_attempts", "callback_nonce"),
+        sideEffectsCompletedAt: await hasColumn("payment_attempts", "side_effects_completed_at"),
+      };
+      await knex.schema.alterTable("payment_attempts", (table) => {
+        if (!columns.providerStatus) table.string("provider_status").nullable();
+        if (!columns.nextAction) table.string("next_action").nullable();
+        if (!columns.nextActionAt) {
+          table.timestamp("next_action_at", { useTz: true }).nullable();
+        }
+        if (!columns.leaseUntil) {
+          table.timestamp("lease_until", { useTz: true }).nullable();
+        }
+        if (!columns.leaseVersion) {
+          table.integer("lease_version").notNullable().defaultTo(0);
+        }
+        if (!columns.callbackNonceHash) {
+          table.string("callback_nonce_hash", 64).nullable();
+        }
+        if (!columns.callbackNonce) {
+          table.string("callback_nonce", 64).nullable();
+        }
+        if (!columns.sideEffectsCompletedAt) {
+          table.timestamp("side_effects_completed_at", { useTz: true }).nullable();
+        }
+      });
+    }
+
+    if (hasContractTransactions) {
+      const names = [
+        "settled_at",
+        "reverted_at",
+        "cancelled_at",
+        "last_reconciled_at",
+        "last_http_status",
+        "last_provider_code",
+      ];
+      const present = {};
+      for (const name of names) {
+        present[name] = await hasColumn("contract_transactions", name);
+      }
+      await knex.schema.alterTable("contract_transactions", (table) => {
+        if (!present.settled_at) {
+          table.timestamp("settled_at", { useTz: true }).nullable();
+        }
+        if (!present.reverted_at) {
+          table.timestamp("reverted_at", { useTz: true }).nullable();
+        }
+        if (!present.cancelled_at) {
+          table.timestamp("cancelled_at", { useTz: true }).nullable();
+        }
+        if (!present.last_reconciled_at) {
+          table.timestamp("last_reconciled_at", { useTz: true }).nullable();
+        }
+        if (!present.last_http_status) table.integer("last_http_status").nullable();
+        if (!present.last_provider_code) {
+          table.integer("last_provider_code").nullable();
+        }
+      });
+    }
+
+    const hasPaymentOperations = await knex.schema.hasTable("payment_operations");
+    if (!hasPaymentOperations) {
+      await knex.schema.createTable("payment_operations", (table) => {
+        table.increments("id").primary();
+        table.string("idempotency_key", 255).notNullable().unique();
+        table.string("operation_type", 32).notNullable();
+        table.string("status", 32).notNullable().defaultTo("Queued");
+        table.string("provider_status", 64).nullable();
+        table.integer("http_status").nullable();
+        table.integer("provider_code").nullable();
+        table.integer("retry_count").notNullable().defaultTo(0);
+        table.timestamp("next_run_at", { useTz: true }).nullable();
+        table.timestamp("lease_until", { useTz: true }).nullable();
+        table.text("failure_message").nullable();
+        table.jsonb("metadata").nullable();
+        table.integer("attempt_key").nullable();
+        table.timestamp("created_at", { useTz: true }).notNullable().defaultTo(knex.fn.now());
+        table.timestamp("updated_at", { useTz: true }).notNullable().defaultTo(knex.fn.now());
+      });
+    } else if (!(await hasColumn("payment_operations", "attempt_key"))) {
+      await knex.schema.alterTable("payment_operations", (table) => {
+        table.integer("attempt_key").nullable();
+      });
+    }
+
+    // Legacy SnappPay tokens stay where they already are, in `track_id`.
+
+    if (await knex.schema.hasTable("order_logs")) {
+      const hasChanges = await hasColumn("order_logs", "changes");
+      if (hasChanges) {
+        const [{ data_type: changesType } = {}] = await knex("information_schema.columns")
+          .select("data_type")
+          .where({
+            table_schema: "public",
+            table_name: "order_logs",
+            column_name: "changes",
+          })
+          .limit(1);
+        if (changesType === "json" || changesType === "jsonb") {
+          await knex.raw(
+            `UPDATE order_logs
+             SET changes = (
+               changes::jsonb
+                 #- '{snappay,token}'
+                 #- '{snappay,payload,paymentToken}'
+             )::${changesType}
+             WHERE changes IS NOT NULL
+               AND changes::text ILIKE '%paymentToken%'`,
+          );
+        }
+      }
+    }
+    if (hasContractTransactions && (await hasColumn("contract_transactions", "gateway_response"))) {
+      const [{ data_type: responseType } = {}] = await knex("information_schema.columns")
+        .select("data_type")
+        .where({
+          table_schema: "public",
+          table_name: "contract_transactions",
+          column_name: "gateway_response",
+        })
+        .limit(1);
+      if (responseType === "json" || responseType === "jsonb") {
+        await knex.raw(
+          `UPDATE contract_transactions
+           SET gateway_response = (
+             gateway_response::jsonb
+               #- '{paymentToken}'
+               #- '{response,paymentToken}'
+               #- '{access_token}'
+           )::${responseType}
+           WHERE lower(external_source) IN ('snappay', 'snapppay')
+             AND gateway_response IS NOT NULL`,
+        );
+      }
+    }
+
+    if (hasPaymentAttempts) {
+      await knex.raw(
+        `CREATE INDEX IF NOT EXISTS idx_payment_attempts_snappay_due
+         ON payment_attempts (next_action_at)
+         WHERE lower(gateway) IN ('snappay', 'snapppay')
+         AND status IN ('Pending', 'Redirected', 'Unknown')`,
+      );
+    }
+    await knex.raw(
+      `CREATE INDEX IF NOT EXISTS idx_payment_operations_due
+       ON payment_operations (status, next_run_at, lease_until)
+       WHERE status IN ('Queued', 'Processing', 'Unknown')`,
+    );
+    // Do not create manual UNIQUE indexes on Strapi-managed tables. During its
+    // next schema synchronization Strapi treats those indexes as constraints and
+    // issues `ALTER TABLE ... DROP CONSTRAINT`, which PostgreSQL rejects because
+    // a partial unique index is not a constraint. The post-sync invariant check
+    // reasserts `attemptId` and `idempotencyKey` as real table constraints.
+    // Provider-reference deduplication remains in the transactional application
+    // workflow and is backed by expression-only unique indexes after sync. Those
+    // expression indexes are not misclassified by Strapi's PostgreSQL inspector.
+  },
+
+  async down(knex) {
+    await knex.raw("DROP INDEX IF EXISTS idx_payment_operations_idempotency_key");
+    await knex.raw("DROP INDEX IF EXISTS idx_payment_operations_due");
+    await knex.raw("DROP INDEX IF EXISTS idx_payment_attempts_attempt_id");
+    await knex.raw("DROP INDEX IF EXISTS idx_payment_attempts_snappay_due");
+    await knex.raw("DROP INDEX IF EXISTS idx_contract_transactions_snappay_token_hash");
+    await knex.raw("DROP INDEX IF EXISTS idx_contract_transactions_snappay_transaction");
+    await knex.raw("DROP INDEX IF EXISTS idx_payment_attempts_snappay_transaction");
+    if (await knex.schema.hasTable("payment_operations")) {
+      await knex.schema.dropTable("payment_operations");
+    }
+  },
+};

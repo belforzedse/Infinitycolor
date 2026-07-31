@@ -15,10 +15,10 @@ export default function ScrollToTop() {
 
   React.useEffect(() => {
     const recalcBottom = () => {
-      const isMobile = window.matchMedia("(max-width: 767px)").matches;
+      const isMobile = window.matchMedia("(max-width: 1023px)").matches;
       if (isMobile) {
         const nav = document.querySelector<HTMLElement>("nav[data-bottom-nav]");
-        const navH = nav ? nav.offsetHeight : 64;
+        const navH = nav ? nav.offsetHeight : 0;
         setBtnBottom(navH + 20); // nav height + margin
       } else {
         setBtnBottom(48); // desktop spacing

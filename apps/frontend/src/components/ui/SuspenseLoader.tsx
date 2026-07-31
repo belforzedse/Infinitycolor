@@ -1,13 +1,14 @@
 "use client";
 
 import clsx from "clsx";
-import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  noteEnhancementLoaded,
+  useAdaptiveHydrated,
+  useAdaptiveQuality,
+} from "@/lib/adaptive-quality";
 
-const DotLottieReact = dynamic(
-  () => import("@lottiefiles/dotlottie-react").then((mod) => mod.DotLottieReact),
-  { ssr: false },
-);
+type DotLottieComponent = (typeof import("@lottiefiles/dotlottie-react"))["DotLottieReact"];
 
 const LOADING_MESSAGE_DELAY_MS = 3000;
 const LOADING_ANIMATION_URL = "/animations/infloading.json";
@@ -49,10 +50,14 @@ export default function SuspenseLoader({
   message = "در حال بارگزاری",
 }: Props) {
   const [showMessage, setShowMessage] = useState(false);
-  const [animationData, setAnimationData] = useState<Record<string, unknown> | null>(
-    loadingAnimationCache,
-  );
+  const [animationData, setAnimationData] = useState<Record<string, unknown> | null>(null);
   const [showAnimation, setShowAnimation] = useState(false);
+  const [DotLottieReact, setDotLottieReact] = useState<DotLottieComponent | null>(null);
+  const dotLottieRef = useRef<{ stop: () => void } | null>(null);
+  const hydrated = useAdaptiveHydrated();
+  const quality = useAdaptiveQuality();
+  const shouldEnhance =
+    hydrated && quality.rendering === "enhanced" && quality.motion === "enhanced";
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -65,16 +70,37 @@ export default function SuspenseLoader({
   }, []);
 
   useEffect(() => {
+    if (!shouldEnhance) {
+      dotLottieRef.current?.stop();
+      dotLottieRef.current = null;
+      setShowAnimation(false);
+      setAnimationData(null);
+      setDotLottieReact(null);
+      return;
+    }
+
     let cancelled = false;
 
-    loadLoadingAnimation().then((data) => {
-      if (!cancelled) setAnimationData(data);
-    });
+    Promise.all([import("@lottiefiles/dotlottie-react"), loadLoadingAnimation()])
+      .then(([module, data]) => {
+        if (cancelled) return;
+        setDotLottieReact(() => module.DotLottieReact);
+        setAnimationData(data);
+        if (data) noteEnhancementLoaded("lottie-loader");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDotLottieReact(null);
+          setAnimationData(null);
+        }
+      });
 
     return () => {
       cancelled = true;
+      dotLottieRef.current?.stop();
+      dotLottieRef.current = null;
     };
-  }, []);
+  }, [shouldEnhance]);
 
   useEffect(() => {
     if (!animationData) return;
@@ -114,7 +140,7 @@ export default function SuspenseLoader({
           >
             <div className="h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary" />
           </div>
-          {animationData && (
+          {shouldEnhance && animationData && DotLottieReact && (
             <div
               className={clsx(
                 "absolute inset-0 transition duration-500 ease-out",
@@ -125,6 +151,9 @@ export default function SuspenseLoader({
                 data={animationData}
                 loop
                 autoplay
+                dotLottieRefCallback={(instance) => {
+                  dotLottieRef.current = instance;
+                }}
                 layout={{ fit: "contain", align: [0.5, 0.5] }}
                 className="h-full w-full"
               />

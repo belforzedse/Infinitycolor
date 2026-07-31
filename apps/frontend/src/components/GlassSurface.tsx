@@ -164,21 +164,25 @@ const GlassSurface: React.FC<GlassSurfaceProps> = ({
   ]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || typeof ResizeObserver === "undefined") return;
 
+    let frameId = 0;
     const resizeObserver = new ResizeObserver(() => {
-      setTimeout(updateDisplacementMap, 0);
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(updateDisplacementMap);
     });
 
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      window.cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
     };
   }, []);
 
   useEffect(() => {
-    setTimeout(updateDisplacementMap, 0);
+    const timeoutId = window.setTimeout(updateDisplacementMap, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [width, height]);
 
   const capabilities = React.useMemo(() => {

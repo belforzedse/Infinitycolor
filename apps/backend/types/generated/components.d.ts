@@ -132,6 +132,7 @@ export interface IdentityStore extends Schema.Component {
     name: Attribute.String;
     neshanLink: Attribute.String;
     phones: Attribute.Component<"identity.phone", true>;
+    postalCode: Attribute.String;
     showInAbout: Attribute.Boolean & Attribute.DefaultTo<false>;
     showInFooter: Attribute.Boolean & Attribute.DefaultTo<true>;
     socialLinks: Attribute.Component<"identity.social-link", true>;

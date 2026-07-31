@@ -1,4 +1,4 @@
-# CI/GitLab override for scale compose: pull app images from registry.cyandm.org instead of ghcr.io.
+# CI/GitLab override for scale compose: force app services to use the GitLab registry.
 # Used by .gitlab-ci.yml deploy. Use with docker-compose.scale.yml.
 # Usage: docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.scale.yml -f docker-compose.scale.ci.yml --env-file ... up -d
 
@@ -16,4 +16,7 @@ services:
     image: ${REGISTRY_IMAGE_BASE}/infinity-backend:${IMAGE_TAG:-main}
 
   strapi-6:
+    image: ${REGISTRY_IMAGE_BASE}/infinity-backend:${IMAGE_TAG:-main}
+
+  backend-worker-2:
     image: ${REGISTRY_IMAGE_BASE}/infinity-backend:${IMAGE_TAG:-main}

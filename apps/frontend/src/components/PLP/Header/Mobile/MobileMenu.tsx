@@ -568,7 +568,10 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
           >
             <Dialog.Title className="sr-only">منوی فروشگاه</Dialog.Title>
 
-            <div className="sticky top-0 z-20 rounded-b-none border-b border-stone-100/80 bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
+            <div
+              className="sticky top-0 z-20 rounded-b-none border-b border-stone-100/80 bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/70"
+              data-adaptive-surface
+            >
               <div className="flex min-h-[4.25rem] items-center gap-2 px-5 py-2" dir="ltr">
                 <button
                   type="button"

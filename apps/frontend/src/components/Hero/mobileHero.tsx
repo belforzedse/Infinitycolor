@@ -83,7 +83,7 @@ export default function MobileHero({ layout, slideKey = 0 }: Props) {
           </AnimatePresence>
         </div>
 
-        <div className="relative aspect-[361/245] w-full overflow-hidden rounded-[20px] [backface-visibility:hidden] [transform:translateZ(0)] [will-change:transform]">
+        <div className="relative aspect-[361/245] w-full overflow-hidden rounded-[20px] [backface-visibility:hidden] [transform:translateZ(0)]">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={`hero-${slideKey}`}

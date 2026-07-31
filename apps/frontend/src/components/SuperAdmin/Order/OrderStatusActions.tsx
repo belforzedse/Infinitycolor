@@ -7,10 +7,13 @@ import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import {
   changeOrderStatus,
   cancelOrder,
+  formatSnappayOperationFailure,
+  waitForPaymentOperation,
   type OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
 import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTranslations";
 import { PersianOrderStatus } from "@/constants/enums";
+import { resolvePaymentGateway } from "@/utils/paymentGateways";
 
 type Props = {
   order: SuperAdminOrderDetail;
@@ -26,34 +29,82 @@ type PendingAction =
 // backend Status; the bucket labels match the storefront categories.
 const STATUS_ACTIONS: { status: OrderLifecycleStatus; label: string; bucket: PersianOrderStatus }[] =
   [
-    { status: "Started", label: "در حال انجام", bucket: PersianOrderStatus.INPROGRESS },
+    { status: "Shipment", label: "تحویل به ارسال", bucket: PersianOrderStatus.INPROGRESS },
     { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.DELIVERED },
   ];
 
 export default function OrderStatusActions({ order, onSuccess }: Props) {
   const [pending, setPending] = useState<PendingAction>(null);
   const [loading, setLoading] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
 
   const currentBucket = useMemo(
     () => getOrderStatusCategory(order.orderStatus),
     [order.orderStatus],
   );
-  // SnappPay cancellations are irreversible — warn explicitly before cancelling.
-  const isSnappPayOrder = Boolean(order.transactionId && order.paymentToken);
+  const isSnappPayOrder =
+    resolvePaymentGateway(order.paymentGateway)?.key === "snappay";
   const isCancelled = currentBucket === PersianOrderStatus.CANCELLED;
 
   const runAction = async () => {
     if (!pending || loading) return;
+    const normalizedReason = cancelReason.trim();
+    if (
+      pending.kind === "cancel" &&
+      isSnappPayOrder &&
+      normalizedReason.length < 3
+    ) {
+      toast.error("دلیل لغو سفارش را وارد کنید.");
+      return;
+    }
     setLoading(true);
     try {
       if (pending.kind === "status") {
         await changeOrderStatus(String(order.id), pending.status);
         toast.success(`وضعیت سفارش به «${pending.label}» تغییر کرد`);
       } else {
-        await cancelOrder(order.id);
+        const result = await cancelOrder(
+          order.id,
+          normalizedReason || undefined,
+        );
+        if (result.status === "queued" && result.operationId) {
+          toast.success("درخواست لغو برای اسنپ‌پی ثبت شد.");
+          const operation = await waitForPaymentOperation(
+            order.id,
+            result.operationId,
+          );
+          if (operation.status === "Failed") {
+            toast.error(
+              formatSnappayOperationFailure(
+                operation,
+                "اسنپ‌پی درخواست لغو را نپذیرفت.",
+              ),
+            );
+            onSuccess();
+            return;
+          }
+          if (operation.status === "Unknown") {
+            toast.error(
+              formatSnappayOperationFailure(
+                operation,
+                "نتیجه لغو نامشخص است؛ درخواست را تکرار نکنید و آن را دستی بررسی کنید.",
+              ),
+            );
+            onSuccess();
+            return;
+          }
+          if (operation.status !== "Succeeded") {
+            toast.success("لغو همچنان در پس‌زمینه در حال پیگیری است.");
+            setPending(null);
+            setCancelReason("");
+            onSuccess();
+            return;
+          }
+        }
         toast.success("سفارش لغو شد");
       }
       setPending(null);
+      setCancelReason("");
       onSuccess();
     } catch (error: unknown) {
       const message =
@@ -91,12 +142,15 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
 
       <div className="flex flex-wrap gap-3">
         {STATUS_ACTIONS.map((action) => {
-          const isCurrent = currentBucket === action.bucket;
+          const isCurrent = order.orderStatus === action.status;
+          const isAllowed =
+            (order.orderStatus === "Started" && action.status === "Shipment") ||
+            (order.orderStatus === "Shipment" && action.status === "Done");
           return (
             <button
               key={action.status}
               type="button"
-              disabled={loading || isCurrent}
+              disabled={loading || isCurrent || !isAllowed}
               onClick={() => setPending({ kind: "status", status: action.status, label: action.label })}
               className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               title={isCurrent ? "سفارش هم‌اکنون در این وضعیت است" : undefined}
@@ -123,12 +177,38 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
         description={confirmDescription}
         confirmText={loading ? "در حال انجام..." : pending?.kind === "cancel" ? "لغو سفارش" : "تایید و ذخیره"}
         cancelText="انصراف"
+        confirmDisabled={
+          loading ||
+          (pending?.kind === "cancel" &&
+            isSnappPayOrder &&
+            cancelReason.trim().length < 3)
+        }
         onConfirm={runAction}
         onCancel={() => {
           if (loading) return;
           setPending(null);
+          setCancelReason("");
         }}
-      />
+      >
+        {pending?.kind === "cancel" && isSnappPayOrder ? (
+          <label className="block space-y-2 text-right">
+            <span className="text-sm font-medium text-slate-800">
+              دلیل لغو
+            </span>
+            <textarea
+              value={cancelReason}
+              onChange={(event) =>
+                setCancelReason(event.target.value.slice(0, 500))
+              }
+              rows={3}
+              maxLength={500}
+              required
+              className="w-full rounded-md border border-slate-300 px-3 py-2"
+              placeholder="حداقل ۳ نویسه"
+            />
+          </label>
+        ) : null}
+      </ConfirmDialog>
     </div>
   );
 }

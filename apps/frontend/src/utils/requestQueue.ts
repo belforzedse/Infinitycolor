@@ -1,7 +1,7 @@
 /**
  * Request Queue Manager
  * Ensures cart mutations are processed sequentially to prevent race conditions
- * Handles failures and retries gracefully
+ * Executes mutations sequentially without replaying ambiguous failures.
  */
 
 type QueuedRequest<T> = {
@@ -14,9 +14,6 @@ type QueuedRequest<T> = {
 export class RequestQueue {
   private queue: QueuedRequest<any>[] = [];
   private isProcessing = false;
-  private maxRetries = 3;
-  private retryDelay = 1000; // ms
-
   /**
    * Add a request to the queue
    */
@@ -49,8 +46,7 @@ export class RequestQueue {
       if (!request) continue;
 
       try {
-        // Execute with retries
-        const result = await this.executeWithRetry(request.executor);
+        const result = await request.executor();
         request.resolve(result);
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
@@ -59,26 +55,6 @@ export class RequestQueue {
     }
 
     this.isProcessing = false;
-  }
-
-  /**
-   * Execute request with automatic retries on failure
-   */
-  private async executeWithRetry<T>(
-    executor: () => Promise<T>,
-    attempt = 1
-  ): Promise<T> {
-    try {
-      return await executor();
-    } catch (error) {
-      if (attempt < this.maxRetries) {
-        // Wait before retrying with exponential backoff
-        const delay = this.retryDelay * Math.pow(2, attempt - 1);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        return this.executeWithRetry(executor, attempt + 1);
-      }
-      throw error;
-    }
   }
 
   /**

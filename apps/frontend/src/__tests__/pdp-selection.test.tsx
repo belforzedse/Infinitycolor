@@ -4,7 +4,11 @@ import PDPHeroInfo from "@/components/PDP/Hero/Info";
 
 // Mock Action component to avoid CartProvider/useCart dependency in tests
 jest.mock("@/components/PDP/Hero/Info/Action", () => {
-  const MockAction = () => <div data-testid="mock-action">action</div>;
+  const MockAction = (props: any) => (
+    <div data-testid="mock-action" data-variation-id={props.variationId || ""}>
+      action
+    </div>
+  );
   MockAction.displayName = "MockAction";
   return MockAction;
 });
@@ -102,12 +106,14 @@ describe("PDPHeroInfo selection logic", () => {
 
     render(<PDPHeroInfo {...baseProps} productData={productData} />);
 
-    // Click a color option (blue) - it's a button with title 'Blue' when enabled
+    expect(screen.getByTestId("mock-action")).toHaveAttribute("data-variation-id", "1");
     const blueBtn = screen.getByTitle("Blue") as HTMLElement;
-    if (blueBtn) fireEvent.click(blueBtn);
+    fireEvent.click(blueBtn);
 
-    // Expect some UI update, e.g., the Action component has updated props (hard to inspect here), so ensure no crash
-    expect(true).toBe(true);
+    expect(screen.getByTestId("mock-action")).toHaveAttribute("data-variation-id", "2");
+    expect(
+      screen.getAllByTestId("pdp-size-option").find((option) => option.dataset.sizeId === "2"),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   test("shows size guide button even when product has no sizes", () => {

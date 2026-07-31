@@ -1,7 +1,11 @@
+"use client";
+
 import ProductSmallCard from "@/components/Product/SmallCard";
 import type { ProductCardProps } from "@/components/Product/Card";
 import { cn } from "@/lib/utils";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
+import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
+import { useEffect } from "react";
 
 export type HomeGifPromoSlot = {
   id: "slot-1" | "slot-2";
@@ -51,7 +55,7 @@ function PromoSlot({ slot }: { slot: HomeGifPromoSlot }) {
       </div>
 
       {/* products second → renders on the LEFT in RTL */}
-      <div className="grid min-w-0 grid-cols-1 gap-3 xs:grid-cols-2 sm:grid-cols-1 lg:h-full lg:content-between lg:gap-0">
+      <div className="xs:grid-cols-2 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-1 lg:h-full lg:content-between lg:gap-0">
         {products.map((product) => (
           <ProductSmallCard key={product.id} {...mapToSmallCard(product)} />
         ))}
@@ -60,11 +64,15 @@ function PromoSlot({ slot }: { slot: HomeGifPromoSlot }) {
   );
 }
 
-export default function HomeGifPromoSection({
-  slots,
-  className,
-}: HomeGifPromoSectionProps) {
+export default function HomeGifPromoSection({ slots, className }: HomeGifPromoSectionProps) {
   const readySlots = slots.filter((slot) => slot.imageUrl.trim() && slot.products.length > 0);
+
+  useEffect(() => {
+    if (readySlots.length > 0) {
+      noteEnhancementLoaded("optional-gif");
+    }
+  }, [readySlots.length]);
+
   if (readySlots.length === 0) return null;
 
   return (

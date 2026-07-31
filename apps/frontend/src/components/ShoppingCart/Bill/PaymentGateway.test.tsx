@@ -56,6 +56,18 @@ describe("ShoppingCartBillPaymentGateway", () => {
     expect(screen.queryByTestId("payment-gateway-snappay")).not.toBeInTheDocument();
   });
 
+  it("renders SnappPay disabled before eligibility is known", () => {
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="samankish"
+        onChange={onChange}
+        availableGateways={["samankish", "snappay"]}
+      />,
+    );
+
+    expect(screen.getByTestId("payment-gateway-snappay")).toBeDisabled();
+  });
+
   it("renders no gateway cards when availableGateways is omitted", () => {
     expect(() => {
       render(<ShoppingCartBillPaymentGateway selected="samankish" onChange={onChange} />);
@@ -119,5 +131,21 @@ describe("ShoppingCartBillPaymentGateway", () => {
     await user.click(wallet);
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("marks an affordable selected wallet option", () => {
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="wallet"
+        onChange={onChange}
+        availableGateways={["wallet"]}
+        walletBalanceIrr={50_000}
+        requiredAmountIrr={10_000}
+      />,
+    );
+
+    const wallet = screen.getByTestId("payment-gateway-wallet");
+    expect(wallet).toHaveAttribute("data-disabled", "false");
+    expect(wallet).toHaveAttribute("data-selected", "true");
   });
 });

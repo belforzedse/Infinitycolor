@@ -38,6 +38,7 @@ export interface IdentityContactNumber {
 export interface IdentityStore {
   name?: string;
   address?: string;
+  postalCode?: string;
   phones: IdentityPhone[];
   wazeLink?: string;
   neshanLink?: string;

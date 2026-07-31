@@ -248,13 +248,13 @@ const superAdminSidebar: SidebarItem[] = [
     icon: <CartIcon />,
     children: [],
   },
-  // {
-  //   id: "payment-methods",
-  //   label: "روش های پرداخت",
-  //   href: "/super-admin/payment-methods",
-  //   icon: <PaymentIcon />,
-  //   children: [],
-  // },
+  {
+    id: "payment-methods",
+    label: "روش های پرداخت",
+    href: "/super-admin/payment-methods",
+    icon: <PaymentIcon />,
+    children: [],
+  },
   {
     id: "discounts",
     label: "مدیریت تخفیف ها",

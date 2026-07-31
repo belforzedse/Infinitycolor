@@ -7,12 +7,15 @@ const webServerCommand = process.env.E2E_WEB_SERVER_COMMAND?.trim();
 function resolveWebServerApiEnv(): Record<string, string> {
   const storefrontOrigin = storefrontBaseURL().replace(/\/$/, "");
   const proxyTarget = process.env.E2E_API_PROXY_TARGET?.trim();
+  const configuredImageBaseUrl =
+    process.env.NEXT_PUBLIC_IMAGE_BASE_URL?.trim();
 
   if (proxyTarget) {
     return {
       E2E_API_PROXY_TARGET: proxyTarget.replace(/\/$/, ""),
       NEXT_PUBLIC_API_BASE_URL: `${storefrontOrigin}/api`,
-      NEXT_PUBLIC_IMAGE_BASE_URL: storefrontOrigin,
+      NEXT_PUBLIC_IMAGE_BASE_URL:
+        configuredImageBaseUrl || storefrontOrigin,
       STRAPI_INTERNAL_URL: strapiApiURL(),
       STRAPI_BUILD_TIME_URL: strapiApiURL(),
     };
@@ -20,7 +23,8 @@ function resolveWebServerApiEnv(): Record<string, string> {
 
   return {
     NEXT_PUBLIC_API_BASE_URL: strapiApiURL(),
-    NEXT_PUBLIC_IMAGE_BASE_URL: strapiOrigin(),
+    NEXT_PUBLIC_IMAGE_BASE_URL:
+      configuredImageBaseUrl || strapiOrigin(),
     STRAPI_INTERNAL_URL: strapiApiURL(),
     STRAPI_BUILD_TIME_URL: strapiApiURL(),
   };
@@ -79,7 +83,8 @@ export default defineConfig({
           HOME_BATCHED_SECTIONS_ENABLED:
             process.env.HOME_BATCHED_SECTIONS_ENABLED ?? "true",
           HOME_BATCHED_SECTION_ALLOWLIST:
-            process.env.HOME_BATCHED_SECTION_ALLOWLIST ?? "newest",
+            process.env.HOME_BATCHED_SECTION_ALLOWLIST ??
+            "newest,discounted",
           HOME_PRODUCT_SERVER_SHELL_SECTION:
             process.env.HOME_PRODUCT_SERVER_SHELL_SECTION ?? "newest",
           E2E_DISABLE_HOMEPAGE_FETCH_CACHE:

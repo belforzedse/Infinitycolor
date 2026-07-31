@@ -6,7 +6,6 @@ import HeartIcon from "../../Icons/HeartIcon";
 import ShareIcon from "../../Icons/ShareIcon";
 import BasketIcon from "../../Icons/BasketIcon";
 import { useState, useEffect } from "react";
-import dynamic from "next/dynamic";
 import Select from "@/components/Kits/Form/Select";
 import useProductLike from "@/hooks/useProductLike";
 import useAddToCart from "@/hooks/useAddToCart";
@@ -16,10 +15,14 @@ import logger from "@/utils/logger";
 import { scrollIntoViewWithOffset } from "@/utils/scroll";
 import { trackMatomoEvent } from "@/lib/analytics/matomo";
 
-const ShareModal = dynamic(() => import("@/components/Product/ShareModal"), {
-  ssr: false,
-  loading: () => null,
-});
+type ShareModalComponent = (typeof import("@/components/Product/ShareModal"))["default"];
+
+let shareModulePromise: Promise<typeof import("@/components/Product/ShareModal")> | null = null;
+
+function loadShareModule() {
+  shareModulePromise ??= import("@/components/Product/ShareModal");
+  return shareModulePromise;
+}
 
 const options = [
   { id: 1, name: "۱ عدد" },
@@ -56,6 +59,7 @@ interface PDPHeroInfoActionProps {
   size?: string;
   model?: string;
   variationId?: string;
+  productSlug?: string;
   hasStock?: boolean;
   currentVariation?: any; // Add current variation data
 }
@@ -90,10 +94,12 @@ export default function PDPHeroInfoAction({
   size,
   model,
   variationId,
+  productSlug,
   hasStock = true,
   currentVariation,
 }: PDPHeroInfoActionProps) {
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [ShareModal, setShareModal] = useState<ShareModalComponent | null>(null);
   const [isClientMounted, setIsClientMounted] = useState(false);
 
   // Initialize product like hook
@@ -114,6 +120,7 @@ export default function PDPHeroInfoAction({
     size,
     model,
     variationId,
+    productSlug,
   });
 
   // Get available stock count for current variation
@@ -196,6 +203,9 @@ export default function PDPHeroInfoAction({
       name: `${productId}:${name}`,
     });
     setIsShareOpen(true);
+    void loadShareModule()
+      .then((module) => setShareModal(() => module.default))
+      .catch(() => setIsShareOpen(false));
   };
 
   // Handle scroll to comments
@@ -315,28 +325,29 @@ export default function PDPHeroInfoAction({
 
         <button
           type="button"
-          className={`${iconButtonClass} ${
-            isLoading ? "cursor-wait opacity-50" : ""
-          }`}
+          className={`${iconButtonClass} ${isLoading ? "cursor-wait opacity-50" : ""}`}
           onClick={handleToggleLike}
           disabled={isLoading}
           aria-label={isLiked ? "حذف از علاقه‌مندی‌ها" : "افزودن به علاقه‌مندی‌ها"}
         >
-          <HeartIcon filled={isLiked} className={isLiked ? "text-infinity-primary" : "text-neutral-800"} />
+          <HeartIcon
+            filled={isLiked}
+            className={isLiked ? "text-infinity-primary" : "text-neutral-800"}
+          />
         </button>
       </div>
 
       <div className="flex w-full flex-1 gap-3">
         {!hasStock ? (
           <Button
-            className="text-base flex h-[46px] flex-1 cursor-not-allowed items-center justify-center rounded-xl bg-gray-400 py-0 text-white"
+            className="flex h-[46px] flex-1 cursor-not-allowed items-center justify-center rounded-xl bg-gray-400 py-0 text-base text-white"
             text="ناموجود"
             disabled={true}
           />
         ) : (
           <>
             <Button
-              className={`text-base flex h-[46px] flex-1 items-center justify-center rounded-xl py-0 ${
+              className={`flex h-[46px] flex-1 items-center justify-center rounded-xl py-0 text-base ${
                 isInCart
                   ? "border-2 border-infinity-primary bg-infinity-primary-lighter/20 !text-infinity-primary-dark"
                   : "bg-actions-primary !text-gray-100"
@@ -366,7 +377,7 @@ export default function PDPHeroInfoAction({
         )}
       </div>
 
-      {isShareOpen && (
+      {isShareOpen && ShareModal && (
         <ShareModal
           open={isShareOpen}
           onOpenChange={setIsShareOpen}

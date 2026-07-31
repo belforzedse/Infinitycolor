@@ -4,6 +4,11 @@ import { errorNotificationsAtom, addErrorNotification } from "@/lib/atoms/errors
 import { currentUserAtom } from "@/lib/atoms/auth";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { ACCESS_TOKEN_STORAGE_KEY, clearAccessToken } from "@/utils/accessToken";
+import { safeInternalRedirect } from "@/utils/authRedirect";
+import { isAuthRequiredRoute } from "@/utils/routeAccessPolicy";
+import { clearUserStorage } from "@/utils/userStorage";
+
+let pendingAuthRedirect: string | null = null;
 
 /**
  * Handles authentication errors (401, 403) gracefully
@@ -33,9 +38,22 @@ export const handleAuthErrors = (error?: any, isAdminCheck?: boolean): void => {
   if (isUnauthorized) {
     // Clear auth state immediately
     clearAccessToken();
+    clearUserStorage();
     jotaiStore.set(currentUserAtom, null);
 
-    // Show friendly notification (no hard redirect)
+    const requestedPath = safeInternalRedirect(
+      `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    );
+    if (requestedPath && isAuthRequiredRoute(window.location.pathname)) {
+      const target = `/auth?redirect=${encodeURIComponent(requestedPath)}`;
+      if (pendingAuthRedirect !== target) {
+        pendingAuthRedirect = target;
+        window.location.replace(target);
+      }
+      return;
+    }
+
+    // Public routes remain usable; offer login without forcing navigation.
     if (!isJest) {
       const notification = addErrorNotification(
         401,

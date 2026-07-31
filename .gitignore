@@ -106,6 +106,7 @@ apps/frontend/junit.xml
 apps/e2e/playwright-report/
 apps/e2e/test-results/
 apps/e2e/e2e-results.xml
+apps/e2e/*-e2e-results.xml
 apps/e2e/.auth/
 
 ############################
@@ -146,6 +147,8 @@ nul
 
 # Generated files
 apps/frontend/src/constants/build-version.json
+apps/frontend/public/build-version.json
+apps/frontend/public/sw-version.js
 
 # Lock files (optional - uncomment to ignore)
 # yarn.lock

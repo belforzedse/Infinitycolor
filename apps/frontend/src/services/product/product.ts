@@ -93,6 +93,9 @@ export interface ProductDetail {
               id: number;
               attributes: {
                 Count: number;
+                reservedCount?: number;
+                ReservedCount?: number;
+                reserved_count?: number;
               };
             };
           };
@@ -729,7 +732,7 @@ export const getDefaultProductVariation = (product: ProductDetail) => {
 
     // Check if it has stock data and quantity > 0
     const stock = getVariationStockAttributes(variation);
-    return stock ? parseStockCount(stock.Count) > 0 : false;
+    return stock ? getAvailableStockCount(variation) > 0 : false;
   });
 
   if (publishedWithStock) {
@@ -888,7 +891,11 @@ export const getAvailableStockCount = (
     return 0;
   }
 
-  return parseStockCount(stockData.Count);
+  const physical = parseStockCount(stockData.Count);
+  const reserved = parseStockCount(
+    stockData.reservedCount ?? stockData.ReservedCount ?? stockData.reserved_count ?? 0,
+  );
+  return Math.max(0, physical - reserved);
 };
 
 export type PdpSelectionState = {
@@ -979,7 +986,7 @@ export const hasStockForVariation = (
     });
   }
 
-  const stockQuantity = parseStockCount(stockData.Count);
+  const stockQuantity = getAvailableStockCount(variation);
   if (process.env.NODE_ENV !== "production") {
     logger.info("Stock Count value", { stockQuantity });
     logger.info("Requested quantity", { requestedQuantity });

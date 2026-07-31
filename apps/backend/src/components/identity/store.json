@@ -12,6 +12,9 @@
     "address": {
       "type": "text"
     },
+    "postalCode": {
+      "type": "string"
+    },
     "phones": {
       "type": "component",
       "repeatable": true,

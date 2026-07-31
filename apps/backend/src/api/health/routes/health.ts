@@ -6,7 +6,6 @@ export default {
       handler: "health.check",
       config: {
         auth: false,
-        prefix: "",
         policies: [],
         middlewares: [],
       },

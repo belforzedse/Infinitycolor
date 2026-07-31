@@ -154,9 +154,37 @@ async function sendOrderSms(params: {
     fingerprint,
   });
 
+  const finish = async (result: SmsSendResult): Promise<SmsSendResult> => {
+    try {
+      await strapi.db?.query?.("api::order-log.order-log")?.create?.({
+        data: {
+          order: Number(orderId),
+          Action: "Update",
+          Description: "Customer SMS delivery outcome",
+          Changes: {
+            channel: "sms",
+            type,
+            outcome: result.ok ? "sent" : result.skipped ? "skipped" : "failed",
+            reason: result.reason || null,
+            providerStatus: result.status || null,
+            messageId: result.messageId || null,
+            recipient: phone ? maskPhone(phone) : null,
+          },
+        },
+      });
+    } catch (auditError) {
+      strapi.log?.warn?.("[sms] failed to persist delivery outcome", {
+        type,
+        orderId,
+        error: (auditError as Error)?.message || String(auditError),
+      });
+    }
+    return result;
+  };
+
   if (!phone) {
     strapi.log?.warn?.("[sms] skipped order notification without phone", { type, orderId });
-    return { ok: false, skipped: true, reason: "missing_phone" };
+    return finish({ ok: false, skipped: true, reason: "missing_phone" });
   }
 
   const config = loadSmsConfig();
@@ -166,7 +194,7 @@ async function sendOrderSms(params: {
       orderId,
       recipient: maskPhone(phone),
     });
-    return { ok: false, skipped: true, disabled: true, reason: "disabled" };
+    return finish({ ok: false, skipped: true, disabled: true, reason: "disabled" });
   }
 
   const claimed = await claimSmsIdempotency(key);
@@ -176,7 +204,7 @@ async function sendOrderSms(params: {
       orderId,
       recipient: maskPhone(phone),
     });
-    return { ok: false, skipped: true, duplicate: true, reason: "duplicate" };
+    return finish({ ok: false, skipped: true, duplicate: true, reason: "duplicate" });
   }
 
   const result = await sendPatternSms({
@@ -191,7 +219,7 @@ async function sendOrderSms(params: {
     await releaseSmsIdempotency(key);
   }
 
-  return result;
+  return finish(result);
 }
 
 export async function notifyOrderCreatedSms(

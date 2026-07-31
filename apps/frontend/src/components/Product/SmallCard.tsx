@@ -3,7 +3,6 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import imageLoader from "@/utils/imageLoader";
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import HeartIcon from "./Icons/HeartIcon";
 import EyeIcon from "./Icons/EyeIcon";
 import MoreIcon from "./Icons/MoreIcon";
@@ -12,17 +11,23 @@ import useProductLike from "@/hooks/useProductLike";
 import clsx from "clsx";
 import { ImageCard, InfoCard, PriceCard } from "./CardParts";
 import { computeSaleDiscountPercent } from "@/utils/discounts";
+import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
 
-// Lazy load heavy modals
-const QuickViewModal = dynamic(() => import("./QuickViewModal"), {
-  ssr: false,
-  loading: () => null,
-});
+type QuickViewModalComponent = (typeof import("./QuickViewModal"))["default"];
+type ShareModalComponent = (typeof import("./ShareModal"))["default"];
 
-const ShareModal = dynamic(() => import("./ShareModal"), {
-  ssr: false,
-  loading: () => null,
-});
+let quickViewModulePromise: Promise<typeof import("./QuickViewModal")> | null = null;
+let shareModulePromise: Promise<typeof import("./ShareModal")> | null = null;
+
+function loadQuickViewModule() {
+  quickViewModulePromise ??= import("./QuickViewModal");
+  return quickViewModulePromise;
+}
+
+function loadShareModule() {
+  shareModulePromise ??= import("./ShareModal");
+  return shareModulePromise;
+}
 
 export interface ProductSmallCardProps {
   id: number;
@@ -61,6 +66,8 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isQuickViewOpen, setIsQuickViewOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [QuickViewModal, setQuickViewModal] = useState<QuickViewModalComponent | null>(null);
+  const [ShareModal, setShareModal] = useState<ShareModalComponent | null>(null);
 
   // Refs
   const menuRef = useRef<HTMLDivElement>(null);
@@ -115,14 +122,22 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsMenuOpen(false);
+    noteEnhancementLoaded("quick-view");
     setIsQuickViewOpen(true);
+    void loadQuickViewModule()
+      .then((module) => setQuickViewModal(() => module.default))
+      .catch(() => setIsQuickViewOpen(false));
   }, []);
 
   const handleShare = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsMenuOpen(false);
+    noteEnhancementLoaded("share");
     setIsShareOpen(true);
+    void loadShareModule()
+      .then((module) => setShareModal(() => module.default))
+      .catch(() => setIsShareOpen(false));
   }, []);
 
   const handleToggleLike = useCallback(
@@ -264,7 +279,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
       </article>
 
       {/* Modals */}
-      {isQuickViewOpen && (
+      {isQuickViewOpen && QuickViewModal && (
         <QuickViewModal
           isOpen={isQuickViewOpen}
           onClose={() => setIsQuickViewOpen(false)}
@@ -272,7 +287,7 @@ const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
         />
       )}
 
-      {isShareOpen && (
+      {isShareOpen && ShareModal && (
         <ShareModal
           open={isShareOpen}
           onOpenChange={setIsShareOpen}

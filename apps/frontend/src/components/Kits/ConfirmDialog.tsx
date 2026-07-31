@@ -1,6 +1,7 @@
 "use client";
 
 import Modal from "@/components/Kits/Modal";
+import type { ReactNode } from "react";
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -10,6 +11,8 @@ interface ConfirmDialogProps {
   cancelText?: string;
   onConfirm: () => void;
   onCancel: () => void;
+  confirmDisabled?: boolean;
+  children?: ReactNode;
 }
 
 export default function ConfirmDialog({
@@ -20,6 +23,8 @@ export default function ConfirmDialog({
   cancelText = "انصراف",
   onConfirm,
   onCancel,
+  confirmDisabled = false,
+  children,
 }: ConfirmDialogProps) {
   return (
     <Modal isOpen={isOpen} onClose={onCancel} title={title} className="max-w-md">
@@ -27,12 +32,14 @@ export default function ConfirmDialog({
         {description ? (
           <p className="text-sm text-right text-neutral-600">{description}</p>
         ) : null}
+        {children}
 
         <div className="flex items-center justify-start gap-3">
           <button
             type="button"
             onClick={onConfirm}
-            className="rounded-xl bg-actions-primary px-5 py-2.5 text-white hover:brightness-110"
+            disabled={confirmDisabled}
+            className="rounded-xl bg-actions-primary px-5 py-2.5 text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {confirmText}
           </button>

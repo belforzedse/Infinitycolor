@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { formatProductsToCardProps } from "@/services/product/product";
 import type { PLPProduct } from "@/components/PLP/types";
 import { StorefrontGrid } from "@/components/storefront";
+import { useAdaptiveQuality } from "@/lib/adaptive-quality";
 
 const ProductCard = dynamic(() => import("@/components/Product/Card"), {
   loading: () => <div className="skeleton-shimmer h-48 rounded-lg" />,
@@ -11,12 +12,14 @@ const ProductCard = dynamic(() => import("@/components/Product/Card"), {
 
 interface PLPDesktopListProps {
   products: PLPProduct[];
-  includeMedia: boolean;
 }
 
-export default function PLPDesktopList({ products, includeMedia }: PLPDesktopListProps) {
+export default function PLPDesktopList({ products }: PLPDesktopListProps) {
+  const quality = useAdaptiveQuality();
+  const includeMedia = quality.media === "high";
+
   return (
-    <StorefrontGrid variant="plp" className="hidden md:grid">
+    <StorefrontGrid variant="plp" data-aq-product-list="responsive">
       {products.map((product, index) => {
         const card = formatProductsToCardProps([product])[0];
         if (!card) return null;
@@ -26,7 +29,7 @@ export default function PLPDesktopList({ products, includeMedia }: PLPDesktopLis
             key={product.id}
             {...card}
             images={includeMedia ? card.images : card.images.slice(0, 1)}
-            priority={index < 6}
+            priority={index < 2}
           />
         );
       })}

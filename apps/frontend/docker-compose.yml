@@ -1,6 +1,6 @@
 services:
   frontend:
-    image: ghcr.io/belforzedse/infinity-frontend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-main}
     env_file:
       - ${ENV_FILE:-main.env}
     extra_hosts:
@@ -8,7 +8,7 @@ services:
     restart: unless-stopped
     depends_on:
       frontend-redis:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "127.0.0.1:${HOST_PORT:-3000}:3000"
     networks:
@@ -20,7 +20,7 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/_health"]
       interval: 30s
       timeout: 10s
       retries: 3

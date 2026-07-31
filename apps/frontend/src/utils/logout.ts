@@ -19,53 +19,9 @@ import { SubmitOrderStep } from "@/types/Order";
 import { __clearOrderCache } from "@/services/order";
 import { invalidateAddressCache } from "@/services/user/addresses";
 import { clearAccessToken } from "@/utils/accessToken";
-import { apiCache } from "@/lib/api-cache";
+import { clearUserStorage } from "@/utils/userStorage";
 
-/**
- * Clear all user-specific storage and cache entries
- * Should be called on logout and when switching users
- */
-export function clearUserStorage(): void {
-  if (typeof window === "undefined") return;
-
-  try {
-    // Clear localStorage items
-    localStorage.removeItem("discountCode");
-    localStorage.removeItem("recentSearches");
-
-    // Clear sessionStorage items
-    sessionStorage.removeItem("tempPreInvoiceOrder");
-    sessionStorage.removeItem("otpToken");
-
-    // Clear all order detail cache entries (pattern: infinity:order-detail:*)
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i);
-      if (key && key.startsWith("infinity:order-detail:")) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach((key) => sessionStorage.removeItem(key));
-
-    // Clear user-specific API cache entries
-    const userSpecificPatterns = [
-      /\/api\/users\//i,
-      /\/api\/local-user\//i,
-      /\/api\/orders\//i,
-      /\/api\/carts\//i,
-      /\/api\/wallet\//i,
-      /\/api\/product-likes\//i,
-      /\/api\/local-user-addresses\//i,
-    ];
-
-    userSpecificPatterns.forEach((pattern) => {
-      apiCache.clearByPattern(pattern);
-    });
-  } catch (error) {
-    // Ignore storage errors (e.g., in private browsing mode)
-    console.warn("[Logout] Error clearing user storage:", error);
-  }
-}
+export { clearUserStorage } from "@/utils/userStorage";
 
 export async function performLogout(): Promise<void> {
   try {

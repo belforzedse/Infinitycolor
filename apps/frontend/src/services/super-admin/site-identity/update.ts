@@ -17,9 +17,7 @@ function clean<T extends Record<string, unknown>>(obj: T): T {
   return out;
 }
 
-export async function updateSuperAdminSiteIdentity(
-  identity: SiteIdentity,
-): Promise<SiteIdentity> {
+export async function updateSuperAdminSiteIdentity(identity: SiteIdentity): Promise<SiteIdentity> {
   const data = {
     siteName: identity.siteName?.trim() || DEFAULT_SITE_IDENTITY.siteName,
     brandDescription: identity.brandDescription?.trim() || null,
@@ -31,6 +29,7 @@ export async function updateSuperAdminSiteIdentity(
       clean({
         name: s.name ?? null,
         address: s.address ?? null,
+        postalCode: s.postalCode ?? null,
         phones: (s.phones ?? [])
           .filter((p) => p.number?.trim())
           .map((p) => clean({ label: p.label ?? null, number: p.number })),

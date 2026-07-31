@@ -1,3 +1,18 @@
 packages:
   - "apps/*"
   - "packages/*"
+overrides:
+  sharp: 0.34.5
+allowBuilds:
+  '@sentry/cli': false
+  '@strapi/strapi': true
+  '@swc/core': true
+  core-js-pure: true
+  cpu-features: false
+  esbuild: true
+  msw: false
+  protobufjs: false
+  sharp: true
+  ssh2: false
+  unrs-resolver: false
+  yarn: false

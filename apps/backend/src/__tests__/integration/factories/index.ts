@@ -20,6 +20,7 @@ export function makeFactories(strapi: any) {
   // Deletion order: children first, then parents.
   const created: Ref[] = [];
   const createdOrderIds: number[] = [];
+  const createdWalletIds: number[] = [];
   const track = (uid: string, id: number) => {
     created.push({ uid, id });
     return id;
@@ -326,6 +327,55 @@ export function makeFactories(strapi: any) {
     };
   }
 
+  async function createWallet(opts: { userId: number; balanceIrr: number }) {
+    const row = await q("api::local-user-wallet.local-user-wallet").create({
+      data: {
+        user: opts.userId,
+        Balance: opts.balanceIrr,
+        LastTransactionDate: new Date().toISOString(),
+        Description: TEST_PREFIX,
+      },
+    });
+    track("api::local-user-wallet.local-user-wallet", row.id);
+    createdWalletIds.push(row.id);
+    return row;
+  }
+
+  async function createPaymentAttempt(opts: {
+    userId: number;
+    orderId: number;
+    contractId: number;
+    amountIrr: number;
+    attemptId?: string;
+    status?: string;
+    gateway?: string;
+  }) {
+    const attemptId = opts.attemptId ?? uniq();
+    const row = await q("api::payment-attempt.payment-attempt").create({
+      data: {
+        attemptId,
+        quoteHash: `sha256:${uniq()}`,
+        quoteSnapshot: {
+          financialSummary: {
+            subtotal: Math.round(opts.amountIrr / 10),
+            discount: 0,
+            tax: 0,
+            shipping: 0,
+            total: Math.round(opts.amountIrr / 10),
+          },
+        },
+        Status: opts.status ?? "Created",
+        Gateway: opts.gateway ?? "wallet",
+        Amount: opts.amountIrr,
+        user: opts.userId,
+        order: opts.orderId,
+        contract: opts.contractId,
+      },
+    });
+    track("api::payment-attempt.payment-attempt", row.id);
+    return row;
+  }
+
   async function getStock(stockId: number) {
     return q("api::product-stock.product-stock").findOne({ where: { id: stockId } });
   }
@@ -357,6 +407,15 @@ export function makeFactories(strapi: any) {
   }
 
   async function cleanup() {
+    if (createdWalletIds.length > 0) {
+      try {
+        await q("api::local-user-wallet-transaction.local-user-wallet-transaction").deleteMany({
+          where: { user_wallet: { id: { $in: createdWalletIds } } },
+        });
+      } catch {
+        /* best effort: disposable DB */
+      }
+    }
     if (createdOrderIds.length > 0) {
       try {
         await q("api::order-log.order-log").deleteMany({
@@ -377,6 +436,7 @@ export function makeFactories(strapi: any) {
     }
     created.length = 0;
     createdOrderIds.length = 0;
+    createdWalletIds.length = 0;
   }
 
   return {
@@ -390,6 +450,8 @@ export function makeFactories(strapi: any) {
     createOrderItem,
     createReservedOrder,
     createPayableOrder,
+    createWallet,
+    createPaymentAttempt,
     getStock,
     getOrder,
     getContract,

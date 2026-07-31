@@ -7,19 +7,27 @@ import { factories } from "@strapi/strapi";
 import { Strapi } from "@strapi/strapi";
 import { generateAnipoBarcodeHandler } from "./helpers/generateBarcode";
 import { verifyPaymentHandler } from "./helpers/payment";
+import { snappayCallbackHandler } from "./helpers/snappayCallback";
 import { adminAdjustItemsHandler } from "./helpers/adminAdjustItems";
 import { adminCancelOrderHandler } from "./helpers/adminCancel";
+import { adminPaymentOperationHandler } from "./helpers/adminPaymentOperation";
 import { adminVoidBarcodeHandler } from "./helpers/adminVoidBarcode";
 import { decrementManualOrderStockHandler } from "./helpers/manualOrderStock";
 import { getActiveReserveHandler } from "./handlers/getActiveReserve";
 import { releaseReserveHandler } from "./handlers/releaseReserve";
 import { logAdminOrderCreate, logAdminOrderFieldUpdate } from "../../../utils/adminActivity";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
+import { adminTransitionOrderHandler } from "./helpers/adminTransition";
 import {
   STORE_MANAGER_PLUS_ROLES,
   resolveCustomerTargetUserId,
   roleIsAllowed,
 } from "../../../utils/roles";
+import {
+  findOrderPaymentAttempt,
+  reconcileOrderPaymentAttempt,
+} from "../../payment-attempt/services/payment-attempt";
+import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
 
 // Business fields captured as admin activity on a generic `PUT /orders/:id` edit. Whitelisted on
 // purpose: anything not listed here (tokens, payment internals, relations) is never diffed/logged.
@@ -147,8 +155,10 @@ export default factories.createCoreController(
         // Transform the response to match the frontend's expected structure
         // Check both order.user_info (legacy) and order.user.user_info (correct structure)
         const userInfo = order.user?.user_info || order.user_info;
+        const sanitizedContract = order.contract;
         const transformedOrder = {
           ...order,
+          contract: sanitizedContract,
           user: order.user
             ? {
                 data: {
@@ -226,16 +236,29 @@ export default factories.createCoreController(
     async update(ctx) {
       const { id } = ctx.params;
       const requestData = (ctx.request?.body as any)?.data ?? {};
+      const requestsStatusChange = Object.prototype.hasOwnProperty.call(
+        requestData,
+        "Status",
+      );
 
       // Snapshot the whitelisted fields before the write so we can diff afterwards.
       let before: Record<string, any> | null = null;
       try {
         before = await strapi.db.query("api::order.order").findOne({
           where: { id },
-          select: AUDITED_ORDER_FIELDS as unknown as string[],
+          select: [...AUDITED_ORDER_FIELDS, "PaymentGateway"],
         });
       } catch (e) {
         before = null;
+      }
+
+      if (requestsStatusChange) {
+        return ctx.badRequest("Use the order transition or cancellation operation", {
+          data: {
+            success: false,
+            errorCode: "ORDER_STATUS_TRANSITION_REQUIRED",
+          },
+        });
       }
 
       const response = await super.update(ctx);
@@ -280,12 +303,24 @@ export default factories.createCoreController(
       return verifyPaymentHandler(strapi as any, ctx);
     },
 
+    async snappayCallback(ctx) {
+      return snappayCallbackHandler(strapi as any, ctx);
+    },
+
     async adminAdjustItems(ctx) {
       return adminAdjustItemsHandler(strapi as any, ctx);
     },
 
     async adminCancel(ctx) {
       return adminCancelOrderHandler(strapi as any, ctx);
+    },
+
+    async adminPaymentOperation(ctx) {
+      return adminPaymentOperationHandler(strapi as any, ctx);
+    },
+
+    async adminTransition(ctx) {
+      return adminTransitionOrderHandler(strapi as any, ctx);
     },
 
     async adminVoidBarcode(ctx) {
@@ -308,7 +343,7 @@ export default factories.createCoreController(
           populate: {
             contract: {
               populate: {
-                contract_transactions: true,
+                contract_transactions: { populate: { payment_gateway: true } },
               },
             },
           },
@@ -326,37 +361,61 @@ export default factories.createCoreController(
           );
         }
 
-        let transactionId: string | undefined;
-        if (order.PaymentGateway === "SnappPay") {
-          const contract = order.contract as any;
-          if (contract && typeof contract === "object") {
-            transactionId =
-              (contract.external_id ? String(contract.external_id) : undefined) ||
-              undefined;
-
-            if (!transactionId) {
-              const txList = Array.isArray(contract.contract_transactions)
-                ? contract.contract_transactions
-                : [];
-              const snappTx = [...txList].reverse().find((tx: any) => {
-                const source = tx?.external_source || contract?.external_source;
-                return source === "SnappPay";
-              });
-              if (snappTx?.external_id) {
-                transactionId = String(snappTx.external_id);
-              }
-            }
-          }
-        }
+        const attempt = await reconcileOrderPaymentAttempt(strapi as any, order);
+        const contract = order.contract as any;
+        const txList = Array.isArray(contract?.contract_transactions)
+          ? contract.contract_transactions
+          : [];
+        const latestTx = [...txList].reverse().find((tx: any) => tx?.Status !== "Failed") ||
+          [...txList].reverse()[0];
+        const transactionId =
+          attempt?.providerReference ||
+          latestTx?.GatewayRefId ||
+          latestTx?.external_id ||
+          latestTx?.TrackId ||
+          contract?.external_id ||
+          undefined;
+        const isSnappay = isSnappayGatewayValue(order.PaymentGateway);
+        const paymentStatus = attempt?.Status ||
+          (isSnappay
+            ? "Unknown"
+            : ["Started", "Shipment", "Done"].includes(order.Status)
+            ? "Succeeded"
+            : order.Status === "Cancelled"
+            ? "Failed"
+            : "Unknown");
+        const isPaid = paymentStatus === "Succeeded";
+        const canRetry = ["Failed", "Cancelled", "Expired"].includes(paymentStatus);
 
         return {
           data: {
             success: true,
             orderId: order.id,
             status: order.Status,
-            isPaid: ["Started", "Shipment", "Done"].includes(order.Status),
+            paymentStatus,
+            isPaid,
             paymentGateway: order.PaymentGateway || "Unknown",
             transactionId,
+            attemptId: attempt?.attemptId,
+            amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,
+            canRetry,
+            nextAction: isPaid
+              ? "view_order"
+              : canRetry
+              ? "return_to_cart"
+              : "recheck",
+            failureCode:
+              attempt?.failureCode ||
+              (isSnappay && !attempt
+                ? "SNAPPAY_ATTEMPT_NOT_FOUND"
+                : undefined),
+            failureMessage:
+              attempt?.failureMessage ||
+              (isSnappay && !attempt
+                ? "SnappPay payment requires reconciliation"
+                : undefined),
+            lastReconciledAt: attempt?.lastReconciledAt || undefined,
+            authoritative: !isSnappay || Boolean(attempt),
           },
         };
       } catch (error) {
@@ -367,6 +426,25 @@ export default factories.createCoreController(
           },
         });
       }
+    },
+
+    async reconcilePayment(ctx) {
+      const orderId = Number(ctx.params?.id);
+      const userId = await resolveCustomerTargetUserId(ctx, strapi as any);
+      if (!userId) return;
+      const order = await strapi.db.query("api::order.order").findOne({
+        where: { id: orderId, user: { id: userId } },
+        fields: ["id", "PaymentGateway"],
+      } as any);
+      if (!order) {
+        return ctx.forbidden("You do not have permission to access this order");
+      }
+      if (isSnappayGatewayValue(order.PaymentGateway)) {
+        await strapi
+          .service("api::payment-gateway.snappay-orchestrator")
+          .reconcileOrder(orderId, "customer_request");
+      }
+      return this.checkPaymentStatus(ctx);
     },
 
     async getActiveReserve(ctx) {

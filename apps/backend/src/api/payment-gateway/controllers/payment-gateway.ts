@@ -8,6 +8,10 @@ import { computeCouponDiscount } from "../../cart/services/lib/discounts";
 import { Strapi } from "@strapi/strapi";
 import { getAvailableCheckoutGateways } from "../services/checkout-gateway-availability";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import {
+  assertSnappayRuntimeConfig,
+  isSnappayHardenedInitiationEnabled,
+} from "../services/snappay-orchestrator";
 
 export default factories.createCoreController(
   "api::payment-gateway.payment-gateway",
@@ -85,6 +89,15 @@ export default factories.createCoreController(
     // Compute SnappPay eligibility based on current cart and shipping
     async snappEligible(ctx) {
       try {
+        if (!isSnappayHardenedInitiationEnabled()) {
+          return ctx.send({
+            data: {
+              eligible: false,
+              message: "SnappPay checkout is temporarily unavailable",
+            },
+          });
+        }
+        assertSnappayRuntimeConfig();
         const userId = await resolveCustomerTargetUserId(ctx, strapi);
         if (!userId) return;
 
@@ -104,8 +117,66 @@ export default factories.createCoreController(
           (ctx.request.query?.discountCode as string | undefined) ||
           (ctx.request.body?.discountCode as string | undefined);
 
-        // If amount is provided directly from frontend (قابل پرداخت), use it directly
+        // If amount is provided directly from frontend (قابل پرداخت), use it —
+        // but only after bounding it against the caller's real cart.
+        //
+        // The storefront computes the payable total client-side (it holds the
+        // selected shipping and any discount preview), so the server cannot
+        // reproduce it from the cart alone and has to accept the value. Taking it
+        // unconditionally, however, turned this endpoint into an unmetered
+        // eligibility oracle: any authenticated user could loop arbitrary amounts
+        // and each call became an authenticated outbound request against our
+        // production SnappPay credentials. Requiring a non-empty cart and
+        // rejecting amounts the cart could not plausibly produce keeps the value
+        // tied to a real checkout without breaking the legitimate flow.
         if (amountTomanParam !== undefined) {
+          if (!Number.isFinite(amountTomanParam) || amountTomanParam <= 0) {
+            return ctx.send({
+              data: { eligible: false, message: "Invalid amount" },
+            });
+          }
+
+          const cartService = strapi.service("api::cart.cart");
+          const cart = await cartService.getUserCart(userId);
+          if (!cart?.cart_items?.length) {
+            return ctx.send({
+              data: { eligible: false, message: "Cart is empty" },
+            });
+          }
+
+          let cartSubtotal = 0;
+          for (const item of cart.cart_items) {
+            const price =
+              item?.product_variation?.DiscountPrice ??
+              item?.product_variation?.Price ??
+              0;
+            cartSubtotal += Number(price) * Number(item?.Count || 0);
+          }
+
+          // A discount can only lower the payable total, shipping can only raise
+          // it, so the cart subtotal plus the priciest shipping method is a hard
+          // upper bound on any legitimate payable amount.
+          const shippingMethods = await strapi.entityService.findMany(
+            "api::shipping.shipping",
+            { fields: ["Price"] } as any,
+          );
+          const maxShipping = (shippingMethods || []).reduce(
+            (max: number, method: any) => Math.max(max, Number(method?.Price || 0)),
+            0,
+          );
+          const upperBound = Math.round(cartSubtotal) + Math.round(maxShipping);
+
+          if (amountTomanParam > upperBound) {
+            strapi.log.warn("Rejected SnappPay eligibility amount above cart bound", {
+              userId,
+              amountToman: amountTomanParam,
+              upperBound,
+            });
+            return ctx.send({
+              data: { eligible: false, message: "Amount does not match the cart" },
+            });
+          }
+
           const amountIRR = Math.max(0, amountTomanParam) * 10;
 
           strapi.log.info("SnappPay eligible request (direct amount)", {
@@ -151,15 +222,7 @@ export default factories.createCoreController(
           const count = Number(item?.Count || 0);
           subtotal += Number(price) * count;
 
-          console.log(
-            `[ELIGIBLE CALC] VarID=${item?.product_variation?.id}, DiscountPrice=${
-              item?.product_variation?.DiscountPrice
-            }, Price=${item?.product_variation?.Price}, Count=${count}, ItemTotal=${
-              Number(price) * count
-            }`,
-          );
         }
-        console.log(`[ELIGIBLE CALC] Final subtotal=${subtotal}`);
 
         // Discounts: apply coupon first if provided, otherwise fallback to general discount
         let discountAmount = 0;
@@ -310,80 +373,6 @@ export default factories.createCoreController(
             stack: error.stack,
             timestamp: new Date().toISOString(),
             version: "v2",
-          },
-        });
-      }
-    },
-
-    // Test endpoint for SnappPay (eligible + token)
-    async testSnappPay(ctx) {
-      try {
-        const {
-          amountIRR = 4000,
-          mobile = "989121234567",
-          callbackURL = "/orders/payment-callback",
-        } = ctx.request.body || {};
-
-        const snappay = strapi.service("api::payment-gateway.snappay");
-
-        const eligible = await snappay.eligible(Number(amountIRR));
-
-        const serverBaseUrl = strapi.config.get(
-          "server.url",
-          "http://localhost:1337"
-        );
-        const absoluteCallback = `${serverBaseUrl}${
-          String(callbackURL).startsWith("/") ? "" : "/"
-        }${callbackURL}`;
-
-        const payload = {
-          amount: Number(amountIRR),
-          discountAmount: 0,
-          externalSourceAmount: 0,
-          mobile: String(mobile),
-          paymentMethodTypeDto: "INSTALLMENT" as const,
-          returnURL: absoluteCallback,
-          transactionId: `TEST${Date.now()}`.slice(0, 10),
-          cartList: [
-            {
-              cartId: 1,
-              cartItems: [
-                {
-                  amount: Number(amountIRR),
-                  category: "General",
-                  count: 1,
-                  id: 1,
-                  name: "Test Item",
-                  commissionType: 1,
-                },
-              ],
-              isShipmentIncluded: true,
-              isTaxIncluded: true,
-              taxAmount: 0,
-              shippingAmount: 0,
-              totalAmount: Number(amountIRR),
-            },
-          ],
-        } as any;
-
-        const tokenResp = await snappay.requestPaymentToken(payload);
-
-        return ctx.send({
-          data: {
-            success: true,
-            eligible,
-            tokenResp,
-          },
-        });
-      } catch (error) {
-        strapi.log.error("Error testing SnappPay:", {
-          message: error.message,
-          stack: error.stack,
-        });
-        return ctx.badRequest("SnappPay test failed", {
-          data: {
-            success: false,
-            error: error.message,
           },
         });
       }

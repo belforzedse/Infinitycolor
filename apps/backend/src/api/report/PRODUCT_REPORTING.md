@@ -24,10 +24,46 @@ paid_orders =
 
 Consequences:
 
-- `Paying` orders (no successful transaction) are **excluded** — they may never settle.
-- Fully-refunded / `Cancelled` orders net to `<= 0` and are **excluded**.
+- Orders with no successful transaction are **excluded**. In practice that means
+  `Paying` orders — but note the CTE filters on `ct.status`, **not** on
+  `orders.status`, so an order left at `Paying` *after* a successful charge (see
+  `handleStockDecrementFailure`, which deliberately does this when stock cannot be
+  decremented) **is still counted**. The exclusion follows from "no Success row",
+  not from the order status.
+- Fully-refunded / `Cancelled` orders net to `<= 0` and are **excluded** — provided
+  the refund is recorded as a `Return` transaction for the full paid amount. A
+  refund written short leaves a positive residue and the order stays counted
+  forever.
 - Partial refunds keep the order (still net-positive) and reduce its metrics via `refund_irr`.
 - Date window is applied to **`orders.date`** (the sale date), bucketed in the store timezone.
+
+### The gateway visibility invariant
+
+**A payment gateway appears in these reports only if its settlement path writes
+`contract_transaction.Status = 'Success'`.** There is no fallback: an order whose
+gateway never writes that row contributes zero to gross, net, units, order count,
+AOV, trends and inventory velocity, and the gateway is absent from the breakdown.
+
+This is not hypothetical. Mellat had **no `contract_transaction` writer at all** —
+the callback verified, settled, decremented stock and set the order `Started`, but
+never recorded a transaction — so every Mellat sale was invisible in every report,
+silently, while the numbers looked entirely plausible. The same omission also made
+Mellat's replay-idempotency check permanently unmatchable.
+
+Two guards now exist against a recurrence:
+
+- `gatewayBreakdownQuery` is rooted in `orders` with a `LEFT JOIN` onto
+  `paid_orders`, so a gateway with orders but no settlement renders as an explicit
+  zero row rather than vanishing. It previously inner-joined from `paid_orders`,
+  which dropped such gateways entirely — and `withShares` then made the survivors
+  sum to a confident 100%.
+- `gatewaySettlementWarnings` compares each gateway's total order count against its
+  settled count and emits a `dataQualityWarnings[]` entry when a gateway has orders
+  but zero settled ones. The UI renders these as a warning, not a note.
+
+When adding a gateway, the settlement path must write a `Success` transaction, and
+refunds must be written as `Type: 'Return'` rows rather than by editing the original
+charge downward — the CTE's `settled_irr`/`refund_irr` split depends on it.
 
 All product-money metrics are then computed from the **`order_items`** of these
 paid orders, using the immutable snapshot fields (`ProductTitle`, `ProductSKU`,

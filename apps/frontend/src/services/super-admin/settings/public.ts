@@ -90,7 +90,7 @@ const PUBLIC_SETTINGS_QUERY = PUBLIC_SETTINGS_FIELDS.map(
 const HERO_SLIDER_QUERY = "fields[0]=homeHeroSliderPublished&fields[1]=homeHeroSliderMeta";
 
 type PublicSettingsFetchOptions = RequestInit & {
-  next?: { revalidate: number; tags: string[] };
+  next?: { revalidate: number | false; tags: string[] };
 };
 
 const publicSettingsFetchOptions = (): PublicSettingsFetchOptions => ({
@@ -112,9 +112,13 @@ export type PublicHeroSlider = {
 export async function getPublicHeroSlider(): Promise<PublicHeroSlider> {
   try {
     const baseUrl = typeof window === "undefined" ? getStrapiServerUrl() : API_BASE_URL;
+    const cacheOptions: PublicSettingsFetchOptions =
+      process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE === "1" || process.env.E2E_SEED_MODE === "auto"
+        ? { cache: "no-store" }
+        : { next: { revalidate: false, tags: ["hero-slider"] } };
     const response = await fetch(`${baseUrl}/settings?${HERO_SLIDER_QUERY}`, {
       // Never expires — only cleared by revalidateTag("hero-slider") on publish
-      next: { revalidate: false, tags: ["hero-slider"] },
+      ...cacheOptions,
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",

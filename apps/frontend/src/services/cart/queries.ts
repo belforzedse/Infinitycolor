@@ -1,6 +1,8 @@
 import { apiClient } from "../index";
 import type {
   CartStockCheckResponse,
+  CheckoutQuoteRequest,
+  CheckoutQuoteResponse,
   CheckoutGatewayCode,
 } from "./types/cart";
 import { unwrap } from "./helpers/response";
@@ -30,6 +32,13 @@ interface AvailableGatewaysResponse {
 export const checkCartStock = async (): Promise<CartStockCheckResponse> => {
   const response = await apiClient.get<CartStockCheckResponse>("/carts/check-stock");
   return unwrap<CartStockCheckResponse>(response);
+};
+
+export const getCheckoutQuote = async (
+  data: CheckoutQuoteRequest,
+): Promise<CheckoutQuoteResponse> => {
+  const response = await apiClient.post<CheckoutQuoteResponse>("/carts/quote", data);
+  return unwrap<CheckoutQuoteResponse>(response);
 };
 
 export const getSnappEligible = async (

@@ -5,7 +5,7 @@
 
 services:
   frontend-2:
-    image: ghcr.io/belforzedse/infinity-frontend:${IMAGE_TAG:-dev}
+    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
     env_file:
       - ${ENV_FILE:-dev.env}
     extra_hosts:
@@ -13,7 +13,7 @@ services:
     restart: unless-stopped
     depends_on:
       frontend-redis:
-        condition: service_started
+        condition: service_healthy
     networks:
       - frontend-network
     ports:
@@ -25,14 +25,14 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/_health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
   frontend-3:
-    image: ghcr.io/belforzedse/infinity-frontend:${IMAGE_TAG:-dev}
+    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
     env_file:
       - ${ENV_FILE:-dev.env}
     extra_hosts:
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
     depends_on:
       frontend-redis:
-        condition: service_started
+        condition: service_healthy
     networks:
       - frontend-network
     ports:
@@ -52,14 +52,14 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/_health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
   frontend-4:
-    image: ghcr.io/belforzedse/infinity-frontend:${IMAGE_TAG:-dev}
+    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
     env_file:
       - ${ENV_FILE:-dev.env}
     extra_hosts:
@@ -67,7 +67,7 @@ services:
     restart: unless-stopped
     depends_on:
       frontend-redis:
-        condition: service_started
+        condition: service_healthy
     networks:
       - frontend-network
     ports:
@@ -79,7 +79,7 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/_health"]
       interval: 30s
       timeout: 10s
       retries: 3

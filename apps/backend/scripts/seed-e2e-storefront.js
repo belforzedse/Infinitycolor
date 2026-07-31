@@ -163,6 +163,18 @@ const FIXTURE = {
       lastName: "Customer",
       roleName: "Customer",
       externalId: "e2e-storefront:user:customer",
+      walletBalanceIrr: 50_000_000,
+    },
+    // A second, unrelated Customer used to assert cross-user ownership scoping
+    // (BOLA regression coverage) on address / wallet-transaction endpoints.
+    customerB: {
+      phone: envOrDefault("E2E_CUSTOMER_B_PHONE", "+989000000109"),
+      password: envOrDefault("E2E_CUSTOMER_B_PASSWORD", "E2eCustomerB!123"),
+      email: "e2e.customerb@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "CustomerB",
+      roleName: "Customer",
+      externalId: "e2e-storefront:user:customer-b",
     },
     admin: {
       phone: envOrDefault("E2E_ADMIN_PHONE", "+989000000201"),
@@ -208,6 +220,16 @@ const FIXTURE = {
     slug: ADMIN_CATEGORY_SLUG_PREFIX,
     updatedSlug: `${ADMIN_CATEGORY_SLUG_PREFIX}-updated`,
   },
+  gateways: [
+    {
+      title: "Wallet",
+      description: `${TAG}:gateway:wallet`,
+    },
+    {
+      title: "ZarinPal",
+      description: `${TAG}:gateway:zarinpal`,
+    },
+  ],
 };
 
 function dbClient() {
@@ -320,7 +342,32 @@ async function insertLink(client, table, data) {
   );
 }
 
-async function seedHomepageNewestSettings(client, productId, now) {
+async function seedNavigationSingleton(client, productCategoryId, now) {
+  if (
+    !(await tableExists(client, "navigations")) ||
+    !(await tableExists(client, "navigations_product_categories_links"))
+  ) {
+    return null;
+  }
+
+  const existing = await client.query(`SELECT id FROM navigations ORDER BY id ASC LIMIT 1`);
+  const navigation =
+    existing.rows[0] ||
+    (await insertRow(client, "navigations", {
+      created_at: now,
+      updated_at: now,
+    }));
+
+  await insertLink(client, "navigations_product_categories_links", {
+    navigation_id: navigation.id,
+    product_category_id: productCategoryId,
+    product_category_order: 1,
+  });
+
+  return navigation.id;
+}
+
+async function seedHomepageProductSettings(client, productId, now) {
   if (!(await tableExists(client, "site_settings"))) return [];
 
   const meta = await tableMeta(client, "site_settings");
@@ -328,8 +375,21 @@ async function seedHomepageNewestSettings(client, productId, now) {
   if (!available.has("home_newest_product_ids")) return [];
 
   const payload = JSON.stringify([productId]);
-  const column = meta.find((item) => item.column_name === "home_newest_product_ids");
-  const jsonCast = column?.data_type === "json" ? "::json" : "::jsonb";
+  const newestColumn = meta.find((item) => item.column_name === "home_newest_product_ids");
+  const newestJsonCast = newestColumn?.data_type === "json" ? "::json" : "::jsonb";
+  const discountedColumn = meta.find(
+    (item) => item.column_name === "home_discounted_product_ids",
+  );
+  const discountedJsonCast =
+    discountedColumn?.data_type === "json" ? "::json" : "::jsonb";
+  const productIdAssignments = [
+    `home_newest_product_ids = $1${newestJsonCast}`,
+  ];
+  if (discountedColumn) {
+    productIdAssignments.push(
+      `home_discounted_product_ids = $1${discountedJsonCast}`,
+    );
+  }
   const existing = await client.query(`SELECT id FROM site_settings ORDER BY id ASC LIMIT 1`);
   const updatedAtClause = available.has("updated_at") ? `, updated_at = $2` : "";
 
@@ -340,17 +400,24 @@ async function seedHomepageNewestSettings(client, productId, now) {
     const idParam = available.has("updated_at") ? "$3" : "$2";
     await client.query(
       `UPDATE site_settings
-       SET home_newest_product_ids = $1${jsonCast}${updatedAtClause}
+       SET ${productIdAssignments.join(", ")}${updatedAtClause}
        WHERE id = ${idParam}`,
       params,
     );
-    console.log(`[seed:e2e] Curated homepage newest product ids: [${productId}].`);
+    console.log(
+      `[seed:e2e] Curated homepage newest and discounted product ids: [${productId}].`,
+    );
     return [productId];
   }
 
   const names = ["home_newest_product_ids"];
   const values = [payload];
-  const params = [`$1${jsonCast}`];
+  const params = [`$1${newestJsonCast}`];
+
+  if (discountedColumn) {
+    names.push("home_discounted_product_ids");
+    params.push(`$1${discountedJsonCast}`);
+  }
 
   if (available.has("created_at")) {
     names.push("created_at");
@@ -368,8 +435,82 @@ async function seedHomepageNewestSettings(client, productId, now) {
      VALUES (${params.join(", ")})`,
     values,
   );
-  console.log(`[seed:e2e] Curated homepage newest product ids: [${productId}].`);
+  console.log(
+    `[seed:e2e] Curated homepage newest and discounted product ids: [${productId}].`,
+  );
   return [productId];
+}
+
+async function seedAdaptiveHeroSettings(client, now) {
+  if (!(await tableExists(client, "site_settings"))) return false;
+
+  const meta = await tableMeta(client, "site_settings");
+  const available = new Map(meta.map((column) => [column.column_name, column]));
+  const requiredColumns = [
+    "home_hero_slider_draft",
+    "home_hero_slider_published",
+    "home_hero_slider_meta",
+  ];
+  if (requiredColumns.some((column) => !available.has(column))) return false;
+
+  const existing = await client.query(`SELECT id FROM site_settings ORDER BY id ASC LIMIT 1`);
+  if (existing.rowCount === 0) return false;
+
+  const payload = {
+    version: 3,
+    autoplayIntervalMs: 600000,
+    slides: [
+      {
+        id: "e2e-adaptive-hero",
+        imageUrl: `/uploads/${FIXTURE_UPLOAD_FILE}`,
+        imageAlt: "E2E adaptive quality hero",
+        mobileImageUrl: `/uploads/${FIXTURE_UPLOAD_FILE}`,
+        mobileImageAlt: "E2E adaptive quality hero",
+        link: {
+          type: "internal",
+          href: `/pdp/${FIXTURE.product.slug}`,
+        },
+        isActive: true,
+        autoplayEligible: false,
+        order: 0,
+        schedule: {
+          timezone: "Asia/Tehran",
+        },
+        tracking: {
+          campaign: "e2e-adaptive-quality",
+          source: "e2e",
+          medium: "test",
+          content: "hero",
+          custom: {},
+        },
+      },
+    ],
+  };
+  const publishedMeta = {
+    version: 3,
+    publishedAt: now.toISOString(),
+    publishedBy: null,
+  };
+  const values = [payload, payload, publishedMeta].map(JSON.stringify);
+  const casts = requiredColumns.map((column) =>
+    available.get(column)?.data_type === "json" ? "::json" : "::jsonb",
+  );
+  const updatedAtClause = available.has("updated_at") ? ", updated_at = $4" : "";
+  const params = available.has("updated_at")
+    ? [...values, now, existing.rows[0].id]
+    : [...values, existing.rows[0].id];
+  const idParam = available.has("updated_at") ? "$5" : "$4";
+
+  await client.query(
+    `UPDATE site_settings
+     SET home_hero_slider_draft = $1${casts[0]},
+         home_hero_slider_published = $2${casts[1]},
+         home_hero_slider_meta = $3${casts[2]}${updatedAtClause}
+     WHERE id = ${idParam}`,
+    params,
+  );
+  console.log("[seed:e2e] Published deterministic adaptive-quality hero.");
+  return true;
 }
 
 async function idsBySource(client, table) {
@@ -418,7 +559,11 @@ async function deleteBySource(client, table) {
 
 async function e2eUserIds(client) {
   if (!(await tableExists(client, "users"))) return [];
-  const fixturePhones = [FIXTURE.auth.customer.phone, FIXTURE.auth.admin.phone];
+  const fixturePhones = [
+    FIXTURE.auth.customer.phone,
+    FIXTURE.auth.customerB.phone,
+    FIXTURE.auth.admin.phone,
+  ];
   const result = await client.query(
     `SELECT id FROM users
      WHERE external_source = $1
@@ -446,6 +591,38 @@ async function teardownUserData(client, userIds) {
   await deleteWhereIn(client, "carts_user_links", "user_id", userIds);
   await deleteWhereIn(client, "carts", "id", cartIds);
 
+  const guestMergeIds = await idsFromLink(
+    client,
+    "guest_cart_merges_user_links",
+    "guest_cart_merge_id",
+    "user_id",
+    userIds,
+  );
+  await deleteWhereIn(client, "guest_cart_merges_user_links", "user_id", userIds);
+  await deleteWhereIn(client, "guest_cart_merges", "id", guestMergeIds);
+
+  const paymentAttemptIds = await idsFromLink(
+    client,
+    "payment_attempts_user_links",
+    "payment_attempt_id",
+    "user_id",
+    userIds,
+  );
+  await deleteWhereIn(
+    client,
+    "payment_attempts_order_links",
+    "payment_attempt_id",
+    paymentAttemptIds,
+  );
+  await deleteWhereIn(
+    client,
+    "payment_attempts_contract_links",
+    "payment_attempt_id",
+    paymentAttemptIds,
+  );
+  await deleteWhereIn(client, "payment_attempts_user_links", "user_id", userIds);
+  await deleteWhereIn(client, "payment_attempts", "id", paymentAttemptIds);
+
   const orderIds = await idsFromLink(client, "orders_user_links", "order_id", "user_id", userIds);
   const orderItemIds = await idsFromLink(
     client,
@@ -465,7 +642,16 @@ async function teardownUserData(client, userIds) {
   );
   await deleteWhereIn(client, "order_items_order_links", "order_item_id", orderItemIds);
   await deleteWhereIn(client, "order_items", "id", orderItemIds);
+  const orderLogIds = await idsFromLink(
+    client,
+    "order_logs_order_links",
+    "order_log_id",
+    "order_id",
+    orderIds,
+  );
+  await deleteWhereIn(client, "order_logs_performed_by_links", "order_log_id", orderLogIds);
   await deleteWhereIn(client, "order_logs_order_links", "order_id", orderIds);
+  await deleteWhereIn(client, "order_logs", "id", orderLogIds);
   await deleteWhereIn(client, "orders_contract_links", "order_id", orderIds);
   await deleteWhereIn(client, "orders_delivery_address_links", "order_id", orderIds);
   await deleteWhereIn(client, "orders_shipping_links", "order_id", orderIds);
@@ -479,7 +665,21 @@ async function teardownUserData(client, userIds) {
     "user_id",
     userIds,
   );
+  const contractTransactionIds = await idsFromLink(
+    client,
+    "contract_transactions_contract_links",
+    "contract_transaction_id",
+    "contract_id",
+    contractIds,
+  );
+  await deleteWhereIn(
+    client,
+    "contract_transactions_payment_gateway_links",
+    "contract_transaction_id",
+    contractTransactionIds,
+  );
   await deleteWhereIn(client, "contract_transactions_contract_links", "contract_id", contractIds);
+  await deleteWhereIn(client, "contract_transactions", "id", contractTransactionIds);
   await deleteWhereIn(client, "contract_logs_contract_links", "contract_id", contractIds);
   await deleteWhereIn(client, "contracts_local_user_links", "user_id", userIds);
   await deleteWhereIn(client, "contracts", "id", contractIds);
@@ -514,6 +714,20 @@ async function teardownUserData(client, userIds) {
     "user_id",
     userIds,
   );
+  const walletTransactionIds = await idsFromLink(
+    client,
+    "local_user_wallet_transactions_user_wallet_links",
+    "local_user_wallet_transaction_id",
+    "local_user_wallet_id",
+    walletIds,
+  );
+  await deleteWhereIn(
+    client,
+    "local_user_wallet_transactions_user_wallet_links",
+    "local_user_wallet_transaction_id",
+    walletTransactionIds,
+  );
+  await deleteWhereIn(client, "local_user_wallet_transactions", "id", walletTransactionIds);
   await deleteWhereIn(client, "local_user_infos_user_links", "user_id", userIds);
   await deleteWhereIn(client, "local_user_infos", "id", infoIds);
   await deleteWhereIn(client, "local_user_wallets_user_links", "user_id", userIds);
@@ -576,6 +790,13 @@ async function deleteShippingMethod(client) {
   await deleteWhereIn(client, "shippings", "id", shippingIds);
 }
 
+async function deleteSeededPaymentGateways(client) {
+  if (!(await tableExists(client, "payment_gateways"))) return;
+  await client.query(`DELETE FROM payment_gateways WHERE description = ANY($1::text[])`, [
+    FIXTURE.gateways.map((gateway) => gateway.description),
+  ]);
+}
+
 async function teardown(client) {
   const userIds = await e2eUserIds(client);
   const productIds = await idsBySource(client, "products");
@@ -588,6 +809,7 @@ async function teardown(client) {
 
   await teardownUserData(client, userIds);
   await deleteShippingMethod(client);
+  await deleteSeededPaymentGateways(client);
   await deleteAdminCrudCategories(client);
   await deleteWhereIn(client, "files_related_morphs", "related_id", productIds);
   await deleteWhereIn(client, "files_related_morphs", "file_id", fileIds);
@@ -730,7 +952,7 @@ async function seedUser(client, userDef, now) {
   });
 
   const wallet = await insertRow(client, "local_user_wallets", {
-    balance: "0",
+    balance: String(userDef.walletBalanceIrr || 0),
     last_transaction_date: now,
     description: "E2E fixture wallet",
     created_at: now,
@@ -746,6 +968,7 @@ async function seedUser(client, userDef, now) {
 
 async function seedUsers(client, now) {
   const customer = await seedUser(client, FIXTURE.auth.customer, now);
+  const customerB = await seedUser(client, FIXTURE.auth.customerB, now);
   const admin = await seedUser(client, FIXTURE.auth.admin, now);
 
   // Role-specific users power the permission/CRUD suites. They are optional so a
@@ -768,7 +991,38 @@ async function seedUsers(client, now) {
     optionalRoles[key] = await seedUser(client, userDef, now);
   }
 
-  return { customer, admin, ...optionalRoles };
+  return { customer, customerB, admin, ...optionalRoles };
+}
+
+async function walletIdForUser(client, userId) {
+  const result = await client.query(
+    `SELECT local_user_wallet_id AS id FROM local_user_wallets_user_links WHERE user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  const walletId = Number(result.rows[0]?.id);
+  if (!Number.isFinite(walletId)) {
+    throw new Error(`No wallet found for seeded user ${userId}`);
+  }
+  return walletId;
+}
+
+async function seedWalletTransaction(client, walletId, now) {
+  const transaction = await insertRow(client, "local_user_wallet_transactions", {
+    amount: "500000",
+    type: "Add",
+    date: now,
+    cause: "E2E fixture top-up",
+    reference_id: `${TAG}:wallet-transaction:${walletId}`,
+    note: "e2e",
+    description: "E2E seeded wallet transaction",
+    created_at: now,
+    updated_at: now,
+  });
+  await insertLink(client, "local_user_wallet_transactions_user_wallet_links", {
+    local_user_wallet_transaction_id: transaction.id,
+    local_user_wallet_id: walletId,
+  });
+  return { id: transaction.id };
 }
 
 async function firstShippingCityId(client) {
@@ -791,6 +1045,35 @@ async function seedShippingMethods(client, now) {
     ids.push(shipping.id);
   }
   return ids;
+}
+
+async function seedPaymentGateways(client, now) {
+  if (!(await tableExists(client, "payment_gateways"))) {
+    throw new Error("Table not found: payment_gateways");
+  }
+
+  const gateways = [];
+  for (const gateway of FIXTURE.gateways) {
+    const existing = await client.query(
+      `SELECT id FROM payment_gateways WHERE lower(title) = lower($1) LIMIT 1`,
+      [gateway.title],
+    );
+    if (existing.rowCount > 0) {
+      throw new Error(
+        `E2E ${gateway.title} gateway conflicts with existing payment gateway id ${existing.rows[0].id}`,
+      );
+    }
+    gateways.push(
+      await insertRow(client, "payment_gateways", {
+        title: gateway.title,
+        description: gateway.description,
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      }),
+    );
+  }
+  return gateways;
 }
 
 async function seedCustomerAddress(client, userId, now) {
@@ -866,6 +1149,7 @@ async function seed(client) {
     created_at: now,
     updated_at: now,
   });
+  await seedNavigationSingleton(client, category.id, now);
 
   const product = await insertRow(client, "products", {
     title: FIXTURE.product.title,
@@ -883,7 +1167,8 @@ async function seed(client) {
     created_at: now,
     updated_at: now,
   });
-  const homepageNewestProductIds = await seedHomepageNewestSettings(client, product.id, now);
+  const homepageNewestProductIds = await seedHomepageProductSettings(client, product.id, now);
+  await seedAdaptiveHeroSettings(client, now);
 
   await insertLink(client, "products_product_main_category_links", {
     product_id: product.id,
@@ -1019,7 +1304,15 @@ async function seed(client) {
   const users = await seedUsers(client, now);
   const customerCart = await seedCustomerCart(client, users.customer.id, variations[0].id, now);
   const customerAddress = await seedCustomerAddress(client, users.customer.id, now);
+
+  // Customer B owns her own address + wallet transaction, unrelated to the primary
+  // customer above, so permission specs can assert cross-user access is denied.
+  const customerBAddress = await seedCustomerAddress(client, users.customerB.id, now);
+  const customerBWalletId = await walletIdForUser(client, users.customerB.id);
+  const customerBTransaction = await seedWalletTransaction(client, customerBWalletId, now);
+
   const shippingIds = await seedShippingMethods(client, now);
+  const paymentGateways = await seedPaymentGateways(client, now);
 
   const paymentVariationIndex = FIXTURE.variations.findIndex(
     (variation) => variation.sku === "E2E-STOREFRONT-PAY",
@@ -1038,7 +1331,12 @@ async function seed(client) {
     customerUserId: users.customer.id,
     customerCartId: customerCart.id,
     customerAddressId: customerAddress.id,
+    customerBUserId: users.customerB.id,
+    customerBAddressId: customerBAddress.id,
+    customerBWalletTransactionId: customerBTransaction.id,
     shippingIds,
+    paymentGatewayId: paymentGateways[0].id,
+    zarinpalPaymentGatewayId: paymentGateways[1].id,
     adminUserId: users.admin.id,
     founderUserId: users.founder ? users.founder.id : null,
     storeManagerUserId: users.storeManager ? users.storeManager.id : null,

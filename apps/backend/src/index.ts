@@ -14,11 +14,20 @@ import localUserOverride from "./api/local-user/documentation/1.0.0/overrides/lo
 import productLifeCycles from "./api/product/lifecycles";
 import productVariationLifeCycles from "./api/product-variation/lifecycles";
 import { ensureIranLocations } from "./jobs/ensureLocations";
-import { ensureBackgroundJobLocksTable } from "./jobs/backgroundJobRunner";
 import { startExpireStockReservationsJob } from "./jobs/expireStockReservations";
 import { startExpireReserveOrdersJob } from "./jobs/expireReserveOrders";
 import { startFlushViewCountersJob } from "./jobs/flushViewCounters";
 import { registerAppLifecycles } from "./lifecycles/registerAppLifecycles";
+import {
+  shouldRunWebBootstrapMaintenance,
+  shouldStartInProcessBackgroundJobs,
+} from "./utils/processRole";
+import {
+  assertSnappayRuntimeConfig,
+  isSnappayHardenedInitiationEnabled,
+} from "./api/payment-gateway/services/snappay-orchestrator";
+import { backfillLegacySnappayAttempts } from "./api/payment-gateway/services/snappay-legacy-backfill";
+import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/snappay-database";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -158,6 +167,8 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
           "removeItem",
           "checkStock",
           "applyDiscount",
+          "mergeGuestCart",
+          "checkoutQuote",
           "finalizeToOrder",
           "shippingPreview",
           "shippingOptions",
@@ -181,6 +192,15 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       "api::notification": {
         notification: ["listMine", "unreadCount", "markAllRead", "markRead"],
       },
+      "api::user-activity": {
+        "user-activity": [
+          "findUserActivities",
+          "findUserActivitiesByUserId",
+          "unreadCount",
+          "markRead",
+          "markAllRead",
+        ],
+      },
       "api::product-stock": {
         "product-stock": READ_ACTIONS,
       },
@@ -192,6 +212,7 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
           "getMyOrders",
           "getMyOrderDetail",
           "checkPaymentStatus",
+          "reconcilePayment",
           "getActiveReserve",
           "releaseReserve",
         ],
@@ -240,13 +261,6 @@ if (CONTENT_API_ALLOW_ALL) {
   allowRoles.forEach((role) => {
     ROLE_PERMISSION_SPECS[role] = { mode: "all" };
   });
-}
-
-function shouldStartBackgroundJobs() {
-  const argv = process.argv.join(" ");
-  const disabled = String(process.env.DISABLE_BACKGROUND_JOBS || "false").toLowerCase() === "true";
-  const isBuildCommand = /\b(build|ts:generate-types|generate-types)\b/.test(argv);
-  return !disabled && !isBuildCommand;
 }
 
 type RestrictedController = {
@@ -647,7 +661,37 @@ export default {
    * This gives you an opportunity to set up your data model,
    * run jobs, or perform some special logic.
    */
-  bootstrap({ strapi }) {
+  async bootstrap({ strapi }) {
+    const snappayHardenedInitiationEnabled = isSnappayHardenedInitiationEnabled();
+    if (snappayHardenedInitiationEnabled) {
+      assertSnappayRuntimeConfig();
+    }
+
+    const databaseClient = String(
+      (strapi.db.connection as any)?.client?.config?.client || "",
+    ).toLowerCase();
+    if (
+      snappayHardenedInitiationEnabled ||
+      databaseClient.includes("pg") ||
+      databaseClient.includes("postgres")
+    ) {
+      // These constraints also protect the shared payment-attempt workflow when
+      // hardened SnappPay initiation is disabled, so keep them on every
+      // PostgreSQL boot. A non-Postgres database still fails closed if hardened
+      // initiation is explicitly enabled.
+      await ensureSnappayDatabaseInvariants(strapi as any);
+    }
+
+    if (snappayHardenedInitiationEnabled) {
+      const legacyBackfill = await backfillLegacySnappayAttempts(
+        strapi as any,
+      );
+      strapi.log.info("Hardened SnappPay runtime configuration validated");
+      strapi.log.info("Legacy SnappPay recovery records checked", {
+        created: legacyBackfill.created,
+        skipped: legacyBackfill.skipped,
+      });
+    }
     registerAppLifecycles(strapi);
     strapi.db.lifecycles.subscribe(productLifeCycles);
     strapi.db.lifecycles.subscribe(productVariationLifeCycles);
@@ -679,6 +723,13 @@ export default {
       }
     }
 
+    if (!shouldRunWebBootstrapMaintenance()) {
+      strapi.log.info("Web bootstrap maintenance skipped for PROCESS_ROLE", {
+        role: process.env.PROCESS_ROLE || "web",
+      });
+      return;
+    }
+
     // Opt-in escape hatch for integration tests: skip the idempotent app-level
     // seeding (Iran locations, role/permission assignment, settings/identity/FAQ,
     // category migrations) and background jobs. These are safe to skip in a fresh
@@ -692,13 +743,7 @@ export default {
     ensureIranLocations(strapi).catch((err) => {
       strapi.log.error("Failed to ensure province/city seed", err);
     });
-    if (shouldStartBackgroundJobs()) {
-      // Belt-and-suspenders: ensure the distributed-lock table exists before starting
-      // jobs. The migration that creates it can be recorded-but-rolled-back when multiple
-      // instances race migrations on boot, which silently disables every background job.
-      ensureBackgroundJobLocksTable(strapi).catch((error) => {
-        strapi.log.error("Failed to ensure background_job_locks table", error);
-      });
+    if (shouldStartInProcessBackgroundJobs()) {
       try {
         startExpireStockReservationsJob(strapi);
       } catch (error) {
@@ -715,7 +760,7 @@ export default {
         strapi.log.error("Failed to start flush view counters job", error);
       }
     } else {
-      strapi.log.info("Background jobs skipped for build/type-generation command");
+      strapi.log.info("In-process background jobs skipped for this process");
     }
     // Migrate any existing local-users to plugin users by creating a bridge (idempotent)
     (async function migrateLocalUsers() {

@@ -1,6 +1,6 @@
 import { apiClient } from "../index";
 import { unwrap } from "./helpers/response";
-import type { FinalizeCartRequest, FinalizeCartResponse, CartItemResponse } from "./types/cart";
+import type { FinalizeCartRequest, FinalizeCartResponse, CartItemResponse, GuestCartMergeResponse } from "./types/cart";
 
 interface AddItemPayload {
   productVariationId: number;
@@ -74,4 +74,15 @@ export const removeCartItem = async (cartItemId: number): Promise<{ message: str
 export const finalizeCart = async (data: FinalizeCartRequest): Promise<FinalizeCartResponse> => {
   const response = await apiClient.post<FinalizeCartResponse>("/carts/finalize", data);
   return unwrap<FinalizeCartResponse>(response);
+};
+
+export const mergeGuestCart = async (
+  mergeId: string,
+  items: Array<{ productVariationId: number; quantity: number }>,
+): Promise<GuestCartMergeResponse> => {
+  const response = await apiClient.post<GuestCartMergeResponse>("/carts/merge-guest", {
+    mergeId,
+    items,
+  });
+  return unwrap<GuestCartMergeResponse>(response);
 };

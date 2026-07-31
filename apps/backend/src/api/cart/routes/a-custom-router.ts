@@ -21,6 +21,14 @@ export default {
       },
     },
     {
+      method: "POST",
+      path: "/carts/merge-guest",
+      handler: "cart.mergeGuestCart",
+      config: {
+        auth: { scope: [] },
+      },
+    },
+    {
       method: "PUT",
       path: "/carts/update-item",
       handler: "cart.updateItem",
@@ -51,6 +59,14 @@ export default {
       config: {
         auth: { scope: [] },
         middlewares: ["api::cart.discount-throttle"],
+      },
+    },
+    {
+      method: "POST",
+      path: "/carts/quote",
+      handler: "cart.checkoutQuote",
+      config: {
+        auth: { scope: [] },
       },
     },
     {

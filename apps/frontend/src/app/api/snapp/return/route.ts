@@ -2,7 +2,7 @@ import type { NextRequest} from "next/server";
 import { NextResponse } from "next/server";
 import { getStrapiServerUrl } from "@/constants/api";
 
-function isAllowedRedirect(raw: string): boolean {
+function isAllowedRedirect(raw: string, requestOrigin: string): boolean {
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:" && url.protocol !== "https:") return false;
@@ -10,9 +10,10 @@ function isAllowedRedirect(raw: string): boolean {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    // If no allowlist provided, allow any http(s) to preserve dev behavior
-    if (allowed.length === 0) return true;
-    return allowed.some((origin) => origin === url.origin);
+    return (
+      url.origin === requestOrigin ||
+      allowed.some((origin) => origin === url.origin)
+    );
   } catch {
     return false;
   }
@@ -21,61 +22,57 @@ function isAllowedRedirect(raw: string): boolean {
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
-    const pairs: string[] = [];
-    form.forEach((value, key) => {
-      pairs.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
-    });
-    const body = pairs.join("&");
+    const body = new URLSearchParams();
+    for (const key of ["transactionId", "state", "amount"]) {
+      const value = form.get(key);
+      if (typeof value === "string") body.set(key, value);
+    }
 
     const apiBase = getStrapiServerUrl();
     if (!apiBase) {
       throw new Error("Strapi server URL is not defined");
     }
-    const url = `${apiBase.replace(/\/$/, "")}/orders/payment-callback`;
+    const url = new URL(
+      `${apiBase.replace(/\/$/, "")}/orders/snappay/callback`,
+    );
+    const nonce = req.nextUrl.searchParams.get("nonce");
+    if (nonce) url.searchParams.set("nonce", nonce);
 
-    const res = await fetch(url, {
+    const res = await fetch(url.toString(), {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body,
+      body: body.toString(),
       redirect: "manual",
     });
 
     // If backend responds with redirect, forward it
     const location = res.headers.get("location");
     if (location) {
-      if (isAllowedRedirect(location)) {
+      if (isAllowedRedirect(location, req.nextUrl.origin)) {
         return NextResponse.redirect(location, { status: 302 });
       }
-      return NextResponse.redirect("/orders/failure?error=invalid_redirect", {
-        status: 302,
-      });
-    }
-
-    // Otherwise, inspect payload to decide success/failure or missing order
-    let json: any = null;
-    try {
-      json = await res.json();
-    } catch {}
-
-    if (res.ok) {
-      const orderId = json?.data?.orderId || json?.orderId;
       return NextResponse.redirect(
-        orderId ? `/orders/success?orderId=${orderId}` : "/orders/success",
+        new URL("/payment/result?resultHint=invalid_redirect", req.url),
         { status: 302 },
       );
     }
 
-    // If backend reports invalid order id or anything else, go to failure (preserving error message if any)
-    const errorMsg = encodeURIComponent(
-      json?.error?.message || json?.data?.error || "payment_failed",
+    return NextResponse.redirect(
+      new URL(
+        res.ok
+          ? "/payment/result?resultHint=processing"
+          : "/payment/result?resultHint=invalid_callback",
+        req.url,
+      ),
+      { status: 302 },
     );
-    return NextResponse.redirect(`/orders/failure?error=${errorMsg}`, {
-      status: 302,
-    });
   } catch {
-    return NextResponse.redirect("/orders/failure", { status: 302 });
+    return NextResponse.redirect(
+      new URL("/payment/result?resultHint=callback_error", req.url),
+      { status: 302 },
+    );
   }
 }
 

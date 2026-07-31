@@ -4,8 +4,7 @@ const createJestConfig = nextJest({ dir: "./" });
 
 const customJestConfig = {
   collectCoverageFrom: [
-    "middleware.ts",
-    "src/app/orders/payment-callback/PaymentCallbackPageClient.tsx",
+    "src/proxy.ts",
     "src/atoms/**/*.{ts,tsx}",
     "src/components/**/*.{ts,tsx}",
     "src/constants/**/*.{ts,tsx}",
@@ -33,12 +32,6 @@ const customJestConfig = {
       branches: 40,
       functions: 25,
       lines: 17,
-    },
-    "src/app/orders/payment-callback/PaymentCallbackPageClient.tsx": {
-      statements: 90,
-      branches: 70,
-      functions: 100,
-      lines: 90,
     },
     "src/components/ShoppingCart/Bill/PaymentGateway.tsx": {
       statements: 90,

@@ -1,4 +1,4 @@
-# CI/GitLab override for staging scale compose: pull app images from registry.cyandm.org instead of ghcr.io.
+# CI/GitLab override for staging scale compose: force app services to use the GitLab registry.
 # Used by .gitlab-ci.yml deploy. Use with docker-compose.staging.scale.yml.
 # Usage: docker compose -f docker-compose.yml -f docker-compose.ci.yml -f docker-compose.staging.scale.yml -f docker-compose.staging.scale.ci.yml --env-file ... up -d
 

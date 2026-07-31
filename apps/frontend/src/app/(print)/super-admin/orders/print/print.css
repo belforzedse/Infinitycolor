@@ -1,90 +1,822 @@
-/* --- FULL VIEWPORT OVERLAY (hides app chrome) --- */
-.print-layout-overlay {
-  position: fixed; /* cover the entire viewport, hide underlying header/sidebar/FAB */
-  inset: 0;
-  z-index: 9999; /* above everything else */
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  overflow: auto;
-  padding: 24px; /* screen padding */
-  background: #f5f5f5;
-}
-
-/* A4 page preview on screen */
-.print-wrapper {
-  width: 100%;
-  max-width: 210mm; /* A4 width */
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-  padding: 0; /* your invoice component handles its own padding/borders */
-}
-
-/* Page size + margins for printed output */
 @page {
-  size: A4;
-  margin: 12mm 12mm 14mm 12mm; /* top right bottom left */
+  size: A5 portrait;
+  margin: 0;
 }
 
-/* Print reset: pure white, no overlay chrome, no borders/shadows */
-@media print {
-  html,
-  body {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-    background: #ffffff !important;
-    overflow: visible !important;
-    height: auto !important;
-  }
-  .print-layout-overlay {
-    position: static !important;
-    inset: auto !important;
-    padding: 0 !important;
-    background: #ffffff !important;
-    box-shadow: none !important;
-  }
-  .print-wrapper {
-    border: none !important;
-    box-shadow: none !important;
-    width: auto !important;
-    max-width: none !important;
-  }
+html:has(.factorchi-document),
+body:has(.factorchi-document) {
+  min-height: 0 !important;
+  background: #ffffff !important;
+  scrollbar-gutter: auto !important;
 }
 
-/* Keep rows/blocks together across pages */
-table {
-  border-collapse: collapse;
+.factorchi-document {
+  --fc-font-family: var(--font-peyda, Peyda), Tahoma, sans-serif;
+  --fc-font-size: 13px;
+  --fc-font-size-sm: 11px;
+  --fc-font-size-lg: 13px;
+  --fc-font-size-shop: 12px;
+  --fc-font-size-buyer: 12px;
+  --fc-line-height: 1.49;
+  --fc-product-image-size: 70px;
+  --fc-section-gap: 6px;
+  --fc-shop-logo-size: 60px;
+  --fc-brand: #5f1b29;
+  --fc-brand-light: #bd3854;
+  --fc-accent: #ed3819;
+  --fc-border: #e2e8f0;
+  --fc-border-strong: #cbd5e1;
+  --fc-surface: #ffffff;
+  --fc-muted: #64748b;
+  --fc-soft: #f8fafc;
+  --fc-radius: 10px;
+  --fc-shadow: 0 4px 24px rgba(15, 23, 42, 0.08);
+
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  color: #1e293b;
+  background: #ffffff;
+  font-family: var(--fc-font-family);
+  font-size: var(--fc-font-size);
+  line-height: var(--fc-line-height);
 }
-thead {
-  display: table-header-group;
+
+.factorchi-document *,
+.factorchi-document *::before,
+.factorchi-document *::after {
+  box-sizing: border-box;
 }
-tfoot {
-  display: table-footer-group;
+
+.factorchi-document > .fc-document-frame {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 148mm;
+  margin: 20px auto 32px;
+  padding: 10px;
+  background: transparent;
 }
-tr,
-.break-inside-avoid {
+
+.factorchi-document .container {
+  position: relative;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.factorchi-document .fc-document-type {
+  display: block;
+  width: 100%;
+  margin: 0 0 var(--fc-section-gap);
+  padding: 10px 14px;
+  color: #ffffff;
+  background: var(--fc-brand);
+  border-radius: var(--fc-radius);
+  font-size: var(--fc-font-size-lg);
+  font-weight: 700;
+  line-height: var(--fc-line-height);
+  text-align: center;
+}
+
+.factorchi-document table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.factorchi-document table.shop-detail {
+  width: 100%;
+  table-layout: fixed;
+  margin: 0 0 var(--fc-section-gap);
+  overflow: hidden;
+  background: var(--fc-surface);
+  border: 1px solid var(--fc-border);
+  border-radius: var(--fc-radius);
+  font-size: var(--fc-font-size-shop);
+}
+
+.factorchi-document table.fci-res-table {
+  font-size: var(--fc-font-size);
+  line-height: var(--fc-line-height);
+}
+
+.factorchi-document table.shop-detail > tbody > tr > td {
+  width: 33.333%;
+}
+
+.factorchi-document table.shop-detail td {
+  padding: 4px 14px;
+  vertical-align: middle;
+  border: 0;
+  border-color: var(--fc-border);
+  line-height: var(--fc-line-height);
+}
+
+.factorchi-document table.shop-detail > tbody > tr > td:first-child {
+  text-align: right;
+}
+
+.factorchi-document table.shop-detail tfoot td {
+  position: relative;
+  overflow: hidden;
+  padding-left: 40px;
+  background: var(--fc-soft);
+}
+
+.factorchi-document table.shop-detail tfoot td::before,
+.factorchi-document .customer-detail::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  width: 28px;
+  max-height: 100%;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: #ffffff;
+  background: var(--fc-brand);
+  font-size: var(--fc-font-size-sm);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-orientation: mixed;
+  writing-mode: vertical-rl;
+}
+
+.factorchi-document table.shop-detail tfoot td::before {
+  content: "فروشگاه";
+}
+
+.factorchi-document .customer-detail::before {
+  content: "خریدار";
+}
+
+.factorchi-document .shop-title {
+  margin: 0 0 4px;
+  color: var(--fc-brand);
+  font-size: var(--fc-font-size-shop);
+  font-weight: 700;
+}
+
+.factorchi-document .fc-shop-barcode-title {
+  display: flex;
+  max-width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 2px 0 6px;
+}
+
+.factorchi-document .fc-shop-barcode-title .barcode {
+  display: flex;
+  max-width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 0;
+  line-height: 1.1;
+}
+
+.factorchi-document .fc-shop-barcode-title .barcode svg {
+  display: block;
+  width: auto;
+  max-width: 160px;
+  height: 28px;
+  max-height: 28px;
+}
+
+.factorchi-document .fc-shop-logo-cell {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.factorchi-document .fc-shop-logo-row {
+  display: flex !important;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 0 auto;
+}
+
+.factorchi-document .fc-shop-logo-row > * {
+  box-sizing: border-box;
+  width: 50%;
+  max-width: 50%;
+  min-width: 0;
+  flex: 1 1 50%;
+}
+
+.factorchi-document .fc-shop-logo-row .shop-logo {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: var(--fc-shop-logo-size);
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.factorchi-document .shop-meta-dates {
+  text-align: left;
+  vertical-align: top !important;
+}
+
+.factorchi-document .shop-meta-dates .print-date,
+.factorchi-document .shop-meta-dates .transmission-date,
+.factorchi-document .shop-meta-dates .order-id {
+  display: block;
+  width: 100%;
+  margin: 0 0 6px;
+  text-align: left;
+}
+
+.factorchi-document .shop-meta-dates .order-id {
+  margin-bottom: 0;
+  font-size: var(--fc-font-size);
+  font-weight: 700;
+}
+
+.factorchi-document .print-date,
+.factorchi-document .transmission-date,
+.factorchi-document .shop-url,
+.factorchi-document .shop-phone {
+  margin: 0 0 2px;
+  font-size: var(--fc-font-size-sm);
+  font-weight: 500;
+  line-height: var(--fc-line-height);
+}
+
+.factorchi-document .section .title {
+  color: var(--fc-brand);
+  font-weight: 500;
+}
+
+.factorchi-document table.shop-detail tfoot td p {
+  margin: 0 0 2px;
+  padding: 0;
+  color: #1e293b;
+  font-size: var(--fc-font-size-shop);
+  font-weight: 400;
+  line-height: var(--fc-line-height);
+}
+
+.factorchi-document table.shop-detail tfoot td p strong,
+.factorchi-document .customer-detail p strong {
+  color: var(--fc-brand);
+  font-weight: 600;
+}
+
+.factorchi-document .fc-shop-meta-line {
+  display: flex;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 4px 16px;
+}
+
+.factorchi-document .fc-shop-meta-line.is-long {
+  flex-wrap: wrap;
+}
+
+.factorchi-document .fc-shop-meta-line .shop-address {
+  display: block;
+  width: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.factorchi-document .fc-shop-meta-line.is-long .shop-address {
+  width: 100%;
+  flex: 1 1 100%;
+  margin-bottom: 2px;
+}
+
+.factorchi-document .fc-shop-contacts {
+  display: flex;
+  max-width: 100%;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 14px;
+  row-gap: 2px;
+  margin: 0;
+}
+
+.factorchi-document .fc-shop-meta-line.is-long .fc-shop-contacts {
+  flex: 1 1 100%;
+}
+
+.factorchi-document .fc-shop-contacts > p {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  color: #1e293b;
+  font-size: calc(var(--fc-font-size) - 2px);
+  font-weight: 400;
+  line-height: var(--fc-line-height);
+  white-space: nowrap;
+}
+
+.factorchi-document .fc-shop-contacts > p strong {
+  color: var(--fc-brand);
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.factorchi-document .fc-shop-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 20px;
+}
+
+.factorchi-document .fc-shop-meta-grid > p {
+  margin: 0;
+  padding: 0;
+}
+
+.factorchi-document .fc-shop-meta-grid .shop-address {
+  grid-column: 1 / -1;
+  display: block;
+  width: 100%;
+  margin-bottom: 2px;
+  color: #1e293b;
+  font-size: var(--fc-font-size-shop);
+  font-weight: 400;
+}
+
+.factorchi-document .customer-detail {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 20px;
+  margin: var(--fc-section-gap) 0;
+  padding: 8px 12px 8px 40px;
+  overflow: hidden;
+  background: var(--fc-soft);
+  border: 1px solid var(--fc-border);
+  border-radius: var(--fc-radius);
+  font-size: var(--fc-font-size-buyer);
+}
+
+.factorchi-document .customer-detail p {
+  margin: 0;
+  padding: 0;
+  font-size: var(--fc-font-size-buyer);
+  font-weight: 500;
+  line-height: var(--fc-line-height);
+}
+
+.factorchi-document .customer-detail p strong {
+  margin-left: 4px;
+}
+
+.factorchi-document .customer-detail .customer-address {
+  grid-column: 1 / -1;
+}
+
+.factorchi-document .customer-detail.fc-party-compact {
+  display: block;
+}
+
+.factorchi-document .fc-customer-meta-line {
+  display: flex;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 4px 16px;
+}
+
+.factorchi-document .fc-customer-meta-line.is-long {
+  flex-wrap: wrap;
+}
+
+.factorchi-document .fc-customer-meta-line .customer-address {
+  display: block;
+  width: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+  grid-column: auto;
+  margin: 0;
+}
+
+.factorchi-document .fc-customer-meta-line.is-long .customer-address {
+  width: 100%;
+  flex: 1 1 100%;
+  margin-bottom: 2px;
+}
+
+.factorchi-document .fc-customer-contacts {
+  display: flex;
+  max-width: 100%;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 14px;
+  row-gap: 2px;
+  margin: 0;
+}
+
+.factorchi-document .fc-customer-meta-line.is-long .fc-customer-contacts {
+  flex: 1 1 100%;
+}
+
+.factorchi-document .customer-detail.fc-party-compact p {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.factorchi-document .customer-detail.fc-party-compact .customer-address {
+  white-space: normal;
+}
+
+.factorchi-document table.factorchi-products-table {
+  width: 100%;
+  margin: var(--fc-section-gap) 0;
+  overflow: hidden;
+  border: 1px solid var(--fc-border);
+  border-radius: var(--fc-radius);
+  font-size: var(--fc-font-size);
+  line-height: var(--fc-line-height);
+}
+
+.factorchi-document table.factorchi-products-table th,
+.factorchi-document table.factorchi-products-table td {
+  padding: 8px 12px;
+  vertical-align: middle;
+  text-align: center;
+  border: 0;
+  border-inline-end: 1px solid var(--fc-border);
+  border-bottom: 1px solid var(--fc-border);
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+}
+
+.factorchi-document table.factorchi-products-table thead th {
+  color: #ffffff;
+  background: var(--fc-brand);
+  font-weight: 600;
+}
+
+.factorchi-document table.factorchi-products-table tr > *:last-child {
+  border-inline-end: 0;
+}
+
+.factorchi-document table.factorchi-products-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.factorchi-document table.fci-fix-table tr:last-child > th,
+.factorchi-document table.fci-fix-table tr:last-child > td {
+  border-bottom: 0;
+}
+
+.factorchi-document .fc-product-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  direction: rtl;
+}
+
+.factorchi-document .fc-product-text {
+  min-width: 0;
+  text-align: center;
+}
+
+.factorchi-document .fc-cell-qty,
+.factorchi-document .fc-cell-price {
+  font-weight: 600;
+  text-align: center;
+}
+
+.factorchi-document .fc-cell-price {
+  white-space: nowrap;
+}
+
+.factorchi-document .woocommerce-Price-amount {
+  font-size: var(--fc-font-size);
+  font-weight: 600;
+  line-height: var(--fc-line-height);
+}
+
+.factorchi-document .woocommerce-Price-currencySymbol {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.factorchi-document .fc-invoice-footer-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--fc-section-gap);
+  align-items: stretch;
+  margin: var(--fc-section-gap) 0;
+}
+
+.factorchi-document .fc-invoice-footer-total,
+.factorchi-document .fc-invoice-footer-note,
+.factorchi-document .fc-invoice-footer-barcode {
+  flex: 0 0 calc(50% - (var(--fc-section-gap) / 2));
+  width: calc(50% - (var(--fc-section-gap) / 2));
+  min-width: 0;
+}
+
+.factorchi-document
+  .fc-invoice-footer-row:has(.fc-invoice-footer-total):has(.fc-invoice-footer-note):has(
+    .fc-invoice-footer-barcode
+  )
+  > * {
+  flex: 0 0 calc(33.33% - ((var(--fc-section-gap) * 2) / 3));
+  width: calc(33.33% - ((var(--fc-section-gap) * 2) / 3));
+}
+
+.factorchi-document table.factorchi-total-table,
+.factorchi-document table.factorchi-note-table {
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--fc-border);
+  border-radius: var(--fc-radius);
+  font-size: var(--fc-font-size);
+  line-height: var(--fc-line-height);
+}
+
+.factorchi-document table.factorchi-total-table td {
+  padding: 10px 12px;
+  vertical-align: middle;
+  text-align: center;
+  border: 0;
+  border-inline-end: 1px solid var(--fc-border);
+  border-bottom: 1px solid var(--fc-border);
+}
+
+.factorchi-document table.factorchi-total-table tr > *:last-child {
+  border-inline-end: 0;
+}
+
+.factorchi-document table.factorchi-total-table tr:last-child > * {
+  border-bottom: 0;
+}
+
+.factorchi-document table.factorchi-total-table .final td {
+  color: #ffffff;
+  background: var(--fc-brand);
+  font-weight: 700;
+}
+
+.factorchi-document table.factorchi-total-table .final {
+  color: #ffffff;
+}
+
+.factorchi-document table.factorchi-note-table th {
+  padding: 10px 12px;
+  color: #ffffff;
+  background: var(--fc-brand);
+  border: 0;
+  font-weight: 600;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.factorchi-document table.factorchi-note-table td {
+  padding: 4px;
+  color: #334155;
+  border: 0;
+  font-size: 12px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.factorchi-document table.factorchi-note-table p {
+  margin: 2px 0;
+}
+
+.factorchi-document .fc-invoice-footer-note .customer-note,
+.factorchi-document .fc-invoice-footer-note .order-note {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+.factorchi-document .fc-invoice-footer-barcode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  overflow: hidden;
+  background: none;
+  border: 1px solid var(--fc-border);
+  border-radius: var(--fc-radius);
+}
+
+.factorchi-document .barcode {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+}
+
+.factorchi-document .barcode svg {
+  display: block;
+  width: auto;
+  max-width: 160px;
+  height: 28px;
+  max-height: 28px;
+  border-radius: 0;
+}
+
+.factorchi-document .barcode .barcode-text {
+  display: block;
+  color: #111111;
+  direction: ltr;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  unicode-bidi: isolate;
+}
+
+.factorchi-document .fc-invoice-tearoff {
+  margin: 12px 0 0;
+  padding: 0;
   break-inside: avoid;
   page-break-inside: avoid;
 }
 
-/* One invoice per page for bulk */
-.break-after-page,
-.print\:break-after-page {
-  break-after: page;
-  page-break-after: always;
+.factorchi-document .fc-invoice-tearoff-cut {
+  position: relative;
+  height: 0;
+  margin: 0 0 var(--fc-section-gap);
+  border: 0;
+  border-top: 1.5px dashed #94a3b8;
 }
 
-/* Hide anything you explicitly mark as no-print */
-@media print {
-  .no-print {
-    display: none !important;
+.factorchi-document .fc-invoice-tearoff-cut::before {
+  position: absolute;
+  top: -0.5em;
+  right: 0;
+  padding: 0 6px;
+  color: #64748b;
+  background: #ffffff;
+  content: "✂";
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+
+.factorchi-document .fc-invoice-tearoff-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  align-items: baseline;
+  padding: 8px;
+  background: var(--fc-soft);
+  border: 1px solid var(--fc-border);
+  border-radius: var(--fc-radius);
+}
+
+.factorchi-document .fc-invoice-tearoff-fields .fc-tearoff-item {
+  margin: 0;
+  padding: 0;
+  color: #1e293b;
+  font-size: calc(var(--fc-font-size) - 1px);
+  font-weight: 400;
+  line-height: var(--fc-line-height);
+  white-space: nowrap;
+}
+
+.factorchi-document .fc-invoice-tearoff-fields .fc-tearoff-item strong {
+  color: #000000;
+  font-weight: 600;
+}
+
+.factorchi-document.invoice .classic,
+.factorchi-document.pre-invoice .classic {
+  --fc-brand: #e1e1e1;
+  --fc-brand-light: #cfcfcf;
+  --fc-accent: #bdbdbd;
+}
+
+.factorchi-document.invoice .classic .fc-document-type,
+.factorchi-document.pre-invoice .classic .fc-document-type,
+.factorchi-document.invoice .classic th,
+.factorchi-document.pre-invoice .classic th,
+.factorchi-document.invoice .classic table.factorchi-total-table .final td,
+.factorchi-document.pre-invoice .classic table.factorchi-total-table .final td,
+.factorchi-document.invoice .classic table.shop-detail tfoot td::before,
+.factorchi-document.pre-invoice .classic table.shop-detail tfoot td::before,
+.factorchi-document.invoice .classic .customer-detail::before,
+.factorchi-document.pre-invoice .classic .customer-detail::before,
+.factorchi-document.invoice .classic table.factorchi-products-table thead th,
+.factorchi-document.pre-invoice .classic table.factorchi-products-table thead th {
+  color: #000000;
+}
+
+.factorchi-document.invoice .classic .shop-title,
+.factorchi-document.pre-invoice .classic .shop-title,
+.factorchi-document.invoice .classic .order-id,
+.factorchi-document.pre-invoice .classic .order-id,
+.factorchi-document.invoice .classic .customer-detail p strong,
+.factorchi-document.pre-invoice .classic .customer-detail p strong,
+.factorchi-document.invoice .classic .section .title,
+.factorchi-document.pre-invoice .classic .section .title,
+.factorchi-document.invoice .classic table.shop-detail tfoot td p strong,
+.factorchi-document.pre-invoice .classic table.shop-detail tfoot td p strong {
+  color: #000000;
+}
+
+.invoice-bulk-sheet:not(:last-child) {
+  margin-bottom: 24px;
+}
+
+@media screen and (max-width: 640px) {
+  .factorchi-document > .fc-document-frame {
+    margin-top: 12px;
+    margin-bottom: 24px;
+    padding: 10px;
+  }
+
+  .factorchi-document .customer-detail {
+    grid-template-columns: 1fr;
+  }
+
+  .factorchi-document .container {
+    padding: 14px 12px;
+  }
+
+  .factorchi-document .fc-invoice-footer-row {
+    flex-direction: column;
+  }
+
+  .factorchi-document .fc-invoice-footer-row > * {
+    flex-basis: auto;
+    width: 100%;
   }
 }
 
-/* Image safety */
-img,
-svg {
-  max-width: 100%;
-  height: auto;
+@media print {
+  html,
+  body {
+    width: 100%;
+    height: auto;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .factorchi-document {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+  }
+
+  .factorchi-document > .fc-document-frame {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 10px !important;
+  }
+
+  .factorchi-document table.fci-fix-table th,
+  .factorchi-document table.fci-fix-table td,
+  .factorchi-document table.factorchi-products-table th,
+  .factorchi-document table.factorchi-products-table td {
+    padding: 6px 8px;
+  }
+
+  .invoice-bulk-sheet:not(:last-child) {
+    margin-bottom: 0 !important;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .invoice-bulk-sheet:last-child {
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
 }

@@ -15,6 +15,7 @@ interface UseAddToCartProps {
   size?: string;
   model?: string;
   variationId?: string;
+  productSlug?: string;
 }
 
 export default function useAddToCart({
@@ -29,6 +30,7 @@ export default function useAddToCart({
   size,
   model,
   variationId,
+  productSlug,
 }: UseAddToCartProps) {
   const {
     addToCart: addToCartContext,
@@ -106,9 +108,7 @@ export default function useAddToCart({
       // to use an API endpoint for authenticated users in the future
       addToCartContext({
         id: cartItemId,
-        slug: variationId
-          ? `${productId}-${variationId}`
-          : `${productId}-${color || ""}-${size || ""}-${model || ""}`,
+        slug: productSlug || productId,
         productId,
         variationId,
         name,

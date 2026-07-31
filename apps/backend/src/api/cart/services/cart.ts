@@ -16,6 +16,17 @@ import { addCartItemOp } from "./ops/addCartItem";
 import { updateCartItemOp } from "./ops/updateCartItem";
 import { removeCartItemOp } from "./ops/removeCartItem";
 import { checkCartStockOp } from "./ops/checkCartStock";
+import { createCheckoutQuote, type CheckoutQuote } from "./lib/checkout-quote";
+import {
+  createPaymentAttempt,
+  findPaymentAttempt,
+} from "../../payment-attempt/services/payment-attempt";
+import {
+  generateSnappayCallbackNonce,
+  generateSnappayTransactionId,
+  hashSnappayCallbackNonce,
+} from "../../payment-gateway/services/snappay-security";
+import { redactSensitive } from "../../../utils/redactSensitive";
 
 export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   async getUserCart(userId: number) {
@@ -90,6 +101,53 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   },
 
   async finalizeCartToOrder(userId: number, shippingData: any) {
+    const gateway = String(shippingData?.gateway || "").trim().toLowerCase();
+    const managesPaymentAttempt = gateway !== "";
+    const attemptId = String(shippingData?.attemptId || "").trim();
+    const expectedQuoteHash = String(shippingData?.quoteHash || "").trim();
+
+    if (managesPaymentAttempt) {
+      if (!attemptId || attemptId.length > 128) {
+        return {
+          success: false,
+          status: 400,
+          errorCode: "CHECKOUT_ATTEMPT_REQUIRED",
+          message: "Checkout attempt id is required",
+        };
+      }
+      if (!expectedQuoteHash) {
+        return {
+          success: false,
+          status: 400,
+          errorCode: "CHECKOUT_QUOTE_REQUIRED",
+          message: "Checkout quote is required",
+        };
+      }
+
+      const replay = await findPaymentAttempt(strapi as any, userId, attemptId);
+      if (replay) {
+        if (
+          String(replay.quoteHash) !== expectedQuoteHash ||
+          String(replay.Gateway) !== gateway
+        ) {
+          return {
+            success: false,
+            status: 409,
+            errorCode: "CHECKOUT_ATTEMPT_CONFLICT",
+            message: "شناسه پرداخت قبلاً برای پیش‌فاکتور دیگری استفاده شده است",
+          };
+        }
+        return {
+          success: true,
+          replayed: true,
+          order: replay.order,
+          contract: replay.contract,
+          paymentAttempt: replay,
+          financialSummary: replay.quoteSnapshot?.financialSummary,
+        };
+      }
+    }
+
     // First check stock
     const stockCheck = await this.checkCartStock(userId);
 
@@ -109,9 +167,70 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       return { success: false, message: "Cannot create order from empty cart" };
     }
 
+    let checkoutQuote: CheckoutQuote | null = null;
+    if (managesPaymentAttempt) {
+      checkoutQuote = await createCheckoutQuote(strapi as any, userId, {
+        cart,
+        shippingId: shippingData.shippingId,
+        shippingCost: shippingData.shippingCost,
+        discountCode: shippingData.discountCode,
+        gateway,
+        reserveGroupId: shippingData.reserveGroupId,
+      });
+      if (checkoutQuote.quoteHash !== expectedQuoteHash) {
+        return {
+          success: false,
+          status: 409,
+          errorCode: "CHECKOUT_QUOTE_CHANGED",
+          message: "قیمت یا موجودی سبد خرید تغییر کرده است",
+          quote: checkoutQuote,
+        };
+      }
+      if (gateway === "snappay") {
+        await strapi
+          .service("api::payment-gateway.snappay-orchestrator")
+          .checkEligibility(Math.round(checkoutQuote.financialSummary.total * 10));
+      }
+    }
+
+    const snappayInitiation =
+      gateway === "snappay"
+        ? {
+            transactionId: generateSnappayTransactionId(),
+            callbackNonce: generateSnappayCallbackNonce(),
+          }
+        : null;
+
     try {
       // Start transaction to ensure all operations succeed or fail together
       const result = await strapi.db.transaction(async ({ trx }) => {
+        if (managesPaymentAttempt) {
+          const replay = await findPaymentAttempt(
+            strapi as any,
+            userId,
+            attemptId,
+            trx,
+          );
+          if (replay) {
+            if (
+              String(replay.quoteHash) !== expectedQuoteHash ||
+              String(replay.Gateway) !== gateway
+            ) {
+              throw new Error(
+                "CHECKOUT_ATTEMPT_CONFLICT: Attempt id was already used for another quote",
+              );
+            }
+            return {
+              success: true,
+              replayed: true,
+              order: replay.order,
+              contract: replay.contract,
+              paymentAttempt: replay,
+              financialSummary: replay.quoteSnapshot?.financialSummary,
+            };
+          }
+        }
+
         // Using enum values explicitly
         type OrderStatus =
           | "Paying"
@@ -129,12 +248,16 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           | "Cancelled";
         type ContractType = "Cash" | "Credit";
 
+        // Must exceed the longest gateway payment-session lifetime. If a
+        // reservation expires while the customer can still complete payment, the
+        // expiry job releases the stock and the subsequent successful charge has
+        // to be reversed. SAMAN_TOKEN_EXPIRY_MIN is 20, so 15 was under-set.
         const reservationTtlMinutes = Number(
-          process.env.STOCK_RESERVATION_TTL_MINUTES || 15
+          process.env.STOCK_RESERVATION_TTL_MINUTES || 30
         );
         const reservationTtlMs = Number.isFinite(reservationTtlMinutes)
           ? Math.max(1, reservationTtlMinutes) * 60 * 1000
-          : 15 * 60 * 1000;
+          : 30 * 60 * 1000;
         const reservedUntil = new Date(Date.now() + reservationTtlMs);
 
         // Validate reservation date is in the future
@@ -317,11 +440,12 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         }
         */
 
-        let discountAmount = 0;
-        let discountCode: string | undefined;
-        let appliedGeneralDiscountId: number | undefined;
+        let discountAmount = checkoutQuote?.financialSummary.discount || 0;
+        let discountCode: string | undefined = checkoutQuote?.discountCode;
+        let appliedGeneralDiscountId: number | undefined =
+          checkoutQuote?.appliedGeneralDiscountId;
 
-        if (shippingData?.discountCode) {
+        if (!checkoutQuote && shippingData?.discountCode) {
           discountCode = String(shippingData.discountCode);
           try {
             discountAmount = await computeCouponDiscount(
@@ -340,7 +464,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         }
 
         // If no coupon applied, find active general discounts
-        if (!discountAmount) {
+        if (!checkoutQuote && !discountAmount) {
           const generalDiscounts = await findFirstActiveGeneralDiscount(
             strapi as any
           );
@@ -361,11 +485,8 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           }
         }
 
-        const totals = computeTotals(
-          subtotal,
-          discountAmount,
-          finalShippingCost
-        );
+        const totals = checkoutQuote?.financialSummary ||
+          computeTotals(subtotal, discountAmount, finalShippingCost);
 
         const contract = await createContract(
           strapi as any,
@@ -395,6 +516,88 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           ...(trx ? { transacting: trx } : {}),
         });
 
+        const paymentAttempt = managesPaymentAttempt
+          ? await createPaymentAttempt(
+              strapi as any,
+              {
+                attemptId,
+                quoteHash: expectedQuoteHash,
+                quoteSnapshot: checkoutQuote,
+                Status: "Created",
+                Gateway: gateway,
+                Amount: Math.round(totals.total * 10),
+                user: userId,
+                order: order.id,
+                contract: contract.id,
+                ...(snappayInitiation
+                  ? {
+                      providerReference: snappayInitiation.transactionId,
+                      providerStatus: "CREATED",
+                      callbackNonceHash: hashSnappayCallbackNonce(
+                        snappayInitiation.callbackNonce,
+                      ),
+                      // Kept so a replayed initiation can rebuild the same return
+                      // URL. Private in the schema, so it never leaves the server.
+                      callbackNonce: snappayInitiation.callbackNonce,
+                    }
+                  : {}),
+              },
+              trx,
+            )
+          : undefined;
+
+        if (snappayInitiation && paymentAttempt) {
+          const gatewayRecord: any = await strapi.db
+            .query("api::payment-gateway.payment-gateway")
+            .findOne({
+              where: {
+                $or: [
+                  { Title: { $containsi: "snapp" } },
+                  { Title: { $containsi: "اسنپ" } },
+                ],
+              },
+              ...(trx ? { transacting: trx } : {}),
+            } as any);
+          if (!gatewayRecord?.id) {
+            throw new Error(
+              "SNAPPAY_GATEWAY_RECORD_MISSING: Enable the SnappPay gateway before checkout",
+            );
+          }
+          await strapi.db
+            .query("api::contract-transaction.contract-transaction")
+            .create({
+              data: {
+                Type: "Gateway",
+                Amount: Math.round(totals.total * 10),
+                DiscountAmount: Math.round(totals.discount * 10),
+                Step: 1,
+                Status: "Pending",
+                TrackId: null,
+                GatewayStatus: "CREATED",
+                GatewayResponse: {
+                  endpoint: "token",
+                  successful: false,
+                  initialized: true,
+                },
+                external_id: snappayInitiation.transactionId,
+                external_source: "SnappPay",
+                contract: contract.id,
+                payment_gateway: gatewayRecord.id,
+                Date: new Date(),
+              },
+              ...(trx ? { transacting: trx } : {}),
+            } as any);
+          await strapi.db.query("api::contract.contract").update({
+            where: { id: contract.id },
+            data: {
+              Type: "Credit",
+              external_source: "SnappPay",
+              external_id: snappayInitiation.transactionId,
+            },
+            ...(trx ? { transacting: trx } : {}),
+          } as any);
+        }
+
         // Note: Do not clear the cart here. Cart will be cleared only after
         // a successful payment gateway request in the controller.
 
@@ -402,12 +605,38 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           success: true,
           order,
           contract,
+          paymentAttempt,
+          ...(snappayInitiation
+            ? { snappayCallbackNonce: snappayInitiation.callbackNonce }
+            : {}),
           financialSummary: totals,
         };
       });
 
       return result;
     } catch (error: any) {
+      if (managesPaymentAttempt) {
+        const replay = await findPaymentAttempt(
+          strapi as any,
+          userId,
+          attemptId,
+        ).catch(() => null);
+        if (
+          replay &&
+          String(replay.quoteHash) === expectedQuoteHash &&
+          String(replay.Gateway) === gateway
+        ) {
+          return {
+            success: true,
+            replayed: true,
+            order: replay.order,
+            contract: replay.contract,
+            paymentAttempt: replay,
+            financialSummary: replay.quoteSnapshot?.financialSummary,
+          };
+        }
+      }
+
       // Enhanced error logging with full context
       const errorContext = {
         userId,
@@ -418,12 +647,16 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         errorStack: error.stack,
         errorName: error.name,
       };
+      const safeErrorContext = redactSensitive(errorContext);
 
-      strapi.log.error("Order creation failed:", errorContext);
+      strapi.log.error("Order creation failed:", safeErrorContext);
       console.error("=== ORDER CREATION FAILED ===");
       console.error("Error Message:", error.message);
       console.error("Error Code:", error.message?.split(":")[0]);
-      console.error("Full Context:", JSON.stringify(errorContext, null, 2));
+      console.error(
+        "Full Context:",
+        JSON.stringify(safeErrorContext, null, 2),
+      );
 
       // Parse error message to extract error code and details
       const errorMessage = error.message || "Unknown error";

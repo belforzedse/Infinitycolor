@@ -5,6 +5,8 @@ import {
   E2E_DEFAULT_ADMIN_PHONE,
   E2E_DEFAULT_CUSTOMER_PASSWORD,
   E2E_DEFAULT_CUSTOMER_PHONE,
+  E2E_DEFAULT_CUSTOMER_B_PASSWORD,
+  E2E_DEFAULT_CUSTOMER_B_PHONE,
   E2E_DEFAULT_EDITOR_PASSWORD,
   E2E_DEFAULT_EDITOR_PHONE,
   E2E_DEFAULT_FOUNDER_PASSWORD,
@@ -15,6 +17,7 @@ import {
 
 export type E2EAuthRole =
   | "customer"
+  | "customer-b"
   | "admin"
   | "founder"
   | "store-manager"
@@ -23,6 +26,7 @@ export type E2EAuthRole =
 /** All seeded roles, in the order auth states are generated. */
 export const E2E_AUTH_ROLES: E2EAuthRole[] = [
   "customer",
+  "customer-b",
   "admin",
   "founder",
   "store-manager",
@@ -40,6 +44,7 @@ type Credentials = { phone: string; password: string };
 
 const DEFAULT_CREDENTIALS: Record<E2EAuthRole, Credentials> = {
   customer: { phone: E2E_DEFAULT_CUSTOMER_PHONE, password: E2E_DEFAULT_CUSTOMER_PASSWORD },
+  "customer-b": { phone: E2E_DEFAULT_CUSTOMER_B_PHONE, password: E2E_DEFAULT_CUSTOMER_B_PASSWORD },
   admin: { phone: E2E_DEFAULT_ADMIN_PHONE, password: E2E_DEFAULT_ADMIN_PASSWORD },
   founder: { phone: E2E_DEFAULT_FOUNDER_PHONE, password: E2E_DEFAULT_FOUNDER_PASSWORD },
   "store-manager": {
@@ -52,6 +57,7 @@ const DEFAULT_CREDENTIALS: Record<E2EAuthRole, Credentials> = {
 /** Env var override prefix per role, e.g. E2E_CUSTOMER_PHONE / E2E_STORE_MANAGER_PASSWORD. */
 const ENV_PREFIX: Record<E2EAuthRole, string> = {
   customer: "E2E_CUSTOMER",
+  "customer-b": "E2E_CUSTOMER_B",
   admin: "E2E_ADMIN",
   founder: "E2E_FOUNDER",
   "store-manager": "E2E_STORE_MANAGER",

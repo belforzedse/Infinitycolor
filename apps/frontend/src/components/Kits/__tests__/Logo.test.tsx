@@ -1,28 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { StorefrontLogo } from "@repo/brand";
 
-jest.mock("next/image", () => ({
-  __esModule: true,
-  default: ({
-    priority,
-    src,
-    width,
-    height,
-    ...props
-  }: Record<string, unknown>) => {
-    // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
-    return (
-      <img
-        data-priority={priority ? "true" : undefined}
-        src={typeof src === "string" ? src : ""}
-        width={width as number | undefined}
-        height={height as number | undefined}
-        {...props}
-      />
-    );
-  },
-}));
-
 jest.mock("next/link", () => ({
   __esModule: true,
   default: ({
@@ -53,14 +31,22 @@ describe("StorefrontLogo", () => {
     render(<StorefrontLogo />);
 
     const img = screen.getByAltText("Logo");
-    expect(img).toHaveAttribute("src", "/images/full-logo.png");
+    const optimizedSource = new URL(
+      img.getAttribute("src") || "",
+      "http://localhost",
+    );
+    expect(optimizedSource.pathname).toBe("/_next/image");
+    expect(optimizedSource.searchParams.get("url")).toBe(
+      "/images/full-logo.png",
+    );
   });
 
-  it("should have priority loading", () => {
+  it("should preload rather than lazy-load the storefront logo", () => {
     render(<StorefrontLogo />);
 
     const img = screen.getByAltText("Logo");
-    expect(img).toHaveAttribute("data-priority", "true");
+    expect(img).not.toHaveAttribute("loading", "lazy");
+    expect(img).toHaveAttribute("srcset");
   });
 
   it("should have responsive sizes", () => {

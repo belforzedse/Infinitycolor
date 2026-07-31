@@ -14,8 +14,10 @@ import type { ApiCache } from "../cache/api-cache";
 interface ErrorResponse {
   message?: string;
   errors?: Record<string, string[]>;
+  data?: unknown;
   error?: {
     message?: string;
+    details?: unknown;
   };
 }
 
@@ -172,11 +174,31 @@ export class ApiClient {
   }
 
   private handleError(status: number, data: ErrorResponse): ApiError {
-    return {
+    const details = data.error?.details;
+    const productData =
+      details && typeof details === "object" && "data" in details
+        ? (details as { data?: unknown }).data
+        : data.data;
+    const errorCode =
+      productData && typeof productData === "object" && "errorCode" in productData
+        ? String((productData as { errorCode?: unknown }).errorCode || "") || undefined
+        : undefined;
+    const error: ApiError = {
       message: data.error?.message || data.message || this.errorMessages.DEFAULT,
       status,
       errors: data.errors,
     };
+
+    // Keep the established error shape for ordinary auth/network failures.
+    // Recovery-only fields are added only when the backend actually supplied
+    // them, so callers doing exact comparisons do not receive meaningless
+    // `undefined` properties or an empty raw error object.
+    if (status === 400) error.error = data.error || data;
+    if (details !== undefined) error.details = details;
+    if (productData !== undefined) error.data = productData;
+    if (errorCode !== undefined) error.errorCode = errorCode;
+
+    return error;
   }
 
   private async parseResponseData(response: Response): Promise<unknown> {
@@ -236,9 +258,11 @@ export class ApiClient {
       url.searchParams.set("_cb", String(Date.now()));
     }
 
-    const urlString = url.toString();
-    const retries = options?.retries ?? this.retryConfig.maxRetries;
     const isGet = method.toUpperCase() === "GET";
+    const urlString = url.toString();
+    // Reads may be retried safely. Mutations default to one attempt because a
+    // lost response does not prove the server failed to apply the operation.
+    const retries = options?.retries ?? (isGet ? this.retryConfig.maxRetries : 0);
 
     const cache = this.apiCache;
     const cacheKey = cache ? cache.generateKey(method, urlString, data) : "";
@@ -363,16 +387,6 @@ export class ApiClient {
       const responseData = await this.parseResponseData(response);
 
       if (!response.ok) {
-        if (response.status === 400) {
-          const parsed = responseData as { error?: { message?: string } };
-          const error: ApiError = {
-            status: response.status,
-            message: parsed.error?.message || this.errorMessages.DEFAULT,
-            error: parsed.error || responseData,
-          };
-          throw error;
-        }
-
         const error = this.handleError(response.status, responseData as ErrorResponse);
 
         if (!options?.suppressAuthRedirect) {

@@ -1,84 +1,132 @@
 "use client";
 
 import { useEffect } from "react";
+import { usePathname } from "next/navigation";
+import { useAdaptiveQuality } from "@/lib/adaptive-quality";
+
+type IdleWindow = Window & {
+  requestIdleCallback?: (callback: () => void) => number;
+  cancelIdleCallback?: (id: number) => void;
+};
 
 export default function ImageEffects() {
+  const pathname = usePathname();
+  const quality = useAdaptiveQuality();
+
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (
+      pathname?.startsWith("/super-admin") ||
+      quality.rendering === "safe" ||
+      quality.motion === "minimal"
+    ) {
+      return;
+    }
 
-    // Defer DOM mutations to after hydration to avoid className mismatches
-    const schedule: (cb: () => void) => number = (window as any).requestIdleCallback
-      ? (cb: () => void) => (window as any).requestIdleCallback(() => cb())
-      : (cb: () => void) => window.setTimeout(cb, 0);
-    const cancel: (id: number) => void = (window as any).cancelIdleCallback
-      ? (id: number) => (window as any).cancelIdleCallback(id)
-      : (id: number) => clearTimeout(id);
+    const idleWindow = window as IdleWindow;
+    const schedule = idleWindow.requestIdleCallback
+      ? (callback: () => void) =>
+          idleWindow.requestIdleCallback?.(callback) ?? 0
+      : (callback: () => void) => window.setTimeout(callback, 0);
+    const cancel = idleWindow.cancelIdleCallback
+      ? (id: number) => idleWindow.cancelIdleCallback?.(id)
+      : (id: number) => window.clearTimeout(id);
 
+    let cleanupObserver: (() => void) | undefined;
     const idleId = schedule(() => {
-      const applyEffects = (img: HTMLImageElement) => {
-        if (!img) return;
-        // Skip Next.js <Image> managed elements to avoid hydration mismatches
-        if (img.dataset?.nimg !== undefined) {
-          return;
-        }
-        // Only mutate images explicitly opted into the image fade effect. Mutating
-        // every plain logo/icon <img> before hydration causes React attribute
-        // mismatch warnings for className/loading.
-        if (!img.classList.contains("img-fx")) {
-          return;
-        }
-        // Ensure lazy loading on plain <img>
-        if (!img.getAttribute("loading")) {
-          img.setAttribute("loading", "lazy");
-        }
-        // Skip if already marked loaded
-        if (img.classList.contains("img-loaded")) return;
-        // Prefer listening for load to avoid immediate class flips during hydration
-        const onLoad = () => {
-          img.classList.add("img-loaded");
-          img.removeEventListener("load", onLoad);
-        };
-        img.addEventListener("load", onLoad);
-        // If cached and already complete, mark in next frame to avoid hydration mismatch
-        if (img.complete) {
-          requestAnimationFrame(() => {
-            img.classList.add("img-loaded");
-          });
-        }
-      };
-
-      // Initial pass
-      document.querySelectorAll<HTMLImageElement>("img.img-fx").forEach(applyEffects);
-
-      // Observe for new images
+      const frameIds = new Set<number>();
+      const loadHandlers = new Map<HTMLImageElement, () => void>();
       const observer = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          m.addedNodes.forEach((node) => {
+        for (const mutation of mutations) {
+          mutation.addedNodes.forEach((node) => {
             if (node instanceof HTMLImageElement) {
               applyEffects(node);
             } else if (node instanceof HTMLElement) {
-              node.querySelectorAll<HTMLImageElement>("img.img-fx").forEach((img) => applyEffects(img));
+              node
+                .querySelectorAll<HTMLImageElement>("img.img-fx")
+                .forEach(applyEffects);
             }
           });
         }
       });
 
-      observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-      });
+      const clearPendingWork = () => {
+        frameIds.forEach((frameId) =>
+          window.cancelAnimationFrame(frameId),
+        );
+        frameIds.clear();
+        loadHandlers.forEach((handler, image) =>
+          image.removeEventListener("load", handler),
+        );
+        loadHandlers.clear();
+      };
 
-      cleanup = () => observer.disconnect();
+      function applyEffects(image: HTMLImageElement) {
+        if (
+          image.dataset.nimg !== undefined ||
+          !image.classList.contains("img-fx")
+        ) {
+          return;
+        }
+        if (!image.getAttribute("loading")) {
+          image.setAttribute("loading", "lazy");
+        }
+        if (image.classList.contains("img-loaded")) return;
+
+        const markLoaded = () => {
+          image.classList.add("img-loaded");
+          const handler = loadHandlers.get(image);
+          if (handler) image.removeEventListener("load", handler);
+          loadHandlers.delete(image);
+        };
+
+        if (image.complete) {
+          const frameId = window.requestAnimationFrame(() => {
+            frameIds.delete(frameId);
+            markLoaded();
+          });
+          frameIds.add(frameId);
+          return;
+        }
+
+        loadHandlers.set(image, markLoaded);
+        image.addEventListener("load", markLoaded);
+      }
+
+      const connect = () => {
+        if (document.visibilityState === "hidden") return;
+        document
+          .querySelectorAll<HTMLImageElement>("img.img-fx")
+          .forEach(applyEffects);
+        observer.observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+        });
+      };
+      const handleVisibility = () => {
+        observer.disconnect();
+        clearPendingWork();
+        connect();
+      };
+
+      connect();
+      document.addEventListener("visibilitychange", handleVisibility);
+      cleanupObserver = () => {
+        document.removeEventListener("visibilitychange", handleVisibility);
+        observer.disconnect();
+        clearPendingWork();
+      };
     });
 
-    let cleanup: (() => void) | undefined;
     return () => {
-      if (cleanup) cleanup();
-      try {
-        cancel(idleId);
-      } catch {}
+      cleanupObserver?.();
+      cancel(idleId);
     };
-  }, []);
+  }, [
+    pathname,
+    quality.motion,
+    quality.rendering,
+    quality.routeGeneration,
+  ]);
 
   return null;
 }

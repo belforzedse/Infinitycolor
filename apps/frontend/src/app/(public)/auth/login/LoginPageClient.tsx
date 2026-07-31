@@ -8,16 +8,12 @@ import LoginActions from "@/components/Auth/Login/Actions";
 import { AuthService, UserService } from "@/services";
 import { toast } from "react-hot-toast";
 import { useCart } from "@/contexts/CartContext";
-import {
-  currentUserAtom,
-  redirectUrlAtom,
-  userErrorAtom,
-  userLoadingAtom,
-} from "@/lib/atoms/auth";
+import { currentUserAtom, redirectUrlAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { useEffect } from "react";
 import { setAccessToken } from "@/utils/accessToken";
 import { isProfileIncomplete } from "@/utils/profile";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
+import { safeInternalRedirect } from "@/utils/authRedirect";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -30,10 +26,7 @@ export default function LoginPage() {
 
   // Store redirect URL from query params into atom on page load
   useEffect(() => {
-    const redirect = searchParams.get("redirect");
-    if (redirect) {
-      setRedirectUrl(redirect);
-    }
+    setRedirectUrl(safeInternalRedirect(searchParams.get("redirect")));
   }, [searchParams, setRedirectUrl]);
 
   const handleLogin = async (data: {

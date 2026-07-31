@@ -12,12 +12,14 @@ const REDACTED = "[redacted]";
  * `apiKey`, `API_KEY`, `userPassword`, `authorizationHeader` all match.
  */
 const SENSITIVE_KEY_PATTERN =
-  /(token|password|secret|authorization|cookie|jwt|otp|api[-_]?key|card|cvv|pin|credential|passwd|session)/i;
+  /(token|password|secret|authorization|cookie|jwt|otp|api[-_]?key|card|cvv|pin|credential|passwd|session|snappay)/i;
 
 const MAX_DEPTH = 8;
 
 function redactValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
-  if (depth > MAX_DEPTH) return value;
+  // Never return an uninspected object once the recursion budget is exhausted:
+  // a deeply nested payment token would otherwise bypass redaction entirely.
+  if (depth > MAX_DEPTH) return "[max-depth]";
   if (value === null || typeof value !== "object") return value;
 
   if (seen.has(value as object)) return "[circular]";

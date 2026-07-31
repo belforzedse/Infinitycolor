@@ -52,7 +52,10 @@ async function routeCheckoutGatewaysWithZarinpal(page: Page) {
 export async function finalizeToZarinpalRedirect(
   page: Page,
   request: APIRequestContext,
-  options: { mockGateway?: boolean } = {},
+  options: {
+    mockGateway?: boolean;
+    onSubmitStarted?: () => Promise<void> | void;
+  } = {},
 ): Promise<FinalizedZarinpalPayment> {
   if (options.mockGateway !== false) {
     await routeZarinpalPlaceholder(page);
@@ -94,7 +97,9 @@ export async function finalizeToZarinpalRedirect(
       .catch(reject);
   });
 
-  await page.getByTestId("checkout-submit").click();
+  const submitPromise = page.getByTestId("checkout-submit").click();
+  await options.onSubmitStarted?.();
+  await submitPromise;
   const finalizeCapture = await finalizeCapturePromise;
   if (!finalizeCapture.ok) {
     expect(
@@ -199,6 +204,7 @@ export async function stubSuccessfulCallback(page: Page, payment: FinalizedZarin
             success: true,
             orderId: payment.orderId,
             status: "Started",
+            paymentStatus: "Succeeded",
             isPaid: true,
             transactionId: payment.refId,
             paymentGateway: "ZarinPal",
@@ -213,8 +219,10 @@ export async function simulateCallbackFailure(page: Page, payment: FinalizedZari
   await page.goto(`/orders/payment-callback?ResNum=${payment.orderId}`, {
     waitUntil: "domcontentloaded",
   });
-  await expect(page).toHaveURL(/\/orders\/failure/, { timeout: 30_000 });
-  await expect(page.getByTestId("order-payment-failure")).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(new RegExp(`/payment/result\\?.*orderId=${payment.orderId}`), {
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId("payment-result")).toBeVisible({ timeout: 30_000 });
 }
 
 async function clickGatewayButton(page: Page, name: string | RegExp) {

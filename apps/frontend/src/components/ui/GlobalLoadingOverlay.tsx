@@ -46,6 +46,7 @@ export default function GlobalLoadingOverlay() {
       {/* Backdrop: stop blocking clicks after MAX_BLOCKING_MS so UI never stays stuck */}
       <div
         className={`absolute inset-0 bg-white/40 backdrop-blur-[2px] transition-opacity ${allowClickThrough ? "pointer-events-none" : ""}`}
+        data-adaptive-surface
       />
       <div className="pointer-events-none relative mt-24">
         <SuspenseLoader fullscreen={false} />

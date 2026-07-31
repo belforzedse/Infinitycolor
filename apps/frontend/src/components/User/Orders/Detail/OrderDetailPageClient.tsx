@@ -12,6 +12,7 @@ import SupportActions from "./SupportActions";
 import ReserveInfoCard from "./ReserveInfoCard";
 import toast from "react-hot-toast";
 import { StorefrontAccountShell } from "@/components/storefront";
+import { getOrderStatusMeta } from "@/utils/statusTranslations";
 
 interface OrderDetailPageClientProps {
   orderId: string;
@@ -30,6 +31,7 @@ export default function OrderDetailPageClient({ orderId }: OrderDetailPageClient
 
   const numericOrderId = useMemo(() => Number(orderId), [orderId]);
   const cacheKey = useMemo(() => `infinity:order-detail:${numericOrderId}`, [numericOrderId]);
+  const currentStatus = order ? getOrderStatusMeta(order.Status) : null;
 
   useEffect(() => {
     if (Number.isNaN(numericOrderId)) {
@@ -159,6 +161,14 @@ export default function OrderDetailPageClient({ orderId }: OrderDetailPageClient
               <p className="text-sm text-slate-500 lg:text-base">
                 وضعیت سفارش خود را به‌صورت کامل مشاهده و پیگیری کنید.
               </p>
+              {currentStatus ? (
+                <p
+                  data-testid="order-current-status"
+                  className="mt-3 inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-700"
+                >
+                  وضعیت فعلی: {currentStatus.label}
+                </p>
+              ) : null}
             </div>
           </div>
 

@@ -15,6 +15,7 @@ import {
   gatewayLabelFa,
   withShares,
   gatewayBreakdownQuery,
+  gatewaySettlementWarnings,
   shippingBreakdownQuery,
   PERFORMANCE_SORT_COLUMNS,
   MAX_PAGE_SIZE,
@@ -270,6 +271,59 @@ describe("product-analytics pure helpers", () => {
     });
   });
 
+  describe("gatewaySettlementWarnings", () => {
+    const row = (over: Partial<Parameters<typeof gatewaySettlementWarnings>[0][0]>) => ({
+      gateway: "Mellat",
+      label: "بانک ملت",
+      ordersCount: 0,
+      totalOrdersCount: 0,
+      total: 0,
+      ...over,
+    });
+
+    it("flags a gateway that has orders but settled none of them", () => {
+      // This is the Mellat failure: orders existed, no contract_transaction was
+      // ever written as Success, so every report read zero without saying so.
+      const warnings = gatewaySettlementWarnings([
+        row({ ordersCount: 0, totalOrdersCount: 412 }),
+      ]);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        code: "GATEWAY_NO_SETTLED_ORDERS",
+        gateway: "Mellat",
+        ordersCount: 412,
+      });
+      expect(warnings[0].message).toContain("بانک ملت");
+    });
+
+    it("stays silent for a gateway that settled at least one order", () => {
+      expect(
+        gatewaySettlementWarnings([
+          row({ ordersCount: 5, totalOrdersCount: 9, total: 500_000 }),
+        ]),
+      ).toEqual([]);
+    });
+
+    it("stays silent for a gateway nobody used", () => {
+      expect(
+        gatewaySettlementWarnings([row({ ordersCount: 0, totalOrdersCount: 0 })]),
+      ).toEqual([]);
+    });
+
+    it("reports every affected gateway", () => {
+      const warnings = gatewaySettlementWarnings([
+        row({ gateway: "Mellat", ordersCount: 0, totalOrdersCount: 10 }),
+        row({ gateway: "SnappPay", label: "اسنپ‌پی", ordersCount: 3, totalOrdersCount: 4 }),
+        row({ gateway: "ZarinPal", label: "زرین‌پال", ordersCount: 0, totalOrdersCount: 7 }),
+      ]);
+      expect(warnings.map((w) => w.gateway)).toEqual(["Mellat", "ZarinPal"]);
+    });
+
+    it("tolerates an empty result set", () => {
+      expect(gatewaySettlementWarnings([])).toEqual([]);
+    });
+  });
+
   describe("breakdown query builders", () => {
     // Minimal joins stub — the breakdown queries only read orderToContract /
     // contractToTx (via paidOrdersCte) and orderToShipping.
@@ -286,6 +340,22 @@ describe("product-analytics pure helpers", () => {
       expect(sql).toMatch(/GROUP BY/i);
       // attributes settlement per order (no double counting across gateways)
       expect(sql).toContain("SUM(po.settled_irr)");
+    });
+
+    it("gateway query is rooted in orders so an unsettled gateway still gets a row", () => {
+      // Regression: this used to be `FROM paid_orders po JOIN orders o`, which
+      // dropped any gateway with zero settled transactions from the result
+      // entirely — and withShares then made the survivors sum to 100%.
+      const sql = gatewayBreakdownQuery(joins);
+      expect(sql).toMatch(/FROM\s+orders o/i);
+      expect(sql).toMatch(/LEFT JOIN paid_orders po ON po\.order_id = o\.id/i);
+      expect(sql).not.toMatch(/FROM\s+paid_orders po\s+JOIN\s+orders/i);
+      // Counts must be distinguishable: paid orders vs all orders in range.
+      expect(sql).toContain("COUNT(po.order_id)");
+      expect(sql).toContain("COUNT(*)::bigint AS total_orders_count");
+      // Outer date window in addition to the CTE's.
+      expect(sql).toMatch(/WHERE o\.date BETWEEN \? AND \?/i);
+      expect(sql.match(/BETWEEN \? AND \?/g)).toHaveLength(2);
     });
 
     it("shipping query sums the stored shipping_cost, not product subtotal", () => {

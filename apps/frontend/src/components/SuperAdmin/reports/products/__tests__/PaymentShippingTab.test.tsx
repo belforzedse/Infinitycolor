@@ -13,8 +13,22 @@ const baseResponse = {
   currency: "Toman",
   totals: { gatewaySales: 1_500_000, shippingRevenue: 90_000, ordersCount: 3 },
   gateways: [
-    { gateway: "Mellat", label: "ملت", ordersCount: 2, total: 1_000_000, sharePct: 66.67 },
-    { gateway: "ZarinPal", label: "زرین‌پال", ordersCount: 1, total: 500_000, sharePct: 33.33 },
+    {
+      gateway: "Mellat",
+      label: "ملت",
+      ordersCount: 2,
+      totalOrdersCount: 2,
+      total: 1_000_000,
+      sharePct: 66.67,
+    },
+    {
+      gateway: "ZarinPal",
+      label: "زرین‌پال",
+      ordersCount: 1,
+      totalOrdersCount: 1,
+      total: 500_000,
+      sharePct: 33.33,
+    },
   ],
   shippingMethods: [
     { method: "پست پیشتاز", ordersCount: 2, total: 60_000 },
@@ -68,5 +82,48 @@ describe("PaymentShippingTab", () => {
       expect(screen.getByText("boom")).toBeInTheDocument();
     });
     expect(screen.getByText("تلاش مجدد")).toBeInTheDocument();
+  });
+
+  // A gateway that takes orders but settles none reads as a confident zero in
+  // every report. The row alone is easy to miss, so it must also be called out.
+  it("surfaces a data-quality warning when a gateway settles nothing", async () => {
+    mockBreakdown.mockResolvedValue({
+      ...baseResponse,
+      gateways: [
+        {
+          gateway: "Mellat",
+          label: "بانک ملت",
+          ordersCount: 0,
+          totalOrdersCount: 12,
+          total: 0,
+          sharePct: 0,
+        },
+      ],
+      dataQualityWarnings: [
+        {
+          code: "GATEWAY_NO_SETTLED_ORDERS",
+          gateway: "Mellat",
+          ordersCount: 12,
+          message: "درگاه «بانک ملت» در این بازه ۱۲ سفارش دارد اما هیچ تراکنش موفقی ثبت نکرده است.",
+        },
+      ],
+    });
+    render(<PaymentShippingTab start="2026-01-01" end="2026-01-31" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+    expect(screen.getByText("هشدار صحت داده")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("هیچ تراکنش موفقی ثبت نکرده است");
+  });
+
+  it("shows no warning banner when every gateway settles normally", async () => {
+    mockBreakdown.mockResolvedValue(baseResponse);
+    render(<PaymentShippingTab start="2026-01-01" end="2026-01-31" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("بانک ملت")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

@@ -4,37 +4,48 @@ import {
   ensurePaymentGateway,
   requestMellatPayment,
   requestSamanPayment,
-  requestSnappPayment,
 } from "../controllers/handlers/gateway-helpers";
-import { deductWalletBalanceAtomic } from "../../local-user-wallet/services/local-user-wallet";
+import { settleOrderWithWallet } from "../controllers/handlers/wallet-settlement";
+import {
+  claimPaymentAttemptForInitiation,
+  findPaymentAttempt,
+  updatePaymentAttempt,
+} from "../../payment-attempt/services/payment-attempt";
 
 jest.mock("../controllers/handlers/gateway-helpers", () => ({
   cancelOrderAndRelease: jest.fn().mockResolvedValue(undefined),
   ensurePaymentGateway: jest.fn().mockResolvedValue(undefined),
   requestMellatPayment: jest.fn(),
   requestSamanPayment: jest.fn(),
-  requestSnappPayment: jest.fn(),
   requestZarinPalPayment: jest.fn(),
 }));
 
-jest.mock("../../local-user-wallet/services/local-user-wallet", () => ({
-  deductWalletBalanceAtomic: jest.fn().mockResolvedValue({
+jest.mock("../controllers/handlers/wallet-settlement", () => ({
+  settleOrderWithWallet: jest.fn().mockResolvedValue({
     success: true,
-    walletId: 99,
-    newBalance: 5000000,
+    reference: "wallet-order-42-checkout-attempt",
+    newBalance: 5_000_000,
   }),
+}));
+
+jest.mock("../../payment-attempt/services/payment-attempt", () => ({
+  claimPaymentAttemptForInitiation: jest.fn().mockResolvedValue(true),
+  findPaymentAttempt: jest.fn().mockResolvedValue(null),
+  updatePaymentAttempt: jest.fn().mockResolvedValue({}),
+  paymentAttemptResponse: jest.fn((attempt: any) => ({
+    success: attempt?.Status === "Redirected" || attempt?.Status === "Succeeded",
+    attemptId: attempt?.attemptId,
+    paymentStatus: attempt?.Status,
+    errorCode: attempt?.Status === "Pending" ? "PAYMENT_IN_PROGRESS" : undefined,
+  })),
 }));
 
 type StrapiMockHelpers = ReturnType<typeof createStrapiMock>;
 
 // Creates a lightweight Koa-like ctx with error helpers that throw, allowing tests to assert on badRequest/unauthorized behaviours.
 const createCtx = (overrides: Partial<any> = {}) => {
+  const requestOverrides = overrides.request || {};
   const ctx: any = {
-    request: {
-      body: {},
-      header: {},
-      ...overrides.request,
-    },
     state: {
       user: { id: 1 },
       ...overrides.state,
@@ -51,6 +62,15 @@ const createCtx = (overrides: Partial<any> = {}) => {
       throw error;
     }),
     ...overrides,
+    request: {
+      header: {},
+      ...requestOverrides,
+      body: {
+        attemptId: "checkout-attempt",
+        quoteHash: "checkout-quote",
+        ...(requestOverrides.body || {}),
+      },
+    },
   };
 
   return ctx;
@@ -123,31 +143,70 @@ const mockEntityFindOne = (
 const mockedRequestMellatPayment = requestMellatPayment as jest.MockedFunction<
   typeof requestMellatPayment
 >;
-const mockedRequestSnappPayment = requestSnappPayment as jest.MockedFunction<
-  typeof requestSnappPayment
->;
 const mockedRequestSamanPayment = requestSamanPayment as jest.MockedFunction<
   typeof requestSamanPayment
 >;
 const mockedCancelOrderAndRelease = cancelOrderAndRelease as jest.MockedFunction<
   typeof cancelOrderAndRelease
 >;
+const mockedSettleOrderWithWallet = settleOrderWithWallet as jest.MockedFunction<
+  typeof settleOrderWithWallet
+>;
+const mockedClaimPaymentAttempt = claimPaymentAttemptForInitiation as jest.MockedFunction<
+  typeof claimPaymentAttemptForInitiation
+>;
+const mockedFindPaymentAttempt = findPaymentAttempt as jest.MockedFunction<
+  typeof findPaymentAttempt
+>;
+const mockedUpdatePaymentAttempt = updatePaymentAttempt as jest.MockedFunction<
+  typeof updatePaymentAttempt
+>;
 const mockedEnsurePaymentGateway = ensurePaymentGateway as jest.MockedFunction<
   typeof ensurePaymentGateway
 >;
 
 describe("finalizeToOrderHandler", () => {
+  const originalEnv = process.env;
+
   beforeEach(() => {
+    process.env = {
+      ...originalEnv,
+      MELLAT_TERMINAL_ID: "test-terminal",
+      MELLAT_USERNAME: "test-user",
+      MELLAT_PASSWORD: "test-password",
+      SAMAN_TERMINAL_ID: "test-terminal",
+      SAMAN_USERNAME: "test-user",
+      SAMAN_PASSWORD: "test-password",
+      SNAPPAY_CLIENT_SECRET: "test-secret",
+      SNAPPAY_PASSWORD: "test-password",
+    };
     jest.clearAllMocks();
+    mockedClaimPaymentAttempt.mockResolvedValue(true);
+    mockedFindPaymentAttempt.mockResolvedValue(null);
+    mockedUpdatePaymentAttempt.mockResolvedValue({} as any);
+    mockedSettleOrderWithWallet.mockResolvedValue({
+      success: true,
+      reference: "wallet-order-42-checkout-attempt",
+      newBalance: 5_000_000,
+    });
     mockedCancelOrderAndRelease.mockResolvedValue(undefined);
     mockedEnsurePaymentGateway.mockResolvedValue(undefined as any);
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   it("rejects the request when required shipping data is missing", async () => {
     const { strapi } = createStrapiMock();
     const handler = finalizeToOrderHandler(strapi);
     const ctx = createCtx({
-      request: { body: { addressId: 10 } },
+      request: {
+        body: {
+          addressId: 10,
+          paymentToken: "must-never-reach-logs",
+        },
+      },
     });
 
     await expect(handler(ctx)).rejects.toMatchObject({
@@ -162,6 +221,14 @@ describe("finalizeToOrderHandler", () => {
       }),
     );
     expect(strapi.entityService.findOne).not.toHaveBeenCalled();
+    expect(strapi.log.error).toHaveBeenCalledWith(
+      "Error in finalizeToOrder:",
+      expect.objectContaining({
+        requestBody: expect.objectContaining({
+          paymentToken: "[redacted]",
+        }),
+      }),
+    );
   });
 
   it("rejects the request when the shipping method cannot be found", async () => {
@@ -238,39 +305,23 @@ describe("finalizeToOrderHandler", () => {
       }),
     );
 
-    expect(mockedRequestSnappPayment).not.toHaveBeenCalled();
     expect(mockedRequestSamanPayment).not.toHaveBeenCalled();
     expect(mockedRequestMellatPayment).not.toHaveBeenCalled();
   });
 
   it("settles the order immediately when wallet funding succeeds", async () => {
-    const { strapi, registerService, registerQuery } = createStrapiMock();
+    const { strapi, registerService } = createStrapiMock();
     const cartService = {
       finalizeCartToOrder: jest.fn().mockResolvedValue({
         success: true,
         order: { id: 42 },
         contract: { id: 7, Amount: 250_000 },
-        financialSummary: { payable: 250_000 },
+        financialSummary: { total: 250_000, payable: 250_000, discount: 0 },
+        paymentAttempt: { id: 1042, attemptId: "checkout-attempt", Status: "Created" },
       }),
+      clearCart: jest.fn().mockResolvedValue(undefined),
     };
     registerService("api::cart.cart", cartService);
-
-    const walletRecord = { id: 99, Balance: 3_000_000 };
-    registerQuery("api::local-user-wallet.local-user-wallet", {
-      findOne: jest.fn().mockResolvedValue(walletRecord),
-    });
-
-    const orderWithItems = {
-      id: 42,
-      order_items: [
-        {
-          Count: 2,
-          product_variation: {
-            product_stock: { id: 55, Count: 10 },
-          },
-        },
-      ],
-    };
 
   mockEntityFindOne(strapi, {
     "api::shipping.shipping": () => ({ id: 4, Title: "Pickup" }),
@@ -279,7 +330,6 @@ describe("finalizeToOrderHandler", () => {
       shipping_city: {},
       user: { id: 1 },
     }),
-      "api::order.order": () => orderWithItems,
     });
 
     const ctx = createCtx({
@@ -302,7 +352,7 @@ describe("finalizeToOrderHandler", () => {
       message: "Order paid via wallet.",
       orderId: 42,
       contractId: 7,
-      requestId: "wallet",
+      requestId: "wallet-order-42-checkout-attempt",
     });
 
     expect(cartService.finalizeCartToOrder).toHaveBeenCalledWith(
@@ -313,50 +363,34 @@ describe("finalizeToOrderHandler", () => {
       }),
     );
 
-    expect(strapi.entityService.create).toHaveBeenCalledWith(
-      "api::local-user-wallet-transaction.local-user-wallet-transaction",
+    expect(mockedSettleOrderWithWallet).toHaveBeenCalledWith(
+      strapi,
       expect.objectContaining({
-        data: expect.objectContaining({
-          Amount: 2_500_000,
-          Type: "Minus",
-          user_wallet: walletRecord.id,
-        }),
+        userId: 1,
+        orderId: 42,
+        contractId: 7,
+        paymentAttemptId: 1042,
+        attemptId: "checkout-attempt",
+        totalToman: 250_000,
       }),
     );
-
-    expect(strapi.entityService.update).toHaveBeenCalledWith(
-      "api::order.order",
-      42,
-      { data: { Status: "Started" } },
-    );
-
-    expect(strapi.entityService.create).toHaveBeenCalledWith(
-      "api::order-log.order-log",
-      expect.objectContaining({
-        data: expect.objectContaining({
-          Description: expect.stringContaining("Wallet payment success"),
-        }),
-      }),
-    );
+    expect(cartService.clearCart).toHaveBeenCalledWith(1);
   });
 
   it("fails fast when wallet balance is insufficient", async () => {
-    const { strapi, registerService, registerQuery } = createStrapiMock();
+    const { strapi, registerService } = createStrapiMock();
     registerService("api::cart.cart", {
       finalizeCartToOrder: jest.fn().mockResolvedValue({
         success: true,
         order: { id: 10 },
         contract: { id: 20, Amount: 100_000 },
-        financialSummary: { payable: 100_000 },
+        financialSummary: { total: 100_000, payable: 100_000, discount: 0 },
+        paymentAttempt: { id: 1010, attemptId: "checkout-attempt", Status: "Created" },
       }),
     });
-    registerQuery("api::local-user-wallet.local-user-wallet", {
-      findOne: jest.fn().mockResolvedValue({ id: 5, Balance: 100_000 }),
-    });
-    (deductWalletBalanceAtomic as jest.Mock).mockResolvedValueOnce({
-      success: false,
-      error: "Wallet balance is insufficient",
-    });
+    mockedSettleOrderWithWallet.mockRejectedValueOnce(
+      new Error("WALLET_DEBIT_FAILED:Wallet balance is insufficient"),
+    );
     mockEntityFindOne(strapi, {
       "api::shipping.shipping": () => ({ id: 1 }),
       "api::local-user-address.local-user-address": () => ({ id: 2, shipping_city: {}, user: { id: 1 } }),
@@ -374,13 +408,17 @@ describe("finalizeToOrderHandler", () => {
 
     const handler = finalizeToOrderHandler(strapi);
     await expect(handler(ctx)).rejects.toMatchObject({
-      message: "Wallet balance is insufficient",
+      message: "WALLET_DEBIT_FAILED:Wallet balance is insufficient",
     });
 
-    expect(ctx.badRequest).toHaveBeenCalledWith(
-      "Wallet balance is insufficient",
+    expect(ctx.badRequest).toHaveBeenNthCalledWith(
+      1,
+      "موجودی کیف پول کافی نیست یا پرداخت کامل نشد",
       expect.objectContaining({
-        data: expect.objectContaining({ error: "insufficient_wallet" }),
+        data: expect.objectContaining({
+          errorCode: "WALLET_DEBIT_FAILED",
+          attemptId: "checkout-attempt",
+        }),
       }),
     );
     expect(mockedCancelOrderAndRelease).toHaveBeenCalledWith(
@@ -441,6 +479,7 @@ describe("finalizeToOrderHandler", () => {
         order: { id: 501 },
         contract: { id: 77, Amount: 180_000 },
         financialSummary: { payable: 180_000 },
+        paymentAttempt: { id: 1501, attemptId: "checkout-attempt", Status: "Created" },
       }),
     };
     registerService("api::cart.cart", cartService);
@@ -484,7 +523,7 @@ describe("finalizeToOrderHandler", () => {
       strapi,
       expect.objectContaining({
         orderId: 501,
-        amount: 1_800_000,
+        amount: 180_000,
         userId: 9,
         contractId: 77,
         callbackURL: undefined,
@@ -529,6 +568,7 @@ describe("finalizeToOrderHandler", () => {
         order: { id: 88 },
         contract: { id: 44, Amount: 320_000 },
         financialSummary: { payable: 320_000 },
+        paymentAttempt: { id: 1088, attemptId: "checkout-attempt", Status: "Created" },
       }),
     };
     registerService("api::cart.cart", cartService);
@@ -607,6 +647,7 @@ describe("finalizeToOrderHandler", () => {
         order: { id: 91 },
         contract: { id: 55, Amount: 220_000 },
         financialSummary: { payable: 220_000 },
+        paymentAttempt: { id: 1091, attemptId: "checkout-attempt", Status: "Created" },
       }),
     });
 
@@ -666,15 +707,71 @@ describe("finalizeToOrderHandler", () => {
     expect(mockedRequestMellatPayment).not.toHaveBeenCalled();
   });
 
-  it("returns gateway-provided response for SnappPay", async () => {
+  it("does not initiate an external provider twice for the same checkout attempt", async () => {
     const { strapi, registerService } = createStrapiMock();
     registerService("api::cart.cart", {
       finalizeCartToOrder: jest.fn().mockResolvedValue({
         success: true,
-        order: { id: 60 },
-        contract: { id: 70, Amount: 200_000 },
-        financialSummary: { payable: 200_000 },
+        replayed: true,
+        order: { id: 92 },
+        contract: { id: 56, Amount: 220_000 },
+        financialSummary: { total: 220_000 },
+        paymentAttempt: { id: 1092, attemptId: "checkout-attempt", Status: "Created" },
       }),
+    });
+    mockEntityFindOne(strapi, {
+      "api::shipping.shipping": () => ({ id: 3 }),
+      "api::local-user-address.local-user-address": () => ({
+        id: 9,
+        shipping_city: {},
+        user: { id: 1 },
+      }),
+    });
+    mockedClaimPaymentAttempt.mockResolvedValueOnce(false);
+    mockedFindPaymentAttempt.mockResolvedValueOnce({
+      id: 1092,
+      attemptId: "checkout-attempt",
+      Status: "Pending",
+    } as any);
+    const ctx = createCtx({
+      request: { body: { shipping: 3, addressId: 9, gateway: "mellat" } },
+    });
+
+    const response = await finalizeToOrderHandler(strapi)(ctx);
+
+    expect(response.data).toEqual(expect.objectContaining({
+      success: false,
+      paymentStatus: "Pending",
+      errorCode: "PAYMENT_IN_PROGRESS",
+    }));
+    expect(mockedRequestMellatPayment).not.toHaveBeenCalled();
+  });
+
+  it("initiates SnappPay through the hardened orchestrator", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const initiate = jest.fn().mockResolvedValue({
+      success: true,
+      status: "Redirected",
+      redirectUrl: "https://snapp.test",
+      transactionId: "ABC1234567",
+    });
+    const finalizeCartToOrder = jest.fn().mockResolvedValue({
+      success: true,
+      order: { id: 60 },
+      contract: { id: 70, Amount: 200_000 },
+      financialSummary: { payable: 200_000 },
+      paymentAttempt: {
+        id: 1060,
+        attemptId: "checkout-attempt",
+        Status: "Created",
+      },
+      snappayCallbackNonce: "abcdefghijklmnopqrstuv",
+    });
+    registerService("api::cart.cart", {
+      finalizeCartToOrder,
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", {
+      initiate,
     });
 
   mockEntityFindOne(strapi, {
@@ -685,11 +782,6 @@ describe("finalizeToOrderHandler", () => {
       user: { id: 1 },
     }),
   });
-
-    mockedRequestSnappPayment.mockResolvedValue({
-      response: { data: { redirectUrl: "https://snapp.test" } },
-      paymentResult: undefined,
-    } as any);
 
     const ctx = createCtx({
       request: {
@@ -704,13 +796,175 @@ describe("finalizeToOrderHandler", () => {
     const handler = finalizeToOrderHandler(strapi);
     const response = await handler(ctx);
 
-    expect(response).toEqual({ data: { redirectUrl: "https://snapp.test" } });
-    expect(mockedRequestSnappPayment).toHaveBeenCalledWith(
-      strapi,
-      ctx,
+    expect(response.data).toEqual(
       expect.objectContaining({
-        order: { id: 60 },
-        contract: { id: 70, Amount: 200_000 },
+        success: true,
+        orderId: 60,
+        contractId: 70,
+        redirectUrl: "https://snapp.test",
+        refId: "ABC1234567",
+        requestId: "ABC1234567",
+        attemptId: "checkout-attempt",
+        paymentStatus: "Redirected",
+      }),
+    );
+    expect(initiate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentAttemptId: 1060,
+        callbackNonce: "abcdefghijklmnopqrstuv",
+      }),
+    );
+    const snappCheckoutData = finalizeCartToOrder.mock.calls[0][1];
+    expect(snappCheckoutData).toEqual(
+      expect.objectContaining({
+        gateway: "snappay",
+        attemptId: "checkout-attempt",
+        quoteHash: "checkout-quote",
+      }),
+    );
+    expect(mockedClaimPaymentAttempt).toHaveBeenCalledWith(strapi, 1060);
+    const successLog = (strapi.log.info as jest.Mock).mock.calls.find(
+      ([message]) => String(message).includes("Payment successful"),
+    );
+    expect(successLog?.[1]).toEqual(
+      expect.objectContaining({
+        hasRedirectUrl: true,
+        refId: "ABC1234567",
+      }),
+    );
+    expect(successLog?.[1]).not.toHaveProperty("redirectUrl");
+    const auditLog = (strapi.entityService.create as jest.Mock).mock.calls.find(
+      ([uid, payload]) =>
+        uid === "api::order-log.order-log" &&
+        String(payload?.data?.Description || "").includes(
+          "Gateway payment request initiated",
+        ),
+    );
+    expect(auditLog?.[1]?.data?.Changes).not.toHaveProperty("redirectUrl");
+    expect(auditLog?.[1]?.data?.Changes).toEqual(
+      expect.objectContaining({ hasRedirectUrl: true }),
+    );
+  });
+
+  it("resumes an uninitiated SnappPay replay with the stored callback nonce", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const callbackNonce = "abcdefghijklmnopqrstuv";
+    const initiate = jest.fn().mockResolvedValue({
+      success: true,
+      status: "Redirected",
+      redirectUrl: "https://snapp.test/recovered",
+      transactionId: "RECOV12345",
+    });
+    registerService("api::cart.cart", {
+      finalizeCartToOrder: jest.fn().mockResolvedValue({
+        success: true,
+        replayed: true,
+        order: { id: 61 },
+        contract: { id: 71, Amount: 200_000 },
+        financialSummary: { payable: 200_000 },
+        paymentAttempt: {
+          id: 1061,
+          attemptId: "checkout-attempt",
+          Status: "Created",
+          callbackNonce,
+        },
+      }),
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", {
+      initiate,
+    });
+    mockEntityFindOne(strapi, {
+      "api::shipping.shipping": () => ({ id: 5 }),
+      "api::local-user-address.local-user-address": () => ({
+        id: 6,
+        shipping_city: {},
+        user: { id: 1 },
+      }),
+    });
+
+    const response = await finalizeToOrderHandler(strapi)(
+      createCtx({
+        request: {
+          body: {
+            shipping: 5,
+            addressId: 6,
+            gateway: "snappay",
+          },
+        },
+      }),
+    );
+
+    expect(initiate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentAttemptId: 1061,
+        callbackNonce,
+      }),
+    );
+    expect(response.data).toEqual(
+      expect.objectContaining({
+        success: true,
+        redirectUrl: "https://snapp.test/recovered",
+        paymentStatus: "Redirected",
+      }),
+    );
+  });
+
+  it("fails closed when an uninitiated SnappPay replay nonce cannot be decrypted", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const initiate = jest.fn();
+    registerService("api::cart.cart", {
+      finalizeCartToOrder: jest.fn().mockResolvedValue({
+        success: true,
+        replayed: true,
+        order: { id: 62 },
+        contract: { id: 72, Amount: 200_000 },
+        financialSummary: { payable: 200_000 },
+        paymentAttempt: {
+          id: 1062,
+          attemptId: "checkout-attempt",
+          Status: "Created",
+          callbackNonce: "",
+        },
+      }),
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", {
+      initiate,
+    });
+    mockEntityFindOne(strapi, {
+      "api::shipping.shipping": () => ({ id: 5 }),
+      "api::local-user-address.local-user-address": () => ({
+        id: 6,
+        shipping_city: {},
+        user: { id: 1 },
+      }),
+    });
+    const ctx = createCtx({
+      request: {
+        body: {
+          shipping: 5,
+          addressId: 6,
+          gateway: "snappay",
+        },
+      },
+    });
+
+    const response = await finalizeToOrderHandler(strapi)(ctx);
+
+    expect(initiate).not.toHaveBeenCalled();
+    expect(mockedUpdatePaymentAttempt).toHaveBeenCalledWith(
+      strapi,
+      1062,
+      expect.objectContaining({
+        Status: "Unknown",
+        failureCode: "SNAPPAY_CALLBACK_NONCE_UNRECOVERABLE",
+        nextAction: "manual_review",
+      }),
+    );
+    expect(ctx.status).toBe(202);
+    expect(response.data).toEqual(
+      expect.objectContaining({
+        success: false,
+        paymentStatus: "Unknown",
       }),
     );
   });

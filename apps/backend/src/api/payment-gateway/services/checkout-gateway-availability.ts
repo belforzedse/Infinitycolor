@@ -44,6 +44,34 @@ const isZarinPalConfigured = (): boolean =>
   isTruthyEnv(process.env.ZARINPAL_E2E_DETERMINISTIC) ||
   isLocalUrl(resolveZarinPalCallbackUrl());
 
+const hasNonEmptyEnv = (...keys: string[]): boolean =>
+  keys.every((key) => Boolean(String(process.env[key] || "").trim()));
+
+const isGatewayConfigured = (code: CheckoutGatewayCode): boolean => {
+  switch (code) {
+    case "samankish":
+      return hasNonEmptyEnv("SAMAN_TERMINAL_ID", "SAMAN_USERNAME", "SAMAN_PASSWORD");
+    case "mellat":
+      return hasNonEmptyEnv("MELLAT_TERMINAL_ID", "MELLAT_USERNAME", "MELLAT_PASSWORD");
+    case "snappay":
+      return (
+        isTruthyEnv(process.env.SNAPPAY_HARDENED_INITIATION_ENABLED) &&
+        hasNonEmptyEnv(
+          "SNAPPAY_BASE_URL",
+          "SNAPPAY_CLIENT_ID",
+          "SNAPPAY_CLIENT_SECRET",
+          "SNAPPAY_USERNAME",
+          "SNAPPAY_PASSWORD",
+          "SNAPPAY_RETURN_URL",
+        )
+      );
+    case "zarinpal":
+      return isZarinPalConfigured();
+    case "wallet":
+      return true;
+  }
+};
+
 const SUPPORTED_CODES = new Set<CheckoutGatewayCode>(
   SUPPORTED_CHECKOUT_GATEWAYS.map((gateway) => gateway.code),
 );
@@ -54,11 +82,25 @@ const normalizeText = (value: unknown): string =>
     .toLowerCase()
     .replace(/\s+/g, " ");
 
+/**
+ * SnappPay is stored in two forms in this codebase: the canonical checkout
+ * code (`snappay`) and the provider/display name (`SnappPay`). Lowercasing the
+ * latter produces `snapppay`, so a direct lowercase equality check is unsafe.
+ */
+export const isSnappayGatewayValue = (value: unknown): boolean => {
+  const normalized = normalizeText(value).replace(/[\s!_-]+/g, "");
+  return (
+    normalized === "snappay" ||
+    normalized === "snapppay" ||
+    normalized.includes("اسنپ")
+  );
+};
+
 const mapGatewayTitleToCode = (title: unknown): CheckoutGatewayCode | null => {
   const normalized = normalizeText(title);
   if (!normalized) return null;
 
-  if (normalized.includes("snapp") || normalized.includes("اسنپ")) return "snappay";
+  if (isSnappayGatewayValue(normalized)) return "snappay";
   if (normalized.includes("zarin") || normalized.includes("زرین")) return "zarinpal";
   if (normalized.includes("saman") || normalized.includes("سامان")) return "samankish";
   if (normalized.includes("mellat") || normalized.includes("ملت")) return "mellat";
@@ -89,10 +131,7 @@ const resolveGatewayAvailabilityMap = async (
       if (!mappedCode || !SUPPORTED_CODES.has(mappedCode)) continue;
       if (row?.IsActive !== true) continue;
 
-      availability.set(
-        mappedCode,
-        mappedCode === "zarinpal" ? isZarinPalConfigured() : true,
-      );
+      availability.set(mappedCode, isGatewayConfigured(mappedCode));
     }
 
     return availability;
@@ -121,7 +160,7 @@ export const normalizeCheckoutGatewayCode = (
 
   if (normalized === "saman" || normalized === "samankish") return "samankish";
   if (normalized === "mellat") return "mellat";
-  if (normalized === "snappay") return "snappay";
+  if (isSnappayGatewayValue(normalized)) return "snappay";
   if (normalized === "wallet") return "wallet";
   if (normalized === "zarinpal" || normalized === "zarin-pal") return "zarinpal";
 

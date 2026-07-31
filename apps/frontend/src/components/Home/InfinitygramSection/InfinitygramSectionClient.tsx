@@ -1,13 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
+import Image from "next/image";
 import Link from "next/link";
-import {
-  SocialPostCard,
-  SocialPostOverlayBadge,
-  toMobilePostCardVariant,
-} from "@repo/social-posts/client";
-import type { PostCardVariant } from "@repo/social-posts/client";
 import type { SocialFeedPost } from "@repo/social-posts";
+import InfinitygramRichPosts from "./InfinitygramRichPosts";
+import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
 
 type InfinitygramSectionClientProps = {
   posts: readonly SocialFeedPost[];
@@ -19,63 +17,20 @@ const EXTERNAL_LINK_PROPS = {
   rel: "noopener noreferrer",
 } as const;
 
-function hrefForPost(slug: string) {
-  return `${INFINITYGRAM_URL}/post/${encodeURIComponent(slug)}`;
-}
-
-function desktopCellClass(post: SocialFeedPost) {
-  return post.desktopVariant === "xl" ? "col-span-2 row-span-2" : "col-span-1 row-span-1";
-}
-
-function mobileCellClass(variant: PostCardVariant) {
-  return variant === "mobile-lg" ? "col-span-2 sm:row-span-2" : "col-span-1";
-}
-
-function PostCard({
-  post,
-  variant,
-  className,
-}: {
-  post: SocialFeedPost;
-  variant: PostCardVariant;
-  className?: string;
-}) {
-  return (
-    <SocialPostCard
-      variant={variant}
-      widthMode="fluid"
-      fluidMaxWidth="none"
-      className={className}
-      imageSrc={post.imageSrc}
-      imageAlt={post.imageAlt}
-      previewMedia={post.previewMedia}
-      likesCount={post.likesCount}
-      commentsCount={post.commentsCount}
-      href={hrefForPost(post.slug)}
-      linkTarget={EXTERNAL_LINK_PROPS.target}
-      linkRel={EXTERNAL_LINK_PROPS.rel}
-      linkAriaLabel={`مشاهده پست ${post.title || post.imageAlt}`}
-      actionTone="light"
-      overlay={post.overlay != null ? <SocialPostOverlayBadge type={post.overlay} /> : undefined}
-    />
-  );
-}
-
 export default function InfinitygramSectionClient({ posts }: InfinitygramSectionClientProps) {
-  let xlCount = 0,
-    smCount = 0;
-  const visiblePosts = posts.filter((post) => {
-    if (post.desktopVariant === "xl" && xlCount < 2) {
-      xlCount++;
-      return true;
-    }
-    if (post.desktopVariant === "sm" && smCount < 4) {
-      smCount++;
-      return true;
-    }
-    return false;
+  const quality = useAdaptiveQuality();
+  const staticMedia = quality.media === "economy";
+  const visiblePosts = posts.filter((post, index) => {
+    const variantLimit = post.desktopVariant === "xl" ? 2 : 4;
+    const precedingVariantCount = posts
+      .slice(0, index + 1)
+      .filter((candidate) => candidate.desktopVariant === post.desktopVariant).length;
+    return precedingVariantCount <= variantLimit;
   });
-  const mobileVisiblePosts = visiblePosts.filter((post) => post.desktopVariant === "sm");
+
+  useEffect(() => {
+    if (!staticMedia) noteEnhancementLoaded("social-media");
+  }, [staticMedia]);
 
   return (
     <section
@@ -83,13 +38,13 @@ export default function InfinitygramSectionClient({ posts }: InfinitygramSection
       aria-labelledby="home-infinitygram-heading"
       className="overflow-hidden bg-[#252220] text-white"
     >
-      <div className="mx-auto w-full max-w-[1360px] 3xl:max-w-[1440px] 4xl:max-w-[1760px] px-2 py-8 sm:px-5 lg:px-[60px] lg:py-10 4xl:px-20">
+      <div className="mx-auto w-full max-w-[1360px] px-2 py-8 sm:px-5 lg:px-[60px] lg:py-10 3xl:max-w-[1440px] 4xl:max-w-[1760px] 4xl:px-20">
         <div className="mb-6 flex items-center justify-between gap-4">
           <h2
             id="home-infinitygram-heading"
             className="flex items-center gap-2 text-right font-peyda-fanum text-3xl font-normal leading-[37px] text-white"
           >
-            <img
+            <Image
               src="/infinitygram-icon.svg"
               alt=""
               width={32}
@@ -109,39 +64,7 @@ export default function InfinitygramSectionClient({ posts }: InfinitygramSection
           </Link>
         </div>
 
-        <div
-          className="hidden w-full min-w-0 grid-flow-dense grid-cols-6 gap-x-1.5 gap-y-2 lg:grid"
-          dir="ltr"
-        >
-          {visiblePosts.map((post) => (
-            <div
-              key={post.id}
-              className={`${desktopCellClass(post)} flex min-w-0 justify-center`}
-              dir="ltr"
-            >
-              <PostCard post={post} variant={post.desktopVariant} />
-            </div>
-          ))}
-        </div>
-
-        <div
-          className="grid w-full min-w-0 grid-flow-dense grid-cols-2 gap-x-2 gap-y-2 sm:grid-cols-3 md:grid-cols-4 min-[900px]:grid-cols-5 lg:hidden"
-          dir="ltr"
-        >
-          {mobileVisiblePosts.map((post) => {
-            const variant = toMobilePostCardVariant(post.desktopVariant);
-
-            return (
-              <div
-                key={post.id}
-                className={`${mobileCellClass(variant)} flex min-w-0 justify-center`}
-                dir="ltr"
-              >
-                <PostCard post={post} variant={variant} className="w-full" />
-              </div>
-            );
-          })}
-        </div>
+        <InfinitygramRichPosts posts={visiblePosts} staticMedia={staticMedia} />
 
         <Link
           href={INFINITYGRAM_URL}

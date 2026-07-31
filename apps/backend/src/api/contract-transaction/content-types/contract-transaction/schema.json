@@ -67,6 +67,24 @@
     "VerifiedAt": {
       "type": "datetime"
     },
+    "SettledAt": {
+      "type": "datetime"
+    },
+    "RevertedAt": {
+      "type": "datetime"
+    },
+    "CancelledAt": {
+      "type": "datetime"
+    },
+    "LastReconciledAt": {
+      "type": "datetime"
+    },
+    "LastHttpStatus": {
+      "type": "integer"
+    },
+    "LastProviderCode": {
+      "type": "integer"
+    },
     "contract": {
       "type": "relation",
       "relation": "manyToOne",

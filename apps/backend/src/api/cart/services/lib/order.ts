@@ -56,7 +56,7 @@ export const createOrderAndItems = async (
       hasVariation: !!variation,
       hasProduct: !!variation?.product,
       productTitle: variation?.product?.Title || "MISSING",
-      productSKU: variation?.product?.SKU || "MISSING",
+      productSKU: variation?.SKU || variation?.product?.SKU || "MISSING",
       price: variation?.Price,
     });
 
@@ -107,7 +107,7 @@ export const createOrderAndItems = async (
       strapi.log.error("=== VALIDATION ERROR: Missing product title ===", errorInfo);
       throw new Error(`MISSING_PRODUCT_TITLE: Product variation ${variation.id} (cart item ${item.id}) missing title. Product may have been deleted.`);
     }
-    if (!variation.product?.SKU) {
+    if (!variation.SKU && !variation.product?.SKU) {
       console.warn("=== WARNING: Missing product SKU ===", {
         variationId: variation.id,
         productTitle: variation.product?.Title,
@@ -187,7 +187,7 @@ if (reservation) {
           Count: item.Count,
           PerAmount: itemPrice,
           ProductTitle: variation.product?.Title,
-          ProductSKU: variation.product?.SKU || `VAR-${variation.id}`, // Use variation ID as fallback SKU
+          ProductSKU: variation.SKU || variation.product?.SKU || `VAR-${variation.id}`,
           product_color: variation.product_variation_color?.id || null,
           product_size: variation.product_variation_size?.id || null,
           product_variation_model: variation.product_variation_model?.id || null,

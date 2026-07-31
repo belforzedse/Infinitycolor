@@ -18,7 +18,7 @@ function ShoppingCartBillPaymentGateway({
   selected,
   onChange,
   availableGateways = [],
-  snappEligible = false,
+  snappEligible,
   snappTitle,
   snappDescription,
   walletBalanceIrr = 0,
@@ -29,14 +29,19 @@ function ShoppingCartBillPaymentGateway({
   const showWalletDetails = walletHovered || selected === "wallet";
 
   // Build SnappPay helper content with title and description on two lines
+  const snappDetails = [snappTitle, snappDescription].filter(
+    (detail): detail is string => Boolean(detail),
+  );
   const snappHelper =
-    snappTitle || snappDescription ? (
+    snappDetails.length > 0 || !snappEligible ? (
       <div className="flex flex-col gap-2 text-right">
-        {snappTitle && <div className="text-md font-bold text-neutral-800">{snappTitle}</div>}
-        {snappDescription && <div className="text-sm text-neutral-600">{snappDescription}</div>}
+        <div className="text-md font-bold text-neutral-800">اسنپ پی</div>
+        {snappDetails.map((detail) => (
+          <div key={detail} className="text-sm text-neutral-600">
+            {detail}
+          </div>
+        ))}
       </div>
-    ) : !snappEligible ? (
-      <div className="text-md font-bold text-neutral-800">اسنپ پی</div>
     ) : undefined;
 
   const saman = {
@@ -74,16 +79,16 @@ function ShoppingCartBillPaymentGateway({
 
   const snappay = {
     id: "snappay" as const,
-    name: "پرداخت اقساطی اسنپ‌پی",
+    name: "اسنپ پی",
     img: "/images/cart/snappay.svg",
     helper: snappHelper,
-    disabled: false,
+    disabled: snappEligible !== true,
   };
 
   const showSaman = availableGateways.includes("samankish");
   const showMellat = availableGateways.includes("mellat");
   const showZarinPal = availableGateways.includes("zarinpal");
-  const showSnappay = availableGateways.includes("snappay") && snappEligible;
+  const showSnappay = availableGateways.includes("snappay") && snappEligible !== false;
   const showWallet = availableGateways.includes("wallet");
 
   return (
@@ -91,11 +96,14 @@ function ShoppingCartBillPaymentGateway({
       <span className="text-2xl text-neutral-800 lg:text-xl">درگاه پرداخت خود را انتخاب کنید</span>
       {showSnappay && (
         <button
-          onClick={() => onChange(snappay.id)}
+          onClick={() => !snappay.disabled && onChange(snappay.id)}
           data-testid="payment-gateway-snappay"
+          disabled={snappay.disabled}
+          aria-disabled={snappay.disabled}
           className={classNames(
             "flex w-full flex-row items-center justify-between gap-4 rounded-lg border border-stone-50 bg-stone-50 py-4 pr-4 transition-opacity duration-300 lg:gap-6 lg:p-2",
-            selected === snappay.id && "!border-infinity-primary",
+            selected === snappay.id && !snappay.disabled && "!border-infinity-primary",
+            snappay.disabled && "cursor-not-allowed opacity-50",
           )}
           type="button"
         >
@@ -194,6 +202,7 @@ function ShoppingCartBillPaymentGateway({
               onClick={() => !wallet.disabled && onChange(wallet.id)}
               data-testid="payment-gateway-wallet"
               data-disabled={wallet.disabled ? "true" : "false"}
+              data-selected={selected === wallet.id ? "true" : "false"}
               onMouseEnter={() => setWalletHovered(true)}
               onMouseLeave={() => setWalletHovered(false)}
               className={classNames(

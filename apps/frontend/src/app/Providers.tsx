@@ -17,6 +17,8 @@ import { ConsentManager } from "@/components/Analytics/ConsentManager";
 import { MatomoTracker } from "@/components/Analytics/MatomoTracker";
 import PWAInstallPrompt from "@/components/ui/PWAInstallPrompt";
 import { SharedElementTransitionProvider } from "@/contexts/SharedElementTransitionContext";
+import NetworkStatusBanner from "@/components/ui/NetworkStatusBanner";
+import VersionCheck from "@/components/ui/VersionCheck";
 
 export default function Providers({ children }: { children: ReactNode }) {
   // Enable automatic data refresh on all pages when tab becomes visible (10 min debounce)
@@ -46,6 +48,8 @@ export default function Providers({ children }: { children: ReactNode }) {
       <ImageEffects />
       {children}
       <GlobalLoadingOverlay />
+      <NetworkStatusBanner />
+      <VersionCheck />
       <PWAInstallPrompt />
       </SharedElementTransitionProvider>
     </Provider>

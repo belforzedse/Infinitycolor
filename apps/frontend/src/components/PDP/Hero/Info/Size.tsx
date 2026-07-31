@@ -47,9 +47,9 @@ export default function PDPHeroInfoSize(props: Props) {
         if (size.stock !== undefined && size.stock <= 0) return true;
 
         // Check if all variations are out of stock
-        const hasAvailableVariations = size.variations.some(
-          (variation) => variation.stock === undefined || variation.stock > 0,
-        );
+        const hasAvailableVariations =
+          size.variations.length === 0 ||
+          size.variations.some((variation) => variation.stock === undefined || variation.stock > 0);
 
         return !hasAvailableVariations;
       })

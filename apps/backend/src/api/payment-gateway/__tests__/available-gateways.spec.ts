@@ -5,6 +5,28 @@ jest.mock("@strapi/strapi", () => ({
 }));
 
 import { createStrapiMock, mockContext } from "../../../__tests__/mocks/factories";
+import {
+  isSnappayGatewayValue,
+  normalizeCheckoutGatewayCode,
+} from "../services/checkout-gateway-availability";
+
+describe("SnappPay gateway normalization", () => {
+  it.each([
+    "snappay",
+    "SnappPay",
+    "SNAPPAY",
+    "Snapp! Pay",
+    "اسنپ‌پی",
+  ])("recognizes the stored/provider variant %s", (value) => {
+    expect(isSnappayGatewayValue(value)).toBe(true);
+    expect(normalizeCheckoutGatewayCode(value)).toBe("snappay");
+  });
+
+  it("does not classify unrelated providers as SnappPay", () => {
+    expect(isSnappayGatewayValue("Saman Kish")).toBe(false);
+    expect(isSnappayGatewayValue("wallet")).toBe(false);
+  });
+});
 
 describe("payment-gateway.availableGateways", () => {
   let controllerFactory: any;
@@ -39,6 +61,9 @@ describe("payment-gateway.availableGateways", () => {
   });
 
   it("returns only explicitly active mapped gateways", async () => {
+    process.env.SAMAN_TERMINAL_ID = "terminal";
+    process.env.SAMAN_USERNAME = "username";
+    process.env.SAMAN_PASSWORD = "password";
     const { strapi } = createStrapiMock();
     (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
       { Title: "SnappPay", IsActive: false },
@@ -57,6 +82,25 @@ describe("payment-gateway.availableGateways", () => {
           expect.objectContaining({ code: "wallet" }),
         ],
       },
+    });
+  });
+
+  it("keeps an active gateway hidden when its server credentials are incomplete", async () => {
+    delete process.env.SAMAN_TERMINAL_ID;
+    delete process.env.SAMAN_USERNAME;
+    delete process.env.SAMAN_PASSWORD;
+    const { strapi } = createStrapiMock();
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
+      { Code: "samankish", Title: "سامان‌کیش", IsActive: true },
+      { Code: "wallet", Title: "کیف پول", IsActive: true },
+    ]);
+    const controller = controllerFactory({ strapi });
+    const ctx = mockContext({});
+
+    await controller.availableGateways(ctx);
+
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [expect.objectContaining({ code: "wallet" })] },
     });
   });
 

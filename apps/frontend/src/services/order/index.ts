@@ -1,38 +1,9 @@
 import { apiClient } from "../index";
 import { getActiveReserve, releaseReserve } from "./reserve";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
+import type { OrderPaymentStatusResponse as SharedOrderPaymentStatusResponse } from "@repo/api/commerce";
 
-// Simple cache implementation for orders
-class OrderCache {
-  private cache = new Map<string, { data: any; timestamp: number }>();
-  private readonly TTL = 5 * 60 * 1000; // 5 minutes
-
-  get(key: string) {
-    const item = this.cache.get(key);
-    if (!item) return null;
-
-    if (Date.now() - item.timestamp > this.TTL) {
-      this.cache.delete(key);
-      return null;
-    }
-
-    return item.data;
-  }
-
-  set(key: string, data: any) {
-    this.cache.set(key, { data, timestamp: Date.now() });
-  }
-
-  clear() {
-    this.cache.clear();
-  }
-}
-
-const orderCache = new OrderCache();
-
-/**
- * Interface for order payment verification
- */
+/** Established callback response used by the SnappPay return journey. */
 export interface PaymentVerificationResponse {
   success: boolean;
   message: string;
@@ -42,9 +13,6 @@ export interface PaymentVerificationResponse {
   transactionId?: string | number | null;
 }
 
-/**
- * Interface for order status check
- */
 export interface OrderStatusResponse {
   id: number;
   Status: string;
@@ -58,14 +26,7 @@ export interface OrderStatusResponse {
 /**
  * Interface for order payment status check
  */
-export interface OrderPaymentStatusResponse {
-  success: boolean;
-  orderId: number;
-  status: string;
-  isPaid: boolean;
-  transactionId?: string | number | null;
-  paymentGateway?: string | null;
-}
+export type OrderPaymentStatusResponse = SharedOrderPaymentStatusResponse;
 
 /**
  * Interface for user's order list
@@ -169,6 +130,7 @@ export interface ContractTransaction {
   Type: string;
   TrackId?: string;
   Date?: string;
+  external_source?: string | null;
   payment_gateway?: {
     id: number;
     Title: string;
@@ -188,12 +150,7 @@ export interface OrdersResponse {
   };
 }
 
-/**
- * Verify a payment after being redirected back from the payment gateway
- * @param orderId The order ID
- * @param refNum Reference number from payment gateway
- * @returns Payment verification result
- */
+/** Preserve the established callback verification client used by SnappPay. */
 export const verifyPayment = async (
   orderId: number,
   refNum: string,
@@ -209,14 +166,13 @@ export const verifyPayment = async (
   }
 };
 
-/**
- * Check the status of an order
- * @param orderId The order ID
- * @returns Order status information
- */
-export const getOrderStatus = async (orderId: number): Promise<OrderStatusResponse> => {
+export const getOrderStatus = async (
+  orderId: number,
+): Promise<OrderStatusResponse> => {
   try {
-    const response = await apiClient.get<OrderStatusResponse>(`/orders/${orderId}/status`);
+    const response = await apiClient.get<OrderStatusResponse>(
+      `/orders/${orderId}/status`,
+    );
     return response as any;
   } catch (error: any) {
     console.error("Error getting order status:", error);
@@ -250,6 +206,16 @@ export const getOrderPaymentStatus = async (
   }
 };
 
+export const reconcileOrderPayment = async (
+  orderId: number,
+): Promise<OrderPaymentStatusResponse> => {
+  const response = await apiClient.post<OrderPaymentStatusResponse>(
+    `/orders/${orderId}/payment-reconcile`,
+    {},
+  );
+  return response.data;
+};
+
 export interface GetMyOrdersOptions {
   reserveGroupId?: string;
 }
@@ -267,16 +233,6 @@ export const getMyOrders = async (
   options?: GetMyOrdersOptions,
 ): Promise<OrdersResponse> => {
   const reserveGroupId = options?.reserveGroupId;
-  const cacheKey = reserveGroupId
-    ? `orders_${page}_${pageSize}_reserve_${reserveGroupId}`
-    : `orders_${page}_${pageSize}`;
-
-  const shouldUseCache = process.env.NODE_ENV !== "test";
-  const cachedData = shouldUseCache ? orderCache.get(cacheKey) : null;
-  if (cachedData) {
-    return cachedData;
-  }
-
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (reserveGroupId) params.set("reserveGroupId", reserveGroupId);
 
@@ -366,11 +322,6 @@ export const getMyOrders = async (
       },
     };
 
-    // Cache the result
-    if (shouldUseCache) {
-      orderCache.set(cacheKey, result);
-    }
-
     return result;
   } catch (error: any) {
     console.error("Error fetching user orders:", error);
@@ -404,6 +355,7 @@ const OrderService = {
   verifyPayment,
   getOrderStatus,
   getOrderPaymentStatus,
+  reconcileOrderPayment,
   getMyOrders,
   getOrderDetail,
   getActiveReserve,
@@ -431,6 +383,7 @@ const OrderService = {
   },
 };
 
-export const __clearOrderCache = () => orderCache.clear();
+/** Kept for test/backward compatibility; order history is intentionally fetched fresh. */
+export const __clearOrderCache = () => undefined;
 
 export default OrderService;

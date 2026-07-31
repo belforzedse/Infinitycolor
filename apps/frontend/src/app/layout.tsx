@@ -8,7 +8,7 @@ import { NuqsAdapter } from "nuqs/adapters/next";
 import { CartProvider } from "@/contexts/CartContext";
 import { MobileMenuProvider } from "@/contexts/MobileMenuContext";
 import Providers from "./Providers";
-import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts";
+import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts/storefront";
 import DevOnlyDebugPanel from "@/components/Debug/DevOnlyDebugPanel";
 import { NavigationProgress } from "@repo/ui/navigation-progress";
 import { OrganizationSchema } from "@/components/SEO/OrganizationSchema";
@@ -16,6 +16,7 @@ import { IMAGE_BASE_URL, MEDIA_CDN_URL } from "@/constants/api";
 import { SITE_URL } from "@/config/site";
 import { getSiteIdentity, resolveSiteName } from "@/services/site-identity";
 import { SiteIdentityProvider } from "@/components/providers/SiteIdentityProvider";
+import { getAdaptiveQualityBootstrapScript } from "@/lib/adaptive-quality/bootstrap-script";
 
 const DEFAULT_SITE_DESCRIPTION =
   "فروشگاه پوشاک آنلاین اینفینیتی - جدیدترین محصولات، تخفیف‌ها و پیشنهادهای ویژه";
@@ -145,14 +146,20 @@ export default async function RootLayout({
   const dnsPrefetchOrigins = Array.from(
     new Set([apiOrigin, imageOrigin, mediaCdnOrigin].filter(Boolean)),
   ) as string[];
+  const adaptiveQualityBootstrap = getAdaptiveQualityBootstrapScript();
 
   return (
     <html
       lang="fa"
       dir="rtl"
       className={`${peyda.variable} ${peydaFanum.variable} ${rokh.variable} ${kaghaz.variable}`}
+      suppressHydrationWarning
     >
       <head>
+        <script
+          id="infinity-adaptive-quality-bootstrap"
+          dangerouslySetInnerHTML={{ __html: adaptiveQualityBootstrap }}
+        />
         {/* Favicons */}
         <link rel="icon" href="/favicon.ico" sizes="any" />
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

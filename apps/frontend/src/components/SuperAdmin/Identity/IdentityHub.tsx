@@ -54,6 +54,7 @@ const newContact = (): IdentityContactNumber => ({ label: "", number: "", type: 
 const newStore = (): IdentityStore => ({
   name: "",
   address: "",
+  postalCode: "",
   phones: [],
   wazeLink: "",
   neshanLink: "",
@@ -82,10 +83,7 @@ export default function IdentityHub() {
   useEffect(() => {
     (async () => {
       try {
-        const [id, fq] = await Promise.all([
-          getSuperAdminSiteIdentity(),
-          getSuperAdminSiteFaq(),
-        ]);
+        const [id, fq] = await Promise.all([getSuperAdminSiteIdentity(), getSuperAdminSiteFaq()]);
         setIdentity(id);
         setFaq(fq);
       } catch (e) {
@@ -128,7 +126,8 @@ export default function IdentityHub() {
   };
 
   // ---- identity mutation helpers ----
-  const patch = (p: Partial<SiteIdentity>) => setIdentity((prev) => (prev ? { ...prev, ...p } : prev));
+  const patch = (p: Partial<SiteIdentity>) =>
+    setIdentity((prev) => (prev ? { ...prev, ...p } : prev));
   const updateStore = (i: number, p: Partial<IdentityStore>) =>
     setIdentity((prev) =>
       prev
@@ -167,7 +166,7 @@ export default function IdentityHub() {
             className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
               tab === t.id
                 ? "bg-[#63A9AE] text-white"
-                : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
             {t.label}
@@ -219,20 +218,28 @@ export default function IdentityHub() {
                     {store.name ? ` — ${store.name}` : ""}
                   </h3>
                   <RemoveButton
-                    onClick={() =>
-                      patch({ stores: identity.stores.filter((_, idx) => idx !== i) })
-                    }
+                    onClick={() => patch({ stores: identity.stores.filter((_, idx) => idx !== i) })}
                   />
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-3">
                   <Field label="نام / عنوان فروشگاه">
-                    <TextInput value={store.name ?? ""} onChange={(v) => updateStore(i, { name: v })} />
+                    <TextInput
+                      value={store.name ?? ""}
+                      onChange={(v) => updateStore(i, { name: v })}
+                    />
                   </Field>
                   <Field label="آدرس">
                     <TextInput
                       value={store.address ?? ""}
                       onChange={(v) => updateStore(i, { address: v })}
+                    />
+                  </Field>
+                  <Field label="کد پستی">
+                    <TextInput
+                      value={store.postalCode ?? ""}
+                      dir="ltr"
+                      onChange={(v) => updateStore(i, { postalCode: v })}
                     />
                   </Field>
                 </div>
@@ -492,16 +499,12 @@ export default function IdentityHub() {
             ))}
             <AddButton
               label="افزودن شماره تماس"
-              onClick={() =>
-                patch({ contactNumbers: [...identity.contactNumbers, newContact()] })
-              }
+              onClick={() => patch({ contactNumbers: [...identity.contactNumbers, newContact()] })}
             />
           </Card>
         )}
 
-        {tab === "faq" && (
-          <FaqEditor faq={faq} setFaq={setFaq} />
-        )}
+        {tab === "faq" && <FaqEditor faq={faq} setFaq={setFaq} />}
       </div>
 
       {/* Sticky save bar */}
@@ -561,9 +564,7 @@ function FaqEditor({
             <RemoveButton
               onClick={() =>
                 setFaq((prev) =>
-                  prev
-                    ? { categories: prev.categories.filter((_, idx) => idx !== ci) }
-                    : prev,
+                  prev ? { categories: prev.categories.filter((_, idx) => idx !== ci) } : prev,
                 )
               }
             />
@@ -632,9 +633,7 @@ function FaqEditor({
             ))}
             <AddButton
               label="افزودن سوال"
-              onClick={() =>
-                updateCategory(ci, { items: [...category.items, newFaqItem()] })
-              }
+              onClick={() => updateCategory(ci, { items: [...category.items, newFaqItem()] })}
             />
           </div>
         </Card>
@@ -642,9 +641,7 @@ function FaqEditor({
       <AddButton
         label="افزودن دسته‌بندی"
         onClick={() =>
-          setFaq((prev) =>
-            prev ? { categories: [...prev.categories, newFaqCategory()] } : prev,
-          )
+          setFaq((prev) => (prev ? { categories: [...prev.categories, newFaqCategory()] } : prev))
         }
       />
     </div>

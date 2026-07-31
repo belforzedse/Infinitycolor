@@ -22,7 +22,6 @@ export default function VersionCheck() {
   const [isOutdated, setIsOutdated] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
-  const [isChecking, setIsChecking] = useState(false);
 
   const checkVersion = async () => {
     // Skip check in development mode
@@ -31,7 +30,6 @@ export default function VersionCheck() {
     }
 
     try {
-      setIsChecking(true);
       // Fetch the latest build version from the server
       // Add cache-busting query parameter to ensure we get the latest version
       const response = await fetch(`/build-version.json?t=${Date.now()}`, {
@@ -59,10 +57,8 @@ export default function VersionCheck() {
       } else {
         setIsOutdated(false);
       }
-    } catch (error) {
-      console.error("[VersionCheck] Error checking version:", error);
-    } finally {
-      setIsChecking(false);
+    } catch {
+      // Update checks are best-effort and must never disturb storefront use.
     }
   };
 
@@ -93,17 +89,40 @@ export default function VersionCheck() {
     };
   }, []);
 
-  const handleRefresh = () => {
+  useEffect(() => {
+    const handleUpdateAvailable = () => {
+      setLatestVersion((current) => current || "service-worker");
+      setIsDismissed(false);
+      setIsOutdated(true);
+    };
+    window.addEventListener("infinity:app-update-available", handleUpdateAvailable);
+    return () =>
+      window.removeEventListener("infinity:app-update-available", handleUpdateAvailable);
+  }, []);
+
+  const handleRefresh = async () => {
     // Clear all caches and reload
     if (typeof window !== "undefined" && "caches" in window) {
-      caches.keys().then((names) => {
-        names.forEach((name) => {
-          caches.delete(name);
-        });
-      });
+      const names = await caches.keys().catch(() => []);
+      await Promise.all(names.map((name) => caches.delete(name))).catch(() => undefined);
     }
 
-    // Reload the page
+    const registration = await navigator.serviceWorker?.getRegistration().catch(() => undefined);
+    if (registration?.waiting) {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeoutId);
+          navigator.serviceWorker.removeEventListener("controllerchange", finish);
+          resolve();
+        };
+        const timeoutId = window.setTimeout(finish, 1500);
+        navigator.serviceWorker.addEventListener("controllerchange", finish);
+        registration.waiting?.postMessage({ type: "SKIP_WAITING" });
+      });
+    }
     window.location.reload();
   };
 
@@ -111,16 +130,24 @@ export default function VersionCheck() {
     setIsDismissed(true);
     // Store dismissal in localStorage with version to re-show if version changes
     if (typeof window !== "undefined") {
-      localStorage.setItem("versionCheckDismissed", latestVersion || "");
+      try {
+        localStorage.setItem("versionCheckDismissed", latestVersion || "");
+      } catch {
+        // Dismissal persistence is optional.
+      }
     }
   };
 
   // Don't show if dismissed for this version
   useEffect(() => {
     if (typeof window !== "undefined" && latestVersion) {
-      const dismissedVersion = localStorage.getItem("versionCheckDismissed");
-      if (dismissedVersion === latestVersion) {
-        setIsDismissed(true);
+      try {
+        const dismissedVersion = localStorage.getItem("versionCheckDismissed");
+        if (dismissedVersion === latestVersion) {
+          setIsDismissed(true);
+        }
+      } catch {
+        // Keep the banner visible if storage is unavailable.
       }
     }
   }, [latestVersion]);

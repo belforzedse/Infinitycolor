@@ -32,4 +32,9 @@ export type StrapiSmsLike = {
   entityService?: {
     findOne?: (uid: string, id: number, options?: any) => Promise<any>;
   };
+  db?: {
+    query?: (uid: string) => {
+      create?: (options: any) => Promise<any>;
+    };
+  };
 };

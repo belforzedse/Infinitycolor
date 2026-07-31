@@ -11,9 +11,9 @@
 import os from "os";
 import path from "path";
 
-/** Postgres image. Defaults to the Arvan mirror (matches CI's `docker.arvancloud.ir/node:20`). */
+/** Postgres image. Defaults to the canonical Arvan Docker Hub mirror path. */
 export const PG_IMAGE =
-  process.env.INTEGRATION_PG_IMAGE || "docker.arvancloud.ir/postgres:16-alpine";
+  process.env.INTEGRATION_PG_IMAGE || "docker.arvancloud.ir/library/postgres:16-alpine";
 
 /** `testcontainers` (default) launches a disposable container; `service` reuses CI-provided env. */
 export const DB_MODE = (process.env.INTEGRATION_DB_MODE || "testcontainers").toLowerCase();

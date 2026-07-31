@@ -23,6 +23,12 @@ function createMockStrapi() {
   const orderLogQuery = {
     create: jest.fn(),
   };
+  const paymentAttemptQuery = {
+    findOne: jest.fn().mockResolvedValue(null),
+  };
+  const snappayOrchestrator = {
+    reconcileOrder: jest.fn().mockResolvedValue(undefined),
+  };
 
   const trx = {
     raw: jest.fn(),
@@ -47,9 +53,18 @@ function createMockStrapi() {
         if (uid === "api::order.order") return orderQuery;
         if (uid === "api::contract.contract") return contractQuery;
         if (uid === "api::order-log.order-log") return orderLogQuery;
+        if (uid === "api::payment-attempt.payment-attempt") {
+          return paymentAttemptQuery;
+        }
         throw new Error(`Unexpected uid: ${uid}`);
       }),
     },
+    service: jest.fn((uid: string) => {
+      if (uid === "api::payment-gateway.snappay-orchestrator") {
+        return snappayOrchestrator;
+      }
+      throw new Error(`Unexpected service uid: ${uid}`);
+    }),
     metrics: {
       increment: jest.fn(),
     },
@@ -60,6 +75,8 @@ function createMockStrapi() {
     orderQuery,
     contractQuery,
     orderLogQuery,
+    paymentAttemptQuery,
+    snappayOrchestrator,
   };
 }
 
@@ -163,6 +180,173 @@ describe("expiry jobs", () => {
     expect(orderLogQuery.create).not.toHaveBeenCalled();
   });
 
+  it("defers expiry and reconciles an active SnappPay attempt", async () => {
+    const {
+      strapi,
+      orderQuery,
+      paymentAttemptQuery,
+      snappayOrchestrator,
+    } = createMockStrapi();
+    strapi.entityService.findMany.mockResolvedValue([{ id: 13 }]);
+    paymentAttemptQuery.findOne.mockResolvedValue({
+      id: 113,
+      attemptId: "snappay-attempt-13",
+      Status: "Unknown",
+    });
+    orderQuery.update.mockResolvedValue({ id: 13 });
+
+    const result = await runExpireStockReservationsTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+      graceSeconds: 0,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.stats.skipped).toBe(1);
+    expect(result.stats.processed).toBe(0);
+    expect(orderQuery.update).toHaveBeenCalledWith({
+      where: {
+        id: 13,
+        Status: "Paying",
+        ReservationStatus: "Reserved",
+      },
+      data: {
+        ReservedUntil: new Date("2026-05-30T12:05:00.000Z"),
+      },
+    });
+    expect(snappayOrchestrator.reconcileOrder).toHaveBeenCalledWith(
+      13,
+      "reservation_expiry",
+    );
+    expect(mockedReleaseOrderReservation).not.toHaveBeenCalled();
+  });
+
+  // Regression: markManualReview parks an exhausted attempt as Status "Unknown"
+  // with nextActionAt null. "Unknown" is inside the deferral set, so keying the
+  // deferral on Status alone extended ReservedUntil every minute forever while
+  // nothing could ever resolve it — the reserved units left sellable inventory
+  // permanently, with the operator locked out by a 409.
+  it("releases the reservation for a SnappPay attempt parked for manual review", async () => {
+    const {
+      strapi,
+      orderQuery,
+      contractQuery,
+      orderLogQuery,
+      paymentAttemptQuery,
+      snappayOrchestrator,
+    } = createMockStrapi();
+    strapi.entityService.findMany.mockResolvedValue([{ id: 14 }]);
+    paymentAttemptQuery.findOne.mockResolvedValue({
+      id: 114,
+      attemptId: "snappay-attempt-14",
+      Status: "Unknown",
+      nextAction: "manual_review",
+      nextActionAt: null,
+      createdAt: new Date("2026-05-30T11:00:00.000Z"),
+    });
+    orderQuery.findOne.mockResolvedValue({ id: 14, contract: { id: 56 } });
+    strapi.db.transaction.mockImplementationOnce(async (callback: any) => {
+      const trx = { raw: jest.fn().mockResolvedValue({ rows: [{ id: 14 }] }) };
+      return callback({ trx });
+    });
+    contractQuery.update.mockResolvedValue({ id: 56 });
+    orderLogQuery.create.mockResolvedValue({ id: 2 });
+    mockedReleaseOrderReservation.mockResolvedValue({ success: true });
+
+    const result = await runExpireStockReservationsTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+      graceSeconds: 0,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.stats.processed).toBe(1);
+    expect(result.stats.skipped).toBe(0);
+    expect(mockedReleaseOrderReservation).toHaveBeenCalled();
+    // The reservation must not be pushed forward again.
+    expect(orderQuery.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ ReservedUntil: expect.anything() }),
+      }),
+    );
+    expect(snappayOrchestrator.reconcileOrder).not.toHaveBeenCalled();
+    expect(strapi.log.error).toHaveBeenCalledWith(
+      "Releasing stock reservation for an unresolved SnappPay payment",
+      expect.objectContaining({ reason: "parked_for_manual_review" }),
+    );
+  });
+
+  it("releases the reservation once an unresolved SnappPay attempt outlives the defer ceiling", async () => {
+    const {
+      strapi,
+      orderQuery,
+      contractQuery,
+      orderLogQuery,
+      paymentAttemptQuery,
+      snappayOrchestrator,
+    } = createMockStrapi();
+    process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS = "48";
+    strapi.entityService.findMany.mockResolvedValue([{ id: 15 }]);
+    paymentAttemptQuery.findOne.mockResolvedValue({
+      id: 115,
+      attemptId: "snappay-attempt-15",
+      Status: "Redirected",
+      nextAction: "await_callback",
+      nextActionAt: null,
+      // 49h old — past the ceiling.
+      createdAt: new Date("2026-05-28T11:00:00.000Z"),
+    });
+    orderQuery.findOne.mockResolvedValue({ id: 15, contract: { id: 57 } });
+    strapi.db.transaction.mockImplementationOnce(async (callback: any) => {
+      const trx = { raw: jest.fn().mockResolvedValue({ rows: [{ id: 15 }] }) };
+      return callback({ trx });
+    });
+    contractQuery.update.mockResolvedValue({ id: 57 });
+    orderLogQuery.create.mockResolvedValue({ id: 3 });
+    mockedReleaseOrderReservation.mockResolvedValue({ success: true });
+
+    const result = await runExpireStockReservationsTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+      graceSeconds: 0,
+    });
+
+    expect(result.stats.processed).toBe(1);
+    expect(mockedReleaseOrderReservation).toHaveBeenCalled();
+    expect(snappayOrchestrator.reconcileOrder).not.toHaveBeenCalled();
+    expect(strapi.log.error).toHaveBeenCalledWith(
+      "Releasing stock reservation for an unresolved SnappPay payment",
+      expect.objectContaining({ reason: "defer_ceiling_exceeded" }),
+    );
+  });
+
+  it("keeps deferring while the customer is still on the SnappPay payment page", async () => {
+    const { strapi, orderQuery, paymentAttemptQuery, snappayOrchestrator } =
+      createMockStrapi();
+    strapi.entityService.findMany.mockResolvedValue([{ id: 16 }]);
+    // await_callback carries a null nextActionAt, so the deferral must not key
+    // on nextActionAt being set — that would release stock mid-payment.
+    paymentAttemptQuery.findOne.mockResolvedValue({
+      id: 116,
+      attemptId: "snappay-attempt-16",
+      Status: "Redirected",
+      nextAction: "await_callback",
+      nextActionAt: null,
+      createdAt: new Date("2026-05-30T11:58:00.000Z"),
+    });
+    orderQuery.update.mockResolvedValue({ id: 16 });
+
+    const result = await runExpireStockReservationsTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+      graceSeconds: 0,
+    });
+
+    expect(result.stats.skipped).toBe(1);
+    expect(result.stats.processed).toBe(0);
+    expect(mockedReleaseOrderReservation).not.toHaveBeenCalled();
+    expect(snappayOrchestrator.reconcileOrder).toHaveBeenCalledWith(
+      16,
+      "reservation_expiry",
+    );
+  });
+
   it("skips overlapping stock-expiry runs in the same process", async () => {
     const { strapi } = createMockStrapi();
     let resolveFindMany: (value: unknown[]) => void = () => undefined;
@@ -190,19 +374,23 @@ describe("expiry jobs", () => {
     await first;
   });
 
-  it("skips work when another instance owns the distributed lock", async () => {
+  it("does not use the legacy DB lock for stock-expiry runs", async () => {
     process.env.DATABASE_CLIENT = "postgres";
     const { strapi } = createMockStrapi();
-    strapi.db.connection.raw.mockResolvedValueOnce({ rows: [] });
+    strapi.entityService.findMany.mockResolvedValue([]);
 
     const result = await runExpireStockReservationsTick(strapi, {
       now: new Date("2026-05-30T12:00:00.000Z"),
       graceSeconds: 0,
     });
 
-    expect(result.status).toBe("skipped");
-    expect(result.status === "skipped" ? result.skippedReason : undefined).toBe("distributed_lock");
-    expect(strapi.entityService.findMany).not.toHaveBeenCalled();
+    expect(result.status).toBe("completed");
+    const rawArgs = strapi.db.connection.raw.mock.calls.flat();
+    expect(
+      rawArgs.some(
+        (argument) => typeof argument === "string" && argument.includes("background_job_locks")
+      )
+    ).toBe(false);
   });
 
   it("releases the in-process guard after DB errors", async () => {

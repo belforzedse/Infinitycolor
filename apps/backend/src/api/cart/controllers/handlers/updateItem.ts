@@ -1,5 +1,6 @@
 import { Strapi } from "@strapi/strapi";
 import { resolveCustomerTargetUserId } from "../../../../utils/roles";
+import { getAvailableStockCount } from "../../services/lib/stock";
 
 export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
   const { cartItemId, count } = ctx.request.body;
@@ -44,7 +45,10 @@ export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
       );
     }
 
-    if (cartItem.product_variation?.product_stock?.Count < count) {
+    const available = cartItem.product_variation?.product_stock
+      ? getAvailableStockCount(cartItem.product_variation.product_stock)
+      : 0;
+    if (available < count) {
       return ctx.badRequest("Not enough stock", {
         data: { success: false, error: "Not enough stock" },
       });

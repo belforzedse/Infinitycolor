@@ -37,6 +37,15 @@ export async function selectZarinpalGateway(page: Page) {
   await expect(zarinpal).toHaveAttribute("data-selected", "true");
 }
 
+/** Select the seeded wallet gateway and verify the balance makes it payable. */
+export async function selectWalletGateway(page: Page) {
+  const wallet = page.getByTestId("payment-gateway-wallet");
+  await expect(wallet).toBeVisible({ timeout: 15_000 });
+  await expect(wallet).toHaveAttribute("data-disabled", "false");
+  await wallet.click();
+  await expect(wallet).toHaveAttribute("data-selected", "true");
+}
+
 /**
  * Fill the authenticated checkout form to a payable state (address + shipping +
  * Zarinpal) without submitting. Name/phone are pre-filled from the seeded user.
@@ -47,4 +56,14 @@ export async function fillCheckoutWithZarinpal(page: Page) {
   await selectSeededAddress(page);
   await selectFirstShipping(page);
   await selectZarinpalGateway(page);
+}
+
+
+/** Fill the authenticated checkout form with the real seeded wallet gateway. */
+export async function fillCheckoutWithWallet(page: Page) {
+  await expect(page.getByTestId("checkout-auth-gate")).toHaveCount(0);
+  await expect(page.getByTestId("checkout-submit")).toBeVisible({ timeout: 30_000 });
+  await selectSeededAddress(page);
+  await selectFirstShipping(page);
+  await selectWalletGateway(page);
 }

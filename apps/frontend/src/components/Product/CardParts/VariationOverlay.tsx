@@ -22,7 +22,10 @@ export const VariationOverlay: FC<VariationOverlayProps> = ({
   title,
 }) => {
   return (
-    <div className="absolute inset-x-0 -bottom-4 z-10 hidden translate-y-full px-3 py-4 backdrop-blur-md transition-transform duration-500 ease-out md:block md:group-hover:translate-y-0 md:group-focus-within:translate-y-0">
+    <div
+      className="product-card-variation-overlay absolute inset-x-0 -bottom-4 z-10 hidden translate-y-full px-3 py-4 transition-transform duration-500 ease-out md:block md:group-focus-within:translate-y-0 md:group-hover:translate-y-0"
+      data-testid="product-card-variation-overlay"
+    >
       <div className="mb-3 flex items-center justify-between gap-2">
         <span className="text-[10px] text-infinity-primary">
           موجود در {faNum(colorsCount || validImagesCount)} رنگ بندی متفاوت!

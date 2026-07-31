@@ -226,4 +226,47 @@ describe("ZarinPal payment gateway service", () => {
       }),
     );
   });
+
+  it.each([
+    ["network failure", { message: "socket timeout" }],
+    ["provider outage", { message: "upstream unavailable", response: { status: 503 } }],
+    ["provider throttling", { message: "retry later", response: { status: 429 } }],
+  ])("marks %s during verification as ambiguous", async (_label, gatewayError) => {
+    process.env.URL = "https://api.infinitycolor.co";
+    process.env.ZARINPAL_MERCHANT_ID = "merchant-123";
+    mockVerify.mockRejectedValueOnce(gatewayError);
+    const { service } = createService();
+
+    await expect(
+      service.verifyPayment({ authority: "AUTH-UNKNOWN", amountToman: 10_000 }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        success: false,
+        ambiguous: true,
+      }),
+    );
+  });
+
+  it("keeps a provider-declared 4xx verification rejection definitive", async () => {
+    process.env.URL = "https://api.infinitycolor.co";
+    process.env.ZARINPAL_MERCHANT_ID = "merchant-123";
+    mockVerify.mockRejectedValueOnce({
+      message: "Authority invalid",
+      response: {
+        status: 400,
+        data: { data: { code: -51 } },
+      },
+    });
+    const { service } = createService();
+
+    await expect(
+      service.verifyPayment({ authority: "AUTH-BAD", amountToman: 10_000 }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        success: false,
+        ambiguous: false,
+        code: -51,
+      }),
+    );
+  });
 });

@@ -2,18 +2,6 @@
   "name": "infinitycolor-monorepo",
   "private": true,
   "packageManager": "pnpm@10.28.2",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@strapi/strapi",
-      "@swc/core",
-      "core-js-pure",
-      "esbuild",
-      "sharp"
-    ],
-    "overrides": {
-      "sharp": "0.34.5"
-    }
-  },
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",

@@ -4,29 +4,23 @@ import Image from "next/image";
 import imageLoader from "@/utils/imageLoader";
 import pdpImageLoader from "@/utils/pdpImageLoader";
 import NavigationButtons from "../../NavigationButtons";
-import {
-  useEffect,
-  useRef,
-  useState,
-  type MouseEvent,
-  type TouchEvent,
-  type WheelEvent,
-} from "react";
+import { useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
 import { useDrag } from "@use-gesture/react";
 import { hapticNavigation } from "@/utils/haptics";
-import { useInView } from "react-intersection-observer";
+import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
 
 type Props = {
   type: "video" | "image";
   src: string;
   thumb?: string;
   alt?: string;
+  priority?: boolean;
   goToNextImage: () => void;
   goToPreviousImage: () => void;
 };
 
 export default function PDPHeroGallerySingleImage(props: Props) {
-  const { type, src, thumb, alt, goToNextImage, goToPreviousImage } = props;
+  const { type, src, thumb, alt, priority = false, goToNextImage, goToPreviousImage } = props;
   const [isLoading, setIsLoading] = useState(true);
   const [broken, setBroken] = useState(false);
   const [zoomScale, setZoomScale] = useState(1);
@@ -42,7 +36,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   });
   const [zoomHintVisible, setZoomHintVisible] = useState(false);
   const hintTimerRef = useRef<number | null>(null);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const quality = useAdaptiveQuality();
   const lastTapRef = useRef<number>(0);
   const pinchState = useRef<{ active: boolean; startDistance: number; startScale: number }>({
     active: false,
@@ -50,19 +44,17 @@ export default function PDPHeroGallerySingleImage(props: Props) {
     startScale: 1,
   });
 
-  // Use intersection observer for video lazy loading
-  const { ref: videoIntersectionRef, inView } = useInView({
-    threshold: 0.1,
-    triggerOnce: true,
-  });
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [videoRequested, setVideoRequested] = useState(false);
+  const [videoInView, setVideoInView] = useState(false);
+  const allowsZoom = type !== "video";
+  const shouldAttachVideoSource = videoRequested || (quality.media !== "economy" && videoInView);
 
   const isDesktopZoom = () => {
     if (typeof window === "undefined") return false;
     return window.innerWidth >= 1024;
   };
-
 
   const clampScale = (value: number) => Math.min(Math.max(1, value), 2.75);
   const clampTranslate = (value: number, max: number) => Math.max(Math.min(value, max), -max);
@@ -95,7 +87,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const showHint = () => {
-    if (!isDesktopZoom() || type === "video") return;
+    if (!allowsZoom || !isDesktopZoom()) return;
     setZoomHintVisible(true);
     scheduleHintHide();
   };
@@ -109,7 +101,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
-    if (type === "video" || !isDesktopZoom()) return;
+    if (!allowsZoom || !isDesktopZoom()) return;
     const direction = Math.sign(event.deltaY) || 1;
     const zoomDelta = direction > 0 ? -0.12 : 0.12;
     const next = clampScale(zoomScale + zoomDelta);
@@ -135,7 +127,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleMouseMove = (event: MouseEvent<HTMLDivElement>) => {
-    if (type === "video") return;
+    if (!allowsZoom) return;
 
     if (dragState.current.active) {
       const limits = getTranslateLimits();
@@ -152,7 +144,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleMouseDown = (event: MouseEvent<HTMLDivElement>) => {
-    if (type === "video" || zoomScale <= 1) return;
+    if (!allowsZoom || zoomScale <= 1) return;
     dragState.current = {
       active: true,
       startX: event.clientX,
@@ -184,20 +176,6 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-      setPrefersReducedMotion(mq.matches);
-      const handler = (event: MediaQueryListEvent) => setPrefersReducedMotion(event.matches);
-      if (mq.addEventListener) mq.addEventListener("change", handler);
-      else mq.addListener(handler);
-      return () => {
-        if (mq.removeEventListener) mq.removeEventListener("change", handler);
-        else mq.removeListener(handler);
-      };
-    }
-  }, []);
-
-  useEffect(() => {
     return () => {
       if (hintTimerRef.current) {
         window.clearTimeout(hintTimerRef.current);
@@ -216,10 +194,34 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   }, []);
 
   useEffect(() => {
-    setIsLoading(true);
-    setBroken(false);
-  }, [src, type]);
+    if (
+      type !== "video" ||
+      quality.media === "economy" ||
+      !videoRef.current ||
+      typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
 
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVideoInView(true);
+        observer.disconnect();
+      },
+      { rootMargin: "160px", threshold: 0.1 },
+    );
+    observer.observe(videoRef.current);
+    return () => observer.disconnect();
+  }, [quality.media, src, type]);
+
+  useEffect(() => {
+    if (!videoRequested || !videoRef.current) return;
+    noteEnhancementLoaded("optional-video");
+    void videoRef.current.play().catch(() => {
+      // The native controls remain available when autoplay policies reject play().
+    });
+  }, [videoRequested]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -261,7 +263,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
     {
       axis: "x",
       threshold: 10,
-      preventDefault: true,
+      preventDefault: false,
     },
   );
 
@@ -273,7 +275,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (prefersReducedMotion) return;
+    if (!allowsZoom) return;
     if (event.touches.length === 2) {
       pinchState.current = {
         active: true,
@@ -284,7 +286,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   };
 
   const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (prefersReducedMotion) return;
+    if (!allowsZoom) return;
     if (pinchState.current.active && event.touches.length === 2) {
       const newDistance = distanceBetweenTouches(event.touches);
       const scaleFactor = newDistance / pinchState.current.startDistance;
@@ -307,7 +309,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
       pinchState.current.active = false;
     }
 
-    if (prefersReducedMotion) return;
+    if (!allowsZoom) return;
 
     // Double-tap to toggle zoom on mobile
     if (event.touches.length === 0 && event.changedTouches.length === 1 && !isDesktopZoom()) {
@@ -330,7 +332,10 @@ export default function PDPHeroGallerySingleImage(props: Props) {
     <div className="w-full flex-1 xl:self-start">
       <div
         ref={containerRef}
-        className="relative aspect-[4/5] w-full overflow-hidden rounded-3xl xl:max-h-[calc(100vh-var(--header-offset,88px)-1rem)]"
+        className="relative aspect-[4/5] w-full touch-pan-y overflow-hidden rounded-3xl xl:max-h-[calc(100vh-var(--header-offset,88px)-1rem)]"
+        data-aq-pdp-gallery-media={type}
+        data-aq-pdp-zoom={allowsZoom ? "available" : "unavailable"}
+        style={{ touchAction: "pan-y pinch-zoom" }}
         onWheel={handleWheel}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
@@ -351,36 +356,44 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                   src={thumb}
                   alt={alt || "Video thumbnail"}
                   fill
-                  className="object-contain transition-opacity duration-500"
+                  className={`object-contain ${
+                    quality.motion === "minimal"
+                      ? "transition-none"
+                      : "transition-opacity duration-500"
+                  }`}
                   loader={imageLoader}
                 />
-                <div className="absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-black/10 animate-pulse" />
+                <div
+                  className={`absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-black/10 ${
+                    quality.motion === "minimal" ? "" : "animate-pulse"
+                  }`}
+                />
               </div>
             )}
 
             {/* Video player with luxury styling */}
-            <div className="relative h-full w-full overflow-hidden rounded-3xl group/video-container">
+            <div className="group/video-container relative h-full w-full overflow-hidden rounded-3xl">
               <video
-                ref={(node) => {
-                  videoRef.current = node;
-                  if (node) {
-                    videoIntersectionRef(node);
-                  }
-                }}
+                ref={videoRef}
                 className={`h-full w-full object-contain ${
                   isLoading ? "opacity-0" : "opacity-100"
                 }`}
-                src={inView ? src : undefined}
+                src={shouldAttachVideoSource ? src : undefined}
                 controls
                 loop
                 playsInline
-                preload={inView ? "metadata" : "none"}
+                preload={
+                  shouldAttachVideoSource && quality.media !== "economy" ? "metadata" : "none"
+                }
                 onLoadedData={() => setIsLoading(false)}
                 onCanPlay={() => setIsLoading(false)}
                 onError={() => setIsLoading(false)}
-                onPlay={() => setIsVideoPlaying(true)}
+                onPlay={() => {
+                  setVideoRequested(true);
+                  setIsVideoPlaying(true);
+                }}
                 onPause={() => setIsVideoPlaying(false)}
-                poster={thumb || src}
+                poster={thumb || undefined}
               />
 
               {/* Luxury play overlay - functional play button */}
@@ -388,13 +401,22 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    videoRef.current?.play();
+                    if (!shouldAttachVideoSource) {
+                      setVideoRequested(true);
+                    } else {
+                      noteEnhancementLoaded("optional-video");
+                      void videoRef.current?.play();
+                    }
                   }}
-                  className="absolute inset-0 z-10 flex items-center justify-center pointer-events-auto opacity-0 transition-opacity duration-300 group-hover/video-container:opacity-100"
+                  className={`pointer-events-auto absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300 ${
+                    quality.media === "economy"
+                      ? "opacity-100"
+                      : "opacity-0 group-hover/video-container:opacity-100 focus-visible:opacity-100"
+                  }`}
                   aria-label="Play video"
                 >
                   <div className="group/video-play flex items-center justify-center">
-                    <div className="absolute h-20 w-20 rounded-full bg-white/95 backdrop-blur-md shadow-2xl ring-4 ring-infinity-primary-lighter/30 transition-all duration-300 group-hover/video-play:scale-110 group-hover/video-play:bg-white group-hover/video-play:ring-infinity-primary-light/50" />
+                    <div className="absolute h-20 w-20 rounded-full bg-white/95 shadow-2xl ring-4 ring-infinity-primary-lighter/30 backdrop-blur-md transition-all duration-300 group-hover/video-play:scale-110 group-hover/video-play:bg-white group-hover/video-play:ring-infinity-primary-light/50" />
                     <svg
                       className="relative left-1 h-10 w-10 text-infinity-primary transition-transform duration-300 group-hover/video-play:scale-110"
                       fill="currentColor"
@@ -410,47 +432,72 @@ export default function PDPHeroGallerySingleImage(props: Props) {
         ) : (
           <div className="absolute inset-0">
             <div
-              className="relative h-full w-full transition-transform duration-200 ease-out"
+              className={`relative h-full w-full ${
+                quality.motion === "minimal"
+                  ? "transition-none"
+                  : "transition-transform duration-200 ease-out"
+              }`}
               style={{
                 transform: `translate(${translate.x}px, ${translate.y}px)`,
               }}
             >
               <div
-                className="relative h-full w-full transition-transform duration-200 ease-out"
+                className={`relative h-full w-full ${
+                  quality.motion === "minimal"
+                    ? "transition-none"
+                    : "transition-transform duration-200 ease-out"
+                }`}
                 style={{
                   transform: `scale(${zoomScale})`,
                   transformOrigin,
                 }}
               >
                 {broken || !src ? (
-                  <div className="h-full w-full bg-gray-200 rounded-lg flex items-center justify-center">
-                    <svg className="w-24 h-24 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
+                  <div className="flex h-full w-full items-center justify-center rounded-lg bg-gray-200">
+                    <svg
+                      className="h-24 w-24 text-gray-400"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
+                        clipRule="evenodd"
+                      />
                     </svg>
                   </div>
                 ) : (
                   <>
                     <div
                       aria-hidden="true"
-                      className={`absolute inset-0 z-0 transition-opacity duration-300 ${
-                        isLoading ? "opacity-100" : "opacity-0"
-                      }`}
+                      data-aq-pdp-placeholder={quality.rendering === "safe" ? "static" : "blurred"}
+                      className={`absolute inset-0 z-0 ${
+                        quality.motion === "minimal"
+                          ? "transition-none"
+                          : "transition-opacity duration-300"
+                      } ${isLoading ? "opacity-100" : "opacity-0"}`}
                       style={
                         thumb
                           ? {
                               backgroundImage: `url(${thumb})`,
                               backgroundSize: "cover",
                               backgroundPosition: "center",
-                              filter: "blur(18px)",
-                              transform: "scale(1.05)",
+                              ...(quality.rendering === "safe"
+                                ? {}
+                                : {
+                                    filter: "blur(18px)",
+                                    transform: "scale(1.05)",
+                                  }),
                             }
                           : { backgroundColor: "#f3f4f6" }
                       }
                     />
                     <Image
-                      className={`h-full w-full object-contain transition-opacity duration-300 ${
-                        isLoading ? "opacity-0" : "opacity-100"
-                      }`}
+                      className={`h-full w-full object-contain ${
+                        quality.motion === "minimal"
+                          ? "transition-none"
+                          : "transition-opacity duration-300"
+                      } ${isLoading ? "opacity-0" : "opacity-100"}`}
                       src={src}
                       alt={alt || ""}
                       fill
@@ -462,7 +509,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                         setBroken(true);
                         setIsLoading(false);
                       }}
-                      priority={false}
+                      priority={priority}
                     />
                   </>
                 )}
@@ -480,7 +527,11 @@ export default function PDPHeroGallerySingleImage(props: Props) {
         {/* Luxury loading shimmer effect for videos */}
         {isLoading && thumb && type === "video" ? (
           <div
-            className="absolute inset-0 z-0 scale-110 blur-2xl transition-opacity duration-500"
+            className={`absolute inset-0 z-0 ${
+              quality.rendering === "safe" ? "" : "scale-110 blur-2xl"
+            } ${
+              quality.motion === "minimal" ? "transition-none" : "transition-opacity duration-500"
+            }`}
             style={{
               backgroundImage: `url(${thumb})`,
               backgroundSize: "cover",
@@ -492,8 +543,16 @@ export default function PDPHeroGallerySingleImage(props: Props) {
 
         {isLoading && !thumb && type === "video" ? (
           <div className="absolute inset-0 z-0 overflow-hidden rounded-3xl">
-            <div className="h-full w-full animate-pulse bg-gradient-to-br from-gray-100 via-infinity-primary-lighter/30 to-gray-100" />
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
+            <div
+              className={`h-full w-full bg-gradient-to-br from-gray-100 via-infinity-primary-lighter/30 to-gray-100 ${
+                quality.motion === "minimal" ? "" : "animate-pulse"
+              }`}
+            />
+            <div
+              className={`absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent ${
+                quality.motion === "minimal" ? "" : "animate-shimmer"
+              }`}
+            />
           </div>
         ) : null}
 

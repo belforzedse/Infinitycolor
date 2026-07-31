@@ -13,6 +13,8 @@ import { checkStockHandler } from "./handlers/checkStock";
 import { finalizeToOrderHandler } from "./handlers/finalizeToOrder";
 import { shippingPreviewHandler } from "./handlers/shippingPreview";
 import { shippingOptionsHandler } from "./handlers/shippingOptions";
+import { checkoutQuoteHandler } from "./handlers/checkoutQuote";
+import { mergeGuestCartHandler } from "./handlers/mergeGuestCart";
 
 export default factories.createCoreController(
   "api::cart.cart",
@@ -29,6 +31,10 @@ export default factories.createCoreController(
       return addItemHandler(strapi)(ctx);
     },
 
+    async mergeGuestCart(ctx) {
+      return mergeGuestCartHandler(strapi)(ctx);
+    },
+
     async updateItem(ctx) {
       return updateItemHandler(strapi)(ctx);
     },
@@ -43,6 +49,10 @@ export default factories.createCoreController(
 
     async finalizeToOrder(ctx) {
       return finalizeToOrderHandler(strapi)(ctx);
+    },
+
+    async checkoutQuote(ctx) {
+      return checkoutQuoteHandler(strapi)(ctx);
     },
 
     async shippingPreview(ctx) {

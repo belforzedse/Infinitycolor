@@ -93,13 +93,20 @@ describe('SnappPay Service - Real Implementation', () => {
       const result = await service.eligible(1_000_000);
 
       expect(result.successful).toBe(false);
-      expect(result.errorData?.message).toContain('Request failed');
-      expect(mockStrapi.log.error).toHaveBeenCalled();
+      expect(result.errorData?.message).toBe('SnappPay request failed');
+      expect(mockStrapi.log.warn).toHaveBeenCalledWith(
+        'SnappPay provider call failed',
+        expect.objectContaining({
+          endpoint: 'eligible',
+          httpStatus: 403,
+          providerCode: 403,
+        }),
+      );
     });
   });
 
   describe('requestPaymentToken', () => {
-    it('requests a payment token with normalized payload', async () => {
+    it('sends only the exact v2.1 token-request fields', async () => {
       mockAxiosInstance.post
         .mockResolvedValueOnce({
           data: { access_token: 'token-abc', expires_in: 3600 },
@@ -118,8 +125,9 @@ describe('SnappPay Service - Real Implementation', () => {
         amount: 5_000_000,
         discountAmount: 500_000,
         externalSourceAmount: 0,
-        mobile: '09123456789',
+        mobile: '+989123456789',
         paymentMethodTypeDto: 'INSTALLMENT',
+        unrecognizedField: 'must-not-leave-process',
         returnURL: 'https://example.com/callback',
         transactionId: 'ORDER-100',
         cartList: [
@@ -148,15 +156,21 @@ describe('SnappPay Service - Real Implementation', () => {
 
       expect(result.successful).toBe(true);
       expect(result.response?.paymentToken).toBe('payment-token-xyz');
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
-        '/api/online/payment/v1/token',
-        expect.objectContaining({
-          amount: 5_000_000,
-          mobile: '+989123456789',
-          transactionId: 'ORDER-100',
-        }),
-        expect.anything(),
+      const tokenCall = mockAxiosInstance.post.mock.calls.find(
+        ([path]: [string]) => path === '/api/online/payment/v1/token',
       );
+      expect(tokenCall?.[1]).toEqual({
+        amount: 5_000_000,
+        discountAmount: 500_000,
+        externalSourceAmount: 0,
+        mobile: '+989123456789',
+        returnURL: 'https://example.com/callback',
+        transactionId: 'ORDER-100',
+        cartList: payload.cartList,
+      });
+      expect(tokenCall?.[1]).not.toHaveProperty('paymentMethodTypeDto');
+      expect(tokenCall?.[1]).not.toHaveProperty('forcedPaymentMethodTypes');
+      expect(tokenCall?.[1]).not.toHaveProperty('unrecognizedField');
     });
 
     it('bubbles SnappPay error payloads', async () => {
@@ -176,7 +190,6 @@ describe('SnappPay Service - Real Implementation', () => {
         discountAmount: 0,
         externalSourceAmount: 0,
         mobile: '09121111111',
-        paymentMethodTypeDto: 'INSTALLMENT',
         returnURL: 'https://example.com/callback',
         transactionId: 'ORDER-200',
         cartList: [],
@@ -260,6 +273,41 @@ describe('SnappPay Service - Real Implementation', () => {
     });
   });
 
+  describe('update', () => {
+    it('sends only the exact v2.1 update fields', async () => {
+      mockAxiosInstance.post
+        .mockResolvedValueOnce({ data: { access_token: 'token', expires_in: 3600 } })
+        .mockResolvedValueOnce({
+          data: { successful: true, response: { status: 'SETTLE' } },
+        });
+      const payload = {
+        paymentToken: 'PT-UPDATE',
+        amount: 900_000,
+        discountAmount: 0,
+        externalSourceAmount: 0,
+        mobile: '+989121111111',
+        paymentMethodTypeDto: 'INSTALLMENT',
+        cartList: [],
+      };
+
+      const result = await service.update(payload as any);
+
+      expect(result.successful).toBe(true);
+      const updateCall = mockAxiosInstance.post.mock.calls.find(
+        ([path]: [string]) => path === '/api/online/payment/v1/update',
+      );
+      expect(updateCall?.[1]).toEqual({
+        paymentToken: 'PT-UPDATE',
+        amount: 900_000,
+        discountAmount: 0,
+        externalSourceAmount: 0,
+        cartList: [],
+      });
+      expect(updateCall?.[1]).not.toHaveProperty('mobile');
+      expect(updateCall?.[1]).not.toHaveProperty('paymentMethodTypeDto');
+    });
+  });
+
   describe('Error handling', () => {
     it('surfaces timeout errors in the response envelope', async () => {
       mockAxiosInstance.post.mockRejectedValueOnce({
@@ -269,7 +317,7 @@ describe('SnappPay Service - Real Implementation', () => {
 
       const result = await service.eligible(2_000_000);
       expect(result.successful).toBe(false);
-      expect(result.errorData?.message).toContain('timeout');
+      expect(result.errorData?.message).toBe('SnappPay request timed out');
     });
 
     it('uses the configured inert test endpoint from environment', async () => {

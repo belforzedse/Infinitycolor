@@ -7,7 +7,7 @@ import type { Option } from "@/components/Kits/Form/Select";
 import SaveIcon from "../Icons/SaveIcon";
 import UserService from "@/services/user";
 import type { MeResponse } from "@/services/user/me";
-import type { AddAddressRequest } from "@/services/user/addresses";
+import type { AddAddressRequest, UserAddress } from "@/services/user/addresses";
 import type { Province, City } from "@/services/location";
 import { getProvinces, getCities } from "@/services/location";
 import { toast } from "react-hot-toast";
@@ -21,9 +21,10 @@ interface Props {
   isOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   showButton?: boolean;
+  editingAddress?: UserAddress | null;
 }
 
-export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onOpenChange, showButton = true }: Props) {
+export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onOpenChange, showButton = true, editingAddress = null }: Props) {
   const [addresses, setAddresses] = useAtom(addressesAtom);
   const [internalIsOpen, setInternalIsOpen] = useState(false);
 
@@ -51,6 +52,21 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
   const [loadingCities, setLoadingCities] = useState(false);
   const [errorProvinces, setErrorProvinces] = useState<string | null>(null);
   const [errorCities, setErrorCities] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !editingAddress) return;
+    setSelectedProvince({
+      id: editingAddress.shipping_city.shipping_province.id,
+      name: editingAddress.shipping_city.shipping_province.Title,
+    });
+    setSelectedCity({
+      id: editingAddress.shipping_city.id,
+      name: editingAddress.shipping_city.Title,
+    });
+    setPostalCode(editingAddress.PostalCode || "");
+    setDetails(editingAddress.Description || "");
+    setFullAddress(editingAddress.FullAddress || "");
+  }, [isOpen, editingAddress]);
 
   // Fetch user info when the component mounts
   useEffect(() => {
@@ -150,14 +166,16 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
 
     try {
       setLoading(true);
-      const newAddress = await UserService.addresses.add(addressData);
+      const newAddress = editingAddress
+        ? await UserService.addresses.update(editingAddress.id, addressData)
+        : await UserService.addresses.add(addressData);
 
       // Verify the address has the required structure for the dropdown
       // If it doesn't have shipping_city.Title, we need to wait for the refetch
       const hasFullStructure = newAddress?.shipping_city?.Title &&
                                 newAddress?.shipping_city?.shipping_province?.Title;
 
-      if (hasFullStructure) {
+      if (hasFullStructure && !editingAddress) {
         // Optimistically update the atom immediately for instant UI update
         setAddresses([...addresses, newAddress]);
       }
@@ -165,7 +183,7 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
       // Invalidate API cache for addresses endpoint
       apiCache.clearByPattern(/local-user-addresses/);
 
-      toast.success("آدرس با موفقیت اضافه شد");
+      toast.success(editingAddress ? "آدرس با موفقیت ویرایش شد" : "آدرس با موفقیت اضافه شد");
 
       // Reset form fields
       setSelectedProvince(null);
@@ -210,7 +228,7 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
         <form onSubmit={handleSubmit} className="flex max-h-[80vh] flex-col gap-4 overflow-y-auto">
           <div className="grid flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
           <span className="text-foreground-primary text-lg mb-1 lg:text-2xl lg:col-span-2">
-            افزودن آدرس
+            {editingAddress ? "ویرایش آدرس" : "افزودن آدرس"}
           </span>
 
           {/* User Info Display */}
@@ -315,7 +333,7 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
             >
               <SaveIcon className="h-5 w-5" />
               <span className="text-base lg:text-sm">
-                {loading ? "در حال ذخیره..." : "ذخیره آدرس"}
+                {loading ? "در حال ذخیره..." : editingAddress ? "ثبت تغییرات" : "ذخیره آدرس"}
               </span>
             </button>
           </div>

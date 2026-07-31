@@ -61,7 +61,12 @@ export const createCtx = (overrides: Partial<any> = {}) => {
 
 export const createStrapiMock = () => {
   const serviceMap: Record<string, any> = {};
-  const queryMap: Record<string, any> = {};
+  const queryMap: Record<string, any> = {
+    "api::payment-attempt.payment-attempt": {
+      findOne: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockImplementation(async ({ data }: any) => data),
+    },
+  };
   const strapi: any = {
     log: {
       info: jest.fn(),

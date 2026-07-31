@@ -142,7 +142,7 @@ export default function SuperAdminOrderSummaryFooter({
         </div>
         {order.paymentToken ? (
           <div className="flex items-center gap-3">
-            <p className="text-sm text-slate-500">توکن پرداخت SnappPay</p>
+            <p className="text-sm text-slate-500">توکن پرداخت اسنپ پی</p>
             <div className="flex-1 h-[1px] border-t border-slate-300 border-dashed"></div>
             <p className="text-base font-mono text-foreground-primary ltr">
               {order.paymentToken}

@@ -23,12 +23,11 @@ import {
 } from "@/services/super-admin/settings/public";
 import HomeProductSections from "./HomeProductSections";
 import CategoryCarousel from "@/components/Categories/CategoryCarousel";
-import SiteGifBanner from "@/components/Home/SiteGifBanner";
+import AdaptiveSiteGifBanner from "@/components/Home/AdaptiveSiteGifBanner";
 import InfinitygramSection, {
   InfinitygramSectionSkeleton,
 } from "@/components/Home/InfinitygramSection";
 import { SkeletonBlock, SkeletonMedia, SkeletonText } from "@repo/ui/skeleton";
-import type { SuperAdminSettings } from "@/types/super-admin/settings";
 
 export const metadata: Metadata = {
   title: {
@@ -150,7 +149,7 @@ async function ProductSectionsBlock({
   homepageSettings,
   promoBanners,
 }: {
-  homepageSettings: SuperAdminSettings;
+  homepageSettings: Awaited<ReturnType<typeof getPublicSuperAdminSettings>>;
   promoBanners: HomePromoBanner[];
 }) {
   return <HomeProductSections homepageSettings={homepageSettings} promoBanners={promoBanners} />;
@@ -244,7 +243,7 @@ export default async function Home() {
         {/* JSON-LD Organization Schema for SEO */}
         <OrganizationSchema />
 
-        <SiteGifBanner
+        <AdaptiveSiteGifBanner
           enabled={homepageSettings.siteGifEnabled}
           imageUrl={homepageSettings.siteGifImage}
           linkHref={homepageSettings.siteGifLinkHref}

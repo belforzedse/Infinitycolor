@@ -2,6 +2,14 @@ import type { Strapi } from "@strapi/strapi";
 import { consumeOrderReservation, releaseOrderReservation } from "../../../../utils/stockReservations";
 import { decrementStockAtomic } from "../../../cart/services/lib/stock";
 import { trackOrderToMatomo } from "../../../report/services/matomo-tracker";
+import {
+  findOrderPaymentAttempt,
+  updatePaymentAttempt,
+} from "../../../payment-attempt/services/payment-attempt";
+import {
+  settleZarinPalPayment,
+  ZarinPalSettlementError,
+} from "./zarinpalSettlement";
 const getFrontendBaseUrl = () =>
   (process.env.FRONTEND_BASE_URL || process.env.FRONTEND_URL || "https://infinitycolor.co").replace(
     /\/$/,
@@ -14,6 +22,21 @@ const buildPaymentRedirectUrl = (
 ) => {
   const base = getFrontendBaseUrl();
   const url = new URL(`${base}/payment/${type}`);
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") return;
+      url.searchParams.set(key, String(value));
+    });
+  }
+  return url.toString();
+};
+
+const buildZarinPalPaymentRedirectUrl = (
+  type: "success" | "failure" | "cancelled" | "issue",
+  params?: Record<string, string | number | null | undefined>,
+) => {
+  const url = new URL(`${getFrontendBaseUrl()}/payment/result`);
+  url.searchParams.set("resultHint", type);
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
       if (value === undefined || value === null || value === "") return;
@@ -416,6 +439,98 @@ async function handleStockDecrementFailure(
   );
 }
 
+/**
+ * Records the settled Mellat transaction on the order's contract.
+ *
+ * Two things depend on this row existing:
+ *  - Product reports define a paid sale as `contract_transaction.Status='Success'`
+ *    (see `paidOrdersCte` in api/report/services/product-analytics.ts). Without a
+ *    row, Mellat sales are excluded from every report and Mellat is absent from
+ *    the gateway breakdown entirely.
+ *  - The callback idempotency check in `verifyPaymentHandler` looks for
+ *    `{ external_source: "Mellat", external_id: SaleReferenceId, Status: "Success" }`.
+ *    With no writer it could never match, so a replayed callback decremented stock
+ *    and consumed the discount a second time.
+ *
+ * Mirrors the SamanKish shape: find-or-create, then mark Success.
+ */
+async function recordMellatSettlement(
+  strapi: Strapi,
+  params: {
+    orderId: number;
+    contract: any;
+    saleReferenceId?: string | number;
+    refId?: string | number;
+  },
+): Promise<void> {
+  const { orderId, contract, saleReferenceId, refId } = params;
+  const contractId =
+    typeof contract === "object" && contract ? contract.id : contract;
+  if (!contractId) {
+    strapi.log.error("Cannot record Mellat settlement: order has no contract", {
+      orderId,
+    });
+    return;
+  }
+
+  const externalId = String(saleReferenceId ?? refId ?? "");
+  const trackId = String(refId ?? saleReferenceId ?? "");
+  const contractAmountIrr =
+    Math.round(Number(contract?.Amount ?? 0) as number) * 10;
+
+  try {
+    const existing = (await strapi.entityService.findMany(
+      "api::contract-transaction.contract-transaction",
+      {
+        filters: {
+          external_source: "Mellat",
+          external_id: externalId,
+        },
+        limit: 1,
+      },
+    )) as any[];
+
+    if (existing && existing.length > 0) {
+      await strapi.entityService.update(
+        "api::contract-transaction.contract-transaction",
+        existing[0].id,
+        {
+          data: {
+            Status: "Success",
+            TrackId: trackId,
+            Amount: contractAmountIrr || existing[0].Amount,
+          },
+        },
+      );
+      return;
+    }
+
+    await strapi.entityService.create(
+      "api::contract-transaction.contract-transaction",
+      {
+        data: {
+          Type: "Gateway",
+          Amount: contractAmountIrr,
+          DiscountAmount: 0,
+          Step: 1,
+          Status: "Success",
+          TrackId: trackId,
+          external_id: externalId,
+          external_source: "Mellat",
+          contract: contractId,
+          Date: new Date(),
+        },
+      },
+    );
+  } catch (err) {
+    strapi.log.error("Failed to record Mellat contract transaction", {
+      orderId,
+      externalId,
+      error: String((err as any)?.message || err).slice(0, 300),
+    });
+  }
+}
+
 export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
   // Mellat returns: ResCode, SaleOrderId, SaleReferenceId, RefId, OrderId
   const { ResCode, SaleOrderId, SaleReferenceId, RefId, OrderId } = (ctx.request as any).body || {};
@@ -459,46 +574,26 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
     q.mid;
 
   try {
-    // Log raw request payload and query for diagnostics
-    try {
-      strapi.log.info("Payment callback raw input");
-      strapi.log.info(
-        JSON.stringify(
-          {
-            method: (ctx.request as any).method,
-            ip: (ctx.request as any).ip,
-            query: (ctx.request as any).query,
-            body: (ctx.request as any).body,
-            headers: {
-              "content-type": (ctx.request as any).header["content-type"],
-              "user-agent": (ctx.request as any).header["user-agent"],
-              "x-forwarded-for": (ctx.request as any).header["x-forwarded-for"],
-            },
-            timestamp: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
-      );
-    } catch {}
+    const legacySnappayInput =
+      Boolean(transactionIdInput || paymentTokenInput) ||
+      (["OK", "FAILED"].includes(String(state || "").toUpperCase()) &&
+        (b.amount !== undefined || b.OrderId !== undefined) &&
+        !samanRefNumInput &&
+        !samanResNumInput);
+    if (legacySnappayInput) {
+      return ctx.badRequest("SnappPay callback endpoint has changed", {
+        data: {
+          success: false,
+          errorCode: "SNAPPAY_LEGACY_CALLBACK_DISABLED",
+        },
+      });
+    }
 
-    // Log all callback parameters for debugging
-    strapi.log.info("Payment callback received:", {
-      ResCode,
-      SaleOrderId,
-      SaleReferenceId,
-      RefId,
-      OrderId,
-      state,
-      paymentToken: paymentTokenInput,
-      transactionId: transactionIdInput,
-      zarinpalAuthority: zarinpalAuthorityInput,
-      zarinpalStatus: zarinpalStatusInput,
-      samanState: samanStateInput,
-      samanStatus: samanStatusInput,
-      samanRefNum: samanRefNumInput,
-      samanResNum: samanResNumInput,
-      timestamp: new Date().toISOString(),
+    strapi.log.info("Payment callback received", {
+      method: String((ctx.request as any).method || ""),
+      hasMellatReference: Boolean(SaleReferenceId || RefId),
+      hasSamanReference: Boolean(samanRefNumInput || samanResNumInput),
+      hasZarinpalAuthority: Boolean(zarinpalAuthorityInput),
     });
 
     const isZarinPalFlow =
@@ -520,7 +615,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           callbackStatus,
         });
         return ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
+          buildZarinPalPaymentRedirectUrl("failure", {
             error: "Missing ZarinPal authority",
           }),
         );
@@ -567,7 +662,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       if (!contractTransaction) {
         strapi.log.error("ZarinPal callback authority not found", { authority });
         return ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
+          buildZarinPalPaymentRedirectUrl("failure", {
             error: "ZarinPal transaction not found",
           }),
         );
@@ -591,7 +686,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           contractId,
         });
         return ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
+          buildZarinPalPaymentRedirectUrl("failure", {
             error: "Invalid ZarinPal order reference",
           }),
         );
@@ -603,7 +698,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           orderId,
           txId: contractTransaction.id,
         });
-        return ctx.redirect(buildPaymentRedirectUrl("success", { orderId }));
+        return ctx.redirect(buildZarinPalPaymentRedirectUrl("success", { orderId }));
       }
 
       const orderEntity = (await strapi.entityService.findOne("api::order.order", orderId, {
@@ -614,7 +709,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       if (!orderEntity) {
         strapi.log.error("ZarinPal order not found", { orderId, authority });
         return ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
+          buildZarinPalPaymentRedirectUrl("failure", {
             error: "ZarinPal order not found",
           }),
         );
@@ -686,8 +781,27 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           strapi.log.error("Failed to log ZarinPal failure", error);
         }
 
+        try {
+          const attempt: any = await findOrderPaymentAttempt(strapi, orderId);
+          if (attempt?.id) {
+            await updatePaymentAttempt(strapi, Number(attempt.id), {
+              Status: redirectType === "cancelled" ? "Cancelled" : "Failed",
+              failureCode:
+                redirectType === "cancelled"
+                  ? "ZARINPAL_CANCELLED"
+                  : "ZARINPAL_VERIFICATION_FAILED",
+              failureMessage: reason,
+              providerResponse: { callbackStatus, authority, reason },
+              lastReconciledAt: new Date(),
+              resolvedAt: new Date(),
+            });
+          }
+        } catch (error) {
+          strapi.log.error("Failed to update ZarinPal payment attempt", error);
+        }
+
         return ctx.redirect(
-          buildPaymentRedirectUrl(redirectType, {
+          buildZarinPalPaymentRedirectUrl(redirectType, {
             orderId,
             error: reason,
             reason: redirectType === "cancelled" ? "user-cancelled" : undefined,
@@ -706,6 +820,47 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       });
 
       if (!verificationResult?.success) {
+        if (verificationResult?.ambiguous) {
+          const reason =
+            verificationResult?.message ||
+            verificationResult?.error ||
+            "ZarinPal verification result is temporarily unknown";
+          try {
+            await strapi.entityService.update(
+              "api::contract-transaction.contract-transaction",
+              contractTransaction.id,
+              {
+                data: {
+                  GatewayAuthority: authority,
+                  GatewayStatus: "VERIFICATION_AMBIGUOUS",
+                  GatewayResponse: verificationResult.gatewayResponse,
+                } as any,
+              },
+            );
+            const attempt: any = await findOrderPaymentAttempt(strapi, orderId);
+            if (attempt?.id) {
+              await updatePaymentAttempt(strapi, Number(attempt.id), {
+                Status: "Unknown",
+                failureCode: "ZARINPAL_VERIFICATION_AMBIGUOUS",
+                failureMessage: reason,
+                providerResponse: verificationResult.gatewayResponse,
+                lastReconciledAt: new Date(),
+              });
+            }
+          } catch (error) {
+            strapi.log.error("Failed to persist ambiguous ZarinPal result", {
+              orderId,
+              authority,
+              error: (error as Error)?.message || error,
+            });
+          }
+          return ctx.redirect(
+            buildZarinPalPaymentRedirectUrl("issue", {
+              orderId,
+              code: "zarinpal_verification_ambiguous",
+            }),
+          );
+        }
         return markFailed(
           verificationResult?.message ||
             verificationResult?.error ||
@@ -713,95 +868,59 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         );
       }
 
-      const stockResult = await handlePostPaymentStock(strapi, orderId, "ZarinPal");
-      const stockErrors =
-        stockResult.errors && stockResult.errors.length > 0
-          ? stockResult.errors
-          : stockResult.success
-          ? []
-          : [
-              {
-                error: stockResult.expired
-                  ? "Reservation expired"
-                  : "Stock decrement failed",
-              },
-            ];
-
-      if (!stockResult.success || stockErrors.length > 0) {
+      let settlement: Awaited<ReturnType<typeof settleZarinPalPayment>>;
+      try {
+        settlement = await settleZarinPalPayment(strapi, {
+          orderId,
+          contractId,
+          contractTransactionId: Number(contractTransaction.id),
+          authority,
+          verification: verificationResult,
+        });
+      } catch (error) {
+        const settlementCode =
+          error instanceof ZarinPalSettlementError
+            ? error.code
+            : "ZARINPAL_FINALIZE_FAILED";
         try {
           await strapi.entityService.update(
             "api::contract-transaction.contract-transaction",
             contractTransaction.id,
             {
               data: {
-                GatewayStatus: "VERIFIED_STOCK_FAILED",
+                GatewayStatus: `VERIFIED_LOCAL_FAILURE:${settlementCode}`,
                 GatewayResponse: verificationResult.gatewayResponse,
               } as any,
             },
           );
         } catch {}
-        return handleStockDecrementFailure(strapi, ctx, {
-          orderId,
-          stockErrors,
-          refNum: verificationResult.refId || authority,
-          paymentMethod: "ZarinPal",
-          externalSource: "ZarinPal",
-          externalId: verificationResult.refId || authority,
-        });
-      }
-
-      const finalReference = verificationResult.refId || authority;
-      try {
-        await strapi.db.transaction(async ({ trx }) => {
-          await strapi.db.query("api::order.order").update({
-            where: { id: orderId },
-            data: {
-              Status: "Started",
-              external_source: "ZarinPal",
-              external_id: finalReference,
-            },
-            transacting: trx,
-          } as any);
-          await strapi.db.query("api::contract.contract").update({
-            where: { id: contractId },
-            data: {
-              Status: "Confirmed",
-              external_source: "ZarinPal",
-              external_id: finalReference,
-            },
-            transacting: trx,
-          } as any);
-          await strapi.db.query("api::contract-transaction.contract-transaction").update({
-            where: { id: contractTransaction.id },
-            data: {
-              Status: "Success",
-              TrackId: authority,
-              GatewayAuthority: authority,
-              GatewayRefId: verificationResult.refId,
-              GatewayStatus: verificationResult.alreadyVerified
-                ? "ALREADY_VERIFIED"
-                : "VERIFIED",
-              GatewayResponse: verificationResult.gatewayResponse,
-              VerifiedAt: new Date(),
-              external_id: finalReference,
-              external_source: "ZarinPal",
-            },
-            transacting: trx,
-          } as any);
-        });
-      } catch (error) {
-        strapi.log.error("Failed to finalize ZarinPal payment transaction", {
+        try {
+          const attempt: any = await findOrderPaymentAttempt(strapi, orderId);
+          if (attempt?.id) {
+            await updatePaymentAttempt(strapi, Number(attempt.id), {
+              Status: "Unknown",
+              failureCode: settlementCode,
+              failureMessage: (error as Error)?.message || settlementCode,
+              providerResponse: verificationResult.gatewayResponse,
+              lastReconciledAt: new Date(),
+            });
+          }
+        } catch {}
+        strapi.log.error("Failed to atomically finalize ZarinPal payment", {
           orderId,
           authority,
+          settlementCode,
           error: (error as Error)?.message || error,
         });
         return ctx.redirect(
-          buildPaymentRedirectUrl("issue", {
+          buildZarinPalPaymentRedirectUrl("issue", {
             orderId,
-            code: "zarinpal_finalize_failed",
+            code: settlementCode.toLowerCase(),
           }),
         );
       }
+
+      const finalReference = settlement.finalReference;
 
       if (orderEntity?.DiscountCode) {
         await incrementDiscountUsageCounter(strapi, orderEntity.DiscountCode, orderId);
@@ -829,7 +948,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       await clearCartAfterPayment(strapi, orderId);
 
       return ctx.redirect(
-        buildPaymentRedirectUrl("success", {
+        buildZarinPalPaymentRedirectUrl("success", {
           orderId,
           transactionId: finalReference,
         }),
@@ -1260,551 +1379,6 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       );
     }
 
-    // If this is a SnappPay flow (state provided or paymentToken present), follow SnappPay verify+settle
-    if (state || paymentTokenInput || transactionIdInput) {
-      // Resolve orderId and token using transactionId first (exact match), then fallback to paymentToken
-      let orderId: number | undefined = OrderId ? parseInt(OrderId, 10) : undefined;
-      let chosenTx: any | undefined;
-
-      try {
-        if (!orderId && transactionIdInput) {
-          const exactByTx = (await strapi.entityService.findMany(
-            "api::contract-transaction.contract-transaction",
-            {
-              filters: {
-                external_source: "SnappPay",
-                external_id: transactionIdInput,
-              },
-              populate: { contract: { populate: { order: true } } },
-              sort: { createdAt: "desc" },
-              limit: 1,
-            },
-          )) as any[];
-          if (exactByTx?.length) {
-            chosenTx = exactByTx[0];
-            const co = chosenTx?.contract?.order;
-            orderId = typeof co === "object" && co ? Number(co.id) : Number(co);
-          }
-        }
-
-        if (!orderId && paymentTokenInput) {
-          const byToken = (await strapi.entityService.findMany(
-            "api::contract-transaction.contract-transaction",
-            {
-              filters: {
-                external_source: "SnappPay",
-                TrackId: paymentTokenInput,
-              },
-              populate: { contract: { populate: { order: true } } },
-              sort: { createdAt: "desc" },
-              limit: 1,
-            },
-          )) as any[];
-          if (byToken?.length) {
-            chosenTx = byToken[0];
-            const co = chosenTx?.contract?.order;
-            orderId = typeof co === "object" && co ? Number(co.id) : Number(co);
-          }
-        }
-      } catch (e) {
-        strapi.log.error("Failed to resolve order from SnappPay transaction", e);
-      }
-
-      if (!orderId || isNaN(orderId)) {
-        return ctx.badRequest("Invalid order ID", {
-          data: {
-            success: false,
-            error: "Invalid order ID (SnappPay)",
-            debug: {
-              transactionId: transactionIdInput,
-              paymentToken: paymentTokenInput,
-            },
-          },
-        });
-      }
-
-      // SnappPay requires verify then settle using saved paymentToken (or from request)
-      const snappay = strapi.service("api::payment-gateway.snappay");
-      let tokenForOps = paymentTokenInput as string | undefined;
-      if (!tokenForOps && chosenTx?.TrackId) tokenForOps = chosenTx.TrackId;
-      if (!tokenForOps) {
-        // Fallback: lookup by orderId to fetch recent transaction
-        try {
-          const txForOrder = (await strapi.entityService.findMany(
-            "api::contract-transaction.contract-transaction",
-            {
-              filters: {
-                external_source: "SnappPay",
-                contract: { order: { id: orderId } },
-              },
-              sort: { createdAt: "desc" },
-              limit: 1,
-            },
-          )) as any[];
-          tokenForOps = txForOrder?.[0]?.TrackId;
-          if (!chosenTx && txForOrder?.length) chosenTx = txForOrder[0];
-        } catch {}
-      }
-
-      if (!tokenForOps) {
-        return ctx.badRequest("Missing payment token for SnappPay", {
-          data: { success: false, error: "Missing paymentToken" },
-        });
-      }
-
-      // Idempotency check: Check if this SnappPay callback has already been processed
-      const transactionIdForIdempotency = transactionIdInput || paymentTokenInput || tokenForOps;
-      if (transactionIdForIdempotency) {
-        try {
-          const existingTx = await strapi.entityService.findMany(
-            "api::contract-transaction.contract-transaction",
-            {
-              filters: {
-                external_source: "SnappPay",
-                external_id: String(transactionIdForIdempotency),
-                Status: "Success",
-              },
-              limit: 1,
-            },
-          );
-
-          if (existingTx && existingTx.length > 0) {
-            strapi.log.info(
-              `SnappPay callback already processed (idempotency check): transactionId=${transactionIdForIdempotency}, orderId=${orderId}`,
-              {
-                transactionId: String(transactionIdForIdempotency),
-                orderId,
-                existingTxId: existingTx[0].id,
-              },
-            );
-            // Redirect to success page - transaction already processed
-            return ctx.redirect(buildPaymentRedirectUrl("success", { orderId }));
-          }
-        } catch (idempotencyErr) {
-          strapi.log.error("Failed to check SnappPay callback idempotency", idempotencyErr);
-          // Continue processing if idempotency check fails
-        }
-      }
-
-      // Log resolved identifiers
-      try {
-        strapi.log.info("SnappPay callback identifiers", {
-          resolvedOrderId: orderId,
-          tokenForOps,
-          incomingPaymentToken: paymentTokenInput,
-          incomingTransactionId: transactionIdInput,
-          state,
-        });
-      } catch {}
-
-      // On callback, state OK => verify+settle; FAILED => revert
-      if (String(state || "OK").toUpperCase() !== "OK") {
-        const revertResult = await snappay.revert(tokenForOps);
-        await strapi.entityService.update("api::order.order", orderId, {
-          data: { Status: "Cancelled" },
-        });
-        try {
-          await releaseOrderReservation(strapi as any, Number(orderId), "Released");
-        } catch {}
-        try {
-          const orderForContract: any = await strapi.entityService.findOne("api::order.order", orderId, {
-            populate: { contract: true },
-          });
-          const contractId =
-            typeof orderForContract?.contract === "object" && orderForContract.contract
-              ? orderForContract.contract.id
-              : orderForContract?.contract;
-          if (contractId) {
-            await strapi.entityService.update("api::contract.contract", contractId, {
-              data: { Status: "Cancelled", external_source: "SnappPay" },
-            });
-          }
-        } catch {}
-        try {
-          await strapi.entityService.create("api::order-log.order-log", {
-            data: {
-              order: orderId,
-              Action: "Update",
-              Description: "SnappPay callback FAILED (revert)",
-              Changes: { state, transactionId: transactionIdInput },
-            },
-          });
-        } catch {}
-        return ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
-            orderId,
-            transactionId: transactionIdInput || "",
-          }),
-        );
-      }
-
-      // Check payment status before verify
-      const statusBeforeVerify = await snappay.status(tokenForOps);
-      try {
-        strapi.log.info("SnappPay status before verify", {
-          successful: statusBeforeVerify?.successful,
-          status: statusBeforeVerify?.response?.status,
-          transactionId: statusBeforeVerify?.response?.transactionId,
-          error: statusBeforeVerify?.errorData,
-        });
-      } catch {}
-
-      let verifyResult = await snappay.verify(tokenForOps);
-      try {
-        strapi.log.info("SnappPay verify result", {
-          successful: verifyResult?.successful,
-          error: verifyResult?.errorData,
-        });
-      } catch {}
-
-      let verified = !!verifyResult?.successful;
-      let statusAfterVerifyFail: any = null;
-      let retryVerifyResult: any = null;
-      let statusAfterRetry: any = null;
-
-      if (!verified) {
-        // SnapPay guidance: on verify failure/timeout, check status before deciding failure.
-        statusAfterVerifyFail = await snappay.status(tokenForOps);
-        const verifyFailStatus = String(
-          statusAfterVerifyFail?.response?.status || ""
-        ).toUpperCase();
-
-        try {
-          strapi.log.warn("SnappPay verify fallback status", {
-            successful: statusAfterVerifyFail?.successful,
-            status: statusAfterVerifyFail?.response?.status,
-            transactionId: statusAfterVerifyFail?.response?.transactionId,
-            error: statusAfterVerifyFail?.errorData,
-          });
-        } catch {}
-
-        if (verifyFailStatus === "VERIFY") {
-          verified = true;
-        } else if (
-          verifyFailStatus === "PENDING" ||
-          verifyFailStatus.endsWith("_PENDING")
-        ) {
-          retryVerifyResult = await snappay.verify(tokenForOps);
-          try {
-            strapi.log.info("SnappPay verify retry result", {
-              successful: retryVerifyResult?.successful,
-              error: retryVerifyResult?.errorData,
-            });
-          } catch {}
-
-          if (retryVerifyResult?.successful) {
-            verifyResult = retryVerifyResult;
-            verified = true;
-          } else {
-            statusAfterRetry = await snappay.status(tokenForOps);
-            const retryStatus = String(
-              statusAfterRetry?.response?.status || ""
-            ).toUpperCase();
-            try {
-              strapi.log.warn("SnappPay verify retry fallback status", {
-                successful: statusAfterRetry?.successful,
-                status: statusAfterRetry?.response?.status,
-                transactionId: statusAfterRetry?.response?.transactionId,
-                error: statusAfterRetry?.errorData,
-              });
-            } catch {}
-            if (retryStatus === "VERIFY") {
-              verified = true;
-            }
-          }
-        }
-      }
-
-      if (!verified) {
-        await strapi.entityService.update("api::order.order", orderId, {
-          data: { Status: "Cancelled" },
-        });
-        try {
-          await releaseOrderReservation(strapi as any, Number(orderId), "Released");
-        } catch {}
-        try {
-          await strapi.entityService.create("api::order-log.order-log", {
-            data: {
-              order: orderId,
-              Action: "Update",
-              Description: "SnappPay verify failed",
-              Changes: {
-                verifyResult,
-                statusAfterVerifyFail,
-                retryVerifyResult,
-                statusAfterRetry,
-              },
-            },
-          });
-        } catch {}
-        return ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
-            orderId,
-            transactionId: transactionIdInput || "",
-          }),
-        );
-      }
-
-      // If reservation expired, revert before settlement and inform the user
-      try {
-        const orderForReservation: any = await strapi.entityService.findOne(
-          "api::order.order",
-          orderId,
-          { fields: ["Status", "ReservationStatus", "ReservedUntil"], populate: { contract: true } } as any,
-        );
-
-        const reservationStatus = orderForReservation?.ReservationStatus;
-        if (reservationStatus && reservationStatus !== "Consumed") {
-          const until = orderForReservation?.ReservedUntil
-            ? new Date(orderForReservation.ReservedUntil)
-            : null;
-          const orderCancelled = String(orderForReservation?.Status) === "Cancelled";
-          const invalidReservation =
-            reservationStatus !== "Reserved" || orderCancelled || !until || until.getTime() < Date.now();
-
-          if (invalidReservation) {
-            try {
-              await releaseOrderReservation(strapi as any, Number(orderId), "Expired");
-            } catch {}
-            try {
-              await snappay.revert(tokenForOps);
-            } catch (revertErr) {
-              strapi.log.error(
-                "SnappPay revert attempt failed (invalid/expired reservation)",
-                revertErr,
-              );
-            }
-            try {
-              await strapi.entityService.update("api::order.order", orderId, {
-                data: { Status: "Cancelled" },
-              });
-            } catch {}
-            const contractId =
-              typeof orderForReservation?.contract === "object" && orderForReservation.contract
-                ? orderForReservation.contract.id
-                : orderForReservation?.contract;
-            if (contractId) {
-              try {
-                await strapi.entityService.update("api::contract.contract", contractId, {
-                  data: { Status: "Cancelled", external_source: "SnappPay" },
-                });
-              } catch {}
-            }
-
-            return ctx.redirect(
-              buildPaymentRedirectUrl("issue", {
-                orderId,
-                code: "reservation_expired_reversed",
-              }),
-            );
-          }
-        }
-      } catch (reservationErr) {
-        strapi.log.error("Failed to validate reservation before SnappPay settlement", reservationErr);
-      }
-
-      // Auto-settle SnappPay transaction (like Mellat)
-      const settleResult = await snappay.settle(tokenForOps);
-      try {
-        strapi.log.info("SnappPay settle result", {
-          successful: settleResult?.successful,
-          error: settleResult?.errorData,
-        });
-      } catch {}
-
-      const newlySettled = settleResult?.successful;
-      const alreadySettled =
-        newlySettled ||
-        settleResult?.errorData?.errorCode === 409 ||
-        /already\s+settled/i.test(
-          settleResult?.errorData?.message || settleResult?.errorData?.data || "",
-        );
-
-      // Retry settlement if it failed (not already settled)
-      const MAX_RETRIES = 2; // 2 retries = 3 total attempts
-      const RETRY_DELAY_MS = 30000; // 30 seconds as recommended by SnappPay
-      let retryCount = 0;
-      let finalSettleResult = settleResult;
-      let retrySettled = alreadySettled;
-      let retryNewlySettled = newlySettled;
-
-      if (!alreadySettled) {
-        while (retryCount < MAX_RETRIES) {
-          retryCount++;
-          strapi.log.warn(
-            `Settlement failed, retrying (${retryCount}/${MAX_RETRIES}) after ${RETRY_DELAY_MS}ms`,
-            {
-              orderId,
-              tokenForOps,
-              previousError: finalSettleResult?.errorData,
-            },
-          );
-
-          // Wait 30 seconds before retry
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-
-          // Retry settlement
-          finalSettleResult = await snappay.settle(tokenForOps);
-
-          try {
-            strapi.log.info(`SnappPay settle retry ${retryCount} result`, {
-              successful: finalSettleResult?.successful,
-              error: finalSettleResult?.errorData,
-            });
-          } catch {}
-
-          // Check if this retry succeeded or was already settled
-          retryNewlySettled = finalSettleResult?.successful;
-          retrySettled =
-            retryNewlySettled ||
-            finalSettleResult?.errorData?.errorCode === 409 ||
-            /already\s+settled/i.test(
-              finalSettleResult?.errorData?.message || finalSettleResult?.errorData?.data || "",
-            );
-
-          if (retrySettled) {
-            break; // Success! Exit retry loop
-          }
-        }
-
-        // If all retries failed, log for manual review
-        if (!retrySettled) {
-          strapi.log.error(
-            `Settlement failed after ${retryCount + 1} attempts. Manual review required.`,
-            {
-              orderId,
-              tokenForOps,
-              finalError: finalSettleResult?.errorData,
-            },
-          );
-
-          try {
-            await strapi.entityService.create("api::order-log.order-log", {
-              data: {
-                order: orderId,
-                Action: "Update",
-                Description: `SnappPay settlement failed after ${
-                  retryCount + 1
-                } attempts - MANUAL REVIEW REQUIRED`,
-                Changes: {
-                  totalAttempts: retryCount + 1,
-                  error: finalSettleResult?.errorData,
-                  transactionId: transactionIdInput,
-                },
-              },
-            });
-          } catch {}
-        }
-      }
-
-      // Check payment status after settle to confirm final state
-      const statusAfterSettle = await snappay.status(tokenForOps);
-      try {
-        strapi.log.info("SnappPay status after settle", {
-          successful: statusAfterSettle?.successful,
-          status: statusAfterSettle?.response?.status,
-          transactionId: statusAfterSettle?.response?.transactionId,
-          error: statusAfterSettle?.errorData,
-          retriesPerformed: retryCount,
-        });
-      } catch {}
-
-      // If newly settled (including after retries), decrement stock atomically
-      if (retryNewlySettled) {
-        const stockResult = await handlePostPaymentStock(strapi, orderId, "SnappPay");
-        const stockErrors =
-          stockResult.errors && stockResult.errors.length > 0
-            ? stockResult.errors
-            : stockResult.success
-            ? []
-            : [
-                {
-                  error: stockResult.expired
-                    ? "Reservation expired"
-                    : "Stock decrement failed",
-                },
-              ];
-
-        if (!stockResult.success || stockErrors.length > 0) {
-          const referenceId =
-            transactionIdInput ||
-            statusAfterSettle?.response?.transactionId ||
-            tokenForOps;
-          return handleStockDecrementFailure(strapi, ctx, {
-            orderId,
-            stockErrors,
-            refNum: referenceId,
-            paymentMethod: "SnappPay",
-            externalSource: "SnappPay",
-            externalId: referenceId,
-          });
-        }
-
-        // Barcode generation now only occurs when triggered manually from the admin panel.
-      }
-
-      await strapi.entityService.update("api::order.order", orderId, {
-        data: { Status: "Started" },
-      });
-
-      // Log payment success to user activity feed
-      try {
-        const order = await strapi.entityService.findOne("api::order.order", orderId, {
-          populate: { user: true, contract: true },
-        }) as any;
-        const userId = order?.user?.id ? Number(order.user.id) : null;
-        const amount = order?.contract?.Amount ? Number(order.contract.Amount) : order?.Total ? Number(order.Total) : 0;
-
-        if (userId) {
-          const activityService = strapi.service("api::user-activity.user-activity") as any;
-          if (activityService?.logPaymentSuccess) {
-            await activityService.logPaymentSuccess(userId, orderId, amount);
-          }
-        }
-      } catch (activityError) {
-        strapi.log.error("Failed to log payment success to user activity", {
-          orderId,
-          error: (activityError as Error).message,
-        });
-      }
-
-      // Increment discount usage counter if discount was applied
-      try {
-        const orderWithDiscount = await strapi.entityService.findOne("api::order.order", orderId);
-        if (orderWithDiscount?.DiscountCode) {
-          await incrementDiscountUsageCounter(strapi, orderWithDiscount.DiscountCode, orderId);
-        }
-      } catch (err) {
-        strapi.log.error("Failed to increment discount for SnappPay order", err);
-      }
-
-      try {
-        await strapi.entityService.create("api::order-log.order-log", {
-          data: {
-            order: orderId,
-            Action: "Update",
-            Description: retryNewlySettled
-              ? `SnappPay verify+settle succeeded${
-                  retryCount > 0 ? ` (after ${retryCount} retries)` : ""
-                }`
-              : "SnappPay verify succeeded (already settled)",
-            Changes: {
-              transactionId: transactionIdInput,
-              retries: retryCount,
-            },
-          },
-        });
-      } catch {}
-
-      await clearCartAfterPayment(strapi, orderId);
-
-      return ctx.redirect(
-        buildPaymentRedirectUrl("success", {
-          orderId,
-          transactionId: transactionIdInput || "",
-        }),
-      );
-    }
 
     // Check if payment was successful (ResCode = 0) - Mellat
     if (ResCode !== "0") {
@@ -2054,11 +1628,47 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           },
         });
 
+        const settledOrder = (await strapi.entityService.findOne(
+          "api::order.order",
+          orderId,
+          { populate: { contract: true } } as any,
+        )) as any;
+
+        // Record the settled transaction before anything that can fail, so a
+        // replayed callback is caught by the idempotency check above.
+        await recordMellatSettlement(strapi, {
+          orderId,
+          contract: settledOrder?.contract,
+          saleReferenceId: SaleReferenceId,
+          refId: RefId,
+        });
+
+        if (settledOrder?.contract) {
+          const settledContractId =
+            typeof settledOrder.contract === "object"
+              ? settledOrder.contract.id
+              : settledOrder.contract;
+          try {
+            await strapi.entityService.update(
+              "api::contract.contract",
+              settledContractId,
+              {
+                data: {
+                  Status: "Confirmed",
+                  external_source: "Mellat",
+                  external_id: String(SaleReferenceId ?? RefId ?? ""),
+                },
+              },
+            );
+          } catch (err) {
+            strapi.log.error("Failed to update contract for Mellat", err);
+          }
+        }
+
         // Increment discount usage counter if discount was applied
         try {
-          const orderWithDiscount = await strapi.entityService.findOne("api::order.order", orderId);
-          if (orderWithDiscount?.DiscountCode) {
-            await incrementDiscountUsageCounter(strapi, orderWithDiscount.DiscountCode, orderId);
+          if (settledOrder?.DiscountCode) {
+            await incrementDiscountUsageCounter(strapi, settledOrder.DiscountCode, orderId);
           }
         } catch (err) {
           strapi.log.error("Failed to increment discount for Mellat order", err);

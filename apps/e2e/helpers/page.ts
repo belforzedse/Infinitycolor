@@ -1,11 +1,12 @@
 import { expect, type Page } from "@playwright/test";
+import { installLocalMediaFixture } from "./local-media";
 
 const THIRD_PARTY_HOST_PATTERN =
   /(?:matomo|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)/i;
 
-function isThirdPartyRequest(url: string): boolean {
+function isThirdPartyRequest(url: string | URL): boolean {
   try {
-    const { hostname } = new URL(url);
+    const { hostname } = typeof url === "string" ? new URL(url) : url;
     if (hostname === "localhost" || hostname === "127.0.0.1") {
       return false;
     }
@@ -26,6 +27,7 @@ export type RuntimeErrorCollector = {
 export async function prepareStorefrontPage(page: Page): Promise<RuntimeErrorCollector> {
   const errors: string[] = [];
 
+  await installLocalMediaFixture(page);
   await page.route((url) => isThirdPartyRequest(url), (route) => route.abort());
 
   await page.addInitScript(() => {

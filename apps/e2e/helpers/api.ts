@@ -208,3 +208,44 @@ export async function getPaymentStatus(
   };
   return payload.data;
 }
+
+export async function getWalletBalance(
+  request: APIRequestContext,
+  role: E2EAuthRole = "customer",
+) {
+  const response = await apiGet(request, role, "/local-user-wallet/me");
+  await expectApiOk(response, `read ${role} wallet`);
+  const payload = (await response.json()) as {
+    success?: boolean;
+    data?: { balance?: number | string };
+  };
+  expect(payload.success, `${role} wallet response should be successful`).toBe(true);
+  return Number(payload.data?.balance ?? 0);
+}
+
+export async function getCustomerOrderDetail(
+  request: APIRequestContext,
+  orderId: number,
+  role: E2EAuthRole = "customer",
+) {
+  const response = await apiGet(request, role, `/orders/my-orders/${orderId}`);
+  await expectApiOk(response, `read customer order ${orderId}`);
+  const payload = (await response.json()) as {
+    data?: {
+      id?: number;
+      Status?: string;
+      order_items?: Array<{
+        ProductTitle?: string;
+        ProductSKU?: string;
+        PerAmount?: number | string;
+        Count?: number;
+      }>;
+      contract_transactions?: Array<{
+        Type?: string;
+        Status?: string;
+        external_source?: string | null;
+      }>;
+    };
+  };
+  return payload.data;
+}

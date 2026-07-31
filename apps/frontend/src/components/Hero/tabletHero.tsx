@@ -123,7 +123,7 @@ export default function TabletHero({ layout, slideKey = 0 }: Props) {
 
           {/* Hero banner square on the right */}
           <div
-            className="relative aspect-square overflow-hidden rounded-[20px] [backface-visibility:hidden] [transform:translateZ(0)] [will-change:transform]"
+            className="relative aspect-square overflow-hidden rounded-[20px] [backface-visibility:hidden] [transform:translateZ(0)]"
             dir="rtl"
           >
             <AnimatePresence mode="wait" initial={false}>
