@@ -98,7 +98,9 @@ const nextConfig = {
     process.env.NODE_ENV === "production"
       ? require.resolve("./cache-handler.mjs")
       : undefined,
-  cacheMaxMemorySize: 256 * 1024 * 1024, // 256MB in-memory cache per instance
+  // Force all replicas through the shared handler. A per-process L1 cache makes
+  // invalidation inconsistent and can leave the Redis handler unused.
+  cacheMaxMemorySize: 0,
 };
 module.exports = withSentryConfig(withBundleAnalyzer(nextConfig), {
   silent: !process.env.CI,
