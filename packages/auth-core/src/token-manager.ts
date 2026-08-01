@@ -5,6 +5,7 @@ export interface TokenManagerOptions {
   fetchImpl?: typeof fetch;
   refreshSkewSeconds?: number;
   now?: () => number;
+  isAvailable?: () => boolean;
 }
 
 export interface TokenManager {
@@ -49,6 +50,7 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
   const authOrigin = new URL(options.authOrigin).origin;
   const refreshSkewMs = (options.refreshSkewSeconds ?? 10) * 1_000;
   const now = options.now ?? Date.now;
+  const isAvailable = options.isAvailable ?? (() => true);
   let cached: CachedToken | null = null;
   let acquisition: Promise<string | null> | null = null;
   let generation = 0;
@@ -86,6 +88,7 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
   const getToken: TokenManager["getToken"] = async ({
     forceRefresh = false,
   } = {}) => {
+    if (!isAvailable()) return null;
     if (!forceRefresh && cached && cached.expiresAtMs - refreshSkewMs > now()) {
       return cached.value;
     }
@@ -107,7 +110,7 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
 
   return {
     getToken,
-    peek: () => cached?.value ?? null,
+    peek: () => (isAvailable() ? (cached?.value ?? null) : null),
     expire,
     clearForLogout,
     async authenticatedFetch(input, init = {}) {

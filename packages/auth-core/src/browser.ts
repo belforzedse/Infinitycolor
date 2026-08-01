@@ -96,7 +96,11 @@ export function createCentralAuthBrowserClient(
   };
 
   return {
-    tokenManager: createTokenManager({ authOrigin, fetchImpl }),
+    tokenManager: createTokenManager({
+      authOrigin,
+      fetchImpl,
+      isAvailable: () => typeof window !== "undefined",
+    }),
     phoneStatus: (phone: string) =>
       request<PhoneStatusResponse>("/api/auth/infinity/phone-status", {
         phone,

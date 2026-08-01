@@ -11,6 +11,7 @@ import {
   verifyBridgeSignature,
 } from "@repo/auth-core";
 import { createTokenManager } from "@repo/auth-core/token-manager";
+import { createCentralAuthBrowserClient } from "@repo/auth-core/browser";
 import { getAuthEnv, resetAuthEnvForTests } from "./server/env";
 import {
   sealFlowState,
@@ -119,6 +120,21 @@ test("token manager coalesces acquisition and discards a post-logout result", as
   assert.equal(await first, null);
   assert.equal(await second, null);
   assert.equal(manager.peek(), null);
+});
+
+test("browser auth client never acquires a token during server rendering", async () => {
+  let calls = 0;
+  const client = createCentralAuthBrowserClient({
+    authOrigin: "https://auth.infinitycolor.co",
+    fetchImpl: (async () => {
+      calls += 1;
+      return new Response(null, { status: 500 });
+    }) as typeof fetch,
+  });
+
+  assert.equal(await client.tokenManager.getToken(), null);
+  assert.equal(client.tokenManager.peek(), null);
+  assert.equal(calls, 0);
 });
 
 test("authenticated fetch retries one read but never retries a mutation", async () => {
