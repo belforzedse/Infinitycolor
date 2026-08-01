@@ -5,6 +5,7 @@ const originalEnv = {
   NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
   NEXT_PUBLIC_IMAGE_BASE_URL: process.env.NEXT_PUBLIC_IMAGE_BASE_URL,
   NEXT_PUBLIC_MATOMO_URL: process.env.NEXT_PUBLIC_MATOMO_URL,
+  NEXT_PUBLIC_AUTH_ORIGIN: process.env.NEXT_PUBLIC_AUTH_ORIGIN,
 };
 
 function restoreEnvValue(key: keyof typeof originalEnv) {
@@ -22,6 +23,7 @@ describe("securityHeaders", () => {
     process.env.NEXT_PUBLIC_API_BASE_URL = "https://api.infinitycolor.co/api";
     process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://api.infinitycolor.co";
     delete process.env.NEXT_PUBLIC_MATOMO_URL;
+    process.env.NEXT_PUBLIC_AUTH_ORIGIN = "https://auth.infinitycolor.co";
   });
 
   afterEach(() => {
@@ -29,6 +31,7 @@ describe("securityHeaders", () => {
     restoreEnvValue("NEXT_PUBLIC_API_BASE_URL");
     restoreEnvValue("NEXT_PUBLIC_IMAGE_BASE_URL");
     restoreEnvValue("NEXT_PUBLIC_MATOMO_URL");
+    restoreEnvValue("NEXT_PUBLIC_AUTH_ORIGIN");
   });
 
   it("builds the hardened baseline headers", () => {
@@ -53,6 +56,7 @@ describe("securityHeaders", () => {
     expect(csp).toContain("form-action 'self' https://www.zarinpal.com https://sandbox.zarinpal.com");
     expect(csp).toContain("https://api.infinitycolor.co");
     expect(csp).toContain("https://analytics.infinitycolor.co");
+    expect(csp).toContain("https://auth.infinitycolor.co");
     expect(csp).not.toContain("*");
     expect(csp).not.toMatch(/(^|[ ;])https:([ ;]|$)/);
     expect(csp).not.toMatch(/(^|[ ;])http:([ ;]|$)/);
