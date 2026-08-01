@@ -1,18 +1,23 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import type { ReturnGrantExchangeResponse } from "@repo/auth-core/contracts";
-import { authServerOrigin, validatedStorefrontReturnPath } from "@/lib/central-auth-server";
+import {
+  authServerOrigin,
+  storefrontUrl,
+  validatedStorefrontReturnPath,
+} from "@/lib/central-auth-server";
 
 const LOOP_COOKIE = "infinity_auth_restore_loop";
 
-function failure(request: NextRequest, reason: string) {
-  const url = new URL("/auth/complete", request.nextUrl.origin);
+function failure(reason: string) {
+  const url = storefrontUrl("/auth/complete");
   url.searchParams.set("error", reason);
   return NextResponse.redirect(url, 307);
 }
 
 export async function GET(request: NextRequest) {
   const grant = request.nextUrl.searchParams.get("grant") ?? "";
-  if (!/^[A-Za-z0-9_-]{40,80}$/.test(grant)) return failure(request, "invalid_grant");
+  if (!/^[A-Za-z0-9_-]{40,80}$/.test(grant)) return failure("invalid_grant");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5_000);
@@ -27,12 +32,11 @@ export async function GET(request: NextRequest) {
     const payload = (await response
       .json()
       .catch(() => ({}))) as Partial<ReturnGrantExchangeResponse>;
-    if (!response.ok || payload.authenticated !== true)
-      return failure(request, "grant_exchange_failed");
+    if (!response.ok || payload.authenticated !== true) return failure("grant_exchange_failed");
     const returnPath = validatedStorefrontReturnPath(payload.returnTo);
-    if (!returnPath) return failure(request, "invalid_return");
+    if (!returnPath) return failure("invalid_return");
 
-    const complete = new URL("/auth/complete", request.nextUrl.origin);
+    const complete = storefrontUrl("/auth/complete");
     complete.searchParams.set("returnTo", returnPath);
     const loop = Number(request.cookies.get(LOOP_COOKIE)?.value ?? "0");
     complete.searchParams.set(
@@ -46,7 +50,7 @@ export async function GET(request: NextRequest) {
     result.headers.set("Cache-Control", "no-store, max-age=0");
     return result;
   } catch {
-    return failure(request, "grant_exchange_unavailable");
+    return failure("grant_exchange_unavailable");
   } finally {
     clearTimeout(timeout);
   }

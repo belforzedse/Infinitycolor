@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { storefrontUrl } from "@/lib/central-auth-server";
 import { AUTH_ROUTE_HINT_COOKIE } from "@/utils/authRouteHint";
 
-export function GET(request: NextRequest) {
-  const target = new URL("/auth/logout-complete", request.nextUrl.origin);
+export function GET() {
+  const target = storefrontUrl("/auth/logout-complete");
   const response = NextResponse.redirect(target, 307);
   for (const name of [AUTH_ROUTE_HINT_COOKIE, "infinity_auth_restore_loop"]) {
     response.cookies.set(name, "", {

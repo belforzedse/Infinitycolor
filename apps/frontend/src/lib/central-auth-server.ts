@@ -20,6 +20,17 @@ export function storefrontOrigin(): string {
   return exactOrigin("NEXT_PUBLIC_SITE_URL", SITE_URL);
 }
 
+export function storefrontUrl(path: string): URL {
+  return new URL(path, storefrontOrigin());
+}
+
+export function isTrustedStorefrontRequest(
+  origin: string | null,
+  fetchSite: string | null,
+): boolean {
+  return (!origin || origin === storefrontOrigin()) && fetchSite !== "cross-site";
+}
+
 export function authServerOrigin(): string {
   const value = process.env.AUTH_SERVER_ORIGIN || process.env.NEXT_PUBLIC_AUTH_ORIGIN;
   if (!value) throw new Error("AUTH_SERVER_ORIGIN is required for central auth");
