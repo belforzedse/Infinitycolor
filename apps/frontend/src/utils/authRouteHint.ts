@@ -7,25 +7,16 @@ export const AUTH_ROUTE_HINT_COOKIE = "infinity_route_hint";
 export const AUTH_ROUTE_HINT_COOKIE_VALUE = "1";
 export const AUTH_ROUTE_HINT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
-function writeMarkerCookie(maxAge: number) {
-  if (typeof document === "undefined") return;
-
-  const secure =
-    typeof window !== "undefined" && window.location.protocol === "https:" ? "; Secure" : "";
-
-  document.cookie =
-    [
-      `${AUTH_ROUTE_HINT_COOKIE}=${AUTH_ROUTE_HINT_COOKIE_VALUE}`,
-      "Path=/",
-      `Max-Age=${maxAge}`,
-      "SameSite=Lax",
-    ].join("; ") + secure;
-}
-
+/** The authenticated callback is the only code allowed to set the HttpOnly hint. */
 export function setAuthRouteHint(): void {
-  writeMarkerCookie(AUTH_ROUTE_HINT_MAX_AGE_SECONDS);
+  // Intentionally empty. Browser JavaScript cannot author the HttpOnly route hint.
 }
 
 export function clearAuthRouteHint(): void {
-  writeMarkerCookie(0);
+  if (typeof window === "undefined") return;
+  void fetch("/api/auth/route-hint", {
+    method: "DELETE",
+    credentials: "same-origin",
+    cache: "no-store",
+  });
 }

@@ -1,6 +1,7 @@
 import AuthService from "@/services/auth";
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
+import { clearOtpToken, readOtpToken, rememberOtpToken } from "@/services/auth/otpChallenge";
 
 jest.mock("@/services", () => ({
   apiClient: {
@@ -13,12 +14,13 @@ describe("Authentication Flow Integration", () => {
 
   beforeEach(() => {
     mockPost.mockReset();
+    clearOtpToken();
     localStorage.clear();
     sessionStorage.clear();
   });
 
   describe("OTP authentication", () => {
-    it("completes send and verify using the stored OTP token", async () => {
+    it("completes send and verify using only the in-memory OTP token", async () => {
       mockPost
         .mockResolvedValueOnce({ otpToken: "otp-token-123" })
         .mockResolvedValueOnce({ token: "auth-token-456" });
@@ -27,7 +29,8 @@ describe("Authentication Flow Integration", () => {
       const verifyResponse = await AuthService.verifyOTP("123456");
 
       expect(otpResponse).toEqual({ otpToken: "otp-token-123" });
-      expect(sessionStorage.getItem("otpToken")).toBe("otp-token-123");
+      expect(readOtpToken()).toBeNull();
+      expect(sessionStorage.getItem("otpToken")).toBeNull();
       expect(verifyResponse).toEqual({ token: "auth-token-456" });
       expect(mockPost).toHaveBeenNthCalledWith(1, ENDPOINTS.AUTH.SEND_OTP, {
         phone: "+989123456789",
@@ -44,7 +47,7 @@ describe("Authentication Flow Integration", () => {
     });
 
     it("propagates OTP verification failures", async () => {
-      sessionStorage.setItem("otpToken", "otp-token-123");
+      rememberOtpToken("otp-token-123");
       const verifyError = new Error("Invalid OTP");
       mockPost.mockRejectedValueOnce(verifyError);
 
@@ -150,7 +153,7 @@ describe("Authentication Flow Integration", () => {
     });
 
     it("falls back to the stored OTP token during reset", async () => {
-      sessionStorage.setItem("otpToken", "stored-token");
+      rememberOtpToken("stored-token");
       mockPost.mockResolvedValueOnce({ success: true });
 
       await AuthService.resetPassword({

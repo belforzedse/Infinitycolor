@@ -17,7 +17,6 @@ export interface categoryResponseType {
 
 export const getAllCategories = async (): Promise<PaginatedResponse<categoryResponseType>> => {
   const endpoint = `${ENDPOINTS.PRODUCT.CATEGORY}`;
-  //const accessToken = localStorage.getItem("accessToken");
   try {
     // Use no-store cache for super-admin pages to ensure fresh data
     const response = await apiClient.get<PaginatedResponse<categoryResponseType>>(endpoint, {

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import LoginPageClient from "./LoginPageClient";
+import { redirectLegacyAuthPage } from "@/lib/central-auth-redirect";
 
 export const metadata: Metadata = {
   title: "ورود",
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/auth/login" },
 };
 
-export default function LoginPage() {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ redirect?: string }> }) {
+  redirectLegacyAuthPage(await searchParams);
   return <LoginPageClient />;
 }

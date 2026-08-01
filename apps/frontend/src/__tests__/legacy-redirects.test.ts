@@ -17,10 +17,7 @@ const {
   LEGACY_REDIRECT_STATUS,
   proxy,
 } = require("../proxy");
-const {
-  AUTH_ROUTE_HINT_COOKIE,
-  AUTH_ROUTE_HINT_COOKIE_VALUE,
-} = require("../utils/authRouteHint");
+const { AUTH_ROUTE_HINT_COOKIE, AUTH_ROUTE_HINT_COOKIE_VALUE } = require("../utils/authRouteHint");
 const { getSecurityHeaderEntries } = require("../utils/securityHeaders");
 const { legacyRedirects } = require("../../redirects");
 
@@ -185,6 +182,33 @@ describe("middleware authenticated route gate", () => {
     expect(response.url).toBeUndefined();
     expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
     expectSecurityHeaders(response.headers);
+  });
+
+  it("uses the public auth origin for browser redirects, not the server-only origin", async () => {
+    const previous = {
+      cutover: process.env.CENTRAL_AUTH_CUTOVER_ENABLED,
+      publicOrigin: process.env.NEXT_PUBLIC_AUTH_ORIGIN,
+      serverOrigin: process.env.AUTH_SERVER_ORIGIN,
+    };
+    process.env.CENTRAL_AUTH_CUTOVER_ENABLED = "true";
+    process.env.NEXT_PUBLIC_AUTH_ORIGIN = "https://auth.infinitycolor.co";
+    process.env.AUTH_SERVER_ORIGIN = "http://auth.internal:2889";
+    try {
+      const response = await proxy(mockRequest("/account?tab=profile"));
+
+      expect(response.status).toBe(AUTH_REDIRECT_STATUS);
+      expect(response.url.origin).toBe("https://auth.infinitycolor.co");
+      expect(response.url.searchParams.get("returnTo")).toBe(
+        "https://infinitycolor.co/account?tab=profile",
+      );
+    } finally {
+      if (previous.cutover === undefined) delete process.env.CENTRAL_AUTH_CUTOVER_ENABLED;
+      else process.env.CENTRAL_AUTH_CUTOVER_ENABLED = previous.cutover;
+      if (previous.publicOrigin === undefined) delete process.env.NEXT_PUBLIC_AUTH_ORIGIN;
+      else process.env.NEXT_PUBLIC_AUTH_ORIGIN = previous.publicOrigin;
+      if (previous.serverOrigin === undefined) delete process.env.AUTH_SERVER_ORIGIN;
+      else process.env.AUTH_SERVER_ORIGIN = previous.serverOrigin;
+    }
   });
 
   it.each([

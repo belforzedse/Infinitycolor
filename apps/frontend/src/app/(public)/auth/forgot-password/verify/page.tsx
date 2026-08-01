@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import ForgotPasswordVerifyPageClient from "./ForgotPasswordVerifyPageClient";
+import { redirectLegacyAuthPage } from "@/lib/central-auth-redirect";
 
 export const metadata: Metadata = {
   title: "تایید بازیابی رمز عبور",
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/auth/forgot-password/verify" },
 };
 
-export default function ForgotPasswordVerifyPage() {
+export default async function ForgotPasswordVerifyPage({ searchParams }: { searchParams: Promise<{ redirect?: string }> }) {
+  redirectLegacyAuthPage(await searchParams);
   return <ForgotPasswordVerifyPageClient />;
 }

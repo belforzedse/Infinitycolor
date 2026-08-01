@@ -1,26 +1,28 @@
 import { clearAccessToken, setAccessToken } from "../accessToken";
-import { AUTH_ROUTE_HINT_COOKIE, AUTH_ROUTE_HINT_COOKIE_VALUE } from "../authRouteHint";
 
-describe("storefront access token routing marker", () => {
+describe("storefront access token boundary", () => {
+  const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 204 });
+
   beforeEach(() => {
     localStorage.clear();
-    document.cookie = `${AUTH_ROUTE_HINT_COOKIE}=; Path=/; Max-Age=0`;
+    fetchMock.mockClear();
+    global.fetch = fetchMock;
   });
 
-  it("sets the non-secret route marker when a token is stored", () => {
-    setAccessToken("test-token");
-
-    expect(localStorage.getItem("accessToken")).toBe("test-token");
-    expect(document.cookie).toContain(
-      `${AUTH_ROUTE_HINT_COOKIE}=${AUTH_ROUTE_HINT_COOKIE_VALUE}`,
+  it("fails closed instead of persisting a reusable token", () => {
+    expect(() => setAccessToken("test-token")).toThrow(
+      "Reusable auth credentials may not be persisted",
     );
+    expect(localStorage.getItem("accessToken")).toBeNull();
   });
 
-  it("clears the route marker together with the token", () => {
-    setAccessToken("test-token");
+  it("invalidates in-memory auth state and asks the server to clear its HttpOnly hint", () => {
     clearAccessToken();
 
     expect(localStorage.getItem("accessToken")).toBeNull();
-    expect(document.cookie).not.toContain(`${AUTH_ROUTE_HINT_COOKIE}=`);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/route-hint",
+      expect.objectContaining({ method: "DELETE", credentials: "same-origin" }),
+    );
   });
 });

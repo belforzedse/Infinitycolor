@@ -7,7 +7,7 @@ import { CartService } from "@/services";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import notify from "@/utils/notify";
 import { cartRequestQueue } from "@/utils/requestQueue";
-import { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
+import { centralAuth, subscribeToAuthState } from "@/lib/central-auth";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
 import { isOnline } from "@/utils/offlineQueue";
 import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
@@ -116,15 +116,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isCartReady, setIsCartReady] = useState(false);
   const [initializedMode, setInitializedMode] = useState<"guest" | "account" | null>(null);
-  const [authToken, setAuthToken] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
-    } catch {
-      return null;
-    }
-  });
-  const isLoggedIn = Boolean(authToken);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const cartInitGenerationRef = useRef(0);
   const pathname = usePathname();
 
@@ -132,24 +124,19 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const readToken = () => {
-      try {
-        return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
-      } catch {
-        return null;
-      }
+    let active = true;
+    const updateLoginState = async () => {
+      const token = await centralAuth.tokenManager.getToken().catch(() => null);
+      if (active) setIsLoggedIn(Boolean(token));
     };
-    const updateLoginState = () => {
-      setAuthToken(readToken());
-    };
-
-    updateLoginState();
-    window.addEventListener("storage", updateLoginState);
-    window.addEventListener(ACCESS_TOKEN_EVENT, updateLoginState);
-
+    void updateLoginState();
+    const unsubscribe = subscribeToAuthState((event) => {
+      if (event.type === "logout") setIsLoggedIn(false);
+      else void updateLoginState();
+    });
     return () => {
-      window.removeEventListener("storage", updateLoginState);
-      window.removeEventListener(ACCESS_TOKEN_EVENT, updateLoginState);
+      active = false;
+      unsubscribe();
     };
   }, []);
 
@@ -168,7 +155,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setInitializedMode(null);
 
     const initializeCart = async () => {
-      const loggedIn = Boolean(authToken);
+      const loggedIn = isLoggedIn;
 
       try {
         if (loggedIn) {
@@ -220,7 +207,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     void initializeCart();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run when login mode changes; cart helpers are stable for the session
-  }, [authToken]);
+  }, [isLoggedIn]);
 
   // Save cart to localStorage when it changes (only for non-logged in users)
   useEffect(() => {

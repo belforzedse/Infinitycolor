@@ -22,7 +22,6 @@ export function clearUserStorage(): void {
     }
 
     sessionStorage.removeItem("tempPreInvoiceOrder");
-    sessionStorage.removeItem("otpToken");
 
     const orderDetailKeys: string[] = [];
     for (let index = 0; index < sessionStorage.length; index += 1) {

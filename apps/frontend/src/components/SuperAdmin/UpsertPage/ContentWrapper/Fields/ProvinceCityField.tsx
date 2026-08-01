@@ -44,16 +44,7 @@ export default function ProvinceCityField({
   const fetchProvinces = async () => {
     try {
       setLoading(true);
-      const accessToken = localStorage.getItem("accessToken");
-      if (!accessToken) {
-        throw new Error("No access token found");
-      }
-
-      const response = await apiClient.get("/shipping/province?full=true", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
+      const response = await apiClient.get("/shipping/province?full=true");
 
       const data = response.data as {
         total: number;

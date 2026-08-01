@@ -1,28 +1,82 @@
 import { readFileSync } from "node:fs";
 import { expect, type APIRequestContext, type APIResponse } from "@playwright/test";
 import { authStorageStatePath, type E2EAuthRole } from "./auth";
-import { strapiApiURL } from "./env";
+import { centralAuthOrigin, storefrontBaseURL, strapiApiURL } from "./env";
 import { E2E_PAYMENT_VARIATION_SKU, E2E_PRODUCT_SLUG } from "../fixtures/storefront";
 
-/**
- * Read the bearer token a role's storage state carries in localStorage. The
- * states are produced by global-setup; this lets API-level assertions reuse the
- * exact same identity the browser uses, without a second login round-trip.
- */
-export function authTokenForRole(role: E2EAuthRole): string {
-  const raw = JSON.parse(readFileSync(authStorageStatePath(role), "utf8")) as {
-    origins?: { localStorage?: { name: string; value: string }[] }[];
-  };
-  const token = raw.origins?.[0]?.localStorage?.find((e) => e.name === "accessToken")?.value;
-  if (!token) {
-    throw new Error(`No accessToken found in auth storage state for role "${role}"`);
+type CachedRoleToken = { token: string; refreshAfter: number };
+const cachedRoleTokens = new Map<E2EAuthRole, CachedRoleToken>();
+const pendingRoleTokens = new Map<E2EAuthRole, Promise<string>>();
+
+function jwtExpiry(token: string): number {
+  const payload = token.split(".")[1];
+  if (!payload) return 0;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      exp?: unknown;
+    };
+    return typeof parsed.exp === "number" ? parsed.exp * 1_000 : 0;
+  } catch {
+    return 0;
   }
-  return token;
 }
 
-export function authHeaders(role: E2EAuthRole): Record<string, string> {
+function sessionCookieForRole(role: E2EAuthRole): string {
+  const raw = JSON.parse(readFileSync(authStorageStatePath(role), "utf8")) as {
+    cookies?: Array<{ name: string; value: string; domain: string }>;
+  };
+  const authHost = new URL(centralAuthOrigin()).hostname;
+  const cookies = (raw.cookies ?? []).filter(
+    (cookie) =>
+      cookie.domain.replace(/^\./, "") === authHost &&
+      cookie.name.endsWith("session_token"),
+  );
+  if (cookies.length !== 1) {
+    throw new Error(`Expected one Better Auth session cookie for role "${role}"`);
+  }
+  return `${cookies[0].name}=${cookies[0].value}`;
+}
+
+export async function authTokenForRole(role: E2EAuthRole): Promise<string> {
+  const cached = cachedRoleTokens.get(role);
+  if (cached && cached.refreshAfter > Date.now()) return cached.token;
+  const pending = pendingRoleTokens.get(role);
+  if (pending) return pending;
+
+  const acquisition = (async () => {
+    const response = await fetch(
+      `${centralAuthOrigin().replace(/\/$/, "")}/api/auth/token`,
+      {
+        headers: {
+          Accept: "application/json",
+          Cookie: sessionCookieForRole(role),
+          Origin: new URL(storefrontBaseURL()).origin,
+        },
+        cache: "no-store",
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Better Auth token acquisition failed for role "${role}" (${response.status})`,
+      );
+    }
+    const payload = (await response.json()) as { token?: string };
+    if (!payload.token) throw new Error(`Better Auth omitted token for role "${role}"`);
+    const expiry = jwtExpiry(payload.token);
+    if (expiry <= Date.now()) throw new Error(`Better Auth returned an expired token for "${role}"`);
+    cachedRoleTokens.set(role, {
+      token: payload.token,
+      refreshAfter: Math.max(Date.now(), expiry - 10_000),
+    });
+    return payload.token;
+  })().finally(() => pendingRoleTokens.delete(role));
+  pendingRoleTokens.set(role, acquisition);
+  return acquisition;
+}
+
+export async function authHeaders(role: E2EAuthRole): Promise<Record<string, string>> {
   return {
-    Authorization: `Bearer ${authTokenForRole(role)}`,
+    Authorization: `Bearer ${await authTokenForRole(role)}`,
     Accept: "application/json",
   };
 }
@@ -33,36 +87,36 @@ function apiUrl(pathname: string): string {
 }
 
 /** Authenticated GET against the Strapi API as the given role. */
-export function apiGet(
+export async function apiGet(
   request: APIRequestContext,
   role: E2EAuthRole,
   pathname: string,
   params?: Record<string, string | number | boolean>,
 ) {
-  return request.get(apiUrl(pathname), { headers: authHeaders(role), params });
+  return request.get(apiUrl(pathname), { headers: await authHeaders(role), params });
 }
 
 /** Authenticated POST/PUT/DELETE helpers as the given role. */
-export function apiPost(
+export async function apiPost(
   request: APIRequestContext,
   role: E2EAuthRole,
   pathname: string,
   data?: unknown,
 ) {
-  return request.post(apiUrl(pathname), { headers: authHeaders(role), data });
+  return request.post(apiUrl(pathname), { headers: await authHeaders(role), data });
 }
 
-export function apiPut(
+export async function apiPut(
   request: APIRequestContext,
   role: E2EAuthRole,
   pathname: string,
   data?: unknown,
 ) {
-  return request.put(apiUrl(pathname), { headers: authHeaders(role), data });
+  return request.put(apiUrl(pathname), { headers: await authHeaders(role), data });
 }
 
-export function apiDelete(request: APIRequestContext, role: E2EAuthRole, pathname: string) {
-  return request.delete(apiUrl(pathname), { headers: authHeaders(role) });
+export async function apiDelete(request: APIRequestContext, role: E2EAuthRole, pathname: string) {
+  return request.delete(apiUrl(pathname), { headers: await authHeaders(role) });
 }
 
 /**

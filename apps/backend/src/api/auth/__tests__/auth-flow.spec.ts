@@ -29,6 +29,17 @@ describe("Auth Flow", () => {
       expect(result).toBe(200);
     });
 
+    it.each(["09abcdefghi", "۰۹۱۲۳۴۵۶۷۸۹", "+۹۸۹۱۲۳۴۵۶۷۸۹"])(
+      "should reject non-ASCII phone digits: %s",
+      (phone) => {
+        const ctx = createCtx({});
+        const result = validatePhone(ctx, phone);
+
+        expect(result).not.toBe(200);
+        expect(ctx.status).toBe(400);
+      },
+    );
+
     it("should reject phone with less than 11 digits", () => {
       const ctx = createCtx({});
       const result = validatePhone(ctx, "0912345678");

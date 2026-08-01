@@ -88,10 +88,6 @@ function ShoppingCartBillInformationForm({ register, errors, control, setValue }
       return;
     }
 
-    if (typeof window !== "undefined" && !localStorage.getItem("accessToken")) {
-      return;
-    }
-
     const fetchUserInfo = async () => {
       try {
         const user = await UserService.me();
