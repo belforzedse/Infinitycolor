@@ -1,4 +1,4 @@
-import type { BetterAuthTokenResponse } from "./contracts";
+import type { BetterAuthTokenResponse } from "./contracts.js";
 
 export interface TokenManagerOptions {
   authOrigin: string;
