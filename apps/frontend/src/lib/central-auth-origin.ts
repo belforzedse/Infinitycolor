@@ -1,6 +1,14 @@
-export type CentralAuthEnvironment = "development" | "staging" | "production";
+export type CentralAuthEnvironment =
+  | "development"
+  | "e2e"
+  | "staging"
+  | "production";
 
-const FROZEN_AUTH_ORIGINS: Record<Exclude<CentralAuthEnvironment, "development">, string> = {
+const FROZEN_AUTH_ORIGINS: Record<
+  Exclude<CentralAuthEnvironment, "development">,
+  string
+> = {
+  e2e: "http://localhost:2889",
   staging: "https://auth.staging.infinitycolor.co",
   production: "https://auth.infinitycolor.co",
 };
@@ -13,8 +21,15 @@ export function centralAuthEnvironment(): CentralAuthEnvironment {
     }
     return "development";
   }
-  if (value !== "development" && value !== "staging" && value !== "production") {
-    throw new Error("NEXT_PUBLIC_AUTH_ENVIRONMENT must be development, staging, or production");
+  if (
+    value !== "development" &&
+    value !== "e2e" &&
+    value !== "staging" &&
+    value !== "production"
+  ) {
+    throw new Error(
+      "NEXT_PUBLIC_AUTH_ENVIRONMENT must be development, e2e, staging, or production",
+    );
   }
   if (process.env.NODE_ENV === "production" && value === "development") {
     throw new Error("A production storefront build cannot use the development auth environment");

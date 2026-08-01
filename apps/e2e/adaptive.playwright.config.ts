@@ -1,6 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
 import baseConfig from "./playwright.config";
 
+const baseWebServers = baseConfig.webServer
+  ? Array.isArray(baseConfig.webServer)
+    ? baseConfig.webServer
+    : [baseConfig.webServer]
+  : undefined;
+
 export default defineConfig({
   ...baseConfig,
   testMatch: ["**/adaptive-quality.spec.ts"],
@@ -50,12 +56,12 @@ export default defineConfig({
       },
     },
   ],
-  webServer: baseConfig.webServer
-    ? {
-        ...baseConfig.webServer,
+  webServer: baseWebServers
+    ? baseWebServers.map((server) => ({
+        ...server,
         timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 300_000),
         env: {
-          ...baseConfig.webServer.env,
+          ...server.env,
           NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ENABLED: "true",
           NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_RUNTIME_DOWNGRADE: "true",
           NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_PROMOTION: "true",
@@ -64,6 +70,6 @@ export default defineConfig({
           NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE: "false",
           NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_E2E: "true",
         },
-      }
+      }))
     : undefined,
 });

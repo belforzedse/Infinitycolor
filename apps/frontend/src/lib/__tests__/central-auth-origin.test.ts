@@ -31,4 +31,26 @@ describe("central auth deployment authority", () => {
       "production central auth origin must match its frozen authority",
     );
   });
+
+  it("accepts the isolated loopback E2E authority in a production Next build", () => {
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      NEXT_PUBLIC_AUTH_ENVIRONMENT: "e2e",
+      NEXT_PUBLIC_AUTH_ORIGIN: "http://localhost:2889",
+    });
+
+    expect(exactCentralAuthOrigin()).toBe("http://localhost:2889");
+  });
+
+  it("rejects a non-loopback authority for the E2E environment", () => {
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      NEXT_PUBLIC_AUTH_ENVIRONMENT: "e2e",
+      NEXT_PUBLIC_AUTH_ORIGIN: "http://auth:2889",
+    });
+
+    expect(() => exactCentralAuthOrigin()).toThrow(
+      "e2e central auth origin must match its frozen authority",
+    );
+  });
 });
