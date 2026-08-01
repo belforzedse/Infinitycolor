@@ -41,3 +41,14 @@ test("phone collection exposes browser autofill and an associated label", () => 
     /id="login-phone"[\s\S]*name="username"[\s\S]*autoComplete="username"/,
   );
 });
+
+test("central auth uses the canonical Infinity favicon", () => {
+  const authFavicon = fs.readFileSync(
+    path.join(appRoot, "src/app/favicon.ico"),
+  );
+  const storefrontFavicon = fs.readFileSync(
+    path.resolve(appRoot, "../frontend/src/app/favicon.ico"),
+  );
+
+  assert.deepEqual(authFavicon, storefrontFavicon);
+});
