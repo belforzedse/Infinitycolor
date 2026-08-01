@@ -300,8 +300,12 @@ const STORE_MANAGER_RESTRICTED_CONTROLLERS: RestrictedController[] = [
   // Restrict user activity - store managers cannot view other users' activities
   { typeKey: "api::user-activity", controller: "user-activity", allowActions: [] },
   // Restrict wallet management - only superadmin can view/adjust user wallets (admin actions).
-  // The customer-facing GET /local-user-wallet/me action is granted separately to customers.
-  { typeKey: "api::local-user-wallet", controller: "local-user-wallet", allowActions: [] },
+  // Management roles remain customer-capable and may read only their own wallet.
+  {
+    typeKey: "api::local-user-wallet",
+    controller: "local-user-wallet",
+    allowActions: ["getCurrentUserWallet"],
+  },
   // Restrict blog management - store managers can only read blog posts (like normal users)
   { typeKey: "api::blog-post", controller: "blog-post", allowActions: READ_ACTIONS },
   { typeKey: "api::blog-category", controller: "blog-category", allowActions: READ_ACTIONS },
