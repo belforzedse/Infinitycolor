@@ -1,11 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import baseConfig from "./playwright.config";
-
-const baseWebServers = baseConfig.webServer
-  ? Array.isArray(baseConfig.webServer)
-    ? baseConfig.webServer
-    : [baseConfig.webServer]
-  : undefined;
+import { extendWebServers } from "./helpers/web-servers";
 
 export default defineConfig({
   ...baseConfig,
@@ -56,20 +51,16 @@ export default defineConfig({
       },
     },
   ],
-  webServer: baseWebServers
-    ? baseWebServers.map((server) => ({
-        ...server,
-        timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 300_000),
-        env: {
-          ...server.env,
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ENABLED: "true",
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_RUNTIME_DOWNGRADE: "true",
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_PROMOTION: "true",
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_TELEMETRY: "true",
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ROLLOUT_PERCENT: "100",
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE: "false",
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_E2E: "true",
-        },
-      }))
-    : undefined,
+  webServer: extendWebServers(baseConfig.webServer, {
+    timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 300_000),
+    env: {
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ENABLED: "true",
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_RUNTIME_DOWNGRADE: "true",
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_PROMOTION: "true",
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_TELEMETRY: "true",
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_ROLLOUT_PERCENT: "100",
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE: "false",
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_E2E: "true",
+    },
+  }),
 });

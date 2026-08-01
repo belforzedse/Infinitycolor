@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import parityConfig from "./static-parity.playwright.config";
+import { extendWebServers } from "./helpers/web-servers";
 
 export default defineConfig({
   ...parityConfig,
@@ -16,14 +17,11 @@ export default defineConfig({
       },
     ],
   ],
-  webServer: parityConfig.webServer
-    ? {
-        ...parityConfig.webServer,
-        env: {
-          ...parityConfig.webServer.env,
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE: "true",
-          NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_E2E: "true",
-        },
-      }
-    : undefined,
+  webServer: extendWebServers(parityConfig.webServer, {
+    timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 300_000),
+    env: {
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_FORCE_SAFE: "true",
+      NEXT_PUBLIC_INFINITY_ADAPTIVE_QUALITY_E2E: "true",
+    },
+  }),
 });
