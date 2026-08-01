@@ -54,6 +54,22 @@ function Spinner() {
   );
 }
 
+function FieldLabel({
+  htmlFor,
+  children,
+  className = "",
+}: {
+  htmlFor: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <label htmlFor={htmlFor} className={`inline-block ${className}`}>
+      <Text variant="label">{children}</Text>
+    </label>
+  );
+}
+
 function routeToRedirect(redirectTo: string) {
   if (redirectTo.startsWith("/")) {
     window.location.assign(redirectTo);
@@ -112,12 +128,13 @@ export function PhoneStatusForm({
       <form
         onSubmit={submit}
         className="mt-8 space-y-6 md:space-y-7"
+        autoComplete="on"
         noValidate
       >
         <div>
-          <Text variant="label" className="mb-2 md:mb-2.5">
+          <FieldLabel htmlFor="phone" className="mb-2 md:mb-2.5">
             شماره همراه
-          </Text>
+          </FieldLabel>
           <AuthInput
             id="phone"
             name="phone"
@@ -125,12 +142,16 @@ export function PhoneStatusForm({
             dir="ltr"
             inputMode="tel"
             autoComplete="tel"
+            autoCapitalize="none"
+            autoCorrect="off"
+            enterKeyHint="next"
             value={phoneValue}
             onChange={(event) => setPhoneValue(event.target.value)}
             placeholder="09122032114"
             error={error}
             aria-describedby={error ? "phone-error" : undefined}
             required
+            aria-required="true"
           />
         </div>
         <AuthButton
@@ -208,13 +229,16 @@ export function PasswordLoginForm({
       <div className="mb-6">
         <AuthReturnButton href={storefrontOrigin} label="بازگشت به فروشگاه" />
       </div>
-      <form onSubmit={submit} className="mt-8 space-y-7">
+      <form onSubmit={submit} className="mt-8 space-y-7" autoComplete="on">
         <div className="space-y-7">
           <div>
-            <Text variant="label" className="mb-2 inline-block">
+            <FieldLabel htmlFor="login-phone" className="mb-2">
               شماره همراه
-            </Text>
+            </FieldLabel>
             <PhoneInput
+              id="login-phone"
+              name="username"
+              autoComplete="username"
               value={phone}
               onEdit={() => {
                 setPhone("");
@@ -223,10 +247,11 @@ export function PasswordLoginForm({
             />
           </div>
           <div>
-            <Text variant="label" className="mb-2 inline-block">
+            <FieldLabel htmlFor="login-password" className="mb-2">
               رمز عبور
-            </Text>
+            </FieldLabel>
             <AuthPasswordInput
+              id="login-password"
               name="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -421,20 +446,27 @@ export function ForgotPasswordForm() {
       <AuthTitle subtitle="لطفا شماره همراه خود را جهت بازیابی رمز وارد نمایید">
         بازیابی رمز عبور
       </AuthTitle>
-      <form onSubmit={submit} className="mt-8 space-y-7">
+      <form onSubmit={submit} className="mt-8 space-y-7" autoComplete="on">
         <div>
-          <Text variant="label" className="mb-2 inline-block">
+          <FieldLabel htmlFor="reset-phone" className="mb-2">
             شماره همراه
-          </Text>
+          </FieldLabel>
           <AuthInput
             id="reset-phone"
+            name="phone"
             type="tel"
             dir="ltr"
+            inputMode="tel"
             value={phone}
             onChange={(event) => setPhoneValue(event.target.value)}
             autoComplete="tel"
+            autoCapitalize="none"
+            autoCorrect="off"
+            enterKeyHint="next"
             error={error}
             placeholder="09122032114"
+            required
+            aria-required="true"
           />
         </div>
         <AuthButton
@@ -512,7 +544,7 @@ export function ResetPasswordForm() {
       >
         بازیابی رمز عبور
       </AuthTitle>
-      <form onSubmit={submit} className="mt-8 space-y-7">
+      <form onSubmit={submit} className="mt-8 space-y-7" autoComplete="on">
         <div className="space-y-3">
           <Text variant="label">کدتایید شماره همراه</Text>
           <VerificationInput onChange={setOtp} />
@@ -533,10 +565,12 @@ export function ResetPasswordForm() {
           </div>
         </div>
         <div>
-          <Text variant="label" className="mb-2 inline-block">
+          <FieldLabel htmlFor="new-password" className="mb-2">
             رمز عبور
-          </Text>
+          </FieldLabel>
           <AuthPasswordInput
+            id="new-password"
+            name="new-password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             showStrength
@@ -544,10 +578,12 @@ export function ResetPasswordForm() {
           />
         </div>
         <div>
-          <Text variant="label" className="mb-2 inline-block">
+          <FieldLabel htmlFor="confirm-new-password" className="mb-2">
             تکرار رمز عبور
-          </Text>
+          </FieldLabel>
           <AuthPasswordInput
+            id="confirm-new-password"
+            name="confirm-new-password"
             value={confirmation}
             onChange={(event) => setConfirmation(event.target.value)}
             error={
@@ -642,73 +678,110 @@ export function RegistrationInfoForm() {
       <AuthTitle subtitle="لطفا اطلاعات خود را تکمیل نمایید">
         ایجاد حساب کاربری
       </AuthTitle>
-      <form onSubmit={submit} className="space-y-7">
+      <form onSubmit={submit} className="space-y-7" autoComplete="on">
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 md:gap-6">
           <div>
-            <Text variant="label" className="mb-2">
+            <FieldLabel htmlFor="first-name" className="mb-2">
               نام
-            </Text>
+            </FieldLabel>
             <AuthInput
+              id="first-name"
+              name="given-name"
+              type="text"
               value={form.firstName}
               onChange={change("firstName")}
               placeholder="نام"
               autoComplete="given-name"
+              required
             />
           </div>
           <div>
-            <Text variant="label" className="mb-2">
+            <FieldLabel htmlFor="last-name" className="mb-2">
               نام خانوادگی
-            </Text>
+            </FieldLabel>
             <AuthInput
+              id="last-name"
+              name="family-name"
+              type="text"
               value={form.lastName}
               onChange={change("lastName")}
               placeholder="نام خانوادگی"
               autoComplete="family-name"
+              required
             />
           </div>
         </div>
         <div>
-          <Text variant="label" className="mb-2">
-            تاریخ تولد
-          </Text>
-          <div className="flex gap-2">
+          <span id="birth-date-label" className="mb-2 inline-block">
+            <Text variant="label">تاریخ تولد</Text>
+          </span>
+          <div
+            className="flex gap-2"
+            role="group"
+            aria-labelledby="birth-date-label"
+          >
             <AuthInput
+              id="birth-year"
+              name="bday-year"
               type="number"
               value={form.birthYear}
               onChange={change("birthYear")}
               placeholder="سال (مثلا 1370)"
               min="1300"
               max="1450"
+              autoComplete="bday-year"
+              aria-label="سال تولد"
+              required
             />
             <AuthInput
+              id="birth-month"
+              name="bday-month"
               type="number"
               value={form.birthMonth}
               onChange={change("birthMonth")}
               placeholder="ماه (1-12)"
               min="1"
               max="12"
+              autoComplete="bday-month"
+              aria-label="ماه تولد"
+              required
             />
             <AuthInput
+              id="birth-day"
+              name="bday-day"
               type="number"
               value={form.birthDay}
               onChange={change("birthDay")}
               placeholder="روز (1-31)"
               min="1"
               max="31"
+              autoComplete="bday-day"
+              aria-label="روز تولد"
+              required
             />
           </div>
         </div>
         <div>
-          <Text variant="label" className="mb-2">
+          <FieldLabel htmlFor="registration-phone" className="mb-2">
             شماره همراه
-          </Text>
-          <AuthInput type="tel" dir="ltr" value={phone} disabled />
+          </FieldLabel>
+          <AuthInput
+            id="registration-phone"
+            name="phone"
+            type="tel"
+            dir="ltr"
+            value={phone}
+            autoComplete="tel"
+            disabled
+          />
         </div>
         <div>
-          <Text variant="label" className="mb-2">
+          <FieldLabel htmlFor="registration-password" className="mb-2">
             رمز عبور
-          </Text>
+          </FieldLabel>
           <AuthPasswordInput
+            id="registration-password"
+            name="new-password"
             value={form.password}
             onChange={change("password")}
             showStrength
@@ -716,10 +789,15 @@ export function RegistrationInfoForm() {
           />
         </div>
         <div>
-          <Text variant="label" className="mb-2">
+          <FieldLabel
+            htmlFor="registration-password-confirmation"
+            className="mb-2"
+          >
             تکرار رمز عبور
-          </Text>
+          </FieldLabel>
           <AuthPasswordInput
+            id="registration-password-confirmation"
+            name="new-password-confirmation"
             value={form.confirmation}
             onChange={change("confirmation")}
             error={
