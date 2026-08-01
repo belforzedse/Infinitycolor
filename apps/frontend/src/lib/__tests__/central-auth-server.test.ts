@@ -12,6 +12,10 @@ describe("central auth storefront authority", () => {
     expect(target.pathname).toBe("/auth/complete");
     expect(target.searchParams.get("error")).toBe("invalid_grant");
     expect(target.origin).not.toBe("https://0.0.0.0:3000");
+
+    const logoutTarget = storefrontUrl("/auth/logout-complete");
+    expect(logoutTarget.origin).toBe(storefrontOrigin());
+    expect(logoutTarget.pathname).toBe("/auth/logout-complete");
   });
 
   it("accepts only the configured storefront Origin for route-hint mutations", () => {

@@ -32,4 +32,12 @@ test("phone collection exposes browser autofill and an associated label", () => 
   assert.match(forms, /id="phone"[\s\S]*name="phone"[\s\S]*type="tel"/);
   assert.match(forms, /inputMode="tel"[\s\S]*autoComplete="tel"/);
   assert.match(forms, /<form[\s\S]*autoComplete="on"/);
+  assert.match(
+    forms,
+    /id="reset-phone"[\s\S]*name="phone"[\s\S]*type="tel"[\s\S]*autoComplete="tel"/,
+  );
+  assert.match(
+    forms,
+    /id="login-phone"[\s\S]*name="username"[\s\S]*autoComplete="username"/,
+  );
 });
