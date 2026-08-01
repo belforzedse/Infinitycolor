@@ -1,6 +1,7 @@
 import { apiClient } from "@/services";
 import { formatQueryParams } from "@/utils/api";
 import { API_BASE_URL } from "@/constants/api";
+import { getAccessToken } from "@/utils/auth";
 import type {
   ProductOverview,
   ProductTrends,
@@ -129,7 +130,7 @@ export async function downloadProductReportExcel(
   const params = filterParams(filters);
   if (sort) params.sort = `${sort.key}:${sort.direction}`;
   const url = `${API_BASE_URL}${BASE}/export${formatQueryParams(params as any)}`;
-  const token = localStorage.getItem("accessToken");
+  const token = await getAccessToken();
   const res = await fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });

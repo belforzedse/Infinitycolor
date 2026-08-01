@@ -15,7 +15,6 @@ function VerifyContent() {
   const phoneNumber = queryParams.get("phoneNumber");
 
   const router = useRouter();
-  const [pendingPassword, setPendingPassword] = useState<string | null>(null);
 
   useEffect(() => {
     if (!phoneNumber) {
@@ -37,14 +36,6 @@ function VerifyContent() {
 
     sendInitialOTP();
   }, [phoneNumber, router]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = sessionStorage.getItem("pendingNewPassword");
-    if (stored) {
-      setPendingPassword(stored);
-    }
-  }, []);
 
   return (
     <div className="mx-auto w-full">
@@ -70,7 +61,6 @@ function VerifyContent() {
             toast.error(friendlyMessage);
           }
         }}
-        initialPassword={pendingPassword ?? undefined}
         onSubmit={async (data) => {
           if (!phoneNumber) {
             router.push("/auth/forgot-password");
@@ -81,7 +71,6 @@ function VerifyContent() {
             const response = await AuthService.resetPassword({
               otp: data.otp.split("").reverse().join(""),
               newPassword: data.password,
-              otpToken: typeof window !== "undefined" ? sessionStorage.getItem("otpToken") : null,
               phone: phoneNumber || undefined,
             });
 
@@ -106,11 +95,6 @@ function VerifyContent() {
           }
 
           toast.error(friendlyMessage);
-        }
-      }}
-      onSuccess={() => {
-        if (typeof window !== "undefined") {
-          sessionStorage.removeItem("pendingNewPassword");
         }
       }}
       />

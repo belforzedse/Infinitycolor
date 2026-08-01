@@ -24,7 +24,7 @@ import toast from "react-hot-toast";
 import WalletService from "@/services/wallet";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import { ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
+import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateErrorMessage } from "@/lib/errorTranslations";
@@ -147,22 +147,20 @@ function ShoppingCartBillForm({}: Props) {
       return;
     }
 
-    const token = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
-    setHasAccessToken(Boolean(token));
-    setIsAuthTokenReady(true);
-
-    // Don't redirect while user is still loading (AuthInitializer may be populating currentUser)
-    if (userLoading) return;
-    // Don't redirect if we already have a user
-    if (currentUser) return;
-    // Don't redirect if we've already sent the user to auth this "session"
-    if (hasRedirected) return;
-    // Belt-and-suspenders: if token exists, give the app a moment to hydrate user
-    if (token) return;
-
-    setHasRedirected(true);
-    const authUrl = "/auth?redirect=/checkout";
-    window.location.href = authUrl;
+    let cancelled = false;
+    centralAuth.tokenManager.getToken().then((token) => {
+      if (cancelled) return;
+      setHasAccessToken(Boolean(token));
+      setIsAuthTokenReady(true);
+      if (userLoading || currentUser || hasRedirected || token) return;
+      setHasRedirected(true);
+      window.location.href = centralLoginUrl("/checkout");
+    }).catch(() => {
+      if (!cancelled) setIsAuthTokenReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser, userLoading, hasRedirected]);
 
   const {

@@ -10,7 +10,6 @@ import { toast } from "react-hot-toast";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, redirectUrlAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { useEffect } from "react";
-import { setAccessToken } from "@/utils/accessToken";
 import { isProfileIncomplete } from "@/utils/profile";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { safeInternalRedirect } from "@/utils/authRedirect";
@@ -38,8 +37,6 @@ export default function LoginPage() {
       const res = await AuthService.loginPassword(data.phoneNumber, data.password);
 
       if (res.token) {
-        setAccessToken(res.token);
-
         // Migrate local cart to API after login
         await migrateLocalCartToApi();
         // Fetch current user and redirect based on role or redirect URL

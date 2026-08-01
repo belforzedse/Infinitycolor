@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import RegisterPageClient from "./RegisterPageClient";
+import { redirectLegacyAuthPage } from "@/lib/central-auth-redirect";
 
 export const metadata: Metadata = {
   title: "ثبت‌نام",
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/auth/register" },
 };
 
-export default function RegisterPage() {
+export default async function RegisterPage({ searchParams }: { searchParams: Promise<{ redirect?: string }> }) {
+  redirectLegacyAuthPage(await searchParams);
   return <RegisterPageClient />;
 }

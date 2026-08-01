@@ -26,6 +26,7 @@ Useful local defaults:
 
 ```powershell
 $env:E2E_BASE_URL = "http://localhost:2888"
+$env:E2E_AUTH_ORIGIN = "http://localhost:2889"
 $env:E2E_API_URL = "http://127.0.0.1:1337/api"
 $env:NEXT_PUBLIC_API_BASE_URL = "http://127.0.0.1:1337/api"
 $env:NEXT_PUBLIC_IMAGE_BASE_URL = "http://127.0.0.1:1337"
@@ -34,7 +35,6 @@ $env:E2E_CUSTOMER_PHONE = "+989000000101"
 $env:E2E_CUSTOMER_PASSWORD = "E2eCustomer!123"
 $env:E2E_ADMIN_PHONE = "+989000000201"
 $env:E2E_ADMIN_PASSWORD = "E2eAdmin!123"
-$env:E2E_JWT_SECRET = "your-local-backend-jwt-secret"
 ```
 
 Use `localhost` for the frontend in local Next dev. Next 16 blocks dev/HMR resources
@@ -66,7 +66,7 @@ By default, global setup waits for `/_health` and runs:
 pnpm --filter @repo/backend seed:e2e
 ```
 
-The seed command creates deterministic storefront fixtures plus local-only E2E customer/admin users. It also gives the E2E customer a seeded cart with the smoke product so authenticated checkout validation does not depend on an extra add-to-cart step. Playwright uses the seeded user ids and `E2E_JWT_SECRET` (or local backend `JWT_SECRET`) to generate storage state under `apps/e2e/.auth/`, avoiding login rate-limit flake during repeated smoke runs. That directory is ignored by git and must not be uploaded as a CI artifact.
+The seed command creates deterministic storefront fixtures plus local-only E2E customer/admin users. It also gives the E2E customer a seeded cart with the smoke product so authenticated checkout validation does not depend on an extra add-to-cart step. Global setup signs each role into the central Better Auth service, verifies a 60-second `/api/auth/token` JWT against Strapi, and writes only the resulting Better Auth cookie plus the nonsecret storefront route hint under `apps/e2e/.auth/`. It never writes a Strapi JWT to localStorage. That directory is ignored by git and must not be uploaded as a CI artifact.
 
 If a frontend dev server is already running, seed before starting it or restart the frontend after
 seeding so server-side product data is not stale. Redis endpoint cache clearing is opt-in:

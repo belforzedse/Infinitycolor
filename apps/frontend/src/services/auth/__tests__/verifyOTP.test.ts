@@ -1,6 +1,7 @@
 import { verifyOTP } from "../verifyOTP";
 import { apiClient } from "../../index";
 import { ENDPOINTS } from "@/constants/api";
+import { clearOtpToken, readOtpToken, rememberOtpToken } from "../otpChallenge";
 
 jest.mock("../../index", () => ({
   apiClient: {
@@ -13,12 +14,13 @@ describe("verifyOTP", () => {
 
   beforeEach(() => {
     mockPost.mockReset();
+    clearOtpToken();
     sessionStorage.clear();
   });
 
   it("posts the OTP with the stored otpToken and returns the API payload", async () => {
     const response = { token: "auth-token", user: { id: 1, name: "Test User" } };
-    sessionStorage.setItem("otpToken", "mock-otp-token");
+    rememberOtpToken("mock-otp-token");
     mockPost.mockResolvedValueOnce(response);
 
     const result = await verifyOTP("123456");
@@ -32,6 +34,8 @@ describe("verifyOTP", () => {
       { suppressAuthRedirect: true },
     );
     expect(result).toEqual(response);
+    expect(readOtpToken()).toBeNull();
+    expect(sessionStorage.getItem("otpToken")).toBeNull();
   });
 
   it("passes a null otpToken through when sessionStorage has no token", async () => {
@@ -50,10 +54,10 @@ describe("verifyOTP", () => {
   });
 
   it("uses the exact OTP value entered by the user", async () => {
-    sessionStorage.setItem("otpToken", "mock-otp-token");
     mockPost.mockResolvedValue({ token: "auth-token" });
 
     for (const otp of ["123456", "000000", "999999"]) {
+      rememberOtpToken("mock-otp-token");
       await verifyOTP(otp);
       expect(mockPost).toHaveBeenLastCalledWith(
         ENDPOINTS.AUTH.VERIFY_OTP,
@@ -65,7 +69,7 @@ describe("verifyOTP", () => {
 
   it("propagates API errors", async () => {
     const error = new Error("Invalid OTP");
-    sessionStorage.setItem("otpToken", "mock-otp-token");
+    rememberOtpToken("mock-otp-token");
     mockPost.mockRejectedValueOnce(error);
 
     await expect(verifyOTP("123456")).rejects.toThrow("Invalid OTP");

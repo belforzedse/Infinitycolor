@@ -254,7 +254,6 @@ export async function sendLegacyOtpSms(input: LegacyOtpSmsInput): Promise<SmsSen
     } else {
       logger?.warn?.("[sms] IPPanel legacy OTP SMS failed", {
         ...logContext,
-        body: parsed || raw.slice(0, 500),
       });
     }
 

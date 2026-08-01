@@ -1,58 +1,10 @@
-"use client";
-
 import Image from "next/image";
+import { Suspense } from "react";
 import AuthIllustration from "@/components/Auth/Illustration";
-import { Suspense, useEffect } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { UserService } from "@/services";
 import SuspenseLoader from "@/components/ui/SuspenseLoader";
-import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import { jotaiStore } from "@/lib/jotaiStore";
 import { StorefrontContainer } from "@/components/storefront";
-import { safeInternalRedirect } from "@/utils/authRedirect";
-import { setAuthRouteHint } from "@/utils/authRouteHint";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-
-  useEffect(() => {
-    // Allow registration-related pages to stay accessible even when a token exists
-    if (pathname?.startsWith("/auth/register")) {
-      const mobileParam = searchParams.get("phone");
-      if (mobileParam) {
-        localStorage.setItem("pendingPhone", mobileParam);
-      }
-      return;
-    }
-
-    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-    if (!token) return;
-
-    // Get the redirect parameter if it exists
-    const redirectTarget = safeInternalRedirect(searchParams.get("redirect"));
-
-    // Redirect authenticated users based on role (or to the redirect URL if provided).
-    // Set currentUserAtom so checkout (and other pages) see the user immediately and don't redirect back to auth.
-    UserService.me()
-      .then((me) => {
-        jotaiStore.set(currentUserAtom, me);
-        jotaiStore.set(userLoadingAtom, false);
-        setAuthRouteHint();
-        if (redirectTarget) {
-          router.replace(redirectTarget);
-        } else if (me?.isAdmin) {
-          router.replace("/super-admin");
-        } else {
-          router.replace("/account");
-        }
-      })
-      .catch(() => {
-        // If fetch fails, stay on auth and let user log in again
-      });
-  }, [router, searchParams, pathname]);
-
   return (
     <main className="flex min-h-screen items-start justify-center bg-infinity-primary-lighter/20 p-4 md:items-center">
       <StorefrontContainer className="flex flex-col items-center justify-center gap-8 py-8 md:flex-row md:py-0">
@@ -63,14 +15,10 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
                 <Image src="/images/logo_PDF.webp" alt="Logo" fill className="object-contain" />
               </div>
             </div>
-
             <Suspense fallback={<SuspenseLoader />}>{children}</Suspense>
           </div>
         </div>
-
-        <div className="block w-full max-w-[350px] md:max-w-[651px]">
-          <AuthIllustration />
-        </div>
+        <div className="block w-full max-w-[350px] md:max-w-[651px]"><AuthIllustration /></div>
       </StorefrontContainer>
     </main>
   );

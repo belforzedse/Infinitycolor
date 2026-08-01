@@ -1,0 +1,37 @@
+{
+  "name": "@repo/auth",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "dev": "next dev -p 2889",
+    "build": "next build",
+    "start": "next start -p 2889",
+    "check-types": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@repo/auth-core": "workspace:*",
+    "@repo/auth-ui": "workspace:*",
+    "@repo/fonts": "workspace:*",
+    "better-auth": "1.6.23",
+    "clsx": "2.1.1",
+    "next": "16.2.12",
+    "pg": "8.8.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.30",
+    "@types/pg": "8.15.5",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "auth": "1.6.23",
+    "postcss": "8.5.6",
+    "tailwindcss": "3.4.17",
+    "tsx": "4.21.0",
+    "typescript": "5.8.3"
+  }
+}

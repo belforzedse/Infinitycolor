@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import UserContainer from "@/components/layout/UserContainer";
 import OrderRow from "@/components/User/Orders/OrderRow";
@@ -24,21 +24,12 @@ import toast from "react-hot-toast";
 import { StorefrontAccountShell } from "@/components/storefront";
 
 export default function ReserveGroupPage() {
-  const router = useRouter();
   const params = useParams();
   const reserveGroupId = typeof params?.reserveGroupId === "string" ? params.reserveGroupId : null;
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [releasingOrderId, setReleasingOrderId] = useState<number | null>(null);
-
-  useEffect(() => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-    if (!token) {
-      router.push("/auth/login");
-      return;
-    }
-  }, [router]);
 
   const RESERVE_GROUP_PAGE_SIZE = 100;
 

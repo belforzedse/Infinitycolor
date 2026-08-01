@@ -13,6 +13,7 @@ import ReserveInfoCard from "./ReserveInfoCard";
 import toast from "react-hot-toast";
 import { StorefrontAccountShell } from "@/components/storefront";
 import { getOrderStatusMeta } from "@/utils/statusTranslations";
+import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 
 interface OrderDetailPageClientProps {
   orderId: string;
@@ -56,11 +57,13 @@ export default function OrderDetailPageClient({ orderId }: OrderDetailPageClient
   }, [cacheKey, numericOrderId]);
 
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      router.push("/auth/login");
-      return;
-    }
+    let active = true;
+    centralAuth.tokenManager.getToken().then((token) => {
+      if (active && !token) window.location.replace(centralLoginUrl(window.location.pathname));
+    }).catch(() => {
+      if (active) window.location.replace(centralLoginUrl(window.location.pathname));
+    });
+    return () => { active = false; };
   }, [router]);
 
   useEffect(() => {

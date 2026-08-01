@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { useAtom } from "jotai";
+import { useEffect } from "react";
+import { useSetAtom } from "jotai";
 import { currentUserAtom, userLoadingAtom, userErrorAtom } from "@/lib/atoms/auth";
 import { addressesAtom, addressesLoadingAtom, addressesErrorAtom } from "@/atoms/addressesAtom";
 import {
@@ -20,146 +20,112 @@ import UserService from "@/services/user";
 import { __clearOrderCache } from "@/services/order";
 import { invalidateAddressCache } from "@/services/user/addresses";
 import { jotaiStore } from "@/lib/jotaiStore";
-import { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
+import {
+  centralAuth,
+  centralAuthOrigin,
+  initializeCentralAuthBrowser,
+  subscribeToAuthState,
+} from "@/lib/central-auth";
 import { clearUserStorage } from "@/utils/userStorage";
-import { clearAuthRouteHint, setAuthRouteHint } from "@/utils/authRouteHint";
+import { isProfileIncomplete } from "@/utils/profile";
+import { isAuthRequiredRoute } from "@/utils/routeAccessPolicy";
 
-/**
- * AuthInitializer Component
- * Fetches the current user once at app startup and caches it globally
- * Prevents redundant API calls to /users/me endpoint
- *
- * Key Features:
- * - Detects logout by monitoring localStorage token removal
- * - Clears cached user immediately when logout is detected
- * - Prevents flash of old user content on logout → login flow
- * - Refreshes user data when token changes
- */
+function clearIdentityState() {
+  jotaiStore.set(currentUserAtom, null);
+  jotaiStore.set(userErrorAtom, null);
+  jotaiStore.set(addressesAtom, []);
+  jotaiStore.set(addressesLoadingAtom, false);
+  jotaiStore.set(addressesErrorAtom, null);
+  invalidateAddressCache();
+  jotaiStore.set(likedProductsAtom, []);
+  jotaiStore.set(likedProductsLoadedAtom, false);
+  __resetUseProductLikeState();
+  jotaiStore.set(orderIdAtom, null);
+  jotaiStore.set(orderNumberAtom, null);
+  jotaiStore.set(transactionIdAtom, null);
+  jotaiStore.set(submitOrderStepAtom, SubmitOrderStep.Table);
+  __clearOrderCache();
+  clearUserStorage();
+}
+
+async function clearStaleRouteHint(): Promise<void> {
+  const protectedRoute = isAuthRequiredRoute(window.location.pathname);
+  await fetch("/api/auth/route-hint", {
+    method: protectedRoute ? "POST" : "DELETE",
+    credentials: "same-origin",
+    cache: "no-store",
+  }).catch(() => undefined);
+
+  if (protectedRoute) {
+    const login = new URL("/auth", centralAuthOrigin);
+    login.searchParams.set("returnTo", window.location.href);
+    window.location.replace(login.toString());
+  }
+}
+
+/** Restores a Better Auth session by obtaining a short-lived in-memory API JWT. */
 export default function AuthInitializer() {
-  const [user, setUser] = useAtom(currentUserAtom);
-  const [, setIsLoading] = useAtom(userLoadingAtom);
-  const [, setError] = useAtom(userErrorAtom);
-
-  // Track last known token to detect changes
-  const lastTokenRef = useRef<string | null>(null);
+  const setUser = useSetAtom(currentUserAtom);
+  const setIsLoading = useSetAtom(userLoadingAtom);
+  const setError = useSetAtom(userErrorAtom);
 
   useEffect(() => {
-    const handleUserLoad = async () => {
-      if (typeof window === "undefined") return;
+    let active = true;
+    initializeCentralAuthBrowser();
 
-      const token = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
-
-      // Detect logout: token was present, now it's gone
-      if (lastTokenRef.current && !token) {
-        setUser(null); // Clear cached user immediately
-        setError(null);
-        __clearOrderCache();
-        // Clear address atoms to prevent showing previous user's addresses
-        jotaiStore.set(addressesAtom, []);
-        jotaiStore.set(addressesLoadingAtom, false);
-        jotaiStore.set(addressesErrorAtom, null);
-        invalidateAddressCache();
-        // Clear liked products to prevent showing previous user's favorites
-        jotaiStore.set(likedProductsAtom, []);
-        jotaiStore.set(likedProductsLoadedAtom, false);
-        __resetUseProductLikeState();
-        // Clear order-related atoms
-        jotaiStore.set(orderIdAtom, null);
-        jotaiStore.set(orderNumberAtom, null);
-        jotaiStore.set(transactionIdAtom, null);
-        jotaiStore.set(submitOrderStepAtom, SubmitOrderStep.Table);
-        // Clear all user-specific storage and cache
-        clearUserStorage();
-        lastTokenRef.current = null;
-        return;
-      }
-
-      // No token, no user to load
-      if (!token) {
-        clearAuthRouteHint();
-        lastTokenRef.current = null;
-        setIsLoading(false);
-        return;
-      }
-
-      // Token changed (login) - refresh user data
-      const tokenChanged = lastTokenRef.current !== token;
-      const userNotLoaded = user === null;
-
-      if (!tokenChanged && !userNotLoaded) {
-        return; // Already loaded, token hasn't changed
-      }
-
-      if (tokenChanged) {
-        setUser(null);
-        setError(null);
-        // Clear address atoms when token changes (new user login)
-        jotaiStore.set(addressesAtom, []);
-        jotaiStore.set(addressesLoadingAtom, false);
-        jotaiStore.set(addressesErrorAtom, null);
-        invalidateAddressCache();
-        // Clear liked products when token changes (new user login)
-        jotaiStore.set(likedProductsAtom, []);
-        jotaiStore.set(likedProductsLoadedAtom, false);
-        __resetUseProductLikeState();
-        // Clear order-related atoms when token changes (new user login)
-        jotaiStore.set(orderIdAtom, null);
-        jotaiStore.set(orderNumberAtom, null);
-        jotaiStore.set(transactionIdAtom, null);
-        jotaiStore.set(submitOrderStepAtom, SubmitOrderStep.Table);
-        // Clear all user-specific storage and cache when token changes (new user login)
-        clearUserStorage();
-      }
-
-      lastTokenRef.current = token;
-
+    const restore = async (forceRefresh = false) => {
+      if (!active) return;
+      setIsLoading(true);
       try {
-        setIsLoading(true);
-        setError(null);
-
-        const userData = await UserService.me();
-        setUser(userData);
-        setAuthRouteHint();
-      } catch (error) {
-        const err = error instanceof Error ? error : new Error("Failed to fetch user");
-        setError(err);
-        const errorRecord =
-          typeof error === "object" && error !== null
-            ? (error as Record<string, unknown>)
-            : null;
-        const hasDetails =
-          (error instanceof Error && error.message) ||
-          typeof errorRecord?.status === "number" ||
-          typeof errorRecord?.message === "string";
-        if (hasDetails) {
-          console.error("[AuthInitializer] Failed to load user:", error);
+        const token = await centralAuth.tokenManager.getToken({ forceRefresh });
+        if (!active) return;
+        if (!token) {
+          clearIdentityState();
+          await clearStaleRouteHint();
+          return;
         }
+        const me = await UserService.me();
+        if (!active) return;
+        if (!me.isAdmin && isProfileIncomplete(me)) {
+          clearIdentityState();
+          await fetch("/api/auth/route-hint", {
+            method: "DELETE",
+            credentials: "same-origin",
+            cache: "no-store",
+          }).catch(() => undefined);
+          const completion = new URL("/auth/register/info", centralAuthOrigin);
+          completion.searchParams.set("returnTo", window.location.href);
+          window.location.replace(completion.toString());
+          return;
+        }
+        setUser(me);
+        setError(null);
+      } catch (cause) {
+        if (!active) return;
+        centralAuth.tokenManager.expire();
+        clearIdentityState();
+        const error = cause instanceof Error ? cause : new Error("Failed to restore session");
+        setError(error);
+        await clearStaleRouteHint();
       } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+
+    void restore();
+    const unsubscribe = subscribeToAuthState((event) => {
+      if (event.type === "logout") {
+        clearIdentityState();
         setIsLoading(false);
+        return;
       }
-    };
-
-    // Run on mount
-    handleUserLoad();
-
-    // Listen for storage changes (logout from other tabs, programmatic removal)
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === ACCESS_TOKEN_STORAGE_KEY) {
-        handleUserLoad();
-      }
-    };
-
-    const handleTokenEvent = () => {
-      handleUserLoad();
-    };
-
-    window.addEventListener("storage", handleStorageChange);
-    window.addEventListener(ACCESS_TOKEN_EVENT, handleTokenEvent);
+      void restore(true);
+    });
     return () => {
-      window.removeEventListener("storage", handleStorageChange);
-      window.removeEventListener(ACCESS_TOKEN_EVENT, handleTokenEvent);
+      active = false;
+      unsubscribe();
     };
-  }, [user, setUser, setIsLoading, setError]);
+  }, [setError, setIsLoading, setUser]);
 
-  return null; // This component doesn't render anything
+  return null;
 }

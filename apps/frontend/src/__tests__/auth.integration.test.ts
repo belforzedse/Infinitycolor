@@ -4,14 +4,40 @@ import { HTTP_STATUS, ERROR_MESSAGES } from "@/constants/api";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import { jotaiStore } from "@/lib/jotaiStore";
 
+jest.mock("@/lib/central-auth", () => ({
+  centralAuth: {
+    tokenManager: {
+      getToken: jest.fn(),
+      expire: jest.fn(),
+      clearForLogout: jest.fn(),
+    },
+  },
+  clearCentralAuthForLogout: jest.fn(),
+  centralLoginUrl: jest.fn(() => "http://localhost:2889/auth"),
+}));
+
+const mockedCentralAuth = jest.requireMock("@/lib/central-auth") as {
+  centralAuth: {
+    tokenManager: {
+      getToken: jest.Mock;
+      expire: jest.Mock;
+      clearForLogout: jest.Mock;
+    };
+  };
+  clearCentralAuthForLogout: jest.Mock;
+};
+
 describe("Authentication flows", () => {
   beforeEach(() => {
     localStorage.clear();
     jotaiStore.set(currentUserAtom, null);
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
+    mockedCentralAuth.centralAuth.tokenManager.expire.mockReset();
+    mockedCentralAuth.centralAuth.tokenManager.clearForLogout.mockReset();
+    mockedCentralAuth.clearCentralAuthForLogout.mockReset();
   });
 
-  it("clears token and redirects to auth on unauthorized", async () => {
-    localStorage.setItem("accessToken", "token");
+  it("clears central session state on unauthorized", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: HTTP_STATUS.UNAUTHORIZED,
@@ -24,13 +50,14 @@ describe("Authentication flows", () => {
       errors: undefined,
     });
 
+    expect(mockedCentralAuth.clearCentralAuthForLogout).toHaveBeenCalledTimes(1);
+    expect(mockedCentralAuth.centralAuth.tokenManager.expire).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("accessToken")).toBeNull();
   });
 
-  it("redirects non-admin users to account", () => {
-    localStorage.setItem("accessToken", "token");
+  it("does not clear session state solely because a user is not an admin", () => {
     handleAuthErrors(null, false);
-    expect(localStorage.getItem("accessToken")).toBe("token");
+    expect(mockedCentralAuth.clearCentralAuthForLogout).not.toHaveBeenCalled();
   });
 
   it("keeps customer session state on forbidden API errors", async () => {
@@ -46,7 +73,6 @@ describe("Authentication flows", () => {
       roleName: "Customer",
     };
 
-    localStorage.setItem("accessToken", "token");
     jotaiStore.set(currentUserAtom, user as any);
     window.history.pushState({}, "", "/orders/123");
     global.fetch = jest.fn().mockResolvedValue({
@@ -61,7 +87,7 @@ describe("Authentication flows", () => {
       errors: undefined,
     });
 
-    expect(localStorage.getItem("accessToken")).toBe("token");
+    expect(mockedCentralAuth.clearCentralAuthForLogout).not.toHaveBeenCalled();
     expect(jotaiStore.get(currentUserAtom)).toEqual(user);
     expect(window.location.pathname).toBe("/orders/123");
   });

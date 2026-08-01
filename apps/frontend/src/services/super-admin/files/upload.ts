@@ -92,7 +92,7 @@ export const uploadFile = async (
     const processed = await compressImageToWebP(file, options);
     formData.append("files", processed);
 
-    const token = getAccessToken();
+    const token = await getAccessToken();
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: "POST",
       headers: token

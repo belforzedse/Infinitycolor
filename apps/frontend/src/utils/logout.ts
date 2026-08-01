@@ -1,71 +1,9 @@
-/**
- * Centralized logout utility
- * Ensures consistent logout behavior across the app:
- * 1. Removes auth token from localStorage
- * 2. Clears cached user data (prevents flash of old user on next login)
- * 3. Redirects to auth page
- *
- * Usage:
- *   import { performLogout } from '@/utils/logout'
- *   performLogout() // Logs out user and redirects to /auth
- */
-
-import { jotaiStore } from "@/lib/jotaiStore";
-import { currentUserAtom, userErrorAtom } from "@/lib/atoms/auth";
-import { addressesAtom, addressesLoadingAtom, addressesErrorAtom } from "@/atoms/addressesAtom";
-import { likedProductsAtom, likedProductsLoadedAtom, __resetUseProductLikeState } from "@/hooks/useProductLike";
-import { submitOrderStepAtom, orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
-import { SubmitOrderStep } from "@/types/Order";
-import { __clearOrderCache } from "@/services/order";
-import { invalidateAddressCache } from "@/services/user/addresses";
-import { clearAccessToken } from "@/utils/accessToken";
-import { clearUserStorage } from "@/utils/userStorage";
+/** Current-device logout is completed as a top-level central-auth navigation. */
+import { centralLogoutUrl } from "@/lib/central-auth";
 
 export { clearUserStorage } from "@/utils/userStorage";
 
 export async function performLogout(): Promise<void> {
-  try {
-    // 1. Clear user atom to prevent showing cached user content
-    if (typeof window !== "undefined") {
-      jotaiStore.set(currentUserAtom, null);
-      jotaiStore.set(userErrorAtom, null);
-      // Clear address atoms to prevent showing previous user's addresses
-      jotaiStore.set(addressesAtom, []);
-      jotaiStore.set(addressesLoadingAtom, false);
-      jotaiStore.set(addressesErrorAtom, null);
-      // Clear liked products to prevent showing previous user's favorites
-      jotaiStore.set(likedProductsAtom, []);
-      jotaiStore.set(likedProductsLoadedAtom, false);
-      __resetUseProductLikeState();
-      // Clear order-related atoms
-      jotaiStore.set(orderIdAtom, null);
-      jotaiStore.set(orderNumberAtom, null);
-      jotaiStore.set(transactionIdAtom, null);
-      jotaiStore.set(submitOrderStepAtom, SubmitOrderStep.Table);
-      try {
-        localStorage.removeItem("refreshToken");
-      } catch {
-        // ignore storage errors
-      }
-    }
-
-    // 2. Remove auth token (triggers storage event listener in AuthInitializer)
-    clearAccessToken();
-    __clearOrderCache();
-    invalidateAddressCache();
-    // Clear all user-specific storage and cache
-    clearUserStorage();
-
-    // 3. Redirect to auth page
-    if (typeof window !== "undefined") {
-      window.location.href = "/auth";
-    }
-  } catch (error) {
-    console.error("[Logout] Error during logout:", error);
-    // Even if something fails, redirect to auth page
-    if (typeof window !== "undefined") {
-      __clearOrderCache();
-      window.location.href = "/auth";
-    }
-  }
+  if (typeof window === "undefined") return;
+  window.location.assign(centralLogoutUrl());
 }

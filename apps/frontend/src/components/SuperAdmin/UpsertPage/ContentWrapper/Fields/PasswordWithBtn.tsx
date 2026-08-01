@@ -20,21 +20,10 @@ export default function ContentWrapperPasswordWithBtn(props: Props) {
       return;
     }
 
-    const accessToken = localStorage.getItem("accessToken");
     setIsLoading(true);
 
     try {
-      await apiClient.put(
-        `/user/${props.id}`,
-        {
-          password: newPassword,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        },
-      );
+      await apiClient.put(`/user/${props.id}`, { password: newPassword });
       setShowPasswordModal(false);
       setNewPassword("");
       setRetryPassword("");
