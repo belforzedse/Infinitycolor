@@ -133,10 +133,12 @@ describe("Better Auth JWT pinned claims", () => {
     expect(config?.jwksUrl.href).toBe("https://auth.staging.infinitycolor.co/api/auth/jwks");
   });
 
-  test("permits only the frozen isolated E2E authority inside CI", () => {
+  test("permits only the frozen isolated E2E authority in the Infinity GitLab project", () => {
     Object.assign(process.env, {
       NODE_ENV: "production",
-      CI: "true",
+      CI: "1",
+      GITLAB_CI: "true",
+      CI_PROJECT_PATH: "bel4/infinity",
       BETTER_AUTH_BRIDGE_ENABLED: "true",
       BETTER_AUTH_ENVIRONMENT: "e2e",
       BETTER_AUTH_JWKS_URL: "http://build:2889/api/auth/jwks",
@@ -156,10 +158,13 @@ describe("Better Auth JWT pinned claims", () => {
     );
   });
 
-  test("rejects the isolated E2E authority outside CI", () => {
+  test.each([
+    ["outside GitLab CI", { GITLAB_CI: "false", CI_PROJECT_PATH: "bel4/infinity" }],
+    ["in another project", { GITLAB_CI: "true", CI_PROJECT_PATH: "bel4/other" }],
+  ])("rejects the isolated E2E authority %s", (_label, ciEnvironment) => {
     Object.assign(process.env, {
       NODE_ENV: "production",
-      CI: "false",
+      ...ciEnvironment,
       BETTER_AUTH_BRIDGE_ENABLED: "true",
       BETTER_AUTH_ENVIRONMENT: "e2e",
       BETTER_AUTH_JWKS_URL: "http://build:2889/api/auth/jwks",
@@ -168,7 +173,7 @@ describe("Better Auth JWT pinned claims", () => {
     });
 
     expect(() => __betterAuthJwtTestUtils.getConfig()).toThrow(
-      "The e2e Better Auth environment is restricted to CI jobs",
+      "The e2e Better Auth environment is restricted to the Infinity GitLab CI project",
     );
   });
 });

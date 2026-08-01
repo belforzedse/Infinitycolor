@@ -63,8 +63,13 @@ function configuredEnvironment(): "development" | "e2e" | "staging" | "productio
       "BETTER_AUTH_ENVIRONMENT must be development, e2e, staging, or production",
     );
   }
-  if (value === "e2e" && process.env.CI !== "true") {
-    throw new Error("The e2e Better Auth environment is restricted to CI jobs");
+  if (
+    value === "e2e" &&
+    (process.env.GITLAB_CI !== "true" || process.env.CI_PROJECT_PATH !== "bel4/infinity")
+  ) {
+    throw new Error(
+      "The e2e Better Auth environment is restricted to the Infinity GitLab CI project",
+    );
   }
   if (process.env.NODE_ENV === "production" && value === "development") {
     throw new Error(
