@@ -7,8 +7,8 @@ import {
   type AuthSuccessResponse,
   type OtpRequestResponse,
   type PhoneStatusResponse,
-} from "./contracts";
-import { createTokenManager } from "./token-manager";
+} from "./contracts.js";
+import { createTokenManager } from "./token-manager.js";
 
 export function clearStaleBrowserCredentials(): void {
   if (typeof window === "undefined") return;
