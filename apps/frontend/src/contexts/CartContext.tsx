@@ -116,7 +116,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isCartReady, setIsCartReady] = useState(false);
   const [initializedMode, setInitializedMode] = useState<"guest" | "account" | null>(null);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+  const [sessionGeneration, setSessionGeneration] = useState(0);
   const cartInitGenerationRef = useRef(0);
   const pathname = usePathname();
 
@@ -125,14 +126,25 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === "undefined") return;
 
     let active = true;
-    const updateLoginState = async () => {
-      const token = await centralAuth.tokenManager.getToken().catch(() => null);
-      if (active) setIsLoggedIn(Boolean(token));
+    const updateLoginState = async (forceRefresh = false) => {
+      const token = await centralAuth.tokenManager
+        .getToken({ forceRefresh })
+        .catch(() => null);
+      if (active) {
+        setIsLoggedIn(Boolean(token));
+        if (forceRefresh) setSessionGeneration((generation) => generation + 1);
+      }
     };
     void updateLoginState();
     const unsubscribe = subscribeToAuthState((event) => {
-      if (event.type === "logout") setIsLoggedIn(false);
-      else void updateLoginState();
+      if (event.type === "logout") {
+        setIsLoggedIn(false);
+        setSessionGeneration((generation) => generation + 1);
+      } else {
+        setCartItems([]);
+        setIsCartReady(false);
+        void updateLoginState(true);
+      }
     });
     return () => {
       active = false;
@@ -148,6 +160,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   // Initialize cart based on authentication status (client-only)
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (isLoggedIn === null) return;
 
     const generation = ++cartInitGenerationRef.current;
     const CART_INIT_TIMEOUT_MS = 20_000;
@@ -207,11 +220,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     void initializeCart();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run when login mode changes; cart helpers are stable for the session
-  }, [isLoggedIn]);
+  }, [isLoggedIn, sessionGeneration]);
 
   // Save cart to localStorage when it changes (only for non-logged in users)
   useEffect(() => {
-    if (!isCartReady || initializedMode !== "guest" || isLoggedIn) return;
+    if (!isCartReady || initializedMode !== "guest" || isLoggedIn !== false) return;
 
     try {
       localStorage.setItem("cart", JSON.stringify(cartItems));

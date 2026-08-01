@@ -1,7 +1,6 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CartProvider, useCart, type CartItem } from "../CartContext";
-import { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
 
 const mockToastCustom = jest.fn(() => "toast-id");
 const mockToastDismiss = jest.fn();
@@ -45,6 +44,23 @@ jest.mock("@/lib/analytics/matomo", () => ({
   trackFunnelStep: jest.fn(),
   trackMatomoEvent: jest.fn(),
 }));
+
+jest.mock("@/lib/central-auth", () => ({
+  centralAuth: {
+    tokenManager: {
+      getToken: jest.fn(),
+    },
+  },
+  subscribeToAuthState: jest.fn(),
+}));
+
+const mockedCentralAuth = jest.requireMock("@/lib/central-auth") as {
+  centralAuth: { tokenManager: { getToken: jest.Mock } };
+  subscribeToAuthState: jest.Mock;
+};
+let mockAuthStateListener:
+  | ((event: { type: "logout" | "session-changed"; at: number }) => void)
+  | undefined;
 
 const mockCartService = jest.requireMock("@/services").CartService as {
   getUserCart: jest.Mock;
@@ -104,7 +120,7 @@ const apiCart = (name: string, suffix: number) => ({
 });
 
 function VariantCartProbe() {
-  const { cartItems, addToCart } = useCart();
+  const { cartItems, addToCart, isCartReady } = useCart();
   const addVariant = (variationId: string) =>
     addToCart({
       ...cartItem,
@@ -115,6 +131,7 @@ function VariantCartProbe() {
 
   return (
     <div>
+      <span data-testid="variant-cart-ready">{String(isCartReady)}</span>
       <span data-testid="variant-cart-count">{cartItems.length}</span>
       <span data-testid="variant-cart-lines">
         {cartItems.map((item) => `${item.variationId}:${item.quantity}`).join("|")}
@@ -128,6 +145,12 @@ function VariantCartProbe() {
 describe("CartProvider remove undo", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuthStateListener = undefined;
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation((listener) => {
+      mockAuthStateListener = listener;
+      return jest.fn();
+    });
     mockIsOnline.mockReturnValue(true);
     mockCartService.getUserCart.mockResolvedValue({ cart_items: [] });
     mockCartService.checkCartStock.mockResolvedValue({ valid: true });
@@ -168,6 +191,12 @@ describe("CartProvider remove undo", () => {
 describe("CartProvider variant identity", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuthStateListener = undefined;
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation((listener) => {
+      mockAuthStateListener = listener;
+      return jest.fn();
+    });
     mockIsOnline.mockReturnValue(true);
     mockCartService.getUserCart.mockResolvedValue({ cart_items: [] });
     mockCartService.checkCartStock.mockResolvedValue({ valid: true });
@@ -181,7 +210,7 @@ describe("CartProvider variant identity", () => {
       </CartProvider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId("variant-cart-count")).toHaveTextContent("0"));
+    await waitFor(() => expect(screen.getByTestId("variant-cart-ready")).toHaveTextContent("true"));
     fireEvent.click(screen.getByText("add first"));
     fireEvent.click(screen.getByText("add second"));
 
@@ -198,7 +227,7 @@ describe("CartProvider variant identity", () => {
       </CartProvider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId("variant-cart-count")).toHaveTextContent("0"));
+    await waitFor(() => expect(screen.getByTestId("variant-cart-ready")).toHaveTextContent("true"));
     fireEvent.click(screen.getByText("add first"));
     fireEvent.click(screen.getByText("add second"));
     fireEvent.click(screen.getByText("add first"));
@@ -214,6 +243,12 @@ describe("CartProvider variant identity", () => {
 describe("CartProvider identity and storage hardening", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuthStateListener = undefined;
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation((listener) => {
+      mockAuthStateListener = listener;
+      return jest.fn();
+    });
     mockIsOnline.mockReturnValue(true);
     mockCartService.getUserCart.mockResolvedValue({ cart_items: [] });
     mockCartService.checkCartStock.mockResolvedValue({ valid: true });
@@ -234,7 +269,7 @@ describe("CartProvider identity and storage hardening", () => {
   });
 
   it("never persists an authenticated cart into the following guest session", async () => {
-    localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, "account-a");
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("account-a");
     mockCartService.getUserCart.mockResolvedValue(apiCart("سبد حساب الف", 1));
 
     render(
@@ -246,16 +281,17 @@ describe("CartProvider identity and storage hardening", () => {
     await waitFor(() => expect(screen.getByTestId("cart-names")).toHaveTextContent("سبد حساب الف"));
     expect(localStorage.getItem("cart")).toBeNull();
 
-    localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
-    act(() => window.dispatchEvent(new Event(ACCESS_TOKEN_EVENT)));
+    act(() => mockAuthStateListener?.({ type: "logout", at: Date.now() }));
 
     await waitFor(() => expect(screen.getByTestId("cart-count")).toHaveTextContent("0"));
     expect(localStorage.getItem("cart")).toBe("[]");
     expect(localStorage.getItem("cart")).not.toContain("سبد حساب الف");
   });
 
-  it("drops the prior account cart immediately when the token identity changes", async () => {
-    localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, "account-a");
+  it("drops the prior account cart immediately when the session identity changes", async () => {
+    mockedCentralAuth.centralAuth.tokenManager.getToken
+      .mockResolvedValueOnce("account-a")
+      .mockResolvedValue("account-b");
     mockCartService.getUserCart
       .mockResolvedValueOnce(apiCart("سبد حساب الف", 1))
       .mockResolvedValueOnce(apiCart("سبد حساب ب", 2));
@@ -268,8 +304,7 @@ describe("CartProvider identity and storage hardening", () => {
 
     await waitFor(() => expect(screen.getByTestId("cart-names")).toHaveTextContent("سبد حساب الف"));
 
-    localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, "account-b");
-    act(() => window.dispatchEvent(new Event(ACCESS_TOKEN_EVENT)));
+    act(() => mockAuthStateListener?.({ type: "session-changed", at: Date.now() }));
 
     await waitFor(() => expect(screen.getByTestId("cart-names")).toHaveTextContent("سبد حساب ب"));
     expect(screen.getByTestId("cart-names")).not.toHaveTextContent("سبد حساب الف");

@@ -5,15 +5,24 @@ import {
   downloadProductReportExcel,
 } from "../index";
 import { apiClient } from "@/services";
+import { getAccessToken } from "@/utils/auth";
 
 jest.mock("@/services", () => ({
   apiClient: { get: jest.fn() },
 }));
 
+jest.mock("@/utils/auth", () => ({
+  getAccessToken: jest.fn(),
+}));
+
 const getMock = apiClient.get as jest.Mock;
+const getAccessTokenMock = getAccessToken as jest.Mock;
 
 describe("product report services", () => {
-  beforeEach(() => getMock.mockReset());
+  beforeEach(() => {
+    getMock.mockReset();
+    getAccessTokenMock.mockReset().mockResolvedValue(null);
+  });
 
   describe("buildPerformanceUrl", () => {
     it("encodes active filters and sort, omitting empty values", () => {
@@ -79,7 +88,7 @@ describe("product report services", () => {
     });
 
     it("calls the export endpoint with the bearer token and triggers a download", async () => {
-      localStorage.setItem("accessToken", "tok-123");
+      getAccessTokenMock.mockResolvedValue("tok-123");
       const blob = new Blob(["x"], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });

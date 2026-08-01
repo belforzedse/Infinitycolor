@@ -11,12 +11,27 @@ jest.mock("@/utils/auth", () => ({
   handleAuthErrors: jest.fn(),
 }));
 
+jest.mock("@/lib/central-auth", () => ({
+  centralAuth: {
+    tokenManager: {
+      getToken: jest.fn(),
+      expire: jest.fn(),
+    },
+  },
+}));
+
+const mockedCentralAuth = jest.requireMock("@/lib/central-auth") as {
+  centralAuth: { tokenManager: { getToken: jest.Mock; expire: jest.Mock } };
+};
+
 describe("ApiClient error handling", () => {
   const mockFetch = jest.fn();
 
   beforeEach(() => {
     (handleAuthErrors as jest.Mock).mockClear();
     mockFetch.mockReset();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
+    mockedCentralAuth.centralAuth.tokenManager.expire.mockReset();
     global.fetch = mockFetch as any;
   });
 
