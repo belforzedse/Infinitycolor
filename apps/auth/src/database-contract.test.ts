@@ -8,6 +8,22 @@ import { ReturnGrantRepository } from "./server/return-grants";
 const connectionString = process.env.AUTH_TEST_DATABASE_URL;
 
 test(
+  "application role cannot create objects in the auth schema",
+  { skip: !connectionString },
+  async () => {
+    const pool = new Pool({ connectionString, max: 1 });
+    try {
+      await assert.rejects(
+        pool.query("create table auth.__privilege_probe (id integer)"),
+        (error: Error & { code?: string }) => error.code === "42501",
+      );
+    } finally {
+      await pool.end();
+    }
+  },
+);
+
+test(
   "migration supports concurrent immutable linking and one-time return grants",
   { skip: !connectionString },
   async () => {

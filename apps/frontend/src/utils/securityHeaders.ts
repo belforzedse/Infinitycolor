@@ -37,6 +37,10 @@ function getSentryOrigin(): string | null {
   return originFromSentryDsn(process.env.NEXT_PUBLIC_SENTRY_DSN);
 }
 
+function getCentralAuthOrigin(): string | null {
+  return originFromUrl(process.env.NEXT_PUBLIC_AUTH_ORIGIN);
+}
+
 export function getContentSecurityPolicyReportOnly(): string {
   const imageSources = unique([
     "'self'",
@@ -50,6 +54,7 @@ export function getContentSecurityPolicyReportOnly(): string {
     ...getTrustedApiSourceOrigins(),
     getMatomoOrigin(),
     getSentryOrigin(),
+    getCentralAuthOrigin(),
   ]);
 
   // Non-self sources are intentionally limited to Strapi/API media, Matomo,
