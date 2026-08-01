@@ -4,6 +4,7 @@ import { getSecurityHeaderEntries } from "./utils/securityHeaders";
 import { AUTH_ROUTE_HINT_COOKIE, AUTH_ROUTE_HINT_COOKIE_VALUE } from "./utils/authRouteHint";
 import { isAuthRequiredRoute, isPrivateRoute } from "./utils/routeAccessPolicy";
 import { exactCentralAuthOrigin } from "./lib/central-auth-origin";
+import { SITE_URL } from "./config/site";
 
 export { isAuthRequiredRoute };
 
@@ -202,7 +203,10 @@ function getAuthRedirectUrl(request: NextRequest) {
     // may be an internal service address and is reserved for server-to-server calls.
     const url = new URL("/auth", exactCentralAuthOrigin());
     const requestedPath = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-    url.searchParams.set("returnTo", new URL(requestedPath, request.nextUrl.origin).toString());
+    // Next's standalone server sees its loopback/container authority behind the
+    // reverse proxy. Return grants must use the configured public storefront
+    // authority and must never derive it from forwarded or request host data.
+    url.searchParams.set("returnTo", new URL(requestedPath, SITE_URL).toString());
     return url;
   }
   const url = request.nextUrl.clone();
