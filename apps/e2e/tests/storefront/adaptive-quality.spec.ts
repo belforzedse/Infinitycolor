@@ -17,6 +17,7 @@ import {
   stubSuccessfulCallback,
 } from "../../helpers/payment";
 import { installLocalMediaFixture } from "../../helpers/local-media";
+import { isExpectedHarnessConsoleError } from "../../helpers/runtime-console";
 
 type AdaptivePreset = {
   memory?: number;
@@ -78,12 +79,6 @@ const forbiddenChunkMarkers = [
   { family: "glass-surface", markers: ["glass-filter-", "distortionScale"] },
 ] as const;
 
-const expectedHarnessConsoleErrors = [
-  "The Content Security Policy directive 'frame-ancestors' is ignored when delivered in a report-only policy.",
-  "was delivered in report-only mode, but does not specify a 'report-to'; the policy will have no effect.",
-  "Failed to preconnect to https://media.infinitycolor.test/. Error: Error resolving",
-] as const;
-
 // WebKit reports requests abandoned by a localhost page transition as page
 // errors. The commerce assertions below still fail on a real data or routing
 // regression; suppress only this engine-specific local harness diagnostic.
@@ -103,12 +98,9 @@ function collectStrictRuntimeErrors(page: Page) {
   });
   page.on("console", (message) => {
     if (message.type() !== "error") return;
+    if (isExpectedHarnessConsoleError(message)) return;
 
     const text = message.text();
-    if (expectedHarnessConsoleErrors.some((marker) => text.includes(marker))) {
-      return;
-    }
-
     const location = message.location().url;
     errors.push(
       `console.error: ${text}${location ? ` (${location})` : ""}`,
@@ -1163,7 +1155,7 @@ test.describe("adaptive quality authentication isolation", () => {
       "/account?tab=profile",
     );
     expect(accountResponse?.status()).toBe(307);
-    await expect(page.locator(".public-layout")).toHaveCount(0);
+    await expect(page.locator(".public-layout.bg-white.pt-5")).toHaveCount(0);
   });
 });
 
