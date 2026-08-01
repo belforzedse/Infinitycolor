@@ -12,12 +12,12 @@ jest.mock('@strapi/strapi', () => ({
 }));
 
 import { createStrapiMock, mockContext, mockUser } from '../../../__tests__/mocks/factories';
+import walletRoutes from '../routes/custom-router';
 
 describe('Wallet Operations - Real Implementation', () => {
   let mockStrapi: any;
   let walletController: any;
   let topupController: any;
-  let jwtService: any;
   let mellatService: any;
   let walletModule: any;
   let topupModule: any;
@@ -116,22 +116,6 @@ describe('Wallet Operations - Real Implementation', () => {
     walletController = walletModule.default({ strapi: mockStrapi });
     topupController = topupModule.default({ strapi: mockStrapi });
 
-    // Mock JWT service
-    jwtService = {
-      issue: jest.fn(),
-      verify: jest.fn((token) => ({ id: 1, phone: '09123456789' })),
-    };
-
-    mockStrapi.plugin = jest.fn((pluginName: string) => {
-      if (pluginName === 'users-permissions') {
-        return {
-          service: jest.fn((serviceName: string) => {
-            if (serviceName === 'jwt') return jwtService;
-          }),
-        };
-      }
-    });
-
     // Mock Mellat service
     mellatService = {
       requestPayment: jest.fn(),
@@ -164,6 +148,14 @@ describe('Wallet Operations - Real Implementation', () => {
   });
 
   describe('getCurrentUserWallet - Get wallet balance', () => {
+    it('uses the shared content API auth strategy', () => {
+      const route = walletRoutes.routes.find(
+        (candidate: any) => candidate.path === '/local-user-wallet/me'
+      );
+
+      expect(route?.config.auth).toEqual({ scope: [] });
+    });
+
     it('should return wallet balance for authenticated user - REAL query', async () => {
       const userId = 1;
       const walletBalance = 500000; // 500k IRR
@@ -196,30 +188,18 @@ describe('Wallet Operations - Real Implementation', () => {
       });
     });
 
-    it('should verify JWT from header if state.user not set', async () => {
-      const userId = 5;
-      const token = 'valid-jwt-token';
-
-      jwtService.verify.mockResolvedValue({ id: userId });
-
+    it('should reject a bearer header when no auth strategy populated state.user', async () => {
       const walletQuery = mockStrapi.db.query('api::local-user-wallet.local-user-wallet');
-      walletQuery.findOne.mockResolvedValue({
-        id: 1,
-        Balance: 100000,
-        user: userId,
-      });
-
       const ctx = mockContext({
-        request: { header: { authorization: `Bearer ${token}` } },
+        request: { header: { authorization: 'Bearer unverified-token' } },
         state: {}, // No user in state
+        unauthorized: jest.fn(),
       });
 
       await walletController.getCurrentUserWallet(ctx);
 
-      expect(jwtService.verify).toHaveBeenCalledWith(token);
-      expect(walletQuery.findOne).toHaveBeenCalledWith({
-        where: { user: userId },
-      });
+      expect(ctx.unauthorized).toHaveBeenCalledWith('Authentication required');
+      expect(walletQuery.findOne).not.toHaveBeenCalled();
     });
 
     it('should return unauthorized without authentication', async () => {
