@@ -30,30 +30,10 @@ export default factories.createCoreController(
   ({ strapi }) => ({
     async getCurrentUserWallet(ctx) {
       try {
-        // Resolve plugin user id via ctx.state or Authorization header
-        let pluginUserId: number | null | undefined = null;
-        if (ctx.state.user) {
-          pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
-          if (!pluginUserId) return;
-        } else {
-          const authHeader = ctx.request.header.authorization || "";
-          const token = authHeader.toLowerCase().startsWith("bearer ")
-            ? authHeader.split(" ")[1]
-            : null;
-          if (token) {
-            try {
-              const payload = await strapi
-                .plugin("users-permissions")
-                .service("jwt")
-                .verify(token);
-              pluginUserId = payload?.id;
-            } catch (err) {
-              strapi.log.debug("Failed to verify JWT for wallet", err);
-            }
-          }
-        }
-
-        if (!pluginUserId) return ctx.unauthorized("Authentication required");
+        // Both native Strapi JWTs and Better Auth JWTs are resolved by the
+        // registered content-API strategies before this controller runs.
+        const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
+        if (!pluginUserId) return;
 
         // Find user's wallet
         const wallet = await strapi.db.query(WALLET_UID).findOne({
