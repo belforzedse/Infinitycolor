@@ -1,4 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { isTrustedStorefrontRequest } from "@/lib/central-auth-server";
 import {
   AUTH_ROUTE_HINT_COOKIE,
   AUTH_ROUTE_HINT_COOKIE_VALUE,
@@ -10,7 +12,7 @@ const LOOP_COOKIE = "infinity_auth_restore_loop";
 function trustedSameOrigin(request: NextRequest): boolean {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
-  return (!origin || origin === request.nextUrl.origin) && fetchSite !== "cross-site";
+  return isTrustedStorefrontRequest(origin, fetchSite);
 }
 
 function clearHint(response: NextResponse) {
