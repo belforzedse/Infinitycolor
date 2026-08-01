@@ -1,8 +1,22 @@
 import { defineConfig, devices } from "@playwright/test";
-import { storefrontBaseURL, strapiApiURL, strapiOrigin } from "./helpers/env";
+import {
+  centralAuthOrigin,
+  storefrontBaseURL,
+  strapiApiURL,
+  strapiOrigin,
+} from "./helpers/env";
 
 const isCI = !!process.env.CI;
 const webServerCommand = process.env.E2E_WEB_SERVER_COMMAND?.trim();
+const authServerCommand = process.env.E2E_AUTH_SERVER_COMMAND?.trim();
+
+function stringProcessEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
 
 function resolveWebServerApiEnv(): Record<string, string> {
   const storefrontOrigin = storefrontBaseURL().replace(/\/$/, "");
@@ -72,25 +86,46 @@ export default defineConfig({
       },
     },
   ],
-  webServer: webServerCommand
-    ? {
-        command: webServerCommand,
-        url: storefrontBaseURL(),
-        reuseExistingServer: !isCI,
-        timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
-        env: {
-          ...process.env,
-          HOME_BATCHED_SECTIONS_ENABLED:
-            process.env.HOME_BATCHED_SECTIONS_ENABLED ?? "true",
-          HOME_BATCHED_SECTION_ALLOWLIST:
-            process.env.HOME_BATCHED_SECTION_ALLOWLIST ??
-            "newest,discounted",
-          HOME_PRODUCT_SERVER_SHELL_SECTION:
-            process.env.HOME_PRODUCT_SERVER_SHELL_SECTION ?? "newest",
-          E2E_DISABLE_HOMEPAGE_FETCH_CACHE:
-            process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE ?? "1",
-          ...resolveWebServerApiEnv(),
-        },
-      }
-    : undefined,
+  webServer: [
+    ...(authServerCommand
+      ? [
+          {
+            command: authServerCommand,
+            url: `${centralAuthOrigin().replace(/\/$/, "")}/api/health/ready`,
+            name: "central-auth",
+            reuseExistingServer: !isCI,
+            timeout: Number(
+              process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000,
+            ),
+            env: stringProcessEnvironment(),
+          },
+        ]
+      : []),
+    ...(webServerCommand
+      ? [
+          {
+            command: webServerCommand,
+            url: storefrontBaseURL(),
+            name: "storefront",
+            reuseExistingServer: !isCI,
+            timeout: Number(
+              process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000,
+            ),
+            env: {
+              ...stringProcessEnvironment(),
+              HOME_BATCHED_SECTIONS_ENABLED:
+                process.env.HOME_BATCHED_SECTIONS_ENABLED ?? "true",
+              HOME_BATCHED_SECTION_ALLOWLIST:
+                process.env.HOME_BATCHED_SECTION_ALLOWLIST ??
+                "newest,discounted",
+              HOME_PRODUCT_SERVER_SHELL_SECTION:
+                process.env.HOME_PRODUCT_SERVER_SHELL_SECTION ?? "newest",
+              E2E_DISABLE_HOMEPAGE_FETCH_CACHE:
+                process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE ?? "1",
+              ...resolveWebServerApiEnv(),
+            },
+          },
+        ]
+      : []),
+  ],
 });
