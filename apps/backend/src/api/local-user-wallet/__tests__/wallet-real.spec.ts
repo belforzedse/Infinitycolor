@@ -154,6 +154,7 @@ describe('Wallet Operations - Real Implementation', () => {
       );
 
       expect(route?.config.auth).toEqual({ scope: [] });
+      expect(route?.config.middlewares).toBeUndefined();
     });
 
     it('should return wallet balance for authenticated user - REAL query', async () => {
