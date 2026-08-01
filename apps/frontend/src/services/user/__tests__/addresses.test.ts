@@ -31,7 +31,6 @@ jest.mock("@/utils/auth", () => ({
 }));
 
 describe("User Addresses Service", () => {
-  const mockToken = "mock-access-token";
   const validAddress: AddAddressRequest = {
     PostalCode: "1234567890",
     Description: "Home",
@@ -57,7 +56,6 @@ describe("User Addresses Service", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    localStorage.clear();
   });
 
   describe("getUserAddresses", () => {
@@ -91,26 +89,16 @@ describe("User Addresses Service", () => {
 
   describe("addUserAddress", () => {
     it("adds an address, returns the created address, and invalidates address cache", async () => {
-      localStorage.setItem("accessToken", mockToken);
       (apiClient.post as jest.Mock).mockResolvedValue({ data: persistedAddress });
 
       const result = await addUserAddress(validAddress);
 
-      expect(apiClient.post).toHaveBeenCalledWith(
-        "/local-user-addresses/create",
-        validAddress,
-        {
-          headers: {
-            Authorization: `Bearer ${mockToken}`,
-          },
-        },
-      );
+      expect(apiClient.post).toHaveBeenCalledWith("/local-user-addresses/create", validAddress);
       expect(apiCache.clearByPattern).toHaveBeenCalledWith(/local-user-addresses/);
       expect(result).toEqual(persistedAddress);
     });
 
     it("fetches the full address when the create response is missing relations", async () => {
-      localStorage.setItem("accessToken", mockToken);
       (apiClient.post as jest.Mock).mockResolvedValue({ data: { id: persistedAddress.id } });
       (apiClient.get as jest.Mock).mockResolvedValue({ data: [persistedAddress] });
       const consoleWarn = jest.spyOn(console, "warn").mockImplementation();
@@ -133,64 +121,61 @@ describe("User Addresses Service", () => {
       [{ FullAddress: "   " }, "Full address is required"],
       [{ shipping_city: 0 }, "Shipping city is required"],
     ])("validates %p", async (override, message) => {
-      localStorage.setItem("accessToken", mockToken);
-
       await expect(addUserAddress({ ...validAddress, ...override })).rejects.toThrow(message);
       expect(apiClient.post).not.toHaveBeenCalled();
     });
 
-    it("requires an access token for mutations", async () => {
+    it("surfaces authentication errors from the shared API client", async () => {
+      (apiClient.post as jest.Mock).mockRejectedValue(new Error("Authentication required"));
+
       await expect(addUserAddress(validAddress)).rejects.toThrow("Authentication required");
-      expect(apiClient.post).not.toHaveBeenCalled();
+      expect(apiClient.post).toHaveBeenCalledWith("/local-user-addresses/create", validAddress);
     });
   });
 
   describe("updateUserAddress", () => {
     it("updates an address and invalidates address cache", async () => {
-      localStorage.setItem("accessToken", mockToken);
       (apiClient.put as jest.Mock).mockResolvedValue({ data: persistedAddress });
 
       const result = await updateUserAddress(1, validAddress);
 
-      expect(apiClient.put).toHaveBeenCalledWith("/local-user-addresses/1", { data: validAddress }, {
-        headers: {
-          Authorization: `Bearer ${mockToken}`,
-        },
+      expect(apiClient.put).toHaveBeenCalledWith("/local-user-addresses/1", {
+        data: validAddress,
       });
       expect(apiCache.clearByPattern).toHaveBeenCalledWith(/local-user-addresses/);
       expect(result).toEqual(persistedAddress);
     });
 
-    it("requires an access token", async () => {
+    it("surfaces authentication errors from the shared API client", async () => {
+      (apiClient.put as jest.Mock).mockRejectedValue(new Error("Authentication required"));
+
       await expect(updateUserAddress(1, validAddress)).rejects.toThrow(
         "Authentication required",
       );
-      expect(apiClient.put).not.toHaveBeenCalled();
+      expect(apiClient.put).toHaveBeenCalledWith("/local-user-addresses/1", {
+        data: validAddress,
+      });
     });
   });
 
   describe("deleteUserAddress", () => {
     it("deletes an address and invalidates address cache", async () => {
-      localStorage.setItem("accessToken", mockToken);
       (apiClient.delete as jest.Mock).mockResolvedValue({});
 
       await deleteUserAddress(1);
 
-      expect(apiClient.delete).toHaveBeenCalledWith("/local-user-addresses/1", {
-        headers: {
-          Authorization: `Bearer ${mockToken}`,
-        },
-      });
+      expect(apiClient.delete).toHaveBeenCalledWith("/local-user-addresses/1");
       expect(apiCache.clearByPattern).toHaveBeenCalledWith(/local-user-addresses/);
     });
 
-    it("requires an access token", async () => {
+    it("surfaces authentication errors from the shared API client", async () => {
+      (apiClient.delete as jest.Mock).mockRejectedValue(new Error("Authentication required"));
+
       await expect(deleteUserAddress(1)).rejects.toThrow("Authentication required");
-      expect(apiClient.delete).not.toHaveBeenCalled();
+      expect(apiClient.delete).toHaveBeenCalledWith("/local-user-addresses/1");
     });
 
     it("forwards delete errors through the shared auth error handler", async () => {
-      localStorage.setItem("accessToken", mockToken);
       const consoleError = jest.spyOn(console, "error").mockImplementation();
       const error = new Error("Network error");
       (apiClient.delete as jest.Mock).mockRejectedValue(error);

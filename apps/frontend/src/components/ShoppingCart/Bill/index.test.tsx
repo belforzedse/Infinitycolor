@@ -3,13 +3,25 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Provider, createStore } from "jotai";
 import ShoppingCartBillForm from ".";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import { ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
 import { CartService } from "@/services";
 import WalletService from "@/services/wallet";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
 }));
+
+jest.mock("@/lib/central-auth", () => ({
+  centralAuth: {
+    tokenManager: {
+      getToken: jest.fn(),
+    },
+  },
+  centralLoginUrl: jest.fn(() => "http://localhost:2889/auth"),
+}));
+
+const mockedCentralAuth = jest.requireMock("@/lib/central-auth") as {
+  centralAuth: { tokenManager: { getToken: jest.Mock } };
+};
 
 let mockCartState = {
   totalPrice: 100_000,
@@ -175,6 +187,7 @@ describe("ShoppingCartBillForm auth gate", () => {
       ],
     };
     jest.clearAllMocks();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["samankish"]);
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: false });
     (CartService.applyDiscount as jest.Mock).mockResolvedValue({
@@ -192,7 +205,7 @@ describe("ShoppingCartBillForm auth gate", () => {
   });
 
   it("keeps the auth gate during initial token hydration and reveals the form once auth loading settles", async () => {
-    localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, "e2e-token");
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("e2e-token");
 
     const store = createStore();
     store.set(currentUserAtom, null);

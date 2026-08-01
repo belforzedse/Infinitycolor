@@ -11,12 +11,25 @@ jest.mock("@/services", () => ({
   },
 }));
 
+jest.mock("@/lib/central-auth", () => ({
+  centralAuth: {
+    tokenManager: {
+      getToken: jest.fn(),
+    },
+  },
+  centralLoginUrl: jest.fn(() => "http://localhost:2889/auth"),
+}));
+
+const mockedCentralAuth = jest.requireMock("@/lib/central-auth") as {
+  centralAuth: { tokenManager: { getToken: jest.Mock } };
+};
+
 describe("useProductLike", () => {
   const mockToken = "mock-token";
 
   beforeEach(() => {
     jest.clearAllMocks();
-    localStorage.clear();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
     (apiClient.get as jest.Mock).mockResolvedValue({ data: [] });
     (apiClient.post as jest.Mock).mockResolvedValue({});
   });
@@ -51,7 +64,7 @@ describe("useProductLike", () => {
   });
 
   it("should fetch liked products on mount when authenticated", async () => {
-    localStorage.setItem("accessToken", mockToken);
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
     (apiClient.get as jest.Mock).mockResolvedValue({
       data: [
         { id: 1, product: { id: 123 }, createdAt: "2024-01-01", updatedAt: "2024-01-01" },
@@ -95,7 +108,7 @@ describe("useProductLike", () => {
   });
 
   it("should toggle like status when clicking", async () => {
-    localStorage.setItem("accessToken", mockToken);
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
     (apiClient.post as jest.Mock).mockResolvedValue({});
 
     const { hook } = await renderUseProductLike();
@@ -116,7 +129,7 @@ describe("useProductLike", () => {
   });
 
   it("should handle errors when fetching liked products", async () => {
-    localStorage.setItem("accessToken", mockToken);
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
     const consoleError = jest.spyOn(console, "error").mockImplementation();
     (apiClient.get as jest.Mock).mockRejectedValue(new Error("Network error"));
 
@@ -131,7 +144,7 @@ describe("useProductLike", () => {
   });
 
   it("should handle errors when toggling like", async () => {
-    localStorage.setItem("accessToken", mockToken);
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
     const consoleError = jest.spyOn(console, "error").mockImplementation();
     (apiClient.post as jest.Mock).mockRejectedValue(new Error("Network error"));
 
