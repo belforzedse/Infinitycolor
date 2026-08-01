@@ -318,6 +318,22 @@ async function writeCentralAuthStorageState(role: E2EAuthRole) {
       );
     }
 
+    const walletCheck = await fetchWithTimeout(
+      `${strapiApiURL()}/local-user-wallet/me`,
+      {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${tokenPayload.token}`,
+        },
+      },
+      15_000,
+    );
+    if (walletCheck.status === 401 || walletCheck.status === 403) {
+      throw new Error(
+        `E2E ${role} Better Auth wallet authorization failed (${walletCheck.status}): ${await walletCheck.text()}`,
+      );
+    }
+
     const state = await context.storageState();
     state.cookies.push(authRouteHintCookie());
     state.origins = [
