@@ -4,9 +4,18 @@ import EditIcon from "./icons/EditIcon";
 export interface PhoneInputProps {
   value: string;
   onEdit: () => void;
+  id?: string;
+  name?: string;
+  autoComplete?: string;
 }
 
-export default function PhoneInput({ value, onEdit }: PhoneInputProps) {
+export default function PhoneInput({
+  value,
+  onEdit,
+  id,
+  name,
+  autoComplete,
+}: PhoneInputProps) {
   const editButton = (
     <button
       type="button"
@@ -26,9 +35,12 @@ export default function PhoneInput({ value, onEdit }: PhoneInputProps) {
 
   return (
     <AuthInput
+      id={id}
+      name={name}
       type="tel"
       value={faValue}
       readOnly
+      autoComplete={autoComplete}
       className="border-slate-200 bg-slate-100"
       dir="ltr"
       rightElement={editButton}

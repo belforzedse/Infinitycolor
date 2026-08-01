@@ -3,7 +3,6 @@
 @tailwind utilities;
 
 :root {
-  --font-peyda-fanum: sans-serif;
   color-scheme: light;
 }
 
