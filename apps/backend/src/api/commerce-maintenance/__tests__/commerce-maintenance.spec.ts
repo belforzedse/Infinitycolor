@@ -180,14 +180,15 @@ describe("commerce-maintenance purge service", () => {
 });
 
 describe("commerce-maintenance route", () => {
-  it("uses users-permissions authentication middleware and Superadmin policy", () => {
+  it("uses the shared content API auth strategy and Superadmin policy", () => {
     const route = routeConfig.routes.find(
       (entry) => entry.path === "/admin/commerce-data/purge"
     );
 
     expect(route).toBeDefined();
     expect(route?.method).toBe("POST");
-    expect(route?.config.middlewares).toContain("global::authentication");
+    expect(route?.config.auth).toEqual({ scope: [] });
+    expect(route?.config.middlewares).toBeUndefined();
     expect(route?.config.policies).toEqual([
       {
         name: "global::role-based",
