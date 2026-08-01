@@ -132,4 +132,43 @@ describe("Better Auth JWT pinned claims", () => {
     expect(config?.audience).toBe("https://api.staging.infinitycolor.co");
     expect(config?.jwksUrl.href).toBe("https://auth.staging.infinitycolor.co/api/auth/jwks");
   });
+
+  test("permits only the frozen isolated E2E authority inside CI", () => {
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      CI: "true",
+      BETTER_AUTH_BRIDGE_ENABLED: "true",
+      BETTER_AUTH_ENVIRONMENT: "e2e",
+      BETTER_AUTH_JWKS_URL: "http://build:2889/api/auth/jwks",
+      BETTER_AUTH_JWT_ISSUER: "http://localhost:2889",
+      BETTER_AUTH_JWT_AUDIENCE: "http://backend:1337",
+      BETTER_AUTH_JWT_CLOCK_TOLERANCE_SECONDS: "5",
+    });
+
+    const config = __betterAuthJwtTestUtils.getConfig();
+    expect(config?.issuer).toBe("http://localhost:2889");
+    expect(config?.audience).toBe("http://backend:1337");
+    expect(config?.jwksUrl.href).toBe("http://build:2889/api/auth/jwks");
+
+    process.env.BETTER_AUTH_JWKS_URL = "http://backend:2889/api/auth/jwks";
+    expect(() => __betterAuthJwtTestUtils.getConfig()).toThrow(
+      "e2e Better Auth JWKS, issuer, and audience must match the frozen authorities",
+    );
+  });
+
+  test("rejects the isolated E2E authority outside CI", () => {
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      CI: "false",
+      BETTER_AUTH_BRIDGE_ENABLED: "true",
+      BETTER_AUTH_ENVIRONMENT: "e2e",
+      BETTER_AUTH_JWKS_URL: "http://build:2889/api/auth/jwks",
+      BETTER_AUTH_JWT_ISSUER: "http://localhost:2889",
+      BETTER_AUTH_JWT_AUDIENCE: "http://backend:1337",
+    });
+
+    expect(() => __betterAuthJwtTestUtils.getConfig()).toThrow(
+      "The e2e Better Auth environment is restricted to CI jobs",
+    );
+  });
 });

@@ -43,7 +43,7 @@ function exactOrigin(name: string, value: string): string {
   return url.origin;
 }
 
-function configuredEnvironment(): "development" | "staging" | "production" {
+function configuredEnvironment(): "development" | "e2e" | "staging" | "production" {
   const value = process.env.BETTER_AUTH_ENVIRONMENT?.trim();
   if (!value) {
     if (process.env.NODE_ENV === "production") {
@@ -53,8 +53,18 @@ function configuredEnvironment(): "development" | "staging" | "production" {
     }
     return "development";
   }
-  if (value !== "development" && value !== "staging" && value !== "production") {
-    throw new Error("BETTER_AUTH_ENVIRONMENT must be development, staging, or production");
+  if (
+    value !== "development" &&
+    value !== "e2e" &&
+    value !== "staging" &&
+    value !== "production"
+  ) {
+    throw new Error(
+      "BETTER_AUTH_ENVIRONMENT must be development, e2e, staging, or production",
+    );
+  }
+  if (value === "e2e" && process.env.CI !== "true") {
+    throw new Error("The e2e Better Auth environment is restricted to CI jobs");
   }
   if (process.env.NODE_ENV === "production" && value === "development") {
     throw new Error(
@@ -75,6 +85,7 @@ function getConfig(): BetterAuthJwtConfig | null {
     );
   }
   const jwksUrl = new URL(jwksRaw);
+  const environment = configuredEnvironment();
   if (
     !["http:", "https:"].includes(jwksUrl.protocol) ||
     jwksUrl.username ||
@@ -84,7 +95,11 @@ function getConfig(): BetterAuthJwtConfig | null {
   ) {
     throw new Error("BETTER_AUTH_JWKS_URL must be an HTTP(S) URL without credentials");
   }
-  if (process.env.NODE_ENV === "production" && jwksUrl.protocol !== "https:") {
+  if (
+    process.env.NODE_ENV === "production" &&
+    environment !== "e2e" &&
+    jwksUrl.protocol !== "https:"
+  ) {
     throw new Error("BETTER_AUTH_JWKS_URL must use HTTPS in production");
   }
   const tolerance = Number(process.env.BETTER_AUTH_JWT_CLOCK_TOLERANCE_SECONDS ?? "5");
@@ -93,7 +108,6 @@ function getConfig(): BetterAuthJwtConfig | null {
   }
   const issuer = exactOrigin("BETTER_AUTH_JWT_ISSUER", issuerRaw);
   const audience = exactOrigin("BETTER_AUTH_JWT_AUDIENCE", audienceRaw);
-  const environment = configuredEnvironment();
   const frozenAuthority =
     environment === "production"
       ? {
@@ -102,12 +116,21 @@ function getConfig(): BetterAuthJwtConfig | null {
         }
       : environment === "staging"
         ? { auth: STAGING_AUTH_ORIGIN, api: STAGING_API_AUDIENCE }
+        : environment === "e2e"
+          ? {
+              auth: "http://localhost:2889",
+              api: "http://backend:1337",
+              jwks: "http://build:2889/api/auth/jwks",
+            }
         : null;
   if (
     frozenAuthority &&
     (issuer !== frozenAuthority.auth ||
       audience !== frozenAuthority.api ||
-      jwksUrl.href !== `${frozenAuthority.auth}/api/auth/jwks`)
+      jwksUrl.href !==
+        ("jwks" in frozenAuthority
+          ? frozenAuthority.jwks
+          : `${frozenAuthority.auth}/api/auth/jwks`))
   ) {
     throw new Error(
       `${environment} Better Auth JWKS, issuer, and audience must match the frozen authorities`,
