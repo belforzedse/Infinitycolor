@@ -34,13 +34,8 @@ function hasData<T>(p: unknown): p is { data: T } {
 export const me = async (requireAdmin: boolean = false): Promise<MeResponse> => {
 
   const endpoint = `${ENDPOINTS.USER.ME}`;
-  const accessToken = localStorage.getItem("accessToken");
-
   try {
     const response = await apiClient.get<MeResponse>(endpoint, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
       // Force no caching for admin checks to ensure fresh role data
       cache: requireAdmin ? 'no-store' : 'default',
       timeout: CHECKOUT_REQUEST_TIMEOUT_MS,

@@ -1,8 +1,10 @@
 import AuthForm from "@/components/Auth/Form";
 import type { Metadata } from "next";
 import { SITE_NAME, SITE_URL } from "@/config/site";
+import { redirectLegacyAuthPage } from "@/lib/central-auth-redirect";
 
-export default function AuthPage() {
+export default async function AuthPage({ searchParams }: { searchParams: Promise<{ redirect?: string }> }) {
+  redirectLegacyAuthPage(await searchParams);
   return <AuthForm />;
 }
 

@@ -11,11 +11,16 @@ const PHONE_PASSWORD_REQUIRED_MESSAGE = "شماره همراه و رمز عبو�
 const USER_NOT_FOUND_OR_PASSWORD_INCORRECT = "شماره همراه یا رمز عبور اشتباه است.";
 const PASSWORD_RESET_FAILED_MESSAGE = "تغییر رمز عبور ناموفق بود. دوباره تلاش کنید.";
 
-import { RedisClient } from "../../../index";
 import { validatePhone } from "../utils/validations";
-import crypto from "node:crypto";
-import bcrypt from "bcryptjs";
-import { ROLE_NAMES, fetchRoleByName } from "../../../utils/roles";
+import { normalizeRequiredProfileName } from "../utils/profile-names";
+import {
+  CredentialFlowError,
+  issueLegacyJwt,
+  resetPasswordWithOtp,
+  updatePasswordAndLegacyHash,
+  verifyOtpIdentity,
+  verifyPasswordIdentity,
+} from "../services/credential-flow";
 
 export default {
   otp,
@@ -83,80 +88,15 @@ async function login(ctx) {
       return;
     }
 
-    // Safely parse OTP data from Redis with error handling
-    let otpObj: any = null;
-    try {
-      const redisData = await (await RedisClient).get(otpToken);
-      if (!redisData) {
-        ctx.badRequest(OTP_INVALID_MESSAGE);
-        return;
-      }
-      otpObj = JSON.parse(redisData);
-    } catch (error) {
-      strapi.log.error("Failed to parse OTP token from Redis", {
-        otpToken,
-        error: (error as Error).message,
-      });
-      ctx.badRequest(OTP_INVALID_MESSAGE);
-      return;
-    }
-
-    if (!otpObj?.code) {
-      ctx.badRequest(OTP_INVALID_MESSAGE);
-      return;
-    }
-
-    if (String(otpObj.code) !== String(otp)) {
-      ctx.badRequest(OTP_INVALID_MESSAGE);
-      return;
-    }
-
-    // Ensure a plugin user exists for this phone and issue plugin JWT
-    let upUser = await strapi
-      .query("plugin::users-permissions.user")
-      .findOne({ where: { phone: { $endsWith: otpObj.phone.substring(1) } } });
-    const normalizedPhone = (otpObj.phone || "").trim();
-    if (upUser) {
-      // if not confirmed, mark as confirmed
-      if (!upUser.confirmed) {
-        await strapi.entityService.update("plugin::users-permissions.user", upUser.id, {
-          data: { confirmed: true },
-        });
-      }
-    } else {
-      const email = `${normalizedPhone.replace(/\D/g, "") || "user"}@placeholder.local`;
-      const customerRole = await fetchRoleByName(strapi, ROLE_NAMES.CUSTOMER);
-      const hashedTempPassword = await bcrypt.hash(
-        crypto.randomUUID().replace(/-/g, "").slice(0, 12),
-        10,
-      );
-      upUser = await strapi.entityService.create("plugin::users-permissions.user", {
-        data: {
-          username: normalizedPhone,
-          email,
-          phone: normalizedPhone,
-          password: hashedTempPassword,
-          role: customerRole?.id,
-          confirmed: true,
-          blocked: false,
-          IsActive: true,
-        },
-      });
-
-      // create user_info record (was local-user-info) and link to plugin user
-      try {
-        await strapi.entityService.create("api::local-user-info.local-user-info", {
-          data: { user: upUser.id },
-        });
-      } catch (e) {
-        strapi.log.warn("Failed to create user_info for new plugin user", e);
-      }
-    }
-
-    const token = await strapi.plugin("users-permissions").service("jwt").issue({ id: upUser.id });
+    const upUser = await verifyOtpIdentity(otpToken, String(otp));
+    const token = await issueLegacyJwt(Number(upUser.id));
 
     ctx.body = { message: "login successful", token };
   } catch (err) {
+    if (err instanceof CredentialFlowError && err.status === 400) {
+      ctx.badRequest(err.message);
+      return;
+    }
     strapi.log.error("Login failed", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
@@ -189,9 +129,13 @@ async function self(ctx) {
       return ctx.unauthorized(UNAUTHORIZED_MESSAGE);
     }
 
-    const fullUser = await strapi.entityService.findOne("plugin::users-permissions.user", Number(pluginUserId), {
-      populate: ["role"],
-    });
+    const fullUser = await strapi.entityService.findOne(
+      "plugin::users-permissions.user",
+      Number(pluginUserId),
+      {
+        populate: ["role"],
+      },
+    );
 
     if (!fullUser) {
       return ctx.unauthorized(UNAUTHORIZED_MESSAGE);
@@ -249,16 +193,22 @@ async function updateSelf(ctx) {
     const hasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 
     if (hasOwn(body, "FirstName")) {
-      profilePayload.FirstName =
-        typeof body.FirstName === "string" && body.FirstName.trim().length > 0
-          ? body.FirstName.trim()
-          : null;
+      const firstName = normalizeRequiredProfileName(body.FirstName);
+      if (!firstName) {
+        ctx.status = 400;
+        ctx.body = { message: "نام الزامی است" };
+        return;
+      }
+      profilePayload.FirstName = firstName;
     }
     if (hasOwn(body, "LastName")) {
-      profilePayload.LastName =
-        typeof body.LastName === "string" && body.LastName.trim().length > 0
-          ? body.LastName.trim()
-          : null;
+      const lastName = normalizeRequiredProfileName(body.LastName);
+      if (!lastName) {
+        ctx.status = 400;
+        ctx.body = { message: "نام خانوادگی الزامی است" };
+        return;
+      }
+      profilePayload.LastName = lastName;
     }
     if (hasOwn(body, "NationalCode")) {
       profilePayload.NationalCode =
@@ -340,45 +290,25 @@ async function updateSelf(ctx) {
 
 async function registerInfo(ctx) {
   const { firstName, lastName, password, phone, birthDate } = ctx.request.body;
-  let user = ctx.state.user;
+  const user = ctx.state.user;
+  const normalizedFirstName = normalizeRequiredProfileName(firstName);
+  const normalizedLastName = normalizeRequiredProfileName(lastName);
   const normalizedBirthDate =
-    typeof birthDate === "string" && birthDate.trim().length > 0
-      ? birthDate.trim()
-      : null;
+    typeof birthDate === "string" && birthDate.trim().length > 0 ? birthDate.trim() : null;
 
   // Validation applies only to this request; does not modify existing records except via the update below after validation passes.
-  if (!firstName || typeof firstName !== "string" || firstName.trim().length === 0) {
+  if (!normalizedFirstName) {
     ctx.status = 400;
     ctx.body = { message: "نام الزامی است" };
     return;
   }
-  if (!lastName || typeof lastName !== "string" || lastName.trim().length === 0) {
+  if (!normalizedLastName) {
     ctx.status = 400;
     ctx.body = { message: "نام خانوادگی الزامی است" };
     return;
   }
 
   try {
-    if (!user?.id) {
-      const authHeader = ctx.request.header.authorization || "";
-      const token = authHeader.toLowerCase().startsWith("bearer ")
-        ? authHeader.split(" ")[1]
-        : null;
-      if (token) {
-        try {
-      const payload = await strapi
-        .plugin("users-permissions")
-        .service("jwt")
-        .verify(token);
-          if (payload?.id) {
-            user = await strapi.entityService.findOne("plugin::users-permissions.user", payload.id);
-          }
-        } catch (err) {
-          strapi.log.debug("Failed to verify JWT for registerInfo", err);
-        }
-      }
-    }
-
     if (!user?.id) {
       return ctx.unauthorized(UNAUTHORIZED_MESSAGE);
     }
@@ -391,42 +321,31 @@ async function registerInfo(ctx) {
 
     const wasNewProfile = !profileRecord;
 
-    await strapi.db.transaction(async () => {
+    await strapi.db.transaction(async ({ trx }) => {
       if (!profileRecord) {
-        profileRecord = await strapi.entityService.create("api::local-user-info.local-user-info", {
+        profileRecord = await strapi.db.query("api::local-user-info.local-user-info").create({
           data: {
             user: pluginUserId,
-            FirstName: firstName,
-            LastName: lastName,
+            FirstName: normalizedFirstName,
+            LastName: normalizedLastName,
             BirthDate: normalizedBirthDate,
           },
-        });
+          transacting: trx,
+        } as any);
       } else {
-        await strapi.entityService.update("api::local-user-info.local-user-info", profileRecord.id, {
+        await strapi.db.query("api::local-user-info.local-user-info").update({
+          where: { id: profileRecord.id },
           data: {
-            FirstName: firstName,
-            LastName: lastName,
+            FirstName: normalizedFirstName,
+            LastName: normalizedLastName,
             BirthDate: normalizedBirthDate ?? profileRecord?.BirthDate ?? null,
           },
-        });
+          transacting: trx,
+        } as any);
       }
 
-      // update plugin user's password
       if (password) {
-        const hashed = await bcrypt.hash(password, 10);
-        await strapi.entityService.update("plugin::users-permissions.user", pluginUserId, {
-          data: { password: hashed },
-        });
-      }
-
-      // If there is an existing legacy local-user linked, update its Password as well for compatibility
-      const legacyLocal = await strapi.db
-        .query("api::local-user.local-user")
-        .findOne({ where: { strapi_user: pluginUserId } });
-      if (legacyLocal) {
-        await strapi.entityService.update("api::local-user.local-user", legacyLocal.id, {
-          data: { Password: password },
-        });
+        await updatePasswordAndLegacyHash(pluginUserId, password, trx);
       }
     });
 
@@ -465,6 +384,10 @@ async function registerInfo(ctx) {
   }
 }
 
+export const __authControllerTestUtils = {
+  normalizeRequiredProfileName,
+};
+
 async function loginWithPassword(ctx) {
   const { phone, password } = ctx.request.body;
 
@@ -473,49 +396,20 @@ async function loginWithPassword(ctx) {
     return;
   }
 
-  const sanitizedPhone = String(phone).trim();
-  const lookupFragment =
-    sanitizedPhone.startsWith("+") || sanitizedPhone.startsWith("0")
-      ? sanitizedPhone.slice(1)
-      : sanitizedPhone;
+  if (validatePhone(ctx, phone) !== 200) return;
 
-  const upUser = await strapi
-    .query("plugin::users-permissions.user")
-    .findOne({ where: { phone: { $eq: sanitizedPhone } } });
-  if (!upUser) {
-    const userBySuffix = await strapi
-      .query("plugin::users-permissions.user")
-      .findOne({ where: { phone: { $endsWith: lookupFragment } } });
-    if (userBySuffix) {
-      await strapi.entityService.update("plugin::users-permissions.user", userBySuffix.id, {
-        data: { phone: sanitizedPhone },
-      });
+  try {
+    const finalUser = await verifyPasswordIdentity(phone, password);
+    const token = await issueLegacyJwt(Number(finalUser.id));
+    ctx.body = { message: "login successful", token };
+  } catch (err) {
+    if (err instanceof CredentialFlowError) {
+      if (err.status === 401) ctx.unauthorized(err.message);
+      else ctx.badRequest(err.message);
+      return;
     }
+    throw err;
   }
-  const finalUser = await strapi
-    .query("plugin::users-permissions.user")
-    .findOne({ where: { phone: sanitizedPhone }, select: ["id", "password"] });
-
-  if (!finalUser) {
-    ctx.unauthorized(USER_NOT_FOUND_OR_PASSWORD_INCORRECT);
-    return;
-  }
-
-  if (!finalUser.password) {
-    strapi.log.error("User loaded without password hash", { id: finalUser.id });
-  }
-
-  const userService = strapi.plugin("users-permissions").service("user");
-  const isPasswordValid = await userService.validatePassword(password, finalUser.password);
-
-  if (!isPasswordValid) {
-    ctx.unauthorized(USER_NOT_FOUND_OR_PASSWORD_INCORRECT);
-    return;
-  }
-
-  const token = await strapi.plugin("users-permissions").service("jwt").issue({ id: finalUser.id });
-
-  ctx.body = { message: "login successful", token };
 }
 
 async function resetPassword(ctx) {
@@ -526,54 +420,15 @@ async function resetPassword(ctx) {
     return;
   }
 
-  // Safely parse OTP data from Redis with error handling
-  let otpObj: any = null;
   try {
-    const redisData = await (await RedisClient).get(otpToken);
-    if (!redisData) {
-      ctx.badRequest(OTP_INVALID_MESSAGE);
-      return;
-    }
-    otpObj = JSON.parse(redisData);
-  } catch (error) {
-    strapi.log.error("Failed to parse OTP token from Redis (resetPassword)", {
-      otpToken,
-      error: (error as Error).message,
-    });
-    ctx.badRequest(OTP_INVALID_MESSAGE);
-    return;
-  }
-
-  if (!otpObj?.code) {
-    ctx.badRequest(OTP_INVALID_MESSAGE);
-    return;
-  }
-
-  if (String(otpObj.code) !== String(otp)) {
-    ctx.badRequest(OTP_INVALID_MESSAGE);
-    return;
-  }
-
-  // otpObj.merchant should be plugin user id now
-  const pluginUser = await strapi.entityService.findOne(
-    "plugin::users-permissions.user",
-    otpObj.merchant,
-  );
-  if (!pluginUser) {
-    ctx.unauthorized(UNAUTHORIZED_MESSAGE);
-    return;
-  }
-
-  try {
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    await strapi.entityService.update("plugin::users-permissions.user", pluginUser.id, {
-      data: {
-        password: hashedPassword,
-      },
-    });
-
+    await resetPasswordWithOtp(otpToken, String(otp), newPassword);
     ctx.body = { message: "رمز عبور با موفقیت تغییر کرد." };
   } catch (err) {
+    if (err instanceof CredentialFlowError) {
+      if (err.status === 401) ctx.unauthorized(err.message);
+      else ctx.badRequest(err.message);
+      return;
+    }
     strapi.log.error(err);
     ctx.status = 500;
     ctx.body = { message: PASSWORD_RESET_FAILED_MESSAGE };
@@ -581,25 +436,6 @@ async function resetPassword(ctx) {
 }
 
 async function resolvePluginUserId(ctx) {
-  let pluginUserId = ctx.state.user?.id;
-
-  if (!pluginUserId) {
-    const authHeader = ctx.request.header.authorization || "";
-    const token = authHeader.toLowerCase().startsWith("bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-    if (token) {
-      try {
-        const payload = await strapi
-          .plugin("users-permissions")
-          .service("jwt")
-          .verify(token);
-        pluginUserId = payload?.id ? Number(payload.id) : undefined;
-      } catch (err) {
-        strapi.log.debug("Failed to verify JWT for resolvePluginUserId", err);
-      }
-    }
-  }
-
+  const pluginUserId = ctx.state.user?.id;
   return pluginUserId ? Number(pluginUserId) : undefined;
 }

@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import bcrypt from "bcryptjs";
 import { createClient } from "redis";
 import type { Strapi } from "@strapi/strapi";
 
@@ -28,6 +29,7 @@ import {
 } from "./api/payment-gateway/services/snappay-orchestrator";
 import { backfillLegacySnappayAttempts } from "./api/payment-gateway/services/snappay-legacy-backfill";
 import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/snappay-database";
+import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -642,6 +644,9 @@ export default {
    * This gives you an opportunity to extend code.
    */
   register({ strapi }) {
+    // Plugins register before the application register hook, so this is appended
+    // after the native Users & Permissions content-API strategy.
+    strapi.container.get("auth").register("content-api", betterAuthJwtStrategy);
     try {
       const documentationPlugin = strapi.plugin("documentation");
       if (!documentationPlugin) return;
@@ -762,8 +767,14 @@ export default {
     } else {
       strapi.log.info("In-process background jobs skipped for this process");
     }
-    // Migrate any existing local-users to plugin users by creating a bridge (idempotent)
+    // Historical compatibility migration. It must remain off unless a separate,
+    // reviewed data-migration approval explicitly enables it; central auth never
+    // bulk-creates identities from legacy rows.
     (async function migrateLocalUsers() {
+      if (process.env.LEGACY_LOCAL_USER_MIGRATION_ENABLED !== "true") {
+        strapi.log.info("Legacy local-user bulk migration is disabled");
+        return;
+      }
       try {
         const localUsers = await strapi.entityService.findMany("api::local-user.local-user", {
           fields: ["id", "Phone", "IsVerified", "Password", "external_id", "external_source"],
@@ -786,13 +797,32 @@ export default {
             continue;
           }
 
+          const legacyProfile = await strapi.db
+            .query("api::local-user-info.local-user-info")
+            .findOne({
+              where: { user: lu.id },
+              select: ["FirstName", "LastName"],
+            });
+          if (
+            !legacyProfile ||
+            typeof legacyProfile.FirstName !== "string" ||
+            !legacyProfile.FirstName.trim() ||
+            typeof legacyProfile.LastName !== "string" ||
+            !legacyProfile.LastName.trim()
+          ) {
+            strapi.log.warn("Skipped legacy user migration without required profile names");
+            continue;
+          }
+
           // Try to find existing plugin user by phone
           let upUser = await strapi
             .query("plugin::users-permissions.user")
             .findOne({ where: { phone: normalizedPhone } });
           if (!upUser) {
             const email = `${normalizedPhone.replace(/\D/g, "") || "user"}@placeholder.local`;
-            // create plugin user; if legacy Password exists, set it so Strapi will hash it via lifecycle
+            // The frozen plugin schema uses a private string, so it will not hash
+            // automatically. Preserve a bcrypt value or hash legacy plaintext
+            // before this separately approved migration writes a plugin user.
             const createData: any = {
               username: normalizedPhone,
               email,
@@ -801,7 +831,14 @@ export default {
               blocked: false,
               IsActive: lu.IsActive !== false,
             };
-            if (lu?.Password) createData.password = lu.Password;
+            if (lu?.Password) {
+              const storedPassword = String(lu.Password);
+              createData.password = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(
+                storedPassword,
+              )
+                ? storedPassword
+                : await bcrypt.hash(storedPassword, 10);
+            }
             if (lu?.external_id) createData.external_id = lu.external_id;
             if (lu?.external_source) createData.external_source = lu.external_source;
 

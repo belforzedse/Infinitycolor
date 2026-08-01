@@ -12,7 +12,6 @@ import Text from "@/components/Kits/Text";
 import { useCheckPhoneNumber } from "@/hooks/useCheckPhoneNumber";
 import { AuthService } from "@/services";
 import { useCart } from "@/contexts/CartContext";
-import { setAccessToken } from "@/utils/accessToken";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
 
 export default function RegisterPage() {
@@ -39,8 +38,6 @@ export default function RegisterPage() {
         const response = await AuthService.verifyOTP(verificationCode.split("").reverse().join(""));
 
         if (response.token) {
-          setAccessToken(response.token);
-
           // Migrate local cart to API after registration
           await migrateLocalCartToApi();
 

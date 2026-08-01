@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
 import { atom, useAtom } from "jotai";
+import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 
 // Global atom to store liked products
 type LikedProduct = {
@@ -34,7 +35,7 @@ export const navigationUtils = {
 };
 
 export const redirectToAuth = () => {
-  navigationUtils.setWindowLocation("/auth");
+  navigationUtils.setWindowLocation(centralLoginUrl(window.location.pathname));
 };
 
 const useProductLike = ({ productId }: UseProductLikeParams) => {
@@ -56,18 +57,13 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
 
       fetchStarted = true;
 
-      const token = localStorage.getItem("accessToken");
+      const token = await centralAuth.tokenManager.getToken();
       if (!token || hasLoaded || isGlobalLoading) return;
 
       try {
         setIsGlobalLoading(true);
         const response = await apiClient.get<{ data: LikedProduct[] }>(
           ENDPOINTS.PRODUCT_LIKES.USER_LIKES,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          },
         );
 
         const productsData = Array.isArray(response.data) ? response.data : [];
@@ -91,7 +87,7 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const token = localStorage.getItem("accessToken");
+    const token = await centralAuth.tokenManager.getToken();
     if (!token) {
       // Redirect to login page if no token
       redirectToAuth();
@@ -100,15 +96,7 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
 
     try {
       setIsLoading(true);
-      await apiClient.post(
-        ENDPOINTS.PRODUCT_LIKES.TOGGLE,
-        { productId },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
+      await apiClient.post(ENDPOINTS.PRODUCT_LIKES.TOGGLE, { productId });
 
       // Update the global state
       if (safeProducts.some(({ product }) => product?.id?.toString() === String(productId))) {

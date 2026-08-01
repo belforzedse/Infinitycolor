@@ -1,6 +1,7 @@
 import { apiClient } from "../index";
 import { ENDPOINTS } from "@/constants/api";
 import { normalizePhoneNumber } from "@/utils/auth";
+import { clearOtpToken, readOtpToken } from "./otpChallenge";
 
 export interface ResetPasswordRequest {
   otp: string;
@@ -14,22 +15,10 @@ export interface Response {
   success?: boolean;
 }
 
-const resolveStoredOtpToken = () => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    return window.sessionStorage.getItem("otpToken");
-  } catch {
-    return null;
-  }
-};
-
 export const resetPassword = async (payload: ResetPasswordRequest): Promise<Response> => {
   const endpoint = ENDPOINTS.AUTH.RESET_PASSWORD;
 
-  const otpToken = payload.otpToken ?? resolveStoredOtpToken();
+  const otpToken = payload.otpToken ?? readOtpToken();
 
   if (!otpToken) {
     throw new Error("Missing OTP token");
@@ -44,5 +33,6 @@ export const resetPassword = async (payload: ResetPasswordRequest): Promise<Resp
     phone: normalizedPhone,
   });
 
+  clearOtpToken();
   return response as any;
 };

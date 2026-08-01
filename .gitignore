@@ -38,6 +38,8 @@ SECRETS_REFERENCE.txt
 /out/
 apps/frontend/.next/
 apps/frontend/out/
+apps/auth/.next/
+apps/auth/out/
 .turbo/
 
 # Strapi

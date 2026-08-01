@@ -5,6 +5,7 @@
 import { ApiResponse, PaginatedResponse } from "@/types/api";
 import { API_BASE_URL, getStrapiServerUrl } from "@/constants/api";
 import logger from "@/utils/logger";
+import { centralAuth } from "@/lib/central-auth";
 
 export interface BlogPost {
   id: number;
@@ -185,19 +186,11 @@ class BlogService {
     return typeof window === "undefined" ? getStrapiServerUrl() : API_BASE_URL;
   }
 
-  private getAuthToken(): string | null {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("accessToken");
-    }
-    // TODO: For SSR, consider reading from cookies or passing token from server context
-    return null;
-  }
-
-  private getHeaders(): HeadersInit {
+  private async getHeaders(): Promise<HeadersInit> {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
     };
-    const token = this.getAuthToken();
+    const token = typeof window !== "undefined" ? await centralAuth.tokenManager.getToken() : null;
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
@@ -505,7 +498,7 @@ class BlogService {
 
     const baseUrl = this.getBaseUrl();
     const response = await fetch(`${baseUrl}/blog-posts?${searchParams}`, {
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -533,7 +526,7 @@ class BlogService {
 
     const baseUrl = this.getBaseUrl();
     const response = await fetch(`${baseUrl}/blog-posts/${id}?${searchParams}`, {
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -583,7 +576,7 @@ class BlogService {
     }
 
     const fetchOptions: RequestInit & { next?: { revalidate: number } } = {
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       cache: "default",
     };
     if (typeof window === "undefined") {
@@ -659,7 +652,7 @@ class BlogService {
   async createBlogPost(data: CreateBlogPostData): Promise<ApiResponse<BlogPost>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-posts`, {
       method: "POST",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data }),
     });
 
@@ -676,7 +669,7 @@ class BlogService {
   async updateBlogPost(id: number, data: Partial<CreateBlogPostData>): Promise<ApiResponse<BlogPost>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-posts/${id}`, {
       method: "PUT",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data }),
     });
 
@@ -693,7 +686,7 @@ class BlogService {
   async deleteBlogPost(id: number): Promise<void> {
     const response = await fetch(`${this.getBaseUrl()}/blog-posts/${id}`, {
       method: "DELETE",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -713,7 +706,7 @@ class BlogService {
 
     const baseUrl = this.getBaseUrl();
     const response = await fetch(`${baseUrl}/blog-categories?${searchParams}`, {
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -748,7 +741,7 @@ class BlogService {
 
     const response = await fetch(`${this.getBaseUrl()}/blog-categories`, {
       method: "POST",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data: payload }),
     });
 
@@ -774,7 +767,7 @@ class BlogService {
 
     const response = await fetch(`${this.getBaseUrl()}/blog-categories/${id}`, {
       method: "PUT",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data: payload }),
     });
 
@@ -794,7 +787,7 @@ class BlogService {
   async deleteBlogCategory(id: number): Promise<void> {
     const response = await fetch(`${this.getBaseUrl()}/blog-categories/${id}`, {
       method: "DELETE",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -812,7 +805,7 @@ class BlogService {
     searchParams.append("pagination[pageSize]", "100");
 
     const response = await fetch(`${this.getBaseUrl()}/blog-tags?${searchParams}`, {
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -837,7 +830,7 @@ class BlogService {
 
     const response = await fetch(`${this.getBaseUrl()}/blog-tags`, {
       method: "POST",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data: { ...data, Slug: slug } }),
     });
 
@@ -857,7 +850,7 @@ class BlogService {
   async updateBlogTag(id: number, data: Partial<CreateBlogTagData>): Promise<ApiResponse<BlogTag>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-tags/${id}`, {
       method: "PUT",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data }),
     });
 
@@ -877,7 +870,7 @@ class BlogService {
   async deleteBlogTag(id: number): Promise<void> {
     const response = await fetch(`${this.getBaseUrl()}/blog-tags/${id}`, {
       method: "DELETE",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -897,7 +890,7 @@ class BlogService {
     searchParams.append("pagination[pageSize]", "100");
 
     const response = await fetch(`${this.getBaseUrl()}/blog-authors?${searchParams}`, {
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -919,7 +912,7 @@ class BlogService {
   async createBlogAuthor(data: CreateBlogAuthorData): Promise<ApiResponse<BlogAuthor>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-authors`, {
       method: "POST",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data }),
     });
 
@@ -939,7 +932,7 @@ class BlogService {
   async updateBlogAuthor(id: number, data: Partial<CreateBlogAuthorData>): Promise<ApiResponse<BlogAuthor>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-authors/${id}`, {
       method: "PUT",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data }),
     });
 
@@ -959,7 +952,7 @@ class BlogService {
   async deleteBlogAuthor(id: number): Promise<void> {
     const response = await fetch(`${this.getBaseUrl()}/blog-authors/${id}`, {
       method: "DELETE",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -979,7 +972,7 @@ class BlogService {
     searchParams.append("populate[replies][populate][user][populate][user_info]", "*");
 
     const response = await fetch(`${this.getBaseUrl()}/blog-comments/post/${postId}?${searchParams}`, {
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -1009,7 +1002,7 @@ class BlogService {
     }
 
     const response = await fetch(`${this.getBaseUrl()}/blog-comments?${searchParams}`, {
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -1032,7 +1025,7 @@ class BlogService {
   ): Promise<ApiResponse<BlogComment>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-comments`, {
       method: "POST",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({
         data: {
           Content: content,
@@ -1055,7 +1048,7 @@ class BlogService {
   async updateBlogCommentStatus(id: number, status: "Pending" | "Approved" | "Rejected"): Promise<ApiResponse<BlogComment>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-comments/${id}`, {
       method: "PUT",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
       body: JSON.stringify({ data: { Status: status } }),
     });
 
@@ -1072,7 +1065,7 @@ class BlogService {
   async deleteBlogComment(id: number): Promise<void> {
     const response = await fetch(`${this.getBaseUrl()}/blog-comments/${id}`, {
       method: "DELETE",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {

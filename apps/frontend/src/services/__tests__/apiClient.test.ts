@@ -2,6 +2,18 @@ import { ApiClient } from "@repo/api/client";
 import { apiClient } from "@/lib/api-client";
 import { API_BASE_URL, ERROR_MESSAGES } from "@/constants/api";
 
+jest.mock("../../lib/central-auth", () => ({
+  centralAuth: {
+    tokenManager: {
+      getToken: jest.fn(),
+      expire: jest.fn(),
+      clearForLogout: jest.fn(),
+    },
+  },
+  clearCentralAuthForLogout: jest.fn(),
+  centralLoginUrl: jest.fn(() => "http://localhost:2889/auth"),
+}));
+
 jest.mock("../../lib/api-cache", () => ({
   apiCache: undefined,
 }));
@@ -9,6 +21,11 @@ jest.mock("../../lib/api-cache", () => ({
 // Mock fetch globally
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
+const mockedCentralAuth = jest.requireMock("../../lib/central-auth") as {
+  centralAuth: {
+    tokenManager: { getToken: jest.Mock; expire: jest.Mock; clearForLogout: jest.Mock };
+  };
+};
 
 // Mock localStorage
 const localStorageMock = {
@@ -24,6 +41,9 @@ Object.defineProperty(window, "localStorage", {
 describe("ApiClient", () => {
   beforeEach(() => {
     mockFetch.mockClear();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
+    mockedCentralAuth.centralAuth.tokenManager.expire.mockReset();
+    mockedCentralAuth.centralAuth.tokenManager.clearForLogout.mockReset();
     localStorageMock.getItem.mockClear();
     jest.clearAllTimers();
     jest.useFakeTimers();
@@ -66,7 +86,7 @@ describe("ApiClient", () => {
     });
 
     it("includes authorization header when token exists", async () => {
-      localStorageMock.getItem.mockReturnValue("test-token");
+      mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("test-token");
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ data: {} }),
@@ -82,10 +102,11 @@ describe("ApiClient", () => {
           }),
         }),
       );
+      expect(localStorageMock.getItem).not.toHaveBeenCalledWith("accessToken");
     });
 
     it("skips auth for public endpoints", async () => {
-      localStorageMock.getItem.mockReturnValue("test-token");
+      mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("test-token");
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ data: {} }),
@@ -200,19 +221,18 @@ describe("ApiClient", () => {
       });
 
       const requestPromise = apiClient.get("/slow", { timeout: 1000, retries: 0 });
-
-      // Fast-forward time to trigger timeout
-      jest.advanceTimersByTime(1000);
-
-      // Flush microtasks queued by the abort rejection
-      await Promise.resolve();
-
-      await expect(requestPromise).rejects.toEqual(
+      const rejection = expect(requestPromise).rejects.toEqual(
         expect.objectContaining({
           status: 408,
           message: ERROR_MESSAGES.TIMEOUT,
         }),
       );
+
+      // Header construction awaits the async token provider before installing
+      // the request timeout. The async timer helper advances through both the
+      // provider microtasks and the eventual abort timer.
+      await jest.advanceTimersByTimeAsync(1000);
+      await rejection;
     });
 
     it("throws error when API_BASE_URL is not configured", async () => {
