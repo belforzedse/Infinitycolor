@@ -396,40 +396,59 @@ function resolveAttribute(type, value) {
 /**
  * Determine the stock Count to write for a variation/simple product.
  *
- * - When stock is managed and a quantity is present → use that quantity.
- * - When stock is NOT managed → derive from stock_status so that `instock` items
- *   are purchasable (Count > 0) and `outofstock` items are 0. This fixes the
- *   legacy bug where unmanaged in-stock items were left with Count 0 (unavailable).
+ * Gate-1 migration policy accepts managed stock only. Unmanaged units must cause
+ * their whole parent product to be skipped before this mapper is called; throwing
+ * here is a fail-closed backstop against accidental synthetic inventory.
  *
  * @param {object} wcEntity variation or simple product
- * @param {object} [opts]
- * @param {number} [opts.defaultInStockCount=9999]
  * @returns {{ count: number, externalId: string }}
  */
-function mapStock(wcEntity, opts = {}) {
-  const { defaultInStockCount = 9999 } = opts;
+function mapStock(wcEntity) {
   const externalId = `stock_${wcEntity.id}`;
 
   const managed = wcEntity.manage_stock === true;
   const qty = wcEntity.stock_quantity;
 
-  if (managed && qty !== null && qty !== undefined) {
-    return { count: Math.max(0, Number(qty) || 0), externalId };
+  if (!managed) {
+    const error = new Error(`Unmanaged stock is not eligible for migration: ${wcEntity.id}`);
+    error.code = "UNMANAGED_STOCK_REJECTED";
+    throw error;
   }
 
-  const status = (wcEntity.stock_status || "").toLowerCase();
-  if (status === "outofstock") {
-    return { count: 0, externalId };
-  }
-  if (status === "onbackorder" || status === "instock") {
-    return { count: defaultInStockCount, externalId };
+  const numericQuantity = Number(qty);
+  const count = Number.isFinite(numericQuantity) ? Math.max(0, numericQuantity) : 0;
+  return { count, externalId };
+}
+
+/**
+ * A product is eligible only when every sellable unit has explicit managed
+ * stock. Simple products are one sellable unit; variable parents are evaluated
+ * against the complete live variation collection.
+ */
+function evaluateProductStockEligibility(wcProduct, wcVariations = []) {
+  const isSimple =
+    wcProduct?.type === "simple" ||
+    !Array.isArray(wcProduct?.variations) ||
+    wcProduct.variations.length === 0;
+
+  if (isSimple) {
+    return wcProduct?.manage_stock === true
+      ? { eligible: true, reason: null, unmanagedVariationIds: [] }
+      : { eligible: false, reason: "simple-unmanaged-stock", unmanagedVariationIds: [] };
   }
 
-  // Unknown: if a positive quantity exists use it, else assume available.
-  if (qty !== null && qty !== undefined && Number(qty) > 0) {
-    return { count: Number(qty), externalId };
+  if (!Array.isArray(wcVariations) || wcVariations.length === 0) {
+    return { eligible: false, reason: "variable-without-live-variations", unmanagedVariationIds: [] };
   }
-  return { count: defaultInStockCount, externalId };
+
+  const unmanagedVariationIds = wcVariations
+    .filter((variation) => variation?.manage_stock !== true)
+    .map((variation) => Number(variation.id))
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+
+  return unmanagedVariationIds.length === 0
+    ? { eligible: true, reason: null, unmanagedVariationIds: [] }
+    : { eligible: false, reason: "variation-unmanaged-stock", unmanagedVariationIds };
 }
 
 /**
@@ -475,5 +494,6 @@ module.exports = {
   identifyAttributeType,
   resolveAttribute,
   mapStock,
+  evaluateProductStockEligibility,
   synthesizeSimpleVariation,
 };

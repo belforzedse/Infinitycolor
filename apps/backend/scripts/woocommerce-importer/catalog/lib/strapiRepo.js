@@ -1,5 +1,7 @@
 "use strict";
 
+const G = require("./genericAttributes");
+
 /**
  * Strapi target repository. All writes are idempotent: entities are matched by the
  * unique `external_id` field. Existing WooCommerce-sourced entities are loaded once
@@ -16,6 +18,16 @@ class StrapiRepo {
     this.logger = logger;
     // attribute caches: key = `${type}:${title.toLowerCase()}` → strapi id
     this.attrCache = { color: new Map(), size: new Map(), model: new Map() };
+    this.productTagCache = new Map();
+    this.productTagDryRunSeen = new Set();
+    this.genericIndexes = null;
+    this.genericDefinitionCache = new Map();
+    this.genericTermCache = new Map();
+    this.genericDryRunSeen = {
+      definitions: new Set(),
+      terms: new Set(),
+      assignments: new Set(),
+    };
   }
 
   /** Fetch every entity on an endpoint (Strapi pagination), filtered to WC source. */
@@ -129,6 +141,52 @@ class StrapiRepo {
     ]);
   }
 
+  async preloadProductTags() {
+    const entities = await this.fetchAllAttributeEntities("/product-tags");
+    for (const entity of entities) {
+      const title = String(entity.attributes?.Title ?? entity.Title ?? "").trim();
+      if (title) this.productTagCache.set(G.canonicalKey(title), entity.id);
+    }
+  }
+
+  inspectProductTags(sourceTags) {
+    const counters = { created: 0, unchanged: 0 };
+    const seen = new Set();
+    for (const tag of Array.isArray(sourceTags) ? sourceTags : []) {
+      const title = String(tag?.name || "").trim();
+      const key = G.canonicalKey(title);
+      if (!key || seen.has(key) || this.productTagDryRunSeen.has(key)) continue;
+      seen.add(key);
+      this.productTagDryRunSeen.add(key);
+      counters[this.productTagCache.has(key) ? "unchanged" : "created"] += 1;
+    }
+    return counters;
+  }
+
+  async syncProductTags(sourceTags) {
+    const ids = [];
+    const counters = { created: 0, unchanged: 0 };
+    const seen = new Set();
+    for (const tag of Array.isArray(sourceTags) ? sourceTags : []) {
+      const title = String(tag?.name || "").trim();
+      const key = G.canonicalKey(title);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      let id = this.productTagCache.get(key);
+      if (id) {
+        counters.unchanged += 1;
+      } else {
+        const response = await this.http.post("/product-tags", { data: { Title: title } });
+        id = response.data?.data?.id;
+        if (!id) throw new Error(`Product tag create returned no id: ${title}`);
+        this.productTagCache.set(key, id);
+        counters.created += 1;
+      }
+      ids.push(id);
+    }
+    return { ids, counters };
+  }
+
   async fetchAllAttributeEntities(endpoint) {
     const out = [];
     let page = 1;
@@ -196,6 +254,110 @@ class StrapiRepo {
     });
     const data = response.data?.data;
     return Array.isArray(data) && data.length > 0 ? data[0] : null;
+  }
+
+  async preloadGenericAttributes() {
+    const [definitions, terms, assignments] = await Promise.all([
+      this.buildExternalIndex("/product-attributes"),
+      this.buildExternalIndex("/product-attribute-terms"),
+      this.buildExternalIndex("/product-attribute-assignments"),
+    ]);
+    this.genericIndexes = { definitions, terms, assignments };
+    return this.genericIndexes;
+  }
+
+  inspectProductAttributePlan(plan) {
+    if (!this.genericIndexes) throw new Error("Generic attribute indexes are not loaded");
+    const counters = { created: 0, updated: 0 };
+    const countOnce = (kind, externalId) => {
+      if (this.genericDryRunSeen[kind].has(externalId)) return;
+      this.genericDryRunSeen[kind].add(externalId);
+      counters[this.genericIndexes[kind].has(externalId) ? "updated" : "created"] += 1;
+    };
+    for (const dimension of plan.dimensions) {
+      countOnce("definitions", dimension.definitionExternalId);
+      for (const term of dimension.terms) {
+        countOnce("terms", term.externalId);
+      }
+      countOnce("assignments", dimension.assignmentExternalId);
+    }
+    return counters;
+  }
+
+  async syncProductAttributePlan(plan, productId) {
+    if (!this.genericIndexes) throw new Error("Generic attribute indexes are not loaded");
+    const resolvedDimensions = new Map();
+    const counters = { created: 0, updated: 0 };
+
+    for (const dimension of plan.dimensions) {
+      let definitionId = this.genericDefinitionCache.get(dimension.definitionExternalId);
+      if (!definitionId) {
+        const result = await this.upsert({
+          endpoint: "/product-attributes",
+          externalId: dimension.definitionExternalId,
+          payload: G.definitionPayload(dimension, productId),
+          index: this.genericIndexes.definitions,
+        });
+        definitionId = result.id;
+        counters[result.mode] += 1;
+        if (dimension.scope === "Global") {
+          this.genericDefinitionCache.set(dimension.definitionExternalId, definitionId);
+        }
+      }
+
+      const resolvedTerms = new Map();
+      const assignmentTermIds = [];
+      for (const term of dimension.terms) {
+        let termId = dimension.scope === "Global" ? this.genericTermCache.get(term.externalId) : null;
+        if (!termId) {
+          const result = await this.upsert({
+            endpoint: "/product-attribute-terms",
+            externalId: term.externalId,
+            payload: G.termPayload(term, definitionId),
+            index: this.genericIndexes.terms,
+          });
+          termId = result.id;
+          counters[result.mode] += 1;
+          if (dimension.scope === "Global") this.genericTermCache.set(term.externalId, termId);
+        }
+        assignmentTermIds.push(termId);
+
+        let legacyId = null;
+        if (dimension.legacyProjection === "Color") {
+          legacyId = await this.resolveAttributeId({
+            type: "color",
+            title: term.title,
+            colorCode: term.colorCode,
+            externalId: term.externalId,
+          });
+        } else if (dimension.legacyProjection === "Size") {
+          legacyId = await this.resolveAttributeId({
+            type: "size",
+            title: term.title,
+            externalId: term.externalId,
+          });
+        }
+
+        resolvedTerms.set(term.sourceKey, { ...term, id: termId, legacyId });
+      }
+
+      const assignmentResult = await this.upsert({
+        endpoint: "/product-attribute-assignments",
+        externalId: dimension.assignmentExternalId,
+        payload: G.assignmentPayload(dimension, productId, definitionId, assignmentTermIds),
+        index: this.genericIndexes.assignments,
+      });
+      counters[assignmentResult.mode] += 1;
+
+      resolvedDimensions.set(dimension.sourceKey, {
+        ...dimension,
+        definitionId,
+        assignmentId: assignmentResult.id,
+        resolvedTerms,
+      });
+    }
+
+    return { resolvedDimensions, counters };
   }
 
   /**

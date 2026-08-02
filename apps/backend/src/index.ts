@@ -78,6 +78,15 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       "api::product-variation-size": {
         "product-variation-size": READ_ACTIONS,
       },
+      "api::product-attribute": {
+        "product-attribute": READ_ACTIONS,
+      },
+      "api::product-attribute-term": {
+        "product-attribute-term": READ_ACTIONS,
+      },
+      "api::product-attribute-assignment": {
+        "product-attribute-assignment": READ_ACTIONS,
+      },
       "api::product-stock": {
         "product-stock": READ_ACTIONS,
       },
@@ -291,6 +300,21 @@ const STORE_MANAGER_RESTRICTED_CONTROLLERS: RestrictedController[] = [
     // Store managers and editors can only read categories; create/update/delete/deleteWithReassign are superadmin-only
     allowActions: [...READ_ACTIONS],
   },
+  {
+    typeKey: "api::product-attribute",
+    controller: "product-attribute",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-attribute-term",
+    controller: "product-attribute-term",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-attribute-assignment",
+    controller: "product-attribute-assignment",
+    allowActions: READ_ACTIONS,
+  },
   // Restrict users management - completely disabled for store managers
   { typeKey: "plugin::users-permissions", controller: "user" , allowActions: READ_ACTIONS},
   // Restrict admin activity - store managers cannot view admin activities
@@ -365,6 +389,21 @@ const EDITOR_RESTRICTED_CONTROLLERS: RestrictedController[] = [
   {
     typeKey: "api::product-variation-size",
     controller: "product-variation-size",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-attribute",
+    controller: "product-attribute",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-attribute-term",
+    controller: "product-attribute-term",
+    allowActions: READ_ACTIONS,
+  },
+  {
+    typeKey: "api::product-attribute-assignment",
+    controller: "product-attribute-assignment",
     allowActions: READ_ACTIONS,
   },
   {

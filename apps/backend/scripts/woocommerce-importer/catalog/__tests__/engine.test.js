@@ -38,6 +38,7 @@ function makeConfig() {
 function makeEngine(opts = {}) {
   const engine = new CatalogEngine(makeConfig(), noopLogger, { environment: "local" });
   const calls = { upserts: [], stockUpserts: [], puts: [], sizeHelpers: [] };
+  let generatedId = 30000;
 
   // Every variation id that "exists" in Strapi (variable variations + simple synth ids).
   const existingVariationIds = opts.withExisting ? ["201", "202", "203", "102", "103"] : [];
@@ -45,6 +46,9 @@ function makeEngine(opts = {}) {
 
   engine.preflight = async () => {};
   engine.repo.preloadAttributes = async () => {};
+  engine.repo.preloadProductTags = async () => {};
+  engine.repo.inspectProductTags = () => ({ created: 0, unchanged: 0 });
+  engine.repo.syncProductTags = async () => ({ ids: [], counters: { created: 0, unchanged: 0 } });
   engine.repo.buildExternalIndex = async (endpoint) => {
     const map = new Map();
     if (endpoint === "/products") existingProductIds.forEach((id) => map.set(id, { id: Number(id) + 10000 }));
@@ -53,7 +57,11 @@ function makeEngine(opts = {}) {
   };
   engine.repo.upsert = async ({ endpoint, externalId, payload }) => {
     calls.upserts.push({ endpoint, externalId, payload });
-    return { id: Number(externalId) + 10000, mode: "created" };
+    const numericExternalId = Number(externalId);
+    return {
+      id: Number.isFinite(numericExternalId) ? numericExternalId + 10000 : generatedId++,
+      mode: "created",
+    };
   };
   engine.repo.upsertStock = async ({ externalId, variationId }) => {
     calls.stockUpserts.push({ externalId, variationId });
@@ -71,6 +79,28 @@ function makeEngine(opts = {}) {
     { id: 9, name: "اکسسوری", slug: "acc", parent: 5 },
   ];
   engine.woo.iterateProducts = async function* () { for (const p of opts.products || products) yield p; };
+  engine.woo.fetchGlobalAttributeRegistry = async () => new Map([
+    [1, {
+      id: 1,
+      name: "Color",
+      slug: "color",
+      termsByName: new Map([
+        ["قرمز", { id: 11, name: "قرمز", slug: "red", menu_order: 0 }],
+        ["آبی", { id: 12, name: "آبی", slug: "blue", menu_order: 1 }],
+      ]),
+    }],
+    [2, {
+      id: 2,
+      name: "Size",
+      slug: "size",
+      termsByName: new Map([
+        ["m", { id: 21, name: "M", slug: "m", menu_order: 0 }],
+        ["l", { id: 22, name: "L", slug: "l", menu_order: 1 }],
+      ]),
+    }],
+  ]);
+  engine.woo.fetchAllVariations = async (productId) =>
+    variations.filter((variation) => variation.parent_id === productId);
   engine.woo.iterateVariations = async function* (productId) {
     for (const v of variations.filter((x) => x.parent_id === productId)) yield v;
   };
@@ -121,7 +151,7 @@ test("full sync: mirrors WooCommerce color attributes exactly", async () => {
 
   assert.equal(variationUpserts.get("201").product_variation_color, 1);
   assert.equal(variationUpserts.get("202").product_variation_color, 1);
-  assert.equal(variationUpserts.get("203").product_variation_color, null);
+  assert.equal(variationUpserts.get("203").product_variation_color, 1);
   assert.equal(variationUpserts.get("102").product_variation_color, null);
 });
 

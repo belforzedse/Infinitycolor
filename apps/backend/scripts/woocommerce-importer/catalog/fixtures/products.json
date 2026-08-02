@@ -12,6 +12,10 @@
     "rating_count": 12,
     "regular_price": "1000000",
     "sale_price": "850000",
+    "attributes": [
+      { "id": 1, "name": "Color", "position": 0, "visible": true, "variation": true, "options": ["قرمز", "آبی"] },
+      { "id": 2, "name": "Size", "position": 1, "visible": true, "variation": true, "options": ["M", "L"] }
+    ],
     "categories": [
       { "id": 5, "name": "کیف" },
       { "id": 9, "name": "اکسسوری" }
@@ -49,6 +53,8 @@
     "regular_price": "",
     "sale_price": "",
     "price": "",
+    "manage_stock": true,
+    "stock_quantity": 0,
     "stock_status": "outofstock",
     "categories": [],
     "images": [],

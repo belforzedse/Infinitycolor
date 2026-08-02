@@ -5,6 +5,7 @@ import { resolveAuditActor } from "../utils/audit";
 import { logAdminEvent, logOrderEvent } from "../utils/eventLogger";
 import { scheduleHomeProductsRevalidation } from "../utils/homepageRevalidation";
 import { asEntityId } from "../utils/lastEdited";
+import { isTrustedWordPressMigrationRequest } from "../utils/migration-context";
 import {
   notifyOrderCreatedSms,
   notifyOrderStatusSms,
@@ -48,6 +49,7 @@ function registerOrderLifecycle(strapi: Strapi) {
     models: ["api::order.order"],
 
     async afterCreate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const { result } = event as any;
       if (!result?.id) return;
 
@@ -156,6 +158,7 @@ function registerOrderLifecycle(strapi: Strapi) {
     },
 
     async beforeUpdate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const where = (event as any)?.params?.where || {};
       const id = (where && (where.id || where.documentId)) || null;
       if (!id) return;
@@ -187,6 +190,7 @@ function registerOrderLifecycle(strapi: Strapi) {
     },
 
     async afterUpdate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const { result, state } = event as any;
       if (!result?.id) return;
 
@@ -353,6 +357,7 @@ function registerOrderLifecycle(strapi: Strapi) {
     },
 
     async beforeDelete(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const where = (event as any)?.params?.where || {};
       const id = (where && (where.id || where.documentId)) || null;
       if (!id) return;
@@ -360,6 +365,7 @@ function registerOrderLifecycle(strapi: Strapi) {
     },
 
     async afterDelete(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const id = (event as any)?.state?.deletingOrderId;
       if (!id) return;
 
@@ -410,6 +416,7 @@ function registerContractLifecycle(strapi: Strapi) {
     models: ["api::contract.contract"],
 
     async afterCreate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const { result } = event as any;
       if (!result?.id) return;
       const actor = resolveAuditActor(event as any);
@@ -445,6 +452,7 @@ function registerContractLifecycle(strapi: Strapi) {
     },
 
     async beforeUpdate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const where = (event as any)?.params?.where || {};
       const id = (where && (where.id || where.documentId)) || null;
       if (!id) return;
@@ -462,6 +470,7 @@ function registerContractLifecycle(strapi: Strapi) {
     },
 
     async afterUpdate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const { result, state } = event as any;
       if (!result?.id) return;
       const actor = resolveAuditActor(event as any);
@@ -507,6 +516,7 @@ function registerContractLifecycle(strapi: Strapi) {
     },
 
     async beforeDelete(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const where = (event as any)?.params?.where || {};
       const id = (where && (where.id || where.documentId)) || null;
       if (!id) return;
@@ -524,6 +534,7 @@ function registerContractLifecycle(strapi: Strapi) {
     },
 
     async afterDelete(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const id = (event as any)?.state?.deletingContractId;
       if (!id) return;
       const actor = resolveAuditActor(event as any);
@@ -560,6 +571,7 @@ function registerProductStockLifecycle(strapi: Strapi) {
     models: ["api::product-stock.product-stock"],
 
     async afterCreate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const { result } = event as any;
 
       const initialCount = result?.Count ?? 0;
@@ -584,6 +596,7 @@ function registerProductStockLifecycle(strapi: Strapi) {
     },
 
     async beforeUpdate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const where = (event as any)?.params?.where || {};
       const id = (where && (where.id || where.documentId)) || null;
       if (!id) return;
@@ -605,6 +618,7 @@ function registerProductStockLifecycle(strapi: Strapi) {
     },
 
     async afterUpdate(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const { result, state } = event as any;
       const previous = state?.previousCount;
       const current = result?.Count;
@@ -652,6 +666,7 @@ function registerProductStockLifecycle(strapi: Strapi) {
     },
 
     async afterDelete(event) {
+      if (isTrustedWordPressMigrationRequest()) return;
       const stockId = (event as any)?.result?.id ?? (event as any)?.params?.where?.id;
       scheduleHomeProductsRevalidation("product-stock-delete", { stockId });
     },

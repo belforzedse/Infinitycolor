@@ -83,6 +83,15 @@ class WooSource {
     } while (page <= totalPages);
   }
 
+  /** Collect one product's variations for stock-policy eligibility and reuse. */
+  async fetchAllVariations(productId, opts = {}) {
+    const variations = [];
+    for await (const variation of this.iterateVariations(productId, opts)) {
+      variations.push(variation);
+    }
+    return variations;
+  }
+
   /** Fetch all categories (collected — category counts are small). */
   async fetchAllCategories(opts = {}) {
     const perPage = opts.perPage || this.defaultPerPage;
@@ -104,6 +113,42 @@ class WooSource {
     } while (page <= totalPages);
 
     return out;
+  }
+
+  /** Fetch all global Woo attribute definitions and their terms. */
+  async fetchGlobalAttributeRegistry() {
+    const definitionsResponse = await this.http.get("/products/attributes", {
+      params: { per_page: 100, orderby: "id", order: "asc" },
+    });
+    const definitions = Array.isArray(definitionsResponse.data) ? definitionsResponse.data : [];
+    const registry = new Map();
+
+    for (const definition of definitions) {
+      const terms = [];
+      let page = 1;
+      let totalPages = 1;
+      do {
+        const response = await this.http.get(`/products/attributes/${definition.id}/terms`, {
+          params: { per_page: 100, page, orderby: "id", order: "asc" },
+        });
+        totalPages = WooSource.totalPages(response);
+        terms.push(...(Array.isArray(response.data) ? response.data : []));
+        page += 1;
+      } while (page <= totalPages);
+
+      registry.set(Number(definition.id), {
+        ...definition,
+        terms,
+        termsByName: new Map(
+          terms.map((term) => [
+            String(term.name || "").normalize("NFKC").replace(/ي/g, "ی").replace(/ك/g, "ک").trim().replace(/\s+/g, " ").toLocaleLowerCase("fa-IR"),
+            term,
+          ]),
+        ),
+      });
+    }
+
+    return registry;
   }
 
   /** Fetch a single product (used to refresh variation parents). */

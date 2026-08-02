@@ -35,6 +35,20 @@ export interface ProductVariable {
         };
       };
     };
+    selected_attribute_terms?: {
+      data: Array<{
+        id: number;
+        attributes: {
+          Title: string;
+          product_attribute?: {
+            data: {
+              id: number;
+              attributes: { Title: string };
+            } | null;
+          };
+        };
+      }>;
+    };
     product_stock?: {
       data: {
         id: number;
@@ -74,6 +88,12 @@ export interface ProductVariableDisplay {
   colorCode?: string;
   size?: string;
   model?: string;
+  genericAttributes?: Array<{
+    attributeId: number;
+    attribute: string;
+    termId: number;
+    term: string;
+  }>;
   generalDiscounts?: Array<{
     id: number;
     attributes: {

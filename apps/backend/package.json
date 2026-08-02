@@ -47,7 +47,7 @@
     "test:ci": "jest --ci --coverage --detectOpenHandles --reporters=default --reporters=jest-junit",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:importer": "node --test scripts/woocommerce-importer/catalog/__tests__/*.test.js",
+    "test:importer": "node --test scripts/woocommerce-importer/catalog/__tests__/*.test.js scripts/woocommerce-importer/migration-v2/__tests__/*.test.js",
     "type:generate": "strapi ts:generate-types",
     "type-check": "tsc --noEmit",
     "check-types": "tsc --noEmit",

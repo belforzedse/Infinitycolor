@@ -63,12 +63,14 @@ function buildConfig(envName) {
 
   // New catalog-specific knobs (with safe defaults).
   config.catalog = {
-    defaultInStockCount: Number.parseInt(process.env.IMPORT_STOCK_DEFAULT_INSTOCK_COUNT || "9999", 10),
     allowHttpMedia: envName === "local" || process.env.IMPORT_MEDIA_ALLOW_HTTP === "true",
     perPage: Number.parseInt(process.env.IMPORT_BATCH_PRODUCTS || "100", 10),
     maxRetries: Number.parseInt(process.env.IMPORT_ERROR_MAX_RETRIES || "4", 10),
     baseRetryDelay: Number.parseInt(process.env.IMPORT_ERROR_RETRY_DELAY || "1000", 10),
     trackingDirAbs: path.resolve(process.cwd(), envConfig.trackingDir),
+  };
+  config.migration = {
+    controlToken: String(process.env.MIGRATION_CONTROL_TOKEN || ""),
   };
 
   return { config, envConfig };

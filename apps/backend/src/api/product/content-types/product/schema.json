@@ -100,6 +100,18 @@
       "target": "api::product-variation.product-variation",
       "mappedBy": "product"
     },
+    "product_attribute_assignments": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::product-attribute-assignment.product-attribute-assignment",
+      "mappedBy": "product"
+    },
+    "owned_product_attributes": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::product-attribute.product-attribute",
+      "mappedBy": "owner_product"
+    },
     "Files": {
       "type": "media",
       "multiple": true,

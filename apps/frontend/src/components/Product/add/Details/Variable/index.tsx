@@ -72,7 +72,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
       setLoading(true);
       try {
         const response = await apiClient.get(
-          `/product-variations?filters[product][id][$eq]=${productId}&populate[0]=product_variation_color&populate[1]=product_variation_size&populate[2]=product_variation_model&populate[3]=product_stock&populate[4]=general_discounts&pagination[pageSize]=100`,
+          `/product-variations?filters[product][id][$eq]=${productId}&populate[0]=product_variation_color&populate[1]=product_variation_size&populate[2]=product_variation_model&populate[3]=product_stock&populate[4]=general_discounts&populate[5]=selected_attribute_terms&populate[6]=selected_attribute_terms.product_attribute&pagination[pageSize]=100`,
           {
             cache: "no-store",
           },
@@ -103,6 +103,17 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
           const colorCode = variation.attributes.product_variation_color?.data?.attributes?.ColorCode;
           const size = variation.attributes.product_variation_size?.data?.attributes?.Title;
           const model = variation.attributes.product_variation_model?.data?.attributes?.Title;
+          const genericAttributes = (variation.attributes.selected_attribute_terms?.data || [])
+            .map((term) => ({
+              attributeId: Number(term.attributes.product_attribute?.data?.id || 0),
+              attribute: String(
+                term.attributes.product_attribute?.data?.attributes?.Title || "ویژگی",
+              ),
+              termId: Number(term.id),
+              term: String(term.attributes.Title || ""),
+            }))
+            .filter((item) => item.attributeId && item.term)
+            .sort((left, right) => left.attribute.localeCompare(right.attribute));
 
           // Debug: Log color code extraction
           if (process.env.NODE_ENV !== "production" && color) {
@@ -118,7 +129,12 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
           // Create variable name from combinations - only include parts that exist.
           // Absent attributes are `undefined` (not ""), so filter on truthiness to
           // avoid stray " - " separators (e.g. a model-only "کد 1" variation).
-          const variableParts = [size, color, model].filter(
+          const variableParts = [
+            size,
+            color,
+            model,
+            ...genericAttributes.map((item) => `${item.attribute}: ${item.term}`),
+          ].filter(
             (part) => Boolean(part && part.trim()),
           );
           const variableName = variableParts.join(" - ");
@@ -160,6 +176,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             colorCode: colorCode ? colorCode : undefined,
             size: size && size.trim() ? size : undefined,
             model: model && model.trim() ? model : undefined,
+            genericAttributes,
             generalDiscounts: generalDiscounts,
           };
         });

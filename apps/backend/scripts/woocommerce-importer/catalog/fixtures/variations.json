@@ -11,8 +11,8 @@
     "stock_quantity": 5,
     "stock_status": "instock",
     "attributes": [
-      { "name": "رنگ", "option": "قرمز" },
-      { "name": "سایز", "option": "M" }
+      { "id": 1, "name": "Color", "option": "قرمز" },
+      { "id": 2, "name": "Size", "option": "M" }
     ]
   },
   {
@@ -23,9 +23,13 @@
     "regular_price": "",
     "sale_price": "950000",
     "on_sale": true,
-    "manage_stock": false,
+    "manage_stock": true,
+    "stock_quantity": 0,
     "stock_status": "instock",
-    "attributes": [{ "name": "Color", "option": "آبی" }]
+    "attributes": [
+      { "id": 1, "name": "Color", "option": "آبی" },
+      { "id": 2, "name": "Size", "option": "L" }
+    ]
   },
   {
     "id": 203,
@@ -35,7 +39,12 @@
     "regular_price": "",
     "sale_price": "",
     "price": "",
+    "manage_stock": true,
+    "stock_quantity": 0,
     "stock_status": "instock",
-    "attributes": []
+    "attributes": [
+      { "id": 1, "name": "Color", "option": "قرمز" },
+      { "id": 2, "name": "Size", "option": "L" }
+    ]
   }
 ]

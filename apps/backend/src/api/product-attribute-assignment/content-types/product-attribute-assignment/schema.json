@@ -1,0 +1,53 @@
+{
+  "kind": "collectionType",
+  "collectionName": "product_attribute_assignments",
+  "info": {
+    "singularName": "product-attribute-assignment",
+    "pluralName": "product-attribute-assignments",
+    "displayName": "Product Attribute Assignment",
+    "description": "Ordered attribute configuration and allowed terms for one product"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "Position": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
+    },
+    "IsVisible": {
+      "type": "boolean",
+      "default": true
+    },
+    "IsVariation": {
+      "type": "boolean",
+      "default": true
+    },
+    "product": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::product.product",
+      "inversedBy": "product_attribute_assignments"
+    },
+    "product_attribute": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::product-attribute.product-attribute",
+      "inversedBy": "product_attribute_assignments"
+    },
+    "terms": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::product-attribute-term.product-attribute-term",
+      "inversedBy": "product_attribute_assignments"
+    },
+    "external_id": {
+      "type": "string"
+    },
+    "external_source": {
+      "type": "string"
+    }
+  }
+}

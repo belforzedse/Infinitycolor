@@ -68,6 +68,16 @@ interface FeatureGroup {
   colors: Feature[];
   sizes: Feature[];
   models: Feature[];
+  generic: GenericFeatureGroup[];
+}
+
+interface GenericFeatureGroup {
+  assignmentId: number;
+  attributeId: number;
+  title: string;
+  type: "Text" | "Color";
+  position: number;
+  terms: Feature[];
 }
 
 interface FeaturesTableProps {
@@ -137,6 +147,7 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
     colors: [],
     sizes: [],
     models: [],
+    generic: [],
   });
 
   const [availableOptions, setAvailableOptions] = useState<{
@@ -275,7 +286,7 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
 
   const fetchVariationData = useCallback(async () => {
     try {
-      const [colorsRes, sizesRes, modelsRes] = await Promise.all([
+      const [colorsRes, sizesRes, modelsRes, assignmentsRes] = await Promise.all([
         apiClient.get<ApiResponse<ApiFeature[]>>("/product-variation-colors?pagination[pageSize]=1000&sort=Title:asc", {
           cache: "no-store",
         }),
@@ -285,6 +296,12 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
         apiClient.get<ApiResponse<ApiFeature[]>>("/product-variation-models?pagination[pageSize]=1000&sort=Title:asc", {
           cache: "no-store",
         }),
+        productId
+          ? apiClient.get<ApiResponse<any[]>>(
+              `/product-attribute-assignments?filters[product][id][$eq]=${productId}&filters[IsVariation][$eq]=true&populate[product_attribute]=true&populate[terms][populate][product_attribute]=true&pagination[pageSize]=100&sort=Position:asc`,
+              { cache: "no-store" },
+            )
+          : Promise.resolve({ data: [] } as any),
       ]);
 
       setAvailableOptions({
@@ -298,6 +315,7 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
           colors: [],
           sizes: [],
           models: [],
+          generic: [],
         });
         setVariationsCount(0);
         return;
@@ -315,6 +333,32 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
       const existingColors = new Map<string, Feature>();
       const existingSizes = new Map<string, Feature>();
       const existingModels = new Map<string, Feature>();
+      const generic = (((assignmentsRes as any).data || []) as any[])
+        .map((assignment): GenericFeatureGroup | null => {
+          const attributes = assignment.attributes || assignment;
+          const definition = attributes.product_attribute?.data;
+          if (!definition?.id) return null;
+          const definitionAttributes = definition.attributes || definition;
+          if (definitionAttributes.LegacyProjection !== "None") return null;
+          const terms = (attributes.terms?.data || [])
+            .map((term: any) => ({
+              id: String(term.id),
+              value: String(term.attributes?.Title || term.Title || ""),
+              colorCode: term.attributes?.ColorCode || term.ColorCode,
+            }))
+            .filter((term: Feature) => term.id && term.value);
+          if (terms.length === 0) return null;
+          return {
+            assignmentId: Number(assignment.id),
+            attributeId: Number(definition.id),
+            title: String(definitionAttributes.Title || ""),
+            type: definitionAttributes.Type === "Color" ? "Color" : "Text",
+            position: Number(attributes.Position || 0),
+            terms,
+          };
+        })
+        .filter((group): group is GenericFeatureGroup => Boolean(group))
+        .sort((left, right) => left.position - right.position);
 
       existingVariations.forEach((variation: any) => {
         if (variation.attributes.product_variation_color?.data) {
@@ -347,6 +391,7 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
         colors: Array.from(existingColors.values()),
         sizes: Array.from(existingSizes.values()),
         models: Array.from(existingModels.values()),
+        generic,
       });
 
       setVariationsCount(existingVariations.length);
@@ -365,7 +410,19 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
     // Don't use default values - if sizes/models are empty, they won't be included
     const sizeCount = features.sizes.length > 0 ? features.sizes.length : 1;
     const modelCount = features.models.length > 0 ? features.models.length : 1;
-    const potentialVariationsCount = features.colors.length * sizeCount * modelCount;
+    const colorCount = features.colors.length > 0 ? features.colors.length : 1;
+    const genericCount = features.generic.reduce(
+      (count, group) => count * Math.max(group.terms.length, 1),
+      1,
+    );
+    const hasAnyAxis =
+      features.colors.length > 0 ||
+      features.sizes.length > 0 ||
+      features.models.length > 0 ||
+      features.generic.some((group) => group.terms.length > 0);
+    const potentialVariationsCount = hasAnyAxis
+      ? colorCount * sizeCount * modelCount * genericCount
+      : 0;
 
     setVariationsCount(potentialVariationsCount);
   }, [features]);
@@ -435,141 +492,59 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
     }));
   };
 
-  // Generate a random SKU
-  const generateSKU = (colorCode: string, sizeCode: string, modelCode: string) => {
-    const randomPart = Math.random().toString(36).substring(2, 7).toUpperCase();
-    return `${productId}-${colorCode}-${sizeCode}-${modelCode}-${randomPart}`;
+  const removeGenericTerm = (attributeId: number, termId: string) => {
+    setFeatures((prev) => ({
+      ...prev,
+      generic: prev.generic.map((group) =>
+        group.attributeId === attributeId
+          ? { ...group, terms: group.terms.filter((term) => term.id !== termId) }
+          : group,
+      ),
+    }));
   };
 
   const generateVariations = async () => {
     if (!productId || isGeneratingVariations) return;
 
-    // Check if we have at least one color selected
-    if (features.colors.length === 0) {
-      alert("لطفاً حداقل یک رنگ برای محصول انتخاب کنید");
-      return;
-    }
-
     try {
       setIsGeneratingVariations(true);
-      // Create all possible combinations
-      const combinations = [];
-      const colorList = features.colors;
-      const sizeOptions = features.sizes; // No default - use empty array if none selected
-      const modelOptions = features.models; // No default - use empty array if none selected
-
-      // Validate color IDs exist in available options
-      const availableColorIds = new Set(availableOptions.colors.map((c) => String(c.id)));
-      const invalidColors = colorList.filter((color) => !availableColorIds.has(String(color.id)));
-
-      if (invalidColors.length > 0) {
-        toast.error(
-          `رنگ‌های نامعتبر یافت شد. لطفاً رنگ‌ها را دوباره انتخاب کنید. (${invalidColors.map((c) => c.value).join(", ")})`
-        );
-        setIsGeneratingVariations(false);
+      const axes = [
+        ...(features.colors.length > 0
+          ? [{ type: "color", termIds: features.colors.map((term) => Number(term.id)) }]
+          : []),
+        ...(features.sizes.length > 0
+          ? [{ type: "size", termIds: features.sizes.map((term) => Number(term.id)) }]
+          : []),
+        ...(features.models.length > 0
+          ? [{ type: "model", termIds: features.models.map((term) => Number(term.id)) }]
+          : []),
+        ...features.generic
+          .filter((group) => group.terms.length > 0)
+          .map((group) => ({
+            type: "attribute",
+            attributeId: group.attributeId,
+            termIds: group.terms.map((term) => Number(term.id)),
+          })),
+      ];
+      if (axes.length === 0) {
+        toast.error("حداقل یک ویژگی و یک مقدار انتخاب کنید");
         return;
       }
 
-      for (const color of colorList) {
-        const colorId = parseInt(color.id);
-        if (isNaN(colorId) || colorId <= 0) {
-          toast.error(`شناسه رنگ نامعتبر: ${color.value} (${color.id})`);
-          setIsGeneratingVariations(false);
-          return;
-        }
-
-        // If no sizes or models, create variations with only colors
-        if (sizeOptions.length === 0 && modelOptions.length === 0) {
-          const sku = generateSKU(color.id, "no-size", "no-model");
-          combinations.push({
-            product: productId,
-            product_variation_color: colorId,
-            SKU: sku,
-            Price: 0,
-            DiscountPrice: null,
-          });
-        } else if (sizeOptions.length === 0) {
-          // Only models, no sizes
-          for (const model of modelOptions) {
-            const sku = generateSKU(color.id, "no-size", model.id || "no-model");
-            combinations.push({
-              product: productId,
-              product_variation_color: colorId,
-              product_variation_model: parseInt(model.id),
-              SKU: sku,
-              Price: 0,
-              DiscountPrice: null,
-            });
-          }
-        } else if (modelOptions.length === 0) {
-          // Only sizes, no models
-          for (const size of sizeOptions) {
-            const sku = generateSKU(color.id, size.id || "no-size", "no-model");
-            combinations.push({
-              product: productId,
-              product_variation_color: colorId,
-              product_variation_size: parseInt(size.id),
-              SKU: sku,
-              Price: 0,
-              DiscountPrice: null,
-            });
-          }
-        } else {
-          // Both sizes and models
-          for (const size of sizeOptions) {
-            for (const model of modelOptions) {
-              const sku = generateSKU(color.id, size.id || "no-size", model.id || "no-model");
-              combinations.push({
-                product: productId,
-                product_variation_color: colorId,
-                product_variation_size: parseInt(size.id),
-                product_variation_model: parseInt(model.id),
-                SKU: sku,
-                Price: 0,
-                DiscountPrice: null,
-              });
-            }
-          }
-        }
-      }
-
-      // Fetch existing variations to avoid duplicates
-      const existingVariationsRes = await apiClient.get<ApiResponse<ProductVariation[]>>(
-        `/product-variations?filters[product][id][$eq]=${productId}&populate=product_variation_color,product_variation_size,product_variation_model`,
-        {
-          cache: "no-store",
-        },
+      const response = await apiClient.post<any>(
+        `/products/${productId}/variation-combinations`,
+        { axes },
       );
-
-      const existingVariations = (existingVariationsRes as any).data || [];
-
-      // Filter out combinations that already exist
-      const newCombinations = combinations.filter((comb) => {
-        return !existingVariations.some((existing: any) => {
-          const existingColor = existing.attributes.product_variation_color?.data?.id;
-          const existingSize = existing.attributes.product_variation_size?.data?.id;
-          const existingModel = existing.attributes.product_variation_model?.data?.id;
-
-          return (
-            existingColor === comb.product_variation_color &&
-            existingSize === comb.product_variation_size &&
-            existingModel === comb.product_variation_model
-          );
-        });
-      });
-
-      for (const combination of newCombinations) {
-        await apiClient.post("/product-variations", { data: combination });
-      }
+      const result = response.data || response;
 
       // Refresh variation data after creation
       await fetchVariationData();
       onVariationsGenerated?.();
 
-      if (newCombinations.length === 0) {
+      if (!result.created) {
         toast("هیچ تنوع جدیدی برای ایجاد وجود نداشت");
       } else {
-        toast.success(`${newCombinations.length} تنوع جدید با موفقیت ایجاد شد`);
+        toast.success(`${result.created} تنوع جدید با موفقیت ایجاد شد`);
       }
     } catch (error) {
       console.error("Error generating variations:", error);
@@ -856,6 +831,41 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                   </div>
                 </td>
               </tr>
+              {features.generic.map((group) => (
+                <tr key={group.attributeId} className="border-t border-slate-100">
+                  <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
+                    <div>{group.title}</div>
+                    <div className="mt-1 text-[11px] text-slate-400">ویژگی عمومی</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {group.terms.map((term) => (
+                        <div
+                          key={term.id}
+                          className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-100 px-2 py-1"
+                        >
+                          {group.type === "Color" && /^#[0-9a-f]{6}$/i.test(term.colorCode || "") && (
+                            <span
+                              className="h-4 w-4 rounded-full border border-black/10"
+                              style={{ backgroundColor: term.colorCode }}
+                              aria-hidden="true"
+                            />
+                          )}
+                          <span className="text-sm text-slate-500">{term.value}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeGenericTerm(group.attributeId, term.id)}
+                            className="text-slate-400"
+                            aria-label={`حذف ${term.value}`}
+                          >
+                            <DeleteIcon />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

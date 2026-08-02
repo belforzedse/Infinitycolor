@@ -1,6 +1,21 @@
 export default {
   routes: [
     {
+      method: "POST",
+      path: "/products/:id/variation-combinations",
+      handler: "product.generateVariationCombinations",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          {
+            name: "global::role-based",
+            config: { roles: ["superadmin"] },
+          },
+        ],
+        middlewares: [],
+      },
+    },
+    {
       method: "GET",
       path: "/products/searchwise-feed",
       handler: "product.searchwiseFeed",

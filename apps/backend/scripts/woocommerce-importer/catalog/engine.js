@@ -10,6 +10,7 @@ const MediaSync = require("./lib/media");
 const { ImportReport } = require("./lib/report");
 const { resolveScope, needsProductLoop } = require("./lib/presets");
 const T = require("./lib/transforms");
+const G = require("./lib/genericAttributes");
 
 function normalizeRunLimit(limit) {
   return Number.isFinite(limit) ? limit : "all";
@@ -119,7 +120,6 @@ class CatalogEngine {
 
     this.multiplier = config.import.currency.multiplier || 1;
     this.statusMappings = config.import.statusMappings.product || {};
-    this.defaultInStockCount = config.catalog.defaultInStockCount;
   }
 
   async preflight() {
@@ -215,13 +215,21 @@ class CatalogEngine {
     // Attribute cache only matters when we write variations with attributes.
     if (flags.variations && flags.variationFields === "all") {
       await this.repo.preloadAttributes();
+      await this.repo.preloadGenericAttributes();
+    }
+    if (flags.products) {
+      await this.repo.preloadProductTags();
     }
 
     if (flags.categories) {
       await this.syncCategories(report, dryRun, runContext);
     }
     if (needsProductLoop(flags)) {
-      await this.syncProducts(report, dryRun, flags, limit, runContext, { startAfterExternalId });
+      await this.syncProducts(report, dryRun, flags, limit, runContext, {
+        startAfterExternalId,
+        observer: opts.observer || null,
+        onlyExternalIds: opts.onlyExternalIds || null,
+      });
     }
 
     if (!dryRun) {
@@ -382,12 +390,21 @@ class CatalogEngine {
       productIndex: await this.repo.buildExternalIndex("/products", productIndexParams),
       variationIndex: await this.repo.buildExternalIndex("/product-variations"),
       stockIndex: await this.repo.buildExternalIndex("/product-stocks"),
+      globalAttributeRegistry:
+        flags.variations && flags.variationFields === "all"
+          ? await this.woo.fetchGlobalAttributeRegistry()
+          : new Map(),
+      observer: options.observer || null,
     };
 
     let processed = 0;
+    const onlyExternalIds = options.onlyExternalIds
+      ? new Set(Array.from(options.onlyExternalIds, (value) => String(value)))
+      : null;
     for await (const wcProduct of this.woo.iterateProducts()) {
       try {
         await this.ensureRunCanContinue(runContext);
+        if (onlyExternalIds && !onlyExternalIds.has(String(wcProduct.id))) continue;
         if (options.startAfterExternalId && Number(wcProduct.id) <= options.startAfterExternalId) {
           report.count("products", "skipped");
           continue;
@@ -442,6 +459,27 @@ class CatalogEngine {
       return;
     }
 
+    const isSimple =
+      wcProduct.type === "simple" ||
+      !Array.isArray(wcProduct.variations) ||
+      wcProduct.variations.length === 0;
+    const wcVariations = isSimple ? [] : await this.woo.fetchAllVariations(wcProduct.id);
+    const stockEligibility = T.evaluateProductStockEligibility(wcProduct, wcVariations);
+    if (!stockEligibility.eligible) {
+      ctx.observer?.onProduct?.({ wcProduct, wcVariations, stockEligibility });
+      report.count("products", "skipped");
+      if (runContext) {
+        runContext.store.completeItem(runContext.runId, itemKey, {
+          status: "skipped",
+          reason: stockEligibility.reason,
+          unmanagedVariationIds: stockEligibility.unmanagedVariationIds,
+        });
+      }
+      return;
+    }
+    ctx.observer?.onProduct?.({ wcProduct, wcVariations, stockEligibility });
+    const attributePlan = G.buildProductAttributePlan(wcProduct, ctx.globalAttributeRegistry);
+
     const existing = productIndex.get(wcProduct.id.toString());
     let productStrapiId = existing?.id || this.mapping.getStrapiId("products", wcProduct.id);
     let productFingerprint = null;
@@ -455,6 +493,16 @@ class CatalogEngine {
         resolveCategoryParent,
         statusMappings: this.statusMappings,
       });
+      if (dryRun) {
+        const tagCounters = this.repo.inspectProductTags(wcProduct.tags);
+        report.count("productTags", "created", tagCounters.created);
+        report.count("productTags", "unchanged", tagCounters.unchanged);
+      } else {
+        const tagResult = await this.repo.syncProductTags(wcProduct.tags);
+        data.product_tags = tagResult.ids;
+        report.count("productTags", "created", tagResult.counters.created);
+        report.count("productTags", "unchanged", tagResult.counters.unchanged);
+      }
       productFingerprint = fingerprint({ data, sizeGuideMatrix });
 
       if (dryRun) {
@@ -489,6 +537,20 @@ class CatalogEngine {
       return;
     }
 
+    let attributeContext = { plan: attributePlan, resolvedDimensions: null };
+    if (flags.variations && flags.variationFields === "all") {
+      if (dryRun) {
+        const counters = this.repo.inspectProductAttributePlan(attributePlan);
+        report.count("attributes", "created", counters.created);
+        report.count("attributes", "updated", counters.updated);
+      } else {
+        const synced = await this.repo.syncProductAttributePlan(attributePlan, productStrapiId);
+        attributeContext = { plan: attributePlan, resolvedDimensions: synced.resolvedDimensions };
+        report.count("attributes", "created", synced.counters.created);
+        report.count("attributes", "updated", synced.counters.updated);
+      }
+    }
+
     // Media — attach only when ids are present (never null existing media on failure).
     if (flags.media && !dryRun && productStrapiId && productStrapiId > 0) {
       // "preserve" policy (full-sync): leave existing media untouched when a product
@@ -514,7 +576,13 @@ class CatalogEngine {
     }
 
     if (flags.variations || flags.stock) {
-      await this.syncVariations(wcProduct, productStrapiId, ctx);
+      await this.syncVariations(
+        wcProduct,
+        productStrapiId,
+        ctx,
+        wcVariations,
+        attributeContext,
+      );
     }
 
     if (runContext) {
@@ -525,7 +593,13 @@ class CatalogEngine {
     }
   }
 
-  async syncVariations(wcProduct, parentStrapiId, ctx) {
+  async syncVariations(
+    wcProduct,
+    parentStrapiId,
+    ctx,
+    prefetchedVariations = [],
+    attributeContext = { plan: { sourceProductId: wcProduct.id, dimensions: [] }, resolvedDimensions: null },
+  ) {
     const isSimple =
       wcProduct.type === "simple" ||
       !Array.isArray(wcProduct.variations) ||
@@ -533,14 +607,14 @@ class CatalogEngine {
 
     if (isSimple) {
       const synthetic = T.synthesizeSimpleVariation(wcProduct);
-      await this.syncOneVariation(synthetic, wcProduct, parentStrapiId, ctx);
+      await this.syncOneVariation(synthetic, wcProduct, parentStrapiId, ctx, attributeContext);
       return;
     }
 
-    for await (const wcVariation of this.woo.iterateVariations(wcProduct.id)) {
+    for (const wcVariation of prefetchedVariations) {
       try {
         await this.ensureRunCanContinue(ctx.runContext);
-        await this.syncOneVariation(wcVariation, wcProduct, parentStrapiId, ctx);
+        await this.syncOneVariation(wcVariation, wcProduct, parentStrapiId, ctx, attributeContext);
       } catch (error) {
         if (isRunControlError(error)) throw error;
         ctx.report.fail("variations", { wcId: wcVariation.id, stage: "sync-variation", error });
@@ -557,7 +631,7 @@ class CatalogEngine {
     }
   }
 
-  async syncOneVariation(wcVariation, parentProduct, parentStrapiId, ctx) {
+  async syncOneVariation(wcVariation, parentProduct, parentStrapiId, ctx, attributeContext) {
     const { report, dryRun, flags, variationIndex, stockIndex, runContext } = ctx;
     const externalId = wcVariation.id.toString();
     const itemKey = `variation:${externalId}`;
@@ -600,6 +674,24 @@ class CatalogEngine {
               wcId: wcVariation.id,
               stage: "price",
               error: "no price in WooCommerce",
+            });
+          }
+          return;
+        }
+        const selection = G.selectVariationTerms(wcVariation, attributeContext.plan);
+        if (selection.errors.length > 0) {
+          const reasonCodes = selection.errors.map((error) => error.code).join(",");
+          report.fail("attributes", {
+            wcId: wcVariation.id,
+            stage: "generic-attributes",
+            error: reasonCodes,
+          });
+          if (runContext) {
+            runContext.store.failItem(runContext.runId, itemKey, {
+              entity: "variations",
+              wcId: wcVariation.id,
+              stage: "generic-attributes",
+              error: reasonCodes,
             });
           }
           return;
@@ -650,7 +742,7 @@ class CatalogEngine {
           }
           return;
         }
-        await this.attachAttributes(wcVariation, data, report);
+        await this.attachAttributes(wcVariation, data, attributeContext);
         variationFingerprint = fingerprint(data);
         const { id, mode } = await this.repo.upsert({
           endpoint: "/product-variations",
@@ -667,7 +759,7 @@ class CatalogEngine {
     // --- Stock write ---
     if (flags.stock && variationStrapiId) {
       const stockKey = `stock:${wcVariation.id}`;
-      const stock = T.mapStock(wcVariation, { defaultInStockCount: this.defaultInStockCount });
+      const stock = T.mapStock(wcVariation);
       if (this.shouldSkipTrackedItem(runContext, stockKey)) {
         report.count("stocks", "skipped");
       } else {
@@ -738,31 +830,47 @@ class CatalogEngine {
     return { ok: wcOnly.length === 0, wcOnly, strapiOnly };
   }
 
-  async attachAttributes(wcVariation, data, report) {
-    let hasWooColorAttribute = false;
-    const wcAttrs = Array.isArray(wcVariation.attributes) ? wcVariation.attributes : [];
-    for (const attr of wcAttrs) {
-      const type = T.identifyAttributeType(attr.name || "");
-      const resolved = T.resolveAttribute(type, attr.option);
-      if (!resolved) continue;
-      if (type === "color") {
-        hasWooColorAttribute = true;
+  async attachAttributes(wcVariation, data, attributeContext) {
+    const selection = G.selectVariationTerms(wcVariation, attributeContext.plan);
+    if (selection.errors.length > 0) {
+      const error = new Error(
+        `Variation attribute mapping failed: ${selection.errors.map((item) => item.code).join(",")}`,
+      );
+      error.code = "VARIATION_ATTRIBUTE_MAPPING_FAILED";
+      throw error;
+    }
+    if (!attributeContext.resolvedDimensions) {
+      throw new Error("Resolved product attributes are required for a write run");
+    }
+
+    data.product_variation_color = null;
+    data.product_variation_size = null;
+    data.product_variation_model = null;
+    data.selected_attribute_terms = [];
+    const signatureTokens = [];
+
+    for (const { dimension, term } of selection.selected) {
+      const resolvedDimension = attributeContext.resolvedDimensions.get(dimension.sourceKey);
+      const resolvedTerm = resolvedDimension?.resolvedTerms.get(term.sourceKey);
+      if (!resolvedDimension || !resolvedTerm?.id) {
+        throw new Error(`Resolved attribute term missing: ${dimension.sourceKey}/${term.sourceKey}`);
       }
-      try {
-        const id = await this.repo.resolveAttributeId({ type, ...resolved });
-        if (id) {
-          data[`product_variation_${type}`] = id;
-        }
-      } catch (error) {
-        report.fail("attributes", { wcId: wcVariation.id, stage: `attr-${type}`, error });
+
+      if (dimension.legacyProjection === "Color") {
+        if (!resolvedTerm.legacyId) throw new Error(`Legacy color projection missing: ${term.title}`);
+        data.product_variation_color = resolvedTerm.legacyId;
+        signatureTokens.push(`color=${resolvedTerm.legacyId}`);
+      } else if (dimension.legacyProjection === "Size") {
+        if (!resolvedTerm.legacyId) throw new Error(`Legacy size projection missing: ${term.title}`);
+        data.product_variation_size = resolvedTerm.legacyId;
+        signatureTokens.push(`size=${resolvedTerm.legacyId}`);
+      } else {
+        data.selected_attribute_terms.push(resolvedTerm.id);
+        signatureTokens.push(`attribute:${resolvedDimension.definitionId}=${resolvedTerm.id}`);
       }
     }
 
-    // WooCommerce is the source of truth. If it has no color, clear any
-    // previously imported default color relation in Strapi.
-    if (!hasWooColorAttribute) {
-      data.product_variation_color = null;
-    }
+    data.AttributeSignature = signatureTokens.sort().join("|");
   }
 }
 

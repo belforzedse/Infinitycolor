@@ -1,0 +1,55 @@
+{
+  "kind": "collectionType",
+  "collectionName": "product_attribute_terms",
+  "info": {
+    "singularName": "product-attribute-term",
+    "pluralName": "product-attribute-terms",
+    "displayName": "Product Attribute Term",
+    "description": "One selectable value of a product attribute"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "Title": {
+      "type": "string",
+      "required": true
+    },
+    "Slug": {
+      "type": "string"
+    },
+    "ColorCode": {
+      "type": "string"
+    },
+    "Position": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
+    },
+    "product_attribute": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::product-attribute.product-attribute",
+      "inversedBy": "product_attribute_terms"
+    },
+    "product_attribute_assignments": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::product-attribute-assignment.product-attribute-assignment",
+      "mappedBy": "terms"
+    },
+    "product_variations": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::product-variation.product-variation",
+      "mappedBy": "selected_attribute_terms"
+    },
+    "external_id": {
+      "type": "string"
+    },
+    "external_source": {
+      "type": "string"
+    }
+  }
+}
