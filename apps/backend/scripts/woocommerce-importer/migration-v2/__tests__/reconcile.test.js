@@ -8,6 +8,79 @@ const path = require("node:path");
 const { RunLedger } = require("../lib/ledger");
 const { runReconcile } = require("../reconcile");
 
+async function runProductReconciliation({ destinationTitle, expectedFailures = 0 }) {
+  const sourceProduct = {
+    id: 44,
+    name: "کیف A001",
+    slug: "bag-a001",
+    meta_data: [{ key: "product_size_guide", value: [["SIZE", "M"]] }],
+  };
+  const source = {
+    async getProduct() { return sourceProduct; },
+    metrics() { return {}; },
+  };
+  const destination = {
+    async loadSnapshot(entity) {
+      if (entity === "products") {
+        return [{ id: 7, external_source: "woocommerce", external_id: "44" }];
+      }
+      return [];
+    },
+    async getContent(endpoint, query) {
+      assert.equal(endpoint, "/product-variations");
+      assert.equal(query["filters[product][id][$eq]"], 7);
+      return {
+        data: [{
+          id: 70,
+          attributes: {
+            product: {
+              data: {
+                id: 7,
+                attributes: {
+                  Title: destinationTitle,
+                  Slug: "bag-a001",
+                  product_size_helper: {
+                    data: { id: 8, attributes: { Helper: [["SIZE", "M"]] } },
+                  },
+                },
+              },
+            },
+          },
+        }],
+      };
+    },
+    metrics() { return {}; },
+  };
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-reconcile-product-"));
+  const ledger = new RunLedger(stateDir, "reconcile", "reconcile-product").start();
+  try {
+    await runReconcile({
+      source,
+      destination,
+      ledger,
+      pilot: {
+        runId: "pilot",
+        pilotSelection: { productIds: ["44"], userIds: [], walletIds: [], orders: [] },
+      },
+      dryRun: { runId: "dry-run", candidates: { blogPosts: [] } },
+    });
+    assert.equal(ledger.summary.entities.products.verified, expectedFailures === 0 ? 1 : 0);
+    assert.equal(ledger.summary.failures.length, expectedFailures);
+    return ledger.summary;
+  } finally {
+    ledger.release();
+  }
+}
+
+test("product reconciliation includes inactive products and compares normalized titles", async () => {
+  await runProductReconciliation({ destinationTitle: "کیف A 001" });
+});
+
+test("product reconciliation does not count a mismatched product as verified", async () => {
+  const summary = await runProductReconciliation({ destinationTitle: "عنوان اشتباه", expectedFailures: 1 });
+  assert.equal(summary.failures[0].code, "PRODUCT_TITLE_MISMATCH");
+});
+
 test("order reconciliation accepts Strapi null relation wrappers and verifies core fields", async () => {
   const sourceOrder = {
     id: 44,

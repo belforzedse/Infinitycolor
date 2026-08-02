@@ -49,32 +49,49 @@ function safeDecode(value) {
 
 async function reconcileProducts(source, destination, dryRun, pilot, ledger) {
   const productIds = selectedIds(dryRun, pilot, "productIds");
+  const destinationProducts = (await destination.loadSnapshot("products")).map(attrs);
   for (const sourceId of productIds) {
     ledger.count("products", "source");
     const sourceProduct = await source.getProduct(sourceId);
-    const destinationResponse = await destination.getContent("/products", {
-      "filters[external_source][$eq]": "woocommerce",
-      "filters[external_id][$eq]": sourceId,
-      "populate[product_size_helper]": "true",
-      "populate[product_attribute_assignments][populate][product_attribute]": "true",
-      "pagination[pageSize]": 2,
-    });
-    const rows = rowsOf(destinationResponse);
-    if (rows.length !== 1) {
+    const matches = destinationProducts.filter(
+      (row) => row.external_source === "woocommerce" && String(row.external_id || "") === sourceId,
+    );
+    if (matches.length !== 1) {
       mismatch(ledger, "products", sourceId, "PRODUCT_NOT_UNIQUE");
       continue;
     }
-    const destinationProduct = attrs(rows[0]);
+
+    // The public product controller intentionally hides inactive products even
+    // from API-token requests. Every imported product has at least one real or
+    // synthetic variation, so traverse that relation after resolving identity
+    // through the unfiltered migration snapshot.
+    const destinationResponse = await destination.getContent("/product-variations", {
+      "filters[product][id][$eq]": matches[0].id,
+      "populate[product][populate][product_size_helper]": "true",
+      "pagination[pageSize]": 1,
+    });
+    const variation = rowsOf(destinationResponse)[0];
+    const destinationProductRaw = relationOne(attrs(variation).product);
+    const destinationProduct = attrs(destinationProductRaw);
+    if (!destinationProductRaw || Number(destinationProductRaw.id) !== Number(matches[0].id)) {
+      mismatch(ledger, "products", sourceId, "PRODUCT_RELATION_NOT_FOUND");
+      continue;
+    }
+
+    let valid = true;
+    const check = (condition, code) => {
+      if (!condition) {
+        valid = false;
+        mismatch(ledger, "products", sourceId, code);
+      }
+    };
     const expectedGuide = CatalogT.extractSizeGuideMatrix(sourceProduct);
     const helper = attrs(destinationProduct.product_size_helper?.data || destinationProduct.product_size_helper);
     const actualGuide = helper?.Helper ?? null;
-    if (destinationProduct.Title !== sourceProduct.name) mismatch(ledger, "products", sourceId, "PRODUCT_TITLE_MISMATCH");
-    if (destinationProduct.Slug !== safeDecode(sourceProduct.slug)) mismatch(ledger, "products", sourceId, "PRODUCT_SLUG_MISMATCH");
-    if (JSON.stringify(expectedGuide) !== JSON.stringify(actualGuide)) {
-      mismatch(ledger, "products", sourceId, "SIZE_GUIDE_MISMATCH");
-      continue;
-    }
-    ledger.count("products", "verified");
+    check(destinationProduct.Title === CatalogT.normalizeName(sourceProduct.name), "PRODUCT_TITLE_MISMATCH");
+    check(destinationProduct.Slug === safeDecode(sourceProduct.slug), "PRODUCT_SLUG_MISMATCH");
+    check(JSON.stringify(expectedGuide) === JSON.stringify(actualGuide), "SIZE_GUIDE_MISMATCH");
+    if (valid) ledger.count("products", "verified");
   }
 }
 
