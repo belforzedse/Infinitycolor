@@ -55,8 +55,8 @@ describe("securityHeaders", () => {
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("form-action 'self' https://www.zarinpal.com https://sandbox.zarinpal.com");
     expect(csp).toContain("https://api.infinitycolor.co");
-    expect(csp).toContain("https://analytics.infinitycolor.co");
-    expect(csp).toContain("https://auth.infinitycolor.co");
+    expect(csp).toContain("https://matomo.alpagency.net");
+    expect(csp).toContain("connect-src 'self' https://api.infinitycolor.co https://matomo.alpagency.net https://auth.infinitycolor.co");
     expect(csp).not.toContain("*");
     expect(csp).not.toMatch(/(^|[ ;])https:([ ;]|$)/);
     expect(csp).not.toMatch(/(^|[ ;])http:([ ;]|$)/);

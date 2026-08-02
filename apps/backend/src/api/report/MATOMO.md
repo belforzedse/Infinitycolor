@@ -26,8 +26,8 @@ Strapi payment confirmation ──(Tracking API matomo.php, idgoal=0)──▶ M
 
 | Var | Required | Notes |
 | --- | -------- | ----- |
-| `MATOMO_BASE_URL` | yes | e.g. `https://analytics.infinitycolor.org` |
-| `MATOMO_SITE_ID` | yes | prod = `1`, staging = `2` |
+| `MATOMO_BASE_URL` | yes | `https://matomo.alpagency.net` |
+| `MATOMO_SITE_ID` | yes | prod = `2`, staging = `3` |
 | `MATOMO_API_TOKEN` | yes | server-side only; used for Reporting + Tracking API |
 | `MATOMO_TIMEOUT_MS` | no | default 8000 |
 | `MATOMO_SERVER_TRACKING_ENABLED` | no | server ecommerce tracking; defaults **on** when configured. Set `false` to disable |

@@ -8,7 +8,7 @@ type SecurityHeader = {
   value: string;
 };
 
-const DEFAULT_MATOMO_URL = "https://analytics.infinitycolor.co";
+const DEFAULT_MATOMO_URL = "https://matomo.alpagency.net";
 
 function unique(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));

@@ -1,6 +1,6 @@
 services:
   frontend:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-main}
     env_file:
       - ${ENV_FILE:-main.env}
     extra_hosts:

@@ -39,7 +39,7 @@ describe("MatomoTracker", () => {
     (window as any)._paq = [];
     (window as any).__matomoInitialized = false;
     process.env.NEXT_PUBLIC_MATOMO_ENABLE_DEV = "true";
-    process.env.NEXT_PUBLIC_MATOMO_URL = "https://analytics.infinitycolor.co";
+    process.env.NEXT_PUBLIC_MATOMO_URL = "https://matomo.alpagency.net";
     process.env.NEXT_PUBLIC_MATOMO_SITE_ID = "1";
 
     rafQueue = [];

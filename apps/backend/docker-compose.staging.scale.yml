@@ -5,7 +5,7 @@
 
 services:
   strapi-2:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-dev}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-dev}
     container_name: infinity-strapi-2
     env_file:
       - ${ENV_FILE:-dev.env}

@@ -5,7 +5,7 @@
 
 services:
   strapi-2:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     container_name: infinity-strapi-2
     env_file:
       - ${ENV_FILE:-main.env}
@@ -35,7 +35,7 @@ services:
       start_period: 120s
 
   strapi-3:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     container_name: infinity-strapi-3
     env_file:
       - ${ENV_FILE:-main.env}
@@ -65,7 +65,7 @@ services:
       start_period: 120s
 
   strapi-4:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     container_name: infinity-strapi-4
     env_file:
       - ${ENV_FILE:-main.env}
@@ -95,7 +95,7 @@ services:
       start_period: 120s
 
   strapi-5:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     container_name: infinity-strapi-5
     env_file:
       - ${ENV_FILE:-main.env}
@@ -125,7 +125,7 @@ services:
       start_period: 120s
 
   strapi-6:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     container_name: infinity-strapi-6
     env_file:
       - ${ENV_FILE:-main.env}
@@ -155,7 +155,7 @@ services:
       start_period: 120s
 
   backend-worker-2:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     container_name: infinity-backend-worker-2
     command: ["pnpm", "run", "worker:prod"]
     env_file:
