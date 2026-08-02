@@ -151,6 +151,7 @@ class CatalogEngine {
   async runSync(opts = {}) {
     let dryRun = Boolean(opts.dryRun);
     let limit = opts.limit ?? Infinity;
+    const categoryLimit = opts.categoryLimit ?? Infinity;
     let scope = opts.scope || "full";
     let skipMedia = Boolean(opts.skipMedia);
     let startAfterExternalId = parseOptionalPositiveInt(opts.startAfterExternalId);
@@ -222,7 +223,7 @@ class CatalogEngine {
     }
 
     if (flags.categories) {
-      await this.syncCategories(report, dryRun, runContext);
+      await this.syncCategories(report, dryRun, runContext, categoryLimit);
     }
     if (needsProductLoop(flags)) {
       await this.syncProducts(report, dryRun, flags, limit, runContext, {
@@ -303,11 +304,11 @@ class CatalogEngine {
     }));
   }
 
-  async syncCategories(report, dryRun, runContext = null) {
+  async syncCategories(report, dryRun, runContext = null, limit = Infinity) {
     this.logger.info("Phase: categories");
     if (runContext) runContext.store.setCurrentStep(runContext.runId, "categories");
     const wcCategories = await this.woo.fetchAllCategories();
-    const sorted = sortCategoriesByHierarchy(wcCategories);
+    const sorted = sortCategoriesByHierarchy(wcCategories).slice(0, limit);
     const index = await this.repo.buildExternalIndex("/product-categories");
 
     for (const wc of sorted) {

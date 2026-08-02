@@ -117,6 +117,12 @@ test("sortCategoriesByHierarchy: parents before children, orphans included", () 
   assert.equal(sorted.length, 3);
 });
 
+test("dry-run category sampling honors the requested cap", async () => {
+  const engine = makeEngine();
+  const report = await engine.runSync({ dryRun: true, scope: "categories", categoryLimit: 1 });
+  assert.equal(report.entities.categories.created, 1);
+});
+
 test("full dry-run: counts creates, synthesizes simple variations, flags missing price", async () => {
   const engine = makeEngine();
   const report = await engine.runSync({ dryRun: true, skipMedia: true });

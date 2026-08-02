@@ -297,8 +297,8 @@ const STORE_MANAGER_RESTRICTED_CONTROLLERS: RestrictedController[] = [
   {
     typeKey: "api::product-category",
     controller: "product-category",
-    // Store managers and editors can only read categories; create/update/delete/deleteWithReassign are superadmin-only
-    allowActions: [...READ_ACTIONS],
+    // Store managers can add categories while edits and destructive actions remain superadmin-only.
+    allowActions: [...READ_ACTIONS, "create"],
   },
   {
     typeKey: "api::product-attribute",
