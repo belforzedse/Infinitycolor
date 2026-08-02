@@ -223,7 +223,13 @@ class CatalogEngine {
     }
 
     if (flags.categories) {
-      await this.syncCategories(report, dryRun, runContext, categoryLimit);
+      await this.syncCategories(
+        report,
+        dryRun,
+        runContext,
+        categoryLimit,
+        opts.onlyCategoryExternalIds || null,
+      );
     }
     if (needsProductLoop(flags)) {
       await this.syncProducts(report, dryRun, flags, limit, runContext, {
@@ -304,11 +310,32 @@ class CatalogEngine {
     }));
   }
 
-  async syncCategories(report, dryRun, runContext = null, limit = Infinity) {
+  async syncCategories(
+    report,
+    dryRun,
+    runContext = null,
+    limit = Infinity,
+    onlyExternalIds = null,
+  ) {
     this.logger.info("Phase: categories");
     if (runContext) runContext.store.setCurrentStep(runContext.runId, "categories");
     const wcCategories = await this.woo.fetchAllCategories();
-    const sorted = sortCategoriesByHierarchy(wcCategories).slice(0, limit);
+    let sorted = sortCategoriesByHierarchy(wcCategories);
+    if (onlyExternalIds) {
+      const byId = new Map(wcCategories.map((category) => [String(category.id), category]));
+      const selected = new Set(Array.from(onlyExternalIds, (value) => String(value)));
+      for (const sourceId of Array.from(selected)) {
+        let current = byId.get(sourceId);
+        const visited = new Set();
+        while (current && Number(current.parent) > 0 && !visited.has(String(current.parent))) {
+          visited.add(String(current.parent));
+          selected.add(String(current.parent));
+          current = byId.get(String(current.parent));
+        }
+      }
+      sorted = sorted.filter((category) => selected.has(String(category.id)));
+    }
+    sorted = sorted.slice(0, limit);
     const index = await this.repo.buildExternalIndex("/product-categories");
 
     for (const wc of sorted) {

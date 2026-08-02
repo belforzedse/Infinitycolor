@@ -123,6 +123,24 @@ test("dry-run category sampling honors the requested cap", async () => {
   assert.equal(report.entities.categories.created, 1);
 });
 
+test("pilot category selection includes only selected categories and their parents", async () => {
+  const engine = makeEngine();
+  const report = await engine.runSync({
+    dryRun: true,
+    scope: "categories",
+    onlyCategoryExternalIds: new Set([9]),
+  });
+  assert.equal(report.entities.categories.created, 2);
+
+  const parentOnlyEngine = makeEngine();
+  const parentOnly = await parentOnlyEngine.runSync({
+    dryRun: true,
+    scope: "categories",
+    onlyCategoryExternalIds: new Set([5]),
+  });
+  assert.equal(parentOnly.entities.categories.created, 1);
+});
+
 test("full dry-run: counts creates, synthesizes simple variations, flags missing price", async () => {
   const engine = makeEngine();
   const report = await engine.runSync({ dryRun: true, skipMedia: true });

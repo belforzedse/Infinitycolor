@@ -139,7 +139,18 @@ async function selectRelationAwarePilotOrders(source, options = {}) {
   };
 }
 
-async function runCatalogPilot(config, ledger, productIds) {
+async function loadPilotCategoryIds(source, productIds) {
+  const categoryIds = new Set();
+  for (const productId of productIds) {
+    const product = await source.getProduct(productId);
+    for (const category of Array.isArray(product?.categories) ? product.categories : []) {
+      if (Number(category?.id) > 0) categoryIds.add(String(category.id));
+    }
+  }
+  return Array.from(categoryIds);
+}
+
+async function runCatalogPilot(config, ledger, productIds, categoryIds) {
   const trackingDir = path.join(config.stateDir, "catalog");
   fs.mkdirSync(trackingDir, { recursive: true, mode: 0o700 });
   const { config: catalogConfig } = buildConfig("production");
@@ -151,6 +162,7 @@ async function runCatalogPilot(config, ledger, productIds) {
     dryRun: true,
     scope: "full",
     onlyExternalIds: new Set(productIds),
+    onlyCategoryExternalIds: new Set(categoryIds),
   });
   ledger.summary.catalogPilotValidation = validationReport.toJSON();
   ledger.persist();
@@ -161,6 +173,7 @@ async function runCatalogPilot(config, ledger, productIds) {
     dryRun: false,
     scope: "full",
     onlyExternalIds: new Set(productIds),
+    onlyCategoryExternalIds: new Set(categoryIds),
   });
   ledger.summary.catalogPilot = report.toJSON();
   if (report.hasFailures()) throw new Error("CATALOG_PILOT_FAILED");
@@ -347,14 +360,16 @@ async function runPilot({ config, source, destination, ledger, dryRun }) {
     ...candidateIds(dryRun, "products"),
   ])).slice(0, 8);
   if (productIds.length === 0) throw new Error("PILOT_PRODUCTS_NOT_SELECTED");
+  const categoryIds = await loadPilotCategoryIds(source, productIds);
   ledger.summary.pilotSelection = {
     orderRowsScanned: orderSelection.scanned,
     orders: orderSelection.orders,
     productIds,
+    categoryIds,
     rejected: orderSelection.rejected,
   };
   ledger.persist();
-  await runCatalogPilot(config, ledger, productIds);
+  await runCatalogPilot(config, ledger, productIds, categoryIds);
 
   const importedUsers = new Set();
   const walletIds = firstCandidates(dryRun, ["walletZero", "walletNonZero"]).slice(0, 2);
@@ -403,5 +418,6 @@ module.exports = {
   upsertPilotBlog,
   upsertPilotOrder,
   loadApprovedGuestPhones,
+  loadPilotCategoryIds,
   selectRelationAwarePilotOrders,
 };
