@@ -38,6 +38,7 @@ SECRETS_REFERENCE.txt
 # Next.js
 /.next/
 /out/
+apps/frontend/out/
 apps/frontend/.next/
 apps/auth/.next/
 apps/auth/out/
