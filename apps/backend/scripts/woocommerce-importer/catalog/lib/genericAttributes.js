@@ -150,6 +150,7 @@ function sourceAttributeKey(attribute, productPlan) {
 function selectVariationTerms(wcVariation, productPlan) {
   const selected = [];
   const errors = [];
+  const omitted = [];
   const dimensionsByKey = new Map(productPlan.dimensions.map((dimension) => [dimension.sourceKey, dimension]));
 
   for (const attribute of Array.isArray(wcVariation?.attributes) ? wcVariation.attributes : []) {
@@ -169,15 +170,25 @@ function selectVariationTerms(wcVariation, productPlan) {
     selected.push({ dimension, term });
   }
 
-  const requiredKeys = productPlan.dimensions
-    .filter((dimension) => dimension.isVariation)
-    .map((dimension) => dimension.sourceKey);
+  const variationDimensions = productPlan.dimensions.filter(
+    (dimension) => dimension.isVariation,
+  );
   const selectedKeys = new Set(selected.map(({ dimension }) => dimension.sourceKey));
-  requiredKeys.forEach((key) => {
-    if (!selectedKeys.has(key)) errors.push({ code: "MISSING_VARIATION_TERM", sourceKey: key });
+  variationDimensions.forEach((dimension) => {
+    if (selectedKeys.has(dimension.sourceKey)) return;
+
+    // Woo permits a variation to leave pa_size unset. The destination size
+    // relation is optional too, so preserve that absence instead of fabricating
+    // a synthetic size or rejecting an otherwise valid variation.
+    if (dimension.legacyProjection === "Size") {
+      omitted.push({ code: "OPTIONAL_SIZE_UNSET", sourceKey: dimension.sourceKey });
+      return;
+    }
+
+    errors.push({ code: "MISSING_VARIATION_TERM", sourceKey: dimension.sourceKey });
   });
 
-  return { selected, errors };
+  return { selected, errors, omitted };
 }
 
 function definitionPayload(dimension, ownerProductId) {
