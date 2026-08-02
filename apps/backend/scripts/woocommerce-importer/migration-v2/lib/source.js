@@ -60,6 +60,17 @@ class WordPressSource {
 
   getCustomer(id) { return this.woo.get(`/customers/${id}`).then((response) => response.data); }
   getProduct(id) { return this.woo.get(`/products/${id}`).then((response) => response.data); }
+  async getProductVariations(id) {
+    const rows = [];
+    for await (const page of this.pages(
+      this.woo,
+      `/products/${id}/variations`,
+      { orderby: "id", order: "asc" },
+    )) {
+      rows.push(...page.rows);
+    }
+    return rows;
+  }
   getOrder(id) { return this.woo.get(`/orders/${id}`).then((response) => response.data); }
   getPost(id) { return this.wp.get(`/posts/${id}`, { context: "edit" }).then((response) => response.data); }
   getBlogCategory(id) { return this.wp.get(`/categories/${id}`, { context: "edit" }).then((response) => response.data); }

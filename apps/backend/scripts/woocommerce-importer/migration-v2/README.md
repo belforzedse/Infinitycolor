@@ -67,7 +67,10 @@ node scripts/woocommerce-importer/migration-v2/cli.js dry-run \
 Use `runs` or `show --run RUN_ID` to inspect the protected summary without
 loading credentials. A dry-run with documented quarantines can finish as
 `completed-with-exceptions`; investigate every failure code before selecting a
-pilot.
+pilot. A bounded run may feed the explicitly confirmed pilot: the pilot performs
+its own read-only catalog preflight and selects real guest and registered orders
+with their complete product, variation, and customer dependencies before it
+writes anything.
 
 Run only the representative candidates selected by the completed dry-run:
 

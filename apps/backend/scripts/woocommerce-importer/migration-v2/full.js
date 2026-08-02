@@ -8,7 +8,7 @@ const { CatalogRunStore } = require("../catalog/lib/runStore");
 const Logger = require("../utils/Logger");
 const T = require("./lib/transforms");
 const { loadBlogDestinationIndexes } = require("./dry-run");
-const { upsertPilotBlog } = require("./pilot");
+const { loadApprovedGuestPhones, upsertPilotBlog } = require("./pilot");
 
 async function mapPool(items, concurrency, action) {
   let cursor = 0;
@@ -140,7 +140,7 @@ async function runBlogs(source, destination, ledger, resumePage) {
   }
 }
 
-async function runOrders(source, destination, ledger, resumePage) {
+async function runOrders(source, destination, ledger, resumePage, approvedGuestPhones) {
   for await (const page of source.orders()) {
     if (page.page <= resumePage) continue;
     await mapPool(page.rows, 2, async (order) => {
@@ -148,6 +148,9 @@ async function runOrders(source, destination, ledger, resumePage) {
       ledger.count("orders", "source");
       try {
         const payload = T.orderPayload(order);
+        if (payload.guestPhone && !approvedGuestPhones.has(payload.guestPhone)) {
+          payload.guestPhone = null;
+        }
         ledger.count("orders", "eligible");
         const result = await destination.upsertOrder(payload);
         ledger.count("orders", result.mode === "created" ? "inserted" : "updated");
@@ -171,7 +174,14 @@ async function runFull({ config, source, destination, ledger, resume = false }) 
   await runUsers(source, destination, ledger, checkpointPage(ledger, "users"));
   await runWallets(source, destination, ledger, checkpointPage(ledger, "wallets"));
   await runBlogs(source, destination, ledger, checkpointPage(ledger, "blogPosts"));
-  await runOrders(source, destination, ledger, checkpointPage(ledger, "orders"));
+  const approvedGuestPhones = await loadApprovedGuestPhones(destination);
+  await runOrders(
+    source,
+    destination,
+    ledger,
+    checkpointPage(ledger, "orders"),
+    approvedGuestPhones,
+  );
   ledger.summary.metrics.source = source.metrics();
   ledger.summary.metrics.destination = destination.metrics();
   ledger.persist();

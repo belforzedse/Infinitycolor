@@ -109,7 +109,6 @@ async function main() {
       if (dryRun.command !== "dry-run" || !String(dryRun.status).startsWith("completed")) {
         throw new Error("Pilot source run must be a completed dry-run");
       }
-      if (dryRun.sample) throw new Error("Pilot source run must not be sampled");
       await runPilot({ config, source, destination, ledger, dryRun });
     } else if (command === "reconcile") {
       const pilot = loadRun(config.stateDir, options["from-run"]);
