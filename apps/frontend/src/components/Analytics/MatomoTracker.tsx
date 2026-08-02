@@ -16,8 +16,8 @@ import {
   trackPageView,
 } from "@/lib/analytics/matomo";
 
-const DEFAULT_MATOMO_URL = "https://analytics.infinitycolor.co";
-const DEFAULT_MATOMO_SITE_ID = "1";
+const DEFAULT_MATOMO_URL = "https://matomo.alpagency.net";
+const DEFAULT_MATOMO_SITE_ID = "2";
 type MatomoCommand = [string, ...unknown[]];
 
 function trimTrailingSlash(value: string) {

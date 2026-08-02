@@ -5,7 +5,7 @@
 
 services:
   frontend-2:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
     env_file:
       - ${ENV_FILE:-dev.env}
     extra_hosts:
@@ -32,7 +32,7 @@ services:
       start_period: 60s
 
   frontend-3:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
     env_file:
       - ${ENV_FILE:-dev.env}
     extra_hosts:
@@ -59,7 +59,7 @@ services:
       start_period: 60s
 
   frontend-4:
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-frontend:${IMAGE_TAG:-dev}
     env_file:
       - ${ENV_FILE:-dev.env}
     extra_hosts:
