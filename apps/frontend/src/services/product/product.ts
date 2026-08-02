@@ -57,6 +57,54 @@ export interface ProductSizeHelper {
   };
 }
 
+export type ProductAttributeDefinition = {
+  id: number;
+  attributes: {
+    Title: string;
+    Slug: string;
+    Scope: "Global" | "Product";
+    Type: "Text" | "Color";
+    LegacyProjection: "None" | "Color" | "Size" | "Model";
+    Position?: number;
+  };
+};
+
+export type ProductAttributeTerm = {
+  id: number;
+  attributes: {
+    Title: string;
+    Slug?: string;
+    ColorCode?: string | null;
+    Position?: number;
+    product_attribute?: { data: ProductAttributeDefinition | null };
+  };
+};
+
+export type ProductAttributeAssignment = {
+  id: number;
+  attributes: {
+    Position?: number;
+    IsVisible?: boolean;
+    IsVariation?: boolean;
+    product_attribute?: { data: ProductAttributeDefinition | null };
+    terms?: { data: ProductAttributeTerm[] };
+  };
+};
+
+export type GenericAttributeSelector = {
+  assignmentId: number;
+  attributeId: number;
+  title: string;
+  type: "Text" | "Color";
+  position: number;
+  options: Array<{
+    id: string;
+    title: string;
+    colorCode?: string | null;
+    position: number;
+  }>;
+};
+
 export interface ProductDetail {
   id: number;
   attributes: {
@@ -124,8 +172,15 @@ export interface ProductDetail {
               };
             };
           };
+          selected_attribute_terms?: {
+            data: ProductAttributeTerm[];
+          };
+          AttributeSignature?: string;
         };
       }>;
+    };
+    product_attribute_assignments?: {
+      data: ProductAttributeAssignment[];
     };
     product_main_category: {
       data: {
@@ -505,7 +560,7 @@ export const getProductById = async (
   id: string,
   options?: ApiRequestOptions,
 ): Promise<ApiResponse<ProductDetail>> => {
-  const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/${id}?populate[0]=CoverImage&populate[1]=Media&populate[2]=product_main_category&populate[3]=product_reviews&populate[4]=product_tags&populate[5]=product_variations&populate[6]=product_variations.product_stock&populate[7]=product_variations.product_variation_color&populate[8]=product_variations.product_variation_size&populate[9]=product_variations.product_variation_model&populate[10]=product_other_categories&populate[11]=product_size_helper&populate[12]=product_reviews.user&populate[13]=product_reviews.user.user_info&populate[14]=product_reviews.product_review_replies&populate[15]=product_reviews.product_review_replies.user&populate[16]=product_reviews.product_review_replies.user.user_info`;
+  const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/${id}?populate[0]=CoverImage&populate[1]=Media&populate[2]=product_main_category&populate[3]=product_reviews&populate[4]=product_tags&populate[5]=product_variations&populate[6]=product_variations.product_stock&populate[7]=product_variations.product_variation_color&populate[8]=product_variations.product_variation_size&populate[9]=product_variations.product_variation_model&populate[10]=product_other_categories&populate[11]=product_size_helper&populate[12]=product_reviews.user&populate[13]=product_reviews.user.user_info&populate[14]=product_reviews.product_review_replies&populate[15]=product_reviews.product_review_replies.user&populate[16]=product_reviews.product_review_replies.user.user_info&populate[17]=product_variations.selected_attribute_terms&populate[18]=product_variations.selected_attribute_terms.product_attribute&populate[19]=product_attribute_assignments&populate[20]=product_attribute_assignments.product_attribute&populate[21]=product_attribute_assignments.terms&populate[22]=product_attribute_assignments.terms.product_attribute`;
 
   try {
     const response = await apiClient.get<any>(endpoint, options);
@@ -713,6 +768,70 @@ const getRelationId = (relation: any): number | undefined => {
   return typeof id === "number" ? id : undefined;
 };
 
+const relationArray = (relation: any): any[] => {
+  const node = getRelationNode(relation);
+  if (!node) return [];
+  return Array.isArray(node) ? node : [node];
+};
+
+export const getGenericAttributeSelectors = (
+  product: ProductDetail | null | undefined,
+): GenericAttributeSelector[] => {
+  const assignments = relationArray(product?.attributes?.product_attribute_assignments);
+
+  return assignments
+    .map((assignment): GenericAttributeSelector | null => {
+      const assignmentAttributes = getRelationAttributes(assignment);
+      const definition = getRelationNode(assignmentAttributes?.product_attribute);
+      const definitionAttributes = getRelationAttributes(definition);
+      if (
+        !definition?.id ||
+        assignmentAttributes?.IsVisible === false ||
+        assignmentAttributes?.IsVariation === false ||
+        definitionAttributes?.LegacyProjection !== "None"
+      ) {
+        return null;
+      }
+
+      const options = relationArray(assignmentAttributes?.terms)
+        .map((term) => {
+          const attributes = getRelationAttributes(term);
+          return {
+            id: String(term.id),
+            title: String(attributes?.Title || ""),
+            colorCode: attributes?.ColorCode ?? null,
+            position: Number(attributes?.Position || 0),
+          };
+        })
+        .filter((term) => term.id && term.title)
+        .sort((left, right) => left.position - right.position || left.title.localeCompare(right.title));
+
+      if (options.length === 0) return null;
+      return {
+        assignmentId: Number(assignment.id),
+        attributeId: Number(definition.id),
+        title: String(definitionAttributes?.Title || ""),
+        type: definitionAttributes?.Type === "Color" ? "Color" : "Text",
+        position: Number(assignmentAttributes?.Position ?? definitionAttributes?.Position ?? 0),
+        options,
+      };
+    })
+    .filter((selector): selector is GenericAttributeSelector => Boolean(selector))
+    .sort((left, right) => left.position - right.position || left.title.localeCompare(right.title));
+};
+
+export const getVariationGenericSelection = (
+  variation: ProductDetail["attributes"]["product_variations"]["data"][0] | null | undefined,
+): Record<string, string> => {
+  const selection: Record<string, string> = {};
+  for (const term of relationArray(variation?.attributes?.selected_attribute_terms)) {
+    const attributes = getRelationAttributes(term);
+    const definitionId = getRelationId(attributes?.product_attribute);
+    if (definitionId && term?.id) selection[String(definitionId)] = String(term.id);
+  }
+  return selection;
+};
+
 const getVariationStockAttributes = (
   variation: ProductDetail["attributes"]["product_variations"]["data"][0],
 ) => getRelationAttributes(variation?.attributes?.product_stock);
@@ -904,6 +1023,7 @@ export type PdpSelectionState = {
   modelId: string;
   hasStock: boolean;
   variationId?: string;
+  generic: Record<string, string>;
 };
 
 export const getVariationRelationIds = (
@@ -921,7 +1041,13 @@ export const getInitialPdpSelection = (
   sizes: { id: string }[],
   models: { id: string }[],
 ): PdpSelectionState => {
-  const empty: PdpSelectionState = { colorId: "", sizeId: "", modelId: "", hasStock: false };
+  const empty: PdpSelectionState = {
+    colorId: "",
+    sizeId: "",
+    modelId: "",
+    hasStock: false,
+    generic: {},
+  };
   const variations = productData?.attributes?.product_variations?.data;
   if (!variations?.length) return empty;
 
@@ -938,6 +1064,7 @@ export const getInitialPdpSelection = (
       ...ids,
       hasStock: hasStockForVariation(preferred, 1),
       variationId: preferred.id?.toString(),
+      generic: getVariationGenericSelection(preferred),
     };
   }
 
@@ -950,6 +1077,7 @@ export const getInitialPdpSelection = (
     sizeId: firstSize,
     modelId: firstModel,
     hasStock: false,
+    generic: {},
   };
 };
 
@@ -1007,6 +1135,7 @@ export const findProductVariation = (
   colorId?: number,
   sizeId?: number,
   modelId?: number,
+  genericSelection: Record<string, string> = {},
 ) => {
   if (!product.attributes.product_variations?.data?.length) {
     return null;
@@ -1018,9 +1147,13 @@ export const findProductVariation = (
     const sizeMatch =
       !sizeId || getRelationId(variation.attributes.product_variation_size) === sizeId;
     const variationModelId = getRelationId(variation.attributes.product_variation_model);
-    const modelMatch = !modelId || variationModelId === undefined || variationModelId === modelId;
+    const modelMatch = !modelId || variationModelId === modelId;
+    const variationGenericSelection = getVariationGenericSelection(variation);
+    const genericMatch = Object.entries(genericSelection).every(
+      ([attributeId, termId]) => variationGenericSelection[attributeId] === termId,
+    );
 
-    return variation.attributes.IsPublished && colorMatch && sizeMatch && modelMatch;
+    return variation.attributes.IsPublished && colorMatch && sizeMatch && modelMatch && genericMatch;
   });
 };
 

@@ -87,12 +87,7 @@ class HttpClient {
   }
 }
 
-/**
- * Build an axios instance for the WooCommerce REST API. Auth is sent both as HTTP
- * Basic and as query params (some hosts strip the Authorization header). Note:
- * secrets live on `params`, which axios serializes separately and the importer
- * never logs.
- */
+/** Build a fail-closed, read-only WooCommerce client using HTTPS Basic auth. */
 function createWooAxios(config) {
   const instance = axios.create({
     baseURL: config.woocommerce.baseUrl,
@@ -103,15 +98,12 @@ function createWooAxios(config) {
       password: config.woocommerce.auth.consumerSecret,
     },
   });
-  instance.interceptors.request.use((cfg) => {
-    cfg.params = cfg.params || {};
-    if (cfg.params.consumer_key === undefined) {
-      cfg.params.consumer_key = config.woocommerce.auth.consumerKey;
+  instance.interceptors.request.use((request) => {
+    const method = String(request.method || "get").toLowerCase();
+    if (!["get", "head", "options"].includes(method)) {
+      throw new Error(`WooCommerce source is read-only; blocked ${method.toUpperCase()} request`);
     }
-    if (cfg.params.consumer_secret === undefined) {
-      cfg.params.consumer_secret = config.woocommerce.auth.consumerSecret;
-    }
-    return cfg;
+    return request;
   });
   return instance;
 }
@@ -124,6 +116,10 @@ function createStrapiAxios(config) {
   };
   if (!config.strapi.usePublicAccess && config.strapi.auth?.token) {
     headers.Authorization = `Bearer ${config.strapi.auth.token}`;
+  }
+  if (config.migration?.controlToken) {
+    headers["X-Infinity-Migration-Mode"] = "wordpress-v2";
+    headers["X-Infinity-Migration-Control"] = config.migration.controlToken;
   }
   return axios.create({
     baseURL: config.strapi.baseUrl,

@@ -161,13 +161,37 @@ test("mapStock: managed quantity used directly", () => {
   });
 });
 
-test("mapStock: unmanaged in-stock → defaultInStockCount (fixes 'in-stock shown unavailable')", () => {
-  const r = T.mapStock({ id: 2, manage_stock: false, stock_status: "instock" }, { defaultInStockCount: 9999 });
-  assert.equal(r.count, 9999);
+test("mapStock: unmanaged stock is rejected instead of inventing inventory", () => {
+  assert.throws(
+    () => T.mapStock({ id: 2, manage_stock: false, stock_status: "instock" }),
+    (error) => error.code === "UNMANAGED_STOCK_REJECTED",
+  );
 });
 
-test("mapStock: out of stock → 0", () => {
-  assert.equal(T.mapStock({ id: 3, stock_status: "outofstock" }).count, 0);
+test("mapStock: managed negative and missing quantities clamp to 0", () => {
+  assert.equal(T.mapStock({ id: 3, manage_stock: true, stock_quantity: -2 }).count, 0);
+  assert.equal(T.mapStock({ id: 4, manage_stock: true, stock_quantity: null }).count, 0);
+});
+
+test("evaluateProductStockEligibility: skips a whole product when any sellable unit is unmanaged", () => {
+  assert.deepEqual(
+    T.evaluateProductStockEligibility(
+      { id: 10, type: "variable", variations: [101, 102] },
+      [
+        { id: 101, manage_stock: true },
+        { id: 102, manage_stock: false },
+      ],
+    ),
+    {
+      eligible: false,
+      reason: "variation-unmanaged-stock",
+      unmanagedVariationIds: [102],
+    },
+  );
+  assert.equal(
+    T.evaluateProductStockEligibility({ id: 11, type: "simple", manage_stock: false }, []).eligible,
+    false,
+  );
 });
 
 test("resolveAttribute: color normalized through mapping table with hex code", () => {

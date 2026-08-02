@@ -3,6 +3,8 @@
  *
  * Triggers Next.js on-demand revalidation when blog posts are published or updated
  */
+import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
+
 const BLOG_COUNTER_ONLY_FIELDS = new Set(["ViewCount"]);
 const UPDATE_METADATA_FIELDS = new Set([
   "updatedAt",
@@ -82,6 +84,7 @@ async function triggerRevalidation(slug: string) {
 
 export default {
   async afterCreate(event: any) {
+    if (isTrustedWordPressMigrationRequest()) return;
     const { result } = event;
 
     // Only trigger revalidation if post is published
@@ -91,6 +94,7 @@ export default {
   },
 
   async afterUpdate(event: any) {
+    if (isTrustedWordPressMigrationRequest()) return;
     const { result } = event;
     if (isCounterOnlyBlogUpdate(event?.params?.data)) {
       return;
@@ -105,6 +109,7 @@ export default {
   },
 
   async afterDelete(event: any) {
+    if (isTrustedWordPressMigrationRequest()) return;
     // Revalidate blog listing when a post is deleted
     const frontendUrls = [
       "https://staging.infinitycolor.co",

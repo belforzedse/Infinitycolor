@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { ProductDetail } from "@/services/product/product";
+import {
+  getGenericAttributeSelectors,
+  getVariationGenericSelection,
+  type ProductDetail,
+} from "@/services/product/product";
 import { resolveAssetUrl } from "@/utils/resolveAssetUrl";
 import { computeDiscountForVariation } from "@/utils/discounts";
 import QuickViewGallery from "./QuickViewGallery";
@@ -22,6 +26,7 @@ type VariationUI = {
   stock: number;
   color: { title: string; colorCode: string | null } | null;
   size: { title: string } | null;
+  generic: Record<string, string>;
 };
 
 export default function QuickViewContent({
@@ -33,6 +38,7 @@ export default function QuickViewContent({
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedColorCode, setSelectedColorCode] = useState<string | null>(null);
   const [selectedSizeTitle, setSelectedSizeTitle] = useState<string | null>(null);
+  const [selectedGeneric, setSelectedGeneric] = useState<Record<string, string>>({});
 
   const { Title, CoverImage, Media, product_variations } = productData.attributes;
 
@@ -97,6 +103,7 @@ export default function QuickViewContent({
           stock,
           color: color ? { title: color.Title, colorCode: color.ColorCode ?? null } : null,
           size: size ? { title: size.Title } : null,
+          generic: getVariationGenericSelection(variation),
         };
       });
   }, [product_variations]);
@@ -104,6 +111,17 @@ export default function QuickViewContent({
   // Defaults (derived) so UI highlights something even before user clicks
   const effectiveColorCode = selectedColorCode ?? variations[0]?.color?.colorCode ?? null;
   const effectiveSizeTitle = selectedSizeTitle ?? variations[0]?.size?.title ?? null;
+  const genericSelectors = useMemo(
+    () => getGenericAttributeSelectors(productData),
+    [productData],
+  );
+  const effectiveGeneric = useMemo(
+    () =>
+      Object.keys(selectedGeneric).length > 0
+        ? selectedGeneric
+        : variations[0]?.generic || {},
+    [selectedGeneric, variations],
+  );
 
   const currentVariation = useMemo(() => {
     if (!variations.length) return undefined;
@@ -111,11 +129,16 @@ export default function QuickViewContent({
     const matches = variations.filter((v) => {
       const okColor = effectiveColorCode ? v.color?.colorCode === effectiveColorCode : true;
       const okSize = effectiveSizeTitle ? v.size?.title === effectiveSizeTitle : true;
-      return okColor && okSize;
+      const okGeneric = genericSelectors.every(
+        (selector) =>
+          v.generic[String(selector.attributeId)] ===
+          effectiveGeneric[String(selector.attributeId)],
+      );
+      return okColor && okSize && okGeneric;
     });
 
     return matches[0];
-  }, [variations, effectiveColorCode, effectiveSizeTitle]);
+  }, [variations, effectiveColorCode, effectiveSizeTitle, effectiveGeneric, genericSelectors]);
 
   const hasDiscount = useMemo(() => {
     if (!currentVariation) return false;
@@ -163,6 +186,14 @@ export default function QuickViewContent({
     }
     return set;
   }, [effectiveColorCode, sizes, variations]);
+  const availableGenericTermIds = useMemo(() => {
+    const ids = new Set<string>();
+    variations.forEach((variation) => {
+      if (variation.stock <= 0) return;
+      Object.values(variation.generic).forEach((termId) => ids.add(termId));
+    });
+    return ids;
+  }, [variations]);
 
   return (
     <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-2" data-testid="quick-view-content">
@@ -260,6 +291,29 @@ export default function QuickViewContent({
             }
           }}
           onSelectSize={setSelectedSizeTitle}
+          genericSelectors={genericSelectors}
+          genericSelection={effectiveGeneric}
+          availableGenericTermIds={availableGenericTermIds}
+          onSelectGeneric={(attributeId, termId) => {
+            const candidates = variations.filter(
+              (variation) => variation.stock > 0 && variation.generic[attributeId] === termId,
+            );
+            const best = candidates
+              .map((variation) => ({
+                variation,
+                score:
+                  Object.entries(effectiveGeneric).filter(
+                    ([key, value]) => key !== attributeId && variation.generic[key] === value,
+                  ).length +
+                  (variation.color?.colorCode === effectiveColorCode ? 1 : 0) +
+                  (variation.size?.title === effectiveSizeTitle ? 1 : 0),
+              }))
+              .sort((left, right) => right.score - left.score)[0]?.variation;
+            if (!best) return;
+            setSelectedGeneric(best.generic);
+            setSelectedColorCode(best.color?.colorCode ?? null);
+            setSelectedSizeTitle(best.size?.title ?? null);
+          }}
         />
 
         {/* Description intentionally omitted — shown on the full PDP. */}

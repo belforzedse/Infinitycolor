@@ -1,4 +1,5 @@
 import { resolveAuditActor } from "../../../../utils/audit";
+import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
 
 type AuditAction = "Create" | "Update" | "Delete";
 
@@ -33,6 +34,7 @@ export default {
   async afterCreate(event) {
     const { result } = event;
     if (!result?.id) return;
+    if (isTrustedWordPressMigrationRequest()) return;
     const actor = resolveAuditActor(event as any);
 
     await strapi.entityService.create(
@@ -55,6 +57,10 @@ export default {
     const where = event?.params?.where || {};
     const id = (where && (where.id || where.documentId)) || null;
     if (!id) return;
+    if (isTrustedWordPressMigrationRequest()) {
+      event.state = { ...(event.state || {}), migrationWrite: true };
+      return;
+    }
 
     const previous = await strapi.entityService.findOne(
       "api::local-user.local-user",
@@ -78,6 +84,7 @@ export default {
   async afterUpdate(event) {
     const { result, state } = event as any;
     if (!result?.id) return;
+    if (state?.migrationWrite || isTrustedWordPressMigrationRequest()) return;
     const actor = resolveAuditActor(event as any);
 
     const previous = state?.previousLocalUser || {};
@@ -114,11 +121,16 @@ export default {
     const where = event?.params?.where || {};
     const id = (where && (where.id || where.documentId)) || null;
     if (!id) return;
+    if (isTrustedWordPressMigrationRequest()) {
+      event.state = { ...(event.state || {}), migrationWrite: true };
+      return;
+    }
 
     event.state = { ...(event.state || {}), deletingUserId: id };
   },
 
   async afterDelete(event) {
+    if ((event as any)?.state?.migrationWrite || isTrustedWordPressMigrationRequest()) return;
     const id = (event as any)?.state?.deletingUserId;
     if (!id) return;
     const actor = resolveAuditActor(event as any);

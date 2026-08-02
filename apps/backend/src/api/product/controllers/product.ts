@@ -21,6 +21,7 @@ import {
   parseSearchwisePage,
   parseSearchwiseSize,
 } from "../services/searchwise-feed";
+import { generateVariationCombinations } from "../services/variation-combinations";
 
 /**
  * Check if the user is an admin (superadmin, store manager, or editor)
@@ -143,7 +144,22 @@ const PRODUCT_POPULATE = {
       product_variation_color: true,
       product_variation_size: true,
       product_variation_model: true,
+      selected_attribute_terms: {
+        populate: {
+          product_attribute: true,
+        },
+      },
       product_stock: true,
+    },
+  },
+  product_attribute_assignments: {
+    populate: {
+      product_attribute: true,
+      terms: {
+        populate: {
+          product_attribute: true,
+        },
+      },
     },
   },
   product_faqs: true,
@@ -166,7 +182,22 @@ const PRODUCT_SHELL_POPULATE = {
       product_variation_color: true,
       product_variation_size: true,
       product_variation_model: true,
+      selected_attribute_terms: {
+        populate: {
+          product_attribute: true,
+        },
+      },
       product_stock: true,
+    },
+  },
+  product_attribute_assignments: {
+    populate: {
+      product_attribute: true,
+      terms: {
+        populate: {
+          product_attribute: true,
+        },
+      },
     },
   },
   product_faqs: true,
@@ -289,6 +320,26 @@ async function findProductBySlugInternal(
 export default factories.createCoreController(
   "api::product.product",
   ({ strapi }) => ({
+    async generateVariationCombinations(ctx) {
+      try {
+        const result = await generateVariationCombinations(
+          strapi,
+          ctx.params?.id,
+          ctx.request?.body?.axes,
+        );
+        ctx.body = { data: result };
+      } catch (error) {
+        strapi.log.warn("Product variation combination generation rejected", {
+          productId: ctx.params?.id,
+          error: (error as Error).message,
+        });
+        return ctx.badRequest("Variation combinations could not be generated", {
+          data: { code: "VARIATION_COMBINATIONS_REJECTED" },
+          error: (error as Error).message,
+        });
+      }
+    },
+
     /**
      * Apply public-only filters for non-admin users
      * Ensures drafts/removed products are hidden from non-admins

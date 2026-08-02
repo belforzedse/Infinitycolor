@@ -1,0 +1,71 @@
+{
+  "kind": "collectionType",
+  "collectionName": "product_attributes",
+  "info": {
+    "singularName": "product-attribute",
+    "pluralName": "product-attributes",
+    "displayName": "Product Attribute",
+    "description": "Reusable or product-scoped variation attribute definition"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "Title": {
+      "type": "string",
+      "required": true
+    },
+    "Slug": {
+      "type": "string",
+      "required": true
+    },
+    "Scope": {
+      "type": "enumeration",
+      "enum": ["Global", "Product"],
+      "default": "Global",
+      "required": true
+    },
+    "Type": {
+      "type": "enumeration",
+      "enum": ["Text", "Color"],
+      "default": "Text",
+      "required": true
+    },
+    "LegacyProjection": {
+      "type": "enumeration",
+      "enum": ["None", "Color", "Size", "Model"],
+      "default": "None",
+      "required": true
+    },
+    "Position": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
+    },
+    "owner_product": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::product.product",
+      "inversedBy": "owned_product_attributes"
+    },
+    "product_attribute_terms": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::product-attribute-term.product-attribute-term",
+      "mappedBy": "product_attribute"
+    },
+    "product_attribute_assignments": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::product-attribute-assignment.product-attribute-assignment",
+      "mappedBy": "product_attribute"
+    },
+    "external_id": {
+      "type": "string"
+    },
+    "external_source": {
+      "type": "string"
+    }
+  }
+}

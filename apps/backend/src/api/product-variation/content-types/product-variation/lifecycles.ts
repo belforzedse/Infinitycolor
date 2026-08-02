@@ -5,6 +5,7 @@ import {
 } from "../../../../utils/adminAudit";
 import { asEntityId } from "../../../../utils/lastEdited";
 import { scheduleHomeProductsRevalidation } from "../../../../utils/homepageRevalidation";
+import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
 
 type AuditAction = "Create" | "Update" | "Delete";
 
@@ -38,6 +39,7 @@ export default {
   async afterCreate(event) {
     const { result } = event;
     if (!result?.id) return;
+    if (isTrustedWordPressMigrationRequest()) return;
     const actor = resolveAuditActor(event as any);
 
     await strapi.entityService.create(
@@ -83,6 +85,10 @@ export default {
     const where = event?.params?.where || {};
     const id = (where && (where.id || where.documentId)) || null;
     if (!id) return;
+    if (isTrustedWordPressMigrationRequest()) {
+      event.state = { ...(event.state || {}), migrationWrite: true };
+      return;
+    }
 
     const previous = await strapi.entityService.findOne(
       "api::product-variation.product-variation",
@@ -94,6 +100,11 @@ export default {
           product_variation_color: true,
           product_variation_size: true,
           product_variation_model: true,
+          selected_attribute_terms: {
+            populate: {
+              product_attribute: true,
+            },
+          },
         },
       }
     );
@@ -107,6 +118,7 @@ export default {
   async afterUpdate(event) {
     const { result, state } = event as any;
     if (!result?.id) return;
+    if (state?.migrationWrite || isTrustedWordPressMigrationRequest()) return;
     const actor = resolveAuditActor(event as any);
 
     const previous = state?.previousProductVariation || {};
@@ -120,6 +132,11 @@ export default {
           product_variation_color: true,
           product_variation_size: true,
           product_variation_model: true,
+          selected_attribute_terms: {
+            populate: {
+              product_attribute: true,
+            },
+          },
         },
       }
     );
@@ -174,6 +191,10 @@ export default {
     const where = event?.params?.where || {};
     const id = (where && (where.id || where.documentId)) || null;
     if (!id) return;
+    if (isTrustedWordPressMigrationRequest()) {
+      event.state = { ...(event.state || {}), migrationWrite: true };
+      return;
+    }
     const existing = await strapi.db
       .query("api::product-variation.product-variation")
       .findOne({
@@ -189,6 +210,7 @@ export default {
   },
 
   async afterDelete(event) {
+    if ((event as any)?.state?.migrationWrite || isTrustedWordPressMigrationRequest()) return;
     const id = (event as any)?.state?.deletingProductVariationId;
     if (!id) return;
     const actor = resolveAuditActor(event as any);

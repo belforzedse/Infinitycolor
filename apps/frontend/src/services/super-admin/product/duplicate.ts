@@ -83,6 +83,77 @@ export const duplicateProduct = async (productId: string) => {
 
     const newProductId = response.data.id;
 
+    // Clone the generic attribute configuration before variations so product-scoped
+    // terms can be remapped to their new owner. Global definitions remain shared.
+    const genericTermIdMap = new Map<number, number>();
+    try {
+      const assignmentResponse = await apiClient.get<any>(
+        `/product-attribute-assignments?filters[product][id][$eq]=${productId}&populate[product_attribute]=true&populate[terms]=true&pagination[pageSize]=100`,
+        { cache: "no-store" },
+      );
+      const assignments = assignmentResponse.data || [];
+      for (const assignment of assignments) {
+        const assignmentData = assignment.attributes || assignment;
+        const definition = assignmentData.product_attribute?.data;
+        const definitionData = definition?.attributes || definition;
+        const originalTerms = assignmentData.terms?.data || [];
+        let definitionId = definition?.id;
+        const assignedTermIds: number[] = [];
+
+        if (definitionData?.Scope === "Product") {
+          const createdDefinitionResponse = await apiClient.post<any>("/product-attributes", {
+            data: {
+              Title: definitionData.Title,
+              Slug: definitionData.Slug,
+              Scope: "Product",
+              Type: definitionData.Type,
+              LegacyProjection: definitionData.LegacyProjection || "None",
+              Position: definitionData.Position || 0,
+              owner_product: newProductId,
+            },
+          });
+          const createdDefinition = createdDefinitionResponse.data || createdDefinitionResponse;
+          definitionId = createdDefinition.id;
+
+          for (const originalTerm of originalTerms) {
+            const termData = originalTerm.attributes || originalTerm;
+            const createdTermResponse = await apiClient.post<any>("/product-attribute-terms", {
+              data: {
+                Title: termData.Title,
+                Slug: termData.Slug,
+                ColorCode: termData.ColorCode || null,
+                Position: termData.Position || 0,
+                product_attribute: definitionId,
+              },
+            });
+            const createdTerm = createdTermResponse.data || createdTermResponse;
+            genericTermIdMap.set(Number(originalTerm.id), Number(createdTerm.id));
+            assignedTermIds.push(Number(createdTerm.id));
+          }
+        } else {
+          originalTerms.forEach((term: any) => {
+            genericTermIdMap.set(Number(term.id), Number(term.id));
+            assignedTermIds.push(Number(term.id));
+          });
+        }
+
+        if (definitionId && assignedTermIds.length > 0) {
+          await apiClient.post<any>("/product-attribute-assignments", {
+            data: {
+              product: newProductId,
+              product_attribute: definitionId,
+              terms: assignedTermIds,
+              Position: assignmentData.Position || 0,
+              IsVisible: assignmentData.IsVisible !== false,
+              IsVariation: assignmentData.IsVariation !== false,
+            },
+          });
+        }
+      }
+    } catch (attributeError) {
+      console.warn("Failed to duplicate generic product attributes:", attributeError);
+    }
+
     // Duplicate product variations
     if (originalData.product_variations?.data?.length) {
       const variationErrors: string[] = [];
@@ -108,6 +179,9 @@ export const duplicateProduct = async (productId: string) => {
           const productVariationColor = variationData.product_variation_color?.data?.id || null;
           const productVariationSize = variationData.product_variation_size?.data?.id || null;
           const productVariationModel = variationData.product_variation_model?.data?.id || null;
+          const selectedAttributeTermIds = (variationData.selected_attribute_terms?.data || [])
+            .map((term: any) => genericTermIdMap.get(Number(term.id)) || Number(term.id))
+            .filter((id: number) => Number.isFinite(id) && id > 0);
 
           const newVariationData: any = {
             SKU: `${variationData.SKU}-copy-${Date.now()}`,
@@ -115,6 +189,7 @@ export const duplicateProduct = async (productId: string) => {
             DiscountPrice: variationData.DiscountPrice || null,
             IsPublished: false,
             product: newProductId,
+            selected_attribute_terms: selectedAttributeTermIds,
           };
 
           // Only add relation fields if they exist

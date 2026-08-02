@@ -11,6 +11,8 @@ import {
   formatGalleryAssets,
   calculateUniqueColorsCount,
   getUniqueColorCodes,
+  getGenericAttributeSelectors,
+  getVariationGenericSelection,
   type ProductDetail,
 } from "../product";
 
@@ -86,6 +88,108 @@ describe("Product Service Helpers", () => {
         },
       },
     },
+  });
+
+  describe("generic product attributes", () => {
+    it("returns only visible non-projected selectors in configured order", () => {
+      const product = createMockProduct();
+      product.attributes.product_attribute_assignments = {
+        data: [
+          {
+            id: 9,
+            attributes: {
+              Position: 2,
+              IsVisible: true,
+              IsVariation: true,
+              product_attribute: {
+                data: {
+                  id: 31,
+                  attributes: {
+                    Title: "طرح",
+                    Slug: "pa_design",
+                    Scope: "Global",
+                    Type: "Text",
+                    LegacyProjection: "None",
+                  },
+                },
+              },
+              terms: {
+                data: [
+                  { id: 102, attributes: { Title: "راه راه", Position: 2 } },
+                  { id: 101, attributes: { Title: "ساده", Position: 1 } },
+                ],
+              },
+            },
+          },
+          {
+            id: 10,
+            attributes: {
+              IsVisible: true,
+              IsVariation: true,
+              product_attribute: {
+                data: {
+                  id: 32,
+                  attributes: {
+                    Title: "سایز",
+                    Slug: "pa_size",
+                    Scope: "Global",
+                    Type: "Text",
+                    LegacyProjection: "Size",
+                  },
+                },
+              },
+              terms: { data: [] },
+            },
+          },
+        ],
+      };
+
+      expect(getGenericAttributeSelectors(product)).toEqual([
+        {
+          assignmentId: 9,
+          attributeId: 31,
+          title: "طرح",
+          type: "Text",
+          position: 2,
+          options: [
+            { id: "101", title: "ساده", colorCode: null, position: 1 },
+            { id: "102", title: "راه راه", colorCode: null, position: 2 },
+          ],
+        },
+      ]);
+    });
+
+    it("matches the selected generic term and does not wildcard a requested model", () => {
+      const product = createMockProduct();
+      const base = product.attributes.product_variations.data[0];
+      base.attributes.selected_attribute_terms = {
+        data: [
+          {
+            id: 101,
+            attributes: {
+              Title: "ساده",
+              product_attribute: {
+                data: {
+                  id: 31,
+                  attributes: {
+                    Title: "طرح",
+                    Slug: "pa_design",
+                    Scope: "Global",
+                    Type: "Text",
+                    LegacyProjection: "None",
+                  },
+                },
+              },
+            },
+          },
+        ],
+      };
+
+      expect(getVariationGenericSelection(base)).toEqual({ "31": "101" });
+      expect(findProductVariation(product, 1, 1, undefined, { "31": "101" })?.id).toBe(1);
+      expect(findProductVariation(product, 1, 1, 999, { "31": "101" })).toBeUndefined();
+      expect(findProductVariation(product, 1, 1, undefined, { "31": "999" })).toBeUndefined();
+    });
   });
 
   describe("getDefaultProductVariation", () => {

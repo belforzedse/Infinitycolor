@@ -8,9 +8,12 @@ import Main from "./Main";
 import Model from "./Model";
 import Price from "./Price";
 import Size from "./Size";
+import GenericAttributes from "./GenericAttributes";
 import {
   findProductVariation,
+  getGenericAttributeSelectors,
   getInitialPdpSelection,
+  getVariationGenericSelection,
   getVariationRelationIds,
   hasStockForVariation,
   type ProductDetail,
@@ -113,9 +116,16 @@ export default function PDPHeroInfo(props: Props) {
   const [selectedColor, setSelectedColor] = useState<string>(initialSelection.colorId);
   const [selectedSize, setSelectedSize] = useState<string>(initialSelection.sizeId);
   const [selectedModel, setSelectedModel] = useState<string>(initialSelection.modelId);
+  const [selectedGeneric, setSelectedGeneric] = useState<Record<string, string>>(
+    initialSelection.generic,
+  );
+  const genericSelectors = useMemo(
+    () => getGenericAttributeSelectors(productData),
+    [productData],
+  );
 
   // Compute disabled ids for colors, sizes and models based on productData stock
-  const { disabledColors, disabledSizes, disabledModels, availableVariations } = useMemo(() => {
+  const { disabledColors, disabledSizes, disabledModels, disabledGenericTerms, availableVariations } = useMemo(() => {
     const disabledColors: string[] = [];
     const disabledSizes: string[] = [];
     const disabledModels: string[] = [];
@@ -125,6 +135,7 @@ export default function PDPHeroInfo(props: Props) {
         disabledColors,
         disabledSizes,
         disabledModels,
+        disabledGenericTerms: new Set<string>(),
         availableVariations: [],
       };
     }
@@ -137,6 +148,7 @@ export default function PDPHeroInfo(props: Props) {
     const modelHasStock: Record<string, boolean> = {};
 
     const availableVars: any[] = [];
+    const genericTermHasStock = new Set<string>();
     variations.forEach((variation) => {
       // require published + stock to be considered purchasable
       const published = variation.attributes.IsPublished === true;
@@ -145,6 +157,11 @@ export default function PDPHeroInfo(props: Props) {
       if (purchasable) availableVars.push(variation);
 
       const { colorId, sizeId, modelId } = getVariationRelationIds(variation);
+      if (purchasable) {
+        Object.values(getVariationGenericSelection(variation)).forEach((termId) =>
+          genericTermHasStock.add(termId),
+        );
+      }
 
       if (colorId) colorHasStock[colorId] = colorHasStock[colorId] || purchasable;
       if (sizeId) sizeHasStock[sizeId] = sizeHasStock[sizeId] || purchasable;
@@ -162,14 +179,21 @@ export default function PDPHeroInfo(props: Props) {
     models.forEach((m) => {
       if (!modelHasStock[m.id]) disabledModels.push(m.id);
     });
+    const disabledGenericTerms = new Set<string>();
+    genericSelectors.forEach((selector) =>
+      selector.options.forEach((option) => {
+        if (!genericTermHasStock.has(option.id)) disabledGenericTerms.add(option.id);
+      }),
+    );
 
     return {
       disabledColors,
       disabledSizes,
       disabledModels,
+      disabledGenericTerms,
       availableVariations: availableVars,
     };
-  }, [productData, colors, sizes, models]);
+  }, [productData, colors, sizes, models, genericSelectors]);
 
   // Calculate the current price based on selected variation
   const [currentPrice, setCurrentPrice] = useState(product.price);
@@ -184,7 +208,12 @@ export default function PDPHeroInfo(props: Props) {
 
   // Update variation details based on selected properties
   const updateVariationDetails = useCallback(
-    (colorId: string, sizeId: string, modelId: string) => {
+    (
+      colorId: string,
+      sizeId: string,
+      modelId: string,
+      genericSelection: Record<string, string> = {},
+    ) => {
       debugLog("=== UPDATE VARIATION DETAILS DEBUG ===");
       debugLog("Selected color ID:", colorId);
       debugLog("Selected size ID:", sizeId);
@@ -208,7 +237,13 @@ export default function PDPHeroInfo(props: Props) {
 
       debugLog("Converted IDs - Color:", colorIdNum, "Size:", sizeIdNum, "Model:", modelIdNum);
 
-      const variation = findProductVariation(productData, colorIdNum, sizeIdNum, modelIdNum);
+      const variation = findProductVariation(
+        productData,
+        colorIdNum,
+        sizeIdNum,
+        modelIdNum,
+        genericSelection,
+      );
 
       debugLog("Found variation:", variation);
 
@@ -285,7 +320,9 @@ export default function PDPHeroInfo(props: Props) {
       setSelectedColor(best.ids.colorId);
       setSelectedSize(best.ids.sizeId);
       setSelectedModel(best.ids.modelId);
-      updateVariationDetails(best.ids.colorId, best.ids.sizeId, best.ids.modelId);
+      const generic = getVariationGenericSelection(best.variation);
+      setSelectedGeneric(generic);
+      updateVariationDetails(best.ids.colorId, best.ids.sizeId, best.ids.modelId, generic);
     },
     [productData, selectedColor, selectedSize, selectedModel, updateVariationDetails],
   );
@@ -293,18 +330,65 @@ export default function PDPHeroInfo(props: Props) {
   const handleSizeChange = (sizeId: string) => selectPurchasableOption("size", sizeId);
   const handleColorChange = (colorId: string) => selectPurchasableOption("color", colorId);
   const handleModelChange = (modelId: string) => selectPurchasableOption("model", modelId);
+  const handleGenericChange = (attributeId: string, termId: string) => {
+    const variations = productData?.attributes?.product_variations?.data || [];
+    const candidates = variations.filter(
+      (variation) =>
+        variation.attributes.IsPublished === true &&
+        hasStockForVariation(variation, 1) &&
+        getVariationGenericSelection(variation)[attributeId] === termId,
+    );
+    const best = candidates
+      .map((variation) => {
+        const generic = getVariationGenericSelection(variation);
+        const ids = getVariationRelationIds(variation);
+        const score =
+          Object.entries(selectedGeneric).filter(
+            ([key, value]) => key !== attributeId && generic[key] === value,
+          ).length +
+          (ids.colorId === selectedColor ? 1 : 0) +
+          (ids.sizeId === selectedSize ? 1 : 0) +
+          (ids.modelId === selectedModel ? 1 : 0);
+        return { variation, generic, ids, score };
+      })
+      .sort((left, right) => right.score - left.score)[0];
+    if (!best) return;
+    setSelectedColor(best.ids.colorId);
+    setSelectedSize(best.ids.sizeId);
+    setSelectedModel(best.ids.modelId);
+    setSelectedGeneric(best.generic);
+    updateVariationDetails(
+      best.ids.colorId,
+      best.ids.sizeId,
+      best.ids.modelId,
+      best.generic,
+    );
+  };
 
   // Sync price/stock with the first in-stock variation (matches product card availability)
   useEffect(() => {
     if (!productData?.attributes?.product_variations?.data?.length) return;
 
     const selection = getInitialPdpSelection(productData, colors, sizes, models);
-    if (!selection.colorId && !selection.sizeId) return;
+    if (
+      !selection.colorId &&
+      !selection.sizeId &&
+      !selection.modelId &&
+      Object.keys(selection.generic).length === 0
+    ) {
+      return;
+    }
 
     setSelectedColor(selection.colorId);
     setSelectedSize(selection.sizeId);
     setSelectedModel(selection.modelId);
-    updateVariationDetails(selection.colorId, selection.sizeId, selection.modelId);
+    setSelectedGeneric(selection.generic);
+    updateVariationDetails(
+      selection.colorId,
+      selection.sizeId,
+      selection.modelId,
+      selection.generic,
+    );
   }, [productData, colors, sizes, models, updateVariationDetails]);
 
   // Get selected color and size objects
@@ -332,7 +416,11 @@ export default function PDPHeroInfo(props: Props) {
   const showSizeSelector = sizes.length > 0;
   const showColorSelector = colors.length > 1;
   const hasVisibleVariationSelectors =
-    showSizeGuide || showSizeSelector || showColorSelector || models.length > 0;
+    showSizeGuide ||
+    showSizeSelector ||
+    showColorSelector ||
+    models.length > 0 ||
+    genericSelectors.length > 0;
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-5 md:max-w-[400px] tablet:max-w-[500px] lg:max-w-[688px]">
@@ -420,6 +508,13 @@ export default function PDPHeroInfo(props: Props) {
                 disabledModelIds={disabledModels}
               />
             )}
+
+            <GenericAttributes
+              selectors={genericSelectors}
+              selection={selectedGeneric}
+              disabledTermIds={disabledGenericTerms}
+              onChange={handleGenericChange}
+            />
           </div>
         </>
       )}

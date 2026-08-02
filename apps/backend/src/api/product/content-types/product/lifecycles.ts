@@ -6,6 +6,7 @@ import {
 } from "../../../../utils/adminAudit";
 import { generateUniqueProductSlug } from "../../../../utils/productSlug";
 import { scheduleHomeProductsRevalidation } from "../../../../utils/homepageRevalidation";
+import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
 
 type AuditAction = "Create" | "Update" | "Delete";
 const PRODUCT_COUNTER_ONLY_FIELDS = new Set(["SeenCount"]);
@@ -147,6 +148,7 @@ export default {
   async afterCreate(event) {
     const { result } = event;
     if (!result?.id) return;
+    if (isTrustedWordPressMigrationRequest()) return;
     const actor = resolveAuditActor(event as any);
 
     await strapi.entityService.create("api::product-log.product-log" as any, {
@@ -189,6 +191,10 @@ export default {
     const where = event?.params?.where || {};
     const id = (where && (where.id || where.documentId)) || null;
     if (!id) return;
+    if (isTrustedWordPressMigrationRequest()) {
+      event.state = { ...(event.state || {}), migrationWrite: true };
+      return;
+    }
 
     const { data } = event.params;
     if (isCounterOnlyProductUpdate(data)) {
@@ -235,6 +241,7 @@ export default {
   async afterUpdate(event) {
     const { result, state } = event as any;
     if (!result?.id) return;
+    if (state?.migrationWrite || isTrustedWordPressMigrationRequest()) return;
     if (state?.counterOnlyUpdate || isCounterOnlyProductUpdate((event as any)?.params?.data)) {
       return;
     }
@@ -341,10 +348,15 @@ export default {
     const where = event?.params?.where || {};
     const id = (where && (where.id || where.documentId)) || null;
     if (!id) return;
+    if (isTrustedWordPressMigrationRequest()) {
+      event.state = { ...(event.state || {}), migrationWrite: true };
+      return;
+    }
     event.state = { ...(event.state || {}), deletingProductId: id };
   },
 
   async afterDelete(event) {
+    if ((event as any)?.state?.migrationWrite || isTrustedWordPressMigrationRequest()) return;
     const id = (event as any)?.state?.deletingProductId;
     if (!id) return;
     const actor = resolveAuditActor(event as any);
