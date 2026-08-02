@@ -13,6 +13,8 @@ node_modules/
 !.yarn/releases
 !.yarn/versions
 
+
+
 ############################
 # Environment Files
 ############################
@@ -37,7 +39,8 @@ SECRETS_REFERENCE.txt
 /.next/
 /out/
 apps/frontend/.next/
-apps/frontend/out/
+apps/auth/.next/
+apps/auth/out/
 .turbo/
 
 # Strapi
@@ -108,7 +111,7 @@ apps/e2e/test-results/
 apps/e2e/e2e-results.xml
 apps/e2e/*-e2e-results.xml
 apps/e2e/.auth/
-
+tmp/*
 ############################
 # TypeScript
 ############################
