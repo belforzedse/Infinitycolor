@@ -31,6 +31,9 @@ function parseArgs(argv) {
 
 function printSummary(summary) {
   console.log(`run=${summary.runId} status=${summary.status}`);
+  if (summary.sample?.limitPerEntity) {
+    console.log(`sample_limit_per_entity=${summary.sample.limitPerEntity}`);
+  }
   for (const [entity, counts] of Object.entries(summary.entities || {})) {
     console.log(
       `${entity} source=${counts.source || 0} eligible=${counts.eligible || 0} ` +
@@ -68,6 +71,15 @@ async function main() {
   }
 
   const config = configureEnvironment();
+  const sampleLimit = options["limit-per-entity"] === undefined
+    ? null
+    : Number(options["limit-per-entity"]);
+  if (sampleLimit !== null && (!Number.isSafeInteger(sampleLimit) || sampleLimit <= 0)) {
+    throw new Error("--limit-per-entity must be a positive integer");
+  }
+  if (sampleLimit !== null && command !== "dry-run") {
+    throw new Error("--limit-per-entity is supported only for dry-run");
+  }
 
   if (command === "pilot") {
     if (options.confirm !== "Gate1Pilot") throw new Error("Pilot requires --confirm Gate1Pilot");
@@ -91,12 +103,13 @@ async function main() {
     const source = new WordPressSource(config);
     const destination = new Destination(config);
     if (command === "dry-run") {
-      await runDryRun({ config, source, destination, ledger });
+      await runDryRun({ config, source, destination, ledger, sampleLimit });
     } else if (command === "pilot") {
       const dryRun = loadRun(config.stateDir, options["from-run"]);
       if (dryRun.command !== "dry-run" || !String(dryRun.status).startsWith("completed")) {
         throw new Error("Pilot source run must be a completed dry-run");
       }
+      if (dryRun.sample) throw new Error("Pilot source run must not be sampled");
       await runPilot({ config, source, destination, ledger, dryRun });
     } else if (command === "reconcile") {
       const pilot = loadRun(config.stateDir, options["from-run"]);

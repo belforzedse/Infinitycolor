@@ -57,6 +57,9 @@ function createActionTree() {
         "product-category": {
           find: action(),
           findOne: action(),
+          create: action(),
+          update: action(),
+          delete: action(),
           deleteWithReassign: action(),
         },
       },
@@ -176,6 +179,34 @@ describe("role permission templates", () => {
           .enabled,
       ).toBe(false);
     }
+  });
+
+  it("lets store managers create product categories without granting category edits or deletion", () => {
+    const storeManager = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "store-manager",
+    );
+    const category =
+      storeManager["api::product-category"].controllers["product-category"];
+
+    expect(category.find.enabled).toBe(true);
+    expect(category.findOne.enabled).toBe(true);
+    expect(category.create.enabled).toBe(true);
+    expect(category.update.enabled).toBe(false);
+    expect(category.delete.enabled).toBe(false);
+    expect(category.deleteWithReassign.enabled).toBe(false);
+  });
+
+  it("keeps product category creation unavailable to editors", () => {
+    const editor = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "editor",
+    );
+    const category = editor["api::product-category"].controllers["product-category"];
+
+    expect(category.find.enabled).toBe(true);
+    expect(category.findOne.enabled).toBe(true);
+    expect(category.create.enabled).toBe(false);
   });
 
   it("allows founders to read order-scoped admin activity but not standalone activity reports", () => {

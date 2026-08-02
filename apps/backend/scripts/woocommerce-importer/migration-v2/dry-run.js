@@ -23,6 +23,17 @@ function sourceAttributes(row) {
   return row?.attributes || row || {};
 }
 
+async function* limitPages(iterator, limit = Infinity) {
+  let remaining = limit;
+  for await (const page of iterator) {
+    if (remaining <= 0) break;
+    const rows = page.rows.slice(0, remaining);
+    if (rows.length > 0) yield { ...page, rows };
+    remaining -= rows.length;
+    if (remaining <= 0) break;
+  }
+}
+
 function setOutcome(ledger, outcomes, entity, sourceId, next) {
   const key = String(sourceId);
   const previous = outcomes.get(key);
@@ -45,7 +56,7 @@ function catalogCounterToLedger(ledger, report) {
   }
 }
 
-async function runCatalogDryRun(config, ledger) {
+async function runCatalogDryRun(config, ledger, sampleLimit = null) {
   const trackingDir = path.join(config.stateDir, "catalog");
   fs.mkdirSync(trackingDir, { recursive: true, mode: 0o700 });
   const { config: catalogConfig } = buildConfig("production");
@@ -56,6 +67,7 @@ async function runCatalogDryRun(config, ledger) {
   const logger = new Logger({ ...catalogConfig.logging, level: "info" });
   const engine = new CatalogEngine(catalogConfig, logger, { environment: "production" });
   const eligibleVariationIds = new Set();
+  const sampledVariationIds = new Set();
   const pilotVariationIds = new Set();
   const chosenProducts = new Set();
   const candidateKinds = new Set();
@@ -63,12 +75,14 @@ async function runCatalogDryRun(config, ledger) {
   const report = await engine.runSync({
     dryRun: true,
     scope: "full",
+    ...(sampleLimit === null ? {} : { limit: sampleLimit, categoryLimit: sampleLimit }),
     observer: {
       onProduct({ wcProduct, wcVariations, stockEligibility }) {
-        if (!stockEligibility.eligible) return;
         const variationIds = wcProduct.type === "simple"
           ? [String(wcProduct.id)]
           : wcVariations.map((variation) => String(variation.id));
+        variationIds.forEach((id) => sampledVariationIds.add(id));
+        if (!stockEligibility.eligible) return;
         variationIds.forEach((id) => eligibleVariationIds.add(id));
         const kinds = [];
         if (wcProduct.type === "simple") kinds.push("productSimple");
@@ -93,7 +107,7 @@ async function runCatalogDryRun(config, ledger) {
   ledger.summary.catalog = report.toJSON();
   ledger.summary.candidates.products = Array.from(chosenProducts);
   ledger.summary.candidates.pilotVariationIds = Array.from(pilotVariationIds);
-  return { eligibleVariationIds, pilotVariationIds };
+  return { eligibleVariationIds, sampledVariationIds, pilotVariationIds };
 }
 
 async function loadDestinationIndexes(destination) {
@@ -123,9 +137,10 @@ async function loadDestinationIndexes(destination) {
   };
 }
 
-async function scanUsers(source, destinationIndexes, ledger) {
+async function scanUsers(source, destinationIndexes, ledger, limit = Infinity) {
   const outcomes = new Map();
   const validUserIds = new Set();
+  const sampledUserIds = new Set();
   const phones = new Map();
   const emails = new Map();
   const duplicatePhones = new Set();
@@ -139,9 +154,10 @@ async function scanUsers(source, destinationIndexes, ledger) {
     ledger.issue("users", sourceId, code);
   };
 
-  for await (const page of source.customers()) {
+  for await (const page of limitPages(source.customers(), limit)) {
     for (const customer of page.rows) {
       const sourceId = String(customer.id);
+      sampledUserIds.add(sourceId);
       ledger.count("users", "source");
       let payload;
       try {
@@ -216,16 +232,22 @@ async function scanUsers(source, destinationIndexes, ledger) {
     }
     if (page.page % 25 === 0) ledger.checkpoint("users", { page: page.page, source: ledger.summary.entities.users.source });
   }
-  return { validUserIds, sourcePhones, phoneOwners: phones, duplicatePhones };
+  return { validUserIds, sampledUserIds, sourcePhones, phoneOwners: phones, duplicatePhones };
 }
 
-async function scanWallets(source, destinationIndexes, userContext, ledger) {
-  for await (const page of source.walletUsers()) {
+async function scanWallets(source, destinationIndexes, userContext, ledger, limit = Infinity) {
+  const sampled = Number.isFinite(limit);
+  for await (const page of limitPages(source.walletUsers(), limit)) {
     for (const walletUser of page.rows) {
       const sourceId = String(walletUser.id || "");
       ledger.count("wallets", "source");
       try {
         const payload = T.walletPayload(walletUser);
+        if (sampled && !userContext.sampledUserIds.has(payload.userSourceId)) {
+          ledger.summary.sample.exclusions.walletUserOutsideCustomerSample += 1;
+          ledger.count("wallets", "skipped");
+          continue;
+        }
         if (!userContext.validUserIds.has(payload.userSourceId)) {
           ledger.count("wallets", "skipped");
           continue;
@@ -247,25 +269,45 @@ async function scanWallets(source, destinationIndexes, userContext, ledger) {
         ledger.failure("wallets", sourceId, error.message);
       }
     }
-    if (page.page % 25 === 0) ledger.checkpoint("wallets", { page: page.page, source: ledger.summary.entities.wallets.source });
+    if (page.page % 25 === 0) {
+      ledger.checkpoint("wallets", {
+        page: page.page,
+        source: ledger.summary.entities.wallets?.source || 0,
+      });
+    }
   }
 }
 
-async function scanOrders(source, destinationIndexes, userContext, catalogContext, ledger) {
+async function scanOrders(source, destinationIndexes, userContext, catalogContext, ledger, limit = Infinity) {
   const selectedKinds = new Set();
-  for await (const page of source.orders()) {
+  const sampled = Number.isFinite(limit);
+  for await (const page of limitPages(source.orders(), limit)) {
     for (const order of page.rows) {
       const sourceId = String(order.id || "");
       ledger.count("orders", "source");
       try {
         const payload = T.orderPayload(order);
+        const customerOutsideSample = Boolean(
+          sampled &&
+          payload.customerSourceId &&
+          !userContext.sampledUserIds.has(payload.customerSourceId)
+        );
+        const productOutsideSample = Boolean(sampled && payload.items.some(
+          (item) => !catalogContext.sampledVariationIds.has(item.variationSourceId),
+        ));
+        if (customerOutsideSample || productOutsideSample) {
+          if (customerOutsideSample) ledger.summary.sample.exclusions.orderCustomerOutsideSample += 1;
+          if (productOutsideSample) ledger.summary.sample.exclusions.orderProductOutsideSample += 1;
+          ledger.count("orders", "skipped");
+          continue;
+        }
         if (payload.customerSourceId && !userContext.validUserIds.has(payload.customerSourceId)) {
           throw new Error("ORDER_CUSTOMER_NOT_ELIGIBLE");
         }
-        const missingVariation = payload.items.find(
+        const ineligibleVariation = payload.items.find(
           (item) => !catalogContext.eligibleVariationIds.has(item.variationSourceId),
         );
-        if (missingVariation) throw new Error("ORDER_ITEM_PRODUCT_SKIPPED_OR_MISSING");
+        if (ineligibleVariation) throw new Error("ORDER_ITEM_PRODUCT_SKIPPED_OR_MISSING");
         if (
           payload.guestPhone &&
           (userContext.duplicatePhones.has(payload.guestPhone) ||
@@ -293,13 +335,18 @@ async function scanOrders(source, destinationIndexes, userContext, catalogContex
         ledger.failure("orders", sourceId, error.message);
       }
     }
-    if (page.page % 20 === 0) ledger.checkpoint("orders", { page: page.page, source: ledger.summary.entities.orders.source });
+    if (page.page % 20 === 0) {
+      ledger.checkpoint("orders", {
+        page: page.page,
+        source: ledger.summary.entities.orders?.source || 0,
+      });
+    }
   }
 }
 
-async function scanSimpleTaxonomy(iterator, entity, destinationIndex, ledger, titleField) {
+async function scanSimpleTaxonomy(iterator, entity, destinationIndex, ledger, titleField, limit = Infinity) {
   const sourceMap = new Map();
-  for await (const page of iterator) {
+  for await (const page of limitPages(iterator, limit)) {
     for (const row of page.rows) {
       const sourceId = String(row.id);
       const slug = String(row.slug || "").trim();
@@ -317,15 +364,15 @@ async function scanSimpleTaxonomy(iterator, entity, destinationIndex, ledger, ti
   return sourceMap;
 }
 
-async function scanBlog(source, destinationIndexes, ledger) {
+async function scanBlog(source, destinationIndexes, ledger, limit = Infinity) {
   const categories = await scanSimpleTaxonomy(
-    source.blogCategories(), "blogCategories", destinationIndexes.blogCategoriesBySlug, ledger, "name",
+    source.blogCategories(), "blogCategories", destinationIndexes.blogCategoriesBySlug, ledger, "name", limit,
   );
   const tags = await scanSimpleTaxonomy(
-    source.blogTags(), "blogTags", destinationIndexes.blogTagsBySlug, ledger, "name",
+    source.blogTags(), "blogTags", destinationIndexes.blogTagsBySlug, ledger, "name", limit,
   );
   const authors = new Map();
-  for await (const page of source.blogAuthors()) {
+  for await (const page of limitPages(source.blogAuthors(), limit)) {
     for (const author of page.rows) {
       const sourceId = String(author.id);
       const name = String(author.name || "").trim();
@@ -341,7 +388,7 @@ async function scanBlog(source, destinationIndexes, ledger) {
   }
   const mediaRefs = new Set();
   const selected = new Set();
-  for await (const page of source.posts()) {
+  for await (const page of limitPages(source.posts(), limit)) {
     for (const post of page.rows) {
       const sourceId = String(post.id);
       ledger.count("blogPosts", "source");
@@ -375,13 +422,27 @@ async function scanBlog(source, destinationIndexes, ledger) {
   ledger.summary.blogMediaReferences = mediaRefs.size;
 }
 
-async function runDryRun({ config, source, destination, ledger }) {
+async function runDryRun({ config, source, destination, ledger, sampleLimit = null }) {
+  if (sampleLimit !== null) {
+    ledger.summary.sample = {
+      limitPerEntity: sampleLimit,
+      productVariations: "all variations belonging to the sampled products",
+      dependencyHandling: "the first rows are capped strictly; dependencies outside the sample are exclusions",
+      exclusions: {
+        walletUserOutsideCustomerSample: 0,
+        orderCustomerOutsideSample: 0,
+        orderProductOutsideSample: 0,
+      },
+    };
+    ledger.persist();
+  }
   const destinationIndexes = await loadDestinationIndexes(destination);
-  const catalogContext = await runCatalogDryRun(config, ledger);
-  const userContext = await scanUsers(source, destinationIndexes, ledger);
-  await scanWallets(source, destinationIndexes, userContext, ledger);
-  await scanOrders(source, destinationIndexes, userContext, catalogContext, ledger);
-  await scanBlog(source, destinationIndexes, ledger);
+  const limit = sampleLimit ?? Infinity;
+  const catalogContext = await runCatalogDryRun(config, ledger, sampleLimit);
+  const userContext = await scanUsers(source, destinationIndexes, ledger, limit);
+  await scanWallets(source, destinationIndexes, userContext, ledger, limit);
+  await scanOrders(source, destinationIndexes, userContext, catalogContext, ledger, limit);
+  await scanBlog(source, destinationIndexes, ledger, limit);
   ledger.summary.metrics = {
     source: source.metrics(),
     destination: destination.metrics(),
@@ -405,4 +466,12 @@ async function loadBlogDestinationIndexes(destination) {
   };
 }
 
-module.exports = { runDryRun, loadDestinationIndexes, loadBlogDestinationIndexes, scanUsers };
+module.exports = {
+  runDryRun,
+  loadDestinationIndexes,
+  loadBlogDestinationIndexes,
+  scanUsers,
+  scanWallets,
+  scanOrders,
+  limitPages,
+};

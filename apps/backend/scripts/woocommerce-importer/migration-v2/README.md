@@ -49,6 +49,18 @@ Run a complete read-only traversal and destination comparison:
 node scripts/woocommerce-importer/migration-v2/cli.js dry-run
 ```
 
+For a bounded verification pass, cap each top-level source collection. Product
+variations remain complete for the sampled products so the `manage_stock`
+product gate is still evaluated correctly. The first wallet and order rows are
+also capped literally. References to users or products outside their bounded
+samples are counted as exclusions and skipped, rather than reported as false
+migration failures. Sampled ledgers are marked and are rejected as pilot inputs:
+
+```sh
+node scripts/woocommerce-importer/migration-v2/cli.js dry-run \
+  --limit-per-entity 100
+```
+
 Use `runs` or `show --run RUN_ID` to inspect the protected summary without
 loading credentials. A dry-run with documented quarantines can finish as
 `completed-with-exceptions`; investigate every failure code before selecting a
