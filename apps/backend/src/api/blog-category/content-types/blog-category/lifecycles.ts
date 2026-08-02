@@ -1,4 +1,5 @@
 import { generateUnicodeSlug } from "../../../../utils/unicodeSlug";
+import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
 
 /**
  * Ensures the record has a category slug by setting `Slug` from `Slug` or `Title`.
@@ -77,12 +78,15 @@ export default {
     ensureSlug(event.params.data);
   },
   async afterCreate() {
+    if (isTrustedWordPressMigrationRequest()) return;
     await triggerBlogListingRevalidation();
   },
   async afterUpdate() {
+    if (isTrustedWordPressMigrationRequest()) return;
     await triggerBlogListingRevalidation();
   },
   async afterDelete() {
+    if (isTrustedWordPressMigrationRequest()) return;
     await triggerBlogListingRevalidation();
   },
 };
