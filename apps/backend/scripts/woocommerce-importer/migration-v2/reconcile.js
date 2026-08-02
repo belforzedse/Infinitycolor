@@ -12,13 +12,17 @@ function attrs(row) {
 }
 
 function relationOne(value) {
-  const raw = value?.data ?? value;
+  const raw = value && Object.prototype.hasOwnProperty.call(value, "data")
+    ? value.data
+    : value;
   if (Array.isArray(raw)) return raw[0] || null;
   return raw || null;
 }
 
 function relationMany(value) {
-  const raw = value?.data ?? value;
+  const raw = value && Object.prototype.hasOwnProperty.call(value, "data")
+    ? value.data
+    : value;
   return Array.isArray(raw) ? raw : raw ? [raw] : [];
 }
 
