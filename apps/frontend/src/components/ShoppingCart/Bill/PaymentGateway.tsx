@@ -28,21 +28,16 @@ function ShoppingCartBillPaymentGateway({
   const walletDisabled = walletBalanceIrr < requiredAmountIrr || requiredAmountIrr <= 0;
   const showWalletDetails = walletHovered || selected === "wallet";
 
-  // Build SnappPay helper content with title and description on two lines
-  const snappDetails = [snappTitle, snappDescription].filter(
-    (detail): detail is string => Boolean(detail),
+  const snappDisplayTitle = snappTitle?.trim() || "اسنپ پی";
+  const snappDisplayDescription = snappDescription?.trim();
+  const snappHelper = (
+    <div className="flex flex-col gap-2 text-right">
+      <div className="text-md font-bold text-neutral-800">{snappDisplayTitle}</div>
+      {snappDisplayDescription ? (
+        <div className="text-sm text-neutral-600">{snappDisplayDescription}</div>
+      ) : null}
+    </div>
   );
-  const snappHelper =
-    snappDetails.length > 0 || !snappEligible ? (
-      <div className="flex flex-col gap-2 text-right">
-        <div className="text-md font-bold text-neutral-800">اسنپ پی</div>
-        {snappDetails.map((detail) => (
-          <div key={detail} className="text-sm text-neutral-600">
-            {detail}
-          </div>
-        ))}
-      </div>
-    ) : undefined;
 
   const saman = {
     id: "samankish" as const,
@@ -79,7 +74,7 @@ function ShoppingCartBillPaymentGateway({
 
   const snappay = {
     id: "snappay" as const,
-    name: "اسنپ پی",
+    name: snappDisplayTitle,
     img: "/images/cart/snappay.svg",
     helper: snappHelper,
     disabled: snappEligible !== true,
@@ -118,9 +113,7 @@ function ShoppingCartBillPaymentGateway({
           </div>
 
           <div className="flex flex-1 flex-col items-start gap-2">
-            <span className="text-md lg:text-lg">
-              {snappay.helper || <span className="font-bold text-neutral-800">{snappay.name}</span>}
-            </span>
+            <div className="text-md lg:text-lg">{snappay.helper}</div>
           </div>
         </button>
       )}

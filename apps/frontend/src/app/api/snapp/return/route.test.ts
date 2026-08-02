@@ -17,6 +17,11 @@ jest.mock("@/constants/api", () => ({
   getStrapiServerUrl: jest.fn(),
 }));
 
+jest.mock("@/lib/central-auth-server", () => ({
+  storefrontOrigin: () => "https://storefront.test.invalid",
+  storefrontUrl: (path: string) => new URL(path, "https://storefront.test.invalid"),
+}));
+
 const mockedApiUrl = getStrapiServerUrl as jest.MockedFunction<
   typeof getStrapiServerUrl
 >;
@@ -60,7 +65,7 @@ describe("SnappPay storefront return proxy", () => {
       },
     }) as any;
     const request = callbackRequest(
-      "https://storefront.test.invalid/api/snapp/return?nonce=abcdefghijklmnopqrstuv",
+      "https://0.0.0.0:3000/api/snapp/return?nonce=abcdefghijklmnopqrstuv",
       {
         transactionId: "ABC1234567",
         state: "OK",
@@ -97,19 +102,35 @@ describe("SnappPay storefront return proxy", () => {
             : null,
       },
     }) as any;
-    const request = callbackRequest(
-      "https://storefront.test.invalid/api/snapp/return",
-      {
-        transactionId: "ABC1234567",
-        state: "OK",
-        amount: "1200000",
-      },
-    );
+    const request = callbackRequest("https://0.0.0.0:3000/api/snapp/return", {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: "1200000",
+    });
 
     const response = await POST(request);
 
     expect(response.headers.get("location")).toBe(
       "https://storefront.test.invalid/payment/result?resultHint=invalid_redirect",
+    );
+  });
+
+  it("uses the configured storefront for fallback redirects behind an internal proxy origin", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+    }) as any;
+    const request = callbackRequest("https://0.0.0.0:3000/api/snapp/return", {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: "1200000",
+    });
+
+    const response = await POST(request);
+
+    expect(response.headers.get("location")).toBe(
+      "https://storefront.test.invalid/payment/result?resultHint=processing",
     );
   });
 });
