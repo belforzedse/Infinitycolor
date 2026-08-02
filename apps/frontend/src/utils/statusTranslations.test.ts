@@ -7,7 +7,7 @@ import { PersianOrderStatus } from "@/constants/enums";
 describe("customer order status translations", () => {
   it.each([
     ["Paying", "در انتظار پرداخت"],
-    ["Started", "در حال پردازش"],
+    ["Started", "در حال انجام"],
     ["Shipment", "ارسال شده"],
     ["Done", "تحویل داده شده"],
     ["Cancelled", "لغو شده"],

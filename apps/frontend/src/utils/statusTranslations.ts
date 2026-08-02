@@ -20,7 +20,7 @@ const COMPLETED_LABEL = "تکمیل شده";
 const ORDER_STATUS_MAP: Record<string, StatusMeta> = {
   paying: { label: "در انتظار پرداخت", tone: "warning" },
   "paying offline": { label: "در انتظار ثبت پرداخت", tone: "warning" },
-  started: { label: "در حال پردازش", tone: "info" },
+  started: { label: IN_PROGRESS_LABEL, tone: "info" },
   pending: { label: IN_PROGRESS_LABEL, tone: "info" },
   processing: { label: IN_PROGRESS_LABEL, tone: "info" },
   "in progress": { label: IN_PROGRESS_LABEL, tone: "info" },

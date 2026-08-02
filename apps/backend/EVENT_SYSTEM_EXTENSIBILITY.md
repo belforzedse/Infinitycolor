@@ -500,7 +500,7 @@ export default {
           try {
             await sendSMS(strapi, {
               phone: user.phone,
-              message: `سفارش #${result.id} شما ثبت شد و در حال پردازش است`,
+              message: `سفارش #${result.id} شما ثبت شد و در حال انجام است`,
               userId: orderUserId,
               orderId: result.id,
               template: "order_confirmation",

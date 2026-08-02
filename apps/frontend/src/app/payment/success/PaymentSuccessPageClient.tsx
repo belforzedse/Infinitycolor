@@ -169,7 +169,7 @@ function PaymentSuccessContent() {
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6 w-full">
             <h3 className="text-lg font-semibold text-blue-800 mb-3">مراحل بعدی</h3>
             <div className="text-right space-y-2 text-gray-700">
-              <p>✅ سفارش شما در حال پردازش است</p>
+              <p>✅ سفارش شما در حال انجام است</p>
               <p>✅ ایمیل تایید برای شما ارسال خواهد شد</p>
               <p>✅ می‌توانید وضعیت سفارش خود را پیگیری کنید</p>
               <p>✅ کالاها در کمترین زمان ممکن ارسال می‌شوند</p>
