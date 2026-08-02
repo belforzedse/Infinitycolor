@@ -34,6 +34,83 @@ async function* limitPages(iterator, limit = Infinity) {
   }
 }
 
+async function collectRows(iterator, limit) {
+  const rows = [];
+  for await (const page of limitPages(iterator, limit)) rows.push(...page.rows);
+  return rows;
+}
+
+function rowsSource(methodName, rows) {
+  return {
+    async *[methodName]() {
+      yield { page: 1, rows, total: rows.length, totalPages: 1 };
+    },
+  };
+}
+
+async function pooledResults(items, concurrency, action) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await action(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function loadValidCustomerWalletCohort(source, limit, concurrency = 4) {
+  const customerRows = [];
+  const walletRows = [];
+  let rawCustomerRowsScanned = 0;
+  let invalidPhoneCandidates = 0;
+  let unavailableWalletCandidates = 0;
+
+  for await (const page of source.customers()) {
+    const candidates = [];
+    for (const customer of page.rows) {
+      if (customerRows.length + candidates.length >= limit) break;
+      rawCustomerRowsScanned += 1;
+      try {
+        T.customerPayload(customer);
+        candidates.push(customer);
+      } catch {
+        invalidPhoneCandidates += 1;
+      }
+    }
+
+    const balances = await pooledResults(candidates, concurrency, async (customer) => {
+      try {
+        const response = await source.getWalletBalance(customer.id);
+        return { ok: true, balance: T.walletBalanceValue(response) };
+      } catch {
+        return { ok: false };
+      }
+    });
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      if (!balances[index].ok) {
+        unavailableWalletCandidates += 1;
+        continue;
+      }
+      customerRows.push(candidates[index]);
+      walletRows.push({ id: String(candidates[index].id), balance: balances[index].balance });
+    }
+    if (customerRows.length >= limit) break;
+  }
+
+  return {
+    customerRows,
+    walletRows,
+    rawCustomerRowsScanned,
+    invalidPhoneCandidates,
+    unavailableWalletCandidates,
+  };
+}
+
 function setOutcome(ledger, outcomes, entity, sourceId, next) {
   const key = String(sourceId);
   const previous = outcomes.get(key);
@@ -159,6 +236,11 @@ async function scanUsers(source, destinationIndexes, ledger, limit = Infinity) {
       const sourceId = String(customer.id);
       sampledUserIds.add(sourceId);
       ledger.count("users", "source");
+      if (customer.__migrationFetchError) {
+        setOutcome(ledger, outcomes, "users", sourceId, "failed");
+        issueOnce(sourceId, customer.__migrationFetchError);
+        continue;
+      }
       let payload;
       try {
         payload = T.customerPayload(customer);
@@ -427,9 +509,12 @@ async function runDryRun({ config, source, destination, ledger, sampleLimit = nu
     ledger.summary.sample = {
       limitPerEntity: sampleLimit,
       productVariations: "all variations belonging to the sampled products",
+      userCohort: "valid Woo customers with readable wallet balances",
       dependencyHandling: "the first rows are capped strictly; dependencies outside the sample are exclusions",
       exclusions: {
         walletUserOutsideCustomerSample: 0,
+        customerPhoneInvalidBeforeCohort: 0,
+        walletUnavailableBeforeCohort: 0,
         orderCustomerOutsideSample: 0,
         orderProductOutsideSample: 0,
       },
@@ -439,8 +524,33 @@ async function runDryRun({ config, source, destination, ledger, sampleLimit = nu
   const destinationIndexes = await loadDestinationIndexes(destination);
   const limit = sampleLimit ?? Infinity;
   const catalogContext = await runCatalogDryRun(config, ledger, sampleLimit);
-  const userContext = await scanUsers(source, destinationIndexes, ledger, limit);
-  await scanWallets(source, destinationIndexes, userContext, ledger, limit);
+  let userContext;
+  if (sampleLimit === null) {
+    userContext = await scanUsers(source, destinationIndexes, ledger, limit);
+    await scanWallets(source, destinationIndexes, userContext, ledger, limit);
+  } else {
+    const cohort = await loadValidCustomerWalletCohort(source, limit);
+    ledger.summary.sample.selection = {
+      rawCustomerRowsScanned: cohort.rawCustomerRowsScanned,
+    };
+    ledger.summary.sample.exclusions.customerPhoneInvalidBeforeCohort =
+      cohort.invalidPhoneCandidates;
+    ledger.summary.sample.exclusions.walletUnavailableBeforeCohort =
+      cohort.unavailableWalletCandidates;
+    userContext = await scanUsers(
+      rowsSource("customers", cohort.customerRows),
+      destinationIndexes,
+      ledger,
+      limit,
+    );
+    await scanWallets(
+      rowsSource("walletUsers", cohort.walletRows),
+      destinationIndexes,
+      userContext,
+      ledger,
+      limit,
+    );
+  }
   await scanOrders(source, destinationIndexes, userContext, catalogContext, ledger, limit);
   await scanBlog(source, destinationIndexes, ledger, limit);
   ledger.summary.metrics = {
@@ -474,4 +584,5 @@ module.exports = {
   scanWallets,
   scanOrders,
   limitPages,
+  loadValidCustomerWalletCohort,
 };

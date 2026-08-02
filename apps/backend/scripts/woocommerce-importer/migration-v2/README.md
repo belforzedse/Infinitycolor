@@ -51,10 +51,13 @@ node scripts/woocommerce-importer/migration-v2/cli.js dry-run
 
 For a bounded verification pass, cap each top-level source collection. Product
 variations remain complete for the sampled products so the `manage_stock`
-product gate is still evaluated correctly. The first wallet and order rows are
-also capped literally. References to users or products outside their bounded
-samples are counted as exclusions and skipped, rather than reported as false
-migration failures. Sampled ledgers are marked and are rejected as pilot inputs:
+product gate is still evaluated correctly. The bounded user cohort selects valid
+Woo customers with readable wallet balances, so the same 100 users and wallets
+are validated together; rejected phone and wallet candidates remain counted in
+the sample metadata. The first order rows are capped literally. References to
+users or products outside their bounded samples are counted as exclusions and
+skipped, rather than reported as false migration failures. Sampled ledgers are
+marked and are rejected as pilot inputs:
 
 ```sh
 node scripts/woocommerce-importer/migration-v2/cli.js dry-run \
