@@ -63,7 +63,7 @@ test("buildProductAttributePlan: preserves five global taxonomies and product-sc
   assert.notEqual(plan.dimensions[1].definitionExternalId, plan.dimensions[5].definitionExternalId);
 });
 
-test("selectVariationTerms: maps exact terms and rejects incomplete combinations", () => {
+test("selectVariationTerms: maps exact terms and permits an unset optional size", () => {
   const product = {
     id: 901,
     attributes: [
@@ -81,6 +81,20 @@ test("selectVariationTerms: maps exact terms and rejects incomplete combinations
   assert.equal(exact.errors.length, 0);
   assert.equal(exact.selected.length, 2);
 
-  const missing = G.selectVariationTerms({ attributes: [{ id: 1, option: "قرمز" }] }, plan);
-  assert.deepEqual(missing.errors.map((error) => error.code), ["MISSING_VARIATION_TERM"]);
+  const missingDesign = G.selectVariationTerms({ attributes: [{ id: 1, option: "قرمز" }] }, plan);
+  assert.deepEqual(missingDesign.errors.map((error) => error.code), ["MISSING_VARIATION_TERM"]);
+
+  const missingSizePlan = G.buildProductAttributePlan({
+    id: 902,
+    attributes: [
+      { id: 2, name: "Size", variation: true, options: ["M"] },
+      { id: 4, name: "Design", variation: true, options: ["مینیمال"] },
+    ],
+  }, registry());
+  const missingSize = G.selectVariationTerms({
+    attributes: [{ id: 4, option: "مینیمال" }],
+  }, missingSizePlan);
+  assert.equal(missingSize.errors.length, 0);
+  assert.deepEqual(missingSize.omitted.map((item) => item.code), ["OPTIONAL_SIZE_UNSET"]);
+  assert.deepEqual(missingSize.selected.map(({ dimension }) => dimension.legacyProjection), ["None"]);
 });

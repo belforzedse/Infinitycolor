@@ -110,6 +110,8 @@ after the accepted validation or a rollback decision.
 - Keep all five global Woo attribute taxonomies distinct. Project only
   `pa_color` to legacy Color and `pa_size` to legacy Size. Product-scoped custom
   attributes remain generic.
+- Preserve a Woo variation with no `pa_size` selection as size-less. The
+  destination size relation is optional; do not invent a synthetic size.
 - Convert wallet balances from toman to rial by an exact multiplication by ten;
   transaction history is not imported.
 - Match users by WordPress source ID, then canonical unique phone. Never match by
