@@ -94,7 +94,7 @@ async function main() {
       await runDryRun({ config, source, destination, ledger });
     } else if (command === "pilot") {
       const dryRun = loadRun(config.stateDir, options["from-run"]);
-      if (dryRun.command !== "dry-run" || dryRun.status !== "completed") {
+      if (dryRun.command !== "dry-run" || !String(dryRun.status).startsWith("completed")) {
         throw new Error("Pilot source run must be a completed dry-run");
       }
       await runPilot({ config, source, destination, ledger, dryRun });
