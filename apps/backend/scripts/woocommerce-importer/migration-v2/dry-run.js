@@ -131,6 +131,13 @@ async function scanUsers(source, destinationIndexes, ledger) {
   const duplicatePhones = new Set();
   const duplicateEmails = new Set();
   const sourcePhones = new Map();
+  const reportedIssues = new Set();
+  const issueOnce = (sourceId, code) => {
+    const key = `${sourceId}:${code}`;
+    if (reportedIssues.has(key)) return;
+    reportedIssues.add(key);
+    ledger.issue("users", sourceId, code);
+  };
 
   for await (const page of source.customers()) {
     for (const customer of page.rows) {
@@ -144,19 +151,20 @@ async function scanUsers(source, destinationIndexes, ledger) {
         ledger.issue("users", sourceId, error.message);
         continue;
       }
-      ledger.count("users", "eligible");
       sourcePhones.set(sourceId, payload.phone);
       const email = String(payload.email || "").trim().toLowerCase();
       const duplicatePhoneOwner = phones.get(payload.phone);
       if (duplicatePhones.has(payload.phone) || (duplicatePhoneOwner && duplicatePhoneOwner !== sourceId)) {
         if (duplicatePhoneOwner) {
           setOutcome(ledger, outcomes, "users", duplicatePhoneOwner, "failed");
-          validUserIds.delete(duplicatePhoneOwner);
+          if (validUserIds.delete(duplicatePhoneOwner)) ledger.count("users", "eligible", -1);
           ledger.candidate("userDuplicateConflict", duplicatePhoneOwner);
+          issueOnce(duplicatePhoneOwner, "USER_DUPLICATE_PHONE");
         }
         setOutcome(ledger, outcomes, "users", sourceId, "failed");
         duplicatePhones.add(payload.phone);
         ledger.candidate("userDuplicateConflict", sourceId);
+        issueOnce(sourceId, "USER_DUPLICATE_PHONE");
         continue;
       }
       phones.set(payload.phone, sourceId);
@@ -165,12 +173,14 @@ async function scanUsers(source, destinationIndexes, ledger) {
         if (duplicateEmails.has(email) || (duplicateEmailOwner && duplicateEmailOwner !== sourceId)) {
           if (duplicateEmailOwner) {
             setOutcome(ledger, outcomes, "users", duplicateEmailOwner, "failed");
-            validUserIds.delete(duplicateEmailOwner);
+            if (validUserIds.delete(duplicateEmailOwner)) ledger.count("users", "eligible", -1);
             ledger.candidate("userDuplicateConflict", duplicateEmailOwner);
+            issueOnce(duplicateEmailOwner, "USER_DUPLICATE_EMAIL");
           }
           setOutcome(ledger, outcomes, "users", sourceId, "failed");
           duplicateEmails.add(email);
           ledger.candidate("userDuplicateConflict", sourceId);
+          issueOnce(sourceId, "USER_DUPLICATE_EMAIL");
           continue;
         }
         emails.set(email, sourceId);
@@ -184,6 +194,7 @@ async function scanUsers(source, destinationIndexes, ledger) {
         (sourceExisting && phoneExisting && Number(sourceExisting.id) !== Number(phoneExisting.id))
       ) {
         setOutcome(ledger, outcomes, "users", sourceId, "failed");
+        issueOnce(sourceId, "DESTINATION_USER_MATCH_AMBIGUOUS");
         continue;
       }
       const destinationEmail = email ? destinationIndexes.usersByEmail.map.get(email) : null;
@@ -193,8 +204,10 @@ async function scanUsers(source, destinationIndexes, ledger) {
         (destinationEmail && Number(destinationEmail.id) !== matchedId)
       ) {
         setOutcome(ledger, outcomes, "users", sourceId, "failed");
+        issueOnce(sourceId, "DESTINATION_USER_EMAIL_CONFLICT");
         continue;
       }
+      ledger.count("users", "eligible");
       validUserIds.add(sourceId);
       setOutcome(ledger, outcomes, "users", sourceId, matchedId ? "updated" : "inserted");
       if (!ledger.summary.candidates.userInsert && !matchedId) {
@@ -392,4 +405,4 @@ async function loadBlogDestinationIndexes(destination) {
   };
 }
 
-module.exports = { runDryRun, loadDestinationIndexes, loadBlogDestinationIndexes };
+module.exports = { runDryRun, loadDestinationIndexes, loadBlogDestinationIndexes, scanUsers };
