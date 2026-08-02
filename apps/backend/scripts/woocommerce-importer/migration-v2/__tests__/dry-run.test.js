@@ -5,7 +5,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { scanUsers, scanWallets, scanOrders, limitPages } = require("../dry-run");
+const {
+  scanUsers,
+  scanWallets,
+  scanOrders,
+  limitPages,
+  loadValidCustomerWalletCohort,
+} = require("../dry-run");
 const { RunLedger } = require("../lib/ledger");
 
 const emptyIndex = () => ({ map: new Map(), duplicates: new Set() });
@@ -54,6 +60,36 @@ test("sample page limiter yields exactly the requested number of rows", async ()
   const rows = [];
   for await (const page of limitPages(pages(), 3)) rows.push(...page.rows);
   assert.deepEqual(rows.map((row) => row.id), [1, 2, 3]);
+});
+
+test("bounded user sampling selects valid customers with readable wallets", async () => {
+  const requestedBalances = [];
+  const source = {
+    async *customers() {
+      yield {
+        page: 1,
+        rows: [
+          { id: 10, billing: { phone: "invalid" } },
+          { id: 20, billing: { phone: "09120000020" } },
+          { id: 30, billing: { phone: "09120000030" } },
+        ],
+      };
+      yield { page: 2, rows: [{ id: 40, billing: { phone: "09120000040" } }] };
+    },
+    async getWalletBalance(id) {
+      requestedBalances.push(String(id));
+      if (String(id) === "20") throw new Error("missing");
+      return { balance: "2" };
+    },
+  };
+
+  const cohort = await loadValidCustomerWalletCohort(source, 2, 2);
+  assert.deepEqual(cohort.customerRows.map((row) => row.id), [30, 40]);
+  assert.deepEqual(cohort.walletRows.map((row) => row.id), ["30", "40"]);
+  assert.deepEqual(requestedBalances.sort(), ["20", "30", "40"]);
+  assert.equal(cohort.rawCustomerRowsScanned, 4);
+  assert.equal(cohort.invalidPhoneCandidates, 1);
+  assert.equal(cohort.unavailableWalletCandidates, 1);
 });
 
 test("bounded wallet sampling stops at the row limit and records outside-user exclusions", async () => {
