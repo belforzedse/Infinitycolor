@@ -17,7 +17,6 @@ export default {
       handler: "product-category.deleteWithReassign",
       config: {
         auth: { scope: [] },
-        middlewares: ["global::authentication"],
         policies: superadminOnlyPolicy,
       },
     },

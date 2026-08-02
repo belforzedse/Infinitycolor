@@ -250,8 +250,9 @@ describe("role permission templates", () => {
       "superadmin",
     );
 
-    // Non-superadmin management roles are denied the admin wallet actions.
+    // Non-superadmin management roles retain only their customer-facing wallet action.
     for (const tree of [storeManager, founder, editor]) {
+      expect(walletCtrl(tree).getCurrentUserWallet.enabled).toBe(true);
       expect(walletCtrl(tree).adminAdjustWallet.enabled).toBe(false);
       expect(walletCtrl(tree).adminGetUserWallet.enabled).toBe(false);
     }

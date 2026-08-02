@@ -7,7 +7,7 @@ import { CartService } from "@/services";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import notify from "@/utils/notify";
 import { cartRequestQueue } from "@/utils/requestQueue";
-import { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY } from "@/utils/accessToken";
+import { centralAuth, subscribeToAuthState } from "@/lib/central-auth";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
 import { isOnline } from "@/utils/offlineQueue";
 import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
@@ -116,15 +116,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isCartReady, setIsCartReady] = useState(false);
   const [initializedMode, setInitializedMode] = useState<"guest" | "account" | null>(null);
-  const [authToken, setAuthToken] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
-    } catch {
-      return null;
-    }
-  });
-  const isLoggedIn = Boolean(authToken);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
+  const [sessionGeneration, setSessionGeneration] = useState(0);
   const cartInitGenerationRef = useRef(0);
   const pathname = usePathname();
 
@@ -132,24 +125,30 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const readToken = () => {
-      try {
-        return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
-      } catch {
-        return null;
+    let active = true;
+    const updateLoginState = async (forceRefresh = false) => {
+      const token = await centralAuth.tokenManager
+        .getToken({ forceRefresh })
+        .catch(() => null);
+      if (active) {
+        setIsLoggedIn(Boolean(token));
+        if (forceRefresh) setSessionGeneration((generation) => generation + 1);
       }
     };
-    const updateLoginState = () => {
-      setAuthToken(readToken());
-    };
-
-    updateLoginState();
-    window.addEventListener("storage", updateLoginState);
-    window.addEventListener(ACCESS_TOKEN_EVENT, updateLoginState);
-
+    void updateLoginState();
+    const unsubscribe = subscribeToAuthState((event) => {
+      if (event.type === "logout") {
+        setIsLoggedIn(false);
+        setSessionGeneration((generation) => generation + 1);
+      } else {
+        setCartItems([]);
+        setIsCartReady(false);
+        void updateLoginState(true);
+      }
+    });
     return () => {
-      window.removeEventListener("storage", updateLoginState);
-      window.removeEventListener(ACCESS_TOKEN_EVENT, updateLoginState);
+      active = false;
+      unsubscribe();
     };
   }, []);
 
@@ -161,6 +160,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   // Initialize cart based on authentication status (client-only)
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (isLoggedIn === null) return;
 
     const generation = ++cartInitGenerationRef.current;
     const CART_INIT_TIMEOUT_MS = 20_000;
@@ -168,7 +168,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setInitializedMode(null);
 
     const initializeCart = async () => {
-      const loggedIn = Boolean(authToken);
+      const loggedIn = isLoggedIn;
 
       try {
         if (loggedIn) {
@@ -220,11 +220,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     void initializeCart();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run when login mode changes; cart helpers are stable for the session
-  }, [authToken]);
+  }, [isLoggedIn, sessionGeneration]);
 
   // Save cart to localStorage when it changes (only for non-logged in users)
   useEffect(() => {
-    if (!isCartReady || initializedMode !== "guest" || isLoggedIn) return;
+    if (!isCartReady || initializedMode !== "guest" || isLoggedIn !== false) return;
 
     try {
       localStorage.setItem("cart", JSON.stringify(cartItems));

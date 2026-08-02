@@ -1,7 +1,7 @@
 "use server";
 
-import { revalidateTag } from "next/cache";
+import { updateTag } from "next/cache";
 
 export async function revalidateHeroSliderCache() {
-  revalidateTag("hero-slider", "max");
+  updateTag("hero-slider");
 }

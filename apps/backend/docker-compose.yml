@@ -1,7 +1,7 @@
 services:
   strapi:
     container_name: infinity-strapi
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     env_file:
       - ${ENV_FILE:-main.env}
     environment:
@@ -29,7 +29,7 @@ services:
 
   backend-worker:
     container_name: infinity-backend-worker
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     command: ["pnpm", "run", "worker:prod"]
     env_file:
       - ${ENV_FILE:-main.env}
@@ -54,7 +54,7 @@ services:
 
   backend-scheduler:
     container_name: infinity-backend-scheduler
-    image: ${REGISTRY_IMAGE_BASE:-registry.cyandm.org/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
+    image: ${REGISTRY_IMAGE_BASE:-registry.alpagency.net/bel4/infinity}/infinity-backend:${IMAGE_TAG:-main}
     command: ["pnpm", "run", "scheduler:prod"]
     env_file:
       - ${ENV_FILE:-main.env}

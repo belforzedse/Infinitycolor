@@ -46,6 +46,7 @@ apps/auth/out/
 
 # Strapi
 dist/
+dist-cjs/
 build/
 .strapi/
 .strapi-updater.json
@@ -157,5 +158,3 @@ apps/frontend/public/sw-version.js
 # Lock files (optional - uncomment to ignore)
 # yarn.lock
 # package-lock.json
-
-

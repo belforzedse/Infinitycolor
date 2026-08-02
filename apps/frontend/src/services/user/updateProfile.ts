@@ -13,13 +13,7 @@ export interface UpdateProfileRequest {
 
 export const updateProfile = async (data: UpdateProfileRequest): Promise<MeResponse> => {
   const endpoint = `${ENDPOINTS.USER.ME}`;
-  const accessToken = localStorage.getItem("accessToken");
-
-  const response = await apiClient.put(endpoint, data, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+  const response = await apiClient.put(endpoint, data);
 
   return response as any;
 };

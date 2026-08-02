@@ -538,7 +538,7 @@ required before 100%.
 ## Exact rollback and cache procedure
 
 1. Identify the last known-good immutable image
-   `registry.cyandm.org/bel4/infinity/infinity-frontend:<commit-sha>`. Do not
+   `registry.alpagency.net/bel4/infinity/infinity-frontend:<commit-sha>`. Do not
    rebuild it.
 2. On `/opt/infinity/frontend`, export the same `ENV_FILE`,
    `REGISTRY_IMAGE_BASE`, Redis image, and scale compose files used by the

@@ -75,12 +75,6 @@ export const getUserAddresses = async (): Promise<UserAddress[]> => {
 };
 
 export const addUserAddress = async (address: AddAddressRequest): Promise<UserAddress> => {
-  const token = localStorage.getItem("accessToken");
-
-  if (!token) {
-    throw new Error("Authentication required");
-  }
-
   // Validate postal code is 10 digits
   if (!/^\d{10}$/.test(address.PostalCode)) {
     throw new Error("Postal code must be a 10-digit number");
@@ -97,11 +91,7 @@ export const addUserAddress = async (address: AddAddressRequest): Promise<UserAd
   }
 
   try {
-    const response = await apiClient.post("/local-user-addresses/create", address, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    const response = await apiClient.post("/local-user-addresses/create", address);
 
     // Invalidate cache after successful add
     invalidateAddressCache();
@@ -136,18 +126,8 @@ export const updateUserAddress = async (
   id: number,
   address: AddAddressRequest,
 ): Promise<UserAddress> => {
-  const token = localStorage.getItem("accessToken");
-
-  if (!token) {
-    throw new Error("Authentication required");
-  }
-
   try {
-    const response = await apiClient.put(`/local-user-addresses/${id}`, { data: address }, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    const response = await apiClient.put(`/local-user-addresses/${id}`, { data: address });
 
     // Invalidate cache after successful update
     invalidateAddressCache();
@@ -161,18 +141,8 @@ export const updateUserAddress = async (
 };
 
 export const deleteUserAddress = async (id: number): Promise<void> => {
-  const token = localStorage.getItem("accessToken");
-
-  if (!token) {
-    throw new Error("Authentication required");
-  }
-
   try {
-    await apiClient.delete(`/local-user-addresses/${id}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    await apiClient.delete(`/local-user-addresses/${id}`);
 
     // Invalidate cache after successful delete
     invalidateAddressCache();

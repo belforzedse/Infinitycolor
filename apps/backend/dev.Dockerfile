@@ -31,6 +31,7 @@ RUN --mount=type=cache,target=/root/.npm \
     --mount=type=cache,target=/root/.cache/node/corepack \
     /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm install --filter @repo/backend... --frozen-lockfile
+RUN pnpm --filter @repo/auth-core build
 
 COPY apps/backend ./apps/backend
 WORKDIR /repo/apps/backend
@@ -56,7 +57,8 @@ RUN --mount=type=cache,target=/root/.cache/node/corepack \
     && cd /app \
     && echo "rebuilding sharp for musl runtime..." \
     && npm_config_platform=linux npm_config_arch=x64 npm_config_libc=musl pnpm rebuild sharp --unsafe-perm \
-    && node -e "const sharp=require('sharp'); console.log('sharp-ok', process.platform, process.arch, sharp.versions);"
+    && node -e "const sharp=require('sharp'); console.log('sharp-ok', process.platform, process.arch, sharp.versions);" \
+    && node -e "const authCore=require('@repo/auth-core'); if (typeof authCore.verifyBridgeSignature !== 'function') throw new Error('auth-core-runtime-invalid'); console.log('auth-core-runtime-ok');"
 
 FROM docker.arvancloud.ir/library/node:20-alpine AS runner
 

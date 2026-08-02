@@ -15,13 +15,7 @@ export type Response = {
 
 export const getInfo = async (id: string): Promise<Response> => {
   const endpoint = `${ENDPOINTS.USER.GET_INFO}?value=${id}`;
-  const accessToken = localStorage.getItem("accessToken");
-
-  const response = await apiClient.get<Response>(endpoint, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+  const response = await apiClient.get<Response>(endpoint);
 
   return response as any;
 };

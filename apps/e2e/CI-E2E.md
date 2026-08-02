@@ -5,6 +5,7 @@
 Run Playwright from `apps/e2e`. The suite expects:
 
 - Frontend: `E2E_BASE_URL`, default `http://localhost:2888`
+- Central auth: `E2E_AUTH_ORIGIN`, default `http://localhost:2889`
 - Backend API: `E2E_API_URL`, default `http://localhost:1337/api`
 - Backend health: `E2E_API_HEALTH_URL`, default `http://localhost:1337/_health`
 - Redis and Postgres available before Strapi starts
@@ -13,8 +14,9 @@ Run Playwright from `apps/e2e`. The suite expects:
   `ZARINPAL_SANDBOX=true`, `ZARINPAL_CALLBACK_URL=http://localhost:1337/api/orders/payment-callback`,
   `ZARINPAL_CURRENCY=IRR`, and `URL=http://localhost:1337`
 
-`global-setup.ts` waits for backend health, runs `pnpm --filter @repo/backend seed:e2e`,
-and writes role auth states under `.auth/`.
+`global-setup.ts` waits for backend and central-auth readiness, runs
+`pnpm --filter @repo/backend seed:e2e`, signs each seeded role into Better Auth,
+verifies its short-lived Strapi API JWT, and writes role cookie states under `.auth/`.
 
 ## Recommended CI Jobs
 
@@ -35,7 +37,7 @@ Artifacts:
 - `apps/e2e/playwright-report/`
 - `apps/e2e/test-results/`
 
-Do not artifact `.auth/`; it contains bearer tokens and is already gitignored.
+Do not artifact `.auth/`; it contains Better Auth session cookies and is already gitignored.
 
 ## Payment Live
 

@@ -1,22 +1,15 @@
-import {
-  ACCESS_TOKEN_EVENT,
-  ACCESS_TOKEN_STORAGE_KEY,
-  clearAccessToken as clearStoredAccessToken,
-  setAccessToken as setStoredAccessToken,
-} from "@repo/api/token";
-import { clearAuthRouteHint, setAuthRouteHint } from "@/utils/authRouteHint";
+import { clearCentralAuthForLogout } from "@/lib/central-auth";
+import { clearAuthRouteHint } from "@/utils/authRouteHint";
 
-export { ACCESS_TOKEN_EVENT, ACCESS_TOKEN_STORAGE_KEY };
+/** Legacy constants remain for test/source compatibility; no token uses browser storage. */
+export const ACCESS_TOKEN_STORAGE_KEY = "accessToken";
+export const ACCESS_TOKEN_EVENT = "infinity-auth-state-change";
 
-export function setAccessToken(token: string): void {
-  setStoredAccessToken(token);
-  setAuthRouteHint();
+export function setAccessToken(_token: string): never {
+  throw new Error("Reusable auth credentials may not be persisted in the storefront");
 }
 
 export function clearAccessToken(): void {
-  try {
-    clearStoredAccessToken();
-  } finally {
-    clearAuthRouteHint();
-  }
+  clearCentralAuthForLogout();
+  clearAuthRouteHint();
 }

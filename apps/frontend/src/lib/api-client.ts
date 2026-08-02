@@ -12,6 +12,7 @@ import {
 import type { ApiError, ApiRequestOptions } from "@repo/api/types";
 import { handleAuthErrors } from "@/utils/auth";
 import { apiCache } from "./api-cache";
+import { centralAuth } from "./central-auth";
 
 function onHttpError(
   error: ApiError,
@@ -42,6 +43,8 @@ export const apiClient = new ApiClient({
   retryConfig: RETRY_CONFIG,
   errorMessages: ERROR_MESSAGES,
   apiCache,
+  getAuthToken: (options) => centralAuth.tokenManager.getToken(options),
+  onAuthTokenRejected: () => centralAuth.tokenManager.expire(),
   onHttpError,
 });
 

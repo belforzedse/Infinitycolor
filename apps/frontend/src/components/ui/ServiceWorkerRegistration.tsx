@@ -48,6 +48,14 @@ export default function ServiceWorkerRegistration() {
         updateViaCache: "none",
       });
 
+      // Browser automation and restrictive privacy modes can expose the
+      // ServiceWorker API while blocking registration and resolving without a
+      // registration object. Treat that as unsupported instead of dereferencing
+      // `waiting` below.
+      if (!registration) {
+        return undefined;
+      }
+
       console.log("[SW] Service worker registered successfully:", registration);
 
       if (registration.waiting && navigator.serviceWorker.controller) {

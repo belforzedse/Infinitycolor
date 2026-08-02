@@ -1,6 +1,9 @@
 export const storefrontBaseURL = () =>
   process.env.E2E_BASE_URL?.trim() || "http://localhost:2888";
 
+export const centralAuthOrigin = () =>
+  process.env.E2E_AUTH_ORIGIN?.trim() || "http://localhost:2889";
+
 export const strapiApiURL = () =>
   process.env.E2E_API_URL?.trim() || "http://127.0.0.1:1337/api";
 

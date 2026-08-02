@@ -1,17 +1,21 @@
 import { spawn } from "node:child_process";
-import { createHmac } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { request as playwrightRequest } from "@playwright/test";
 import {
   authCredentials,
   authStateDir,
   authStorageStatePath,
-  authUserIdEnvName,
   E2E_AUTH_ROLES,
   type E2EAuthRole,
 } from "../helpers/auth";
-import { storefrontBaseURL, strapiApiURL, strapiOrigin } from "../helpers/env";
+import {
+  centralAuthOrigin,
+  storefrontBaseURL,
+  strapiApiURL,
+  strapiOrigin,
+} from "../helpers/env";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -80,20 +84,11 @@ function authRouteHintCookie() {
     domain: storefrontUrl.hostname,
     path: "/",
     expires: Math.floor(Date.now() / 1000) + AUTH_ROUTE_HINT_MAX_AGE_SECONDS,
-    httpOnly: false,
+    httpOnly: true,
     secure: storefrontUrl.protocol === "https:",
     sameSite: "Lax" as const,
   };
 }
-
-const SEED_SUMMARY_USER_KEY: Record<E2EAuthRole, keyof SeedSummary> = {
-  customer: "customerUserId",
-  "customer-b": "customerBUserId",
-  admin: "adminUserId",
-  founder: "founderUserId",
-  "store-manager": "storeManagerUserId",
-  editor: "editorUserId",
-};
 
 function runCommand(command: string, env: NodeJS.ProcessEnv = process.env) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
@@ -219,6 +214,7 @@ async function revalidateSeededStorefront(seedSummary?: SeedSummary) {
   };
 
   await postRevalidation({ path: "/", type: "site-settings" });
+  await postRevalidation({ tag: "hero-slider", type: "hero-slider" });
   await postRevalidation(
     productSlug
       ? { path: `/pdp/${productSlug}`, type: "product" }
@@ -253,6 +249,7 @@ async function revalidateSeededStorefront(seedSummary?: SeedSummary) {
       ]);
       const homeReady =
         homeResponse.ok &&
+        homeHtml.includes('data-aq-hero="static"') &&
         homeHtml.includes(`data-product-slug="${productSlug}"`) &&
         homeHtml.includes('data-home-full-bleed="discounted"');
       const productReady =
@@ -276,153 +273,86 @@ async function revalidateSeededStorefront(seedSummary?: SeedSummary) {
   );
 }
 
-async function readBackendEnvValue(name: string, aliases: string[] = []) {
-  for (const envName of [...aliases, name]) {
-    const existing = process.env[envName]?.trim();
-    if (existing) return existing;
-  }
-
-  const envPath = path.join(repoRoot, "apps/backend/.env");
-  const content = await readFile(envPath, "utf8").catch(() => "");
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const equalsIndex = trimmed.indexOf("=");
-    if (equalsIndex < 0) continue;
-    const key = trimmed.slice(0, equalsIndex).trim();
-    if (key !== name) continue;
-    const rawValue = trimmed.slice(equalsIndex + 1).trim();
-    return rawValue.replace(/^['"]|['"]$/g, "");
-  }
-
-  const envNames = [...aliases, name].join(" or ");
-  throw new Error(`Missing ${envNames}; set it in the environment or apps/backend/.env`);
-}
-
-function base64UrlJson(value: unknown) {
-  return Buffer.from(JSON.stringify(value)).toString("base64url");
-}
-
-function issueJwt(userId: number, secret: string) {
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const header = base64UrlJson({ alg: "HS256", typ: "JWT" });
-  const payload = base64UrlJson({
-    id: userId,
-    iat: issuedAt,
-    exp: issuedAt + 7 * 24 * 60 * 60,
-  });
-  const unsignedToken = `${header}.${payload}`;
-  const signature = createHmac("sha256", secret).update(unsignedToken).digest("base64url");
-  return `${unsignedToken}.${signature}`;
-}
-
-function resolveSeededUserId(role: E2EAuthRole, seedSummary?: SeedSummary) {
-  const envName = authUserIdEnvName(role);
-  const envValue = Number(process.env[envName]);
-  const seedValue = seedSummary?.[SEED_SUMMARY_USER_KEY[role]] as number | undefined;
-  const userId = Number.isFinite(envValue) && envValue > 0 ? envValue : seedValue;
-
-  if (!Number.isFinite(userId) || !userId) {
-    throw new Error(
-      `Missing E2E ${role} user id; run the E2E seed or set ${envName} when E2E_SEED_MODE=skip`,
-    );
-  }
-
-  return Number(userId);
-}
-
-async function writeAuthStorageStateFromToken(role: E2EAuthRole, token: string) {
-  const authCheck = await fetchWithTimeout(`${strapiApiURL()}/auth/self`, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-  }, 15_000);
-  if (!authCheck.ok) {
-    const body = await authCheck.text().catch(() => "");
-    throw new Error(
-      `E2E ${role} token validation failed (${authCheck.status} ${authCheck.statusText}): ${body}`,
-    );
-  }
-
-  await mkdir(authStateDir, { recursive: true });
-  await writeFile(
-    authStorageStatePath(role),
-    JSON.stringify(
-      {
-        cookies: [authRouteHintCookie()],
-        origins: [
-          {
-            origin: storefrontBaseURL(),
-            localStorage: [
-              { name: "accessToken", value: token },
-              { name: "analytics-consent", value: "denied" },
-              { name: "pdp_debug", value: "0" },
-            ],
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-  );
-}
-
-async function writeAuthStorageStateViaLogin(role: E2EAuthRole) {
+async function writeCentralAuthStorageState(role: E2EAuthRole) {
   const credentials = authCredentials(role);
-  const response = await fetchWithTimeout(`${strapiApiURL()}/auth/login-with-password`, {
-    method: "POST",
-    headers: {
+  const context = await playwrightRequest.newContext({
+    baseURL: centralAuthOrigin(),
+    extraHTTPHeaders: {
       Accept: "application/json",
-      "Content-Type": "application/json",
+      Origin: new URL(storefrontBaseURL()).origin,
     },
-    body: JSON.stringify(credentials),
-  }, 15_000);
+  });
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(
-      `E2E ${role} login failed (${response.status} ${response.statusText}): ${body}`,
-    );
-  }
+  try {
+    const response = await context.post("/api/auth/infinity/password/sign-in", {
+      data: credentials,
+    });
+    if (!response.ok()) {
+      throw new Error(
+        `E2E ${role} central login failed (${response.status()}): ${await response.text()}`,
+      );
+    }
 
-  const payload = (await response.json()) as { token?: string };
-  if (!payload.token) {
-    throw new Error(`E2E ${role} login did not return a token`);
-  }
+    const tokenResponse = await context.get("/api/auth/token");
+    if (!tokenResponse.ok()) {
+      throw new Error(
+        `E2E ${role} Better Auth token request failed (${tokenResponse.status()}): ${await tokenResponse.text()}`,
+      );
+    }
+    const tokenPayload = (await tokenResponse.json()) as { token?: string };
+    if (!tokenPayload.token) {
+      throw new Error(`E2E ${role} Better Auth token response omitted token`);
+    }
 
-  await mkdir(authStateDir, { recursive: true });
-  await writeFile(
-    authStorageStatePath(role),
-    JSON.stringify(
+    const authCheck = await fetchWithTimeout(
+      `${strapiApiURL()}/auth/self`,
       {
-        cookies: [authRouteHintCookie()],
-        origins: [
-          {
-            origin: storefrontBaseURL(),
-            localStorage: [
-              { name: "accessToken", value: payload.token },
-              { name: "analytics-consent", value: "denied" },
-              { name: "pdp_debug", value: "0" },
-            ],
-          },
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${tokenPayload.token}`,
+        },
+      },
+      15_000,
+    );
+    if (!authCheck.ok) {
+      throw new Error(
+        `E2E ${role} Better Auth JWT validation failed (${authCheck.status}): ${await authCheck.text()}`,
+      );
+    }
+
+    const walletCheck = await fetchWithTimeout(
+      `${strapiApiURL()}/local-user-wallet/me`,
+      {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${tokenPayload.token}`,
+        },
+      },
+      15_000,
+    );
+    if (walletCheck.status === 401 || walletCheck.status === 403) {
+      throw new Error(
+        `E2E ${role} Better Auth wallet authorization failed (${walletCheck.status}): ${await walletCheck.text()}`,
+      );
+    }
+
+    const state = await context.storageState();
+    state.cookies.push(authRouteHintCookie());
+    state.origins = [
+      {
+        origin: new URL(storefrontBaseURL()).origin,
+        localStorage: [
+          { name: "analytics-consent", value: "denied" },
+          { name: "pdp_debug", value: "0" },
         ],
       },
-      null,
-      2,
-    ),
-  );
-}
+    ];
 
-async function writeAuthStorageState(role: E2EAuthRole, seedSummary?: SeedSummary) {
-  if (process.env.E2E_AUTH_MODE === "login") {
-    await writeAuthStorageStateViaLogin(role);
-    return;
+    await mkdir(authStateDir, { recursive: true });
+    await writeFile(authStorageStatePath(role), JSON.stringify(state, null, 2));
+  } finally {
+    await context.dispose();
   }
-
-  const userId = resolveSeededUserId(role, seedSummary);
-  const jwtSecret = await readBackendEnvValue("JWT_SECRET", ["E2E_JWT_SECRET"]);
-  await writeAuthStorageStateFromToken(role, issueJwt(userId, jwtSecret));
 }
 
 export default async function globalSetup() {
@@ -446,8 +376,12 @@ export default async function globalSetup() {
   }
 
   if (process.env.E2E_AUTH_MODE !== "skip") {
+    await waitForEndpoint(
+      `${centralAuthOrigin().replace(/\/$/, "")}/api/health/ready`,
+      Number(process.env.E2E_SERVICE_TIMEOUT_MS || 120_000),
+    );
     for (const role of E2E_AUTH_ROLES) {
-      await writeAuthStorageState(role, seedSummary);
+      await writeCentralAuthStorageState(role);
     }
   }
 }

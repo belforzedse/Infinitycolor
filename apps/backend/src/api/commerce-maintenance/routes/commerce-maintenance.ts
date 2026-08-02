@@ -17,7 +17,6 @@ export default {
       handler: "commerce-maintenance.purge",
       config: {
         auth: { scope: [] },
-        middlewares: ["global::authentication"],
         policies: superadminOnlyPolicy,
       },
     },

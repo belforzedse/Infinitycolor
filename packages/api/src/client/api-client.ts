@@ -39,9 +39,13 @@ export interface ApiClientConfig {
     retryableStatusCodes: readonly number[];
   };
   errorMessages?: ErrorMessages;
-  /** If set, used for Bearer token; otherwise reads localStorage key below (browser only). */
-  getAuthToken?: () => string | null;
-  accessTokenStorageKey?: string;
+  /** Explicit async provider for an ephemeral Bearer token. There is no storage fallback. */
+  getAuthToken?: (options?: { forceRefresh?: boolean }) =>
+    | Promise<string | null>
+    | string
+    | null;
+  /** Invalidates the provider's cached token before the single safe 401 retry. */
+  onAuthTokenRejected?: () => void;
   /**
    * Called for failed responses before throw, unless suppressAuthRedirect is true.
    * Use for session cleanup, toasts, redirects, etc.
@@ -74,8 +78,8 @@ export class ApiClient {
     retryableStatusCodes: readonly number[];
   };
   private readonly errorMessages: ErrorMessages;
-  private readonly getAuthToken?: () => string | null;
-  private readonly accessTokenStorageKey: string;
+  private readonly getAuthToken?: ApiClientConfig["getAuthToken"];
+  private readonly onAuthTokenRejected?: ApiClientConfig["onAuthTokenRejected"];
   private readonly onHttpError?: ApiClientConfig["onHttpError"];
   private readonly apiCache?: ApiCache;
 
@@ -85,7 +89,7 @@ export class ApiClient {
     this.retryConfig = config.retryConfig ?? defaultRetryConfig;
     this.errorMessages = config.errorMessages ?? ERROR_MESSAGES;
     this.getAuthToken = config.getAuthToken;
-    this.accessTokenStorageKey = config.accessTokenStorageKey ?? "accessToken";
+    this.onAuthTokenRejected = config.onAuthTokenRejected;
     this.onHttpError = config.onHttpError;
     this.apiCache = config.apiCache;
   }
@@ -344,7 +348,7 @@ export class ApiClient {
     options: ApiRequestOptions | undefined,
     etag: string | null,
   ): Promise<{ data: ApiResponse<T>; headers: Headers }> {
-    let headers = this.buildHeaders(options?.headers, options?.skipAuth);
+    let headers = await this.buildHeaders(options?.headers, options?.skipAuth);
 
     if (etag && method.toUpperCase() === "GET") {
       (headers as Record<string, string>)["If-None-Match"] = etag;
@@ -372,10 +376,29 @@ export class ApiClient {
     );
 
     try {
-      const response = await fetch(url, {
+      let response = await fetch(url, {
         ...config,
         signal: controller.signal,
       });
+
+      const methodUpper = method.toUpperCase();
+      const mayRetryAuth =
+        response.status === 401 &&
+        (methodUpper === "GET" || methodUpper === "HEAD") &&
+        !options?.skipAuth &&
+        !options?.headers?.Authorization &&
+        Boolean(this.getAuthToken);
+
+      if (mayRetryAuth) {
+        this.onAuthTokenRejected?.();
+        headers = await this.buildHeaders(options?.headers, false, true);
+        if (etag && methodUpper === "GET") {
+          (headers as Record<string, string>)["If-None-Match"] = etag;
+        }
+        if (new Headers(headers).has("authorization")) {
+          response = await fetch(url, { ...config, headers, signal: controller.signal });
+        }
+      }
 
       clearTimeout(timeoutId);
       if (cleanupExternalAbort) cleanupExternalAbort();
@@ -429,10 +452,11 @@ export class ApiClient {
     return headers.get("etag") || null;
   }
 
-  private buildHeaders(
+  private async buildHeaders(
     customHeaders?: Record<string, string>,
     skipAuth?: boolean,
-  ): HeadersInit {
+    forceRefresh = false,
+  ): Promise<HeadersInit> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json",
@@ -440,7 +464,7 @@ export class ApiClient {
     };
 
     if (!skipAuth && !customHeaders?.Authorization) {
-      const token = this.resolveAuthToken();
+      const token = await this.resolveAuthToken(forceRefresh);
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }
@@ -449,18 +473,8 @@ export class ApiClient {
     return headers;
   }
 
-  private resolveAuthToken(): string | null {
-    if (this.getAuthToken) {
-      return this.getAuthToken();
-    }
-    if (typeof window !== "undefined") {
-      try {
-        return localStorage.getItem(this.accessTokenStorageKey);
-      } catch {
-        return null;
-      }
-    }
-    return null;
+  private async resolveAuthToken(forceRefresh: boolean): Promise<string | null> {
+    return (await this.getAuthToken?.({ forceRefresh })) ?? null;
   }
 }
 

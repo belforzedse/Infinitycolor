@@ -5,12 +5,16 @@ import {
   E2E_PRODUCT_TITLE,
 } from "../../fixtures/storefront";
 import { installLocalMediaFixture } from "../../helpers/local-media";
+import { isExpectedHarnessConsoleError } from "../../helpers/runtime-console";
 
 function collectRuntimeErrors(page: Page) {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
   page.on("console", (message) => {
-    if (message.type() === "error") {
+    if (
+      message.type() === "error" &&
+      !isExpectedHarnessConsoleError(message)
+    ) {
       errors.push(`console.error: ${message.text()}`);
     }
   });

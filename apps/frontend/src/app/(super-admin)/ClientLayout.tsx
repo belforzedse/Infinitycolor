@@ -11,6 +11,7 @@ import { currentUserAtom } from "@/lib/atoms/auth";
 import { useAtomValue, useSetAtom } from "jotai";
 import { isFounderRole, canFounderAccessPath } from "@/constants/roleAccess";
 import clsx from "clsx";
+import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -44,10 +45,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     lastCheckRef.current = now;
 
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+      const token = await centralAuth.tokenManager.getToken();
       if (!token) {
         setIsAuthorized(false);
-        router.replace("/auth");
+        window.location.replace(centralLoginUrl(pathname));
         return;
       }
 
@@ -69,7 +70,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
       if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
         setIsAuthorized(false);
-        router.replace("/auth");
+        window.location.replace(centralLoginUrl(pathname));
         return;
       }
       if (error?.status === HTTP_STATUS.FORBIDDEN) {
@@ -94,17 +95,18 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     let isMounted = true;
     setIsLoading(true);
 
-    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-    if (!token) {
-      router.replace("/auth");
-      return;
-    }
-
-    // Force refresh user data by clearing cache first, then fetching fresh data
-    setCurrentUser(null);
-    UserService.me(true)
+    const run = async () => {
+      const token = await centralAuth.tokenManager.getToken();
+      if (!token) {
+        window.location.replace(centralLoginUrl(pathname));
+        return;
+      }
+      setCurrentUser(null);
+      return UserService.me(true);
+    };
+    run()
       .then((me) => {
-        if (!isMounted) return;
+        if (!isMounted || !me) return;
         // Update the cached user data with fresh data
         setCurrentUser(me);
 
@@ -123,7 +125,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         setCurrentUser(null);
 
         if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
-          router.replace("/auth");
+          window.location.replace(centralLoginUrl(pathname));
           return;
         }
         if (error?.status === HTTP_STATUS.FORBIDDEN) {

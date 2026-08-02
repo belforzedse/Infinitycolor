@@ -123,7 +123,7 @@ Key variables:
 - `STRAPI_INTERNAL_URL`: Server-only; set in Docker runtime (leave empty for local dev)
 
 Server-side fetches use `getStrapiServerUrl()` (see `.cursor/rules/frontend-strapi-url-env.mdc`) — no extra page setup required for homepage/PLP.
-- `NEXT_PUBLIC_MATOMO_URL`: Matomo base URL (for example `https://analytics.example.com`)
+- `NEXT_PUBLIC_MATOMO_URL`: Matomo base URL (`https://matomo.alpagency.net`)
 - `NEXT_PUBLIC_MATOMO_SITE_ID`: Matomo site ID used by frontend tracker
 - `REVALIDATION_SECRET`: Secret for blog post cache invalidation (must match backend)
 
@@ -168,8 +168,8 @@ docker build \
   --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.example.com/api \
   --build-arg NEXT_PUBLIC_IMAGE_BASE_URL=https://api.example.com \
   --build-arg NEXT_PUBLIC_STRAPI_TOKEN=token \
-  --build-arg NEXT_PUBLIC_MATOMO_URL=https://analytics.example.com \
-  --build-arg NEXT_PUBLIC_MATOMO_SITE_ID=1 \
+  --build-arg NEXT_PUBLIC_MATOMO_URL=https://matomo.alpagency.net \
+  --build-arg NEXT_PUBLIC_MATOMO_SITE_ID=2 \
   -f main.Dockerfile \
   -t infinity-frontend:prod .
 

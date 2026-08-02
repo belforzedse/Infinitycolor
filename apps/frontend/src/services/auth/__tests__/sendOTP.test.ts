@@ -1,6 +1,7 @@
 import { sendOTP } from "../sendOTP";
 import { apiClient } from "../../index";
 import { ENDPOINTS } from "@/constants/api";
+import { clearOtpToken, readOtpToken } from "../otpChallenge";
 
 jest.mock("../../index", () => ({
   apiClient: {
@@ -13,6 +14,7 @@ describe("sendOTP", () => {
 
   beforeEach(() => {
     mockPost.mockReset();
+    clearOtpToken();
     sessionStorage.clear();
   });
 
@@ -43,12 +45,13 @@ describe("sendOTP", () => {
     });
   });
 
-  it("stores the returned otpToken in sessionStorage", async () => {
+  it("keeps the returned otpToken in memory and never sessionStorage", async () => {
     mockPost.mockResolvedValueOnce({ otpToken: "mock-otp-token" });
 
     await sendOTP("09123456789");
 
-    expect(sessionStorage.getItem("otpToken")).toBe("mock-otp-token");
+    expect(readOtpToken()).toBe("mock-otp-token");
+    expect(sessionStorage.getItem("otpToken")).toBeNull();
   });
 
   it("propagates API errors without storing a token", async () => {
@@ -56,6 +59,7 @@ describe("sendOTP", () => {
     mockPost.mockRejectedValueOnce(error);
 
     await expect(sendOTP("09123456789")).rejects.toThrow("Network Error");
+    expect(readOtpToken()).toBeNull();
     expect(sessionStorage.getItem("otpToken")).toBeNull();
   });
 });

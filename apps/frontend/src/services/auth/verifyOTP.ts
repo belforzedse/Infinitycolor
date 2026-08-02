@@ -1,5 +1,6 @@
 import { apiClient } from "../index";
 import { ENDPOINTS } from "@/constants/api";
+import { clearOtpToken, readOtpToken } from "./otpChallenge";
 
 export interface Response {
   token: string;
@@ -11,11 +12,12 @@ export const verifyOTP = async (otp: string): Promise<Response> => {
   const response = await apiClient.post<Response>(
     endpoint,
     {
-      otpToken: sessionStorage.getItem("otpToken"),
+      otpToken: readOtpToken(),
       otp: otp,
     },
     { suppressAuthRedirect: true },
   );
 
+  clearOtpToken();
   return response as any;
 };

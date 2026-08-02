@@ -47,17 +47,13 @@ export default function RegisterInfoPage() {
 
   useEffect(() => {
     const paramsPhone = searchParams.get("phone");
-    const storedPhone = typeof window !== "undefined" ? localStorage.getItem("pendingPhone") : null;
-    const phoneToUse = paramsPhone || storedPhone;
+    const phoneToUse = paramsPhone;
 
     if (phoneToUse) {
       setFormData((prev) => ({ ...prev, phoneNumber: phoneToUse }));
     } else {
       toast.error("لطفا ابتدا شماره خود را تایید کنید.");
       router.replace("/auth");
-    }
-    if (storedPhone) {
-      localStorage.removeItem("pendingPhone");
     }
   }, [router, searchParams]);
 

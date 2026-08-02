@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (type === "hero-slider") {
-      revalidateTag("hero-slider", "max");
+      revalidateTag("hero-slider", { expire: 0 });
 
       return NextResponse.json({
         revalidated: true,
