@@ -10,10 +10,14 @@ const conflictingIndexRepair = require(
 
 let strapi: any;
 const operationIds: number[] = [];
+// This suite exercises the full migration chain before Strapi schema sync.
+// Shared CI runners can push that cold boot past Jest's general 4-minute
+// integration timeout while image builds are saturating the runner disk.
+const STRAPI_COLD_BOOT_TIMEOUT_MS = 420_000;
 
 beforeAll(async () => {
   strapi = await setupStrapi();
-});
+}, STRAPI_COLD_BOOT_TIMEOUT_MS);
 
 afterEach(async () => {
   for (const id of operationIds.splice(0).reverse()) {
