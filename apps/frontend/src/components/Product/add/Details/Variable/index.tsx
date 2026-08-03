@@ -100,7 +100,8 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
         const formattedVariations = variations.map((variation: ProductVariable) => {
           // Extract color, size, model details - only use actual values, no defaults
           const color = variation.attributes.product_variation_color?.data?.attributes?.Title;
-          const colorCode = variation.attributes.product_variation_color?.data?.attributes?.ColorCode;
+          const colorCode =
+            variation.attributes.product_variation_color?.data?.attributes?.ColorCode;
           const size = variation.attributes.product_variation_size?.data?.attributes?.Title;
           const model = variation.attributes.product_variation_model?.data?.attributes?.Title;
           const genericAttributes = (variation.attributes.selected_attribute_terms?.data || [])
@@ -134,9 +135,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             color,
             model,
             ...genericAttributes.map((item) => `${item.attribute}: ${item.term}`),
-          ].filter(
-            (part) => Boolean(part && part.trim()),
-          );
+          ].filter((part) => Boolean(part && part.trim()));
           const variableName = variableParts.join(" - ");
 
           // Get variation-specific discount price (priority)
@@ -237,24 +236,8 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
     }
 
     try {
-      // Find the variation to get its stockId
-      const variationToDelete = variables.find((v) => v.id === deleteId);
-      const stockId = variationToDelete?.stockId;
-
-      // Delete product_stock first if it exists (to avoid relation errors)
-      if (stockId) {
-        try {
-          await apiClient.delete(`/product-stocks/${stockId}`);
-        } catch (stockError: any) {
-          // If stock deletion fails, log but continue - the variation deletion might still work
-          // This handles cases where stock might already be deleted or doesn't exist
-          if (process.env.NODE_ENV !== "production") {
-            console.warn("Could not delete product_stock:", stockError);
-          }
-        }
-      }
-
-      // Now delete the variation
+      // The backend removes the variation and its dependent stock in one
+      // transaction, and blocks deletion while inventory is reserved.
       await apiClient.delete(`/product-variations/${deleteId}`);
 
       // Update local state and refresh
@@ -305,9 +288,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
       stockInput !== undefined ? Math.min(Math.max(stockInput, 0), MAX_STOCK) : undefined;
 
     const publishValue =
-      bulkForm.publishState === "no-change"
-        ? undefined
-        : bulkForm.publishState === "published";
+      bulkForm.publishState === "no-change" ? undefined : bulkForm.publishState === "published";
 
     if (!isValidAction(priceValue, discountValue, stockValue, publishValue)) {
       toast.error("هیچ تغییری برای اعمال انتخاب نشده است");
@@ -379,8 +360,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
                 stockIdUpdates[variation.id] !== undefined
                   ? stockIdUpdates[variation.id]
                   : variation.stockId,
-              isPublished:
-                publishValue !== undefined ? publishValue : variation.isPublished,
+              isPublished: publishValue !== undefined ? publishValue : variation.isPublished,
             };
           }),
         );
@@ -399,7 +379,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
     priceValue: number | undefined,
     discountValue: number | null | undefined,
     stockValue: number | undefined,
-    publishValue: boolean | undefined
+    publishValue: boolean | undefined,
   ): boolean => {
     if (
       priceValue === undefined &&
@@ -547,19 +527,25 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
                       style={{ backgroundColor: currentVariation.colorCode || "#f5f5f5" }}
                       aria-label={`کد رنگ ${currentVariation.colorCode || "نامشخص"}`}
                     />
-                    <span className="text-sm font-medium text-slate-700">{currentVariation.color}</span>
+                    <span className="text-sm font-medium text-slate-700">
+                      {currentVariation.color}
+                    </span>
                   </div>
                 )}
                 {currentVariation.size && currentVariation.size.trim() && (
                   <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
                     <Ruler className="h-5 w-5 text-slate-500" />
-                    <span className="text-sm font-medium text-slate-700">سایز: {currentVariation.size}</span>
+                    <span className="text-sm font-medium text-slate-700">
+                      سایز: {currentVariation.size}
+                    </span>
                   </div>
                 )}
                 {currentVariation.model && currentVariation.model.trim() && (
                   <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
                     <Settings className="h-5 w-5 text-slate-500" />
-                    <span className="text-sm font-medium text-slate-700">مدل: {currentVariation.model}</span>
+                    <span className="text-sm font-medium text-slate-700">
+                      مدل: {currentVariation.model}
+                    </span>
                   </div>
                 )}
                 {(!currentVariation.color || !currentVariation.color.trim()) &&
@@ -649,10 +635,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
                   onChange={(e) =>
                     setCurrentVariation({
                       ...currentVariation,
-                      stock: Math.min(
-                        Math.max(Number(e.target.value), 0),
-                        MAX_STOCK,
-                      ),
+                      stock: Math.min(Math.max(Number(e.target.value), 0), MAX_STOCK),
                     })
                   }
                   max={MAX_STOCK}
@@ -717,11 +700,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
         )}
       </Modal>
 
-      <Modal
-        isOpen={bulkModalOpen}
-        onClose={closeBulkModal}
-        title="ویرایش گروهی تنوع‌ها"
-      >
+      <Modal isOpen={bulkModalOpen} onClose={closeBulkModal} title="ویرایش گروهی تنوع‌ها">
         <p className="mb-4 text-sm text-slate-500">
           تغییرات زیر برای {selectedRows.length} تنوع انتخاب شده اعمال می‌شود. فیلدهایی که خالی
           بمانند بدون تغییر خواهند ماند.
@@ -744,9 +723,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             <input
               type="number"
               value={bulkForm.discountPrice}
-              onChange={(e) =>
-                setBulkForm((prev) => ({ ...prev, discountPrice: e.target.value }))
-              }
+              onChange={(e) => setBulkForm((prev) => ({ ...prev, discountPrice: e.target.value }))}
               disabled={bulkForm.removeDiscount}
               placeholder="بدون تغییر"
               className="w-full rounded-lg border border-slate-300 p-2 disabled:bg-slate-100"
@@ -810,7 +787,7 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
           </button>
           <button
             onClick={handleBulkUpdate}
-            className="rounded-lg bg-infinity-primary-light px-4 py-2 text-white disabled:bg-infinity-primary-lighter/30 disabled:border-infinity-primary-lighter/60"
+            className="rounded-lg bg-infinity-primary-light px-4 py-2 text-white disabled:border-infinity-primary-lighter/60 disabled:bg-infinity-primary-lighter/30"
             disabled={isBulkSaving}
           >
             {isBulkSaving ? "در حال اعمال..." : "ثبت تغییرات"}

@@ -30,6 +30,8 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   const [productData, setProductData] = useAtom(editProductDataAtom);
   const router = useRouter();
   const { roleName } = useCurrentUser();
+  const normalizedRole = (roleName ?? "").toLowerCase().trim();
+  const isOperationalManager = normalizedRole === "store manager" || normalizedRole === "founder";
   const { fetchAllCategories } = useProductCategory();
   const { handleFetchTags } = useProductTag();
   const sizeGuideRef = useRef<SizeGuideHandle | null>(null);
@@ -41,8 +43,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   const [displayDate, setDisplayDate] = useState<string | null>(null);
 
   const isDirty = () =>
-    savedSnapshotRef.current !== null &&
-    JSON.stringify(productData) !== savedSnapshotRef.current;
+    savedSnapshotRef.current !== null && JSON.stringify(productData) !== savedSnapshotRef.current;
 
   // Redirect editors away from product pages
   useEffect(() => {
@@ -80,8 +81,8 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         const loaded = transformToProductData(result.data.attributes);
         setProductData(loaded);
         setDisplayDate(
-          (result.data.attributes as { LastEditedByAdminAt?: string | null })
-            .LastEditedByAdminAt ?? null,
+          (result.data.attributes as { LastEditedByAdminAt?: string | null }).LastEditedByAdminAt ??
+            null,
         );
         savedSnapshotRef.current = JSON.stringify(loaded);
       } catch (error: any) {
@@ -232,20 +233,18 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         {/* <SetPrice />
         <SetStatus /> */}
         <SetDetails isEditMode />
-        <ProductDisplayDateCard productId={id} initialDate={displayDate} />
-        <ProductActivityLogs
-          productId={id}
-          pageSize={20}
-          title="رویدادهای محصول"
-        />
+        {!isOperationalManager && (
+          <>
+            <ProductDisplayDateCard productId={id} initialDate={displayDate} />
+            <ProductActivityLogs productId={id} pageSize={20} title="رویدادهای محصول" />
+          </>
+        )}
       </div>
       <div className="order-1 col-span-2 h-fit flex-1 lg:order-2">
         <Tabs tabs={tabs} tabsClassName="!bg-transparent">
           {[
             <Overall key={"overall"} productData={productData} isEditMode />,
-            ...(!isSimpleProduct
-              ? [<Variables key={"variables"} productId={Number(id)} />]
-              : []),
+            ...(!isSimpleProduct ? [<Variables key={"variables"} productId={Number(id)} />] : []),
             <Sizes key={"sizes"} ref={sizeGuideRef} productId={Number(id)} />,
           ]}
         </Tabs>

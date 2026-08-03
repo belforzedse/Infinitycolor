@@ -40,8 +40,8 @@ const INITIAL_MODAL_STATE: ModalState = {
 
 export default function ProductColorsPage() {
   const router = useRouter();
-  const { roleName, isStoreManager, isAdmin } = useCurrentUser();
-  const canDeleteColors = isStoreManager || isAdmin;
+  const { roleName } = useCurrentUser();
+  const canDeleteColors = (roleName || "").toLowerCase().trim() === "superadmin";
   const [colors, setColors] = useState<ApiColor[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -217,7 +217,7 @@ export default function ProductColorsPage() {
         <button
           type="button"
           onClick={() => openModal()}
-          className="text-sm rounded-xl bg-infinity-primary px-4 py-2 text-white transition-colors hover:bg-infinity-primary"
+          className="rounded-xl bg-infinity-primary px-4 py-2 text-sm text-white transition-colors hover:bg-infinity-primary"
         >
           افزودن رنگ جدید
         </button>
@@ -230,20 +230,18 @@ export default function ProductColorsPage() {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="جستجو بر اساس نام یا کد رنگ"
-            className="text-sm w-full rounded-lg border border-slate-200 px-3 py-2 focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary/30"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary/30"
           />
           <div className="flex items-center gap-2">
             <button
               type="button"
               disabled={loading}
               onClick={fetchColors}
-              className="text-sm rounded-lg border border-slate-200 px-4 py-2 text-neutral-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+              className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-neutral-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
             >
               بروزرسانی
             </button>
-            <span className="text-xs text-neutral-500">
-              {filteredColors.length} رنگ ثبت شده
-            </span>
+            <span className="text-xs text-neutral-500">{filteredColors.length} رنگ ثبت شده</span>
           </div>
         </div>
 
@@ -267,21 +265,21 @@ export default function ProductColorsPage() {
                       style={{ backgroundColor: color.attributes?.ColorCode || "#f5f5f5" }}
                     />
                     <div>
-                      <p className="text-base font-semibold text-neutral-800">{color.attributes?.Title}</p>
+                      <p className="text-base font-semibold text-neutral-800">
+                        {color.attributes?.Title}
+                      </p>
                       <p className="text-xs text-neutral-500">
                         {color.attributes?.ColorCode?.toUpperCase() ?? "بدون رنگ"}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-xs text-neutral-500">
-                    <span>
-                      کد خارجی: {color.attributes?.external_id?.trim() || "ثبت نشده"}
-                    </span>
+                    <span>کد خارجی: {color.attributes?.external_id?.trim() || "ثبت نشده"}</span>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => openModal(color)}
-                        className="text-sm rounded-lg border border-slate-200 px-4 py-1.5 text-neutral-700 transition-colors hover:bg-slate-50"
+                        className="rounded-lg border border-slate-200 px-4 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-slate-50"
                       >
                         ویرایش
                       </button>
@@ -289,7 +287,7 @@ export default function ProductColorsPage() {
                         <button
                           type="button"
                           onClick={() => handleDeleteColor(color)}
-                          className="text-sm rounded-lg border border-red-200 bg-red-50 px-4 py-1.5 text-red-700 transition-colors hover:bg-red-100"
+                          className="rounded-lg border border-red-200 bg-red-50 px-4 py-1.5 text-sm text-red-700 transition-colors hover:bg-red-100"
                         >
                           حذف
                         </button>
@@ -328,7 +326,7 @@ export default function ProductColorsPage() {
                 leaveFrom="opacity-100 scale-100"
                 leaveTo="opacity-0 scale-95"
               >
-                <Dialog.Panel className="w-full max-w-5xl rounded-2xl bg-white p-8 shadow-xl max-h-[90vh] overflow-y-auto">
+                <Dialog.Panel className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-8 shadow-xl">
                   <Dialog.Title className="text-xl font-semibold text-neutral-900">
                     {modalState.id ? "ویرایش رنگ" : "افزودن رنگ جدید"}
                   </Dialog.Title>
@@ -344,10 +342,16 @@ export default function ProductColorsPage() {
                           onChange={(e) => {
                             const newTitle = e.target.value;
                             // Auto-check "No Color" if title contains " کد" or starts with "کد"
-                            const shouldAutoCheck = newTitle.includes(" کد") || newTitle.startsWith("کد");
+                            const shouldAutoCheck =
+                              newTitle.includes(" کد") || newTitle.startsWith("کد");
 
                             if (process.env.NODE_ENV === "development") {
-                              console.log("Title changed:", newTitle, "| Should auto-check:", shouldAutoCheck);
+                              console.log(
+                                "Title changed:",
+                                newTitle,
+                                "| Should auto-check:",
+                                shouldAutoCheck,
+                              );
                             }
 
                             setModalState((prev) => ({
@@ -372,12 +376,15 @@ export default function ProductColorsPage() {
                             setModalState((prev) => ({
                               ...prev,
                               noColor: e.target.checked,
-                              colorCode: e.target.checked ? "" : prev.colorCode
+                              colorCode: e.target.checked ? "" : prev.colorCode,
                             }))
                           }
                           className="h-4 w-4 rounded border-slate-300 text-infinity-primary focus:ring-infinity-primary"
                         />
-                        <label htmlFor="noColorCheckbox" className="text-sm text-neutral-700 cursor-pointer">
+                        <label
+                          htmlFor="noColorCheckbox"
+                          className="cursor-pointer text-sm text-neutral-700"
+                        >
                           بدون رنگ
                         </label>
                       </div>
@@ -385,8 +392,10 @@ export default function ProductColorsPage() {
                       {!modalState.noColor ? (
                         <>
                           <div>
-                            <label className="text-sm font-medium text-neutral-700">انتخاب از پالت</label>
-                            <div className="mt-3 rounded-xl border border-slate-200 p-4 bg-slate-50">
+                            <label className="text-sm font-medium text-neutral-700">
+                              انتخاب از پالت
+                            </label>
+                            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
                               <HexColorPicker
                                 color={modalState.colorCode}
                                 onChange={handleColorChange}
@@ -409,8 +418,18 @@ export default function ProductColorsPage() {
                         <div className="mt-3 rounded-xl border border-slate-300 bg-slate-100 p-8">
                           <div className="flex flex-col items-center justify-center text-center">
                             <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-slate-200">
-                              <svg className="h-8 w-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                              <svg
+                                className="h-8 w-8 text-slate-500"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                                />
                               </svg>
                             </div>
                             <p className="text-sm font-medium text-slate-600">
@@ -421,18 +440,22 @@ export default function ProductColorsPage() {
                       )}
 
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-xs font-medium text-neutral-600 mb-3">پیش‌نمایش رنگ</p>
+                        <p className="mb-3 text-xs font-medium text-neutral-600">پیش‌نمایش رنگ</p>
                         <div className="flex items-center gap-3">
                           <span
                             className="h-16 w-16 rounded-lg border-2 border-slate-300"
-                            style={{ backgroundColor: modalState.noColor ? "#ffffff" : modalState.colorCode }}
+                            style={{
+                              backgroundColor: modalState.noColor
+                                ? "#ffffff"
+                                : modalState.colorCode,
+                            }}
                             aria-hidden="true"
                           />
                           <div className="text-sm">
                             <p className="font-semibold text-neutral-800">
                               {modalState.noColor ? "بدون رنگ" : modalState.colorCode.toUpperCase()}
                             </p>
-                            <p className="text-xs text-neutral-500 mt-1">
+                            <p className="mt-1 text-xs text-neutral-500">
                               {modalState.noColor ? "بدون رنگ" : "رنگ انتخاب‌شده"}
                             </p>
                           </div>
@@ -444,10 +467,12 @@ export default function ProductColorsPage() {
                     <div className="space-y-4">
                       <p className="text-sm font-medium text-neutral-700">انتخاب از دسته‌بندی</p>
                       {!modalState.noColor ? (
-                        <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                        <div className="max-h-[500px] space-y-3 overflow-y-auto pr-2">
                           {Object.entries(COLOR_CATEGORIES).map(([key, category]) => (
                             <div key={key}>
-                              <p className="text-xs font-semibold text-neutral-600 mb-2">{category.label}</p>
+                              <p className="mb-2 text-xs font-semibold text-neutral-600">
+                                {category.label}
+                              </p>
                               <div className="grid grid-cols-10 gap-1.5">
                                 {category.colors.map((color) => (
                                   <button
@@ -469,11 +494,21 @@ export default function ProductColorsPage() {
                           ))}
                         </div>
                       ) : (
-                        <div className="rounded-xl border border-slate-300 bg-slate-100 p-8 h-[500px] flex items-center justify-center">
+                        <div className="flex h-[500px] items-center justify-center rounded-xl border border-slate-300 bg-slate-100 p-8">
                           <div className="flex flex-col items-center justify-center text-center">
                             <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-slate-200">
-                              <svg className="h-8 w-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                              <svg
+                                className="h-8 w-8 text-slate-500"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                                />
                               </svg>
                             </div>
                             <p className="text-sm font-medium text-slate-600">
@@ -499,7 +534,9 @@ export default function ProductColorsPage() {
                       onClick={handleSaveColor}
                       disabled={saving}
                       className={`rounded-lg px-6 py-2 text-sm font-medium text-white transition-colors ${
-                        saving ? "bg-infinity-primary-lighter cursor-not-allowed" : "bg-infinity-primary hover:bg-infinity-primary-dark"
+                        saving
+                          ? "cursor-not-allowed bg-infinity-primary-lighter"
+                          : "bg-infinity-primary hover:bg-infinity-primary-dark"
                       }`}
                     >
                       {saving ? "در حال ذخیره..." : "ذخیره"}
@@ -557,7 +594,8 @@ export default function ProductColorsPage() {
                           className="h-10 w-10 rounded-lg border border-slate-200"
                           style={{
                             backgroundColor:
-                              colors.find((c) => c.id === deleteId)?.attributes?.ColorCode || "#f5f5f5",
+                              colors.find((c) => c.id === deleteId)?.attributes?.ColorCode ||
+                              "#f5f5f5",
                           }}
                         />
                         <div>
@@ -565,7 +603,9 @@ export default function ProductColorsPage() {
                             {colors.find((c) => c.id === deleteId)?.attributes?.Title}
                           </p>
                           <p className="text-xs text-neutral-500">
-                            {colors.find((c) => c.id === deleteId)?.attributes?.ColorCode?.toUpperCase() ?? "بدون رنگ"}
+                            {colors
+                              .find((c) => c.id === deleteId)
+                              ?.attributes?.ColorCode?.toUpperCase() ?? "بدون رنگ"}
                           </p>
                         </div>
                       </div>
@@ -589,9 +629,7 @@ export default function ProductColorsPage() {
                       onClick={confirmDelete}
                       disabled={deleting}
                       className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
-                        deleting
-                          ? "bg-red-300 cursor-not-allowed"
-                          : "bg-red-600 hover:bg-red-700"
+                        deleting ? "cursor-not-allowed bg-red-300" : "bg-red-600 hover:bg-red-700"
                       }`}
                     >
                       {deleting ? "در حال حذف..." : "حذف"}

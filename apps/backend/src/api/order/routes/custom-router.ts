@@ -2,6 +2,22 @@
  * Custom router for order APIs
  */
 
+import { ROLE_NAMES, STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
+
+const operationalPolicy = [
+  {
+    name: "global::role-based",
+    config: { roles: STORE_MANAGER_PLUS_ROLES },
+  },
+];
+
+const superadminPolicy = [
+  {
+    name: "global::role-based",
+    config: { roles: [ROLE_NAMES.SUPERADMIN] },
+  },
+];
+
 export default {
   routes: [
     {
@@ -84,6 +100,7 @@ export default {
       handler: "order.generateAnipoBarcode",
       config: {
         auth: { scope: [] },
+        policies: operationalPolicy,
       },
     },
     {
@@ -92,6 +109,16 @@ export default {
       handler: "order.adminAdjustItems",
       config: {
         auth: { scope: [] },
+        policies: operationalPolicy,
+      },
+    },
+    {
+      method: "PUT",
+      path: "/orders/:id/admin/notes",
+      handler: "order.adminUpdateNotes",
+      config: {
+        auth: { scope: [] },
+        policies: operationalPolicy,
       },
     },
     {
@@ -100,6 +127,7 @@ export default {
       handler: "order.adminTransition",
       config: {
         auth: { scope: [] },
+        policies: operationalPolicy,
       },
     },
     {
@@ -108,6 +136,7 @@ export default {
       handler: "order.adminCancel",
       config: {
         auth: { scope: [] },
+        policies: operationalPolicy,
       },
     },
     {
@@ -116,6 +145,7 @@ export default {
       handler: "order.adminPaymentOperation",
       config: {
         auth: { scope: [] },
+        policies: superadminPolicy,
       },
     },
     {
@@ -124,6 +154,7 @@ export default {
       handler: "order.adminVoidBarcode",
       config: {
         auth: { scope: [] },
+        policies: operationalPolicy,
       },
     },
     {
@@ -132,6 +163,7 @@ export default {
       handler: "order.decrementStockManual",
       config: {
         auth: { scope: [] },
+        policies: operationalPolicy,
       },
     },
   ],

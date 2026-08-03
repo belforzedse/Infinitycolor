@@ -80,6 +80,14 @@ interface GenericFeatureGroup {
   terms: Feature[];
 }
 
+interface GenericAttributeOption {
+  id: number;
+  title: string;
+  type: "Text" | "Color";
+  position: number;
+  terms: Feature[];
+}
+
 interface FeaturesTableProps {
   productId: number;
   onVariationsGenerated?: () => void;
@@ -178,6 +186,11 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
 
   const [isGeneratingVariations, setIsGeneratingVariations] = useState(false);
   const [variationsCount, setVariationsCount] = useState(0);
+  const [availableGenericAttributes, setAvailableGenericAttributes] = useState<
+    GenericAttributeOption[]
+  >([]);
+  const [selectedGenericAttributeId, setSelectedGenericAttributeId] = useState("");
+  const [isSavingAssignment, setIsSavingAssignment] = useState(false);
   const [colorModal, setColorModal] = useState({
     isOpen: false,
     name: "",
@@ -286,22 +299,35 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
 
   const fetchVariationData = useCallback(async () => {
     try {
-      const [colorsRes, sizesRes, modelsRes, assignmentsRes] = await Promise.all([
-        apiClient.get<ApiResponse<ApiFeature[]>>("/product-variation-colors?pagination[pageSize]=1000&sort=Title:asc", {
-          cache: "no-store",
-        }),
-        apiClient.get<ApiResponse<ApiFeature[]>>("/product-variation-sizes?pagination[pageSize]=1000&sort=Title:asc", {
-          cache: "no-store",
-        }),
-        apiClient.get<ApiResponse<ApiFeature[]>>("/product-variation-models?pagination[pageSize]=1000&sort=Title:asc", {
-          cache: "no-store",
-        }),
+      const [colorsRes, sizesRes, modelsRes, assignmentsRes, attributesRes] = await Promise.all([
+        apiClient.get<ApiResponse<ApiFeature[]>>(
+          "/product-variation-colors?pagination[pageSize]=1000&sort=Title:asc",
+          {
+            cache: "no-store",
+          },
+        ),
+        apiClient.get<ApiResponse<ApiFeature[]>>(
+          "/product-variation-sizes?pagination[pageSize]=1000&sort=Title:asc",
+          {
+            cache: "no-store",
+          },
+        ),
+        apiClient.get<ApiResponse<ApiFeature[]>>(
+          "/product-variation-models?pagination[pageSize]=1000&sort=Title:asc",
+          {
+            cache: "no-store",
+          },
+        ),
         productId
           ? apiClient.get<ApiResponse<any[]>>(
               `/product-attribute-assignments?filters[product][id][$eq]=${productId}&filters[IsVariation][$eq]=true&populate[product_attribute]=true&populate[terms][populate][product_attribute]=true&pagination[pageSize]=100&sort=Position:asc`,
               { cache: "no-store" },
             )
           : Promise.resolve({ data: [] } as any),
+        apiClient.get<ApiResponse<any[]>>(
+          "/product-attributes?filters[LegacyProjection][$eq]=None&populate[product_attribute_terms]=true&pagination[pageSize]=200&sort=Position:asc",
+          { cache: "no-store" },
+        ),
       ]);
 
       setAvailableOptions({
@@ -309,6 +335,29 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
         sizes: (sizesRes as any).data || [],
         models: (modelsRes as any).data || [],
       });
+
+      setAvailableGenericAttributes(
+        (((attributesRes as any).data || []) as any[])
+          .map((attribute): GenericAttributeOption | null => {
+            const value = attribute.attributes || attribute;
+            const terms = (value.product_attribute_terms?.data || [])
+              .map((term: any) => ({
+                id: String(term.id),
+                value: String(term.attributes?.Title || term.Title || ""),
+                colorCode: term.attributes?.ColorCode || term.ColorCode,
+              }))
+              .filter((term: Feature) => term.id && term.value);
+            if (!attribute.id || terms.length === 0) return null;
+            return {
+              id: Number(attribute.id),
+              title: String(value.Title || ""),
+              type: value.Type === "Color" ? "Color" : "Text",
+              position: Number(value.Position || 0),
+              terms,
+            };
+          })
+          .filter((attribute): attribute is GenericAttributeOption => Boolean(attribute)),
+      );
 
       if (!productId) {
         setFeatures({
@@ -503,6 +552,46 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
     }));
   };
 
+  const addGenericAssignment = async () => {
+    const attributeId = Number(selectedGenericAttributeId);
+    const attribute = availableGenericAttributes.find((item) => item.id === attributeId);
+    if (!attribute || !productId) return;
+
+    setIsSavingAssignment(true);
+    try {
+      await apiClient.post("/product-attribute-assignments", {
+        data: {
+          product: productId,
+          product_attribute: attribute.id,
+          terms: attribute.terms.map((term) => Number(term.id)),
+          Position: attribute.position,
+          IsVisible: true,
+          IsVariation: true,
+        },
+      });
+      setSelectedGenericAttributeId("");
+      await fetchVariationData();
+      toast.success("ویژگی به محصول افزوده شد");
+    } catch (error) {
+      toast.error("افزودن ویژگی به محصول با خطا مواجه شد");
+    } finally {
+      setIsSavingAssignment(false);
+    }
+  };
+
+  const removeGenericAssignment = async (assignmentId: number) => {
+    setIsSavingAssignment(true);
+    try {
+      await apiClient.delete(`/product-attribute-assignments/${assignmentId}`);
+      await fetchVariationData();
+      toast.success("ویژگی از محصول حذف شد");
+    } catch (error) {
+      toast.error("حذف ویژگی از محصول با خطا مواجه شد");
+    } finally {
+      setIsSavingAssignment(false);
+    }
+  };
+
   const generateVariations = async () => {
     if (!productId || isGeneratingVariations) return;
 
@@ -531,10 +620,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
         return;
       }
 
-      const response = await apiClient.post<any>(
-        `/products/${productId}/variation-combinations`,
-        { axes },
-      );
+      const response = await apiClient.post<any>(`/products/${productId}/variation-combinations`, {
+        axes,
+      });
       const result = response.data || response;
 
       // Refresh variation data after creation
@@ -614,7 +702,7 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                   type="button"
                                   key={option.id}
                                   onClick={() => !isSelected && addFeature("colors", option)}
-                                  className={`flex w-full items-center gap-3 px-3 py-2 text-sm text-right ${
+                                  className={`flex w-full items-center gap-3 px-3 py-2 text-right text-sm ${
                                     isSelected
                                       ? "cursor-not-allowed text-slate-400"
                                       : "cursor-pointer hover:bg-slate-100"
@@ -714,7 +802,7 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                   type="button"
                                   key={option.id}
                                   onClick={() => !isSelected && addFeature("sizes", option)}
-                                  className={`w-full px-3 py-2 text-sm text-right ${
+                                  className={`w-full px-3 py-2 text-right text-sm ${
                                     isSelected
                                       ? "cursor-not-allowed text-slate-400"
                                       : "cursor-pointer hover:bg-slate-100"
@@ -793,7 +881,7 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                   type="button"
                                   key={option.id}
                                   onClick={() => !isSelected && addFeature("models", option)}
-                                  className={`w-full px-3 py-2 text-sm text-right ${
+                                  className={`w-full px-3 py-2 text-right text-sm ${
                                     isSelected
                                       ? "cursor-not-allowed text-slate-400"
                                       : "cursor-pointer hover:bg-slate-100"
@@ -831,10 +919,59 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                   </div>
                 </td>
               </tr>
+              {availableGenericAttributes.some(
+                (attribute) =>
+                  !features.generic.some((group) => group.attributeId === attribute.id),
+              ) && (
+                <tr className="border-t border-slate-100">
+                  <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
+                    ویژگی عمومی
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <select
+                        value={selectedGenericAttributeId}
+                        onChange={(event) => setSelectedGenericAttributeId(event.target.value)}
+                        className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      >
+                        <option value="">انتخاب ویژگی تعریف‌شده</option>
+                        {availableGenericAttributes
+                          .filter(
+                            (attribute) =>
+                              !features.generic.some((group) => group.attributeId === attribute.id),
+                          )
+                          .map((attribute) => (
+                            <option key={attribute.id} value={attribute.id}>
+                              {attribute.title}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!selectedGenericAttributeId || isSavingAssignment}
+                        onClick={addGenericAssignment}
+                        className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white disabled:opacity-50"
+                      >
+                        افزودن به محصول
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
               {features.generic.map((group) => (
                 <tr key={group.attributeId} className="border-t border-slate-100">
                   <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
-                    <div>{group.title}</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{group.title}</span>
+                      <button
+                        type="button"
+                        disabled={isSavingAssignment}
+                        onClick={() => removeGenericAssignment(group.assignmentId)}
+                        className="text-xs text-red-500 disabled:opacity-50"
+                      >
+                        حذف از محصول
+                      </button>
+                    </div>
                     <div className="mt-1 text-[11px] text-slate-400">ویژگی عمومی</div>
                   </td>
                   <td className="px-4 py-3">
@@ -844,13 +981,14 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                           key={term.id}
                           className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-100 px-2 py-1"
                         >
-                          {group.type === "Color" && /^#[0-9a-f]{6}$/i.test(term.colorCode || "") && (
-                            <span
-                              className="h-4 w-4 rounded-full border border-black/10"
-                              style={{ backgroundColor: term.colorCode }}
-                              aria-hidden="true"
-                            />
-                          )}
+                          {group.type === "Color" &&
+                            /^#[0-9a-f]{6}$/i.test(term.colorCode || "") && (
+                              <span
+                                className="h-4 w-4 rounded-full border border-black/10"
+                                style={{ backgroundColor: term.colorCode }}
+                                aria-hidden="true"
+                              />
+                            )}
                           <span className="text-sm text-slate-500">{term.value}</span>
                           <button
                             type="button"
@@ -933,10 +1071,16 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                         onChange={(e) => {
                           const newName = e.target.value;
                           // Auto-check "No Color" if name contains " کد" or starts with "کد"
-                          const shouldAutoCheck = newName.includes(" کد") || newName.startsWith("کد");
+                          const shouldAutoCheck =
+                            newName.includes(" کد") || newName.startsWith("کد");
 
                           if (process.env.NODE_ENV === "development") {
-                            console.log("Color name changed:", newName, "| Should auto-check:", shouldAutoCheck);
+                            console.log(
+                              "Color name changed:",
+                              newName,
+                              "| Should auto-check:",
+                              shouldAutoCheck,
+                            );
                           }
 
                           setColorModal((prev) => ({
@@ -961,12 +1105,15 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                           setColorModal((prev) => ({
                             ...prev,
                             noColor: e.target.checked,
-                            colorCode: e.target.checked ? "" : prev.colorCode
+                            colorCode: e.target.checked ? "" : prev.colorCode,
                           }))
                         }
                         className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                       />
-                      <label htmlFor="noColorCheckboxFeature" className="text-sm text-neutral-700 cursor-pointer">
+                      <label
+                        htmlFor="noColorCheckboxFeature"
+                        className="cursor-pointer text-sm text-neutral-700"
+                      >
                         بدون رنگ
                       </label>
                     </div>
@@ -1005,12 +1152,15 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                 </div>
                               </div>
                               <p className="text-xs text-neutral-500">
-                                می‌توانید کد رنگ را بچسبانید یا از انتخاب‌گر برای پیدا کردن دقیق‌ترین طیف استفاده کنید.
+                                می‌توانید کد رنگ را بچسبانید یا از انتخاب‌گر برای پیدا کردن
+                                دقیق‌ترین طیف استفاده کنید.
                               </p>
                             </div>
                           </div>
                           <div className="mt-4">
-                            <p className="text-xs font-medium text-neutral-600">رنگ‌های پر استفاده</p>
+                            <p className="text-xs font-medium text-neutral-600">
+                              رنگ‌های پر استفاده
+                            </p>
                             <div className="mt-2 grid grid-cols-5 gap-2">
                               {COLOR_PALETTE.map((color) => (
                                 <button
@@ -1033,8 +1183,18 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                         <div className="mt-3 rounded-xl border border-slate-300 bg-slate-100 p-8">
                           <div className="flex flex-col items-center justify-center text-center">
                             <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-slate-200">
-                              <svg className="h-8 w-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                              <svg
+                                className="h-8 w-8 text-slate-500"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                                />
                               </svg>
                             </div>
                             <p className="text-sm font-medium text-slate-600">

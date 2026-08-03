@@ -1,6 +1,12 @@
 import {
   canFounderAccessPath,
+  canEditorAccessPath,
+  canRoleAccessPath,
+  canStoreManagerAccessPath,
+  getRoleAdminLandingPath,
+  isEditorRole,
   isFounderRole,
+  isStoreManagerRole,
   FOUNDER_HIDDEN_PARENT_IDS,
 } from "@/constants/roleAccess";
 
@@ -35,8 +41,11 @@ describe("roleAccess - Founder rules", () => {
         "/super-admin/stories/add",
         "/super-admin/settings",
         "/super-admin/settings/general",
-        "/super-admin/coupons",
-        "/super-admin/general-discounts",
+        "/super-admin/payment-methods",
+        "/super-admin/carts",
+        "/super-admin/orders/add",
+        "/super-admin/products/homepage",
+        "/super-admin/shipping/provinces",
         "/super-admin/users",
         "/super-admin/users/edit/5",
         "/super-admin/reports/traffic",
@@ -54,7 +63,8 @@ describe("roleAccess - Founder rules", () => {
         "/super-admin/orders",
         "/super-admin/orders/edit/99",
         "/super-admin/products",
-        "/super-admin/carts",
+        "/super-admin/coupons",
+        "/super-admin/general-discounts",
         "/super-admin/shipping",
         "/super-admin/reports/product-sales",
       ];
@@ -71,7 +81,59 @@ describe("roleAccess - Founder rules", () => {
 
   it("hides the expected sidebar parents", () => {
     expect([...FOUNDER_HIDDEN_PARENT_IDS].sort()).toEqual(
-      ["blog", "customization", "discounts", "faq", "settings", "stories", "users"].sort(),
+      [
+        "blog",
+        "carts",
+        "customization",
+        "faq",
+        "payment-methods",
+        "settings",
+        "stories",
+        "users",
+      ].sort(),
     );
+  });
+});
+
+describe("roleAccess - Store manager rules", () => {
+  it("recognizes Store manager aliases", () => {
+    expect(isStoreManagerRole("Store manager")).toBe(true);
+    expect(isStoreManagerRole("store-manager")).toBe(true);
+    expect(isStoreManagerRole("Superadmin")).toBe(false);
+  });
+
+  it("allows operational commerce and blocks control-plane routes", () => {
+    for (const path of [
+      "/super-admin/products",
+      "/super-admin/products/attributes",
+      "/super-admin/products/comments",
+      "/super-admin/coupons",
+      "/super-admin/general-discounts",
+      "/super-admin/shipping",
+      "/super-admin/orders/edit/10",
+    ]) {
+      expect(canStoreManagerAccessPath(path)).toBe(true);
+    }
+
+    for (const path of [
+      "/super-admin/payment-methods",
+      "/super-admin/users",
+      "/super-admin/reports/product-sales",
+      "/super-admin/shipping/provinces",
+      "/super-admin/orders/add",
+      "/super-admin/purgeall",
+    ]) {
+      expect(canStoreManagerAccessPath(path)).toBe(false);
+    }
+  });
+});
+
+describe("roleAccess - Editor rules", () => {
+  it("limits Editors to the blog workspace", () => {
+    expect(isEditorRole(" Editor ")).toBe(true);
+    expect(canEditorAccessPath("/super-admin/blog/posts/12")).toBe(true);
+    expect(canEditorAccessPath("/super-admin/products")).toBe(false);
+    expect(canRoleAccessPath("Editor", "/super-admin/payment-methods")).toBe(false);
+    expect(getRoleAdminLandingPath("Editor")).toBe("/super-admin/blog");
   });
 });

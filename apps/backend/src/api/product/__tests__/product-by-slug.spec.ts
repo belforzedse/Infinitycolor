@@ -1,6 +1,8 @@
 const mockStrapi: any = {};
 const mockBuildCacheKey = jest.fn((_options: unknown) => "product-cache-key");
-const mockWithCache = jest.fn(async (_options: unknown, loader: () => Promise<unknown>) => loader());
+const mockWithCache = jest.fn(async (_options: unknown, loader: () => Promise<unknown>) =>
+  loader(),
+);
 const mockIsTrustedWordPressMigrationRequest = jest.fn(() => false);
 
 jest.mock("@strapi/strapi", () => ({
@@ -14,8 +16,7 @@ jest.mock("../../../utils/responseCache", () => ({
   getCacheTtlFromEnv: jest.fn((_envName: string, fallback: number) => fallback),
   isCacheDebugHeaderEnabled: jest.fn(() => false),
   shouldBypassEndpointCache: jest.fn(() => false),
-  withCache: (options: unknown, loader: () => Promise<unknown>) =>
-    mockWithCache(options, loader),
+  withCache: (options: unknown, loader: () => Promise<unknown>) => mockWithCache(options, loader),
 }));
 
 jest.mock("../../../utils/migration-context", () => ({
@@ -84,10 +85,29 @@ describe("product.findBySlug", () => {
     const ctx: any = { query: { filters: {} }, state: {} };
 
     expect((productController as any).applyPublicProductFilters(ctx)).toBe(true);
-    expect(ctx.query.filters.$and).toEqual([
-      { removedAt: { $null: true } },
-      { Status: "Active" },
-    ]);
+    expect(ctx.query.filters.$and).toEqual([{ removedAt: { $null: true } }, { Status: "Active" }]);
+  });
+
+  it("lets Store Managers inspect inactive catalog records", () => {
+    const ctx: any = {
+      query: { filters: {} },
+      state: { user: { role: { name: "Store manager" } } },
+    };
+
+    expect((productController as any).applyPublicProductFilters(ctx)).toBe(false);
+    expect(ctx.query.filters).toEqual({});
+  });
+
+  it("keeps Editors on the public catalog view", () => {
+    const ctx: any = {
+      query: { filters: {} },
+      state: {
+        user: { isAdmin: true, role: { name: "Editor" } },
+      },
+    };
+
+    expect((productController as any).applyPublicProductFilters(ctx)).toBe(true);
+    expect(ctx.query.filters.$and).toEqual([{ removedAt: { $null: true } }, { Status: "Active" }]);
   });
 
   it("keeps the default by-slug response on the full review populate", async () => {

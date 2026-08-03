@@ -12,20 +12,24 @@ import { apiGet, expectApiForbidden, expectApiOk } from "../../helpers/api";
  *
  * Matrix (sidebar parent visibility):
  *   area        | superadmin | founder | store-manager | editor
- *   shipping    |    yes     |  yes    |     no         |  no
- *   discounts   |    yes     |  no*    |     yes        |  no
+ *   shipping    |    yes     |  yes    |     yes        |  no
+ *   discounts   |    yes     |  yes    |     yes        |  no
  *   users       |    yes     |  no*    |     no         |  no
  *   reports     |    yes     |  sales  |     no         |  no
- *   (* founder is also hard route-guarded away from /coupons and /users)
+ *   (* founder is hard route-guarded away from /users)
  */
 
 function sidebarParent(page: Page, id: string) {
-  return page.locator(`[data-testid="super-admin-sidebar-item"][data-sidebar-id="${id}"]`);
+  return page.locator(
+    `[data-testid="super-admin-sidebar-item"][data-sidebar-id="${id}"]`,
+  );
 }
 
 function visibleSidebarParent(page: Page, id: string) {
   return page
-    .locator(`[data-testid="super-admin-sidebar-item"][data-sidebar-id="${id}"]:visible`)
+    .locator(
+      `[data-testid="super-admin-sidebar-item"][data-sidebar-id="${id}"]:visible`,
+    )
     .first();
 }
 
@@ -56,20 +60,23 @@ test.describe("admin area access matrix (shipping / discounts / users)", () => {
       await expectVisibleSidebarParent(page, "users");
       await expectVisibleSidebarParent(page, "reports");
 
-      await expectApiOk(await apiGet(request, "admin", "/users"), "superadmin users list");
+      await expectApiOk(
+        await apiGet(request, "admin", "/users"),
+        "superadmin users list",
+      );
     });
   });
 
   test.describe("Founder", () => {
     test.use({ storageState: authStorageStatePath("founder") });
 
-    test("@permissions founder keeps shipping + sales reports but is blocked from discounts and users", async ({
+    test("@permissions founder keeps operational commerce + sales reports but is blocked from users", async ({
       page,
       request,
     }) => {
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
       await expectVisibleSidebarParent(page, "shipping");
-      await expect(sidebarParent(page, "discounts")).toHaveCount(0);
+      await expectVisibleSidebarParent(page, "discounts");
       await expect(sidebarParent(page, "users")).toHaveCount(0);
       await expectVisibleSidebarParent(page, "reports");
       await expect(visibleSidebarParent(page, "reports")).toHaveAttribute(
@@ -77,9 +84,14 @@ test.describe("admin area access matrix (shipping / discounts / users)", () => {
         "/super-admin/reports/product-sales",
       );
 
+      await page.goto("/super-admin/coupons", {
+        waitUntil: "domcontentloaded",
+      });
+      await expect(page).toHaveURL(/\/super-admin\/coupons/, {
+        timeout: 30_000,
+      });
+
       // Direct-URL navigation to forbidden areas is bounced back to the dashboard.
-      await page.goto("/super-admin/coupons", { waitUntil: "domcontentloaded" });
-      await expect(page).toHaveURL(/\/super-admin\/?$/, { timeout: 30_000 });
       await page.goto("/super-admin/users", { waitUntil: "domcontentloaded" });
       await expect(page).toHaveURL(/\/super-admin\/?$/, { timeout: 30_000 });
 
@@ -93,12 +105,12 @@ test.describe("admin area access matrix (shipping / discounts / users)", () => {
   test.describe("Store manager", () => {
     test.use({ storageState: authStorageStatePath("store-manager") });
 
-    test("@permissions store manager sees discounts but not shipping, users or reports", async ({
+    test("@permissions store manager sees operational commerce but not users or reports", async ({
       page,
     }) => {
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
       await expectVisibleSidebarParent(page, "discounts");
-      await expect(sidebarParent(page, "shipping")).toHaveCount(0);
+      await expectVisibleSidebarParent(page, "shipping");
       await expect(sidebarParent(page, "users")).toHaveCount(0);
       await expect(sidebarParent(page, "reports")).toHaveCount(0);
     });
@@ -126,7 +138,9 @@ test.describe("admin area access matrix (shipping / discounts / users)", () => {
       request,
     }) => {
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(page).not.toHaveURL(/\/super-admin\/?$/, { timeout: 30_000 });
+      await expect(page).not.toHaveURL(/\/super-admin\/?$/, {
+        timeout: 30_000,
+      });
 
       await expectApiForbidden(await apiGet(request, "customer", "/users"));
     });

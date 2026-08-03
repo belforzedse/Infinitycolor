@@ -5,14 +5,12 @@ import { MobileTable, createColumns } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { useMemo, useState } from "react";
 import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 export default function GeneralDiscountsPage() {
   useFreshDataOnPageLoad();
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
-  const { isStoreManager } = useCurrentUser();
-  const canManageDiscounts = !isStoreManager;
-  const columns = useMemo(() => createColumns(canManageDiscounts), [canManageDiscounts]);
+  const canManageDiscounts = true;
+  const columns = useMemo(() => createColumns(true), []);
 
   return (
     <ContentWrapper

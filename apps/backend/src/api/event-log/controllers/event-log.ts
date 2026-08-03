@@ -4,6 +4,7 @@
 
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
+import { ROLE_NAMES, resolveUserRoleName, roleIsAllowed } from "../../../utils/roles";
 
 export default factories.createCoreController(
   "api::event-log.event-log" as any,
@@ -29,14 +30,12 @@ export default factories.createCoreController(
       if (ctx.query.startDate) filters.startDate = ctx.query.startDate;
       if (ctx.query.endDate) filters.endDate = ctx.query.endDate;
 
-      const result = await strapi
-        .service("api::event-log.event-log" as any)
-        .getUserEvents(userId, {
-          filters,
-          page: Number(page),
-          pageSize: Number(pageSize),
-          sort,
-        });
+      const result = await strapi.service("api::event-log.event-log" as any).getUserEvents(userId, {
+        filters,
+        page: Number(page),
+        pageSize: Number(pageSize),
+        sort,
+      });
 
       return ctx.send(result);
     },
@@ -54,22 +53,18 @@ export default factories.createCoreController(
       const userId = Number(user.id);
 
       // Verify user owns the order or is admin
-      const requesterRoleType = user?.role?.type?.toLowerCase();
-      const requesterRoleName = user?.role?.name?.toLowerCase();
-      const isAdminUser =
-        user?.isAdmin === true ||
-        requesterRoleType === "superadmin" ||
-        requesterRoleType === "store-manager" ||
-        requesterRoleName === "superadmin" ||
-        requesterRoleName === "store manager";
+      const requesterRoleName = await resolveUserRoleName(strapi, user);
+      const isAdminUser = roleIsAllowed(requesterRoleName, [
+        ROLE_NAMES.SUPERADMIN,
+        ROLE_NAMES.FOUNDER,
+      ]);
 
       if (!isAdminUser) {
         // Check if user owns the order
-        const order = (await strapi.entityService.findOne(
-          "api::order.order" as any,
-          orderId,
-          { fields: ["id"], populate: { user: { fields: ["id"] } } }
-        )) as any;
+        const order = (await strapi.entityService.findOne("api::order.order" as any, orderId, {
+          fields: ["id"],
+          populate: { user: { fields: ["id"] } },
+        })) as any;
 
         if (!order) {
           return ctx.notFound("Order not found");
@@ -108,14 +103,8 @@ export default factories.createCoreController(
         return ctx.unauthorized("Authentication required");
       }
 
-      const requesterRoleType = user?.role?.type?.toLowerCase();
-      const requesterRoleName = user?.role?.name?.toLowerCase();
-      const isAdminUser =
-        user?.isAdmin === true ||
-        requesterRoleType === "superadmin" ||
-        requesterRoleType === "store-manager" ||
-        requesterRoleName === "superadmin" ||
-        requesterRoleName === "store manager";
+      const requesterRoleName = await resolveUserRoleName(strapi, user);
+      const isAdminUser = roleIsAllowed(requesterRoleName, [ROLE_NAMES.SUPERADMIN]);
 
       if (!isAdminUser) {
         return ctx.forbidden("Admin access required");
@@ -133,16 +122,14 @@ export default factories.createCoreController(
       if (ctx.query.startDate) filters.startDate = ctx.query.startDate;
       if (ctx.query.endDate) filters.endDate = ctx.query.endDate;
 
-      const result = await strapi
-        .service("api::event-log.event-log" as any)
-        .getAdminEvents({
-          filters,
-          page: Number(page),
-          pageSize: Number(pageSize),
-          sort,
-        });
+      const result = await strapi.service("api::event-log.event-log" as any).getAdminEvents({
+        filters,
+        page: Number(page),
+        pageSize: Number(pageSize),
+        sort,
+      });
 
       return ctx.send(result);
     },
-  })
+  }),
 );

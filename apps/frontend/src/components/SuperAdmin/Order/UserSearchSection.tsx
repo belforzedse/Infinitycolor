@@ -17,8 +17,8 @@ export type User = {
     name: string;
     description: string;
     type: string;
-    createdAt: string;
-    updatedAt: string;
+    createdAt?: string;
+    updatedAt?: string;
   } | null;
   user_info?: {
     id: number;
@@ -28,8 +28,8 @@ export type User = {
     BirthDate?: string | null;
     Sex?: boolean | null;
     Bio?: string | null;
-    createdAt: string;
-    updatedAt: string;
+    createdAt?: string;
+    updatedAt?: string;
   } | null;
   user_wallet?: {
     id: number;
@@ -57,6 +57,14 @@ export type User = {
   };
   orders?: any[];
   discounts?: any[];
+};
+
+type CustomerSearchResult = {
+  id: number;
+  phone: string;
+  firstName: string | null;
+  lastName: string | null;
+  isActive: boolean;
 };
 
 interface UserSearchSectionProps {
@@ -94,89 +102,28 @@ const UserSearchSection: React.FC<UserSearchSectionProps> = ({
     setLoading(true);
     const timeout = setTimeout(async () => {
       try {
-        // Search plugin users endpoint with populate for user_info
-        let baseUrl = `/users?populate=user_info,role,user_wallet&filters[removedAt][$null]=true&pagination[pageSize]=6`;
-
-        // Add search filter
-        const searchTerm = q.trim();
-        const searchWords = searchTerm.split(/\s+/); // Split by any whitespace
-
-        if (searchWords.length === 1) {
-          // Single word search - search in all fields
-          const encodedTerm = encodeURIComponent(searchTerm);
-          baseUrl += `&filters[$or][0][user_info][FirstName][$containsi]=${encodedTerm}`;
-          baseUrl += `&filters[$or][1][user_info][LastName][$containsi]=${encodedTerm}`;
-          baseUrl += `&filters[$or][2][phone][$containsi]=${encodedTerm}`;
-        } else if (searchWords.length === 2) {
-          // Two words: prioritize FirstName + LastName in exact order
-          let orIndex = 0;
-          const firstName = encodeURIComponent(searchWords[0]);
-          const lastName = encodeURIComponent(searchWords[1]);
-
-          // Priority 1: First word in FirstName AND second word in LastName (exact order)
-          baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstName}`;
-          baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastName}`;
-
-          // Priority 2: Exact phrase in FirstName (in case someone has compound first name)
-          const encodedPhrase = encodeURIComponent(searchTerm);
-          baseUrl += `&filters[$or][${orIndex++}][user_info][FirstName][$containsi]=${encodedPhrase}`;
-
-          // Priority 3: Phone number search
-          baseUrl += `&filters[$or][${orIndex++}][phone][$containsi]=${encodedPhrase}`;
-        } else if (searchWords.length === 3) {
-          // Three words: handle patterns like "داریوش فیضی پور"
-          let orIndex = 0;
-          const word1 = encodeURIComponent(searchWords[0]);
-          const word3 = encodeURIComponent(searchWords[2]);
-
-          // Priority 1: First word in FirstName AND (second + third) words in LastName
-          const lastNameCombined = encodeURIComponent(searchWords.slice(1).join(" "));
-          baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${word1}`;
-          baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastNameCombined}`;
-
-          // Priority 2: (First + second) words in FirstName AND third word in LastName
-          const firstNameCombined = encodeURIComponent(searchWords.slice(0, 2).join(" "));
-          baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstNameCombined}`;
-          baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${word3}`;
-
-          // Priority 3: Exact phrase in FirstName
-          const encodedPhrase = encodeURIComponent(searchTerm);
-          baseUrl += `&filters[$or][${orIndex++}][user_info][FirstName][$containsi]=${encodedPhrase}`;
-
-          // Priority 4: Phone number search
-          baseUrl += `&filters[$or][${orIndex++}][phone][$containsi]=${encodedPhrase}`;
-        } else {
-          // More than 3 words: try different combinations
-          let orIndex = 0;
-          const encodedPhrase = encodeURIComponent(searchTerm);
-
-          // Priority 1: Exact phrase in FirstName
-          baseUrl += `&filters[$or][${orIndex++}][user_info][FirstName][$containsi]=${encodedPhrase}`;
-
-          // Priority 2: First word in FirstName, rest in LastName
-          const firstName = encodeURIComponent(searchWords[0]);
-          const lastName = encodeURIComponent(searchWords.slice(1).join(" "));
-          baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstName}`;
-          baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastName}`;
-
-          // Priority 3: First half in FirstName, second half in LastName
-          const midPoint = Math.ceil(searchWords.length / 2);
-          const firstHalf = encodeURIComponent(searchWords.slice(0, midPoint).join(" "));
-          const secondHalf = encodeURIComponent(searchWords.slice(midPoint).join(" "));
-          baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstHalf}`;
-          baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${secondHalf}`;
-
-          // Priority 4: Phone number search
-          baseUrl += `&filters[$or][${orIndex++}][phone][$containsi]=${encodedPhrase}`;
-        }
-
-        const response = await apiClient.get(baseUrl, {
-          signal: controller.signal,
-        });
+        const response = await apiClient.get<CustomerSearchResult[]>(
+          `/sp/customers/search?q=${encodeURIComponent(q)}&pageSize=6`,
+          {
+            signal: controller.signal,
+          },
+        );
 
         if (!mounted) return;
 
-        const users = response as unknown as User[];
+        const users: User[] = (response.data || []).map((customer) => ({
+          id: customer.id,
+          username: customer.phone,
+          email: "",
+          phone: customer.phone,
+          IsVerified: true,
+          IsActive: customer.isActive,
+          user_info: {
+            id: customer.id,
+            FirstName: customer.firstName || "",
+            LastName: customer.lastName || "",
+          },
+        }));
         setSuggestions(users);
         setOpen(users.length > 0);
       } catch (error) {
@@ -257,16 +204,13 @@ const UserSearchSection: React.FC<UserSearchSectionProps> = ({
                   </span>
                 </div>
                 <div>
-                  <p className="font-medium text-green-900">
-                    {getUserDisplayName(selectedUser)}
-                  </p>
+                  <p className="font-medium text-green-900">{getUserDisplayName(selectedUser)}</p>
                   <p className="text-sm text-green-700">{selectedUser.phone}</p>
                 </div>
               </div>
               <div className="text-left">
                 <p className="text-sm text-green-700">
-                  موجودی:{" "}
-                  {formatPrice(selectedUser.user_wallet?.Balance || "0")} تومان
+                  موجودی: {formatPrice(selectedUser.user_wallet?.Balance || "0")} تومان
                 </p>
                 <button
                   onClick={() => onUserSelect(null as any)}
@@ -309,7 +253,7 @@ const UserSearchSection: React.FC<UserSearchSectionProps> = ({
               }}
               onKeyDown={onKeyDown}
               placeholder="جستجو مشتری با نام، نام خانوادگی یا شماره تلفن..."
-              className="text-sm flex-1 bg-transparent text-right text-neutral-600 placeholder-neutral-400 outline-none"
+              className="flex-1 bg-transparent text-right text-sm text-neutral-600 placeholder-neutral-400 outline-none"
               role="combobox"
               aria-expanded={open}
             />
@@ -323,49 +267,40 @@ const UserSearchSection: React.FC<UserSearchSectionProps> = ({
         {/* Suggestions dropdown */}
         {open && (
           <div className="absolute inset-x-0 top-full z-[1000] mt-2 max-h-96 w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white text-neutral-800 shadow-xl">
-              {loading && (
-                <div className="text-xs px-3 py-2 text-neutral-500">
-                  در حال جستجو…
-                </div>
-              )}
-              {!loading && suggestions.length === 0 && (
-                <div className="text-xs px-3 py-2 text-neutral-500">
-                  مشتری یافت نشد
-                </div>
-              )}
-              {!loading &&
-                suggestions.map((user, idx) => (
-                  <button
-                    key={user.id}
-                    onClick={() => handleUserSelect(user)}
-                    className={`flex w-full items-center gap-3 border-b border-slate-100 p-4 text-right hover:bg-slate-50 last:border-b-0 ${
-                      activeIndex === idx ? "bg-slate-50" : ""
-                    }`}
-                  >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
-                      <span className="text-sm font-semibold text-slate-700">
-                        {getUserDisplayName(user).charAt(0)}
+            {loading && <div className="px-3 py-2 text-xs text-neutral-500">در حال جستجو…</div>}
+            {!loading && suggestions.length === 0 && (
+              <div className="px-3 py-2 text-xs text-neutral-500">مشتری یافت نشد</div>
+            )}
+            {!loading &&
+              suggestions.map((user, idx) => (
+                <button
+                  key={user.id}
+                  onClick={() => handleUserSelect(user)}
+                  className={`flex w-full items-center gap-3 border-b border-slate-100 p-4 text-right last:border-b-0 hover:bg-slate-50 ${
+                    activeIndex === idx ? "bg-slate-50" : ""
+                  }`}
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+                    <span className="text-sm font-semibold text-slate-700">
+                      {getUserDisplayName(user).charAt(0)}
+                    </span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium text-slate-900">{getUserDisplayName(user)}</p>
+                      <span className="text-xs text-slate-500">
+                        {translatePluginRoleLabel(user.role?.name)}
                       </span>
                     </div>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <p className="font-medium text-slate-900">
-                          {getUserDisplayName(user)}
-                        </p>
-                        <span className="text-xs text-slate-500">
-                          {translatePluginRoleLabel(user.role?.name)}
-                        </span>
-                      </div>
-                      <p className="text-sm text-slate-600">{user.phone}</p>
-                      {user.user_wallet?.Balance && (
-                        <p className="text-xs text-slate-500">
-                          موجودی:{" "}
-                          {formatPrice(user.user_wallet.Balance)} تومان
-                        </p>
-                      )}
-                    </div>
-                  </button>
-                ))}
+                    <p className="text-sm text-slate-600">{user.phone}</p>
+                    {user.user_wallet?.Balance && (
+                      <p className="text-xs text-slate-500">
+                        موجودی: {formatPrice(user.user_wallet.Balance)} تومان
+                      </p>
+                    )}
+                  </div>
+                </button>
+              ))}
           </div>
         )}
       </div>

@@ -4,7 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { MANAGEMENT_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import { CONTENT_EDITOR_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
 import { validateBlogSlug, generateUniqueBlogSlug } from "../../../utils/slugValidation";
 import { enrichBlogPostsWithAuthorNames } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
@@ -22,442 +22,457 @@ function setCacheHeaderIfEnabled(ctx: any, status: CacheStatus) {
   ctx.set("X-Backend-Cache", status);
 }
 
-const blogPostController = factories.createCoreController("api::blog-post.blog-post" as any, ({ strapi }: { strapi: any }) => ({
-  ensureDefaultPopulate(ctx: any, _populate?: any) {
-    const defaultPopulate = {
-      blog_category: true,
-      blog_tags: true,
-      blog_author: {
-        populate: {
-          Avatar: true,
-        },
-      },
-      FeaturedImage: true,
-    };
-    if (!ctx.query) ctx.query = {};
-    // Always ensure blog_author fields (including avatar) are available
-    // Deep merge blog_author.populate instead of overwriting
-    const userPopulate = ctx.query.populate || {};
-    const mergedPopulate = {
-      ...defaultPopulate,
-      ...userPopulate,
-      blog_author: {
-        populate: {
-          Avatar: true,
-          ...(userPopulate.blog_author?.populate || {}),
-        },
-      },
-    };
-    ctx.query.populate = normalizePopulateQuery(mergedPopulate);
-  },
-
-  async resolveUserFromAuthHeader(ctx: any) {
-    if (ctx.state?.user) return ctx.state.user;
-
-    const authHeader = ctx.request?.header?.authorization || ctx.request?.headers?.authorization;
-    const token = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) return null;
-
-    try {
-      const payload = await strapi.plugin("users-permissions").service("jwt").verify(token);
-      const userId = Number(payload?.id || payload?.userId);
-      if (!userId || Number.isNaN(userId)) return null;
-
-      const user = await strapi.entityService.findOne("plugin::users-permissions.user", userId, {
-        populate: ["role", "user_role", "user_info"],
-      });
-      if (user) {
-        ctx.state.user = user;
-      }
-      return user;
-    } catch {
-      return null;
-    }
-  },
-
-  async getOrCreateAuthorForUser(user: any): Promise<any> {
-    if (!user) return null;
-
-
-    // Get the user's actual name from user_info (same as other admin interfaces)
-    const firstName = user.user_info?.FirstName ?? "";
-    const lastName = user.user_info?.LastName ?? "";
-    const fullName = `${firstName} ${lastName}`.trim();
-
-    // Use the actual name, fallback to username if no name
-    const authorName = fullName || user.username || user.email || `user-${user.id}`;
-
-
-    // Try to find an existing blog-author by users_permissions_user relation
-    const existing = await strapi.entityService.findMany("api::blog-author.blog-author", {
-      filters: {
-        users_permissions_user: user.id,
-      },
-      populate: {
-        users_permissions_user: {
+const blogPostController = factories.createCoreController(
+  "api::blog-post.blog-post" as any,
+  ({ strapi }: { strapi: any }) => ({
+    ensureDefaultPopulate(ctx: any, _populate?: any) {
+      const defaultPopulate = {
+        blog_category: true,
+        blog_tags: true,
+        blog_author: {
           populate: {
-            user_info: "*",
+            Avatar: true,
           },
         },
-      },
-      limit: 1,
-    });
+        FeaturedImage: true,
+      };
+      if (!ctx.query) ctx.query = {};
+      // Always ensure blog_author fields (including avatar) are available
+      // Deep merge blog_author.populate instead of overwriting
+      const userPopulate = ctx.query.populate || {};
+      const mergedPopulate = {
+        ...defaultPopulate,
+        ...userPopulate,
+        blog_author: {
+          populate: {
+            Avatar: true,
+            ...(userPopulate.blog_author?.populate || {}),
+          },
+        },
+      };
+      ctx.query.populate = normalizePopulateQuery(mergedPopulate);
+    },
 
+    async resolveUserFromAuthHeader(ctx: any) {
+      if (ctx.state?.user) return ctx.state.user;
 
-    if (existing && existing.length > 0) {
-      const existingAuthor = existing[0];
-      // Update the Name if it's different from the user's actual name
-      if (fullName && existingAuthor.Name !== fullName) {
+      const authHeader = ctx.request?.header?.authorization || ctx.request?.headers?.authorization;
+      const token =
+        typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+          ? authHeader.split(" ")[1]
+          : null;
 
-        await strapi.entityService.update("api::blog-author.blog-author", existingAuthor.id, {
-          data: {
-            Name: fullName,
-            Email: user.email,
-          } as any,
+      if (!token) return null;
+
+      try {
+        const payload = await strapi.plugin("users-permissions").service("jwt").verify(token);
+        const userId = Number(payload?.id || payload?.userId);
+        if (!userId || Number.isNaN(userId)) return null;
+
+        const user = await strapi.entityService.findOne("plugin::users-permissions.user", userId, {
+          populate: ["role", "user_role", "user_info"],
         });
-        existingAuthor.Name = fullName;
+        if (user) {
+          ctx.state.user = user;
+        }
+        return user;
+      } catch {
+        return null;
       }
+    },
 
+    async getOrCreateAuthorForUser(user: any): Promise<any> {
+      if (!user) return null;
 
-      return existingAuthor;
-    }
+      // Get the user's actual name from user_info (same as other admin interfaces)
+      const firstName = user.user_info?.FirstName ?? "";
+      const lastName = user.user_info?.LastName ?? "";
+      const fullName = `${firstName} ${lastName}`.trim();
 
-    // Create a new author entry with proper users_permissions_user relation
-    const newAuthor = await strapi.entityService.create("api::blog-author.blog-author", {
-      data: {
-        Name: authorName,
-        Email: user.email,
-        users_permissions_user: user.id, // Link to users-permissions user, not local_user
-      },
-      populate: {
-        users_permissions_user: {
-          populate: {
-            user_info: "*",
+      // Use the actual name, fallback to username if no name
+      const authorName = fullName || user.username || user.email || `user-${user.id}`;
+
+      // Try to find an existing blog-author by users_permissions_user relation
+      const existing = await strapi.entityService.findMany("api::blog-author.blog-author", {
+        filters: {
+          users_permissions_user: user.id,
+        },
+        populate: {
+          users_permissions_user: {
+            populate: {
+              user_info: "*",
+            },
           },
         },
-      },
-    });
-
-    return newAuthor;
-  },
-
-  async getActorRoleName(userId?: number, fallback?: any): Promise<string | null> {
-    if (!userId) {
-      return fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null;
-    }
-
-    const userWithRole = await fetchUserWithRole(strapi, userId);
-    return (
-      userWithRole?.user_role?.Title ||
-      userWithRole?.user_role?.Name ||
-      userWithRole?.role?.name ||
-      null
-    );
-  },
-
-  // Override find to filter by status for public users
-  async find(ctx: any) {
-    (this as any).ensureDefaultPopulate(ctx);
-
-    const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
-
-    const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
-
-    // If not Editor+, only show published posts
-    if (!hasEditorRole) {
-      ctx.query.filters = {
-        ...ctx.query.filters,
-        Status: "Published"
-      };
-    }
-
-    const sanitizedQuery = await (this as any).sanitizeQuery(ctx);
-
-    // Use entityService directly to bypass sanitization issues
-    const results = await strapi.entityService.findMany("api::blog-post.blog-post", {
-      ...sanitizedQuery,
-      populate: ctx.query.populate,
-    });
-
-    // Calculate pagination manually since we're using entityService
-    const total = await strapi.entityService.count("api::blog-post.blog-post", {
-      filters: sanitizedQuery.filters,
-    });
-
-    const page = sanitizedQuery.pagination?.page || 1;
-    const pageSize = sanitizedQuery.pagination?.pageSize || 25;
-    const pageCount = Math.ceil(total / pageSize);
-
-    const pagination = {
-      page,
-      pageSize,
-      pageCount,
-      total,
-    };
-
-    const enrichedResults = enrichBlogPostsWithAuthorNames(results);
-
-    const response = await (this as any).transformResponse(enrichedResults, {
-      pagination,
-    }) as any;
-
-    return response;
-  },
-
-  // Override findOne to filter by status for public users
-  async findOne(ctx: any) {
-    const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
-    const { id } = ctx.params;
-    (this as any).ensureDefaultPopulate(ctx);
-
-    const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
-
-    // Get the post
-    const post = await strapi.entityService.findOne("api::blog-post.blog-post", id, {
-      populate: ctx.query.populate || ["blog_category", "blog_tags", "blog_author", "FeaturedImage"]
-    });
-
-    if (!post) {
-      return ctx.notFound("Post not found");
-    }
-
-    // If not Editor+ and post is not published, deny access
-    if (!hasEditorRole && post.Status !== "Published") {
-      return ctx.notFound("Post not found");
-    }
-
-    // Increment view count for published posts (only for non-admin users)
-    if (post.Status === "Published" && !hasEditorRole) {
-      const viewService = strapi.service("api::product-view.product-view") as {
-        queueBlogPostView: (blogPostId: number) => Promise<void>;
-      };
-      void viewService.queueBlogPostView(Number(id));
-    }
-
-    return { data: post };
-  },
-
-  // Create post (Editor+ or API token)
-  async create(ctx: any) {
-    const { user } = ctx.state;
-
-    // Allow API tokens (no user) or users with proper roles
-    if (user) {
-      const actorRoleName = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
-        return ctx.forbidden("You don't have permission to create blog posts");
-      }
-    }
-
-    const { data } = ctx.request.body;
-
-    // Validate or generate slug
-    if (data.Slug) {
-      const slugValidation = await validateBlogSlug(strapi, data.Slug);
-      if (!slugValidation.isValid) {
-        return ctx.badRequest(`Invalid slug: ${slugValidation.error}`);
-      }
-    } else if (data.Title) {
-      // Generate unique slug from title
-      data.Slug = await generateUniqueBlogSlug(strapi, data.Title);
-    } else {
-      return ctx.badRequest("Title is required to generate slug");
-    }
-
-    // Set author automatically if not provided and user exists
-    if (!data.blog_author && user) {
-      // Fetch user with user_info populated
-      const fullUser = await strapi.entityService.findOne("plugin::users-permissions.user", user.id, {
-        populate: {
-          user_info: "*",
-          role: true,
-        },
+        limit: 1,
       });
 
-      if (fullUser) {
-        const author = await (this as any).getOrCreateAuthorForUser(fullUser);
-        if (author) {
-          data.blog_author = author.id;
-        }
-      }
-    }
-
-    // Set published date if status is Published
-    if (data.Status === "Published" && !data.PublishedAt) {
-      data.PublishedAt = new Date();
-    }
-
-    const post = await strapi.entityService.create("api::blog-post.blog-post", {
-      data,
-      populate: ["blog_category", "blog_tags", "blog_author", "FeaturedImage"]
-    });
-
-    return { data: post };
-  },
-
-  // Update post (Editor+ or API token)
-  async update(ctx: any) {
-    const { user } = ctx.state;
-    const { id } = ctx.params;
-
-    // Allow API tokens (no user) or users with proper roles
-    if (user) {
-      const actorRoleName = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
-        return ctx.forbidden("You don't have permission to update blog posts");
-      }
-    }
-
-    const { data } = ctx.request.body;
-
-    // Validate slug if it's being changed
-    if (data.Slug) {
-      const slugValidation = await validateBlogSlug(strapi, data.Slug, parseInt(id));
-      if (!slugValidation.isValid) {
-        return ctx.badRequest(`Invalid slug: ${slugValidation.error}`);
-      }
-    }
-
-    // Set published date if status is changing to Published
-    if (data.Status === "Published" && !data.PublishedAt) {
-      data.PublishedAt = new Date();
-    }
-
-    // Auto-assign author if missing and user exists
-    if (!data.blog_author && user) {
-      // Fetch user with user_info populated
-      const fullUser = await strapi.entityService.findOne("plugin::users-permissions.user", user.id, {
-        populate: {
-          user_info: "*",
-          role: true,
-        },
-      });
-
-      if (fullUser) {
-        const author = await (this as any).getOrCreateAuthorForUser(fullUser);
-        if (author) {
-          data.blog_author = author.id;
-        }
-      }
-    }
-
-    const post = await strapi.entityService.update("api::blog-post.blog-post", id, {
-      data,
-      populate: ["blog_category", "blog_tags", "blog_author", "FeaturedImage"]
-    });
-
-    return { data: post };
-  },
-
-  // Delete post (Editor+ only)
-  async delete(ctx: any) {
-    const { user } = ctx.state;
-
-    const actorRoleName = await this.getActorRoleName(user?.id, user);
-    if (!user || !roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
-      return ctx.forbidden("You don't have permission to delete blog posts");
-    }
-
-    const { id } = ctx.params;
-    const post = await strapi.entityService.delete("api::blog-post.blog-post", id);
-
-    return { data: post };
-  },
-
-
-  // Get post by slug
-  async findBySlug(ctx: any) {
-    const { slug } = ctx.params;
-    const bypassCache = shouldBypassEndpointCache(ctx.request?.headers as Record<string, unknown>);
-
-    const populate = {
-      blog_category: true,
-      blog_tags: true,
-      blog_author: {
-        populate: {
-          Avatar: true,
-        },
-      },
-      FeaturedImage: true,
-    };
-
-    if (!bypassCache) {
-      const cacheKey = buildCacheKey({
-        routeId: "blog-post.by-slug",
-        params: { slug },
-        query: ctx.query || {},
-        locale: String(ctx.query?.locale || ""),
-        authSegment: "anon",
-      });
-
-      const cachedPayload = await withCache(
-        {
-          key: cacheKey,
-          ttlSec: getCacheTtlFromEnv("CACHE_TTL_BLOG_SLUG_SEC", 120),
-          bypass: false,
-          onStatus: (status) => setCacheHeaderIfEnabled(ctx, status),
-          shouldCacheValue: (value) => Boolean((value as any)?.data),
-        },
-        async () => {
-          const posts = await strapi.entityService.findMany("api::blog-post.blog-post", {
-            filters: { Slug: slug, Status: "Published" },
-            populate,
-            limit: 1,
+      if (existing && existing.length > 0) {
+        const existingAuthor = existing[0];
+        // Update the Name if it's different from the user's actual name
+        if (fullName && existingAuthor.Name !== fullName) {
+          await strapi.entityService.update("api::blog-author.blog-author", existingAuthor.id, {
+            data: {
+              Name: fullName,
+              Email: user.email,
+            } as any,
           });
+          existingAuthor.Name = fullName;
+        }
 
-          const post = posts[0];
-          if (!post) return null;
-          return { data: post };
+        return existingAuthor;
+      }
+
+      // Create a new author entry with proper users_permissions_user relation
+      const newAuthor = await strapi.entityService.create("api::blog-author.blog-author", {
+        data: {
+          Name: authorName,
+          Email: user.email,
+          users_permissions_user: user.id, // Link to users-permissions user, not local_user
         },
-      );
+        populate: {
+          users_permissions_user: {
+            populate: {
+              user_info: "*",
+            },
+          },
+        },
+      });
 
-      if (!cachedPayload?.data) {
+      return newAuthor;
+    },
+
+    async getActorRoleName(userId?: number, fallback?: any): Promise<string | null> {
+      if (!userId) {
+        return (
+          fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null
+        );
+      }
+
+      const userWithRole = await fetchUserWithRole(strapi, userId);
+      return (
+        userWithRole?.user_role?.Title ||
+        userWithRole?.user_role?.Name ||
+        userWithRole?.role?.name ||
+        null
+      );
+    },
+
+    // Override find to filter by status for public users
+    async find(ctx: any) {
+      (this as any).ensureDefaultPopulate(ctx);
+
+      const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
+
+      const actorRoleName = await this.getActorRoleName(user?.id, user);
+      const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+
+      // If not Editor+, only show published posts
+      if (!hasEditorRole) {
+        ctx.query.filters = {
+          ...ctx.query.filters,
+          Status: "Published",
+        };
+      }
+
+      const sanitizedQuery = await (this as any).sanitizeQuery(ctx);
+
+      // Use entityService directly to bypass sanitization issues
+      const results = await strapi.entityService.findMany("api::blog-post.blog-post", {
+        ...sanitizedQuery,
+        populate: ctx.query.populate,
+      });
+
+      // Calculate pagination manually since we're using entityService
+      const total = await strapi.entityService.count("api::blog-post.blog-post", {
+        filters: sanitizedQuery.filters,
+      });
+
+      const page = sanitizedQuery.pagination?.page || 1;
+      const pageSize = sanitizedQuery.pagination?.pageSize || 25;
+      const pageCount = Math.ceil(total / pageSize);
+
+      const pagination = {
+        page,
+        pageSize,
+        pageCount,
+        total,
+      };
+
+      const enrichedResults = enrichBlogPostsWithAuthorNames(results);
+
+      const response = (await (this as any).transformResponse(enrichedResults, {
+        pagination,
+      })) as any;
+
+      return response;
+    },
+
+    // Override findOne to filter by status for public users
+    async findOne(ctx: any) {
+      const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
+      const { id } = ctx.params;
+      (this as any).ensureDefaultPopulate(ctx);
+
+      const actorRoleName = await this.getActorRoleName(user?.id, user);
+      const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+
+      // Get the post
+      const post = await strapi.entityService.findOne("api::blog-post.blog-post", id, {
+        populate: ctx.query.populate || [
+          "blog_category",
+          "blog_tags",
+          "blog_author",
+          "FeaturedImage",
+        ],
+      });
+
+      if (!post) {
         return ctx.notFound("Post not found");
       }
 
-      const viewService = strapi.service("api::product-view.product-view") as {
-        queueBlogPostView: (blogPostId: number) => Promise<void>;
+      // If not Editor+ and post is not published, deny access
+      if (!hasEditorRole && post.Status !== "Published") {
+        return ctx.notFound("Post not found");
+      }
+
+      // Increment view count for published posts (only for non-admin users)
+      if (post.Status === "Published" && !hasEditorRole) {
+        const viewService = strapi.service("api::product-view.product-view") as {
+          queueBlogPostView: (blogPostId: number) => Promise<void>;
+        };
+        void viewService.queueBlogPostView(Number(id));
+      }
+
+      return { data: post };
+    },
+
+    // Create post (Editor+ or API token)
+    async create(ctx: any) {
+      const { user } = ctx.state;
+
+      // Allow API tokens (no user) or users with proper roles
+      if (user) {
+        const actorRoleName = await this.getActorRoleName(user?.id, user);
+        if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
+          return ctx.forbidden("You don't have permission to create blog posts");
+        }
+      }
+
+      const { data } = ctx.request.body;
+
+      // Validate or generate slug
+      if (data.Slug) {
+        const slugValidation = await validateBlogSlug(strapi, data.Slug);
+        if (!slugValidation.isValid) {
+          return ctx.badRequest(`Invalid slug: ${slugValidation.error}`);
+        }
+      } else if (data.Title) {
+        // Generate unique slug from title
+        data.Slug = await generateUniqueBlogSlug(strapi, data.Title);
+      } else {
+        return ctx.badRequest("Title is required to generate slug");
+      }
+
+      // Set author automatically if not provided and user exists
+      if (!data.blog_author && user) {
+        // Fetch user with user_info populated
+        const fullUser = await strapi.entityService.findOne(
+          "plugin::users-permissions.user",
+          user.id,
+          {
+            populate: {
+              user_info: "*",
+              role: true,
+            },
+          },
+        );
+
+        if (fullUser) {
+          const author = await (this as any).getOrCreateAuthorForUser(fullUser);
+          if (author) {
+            data.blog_author = author.id;
+          }
+        }
+      }
+
+      // Set published date if status is Published
+      if (data.Status === "Published" && !data.PublishedAt) {
+        data.PublishedAt = new Date();
+      }
+
+      const post = await strapi.entityService.create("api::blog-post.blog-post", {
+        data,
+        populate: ["blog_category", "blog_tags", "blog_author", "FeaturedImage"],
+      });
+
+      return { data: post };
+    },
+
+    // Update post (Editor+ or API token)
+    async update(ctx: any) {
+      const { user } = ctx.state;
+      const { id } = ctx.params;
+
+      // Allow API tokens (no user) or users with proper roles
+      if (user) {
+        const actorRoleName = await this.getActorRoleName(user?.id, user);
+        if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
+          return ctx.forbidden("You don't have permission to update blog posts");
+        }
+      }
+
+      const { data } = ctx.request.body;
+
+      // Validate slug if it's being changed
+      if (data.Slug) {
+        const slugValidation = await validateBlogSlug(strapi, data.Slug, parseInt(id));
+        if (!slugValidation.isValid) {
+          return ctx.badRequest(`Invalid slug: ${slugValidation.error}`);
+        }
+      }
+
+      // Set published date if status is changing to Published
+      if (data.Status === "Published" && !data.PublishedAt) {
+        data.PublishedAt = new Date();
+      }
+
+      // Auto-assign author if missing and user exists
+      if (!data.blog_author && user) {
+        // Fetch user with user_info populated
+        const fullUser = await strapi.entityService.findOne(
+          "plugin::users-permissions.user",
+          user.id,
+          {
+            populate: {
+              user_info: "*",
+              role: true,
+            },
+          },
+        );
+
+        if (fullUser) {
+          const author = await (this as any).getOrCreateAuthorForUser(fullUser);
+          if (author) {
+            data.blog_author = author.id;
+          }
+        }
+      }
+
+      const post = await strapi.entityService.update("api::blog-post.blog-post", id, {
+        data,
+        populate: ["blog_category", "blog_tags", "blog_author", "FeaturedImage"],
+      });
+
+      return { data: post };
+    },
+
+    // Delete post (Editor+ only)
+    async delete(ctx: any) {
+      const { user } = ctx.state;
+
+      const actorRoleName = await this.getActorRoleName(user?.id, user);
+      if (!user || !roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
+        return ctx.forbidden("You don't have permission to delete blog posts");
+      }
+
+      const { id } = ctx.params;
+      const post = await strapi.entityService.delete("api::blog-post.blog-post", id);
+
+      return { data: post };
+    },
+
+    // Get post by slug
+    async findBySlug(ctx: any) {
+      const { slug } = ctx.params;
+      const bypassCache = shouldBypassEndpointCache(
+        ctx.request?.headers as Record<string, unknown>,
+      );
+
+      const populate = {
+        blog_category: true,
+        blog_tags: true,
+        blog_author: {
+          populate: {
+            Avatar: true,
+          },
+        },
+        FeaturedImage: true,
       };
-      void viewService.queueBlogPostView(Number(cachedPayload.data.id));
 
-      return cachedPayload;
-    }
+      if (!bypassCache) {
+        const cacheKey = buildCacheKey({
+          routeId: "blog-post.by-slug",
+          params: { slug },
+          query: ctx.query || {},
+          locale: String(ctx.query?.locale || ""),
+          authSegment: "anon",
+        });
 
-    const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
-    const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
+        const cachedPayload = await withCache(
+          {
+            key: cacheKey,
+            ttlSec: getCacheTtlFromEnv("CACHE_TTL_BLOG_SLUG_SEC", 120),
+            bypass: false,
+            onStatus: (status) => setCacheHeaderIfEnabled(ctx, status),
+            shouldCacheValue: (value) => Boolean((value as any)?.data),
+          },
+          async () => {
+            const posts = await strapi.entityService.findMany("api::blog-post.blog-post", {
+              filters: { Slug: slug, Status: "Published" },
+              populate,
+              limit: 1,
+            });
 
-    const posts = await strapi.entityService.findMany("api::blog-post.blog-post", {
-      filters: { Slug: slug },
-      populate,
-      limit: 1,
-    });
+            const post = posts[0];
+            if (!post) return null;
+            return { data: post };
+          },
+        );
 
-    const post = posts[0];
+        if (!cachedPayload?.data) {
+          return ctx.notFound("Post not found");
+        }
 
-    if (!post) {
-      return ctx.notFound("Post not found");
-    }
+        const viewService = strapi.service("api::product-view.product-view") as {
+          queueBlogPostView: (blogPostId: number) => Promise<void>;
+        };
+        void viewService.queueBlogPostView(Number(cachedPayload.data.id));
 
-    if (!hasEditorRole && post.Status !== "Published") {
-      return ctx.notFound("Post not found");
-    }
+        return cachedPayload;
+      }
 
-    if (post.Status === "Published" && !hasEditorRole) {
-      const viewService = strapi.service("api::product-view.product-view") as {
-        queueBlogPostView: (blogPostId: number) => Promise<void>;
-      };
-      void viewService.queueBlogPostView(Number(post.id));
-    }
+      const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
+      const actorRoleName = await this.getActorRoleName(user?.id, user);
+      const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
 
-    setCacheHeaderIfEnabled(ctx, "BYPASS");
-    return { data: post };
-  }
-}));
+      const posts = await strapi.entityService.findMany("api::blog-post.blog-post", {
+        filters: { Slug: slug },
+        populate,
+        limit: 1,
+      });
+
+      const post = posts[0];
+
+      if (!post) {
+        return ctx.notFound("Post not found");
+      }
+
+      if (!hasEditorRole && post.Status !== "Published") {
+        return ctx.notFound("Post not found");
+      }
+
+      if (post.Status === "Published" && !hasEditorRole) {
+        const viewService = strapi.service("api::product-view.product-view") as {
+          queueBlogPostView: (blogPostId: number) => Promise<void>;
+        };
+        void viewService.queueBlogPostView(Number(post.id));
+      }
+
+      setCacheHeaderIfEnabled(ctx, "BYPASS");
+      return { data: post };
+    },
+  }),
+);
 
 export default blogPostController;

@@ -1,5 +1,9 @@
 import type { ReactNode } from "react";
-import { FOUNDER_HIDDEN_PARENT_IDS } from "@/constants/roleAccess";
+import {
+  FOUNDER_HIDDEN_PARENT_IDS,
+  STORE_MANAGER_HIDDEN_CHILD_IDS,
+  STORE_MANAGER_HIDDEN_PARENT_IDS,
+} from "@/constants/roleAccess";
 import ProductIcon from "@/components/SuperAdmin/Layout/Icons/ProductIcon";
 import OrdersIcon from "@/components/SuperAdmin/Layout/Icons/OrdersIcon";
 import UsersIcon from "@/components/SuperAdmin/Layout/Icons/UsersIcon";
@@ -90,11 +94,11 @@ const superAdminSidebar: SidebarItem[] = [
     icon: <ProductIcon />,
 
     children: [
-      // {
-      //   id: "product-attributes",
-      //   label: "ویژگی ها",
-      //   href: "/super-admin/products/attributes",
-      // },
+      {
+        id: "product-attributes",
+        label: "ویژگی ها",
+        href: "/super-admin/products/attributes",
+      },
       {
         id: "productس",
         label: " محصولات",
@@ -120,11 +124,11 @@ const superAdminSidebar: SidebarItem[] = [
         label: "دسته بندی ها",
         href: "/super-admin/products/categories",
       },
-      // {
-      //   id: "product-tags",
-      //   label: "برچسب ها",
-      //   href: "/super-admin/products/tags",
-      // },
+      {
+        id: "product-tags",
+        label: "برچسب ها",
+        href: "/super-admin/products/tags",
+      },
       {
         id: "product-comments",
         label: "مدیریت نظرات",
@@ -376,18 +380,6 @@ const superAdminSidebar: SidebarItem[] = [
   // },
 ];
 
-const STORE_MANAGER_HIDDEN_PARENT_IDS = new Set([
-  "users",
-  "reports",
-  "shipping",
-  "settings",
-  "blog",
-  "customization",
-  "stories",
-  "faq",
-]);
-const STORE_MANAGER_HIDDEN_CHILD_IDS = new Set(["product-comments", "admin-activity"]);
-
 const cloneWithFilteredChildren = (item: SidebarItem) => {
   const filteredChildren = item.children
     .filter((child) => !STORE_MANAGER_HIDDEN_CHILD_IDS.has(child.id))
@@ -433,7 +425,7 @@ export const getSidebarItemsForRole = (roleName?: string | null): SidebarItem[] 
             children: [],
           };
         }
-        return { ...item, children: item.children.map((child) => ({ ...child })) };
+        return cloneWithFilteredChildren(item);
       });
   }
 

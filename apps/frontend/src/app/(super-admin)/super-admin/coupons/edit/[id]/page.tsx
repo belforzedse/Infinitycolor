@@ -7,8 +7,6 @@ import { useParams, useRouter } from "next/navigation";
 import { apiClient } from "@/services";
 import { useEffect, useState } from "react";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
-import StoreManagerNotice from "@/components/SuperAdmin/StoreManagerNotice";
 import CouponProductSelector, {
   type SelectedProduct,
 } from "@/components/SuperAdmin/Coupons/ProductSelector";
@@ -89,7 +87,6 @@ const parseNumericInput = (value: unknown): number | null => {
 };
 
 export default function Page() {
-  const { isStoreManager, isLoading } = useCurrentUser();
   const router = useRouter();
   const [data, setData] = useState<Coupon | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,16 +96,6 @@ export default function Page() {
   const { id } = useParams();
 
   useEffect(() => {
-    if (isStoreManager) {
-      setLoading(false);
-    }
-  }, [isStoreManager]);
-
-  useEffect(() => {
-    if (isStoreManager || isLoading) {
-      return;
-    }
-
     const fetchData = async () => {
       try {
         const populate = "?populate[products]=*&populate[delivery_methods]=*";
@@ -176,16 +163,10 @@ export default function Page() {
     };
 
     fetchData();
-  }, [id, isStoreManager, isLoading]);
+  }, [id]);
 
-  if (isLoading || loading) {
+  if (loading) {
     return <div>در حال بارگذاری...</div>;
-  }
-
-  if (isStoreManager) {
-    return (
-      <StoreManagerNotice description="برای ویرایش کد تخفیف باید با نقش سوپر ادمین وارد شوید." />
-    );
   }
 
   if (!data) {
@@ -225,7 +206,7 @@ export default function Page() {
             console.error(error);
           }
         }}
-        />
+      />
       <div className="mt-6 space-y-6">
         <CouponProductSelector
           products={selectedProducts}

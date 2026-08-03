@@ -2,6 +2,15 @@
  * Custom router for event-log APIs
  */
 
+import { ROLE_NAMES } from "../../../utils/roles";
+
+const superadminPolicy = [
+  {
+    name: "global::role-based",
+    config: { roles: [ROLE_NAMES.SUPERADMIN] },
+  },
+];
+
 export default {
   routes: [
     {
@@ -26,6 +35,7 @@ export default {
       handler: "event-log.getAdminEvents",
       config: {
         auth: { scope: [] },
+        policies: superadminPolicy,
       },
     },
   ],

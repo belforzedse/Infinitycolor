@@ -1,10 +1,19 @@
-import { MANAGEMENT_ROLES } from "../../../utils/roles";
+import { ROLE_NAMES, STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
 
-const adminPolicy = [
+const superadminPolicy = [
   {
     name: "global::role-based",
     config: {
-      roles: MANAGEMENT_ROLES,
+      roles: [ROLE_NAMES.SUPERADMIN],
+    },
+  },
+];
+
+const operationalPolicy = [
+  {
+    name: "global::role-based",
+    config: {
+      roles: STORE_MANAGER_PLUS_ROLES,
     },
   },
 ];
@@ -17,9 +26,17 @@ export default {
       handler: "plugin-user.createPluginUser",
       config: {
         auth: { scope: [] },
-        policies: adminPolicy,
+        policies: superadminPolicy,
+      },
+    },
+    {
+      method: "GET",
+      path: "/sp/customers/search",
+      handler: "plugin-user.searchCustomers",
+      config: {
+        auth: { scope: [] },
+        policies: operationalPolicy,
       },
     },
   ],
 };
-

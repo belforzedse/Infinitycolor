@@ -2,6 +2,22 @@
  * Custom router for admin-activity APIs
  */
 
+import { ROLE_NAMES } from "../../../utils/roles";
+
+const superadminPolicy = [
+  {
+    name: "global::role-based",
+    config: { roles: [ROLE_NAMES.SUPERADMIN] },
+  },
+];
+
+const founderReportingPolicy = [
+  {
+    name: "global::role-based",
+    config: { roles: [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.FOUNDER] },
+  },
+];
+
 export default {
   routes: [
     {
@@ -10,7 +26,7 @@ export default {
       handler: "admin-activity.findMyActivities",
       config: {
         auth: { scope: [] },
-        policies: [],
+        policies: superadminPolicy,
         middlewares: [],
       },
     },
@@ -20,7 +36,7 @@ export default {
       handler: "admin-activity.findOrderActivities",
       config: {
         auth: { scope: [] },
-        policies: [],
+        policies: founderReportingPolicy,
         middlewares: [],
       },
     },
@@ -30,7 +46,7 @@ export default {
       handler: "admin-activity.findUserActivities",
       config: {
         auth: { scope: [] },
-        policies: [],
+        policies: superadminPolicy,
         middlewares: [],
       },
     },
@@ -40,7 +56,7 @@ export default {
       handler: "admin-activity.findProductActivities",
       config: {
         auth: { scope: [] },
-        policies: [],
+        policies: superadminPolicy,
         middlewares: [],
       },
     },
@@ -50,11 +66,9 @@ export default {
       handler: "admin-activity.findReport",
       config: {
         auth: { scope: [] },
-        policies: [],
+        policies: superadminPolicy,
         middlewares: [],
       },
     },
   ],
 };
-
-

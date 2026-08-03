@@ -41,6 +41,109 @@ type GranularSpec = {
 type RolePermissionSpec = FullAccessSpec | GranularSpec;
 
 const READ_ACTIONS = ["find", "findOne"] as const;
+const CREATE_UPDATE_ACTIONS = [...READ_ACTIONS, "create", "update"] as const;
+const CHILD_CRUD_ACTIONS = [...CREATE_UPDATE_ACTIONS, "delete"] as const;
+
+const FOUNDER_REPORT_ACTIONS = [
+  "productSales",
+  "productOverview",
+  "productTrends",
+  "productBreakdown",
+  "productPerformance",
+  "productInventory",
+  "productDetail",
+  "productExport",
+] as const;
+
+/**
+ * Store managers inherit the normal customer surface and receive only the
+ * operational commerce actions listed here. Keep this list explicit: using
+ * mode=all caused newly-added financial and role-management controllers to be
+ * granted automatically.
+ */
+const STORE_MANAGER_GRANTS: Record<string, ControllerActions> = {
+  "api::product": {
+    product: [...CREATE_UPDATE_ACTIONS, "search", "generateVariationCombinations"],
+  },
+  "api::product-category": {
+    "product-category": CREATE_UPDATE_ACTIONS,
+  },
+  "api::product-category-content": {
+    "product-category-content": CHILD_CRUD_ACTIONS,
+  },
+  "api::product-faq": {
+    "product-faq": CHILD_CRUD_ACTIONS,
+  },
+  "api::product-size-helper": {
+    "product-size-helper": CHILD_CRUD_ACTIONS,
+  },
+  "api::product-tag": {
+    "product-tag": CREATE_UPDATE_ACTIONS,
+  },
+  "api::product-variation": {
+    "product-variation": CHILD_CRUD_ACTIONS,
+  },
+  "api::product-variation-color": {
+    "product-variation-color": CREATE_UPDATE_ACTIONS,
+  },
+  "api::product-variation-size": {
+    "product-variation-size": CREATE_UPDATE_ACTIONS,
+  },
+  "api::product-variation-model": {
+    "product-variation-model": CREATE_UPDATE_ACTIONS,
+  },
+  "api::product-attribute": {
+    "product-attribute": CREATE_UPDATE_ACTIONS,
+  },
+  "api::product-attribute-term": {
+    "product-attribute-term": CREATE_UPDATE_ACTIONS,
+  },
+  "api::product-attribute-assignment": {
+    "product-attribute-assignment": CHILD_CRUD_ACTIONS,
+  },
+  "api::product-stock": {
+    "product-stock": CREATE_UPDATE_ACTIONS,
+  },
+  "api::discount": {
+    discount: CREATE_UPDATE_ACTIONS,
+  },
+  "api::general-discount": {
+    "general-discount": CREATE_UPDATE_ACTIONS,
+  },
+  "api::shipping": {
+    shipping: CREATE_UPDATE_ACTIONS,
+  },
+  "api::shipping-city": {
+    "shipping-city": READ_ACTIONS,
+  },
+  "api::shipping-province": {
+    "shipping-province": READ_ACTIONS,
+  },
+  "api::order": {
+    order: [
+      ...READ_ACTIONS,
+      "generateAnipoBarcode",
+      "adminAdjustItems",
+      "adminUpdateNotes",
+      "adminTransition",
+      "adminCancel",
+      "adminVoidBarcode",
+      "decrementStockManual",
+    ],
+  },
+  "api::product-review": {
+    "product-review": [...READ_ACTIONS, "update"],
+  },
+  "api::product-review-reply": {
+    "product-review-reply": CHILD_CRUD_ACTIONS,
+  },
+  "api::plugin-user": {
+    "plugin-user": ["searchCustomers"],
+  },
+  "plugin::upload": {
+    "content-api": ["find", "findOne", "upload"],
+  },
+};
 
 const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
   public: {
@@ -257,209 +360,50 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
     },
   },
   editor: {
-    mode: "all",
+    inherits: ["customer"],
+    grants: {
+      "api::blog-post": { "blog-post": CHILD_CRUD_ACTIONS },
+      "api::blog-category": { "blog-category": CHILD_CRUD_ACTIONS },
+      "api::blog-tag": { "blog-tag": CHILD_CRUD_ACTIONS },
+      "api::blog-author": { "blog-author": CHILD_CRUD_ACTIONS },
+      "api::blog-comment": { "blog-comment": CHILD_CRUD_ACTIONS },
+      "plugin::upload": {
+        "content-api": ["find", "findOne", "upload"],
+      },
+    },
   },
-  "store-manager": { mode: "all" },
-  founder: { mode: "all" },
+  "store-manager": {
+    inherits: ["customer"],
+    grants: STORE_MANAGER_GRANTS,
+  },
+  founder: {
+    inherits: ["store-manager"],
+    grants: {
+      "api::admin-activity": {
+        "admin-activity": ["findOrderActivities"],
+      },
+      "api::report": {
+        report: FOUNDER_REPORT_ACTIONS,
+      },
+    },
+  },
   superadmin: { mode: "all" },
 };
 
 // Optional escape hatch to allow full Content API access for selected roles.
 // WARNING: Enabling this in production will expose write access to the Content API.
 const CONTENT_API_ALLOW_ALL = process.env.STRAPI_CONTENT_API_ALLOW_ALL === "true";
+if (CONTENT_API_ALLOW_ALL && process.env.NODE_ENV === "production") {
+  throw new Error(
+    "STRAPI_CONTENT_API_ALLOW_ALL is not supported in production because it overrides the commerce authorization contract",
+  );
+}
 if (CONTENT_API_ALLOW_ALL) {
   const allowRoles = ["public", "customer"];
   allowRoles.forEach((role) => {
     ROLE_PERMISSION_SPECS[role] = { mode: "all" };
   });
 }
-
-type RestrictedController = {
-  typeKey: string;
-  controller: string;
-  allowActions?: ReadonlyArray<string>;
-};
-
-const STORE_MANAGER_RESTRICTED_CONTROLLERS: RestrictedController[] = [
-  { typeKey: "api::report", controller: "report" },
-  {
-    typeKey: "api::discount",
-    controller: "discount",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product",
-    controller: "product",
-    // Allow all actions except "delete" (permanent delete)
-    // Store managers can soft delete (update removedAt) but not hard delete
-    allowActions: ["find", "findOne", "create", "update", "search"],
-  },
-  {
-    typeKey: "api::product-category",
-    controller: "product-category",
-    // Store managers can add categories while edits and destructive actions remain superadmin-only.
-    allowActions: [...READ_ACTIONS, "create"],
-  },
-  {
-    typeKey: "api::product-attribute",
-    controller: "product-attribute",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-attribute-term",
-    controller: "product-attribute-term",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-attribute-assignment",
-    controller: "product-attribute-assignment",
-    allowActions: READ_ACTIONS,
-  },
-  // Restrict users management - completely disabled for store managers
-  { typeKey: "plugin::users-permissions", controller: "user" , allowActions: READ_ACTIONS},
-  // Restrict admin activity - store managers cannot view admin activities
-  { typeKey: "api::admin-activity", controller: "admin-activity", allowActions: [] },
-  // Restrict destructive maintenance actions to superadmin only
-  { typeKey: "api::commerce-maintenance", controller: "commerce-maintenance", allowActions: [] },
-  // Restrict user activity - store managers cannot view other users' activities
-  { typeKey: "api::user-activity", controller: "user-activity", allowActions: [] },
-  // Restrict wallet management - only superadmin can view/adjust user wallets (admin actions).
-  // Management roles remain customer-capable and may read only their own wallet.
-  {
-    typeKey: "api::local-user-wallet",
-    controller: "local-user-wallet",
-    allowActions: ["getCurrentUserWallet"],
-  },
-  // Restrict blog management - store managers can only read blog posts (like normal users)
-  { typeKey: "api::blog-post", controller: "blog-post", allowActions: READ_ACTIONS },
-  { typeKey: "api::blog-category", controller: "blog-category", allowActions: READ_ACTIONS },
-  { typeKey: "api::blog-tag", controller: "blog-tag", allowActions: READ_ACTIONS },
-  { typeKey: "api::blog-author", controller: "blog-author", allowActions: READ_ACTIONS },
-  { typeKey: "api::blog-comment", controller: "blog-comment", allowActions: READ_ACTIONS },
-  // Allow store managers to update site settings used by the super-admin customization pages.
-  { typeKey: "api::settings", controller: "settings", allowActions: ["find", "update"] },
-];
-
-const EDITOR_RESTRICTED_CONTROLLERS: RestrictedController[] = [
-  {
-    typeKey: "api::product",
-    controller: "product",
-    allowActions: [...READ_ACTIONS, "search"],
-  },
-  {
-    typeKey: "api::product-category",
-    controller: "product-category",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-category-content",
-    controller: "product-category-content",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-faq",
-    controller: "product-faq",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-size-helper",
-    controller: "product-size-helper",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-tag",
-    controller: "product-tag",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-variation",
-    controller: "product-variation",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-variation-color",
-    controller: "product-variation-color",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-variation-model",
-    controller: "product-variation-model",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-variation-size",
-    controller: "product-variation-size",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-attribute",
-    controller: "product-attribute",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-attribute-term",
-    controller: "product-attribute-term",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-attribute-assignment",
-    controller: "product-attribute-assignment",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-stock",
-    controller: "product-stock",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-review",
-    controller: "product-review",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-review-reply",
-    controller: "product-review-reply",
-    allowActions: READ_ACTIONS,
-  },
-  {
-    typeKey: "api::product-review-like",
-    controller: "product-review-like",
-    allowActions: READ_ACTIONS,
-  },
-  { typeKey: "api::post", controller: "post", allowActions: READ_ACTIONS },
-  { typeKey: "api::post-comment", controller: "post-comment", allowActions: READ_ACTIONS },
-  { typeKey: "api::post-like", controller: "post-like", allowActions: [] },
-  { typeKey: "api::post-bookmark", controller: "post-bookmark", allowActions: [] },
-  { typeKey: "api::post-comment-like", controller: "post-comment-like", allowActions: [] },
-];
-
-const FOUNDER_REPORT_ACTIONS = [
-  "productSales",
-  "productOverview",
-  "productTrends",
-  "productPerformance",
-  "productInventory",
-  "productDetail",
-  "productExport",
-] as const;
-
-// Founder is store-manager-plus, not near-superadmin: it keeps store-manager restrictions
-// but allows order-scoped audit logs and the sales-reporting workspace.
-const FOUNDER_RESTRICTED_CONTROLLERS: RestrictedController[] =
-  STORE_MANAGER_RESTRICTED_CONTROLLERS.map((restriction) => {
-    if (
-      restriction.typeKey === "api::admin-activity" &&
-      restriction.controller === "admin-activity"
-    ) {
-      return { ...restriction, allowActions: ["findOrderActivities"] };
-    }
-
-    if (restriction.typeKey === "api::report" && restriction.controller === "report") {
-      return { ...restriction, allowActions: FOUNDER_REPORT_ACTIONS };
-    }
-
-    return restriction;
-  });
 
 /**
  * Determines whether a role permission spec grants all permissions.
@@ -490,9 +434,7 @@ function applyControllerActions(
 ) {
   const typeEntry = tree[typeKey];
   if (!typeEntry?.controllers?.[controllerName]) {
-    strapi.log.warn(
-      `Permission template skipped unknown controller: ${typeKey}.${controllerName}`,
-    );
+    strapi.log.warn(`Permission template skipped unknown controller: ${typeKey}.${controllerName}`);
     return;
   }
 
@@ -563,22 +505,7 @@ function getDefaultPermissions(strapi: Strapi, roleType: string): Record<string,
   }
 
   if (isFullAccessSpec(spec)) {
-    const tree = usersPermissionsService.getActions({ defaultEnable: true });
-    if (roleType === "store-manager") {
-      applyRestrictedControllers(tree, STORE_MANAGER_RESTRICTED_CONTROLLERS, strapi);
-    } else if (roleType === "founder") {
-      applyRestrictedControllers(tree, FOUNDER_RESTRICTED_CONTROLLERS, strapi);
-    } else if (roleType === "editor") {
-      // Editors get store-manager restrictions EXCEPT blog + settings (content editors manage these)
-      const editorRestrictions = STORE_MANAGER_RESTRICTED_CONTROLLERS.filter(
-        (restriction) =>
-          !restriction.typeKey.startsWith("api::blog-") &&
-          restriction.typeKey !== "api::settings"
-      );
-      applyRestrictedControllers(tree, editorRestrictions, strapi);
-      applyRestrictedControllers(tree, EDITOR_RESTRICTED_CONTROLLERS, strapi);
-    }
-    return tree;
+    return usersPermissionsService.getActions({ defaultEnable: true });
   }
 
   const tree = usersPermissionsService.getActions({ defaultEnable: false });
@@ -586,35 +513,62 @@ function getDefaultPermissions(strapi: Strapi, roleType: string): Record<string,
   return tree;
 }
 
-function applyRestrictedControllers(
-  tree: Record<string, any>,
-  entries: RestrictedController[],
-  strapi: Strapi,
-) {
-  entries.forEach(({ typeKey, controller, allowActions }) => {
-    const controllerEntry = tree[typeKey]?.controllers?.[controller];
-    if (!controllerEntry) {
-      strapi.log.warn(
-        `Permission restriction skipped unknown controller: ${typeKey}.${controller}`,
-      );
-      return;
-    }
-
-    const allowed = new Set(allowActions ?? []);
-    Object.entries(controllerEntry).forEach(([actionName, action]: [string, any]) => {
-      if (allowed.size > 0 && allowed.has(actionName)) {
-        return;
-      }
-      action.enabled = false;
-    });
-  });
-}
-
 export const __rolePermissionTestUtils = {
   getDefaultPermissions,
+  ensurePluginRolesAndPermissions: (strapi: Strapi) => ensurePluginRolesAndPermissions(strapi),
 };
 
-async function assignRolePermissions(strapi: Strapi, role: { id: number; name: string; type?: string | null }) {
+function collectEnabledPermissionActions(tree: Record<string, any>): string[] {
+  const actions: string[] = [];
+
+  Object.entries(tree).forEach(([typeKey, typeEntry]: [string, any]) => {
+    Object.entries(typeEntry?.controllers || {}).forEach(
+      ([controllerName, controller]: [string, any]) => {
+        Object.entries(controller || {}).forEach(([actionName, action]: [string, any]) => {
+          if (action?.enabled) {
+            actions.push(`${typeKey}.${controllerName}.${actionName}`);
+          }
+        });
+      },
+    );
+  });
+
+  return actions.sort();
+}
+
+async function verifyPersistedRolePermissions(
+  strapi: Strapi,
+  role: { id: number; name: string },
+  expectedTree: Record<string, any>,
+) {
+  const persisted = await strapi
+    .query("plugin::users-permissions.role")
+    .findOne({ where: { id: role.id }, populate: ["permissions"] });
+  const expected = collectEnabledPermissionActions(expectedTree);
+  const actual = ((persisted as any)?.permissions || [])
+    .map((permission: any) => permission.action)
+    .sort();
+
+  if (
+    expected.length !== actual.length ||
+    expected.some((action, index) => action !== actual[index])
+  ) {
+    const expectedSet = new Set(expected);
+    const actualSet = new Set(actual);
+    const missing = expected.filter((action) => !actualSet.has(action));
+    const unexpected = actual.filter((action) => !expectedSet.has(action));
+    throw new Error(
+      `Persisted permission verification failed for role: ${role.name}; ` +
+        `expected=${expected.length} actual=${actual.length} ` +
+        `missing=[${missing.join(",")}] unexpected=[${unexpected.join(",")}]`,
+    );
+  }
+}
+
+async function assignRolePermissions(
+  strapi: Strapi,
+  role: { id: number; name: string; type?: string | null },
+) {
   const roleType = role?.type;
   if (!roleType || !ROLE_PERMISSION_SPECS[roleType]) {
     strapi.log.debug(`No permission template configured for role: ${role?.name ?? roleType}`);
@@ -623,15 +577,14 @@ async function assignRolePermissions(strapi: Strapi, role: { id: number; name: s
 
   try {
     const permissions = getDefaultPermissions(strapi, roleType);
-    await strapi
-      .plugin("users-permissions")
-      .service("role")
-      .updateRole(role.id, { permissions });
+    await strapi.plugin("users-permissions").service("role").updateRole(role.id, { permissions });
+    await verifyPersistedRolePermissions(strapi, role, permissions);
     strapi.log.info(`✓ Assigned permissions for role: ${role.name}`);
   } catch (error) {
-    strapi.log.warn(`Could not assign permissions for role: ${role.name}`, {
+    strapi.log.error(`Could not assign permissions for role: ${role.name}`, {
       error: (error as any)?.message,
     });
+    throw error;
   }
 }
 
@@ -655,12 +608,73 @@ function isCounterOnlyUpdate(uid: string, payload: Record<string, unknown> | und
     return false;
   }
 
-  const meaningfulFields = Object.keys(payload).filter((field) => !UPDATE_METADATA_FIELDS.has(field));
+  const meaningfulFields = Object.keys(payload).filter(
+    (field) => !UPDATE_METADATA_FIELDS.has(field),
+  );
   if (meaningfulFields.length === 0) {
     return false;
   }
 
   return meaningfulFields.every((field) => allowedFields.has(field));
+}
+
+async function ensurePluginRolesAndPermissions(strapi: Strapi) {
+  const roles = [
+    {
+      name: "Superadmin",
+      description: "Full access to the system (internal use)",
+      type: "superadmin",
+    },
+    {
+      name: "Store manager",
+      description: "Operational commerce access without financial or destructive administration",
+      type: "store-manager",
+    },
+    {
+      name: "Editor",
+      description:
+        "Blog content editor - can manage blog posts, categories, tags, authors, and comments",
+      type: "editor",
+    },
+    {
+      name: "Founder",
+      description:
+        "Store manager plus founder-specific operational access, without superadmin-only destructive actions",
+      type: "founder",
+    },
+    { name: "Customer", description: "End customer role", type: "customer" },
+  ];
+
+  for (const roleDefinition of roles) {
+    const existing = await strapi
+      .query("plugin::users-permissions.role")
+      .findOne({ where: { name: roleDefinition.name } });
+    const role = existing
+      ? await strapi.query("plugin::users-permissions.role").update({
+          where: { id: existing.id },
+          data: {
+            description: roleDefinition.description,
+            type: roleDefinition.type,
+          },
+        })
+      : await strapi.query("plugin::users-permissions.role").create({
+          data: roleDefinition,
+        });
+
+    strapi.log.info(
+      `${existing ? "✓ Role already exists" : "✓ Created users-permissions role"}: ${roleDefinition.name}`,
+      { roleId: role.id },
+    );
+    await assignRolePermissions(strapi, role as any);
+  }
+
+  const publicRole = await strapi
+    .query("plugin::users-permissions.role")
+    .findOne({ where: { type: "public" } });
+  if (!publicRole) {
+    throw new Error("Public role not found; permissions could not be synchronized");
+  }
+  await assignRolePermissions(strapi, publicRole as any);
 }
 
 export const RedisClient = createClient({
@@ -731,9 +745,7 @@ export default {
     }
 
     if (snappayHardenedInitiationEnabled) {
-      const legacyBackfill = await backfillLegacySnappayAttempts(
-        strapi as any,
-      );
+      const legacyBackfill = await backfillLegacySnappayAttempts(strapi as any);
       strapi.log.info("Hardened SnappPay runtime configuration validated");
       strapi.log.info("Legacy SnappPay recovery records checked", {
         created: legacyBackfill.created,
@@ -876,9 +888,7 @@ export default {
             };
             if (lu?.Password) {
               const storedPassword = String(lu.Password);
-              createData.password = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(
-                storedPassword,
-              )
+              createData.password = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(storedPassword)
                 ? storedPassword
                 : await bcrypt.hash(storedPassword, 10);
             }
@@ -945,84 +955,9 @@ export default {
         strapi.log.error("Failed to migrate local users to plugin users", e);
       }
     })();
-    // Ensure plugin roles exist: Superadmin, Owner, Store manager, Customer
-    (async function ensurePluginRoles() {
-      try {
-        const roles = [
-          {
-            name: "Superadmin",
-            description: "Full access to the system (internal use)",
-            type: "superadmin",
-          },
-          {
-            name: "Store manager",
-            description: "Manage store and orders, cannot manage user wallets",
-            type: "store-manager",
-          },
-          {
-            name: "Editor",
-            description: "Blog content editor - can manage blog posts, categories, tags, authors, and comments",
-            type: "editor",
-          },
-          {
-            name: "Founder",
-            description: "Store manager plus founder-specific operational access, without superadmin-only destructive actions",
-            type: "founder",
-          },
-          { name: "Customer", description: "End customer role", type: "customer" },
-        ];
-
-        for (const r of roles) {
-          try {
-            const existing = await strapi
-              .query("plugin::users-permissions.role")
-              .findOne({ where: { name: r.name } });
-            if (!existing) {
-              const created = await strapi
-                .query("plugin::users-permissions.role")
-                .create({
-                  data: {
-                    name: r.name,
-                    description: r.description,
-                    type: r.type,
-                  },
-                });
-              strapi.log.info(`✓ Created users-permissions role: ${r.name}`, { roleId: created.id });
-
-              await assignRolePermissions(strapi, created as any);
-            } else {
-              strapi.log.info(`✓ Role already exists: ${r.name}`, { roleId: existing.id });
-              await assignRolePermissions(strapi, existing as any);
-            }
-          } catch (roleError) {
-            strapi.log.error(`✗ Failed to create role: ${r.name}`, {
-              error: roleError?.message,
-              details: roleError,
-            });
-          }
-        }
-      } catch (e) {
-        strapi.log.error("✗ Failed to ensure plugin roles", {
-          error: e?.message,
-          details: e,
-        });
-      }
-
-      try {
-        const publicRole = await strapi
-          .query("plugin::users-permissions.role")
-          .findOne({ where: { type: "public" } });
-        if (publicRole) {
-          await assignRolePermissions(strapi, publicRole as any);
-        } else {
-          strapi.log.warn("Public role not found; permissions were not updated");
-        }
-      } catch (error) {
-        strapi.log.error("Failed to assign permissions for public role", {
-          error: (error as any)?.message,
-        });
-      }
-    })();
+    // Authorization is a startup invariant. Await and verify the persisted
+    // grant rows so the API never serves with stale Store manager permissions.
+    await ensurePluginRolesAndPermissions(strapi);
 
     // Ensure settings single type exists (idempotent)
     (async function ensureSettings() {
@@ -1125,8 +1060,7 @@ export default {
               stores: [
                 {
                   name: "گرگان",
-                  address:
-                    "گلستان، گرگان، بلوار ناهارخوران، نبش عدالت ۶۸، کد پستی ۴۹۱۶۹۷۳۳۸۱",
+                  address: "گلستان، گرگان، بلوار ناهارخوران، نبش عدالت ۶۸، کد پستی ۴۹۱۶۹۷۳۳۸۱",
                   phones: [{ label: "تلفن فروشگاه", number: "017-325-304-39" }],
                   showInFooter: true,
                   showInAbout: true,
@@ -1267,11 +1201,9 @@ export default {
         let resetCount = 0;
         for (const category of categories) {
           if (!category.isMainCategory) continue;
-          await strapi.entityService.update(
-            "api::product-category.product-category",
-            category.id,
-            { data: { isMainCategory: false } },
-          );
+          await strapi.entityService.update("api::product-category.product-category", category.id, {
+            data: { isMainCategory: false },
+          });
           resetCount += 1;
         }
 
@@ -1318,11 +1250,9 @@ export default {
           const isMainCategory = Boolean(category.isMainCategory);
           if (!isChild || !isMainCategory) continue;
 
-          await strapi.entityService.update(
-            "api::product-category.product-category",
-            category.id,
-            { data: { isMainCategory: false } },
-          );
+          await strapi.entityService.update("api::product-category.product-category", category.id, {
+            data: { isMainCategory: false },
+          });
           demotedChildren += 1;
         }
 

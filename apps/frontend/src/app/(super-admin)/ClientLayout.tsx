@@ -9,7 +9,7 @@ import { UserService } from "@/services";
 import { HTTP_STATUS } from "@/constants/api";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import { useAtomValue, useSetAtom } from "jotai";
-import { isFounderRole, canFounderAccessPath } from "@/constants/roleAccess";
+import { canRoleAccessPath, getRoleAdminLandingPath } from "@/constants/roleAccess";
 import clsx from "clsx";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 
@@ -159,9 +159,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (!isAuthorized) return; // Only check if already authorized
 
-    const interval = setInterval(() => {
-      checkAuthSilently();
-    }, 5 * 60 * 1000); // 5 minutes
+    const interval = setInterval(
+      () => {
+        checkAuthSilently();
+      },
+      5 * 60 * 1000,
+    ); // 5 minutes
 
     return () => {
       clearInterval(interval);
@@ -187,17 +190,15 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     }
   }, [isLoading, isAuthorized, redirectToPrevious]);
 
-  // Founder route guard: Founders are admins (pass the isAdmin gate) but must not open
-  // restricted sections by URL. Centralized here so it applies on direct loads and client
-  // navigations. Real enforcement is the backend 403s; this keeps restricted UIs unreachable.
-  const founderBlocked =
-    isFounderRole(currentUser?.roleName) && !canFounderAccessPath(pathname);
+  // Backend permissions are authoritative; this centralized route guard keeps
+  // Store manager and Founder navigation consistent with those grants.
+  const roleBlocked = !canRoleAccessPath(currentUser?.roleName, pathname);
 
   useEffect(() => {
-    if (isAuthorized && founderBlocked) {
-      router.replace("/super-admin");
+    if (isAuthorized && roleBlocked) {
+      router.replace(getRoleAdminLandingPath(currentUser?.roleName));
     }
-  }, [isAuthorized, founderBlocked, router]);
+  }, [currentUser?.roleName, isAuthorized, roleBlocked, router]);
 
   if (isLoading) {
     return (
@@ -214,8 +215,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return null;
   }
 
-  // Don't render restricted content for Founders while the guard redirects.
-  if (founderBlocked) {
+  // Don't render restricted content while the guard redirects.
+  if (roleBlocked) {
     return null;
   }
 
@@ -269,10 +270,7 @@ function Tablet({ children }: { children: React.ReactNode }) {
 
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       // Only collapse if click is outside sidebar
-      if (
-        sidebarRef.current &&
-        !sidebarRef.current.contains(event.target as Node)
-      ) {
+      if (sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
         setIsSidebarCollapsed(true);
       }
     };
@@ -292,8 +290,8 @@ function Tablet({ children }: { children: React.ReactNode }) {
       <div
         ref={sidebarRef}
         className={clsx(
-          "sticky top-0 h-screen overflow-y-auto transition-all duration-300 z-10 flex-shrink-0",
-          isSidebarCollapsed ? "w-[80px]" : "w-[280px]"
+          "sticky top-0 z-10 h-screen flex-shrink-0 overflow-y-auto transition-all duration-300",
+          isSidebarCollapsed ? "w-[80px]" : "w-[280px]",
         )}
       >
         <Sidebar
@@ -304,7 +302,7 @@ function Tablet({ children }: { children: React.ReactNode }) {
         />
       </div>
       <div className="flex w-full min-w-0 flex-1 flex-col gap-3 overflow-visible p-4">
-        <div className="w-full max-w-screen-3xl space-y-3 mx-auto min-w-0">
+        <div className="mx-auto w-full min-w-0 max-w-screen-3xl space-y-3">
           <Header onMenuClick={() => {}} />
           {children}
         </div>
@@ -320,8 +318,8 @@ function Desktop({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen gap-5 bg-neutral-50 pl-6 lg:pl-10">
       <div
         className={clsx(
-          "sticky top-0 h-screen overflow-y-auto transition-all duration-300 z-10 flex-shrink-0",
-          isSidebarCollapsed ? "w-[80px]" : "w-[250px]"
+          "sticky top-0 z-10 h-screen flex-shrink-0 overflow-y-auto transition-all duration-300",
+          isSidebarCollapsed ? "w-[80px]" : "w-[250px]",
         )}
       >
         <Sidebar
@@ -332,7 +330,7 @@ function Desktop({ children }: { children: React.ReactNode }) {
         />
       </div>
       <div className="flex w-full min-w-0 flex-1 flex-col gap-4 p-4 lg:gap-7">
-        <div className="w-full max-w-screen-3xl min-w-0 space-y-4 lg:space-y-7 mx-auto">
+        <div className="mx-auto w-full min-w-0 max-w-screen-3xl space-y-4 lg:space-y-7">
           <Header onMenuClick={() => {}} />
           {children}
         </div>

@@ -7,6 +7,59 @@ import { validatePhone } from "../../auth/utils/validations";
 import { normalizeRequiredProfileName } from "../../auth/utils/profile-names";
 
 export default {
+  async searchCustomers(ctx) {
+    const query = String(ctx.query?.q || "").trim();
+    if (query.length < 2) {
+      ctx.badRequest("Search query must contain at least two characters");
+      return;
+    }
+
+    const requestedPageSize = Number(ctx.query?.pageSize || 6);
+    const pageSize = Number.isFinite(requestedPageSize)
+      ? Math.min(Math.max(Math.trunc(requestedPageSize), 1), 20)
+      : 6;
+    const words = query.split(/\s+/).filter(Boolean);
+    const nameFilters: Array<Record<string, unknown>> = [
+      { user_info: { FirstName: { $containsi: query } } },
+      { user_info: { LastName: { $containsi: query } } },
+    ];
+    if (words.length > 1) {
+      nameFilters.push({
+        $and: [
+          { user_info: { FirstName: { $containsi: words[0] } } },
+          { user_info: { LastName: { $containsi: words.slice(1).join(" ") } } },
+        ],
+      });
+    }
+
+    const customers = await strapi.query("plugin::users-permissions.user").findMany({
+      where: {
+        removedAt: { $null: true },
+        role: { type: "customer" },
+        $or: [{ phone: { $containsi: query } }, ...nameFilters],
+      },
+      select: ["id", "phone", "IsActive", "blocked"],
+      populate: {
+        user_info: { select: ["FirstName", "LastName"] },
+      },
+      orderBy: { id: "desc" },
+      limit: pageSize,
+    });
+
+    const data = customers.map((customer: any) => ({
+      id: customer.id,
+      phone: customer.phone,
+      firstName: customer.user_info?.FirstName || null,
+      lastName: customer.user_info?.LastName || null,
+      isActive: customer.IsActive !== false && customer.blocked !== true,
+    }));
+
+    ctx.body = {
+      data,
+      meta: { pageSize, count: data.length },
+    };
+  },
+
   async createPluginUser(ctx) {
     const {
       firstName = null,

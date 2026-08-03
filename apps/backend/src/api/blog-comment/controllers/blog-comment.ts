@@ -5,7 +5,7 @@
 
 import { factories } from "@strapi/strapi";
 import {
-  MANAGEMENT_ROLES,
+  CONTENT_EDITOR_ROLES,
   fetchUserWithRole,
   resolveCustomerTargetUserId,
   roleIsAllowed,
@@ -32,9 +32,10 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     if (ctx.state?.user) return ctx.state.user;
 
     const authHeader = ctx.request?.header?.authorization || ctx.request?.headers?.authorization;
-    const token = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
+    const token =
+      typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+        ? authHeader.split(" ")[1]
+        : null;
 
     if (!token) return null;
 
@@ -58,7 +59,9 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
   async getActorRoleName(userId?: number, fallback?: any) {
     if (!userId) {
-      return fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null;
+      return (
+        fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null
+      );
     }
 
     const userWithRole = await fetchUserWithRole(strapi, userId);
@@ -78,13 +81,13 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
     const user = (await this.resolveUserFromAuthHeader(ctx)) || ctx.state.user;
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
+    const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
 
     // If not Editor+, only show approved comments
     if (!hasEditorRole) {
       ctx.query.filters = {
         ...ctx.query.filters,
-        Status: "Approved"
+        Status: "Approved",
       };
     }
 
@@ -118,7 +121,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
     const comment = await strapi.entityService.create("api::blog-comment.blog-comment", {
       data: commentData,
-      populate: ["user", "blog_post"]
+      populate: ["user", "blog_post"],
     });
 
     return { data: comment };
@@ -136,16 +139,20 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     if (!targetUserId) return;
 
     // Get existing comment
-    const existingComment = await strapi.entityService.findOne("api::blog-comment.blog-comment", id, {
-      populate: ["user"]
-    });
+    const existingComment = await strapi.entityService.findOne(
+      "api::blog-comment.blog-comment",
+      id,
+      {
+        populate: ["user"],
+      },
+    );
 
     if (!existingComment) {
       return ctx.notFound("Comment not found");
     }
 
     // Check if user owns the comment or has Editor+ role
-    const hasEditorRole = roleIsAllowed(user?.role?.name, MANAGEMENT_ROLES);
+    const hasEditorRole = roleIsAllowed(user?.role?.name, CONTENT_EDITOR_ROLES);
 
     if (String(existingComment.user.id) !== String(targetUserId) && !hasEditorRole) {
       return ctx.forbidden("You can only edit your own comments");
@@ -158,7 +165,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
     const comment = await strapi.entityService.update("api::blog-comment.blog-comment", id, {
       data: updateData,
-      populate: ["user", "blog_post"]
+      populate: ["user", "blog_post"],
     });
 
     return { data: comment };
@@ -176,16 +183,20 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     if (!targetUserId) return;
 
     // Get existing comment
-    const existingComment = await strapi.entityService.findOne("api::blog-comment.blog-comment", id, {
-      populate: ["user"]
-    });
+    const existingComment = await strapi.entityService.findOne(
+      "api::blog-comment.blog-comment",
+      id,
+      {
+        populate: ["user"],
+      },
+    );
 
     if (!existingComment) {
       return ctx.notFound("Comment not found");
     }
 
     // Check if user owns the comment or has Editor+ role
-    const hasEditorRole = roleIsAllowed(user?.role?.name, MANAGEMENT_ROLES);
+    const hasEditorRole = roleIsAllowed(user?.role?.name, CONTENT_EDITOR_ROLES);
 
     if (String(existingComment.user.id) !== String(targetUserId) && !hasEditorRole) {
       return ctx.forbidden("You can only delete your own comments");
@@ -237,7 +248,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
     const user = (await this.resolveUserFromAuthHeader(ctx)) || ctx.state.user;
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
+    const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
 
     const filters: any = { blog_post: postId };
     if (!hasEditorRole) {
@@ -258,7 +269,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
   async approve(ctx) {
     const { user } = ctx.state;
 
-    const hasEditorRole = roleIsAllowed(user?.role?.name, MANAGEMENT_ROLES);
+    const hasEditorRole = roleIsAllowed(user?.role?.name, CONTENT_EDITOR_ROLES);
 
     if (!hasEditorRole) {
       return ctx.forbidden("You don't have permission to approve comments");
@@ -268,7 +279,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
     const comment = await strapi.entityService.update("api::blog-comment.blog-comment", id, {
       data: { Status: "Approved" },
-      populate: ["user", "blog_post"]
+      populate: ["user", "blog_post"],
     });
 
     return { data: comment };
@@ -278,7 +289,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
   async reject(ctx) {
     const { user } = ctx.state;
 
-    const hasEditorRole = roleIsAllowed(user?.role?.name, MANAGEMENT_ROLES);
+    const hasEditorRole = roleIsAllowed(user?.role?.name, CONTENT_EDITOR_ROLES);
 
     if (!hasEditorRole) {
       return ctx.forbidden("You don't have permission to reject comments");
@@ -288,9 +299,9 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
 
     const comment = await strapi.entityService.update("api::blog-comment.blog-comment", id, {
       data: { Status: "Rejected" },
-      populate: ["user", "blog_post"]
+      populate: ["user", "blog_post"],
     });
 
     return { data: comment };
-  }
+  },
 }));

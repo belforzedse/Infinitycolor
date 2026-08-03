@@ -18,6 +18,7 @@ import { unwrapCollection, unwrapEntity } from "@/utils/strapi";
 import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
 import { translateOrderStatus } from "@/utils/statusTranslations";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 // Status targets that are effectively irreversible (or trigger customer-facing
 // notifications / refunds) and therefore warrant an explicit extra warning.
@@ -65,12 +66,7 @@ type OrderResponse = {
           Amount: number;
           external_id?: string;
           external_source?: string;
-          Status:
-            | "Not Ready"
-            | "Confirmed"
-            | "Finished"
-            | "Failed"
-            | "Cancelled";
+          Status: "Not Ready" | "Confirmed" | "Finished" | "Failed" | "Cancelled";
           contract_transactions?: {
             data: Array<{
               id: string;
@@ -152,6 +148,8 @@ type OrderResponse = {
 };
 
 export default function EditOrderPage() {
+  const { isStoreManager, isFounder } = useCurrentUser();
+  const isOperationalManager = isStoreManager || isFounder;
   const [data, setData] = useState<SuperAdminOrderDetail>();
 
   const [loading, setLoading] = useState(false);
@@ -195,9 +193,7 @@ export default function EditOrderPage() {
       .get(`/orders/${id}?${query}&${cacheBuster}`)
       .then((res) => {
         const rawResponse = (res as any).data;
-        const normalizedOrder = unwrapEntity(
-          rawResponse?.data ?? rawResponse,
-        ) as
+        const normalizedOrder = unwrapEntity(rawResponse?.data ?? rawResponse) as
           | (OrderResponse["attributes"] & {
               id?: string | number;
             } & Record<string, any>)
@@ -207,21 +203,13 @@ export default function EditOrderPage() {
           throw new Error("سفارش پیدا نشد");
         }
 
-        const orderItemsRaw = unwrapCollection(
-          (normalizedOrder as any).order_items,
-        );
+        const orderItemsRaw = unwrapCollection((normalizedOrder as any).order_items);
         const items: SuperAdminOrderItem[] = orderItemsRaw.map((rawItem: any) => {
           const item = unwrapEntity(rawItem);
           const productVariation = unwrapEntity(item?.product_variation);
-          const variationColor = unwrapEntity(
-            (productVariation as any)?.product_variation_color,
-          );
-          const variationSize = unwrapEntity(
-            (productVariation as any)?.product_variation_size,
-          );
-          const variationModel = unwrapEntity(
-            (productVariation as any)?.product_variation_model,
-          );
+          const variationColor = unwrapEntity((productVariation as any)?.product_variation_color);
+          const variationSize = unwrapEntity((productVariation as any)?.product_variation_size);
+          const variationModel = unwrapEntity((productVariation as any)?.product_variation_model);
           const product = unwrapEntity(productVariation?.product);
           const coverImage = unwrapEntity(product?.CoverImage);
           const color = unwrapEntity(item?.product_color);
@@ -253,14 +241,13 @@ export default function EditOrderPage() {
         });
 
         const contract = unwrapEntity((normalizedOrder as any).contract);
-        const contractTransactions = unwrapCollection(
-          contract?.contract_transactions,
-        ).map((tx: any) => unwrapEntity(tx));
+        const contractTransactions = unwrapCollection(contract?.contract_transactions).map(
+          (tx: any) => unwrapEntity(tx),
+        );
 
         const shippingCost = Number(normalizedOrder?.ShippingCost || 0);
         const itemsSubtotal = (items || []).reduce(
-          (sum: number, it: any) =>
-            sum + Number(it.price || 0) * Number(it.quantity || 0),
+          (sum: number, it: any) => sum + Number(it.price || 0) * Number(it.quantity || 0),
           0,
         );
         const contractAmount = Number(contract?.Amount || 0);
@@ -297,8 +284,7 @@ export default function EditOrderPage() {
           .reverse()
           .find(
             (tx: any) =>
-              (tx?.external_source || contract?.external_source) ===
-                "SnappPay" && tx?.TrackId,
+              (tx?.external_source || contract?.external_source) === "SnappPay" && tx?.TrackId,
           );
         const rawPaymentGateway =
           unwrapEntity(lastTx?.payment_gateway)?.Title ||
@@ -308,24 +294,18 @@ export default function EditOrderPage() {
         const paymentGateway = rawPaymentGateway
           ? getPaymentGatewayLabel(rawPaymentGateway)
           : undefined;
-        const transactionId =
-          contract?.external_id || (normalizedOrder as any)?.external_id;
+        const transactionId = contract?.external_id || (normalizedOrder as any)?.external_id;
 
-        const userName =
-          (userInfo?.FirstName || "") + " " + (userInfo?.LastName || "");
+        const userName = (userInfo?.FirstName || "") + " " + (userInfo?.LastName || "");
 
         setError(null);
         setData({
           id: Number((normalizedOrder as any).id),
           createdAt: new Date(
-            normalizedOrder?.createdAt ??
-              normalizedOrder?.created_at ??
-              Date.now(),
+            normalizedOrder?.createdAt ?? normalizedOrder?.created_at ?? Date.now(),
           ),
           updatedAt: new Date(
-            normalizedOrder?.updatedAt ??
-              normalizedOrder?.updated_at ??
-              Date.now(),
+            normalizedOrder?.updatedAt ?? normalizedOrder?.updated_at ?? Date.now(),
           ),
           description: normalizedOrder?.Description || "",
           note: normalizedOrder?.Note || undefined,
@@ -408,7 +388,7 @@ export default function EditOrderPage() {
 
   const performOrderUpdate = async (formData: SuperAdminOrderDetail) => {
     try {
-      await apiClient.put(`/orders/${id}`, {
+      await apiClient.put(`/orders/${id}/admin/notes`, {
         data: {
           Description: formData.description,
           Note: formData.note,
@@ -459,8 +439,8 @@ export default function EditOrderPage() {
     return <div>Error: {error}</div>;
   }
 
-  const isIrreversibleTarget = !!pendingStatusChange?.toStatus
-    && IRREVERSIBLE_STATUSES.has(pendingStatusChange.toStatus);
+  const isIrreversibleTarget =
+    !!pendingStatusChange?.toStatus && IRREVERSIBLE_STATUSES.has(pendingStatusChange.toStatus);
   const statusChangeDescription = pendingStatusChange
     ? `وضعیت سفارش از «${translateOrderStatus(pendingStatusChange.fromStatus)}» به «${translateOrderStatus(
         pendingStatusChange.toStatus,
@@ -470,7 +450,23 @@ export default function EditOrderPage() {
           : ""
       }`
     : "";
-  const pageConfig = config;
+  const pageConfig = !isOperationalManager
+    ? config
+    : ({
+        ...config,
+        addButton: undefined,
+        config: config.config.map((group) => ({
+          ...group,
+          sections: group.sections.map((section) => ({
+            ...section,
+            fields: section.fields.map((field) =>
+              "name" in field && field.name === "userName"
+                ? { ...field, labelAction: undefined }
+                : field,
+            ),
+          })),
+        })),
+      } as typeof config);
 
   return (
     <>
@@ -492,7 +488,7 @@ export default function EditOrderPage() {
         footer={
           <>
             <Footer order={data} onReload={refreshAfterOrderAction} />
-            {data?.id ? <GatewayLogs orderId={data.id} /> : null}
+            {!isOperationalManager && data?.id ? <GatewayLogs orderId={data.id} /> : null}
           </>
         }
         customSidebar={<Sidebar shippingBarcode={data?.shippingBarcode} orderData={data} />}

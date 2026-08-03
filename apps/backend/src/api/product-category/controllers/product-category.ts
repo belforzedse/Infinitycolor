@@ -4,10 +4,32 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
+
+const OPERATIONAL_CATEGORY_FIELDS = [
+  "Title",
+  "Slug",
+  "Image",
+  "MegaMenuImage",
+  "Color",
+  "isMainCategory",
+  "featured",
+  "parent",
+] as const;
 
 export default factories.createCoreController(
   "api::product-category.product-category",
   ({ strapi }) => ({
+    async create(ctx) {
+      if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_CATEGORY_FIELDS))) return;
+      return super.create(ctx);
+    },
+
+    async update(ctx) {
+      if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_CATEGORY_FIELDS))) return;
+      return super.update(ctx);
+    },
+
     /**
      * Delete a category and reassign its products to a target category.
      * Requires targetCategoryId in request body.
@@ -22,9 +44,7 @@ export default factories.createCoreController(
       }
 
       const targetId =
-        typeof targetCategoryId === "number"
-          ? targetCategoryId
-          : Number(targetCategoryId);
+        typeof targetCategoryId === "number" ? targetCategoryId : Number(targetCategoryId);
       if (!Number.isInteger(targetId) || targetId <= 0) {
         return ctx.badRequest("targetCategoryId is required and must be a positive integer");
       }
@@ -83,20 +103,20 @@ export default factories.createCoreController(
       });
 
       for (const p of productsWithOther) {
-        const others = (p as { product_other_categories?: { id: number }[] })
-          .product_other_categories ?? [];
+        const others =
+          (p as { product_other_categories?: { id: number }[] }).product_other_categories ?? [];
         const newOthers = others.filter((c) => c.id !== id).map((c) => c.id);
         await strapi.entityService.update("api::product.product", p.id, {
           data: { product_other_categories: newOthers },
         });
       }
 
-      const contents = await strapi.db.query(
-        "api::product-category-content.product-category-content",
-      ).findMany({
-        where: { product_category: id },
-        select: ["id"],
-      });
+      const contents = await strapi.db
+        .query("api::product-category-content.product-category-content")
+        .findMany({
+          where: { product_category: id },
+          select: ["id"],
+        });
 
       for (const c of contents) {
         await strapi.entityService.delete(
@@ -105,10 +125,7 @@ export default factories.createCoreController(
         );
       }
 
-      await strapi.entityService.delete(
-        "api::product-category.product-category",
-        id,
-      );
+      await strapi.entityService.delete("api::product-category.product-category", id);
 
       return {
         data: { success: true, reassignedCount },

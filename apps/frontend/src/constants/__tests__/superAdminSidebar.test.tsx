@@ -11,10 +11,14 @@ describe("getSidebarItemsForRole - Founder", () => {
     }
   });
 
-  it("keeps operational sections (orders, products, carts, shipping)", () => {
+  it("keeps operational sections and hides raw customer/payment data", () => {
     expect(founderIds).toEqual(
-      expect.arrayContaining(["dashboard", "orders", "manage-products", "carts", "shipping"]),
+      expect.arrayContaining(["dashboard", "orders", "manage-products", "discounts", "shipping"]),
     );
+    expect(founderIds).not.toContain("carts");
+    expect(founderIds).not.toContain("payment-methods");
+    const shippingChildren = founderItems.find((item) => item.id === "shipping")?.children;
+    expect(shippingChildren?.map((child) => child.id)).toEqual(["shipping-main"]);
   });
 
   it("does not expose stories", () => {
@@ -43,6 +47,27 @@ describe("getSidebarItemsForRole - Store manager", () => {
   it("hides stories and FAQ", () => {
     expect(storeManagerIds).not.toContain("stories");
     expect(storeManagerIds).not.toContain("faq");
+  });
+
+  it("shows the operational commerce sections and safe product tools", () => {
+    expect(storeManagerIds).toEqual(
+      expect.arrayContaining(["manage-products", "orders", "discounts", "shipping"]),
+    );
+    expect(storeManagerIds).not.toContain("payment-methods");
+    expect(storeManagerIds).not.toContain("carts");
+    const productChildren = storeManagerItems.find(
+      (item) => item.id === "manage-products",
+    )?.children;
+    expect(productChildren?.map((child) => child.id)).toEqual(
+      expect.arrayContaining([
+        "product-attributes",
+        "product-tags",
+        "product-comments",
+        "product-categories",
+      ]),
+    );
+    const shippingChildren = storeManagerItems.find((item) => item.id === "shipping")?.children;
+    expect(shippingChildren?.map((child) => child.id)).toEqual(["shipping-main"]);
   });
 });
 
