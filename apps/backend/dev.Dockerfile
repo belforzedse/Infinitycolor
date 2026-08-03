@@ -33,6 +33,18 @@ RUN --mount=type=cache,target=/root/.npm \
     pnpm install --filter @repo/backend... --frozen-lockfile
 RUN pnpm --filter @repo/auth-core build
 
+# Materialize production dependencies before application source is copied. This
+# keeps the expensive pnpm deploy layer reusable for source-only changes.
+RUN --mount=type=cache,target=/root/.cache/node/corepack \
+    echo "starting cacheable production dependency deploy..." \
+    && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
+    pnpm --filter @repo/backend deploy --legacy --prod /app \
+    && cd /app \
+    && echo "rebuilding sharp for musl runtime..." \
+    && npm_config_platform=linux npm_config_arch=x64 npm_config_libc=musl pnpm rebuild sharp --unsafe-perm \
+    && node -e "const sharp=require('sharp'); console.log('sharp-ok', process.platform, process.arch, sharp.versions);" \
+    && node -e "const authCore=require('@repo/auth-core'); if (typeof authCore.verifyBridgeSignature !== 'function') throw new Error('auth-core-runtime-invalid'); console.log('auth-core-runtime-ok');"
+
 COPY apps/backend ./apps/backend
 WORKDIR /repo/apps/backend
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
@@ -44,21 +56,19 @@ RUN echo "removing build artifacts..." \
     && rm -rf .strapi .cache .tmp \
     && echo "strapi build step complete"
 WORKDIR /repo
-RUN --mount=type=cache,target=/root/.cache/node/corepack \
-    echo "starting pnpm deploy..." \
-    && /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm --filter @repo/backend deploy --legacy --prod /app \
-    && echo "pnpm deploy finished, copying build output..." \
+RUN echo "copying backend runtime files..." \
+    && for path in /repo/apps/backend/* /repo/apps/backend/.[!.]* /repo/apps/backend/..?*; do \
+      [ -e "$path" ] || continue; \
+      name="${path##*/}"; \
+      case "$name" in node_modules|dist|build|.strapi|.cache|.tmp) continue ;; esac; \
+      cp -a "$path" /app/; \
+    done \
     && mkdir -p /app/dist /app/build \
     && cp -a /repo/apps/backend/dist/. /app/dist/ \
     && if [ -d /repo/apps/backend/build ]; then cp -a /repo/apps/backend/build/. /app/build/; fi \
     && mkdir -p /app/public/uploads \
     && cp -a /repo/apps/backend/e2e-fixtures/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /app/public/uploads/ \
-    && cd /app \
-    && echo "rebuilding sharp for musl runtime..." \
-    && npm_config_platform=linux npm_config_arch=x64 npm_config_libc=musl pnpm rebuild sharp --unsafe-perm \
-    && node -e "const sharp=require('sharp'); console.log('sharp-ok', process.platform, process.arch, sharp.versions);" \
-    && node -e "const authCore=require('@repo/auth-core'); if (typeof authCore.verifyBridgeSignature !== 'function') throw new Error('auth-core-runtime-invalid'); console.log('auth-core-runtime-ok');"
+    && echo "backend runtime assembly complete"
 
 FROM docker.arvancloud.ir/library/node:20-alpine AS runner
 
