@@ -94,7 +94,7 @@ RUN /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SE
 
 WORKDIR /app
 
-COPY --from=builder --chown=node:node /app /app
+COPY --link --from=builder --chown=node:node /app /app
 RUN chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 1337

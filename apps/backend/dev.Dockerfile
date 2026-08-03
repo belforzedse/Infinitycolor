@@ -82,7 +82,7 @@ RUN /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SE
 
 WORKDIR /app
 
-COPY --from=builder /app /app
+COPY --link --from=builder /app /app
 
 EXPOSE 1337
 CMD ["pnpm", "run", "start:prod"]
