@@ -1,4 +1,5 @@
 import {
+  applySnappayCancellation,
   applySnappayAdminUpdate,
   finalizeSnappaySettlement,
 } from "../services/snappay-finalization";
@@ -92,6 +93,32 @@ describe("SnappPay admin update finalization", () => {
     );
     expect(transactionUpdate).not.toHaveProperty("TrackId");
   });
+
+  it.each(["CANCEL", "REVERT"] as const)(
+    "retains the provider token after a confirmed %s",
+    async (providerStatus) => {
+      const { strapi, rows, updates } = createHarness();
+      rows["api::order.order"].ReservationStatus = "Released";
+
+      await applySnappayCancellation(
+        strapi,
+        ids,
+        providerStatus,
+        "Operator cancellation",
+      );
+
+      const transactionUpdate =
+        updates["api::contract-transaction.contract-transaction"].mock.calls[0][0]
+          .data;
+      expect(transactionUpdate).toEqual(
+        expect.objectContaining({
+          Status: "Failed",
+          GatewayStatus: providerStatus,
+        }),
+      );
+      expect(transactionUpdate).not.toHaveProperty("TrackId");
+    },
+  );
 
   it("rejects forged stock deltas before mutating local state", async () => {
     const { strapi, updates, deletes } = createHarness();

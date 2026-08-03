@@ -345,7 +345,6 @@ export async function applySnappayCancellation(
             ? { CancelledAt: now }
             : { RevertedAt: now }),
           LastReconciledAt: now,
-          TrackId: null,
         },
         ...(trx ? { transacting: trx } : {}),
       } as any);
