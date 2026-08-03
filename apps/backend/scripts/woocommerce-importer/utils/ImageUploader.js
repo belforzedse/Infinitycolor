@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 const { detectMediaKind, isEmbedVideoUrl } = require("./mediaUtils");
+const { sourceTimestampHeaders } = require("./sourceTimestamps");
 
 /**
  * ImageUploader - Handles downloading and uploading images and videos from WooCommerce to Strapi
@@ -42,6 +43,25 @@ class ImageUploader {
 
   getStrapiConfig() {
     return this.config.strapi || {};
+  }
+
+  async restoreMediaSourceTimestamps(mediaId, sourceTimestamps) {
+    if (!sourceTimestamps || !this.config.migration?.controlToken) return;
+    const strapiConfig = this.getStrapiConfig();
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Infinity-Migration-Mode": "wordpress-v2",
+      "X-Infinity-Migration-Control": this.config.migration.controlToken,
+      ...sourceTimestampHeaders(sourceTimestamps),
+    };
+    if (!strapiConfig.usePublicAccess && strapiConfig.auth?.token) {
+      headers.Authorization = `Bearer ${strapiConfig.auth.token}`;
+    }
+    await axios.post(
+      `${strapiConfig.baseUrl}/internal/migrations/wordpress-v2/media/timestamps`,
+      { id: mediaId },
+      { headers, timeout: 60_000 },
+    );
   }
 
   /**
@@ -150,7 +170,7 @@ class ImageUploader {
   /**
    * Upload a single media URL (auto-detects image vs video)
    */
-  async downloadAndUploadMedia(mediaUrl, altText, prefix, isCover = false) {
+  async downloadAndUploadMedia(mediaUrl, altText, prefix, isCover = false, sourceTimestamps = null) {
     const videoConfig = this.getVideoConfig();
     const kind = detectMediaKind(mediaUrl, undefined, videoConfig.allowedTypes || ["mp4", "webm", "mov", "m4v"]);
 
@@ -168,18 +188,18 @@ class ImageUploader {
         this.logger.debug(`⏭️ Video upload disabled — skipping: ${mediaUrl}`);
         return null;
       }
-      return this.downloadAndUploadVideo(mediaUrl, altText, prefix, isCover);
+      return this.downloadAndUploadVideo(mediaUrl, altText, prefix, isCover, sourceTimestamps);
     }
 
     if (kind === "image") {
-      return this.downloadAndUploadImage(mediaUrl, altText, prefix, isCover);
+      return this.downloadAndUploadImage(mediaUrl, altText, prefix, isCover, sourceTimestamps);
     }
 
     this.logger.warn(`⚠️ نوع فایل پشتیبانی نمی‌شود — رد شد: ${mediaUrl}`);
     return null;
   }
 
-  async downloadAndUploadImage(imageUrl, altText, prefix, isCoverImage = false) {
+  async downloadAndUploadImage(imageUrl, altText, prefix, isCoverImage = false, sourceTimestamps = null) {
     try {
       if (this.uploadCache.has(imageUrl)) {
         this.logger.debug(`📸 Using cached image: ${imageUrl}`);
@@ -210,6 +230,7 @@ class ImageUploader {
         altText,
         uploadRetries,
         "image",
+        sourceTimestamps,
       );
 
       if (uploadedImage) {
@@ -223,7 +244,7 @@ class ImageUploader {
     }
   }
 
-  async downloadAndUploadVideo(videoUrl, altText, prefix, isCoverVideo = false) {
+  async downloadAndUploadVideo(videoUrl, altText, prefix, isCoverVideo = false, sourceTimestamps = null) {
     try {
       if (isEmbedVideoUrl(videoUrl)) {
         this.logger.warn(
@@ -266,6 +287,7 @@ class ImageUploader {
         altText,
         uploadRetries,
         "video",
+        sourceTimestamps,
       );
 
       if (uploadedVideo) {
@@ -459,12 +481,19 @@ class ImageUploader {
     }
   }
 
-  async uploadToStrapiWithRetry(fileBuffer, fileName, altText, maxRetries = 3, mediaKind = "image") {
+  async uploadToStrapiWithRetry(
+    fileBuffer,
+    fileName,
+    altText,
+    maxRetries = 3,
+    mediaKind = "image",
+    sourceTimestamps = null,
+  ) {
     let lastError;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const uploadedFile = await this.uploadToStrapi(fileBuffer, fileName, altText);
+        const uploadedFile = await this.uploadToStrapi(fileBuffer, fileName, altText, sourceTimestamps);
         if (uploadedFile) {
           return uploadedFile;
         }
@@ -512,7 +541,7 @@ class ImageUploader {
     return null;
   }
 
-  async uploadToStrapi(fileBuffer, fileName, altText) {
+  async uploadToStrapi(fileBuffer, fileName, altText, sourceTimestamps = null) {
     const form = new FormData();
 
     form.append("files", fileBuffer, {
@@ -532,6 +561,11 @@ class ImageUploader {
     const strapiConfig = this.getStrapiConfig();
     if (!strapiConfig.usePublicAccess && strapiConfig.auth?.token) {
       uploadHeaders.Authorization = `Bearer ${strapiConfig.auth.token}`;
+    }
+    if (this.config.migration?.controlToken) {
+      uploadHeaders["X-Infinity-Migration-Mode"] = "wordpress-v2";
+      uploadHeaders["X-Infinity-Migration-Control"] = this.config.migration.controlToken;
+      Object.assign(uploadHeaders, sourceTimestampHeaders(sourceTimestamps));
     }
 
     const imageConfig = this.getImageConfig();

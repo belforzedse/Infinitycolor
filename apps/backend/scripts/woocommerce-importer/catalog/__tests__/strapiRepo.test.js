@@ -13,12 +13,12 @@ function mockHttp() {
     deletes: [],
     gets: [],
     nextPostId: 1000,
-    async post(url, body) {
-      this.posts.push({ url, body });
+    async post(url, body, config) {
+      this.posts.push({ url, body, config });
       return { data: { data: { id: this.nextPostId++ } } };
     },
-    async put(url, body) {
-      this.puts.push({ url, body });
+    async put(url, body, config) {
+      this.puts.push({ url, body, config });
       return { data: { data: { id: Number(url.split("/").pop()) } } };
     },
     async get(url, config) {
@@ -60,6 +60,30 @@ test("upsert: updates when external_id already indexed (PUT), no SKU mutation", 
   assert.equal(http.puts.length, 1);
   // The SKU sent on update is exactly the input — never suffixed/mutated across runs.
   assert.equal(http.puts[0].body.data.SKU, "BAG-RED-M");
+});
+
+test("upsert sends trusted source timestamps on both create and update", async () => {
+  const http = mockHttp();
+  const repo = new StrapiRepo(http, noopLogger);
+  const index = new Map();
+  const args = {
+    endpoint: "/products",
+    externalId: "101",
+    payload: { Title: "Bag" },
+    index,
+    sourceTimestamps: {
+      createdAt: "2020-01-02T03:04:05.000Z",
+      updatedAt: "2024-05-06T07:08:09.000Z",
+    },
+  };
+  await repo.upsert(args);
+  await repo.upsert(args);
+  for (const call of [http.posts[0], http.puts[0]]) {
+    assert.deepEqual(call.config.headers, {
+      "X-Infinity-Source-Created-At": "2020-01-02T03:04:05.000Z",
+      "X-Infinity-Source-Updated-At": "2024-05-06T07:08:09.000Z",
+    });
+  }
 });
 
 test("upsert: second run with same external_id is idempotent (update, not duplicate)", async () => {

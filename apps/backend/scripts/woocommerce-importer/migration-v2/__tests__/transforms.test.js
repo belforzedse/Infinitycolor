@@ -35,6 +35,17 @@ test("customer payload excludes every address field and password", () => {
   assert.ok(!JSON.stringify(payload).includes("must-not-leak"));
 });
 
+test("customer payload preserves Woo creation and modification timestamps", () => {
+  const payload = T.customerPayload({
+    id: 7,
+    billing: { phone: "09123456789" },
+    date_created_gmt: "2019-01-02T03:04:05",
+    date_modified_gmt: "2024-05-06T07:08:09",
+  });
+  assert.equal(payload.sourceCreatedAt, "2019-01-02T03:04:05.000Z");
+  assert.equal(payload.sourceUpdatedAt, "2024-05-06T07:08:09.000Z");
+});
+
 test("order payload keeps approved core fields and excludes addresses, notes, and payment identifiers", () => {
   const payload = T.orderPayload({
     id: 44,
@@ -55,8 +66,33 @@ test("order payload keeps approved core fields and excludes addresses, notes, an
   assert.equal(payload.totalRial, "10000");
   assert.equal(payload.items[0].unitPriceRial, "4750");
   assert.equal(payload.paymentGateway, "ZarinPal");
+  assert.equal(payload.contractType, "Cash");
+  assert.equal(payload.taxPercent, 0);
+  assert.equal(payload.sourceCreatedAt, "2026-01-02T03:04:05.000Z");
+  assert.equal(payload.sourceUpdatedAt, "2026-01-02T03:04:05.000Z");
   const serialized = JSON.stringify(payload);
   assert.ok(!serialized.includes("must-not-leak"));
   assert.ok(!("billing" in payload));
   assert.ok(!("shipping" in payload));
+});
+
+test("SnappPay orders become credit contracts and non-zero tax is quarantined", () => {
+  const base = {
+    id: 45,
+    customer_id: 0,
+    date_created_gmt: "2026-01-02T03:04:05",
+    date_modified_gmt: "2026-01-03T03:04:05",
+    status: "completed",
+    total: "1000",
+    total_tax: "0",
+    shipping_total: "0",
+    payment_method: "WC_Gateway_SnappPay",
+    billing: { phone: "09123456789" },
+    line_items: [{ id: 10, product_id: 3, variation_id: 4, quantity: 1, price: "1000", name: "کالا" }],
+  };
+  assert.equal(T.orderPayload(base).contractType, "Credit");
+  assert.throws(
+    () => T.orderPayload({ ...base, total_tax: "9" }),
+    /ORDER_NONZERO_TAX_REQUIRES_MAPPING/,
+  );
 });

@@ -19,13 +19,17 @@ function makeMedia(allowHttp = false) {
   const media = new MediaSync(config, noopLogger, store, { allowHttp });
   // Replace the real uploader (network/sharp) with a counting fake.
   let uploadCount = 0;
+  const timestampRestores = [];
   media.uploader = {
     async downloadAndUploadMedia() {
       uploadCount += 1;
       return { id: 42, name: "a.webp", mime: "image/webp" };
     },
+    async restoreMediaSourceTimestamps(id, timestamps) {
+      timestampRestores.push({ id, timestamps });
+    },
   };
-  return { media, store, uploads: () => uploadCount };
+  return { media, store, uploads: () => uploadCount, timestampRestores };
 }
 
 test("MediaSync.syncUrl: uploads once, then reuses from persistent store", async () => {
@@ -41,6 +45,20 @@ test("MediaSync.syncUrl: uploads once, then reuses from persistent store", async
   assert.equal(second.status, "reused");
   assert.equal(second.id, 42);
   assert.equal(uploads(), 1); // NOT re-uploaded on the second run
+});
+
+test("MediaSync.syncUrl restores source timestamps when reusing persistent media", async () => {
+  const { media, timestampRestores } = makeMedia();
+  const url = "https://cdn.example.com/timestamped.jpg";
+  const timestamps = {
+    createdAt: "2020-01-02T03:04:05.000Z",
+    updatedAt: "2024-05-06T07:08:09.000Z",
+  };
+
+  await media.syncUrl(url, "alt", "p-1", true, timestamps);
+  await media.syncUrl(url, "alt", "p-1", true, timestamps);
+
+  assert.deepEqual(timestampRestores, [{ id: 42, timestamps }]);
 });
 
 test("MediaSync.syncUrl: a fresh run reuses ids persisted to disk", async () => {

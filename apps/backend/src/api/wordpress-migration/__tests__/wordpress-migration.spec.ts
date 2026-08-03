@@ -2,6 +2,7 @@ import {
   canonicalIranPhone,
   exactNonNegativeInteger,
   MigrationInputError,
+  restoreMediaTimestamps,
   upsertOrder,
   upsertUser,
 } from "../services/wordpress-migration";
@@ -95,5 +96,50 @@ describe("WordPress migration write service", () => {
       phone: "09123456789",
     })).rejects.toMatchObject({ code: "USER_PHONE_SOURCE_CONFLICT", status: 409 });
     expect(trx.raw).toHaveBeenCalledTimes(2);
+  });
+
+  test("requires explicit contract type and a safe tax percentage", async () => {
+    const strapiMock = { db: { transaction: jest.fn() } };
+    const base = {
+      sourceId: "1",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "SnappPay",
+      date: "2026-01-01T00:00:00Z",
+      totalRial: "0",
+      items: [{ sourceId: "1" }],
+    };
+    await expect(upsertOrder(strapiMock, base)).rejects.toMatchObject({ code: "CONTRACT_TYPE_INVALID" });
+    await expect(upsertOrder(strapiMock, { ...base, contractType: "Credit", taxPercent: 1.5 }))
+      .rejects.toMatchObject({ code: "CONTRACT_TAX_PERCENT_INVALID" });
+    expect(strapiMock.db.transaction).not.toHaveBeenCalled();
+  });
+
+  test("restores timestamps only for an existing media record on a trusted request", async () => {
+    const previousToken = process.env.MIGRATION_CONTROL_TOKEN;
+    const controlToken = "m".repeat(48);
+    process.env.MIGRATION_CONTROL_TOKEN = controlToken;
+    (global as any).strapi = {
+      requestContext: { get: () => ({ request: { headers: {
+        "x-infinity-migration-mode": "wordpress-v2",
+        "x-infinity-migration-control": controlToken,
+        "x-infinity-source-created-at": "2020-01-02T03:04:05.000Z",
+        "x-infinity-source-updated-at": "2024-05-06T07:08:09.000Z",
+      } } }) },
+    };
+    const fileQuery = {
+      findOne: jest.fn().mockResolvedValue({ id: 77 }),
+      update: jest.fn().mockResolvedValue({ id: 77 }),
+    };
+    const strapiMock = { db: { query: jest.fn(() => fileQuery) } };
+    try {
+      await expect(restoreMediaTimestamps(strapiMock, { id: "77" }))
+        .resolves.toEqual({ id: 77, mode: "updated" });
+      expect(fileQuery.update).toHaveBeenCalledWith({ where: { id: 77 }, data: {} });
+    } finally {
+      if (previousToken === undefined) delete process.env.MIGRATION_CONTROL_TOKEN;
+      else process.env.MIGRATION_CONTROL_TOKEN = previousToken;
+      delete (global as any).strapi;
+    }
   });
 });

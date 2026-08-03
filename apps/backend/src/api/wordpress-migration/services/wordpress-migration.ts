@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { getTrustedWordPressMigrationSourceTimestamps } from "../../../utils/migration-context";
 
 const USER_UID = "plugin::users-permissions.user";
 const USER_INFO_UID = "api::local-user-info.local-user-info";
@@ -12,17 +13,18 @@ const VARIATION_UID = "api::product-variation.product-variation";
 const ORDER_STATUSES = new Set(["Paying", "Started", "Shipment", "Done", "Returned", "Cancelled"]);
 const CONTRACT_STATUSES = new Set(["Not Ready", "Confirmed", "Finished", "Failed", "Cancelled"]);
 const PAYMENT_GATEWAYS = new Set(["Unknown", "Wallet", "Mellat", "SnappPay", "SamanKish", "ZarinPal"]);
+const CONTRACT_TYPES = new Set(["Cash", "Credit"]);
 
 const SNAPSHOT_ENTITIES: Record<string, { uid: string; select: string[] }> = {
-  users: { uid: USER_UID, select: ["id", "external_id", "external_source", "phone", "email"] },
-  wallets: { uid: WALLET_UID, select: ["id", "Balance"] },
-  orders: { uid: ORDER_UID, select: ["id", "external_id", "external_source"] },
-  variations: { uid: VARIATION_UID, select: ["id", "external_id", "external_source"] },
-  products: { uid: "api::product.product", select: ["id", "external_id", "external_source"] },
-  blogPosts: { uid: "api::blog-post.blog-post", select: ["id", "Slug"] },
-  blogCategories: { uid: "api::blog-category.blog-category", select: ["id", "Slug"] },
-  blogTags: { uid: "api::blog-tag.blog-tag", select: ["id", "Slug"] },
-  blogAuthors: { uid: "api::blog-author.blog-author", select: ["id", "Name", "Email"] },
+  users: { uid: USER_UID, select: ["id", "external_id", "external_source", "phone", "email", "createdAt", "updatedAt"] },
+  wallets: { uid: WALLET_UID, select: ["id", "Balance", "createdAt", "updatedAt"] },
+  orders: { uid: ORDER_UID, select: ["id", "external_id", "external_source", "createdAt", "updatedAt"] },
+  variations: { uid: VARIATION_UID, select: ["id", "external_id", "external_source", "createdAt", "updatedAt"] },
+  products: { uid: "api::product.product", select: ["id", "external_id", "external_source", "LastEditedByAdminAt", "createdAt", "updatedAt"] },
+  blogPosts: { uid: "api::blog-post.blog-post", select: ["id", "Slug", "createdAt", "updatedAt"] },
+  blogCategories: { uid: "api::blog-category.blog-category", select: ["id", "Slug", "createdAt", "updatedAt"] },
+  blogTags: { uid: "api::blog-tag.blog-tag", select: ["id", "Slug", "createdAt", "updatedAt"] },
+  blogAuthors: { uid: "api::blog-author.blog-author", select: ["id", "Name", "Email", "createdAt", "updatedAt"] },
 };
 
 export class MigrationInputError extends Error {
@@ -105,6 +107,24 @@ export async function getSnapshot(strapiInstance: any, input: any) {
     hasMore: rows.length === pageSize,
     rows,
   };
+}
+
+export async function restoreMediaTimestamps(strapiInstance: any, body: any) {
+  const id = Number(requiredId(body?.id, "MEDIA_ID_INVALID"));
+  if (!Number.isSafeInteger(id)) throw new MigrationInputError("MEDIA_ID_INVALID");
+  if (!getTrustedWordPressMigrationSourceTimestamps()) {
+    throw new MigrationInputError("MEDIA_SOURCE_TIMESTAMPS_REQUIRED");
+  }
+
+  const fileQuery = strapiInstance.db.query("plugin::upload.file");
+  const file = await fileQuery.findOne({ where: { id }, select: ["id"] });
+  if (!file) throw new MigrationInputError("MEDIA_NOT_FOUND", 404);
+
+  // Strapi's normal timestamp lifecycle will add updatedAt, and the trusted
+  // migration timestamp lifecycle registered after it replaces both timestamps
+  // with the validated source instants from the request headers.
+  const saved = await fileQuery.update({ where: { id }, data: {} } as any);
+  return { id: Number(saved?.id || id), mode: "updated" };
 }
 
 async function findUniqueUserForSource(query: any, sourceId: string, trx: any): Promise<any | null> {
@@ -244,9 +264,15 @@ export async function upsertOrder(strapiInstance: any, body: any) {
   const status = String(body?.status || "");
   const contractStatus = String(body?.contractStatus || "");
   const paymentGateway = String(body?.paymentGateway || "Unknown");
+  const contractType = String(body?.contractType || "");
+  const taxPercent = Number(body?.taxPercent);
   if (!ORDER_STATUSES.has(status)) throw new MigrationInputError("ORDER_STATUS_INVALID");
   if (!CONTRACT_STATUSES.has(contractStatus)) throw new MigrationInputError("CONTRACT_STATUS_INVALID");
   if (!PAYMENT_GATEWAYS.has(paymentGateway)) throw new MigrationInputError("PAYMENT_GATEWAY_INVALID");
+  if (!CONTRACT_TYPES.has(contractType)) throw new MigrationInputError("CONTRACT_TYPE_INVALID");
+  if (!Number.isSafeInteger(taxPercent) || taxPercent < 0 || taxPercent > 100) {
+    throw new MigrationInputError("CONTRACT_TAX_PERCENT_INVALID");
+  }
   const date = validatedDate(body?.date);
   const totalRial = exactNonNegativeInteger(body?.totalRial, "ORDER_TOTAL_INVALID");
   const shippingRial = Number(exactNonNegativeInteger(body?.shippingRial ?? "0", "ORDER_SHIPPING_INVALID"));
@@ -293,10 +319,10 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     );
     if (contracts.length > 1) throw new MigrationInputError("ORDER_CONTRACT_AMBIGUOUS", 409);
     const contractData = {
-      Type: "Cash",
+      Type: contractType,
       Status: contractStatus,
       Amount: totalRial,
-      TaxPercent: 0,
+      TaxPercent: taxPercent,
       Date: date,
       local_user: user?.id || null,
       order: order.id,

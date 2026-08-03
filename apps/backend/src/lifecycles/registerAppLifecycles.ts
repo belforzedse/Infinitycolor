@@ -5,7 +5,10 @@ import { resolveAuditActor } from "../utils/audit";
 import { logAdminEvent, logOrderEvent } from "../utils/eventLogger";
 import { scheduleHomeProductsRevalidation } from "../utils/homepageRevalidation";
 import { asEntityId } from "../utils/lastEdited";
-import { isTrustedWordPressMigrationRequest } from "../utils/migration-context";
+import {
+  getTrustedWordPressMigrationSourceTimestamps,
+  isTrustedWordPressMigrationRequest,
+} from "../utils/migration-context";
 import {
   notifyOrderCreatedSms,
   notifyOrderStatusSms,
@@ -673,8 +676,70 @@ function registerProductStockLifecycle(strapi: Strapi) {
   });
 }
 
+const WORDPRESS_MIGRATION_TIMESTAMP_MODELS = [
+  "api::product.product",
+  "api::product-category.product-category",
+  "api::product-variation.product-variation",
+  "api::product-stock.product-stock",
+  "api::product-size-helper.product-size-helper",
+  "api::product-tag.product-tag",
+  "api::product-variation-color.product-variation-color",
+  "api::product-variation-size.product-variation-size",
+  "api::product-variation-model.product-variation-model",
+  "api::product-attribute.product-attribute",
+  "api::product-attribute-term.product-attribute-term",
+  "api::product-attribute-assignment.product-attribute-assignment",
+  "plugin::users-permissions.user",
+  "api::local-user-info.local-user-info",
+  "api::local-user-wallet.local-user-wallet",
+  "api::order.order",
+  "api::order-item.order-item",
+  "api::contract.contract",
+  "api::blog-post.blog-post",
+  "api::blog-category.blog-category",
+  "api::blog-tag.blog-tag",
+  "api::blog-author.blog-author",
+  "plugin::upload.file",
+];
+
+function registerWordPressMigrationTimestampLifecycle(strapi: Strapi) {
+  const applySourceTimestamps = (event: any) => {
+    const timestamps = getTrustedWordPressMigrationSourceTimestamps();
+    if (!timestamps) return;
+    event.params ||= {};
+    event.params.data ||= {};
+    event.params.data.createdAt = timestamps.createdAt;
+    event.params.data.updatedAt = timestamps.updatedAt;
+  };
+
+  strapi.db.lifecycles.subscribe({
+    models: WORDPRESS_MIGRATION_TIMESTAMP_MODELS,
+    beforeCreate: applySourceTimestamps,
+    beforeCreateMany: (event: any) => {
+      const timestamps = getTrustedWordPressMigrationSourceTimestamps();
+      if (!timestamps || !Array.isArray(event?.params?.data)) return;
+      for (const row of event.params.data) {
+        row.createdAt = timestamps.createdAt;
+        row.updatedAt = timestamps.updatedAt;
+      }
+    },
+    beforeUpdate: applySourceTimestamps,
+    beforeUpdateMany: (event: any) => {
+      const timestamps = getTrustedWordPressMigrationSourceTimestamps();
+      if (!timestamps || !Array.isArray(event?.params?.data)) return;
+      for (const row of event.params.data) {
+        row.createdAt = timestamps.createdAt;
+        row.updatedAt = timestamps.updatedAt;
+      }
+    },
+  });
+}
+
 export function registerAppLifecycles(strapi: Strapi) {
   registerOrderLifecycle(strapi);
   registerContractLifecycle(strapi);
   registerProductStockLifecycle(strapi);
+  // Register last so these values override Strapi's default "now" timestamp
+  // subscriber after the request has passed the migration trust gate.
+  registerWordPressMigrationTimestampLifecycle(strapi);
 }

@@ -1,6 +1,7 @@
 import {
   getSnapshot,
   MigrationInputError,
+  restoreMediaTimestamps,
   upsertOrder,
   upsertUser,
   upsertWallet,
@@ -36,5 +37,8 @@ export default {
   },
   async upsertOrder(ctx: any) {
     await respond(ctx, (body) => upsertOrder(strapi, body));
+  },
+  async restoreMediaTimestamps(ctx: any) {
+    await respond(ctx, (body) => restoreMediaTimestamps(strapi, body));
   },
 };

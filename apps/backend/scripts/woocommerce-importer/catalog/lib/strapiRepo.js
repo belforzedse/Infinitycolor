@@ -1,6 +1,7 @@
 "use strict";
 
 const G = require("./genericAttributes");
+const { sourceTimestampHeaders } = require("../../utils/sourceTimestamps");
 
 /**
  * Strapi target repository. All writes are idempotent: entities are matched by the
@@ -87,15 +88,16 @@ class StrapiRepo {
    * @param {Map<string, {id:number}>} args.index
    * @returns {Promise<{ id:number, mode:"created"|"updated" }>}
    */
-  async upsert({ endpoint, externalId, payload, index }) {
+  async upsert({ endpoint, externalId, payload, index, sourceTimestamps = null }) {
     const existing = index.get(externalId.toString());
+    const requestConfig = { headers: sourceTimestampHeaders(sourceTimestamps) };
     if (existing) {
-      await this.http.put(`${endpoint}/${existing.id}`, { data: payload });
+      await this.http.put(`${endpoint}/${existing.id}`, { data: payload }, requestConfig);
       return { id: existing.id, mode: "updated" };
     }
 
     try {
-      const response = await this.http.post(endpoint, { data: payload });
+      const response = await this.http.post(endpoint, { data: payload }, requestConfig);
       const id = response.data?.data?.id;
       index.set(externalId.toString(), { id });
       return { id, mode: "created" };
@@ -104,7 +106,7 @@ class StrapiRepo {
       if (error.response?.status === 400 || error.response?.status === 409) {
         const found = await this.findByExternalId(endpoint, externalId);
         if (found) {
-          await this.http.put(`${endpoint}/${found.id}`, { data: payload });
+          await this.http.put(`${endpoint}/${found.id}`, { data: payload }, requestConfig);
           index.set(externalId.toString(), { id: found.id });
           return { id: found.id, mode: "updated" };
         }
@@ -364,7 +366,7 @@ class StrapiRepo {
    * Upsert a product-stock record for a variation by external_id (`stock_<vid>`).
    * @returns {Promise<"created"|"updated">}
    */
-  async upsertStock({ externalId, count, variationId, stockIndex }) {
+  async upsertStock({ externalId, count, variationId, stockIndex, sourceTimestamps = null }) {
     const payload = {
       Count: count,
       product_variation: variationId,
@@ -376,6 +378,7 @@ class StrapiRepo {
       externalId,
       payload,
       index: stockIndex,
+      sourceTimestamps,
     });
     return result.mode;
   }
@@ -397,8 +400,9 @@ class StrapiRepo {
    * @param {string[][] | null} helperMatrix
    * @returns {Promise<"created"|"updated"|"deleted"|"unchanged">}
    */
-  async syncProductSizeHelper(productId, helperMatrix) {
+  async syncProductSizeHelper(productId, helperMatrix, sourceTimestamps = null) {
     const existing = await this.findProductSizeHelper(productId);
+    const requestConfig = { headers: sourceTimestampHeaders(sourceTimestamps) };
 
     if (!helperMatrix) {
       if (existing) {
@@ -411,7 +415,7 @@ class StrapiRepo {
     if (existing) {
       await this.http.put(`/product-size-helpers/${existing.id}`, {
         data: { Helper: helperMatrix },
-      });
+      }, requestConfig);
       return "updated";
     }
 
@@ -420,7 +424,7 @@ class StrapiRepo {
         Helper: helperMatrix,
         product: productId,
       },
-    });
+    }, requestConfig);
     return "created";
   }
 }

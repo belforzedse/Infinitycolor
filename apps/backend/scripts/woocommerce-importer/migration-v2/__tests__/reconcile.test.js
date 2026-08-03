@@ -24,6 +24,9 @@ async function runProductReconciliation({ destinationTitle, expectedFailures = 0
       if (entity === "products") {
         return [{ id: 7, external_source: "woocommerce", external_id: "44" }];
       }
+      if (entity === "variations") {
+        return [{ id: 70, external_source: "woocommerce", external_id: "44" }];
+      }
       return [];
     },
     async getContent(endpoint, query) {
@@ -111,6 +114,8 @@ test("order reconciliation accepts Strapi null relation wrappers and verifies co
       return {
         data: [{
           attributes: {
+            createdAt: "2026-01-02T03:04:05.000Z",
+            updatedAt: "2026-01-02T03:04:05.000Z",
             Status: "Started",
             Date: "2026-01-02T03:04:05.000Z",
             ShippingCost: 500,
@@ -118,11 +123,20 @@ test("order reconciliation accepts Strapi null relation wrappers and verifies co
             delivery_address: { data: null },
             Description: null,
             Note: null,
-            contract: { data: { attributes: { Status: "Confirmed", Amount: "10000" } } },
+            contract: { data: { attributes: {
+              Status: "Confirmed",
+              Type: "Cash",
+              TaxPercent: 0,
+              Amount: "10000",
+              createdAt: "2026-01-02T03:04:05.000Z",
+              updatedAt: "2026-01-02T03:04:05.000Z",
+            } } },
             user: { data: { attributes: { external_source: "wordpress", external_id: "50" } } },
             order_items: {
               data: [{
                 attributes: {
+                  createdAt: "2026-01-02T03:04:05.000Z",
+                  updatedAt: "2026-01-02T03:04:05.000Z",
                   external_id: "line_item_9",
                   Count: 2,
                   PerAmount: "4750",

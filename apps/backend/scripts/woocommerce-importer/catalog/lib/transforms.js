@@ -14,6 +14,7 @@
 
 const { resolveSlug } = require("./slug");
 const { resolveColorMapping, DEFAULT_COLOR } = require("../../utils/colorMappings");
+const { wooSourceTimestamps } = require("../../utils/sourceTimestamps");
 
 const EXTERNAL_SOURCE = "woocommerce";
 
@@ -99,6 +100,12 @@ function mapProduct(wcProduct, opts = {}) {
     external_id: wcProduct.id.toString(),
     external_source: EXTERNAL_SOURCE,
   };
+  const sourceTimestamps = wooSourceTimestamps(wcProduct);
+  if (sourceTimestamps) {
+    // This destination field powers the "last manual change" ordering. For
+    // migrated products WooCommerce is the historical editor of record.
+    data.LastEditedByAdminAt = sourceTimestamps.updatedAt;
+  }
 
   // Weight is an integer in Strapi (default 100). Only override when WooCommerce
   // actually provides a numeric weight, otherwise leave the schema default intact.
@@ -154,6 +161,7 @@ function mapProduct(wcProduct, opts = {}) {
     mainCategoryMissing,
     otherCategoryMisses,
     sizeGuideMatrix: extractSizeGuideMatrix(wcProduct),
+    sourceTimestamps,
   };
 }
 
@@ -337,7 +345,7 @@ function mapVariation(wcVariation, opts) {
     }
   }
 
-  return { data, priceMissing };
+  return { data, priceMissing, sourceTimestamps: wooSourceTimestamps(wcVariation) };
 }
 
 /** Identify a WooCommerce attribute name as color | size | model. */
@@ -473,6 +481,10 @@ function synthesizeSimpleVariation(wcProduct) {
     stock_quantity: wcProduct.stock_quantity,
     stock_status: wcProduct.stock_status,
     attributes: [],
+    date_created: wcProduct.date_created,
+    date_created_gmt: wcProduct.date_created_gmt,
+    date_modified: wcProduct.date_modified,
+    date_modified_gmt: wcProduct.date_modified_gmt,
     _synthetic: true,
     _parentProduct: wcProduct,
   };

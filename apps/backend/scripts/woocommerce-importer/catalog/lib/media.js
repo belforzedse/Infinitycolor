@@ -3,6 +3,7 @@
 const ImageUploader = require("../../utils/ImageUploader");
 const { splitWcMediaItems, extractVideoUrlsFromMeta, isEmbedVideoUrl } = require("../../utils/mediaUtils");
 const { validateMediaUrl } = require("./safeUrl");
+const { wooSourceTimestamps } = require("../../utils/sourceTimestamps");
 
 /**
  * Media synchronization with persistent deduplication and an SSRF guard.
@@ -44,10 +45,11 @@ class MediaSync {
    * @param {string} prefix
    * @param {boolean} isCover
    */
-  async syncUrl(url, altText, prefix, isCover = false) {
+  async syncUrl(url, altText, prefix, isCover = false, sourceTimestamps = null) {
     // 1. Persistent dedup — already uploaded in a previous run?
     const cached = this.store.get("media", url);
     if (cached && cached.strapiId) {
+      await this.uploader.restoreMediaSourceTimestamps?.(cached.strapiId, sourceTimestamps);
       this.logger.debug(`♻️ Reusing media ${url} → ${cached.strapiId}`);
       return { id: cached.strapiId, mime: cached.mime, status: "reused" };
     }
@@ -60,7 +62,13 @@ class MediaSync {
     }
 
     // 3. Delegate download/convert/upload to the existing uploader
-    const uploaded = await this.uploader.downloadAndUploadMedia(url, altText, prefix, isCover);
+    const uploaded = await this.uploader.downloadAndUploadMedia(
+      url,
+      altText,
+      prefix,
+      isCover,
+      sourceTimestamps,
+    );
     if (!uploaded || !uploaded.id) {
       return { id: null, mime: null, status: "failed" };
     }
@@ -89,7 +97,6 @@ class MediaSync {
 
     let coverId = null;
     const galleryIds = [];
-
     const track = (res) => {
       if (res.status === "uploaded") counts.uploaded += 1;
       else if (res.status === "reused") counts.reused += 1;
@@ -100,11 +107,23 @@ class MediaSync {
     // Cover = first image (fallback: first downloadable video)
     if (imagesEnabled && split.images.length > 0) {
       const c = split.images[0];
-      const res = track(await this.syncUrl(c.src, c.alt || wcProduct.name, `product-${wcProduct.id}-cover`, true));
+      const res = track(await this.syncUrl(
+        c.src,
+        c.alt || wcProduct.name,
+        `product-${wcProduct.id}-cover`,
+        true,
+        wooSourceTimestamps(c),
+      ));
       coverId = res.id;
     } else if (videosEnabled && split.videos.length > 0) {
       const v = split.videos[0];
-      const res = track(await this.syncUrl(v.src, v.alt || wcProduct.name, `product-${wcProduct.id}-cover-video`, true));
+      const res = track(await this.syncUrl(
+        v.src,
+        v.alt || wcProduct.name,
+        `product-${wcProduct.id}-cover-video`,
+        true,
+        wooSourceTimestamps(v),
+      ));
       coverId = res.id;
     }
 
@@ -114,7 +133,13 @@ class MediaSync {
       for (let i = 0; i < galleryImages.length && galleryIds.length < this.maxGallery; i += 1) {
         const img = galleryImages[i];
         const res = track(
-          await this.syncUrl(img.src, img.alt || `${wcProduct.name} - ${i + 1}`, `product-${wcProduct.id}-gallery-${i + 1}`, false),
+          await this.syncUrl(
+            img.src,
+            img.alt || `${wcProduct.name} - ${i + 1}`,
+            `product-${wcProduct.id}-gallery-${i + 1}`,
+            false,
+            wooSourceTimestamps(img),
+          ),
         );
         if (res.id) galleryIds.push(res.id);
       }
@@ -132,7 +157,13 @@ class MediaSync {
         const u = videoUrls[i];
         if (seen.has(u)) continue;
         seen.add(u);
-        const res = track(await this.syncUrl(u, `${wcProduct.name} - video ${i + 1}`, `product-${wcProduct.id}-video-${i + 1}`, false));
+        const res = track(await this.syncUrl(
+          u,
+          `${wcProduct.name} - video ${i + 1}`,
+          `product-${wcProduct.id}-video-${i + 1}`,
+          false,
+          null,
+        ));
         if (res.id) galleryIds.push(res.id);
       }
     }
