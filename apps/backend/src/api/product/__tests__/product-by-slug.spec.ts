@@ -1,6 +1,7 @@
 const mockStrapi: any = {};
 const mockBuildCacheKey = jest.fn((_options: unknown) => "product-cache-key");
 const mockWithCache = jest.fn(async (_options: unknown, loader: () => Promise<unknown>) => loader());
+const mockIsTrustedWordPressMigrationRequest = jest.fn(() => false);
 
 jest.mock("@strapi/strapi", () => ({
   factories: {
@@ -15,6 +16,10 @@ jest.mock("../../../utils/responseCache", () => ({
   shouldBypassEndpointCache: jest.fn(() => false),
   withCache: (options: unknown, loader: () => Promise<unknown>) =>
     mockWithCache(options, loader),
+}));
+
+jest.mock("../../../utils/migration-context", () => ({
+  isTrustedWordPressMigrationRequest: () => mockIsTrustedWordPressMigrationRequest(),
 }));
 
 import productController from "../controllers/product";
@@ -44,6 +49,7 @@ const makeCtx = (query: Record<string, unknown> = {}) =>
 describe("product.findBySlug", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockIsTrustedWordPressMigrationRequest.mockReturnValue(false);
     mockStrapi.entityService = {
       findMany: jest.fn().mockResolvedValue([makeActiveProduct()]),
     };
@@ -58,6 +64,30 @@ describe("product.findBySlug", () => {
     mockStrapi.service = jest.fn(() => ({
       queueProductView: jest.fn(),
     }));
+  });
+
+  it("lets a trusted migration list inactive products while still excluding trash", () => {
+    mockIsTrustedWordPressMigrationRequest.mockReturnValue(true);
+    const ctx: any = {
+      query: { filters: { external_source: { $eq: "woocommerce" } } },
+      state: {},
+    };
+
+    expect((productController as any).applyPublicProductFilters(ctx)).toBe(true);
+    expect(ctx.query.filters.$and).toEqual([
+      { external_source: { $eq: "woocommerce" } },
+      { removedAt: { $null: true } },
+    ]);
+  });
+
+  it("keeps the active-only filter for untrusted product lists", () => {
+    const ctx: any = { query: { filters: {} }, state: {} };
+
+    expect((productController as any).applyPublicProductFilters(ctx)).toBe(true);
+    expect(ctx.query.filters.$and).toEqual([
+      { removedAt: { $null: true } },
+      { Status: "Active" },
+    ]);
   });
 
   it("keeps the default by-slug response on the full review populate", async () => {

@@ -22,6 +22,7 @@ import {
   parseSearchwiseSize,
 } from "../services/searchwise-feed";
 import { generateVariationCombinations } from "../services/variation-combinations";
+import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 
 /**
  * Check if the user is an admin (superadmin, store manager, or editor)
@@ -366,7 +367,12 @@ export default factories.createCoreController(
       }
 
       andConditions.push({ removedAt: { $null: true } });
-      andConditions.push({ Status: "Active" });
+      // A fully trusted migration request must see an existing inactive product
+      // by external_id so the idempotent importer updates it instead of trying a
+      // duplicate create. Trashed products remain excluded.
+      if (!isTrustedWordPressMigrationRequest()) {
+        andConditions.push({ Status: "Active" });
+      }
 
       ctx.query = {
         ...ctx.query,
