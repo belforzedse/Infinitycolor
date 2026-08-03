@@ -2,6 +2,10 @@
 
 const CatalogT = require("../catalog/lib/transforms");
 const T = require("./lib/transforms");
+const {
+  wooSourceTimestamps,
+  wordpressSourceTimestamps,
+} = require("../utils/sourceTimestamps");
 
 function rowsOf(response) {
   return Array.isArray(response?.data) ? response.data : [];
@@ -47,9 +51,27 @@ function safeDecode(value) {
   }
 }
 
+function sameTimestamp(actual, expected) {
+  if (!actual || !expected) return false;
+  const parsed = new Date(actual);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === expected;
+}
+
+function checkSourceTimestamps(check, actual, expected, prefix) {
+  if (!expected) return;
+  check(sameTimestamp(actual?.createdAt, expected.createdAt), `${prefix}_CREATED_AT_MISMATCH`);
+  check(sameTimestamp(actual?.updatedAt, expected.updatedAt), `${prefix}_UPDATED_AT_MISMATCH`);
+}
+
 async function reconcileProducts(source, destination, dryRun, pilot, ledger) {
   const productIds = selectedIds(dryRun, pilot, "productIds");
   const destinationProducts = (await destination.loadSnapshot("products")).map(attrs);
+  const destinationVariations = (await destination.loadSnapshot("variations")).map(attrs);
+  const variationsBySource = new Map(
+    destinationVariations
+      .filter((row) => row.external_source === "woocommerce" && row.external_id)
+      .map((row) => [String(row.external_id), row]),
+  );
   for (const sourceId of productIds) {
     ledger.count("products", "source");
     const sourceProduct = await source.getProduct(sourceId);
@@ -86,12 +108,44 @@ async function reconcileProducts(source, destination, dryRun, pilot, ledger) {
       }
     };
     const expectedGuide = CatalogT.extractSizeGuideMatrix(sourceProduct);
+    const expectedTimestamps = wooSourceTimestamps(sourceProduct);
     const helper = attrs(destinationProduct.product_size_helper?.data || destinationProduct.product_size_helper);
     const actualGuide = helper?.Helper ?? null;
     check(destinationProduct.Title === CatalogT.normalizeName(sourceProduct.name), "PRODUCT_TITLE_MISMATCH");
     check(destinationProduct.Slug === safeDecode(sourceProduct.slug), "PRODUCT_SLUG_MISMATCH");
     check(JSON.stringify(expectedGuide) === JSON.stringify(actualGuide), "SIZE_GUIDE_MISMATCH");
+    checkSourceTimestamps(check, matches[0], expectedTimestamps, "PRODUCT");
+    if (expectedTimestamps) {
+      check(
+        sameTimestamp(matches[0].LastEditedByAdminAt, expectedTimestamps.updatedAt),
+        "PRODUCT_MANUAL_EDIT_AT_MISMATCH",
+      );
+      if (expectedGuide) checkSourceTimestamps(check, helper, expectedTimestamps, "SIZE_HELPER");
+    }
     if (valid) ledger.count("products", "verified");
+
+    const sourceVariations = sourceProduct.type === "simple" || !sourceProduct.variations?.length
+      ? [CatalogT.synthesizeSimpleVariation(sourceProduct)]
+      : await source.getProductVariations(sourceId);
+    for (const sourceVariation of sourceVariations) {
+      const variationSourceId = String(sourceVariation.id);
+      ledger.count("variations", "source");
+      const actualVariation = variationsBySource.get(variationSourceId);
+      if (!actualVariation) {
+        mismatch(ledger, "variations", variationSourceId, "VARIATION_NOT_FOUND");
+        continue;
+      }
+      const variationTimestamps = wooSourceTimestamps(sourceVariation);
+      let variationValid = true;
+      const checkVariation = (condition, code) => {
+        if (!condition) {
+          variationValid = false;
+          mismatch(ledger, "variations", variationSourceId, code);
+        }
+      };
+      checkSourceTimestamps(checkVariation, actualVariation, variationTimestamps, "VARIATION");
+      if (variationValid) ledger.count("variations", "verified");
+    }
   }
 }
 
@@ -123,8 +177,25 @@ async function reconcileUsersAndWallets(source, destination, dryRun, pilot, ledg
     try { expected = T.customerPayload(customer); } catch { continue; }
     const actual = usersBySource.get(sourceId);
     if (!actual) mismatch(ledger, "users", sourceId, "USER_NOT_FOUND");
-    else if (T.canonicalPhone(actual.phone) !== expected.phone) mismatch(ledger, "users", sourceId, "USER_PHONE_MISMATCH");
-    else ledger.count("users", "verified");
+    else {
+      let valid = true;
+      if (T.canonicalPhone(actual.phone) !== expected.phone) {
+        valid = false;
+        mismatch(ledger, "users", sourceId, "USER_PHONE_MISMATCH");
+      }
+      const timestamps = expected.sourceCreatedAt ? {
+        createdAt: expected.sourceCreatedAt,
+        updatedAt: expected.sourceUpdatedAt,
+      } : null;
+      if (timestamps && (
+        !sameTimestamp(actual.createdAt, timestamps.createdAt) ||
+        !sameTimestamp(actual.updatedAt, timestamps.updatedAt)
+      )) {
+        valid = false;
+        mismatch(ledger, "users", sourceId, "USER_SOURCE_TIMESTAMP_MISMATCH");
+      }
+      if (valid) ledger.count("users", "verified");
+    }
   }
   const walletIds = selectedIds(dryRun, pilot, "walletIds");
   for (const sourceId of Array.from(new Set(
@@ -186,8 +257,16 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
     check(!relationOne(actual.delivery_address), "ORDER_ADDRESS_PRESENT");
     check(actual.Description == null && actual.Note == null, "ORDER_PRIVATE_TEXT_PRESENT");
     check(contract.Status === expected.contractStatus, "ORDER_CONTRACT_STATUS_MISMATCH");
+    check(contract.Type === expected.contractType, "ORDER_CONTRACT_TYPE_MISMATCH");
+    check(Number(contract.TaxPercent) === expected.taxPercent, "ORDER_CONTRACT_TAX_MISMATCH");
     check(String(contract.Amount) === expected.totalRial, "ORDER_TOTAL_MISMATCH");
     check(actualItems.length === expected.items.length, "ORDER_ITEM_COUNT_MISMATCH");
+    const orderTimestamps = expected.sourceCreatedAt ? {
+      createdAt: expected.sourceCreatedAt,
+      updatedAt: expected.sourceUpdatedAt,
+    } : null;
+    checkSourceTimestamps(check, actual, orderTimestamps, "ORDER");
+    checkSourceTimestamps(check, contract, orderTimestamps, "ORDER_CONTRACT");
     for (const expectedItem of expected.items) {
       const actualItem = itemsBySource.get(`line_item_${expectedItem.sourceId}`);
       if (!actualItem) {
@@ -198,6 +277,7 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
       check(Number(actualItem.Count) === expectedItem.count, "ORDER_ITEM_QUANTITY_MISMATCH");
       check(String(actualItem.PerAmount) === expectedItem.unitPriceRial, "ORDER_ITEM_PRICE_MISMATCH");
       check(String(actualVariation.external_id || "") === expectedItem.variationSourceId, "ORDER_ITEM_VARIATION_MISMATCH");
+      checkSourceTimestamps(check, actualItem, orderTimestamps, "ORDER_ITEM");
     }
     if (expected.customerSourceId) {
       const actualUser = attrs(relationOne(actual.user));
@@ -221,8 +301,17 @@ async function reconcileBlogs(source, destination, dryRun, ledger) {
     ledger.count("blogPosts", "source");
     const sourcePost = await source.getPost(sourceId);
     const expected = T.blogPostPayload(sourcePost);
-    if (!bySlug.has(expected.data.Slug)) mismatch(ledger, "blogPosts", sourceId, "BLOG_POST_NOT_FOUND");
-    else ledger.count("blogPosts", "verified");
+    const actual = bySlug.get(expected.data.Slug);
+    if (!actual) mismatch(ledger, "blogPosts", sourceId, "BLOG_POST_NOT_FOUND");
+    else {
+      const timestamps = wordpressSourceTimestamps(sourcePost);
+      if (timestamps && (
+        !sameTimestamp(actual.createdAt, timestamps.createdAt) ||
+        !sameTimestamp(actual.updatedAt, timestamps.updatedAt)
+      )) {
+        mismatch(ledger, "blogPosts", sourceId, "BLOG_POST_SOURCE_TIMESTAMP_MISMATCH");
+      } else ledger.count("blogPosts", "verified");
+    }
   }
 }
 

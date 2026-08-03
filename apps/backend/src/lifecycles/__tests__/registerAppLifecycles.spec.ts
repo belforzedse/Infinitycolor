@@ -108,7 +108,47 @@ describe("registerAppLifecycles", () => {
       "api::order.order",
       "api::contract.contract",
       "api::product-stock.product-stock",
+      "api::product.product",
     ]);
+  });
+
+  it("restores source timestamps for trusted migration creates and updates", async () => {
+    const previousToken = process.env.MIGRATION_CONTROL_TOKEN;
+    const controlToken = "t".repeat(48);
+    process.env.MIGRATION_CONTROL_TOKEN = controlToken;
+    (global as any).strapi = {
+      requestContext: {
+        get: () => ({
+          request: {
+            headers: {
+              "x-infinity-migration-mode": "wordpress-v2",
+              "x-infinity-migration-control": controlToken,
+              "x-infinity-source-created-at": "2020-01-02T03:04:05.000Z",
+              "x-infinity-source-updated-at": "2024-05-06T07:08:09.000Z",
+            },
+          },
+        }),
+      },
+    };
+    try {
+      const { strapi, subscribers } = createMockStrapi();
+      registerAppLifecycles(strapi);
+      const subscriber = getSubscriber(subscribers, "api::product.product");
+      const createEvent: any = { params: { data: { Title: "Imported" } } };
+      const updateEvent: any = { params: { data: { Title: "Updated" } } };
+
+      await subscriber.beforeCreate(createEvent);
+      await subscriber.beforeUpdate(updateEvent);
+
+      for (const event of [createEvent, updateEvent]) {
+        expect(event.params.data.createdAt).toEqual(new Date("2020-01-02T03:04:05.000Z"));
+        expect(event.params.data.updatedAt).toEqual(new Date("2024-05-06T07:08:09.000Z"));
+      }
+    } finally {
+      if (previousToken === undefined) delete process.env.MIGRATION_CONTROL_TOKEN;
+      else process.env.MIGRATION_CONTROL_TOKEN = previousToken;
+      delete (global as any).strapi;
+    }
   });
 
   it("keeps old declarative lifecycle files inert to avoid duplicate handlers", () => {

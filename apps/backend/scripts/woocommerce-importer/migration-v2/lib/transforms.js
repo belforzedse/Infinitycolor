@@ -1,5 +1,10 @@
 "use strict";
 
+const {
+  wooSourceTimestamps,
+  wordpressSourceTimestamps,
+} = require("../../utils/sourceTimestamps");
+
 function toEnglishDigits(value) {
   return String(value ?? "")
     .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
@@ -36,12 +41,17 @@ function rendered(value) {
 function customerPayload(customer) {
   const phone = canonicalPhone(customer?.billing?.phone || customer?.shipping?.phone);
   if (!phone) throw new Error("USER_PHONE_INVALID");
+  const sourceTimestamps = wooSourceTimestamps(customer);
   return {
     sourceId: String(customer.id),
     phone,
     email: cleanText(customer.email, 255) || null,
     firstName: cleanText(customer.first_name, 255),
     lastName: cleanText(customer.last_name, 255),
+    ...(sourceTimestamps ? {
+      sourceCreatedAt: sourceTimestamps.createdAt,
+      sourceUpdatedAt: sourceTimestamps.updatedAt,
+    } : {}),
   };
 }
 
@@ -126,6 +136,10 @@ function orderPayload(order) {
   });
   if (items.length === 0) throw new Error("ORDER_ITEMS_EMPTY");
   const shipping = Array.isArray(order.shipping_lines) ? order.shipping_lines[0] : null;
+  const sourceTimestamps = wooSourceTimestamps(order);
+  const gateway = paymentGateway(order.payment_method);
+  const totalTaxRial = decimalToInteger(order.total_tax || 0, 10);
+  if (totalTaxRial !== "0") throw new Error("ORDER_NONZERO_TAX_REQUIRES_MAPPING");
   return {
     sourceId,
     customerSourceId: Number(order.customer_id) > 0 ? String(order.customer_id) : null,
@@ -137,7 +151,13 @@ function orderPayload(order) {
     shippingRial: decimalToInteger(order.shipping_total || 0, 10),
     shippingMethodCode: cleanText(shipping?.method_id, 255) || null,
     shippingMethodTitle: cleanText(shipping?.method_title, 255) || null,
-    paymentGateway: paymentGateway(order.payment_method),
+    paymentGateway: gateway,
+    contractType: gateway === "SnappPay" ? "Credit" : "Cash",
+    taxPercent: 0,
+    ...(sourceTimestamps ? {
+      sourceCreatedAt: sourceTimestamps.createdAt,
+      sourceUpdatedAt: sourceTimestamps.updatedAt,
+    } : {}),
     items,
   };
 }
@@ -160,6 +180,7 @@ function blogPostPayload(post) {
   const published = new Date(post.date_gmt ? `${post.date_gmt}Z` : post.date);
   return {
     sourceId: String(post.id),
+    sourceTimestamps: wordpressSourceTimestamps(post),
     data: {
       Title: title,
       Slug: slug,

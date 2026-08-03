@@ -31,6 +31,19 @@ test("mapProduct: writes ProductType, IsSimpleProduct, Weight, Status", () => {
   assert.ok(!("Weight" in simple)); // blank weight → schema default kept (not written)
 });
 
+test("mapProduct preserves Woo timestamps and stamps the manual-change field", () => {
+  const result = T.mapProduct({
+    ...byId(products, 101),
+    date_created_gmt: "2020-01-02T03:04:05",
+    date_modified_gmt: "2024-05-06T07:08:09",
+  });
+  assert.deepEqual(result.sourceTimestamps, {
+    createdAt: "2020-01-02T03:04:05.000Z",
+    updatedAt: "2024-05-06T07:08:09.000Z",
+  });
+  assert.equal(result.data.LastEditedByAdminAt, "2024-05-06T07:08:09.000Z");
+});
+
 test("mapProduct: falls back to short_description when description empty", () => {
   const { data } = T.mapProduct(byId(products, 102));
   assert.match(data.Description, /شال نخی/);
@@ -138,6 +151,20 @@ test("mapVariation: stable SKU, no per-run mutation; IsPublished default true", 
 
   const noStatus = T.mapVariation({ id: 7, regular_price: "100", attributes: [] }, { parentStrapiId: 1 });
   assert.equal(noStatus.data.IsPublished, true); // missing status defaults to published
+});
+
+test("mapVariation and synthetic simple variations preserve Woo timestamps", () => {
+  const parent = {
+    ...byId(products, 102),
+    date_created_gmt: "2021-01-02T03:04:05",
+    date_modified_gmt: "2023-05-06T07:08:09",
+  };
+  const synthetic = T.synthesizeSimpleVariation(parent);
+  const result = T.mapVariation(synthetic, { parentStrapiId: 500, parentProduct: parent });
+  assert.deepEqual(result.sourceTimestamps, {
+    createdAt: "2021-01-02T03:04:05.000Z",
+    updatedAt: "2023-05-06T07:08:09.000Z",
+  });
 });
 
 test("generateVariationSku: synthesizes WC-<pid>-<vid> when blank", () => {

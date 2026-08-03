@@ -2,6 +2,9 @@
 
 const path = require("node:path");
 const { JsonHttp } = require("./http");
+const {
+  sourceTimestampHeaders,
+} = require("../../utils/sourceTimestamps");
 
 class Destination {
   constructor(config) {
@@ -37,7 +40,15 @@ class Destination {
   }
 
   async upsertUser(payload) {
-    return (await this.http.post("/internal/migrations/wordpress-v2/users/upsert", payload)).data?.data;
+    const timestamps = payload?.sourceCreatedAt ? {
+      createdAt: payload.sourceCreatedAt,
+      updatedAt: payload.sourceUpdatedAt,
+    } : null;
+    return (await this.http.post(
+      "/internal/migrations/wordpress-v2/users/upsert",
+      payload,
+      sourceTimestampHeaders(timestamps),
+    )).data?.data;
   }
 
   async upsertWallet(payload) {
@@ -45,25 +56,34 @@ class Destination {
   }
 
   async upsertOrder(payload) {
-    return (await this.http.post("/internal/migrations/wordpress-v2/orders/upsert", payload)).data?.data;
+    const timestamps = payload?.sourceCreatedAt ? {
+      createdAt: payload.sourceCreatedAt,
+      updatedAt: payload.sourceUpdatedAt,
+    } : null;
+    return (await this.http.post(
+      "/internal/migrations/wordpress-v2/orders/upsert",
+      payload,
+      sourceTimestampHeaders(timestamps),
+    )).data?.data;
   }
 
   async getContent(endpoint, query = {}) {
     return (await this.http.get(endpoint, query)).data;
   }
 
-  async contentUpsert(endpoint, id, data) {
+  async contentUpsert(endpoint, id, data, sourceTimestamps = null) {
+    const headers = sourceTimestampHeaders(sourceTimestamps);
     if (id) {
-      await this.http.put(`${endpoint}/${id}`, { data });
+      await this.http.put(`${endpoint}/${id}`, { data }, headers);
       return { id: Number(id), mode: "updated" };
     }
-    const response = await this.http.post(endpoint, { data });
+    const response = await this.http.post(endpoint, { data }, headers);
     const savedId = response.data?.data?.id;
     if (!savedId) throw new Error(`DESTINATION_CREATE_RETURNED_NO_ID:${endpoint}`);
     return { id: Number(savedId), mode: "created" };
   }
 
-  async uploadBlogMedia(sourceUrl, sourceId) {
+  async uploadBlogMedia(sourceUrl, sourceId, sourceTimestamps = null) {
     const url = new URL(sourceUrl);
     if (url.protocol !== "https:") throw new Error("BLOG_MEDIA_URL_NOT_HTTPS");
     const hostAllowed = (hostname) =>
@@ -88,7 +108,7 @@ class Destination {
     form.append("files", new Blob([bytes], { type: mime }), `wp-blog-${sourceId}${extension}`);
     const response = await fetch(`${this.baseUrl}/upload`, {
       method: "POST",
-      headers: this.headers,
+      headers: { ...this.headers, ...sourceTimestampHeaders(sourceTimestamps) },
       body: form,
     });
     const payload = await response.json();

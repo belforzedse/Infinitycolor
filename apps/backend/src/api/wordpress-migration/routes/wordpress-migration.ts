@@ -26,5 +26,11 @@ export default {
       handler: "wordpress-migration.upsertOrder",
       config: { auth: { scope: [] }, policies: [], middlewares: migrationMiddleware },
     },
+    {
+      method: "POST",
+      path: "/internal/migrations/wordpress-v2/media/timestamps",
+      handler: "wordpress-migration.restoreMediaTimestamps",
+      config: { auth: { scope: [] }, policies: [], middlewares: migrationMiddleware },
+    },
   ],
 };

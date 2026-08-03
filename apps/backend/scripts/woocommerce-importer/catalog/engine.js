@@ -11,6 +11,7 @@ const { ImportReport } = require("./lib/report");
 const { resolveScope, needsProductLoop } = require("./lib/presets");
 const T = require("./lib/transforms");
 const G = require("./lib/genericAttributes");
+const { sourceTimestampHeaders, wooSourceTimestamps } = require("../utils/sourceTimestamps");
 
 function normalizeRunLimit(limit) {
   return Number.isFinite(limit) ? limit : "all";
@@ -516,7 +517,7 @@ class CatalogEngine {
     if (flags.products) {
       const resolveCategoryId = (wooId) => this.mapping.getStrapiId("categories", wooId);
       const resolveCategoryParent = (wooId) => this.mapping.get("categories", wooId)?.parentWcId ?? null;
-      const { data, sizeGuideMatrix } = T.mapProduct(wcProduct, {
+      const { data, sizeGuideMatrix, sourceTimestamps } = T.mapProduct(wcProduct, {
         resolveCategoryId,
         resolveCategoryParent,
         statusMappings: this.statusMappings,
@@ -543,13 +544,14 @@ class CatalogEngine {
           externalId: wcProduct.id.toString(),
           payload: data,
           index: productIndex,
+          sourceTimestamps,
         });
         this.mapping.set("products", wcProduct.id, id, { name: wcProduct.name, slug: data.Slug });
         report.count("products", mode);
         productStrapiId = id;
 
         try {
-          const helperMode = await this.repo.syncProductSizeHelper(id, sizeGuideMatrix);
+          const helperMode = await this.repo.syncProductSizeHelper(id, sizeGuideMatrix, sourceTimestamps);
           report.count("sizeHelpers", helperMode);
         } catch (error) {
           report.fail("sizeHelpers", { wcId: wcProduct.id, stage: "sync-size-guide", error });
@@ -596,7 +598,9 @@ class CatalogEngine {
         if (coverId) update.CoverImage = coverId;
         if (galleryIds.length > 0) update.Media = galleryIds;
         if (Object.keys(update).length > 0) {
-          await this.repo.http.put(`/products/${productStrapiId}`, { data: update });
+          await this.repo.http.put(`/products/${productStrapiId}`, { data: update }, {
+            headers: sourceTimestampHeaders(wooSourceTimestamps(wcProduct)),
+          });
         } else {
           this.logger.info(`ℹ️  no media available in WooCommerce for product ${wcProduct.id}`);
         }
@@ -744,7 +748,9 @@ class CatalogEngine {
           if (!pricing.priceMissing) {
             const payload = { Price: pricing.price };
             payload.DiscountPrice = pricing.discountPrice ?? null;
-            await this.repo.http.put(`/product-variations/${variationStrapiId}`, { data: payload });
+            await this.repo.http.put(`/product-variations/${variationStrapiId}`, { data: payload }, {
+              headers: sourceTimestampHeaders(wooSourceTimestamps(wcVariation)),
+            });
             report.count("variations", "updated");
             variationFingerprint = fingerprint(payload);
           } else {
@@ -752,7 +758,7 @@ class CatalogEngine {
           }
         }
       } else {
-        const { data, priceMissing } = T.mapVariation(wcVariation, {
+        const { data, priceMissing, sourceTimestamps } = T.mapVariation(wcVariation, {
           parentStrapiId,
           parentProduct,
           multiplier: this.multiplier,
@@ -777,6 +783,7 @@ class CatalogEngine {
           externalId,
           payload: data,
           index: variationIndex,
+          sourceTimestamps,
         });
         this.mapping.set("variations", wcVariation.id, id, { productId: parentProduct.id, sku: data.SKU });
         report.count("variations", mode);
@@ -804,6 +811,7 @@ class CatalogEngine {
           count: stock.count,
           variationId: variationStrapiId,
           stockIndex,
+          sourceTimestamps: wooSourceTimestamps(wcVariation),
         });
         report.count("stocks", stockMode);
         if (runContext) {

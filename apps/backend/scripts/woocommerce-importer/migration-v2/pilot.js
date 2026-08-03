@@ -7,6 +7,7 @@ const { buildConfig } = require("../catalog/config");
 const CatalogT = require("../catalog/lib/transforms");
 const Logger = require("../utils/Logger");
 const T = require("./lib/transforms");
+const { wordpressSourceTimestamps } = require("../utils/sourceTimestamps");
 const { loadBlogDestinationIndexes } = require("./dry-run");
 
 function candidateIds(dryRun, kind) {
@@ -222,7 +223,7 @@ async function ensureBlogDependencies(source, destination, indexes, ledger, payl
       Title: String(sourceCategory.name || "").trim().slice(0, 100),
       Slug: slug.slice(0, 150),
       Description: String(sourceCategory.description || "").trim().slice(0, 500),
-    });
+    }, wordpressSourceTimestamps(sourceCategory));
     indexes.blogCategoriesBySlug.map.set(slug, { id: result.id, Slug: slug });
     categoryIds.push(result.id);
     ledger.count("blogCategories", result.mode === "created" ? "inserted" : "updated");
@@ -237,7 +238,7 @@ async function ensureBlogDependencies(source, destination, indexes, ledger, payl
       Name: String(sourceTag.name || "").trim().slice(0, 50),
       Slug: slug.slice(0, 150),
       Description: String(sourceTag.description || "").trim().slice(0, 200),
-    });
+    }, wordpressSourceTimestamps(sourceTag));
     indexes.blogTagsBySlug.map.set(slug, { id: result.id, Slug: slug });
     tagIds.push(result.id);
     ledger.count("blogTags", result.mode === "created" ? "inserted" : "updated");
@@ -253,7 +254,7 @@ async function ensureBlogDependencies(source, destination, indexes, ledger, payl
       Name: name,
       Email: String(sourceAuthor.email || "").trim().toLowerCase() || null,
       Bio: String(sourceAuthor.description || "").trim().slice(0, 1000),
-    });
+    }, wordpressSourceTimestamps(sourceAuthor));
     indexes.blogAuthorsByName.map.set(name, { id: result.id, Name: name });
     authorId = result.id;
     ledger.count("blogAuthors", result.mode === "created" ? "inserted" : "updated");
@@ -276,7 +277,11 @@ async function upsertPilotBlog(source, destination, indexes, ledger, sourceId) {
         const media = await source.getMedia(payload.featuredMediaId);
         const sourceUrl = media?.source_url;
         if (!sourceUrl) throw new Error("BLOG_MEDIA_SOURCE_URL_MISSING");
-        const uploaded = await destination.uploadBlogMedia(sourceUrl, payload.featuredMediaId);
+        const uploaded = await destination.uploadBlogMedia(
+          sourceUrl,
+          payload.featuredMediaId,
+          wordpressSourceTimestamps(media),
+        );
         featuredImageId = uploaded.id;
         ledger.summary.mappings.blogMedia[payload.featuredMediaId] = featuredImageId;
         ledger.summary.metrics.mediaBytes = Number(ledger.summary.metrics.mediaBytes || 0) + uploaded.bytes;
@@ -291,7 +296,7 @@ async function upsertPilotBlog(source, destination, indexes, ledger, sourceId) {
       blog_tags: relations.tagIds,
       blog_author: relations.authorId,
       FeaturedImage: featuredImageId,
-    });
+    }, payload.sourceTimestamps);
     indexes.blogPostsBySlug.map.set(payload.data.Slug, { id: result.id, Slug: payload.data.Slug });
     ledger.count("blogPosts", "eligible");
     ledger.count("blogPosts", result.mode === "created" ? "inserted" : "updated");

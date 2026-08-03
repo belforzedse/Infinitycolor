@@ -77,8 +77,8 @@ class JsonHttp {
   }
 
   get(pathname, query) { return this.request("GET", pathname, { query }); }
-  post(pathname, body) { return this.request("POST", pathname, { body }); }
-  put(pathname, body) { return this.request("PUT", pathname, { body }); }
+  post(pathname, body, headers) { return this.request("POST", pathname, { body, headers }); }
+  put(pathname, body, headers) { return this.request("PUT", pathname, { body, headers }); }
 }
 
 module.exports = { JsonHttp };
