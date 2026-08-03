@@ -156,7 +156,6 @@ export async function finalizeSnappaySettlement(
           SettledAt: transaction.SettledAt || now,
           LastReconciledAt: now,
           VerifiedAt: transaction.VerifiedAt || now,
-          TrackId: null,
         },
         ...(trx ? { transacting: trx } : {}),
       } as any);

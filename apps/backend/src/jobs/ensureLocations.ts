@@ -3,6 +3,112 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 type CityPayload = { province: string; cities: string[] };
+type AnipoLocationCodePayload = {
+  province: string;
+  code: string;
+  cities: Record<string, string>;
+};
+
+export function normalizeIranLocationTitle(value: unknown): string {
+  return String(value || "")
+    .normalize("NFC")
+    .trim()
+    .replace(/ي/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[\u200c\s\-ـ()]/g, "");
+}
+
+export function buildAnipoLocationCodeMaps(payload: AnipoLocationCodePayload[]) {
+  const provinceCodes = new Map<string, string>();
+  const cityCodes = new Map<string, Map<string, string>>();
+
+  for (const entry of payload || []) {
+    const provinceKey = normalizeIranLocationTitle(entry?.province);
+    const provinceCode = String(entry?.code || "").trim();
+    if (!provinceKey || !provinceCode) continue;
+
+    provinceCodes.set(provinceKey, provinceCode);
+    const codes = new Map<string, string>();
+    for (const [title, code] of Object.entries(entry?.cities || {})) {
+      const cityKey = normalizeIranLocationTitle(title);
+      const cityCode = String(code || "").trim();
+      if (cityKey && cityCode) codes.set(cityKey, cityCode);
+    }
+    cityCodes.set(provinceKey, codes);
+  }
+
+  return { provinceCodes, cityCodes };
+}
+
+async function backfillAnipoLocationCodes(
+  strapi: Strapi,
+  maps: ReturnType<typeof buildAnipoLocationCodeMaps>,
+) {
+  const provinceQuery = strapi.db.query(
+    "api::shipping-province.shipping-province",
+  );
+  const cityQuery = strapi.db.query("api::shipping-city.shipping-city");
+  const provinces: any[] = await provinceQuery.findMany({
+    select: ["id", "Title", "Code"],
+  } as any);
+  const provinceTitleById = new Map<number, string>();
+  let provinceUpdates = 0;
+
+  for (const province of provinces || []) {
+    provinceTitleById.set(Number(province.id), String(province.Title || ""));
+    if (String(province.Code || "").trim()) continue;
+    const code = maps.provinceCodes.get(
+      normalizeIranLocationTitle(province.Title),
+    );
+    if (!code) continue;
+    await provinceQuery.update({
+      where: { id: province.id },
+      data: { Code: code },
+    } as any);
+    provinceUpdates += 1;
+  }
+
+  const cities: any[] = await cityQuery.findMany({
+    select: ["id", "Title", "Code"],
+    populate: { shipping_province: true },
+  } as any);
+  let cityUpdates = 0;
+  let missingCityMappings = 0;
+  for (const city of cities || []) {
+    if (String(city.Code || "").trim()) continue;
+    const provinceId = Number(
+      city?.shipping_province?.id ?? city?.shipping_province,
+    );
+    const provinceTitle =
+      city?.shipping_province?.Title || provinceTitleById.get(provinceId) || "";
+    const cityMap = maps.cityCodes.get(
+      normalizeIranLocationTitle(provinceTitle),
+    );
+    const code = cityMap?.get(normalizeIranLocationTitle(city.Title));
+    if (!code) {
+      missingCityMappings += 1;
+      continue;
+    }
+    await cityQuery.update({
+      where: { id: city.id },
+      data: { Code: code },
+    } as any);
+    cityUpdates += 1;
+  }
+
+  strapi.log.info(
+    "✓ Anipo location codes ready: provinces backfilled=%d cities backfilled=%d",
+    provinceUpdates,
+    cityUpdates,
+  );
+  if (missingCityMappings > 0) {
+    strapi.log.warn(
+      "⚠️ Anipo has no exact provider code for %d existing city/county titles; barcode issuance remains available because it uses province code plus city title",
+      missingCityMappings,
+    );
+  }
+}
+
 type ShippingSeed = {
   Title: string;
   Price: number;
@@ -84,6 +190,26 @@ function getShippingDefaults(seed: ShippingSeed, context: ShippingBackfillContex
 
 export async function ensureIranLocations(strapi: Strapi) {
   try {
+    const appRoot = strapi.dirs.app.root;
+    const locationsPath = path.resolve(appRoot, "database/iran-cities.json");
+    const anipoCodesPath = path.resolve(
+      appRoot,
+      "database/anipo-location-codes.json",
+    );
+    const [rawLocations, rawAnipoCodes] = await Promise.all([
+      fs.readFile(locationsPath, "utf8"),
+      fs.readFile(anipoCodesPath, "utf8"),
+    ]);
+    const payload: CityPayload[] = JSON.parse(rawLocations);
+    const anipoCodePayload: AnipoLocationCodePayload[] =
+      JSON.parse(rawAnipoCodes);
+    const anipoCodeMaps = buildAnipoLocationCodeMaps(anipoCodePayload);
+    if (anipoCodeMaps.provinceCodes.size !== payload.length) {
+      throw new Error(
+        `ANIPO_LOCATION_CODE_DATA_INCOMPLETE: expected ${payload.length} provinces, found ${anipoCodeMaps.provinceCodes.size}`,
+      );
+    }
+
     const forceReseed = process.env.FORCE_RESEED === "true";
     const provinceCount = await strapi.db.query("api::shipping-province.shipping-province").count();
     const cityCount = await strapi.db.query("api::shipping-city.shipping-city").count();
@@ -119,64 +245,9 @@ export async function ensureIranLocations(strapi: Strapi) {
     let finalCityCount = cityCount;
 
     if (shouldSeedLocations) {
-      const appRoot = strapi.dirs.app.root;
-      const jsonPath = path.resolve(appRoot, "database/iran-cities.json");
-      const sqlPath = path.resolve(appRoot, "database/iran_cities (for api document) (2).sql");
-
-      strapi.log.info("🔍 Checking for seed files...");
-      strapi.log.debug("  JSON path: %s", jsonPath);
-      strapi.log.debug("  SQL path: %s", sqlPath);
-
-      const [jsonExists, sqlExists] = await Promise.all([
-        fs
-          .access(jsonPath)
-          .then(() => true)
-          .catch(() => false),
-        fs
-          .access(sqlPath)
-          .then(() => true)
-          .catch(() => false),
-      ]);
-
-      if (!jsonExists) {
-        strapi.log.error(
-          "✗ Iran locations bootstrap FAILED - missing files (json: %s, sql: %s). App root: %s",
-          "✗ MISSING",
-          sqlExists ? "✓ found" : "✗ MISSING",
-          appRoot,
-        );
-        return;
-      }
-
-      if (!sqlExists) {
-        strapi.log.warn(
-          "⚠️ iran_cities SQL not found at %s. Proceeding without province/city codes; Titles will still be seeded.",
-          sqlPath,
-        );
-      }
-
-      strapi.log.info("✓ Found seed files (JSON required, SQL optional), starting import...");
-
-      const raw = await fs.readFile(jsonPath, "utf8");
-      const payload: CityPayload[] = JSON.parse(raw);
-
-      const provinceCodeMap = new Map<string, string>();
-      const cityCodeMap = new Map<string, Map<string, string>>();
-      if (sqlExists) {
-        const sql = await fs.readFile(sqlPath, "utf8");
-        const tupleRegex = /\('([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\)/g;
-        let match;
-        while ((match = tupleRegex.exec(sql))) {
-          const provinceName = (match[1] || "").trim();
-          const provinceCode = (match[2] || "").trim();
-          const cityName = (match[3] || "").trim();
-          const cityCode = (match[4] || "").trim();
-          if (!provinceName || !provinceCode || !cityName || !cityCode) continue;
-          provinceCodeMap.set(provinceName, provinceCode);
-          if (!cityCodeMap.has(provinceName)) cityCodeMap.set(provinceName, new Map());
-          cityCodeMap.get(provinceName)!.set(cityName, cityCode);
-        }
-      }
+      strapi.log.info(
+        "✓ Found Iran locations and Anipo code data, starting import...",
+      );
 
       // Insert provinces with codes
       for (const entry of payload) {
@@ -190,7 +261,10 @@ export async function ensureIranLocations(strapi: Strapi) {
         const created = await strapi.entityService.create("api::shipping-province.shipping-province", {
           data: {
             Title: entry.province,
-            Code: provinceCodeMap.get(entry.province) || null,
+            Code:
+              anipoCodeMaps.provinceCodes.get(
+                normalizeIranLocationTitle(entry.province),
+              ) || null,
           },
           fields: ["id"],
         }) as { id: number };
@@ -201,7 +275,10 @@ export async function ensureIranLocations(strapi: Strapi) {
       for (const entry of payload) {
         const provinceId = provinceIdMap.get(entry.province);
         if (!provinceId) continue;
-        const cityCodes = cityCodeMap.get(entry.province) || new Map();
+        const cityCodes =
+          anipoCodeMaps.cityCodes.get(
+            normalizeIranLocationTitle(entry.province),
+          ) || new Map();
         for (const cityTitle of entry.cities) {
           const existing = await strapi.db.query("api::shipping-city.shipping-city").findOne({
             where: { Title: cityTitle, shipping_province: provinceId },
@@ -211,7 +288,8 @@ export async function ensureIranLocations(strapi: Strapi) {
             data: {
               Title: cityTitle,
               shipping_province: provinceId,
-              Code: cityCodes.get(cityTitle) || null,
+              Code:
+                cityCodes.get(normalizeIranLocationTitle(cityTitle)) || null,
             },
           });
         }
@@ -221,6 +299,11 @@ export async function ensureIranLocations(strapi: Strapi) {
     } else {
       strapi.log.info("↷ Skipped province/city seed (already present and FORCE_RESEED not set)");
     }
+
+    // Existing installations used to skip location data as soon as row counts
+    // were non-zero. Backfill missing provider codes independently so upgrades
+    // repair data without deleting addresses or changing relation IDs.
+    await backfillAnipoLocationCodes(strapi, anipoCodeMaps);
 
     const golestanProvince = await strapi.db.query("api::shipping-province.shipping-province").findOne({
       where: { Title: "گلستان" },

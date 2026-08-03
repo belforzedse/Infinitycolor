@@ -1,6 +1,13 @@
 import { enqueueSnappayOperation } from "../../../queue/snappay";
 import { createSnappayAdapter } from "../services/snappay";
-import { processSnappayOperation } from "../services/snappay-orchestrator";
+import {
+  extractSnappayPaymentTokenFromRedirectUrl,
+  processSnappayOperation,
+} from "../services/snappay-orchestrator";
+import {
+  displaySnappayFingerprint,
+  snappayTokenFingerprint,
+} from "../services/snappay-security";
 import { SNAPPAY_RECONCILIATION_DELAYS_MS } from "../services/snappay-state-machine";
 
 jest.mock("../../../queue/snappay", () => ({
@@ -106,9 +113,12 @@ function createHarness(operationOverrides: Record<string, unknown> = {}) {
   } as any;
   return {
     strapi,
+    attempt,
+    transaction,
     operation,
     operationQuery,
     attemptQuery,
+    transactionQuery,
   };
 }
 
@@ -243,5 +253,41 @@ describe("SnappPay operation processing guards", () => {
         }),
       }),
     );
+  });
+
+  it("recovers a cleared provider token from the fingerprinted redirect URL", async () => {
+    const token = "restored-provider-payment-token";
+    const { strapi, attempt, transaction, transactionQuery } = createHarness();
+    transaction.TrackId = null;
+    attempt.redirectUrl = `https://pay.example.test/start?paymentToken=${token}`;
+    attempt.providerResponse = {
+      tokenFingerprint: displaySnappayFingerprint(
+        snappayTokenFingerprint(token),
+      ),
+    };
+    const status = jest.fn().mockResolvedValue({
+      successful: true,
+      response: { status: "REGISTERED" },
+      diagnostic: { endpoint: "status", httpStatus: 200, providerCode: 0 },
+    });
+    mockedAdapter.mockReturnValue({ status } as any);
+
+    await processSnappayOperation(strapi, 88);
+
+    expect(status).toHaveBeenCalledWith(token);
+    expect(transactionQuery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 44 },
+        data: { TrackId: token },
+      }),
+    );
+  });
+
+  it("does not recover SnappPay tokens from an insecure redirect URL", () => {
+    expect(
+      extractSnappayPaymentTokenFromRedirectUrl(
+        "http://pay.example.test/start?paymentToken=secret",
+      ),
+    ).toBe("");
   });
 });
