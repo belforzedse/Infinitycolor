@@ -1,5 +1,5 @@
 # syntax=docker.arvancloud.ir/docker/dockerfile:1.7
-FROM docker.arvancloud.ir/library/node:20-alpine AS builder
+FROM docker.arvancloud.ir/library/node:20-alpine AS dependencies
 
 ARG STRAPI_DISABLE_SOURCEMAPS=true
 ARG STRAPI_TELEMETRY_DISABLED=true
@@ -51,6 +51,8 @@ RUN --mount=type=cache,target=/root/.cache/node/corepack \
     && node -e "const sharp=require('sharp'); console.log('sharp-ok', process.platform, process.arch, sharp.versions);" \
     && node -e "const authCore=require('@repo/auth-core'); if (typeof authCore.verifyBridgeSignature !== 'function') throw new Error('auth-core-runtime-invalid'); console.log('auth-core-runtime-ok');"
 
+FROM dependencies AS builder
+
 COPY apps/backend ./apps/backend
 WORKDIR /repo/apps/backend
 RUN --mount=type=cache,target=/root/.cache/node/corepack \
@@ -62,18 +64,19 @@ RUN echo "removing build artifacts..." \
     && rm -rf .strapi .cache .tmp \
     && echo "strapi build step complete"
 WORKDIR /repo
-RUN echo "copying backend runtime files..." \
+RUN mkdir -p /runtime \
+    && echo "copying backend runtime files..." \
     && for path in /repo/apps/backend/* /repo/apps/backend/.[!.]* /repo/apps/backend/..?*; do \
       [ -e "$path" ] || continue; \
       name="${path##*/}"; \
       case "$name" in node_modules|dist|build|.strapi|.cache|.tmp) continue ;; esac; \
-      cp -a "$path" /app/; \
+      cp -a "$path" /runtime/; \
     done \
-    && mkdir -p /app/dist /app/build \
-    && cp -a /repo/apps/backend/dist/. /app/dist/ \
-    && if [ -d /repo/apps/backend/build ]; then cp -a /repo/apps/backend/build/. /app/build/; fi \
-    && mkdir -p /app/public/uploads \
-    && cp -a /repo/apps/backend/e2e-fixtures/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /app/public/uploads/ \
+    && mkdir -p /runtime/dist /runtime/build \
+    && cp -a /repo/apps/backend/dist/. /runtime/dist/ \
+    && if [ -d /repo/apps/backend/build ]; then cp -a /repo/apps/backend/build/. /runtime/build/; fi \
+    && mkdir -p /runtime/public/uploads \
+    && cp -a /repo/apps/backend/e2e-fixtures/uploads/Cyan_DM_id_WAHX_9y_Gx_0_ea75d58006.webp /runtime/public/uploads/ \
     && echo "backend runtime assembly complete"
 
 FROM docker.arvancloud.ir/library/node:20-alpine AS runner
@@ -104,7 +107,9 @@ RUN /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SE
 
 WORKDIR /app
 
-COPY --link --from=builder --chown=node:node /app /app
+# Keep the multi-gigabyte dependency tree independent from source-only changes.
+COPY --link --from=dependencies --chown=node:node /app /app
+COPY --link --from=builder --chown=node:node /runtime /app
 RUN chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 1337
