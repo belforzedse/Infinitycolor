@@ -127,7 +127,6 @@ export function infinityCredentialsPlugin(
             writeFlowState(ctx, {
               phone: ctx.body.phone,
               purpose: purposeFromHeaders(ctx.headers),
-              hasUser: response.hasUser,
               returnTo:
                 current?.returnTo ?? returnTargetFromHeaders(ctx.headers),
             });
@@ -154,7 +153,6 @@ export function infinityCredentialsPlugin(
               phone: ctx.body.phone,
               challengeId: response.challengeId,
               purpose: purposeFromHeaders(ctx.headers),
-              hasUser: current?.hasUser,
               returnTo:
                 current?.returnTo ?? returnTargetFromHeaders(ctx.headers),
             });
@@ -186,7 +184,7 @@ export function infinityCredentialsPlugin(
               verified.strapiUserId,
               flow.returnTo,
             );
-            if (flow.hasUser === false) {
+            if (verified.isNewUser === true) {
               return ctx.json({
                 message: "login successful",
                 redirectTo: "/auth/register/info",

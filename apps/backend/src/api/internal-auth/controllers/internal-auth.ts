@@ -5,7 +5,7 @@ import {
   hasUserForPhone,
   isAcceptedPhone,
   resetPasswordWithOtp,
-  verifyOtpIdentity,
+  verifyOtpIdentityWithStatus,
   verifyPasswordIdentity,
 } from "../../auth/services/credential-flow";
 
@@ -56,9 +56,16 @@ export default {
   async otpVerify(ctx) {
     const { challengeId, otp } = ctx.request.body ?? {};
     try {
-      const user = await verifyOtpIdentity(String(challengeId ?? ""), String(otp ?? ""));
+      const { user, isNewUser } = await verifyOtpIdentityWithStatus(
+        String(challengeId ?? ""),
+        String(otp ?? ""),
+      );
       await assertUserMayStartSession(user);
-      ctx.body = { strapiUserId: Number(user.id), confirmed: Boolean(user.confirmed) };
+      ctx.body = {
+        strapiUserId: Number(user.id),
+        confirmed: Boolean(user.confirmed),
+        isNewUser,
+      };
     } catch (error) {
       handleCredentialError(ctx, error);
     }
