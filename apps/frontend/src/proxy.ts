@@ -10,6 +10,12 @@ export { isAuthRequiredRoute };
 
 export const LEGACY_REDIRECT_STATUS = 301;
 export const AUTH_REDIRECT_STATUS = 307;
+export const ADMIN_CUTOVER_REDIRECT_STATUS = 307;
+
+const ADMIN_ORIGINS = {
+  production: "https://admin.infinitycolor.co",
+  staging: "https://admin.staging.infinitycolor.co",
+} as const;
 
 const PDP_REDIRECT_TIMEOUT_MS = 1500;
 const WOO_VARIATION_PARAM_NAMES = new Set(["رنگ", "سایز", "طرح"]);
@@ -46,6 +52,37 @@ export function getSegments(pathname: string) {
 function getDecodedPathname(pathname: string) {
   const segments = getSegments(pathname);
   return segments.length > 0 ? `/${segments.join("/")}` : "/";
+}
+
+function isLoopbackAdminOrigin(origin: string) {
+  const hostname = new URL(origin).hostname;
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+function fixedAdminCutoverOrigin() {
+  const environment = process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT;
+  if (environment === "production" || environment === "staging") {
+    return ADMIN_ORIGINS[environment];
+  }
+  const configured = process.env.ADMIN_REDIRECT_LOCAL_ORIGIN?.trim();
+  if (!configured) return "http://localhost:2891";
+  const parsed = new URL(configured);
+  if (parsed.origin !== configured || !isLoopbackAdminOrigin(parsed.origin)) {
+    throw new Error("ADMIN_REDIRECT_LOCAL_ORIGIN must be an exact loopback origin");
+  }
+  return parsed.origin;
+}
+
+export function isLegacyAdminPath(pathname: string) {
+  return pathname === "/super-admin" || pathname.startsWith("/super-admin/");
+}
+
+export function getAdminCutoverRedirectUrl(sourceUrl: LegacyRedirectSourceUrl) {
+  if (!isLegacyAdminPath(sourceUrl.pathname)) return null;
+  const suffix = sourceUrl.pathname.slice("/super-admin".length);
+  const target = new URL(suffix || "/", fixedAdminCutoverOrigin());
+  target.search = sourceUrl.search;
+  return target;
 }
 
 export function lastCategorySegmentFromShopPath(segments: string[]) {
@@ -245,6 +282,23 @@ export async function proxy(request: NextRequest) {
   // Note: /_next/static and /api/ are excluded by matcher, so cache-control for those paths is handled by Next.js
   if (pathname.startsWith("/images/") || pathname.startsWith("/fonts/")) {
     response.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  }
+
+  // This switch remains false through parallel validation. Cutover is an
+  // explicit operational action; the destination is never request-derived.
+  if (process.env.ADMIN_REDIRECT_ENABLED === "true" && isLegacyAdminPath(pathname)) {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      const rejected = NextResponse.json(
+        { error: "method_not_allowed" },
+        { status: 405, headers: { Allow: "GET, HEAD" } },
+      );
+      rejected.headers.set("Cache-Control", "no-store, max-age=0");
+      return applySecurityHeaders(rejected);
+    }
+    const target = getAdminCutoverRedirectUrl(request.nextUrl);
+    const redirected = redirectWithSecurityHeaders(target!, ADMIN_CUTOVER_REDIRECT_STATUS);
+    redirected.headers.set("Cache-Control", "no-store, max-age=0");
+    return redirected;
   }
 
   const legacyRedirectUrl = getLegacyRedirectUrl(request.nextUrl);

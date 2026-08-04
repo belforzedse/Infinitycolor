@@ -40,7 +40,7 @@ test.describe("super-admin coupon CRUD", () => {
     const coupon = await createRuntimeCoupon(request, { type: "Discount", amount: 15 });
 
     // Row renders in the management list.
-    await page.goto("/super-admin/coupons", { waitUntil: "domcontentloaded" });
+    await page.goto("/coupons", { waitUntil: "domcontentloaded" });
     const row = page
       .locator(`[data-testid="admin-coupon-row"][data-id="${coupon.couponId}"]:visible`)
       .first();
@@ -53,12 +53,12 @@ test.describe("super-admin coupon CRUD", () => {
       .first()
       .click();
     await expect(page).toHaveURL(
-      new RegExp(`/super-admin/coupons/edit/${coupon.couponId}$`),
+      new RegExp(`/coupons/edit/${coupon.couponId}$`),
       { timeout: 30_000 },
     );
 
     // Soft-delete from the list, then verify backend state.
-    await page.goto("/super-admin/coupons", { waitUntil: "domcontentloaded" });
+    await page.goto("/coupons", { waitUntil: "domcontentloaded" });
     await page
       .locator(`[data-testid="admin-coupon-soft-delete"][data-id="${coupon.couponId}"]:visible`)
       .first()

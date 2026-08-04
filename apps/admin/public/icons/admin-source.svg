@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Infinity admin">
+  <defs>
+    <linearGradient id="shield" x1="0" y1="0" x2="0.78" y2="1">
+      <stop offset="0" stop-color="#566d97"/>
+      <stop offset="0.22" stop-color="#3d4c6e"/>
+      <stop offset="1" stop-color="#262f45"/>
+    </linearGradient>
+    <linearGradient id="emboss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#aebfdb"/>
+      <stop offset="1" stop-color="#566d97"/>
+    </linearGradient>
+  </defs>
+  <path d="M256 28c21 0 45 27 85 47 39 20 82 30 112 40 20 7 31 26 31 47v97c0 102-48 172-112 219-52 38-101 54-116 58-15-4-64-20-116-58C76 431 28 361 28 259v-97c0-21 11-40 31-47 30-10 73-20 112-40 40-20 64-47 85-47Z" fill="url(#shield)" stroke="#566d97" stroke-width="5" stroke-linejoin="round"/>
+  <g fill="none" stroke="url(#emboss)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.6">
+    <path d="M222 125a34 34 0 0 1 68 0v17"/>
+    <path d="M222 132h-8v25h14m62-25h8v25h-14"/>
+    <circle cx="256" cy="137" r="25"/>
+    <path d="M281 154c0 8-7 15-15 15h-7M222 190c4-20 17-31 34-31s30 11 34 31Z"/>
+  </g>
+  <svg x="88" y="191" width="336" height="171" viewBox="0 0 61.650504 31.243452" preserveAspectRatio="xMidYMid meet">
+    <g transform="translate(-1.102080,48.007640) scale(0.1,-0.1)" fill="#fff">
+      <path d="M90 461c-19-10-45-36-57-57-61-106 13-234 135-234 70 0 102 24 211 160 19 23 49 52 68 62 36 22 43 38 15 38-26 0-89-57-142-128-57-77-99-105-153-105-75 0-127 53-127 128 0 119 133 173 221 89 32-30 52-15 23 18-46 50-131 63-194 29Z"/>
+      <path d="M405 466c-39-18-72-49-122-117-44-60-82-94-114-104-26-8-24-25 3-25 32 0 84 44 139 120 61 84 100 110 164 110 40 0 52-5 80-33 57-57 59-132 4-186-52-52-138-50-189 4-26 27-46 24-30-5 14-26 69-58 105-61 69-5 87 1 130 44 57 57 67 108 33 174-12 26-35 56-50 66-34 25-113 32-153 13Z"/>
+    </g>
+  </svg>
+  <g transform="translate(256 419)" fill="none" stroke="url(#emboss)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.6">
+    <circle r="20"/>
+    <circle r="7"/>
+    <path d="M0-33v7M0 26v7M-33 0h7M26 0h7M-23-23l5 5M18 18l5 5M23-23l-5 5M-18 18l-5 5"/>
+  </g>
+</svg>

@@ -137,6 +137,41 @@ test("browser auth client never acquires a token during server rendering", async
   assert.equal(calls, 0);
 });
 
+test("typed session management wrappers use central auth with no-store credentials", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const client = createCentralAuthBrowserClient({
+    authOrigin: "https://auth.infinitycolor.co",
+    fetchImpl: (async (input, init) => {
+      requests.push({ url: String(input), init });
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
+  });
+
+  await client.listSessions();
+  await client.revokeSession("opaque-session-token");
+  await client.revokeOtherSessions();
+  await client.revokeSessions();
+
+  assert.deepEqual(
+    requests.map((request) => new URL(request.url).pathname),
+    [
+      "/api/auth/list-sessions",
+      "/api/auth/revoke-session",
+      "/api/auth/revoke-other-sessions",
+      "/api/auth/revoke-sessions",
+    ],
+  );
+  for (const request of requests) {
+    assert.equal(request.init?.credentials, "include");
+    assert.equal(request.init?.cache, "no-store");
+  }
+  assert.equal(requests[0].init?.method, "GET");
+  assert.equal(requests[1].init?.body, JSON.stringify({ token: "opaque-session-token" }));
+});
+
 test("authenticated fetch retries one read but never retries a mutation", async () => {
   let tokenNumber = 0;
   let apiGets = 0;
@@ -195,6 +230,7 @@ test("sealed flow cookie is host-only, HttpOnly, short-lived and tamper evident"
     AUTH_FLOW_SECRET: "f".repeat(32),
     AUTH_TRUSTED_STOREFRONT_ORIGINS:
       "https://new.infinitycolor.co,https://infinitycolor.co",
+    AUTH_TRUSTED_ADMIN_ORIGINS: "https://admin.infinitycolor.co",
     AUTH_DEFAULT_STOREFRONT_ORIGIN: "https://new.infinitycolor.co",
     STRAPI_INTERNAL_URL: "https://api.infinitycolor.co",
     AUTH_STRAPI_BRIDGE_SECRET: "b".repeat(32),
@@ -249,6 +285,7 @@ test("staging uses its own exact auth, API, and storefront authorities", () => {
     AUTH_DATABASE_URL: "postgresql://unused/unused",
     AUTH_FLOW_SECRET: "f".repeat(32),
     AUTH_TRUSTED_STOREFRONT_ORIGINS: "https://staging.infinitycolor.co",
+    AUTH_TRUSTED_ADMIN_ORIGINS: "https://admin.staging.infinitycolor.co",
     AUTH_DEFAULT_STOREFRONT_ORIGIN: "https://staging.infinitycolor.co",
     STRAPI_INTERNAL_URL: "https://api.staging.infinitycolor.co",
     AUTH_STRAPI_BRIDGE_SECRET: "b".repeat(32),
@@ -268,6 +305,13 @@ test("staging uses its own exact auth, API, and storefront authorities", () => {
   assert.deepEqual(env.trustedStorefrontOrigins, [
     "https://staging.infinitycolor.co",
   ]);
+  assert.deepEqual(env.trustedAdminOrigins, [
+    "https://admin.staging.infinitycolor.co",
+  ]);
+  assert.deepEqual(env.trustedApplicationOrigins, [
+    "https://staging.infinitycolor.co",
+    "https://admin.staging.infinitycolor.co",
+  ]);
 });
 
 test("Better Auth source freezes absolute sessions and the native secure cookie name", () => {
@@ -283,12 +327,14 @@ test("Better Auth source freezes absolute sessions and the native secure cookie 
   assert.doesNotMatch(source, /useSecureCookies:\s*false/);
 });
 
-test("credentialed CORS echoes only an explicitly trusted storefront origin", () => {
+test("credentialed CORS echoes only an explicitly trusted application origin", () => {
   Object.assign(process.env, {
     NODE_ENV: "production",
     BETTER_AUTH_URL: "https://auth.infinitycolor.co",
     AUTH_TRUSTED_STOREFRONT_ORIGINS:
       "https://new.infinitycolor.co,https://infinitycolor.co",
+    AUTH_TRUSTED_ADMIN_ORIGINS: "https://admin.infinitycolor.co",
+    AUTH_DEPLOYMENT_ENV: "production",
   });
 
   const allowed = proxy(
@@ -302,6 +348,16 @@ test("credentialed CORS echoes only an explicitly trusted storefront origin", ()
   );
   assert.equal(allowed.headers.get("access-control-allow-credentials"), "true");
   assert.match(allowed.headers.get("vary") ?? "", /Origin/i);
+
+  const adminAllowed = proxy(
+    new NextRequest("https://auth.infinitycolor.co/api/auth/token", {
+      headers: { origin: "https://admin.infinitycolor.co" },
+    }),
+  );
+  assert.equal(
+    adminAllowed.headers.get("access-control-allow-origin"),
+    "https://admin.infinitycolor.co",
+  );
 
   const rejected = proxy(
     new NextRequest("https://auth.infinitycolor.co/api/auth/token", {

@@ -22,7 +22,7 @@ export const auth = betterAuth({
   basePath: "/api/auth",
   secret: env.betterAuthSecret,
   database: pool,
-  trustedOrigins: [...env.trustedStorefrontOrigins],
+  trustedOrigins: [...env.trustedApplicationOrigins],
   emailAndPassword: { enabled: false },
   user: {
     modelName: "users",

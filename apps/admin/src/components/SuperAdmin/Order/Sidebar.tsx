@@ -1,0 +1,442 @@
+"use client";
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { apiClient } from "@/services";
+import AnipoBarcodeDialog from "./AnipoBarcodeDialog";
+import { translateOrderLogMessage } from "@/utils/statusTranslations";
+import SuperAdminOrderLogs from "./SuperAdminOrderLogs";
+import { type OrderTimelineEvent } from "@/components/User/Orders/Detail/OrderTimeline";
+import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
+import toast from "react-hot-toast";
+import { openPreInvoicePrintWindow } from "@/utils/preInvoiceTransfer";
+
+interface SuperAdminOrderSidebarProps {
+  orderData?: SuperAdminOrderDetail;
+  selectedItems?: SuperAdminOrderItem[];
+  shippingBarcode?: string;
+}
+
+type OrderLog = {
+  id: number;
+  attributes: {
+    createdAt: string;
+    Description?: string;
+    Changes?: any;
+  };
+};
+
+export default function SuperAdminOrderSidebar({
+  orderData,
+  selectedItems = [],
+  shippingBarcode,
+}: SuperAdminOrderSidebarProps = {}) {
+  const router = useRouter();
+  const { id } = useParams();
+  const { user, isLoading: isUserLoading, isStoreManager } = useCurrentUser();
+  const canViewOrderLogs = !isUserLoading && !!user && !isStoreManager;
+  const [orderLogs, setOrderLogs] = useState<OrderLog[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [activeLogTab, setActiveLogTab] = useState<"events" | "audit">("events");
+  const [readableEventCount, setReadableEventCount] = useState(0);
+  const handleReadableEventsChange = useCallback((events: OrderTimelineEvent[]) => {
+    setReadableEventCount(events.length);
+  }, []);
+
+  const timelineOrderId = orderData?.id ?? (id ? Number(id) : undefined);
+  const [showBarcodeDialog, setShowBarcodeDialog] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [hasBarcode, setHasBarcode] = useState(!!shippingBarcode);
+
+  useEffect(() => {
+    const fetchLogs = async () => {
+      if (!id || !canViewOrderLogs) {
+        setOrderLogs([]);
+        setLogsLoading(false);
+        return;
+      }
+      try {
+        setLogsLoading(true);
+        const res = await apiClient.get(
+          `/order-logs?filters[order][id][$eq]=${id}&sort[0]=createdAt:desc` as any,
+        );
+        setOrderLogs(((res as any).data || []) as OrderLog[]);
+      } catch (error) {
+        console.error("Error fetching order logs:", error);
+      } finally {
+        setLogsLoading(false);
+      }
+    };
+    fetchLogs();
+  }, [id, canViewOrderLogs]);
+
+  useEffect(() => {
+    setReadableEventCount(0);
+  }, [orderData?.id]);
+
+  useEffect(() => {
+    setHasBarcode(!!shippingBarcode);
+  }, [shippingBarcode]);
+
+  const handleGenerateBarcode = async (weight?: number, boxSizeId?: number) => {
+    if (!id) return;
+    setIsGenerating(true);
+    try {
+      const mod = await import("@/services/order");
+      const res = await mod.default.generateAnipoBarcode(parseInt(String(id)), weight, boxSizeId);
+
+      if (res?.success || res?.already) {
+        setHasBarcode(true);
+        toast.success(res?.already ? "بارکد قبلاً ثبت شده است" : "بارکد با موفقیت ایجاد شد");
+      } else {
+        toast.success("درخواست ارسال شد");
+      }
+
+      setShowBarcodeDialog(false);
+      // Refresh page to reflect barcode changes
+      router.refresh();
+    } catch (e) {
+      toast.error("خطا در ایجاد بارکد Anipo");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handlePrintPreInvoice = () => {
+    if (!orderData || selectedItems.length === 0) {
+      toast.error("لطفا ابتدا محصولات را اضافه کنید");
+      return;
+    }
+
+    // Create a temporary order object in Strapi format for the Invoice component
+    const tempOrder = {
+      id: "temp-preview",
+      attributes: {
+        Date: orderData.orderDate?.toISOString() || new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        Description: orderData.description || "",
+        ShippingCost: orderData.shipping || 0,
+        user: {
+          data: {
+            attributes: {
+              Phone: orderData.phoneNumber || "",
+              user_info: {
+                data: {
+                  attributes: {
+                    FirstName: orderData.userName?.split(" ")[0] || "",
+                    LastName: orderData.userName?.split(" ").slice(1).join(" ") || "",
+                  },
+                },
+              },
+            },
+          },
+        },
+        delivery_address: {
+          data: {
+            attributes: {
+              FullAddress: orderData.address || "",
+              PostalCode: orderData.postalCode || "",
+            },
+          },
+        },
+        order_items: {
+          data: selectedItems.map((item, index) => ({
+            id: index.toString(),
+            attributes: {
+              Count: item.quantity,
+              PerAmount: item.price,
+              ProductTitle: item.productName,
+              ProductSKU: item.productCode,
+            },
+          })),
+        },
+        contract: {
+          data: {
+            attributes: {
+              Amount: orderData.total || 0,
+            },
+          },
+        },
+      },
+    };
+
+    try {
+      if (!openPreInvoicePrintWindow(tempOrder)) {
+        toast.error("مرورگر باید از انتقال امن پیش‌فاکتور و باز کردن پنجره جدید پشتیبانی کند");
+      }
+    } catch (error) {
+      toast.error("خطا در باز کردن پیش‌فاکتور");
+    }
+  };
+
+  return (
+    <div className="sticky top-5 flex flex-col gap-3">
+      <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col">
+            <span className="text-foreground-primary text-lg">فاکتور</span>
+
+            <span className="text-sm text-neutral-400">شماره فاکتور: 841649</span>
+          </div>
+
+          <div className="flex w-full gap-2">
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (id) {
+                  try {
+                    window.open(`/orders/print/${id}`, "_blank", "noopener,noreferrer");
+                  } catch (error) {
+                    toast.error("خطا در باز کردن پنجره چاپ");
+                  }
+                } else {
+                  toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                }
+              }}
+              className="flex flex-1 items-center justify-center gap-1 rounded-md bg-slate-100 py-1.5"
+              type="button"
+            >
+              <span className="text-sm text-neutral-500">دانلود فاکتور</span>
+
+              <DownloadIcon />
+            </button>
+
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (id) {
+                  try {
+                    window.open(`/orders/print/${id}`, "_blank", "noopener,noreferrer");
+                  } catch (error) {
+                    toast.error("خطا در باز کردن پنجره چاپ");
+                  }
+                } else {
+                  toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                }
+              }}
+              className="flex flex-1 items-center justify-center gap-1 rounded-md bg-slate-100 py-1.5"
+              type="button"
+            >
+              <span className="text-sm text-neutral-500">پرینت فاکتور</span>
+
+              <PrintIcon />
+            </button>
+          </div>
+
+          {/* Anipo Barcode Button - Full Width */}
+          <div className="mt-2 flex w-full">
+            {hasBarcode ? (
+              <button
+                className="flex w-full cursor-default items-center justify-center gap-1 rounded-md bg-green-50 py-1.5 text-green-600"
+                type="button"
+                disabled
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M20 6L9 17l-5-5"></path>
+                </svg>
+                <span className="text-sm">بارکد صادر شده</span>
+              </button>
+            ) : (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (id) {
+                    setShowBarcodeDialog(true);
+                  } else {
+                    toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                  }
+                }}
+                disabled={isGenerating}
+                className="flex w-full items-center justify-center gap-1 rounded-md bg-orange-50 py-1.5 text-orange-600 transition-colors hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M3 5V19H21V5H3Z"></path>
+                  <path d="M12 8V16"></path>
+                  <path d="M8 12H16"></path>
+                </svg>
+                <span className="text-sm">صدور بارکد Anipo</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {canViewOrderLogs && (
+        <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
+          <div className="flex items-center justify-between">
+            <span className="text-foreground-primary text-lg">رویدادهای سفارش و پیامک</span>
+          </div>
+
+          {/* Tabs for Events and Audit Logs */}
+          <div className="flex gap-2 border-b border-neutral-200">
+            <button
+              type="button"
+              onClick={() => setActiveLogTab("events")}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeLogTab === "events"
+                  ? "border-b-2 border-infinity-primary text-infinity-primary"
+                  : "text-neutral-500 hover:text-neutral-700"
+              }`}
+            >
+              رویدادها ({readableEventCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveLogTab("audit")}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                activeLogTab === "audit"
+                  ? "border-b-2 border-infinity-primary text-infinity-primary"
+                  : "text-neutral-500 hover:text-neutral-700"
+              }`}
+            >
+              لاگ‌های فنی ({orderLogs.length})
+            </button>
+          </div>
+
+          {activeLogTab === "events" ? (
+            <SuperAdminOrderLogs
+              orderId={timelineOrderId}
+              hideHeader
+              onEventsChange={handleReadableEventsChange}
+            />
+          ) : (
+            <>
+              {logsLoading ? (
+                <div className="text-sm text-neutral-400">در حال بارگذاری...</div>
+              ) : orderLogs.length === 0 ? (
+                <div className="text-sm text-neutral-400">لاگی ثبت نشده است</div>
+              ) : (
+                <div className="flex max-h-[400px] flex-col gap-3 overflow-y-auto">
+                  {orderLogs.map((log, index) => {
+                    const date = new Date(log.attributes.createdAt);
+                    const formattedDate = date.toLocaleDateString("fa-IR", {
+                      year: "numeric",
+                      month: "2-digit",
+                      day: "2-digit",
+                    });
+                    const formattedTime = date.toLocaleTimeString("fa-IR", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    });
+                    const isEven = index % 2 === 0;
+
+                    return (
+                      <div
+                        key={log.id}
+                        className={`rounded-lg p-3 ${isEven ? "bg-blue-50" : "bg-purple-50"}`}
+                      >
+                        <div className="text-foreground-primary mb-1 text-sm">
+                          {translateOrderLogMessage(log.attributes.Description) || "ثبت رویداد"}
+                        </div>
+                        {log.attributes.Changes && (
+                          <pre className="mb-1 mt-1 whitespace-pre-wrap break-all text-xs text-neutral-500">
+                            {JSON.stringify(log.attributes.Changes, null, 2)}
+                          </pre>
+                        )}
+                        <div className="mt-1 text-xs text-neutral-500">
+                          {formattedDate} در {formattedTime}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <AnipoBarcodeDialog
+        isOpen={showBarcodeDialog}
+        onClose={() => setShowBarcodeDialog(false)}
+        onGenerate={handleGenerateBarcode}
+        loading={isGenerating}
+      />
+    </div>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="21" height="21" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M10.2502 14.6667V3"
+        stroke="#64748B"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M17.75 14.6667C17.75 16.5075 16.2575 18 14.4167 18H6.08333C4.2425 18 2.75 16.5075 2.75 14.6667"
+        stroke="#64748B"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M14.4167 10.5L10.2492 14.6675L6.08252 10.5"
+        stroke="#64748B"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PrintIcon() {
+  return (
+    <svg width="21" height="21" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M6.5835 7.16667V3.83333C6.5835 3.37333 6.95683 3 7.41683 3H14.0835C14.5435 3 14.9168 3.37333 14.9168 3.83333V7.16667"
+        stroke="#64748B"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6.58333 14.6667H4.91667C3.99583 14.6667 3.25 13.9209 3.25 13V8.83335C3.25 7.91252 3.99583 7.16669 4.91667 7.16669H16.5833C17.5042 7.16669 18.25 7.91252 18.25 8.83335V13C18.25 13.9209 17.5042 14.6667 16.5833 14.6667H14.9167"
+        stroke="#64748B"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M6.5835 12H14.9168V17.1667C14.9168 17.6267 14.5435 18 14.0835 18H7.41683C6.95683 18 6.5835 17.6267 6.5835 17.1667V12Z"
+        stroke="#64748B"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6.5835 9.66667H7.41683"
+        stroke="#64748B"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Removed unused PlusIcon

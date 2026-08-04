@@ -23,14 +23,14 @@ test.describe("super-admin product CRUD", () => {
     await cleanupRuntimeProducts(request);
   });
 
-  test("@admin super-admin can read, update, and soft-delete a runtime product", async ({
+  test("@smoke @admin super-admin can read, update, and soft-delete a runtime product", async ({
     page,
     request,
   }) => {
     await prepareStorefrontPage(page);
     const fixture = await createRuntimeProductFixture(request);
 
-    await page.goto("/super-admin/products?pageSize=100", { waitUntil: "domcontentloaded" });
+    await page.goto("/products?pageSize=100", { waitUntil: "domcontentloaded" });
     const row = page
       .locator('[data-testid="admin-product-row"]:visible')
       .filter({ hasText: fixture.productTitle })
@@ -41,7 +41,7 @@ test.describe("super-admin product CRUD", () => {
       .locator(`[data-testid="admin-product-edit"][data-id="${fixture.productId}"]:visible`)
       .first()
       .click();
-    await expect(page).toHaveURL(new RegExp(`/super-admin/products/${fixture.productId}$`));
+    await expect(page).toHaveURL(new RegExp(`/products/${fixture.productId}$`));
 
     const updatedTitle = `${fixture.productTitle} Updated`;
     const updateResponse = await apiPut(request, "admin", `/products/${fixture.productId}`, {
@@ -49,7 +49,7 @@ test.describe("super-admin product CRUD", () => {
     });
     await expectApiOk(updateResponse, "update runtime product");
 
-    await page.goto("/super-admin/products?pageSize=100", { waitUntil: "domcontentloaded" });
+    await page.goto("/products?pageSize=100", { waitUntil: "domcontentloaded" });
     await expect(
       page.locator('[data-testid="admin-product-row"]:visible').filter({ hasText: updatedTitle }).first(),
     ).toBeVisible({ timeout: 30_000 });

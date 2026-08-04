@@ -1,0 +1,308 @@
+"use client";
+
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import imageLoader from "@/utils/imageLoader";
+import Link from "next/link";
+import HeartIcon from "./Icons/HeartIcon";
+import EyeIcon from "./Icons/EyeIcon";
+import MoreIcon from "./Icons/MoreIcon";
+import ShuffleIcon from "@/components/PDP/Icons/ShuffleIcon";
+import useProductLike from "@/hooks/useProductLike";
+import clsx from "clsx";
+import { ImageCard, InfoCard, PriceCard } from "./CardParts";
+import { computeSaleDiscountPercent } from "@/utils/discounts";
+import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
+
+type QuickViewModalComponent = (typeof import("./QuickViewModal"))["default"];
+type ShareModalComponent = (typeof import("./ShareModal"))["default"];
+
+let quickViewModulePromise: Promise<typeof import("./QuickViewModal")> | null = null;
+let shareModulePromise: Promise<typeof import("./ShareModal")> | null = null;
+
+function loadQuickViewModule() {
+  quickViewModulePromise ??= import("./QuickViewModal");
+  return quickViewModulePromise;
+}
+
+function loadShareModule() {
+  shareModulePromise ??= import("./ShareModal");
+  return shareModulePromise;
+}
+
+export interface ProductSmallCardProps {
+  id: number;
+  slug?: string;
+  title: string;
+  category: string;
+  likedCount: number;
+  price: number;
+  discountedPrice?: number;
+  discount?: number;
+  image: string;
+  className?: string;
+  isAvailable?: boolean;
+  priority?: boolean;
+  colorsCount?: number;
+  colorCodes?: string[];
+}
+
+const ProductSmallCard: React.FC<ProductSmallCardProps> = ({
+  id,
+  slug,
+  title,
+  category,
+  likedCount,
+  price,
+  discountedPrice,
+  discount,
+  image,
+  className,
+  isAvailable = true,
+  priority = false,
+  colorsCount,
+  colorCodes,
+}) => {
+  // State management
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isQuickViewOpen, setIsQuickViewOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const [QuickViewModal, setQuickViewModal] = useState<QuickViewModalComponent | null>(null);
+  const [ShareModal, setShareModal] = useState<ShareModalComponent | null>(null);
+
+  // Refs
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Hooks
+  const {
+    isLiked,
+    isLoading: isLikeLoading,
+    toggleLike,
+  } = useProductLike({
+    productId: id.toString(),
+  });
+
+  const hasDiscount = Boolean(discountedPrice && discountedPrice > 0 && discountedPrice < price);
+
+  const saleDiscountPercent = computeSaleDiscountPercent(price, discountedPrice, discount);
+
+  // Use slug if available, otherwise fall back to ID for backwards compatibility.
+  const productUrl = slug ? `/pdp/${encodeURIComponent(slug)}` : `/pdp/${id}`;
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(event.target as Node) &&
+        menuButtonRef.current &&
+        !menuButtonRef.current.contains(event.target as Node)
+      ) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    if (isMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isMenuOpen]);
+
+  // Event handlers
+  const handleMenuToggle = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsMenuOpen((prev) => !prev);
+  }, []);
+
+  const handleQuickView = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsMenuOpen(false);
+    noteEnhancementLoaded("quick-view");
+    setIsQuickViewOpen(true);
+    void loadQuickViewModule()
+      .then((module) => setQuickViewModal(() => module.default))
+      .catch(() => setIsQuickViewOpen(false));
+  }, []);
+
+  const handleShare = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsMenuOpen(false);
+    noteEnhancementLoaded("share");
+    setIsShareOpen(true);
+    void loadShareModule()
+      .then((module) => setShareModal(() => module.default))
+      .catch(() => setIsShareOpen(false));
+  }, []);
+
+  const handleToggleLike = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsMenuOpen(false);
+      toggleLike(e);
+    },
+    [toggleLike],
+  );
+
+  return (
+    <div
+      className={clsx("relative w-full min-w-0", className)}
+      data-testid="product-small-card"
+      data-product-id={id}
+      data-product-slug={slug || id.toString()}
+      data-product-title={title}
+    >
+      <article
+        className="relative w-full min-w-0"
+        data-testid="product-card"
+        data-product-id={id}
+        data-product-slug={slug || id.toString()}
+        data-product-title={title}
+        aria-label={`محصول ${title}`}
+      >
+        <Link
+          href={productUrl}
+          className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          data-testid="product-card-link"
+          aria-label={`مشاهده جزئیات ${title}`}
+        >
+          <div className="flex h-[116px] flex-row gap-2 rounded-2xl border border-slate-100 bg-white p-2 md:w-full">
+            <ImageCard
+              image={image}
+              title={title}
+              discount={saleDiscountPercent}
+              isAvailable={isAvailable}
+              priority={priority}
+              imageLoader={imageLoader}
+              colorCodes={colorCodes}
+              colorsCount={colorsCount}
+            />
+
+            <InfoCard
+              category={category}
+              title={title}
+              likedCount={likedCount}
+              menuButtonRef={menuButtonRef}
+              handleMenuToggle={handleMenuToggle}
+              isMenuOpen={isMenuOpen}
+              menuButtonTestId="product-small-card-menu"
+              showMenuButton={false}
+            >
+              <PriceCard
+                isAvailable={isAvailable}
+                price={price}
+                discountedPrice={discountedPrice}
+              />
+            </InfoCard>
+          </div>
+        </Link>
+
+        <button
+          ref={menuButtonRef}
+          onClick={handleMenuToggle}
+          className="absolute left-4 top-4 z-20 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          aria-label="منوی عملیات"
+          aria-expanded={isMenuOpen}
+          data-testid="product-small-card-menu"
+          type="button"
+        >
+          <MoreIcon className="h-6 w-6 text-neutral-400" />
+        </button>
+
+        {/* Dropdown Menu */}
+        {isMenuOpen && (
+          <div
+            ref={menuRef}
+            className="absolute left-2 top-12 z-50 min-w-[180px] rounded-xl bg-white p-2 shadow-lg ring-1 ring-slate-200"
+            role="menu"
+            aria-label="منوی عملیات محصول"
+          >
+            <ul className="space-y-1">
+              {/* Like/Unlike */}
+              <li>
+                <button
+                  type="button"
+                  onClick={handleToggleLike}
+                  disabled={isLikeLoading}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-700 transition-colors hover:bg-infinity-primary-lighter/20 hover:text-infinity-primary disabled:cursor-wait disabled:opacity-50"
+                  role="menuitem"
+                  aria-label={isLiked ? "حذف از علاقه‌مندی‌ها" : "افزودن به علاقه‌مندی‌ها"}
+                >
+                  <HeartIcon
+                    className={clsx(
+                      "h-4 w-4 transition-colors",
+                      isLiked ? "fill-infinity-primary text-infinity-primary" : "text-neutral-400",
+                    )}
+                    filled={isLiked}
+                  />
+                  <span>{isLiked ? "حذف از علاقه‌مندی‌ها" : "افزودن به علاقه‌مندی‌ها"}</span>
+                </button>
+              </li>
+
+              {/* Quick View */}
+              <li>
+                <button
+                  type="button"
+                  onClick={handleQuickView}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-700 transition-colors hover:bg-infinity-primary-lighter/20 hover:text-infinity-primary"
+                  role="menuitem"
+                  aria-label="نمایش سریع"
+                  data-testid="product-small-card-quick-view"
+                >
+                  <EyeIcon className="h-4 w-4 text-neutral-400" />
+                  <span>نمایش سریع</span>
+                </button>
+              </li>
+
+              {/* Share */}
+              <li>
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-700 transition-colors hover:bg-infinity-primary-lighter/20 hover:text-infinity-primary"
+                  role="menuitem"
+                  aria-label="اشتراک‌گذاری"
+                >
+                  <ShuffleIcon className="h-4 w-4 text-neutral-400" />
+                  <span>اشتراک‌گذاری</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        )}
+      </article>
+
+      {/* Modals */}
+      {isQuickViewOpen && QuickViewModal && (
+        <QuickViewModal
+          isOpen={isQuickViewOpen}
+          onClose={() => setIsQuickViewOpen(false)}
+          productId={id}
+        />
+      )}
+
+      {isShareOpen && ShareModal && (
+        <ShareModal
+          open={isShareOpen}
+          onOpenChange={setIsShareOpen}
+          product={{
+            id,
+            title,
+            slug,
+            imageUrl: image,
+            price,
+            discountPrice: discountedPrice,
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export default ProductSmallCard;

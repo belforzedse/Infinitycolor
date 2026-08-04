@@ -11,6 +11,7 @@ import {
   type E2EAuthRole,
 } from "../helpers/auth";
 import {
+  adminBaseURL,
   centralAuthOrigin,
   storefrontBaseURL,
   strapiApiURL,
@@ -72,20 +73,21 @@ type SeedSummary = {
 };
 
 const AUTH_ROUTE_HINT_COOKIE = "infinity_route_hint";
+const ADMIN_ROUTE_HINT_COOKIE = "infinity_admin_route_hint";
 const AUTH_ROUTE_HINT_COOKIE_VALUE = "1";
 const AUTH_ROUTE_HINT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
-function authRouteHintCookie() {
-  const storefrontUrl = new URL(storefrontBaseURL());
+function authRouteHintCookie(name: string, baseURL: string) {
+  const applicationUrl = new URL(baseURL);
 
   return {
-    name: AUTH_ROUTE_HINT_COOKIE,
+    name,
     value: AUTH_ROUTE_HINT_COOKIE_VALUE,
-    domain: storefrontUrl.hostname,
+    domain: applicationUrl.hostname,
     path: "/",
     expires: Math.floor(Date.now() / 1000) + AUTH_ROUTE_HINT_MAX_AGE_SECONDS,
     httpOnly: true,
-    secure: storefrontUrl.protocol === "https:",
+    secure: applicationUrl.protocol === "https:",
     sameSite: "Lax" as const,
   };
 }
@@ -337,7 +339,10 @@ async function writeCentralAuthStorageState(role: E2EAuthRole) {
     }
 
     const state = await context.storageState();
-    state.cookies.push(authRouteHintCookie());
+    state.cookies.push(
+      authRouteHintCookie(AUTH_ROUTE_HINT_COOKIE, storefrontBaseURL()),
+      authRouteHintCookie(ADMIN_ROUTE_HINT_COOKIE, adminBaseURL()),
+    );
     state.origins = [
       {
         origin: new URL(storefrontBaseURL()).origin,

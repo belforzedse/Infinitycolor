@@ -30,7 +30,7 @@ test.describe("super-admin order management", () => {
     await prepareStorefrontPage(page);
     const order = await createRuntimeOrder(request);
 
-    await page.goto("/super-admin/orders?pageSize=100", {
+    await page.goto("/orders?pageSize=100", {
       waitUntil: "domcontentloaded",
     });
     await expect(
@@ -48,7 +48,7 @@ test.describe("super-admin order management", () => {
       .first()
       .click();
     await expect(page).toHaveURL(
-      new RegExp(`/super-admin/orders/edit/${order.orderId}$`),
+      new RegExp(`/orders/edit/${order.orderId}$`),
     );
 
     await updateOrderStatus(request, order.orderId, "Shipment");
@@ -70,7 +70,7 @@ test.describe("super-admin order management", () => {
     await prepareStorefrontPage(page);
     const order = await createRuntimeOrder(request);
 
-    await page.goto("/super-admin/orders?pageSize=100", {
+    await page.goto("/orders?pageSize=100", {
       waitUntil: "domcontentloaded",
     });
     await expect(

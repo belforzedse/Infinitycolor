@@ -1,6 +1,9 @@
 export const storefrontBaseURL = () =>
   process.env.E2E_BASE_URL?.trim() || "http://localhost:2888";
 
+export const adminBaseURL = () =>
+  process.env.E2E_ADMIN_BASE_URL?.trim() || "http://localhost:2891";
+
 export const centralAuthOrigin = () =>
   process.env.E2E_AUTH_ORIGIN?.trim() || "http://localhost:2889";
 

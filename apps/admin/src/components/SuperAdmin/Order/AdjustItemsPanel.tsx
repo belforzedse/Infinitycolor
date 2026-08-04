@@ -1,0 +1,515 @@
+import { useRef, useState } from "react";
+import type { SuperAdminOrderDetail } from "@/types/super-admin/order";
+import Modal from "@/components/Kits/Modal";
+import {
+  previewAdjustItems,
+  adjustItems,
+  cancelOrder,
+  ItemAdjustment,
+  AdjustPreview,
+  voidShippingBarcode,
+  waitForPaymentOperation,
+  formatSnappayOperationFailure,
+} from "@/services/super-admin/orders/adjustItems";
+import toast from "react-hot-toast";
+import { resolvePaymentGateway } from "@/utils/paymentGateways";
+
+const ALLOWED_STATUSES = [
+  "پرداخت شده",
+  "Started",
+  "درحال پرداخت",
+  "Paying",
+];
+
+type Props = {
+  order: SuperAdminOrderDetail;
+  onSuccess: () => void;
+};
+
+export default function AdjustItemsPanel({ order, onSuccess }: Props) {
+  const [quantities, setQuantities] = useState<Record<number, number>>(
+    Object.fromEntries(order.items.map((it) => [it.id, it.quantity]))
+  );
+  const [preview, setPreview] = useState<AdjustPreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [forceEdit, setForceEdit] = useState(false);
+  const [voidLoading, setVoidLoading] = useState(false);
+  const [operatorReason, setOperatorReason] = useState("");
+  const applyInFlightRef = useRef(false);
+
+  const isSnappPayOrder =
+    resolvePaymentGateway(order.paymentGateway)?.key === "snappay";
+  const willCancelOrder = preview
+    ? isSnappPayOrder
+      ? order.items.every((item) => {
+          const changedItem = preview.changes.find(
+            (change) => change.orderItemId === item.id
+          );
+          return (changedItem?.newCount ?? item.quantity) === 0;
+        })
+      : order.items.every(
+          (item) => (quantities[item.id] ?? item.quantity) === 0
+        )
+    : false;
+  const primaryActionText = willCancelOrder ? "لغو سفارش" : "ثبت تغییرات";
+  const modalTitle = willCancelOrder ? "تأیید لغو سفارش" : "تأیید تغییرات";
+
+  const hasAllowedStatus = ALLOWED_STATUSES.includes(order.orderStatus);
+  const hasShippingBarcode = Boolean(order.shippingBarcode);
+  const isBlocked = !hasAllowedStatus || hasShippingBarcode;
+  const canEdit = forceEdit || !isBlocked;
+
+  const reasons: string[] = [];
+  if (!hasAllowedStatus) {
+    reasons.push(
+      `وضعیت فعلی سفارش (${order.orderStatus || "نامشخص"}) خارج از وضعیت‌های مجاز برای ویرایش است.`
+    );
+  }
+  if (hasShippingBarcode) {
+    reasons.push(
+      "برای سفارش‌هایی که بارکد ارسال دارند ویرایش آیتم‌ها به صورت پیش‌فرض غیرفعال است."
+    );
+  }
+
+  const handleVoidBarcode = async () => {
+    if (voidLoading) return;
+
+    // Safety check - ensure there's actually a barcode to remove
+    if (!order.shippingBarcode) {
+      toast.error("این سفارش دارای بارکد ارسال نیست.");
+      onSuccess(); // Reload data to sync UI
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "آیا از حذف بارکد ارسال مطمئن هستید؟ این عملیات قابل بازگشت نیست."
+    );
+    if (!confirmed) return;
+
+    const reason =
+      window.prompt("دلیل حذف بارکد را بنویسید (اختیاری):")?.trim() || undefined;
+
+    setVoidLoading(true);
+    try {
+      await voidShippingBarcode(order.id, reason);
+      toast.success("بارکد ارسال با موفقیت حذف شد.");
+      setForceEdit(false);
+      onSuccess();
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || "حذف بارکد ارسال با خطا مواجه شد";
+      toast.error(errorMsg);
+      // Reload data even on error to sync with server state
+      onSuccess();
+    } finally {
+      setVoidLoading(false);
+    }
+  };
+
+  const handleQuantityChange = (itemId: number, value: number) => {
+    const item = order.items.find((it) => it.id === itemId);
+    if (!item) return;
+    const clamped = Math.max(0, Math.min(item.quantity, value));
+    setQuantities((prev) => ({ ...prev, [itemId]: clamped }));
+    setPreview(null);
+  };
+
+  const handlePreview = async () => {
+    const items: ItemAdjustment[] = order.items
+      .filter((it) => quantities[it.id] !== it.quantity)
+      .map((it) => ({
+        orderItemId: it.id,
+        newCount: quantities[it.id],
+        remove: quantities[it.id] === 0,
+      }));
+
+    if (items.length === 0) {
+      toast.error("تغییری اعمال نشده است");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await previewAdjustItems(order.id, items);
+      setPreview(result.preview);
+    } catch (error: any) {
+      if (error.response?.data?.data?.error === "barcode_exists") {
+        toast.error("بارکد ارسال صادر شده؛ ابتدا آن را باطل کنید");
+      } else if (
+        error.response?.data?.data?.error === "negative_refund_not_allowed"
+      ) {
+        toast.error("کاهش موارد باعث افزایش مبلغ می‌شود");
+      } else {
+        toast.error(error.response?.data?.error || "خطا در پیش‌نمایش");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApply = async () => {
+    if (!preview || applyInFlightRef.current) return;
+    const normalizedReason = operatorReason.trim();
+    if (isSnappPayOrder && normalizedReason.length < 3) {
+      toast.error("دلیل این عملیات را وارد کنید.");
+      return;
+    }
+    applyInFlightRef.current = true;
+
+    const items: ItemAdjustment[] = order.items
+      .filter((it) => quantities[it.id] !== it.quantity)
+      .map((it) => ({
+        orderItemId: it.id,
+        newCount: quantities[it.id],
+        remove: quantities[it.id] === 0,
+      }));
+
+    setLoading(true);
+    try {
+      const result = willCancelOrder
+        ? await cancelOrder(order.id, normalizedReason || undefined)
+        : await adjustItems(
+            order.id,
+            items,
+            normalizedReason || undefined,
+          );
+
+      if (
+        result.status === "queued" &&
+        result.operationId
+      ) {
+        toast.success("درخواست برای اسنپ‌پی ثبت شد؛ نتیجه در حال بررسی است.");
+        const operation = await waitForPaymentOperation(
+          order.id,
+          result.operationId,
+        );
+        if (operation.status === "Failed") {
+          toast.error(
+            formatSnappayOperationFailure(
+              operation,
+              "اسنپ‌پی این عملیات را نپذیرفت.",
+            ),
+          );
+          onSuccess();
+          return;
+        }
+        if (operation.status === "Unknown") {
+          toast.error(
+            formatSnappayOperationFailure(
+              operation,
+              "نتیجه عملیات نامشخص است؛ از تکرار درخواست خودداری و آن را دستی بررسی کنید.",
+            ),
+          );
+          onSuccess();
+          return;
+        }
+        if (operation.status !== "Succeeded") {
+          toast.success(
+            "عملیات همچنان در پس‌زمینه در حال پیگیری است.",
+          );
+          setShowConfirm(false);
+          onSuccess();
+          return;
+        }
+      }
+
+      // Build message based on payment method
+      let baseMessage: string;
+      if (isSnappPayOrder) {
+        // For SnappPay orders, no wallet refund - just confirm the changes
+        // Don't show any refund message to user for SnappPay
+        baseMessage =
+          result.status === "cancelled"
+            ? "سفارش لغو شد"
+            : "تغییرات اعمال شد";
+      } else {
+        // For other payment methods, refund to wallet
+        baseMessage =
+          result.status === "cancelled"
+            ? "سفارش لغو و کل مبلغ به کیف پول بازگشت داده شد"
+            : `تغییرات اعمال شد. مبلغ ${Number(result.refundToman || 0).toLocaleString(
+                "fa-IR"
+              )} تومان به کیف پول بازگشت داده شد`;
+      }
+
+      toast.success(baseMessage);
+      setShowConfirm(false);
+      setPreview(null);
+      setOperatorReason("");
+      onSuccess();
+    } catch (error: any) {
+      const responseData = error.response?.data;
+      const rawError = responseData?.data?.error ?? responseData?.error;
+      const errorCode = responseData?.data?.code ?? responseData?.code;
+      const errorMessage =
+        typeof rawError === "string"
+          ? rawError
+          : typeof rawError?.message === "string"
+            ? rawError.message
+            : undefined;
+
+      if (
+        errorCode === "RATE_LIMITED" ||
+        (typeof errorMessage === "string" &&
+          errorMessage.startsWith("SNAPPAY_RATE_LIMIT"))
+      ) {
+        onSuccess();
+        return;
+      }
+
+      if (typeof errorMessage === "string" && errorMessage.startsWith("SNAPPAY_")) {
+        toast.error("به‌روزرسانی SnappPay با خطا روبه‌رو شد؛ لطفاً وضعیت پرداخت را بررسی کنید.");
+      } else {
+        toast.error(errorMessage || "خطا در اعمال تغییرات");
+      }
+    } finally {
+      applyInFlightRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm p-6 mb-6 border border-slate-200">
+      <h3 className="text-lg font-semibold mb-4 text-slate-900">
+        ویرایش اقلام سفارش
+      </h3>
+
+      {isBlocked && !forceEdit ? (
+        <div className="mb-4 rounded-md border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-900">
+          <h4 className="mb-2 font-semibold">ویرایش در حال حاضر مجاز نیست</h4>
+          <ul className="space-y-1">
+            {reasons.map((reason, index) => (
+              <li key={index}>{reason}</li>
+            ))}
+          </ul>
+          {hasShippingBarcode && order.shippingBarcode ? (
+            <div className="mt-3 rounded-md border border-yellow-300 bg-white/60 p-3 text-xs text-yellow-900">
+              <div className="mb-2">
+                <span className="font-semibold">بارکد فعلی:</span>{" "}
+                <span className="ltr text-slate-800">{order.shippingBarcode}</span>
+              </div>
+              <p className="mb-2">
+                برای ادامه می‌توانید بارکد ارسال را به صورت دستی حذف کنید.
+              </p>
+              <button
+                onClick={handleVoidBarcode}
+                disabled={voidLoading}
+                className="rounded-md bg-red-500 px-3 py-1 text-white hover:bg-red-600 disabled:opacity-60"
+              >
+                {voidLoading ? "در حال حذف..." : "حذف بارکد ارسال"}
+              </button>
+            </div>
+          ) : null}
+          <p className="mt-3 text-xs text-yellow-800">
+            در صورت نیاز برای سناریوهای تست (مثل اسنپ پی) می‌توانید ویرایش دستی
+            را فعال کنید. لطفاً بعد از تست، سفارش را به وضعیت استاندارد بازگردانید.
+          </p>
+          <button
+            onClick={() => setForceEdit(true)}
+            className="mt-3 rounded-md bg-red-100 px-3 py-1 text-sm text-red-700 hover:bg-red-200"
+          >
+            فعال‌سازی ویرایش دستی
+          </button>
+        </div>
+      ) : null}
+
+      {forceEdit ? (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+          ویرایش دستی فعال است؛ لطفاً با احتیاط ادامه دهید.
+        </div>
+      ) : null}
+
+      {!canEdit ? null : (
+        <>
+          <div className="space-y-3 mb-4">
+            {order.items.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg"
+              >
+                <img
+                  src={item.image}
+                  alt={item.productName}
+                  className="w-16 h-16 object-cover rounded"
+                />
+                <div className="flex-1">
+                  <p className="font-medium text-slate-900">{item.productName}</p>
+                  <p className="text-sm text-slate-600">
+                    قیمت: {item.price.toLocaleString("fa-IR")} تومان
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-slate-700">تعداد:</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={item.quantity}
+                    value={quantities[item.id]}
+                    onChange={(e) =>
+                      handleQuantityChange(
+                        item.id,
+                        parseInt(e.target.value) || 0
+                      )
+                    }
+                    className="w-20 px-3 py-1 border border-slate-300 rounded-md text-center"
+                  />
+                  <span className="text-sm text-slate-500">
+                    / {item.quantity.toLocaleString("fa-IR")}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleQuantityChange(item.id, 0)}
+                  className="px-3 py-1 bg-red-100 text-red-700 rounded-md hover:bg-red-200 text-sm"
+                >
+                  حذف
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {preview && (
+            <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <h4 className="mb-2 font-semibold text-blue-900">
+                پیش‌نمایش تغییرات
+              </h4>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span>جمع جزء جدید:</span>
+                  <span className="font-medium">
+                    {preview.newTotals.subtotal.toLocaleString("fa-IR")} تومان
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>تخفیف:</span>
+                  <span className="font-medium">
+                    {preview.newTotals.discount.toLocaleString("fa-IR")} تومان
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>هزینه ارسال:</span>
+                  <span className="font-medium">
+                    {preview.newShipping.toLocaleString("fa-IR")} تومان
+                  </span>
+                </div>
+                <div className="flex justify-between border-t border-blue-300 pt-2">
+                  <span className="font-semibold">جمع کل جدید:</span>
+                  <span className="font-semibold">
+                    {preview.newTotals.total.toLocaleString("fa-IR")} تومان
+                  </span>
+                </div>
+                {!isSnappPayOrder && (
+                  <div className="flex justify-between border-t border-blue-300 pt-2 text-green-700">
+                    <span className="font-semibold">مبلغ بازگشت به کیف پول:</span>
+                    <span className="font-semibold">
+                      {preview.refundToman.toLocaleString("fa-IR")} تومان
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              onClick={handlePreview}
+              disabled={loading}
+              className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loading ? "در حال بارگذاری..." : "پیش‌نمایش تغییرات"}
+            </button>
+
+            {preview && (
+              <button
+                onClick={() => setShowConfirm(true)}
+                disabled={loading}
+                className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {primaryActionText}
+              </button>
+            )}
+          </div>
+
+          <Modal
+            isOpen={showConfirm}
+            onClose={() => {
+              setShowConfirm(false);
+              setOperatorReason("");
+            }}
+            title={modalTitle}
+            className="max-w-md rounded-2xl"
+          >
+            <div className="flex flex-col gap-6 text-right">
+              <div className="space-y-3 text-sm leading-6 text-slate-700">
+                <p>
+                  {willCancelOrder
+                    ? "این عملیات سفارش را لغو می‌کند و قابل بازگشت نیست."
+                    : "آیا از اعمال این تغییرات اطمینان دارید؟ این عملیات قابل بازگشت نیست."}
+                </p>
+                {isSnappPayOrder ? (
+                  <>
+                    <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">
+                      {willCancelOrder
+                        ? "این عملیات ابتدا در اسنپ‌پی تأیید و سپس روی سفارش اعمال می‌شود."
+                        : "این تغییرات ابتدا در اسنپ‌پی تأیید و سپس روی سفارش اعمال می‌شود."}
+                    </p>
+                    <label className="block space-y-2">
+                      <span className="font-medium text-slate-800">
+                        دلیل عملیات
+                      </span>
+                      <textarea
+                        value={operatorReason}
+                        onChange={(event) =>
+                          setOperatorReason(event.target.value.slice(0, 500))
+                        }
+                        rows={3}
+                        maxLength={500}
+                        required
+                        className="w-full rounded-md border border-slate-300 px-3 py-2"
+                        placeholder="حداقل ۳ نویسه"
+                      />
+                    </label>
+                  </>
+                ) : preview ? (
+                  <div
+                    className="flex items-center justify-between rounded-lg border border-green-300 bg-green-50 p-4"
+                    data-testid="adjust-refund-callout"
+                  >
+                    <span className="text-sm font-semibold text-green-900">
+                      مبلغ بازگشت به کیف پول مشتری:
+                    </span>
+                    <span className="text-xl font-bold text-green-700">
+                      {preview.refundToman.toLocaleString("fa-IR")} تومان
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex justify-start gap-3">
+                <button
+                  type="button"
+                  onClick={handleApply}
+                  disabled={
+                    loading ||
+                    (isSnappPayOrder && operatorReason.trim().length < 3)
+                  }
+                  className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {loading ? "در حال اعمال..." : primaryActionText}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowConfirm(false);
+                    setOperatorReason("");
+                  }}
+                  className="rounded-md bg-slate-200 px-4 py-2 text-slate-800 hover:bg-slate-300"
+                >
+                  انصراف
+                </button>
+              </div>
+            </div>
+          </Modal>
+        </>
+      )}
+    </div>
+  );
+}

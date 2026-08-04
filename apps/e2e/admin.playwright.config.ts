@@ -1,0 +1,113 @@
+import { defineConfig, devices } from "@playwright/test";
+import {
+  adminBaseURL,
+  centralAuthOrigin,
+  storefrontBaseURL,
+  strapiApiURL,
+  strapiOrigin,
+} from "./helpers/env";
+
+const isCI = !!process.env.CI;
+const authServerCommand = process.env.E2E_AUTH_SERVER_COMMAND?.trim();
+const adminServerCommand = process.env.E2E_ADMIN_SERVER_COMMAND?.trim();
+
+function stringProcessEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+
+export default defineConfig({
+  testDir: "./tests/super-admin",
+  outputDir: "test-results/admin",
+  globalSetup: "./scripts/global-setup.ts",
+  fullyParallel: true,
+  forbidOnly: isCI,
+  retries: isCI ? 1 : 0,
+  workers: Number(process.env.E2E_WORKERS || 1),
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+  reporter: [
+    [isCI ? "dot" : "list"],
+    ["junit", { outputFile: "e2e-admin-results.xml" }],
+    ["html", { outputFolder: "playwright-report/admin", open: "never" }],
+  ],
+  use: {
+    baseURL: adminBaseURL(),
+    locale: "fa-IR",
+    timezoneId: "Asia/Tehran",
+    actionTimeout: 15_000,
+    navigationTimeout: 45_000,
+    screenshot: "only-on-failure",
+    trace: "retain-on-failure",
+    video: isCI ? "off" : "retain-on-failure",
+  },
+  projects: [
+    {
+      name: "chromium-desktop",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 1100 },
+      },
+    },
+    {
+      name: "firefox-desktop",
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width: 1280, height: 800 },
+      },
+    },
+    {
+      name: "webkit-desktop",
+      use: {
+        ...devices["Desktop Safari"],
+        viewport: { width: 1280, height: 800 },
+      },
+    },
+  ],
+  webServer: [
+    ...(authServerCommand
+      ? [
+          {
+            command: authServerCommand,
+            url: `${centralAuthOrigin().replace(/\/$/, "")}/api/health/ready`,
+            name: "central-auth",
+            reuseExistingServer: !isCI,
+            timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
+            env: {
+              ...stringProcessEnvironment(),
+              AUTH_TRUSTED_ADMIN_ORIGINS: adminBaseURL(),
+            },
+          },
+        ]
+      : []),
+    ...(adminServerCommand
+      ? [
+          {
+            command: adminServerCommand,
+            url: `${adminBaseURL().replace(/\/$/, "")}/api/health/live`,
+            name: "admin",
+            reuseExistingServer: !isCI,
+            timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS || 120_000),
+            env: {
+              ...stringProcessEnvironment(),
+              NEXT_PUBLIC_ADMIN_ENVIRONMENT: "e2e",
+              ADMIN_URL: adminBaseURL(),
+              NEXT_PUBLIC_ADMIN_URL: adminBaseURL(),
+              NEXT_PUBLIC_STOREFRONT_URL: storefrontBaseURL(),
+              NEXT_PUBLIC_API_BASE_URL: strapiApiURL(),
+              NEXT_PUBLIC_API_URL: strapiApiURL(),
+              NEXT_PUBLIC_IMAGE_BASE_URL:
+                process.env.NEXT_PUBLIC_IMAGE_BASE_URL?.trim() || strapiOrigin(),
+              NEXT_PUBLIC_AUTH_ENVIRONMENT: "e2e",
+              NEXT_PUBLIC_AUTH_ORIGIN: centralAuthOrigin(),
+              NEXT_PUBLIC_AUTH_URL: centralAuthOrigin(),
+              AUTH_SERVER_ORIGIN: centralAuthOrigin(),
+            },
+          },
+        ]
+      : []),
+  ],
+});

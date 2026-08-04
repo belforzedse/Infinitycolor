@@ -82,7 +82,6 @@ export default function AccountForm() {
         FirstName: formData.firstName,
         LastName: formData.lastName,
         NationalCode: formData.nationalId,
-        Phone: formData.phone,
         BirthDate: formattedBirthDate ?? userData?.BirthDate ?? undefined,
         Sex: (formData.gender || null) as any,
       });

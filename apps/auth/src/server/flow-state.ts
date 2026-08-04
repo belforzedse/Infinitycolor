@@ -144,7 +144,7 @@ export function returnTargetFromHeaders(headers?: Headers): string {
   }
   return resolveReturnTarget(
     requested,
-    env.trustedStorefrontOrigins,
+    env.trustedApplicationOrigins,
     env.defaultStorefrontOrigin,
   );
 }

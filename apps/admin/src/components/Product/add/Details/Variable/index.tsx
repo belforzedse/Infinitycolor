@@ -1,0 +1,814 @@
+import React, { useState, useEffect } from "react";
+import type { ProductVariable, ProductVariableDisplay } from "./types";
+import { ProductVariableTable } from "./Table";
+import { apiClient } from "@/services";
+import toast from "react-hot-toast";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
+import Modal from "@/components/Kits/Modal";
+import ConfirmDialog from "@/components/Kits/ConfirmDialog";
+import { Ruler, Settings } from "lucide-react";
+
+interface ProductVariablesProps {
+  productId: number;
+  refreshKey?: number;
+}
+
+// DEFAULT_TITLES removed - variations should only show actual size/model values, not defaults
+
+const MAX_STOCK = 1000;
+type BulkPublishState = "no-change" | "published" | "draft";
+
+const BULK_FORM_DEFAULT = {
+  price: "",
+  discountPrice: "",
+  stock: "",
+  publishState: "no-change" as BulkPublishState,
+  removeDiscount: false,
+};
+
+const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshKey = 0 }) => {
+  const { isStoreManager, isAdmin } = useCurrentUser();
+  const canDeleteVariations = isStoreManager || isAdmin;
+
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  const [variables, setVariables] = useState<ProductVariableDisplay[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [currentVariation, setCurrentVariation] = useState<ProductVariableDisplay | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkForm, setBulkForm] = useState(BULK_FORM_DEFAULT);
+  const [isBulkSaving, setIsBulkSaving] = useState(false);
+
+  const resetBulkForm = () => {
+    setBulkForm(BULK_FORM_DEFAULT);
+  };
+
+  const closeBulkModal = () => {
+    setBulkModalOpen(false);
+    resetBulkForm();
+  };
+
+  const parseNumberInput = (value: string) => {
+    if (value === "") return undefined;
+    const parsed = Number(value);
+    if (Number.isNaN(parsed)) {
+      return undefined;
+    }
+    return parsed;
+  };
+
+  const closeEditModal = () => {
+    setEditModalOpen(false);
+    setCurrentVariation(null);
+  };
+
+  // Fetch product variations
+  useEffect(() => {
+    const fetchVariations = async () => {
+      if (!productId) return;
+
+      setLoading(true);
+      try {
+        const response = await apiClient.get(
+          `/product-variations?filters[product][id][$eq]=${productId}&populate[0]=product_variation_color&populate[1]=product_variation_size&populate[2]=product_variation_model&populate[3]=product_stock&populate[4]=general_discounts&populate[5]=selected_attribute_terms&populate[6]=selected_attribute_terms.product_attribute&pagination[pageSize]=100`,
+          {
+            cache: "no-store",
+          },
+        );
+
+        // Type assertion to work with the data
+        const variations = response.data as ProductVariable[];
+
+        // Debug: Log the API response to see what we're getting
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.log("Product variations API response:", variations);
+          variations.forEach((variation, index) => {
+            // eslint-disable-next-line no-console
+            console.log(`Variation ${index}:`, {
+              id: variation.id,
+              Price: variation.attributes.Price,
+              generalDiscounts: variation.attributes.general_discounts?.data,
+              attributes: variation.attributes,
+            });
+          });
+        }
+
+        // Transform API data to display format
+        const formattedVariations = variations.map((variation: ProductVariable) => {
+          // Extract color, size, model details - only use actual values, no defaults
+          const color = variation.attributes.product_variation_color?.data?.attributes?.Title;
+          const colorCode =
+            variation.attributes.product_variation_color?.data?.attributes?.ColorCode;
+          const size = variation.attributes.product_variation_size?.data?.attributes?.Title;
+          const model = variation.attributes.product_variation_model?.data?.attributes?.Title;
+          const genericAttributes = (variation.attributes.selected_attribute_terms?.data || [])
+            .map((term) => ({
+              attributeId: Number(term.attributes.product_attribute?.data?.id || 0),
+              attribute: String(
+                term.attributes.product_attribute?.data?.attributes?.Title || "ویژگی",
+              ),
+              termId: Number(term.id),
+              term: String(term.attributes.Title || ""),
+            }))
+            .filter((item) => item.attributeId && item.term)
+            .sort((left, right) => left.attribute.localeCompare(right.attribute));
+
+          // Debug: Log color code extraction
+          if (process.env.NODE_ENV !== "production" && color) {
+            // eslint-disable-next-line no-console
+            console.log(`Color extraction for variation ${variation.id}:`, {
+              color,
+              colorCode,
+              colorData: variation.attributes.product_variation_color?.data,
+              fullAttributes: variation.attributes.product_variation_color?.data?.attributes,
+            });
+          }
+
+          // Create variable name from combinations - only include parts that exist.
+          // Absent attributes are `undefined` (not ""), so filter on truthiness to
+          // avoid stray " - " separators (e.g. a model-only "کد 1" variation).
+          const variableParts = [
+            size,
+            color,
+            model,
+            ...genericAttributes.map((item) => `${item.attribute}: ${item.term}`),
+          ].filter((part) => Boolean(part && part.trim()));
+          const variableName = variableParts.join(" - ");
+
+          // Get variation-specific discount price (priority)
+          const basePrice = Number(variation.attributes.Price || 0);
+          let discountPrice: number | undefined = variation.attributes.DiscountPrice
+            ? Number(variation.attributes.DiscountPrice)
+            : undefined;
+
+          // If no variation-specific discount, calculate from general_discounts
+          const generalDiscounts = variation.attributes.general_discounts?.data || [];
+          if (!discountPrice && generalDiscounts.length > 0) {
+            // Use the first active discount
+            const discount = generalDiscounts[0].attributes;
+            if (discount.Type === "Discount") {
+              // Percentage discount
+              const discountAmount = (basePrice * Number(discount.Amount || 0)) / 100;
+              discountPrice = Math.max(0, basePrice - discountAmount);
+            } else if (discount.Type === "Cash") {
+              // Fixed amount discount
+              discountPrice = Math.max(0, basePrice - Number(discount.Amount || 0));
+            }
+          }
+
+          return {
+            id: variation.id,
+            sku: variation.attributes.SKU || "",
+            price: variation.attributes.Price || 0,
+            discountPrice,
+            stock: variation.attributes.product_stock?.data?.attributes.Count || 0,
+            stockId: variation.attributes.product_stock?.data?.id,
+            variable: variableName,
+            isPublished: variation.attributes.IsPublished || false,
+            colorId: variation.attributes.product_variation_color?.data?.id,
+            sizeId: variation.attributes.product_variation_size?.data?.id,
+            modelId: variation.attributes.product_variation_model?.data?.id,
+            color: color && color.trim() ? color : undefined,
+            colorCode: colorCode ? colorCode : undefined,
+            size: size && size.trim() ? size : undefined,
+            model: model && model.trim() ? model : undefined,
+            genericAttributes,
+            generalDiscounts: generalDiscounts,
+          };
+        });
+
+        // Debug: Log the formatted variations
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.log("Formatted variations:", formattedVariations);
+          formattedVariations.forEach((variation, index) => {
+            // eslint-disable-next-line no-console
+            console.log(`Formatted variation ${index}:`, {
+              id: variation.id,
+              price: variation.price,
+              discountPrice: variation.discountPrice,
+              variable: variation.variable,
+            });
+          });
+        }
+
+        setVariables(formattedVariations);
+      } catch (error) {
+        console.error("Error fetching product variations:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchVariations();
+  }, [productId, refreshKey]);
+
+  const handleCheckboxChange = (id: number) => {
+    setSelectedRows((prev) =>
+      prev.includes(id) ? prev.filter((rowId) => rowId !== id) : [...prev, id],
+    );
+  };
+
+  const handleEditVariation = (id: number) => {
+    const variation = variables.find((v) => v.id === id);
+    if (variation) {
+      setCurrentVariation(variation);
+      setEditModalOpen(true);
+    }
+  };
+
+  const handleDeleteVariation = (id: number) => {
+    setDeleteId(id);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+
+    if (!canDeleteVariations) {
+      toast.error("شما مجوز حذف تنوع محصول را ندارید");
+      setDeleteConfirmOpen(false);
+      setDeleteId(null);
+      return;
+    }
+
+    try {
+      // The backend removes the variation and its dependent stock in one
+      // transaction, and blocks deletion while inventory is reserved.
+      await apiClient.delete(`/product-variations/${deleteId}`);
+
+      // Update local state and refresh
+      setVariables((prev) => prev.filter((v) => v.id !== deleteId));
+      setDeleteConfirmOpen(false);
+      setDeleteId(null);
+      toast.success("تنوع محصول با موفقیت حذف شد");
+
+      // Trigger a refresh by updating refreshKey if parent component supports it
+      // This ensures the list is refreshed after deletion
+    } catch (error: any) {
+      // Check if the error is about relations (which can happen after successful deletion)
+      // If variation was deleted (204), we can ignore relation errors
+      if (error?.status === 400 && error?.error?.message?.includes("relation")) {
+        // Variation was likely deleted successfully, but a relation cleanup failed
+        // This is acceptable - the variation is gone
+        setVariables((prev) => prev.filter((v) => v.id !== deleteId));
+        setDeleteConfirmOpen(false);
+        setDeleteId(null);
+        toast.success("تنوع محصول با موفقیت حذف شد");
+        return;
+      }
+
+      console.error("Error deleting product variation:", error);
+      toast.error("خطا در حذف تنوع محصول");
+    }
+  };
+
+  const handleBulkUpdate = async () => {
+    if (!selectedRows.length) return;
+
+    const priceValue = parseNumberInput(bulkForm.price);
+    if (priceValue !== undefined && priceValue <= 0) {
+      toast.error("قیمت باید بزرگ‌تر از صفر باشد");
+      return;
+    }
+
+    const discountInput = parseNumberInput(bulkForm.discountPrice);
+    let discountValue: number | null | undefined = undefined;
+    if (bulkForm.removeDiscount) {
+      discountValue = null;
+    } else if (discountInput !== undefined) {
+      discountValue = Math.max(0, discountInput);
+    }
+
+    const stockInput = parseNumberInput(bulkForm.stock);
+    const stockValue =
+      stockInput !== undefined ? Math.min(Math.max(stockInput, 0), MAX_STOCK) : undefined;
+
+    const publishValue =
+      bulkForm.publishState === "no-change" ? undefined : bulkForm.publishState === "published";
+
+    if (!isValidAction(priceValue, discountValue, stockValue, publishValue)) {
+      toast.error("هیچ تغییری برای اعمال انتخاب نشده است");
+      return;
+    }
+
+    setIsBulkSaving(true);
+    const stockIdUpdates: Record<number, number | undefined> = {};
+    let updatedCount = 0;
+
+    try {
+      for (const variationId of selectedRows) {
+        const variation = variables.find((v) => v.id === variationId);
+        if (!variation) continue;
+
+        try {
+          const updatePayload: Record<string, unknown> = {};
+          if (priceValue !== undefined) updatePayload.Price = priceValue;
+          if (discountValue !== undefined) updatePayload.DiscountPrice = discountValue;
+          if (publishValue !== undefined) updatePayload.IsPublished = publishValue;
+
+          if (Object.keys(updatePayload).length > 0) {
+            await apiClient.put(`/product-variations/${variationId}`, {
+              data: updatePayload,
+            });
+          }
+
+          if (stockValue !== undefined) {
+            if (variation.stockId) {
+              await apiClient.put(`/product-stocks/${variation.stockId}`, {
+                data: {
+                  Count: stockValue,
+                },
+              });
+            } else {
+              const stockResponse = await apiClient.post("/product-stocks", {
+                data: {
+                  Count: stockValue,
+                  product_variation: variationId,
+                },
+              });
+              const stockData = stockResponse.data as { id: number };
+              stockIdUpdates[variationId] = stockData.id;
+            }
+          }
+
+          updatedCount++;
+        } catch (error) {
+          console.error(`Error updating variation ${variationId}:`, error);
+        }
+      }
+
+      if (updatedCount > 0) {
+        setVariables((prev) =>
+          prev.map((variation) => {
+            if (!selectedRows.includes(variation.id)) return variation;
+
+            return {
+              ...variation,
+              price: priceValue !== undefined ? priceValue : variation.price,
+              discountPrice:
+                discountValue === undefined
+                  ? variation.discountPrice
+                  : discountValue === null
+                    ? undefined
+                    : discountValue,
+              stock: stockValue !== undefined ? stockValue : variation.stock,
+              stockId:
+                stockIdUpdates[variation.id] !== undefined
+                  ? stockIdUpdates[variation.id]
+                  : variation.stockId,
+              isPublished: publishValue !== undefined ? publishValue : variation.isPublished,
+            };
+          }),
+        );
+        toast.success(`تغییرات روی ${updatedCount} تنوع اعمال شد`);
+        setSelectedRows([]);
+        closeBulkModal();
+      } else {
+        toast.error("ویرایش گروهی با خطا مواجه شد");
+      }
+    } finally {
+      setIsBulkSaving(false);
+    }
+  };
+
+  const isValidAction = (
+    priceValue: number | undefined,
+    discountValue: number | null | undefined,
+    stockValue: number | undefined,
+    publishValue: boolean | undefined,
+  ): boolean => {
+    if (
+      priceValue === undefined &&
+      discountValue === undefined &&
+      stockValue === undefined &&
+      publishValue === undefined
+    ) {
+      return false;
+    }
+    return true;
+  };
+
+  const handleSaveVariation = async (updatedVariation: ProductVariableDisplay) => {
+    try {
+      if (updatedVariation.stock > MAX_STOCK) {
+        toast.error(`موجودی هر تنوع نمی‌تواند بیشتر از ${MAX_STOCK.toLocaleString()} باشد.`);
+        return;
+      }
+      if (updatedVariation.stock < 0) {
+        toast.error("موجودی نمی‌تواند مقدار منفی باشد.");
+        return;
+      }
+
+      // Update variation data
+      await apiClient.put(`/product-variations/${updatedVariation.id}`, {
+        data: {
+          SKU: updatedVariation.sku,
+          Price: updatedVariation.price,
+          DiscountPrice: updatedVariation.discountPrice || null,
+          IsPublished: updatedVariation.isPublished,
+        },
+      });
+
+      // Update stock if it exists, or create new stock
+      if (updatedVariation.stockId) {
+        await apiClient.put(`/product-stocks/${updatedVariation.stockId}`, {
+          data: {
+            Count: Math.min(Math.max(updatedVariation.stock, 0), MAX_STOCK),
+          },
+        });
+      } else {
+        // Create new stock and link to variation
+        const stockResponse = await apiClient.post("/product-stocks", {
+          data: {
+            Count: Math.min(Math.max(updatedVariation.stock, 0), MAX_STOCK),
+            product_variation: updatedVariation.id,
+          },
+        });
+
+        // Update stockId in local state
+        const stockData = stockResponse.data as { id: number };
+        updatedVariation.stockId = stockData.id;
+      }
+
+      // Update local state
+      setVariables((prev) =>
+        prev.map((v) => (v.id === updatedVariation.id ? updatedVariation : v)),
+      );
+
+      setEditModalOpen(false);
+      setCurrentVariation(null);
+      toast.success("تنوع محصول با موفقیت به‌روزرسانی شد");
+    } catch (error) {
+      console.error("Error updating product variation:", error);
+    }
+  };
+
+  const handleSelectAll = () => {
+    setSelectedRows(variables.map((v) => v.id));
+  };
+
+  return (
+    <div className="w-full p-5 pt-0" dir="rtl">
+      <h2 className="mb-4 text-base text-neutral-400">متغیر های محصول</h2>
+
+      {variables.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-100 bg-white p-4 text-sm text-slate-600">
+          <div>
+            {selectedRows.length > 0
+              ? `${selectedRows.length} تنوع انتخاب شده`
+              : "هیچ تنوعی انتخاب نشده است"}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => {
+                if (selectedRows.length === variables.length && variables.length > 0) {
+                  setSelectedRows([]);
+                } else {
+                  handleSelectAll();
+                }
+              }}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-60"
+              disabled={variables.length === 0}
+            >
+              {selectedRows.length === variables.length && variables.length > 0
+                ? "برداشتن انتخاب"
+                : "انتخاب همه"}
+            </button>
+            <button
+              onClick={() => setBulkModalOpen(true)}
+              disabled={selectedRows.length === 0}
+              className="rounded-lg bg-infinity-primary px-4 py-2 text-white transition-colors hover:bg-infinity-primary disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              ویرایش گروهی
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="p-8 text-center">در حال بارگذاری...</div>
+      ) : variables.length === 0 ? (
+        <div className="rounded-lg border border-slate-100 p-8 text-center">
+          <p className="text-slate-500">هیچ متغیری برای این محصول تعریف نشده است.</p>
+          <p className="mt-2 text-sm text-slate-400">
+            ابتدا ویژگی‌های محصول را تعریف کنید و سپس تنوع‌های محصول را ایجاد کنید.
+          </p>
+        </div>
+      ) : (
+        <ProductVariableTable
+          variables={variables}
+          selectedRows={selectedRows}
+          onSelectRow={handleCheckboxChange}
+          onEditRow={handleEditVariation}
+          onDeleteRow={canDeleteVariations ? handleDeleteVariation : undefined}
+          editingVariationId={currentVariation?.id}
+        />
+      )}
+
+      <Modal
+        isOpen={editModalOpen && !!currentVariation}
+        onClose={closeEditModal}
+        title="ویرایش متغیر محصول"
+      >
+        {currentVariation && (
+          <>
+            {/* Variation Indicator */}
+            <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="mb-3 text-sm font-medium text-slate-700">تنوع در حال ویرایش:</div>
+              <div className="flex flex-wrap items-center gap-2">
+                {currentVariation.color && currentVariation.color.trim() && (
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <span
+                      className="h-5 w-5 rounded-full border border-slate-200"
+                      style={{ backgroundColor: currentVariation.colorCode || "#f5f5f5" }}
+                      aria-label={`کد رنگ ${currentVariation.colorCode || "نامشخص"}`}
+                    />
+                    <span className="text-sm font-medium text-slate-700">
+                      {currentVariation.color}
+                    </span>
+                  </div>
+                )}
+                {currentVariation.size && currentVariation.size.trim() && (
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <Ruler className="h-5 w-5 text-slate-500" />
+                    <span className="text-sm font-medium text-slate-700">
+                      سایز: {currentVariation.size}
+                    </span>
+                  </div>
+                )}
+                {currentVariation.model && currentVariation.model.trim() && (
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <Settings className="h-5 w-5 text-slate-500" />
+                    <span className="text-sm font-medium text-slate-700">
+                      مدل: {currentVariation.model}
+                    </span>
+                  </div>
+                )}
+                {(!currentVariation.color || !currentVariation.color.trim()) &&
+                  (!currentVariation.size || !currentVariation.size.trim()) &&
+                  (!currentVariation.model || !currentVariation.model.trim()) && (
+                    <span className="text-sm text-slate-500">بدون ویژگی خاص</span>
+                  )}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm">کد محصول (SKU)</label>
+                <input
+                  type="text"
+                  value={currentVariation.sku}
+                  onChange={(e) =>
+                    setCurrentVariation({
+                      ...currentVariation,
+                      sku: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-lg border border-slate-300 p-2"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm">قیمت اصلی (تومان)</label>
+                <input
+                  type="number"
+                  value={currentVariation.price}
+                  onChange={(e) =>
+                    setCurrentVariation({
+                      ...currentVariation,
+                      price: Number(e.target.value),
+                    })
+                  }
+                  className="w-full rounded-lg border border-slate-300 p-2"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm">تخفیف اختصاصی این متغیر (تومان)</label>
+                <input
+                  type="number"
+                  value={currentVariation.discountPrice || ""}
+                  onChange={(e) =>
+                    setCurrentVariation({
+                      ...currentVariation,
+                      discountPrice: e.target.value ? Number(e.target.value) : undefined,
+                    })
+                  }
+                  placeholder="خالی بگذارید برای عدم تخفیف"
+                  className="w-full rounded-lg border border-slate-300 p-2"
+                />
+                <div className="mt-1 text-xs text-slate-500">
+                  تخفیف مخصوص این متغیر - مستقل از تخفیف‌های عمومی
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm">تخفیف‌های عمومی</label>
+                <div className="min-h-[40px] rounded-lg border border-slate-300 bg-slate-50 p-2">
+                  {currentVariation.generalDiscounts &&
+                  currentVariation.generalDiscounts.length > 0 ? (
+                    currentVariation.generalDiscounts.map((discount, index: number) => (
+                      <div key={index} className="text-sm text-slate-600">
+                        {discount.attributes.Type === "Discount"
+                          ? `${discount.attributes.Amount}% تخفیف`
+                          : `${Number(discount.attributes.Amount).toLocaleString()} تومان تخفیف`}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-slate-400">هیچ تخفیف فعالی تعریف نشده</div>
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  برای مدیریت تخفیف‌ها از بخش &quot;تخفیف‌های عمومی&quot; استفاده کنید
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm">موجودی</label>
+                <input
+                  type="number"
+                  value={currentVariation.stock}
+                  onChange={(e) =>
+                    setCurrentVariation({
+                      ...currentVariation,
+                      stock: Math.min(Math.max(Number(e.target.value), 0), MAX_STOCK),
+                    })
+                  }
+                  max={MAX_STOCK}
+                  min={0}
+                  className="w-full rounded-lg border border-slate-300 p-2"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  حداکثر موجودی قابل ثبت برای هر تنوع {MAX_STOCK.toLocaleString()} عدد است.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm">وضعیت انتشار</label>
+                <div className="flex items-center gap-6">
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      checked={currentVariation.isPublished}
+                      onChange={() =>
+                        setCurrentVariation({
+                          ...currentVariation,
+                          isPublished: true,
+                        })
+                      }
+                      className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="mr-2 text-sm text-gray-700">منتشر شده</span>
+                  </label>
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      checked={!currentVariation.isPublished}
+                      onChange={() =>
+                        setCurrentVariation({
+                          ...currentVariation,
+                          isPublished: false,
+                        })
+                      }
+                      className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="mr-2 text-sm text-gray-700">پیش نویس</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={closeEditModal}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-slate-700"
+              >
+                انصراف
+              </button>
+              <button
+                onClick={() => currentVariation && handleSaveVariation(currentVariation)}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-white"
+              >
+                ذخیره تغییرات
+              </button>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <Modal isOpen={bulkModalOpen} onClose={closeBulkModal} title="ویرایش گروهی تنوع‌ها">
+        <p className="mb-4 text-sm text-slate-500">
+          تغییرات زیر برای {selectedRows.length} تنوع انتخاب شده اعمال می‌شود. فیلدهایی که خالی
+          بمانند بدون تغییر خواهند ماند.
+        </p>
+
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm">قیمت جدید (تومان)</label>
+            <input
+              type="number"
+              value={bulkForm.price}
+              onChange={(e) => setBulkForm((prev) => ({ ...prev, price: e.target.value }))}
+              placeholder="بدون تغییر"
+              className="w-full rounded-lg border border-slate-300 p-2"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm">تخفیف اختصاصی (تومان)</label>
+            <input
+              type="number"
+              value={bulkForm.discountPrice}
+              onChange={(e) => setBulkForm((prev) => ({ ...prev, discountPrice: e.target.value }))}
+              disabled={bulkForm.removeDiscount}
+              placeholder="بدون تغییر"
+              className="w-full rounded-lg border border-slate-300 p-2 disabled:bg-slate-100"
+            />
+            <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={bulkForm.removeDiscount}
+                onChange={(e) =>
+                  setBulkForm((prev) => ({
+                    ...prev,
+                    removeDiscount: e.target.checked,
+                    discountPrice: e.target.checked ? "" : prev.discountPrice,
+                  }))
+                }
+              />
+              حذف تخفیف اختصاصی از همه تنوع‌ها
+            </label>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm">موجودی</label>
+            <input
+              type="number"
+              value={bulkForm.stock}
+              onChange={(e) => setBulkForm((prev) => ({ ...prev, stock: e.target.value }))}
+              placeholder="بدون تغییر"
+              className="w-full rounded-lg border border-slate-300 p-2"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              حداکثر موجودی قابل ثبت {MAX_STOCK.toLocaleString()} عدد است.
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm">وضعیت انتشار</label>
+            <select
+              value={bulkForm.publishState}
+              onChange={(e) =>
+                setBulkForm((prev) => ({
+                  ...prev,
+                  publishState: e.target.value as BulkPublishState,
+                }))
+              }
+              className="w-full rounded-lg border border-slate-300 p-2"
+            >
+              <option value="no-change">بدون تغییر</option>
+              <option value="published">منتشر شود</option>
+              <option value="draft">به حالت پیش نویس درآید</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            onClick={closeBulkModal}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-slate-700"
+            disabled={isBulkSaving}
+          >
+            انصراف
+          </button>
+          <button
+            onClick={handleBulkUpdate}
+            className="rounded-lg bg-infinity-primary-light px-4 py-2 text-white disabled:border-infinity-primary-lighter/60 disabled:bg-infinity-primary-lighter/30"
+            disabled={isBulkSaving}
+          >
+            {isBulkSaving ? "در حال اعمال..." : "ثبت تغییرات"}
+          </button>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        title="حذف متغیر محصول"
+        description="آیا از حذف این متغیر محصول اطمینان دارید؟ این عمل قابل بازگشت نیست."
+        confirmText="حذف"
+        cancelText="انصراف"
+        onConfirm={confirmDelete}
+        onCancel={() => {
+          setDeleteConfirmOpen(false);
+          setDeleteId(null);
+        }}
+      />
+    </div>
+  );
+};
+
+export default ProductVariables;

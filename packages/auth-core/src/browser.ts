@@ -67,31 +67,55 @@ export interface CentralAuthBrowserClientOptions {
   fetchImpl?: typeof fetch;
 }
 
+export interface CentralAuthSession {
+  id: string;
+  token: string;
+  userId: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+export type CentralAuthBrowserError = Error & {
+  status: number;
+  code?: string;
+};
+
 export function createCentralAuthBrowserClient(
   options: CentralAuthBrowserClientOptions,
 ) {
   const authOrigin = new URL(options.authOrigin).origin;
   const fetchImpl: typeof fetch =
     options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
-  const request = async <T>(path: string, body: unknown): Promise<T> => {
+  const request = async <T>(
+    path: string,
+    options: { method?: "GET" | "POST"; body?: unknown } = {},
+  ): Promise<T> => {
+    const method = options.method ?? "POST";
     const response = await fetchImpl(`${authOrigin}${path}`, {
-      method: "POST",
+      method,
       credentials: "include",
       cache: "no-store",
       headers: {
         "content-type": "application/json",
         accept: "application/json",
       },
-      body: JSON.stringify(body),
+      body:
+        method === "GET" || options.body === undefined
+          ? undefined
+          : JSON.stringify(options.body),
     });
     const payload = (await response.json().catch(() => ({}))) as T & {
       message?: string;
+      code?: string;
     };
     if (!response.ok)
       throw Object.assign(
         new Error(payload.message ?? "Authentication failed"),
-        { status: response.status },
-      );
+        { status: response.status, code: payload.code },
+      ) as CentralAuthBrowserError;
     return payload;
   };
 
@@ -103,21 +127,35 @@ export function createCentralAuthBrowserClient(
     }),
     phoneStatus: (phone: string) =>
       request<PhoneStatusResponse>("/api/auth/infinity/phone-status", {
-        phone,
+        body: { phone },
       }),
     requestOtp: (phone: string) =>
-      request<OtpRequestResponse>("/api/auth/infinity/otp/request", { phone }),
+      request<OtpRequestResponse>("/api/auth/infinity/otp/request", {
+        body: { phone },
+      }),
     verifyOtp: (otp: string) =>
-      request<AuthSuccessResponse>("/api/auth/infinity/otp/verify", { otp }),
+      request<AuthSuccessResponse>("/api/auth/infinity/otp/verify", {
+        body: { otp },
+      }),
     signInWithPassword: (phone: string, password: string) =>
       request<AuthSuccessResponse>("/api/auth/infinity/password/sign-in", {
-        phone,
-        password,
+        body: { phone, password },
       }),
     resetPassword: (otp: string, newPassword: string) =>
       request<AuthSuccessResponse>("/api/auth/infinity/password/reset", {
-        otp,
-        newPassword,
+        body: { otp, newPassword },
       }),
+    listSessions: () =>
+      request<CentralAuthSession[]>("/api/auth/list-sessions", {
+        method: "GET",
+      }),
+    revokeSession: (token: string) =>
+      request<{ status: boolean }>("/api/auth/revoke-session", {
+        body: { token },
+      }),
+    revokeOtherSessions: () =>
+      request<{ status: boolean }>("/api/auth/revoke-other-sessions"),
+    revokeSessions: () =>
+      request<{ status: boolean }>("/api/auth/revoke-sessions"),
   };
 }

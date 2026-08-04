@@ -8,7 +8,7 @@ import {
 } from "../../fixtures/storefront";
 import { authStorageStatePath } from "../../helpers/auth";
 
-const categoriesPath = "/super-admin/products/categories";
+const categoriesPath = "/products/categories";
 const addCategoryPath = `${categoriesPath}/add`;
 const expandedCategoriesPath = `${categoriesPath}?pageSize=100`;
 const categoriesURLPattern = new RegExp(`${categoriesPath}(?:\\?.*)?$`);
@@ -60,7 +60,7 @@ test.describe("super-admin category CRUD smoke", () => {
     await expect(createdCard).toBeVisible({ timeout: 30_000 });
 
     await createdCard.getByTestId("admin-category-edit").click();
-    await expect(page).toHaveURL(/\/super-admin\/products\/categories\/edit\/\d+$/);
+    await expect(page).toHaveURL(/\/products\/categories\/edit\/\d+$/);
     await fillCategoryForm(
       page,
       E2E_ADMIN_CATEGORY_UPDATED_TITLE,

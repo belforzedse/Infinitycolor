@@ -46,12 +46,12 @@ test.describe("super-admin shipping CRUD", () => {
     // The admin ClientLayout renders mobile/tablet/desktop copies of its children,
     // so every form field exists 3x in the DOM. Scope to the one visible at the
     // desktop viewport via `.filter({ visible: true })`.
-    await page.goto("/super-admin/shipping/add", { waitUntil: "domcontentloaded" });
+    await page.goto("/shipping/add", { waitUntil: "domcontentloaded" });
     await page.getByLabel("نام نمایشی فارسی").filter({ visible: true }).fill(title);
     await page.getByLabel("کد داخلی").filter({ visible: true }).fill(code);
     await page.getByLabel("هزینه پایه تومان").filter({ visible: true }).fill("45000");
     await page.getByRole("button", { name: "ذخیره", exact: true }).filter({ visible: true }).click();
-    await expect(page).toHaveURL(/\/super-admin\/shipping(?:\?.*)?$/, { timeout: 30_000 });
+    await expect(page).toHaveURL(/\/shipping(?:\?.*)?$/, { timeout: 30_000 });
 
     // Verify it persisted with the values we typed.
     const created = await apiGet(request, "admin", "/shippings", {
@@ -68,7 +68,7 @@ test.describe("super-admin shipping CRUD", () => {
     expect(Number(createdRow?.attributes?.Price)).toBe(45000);
 
     // --- Edit through the form ---
-    await page.goto(`/super-admin/shipping/edit/${shippingId}`, {
+    await page.goto(`/shipping/edit/${shippingId}`, {
       waitUntil: "domcontentloaded",
     });
     await expect(page.getByLabel("نام نمایشی فارسی").filter({ visible: true })).toHaveValue(title, {
@@ -92,7 +92,7 @@ test.describe("super-admin shipping CRUD", () => {
       .toBe("۲ تا ۳ روز کاری");
 
     // --- Soft-delete from the list ---
-    await page.goto("/super-admin/shipping", { waitUntil: "domcontentloaded" });
+    await page.goto("/shipping", { waitUntil: "domcontentloaded" });
     await page
       .locator(`[data-testid="admin-shipping-soft-delete"][data-id="${shippingId}"]:visible`)
       .first()
