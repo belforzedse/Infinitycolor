@@ -3,10 +3,14 @@ import path from "node:path";
 import { RedisClient } from "../../../index";
 import {
   assertUserMayStartSession,
+  createOtpChallenge,
+  hasUserForPhone,
   OTP_INVALID_MESSAGE,
   consumeOtpChallenge,
   isAcceptedPhone,
   normalizeOtpPhone,
+  phoneStorageVariants,
+  verifyOtpIdentityWithStatus,
 } from "../services/credential-flow";
 
 describe("shared Strapi credential flow", () => {
@@ -22,6 +26,44 @@ describe("shared Strapi credential flow", () => {
   test("keeps the existing +98 normalization behavior", () => {
     expect(normalizeOtpPhone("09123456789")).toBe("+989123456789");
     expect(normalizeOtpPhone("+989123456789")).toBe("+989123456789");
+  });
+
+  test.each(["09123456789", "+989123456789"])(
+    "looks up both persisted forms for %s",
+    async (phone) => {
+      const findMany = jest.fn().mockResolvedValue([{ id: 17 }]);
+      const originalQuery = (global as any).strapi.query;
+      (global as any).strapi.query = jest.fn(() => ({ findMany }));
+
+      try {
+        expect(phoneStorageVariants(phone)).toEqual(["+989123456789", "09123456789"]);
+        await expect(hasUserForPhone(phone)).resolves.toBe(true);
+        expect(findMany).toHaveBeenCalledWith({
+          where: {
+            phone: { $in: ["+989123456789", "09123456789"] },
+          },
+          limit: 2,
+        });
+      } finally {
+        (global as any).strapi.query = originalQuery;
+      }
+    },
+  );
+
+  test("refuses OTP when both persisted forms point at different users", async () => {
+    const originalQuery = (global as any).strapi.query;
+    (global as any).strapi.query = jest.fn(() => ({
+      findMany: jest.fn().mockResolvedValue([{ id: 17 }, { id: 20 }]),
+    }));
+
+    try {
+      await expect(createOtpChallenge({}, "09123456789")).rejects.toMatchObject({
+        code: "PHONE_IDENTITY_AMBIGUOUS",
+        status: 409,
+      });
+    } finally {
+      (global as any).strapi.query = originalQuery;
+    }
   });
 
   test("accepts only an atomically consumed six-digit challenge", async () => {
@@ -43,6 +85,71 @@ describe("shared Strapi credential flow", () => {
       OTP_INVALID_MESSAGE,
     );
   });
+
+  test.each([
+    {
+      label: "existing",
+      existingUser: { id: 17, confirmed: true },
+      expectedIsNewUser: false,
+    },
+    {
+      label: "new",
+      existingUser: null,
+      expectedIsNewUser: true,
+    },
+  ])(
+    "reports the authoritative $label-user result after OTP verification",
+    async ({ existingUser, expectedIsNewUser }) => {
+      ((await RedisClient).eval as jest.Mock) = jest.fn().mockResolvedValue([
+        "OK",
+        JSON.stringify({
+          code: "012345",
+          phone: "+989123456789",
+          ...(existingUser ? { merchant: existingUser.id } : {}),
+          attempts: 0,
+        }),
+      ]);
+      const createdUser = { id: 20, confirmed: true };
+      const userQuery = {
+        findMany: jest.fn().mockResolvedValue(existingUser ? [existingUser] : []),
+      };
+      const roleQuery = {
+        findOne: jest.fn().mockResolvedValue({ id: 1, name: "Customer" }),
+      };
+      const userDbQuery = {
+        create: jest.fn().mockResolvedValue(createdUser),
+        update: jest.fn(),
+      };
+      const profileDbQuery = {
+        create: jest.fn().mockResolvedValue({ id: 30 }),
+      };
+      const originalStrapi = (global as any).strapi;
+      (global as any).strapi = {
+        ...originalStrapi,
+        query: jest.fn((uid: string) =>
+          uid === "plugin::users-permissions.role" ? roleQuery : userQuery,
+        ),
+        db: {
+          ...originalStrapi.db,
+          connection: { client: { config: { client: "sqlite" } } },
+          transaction: jest.fn(async (callback) => callback({ trx: {} })),
+          query: jest.fn((uid: string) =>
+            uid === "plugin::users-permissions.user" ? userDbQuery : profileDbQuery,
+          ),
+        },
+      };
+
+      try {
+        const result = await verifyOtpIdentityWithStatus("challenge.value", "012345");
+        expect(result).toEqual({
+          user: existingUser ?? createdUser,
+          isNewUser: expectedIsNewUser,
+        });
+      } finally {
+        (global as any).strapi = originalStrapi;
+      }
+    },
+  );
 
   test("production credential generation does not use Math.random", () => {
     const source = readFileSync(path.resolve(__dirname, "../services/credential-flow.ts"), "utf8");

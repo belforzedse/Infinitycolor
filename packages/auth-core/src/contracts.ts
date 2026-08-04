@@ -54,6 +54,11 @@ export type BridgeVerifiedIdentityResponse = {
   confirmed: boolean;
 };
 
+export type BridgeOtpVerifiedIdentityResponse =
+  BridgeVerifiedIdentityResponse & {
+    isNewUser: boolean;
+  };
+
 export type AuthStateEvent = "session-changed" | "logout";
 
 export const AUTH_STATE_CHANNEL = "infinity-auth-state";

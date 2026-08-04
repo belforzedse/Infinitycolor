@@ -1,6 +1,7 @@
 import { createBridgeHeaders } from "@repo/auth-core/bridge-signature";
 import type {
   BridgeOtpRequestResponse,
+  BridgeOtpVerifiedIdentityResponse,
   BridgePhoneStatusResponse,
   BridgeVerifiedIdentityResponse,
 } from "@repo/auth-core/contracts";
@@ -87,7 +88,7 @@ export class StrapiBridgeClient {
   verifyOtp(
     challengeId: string,
     otp: string,
-  ): Promise<BridgeVerifiedIdentityResponse> {
+  ): Promise<BridgeOtpVerifiedIdentityResponse> {
     return this.post("/api/internal/auth/otp/verify", { challengeId, otp });
   }
 

@@ -8,6 +8,8 @@ export const USER_NOT_FOUND_OR_PASSWORD_INCORRECT = "شماره همراه یا 
 export const PHONE_PASSWORD_REQUIRED_MESSAGE = "شماره همراه و رمز عبور الزامی است.";
 export const OTP_MAX_ATTEMPTS = 5;
 const ACCOUNT_UNAVAILABLE_MESSAGE = "احراز هویت ناموفق بود. دوباره تلاش کنید.";
+const PHONE_IDENTITY_AMBIGUOUS_MESSAGE =
+  "این شماره همراه به بیش از یک حساب متصل است. لطفا با پشتیبانی تماس بگیرید.";
 
 interface OtpChallenge {
   code: string;
@@ -43,22 +45,42 @@ export function normalizeOtpPhone(phone: string): string {
   return normalizedPhone;
 }
 
-async function findUserByPhoneSuffix(phone: string, transacting?: any): Promise<any | null> {
-  return strapi.query("plugin::users-permissions.user").findOne({
-    where: { phone: { $endsWith: phone.substring(1) } },
+export function phoneStorageVariants(phone: string): [string, string] {
+  const international = normalizeOtpPhone(phone);
+  return [international, `0${international.slice(3)}`];
+}
+
+async function findUsersByPhone(phone: string, transacting?: any): Promise<any[]> {
+  const users = await strapi.query("plugin::users-permissions.user").findMany({
+    where: { phone: { $in: phoneStorageVariants(phone) } },
+    limit: 2,
     ...(transacting ? { transacting } : {}),
   });
+  return Array.isArray(users) ? users : [];
+}
+
+function requireUnambiguousPhoneIdentity(users: any[]): any | null {
+  if (users.length > 1) {
+    throw new CredentialFlowError(
+      PHONE_IDENTITY_AMBIGUOUS_MESSAGE,
+      409,
+      "PHONE_IDENTITY_AMBIGUOUS",
+    );
+  }
+  return users[0] ?? null;
+}
+
+async function findUserByPhone(phone: string, transacting?: any): Promise<any | null> {
+  return requireUnambiguousPhoneIdentity(await findUsersByPhone(phone, transacting));
 }
 
 export async function hasUserForPhone(phone: string): Promise<boolean> {
-  const normalizedPhone = normalizeOtpPhone(phone);
-  const user = await findUserByPhoneSuffix(normalizedPhone);
-  return Boolean(user?.id);
+  return (await findUsersByPhone(phone)).length > 0;
 }
 
 export async function createOtpChallenge(ctx: any, phone: string): Promise<string> {
   const normalizedPhone = normalizeOtpPhone(phone);
-  const merchant = await findUserByPhoneSuffix(normalizedPhone);
+  const merchant = await findUserByPhone(normalizedPhone);
   const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
   const challengeId = `${Date.now().toString(36)}.${crypto.randomBytes(24).toString("base64url")}`;
   const redis = await RedisClient;
@@ -148,7 +170,12 @@ function advisoryKey(phone: string): string {
   return crypto.createHash("sha256").update(phone, "utf8").digest().readBigInt64BE(0).toString();
 }
 
-async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<any> {
+interface OtpIdentityResolution {
+  user: any;
+  isNewUser: boolean;
+}
+
+async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<OtpIdentityResolution> {
   const customerRole = await fetchRoleByName(strapi, ROLE_NAMES.CUSTOMER);
   return strapi.db.transaction(async ({ trx }) => {
     const databaseClient = String(
@@ -158,8 +185,15 @@ async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<any> {
       await trx.raw("select pg_advisory_xact_lock(?)", [advisoryKey(challenge.phone)]);
     }
 
-    let user = await findUserByPhoneSuffix(challenge.phone, trx);
+    let user = await findUserByPhone(challenge.phone, trx);
     if (user) {
+      if (challenge.merchant && Number(user.id) !== Number(challenge.merchant)) {
+        throw new CredentialFlowError(
+          PHONE_IDENTITY_AMBIGUOUS_MESSAGE,
+          409,
+          "PHONE_IDENTITY_CHANGED",
+        );
+      }
       if (!user.confirmed) {
         user = await strapi.db.query("plugin::users-permissions.user").update({
           where: { id: user.id },
@@ -167,7 +201,7 @@ async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<any> {
           transacting: trx,
         } as any);
       }
-      return user;
+      return { user, isNewUser: false };
     }
 
     const temporaryPassword = crypto.randomBytes(24).toString("base64url");
@@ -190,11 +224,18 @@ async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<any> {
       data: { user: user.id },
       transacting: trx,
     } as any);
-    return user;
+    return { user, isNewUser: true };
   });
 }
 
 export async function verifyOtpIdentity(challengeId: string, otp: string): Promise<any> {
+  return (await verifyOtpIdentityWithStatus(challengeId, otp)).user;
+}
+
+export async function verifyOtpIdentityWithStatus(
+  challengeId: string,
+  otp: string,
+): Promise<OtpIdentityResolution> {
   const challenge = await consumeOtpChallenge(challengeId, otp);
   return resolveOrCreateOtpUser(challenge);
 }
@@ -204,26 +245,18 @@ export async function verifyPasswordIdentity(phone: string, password: string): P
     throw new CredentialFlowError(PHONE_PASSWORD_REQUIRED_MESSAGE, 400, "CREDENTIALS_REQUIRED");
   }
   const sanitizedPhone = String(phone).trim();
-  const lookupFragment =
-    sanitizedPhone.startsWith("+") || sanitizedPhone.startsWith("0")
-      ? sanitizedPhone.slice(1)
-      : sanitizedPhone;
 
   let user = await strapi.query("plugin::users-permissions.user").findOne({
     where: { phone: { $eq: sanitizedPhone } },
     select: ["id", "password", "confirmed", "blocked"],
   });
   if (!user) {
-    const suffixUser = await strapi.query("plugin::users-permissions.user").findOne({
-      where: { phone: { $endsWith: lookupFragment } },
+    const matchingUsers = await strapi.query("plugin::users-permissions.user").findMany({
+      where: { phone: { $in: phoneStorageVariants(sanitizedPhone) } },
       select: ["id", "password", "confirmed", "blocked"],
+      limit: 2,
     });
-    if (suffixUser) {
-      await strapi.entityService.update("plugin::users-permissions.user", suffixUser.id, {
-        data: { phone: sanitizedPhone },
-      });
-      user = suffixUser;
-    }
+    user = requireUnambiguousPhoneIdentity(Array.isArray(matchingUsers) ? matchingUsers : []);
   }
 
   if (!user?.password) {

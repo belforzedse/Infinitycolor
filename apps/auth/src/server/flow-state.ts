@@ -16,7 +16,6 @@ export interface AuthFlowState {
   phone?: string;
   challengeId?: string;
   purpose?: "login" | "reset";
-  hasUser?: boolean;
   returnTo: string;
 }
 
