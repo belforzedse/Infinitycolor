@@ -273,7 +273,9 @@ test("sealed flow cookie is host-only, HttpOnly, short-lived and tamper evident"
     purpose: "login",
     returnTo: "https://new.infinitycolor.co/",
   });
-  assert.equal(unsealFlowState(`${sealed.slice(0, -1)}x`), null);
+  const tampered = Buffer.from(sealed, "base64url");
+  tampered[12] ^= 1;
+  assert.equal(unsealFlowState(tampered.toString("base64url")), null);
 });
 
 test("staging uses its own exact auth, API, and storefront authorities", () => {
