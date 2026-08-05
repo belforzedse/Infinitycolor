@@ -127,8 +127,10 @@ export function infinityCredentialsPlugin(
             writeFlowState(ctx, {
               phone: ctx.body.phone,
               purpose: purposeFromHeaders(ctx.headers),
-              returnTo:
-                current?.returnTo ?? returnTargetFromHeaders(ctx.headers),
+              returnTo: returnTargetFromHeaders(
+                ctx.headers,
+                current?.returnTo,
+              ),
             });
             return ctx.json({ message: "welcome", hasUser: response.hasUser });
           } catch (error) {
@@ -153,8 +155,10 @@ export function infinityCredentialsPlugin(
               phone: ctx.body.phone,
               challengeId: response.challengeId,
               purpose: purposeFromHeaders(ctx.headers),
-              returnTo:
-                current?.returnTo ?? returnTargetFromHeaders(ctx.headers),
+              returnTo: returnTargetFromHeaders(
+                ctx.headers,
+                current?.returnTo,
+              ),
             });
             return ctx.json({ message: "otp sent" });
           } catch (error) {
@@ -216,8 +220,10 @@ export function infinityCredentialsPlugin(
               ctx.body.phone,
               ctx.body.password,
             );
-            const returnTo =
-              flow?.returnTo ?? returnTargetFromHeaders(ctx.headers);
+            const returnTo = returnTargetFromHeaders(
+              ctx.headers,
+              flow?.returnTo,
+            );
             const { session } = await completeSignIn(
               ctx,
               verified.strapiUserId,

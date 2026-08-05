@@ -14,6 +14,7 @@ import { createTokenManager } from "@repo/auth-core/token-manager";
 import { createCentralAuthBrowserClient } from "@repo/auth-core/browser";
 import { getAuthEnv, resetAuthEnvForTests } from "./server/env";
 import {
+  returnTargetFromHeaders,
   sealFlowState,
   unsealFlowState,
   writeFlowState,
@@ -314,6 +315,45 @@ test("staging uses its own exact auth, API, and storefront authorities", () => {
     "https://staging.infinitycolor.co",
     "https://admin.staging.infinitycolor.co",
   ]);
+
+  const staleLegacyTarget =
+    "https://staging.infinitycolor.co/super-admin/orders?page=1";
+  const refreshedAdminTarget = returnTargetFromHeaders(
+    new Headers({
+      referer:
+        "https://auth.staging.infinitycolor.co/auth?returnTo=" +
+        encodeURIComponent(
+          "https://admin.staging.infinitycolor.co/orders?page=2",
+        ),
+    }),
+    staleLegacyTarget,
+  );
+  assert.equal(
+    refreshedAdminTarget,
+    "https://admin.staging.infinitycolor.co/orders?page=2",
+  );
+
+  assert.equal(
+    returnTargetFromHeaders(
+      new Headers({
+        referer: "https://auth.staging.infinitycolor.co/auth/login",
+      }),
+      refreshedAdminTarget,
+    ),
+    refreshedAdminTarget,
+  );
+
+  assert.equal(
+    returnTargetFromHeaders(
+      new Headers({
+        referer:
+          "https://auth.staging.infinitycolor.co/auth?returnTo=" +
+          encodeURIComponent("https://evil.example/super-admin"),
+      }),
+      refreshedAdminTarget,
+    ),
+    "https://staging.infinitycolor.co/",
+  );
 });
 
 test("Better Auth source freezes absolute sessions and the native secure cookie name", () => {
