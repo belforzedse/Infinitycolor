@@ -1,5 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { AUTH_ROUTE_HINT_COOKIE, AUTH_ROUTE_HINT_COOKIE_VALUE } from "@/utils/authRouteHint";
+import {
+  AUTH_ROUTE_HINT_COOKIE,
+  AUTH_ROUTE_HINT_COOKIE_VALUE,
+} from "@/utils/authRouteHint";
 import { exactCentralAuthOrigin } from "@/lib/central-auth-origin";
 import { adminOrigin } from "@/config/admin-env";
 
@@ -32,14 +35,20 @@ function sourceOrigin(value: string | undefined): string | null {
 }
 
 function contentSecurityPolicy(nonce: string): string {
-  const auth = sourceOrigin(process.env.NEXT_PUBLIC_AUTH_URL || process.env.NEXT_PUBLIC_AUTH_ORIGIN);
-  const api = sourceOrigin(process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL);
+  const auth = sourceOrigin(
+    process.env.NEXT_PUBLIC_AUTH_URL || process.env.NEXT_PUBLIC_AUTH_ORIGIN,
+  );
+  const api = sourceOrigin(
+    process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL,
+  );
   const image = sourceOrigin(process.env.NEXT_PUBLIC_IMAGE_BASE_URL);
   const media = sourceOrigin(process.env.NEXT_PUBLIC_MEDIA_CDN_URL);
   const sentry = sourceOrigin(process.env.NEXT_PUBLIC_SENTRY_TUNNEL_ORIGIN);
   const matomo = sourceOrigin(process.env.NEXT_PUBLIC_ADMIN_MATOMO_URL);
-  const developmentScript = process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
-  const developmentConnect = process.env.NODE_ENV === "development" ? " ws: http:" : "";
+  const developmentScript =
+    process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
+  const developmentConnect =
+    process.env.NODE_ENV === "development" ? " ws: http:" : "";
   return [
     "default-src 'self'",
     "base-uri 'none'",
@@ -58,13 +67,19 @@ function contentSecurityPolicy(nonce: string): string {
   ].join("; ");
 }
 
-function withResponseHeaders(response: NextResponse, nonce: string, requestId: string): NextResponse {
+function withResponseHeaders(
+  response: NextResponse,
+  nonce: string,
+  requestId: string,
+): NextResponse {
   const policy = contentSecurityPolicy(nonce);
   const reportOnly =
     process.env.NEXT_PUBLIC_ADMIN_ENVIRONMENT === "staging" ||
     process.env.ADMIN_CSP_REPORT_ONLY === "true";
   response.headers.set(
-    reportOnly ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy",
+    reportOnly
+      ? "Content-Security-Policy-Report-Only"
+      : "Content-Security-Policy",
     policy,
   );
   response.headers.set("Cache-Control", "no-store, max-age=0");
@@ -72,7 +87,10 @@ function withResponseHeaders(response: NextResponse, nonce: string, requestId: s
   response.headers.set("Vary", "Cookie");
   response.headers.set("X-Request-Id", requestId);
   if (process.env.NODE_ENV === "production") {
-    response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    response.headers.set(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains",
+    );
   }
   return response;
 }
@@ -80,7 +98,10 @@ function withResponseHeaders(response: NextResponse, nonce: string, requestId: s
 function loginUrl(request: NextRequest): URL {
   const url = new URL("/auth", exactCentralAuthOrigin());
   const requestedPath = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-  url.searchParams.set("returnTo", new URL(requestedPath, adminOrigin()).toString());
+  url.searchParams.set(
+    "returnTo",
+    new URL(requestedPath, adminOrigin()).toString(),
+  );
   return url;
 }
 
@@ -94,9 +115,14 @@ export function proxy(request: NextRequest) {
   requestHeaders.set("Content-Security-Policy", policy);
 
   const hasHint =
-    request.cookies.get(AUTH_ROUTE_HINT_COOKIE)?.value === AUTH_ROUTE_HINT_COOKIE_VALUE;
+    request.cookies.get(AUTH_ROUTE_HINT_COOKIE)?.value ===
+    AUTH_ROUTE_HINT_COOKIE_VALUE;
   if (!isPublicPath(request.nextUrl.pathname) && !hasHint) {
-    return withResponseHeaders(NextResponse.redirect(loginUrl(request), 307), nonce, requestId);
+    return withResponseHeaders(
+      NextResponse.redirect(loginUrl(request), 307),
+      nonce,
+      requestId,
+    );
   }
 
   return withResponseHeaders(
@@ -107,5 +133,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|icons/|favicon.ico|favicon.svg).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|icons/|images/|animations/|favicon.ico|favicon.svg|Infinity.svg|Logo.png).*)",
+  ],
 };

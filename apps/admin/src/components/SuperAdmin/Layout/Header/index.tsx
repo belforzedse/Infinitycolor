@@ -13,7 +13,9 @@ interface SuperAdminLayoutHeaderProps {
   onMenuClick: () => void;
 }
 
-export default function SuperAdminLayoutHeader({ onMenuClick }: SuperAdminLayoutHeaderProps) {
+export default function SuperAdminLayoutHeader({
+  onMenuClick,
+}: SuperAdminLayoutHeaderProps) {
   const { data: me, error } = useMe();
   const { showHeader } = useMobileStickyHeader({ breakpointPx: 768 });
   const userFacingError = error
@@ -35,12 +37,11 @@ export default function SuperAdminLayoutHeader({ onMenuClick }: SuperAdminLayout
             <div className="flex items-center gap-2 rounded-full border border-slate-200/70 bg-white/70 p-1 shadow-sm">
               <div className="h-10 w-10 overflow-hidden rounded-full bg-neutral-100">
                 <Image
-                  src="https://img.icons8.com/ios/100/000000/user-male-circle.png"
-                  alt="No photo"
+                  src="/icons/admin-192.png"
+                  alt="حساب مدیریتی"
                   width={40}
                   height={40}
                   className="object-cover"
-                  unoptimized
                 />
               </div>
             </div>
@@ -102,19 +103,20 @@ export default function SuperAdminLayoutHeader({ onMenuClick }: SuperAdminLayout
             >
               <div className="h-10 w-10 overflow-hidden rounded-full bg-neutral-100">
                 <Image
-                  src="https://img.icons8.com/ios/100/000000/user-male-circle.png"
-                  alt="No photo"
+                  src="/icons/admin-192.png"
+                  alt="حساب مدیریتی"
                   width={40}
                   height={40}
                   className="object-cover"
-                  unoptimized
                 />
               </div>
               <div className="hidden min-w-0 flex-col gap-1 text-right lg:flex">
                 <span className="text-sm !leading-none text-neutral-600">
                   {me?.FirstName} {me?.LastName}
                 </span>
-                <span className="text-xs !leading-none text-neutral-500">{me?.Phone}</span>
+                <span className="text-xs !leading-none text-neutral-500">
+                  {me?.Phone}
+                </span>
               </div>
               {/* <div className="w-[18px] h-[18px] border border-neutral-600 rounded-full flex justify-center items-center">
                 <SmallChevronDownIcon />

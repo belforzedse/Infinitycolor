@@ -1,11 +1,16 @@
 "use client";
 
 import UpsertPageContentWrapper from "@/components/SuperAdmin/UpsertPage/ContentWrapper";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { createCategory, type CategoryData } from "@/services/super-admin/product/category/create";
-import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import {
+  createCategory,
+  type CategoryData,
+} from "@/services/super-admin/product/category/create";
+import {
+  extractErrorMessage,
+  translateErrorMessage,
+} from "@/lib/errorTranslations";
 import {
   createEmptyCategoryFormData,
   getCategoryFormConfig,
@@ -17,13 +22,15 @@ import CategoryAppearancePanel, {
 } from "../CategoryAppearancePanel";
 
 export default function AddCategoryPage() {
-  const router = useRouter();
-
   // Redirect editors away from product pages
   useEditorRedirect();
 
-  const [categoryImage, setCategoryImage] = useState<CategoryImageValue | undefined>();
-  const [megaMenuImage, setMegaMenuImage] = useState<CategoryImageValue | undefined>();
+  const [categoryImage, setCategoryImage] = useState<
+    CategoryImageValue | undefined
+  >();
+  const [megaMenuImage, setMegaMenuImage] = useState<
+    CategoryImageValue | undefined
+  >();
 
   const handleSubmit = async (formData: ProductCategoryForm) => {
     const title = formData.Title?.trim();
@@ -48,11 +55,14 @@ export default function AddCategoryPage() {
     try {
       await createCategory(payload);
       toast.success("دسته‌بندی با موفقیت ایجاد شد");
-      router.push("/products/categories");
+      window.location.assign("/products/categories");
     } catch (error: any) {
       console.error("Failed to create category:", error);
       const rawErrorMessage = extractErrorMessage(error);
-      const message = translateErrorMessage(rawErrorMessage, "ایجاد دسته‌بندی با خطا مواجه شد");
+      const message = translateErrorMessage(
+        rawErrorMessage,
+        "ایجاد دسته‌بندی با خطا مواجه شد",
+      );
       toast.error(message);
     }
   };
@@ -64,7 +74,10 @@ export default function AddCategoryPage() {
       onSubmit={handleSubmit}
       customSidebar={
         <div className="flex flex-col gap-4">
-          <CategoryAppearancePanel image={categoryImage} onImageChange={setCategoryImage} />
+          <CategoryAppearancePanel
+            image={categoryImage}
+            onImageChange={setCategoryImage}
+          />
           <CategoryAppearancePanel
             image={megaMenuImage}
             onImageChange={setMegaMenuImage}

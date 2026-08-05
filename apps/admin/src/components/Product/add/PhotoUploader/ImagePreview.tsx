@@ -4,7 +4,9 @@ import imageLoader from "@/utils/imageLoader";
 import DeleteIcon from "@/components/Kits/Icons/DeleteIcon";
 import { IMAGE_BASE_URL } from "@/constants/api";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
-import UploadStatusBadge, { type UploadStatus } from "@/components/Product/add/UploadStatusBadge";
+import UploadStatusBadge, {
+  type UploadStatus,
+} from "@/components/Product/add/UploadStatusBadge";
 import { RefreshCcw } from "lucide-react";
 import VideoPreviewModal from "../VideoPreviewModal";
 
@@ -19,7 +21,7 @@ export interface ImagePreviewProps {
 }
 
 const resolveSrc = (preview: string): string => {
-  if (!preview) return "/images/placeholder.png";
+  if (!preview) return "/images/placeholders/image-placeholder.svg";
   const trimmed = preview.trim();
   if (trimmed.startsWith("blob:") || trimmed.startsWith("data:")) {
     return trimmed;
@@ -89,52 +91,52 @@ const PhotoUploaderImagePreview: React.FC<ImagePreviewProps> = ({
             </button>
           </>
         ) : (
-        <Image
-          src={resolveSrc(preview)}
-          alt={`Uploaded image ${index + 1}`}
-          fill
-          className="rounded-lg object-cover transition-transform duration-300 group-hover:scale-105"
-          loader={imageLoader}
+          <Image
+            src={resolveSrc(preview)}
+            alt={`Uploaded image ${index + 1}`}
+            fill
+            className="rounded-lg object-cover transition-transform duration-300 group-hover:scale-105"
+            loader={imageLoader}
+          />
+        )}
+
+        <div className="absolute bottom-2 left-2 z-10 flex flex-col items-start gap-1">
+          <UploadStatusBadge status={uploadStatus} />
+          {uploadStatus === "failed" && uploadError ? (
+            <span className="max-w-36 rounded-md bg-white/95 px-2 py-1 text-[10px] text-rose-700 shadow-sm">
+              {uploadError}
+            </span>
+          ) : null}
+        </div>
+
+        {uploadStatus === "failed" && onRetry ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="absolute inset-x-4 top-1/2 z-10 flex -translate-y-1/2 items-center justify-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-xs font-medium text-rose-600 shadow-sm transition hover:bg-white"
+          >
+            <RefreshCcw className="h-4 w-4" />
+            تلاش مجدد
+          </button>
+        ) : null}
+
+        <button
+          onClick={onRemove}
+          aria-label="حذف رسانه"
+          className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-infinity-primary text-white shadow-sm transition-opacity hover:bg-infinity-primary lg:h-8 lg:w-8 lg:opacity-0 lg:group-hover:opacity-100"
+        >
+          <DeleteIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Video Preview Modal */}
+      {isVideo && (
+        <VideoPreviewModal
+          videoUrl={preview}
+          isOpen={isVideoModalOpen}
+          onClose={() => setIsVideoModalOpen(false)}
         />
       )}
-
-    <div className="absolute bottom-2 left-2 z-10 flex flex-col items-start gap-1">
-      <UploadStatusBadge status={uploadStatus} />
-      {uploadStatus === "failed" && uploadError ? (
-        <span className="max-w-36 rounded-md bg-white/95 px-2 py-1 text-[10px] text-rose-700 shadow-sm">
-          {uploadError}
-        </span>
-      ) : null}
-    </div>
-
-    {uploadStatus === "failed" && onRetry ? (
-      <button
-        type="button"
-        onClick={onRetry}
-        className="absolute inset-x-4 top-1/2 z-10 flex -translate-y-1/2 items-center justify-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-xs font-medium text-rose-600 shadow-sm transition hover:bg-white"
-      >
-        <RefreshCcw className="h-4 w-4" />
-        تلاش مجدد
-      </button>
-    ) : null}
-
-    <button
-      onClick={onRemove}
-      aria-label="حذف رسانه"
-      className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-infinity-primary text-white shadow-sm transition-opacity hover:bg-infinity-primary lg:h-8 lg:w-8 lg:opacity-0 lg:group-hover:opacity-100"
-    >
-      <DeleteIcon className="h-4 w-4" />
-    </button>
-    </div>
-
-    {/* Video Preview Modal */}
-    {isVideo && (
-      <VideoPreviewModal
-        videoUrl={preview}
-        isOpen={isVideoModalOpen}
-        onClose={() => setIsVideoModalOpen(false)}
-      />
-    )}
     </>
   );
 };

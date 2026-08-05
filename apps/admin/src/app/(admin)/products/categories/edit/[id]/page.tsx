@@ -4,13 +4,21 @@ import UpsertPageContentWrapper from "@/components/SuperAdmin/UpsertPage/Content
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import toast from "react-hot-toast";
-import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
-import { getCategoryFormConfig, type ProductCategoryForm } from "../../categoryFormConfig";
+import {
+  extractErrorMessage,
+  translateErrorMessage,
+} from "@/lib/errorTranslations";
+import {
+  getCategoryFormConfig,
+  type ProductCategoryForm,
+} from "../../categoryFormConfig";
 import { getCategoryById } from "@/services/super-admin/product/category/get";
 import { updateCategory } from "@/services/super-admin/product/category/update";
 import type { CategoryData } from "@/services/super-admin/product/category/create";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import CategoryAppearancePanel, { type CategoryImageValue } from "../../CategoryAppearancePanel";
+import CategoryAppearancePanel, {
+  type CategoryImageValue,
+} from "../../CategoryAppearancePanel";
 
 const getCategoryImageValue = (
   imageData?: {
@@ -34,7 +42,9 @@ const getCategoryImageValue = (
     imageAttributes?.formats?.small?.url ||
     imageAttributes?.formats?.thumbnail?.url;
 
-  return imageUrl && imageData?.id ? { id: imageData.id, url: imageUrl } : undefined;
+  return imageUrl && imageData?.id
+    ? { id: imageData.id, url: imageUrl }
+    : undefined;
 };
 
 export default function EditCategoryPage() {
@@ -52,11 +62,17 @@ export default function EditCategoryPage() {
     }
   }, [roleName, router]);
 
-  const [initialData, setInitialData] = useState<ProductCategoryForm | null>(null);
+  const [initialData, setInitialData] = useState<ProductCategoryForm | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
-  const [categoryImage, setCategoryImage] = useState<CategoryImageValue | undefined>();
-  const [megaMenuImage, setMegaMenuImage] = useState<CategoryImageValue | undefined>();
+  const [categoryImage, setCategoryImage] = useState<
+    CategoryImageValue | undefined
+  >();
+  const [megaMenuImage, setMegaMenuImage] = useState<
+    CategoryImageValue | undefined
+  >();
 
   useEffect(() => {
     if (!categoryId) return;
@@ -106,10 +122,15 @@ export default function EditCategoryPage() {
         }
 
         if (process.env.NODE_ENV === "development") {
-          console.log("EditCategoryPage: Extracted parent ID:", parentId, "from payload:", {
-            Parent: payload.attributes?.Parent,
-            parentData: payload.attributes?.parent?.data,
-          });
+          console.log(
+            "EditCategoryPage: Extracted parent ID:",
+            parentId,
+            "from payload:",
+            {
+              Parent: payload.attributes?.Parent,
+              parentData: payload.attributes?.parent?.data,
+            },
+          );
         }
 
         setInitialData({
@@ -125,8 +146,12 @@ export default function EditCategoryPage() {
             : new Date(),
         });
 
-        setCategoryImage(getCategoryImageValue(payload.attributes?.Image?.data));
-        setMegaMenuImage(getCategoryImageValue(payload.attributes?.MegaMenuImage?.data));
+        setCategoryImage(
+          getCategoryImageValue(payload.attributes?.Image?.data),
+        );
+        setMegaMenuImage(
+          getCategoryImageValue(payload.attributes?.MegaMenuImage?.data),
+        );
       } catch (error: any) {
         if (!isMounted) return;
 
@@ -136,7 +161,10 @@ export default function EditCategoryPage() {
           hasShownError = true;
           setHasError(true);
           const rawErrorMessage = extractErrorMessage(error);
-          const message = translateErrorMessage(rawErrorMessage, "دریافت اطلاعات با خطا مواجه شد");
+          const message = translateErrorMessage(
+            rawErrorMessage,
+            "دریافت اطلاعات با خطا مواجه شد",
+          );
           toast.error(message);
           setTimeout(() => {
             if (isMounted) {
@@ -182,7 +210,7 @@ export default function EditCategoryPage() {
     try {
       await updateCategory(categoryId, payload);
       toast.success("تغییرات با موفقیت ذخیره شد");
-      router.push("/products/categories");
+      window.location.assign("/products/categories");
     } catch (error: any) {
       console.error("Failed to update category:", error);
       const rawErrorMessage = extractErrorMessage(error);
@@ -224,7 +252,10 @@ export default function EditCategoryPage() {
       onSubmit={handleSubmit}
       customSidebar={
         <div className="flex flex-col gap-4">
-          <CategoryAppearancePanel image={categoryImage} onImageChange={setCategoryImage} />
+          <CategoryAppearancePanel
+            image={categoryImage}
+            onImageChange={setCategoryImage}
+          />
           <CategoryAppearancePanel
             image={megaMenuImage}
             onImageChange={setMegaMenuImage}

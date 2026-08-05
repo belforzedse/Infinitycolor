@@ -4,7 +4,10 @@ import { useEffect, useRef } from "react";
 import logger from "@/utils/logger";
 import toast from "react-hot-toast";
 import { atom, useAtom } from "jotai";
-import { editProductDataAtom, productDataAtom } from "@/atoms/super-admin/products";
+import {
+  editProductDataAtom,
+  productDataAtom,
+} from "@/atoms/super-admin/products";
 import type { FileType } from "@/components/Product/add/FileUploader/types";
 import type { UploadStatus } from "@/components/Product/add/UploadStatusBadge";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
@@ -92,7 +95,9 @@ export function useUpload({
   const [files, setFiles] = useAtom(filesAtom);
 
   const [uploadingState, setUploadingState] = useAtom(uploadingStateAtom);
-  const [productData, setProductData] = useAtom(isEditMode ? editProductDataAtom : productDataAtom);
+  const [productData, setProductData] = useAtom(
+    isEditMode ? editProductDataAtom : productDataAtom,
+  );
 
   const previousImageKeyRef = useRef<string | null>(null);
   const previousVideoKeyRef = useRef<string | null>(null);
@@ -145,7 +150,7 @@ export function useUpload({
     if (fileType === "image" || fileType === "video") {
       return URL.createObjectURL(file);
     }
-    return "/file-icon.png";
+    return "/images/placeholders/file-placeholder.svg";
   };
 
   const optimizeImage = async (file: File): Promise<File> => {
@@ -159,7 +164,10 @@ export function useUpload({
       return optimized;
     } catch (error) {
       if (process.env.NODE_ENV !== "production") {
-        console.warn("Image optimization failed, uploading original file", error);
+        console.warn(
+          "Image optimization failed, uploading original file",
+          error,
+        );
       }
       return file;
     }
@@ -199,9 +207,13 @@ export function useUpload({
   };
 
   const uploadedIndexBefore = (items: FileWithPreview[], index: number) =>
-    items.slice(0, index).filter((item) => item.uploadStatus === "uploaded").length;
+    items.slice(0, index).filter((item) => item.uploadStatus === "uploaded")
+      .length;
 
-  const uploadVisibleFile = async (item: FileWithPreview, targetType: FileType) => {
+  const uploadVisibleFile = async (
+    item: FileWithPreview,
+    targetType: FileType,
+  ) => {
     const detectedFileType = getFileType(item.file);
 
     if (targetType === "image" && detectedFileType !== "image") {
@@ -236,7 +248,9 @@ export function useUpload({
         ...prev,
         Media: [
           ...((prev as any).Media || []),
-          isEditMode ? { id: response[0].id, attributes: response[0] } : response[0].id.toString(),
+          isEditMode
+            ? { id: response[0].id, attributes: response[0] }
+            : response[0].id.toString(),
         ],
       }));
     } else {
@@ -245,7 +259,9 @@ export function useUpload({
         ...prev,
         Files: [
           ...((prev as any).Files || []),
-          isEditMode ? { id: response[0].id, attributes: response[0] } : response[0].id.toString(),
+          isEditMode
+            ? { id: response[0].id, attributes: response[0] }
+            : response[0].id.toString(),
         ],
       }));
     }
@@ -258,7 +274,10 @@ export function useUpload({
 
   // TODO: Revoke object URLs on unmount to avoid memory leaks
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, fileType: FileType) => {
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    fileType: FileType,
+  ) => {
     const newFiles = Array.from(e.target.files || []);
     if (newFiles.length === 0) return;
 
@@ -282,7 +301,10 @@ export function useUpload({
           await uploadVisibleFile(fileWithPreview, fileType);
           totalSuccessful += 1;
         } catch (error: any) {
-          const friendlyMessage = getUserFacingErrorMessage(error, "خطا در آپلود فایل‌ها");
+          const friendlyMessage = getUserFacingErrorMessage(
+            error,
+            "خطا در آپلود فایل‌ها",
+          );
           updateItemById(fileType, fileWithPreview.id, {
             uploadStatus: "failed",
             uploadError: friendlyMessage,
@@ -295,9 +317,12 @@ export function useUpload({
         if (totalSuccessful === newFiles.length) {
           toast.success("همه فایل‌ها با موفقیت آپلود شدند");
         } else {
-          toast(`${totalSuccessful} از ${newFiles.length} فایل با موفقیت آپلود شدند`, {
-            icon: "⚠️",
-          });
+          toast(
+            `${totalSuccessful} از ${newFiles.length} فایل با موفقیت آپلود شدند`,
+            {
+              icon: "⚠️",
+            },
+          );
         }
       }
 
@@ -329,7 +354,10 @@ export function useUpload({
       await uploadVisibleFile(item, type);
       toast.success("فایل با موفقیت آپلود شد");
     } catch (error: any) {
-      const friendlyMessage = getUserFacingErrorMessage(error, "خطا در آپلود فایل");
+      const friendlyMessage = getUserFacingErrorMessage(
+        error,
+        "خطا در آپلود فایل",
+      );
       updateItemById(type, item.id, {
         uploadStatus: "failed",
         uploadError: friendlyMessage,
@@ -402,13 +430,15 @@ export function useUpload({
   };
 
   const reorderImages = (oldIndex: number, newIndex: number) => {
-    setImages((prevImages) => reorderArrayWithGuards(prevImages, oldIndex, newIndex));
+    setImages((prevImages) =>
+      reorderArrayWithGuards(prevImages, oldIndex, newIndex),
+    );
 
     setProductData((prev: any) => {
       // TODO: Replace cast with strongly typed product data
       if (!prev) return prev;
 
-      const media = (((prev as any).Media || []) as UploadMediaEntry[]);
+      const media = ((prev as any).Media || []) as UploadMediaEntry[];
       if (!Array.isArray(media) || media.length === 0) {
         return prev;
       }
@@ -425,8 +455,12 @@ export function useUpload({
       } else if (
         shouldReorderUntypedMediaAsImages({
           mediaLength: media.length,
-          imageCount: images.filter((image) => image.uploadStatus === "uploaded").length,
-          videoCount: videos.filter((video) => video.uploadStatus === "uploaded").length,
+          imageCount: images.filter(
+            (image) => image.uploadStatus === "uploaded",
+          ).length,
+          videoCount: videos.filter(
+            (video) => video.uploadStatus === "uploaded",
+          ).length,
         })
       ) {
         // Add mode fallback when every media entry is currently an image.
