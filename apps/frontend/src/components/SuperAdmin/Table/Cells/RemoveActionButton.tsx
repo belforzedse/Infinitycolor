@@ -23,7 +23,8 @@ export default function RemoveActionButton(props: Props) {
   const { testIdPrefix } = props;
   const { isRemoved, id, apiUrl, itemName = "محصول", payloadFormatter } = props;
   const [, setRefresh] = useAtom(refreshTable);
-  const { isStoreManager } = useCurrentUser();
+  const { isStoreManager, isFounder } = useCurrentUser();
+  const cannotHardDelete = isStoreManager || isFounder;
   const [isDeleting, setIsDeleting] = useState(false);
   const [showActionDialog, setShowActionDialog] = useState(false);
   const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
@@ -89,7 +90,7 @@ export default function RemoveActionButton(props: Props) {
 
   const handlePermanentDeleteClick = () => {
     // Check if user is store manager - deny permanent delete
-    if (isStoreManager) {
+    if (cannotHardDelete) {
       setShowPermissionDenied(true);
       return;
     }

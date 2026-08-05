@@ -10,7 +10,7 @@ const withBundleAnalyzer = require("@next/bundle-analyzer")({
 
 /**
  * Load build version from generated JSON file
- * This version is used for cache invalidation and is injected as NEXT_PUBLIC_BUILD_VERSION
+ * This version is used for cache invalidation and is injected as NEXT_PUBLIC_BUILD_VERSION!
  */
 let BUILD_VERSION = "dev";
 

@@ -13,6 +13,8 @@ node_modules/
 !.yarn/releases
 !.yarn/versions
 
+
+
 ############################
 # Environment Files
 ############################
@@ -36,9 +38,10 @@ SECRETS_REFERENCE.txt
 # Next.js
 /.next/
 /out/
-apps/frontend/.next/
 apps/frontend/out/
+apps/frontend/.next/
 apps/auth/.next/
+apps/admin/.next/
 apps/auth/out/
 .turbo/
 
@@ -108,10 +111,13 @@ apps/backend/junit.xml
 apps/frontend/junit.xml
 apps/e2e/playwright-report/
 apps/e2e/test-results/
+apps/e2e/e2e-admin-results.xml
 apps/e2e/e2e-results.xml
 apps/e2e/*-e2e-results.xml
 apps/e2e/.auth/
-
+apps/admin/coverage/
+apps/admin/junit.xml
+tmp/*
 ############################
 # TypeScript
 ############################
@@ -156,4 +162,3 @@ apps/frontend/public/sw-version.js
 # Lock files (optional - uncomment to ignore)
 # yarn.lock
 # package-lock.json
-

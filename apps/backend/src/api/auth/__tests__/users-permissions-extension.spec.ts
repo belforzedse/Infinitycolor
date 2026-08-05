@@ -1,4 +1,10 @@
 import bcrypt from "bcryptjs";
+const recordAdminAuditMock = jest.fn().mockResolvedValue(true);
+
+jest.mock("../../../utils/adminAudit", () => ({
+  recordAdminAudit: (...args: unknown[]) => recordAdminAuditMock(...args),
+}));
+
 import extendUsersPermissions, {
   __usersPermissionsExtensionTestUtils,
 } from "../../../extensions/users-permissions/strapi-server";
@@ -165,5 +171,31 @@ describe("Infinity Users & Permissions creation guards", () => {
     });
 
     expect(registrations).toEqual(["infinity-legacy-profile-guard", "users-permissions"]);
+  });
+
+  it("rejects a Superadmin changing their own role and audits only field names", async () => {
+    const update = jest.fn();
+    const rawPlugin = pluginWithRegister(jest.fn());
+    rawPlugin.controllers.user.update = update;
+    const plugin = extendUsersPermissions(rawPlugin);
+    const ctx: any = {
+      state: { user: { id: 7 } },
+      params: { id: "7" },
+      request: { body: { role: 3 } },
+      forbidden: jest.fn(),
+    };
+
+    await plugin.controllers.user.update(ctx);
+
+    expect(update).not.toHaveBeenCalled();
+    expect(ctx.forbidden).toHaveBeenCalledWith("Administrators cannot change their own role");
+    expect(recordAdminAuditMock).toHaveBeenCalledWith(
+      (global as any).strapi,
+      expect.objectContaining({
+        resourceId: 7,
+        severity: "warning",
+        metadata: { rejectedFields: ["role"] },
+      }),
+    );
   });
 });

@@ -19,6 +19,7 @@ export default function CategoriesPage() {
   useFreshDataOnPageLoad();
   const router = useRouter();
   const { roleName } = useCurrentUser();
+  const canDeleteCategories = (roleName ?? "").toLowerCase().trim() === "superadmin";
   const setRefresh = useSetAtom(refreshTable);
   const [deleteModalCategory, setDeleteModalCategory] =
     useState<DeleteCategoryModalCategory | null>(null);
@@ -59,7 +60,10 @@ export default function CategoriesPage() {
     [deleteModalCategory, setRefresh],
   );
 
-  const columns = useMemo(() => getCategoryColumns(handleDelete), [handleDelete]);
+  const columns = useMemo(
+    () => getCategoryColumns(canDeleteCategories ? handleDelete : undefined),
+    [canDeleteCategories, handleDelete],
+  );
   return (
     <>
       <ContentWrapper
@@ -80,16 +84,20 @@ export default function CategoriesPage() {
           columns={columns}
           className="w-full [&_tbody]:grid [&_tbody]:grid-cols-1 [&_tbody]:gap-5 sm:[&_tbody]:grid-cols-2 lg:[&_tbody]:grid-cols-3 [&_tbody_tr]:border-0 [&_tbody_tr]:bg-transparent [&_tbody_tr]:shadow-none [&_tbody_tr]:hover:bg-transparent [&_tbody_tr_td]:p-0 [&_thead]:hidden"
           url={`${ENDPOINTS.PRODUCT.CATEGORY}?populate[children]=*&populate[Image]=*&filters[parent][id][$null]=true`}
-          mobileTable={(data) => <MobileTable data={data} onDelete={handleDelete} />}
+          mobileTable={(data) => (
+            <MobileTable data={data} onDelete={canDeleteCategories ? handleDelete : undefined} />
+          )}
         />
       </ContentWrapper>
-      <DeleteCategoryModal
-        isOpen={deleteModalCategory !== null}
-        onClose={() => setDeleteModalCategory(null)}
-        category={deleteModalCategory}
-        onConfirm={handleConfirmDelete}
-        isDeleting={isDeleting}
-      />
+      {canDeleteCategories && (
+        <DeleteCategoryModal
+          isOpen={deleteModalCategory !== null}
+          onClose={() => setDeleteModalCategory(null)}
+          category={deleteModalCategory}
+          onConfirm={handleConfirmDelete}
+          isDeleting={isDeleting}
+        />
+      )}
     </>
   );
 }

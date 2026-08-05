@@ -1,4 +1,8 @@
-import { applySnappayAdminUpdate } from "../services/snappay-finalization";
+import {
+  applySnappayCancellation,
+  applySnappayAdminUpdate,
+  finalizeSnappaySettlement,
+} from "../services/snappay-finalization";
 
 function createHarness() {
   const updates: Record<string, jest.Mock> = {};
@@ -13,6 +17,7 @@ function createHarness() {
     "api::order.order": {
       id: 22,
       Status: "Started",
+      ReservationStatus: "Consumed",
       ShippingBarcode: null,
       order_items: [
         {
@@ -27,6 +32,11 @@ function createHarness() {
     "api::contract.contract": {
       id: 33,
       Amount: 220_000,
+    },
+    "api::contract-transaction.contract-transaction": {
+      id: 44,
+      GatewayStatus: "SETTLE",
+      TrackId: "provider-payment-token",
     },
   };
   const trx = {
@@ -54,7 +64,7 @@ function createHarness() {
       }),
     },
   } as any;
-  return { strapi, trx, updates, deletes, creates };
+  return { strapi, trx, rows, updates, deletes, creates };
 }
 
 const ids = {
@@ -66,6 +76,50 @@ const ids = {
 };
 
 describe("SnappPay admin update finalization", () => {
+  it("retains the provider token after settlement for later cancel/update calls", async () => {
+    const { strapi, rows, updates } = createHarness();
+    rows["api::payment-attempt.payment-attempt"].Status = "Pending";
+
+    await finalizeSnappaySettlement(strapi, ids);
+
+    const transactionUpdate =
+      updates["api::contract-transaction.contract-transaction"].mock.calls[0][0]
+        .data;
+    expect(transactionUpdate).toEqual(
+      expect.objectContaining({
+        Status: "Success",
+        GatewayStatus: "SETTLE",
+      }),
+    );
+    expect(transactionUpdate).not.toHaveProperty("TrackId");
+  });
+
+  it.each(["CANCEL", "REVERT"] as const)(
+    "retains the provider token after a confirmed %s",
+    async (providerStatus) => {
+      const { strapi, rows, updates } = createHarness();
+      rows["api::order.order"].ReservationStatus = "Released";
+
+      await applySnappayCancellation(
+        strapi,
+        ids,
+        providerStatus,
+        "Operator cancellation",
+      );
+
+      const transactionUpdate =
+        updates["api::contract-transaction.contract-transaction"].mock.calls[0][0]
+          .data;
+      expect(transactionUpdate).toEqual(
+        expect.objectContaining({
+          Status: "Failed",
+          GatewayStatus: providerStatus,
+        }),
+      );
+      expect(transactionUpdate).not.toHaveProperty("TrackId");
+    },
+  );
+
   it("rejects forged stock deltas before mutating local state", async () => {
     const { strapi, updates, deletes } = createHarness();
 

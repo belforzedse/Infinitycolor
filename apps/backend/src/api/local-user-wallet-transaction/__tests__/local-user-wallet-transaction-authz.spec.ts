@@ -107,7 +107,7 @@ describe("local-user-wallet-transaction ownership scoping", () => {
       expect(ctx.query.filters).toEqual({ id: { $in: [-1] } });
     });
 
-    it("does not scope management roles", async () => {
+    it("does not scope Superadmin", async () => {
       const ctx = createCtx({ state: { user: { id: 7, role: { name: "Superadmin" } } } });
 
       await txnController.find(ctx);
@@ -158,7 +158,8 @@ describe("local-user-wallet-transaction ownership scoping", () => {
       expect(Object.getPrototypeOf(txnController).findOne).not.toHaveBeenCalled();
     });
 
-    it("management roles bypass ownership entirely", async () => {
+    it("scopes Store manager to their own transactions", async () => {
+      mockQueries({ txnWithWallet: { id: 1, user_wallet: { user: { id: 22 } } } });
       const ctx = createCtx({
         params: { id: "1" },
         state: { user: { id: 9, role: { name: "Store manager" } } },
@@ -166,9 +167,9 @@ describe("local-user-wallet-transaction ownership scoping", () => {
 
       await txnController.findOne(ctx);
 
-      expect(baseStrapi.db.query).not.toHaveBeenCalled();
-      expect(ctx.notFound).not.toHaveBeenCalled();
-      expect(Object.getPrototypeOf(txnController).findOne).toHaveBeenCalledWith(ctx);
+      expect(baseStrapi.db.query).toHaveBeenCalledWith(TX_UID);
+      expect(ctx.notFound).toHaveBeenCalledWith("Transaction not found");
+      expect(Object.getPrototypeOf(txnController).findOne).not.toHaveBeenCalled();
     });
   });
 });

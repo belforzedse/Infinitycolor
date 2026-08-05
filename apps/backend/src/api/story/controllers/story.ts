@@ -3,7 +3,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { MANAGEMENT_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import { CONTENT_EDITOR_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
 
 async function getActorRoleName(strapi: any, userId?: number): Promise<string | null> {
   if (!userId) return null;
@@ -29,7 +29,7 @@ function slugify(input: string): string {
 async function generateUniqueStorySlug(
   strapi: any,
   title: string,
-  excludeId?: number
+  excludeId?: number,
 ): Promise<string> {
   const baseSlug = slugify(title) || "story";
   let candidate = baseSlug;
@@ -53,124 +53,120 @@ async function generateUniqueStorySlug(
   }
 }
 
-export default factories.createCoreController("api::story.story", ({ strapi }: { strapi: any }) => ({
+export default factories.createCoreController(
+  "api::story.story",
+  ({ strapi }: { strapi: any }) => ({
+    async find(ctx: any) {
+      const { user } = ctx.state;
+      const actorRoleName = await getActorRoleName(strapi, user?.id);
+      const hasAdminRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
 
-  async find(ctx: any) {
-    const { user } = ctx.state;
-    const actorRoleName = await getActorRoleName(strapi, user?.id);
-    const hasAdminRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
-
-    if (!hasAdminRole) {
-      ctx.query.filters = {
-        ...ctx.query.filters,
-        IsActive: true,
-      };
-    }
-
-    return await super.find(ctx);
-  },
-
-  async findOne(ctx: any) {
-    const { user } = ctx.state;
-    const { id } = ctx.params;
-    const actorRoleName = await getActorRoleName(strapi, user?.id);
-    const hasAdminRole = roleIsAllowed(actorRoleName, MANAGEMENT_ROLES);
-
-    const story = await strapi.entityService.findOne("api::story.story", id, {
-      populate: { Media: true, Thumbnail: true },
-    });
-
-    if (!story) {
-      return ctx.notFound("استوری یافت نشد.");
-    }
-
-    if (!hasAdminRole && !story.IsActive) {
-      return ctx.notFound("استوری یافت نشد.");
-    }
-
-    return { data: story };
-  },
-
-  async create(ctx: any) {
-    const { user } = ctx.state;
-    if (user) {
-      const actorRoleName = await getActorRoleName(strapi, user.id);
-      if (!roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
-        return ctx.forbidden("شما مجاز به ایجاد استوری نیستید.");
-      }
-    }
-
-    const data = ctx.request?.body?.data as { Title?: string; Slug?: string } | undefined;
-    if (!data?.Title?.trim()) {
-      return ctx.badRequest("عنوان استوری الزامی است.");
-    }
-    if (!data.Slug) {
-      data.Slug = await generateUniqueStorySlug(strapi, data.Title);
-    }
-
-    return await super.create(ctx);
-  },
-
-  async update(ctx: any) {
-    const { user } = ctx.state;
-    if (user) {
-      const actorRoleName = await getActorRoleName(strapi, user.id);
-      if (!roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
-        return ctx.forbidden("شما مجاز به ویرایش استوری نیستید.");
-      }
-    }
-
-    const storyId = Number(ctx.params?.id);
-    const data = ctx.request?.body?.data as { Title?: string; Slug?: string } | undefined;
-    if (data && !data.Slug && data.Title?.trim()) {
-      data.Slug = await generateUniqueStorySlug(strapi, data.Title, storyId);
-    }
-
-    return await super.update(ctx);
-  },
-
-  async delete(ctx: any) {
-    const { user } = ctx.state;
-    const actorRoleName = await getActorRoleName(strapi, user?.id);
-    if (!user || !roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
-      return ctx.forbidden("شما مجاز به حذف استوری نیستید.");
-    }
-    return await super.delete(ctx);
-  },
-
-  /**
-   * GET /api/stories/active
-   * Returns active stories within their scheduled window, newest first.
-   */
-  async getActive(ctx: any) {
-    try {
-      const now = new Date();
-
-      const stories = await strapi.entityService.findMany("api::story.story", {
-        filters: {
+      if (!hasAdminRole) {
+        ctx.query.filters = {
+          ...ctx.query.filters,
           IsActive: true,
-          $or: [
-            { StartAt: { $null: true } },
-            { StartAt: { $lte: now } },
-          ],
-          $and: [
-            {
-              $or: [
-                { EndAt: { $null: true } },
-                { EndAt: { $gte: now } },
-              ],
-            },
-          ],
-        },
+        };
+      }
+
+      return await super.find(ctx);
+    },
+
+    async findOne(ctx: any) {
+      const { user } = ctx.state;
+      const { id } = ctx.params;
+      const actorRoleName = await getActorRoleName(strapi, user?.id);
+      const hasAdminRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+
+      const story = await strapi.entityService.findOne("api::story.story", id, {
         populate: { Media: true, Thumbnail: true },
-        sort: [{ updatedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-        limit: 50,
       });
 
-      return ctx.send({ data: stories });
-    } catch (error) {
-      strapi.log.error("Error fetching active stories", { error: (error as Error)?.message });
-      return ctx.internalServerError("خطا در دریافت استوری‌ها. دوباره تلاش کنید.");
-    }
-  },
-}));
+      if (!story) {
+        return ctx.notFound("استوری یافت نشد.");
+      }
+
+      if (!hasAdminRole && !story.IsActive) {
+        return ctx.notFound("استوری یافت نشد.");
+      }
+
+      return { data: story };
+    },
+
+    async create(ctx: any) {
+      const { user } = ctx.state;
+      if (user) {
+        const actorRoleName = await getActorRoleName(strapi, user.id);
+        if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
+          return ctx.forbidden("شما مجاز به ایجاد استوری نیستید.");
+        }
+      }
+
+      const data = ctx.request?.body?.data as { Title?: string; Slug?: string } | undefined;
+      if (!data?.Title?.trim()) {
+        return ctx.badRequest("عنوان استوری الزامی است.");
+      }
+      if (!data.Slug) {
+        data.Slug = await generateUniqueStorySlug(strapi, data.Title);
+      }
+
+      return await super.create(ctx);
+    },
+
+    async update(ctx: any) {
+      const { user } = ctx.state;
+      if (user) {
+        const actorRoleName = await getActorRoleName(strapi, user.id);
+        if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
+          return ctx.forbidden("شما مجاز به ویرایش استوری نیستید.");
+        }
+      }
+
+      const storyId = Number(ctx.params?.id);
+      const data = ctx.request?.body?.data as { Title?: string; Slug?: string } | undefined;
+      if (data && !data.Slug && data.Title?.trim()) {
+        data.Slug = await generateUniqueStorySlug(strapi, data.Title, storyId);
+      }
+
+      return await super.update(ctx);
+    },
+
+    async delete(ctx: any) {
+      const { user } = ctx.state;
+      const actorRoleName = await getActorRoleName(strapi, user?.id);
+      if (!user || !roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
+        return ctx.forbidden("شما مجاز به حذف استوری نیستید.");
+      }
+      return await super.delete(ctx);
+    },
+
+    /**
+     * GET /api/stories/active
+     * Returns active stories within their scheduled window, newest first.
+     */
+    async getActive(ctx: any) {
+      try {
+        const now = new Date();
+
+        const stories = await strapi.entityService.findMany("api::story.story", {
+          filters: {
+            IsActive: true,
+            $or: [{ StartAt: { $null: true } }, { StartAt: { $lte: now } }],
+            $and: [
+              {
+                $or: [{ EndAt: { $null: true } }, { EndAt: { $gte: now } }],
+              },
+            ],
+          },
+          populate: { Media: true, Thumbnail: true },
+          sort: [{ updatedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+          limit: 50,
+        });
+
+        return ctx.send({ data: stories });
+      } catch (error) {
+        strapi.log.error("Error fetching active stories", { error: (error as Error)?.message });
+        return ctx.internalServerError("خطا در دریافت استوری‌ها. دوباره تلاش کنید.");
+      }
+    },
+  }),
+);

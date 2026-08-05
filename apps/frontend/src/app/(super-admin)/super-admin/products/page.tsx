@@ -65,7 +65,8 @@ const PRODUCT_FILTER_OPTIONS: AdvancedFilterField[] = [
 
 export default function ProductsPage() {
   useFreshDataOnPageLoad();
-  const { isStoreManager } = useCurrentUser();
+  const { isStoreManager, isFounder } = useCurrentUser();
+  const cannotHardDelete = isStoreManager || isFounder;
 
   // Redirect editors away from product pages
   useEditorRedirect();
@@ -431,7 +432,7 @@ export default function ProductsPage() {
 
           case "permanent_delete": {
             // Check if user is store manager - deny permanent delete
-            if (isStoreManager) {
+            if (cannotHardDelete) {
               setShowPermissionDenied(true);
               return;
             }

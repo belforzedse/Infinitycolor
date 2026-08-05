@@ -1,0 +1,1755 @@
+export const HERO_SLIDER_VERSION = 2 as const;
+export const HERO_SCHEDULE_TIMEZONE = "Asia/Tehran" as const;
+
+export const HERO_DESKTOP_SLOT_KEYS = [
+  "topLeftTextBanner",
+  "bottomActionBannerLeft",
+  "bottomActionBannerRight",
+  "rightBanner",
+] as const;
+
+export const HERO_TABLET_SLOT_KEYS = [
+  "primaryBanner",
+  "bottomActionBannerLeft",
+  "bottomActionBannerRight",
+  "heroBanner",
+] as const;
+
+export const HERO_MOBILE_SLOT_KEYS = [
+  "primaryBanner",
+  "bottomActionBannerLeft",
+  "bottomActionBannerRight",
+  "heroBanner",
+] as const;
+
+export type HeroDesktopSlotKey = (typeof HERO_DESKTOP_SLOT_KEYS)[number];
+export type HeroTabletSlotKey = (typeof HERO_TABLET_SLOT_KEYS)[number];
+export type HeroMobileSlotKey = (typeof HERO_MOBILE_SLOT_KEYS)[number];
+
+export type HeroLinkType = "internal" | "external";
+export type HeroContentAlignment = "top" | "center" | "bottom";
+export type HeroBackgroundType = "color" | "image";
+export type HeroOverflowEdge = "top" | "right" | "bottom" | "left";
+
+export type HeroImageOverflow = {
+  enabled: boolean;
+  edge: HeroOverflowEdge;
+  amountPx: number;
+  offsetXPercent: number;
+  offsetYPercent: number;
+  widthPercent: number;
+};
+
+export const HERO_FONT_FAMILY_OPTIONS = [
+  { value: "font-kaghaz", label: "کاغذ" },
+  { value: "font-rokh", label: "رخ" },
+  { value: "font-peyda", label: "پیدا" },
+  { value: "font-peyda-fanum", label: "پیدا (اعداد فارسی)" },
+] as const;
+
+export const HERO_FONT_SIZE_OPTIONS = [
+  { value: "text-xs", label: "خیلی کوچک" },
+  { value: "text-sm", label: "کوچک" },
+  { value: "text-base", label: "متوسط" },
+  { value: "text-[26px]", label: "۲۶ پیکسل" },
+  { value: "text-lg", label: "بزرگ" },
+  { value: "text-lg sm:text-2xl", label: "کارت واکنش‌گرا" },
+  { value: "text-xl", label: "خیلی بزرگ" },
+  { value: "text-xs sm:text-sm", label: "ریز واکنش‌گرا" },
+  { value: "text-2xl", label: "درشت" },
+  { value: "text-3xl", label: "نمایشی" },
+  { value: "sl:text-[65px] text-[40px]", label: "تیتر ویژه تبلت" },
+  { value: "sl:text-[40px] text-xl", label: "زیرتیتر ویژه تبلت" },
+  { value: "lg:text-[24px] 2xl:text-[28px]", label: "نمایشی تبلت" },
+  { value: "lg:text-[40px] 2xl:text-[48px]", label: "تیتر تبلت" },
+  { value: "lg:text-[44px] 2xl:text-[54px]", label: "تیتر دسکتاپ" },
+  { value: "text-xl sm:text-2xl md:text-3xl", label: "تیتر موبایل" },
+  { value: "text-sm sm:text-base md:text-lg", label: "زیرتیتر موبایل" },
+  { value: "lg:text-[30px] 2xl:text-[34px]", label: "زیرتیتر دسکتاپ" },
+  { value: "lg:text-[48px] 2xl:text-[50px]", label: "تیتر سفارشی دسکتاپ" },
+  { value: "lg:text-[26px] 2xl:text-[30px]", label: "زیرتیتر سفارشی دسکتاپ" },
+  { value: "text-[30px]", label: "تیتر کارت سفارشی" },
+  { value: "text-[20px]", label: "دکمه سفارشی" },
+] as const;
+
+/** Human-friendly size labels (xs → 3xl) for font size dropdown. Keys are HeroFontSizeToken values. */
+export const HERO_FONT_SIZE_DISPLAY_LABELS: Record<string, string> = {
+  "text-xs": "xs — خیلی کوچک",
+  "text-sm": "sm — کوچک",
+  "text-base": "md — متوسط",
+  "text-lg": "lg — بزرگ",
+  "text-xl": "xl — خیلی بزرگ",
+  "text-2xl": "2xl — درشت",
+  "text-3xl": "3xl — نمایشی",
+  "text-[26px]": "۲۶px",
+  "text-lg sm:text-2xl": "کارت واکنش‌گرا",
+  "text-xs sm:text-sm": "ریز واکنش‌گرا",
+  "sl:text-[65px] text-[40px]": "تیتر ویژه تبلت",
+  "sl:text-[40px] text-xl": "زیرتیتر ویژه تبلت",
+  "lg:text-[24px] 2xl:text-[28px]": "نمایشی تبلت",
+  "lg:text-[40px] 2xl:text-[48px]": "تیتر تبلت",
+  "lg:text-[44px] 2xl:text-[54px]": "تیتر دسکتاپ",
+  "text-xl sm:text-2xl md:text-3xl": "تیتر موبایل",
+  "text-sm sm:text-base md:text-lg": "زیرتیتر موبایل",
+  "lg:text-[30px] 2xl:text-[34px]": "زیرتیتر دسکتاپ",
+  "lg:text-[48px] 2xl:text-[50px]": "تیتر سفارشی دسکتاپ",
+  "lg:text-[26px] 2xl:text-[30px]": "زیرتیتر سفارشی دسکتاپ",
+  "text-[30px]": "تیتر کارت سفارشی",
+  "text-[20px]": "دکمه سفارشی",
+};
+
+/** Basic size options (xs–3xl) for primary dropdown; responsive options in "پیشرفته" group. */
+export const HERO_FONT_SIZE_BASIC_OPTIONS = [
+  { value: "text-xs", label: "xs — خیلی کوچک" },
+  { value: "text-sm", label: "sm — کوچک" },
+  { value: "text-base", label: "md — متوسط" },
+  { value: "text-lg", label: "lg — بزرگ" },
+  { value: "text-xl", label: "xl — خیلی بزرگ" },
+  { value: "text-2xl", label: "2xl — درشت" },
+  { value: "text-3xl", label: "3xl — نمایشی" },
+] as const;
+
+export function getFontSizeDisplayLabel(token: string): string {
+  return HERO_FONT_SIZE_DISPLAY_LABELS[token] ?? token;
+}
+
+/** Font size slider range (px) */
+export const HERO_FONT_SIZE_PX_MIN = 12;
+export const HERO_FONT_SIZE_PX_MAX = 96;
+
+/** Background scale slider range (%) */
+export const HERO_BACKGROUND_SCALE_MIN = 50;
+export const HERO_BACKGROUND_SCALE_MAX = 200;
+
+/** Card image width slider range (%) */
+export const HERO_IMAGE_WIDTH_PERCENT_MIN = 20;
+export const HERO_IMAGE_WIDTH_PERCENT_MAX = 100;
+export const HERO_IMAGE_HEIGHT_PERCENT_MIN = 20;
+export const HERO_IMAGE_HEIGHT_PERCENT_MAX = 100;
+
+/** Main visual foreground — wider ranges for anchor layout */
+export const HERO_FOREGROUND_WIDTH_PERCENT_MIN = 10;
+export const HERO_FOREGROUND_WIDTH_PERCENT_MAX = 250;
+export const HERO_FOREGROUND_HEIGHT_PERCENT_MIN = 20;
+export const HERO_FOREGROUND_HEIGHT_PERCENT_MAX = 200;
+/** Slider value that maps to auto height (empty stored value) */
+export const HERO_FOREGROUND_HEIGHT_AUTO_SLIDER_VALUE = 100;
+export const HERO_FOREGROUND_OFFSET_MIN_PX = -600;
+export const HERO_FOREGROUND_OFFSET_MAX_PX = 600;
+export const HERO_FOREGROUND_ZOOM_MIN = 0.25;
+export const HERO_FOREGROUND_ZOOM_MAX = 3;
+export const HERO_INNER_BORDER_WIDTH_MIN_PX = 0;
+export const HERO_INNER_BORDER_WIDTH_MAX_PX = 12;
+export const HERO_INNER_BORDER_OFFSET_MIN_PX = 0;
+export const HERO_INNER_BORDER_OFFSET_MAX_PX = 48;
+export const DEFAULT_HERO_INNER_BORDER: HeroInnerBorder = {
+  enabled: false,
+  color: "#ffffff",
+  widthPx: 1,
+  offsetPx: 12,
+};
+
+const FONT_SIZE_PX_TOKEN_PATTERN = /^text-\[(\d+)px\]$/;
+const FONT_SIZE_ARBITRARY_PX_PATTERN = /\[(\d+)px\]/g;
+
+const TAILWIND_FONT_SIZE_PX: Record<string, number> = {
+  "text-xs": 12,
+  "text-sm": 14,
+  "text-base": 16,
+  "text-lg": 18,
+  "text-xl": 20,
+  "text-2xl": 24,
+  "text-3xl": 30,
+};
+
+function clampHeroNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+export function isAllowedFontSizeToken(token: string): boolean {
+  if (!token) return false;
+  if (HERO_FONT_SIZE_OPTIONS.some((item) => item.value === token)) return true;
+  return FONT_SIZE_PX_TOKEN_PATTERN.test(token);
+}
+
+export function fontSizeTokenToPx(token: string): number {
+  const pxMatch = token.match(FONT_SIZE_PX_TOKEN_PATTERN);
+  if (pxMatch) {
+    return clampHeroNumber(Number(pxMatch[1]), HERO_FONT_SIZE_PX_MIN, HERO_FONT_SIZE_PX_MAX);
+  }
+
+  const arbitraryMatches: RegExpExecArray[] = [];
+  const arbitraryPattern = new RegExp(
+    FONT_SIZE_ARBITRARY_PX_PATTERN.source,
+    FONT_SIZE_ARBITRARY_PX_PATTERN.flags,
+  );
+  let arbitraryMatch = arbitraryPattern.exec(token);
+  while (arbitraryMatch !== null) {
+    arbitraryMatches.push(arbitraryMatch);
+    arbitraryMatch = arbitraryPattern.exec(token);
+  }
+
+  if (arbitraryMatches.length > 0) {
+    const values = arbitraryMatches
+      .map((match) => Number(match[1]))
+      .filter((value) => Number.isFinite(value));
+    if (values.length > 0) {
+      return clampHeroNumber(
+        Math.max(...values),
+        HERO_FONT_SIZE_PX_MIN,
+        HERO_FONT_SIZE_PX_MAX,
+      );
+    }
+  }
+
+  if (TAILWIND_FONT_SIZE_PX[token]) {
+    return TAILWIND_FONT_SIZE_PX[token];
+  }
+
+  const parts = token.split(/\s+/);
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    if (TAILWIND_FONT_SIZE_PX[parts[i]]) {
+      return TAILWIND_FONT_SIZE_PX[parts[i]];
+    }
+  }
+
+  return 16;
+}
+
+export function pxToFontSizeToken(px: number): HeroFontSizeToken {
+  const clamped = clampHeroNumber(px, HERO_FONT_SIZE_PX_MIN, HERO_FONT_SIZE_PX_MAX);
+  return `text-[${clamped}px]` as HeroFontSizeToken;
+}
+
+export type FontSizeTokenResolution = {
+  className: string;
+  fontSizePx?: number;
+};
+
+/**
+ * Slider values use `text-[Npx]` tokens. Tailwind only emits CSS for classes
+ * scanned at build time, so px tokens must render via inline fontSize instead.
+ */
+export function resolveFontSizeToken(token?: string): FontSizeTokenResolution {
+  if (!token?.trim()) {
+    return { className: "" };
+  }
+
+  const trimmed = token.trim();
+  const pxMatch = trimmed.match(FONT_SIZE_PX_TOKEN_PATTERN);
+  if (pxMatch) {
+    return {
+      className: "",
+      fontSizePx: clampHeroNumber(Number(pxMatch[1]), HERO_FONT_SIZE_PX_MIN, HERO_FONT_SIZE_PX_MAX),
+    };
+  }
+
+  return { className: trimmed };
+}
+
+export function fontSizeTokenToInlineStyle(
+  token?: string,
+): { fontSize: string } | undefined {
+  const resolved = resolveFontSizeToken(token);
+  if (resolved.fontSizePx == null) {
+    return undefined;
+  }
+  return { fontSize: `${resolved.fontSizePx}px` };
+}
+
+export function fontSizeClassFromToken(token?: string): string {
+  return resolveFontSizeToken(token).className;
+}
+
+export function backgroundSizeToPercent(value: string): number {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "cover" || normalized === "contain" || normalized === "auto") {
+    return 100;
+  }
+  if (normalized === "100% 100%") {
+    return 200;
+  }
+  const match = normalized.match(/^(\d+)%/);
+  if (match) {
+    return clampHeroNumber(Number(match[1]), HERO_BACKGROUND_SCALE_MIN, HERO_BACKGROUND_SCALE_MAX);
+  }
+  return 100;
+}
+
+export function percentToBackgroundSize(percent: number): string {
+  const clamped = clampHeroNumber(percent, HERO_BACKGROUND_SCALE_MIN, HERO_BACKGROUND_SCALE_MAX);
+  if (clamped === 100) {
+    return "cover";
+  }
+  return `${clamped}% auto`;
+}
+
+export function customWidthToPercent(value: string): number {
+  if (!value?.trim()) {
+    return 100;
+  }
+  const match = value.trim().match(/^(\d+)%$/);
+  if (match) {
+    return clampHeroNumber(Number(match[1]), HERO_IMAGE_WIDTH_PERCENT_MIN, HERO_IMAGE_WIDTH_PERCENT_MAX);
+  }
+  return 100;
+}
+
+export function percentToCustomWidth(percent: number): string {
+  return `${clampHeroNumber(percent, HERO_IMAGE_WIDTH_PERCENT_MIN, HERO_IMAGE_WIDTH_PERCENT_MAX)}%`;
+}
+
+export function foregroundCustomWidthToPercent(value: string): number {
+  if (!value?.trim()) {
+    return 100;
+  }
+  const match = value.trim().match(/^(\d+)%$/);
+  if (match) {
+    return clampHeroNumber(
+      Number(match[1]),
+      HERO_FOREGROUND_WIDTH_PERCENT_MIN,
+      HERO_FOREGROUND_WIDTH_PERCENT_MAX,
+    );
+  }
+  return 100;
+}
+
+export function percentToForegroundCustomWidth(percent: number): string {
+  return `${clampHeroNumber(percent, HERO_FOREGROUND_WIDTH_PERCENT_MIN, HERO_FOREGROUND_WIDTH_PERCENT_MAX)}%`;
+}
+
+export function customHeightToPercent(value: string): number {
+  if (!value?.trim()) {
+    return HERO_IMAGE_HEIGHT_PERCENT_MAX;
+  }
+  const match = value.trim().match(/^(\d+)%$/);
+  if (match) {
+    return clampHeroNumber(Number(match[1]), HERO_IMAGE_HEIGHT_PERCENT_MIN, HERO_IMAGE_HEIGHT_PERCENT_MAX);
+  }
+  return HERO_IMAGE_HEIGHT_PERCENT_MAX;
+}
+
+export function percentToCustomHeight(percent: number): string {
+  const clamped = clampHeroNumber(percent, HERO_IMAGE_HEIGHT_PERCENT_MIN, HERO_IMAGE_HEIGHT_PERCENT_MAX);
+  if (clamped >= HERO_IMAGE_HEIGHT_PERCENT_MAX) {
+    return "";
+  }
+  return `${clamped}%`;
+}
+
+export function foregroundCustomHeightToPercent(value: string): number {
+  if (!value?.trim()) {
+    return HERO_FOREGROUND_HEIGHT_AUTO_SLIDER_VALUE;
+  }
+  const match = value.trim().match(/^(\d+)%$/);
+  if (match) {
+    return clampHeroNumber(
+      Number(match[1]),
+      HERO_FOREGROUND_HEIGHT_PERCENT_MIN,
+      HERO_FOREGROUND_HEIGHT_PERCENT_MAX,
+    );
+  }
+  return HERO_FOREGROUND_HEIGHT_AUTO_SLIDER_VALUE;
+}
+
+export function percentToForegroundCustomHeight(percent: number): string {
+  const clamped = clampHeroNumber(
+    percent,
+    HERO_FOREGROUND_HEIGHT_PERCENT_MIN,
+    HERO_FOREGROUND_HEIGHT_PERCENT_MAX,
+  );
+  if (clamped === HERO_FOREGROUND_HEIGHT_AUTO_SLIDER_VALUE) {
+    return "";
+  }
+  return `${clamped}%`;
+}
+
+export const HERO_FONT_WEIGHT_OPTIONS = [
+  { value: "font-normal", label: "معمولی" },
+  { value: "font-medium", label: "متوسط" },
+  { value: "font-semibold", label: "نیمه‌بولد" },
+  { value: "font-bold", label: "بولد" },
+  { value: "font-extrabold", label: "خیلی بولد" },
+] as const;
+
+export const HERO_LINE_HEIGHT_OPTIONS = [
+  { value: "leading-tight", label: "فشرده" },
+  { value: "leading-snug", label: "نیمه‌فشرده" },
+  { value: "leading-normal", label: "معمولی" },
+  { value: "leading-relaxed", label: "باز" },
+  { value: "leading-[110%]", label: "۱۱۰٪" },
+  { value: "leading-[150%]", label: "۱۵۰٪" },
+] as const;
+
+export const HERO_LETTER_SPACING_OPTIONS = [
+  { value: "tracking-tight", label: "فشرده" },
+  { value: "tracking-normal", label: "معمولی" },
+  { value: "tracking-wide", label: "باز" },
+] as const;
+
+export type HeroFontFamilyToken = (typeof HERO_FONT_FAMILY_OPTIONS)[number]["value"];
+export type HeroFontSizeToken = (typeof HERO_FONT_SIZE_OPTIONS)[number]["value"];
+export type HeroFontWeightToken = (typeof HERO_FONT_WEIGHT_OPTIONS)[number]["value"];
+export type HeroLineHeightToken = (typeof HERO_LINE_HEIGHT_OPTIONS)[number]["value"];
+export type HeroLetterSpacingToken = (typeof HERO_LETTER_SPACING_OPTIONS)[number]["value"];
+
+export type HeroTracking = {
+  campaign: string;
+  source: string;
+  medium: string;
+  content: string;
+  custom: Record<string, string>;
+};
+
+export type HeroInnerBorder = {
+  enabled: boolean;
+  color: string;
+  widthPx: number;
+  offsetPx: number;
+};
+
+export type HeroSlotLink = {
+  type: HeroLinkType;
+  href: string;
+};
+
+export type HeroTextStyle = {
+  color: string;
+  fontFamily: HeroFontFamilyToken;
+  fontSize: HeroFontSizeToken;
+  fontWeight: HeroFontWeightToken;
+  lineHeight: HeroLineHeightToken;
+  letterSpacing: HeroLetterSpacingToken;
+};
+
+export type HeroHeadlineSlot = {
+  kind: "headline";
+  title: string;
+  subtitle: string;
+  backgroundColor: string;
+  bottomMarginPx: number;
+  /** Vertical gap between title and subtitle (px). Default 8. */
+  titleSubtitleGapPx: number;
+  className: string;
+  titleClassName: string;
+  subtitleClassName: string;
+  titleStyle: HeroTextStyle;
+  subtitleStyle: HeroTextStyle;
+  link: HeroSlotLink | null;
+  tracking: HeroTracking;
+};
+
+export type HeroMainVisualSlot = {
+  kind: "mainVisual";
+  backgroundColor: string;
+  backgroundType: HeroBackgroundType;
+  backgroundImageUrl: string;
+  backgroundWidth: string;
+  backgroundHeight: string;
+  backgroundPosition: string;
+  backgroundSize: string;
+  backgroundClassName: string;
+  foregroundImageUrl: string;
+  foregroundAlt: string;
+  foregroundClassName: string;
+  foregroundObjectPosition: string;
+  foregroundCustomWidth: string;
+  foregroundCustomHeight: string;
+  /** Fine-tune foreground position after anchor (px). */
+  foregroundOffsetXPx?: number;
+  foregroundOffsetYPx?: number;
+  /** Foreground image zoom (0.5–2). Default 1. */
+  foregroundZoom?: number;
+  foregroundOverflow: HeroImageOverflow;
+  innerBorder: HeroInnerBorder;
+  link: HeroSlotLink | null;
+  tracking: HeroTracking;
+};
+
+/** Preset options for background size (main visual and cards). */
+export const HERO_BACKGROUND_SIZE_PRESETS = [
+  { value: "cover", label: "پوشش (Cover)" },
+  { value: "contain", label: "دربرگیر (Contain)" },
+  { value: "100% 100%", label: "کشیده" },
+  { value: "auto", label: "خودکار" },
+] as const;
+
+/** Preset options for background position (main visual and cards). */
+export const HERO_BACKGROUND_POSITION_PRESETS = [
+  { value: "center", label: "وسط" },
+  { value: "bottom center", label: "پایین وسط" },
+  { value: "top center", label: "بالا وسط" },
+  { value: "top left", label: "بالا چپ" },
+  { value: "top right", label: "بالا راست" },
+  { value: "bottom left", label: "پایین چپ" },
+  { value: "bottom right", label: "پایین راست" },
+  { value: "center left", label: "وسط چپ" },
+  { value: "center right", label: "وسط راست" },
+] as const;
+
+export const HERO_OBJECT_POSITION_MIN = -100;
+export const HERO_OBJECT_POSITION_MAX = 200;
+
+/** Card product image anchor range — narrower than main visual */
+export const HERO_CARD_OBJECT_POSITION_MIN = -50;
+export const HERO_CARD_OBJECT_POSITION_MAX = 150;
+
+const NAMED_OBJECT_POSITION_PERCENT: Record<string, { x: number; y: number }> = {
+  center: { x: 50, y: 50 },
+  "bottom center": { x: 50, y: 100 },
+  "top center": { x: 50, y: 0 },
+  "top left": { x: 0, y: 0 },
+  "top right": { x: 100, y: 0 },
+  "bottom left": { x: 0, y: 100 },
+  "bottom right": { x: 100, y: 100 },
+  "center left": { x: 0, y: 50 },
+  "center right": { x: 100, y: 50 },
+  left: { x: 0, y: 50 },
+  right: { x: 100, y: 50 },
+  top: { x: 50, y: 0 },
+  bottom: { x: 50, y: 100 },
+};
+
+export function objectPositionToPercents(value: string | undefined | null): { x: number; y: number } {
+  const normalized = (value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) {
+    return NAMED_OBJECT_POSITION_PERCENT["bottom left"];
+  }
+
+  if (NAMED_OBJECT_POSITION_PERCENT[normalized]) {
+    return NAMED_OBJECT_POSITION_PERCENT[normalized];
+  }
+
+  const percentMatch = normalized.match(/^(\d+(?:\.\d+)?)\s*%?\s+(\d+(?:\.\d+)?)\s*%?$/);
+  if (percentMatch) {
+    return {
+      x: clampHeroNumber(Number(percentMatch[1]), HERO_OBJECT_POSITION_MIN, HERO_OBJECT_POSITION_MAX),
+      y: clampHeroNumber(Number(percentMatch[2]), HERO_OBJECT_POSITION_MIN, HERO_OBJECT_POSITION_MAX),
+    };
+  }
+
+  return NAMED_OBJECT_POSITION_PERCENT["bottom left"];
+}
+
+export function percentsToObjectPosition(x: number, y: number): string {
+  const clampedX = clampHeroNumber(x, HERO_OBJECT_POSITION_MIN, HERO_OBJECT_POSITION_MAX);
+  const clampedY = clampHeroNumber(y, HERO_OBJECT_POSITION_MIN, HERO_OBJECT_POSITION_MAX);
+
+  for (const preset of HERO_BACKGROUND_POSITION_PRESETS) {
+    const percents = objectPositionToPercents(preset.value);
+    if (percents.x === clampedX && percents.y === clampedY) {
+      return preset.value;
+    }
+  }
+
+  return `${clampedX}% ${clampedY}%`;
+}
+
+export function objectPositionPresetValue(value: string | undefined | null): string {
+  const normalized = (value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const directPreset = HERO_BACKGROUND_POSITION_PRESETS.find((preset) => preset.value === normalized);
+  if (directPreset) {
+    return directPreset.value;
+  }
+
+  const percents = objectPositionToPercents(value);
+  for (const preset of HERO_BACKGROUND_POSITION_PRESETS) {
+    const presetPercents = objectPositionToPercents(preset.value);
+    if (presetPercents.x === percents.x && presetPercents.y === percents.y) {
+      return preset.value;
+    }
+  }
+
+  return "";
+}
+
+export function cardObjectPositionToPercents(value: string | undefined | null): { x: number; y: number } {
+  const percents = objectPositionToPercents(value);
+  return {
+    x: clampHeroNumber(percents.x, HERO_CARD_OBJECT_POSITION_MIN, HERO_CARD_OBJECT_POSITION_MAX),
+    y: clampHeroNumber(percents.y, HERO_CARD_OBJECT_POSITION_MIN, HERO_CARD_OBJECT_POSITION_MAX),
+  };
+}
+
+export function cardPercentsToObjectPosition(x: number, y: number): string {
+  const clampedX = clampHeroNumber(x, HERO_CARD_OBJECT_POSITION_MIN, HERO_CARD_OBJECT_POSITION_MAX);
+  const clampedY = clampHeroNumber(y, HERO_CARD_OBJECT_POSITION_MIN, HERO_CARD_OBJECT_POSITION_MAX);
+
+  for (const preset of HERO_BACKGROUND_POSITION_PRESETS) {
+    const percents = objectPositionToPercents(preset.value);
+    if (percents.x === clampedX && percents.y === clampedY) {
+      return preset.value;
+    }
+  }
+
+  return `${clampedX}% ${clampedY}%`;
+}
+
+export type HeroCardSlot = {
+  kind: "card";
+  title: string;
+  subtitle: string;
+  imageUrl: string;
+  imageAlt: string;
+  imageHref: string;
+  imageClassName: string;
+  imageObjectPosition: string;
+  imageCustomWidth: string;
+  imageCustomHeight: string;
+  imageOverflow: HeroImageOverflow;
+  buttonLabel: string;
+  buttonHref: string;
+  buttonClassName: string;
+  buttonShowArrow: boolean;
+  buttonArrowClassName: string;
+  backgroundColor: string;
+  backgroundType: HeroBackgroundType;
+  backgroundImageUrl: string;
+  backgroundWidth: string;
+  backgroundHeight: string;
+  backgroundPosition: string;
+  backgroundSize: string;
+  backgroundClassName: string;
+  innerBorder: HeroInnerBorder;
+  className: string;
+  titleClassName: string;
+  subtitleClassName: string;
+  contentAlignment: HeroContentAlignment;
+  paddingClassName: string;
+  titleStyle: HeroTextStyle;
+  buttonStyle: HeroTextStyle;
+  link: HeroSlotLink | null;
+  tracking: HeroTracking;
+};
+
+export type HeroDesktopSlots = {
+  topLeftTextBanner: HeroHeadlineSlot;
+  bottomActionBannerLeft: HeroCardSlot;
+  bottomActionBannerRight: HeroCardSlot;
+  rightBanner: HeroMainVisualSlot;
+};
+
+export type HeroTabletSlots = {
+  primaryBanner: HeroHeadlineSlot;
+  bottomActionBannerLeft: HeroCardSlot;
+  bottomActionBannerRight: HeroCardSlot;
+  heroBanner: HeroMainVisualSlot;
+};
+
+export type HeroMobileSlots = {
+  primaryBanner: HeroHeadlineSlot;
+  bottomActionBannerLeft: HeroCardSlot;
+  bottomActionBannerRight: HeroCardSlot;
+  heroBanner: HeroMainVisualSlot;
+};
+
+export type HeroSlotConfig = HeroHeadlineSlot | HeroMainVisualSlot | HeroCardSlot;
+
+export type HeroSlideSchedule = {
+  timezone: typeof HERO_SCHEDULE_TIMEZONE;
+  startAtUtc?: string;
+  endAtUtc?: string;
+};
+
+export type HeroSlideDevices = {
+  desktop: {
+    slots: HeroDesktopSlots;
+  };
+  tablet: {
+    slots: HeroTabletSlots;
+  };
+  mobile: {
+    slots: HeroMobileSlots;
+  };
+};
+
+export type HeroSlideConfig = {
+  id: string;
+  isActive: boolean;
+  autoplayEligible: boolean;
+  order: number;
+  schedule: HeroSlideSchedule;
+  tracking: HeroTracking;
+  devices: HeroSlideDevices;
+};
+
+export type HeroSliderPayload = {
+  version: typeof HERO_SLIDER_VERSION;
+  autoplayIntervalMs: number;
+  slides: HeroSlideConfig[];
+};
+
+export type HeroSliderMeta = {
+  version: typeof HERO_SLIDER_VERSION;
+  publishedAt: string;
+  publishedBy: number | null;
+};
+
+const DEFAULT_AUTOPLAY_INTERVAL_MS = 600000;
+const MIN_AUTOPLAY_INTERVAL_MS = 3000;
+const MAX_AUTOPLAY_INTERVAL_MS = 3600000;
+export const MIN_HEADLINE_BOTTOM_MARGIN_PX = 0;
+export const MAX_HEADLINE_BOTTOM_MARGIN_PX = 160;
+export const MIN_TITLE_SUBTITLE_GAP_PX = 0;
+export const MAX_TITLE_SUBTITLE_GAP_PX = 64;
+export const DEFAULT_TITLE_SUBTITLE_GAP_PX = 8;
+const DEFAULT_IMAGE_OVERFLOW: HeroImageOverflow = {
+  enabled: false,
+  edge: "top",
+  amountPx: 0,
+  offsetXPercent: 50,
+  offsetYPercent: 50,
+  widthPercent: 100,
+};
+
+const ALLOWED_LINK_TYPES = new Set<HeroLinkType>(["internal", "external"]);
+const ALLOWED_CONTENT_ALIGNMENTS = new Set<HeroContentAlignment>(["top", "center", "bottom"]);
+const ALLOWED_BACKGROUND_TYPES = new Set<HeroBackgroundType>(["color", "image"]);
+const ALLOWED_FONT_FAMILIES = new Set<HeroFontFamilyToken>(
+  HERO_FONT_FAMILY_OPTIONS.map((item) => item.value),
+);
+const ALLOWED_FONT_SIZES = new Set<HeroFontSizeToken>(
+  HERO_FONT_SIZE_OPTIONS.map((item) => item.value),
+);
+const ALLOWED_FONT_WEIGHTS = new Set<HeroFontWeightToken>(
+  HERO_FONT_WEIGHT_OPTIONS.map((item) => item.value),
+);
+const ALLOWED_LINE_HEIGHTS = new Set<HeroLineHeightToken>(
+  HERO_LINE_HEIGHT_OPTIONS.map((item) => item.value),
+);
+const ALLOWED_LETTER_SPACINGS = new Set<HeroLetterSpacingToken>(
+  HERO_LETTER_SPACING_OPTIONS.map((item) => item.value),
+);
+
+const DEFAULT_TOP_HEADLINE_TITLE_STYLE: HeroTextStyle = {
+  color: "#94B5D2",
+  fontFamily: "font-kaghaz",
+  fontSize: "lg:text-[48px] 2xl:text-[50px]",
+  fontWeight: "font-bold",
+  lineHeight: "leading-tight",
+  letterSpacing: "tracking-tight",
+};
+
+const DEFAULT_TOP_HEADLINE_SUBTITLE_STYLE: HeroTextStyle = {
+  color: "text-gray-600",
+  fontFamily: "font-kaghaz",
+  fontSize: "lg:text-[26px] 2xl:text-[30px]",
+  fontWeight: "font-semibold",
+  lineHeight: "leading-relaxed",
+  letterSpacing: "tracking-normal",
+};
+
+const DEFAULT_PRIMARY_TITLE_STYLE: HeroTextStyle = {
+  color: "text-gray-900",
+  fontFamily: "font-kaghaz",
+  fontSize: "text-xl sm:text-2xl md:text-3xl",
+  fontWeight: "font-bold",
+  lineHeight: "leading-tight",
+  letterSpacing: "tracking-normal",
+};
+
+const DEFAULT_PRIMARY_SUBTITLE_STYLE: HeroTextStyle = {
+  color: "text-gray-600",
+  fontFamily: "font-kaghaz",
+  fontSize: "text-sm sm:text-base md:text-lg",
+  fontWeight: "font-medium",
+  lineHeight: "leading-relaxed",
+  letterSpacing: "tracking-normal",
+};
+
+const DEFAULT_CARD_TITLE_STYLE: HeroTextStyle = {
+  color: "text-neutral-800",
+  fontFamily: "font-peyda-fanum",
+  fontSize: "text-lg",
+  fontWeight: "font-normal",
+  lineHeight: "leading-tight",
+  letterSpacing: "tracking-normal",
+};
+
+const DEFAULT_CARD_BUTTON_STYLE: HeroTextStyle = {
+  color: "text-neutral-800",
+  fontFamily: "font-peyda-fanum",
+  fontSize: "text-lg",
+  fontWeight: "font-normal",
+  lineHeight: "leading-normal",
+  letterSpacing: "tracking-normal",
+};
+
+const DEFAULT_DESKTOP_HEADLINE_CLASSNAME =
+  "w-full gap-[8px] pb-[68px] mb-[10px] rounded-3xl px-[36px] pt-[30px]";
+const DEFAULT_TABLET_HEADLINE_CLASSNAME =
+  "w-full gap-[8px] rounded-3xl px-[24px] pb-[40px] pt-[20px]";
+const DEFAULT_MOBILE_HEADLINE_CLASSNAME =
+  "w-full gap-2 rounded-3xl px-4 pb-4 pt-5";
+
+const DEFAULT_DESKTOP_CARD_LEFT_CLASSNAME = "h-[80%]";
+const DEFAULT_DESKTOP_CARD_RIGHT_CLASSNAME = "h-[80%]";
+const DEFAULT_DESKTOP_CARD_LEFT_IMAGE_CLASSNAME =
+  "h-full w-full rounded-lg mb-2 -translate-y-4 object-contain";
+const DEFAULT_DESKTOP_CARD_RIGHT_IMAGE_CLASSNAME =
+  "h-full w-full rounded-lg pl-2 object-contain";
+const DEFAULT_CARD_BACKGROUND_CLASSNAME = "rounded-3xl";
+const DEFAULT_CARD_BUTTON_CLASSNAME = "text-white text-[20px] font-normal rounded-lg";
+const DEFAULT_CARD_PADDING_CLASSNAME = "px-4 py-4 pr-8";
+
+const DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_WIDTH = "520px";
+const DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_HEIGHT = "427px";
+const DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_POSITION = "bottom center";
+const DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_SIZE = "cover";
+const DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_CLASSNAME = "rounded-3xl";
+
+const DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_WIDTH = "100%";
+const DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_HEIGHT = "80%";
+const DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_POSITION = "bottom center";
+const DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_SIZE = "cover";
+const DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_CLASSNAME = "rounded-[20px]";
+const DEFAULT_TABLET_MAIN_VISUAL_FOREGROUND_CLASSNAME =
+  "object-contain max-h-full max-w-full";
+const DEFAULT_TABLET_MAIN_VISUAL_FOREGROUND_POSITION = "bottom center";
+
+const DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_WIDTH = "100%";
+const DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_HEIGHT = "100%";
+const DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_POSITION = "bottom center";
+const DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_SIZE = "cover";
+const DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_CLASSNAME = "rounded-[20px]";
+const DEFAULT_MOBILE_MAIN_VISUAL_FOREGROUND_CLASSNAME =
+  "object-contain max-h-full max-w-full";
+const DEFAULT_MOBILE_MAIN_VISUAL_FOREGROUND_POSITION = "bottom center";
+
+const DEFAULT_TABLET_CARD_LEFT_CLASSNAME = "h-full rounded-[20px]";
+const DEFAULT_TABLET_CARD_RIGHT_CLASSNAME = "h-full rounded-[20px]";
+const DEFAULT_TABLET_CARD_LEFT_IMAGE_CLASSNAME =
+  "h-full w-full object-contain";
+const DEFAULT_TABLET_CARD_RIGHT_IMAGE_CLASSNAME =
+  "h-full w-full object-contain";
+
+const DEFAULT_MOBILE_CARD_LEFT_CLASSNAME = "h-full rounded-[20px]";
+const DEFAULT_MOBILE_CARD_RIGHT_CLASSNAME = "h-full rounded-[20px]";
+const DEFAULT_MOBILE_CARD_LEFT_IMAGE_CLASSNAME =
+  "h-full w-full object-contain";
+const DEFAULT_MOBILE_CARD_RIGHT_IMAGE_CLASSNAME =
+  "h-full w-full object-contain";
+const DEFAULT_MOBILE_CARD_PADDING_CLASSNAME = "px-3 py-3 pl-2";
+const DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME = "text-neutral-800 text-lg font-normal";
+const DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME = "rounded-[20px]";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizeString(value: unknown, maxLength = 280): string {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, maxLength);
+}
+
+function clamp(value: unknown, min: number, max: number, fallback: number): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  if (num < min) return min;
+  if (num > max) return max;
+  return num;
+}
+
+function normalizeImageOverflow(value: unknown): HeroImageOverflow {
+  const raw = isRecord(value) ? value : {};
+  const edgeRaw = sanitizeString(raw.edge, 16);
+  const edge: HeroOverflowEdge =
+    edgeRaw === "right" || edgeRaw === "bottom" || edgeRaw === "left" ? edgeRaw : "top";
+
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_IMAGE_OVERFLOW.enabled,
+    edge,
+    amountPx: clamp(raw.amountPx, 0, 240, DEFAULT_IMAGE_OVERFLOW.amountPx),
+    offsetXPercent: clamp(raw.offsetXPercent, -100, 200, DEFAULT_IMAGE_OVERFLOW.offsetXPercent),
+    offsetYPercent: clamp(raw.offsetYPercent, -100, 200, DEFAULT_IMAGE_OVERFLOW.offsetYPercent),
+    widthPercent: clamp(raw.widthPercent, 20, 220, DEFAULT_IMAGE_OVERFLOW.widthPercent),
+  };
+}
+
+function sanitizeImageUrl(value: unknown): string {
+  const normalized = sanitizeString(value, 2048);
+  if (!normalized) return "";
+
+  if (normalized.startsWith("/")) return normalized;
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  // Strapi may return relative paths like "uploads/..."; normalize so resolveAssetUrl can build full URL
+  return `/${normalized}`;
+}
+
+function sanitizeDateIso(value: unknown): string | undefined {
+  const normalized = sanitizeString(value, 128);
+  if (!normalized) return undefined;
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+
+  return parsed.toISOString();
+}
+
+function sanitizeColorOrClass(value: unknown): string {
+  const normalized = sanitizeString(value, 120);
+  if (!normalized) return "";
+
+  if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(normalized)) {
+    return normalized;
+  }
+
+  if (/^(rgba?|hsla?)\([^)]*\)$/i.test(normalized)) {
+    return normalized;
+  }
+
+  if (/^(text|bg)-[a-z0-9:/\-[\].]+$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return "";
+}
+
+function sanitizeClassName(value: unknown, maxLength = 280): string {
+  return sanitizeString(value, maxLength);
+}
+
+function sanitizeToken<T extends string>(
+  value: unknown,
+  allowed: Set<T>,
+  fallback: T,
+): T {
+  const normalized = sanitizeString(value, 120);
+  if (!normalized) return fallback;
+  return allowed.has(normalized as T) ? (normalized as T) : fallback;
+}
+
+function sanitizeHref(value: unknown): string {
+  const href = sanitizeString(value, 2048);
+  if (!href) return "";
+  if (href.startsWith("/")) return href;
+  if (/^https?:\/\//i.test(href)) return href;
+  return "";
+}
+
+function createDefaultTracking(): HeroTracking {
+  return {
+    campaign: "",
+    source: "",
+    medium: "",
+    content: "",
+    custom: {},
+  };
+}
+
+export function normalizeHeroTracking(value: unknown): HeroTracking {
+  if (!isRecord(value)) return createDefaultTracking();
+
+  const customRaw = isRecord(value.custom) ? value.custom : {};
+  const custom: Record<string, string> = {};
+  Object.entries(customRaw).forEach(([key, raw]) => {
+    const normalizedKey = sanitizeString(key, 64);
+    const normalizedValue = sanitizeString(raw, 256);
+    if (!normalizedKey || !normalizedValue) return;
+    custom[normalizedKey] = normalizedValue;
+  });
+
+  return {
+    campaign: sanitizeString(value.campaign),
+    source: sanitizeString(value.source),
+    medium: sanitizeString(value.medium),
+    content: sanitizeString(value.content),
+    custom,
+  };
+}
+
+function sanitizeSlotLink(value: unknown): HeroSlotLink | null {
+  if (!isRecord(value)) return null;
+
+  const type = sanitizeToken(value.type, ALLOWED_LINK_TYPES, "internal");
+  const href = sanitizeString(value.href, 2048);
+  if (!href) return null;
+
+  if (type === "internal" && href.startsWith("/")) {
+    return { type, href };
+  }
+
+  if (type === "external" && /^https?:\/\//i.test(href)) {
+    return { type, href };
+  }
+
+  return null;
+}
+
+function normalizeHeroInnerBorder(value: unknown): HeroInnerBorder {
+  const raw = isRecord(value) ? value : {};
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_HERO_INNER_BORDER.enabled,
+    color:
+      sanitizeColorOrClass(raw.color) ||
+      DEFAULT_HERO_INNER_BORDER.color,
+    widthPx: clamp(
+      raw.widthPx,
+      HERO_INNER_BORDER_WIDTH_MIN_PX,
+      HERO_INNER_BORDER_WIDTH_MAX_PX,
+      DEFAULT_HERO_INNER_BORDER.widthPx,
+    ),
+    offsetPx: clamp(
+      raw.offsetPx,
+      HERO_INNER_BORDER_OFFSET_MIN_PX,
+      HERO_INNER_BORDER_OFFSET_MAX_PX,
+      DEFAULT_HERO_INNER_BORDER.offsetPx,
+    ),
+  };
+}
+
+function sanitizeTextStyle(
+  value: unknown,
+  defaults: HeroTextStyle,
+  legacyColor?: unknown,
+  legacyTypography?: Record<string, unknown> | null,
+  fieldPrefix?: "title" | "subtitle",
+): HeroTextStyle {
+  const raw = isRecord(value) ? value : {};
+
+  const legacyFont = fieldPrefix ? legacyTypography?.[`${fieldPrefix}Font`] : undefined;
+  const legacySize = fieldPrefix ? legacyTypography?.[`${fieldPrefix}Size`] : undefined;
+  const legacyWeight = fieldPrefix ? legacyTypography?.[`${fieldPrefix}Weight`] : undefined;
+  const legacyLineHeight = fieldPrefix ? legacyTypography?.[`${fieldPrefix}Leading`] : undefined;
+  const legacyTracking = fieldPrefix ? legacyTypography?.[`${fieldPrefix}Tracking`] : undefined;
+
+  return {
+    color: sanitizeColorOrClass(raw.color ?? legacyColor) || defaults.color,
+    fontFamily: sanitizeToken(raw.fontFamily ?? legacyFont, ALLOWED_FONT_FAMILIES, defaults.fontFamily),
+    fontSize: (() => {
+      const rawSize = sanitizeString(raw.fontSize ?? legacySize, 120);
+      if (rawSize && isAllowedFontSizeToken(rawSize)) {
+        return rawSize as HeroFontSizeToken;
+      }
+      return defaults.fontSize;
+    })(),
+    fontWeight: sanitizeToken(raw.fontWeight ?? legacyWeight, ALLOWED_FONT_WEIGHTS, defaults.fontWeight),
+    lineHeight: sanitizeToken(raw.lineHeight ?? legacyLineHeight, ALLOWED_LINE_HEIGHTS, defaults.lineHeight),
+    letterSpacing: sanitizeToken(
+      raw.letterSpacing ?? legacyTracking,
+      ALLOWED_LETTER_SPACINGS,
+      defaults.letterSpacing,
+    ),
+  };
+}
+
+function normalizeHeadlineSlot(
+  value: unknown,
+  defaults: {
+    titleStyle: HeroTextStyle;
+    subtitleStyle: HeroTextStyle;
+    backgroundColor: string;
+    bottomMarginPx: number;
+    titleSubtitleGapPx: number;
+    className: string;
+    titleClassName: string;
+    subtitleClassName: string;
+  },
+): HeroHeadlineSlot {
+  const raw = isRecord(value) ? value : {};
+  const style = isRecord(raw.style) ? raw.style : {};
+  const colors = isRecord(raw.colors) ? raw.colors : {};
+  const typography = isRecord(raw.typography) ? raw.typography : null;
+
+  return {
+    kind: "headline",
+    title: sanitizeString(raw.title),
+    subtitle: sanitizeString(raw.subtitle),
+    backgroundColor:
+      sanitizeColorOrClass(raw.backgroundColor ?? style.backgroundColor ?? colors.background) ||
+      defaults.backgroundColor,
+    bottomMarginPx: clamp(
+      raw.bottomMarginPx ?? style.bottomMarginPx,
+      MIN_HEADLINE_BOTTOM_MARGIN_PX,
+      MAX_HEADLINE_BOTTOM_MARGIN_PX,
+      defaults.bottomMarginPx,
+    ),
+    titleSubtitleGapPx: clamp(
+      raw.titleSubtitleGapPx ?? style.titleSubtitleGapPx,
+      MIN_TITLE_SUBTITLE_GAP_PX,
+      MAX_TITLE_SUBTITLE_GAP_PX,
+      defaults.titleSubtitleGapPx,
+    ),
+    className: sanitizeClassName(raw.className ?? style.className) || defaults.className,
+    titleClassName: sanitizeClassName(raw.titleClassName ?? style.titleClassName) || defaults.titleClassName,
+    subtitleClassName:
+      sanitizeClassName(raw.subtitleClassName ?? style.subtitleClassName) || defaults.subtitleClassName,
+    titleStyle: sanitizeTextStyle(
+      raw.titleStyle,
+      defaults.titleStyle,
+      colors.titleColor,
+      typography,
+      "title",
+    ),
+    subtitleStyle: sanitizeTextStyle(
+      raw.subtitleStyle,
+      defaults.subtitleStyle,
+      colors.subtitleColor,
+      typography,
+      "subtitle",
+    ),
+    link: sanitizeSlotLink(raw.link),
+    tracking: normalizeHeroTracking(raw.tracking),
+  };
+}
+
+function normalizeMainVisualSlot(
+  value: unknown,
+  defaults?: {
+    backgroundImageUrl?: string;
+    backgroundWidth?: string;
+    backgroundHeight?: string;
+    backgroundPosition?: string;
+    backgroundSize?: string;
+    backgroundClassName?: string;
+    foregroundImageUrl?: string;
+    foregroundClassName?: string;
+    foregroundObjectPosition?: string;
+  },
+): HeroMainVisualSlot {
+  const raw = isRecord(value) ? value : {};
+  const style = isRecord(raw.style) ? raw.style : {};
+  const media = isRecord(raw.media) ? raw.media : {};
+
+  const backgroundImageUrl =
+    sanitizeImageUrl(raw.backgroundImageUrl ?? style.backgroundImageUrl) ||
+    defaults?.backgroundImageUrl ||
+    "";
+  const backgroundColor = sanitizeColorOrClass(raw.backgroundColor ?? style.backgroundColor);
+  const explicitBackgroundType = sanitizeToken(
+    raw.backgroundType ?? style.backgroundType,
+    ALLOWED_BACKGROUND_TYPES,
+    backgroundImageUrl ? "image" : "color",
+  );
+
+  return {
+    kind: "mainVisual",
+    backgroundColor,
+    backgroundType: explicitBackgroundType,
+    backgroundImageUrl,
+    backgroundWidth: sanitizeClassName(raw.backgroundWidth ?? style.backgroundWidth, 80) || defaults?.backgroundWidth || "",
+    backgroundHeight:
+      sanitizeClassName(raw.backgroundHeight ?? style.backgroundHeight, 80) || defaults?.backgroundHeight || "",
+    backgroundPosition:
+      sanitizeClassName(raw.backgroundPosition ?? style.backgroundPosition, 80) ||
+      defaults?.backgroundPosition ||
+      "center",
+    backgroundSize:
+      sanitizeClassName(raw.backgroundSize ?? style.backgroundSize, 80) ||
+      defaults?.backgroundSize ||
+      "cover",
+    backgroundClassName:
+      sanitizeClassName(raw.backgroundClassName ?? style.backgroundClassName, 180) ||
+      defaults?.backgroundClassName ||
+      "",
+    foregroundImageUrl:
+      sanitizeImageUrl(raw.foregroundImageUrl ?? media.imageUrl) ||
+      defaults?.foregroundImageUrl ||
+      "",
+    foregroundAlt: sanitizeString(raw.foregroundAlt ?? media.alt, 140),
+    foregroundClassName:
+      sanitizeClassName(raw.foregroundClassName ?? media.className, 180) || defaults?.foregroundClassName || "",
+    foregroundObjectPosition:
+      sanitizeClassName(raw.foregroundObjectPosition ?? media.objectPosition, 80) ||
+      defaults?.foregroundObjectPosition ||
+      "",
+    foregroundCustomWidth: sanitizeClassName(raw.foregroundCustomWidth ?? media.customWidth, 80),
+    foregroundCustomHeight: sanitizeClassName(raw.foregroundCustomHeight ?? media.customHeight, 80),
+    foregroundOffsetXPx: clamp(
+      raw.foregroundOffsetXPx ?? style.foregroundOffsetXPx,
+      HERO_FOREGROUND_OFFSET_MIN_PX,
+      HERO_FOREGROUND_OFFSET_MAX_PX,
+      0,
+    ),
+    foregroundOffsetYPx: clamp(
+      raw.foregroundOffsetYPx ?? style.foregroundOffsetYPx,
+      HERO_FOREGROUND_OFFSET_MIN_PX,
+      HERO_FOREGROUND_OFFSET_MAX_PX,
+      0,
+    ),
+    foregroundZoom:
+      typeof raw.foregroundZoom === "number" && Number.isFinite(raw.foregroundZoom)
+        ? Math.min(HERO_FOREGROUND_ZOOM_MAX, Math.max(HERO_FOREGROUND_ZOOM_MIN, raw.foregroundZoom))
+        : undefined,
+    foregroundOverflow: normalizeImageOverflow(raw.foregroundOverflow ?? media.overflow),
+    innerBorder: normalizeHeroInnerBorder(raw.innerBorder ?? style.innerBorder),
+    link: sanitizeSlotLink(raw.link),
+    tracking: normalizeHeroTracking(raw.tracking),
+  };
+}
+
+function normalizeCardSlot(
+  value: unknown,
+  defaults?: {
+    imageUrl?: string;
+    imageAlt?: string;
+    className?: string;
+    titleClassName?: string;
+    subtitleClassName?: string;
+    imageClassName?: string;
+    imageObjectPosition?: string;
+    backgroundColor?: string;
+    backgroundHeight?: string;
+    backgroundWidth?: string;
+    backgroundPosition?: string;
+    backgroundSize?: string;
+    backgroundClassName?: string;
+    buttonClassName?: string;
+    buttonShowArrow?: boolean;
+    contentAlignment?: HeroContentAlignment;
+    paddingClassName?: string;
+    titleStyle?: HeroTextStyle;
+    buttonStyle?: HeroTextStyle;
+  },
+): HeroCardSlot {
+  const raw = isRecord(value) ? value : {};
+  const style = isRecord(raw.style) ? raw.style : {};
+  const media = isRecord(raw.media) ? raw.media : {};
+  const colors = isRecord(raw.colors) ? raw.colors : {};
+  const typography = isRecord(raw.typography) ? raw.typography : null;
+  const link = isRecord(raw.link) ? raw.link : undefined;
+  const button = isRecord(raw.button) ? raw.button : undefined;
+  const backgroundImageUrl = sanitizeImageUrl(raw.backgroundImageUrl ?? style.backgroundImageUrl);
+  const backgroundColor =
+    sanitizeColorOrClass(raw.backgroundColor ?? style.backgroundColor ?? colors.background);
+
+  return {
+    kind: "card",
+    title: sanitizeString(raw.title),
+    subtitle: sanitizeString(raw.subtitle),
+    imageUrl: sanitizeImageUrl(raw.imageUrl ?? media.imageUrl) || defaults?.imageUrl || "",
+    imageAlt: sanitizeString(raw.imageAlt ?? media.alt, 140) || defaults?.imageAlt || "",
+    imageHref: sanitizeHref(raw.imageHref ?? media.href),
+    imageClassName: sanitizeClassName(raw.imageClassName ?? media.className, 180) || defaults?.imageClassName || "",
+    imageObjectPosition:
+      sanitizeClassName(raw.imageObjectPosition ?? media.objectPosition, 80) ||
+      defaults?.imageObjectPosition ||
+      "",
+    imageCustomWidth: sanitizeClassName(raw.imageCustomWidth ?? media.customWidth, 80),
+    imageCustomHeight: sanitizeClassName(raw.imageCustomHeight ?? media.customHeight, 80),
+    imageOverflow: normalizeImageOverflow(raw.imageOverflow ?? media.overflow),
+    buttonLabel: sanitizeString(raw.buttonLabel ?? raw.label, 120),
+    buttonHref: sanitizeHref(raw.buttonHref ?? link?.href),
+    buttonClassName:
+      sanitizeClassName(raw.buttonClassName ?? button?.className, 220) ||
+      defaults?.buttonClassName ||
+      "",
+    buttonShowArrow:
+      typeof raw.buttonShowArrow === "boolean"
+        ? raw.buttonShowArrow
+        : typeof button?.showArrow === "boolean"
+          ? button.showArrow
+          : (defaults?.buttonShowArrow ?? true),
+    buttonArrowClassName: sanitizeClassName(raw.buttonArrowClassName ?? button?.arrowClassName, 180),
+    backgroundColor: backgroundColor || defaults?.backgroundColor || "",
+    backgroundType: sanitizeToken(
+      raw.backgroundType ?? style.backgroundType,
+      ALLOWED_BACKGROUND_TYPES,
+      backgroundImageUrl ? "image" : "color",
+    ),
+    backgroundImageUrl,
+    backgroundWidth: sanitizeClassName(raw.backgroundWidth ?? style.backgroundWidth, 80) || defaults?.backgroundWidth || "",
+    backgroundHeight:
+      sanitizeClassName(raw.backgroundHeight ?? style.backgroundHeight, 80) ||
+      defaults?.backgroundHeight ||
+      "",
+    backgroundPosition:
+      sanitizeClassName(raw.backgroundPosition ?? style.backgroundPosition, 80) ||
+      defaults?.backgroundPosition ||
+      "center",
+    backgroundSize:
+      sanitizeClassName(raw.backgroundSize ?? style.backgroundSize, 80) ||
+      defaults?.backgroundSize ||
+      "cover",
+    backgroundClassName:
+      sanitizeClassName(raw.backgroundClassName ?? style.backgroundClassName, 180) ||
+      defaults?.backgroundClassName ||
+      "",
+    className: sanitizeClassName(raw.className ?? style.className, 220) || defaults?.className || "",
+    titleClassName:
+      sanitizeClassName(raw.titleClassName ?? style.titleClassName, 180) ||
+      defaults?.titleClassName ||
+      "",
+    subtitleClassName:
+      sanitizeClassName(raw.subtitleClassName ?? style.subtitleClassName, 180) ||
+      defaults?.subtitleClassName ||
+      "",
+    contentAlignment: sanitizeToken(
+      raw.contentAlignment ?? style.contentAlignment,
+      ALLOWED_CONTENT_ALIGNMENTS,
+      defaults?.contentAlignment || "center",
+    ),
+    paddingClassName:
+      sanitizeClassName(raw.paddingClassName ?? style.paddingClassName, 220) ||
+      defaults?.paddingClassName ||
+      DEFAULT_CARD_PADDING_CLASSNAME,
+    titleStyle: sanitizeTextStyle(
+      raw.titleStyle,
+      defaults?.titleStyle || DEFAULT_CARD_TITLE_STYLE,
+      colors.titleColor,
+      typography,
+      "title",
+    ),
+    buttonStyle: sanitizeTextStyle(
+      raw.buttonStyle,
+      defaults?.buttonStyle || DEFAULT_CARD_BUTTON_STYLE,
+    ),
+    innerBorder: normalizeHeroInnerBorder(raw.innerBorder ?? style.innerBorder),
+    link: sanitizeSlotLink(raw.link),
+    tracking: normalizeHeroTracking(raw.tracking),
+  };
+}
+
+function normalizeDesktopSlots(rawSlots: unknown): HeroDesktopSlots {
+  const slots = isRecord(rawSlots) ? rawSlots : {};
+
+  return {
+    topLeftTextBanner: normalizeHeadlineSlot(slots.topLeftTextBanner, {
+      titleStyle: DEFAULT_TOP_HEADLINE_TITLE_STYLE,
+      subtitleStyle: DEFAULT_TOP_HEADLINE_SUBTITLE_STYLE,
+      backgroundColor: "bg-stone-50",
+      bottomMarginPx: 0,
+      titleSubtitleGapPx: DEFAULT_TITLE_SUBTITLE_GAP_PX,
+      className: DEFAULT_DESKTOP_HEADLINE_CLASSNAME,
+      titleClassName: "",
+      subtitleClassName: "",
+    }),
+    bottomActionBannerLeft: normalizeCardSlot(slots.bottomActionBannerLeft, {
+      className: DEFAULT_DESKTOP_CARD_LEFT_CLASSNAME,
+      titleClassName: "text-[30px] font-medium",
+      imageClassName: DEFAULT_DESKTOP_CARD_LEFT_IMAGE_CLASSNAME,
+      imageObjectPosition: "top left",
+      backgroundWidth: "100%",
+      backgroundHeight: "80%",
+      backgroundPosition: "bottom center",
+      backgroundSize: "cover",
+      backgroundClassName: DEFAULT_CARD_BACKGROUND_CLASSNAME,
+      buttonClassName: DEFAULT_CARD_BUTTON_CLASSNAME,
+      buttonShowArrow: true,
+      contentAlignment: "center",
+      paddingClassName: DEFAULT_CARD_PADDING_CLASSNAME,
+    }),
+    bottomActionBannerRight: normalizeCardSlot(slots.bottomActionBannerRight, {
+      className: DEFAULT_DESKTOP_CARD_RIGHT_CLASSNAME,
+      titleClassName: "text-[30px] font-medium",
+      imageClassName: DEFAULT_DESKTOP_CARD_RIGHT_IMAGE_CLASSNAME,
+      imageObjectPosition: "left",
+      backgroundWidth: "100%",
+      backgroundHeight: "80%",
+      backgroundPosition: "bottom center",
+      backgroundSize: "cover",
+      backgroundClassName: DEFAULT_CARD_BACKGROUND_CLASSNAME,
+      buttonClassName: DEFAULT_CARD_BUTTON_CLASSNAME,
+      buttonShowArrow: true,
+      contentAlignment: "center",
+      paddingClassName: DEFAULT_CARD_PADDING_CLASSNAME,
+    }),
+    rightBanner: normalizeMainVisualSlot(slots.rightBanner, {
+      backgroundWidth: DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_WIDTH,
+      backgroundHeight: DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_HEIGHT,
+      backgroundPosition: DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_POSITION,
+      backgroundSize: DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_SIZE,
+      backgroundClassName: DEFAULT_DESKTOP_MAIN_VISUAL_BACKGROUND_CLASSNAME,
+      foregroundClassName: "",
+    }),
+  };
+}
+
+function normalizeTabletSlots(rawSlots: unknown): HeroTabletSlots {
+  const slots = isRecord(rawSlots) ? rawSlots : {};
+
+  return {
+    primaryBanner: normalizeHeadlineSlot(slots.primaryBanner, {
+      titleStyle: {
+        ...DEFAULT_PRIMARY_TITLE_STYLE,
+        fontSize: "lg:text-[40px] 2xl:text-[48px]",
+      },
+      subtitleStyle: {
+        ...DEFAULT_PRIMARY_SUBTITLE_STYLE,
+        fontSize: "lg:text-[24px] 2xl:text-[28px]",
+      },
+      backgroundColor: "bg-stone-50",
+      bottomMarginPx: 0,
+      titleSubtitleGapPx: DEFAULT_TITLE_SUBTITLE_GAP_PX,
+      className: DEFAULT_TABLET_HEADLINE_CLASSNAME,
+      titleClassName: "",
+      subtitleClassName: "",
+    }),
+    bottomActionBannerLeft: normalizeCardSlot(slots.bottomActionBannerLeft, {
+      className: DEFAULT_TABLET_CARD_LEFT_CLASSNAME,
+      imageClassName: DEFAULT_TABLET_CARD_LEFT_IMAGE_CLASSNAME,
+      imageObjectPosition: "left bottom",
+      contentAlignment: "center",
+      buttonClassName: DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME,
+      backgroundClassName: DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME,
+      buttonShowArrow: true,
+    }),
+    bottomActionBannerRight: normalizeCardSlot(slots.bottomActionBannerRight, {
+      className: DEFAULT_TABLET_CARD_RIGHT_CLASSNAME,
+      imageClassName: DEFAULT_TABLET_CARD_RIGHT_IMAGE_CLASSNAME,
+      imageObjectPosition: "left bottom",
+      contentAlignment: "center",
+      buttonClassName: DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME,
+      backgroundClassName: DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME,
+      buttonShowArrow: true,
+    }),
+    heroBanner: normalizeMainVisualSlot(slots.heroBanner, {
+      backgroundWidth: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_WIDTH,
+      backgroundHeight: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_HEIGHT,
+      backgroundPosition: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_POSITION,
+      backgroundSize: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_SIZE,
+      backgroundClassName: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_CLASSNAME,
+      foregroundClassName: DEFAULT_TABLET_MAIN_VISUAL_FOREGROUND_CLASSNAME,
+      foregroundObjectPosition: DEFAULT_TABLET_MAIN_VISUAL_FOREGROUND_POSITION,
+    }),
+  };
+}
+
+function normalizeMobileSlots(rawSlots: unknown): HeroMobileSlots {
+  const slots = isRecord(rawSlots) ? rawSlots : {};
+
+  return {
+    primaryBanner: normalizeHeadlineSlot(slots.primaryBanner, {
+      titleStyle: DEFAULT_PRIMARY_TITLE_STYLE,
+      subtitleStyle: DEFAULT_PRIMARY_SUBTITLE_STYLE,
+      backgroundColor: "bg-stone-50",
+      bottomMarginPx: 0,
+      titleSubtitleGapPx: DEFAULT_TITLE_SUBTITLE_GAP_PX,
+      className: DEFAULT_MOBILE_HEADLINE_CLASSNAME,
+      titleClassName: "",
+      subtitleClassName: "",
+    }),
+    bottomActionBannerLeft: normalizeCardSlot(slots.bottomActionBannerLeft, {
+      className: DEFAULT_MOBILE_CARD_LEFT_CLASSNAME,
+      imageClassName: DEFAULT_MOBILE_CARD_LEFT_IMAGE_CLASSNAME,
+      imageObjectPosition: "left bottom",
+      contentAlignment: "center",
+      paddingClassName: DEFAULT_MOBILE_CARD_PADDING_CLASSNAME,
+      buttonClassName: DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME,
+      backgroundClassName: DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME,
+      buttonShowArrow: true,
+    }),
+    bottomActionBannerRight: normalizeCardSlot(slots.bottomActionBannerRight, {
+      className: DEFAULT_MOBILE_CARD_RIGHT_CLASSNAME,
+      imageClassName: DEFAULT_MOBILE_CARD_RIGHT_IMAGE_CLASSNAME,
+      imageObjectPosition: "left bottom",
+      contentAlignment: "center",
+      paddingClassName: DEFAULT_MOBILE_CARD_PADDING_CLASSNAME,
+      buttonClassName: DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME,
+      backgroundClassName: DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME,
+      buttonShowArrow: true,
+    }),
+    heroBanner: normalizeMainVisualSlot(slots.heroBanner, {
+      backgroundWidth: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_WIDTH,
+      backgroundHeight: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_HEIGHT,
+      backgroundPosition: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_POSITION,
+      backgroundSize: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_SIZE,
+      backgroundClassName: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_CLASSNAME,
+      foregroundClassName: DEFAULT_MOBILE_MAIN_VISUAL_FOREGROUND_CLASSNAME,
+      foregroundObjectPosition: DEFAULT_MOBILE_MAIN_VISUAL_FOREGROUND_POSITION,
+    }),
+  };
+}
+
+function normalizeSlideSchedule(value: unknown): HeroSlideSchedule {
+  const scheduleRaw = isRecord(value) ? value : {};
+  const startAtUtc = sanitizeDateIso(scheduleRaw.startAtUtc);
+  const endAtUtc = sanitizeDateIso(scheduleRaw.endAtUtc);
+
+  return {
+    timezone: HERO_SCHEDULE_TIMEZONE,
+    ...(startAtUtc ? { startAtUtc } : {}),
+    ...(endAtUtc ? { endAtUtc } : {}),
+  };
+}
+
+function normalizeSlide(value: unknown, index: number): HeroSlideConfig {
+  const slideRaw = isRecord(value) ? value : {};
+  const devicesRaw = isRecord(slideRaw.devices) ? slideRaw.devices : {};
+
+  return {
+    id: sanitizeString(slideRaw.id, 80) || `slide-${index + 1}`,
+    isActive: typeof slideRaw.isActive === "boolean" ? slideRaw.isActive : true,
+    autoplayEligible:
+      typeof slideRaw.autoplayEligible === "boolean" ? slideRaw.autoplayEligible : true,
+    order: Number.isFinite(Number(slideRaw.order)) ? Number(slideRaw.order) : index,
+    schedule: normalizeSlideSchedule(slideRaw.schedule),
+    tracking: normalizeHeroTracking(slideRaw.tracking),
+    devices: {
+      desktop: {
+        slots: normalizeDesktopSlots(isRecord(devicesRaw.desktop) ? devicesRaw.desktop.slots : undefined),
+      },
+      tablet: {
+        slots: normalizeTabletSlots(isRecord(devicesRaw.tablet) ? devicesRaw.tablet.slots : undefined),
+      },
+      mobile: {
+        slots: normalizeMobileSlots(isRecord(devicesRaw.mobile) ? devicesRaw.mobile.slots : undefined),
+      },
+    },
+  };
+}
+
+/**
+ * Syncs tablet and mobile slots from desktop content. Copies content (title, subtitle,
+ * images, links, tracking, colors, image positions) from desktop slots and applies
+ * device-specific layout styling for tablet and mobile.
+ */
+export function syncTabletAndMobileFromDesktop(slide: HeroSlideConfig): HeroSlideConfig {
+  const d = slide.devices.desktop.slots;
+
+  const headlineContent = {
+    title: d.topLeftTextBanner.title,
+    subtitle: d.topLeftTextBanner.subtitle,
+    link: d.topLeftTextBanner.link,
+    tracking: d.topLeftTextBanner.tracking,
+    backgroundColor: d.topLeftTextBanner.backgroundColor,
+  };
+
+  const mainVisualContent = {
+    backgroundImageUrl: d.rightBanner.backgroundImageUrl,
+    foregroundImageUrl: d.rightBanner.foregroundImageUrl,
+    foregroundAlt: d.rightBanner.foregroundAlt,
+    link: d.rightBanner.link,
+    tracking: d.rightBanner.tracking,
+    backgroundColor: d.rightBanner.backgroundColor,
+    backgroundType: d.rightBanner.backgroundType,
+    innerBorder: d.rightBanner.innerBorder,
+  };
+
+  const cardLeftContent = {
+    title: d.bottomActionBannerLeft.title,
+    subtitle: d.bottomActionBannerLeft.subtitle,
+    imageUrl: d.bottomActionBannerLeft.imageUrl,
+    imageAlt: d.bottomActionBannerLeft.imageAlt,
+    imageHref: d.bottomActionBannerLeft.imageHref,
+    buttonLabel: d.bottomActionBannerLeft.buttonLabel,
+    buttonHref: d.bottomActionBannerLeft.buttonHref,
+    link: d.bottomActionBannerLeft.link,
+    tracking: d.bottomActionBannerLeft.tracking,
+    backgroundImageUrl: d.bottomActionBannerLeft.backgroundImageUrl,
+    backgroundColor: d.bottomActionBannerLeft.backgroundColor,
+    backgroundType: d.bottomActionBannerLeft.backgroundType,
+    innerBorder: d.bottomActionBannerLeft.innerBorder,
+  };
+
+  const cardRightContent = {
+    title: d.bottomActionBannerRight.title,
+    subtitle: d.bottomActionBannerRight.subtitle,
+    imageUrl: d.bottomActionBannerRight.imageUrl,
+    imageAlt: d.bottomActionBannerRight.imageAlt,
+    imageHref: d.bottomActionBannerRight.imageHref,
+    buttonLabel: d.bottomActionBannerRight.buttonLabel,
+    buttonHref: d.bottomActionBannerRight.buttonHref,
+    link: d.bottomActionBannerRight.link,
+    tracking: d.bottomActionBannerRight.tracking,
+    backgroundImageUrl: d.bottomActionBannerRight.backgroundImageUrl,
+    backgroundColor: d.bottomActionBannerRight.backgroundColor,
+    backgroundType: d.bottomActionBannerRight.backgroundType,
+    innerBorder: d.bottomActionBannerRight.innerBorder,
+  };
+
+  const desktopCardLeftImagePosition =
+    d.bottomActionBannerLeft.imageObjectPosition.trim() || "top left";
+  const desktopCardRightImagePosition =
+    d.bottomActionBannerRight.imageObjectPosition.trim() || "left";
+  const desktopMainVisualForegroundPosition =
+    d.rightBanner.foregroundObjectPosition.trim() ||
+    DEFAULT_TABLET_MAIN_VISUAL_FOREGROUND_POSITION;
+
+  return {
+    ...slide,
+    devices: {
+      ...slide.devices,
+      tablet: {
+        slots: {
+          primaryBanner: normalizeHeadlineSlot(headlineContent, {
+            titleStyle: {
+              ...d.topLeftTextBanner.titleStyle,
+              fontSize: "lg:text-[40px] 2xl:text-[48px]",
+            },
+            subtitleStyle: {
+              ...d.topLeftTextBanner.subtitleStyle,
+              fontSize: "lg:text-[24px] 2xl:text-[28px]",
+            },
+            backgroundColor: d.topLeftTextBanner.backgroundColor || "bg-stone-50",
+            bottomMarginPx: 0,
+            titleSubtitleGapPx: DEFAULT_TITLE_SUBTITLE_GAP_PX,
+            className: DEFAULT_TABLET_HEADLINE_CLASSNAME,
+            titleClassName: "",
+            subtitleClassName: "",
+          }),
+          bottomActionBannerLeft: normalizeCardSlot(cardLeftContent, {
+            className: DEFAULT_TABLET_CARD_LEFT_CLASSNAME,
+            imageClassName: DEFAULT_TABLET_CARD_LEFT_IMAGE_CLASSNAME,
+            imageObjectPosition: desktopCardLeftImagePosition,
+            contentAlignment: "center",
+            buttonClassName: DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME,
+            backgroundClassName: DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME,
+            buttonShowArrow: true,
+            titleStyle: {
+              ...DEFAULT_CARD_TITLE_STYLE,
+              color: d.bottomActionBannerLeft.titleStyle.color || DEFAULT_CARD_TITLE_STYLE.color,
+            },
+            buttonStyle: {
+              ...DEFAULT_CARD_BUTTON_STYLE,
+              color: d.bottomActionBannerLeft.buttonStyle.color || DEFAULT_CARD_BUTTON_STYLE.color,
+            },
+          }),
+          bottomActionBannerRight: normalizeCardSlot(cardRightContent, {
+            className: DEFAULT_TABLET_CARD_RIGHT_CLASSNAME,
+            imageClassName: DEFAULT_TABLET_CARD_RIGHT_IMAGE_CLASSNAME,
+            imageObjectPosition: desktopCardRightImagePosition,
+            contentAlignment: "center",
+            buttonClassName: DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME,
+            backgroundClassName: DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME,
+            buttonShowArrow: true,
+            titleStyle: {
+              ...DEFAULT_CARD_TITLE_STYLE,
+              color: d.bottomActionBannerRight.titleStyle.color || DEFAULT_CARD_TITLE_STYLE.color,
+            },
+            buttonStyle: {
+              ...DEFAULT_CARD_BUTTON_STYLE,
+              color: d.bottomActionBannerRight.buttonStyle.color || DEFAULT_CARD_BUTTON_STYLE.color,
+            },
+          }),
+          heroBanner: normalizeMainVisualSlot(mainVisualContent, {
+            backgroundWidth: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_WIDTH,
+            backgroundHeight: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_HEIGHT,
+            backgroundPosition: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_POSITION,
+            backgroundSize: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_SIZE,
+            backgroundClassName: DEFAULT_TABLET_MAIN_VISUAL_BACKGROUND_CLASSNAME,
+            foregroundClassName: DEFAULT_TABLET_MAIN_VISUAL_FOREGROUND_CLASSNAME,
+            foregroundObjectPosition: desktopMainVisualForegroundPosition,
+          }),
+        },
+      },
+      mobile: {
+        slots: {
+          primaryBanner: normalizeHeadlineSlot(headlineContent, {
+            titleStyle: {
+              ...d.topLeftTextBanner.titleStyle,
+              fontSize: DEFAULT_PRIMARY_TITLE_STYLE.fontSize,
+            },
+            subtitleStyle: {
+              ...d.topLeftTextBanner.subtitleStyle,
+              fontSize: DEFAULT_PRIMARY_SUBTITLE_STYLE.fontSize,
+            },
+            backgroundColor: d.topLeftTextBanner.backgroundColor || "bg-stone-50",
+            bottomMarginPx: 0,
+            titleSubtitleGapPx: DEFAULT_TITLE_SUBTITLE_GAP_PX,
+            className: DEFAULT_MOBILE_HEADLINE_CLASSNAME,
+            titleClassName: "",
+            subtitleClassName: "",
+          }),
+          bottomActionBannerLeft: normalizeCardSlot(cardLeftContent, {
+            className: DEFAULT_MOBILE_CARD_LEFT_CLASSNAME,
+            imageClassName: DEFAULT_MOBILE_CARD_LEFT_IMAGE_CLASSNAME,
+            imageObjectPosition: desktopCardLeftImagePosition,
+            contentAlignment: "center",
+            paddingClassName: DEFAULT_MOBILE_CARD_PADDING_CLASSNAME,
+            buttonClassName: DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME,
+            backgroundClassName: DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME,
+            buttonShowArrow: true,
+            titleStyle: {
+              ...DEFAULT_CARD_TITLE_STYLE,
+              color: d.bottomActionBannerLeft.titleStyle.color || DEFAULT_CARD_TITLE_STYLE.color,
+            },
+            buttonStyle: {
+              ...DEFAULT_CARD_BUTTON_STYLE,
+              color: d.bottomActionBannerLeft.buttonStyle.color || DEFAULT_CARD_BUTTON_STYLE.color,
+            },
+          }),
+          bottomActionBannerRight: normalizeCardSlot(cardRightContent, {
+            className: DEFAULT_MOBILE_CARD_RIGHT_CLASSNAME,
+            imageClassName: DEFAULT_MOBILE_CARD_RIGHT_IMAGE_CLASSNAME,
+            imageObjectPosition: desktopCardRightImagePosition,
+            contentAlignment: "center",
+            paddingClassName: DEFAULT_MOBILE_CARD_PADDING_CLASSNAME,
+            buttonClassName: DEFAULT_COMPACT_CARD_BUTTON_CLASSNAME,
+            backgroundClassName: DEFAULT_COMPACT_CARD_BACKGROUND_CLASSNAME,
+            buttonShowArrow: true,
+            titleStyle: {
+              ...DEFAULT_CARD_TITLE_STYLE,
+              color: d.bottomActionBannerRight.titleStyle.color || DEFAULT_CARD_TITLE_STYLE.color,
+            },
+            buttonStyle: {
+              ...DEFAULT_CARD_BUTTON_STYLE,
+              color: d.bottomActionBannerRight.buttonStyle.color || DEFAULT_CARD_BUTTON_STYLE.color,
+            },
+          }),
+          heroBanner: normalizeMainVisualSlot(mainVisualContent, {
+            backgroundWidth: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_WIDTH,
+            backgroundHeight: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_HEIGHT,
+            backgroundPosition: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_POSITION,
+            backgroundSize: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_SIZE,
+            backgroundClassName: DEFAULT_MOBILE_MAIN_VISUAL_BACKGROUND_CLASSNAME,
+            foregroundClassName: DEFAULT_MOBILE_MAIN_VISUAL_FOREGROUND_CLASSNAME,
+            foregroundObjectPosition: desktopMainVisualForegroundPosition,
+          }),
+        },
+      },
+    },
+  };
+}
+
+export function createDefaultHeroSliderPayload(): HeroSliderPayload {
+  return {
+    version: HERO_SLIDER_VERSION,
+    autoplayIntervalMs: DEFAULT_AUTOPLAY_INTERVAL_MS,
+    slides: [],
+  };
+}
+
+export function normalizeHeroSliderPayload(value: unknown): HeroSliderPayload {
+  if (!isRecord(value)) {
+    return createDefaultHeroSliderPayload();
+  }
+
+  const rawSlides = Array.isArray(value.slides) ? value.slides : [];
+
+  return {
+    version: HERO_SLIDER_VERSION,
+    autoplayIntervalMs: clamp(
+      value.autoplayIntervalMs,
+      MIN_AUTOPLAY_INTERVAL_MS,
+      MAX_AUTOPLAY_INTERVAL_MS,
+      DEFAULT_AUTOPLAY_INTERVAL_MS,
+    ),
+    slides: rawSlides.map((slide, index) => normalizeSlide(slide, index)),
+  };
+}
+
+export function normalizeHeroSliderMeta(value: unknown): HeroSliderMeta | null {
+  if (!isRecord(value)) return null;
+
+  const publishedAt = sanitizeDateIso(value.publishedAt);
+  if (!publishedAt) return null;
+
+  const publishedBy = Number(value.publishedBy);
+
+  return {
+    version: HERO_SLIDER_VERSION,
+    publishedAt,
+    publishedBy: Number.isFinite(publishedBy) ? publishedBy : null,
+  };
+}
+
+export function isHeroSlideVisible(slide: HeroSlideConfig, now = new Date()): boolean {
+  if (!slide.isActive) {
+    return false;
+  }
+
+  const startAtUtc = slide.schedule.startAtUtc ? new Date(slide.schedule.startAtUtc) : null;
+  const endAtUtc = slide.schedule.endAtUtc ? new Date(slide.schedule.endAtUtc) : null;
+
+  if (startAtUtc && !Number.isNaN(startAtUtc.getTime()) && now < startAtUtc) {
+    return false;
+  }
+
+  if (endAtUtc && !Number.isNaN(endAtUtc.getTime()) && now > endAtUtc) {
+    return false;
+  }
+
+  return true;
+}

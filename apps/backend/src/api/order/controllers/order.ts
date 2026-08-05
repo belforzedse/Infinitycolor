@@ -21,6 +21,7 @@ import { adminTransitionOrderHandler } from "./helpers/adminTransition";
 import {
   STORE_MANAGER_PLUS_ROLES,
   resolveCustomerTargetUserId,
+  resolveUserRoleName,
   roleIsAllowed,
 } from "../../../utils/roles";
 import {
@@ -28,6 +29,7 @@ import {
   reconcileOrderPaymentAttempt,
 } from "../../payment-attempt/services/payment-attempt";
 import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
+import { isOperationalManagerRequest } from "../../../utils/operationalCommerce";
 
 // Business fields captured as admin activity on a generic `PUT /orders/:id` edit. Whitelisted on
 // purpose: anything not listed here (tokens, payment internals, relations) is never diffed/logged.
@@ -77,14 +79,57 @@ const buildPaginationMeta = (page: number, pageSize: number, total: number) => (
 export default factories.createCoreController(
   "api::order.order",
   ({ strapi }: { strapi: Strapi }) => ({
+    async find(ctx, next) {
+      if (await isOperationalManagerRequest(ctx, strapi)) {
+        ctx.query = {
+          ...ctx.query,
+          fields: [
+            "Description",
+            "Note",
+            "Status",
+            "ReservationStatus",
+            "ReservedUntil",
+            "Date",
+            "Type",
+            "ShippingCost",
+            "ShippingMethodCode",
+            "ShippingMethodTitle",
+            "ShippingBarcode",
+            "ShippingPostPrice",
+            "ShippingTax",
+            "ShippingWeight",
+            "ShippingBoxSizeId",
+            "DiscountCode",
+            "AppliedGeneralDiscountId",
+            "AppliedDiscountAmount",
+            "PaymentGateway",
+            "isReserveOrder",
+            "reserveExpiresAt",
+            "createdAt",
+            "updatedAt",
+          ],
+          populate: {
+            user: {
+              fields: ["id", "phone", "username"],
+              populate: {
+                user_info: { fields: ["FirstName", "LastName"] },
+              },
+            },
+            contract: { fields: ["Amount", "Status"] },
+          },
+        };
+      }
+      return super.find(ctx, next);
+    },
+
     async findOne(ctx) {
       const { id } = ctx.params;
       const requester = ctx.state.user;
 
       const requesterId = requester?.id ? Number(requester.id) : null;
-      const isAdminUser =
-        requester?.isAdmin === true ||
-        roleIsAllowed(requester?.role?.name || requester?.role?.type, STORE_MANAGER_PLUS_ROLES);
+      const requesterRole = await resolveUserRoleName(strapi, requester);
+      const operationalManager = await isOperationalManagerRequest(ctx, strapi);
+      const isAdminUser = roleIsAllowed(requesterRole, STORE_MANAGER_PLUS_ROLES);
 
       try {
         // Query with all necessary relations populated
@@ -92,21 +137,25 @@ export default factories.createCoreController(
           where: { id },
           populate: {
             user: {
-              fields: ["id", "email", "phone", "username"],
+              fields: operationalManager ? ["id", "phone"] : ["id", "email", "phone", "username"],
               populate: {
-                user_info: true,
+                user_info: operationalManager ? { select: ["id", "FirstName", "LastName"] } : true,
               },
             },
-            user_info: true, // Legacy support - populate at order level too
-            contract: {
-              populate: {
-                contract_transactions: {
+            // Legacy support - populate at order level too, but only with the
+            // names the operational order UI needs.
+            user_info: operationalManager ? { select: ["id", "FirstName", "LastName"] } : true,
+            contract: operationalManager
+              ? { select: ["id", "Amount", "Status"] }
+              : {
                   populate: {
-                    payment_gateway: true,
+                    contract_transactions: {
+                      populate: {
+                        payment_gateway: true,
+                      },
+                    },
                   },
                 },
-              },
-            },
             order_items: {
               populate: {
                 product_variation: {
@@ -155,9 +204,27 @@ export default factories.createCoreController(
         // Transform the response to match the frontend's expected structure
         // Check both order.user_info (legacy) and order.user.user_info (correct structure)
         const userInfo = order.user?.user_info || order.user_info;
-        const sanitizedContract = order.contract;
+        const sanitizedContract =
+          operationalManager && order.contract
+            ? {
+                id: order.contract.id,
+                Amount: order.contract.Amount,
+                Status: order.contract.Status,
+              }
+            : order.contract;
+        const safeOperationalUserInfo =
+          operationalManager && userInfo
+            ? {
+                id: userInfo.id,
+                FirstName: userInfo.FirstName ?? null,
+                LastName: userInfo.LastName ?? null,
+              }
+            : userInfo;
         const transformedOrder = {
           ...order,
+          ...(operationalManager
+            ? { external_id: undefined, external_source: undefined, reserveGroupId: undefined }
+            : {}),
           contract: sanitizedContract,
           user: order.user
             ? {
@@ -166,13 +233,17 @@ export default factories.createCoreController(
                   attributes: {
                     Phone: order.user.phone || null,
                     phone: order.user.phone || null,
-                    email: order.user.email,
-                    username: order.user.username,
-                    user_info: userInfo
+                    ...(operationalManager
+                      ? {}
+                      : {
+                          email: order.user.email,
+                          username: order.user.username,
+                        }),
+                    user_info: safeOperationalUserInfo
                       ? {
                           data: {
-                            id: userInfo.id,
-                            attributes: userInfo,
+                            id: safeOperationalUserInfo.id,
+                            attributes: safeOperationalUserInfo,
                           },
                         }
                       : null,
@@ -236,10 +307,7 @@ export default factories.createCoreController(
     async update(ctx) {
       const { id } = ctx.params;
       const requestData = (ctx.request?.body as any)?.data ?? {};
-      const requestsStatusChange = Object.prototype.hasOwnProperty.call(
-        requestData,
-        "Status",
-      );
+      const requestsStatusChange = Object.prototype.hasOwnProperty.call(requestData, "Status");
 
       // Snapshot the whitelisted fields before the write so we can diff afterwards.
       let before: Record<string, any> | null = null;
@@ -311,6 +379,62 @@ export default factories.createCoreController(
       return adminAdjustItemsHandler(strapi as any, ctx);
     },
 
+    async adminUpdateNotes(ctx) {
+      const requesterRole = await resolveUserRoleName(strapi, ctx.state?.user);
+      if (!roleIsAllowed(requesterRole, STORE_MANAGER_PLUS_ROLES)) {
+        return ctx.forbidden("You do not have permission to update this order");
+      }
+
+      const orderId = Number(ctx.params.id);
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        return ctx.badRequest("Order id must be a positive integer");
+      }
+
+      const input = ctx.request?.body?.data || {};
+      const rejected = Object.keys(input).filter(
+        (field) => field !== "Description" && field !== "Note",
+      );
+      if (rejected.length > 0) {
+        return ctx.badRequest(`Protected order fields cannot be updated: ${rejected.join(", ")}`);
+      }
+
+      const before = await strapi.db.query("api::order.order").findOne({
+        where: { id: orderId },
+        select: ["Description", "Note"],
+      });
+      if (!before) return ctx.notFound("Order not found");
+
+      const updated = await strapi.entityService.update("api::order.order", orderId, {
+        data: {
+          ...(Object.prototype.hasOwnProperty.call(input, "Description")
+            ? { Description: input.Description }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(input, "Note") ? { Note: input.Note } : {}),
+        },
+      });
+
+      const changes: Record<string, { from?: any; to?: any }> = {};
+      for (const field of ["Description", "Note"] as const) {
+        if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
+        if (String(before[field] ?? "") !== String(input[field] ?? "")) {
+          changes[field] = { from: before[field] ?? null, to: input[field] ?? null };
+        }
+      }
+      if (Object.keys(changes).length > 0) {
+        await logAdminOrderFieldUpdate(
+          strapi,
+          orderId,
+          changes,
+          Number(ctx.state.user.id),
+          getClientIp(ctx),
+          getUserAgent(ctx),
+        );
+      }
+
+      const sanitized = await this.sanitizeOutput(updated, ctx);
+      return this.transformResponse(sanitized);
+    },
+
     async adminCancel(ctx) {
       return adminCancelOrderHandler(strapi as any, ctx);
     },
@@ -350,15 +474,12 @@ export default factories.createCoreController(
         });
 
         if (!order) {
-          return ctx.forbidden(
-            "You do not have permission to access this order",
-            {
-              data: {
-                success: false,
-                error: "You do not have permission to access this order",
-              },
-            }
-          );
+          return ctx.forbidden("You do not have permission to access this order", {
+            data: {
+              success: false,
+              error: "You do not have permission to access this order",
+            },
+          });
         }
 
         const attempt = await reconcileOrderPaymentAttempt(strapi as any, order);
@@ -366,7 +487,8 @@ export default factories.createCoreController(
         const txList = Array.isArray(contract?.contract_transactions)
           ? contract.contract_transactions
           : [];
-        const latestTx = [...txList].reverse().find((tx: any) => tx?.Status !== "Failed") ||
+        const latestTx =
+          [...txList].reverse().find((tx: any) => tx?.Status !== "Failed") ||
           [...txList].reverse()[0];
         const transactionId =
           attempt?.providerReference ||
@@ -376,14 +498,15 @@ export default factories.createCoreController(
           contract?.external_id ||
           undefined;
         const isSnappay = isSnappayGatewayValue(order.PaymentGateway);
-        const paymentStatus = attempt?.Status ||
+        const paymentStatus =
+          attempt?.Status ||
           (isSnappay
             ? "Unknown"
             : ["Started", "Shipment", "Done"].includes(order.Status)
-            ? "Succeeded"
-            : order.Status === "Cancelled"
-            ? "Failed"
-            : "Unknown");
+              ? "Succeeded"
+              : order.Status === "Cancelled"
+                ? "Failed"
+                : "Unknown");
         const isPaid = paymentStatus === "Succeeded";
         const canRetry = ["Failed", "Cancelled", "Expired"].includes(paymentStatus);
 
@@ -399,21 +522,13 @@ export default factories.createCoreController(
             attemptId: attempt?.attemptId,
             amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,
             canRetry,
-            nextAction: isPaid
-              ? "view_order"
-              : canRetry
-              ? "return_to_cart"
-              : "recheck",
+            nextAction: isPaid ? "view_order" : canRetry ? "return_to_cart" : "recheck",
             failureCode:
               attempt?.failureCode ||
-              (isSnappay && !attempt
-                ? "SNAPPAY_ATTEMPT_NOT_FOUND"
-                : undefined),
+              (isSnappay && !attempt ? "SNAPPAY_ATTEMPT_NOT_FOUND" : undefined),
             failureMessage:
               attempt?.failureMessage ||
-              (isSnappay && !attempt
-                ? "SnappPay payment requires reconciliation"
-                : undefined),
+              (isSnappay && !attempt ? "SnappPay payment requires reconciliation" : undefined),
             lastReconciledAt: attempt?.lastReconciledAt || undefined,
             authoritative: !isSnappay || Boolean(attempt),
           },
@@ -468,9 +583,7 @@ export default factories.createCoreController(
         if (reserveGroupId && typeof reserveGroupId === "string") {
           filters.reserveGroupId = reserveGroupId;
         }
-        const totalOrders = await strapi.db
-          .query("api::order.order")
-          .count({ where: filters });
+        const totalOrders = await strapi.db.query("api::order.order").count({ where: filters });
 
         const pageNumber = parseInt(page, 10);
         const limit = parseInt(pageSize, 10);
@@ -547,7 +660,7 @@ export default factories.createCoreController(
 
         const order = await strapi.db.query("api::order.order").findOne({
           where: { id: orderId, user: { id: userId } },
-        populate: {
+          populate: {
             order_items: {
               populate: {
                 product_variation: {
@@ -582,9 +695,9 @@ export default factories.createCoreController(
                     },
                   },
                 },
-          user: {
-            fields: ["id", "phone", "username", "email"],
-          },
+            user: {
+              fields: ["id", "phone", "username", "email"],
+            },
           },
         });
 
@@ -606,11 +719,7 @@ export default factories.createCoreController(
             where: { order: { id: orderId } },
           });
           orderLogsMeta = {
-            pagination: buildPaginationMeta(
-              logsPagination.page,
-              logsPagination.pageSize,
-              total,
-            ),
+            pagination: buildPaginationMeta(logsPagination.page, logsPagination.pageSize, total),
           };
         }
         const orderLogs = await strapi.db.query("api::order-log.order-log").findMany(orderLogQuery);
@@ -659,5 +768,5 @@ export default factories.createCoreController(
         });
       }
     },
-  })
+  }),
 );

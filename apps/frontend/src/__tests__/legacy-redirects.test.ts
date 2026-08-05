@@ -6,11 +6,18 @@ jest.mock("next/server", () => ({
       status,
       url,
     })),
+    json: jest.fn((body: unknown, init: ResponseInit) => ({
+      body,
+      headers: new Headers(init.headers),
+      status: init.status,
+    })),
   },
 }));
 
 const {
   AUTH_REDIRECT_STATUS,
+  ADMIN_CUTOVER_REDIRECT_STATUS,
+  getAdminCutoverRedirectUrl,
   getLegacyRedirectUrl,
   isAuthRequiredRoute,
   isRetiredLegacyPath,
@@ -38,8 +45,9 @@ function nextUrl(path: string, origin = "https://infinitycolor.co") {
   return url;
 }
 
-function mockRequest(path: string, hasAuthMarker = false, origin?: string) {
+function mockRequest(path: string, hasAuthMarker = false, origin?: string, method = "GET") {
   return {
+    method,
     nextUrl: nextUrl(path, origin),
     cookies: {
       get: (name: string) =>
@@ -49,6 +57,60 @@ function mockRequest(path: string, hasAuthMarker = false, origin?: string) {
     },
   };
 }
+
+describe("admin cutover redirect", () => {
+  const previous = {
+    enabled: process.env.ADMIN_REDIRECT_ENABLED,
+    environment: process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT,
+  };
+
+  afterEach(() => {
+    if (previous.enabled === undefined) delete process.env.ADMIN_REDIRECT_ENABLED;
+    else process.env.ADMIN_REDIRECT_ENABLED = previous.enabled;
+    if (previous.environment === undefined) delete process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT;
+    else process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT = previous.environment;
+  });
+
+  it("maps the old prefix to fixed root paths while preserving queries", () => {
+    process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT = "production";
+    expect(getAdminCutoverRedirectUrl(new URL("/super-admin?tab=1", "https://untrusted.example"))?.href).toBe(
+      "https://admin.infinitycolor.co/?tab=1",
+    );
+    expect(
+      getAdminCutoverRedirectUrl(
+        new URL("/super-admin/products/edit/12?return=orders", "https://untrusted.example"),
+      )?.href,
+    ).toBe("https://admin.infinitycolor.co/products/edit/12?return=orders");
+  });
+
+  it("does nothing until the cutover switch is explicitly enabled", async () => {
+    delete process.env.ADMIN_REDIRECT_ENABLED;
+    const response = await proxy(mockRequest("/super-admin/products", true));
+    expect(response.url).toBeUndefined();
+  });
+
+  it("uses a temporary no-store 307 for GET and HEAD", async () => {
+    process.env.ADMIN_REDIRECT_ENABLED = "true";
+    process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT = "staging";
+    for (const method of ["GET", "HEAD"]) {
+      const response = await proxy(
+        mockRequest("/super-admin/orders?page=2", true, "https://host-header.invalid", method),
+      );
+      expect(response.status).toBe(ADMIN_CUTOVER_REDIRECT_STATUS);
+      expect(response.url.href).toBe("https://admin.staging.infinitycolor.co/orders?page=2");
+      expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    }
+  });
+
+  it("rejects methods that must never cross the application boundary", async () => {
+    process.env.ADMIN_REDIRECT_ENABLED = "true";
+    process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT = "production";
+    const response = await proxy(mockRequest("/super-admin/products", true, undefined, "POST"));
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toBe("GET, HEAD");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+  });
+});
 
 function expectSecurityHeaders(headers: Headers) {
   for (const [key, value] of SECURITY_HEADER_EXPECTATIONS) {

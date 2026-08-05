@@ -6,8 +6,6 @@ import { toast } from "react-hot-toast";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/services";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
-import StoreManagerNotice from "@/components/SuperAdmin/StoreManagerNotice";
 
 export type CouponRule = {
   id: number;
@@ -29,7 +27,6 @@ type Term = {
 };
 
 export default function Page() {
-  const { isStoreManager, isLoading } = useCurrentUser();
   const router = useRouter();
 
   const initialData: Partial<CouponRule> = {
@@ -38,16 +35,6 @@ export default function Page() {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
-
-  if (isLoading) {
-    return <div>در حال بارگذاری...</div>;
-  }
-
-  if (isStoreManager) {
-    return (
-      <StoreManagerNotice description="برای ایجاد تخفیفای عمومی باید با نقش سوپر ادمین وارد شوید." />
-    );
-  }
 
   return (
     <UpsertPageContentWrapper<CouponRule>
@@ -63,7 +50,8 @@ export default function Page() {
               StartDate: (data.startDate as any)?.value as Date,
               EndDate: (data.endDate as any)?.value as Date,
               IsActive: data.isActive,
-              product_variations: data.terms.find((term) => term.category === "product")?.tags || [],
+              product_variations:
+                data.terms.find((term) => term.category === "product")?.tags || [],
               product_categories:
                 data.terms.find((term) => term.category === "category")?.tags || [],
             },

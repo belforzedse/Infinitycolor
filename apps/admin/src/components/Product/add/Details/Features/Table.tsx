@@ -1,0 +1,1237 @@
+import DeleteIcon from "@/components/Kits/Icons/DeleteIcon";
+import React, { Fragment, useState, useEffect, useCallback } from "react";
+import { Dialog, Transition } from "@headlessui/react";
+import { apiClient } from "@/services";
+import toast from "react-hot-toast";
+import { HexColorPicker, HexColorInput } from "react-colorful";
+import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+
+interface Feature {
+  id: string;
+  value: string;
+  colorCode?: string;
+}
+
+interface ApiFeature {
+  id: number;
+  attributes: {
+    Title: string;
+    ColorCode?: string;
+    [key: string]: any;
+  };
+}
+
+interface ApiResponse<T> {
+  data: T;
+  meta?: any;
+}
+
+interface ProductVariation {
+  id: number;
+  attributes: {
+    product: {
+      data: {
+        id: number;
+      };
+    };
+    product_variation_color?: {
+      data: {
+        id: number;
+        attributes: {
+          Title: string;
+        };
+      };
+    };
+    product_variation_size?: {
+      data: {
+        id: number;
+        attributes: {
+          Title: string;
+        };
+      };
+    };
+    product_variation_model?: {
+      data: {
+        id: number;
+        attributes: {
+          Title: string;
+        };
+      };
+    };
+    SKU?: string;
+    Price?: number;
+    DiscountPrice?: number;
+  };
+}
+
+interface FeatureGroup {
+  colors: Feature[];
+  sizes: Feature[];
+  models: Feature[];
+  generic: GenericFeatureGroup[];
+}
+
+interface GenericFeatureGroup {
+  assignmentId: number;
+  attributeId: number;
+  title: string;
+  type: "Text" | "Color";
+  position: number;
+  terms: Feature[];
+}
+
+interface GenericAttributeOption {
+  id: number;
+  title: string;
+  type: "Text" | "Color";
+  position: number;
+  terms: Feature[];
+}
+
+interface FeaturesTableProps {
+  productId: number;
+  onVariationsGenerated?: () => void;
+}
+
+const COLOR_PALETTE = [
+  "#000000",
+  "#1f2937",
+  "#374151",
+  "#4b5563",
+  "#6b7280",
+  "#94a3b8",
+  "#cbd5f5",
+  "#ffffff",
+  "#f5f5f5",
+  "#e5e7eb",
+  "#991b1b",
+  "#dc2626",
+  "#f87171",
+  "#fee2e2",
+  "#f97316",
+  "#fb923c",
+  "#fed7aa",
+  "#fef3c7",
+  "#facc15",
+  "#a16207",
+  "#ca8a04",
+  "#84cc16",
+  "#22c55e",
+  "#16a34a",
+  "#0d9488",
+  "#14b8a6",
+  "#2dd4bf",
+  "#06b6d4",
+  "#0ea5e9",
+  "#2563eb",
+  "#1d4ed8",
+  "#3b82f6",
+  "#60a5fa",
+  "#818cf8",
+  "#a855f7",
+  "#d946ef",
+  "#ec4899",
+  "#f472b6",
+  "#f9a8d4",
+  "#fda4af",
+  "#fb7185",
+  "#f43f5e",
+  "#be185d",
+  "#831843",
+  "#475569",
+  "#334155",
+];
+
+const ATTRIBUTE_ENDPOINTS = {
+  colors: "/product-variation-colors",
+  sizes: "/product-variation-sizes",
+  models: "/product-variation-models",
+} as const;
+
+// DEFAULT_TITLES removed - sizes and models are now optional, no default values should be used
+
+export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTableProps) => {
+  const [features, setFeatures] = useState<FeatureGroup>({
+    colors: [],
+    sizes: [],
+    models: [],
+    generic: [],
+  });
+
+  const [availableOptions, setAvailableOptions] = useState<{
+    colors: ApiFeature[];
+    sizes: ApiFeature[];
+    models: ApiFeature[];
+  }>({
+    colors: [],
+    sizes: [],
+    models: [],
+  });
+
+  const [inputValues, setInputValues] = useState({
+    colors: "",
+    sizes: "",
+    models: "",
+  });
+
+  const [filteredOptions, setFilteredOptions] = useState<{
+    colors: ApiFeature[];
+    sizes: ApiFeature[];
+    models: ApiFeature[];
+  }>({
+    colors: [],
+    sizes: [],
+    models: [],
+  });
+
+  const [isGeneratingVariations, setIsGeneratingVariations] = useState(false);
+  const [variationsCount, setVariationsCount] = useState(0);
+  const [availableGenericAttributes, setAvailableGenericAttributes] = useState<
+    GenericAttributeOption[]
+  >([]);
+  const [selectedGenericAttributeId, setSelectedGenericAttributeId] = useState("");
+  const [isSavingAssignment, setIsSavingAssignment] = useState(false);
+  const [colorModal, setColorModal] = useState({
+    isOpen: false,
+    name: "",
+    colorCode: "#000000",
+    noColor: false,
+  });
+  const [creationLoading, setCreationLoading] = useState({
+    colors: false,
+    sizes: false,
+    models: false,
+  });
+
+  const createAttributeOption = async (
+    type: "colors" | "sizes" | "models",
+    payload: { Title: string; ColorCode?: string },
+  ) => {
+    const title = payload.Title?.trim();
+    if (!title) {
+      toast.error("نام ویژگی نمی‌تواند خالی باشد");
+      return null;
+    }
+
+    setCreationLoading((prev) => ({ ...prev, [type]: true }));
+    try {
+      const response = await apiClient.post<ApiFeature>(ATTRIBUTE_ENDPOINTS[type], {
+        data: payload,
+      });
+      const created = response.data;
+
+      setAvailableOptions((prev) => ({
+        ...prev,
+        [type]: [...prev[type], created],
+      }));
+
+      addFeature(type, created);
+      toast.success(`${title} با موفقیت اضافه شد`);
+      return created;
+    } catch (error: any) {
+      console.error("Error creating variation option:", error);
+      const rawErrorMessage = extractErrorMessage(error);
+      const message = translateErrorMessage(
+        rawErrorMessage,
+        "خطا در ایجاد ویژگی جدید. لطفاً دوباره تلاش کنید.",
+      );
+      toast.error(message);
+      return null;
+    } finally {
+      setCreationLoading((prev) => ({ ...prev, [type]: false }));
+    }
+  };
+
+  const openColorModal = (prefill?: string) => {
+    setColorModal({
+      isOpen: true,
+      name: prefill?.trim() || "",
+      colorCode: "#000000",
+      noColor: false,
+    });
+  };
+
+  const closeColorModal = () =>
+    setColorModal((prev) => ({
+      ...prev,
+      isOpen: false,
+    }));
+
+  const handleColorChange = (value: string) => {
+    if (!value) {
+      return;
+    }
+    const normalized = value.startsWith("#") ? value : `#${value}`;
+    setColorModal((prev) => ({
+      ...prev,
+      colorCode: normalized.toLowerCase(),
+    }));
+  };
+
+  const handleSaveColor = async () => {
+    if (!colorModal.name.trim()) {
+      toast.error("نام رنگ را وارد کنید");
+      return;
+    }
+    // Colorless entries omit ColorCode entirely; otherwise send the chosen hex.
+    const colorPayload: { Title: string; ColorCode?: string } = {
+      Title: colorModal.name.trim(),
+    };
+    if (!colorModal.noColor && colorModal.colorCode) {
+      colorPayload.ColorCode = colorModal.colorCode;
+    }
+
+    const saved = await createAttributeOption("colors", colorPayload);
+    if (saved) {
+      setInputValues((prev) => ({ ...prev, colors: "" }));
+      closeColorModal();
+    }
+  };
+
+  const handleCreateTextOption = async (type: "sizes" | "models", label: string) => {
+    const created = await createAttributeOption(type, {
+      Title: label.trim(),
+    });
+    if (created) {
+      setInputValues((prev) => ({ ...prev, [type]: "" }));
+    }
+  };
+
+  const fetchVariationData = useCallback(async () => {
+    try {
+      const [colorsRes, sizesRes, modelsRes, assignmentsRes, attributesRes] = await Promise.all([
+        apiClient.get<ApiResponse<ApiFeature[]>>(
+          "/product-variation-colors?pagination[pageSize]=1000&sort=Title:asc",
+          {
+            cache: "no-store",
+          },
+        ),
+        apiClient.get<ApiResponse<ApiFeature[]>>(
+          "/product-variation-sizes?pagination[pageSize]=1000&sort=Title:asc",
+          {
+            cache: "no-store",
+          },
+        ),
+        apiClient.get<ApiResponse<ApiFeature[]>>(
+          "/product-variation-models?pagination[pageSize]=1000&sort=Title:asc",
+          {
+            cache: "no-store",
+          },
+        ),
+        productId
+          ? apiClient.get<ApiResponse<any[]>>(
+              `/product-attribute-assignments?filters[product][id][$eq]=${productId}&filters[IsVariation][$eq]=true&populate[product_attribute]=true&populate[terms][populate][product_attribute]=true&pagination[pageSize]=100&sort=Position:asc`,
+              { cache: "no-store" },
+            )
+          : Promise.resolve({ data: [] } as any),
+        apiClient.get<ApiResponse<any[]>>(
+          "/product-attributes?filters[LegacyProjection][$eq]=None&populate[product_attribute_terms]=true&pagination[pageSize]=200&sort=Position:asc",
+          { cache: "no-store" },
+        ),
+      ]);
+
+      setAvailableOptions({
+        colors: (colorsRes as any).data || [],
+        sizes: (sizesRes as any).data || [],
+        models: (modelsRes as any).data || [],
+      });
+
+      setAvailableGenericAttributes(
+        (((attributesRes as any).data || []) as any[])
+          .map((attribute): GenericAttributeOption | null => {
+            const value = attribute.attributes || attribute;
+            const terms = (value.product_attribute_terms?.data || [])
+              .map((term: any) => ({
+                id: String(term.id),
+                value: String(term.attributes?.Title || term.Title || ""),
+                colorCode: term.attributes?.ColorCode || term.ColorCode,
+              }))
+              .filter((term: Feature) => term.id && term.value);
+            if (!attribute.id || terms.length === 0) return null;
+            return {
+              id: Number(attribute.id),
+              title: String(value.Title || ""),
+              type: value.Type === "Color" ? "Color" : "Text",
+              position: Number(value.Position || 0),
+              terms,
+            };
+          })
+          .filter((attribute): attribute is GenericAttributeOption => Boolean(attribute)),
+      );
+
+      if (!productId) {
+        setFeatures({
+          colors: [],
+          sizes: [],
+          models: [],
+          generic: [],
+        });
+        setVariationsCount(0);
+        return;
+      }
+
+      const existingVariationsRes = await apiClient.get<ApiResponse<ProductVariation[]>>(
+        `/product-variations?filters[product][id][$eq]=${productId}&populate=product_variation_color,product_variation_size,product_variation_model`,
+        {
+          cache: "no-store",
+        },
+      );
+
+      const existingVariations = (existingVariationsRes as any).data || [];
+
+      const existingColors = new Map<string, Feature>();
+      const existingSizes = new Map<string, Feature>();
+      const existingModels = new Map<string, Feature>();
+      const generic = (((assignmentsRes as any).data || []) as any[])
+        .map((assignment): GenericFeatureGroup | null => {
+          const attributes = assignment.attributes || assignment;
+          const definition = attributes.product_attribute?.data;
+          if (!definition?.id) return null;
+          const definitionAttributes = definition.attributes || definition;
+          if (definitionAttributes.LegacyProjection !== "None") return null;
+          const terms = (attributes.terms?.data || [])
+            .map((term: any) => ({
+              id: String(term.id),
+              value: String(term.attributes?.Title || term.Title || ""),
+              colorCode: term.attributes?.ColorCode || term.ColorCode,
+            }))
+            .filter((term: Feature) => term.id && term.value);
+          if (terms.length === 0) return null;
+          return {
+            assignmentId: Number(assignment.id),
+            attributeId: Number(definition.id),
+            title: String(definitionAttributes.Title || ""),
+            type: definitionAttributes.Type === "Color" ? "Color" : "Text",
+            position: Number(attributes.Position || 0),
+            terms,
+          };
+        })
+        .filter((group): group is GenericFeatureGroup => Boolean(group))
+        .sort((left, right) => left.position - right.position);
+
+      existingVariations.forEach((variation: any) => {
+        if (variation.attributes.product_variation_color?.data) {
+          const colorData = variation.attributes.product_variation_color.data;
+          existingColors.set(String(colorData.id), {
+            id: String(colorData.id),
+            value: colorData.attributes.Title,
+            colorCode: colorData.attributes.ColorCode,
+          });
+        }
+
+        if (variation.attributes.product_variation_size?.data) {
+          const sizeData = variation.attributes.product_variation_size.data;
+          existingSizes.set(String(sizeData.id), {
+            id: String(sizeData.id),
+            value: sizeData.attributes.Title,
+          });
+        }
+
+        if (variation.attributes.product_variation_model?.data) {
+          const modelData = variation.attributes.product_variation_model.data;
+          existingModels.set(String(modelData.id), {
+            id: String(modelData.id),
+            value: modelData.attributes.Title,
+          });
+        }
+      });
+
+      setFeatures({
+        colors: Array.from(existingColors.values()),
+        sizes: Array.from(existingSizes.values()),
+        models: Array.from(existingModels.values()),
+        generic,
+      });
+
+      setVariationsCount(existingVariations.length);
+    } catch (error) {
+      console.error("Error fetching variation data:", error);
+    }
+  }, [productId]);
+
+  // Fetch all available options and existing variations
+  useEffect(() => {
+    fetchVariationData();
+  }, [fetchVariationData]);
+
+  // Generate combinations and calculate potential variations count
+  useEffect(() => {
+    // Don't use default values - if sizes/models are empty, they won't be included
+    const sizeCount = features.sizes.length > 0 ? features.sizes.length : 1;
+    const modelCount = features.models.length > 0 ? features.models.length : 1;
+    const colorCount = features.colors.length > 0 ? features.colors.length : 1;
+    const genericCount = features.generic.reduce(
+      (count, group) => count * Math.max(group.terms.length, 1),
+      1,
+    );
+    const hasAnyAxis =
+      features.colors.length > 0 ||
+      features.sizes.length > 0 ||
+      features.models.length > 0 ||
+      features.generic.some((group) => group.terms.length > 0);
+    const potentialVariationsCount = hasAnyAxis
+      ? colorCount * sizeCount * modelCount * genericCount
+      : 0;
+
+    setVariationsCount(potentialVariationsCount);
+  }, [features]);
+
+  // Filter options based on input (keep showing already-added items for clarity)
+  useEffect(() => {
+    const filterOptions = (type: "colors" | "sizes" | "models") => {
+      const query = inputValues[type].trim().toLowerCase();
+      if (!query) return [];
+
+      return availableOptions[type].filter((option) => {
+        const title = (option.attributes.Title || "").toLowerCase();
+
+        // For colors, also search by ColorCode
+        if (type === "colors") {
+          const colorCode = (option.attributes.ColorCode || "").toLowerCase();
+          return title.includes(query) || colorCode.includes(query);
+        }
+
+        // For sizes and models, only search by Title
+        return title.includes(query);
+      });
+    };
+
+    setFilteredOptions({
+      colors: filterOptions("colors"),
+      sizes: filterOptions("sizes"),
+      models: filterOptions("models"),
+    });
+  }, [inputValues, availableOptions]);
+
+  const handleInputChange = (type: "colors" | "sizes" | "models", value: string) => {
+    setInputValues((prev) => ({
+      ...prev,
+      [type]: value,
+    }));
+  };
+
+  const addFeature = (type: "colors" | "sizes" | "models", item: ApiFeature) => {
+    // Check if this item is already selected
+    const isDuplicate = features[type].some((feature) => feature.id === String(item.id));
+
+    if (isDuplicate) return;
+
+    const newFeature: Feature = {
+      id: String(item.id),
+      value: item.attributes.Title,
+      colorCode: item.attributes.ColorCode,
+    };
+
+    setFeatures((prev) => ({
+      ...prev,
+      [type]: [...prev[type], newFeature],
+    }));
+
+    // Clear input after selection
+    setInputValues((prev) => ({
+      ...prev,
+      [type]: "",
+    }));
+  };
+
+  const removeFeature = (type: "colors" | "sizes" | "models", id: string) => {
+    setFeatures((prev) => ({
+      ...prev,
+      [type]: prev[type].filter((feature) => feature.id !== id),
+    }));
+  };
+
+  const removeGenericTerm = (attributeId: number, termId: string) => {
+    setFeatures((prev) => ({
+      ...prev,
+      generic: prev.generic.map((group) =>
+        group.attributeId === attributeId
+          ? { ...group, terms: group.terms.filter((term) => term.id !== termId) }
+          : group,
+      ),
+    }));
+  };
+
+  const addGenericAssignment = async () => {
+    const attributeId = Number(selectedGenericAttributeId);
+    const attribute = availableGenericAttributes.find((item) => item.id === attributeId);
+    if (!attribute || !productId) return;
+
+    setIsSavingAssignment(true);
+    try {
+      await apiClient.post("/product-attribute-assignments", {
+        data: {
+          product: productId,
+          product_attribute: attribute.id,
+          terms: attribute.terms.map((term) => Number(term.id)),
+          Position: attribute.position,
+          IsVisible: true,
+          IsVariation: true,
+        },
+      });
+      setSelectedGenericAttributeId("");
+      await fetchVariationData();
+      toast.success("ویژگی به محصول افزوده شد");
+    } catch (error) {
+      toast.error("افزودن ویژگی به محصول با خطا مواجه شد");
+    } finally {
+      setIsSavingAssignment(false);
+    }
+  };
+
+  const removeGenericAssignment = async (assignmentId: number) => {
+    setIsSavingAssignment(true);
+    try {
+      await apiClient.delete(`/product-attribute-assignments/${assignmentId}`);
+      await fetchVariationData();
+      toast.success("ویژگی از محصول حذف شد");
+    } catch (error) {
+      toast.error("حذف ویژگی از محصول با خطا مواجه شد");
+    } finally {
+      setIsSavingAssignment(false);
+    }
+  };
+
+  const generateVariations = async () => {
+    if (!productId || isGeneratingVariations) return;
+
+    try {
+      setIsGeneratingVariations(true);
+      const axes = [
+        ...(features.colors.length > 0
+          ? [{ type: "color", termIds: features.colors.map((term) => Number(term.id)) }]
+          : []),
+        ...(features.sizes.length > 0
+          ? [{ type: "size", termIds: features.sizes.map((term) => Number(term.id)) }]
+          : []),
+        ...(features.models.length > 0
+          ? [{ type: "model", termIds: features.models.map((term) => Number(term.id)) }]
+          : []),
+        ...features.generic
+          .filter((group) => group.terms.length > 0)
+          .map((group) => ({
+            type: "attribute",
+            attributeId: group.attributeId,
+            termIds: group.terms.map((term) => Number(term.id)),
+          })),
+      ];
+      if (axes.length === 0) {
+        toast.error("حداقل یک ویژگی و یک مقدار انتخاب کنید");
+        return;
+      }
+
+      const response = await apiClient.post<any>(`/products/${productId}/variation-combinations`, {
+        axes,
+      });
+      const result = response.data || response;
+
+      // Refresh variation data after creation
+      await fetchVariationData();
+      onVariationsGenerated?.();
+
+      if (!result.created) {
+        toast("هیچ تنوع جدیدی برای ایجاد وجود نداشت");
+      } else {
+        toast.success(`${result.created} تنوع جدید با موفقیت ایجاد شد`);
+      }
+    } catch (error) {
+      console.error("Error generating variations:", error);
+      toast.error("خطا در ایجاد تنوع‌های محصول");
+    } finally {
+      setIsGeneratingVariations(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="space-y-4">
+        <div className="w-full rounded-xl border border-slate-100">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="border-b border-slate-100">
+                <th className="w-[20%] border-l border-slate-100 px-4 py-2 text-right font-normal text-gray-900">
+                  ویژگی
+                </th>
+                <th className="w-[80%] px-4 py-2 text-right font-normal text-gray-900">مقدارها</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-slate-100">
+                <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
+                  رنگ
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {features.colors.map((color) => (
+                      <div
+                        key={color.id}
+                        className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1"
+                      >
+                        <span
+                          className="h-4 w-4 rounded-full border border-slate-200"
+                          style={{ backgroundColor: color.colorCode || "#f5f5f5" }}
+                          aria-label={`کد رنگ ${color.colorCode || "نامشخص"}`}
+                        />
+                        <span className="text-sm text-slate-500">{color.value}</span>
+                        <button
+                          onClick={() => removeFeature("colors", color.id)}
+                          className="text-slate-400"
+                        >
+                          <DeleteIcon />
+                        </button>
+                      </div>
+                    ))}
+                    <div className="relative min-w-[140px] flex-1">
+                      <input
+                        type="text"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                        placeholder="جستجوی رنگ..."
+                        value={inputValues.colors}
+                        onChange={(e) => handleInputChange("colors", e.target.value)}
+                      />
+                      {inputValues.colors && (
+                        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                          {filteredOptions.colors.length > 0 ? (
+                            filteredOptions.colors.map((option) => {
+                              const isSelected = features.colors.some(
+                                (feature) => feature.id === String(option.id),
+                              );
+
+                              return (
+                                <button
+                                  type="button"
+                                  key={option.id}
+                                  onClick={() => !isSelected && addFeature("colors", option)}
+                                  className={`flex w-full items-center gap-3 px-3 py-2 text-right text-sm ${
+                                    isSelected
+                                      ? "cursor-not-allowed text-slate-400"
+                                      : "cursor-pointer hover:bg-slate-100"
+                                  }`}
+                                  aria-disabled={isSelected}
+                                >
+                                  <span
+                                    className="h-5 w-5 rounded-full border border-slate-200"
+                                    style={{
+                                      backgroundColor: option.attributes.ColorCode || "#f5f5f5",
+                                    }}
+                                  />
+                                  <span>{option.attributes.Title}</span>
+                                  {option.attributes.ColorCode && (
+                                    <span className="text-xs text-slate-400" dir="ltr">
+                                      {option.attributes.ColorCode.toUpperCase()}
+                                    </span>
+                                  )}
+                                  {isSelected && (
+                                    <span className="text-[11px] text-green-600">افزوده شده</span>
+                                  )}
+                                </button>
+                              );
+                            })
+                          ) : (
+                            <div className="px-3 py-2 text-xs text-neutral-500">موردی یافت نشد</div>
+                          )}
+                          <button
+                            type="button"
+                            disabled={creationLoading.colors}
+                            onClick={() => openColorModal(inputValues.colors)}
+                            className={`flex w-full items-center justify-between border-t border-slate-100 px-3 py-2 text-xs ${
+                              creationLoading.colors
+                                ? "cursor-not-allowed text-slate-400"
+                                : "text-blue-600 hover:bg-blue-50"
+                            }`}
+                          >
+                            <span>افزودن رنگ «{inputValues.colors}»</span>
+                            <span aria-hidden="true">+</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={creationLoading.colors}
+                      onClick={() => openColorModal()}
+                      className={`rounded-full border border-dashed border-slate-200 px-3 py-1 text-xs transition ${
+                        creationLoading.colors
+                          ? "cursor-not-allowed text-slate-400"
+                          : "text-blue-600 hover:border-blue-400 hover:text-blue-700"
+                      }`}
+                    >
+                      افزودن رنگ دلخواه
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              <tr className="border-b border-slate-100">
+                <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
+                  سایز
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {features.sizes.map((size) => (
+                      <div
+                        key={size.id}
+                        className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-100 px-2 py-1"
+                      >
+                        <span className="text-sm text-slate-500">{size.value}</span>
+                        <button
+                          onClick={() => removeFeature("sizes", size.id)}
+                          className="text-slate-400"
+                        >
+                          <DeleteIcon />
+                        </button>
+                      </div>
+                    ))}
+                    <div className="relative min-w-[140px] flex-1">
+                      <input
+                        type="text"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                        placeholder="جستجوی سایز..."
+                        value={inputValues.sizes}
+                        onChange={(e) => handleInputChange("sizes", e.target.value)}
+                      />
+                      {inputValues.sizes && (
+                        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                          {filteredOptions.sizes.length > 0 ? (
+                            filteredOptions.sizes.map((option) => {
+                              const isSelected = features.sizes.some(
+                                (feature) => feature.id === String(option.id),
+                              );
+
+                              return (
+                                <button
+                                  type="button"
+                                  key={option.id}
+                                  onClick={() => !isSelected && addFeature("sizes", option)}
+                                  className={`w-full px-3 py-2 text-right text-sm ${
+                                    isSelected
+                                      ? "cursor-not-allowed text-slate-400"
+                                      : "cursor-pointer hover:bg-slate-100"
+                                  }`}
+                                  aria-disabled={isSelected}
+                                >
+                                  <span>{option.attributes.Title}</span>
+                                  {isSelected && (
+                                    <span className="mr-2 text-[11px] text-green-600">
+                                      افزوده شده
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })
+                          ) : (
+                            <div className="px-3 py-2 text-xs text-neutral-500">موردی یافت نشد</div>
+                          )}
+                          <button
+                            type="button"
+                            disabled={creationLoading.sizes}
+                            onClick={() => handleCreateTextOption("sizes", inputValues.sizes)}
+                            className={`flex w-full items-center justify-between border-t border-slate-100 px-3 py-2 text-xs ${
+                              creationLoading.sizes
+                                ? "cursor-not-allowed text-slate-400"
+                                : "text-blue-600 hover:bg-blue-50"
+                            }`}
+                          >
+                            <span>افزودن سایز «{inputValues.sizes}»</span>
+                            <span aria-hidden="true">+</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
+                  مدل
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {features.models.map((model) => (
+                      <div
+                        key={model.id}
+                        className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-100 px-2 py-1"
+                      >
+                        <span className="text-sm text-slate-500">{model.value}</span>
+                        <button
+                          onClick={() => removeFeature("models", model.id)}
+                          className="text-slate-400"
+                        >
+                          <DeleteIcon />
+                        </button>
+                      </div>
+                    ))}
+                    <div className="relative min-w-[140px] flex-1">
+                      <input
+                        type="text"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                        placeholder="جستجوی مدل..."
+                        value={inputValues.models}
+                        onChange={(e) => handleInputChange("models", e.target.value)}
+                      />
+                      {inputValues.models && (
+                        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                          {filteredOptions.models.length > 0 ? (
+                            filteredOptions.models.map((option) => {
+                              const isSelected = features.models.some(
+                                (feature) => feature.id === String(option.id),
+                              );
+
+                              return (
+                                <button
+                                  type="button"
+                                  key={option.id}
+                                  onClick={() => !isSelected && addFeature("models", option)}
+                                  className={`w-full px-3 py-2 text-right text-sm ${
+                                    isSelected
+                                      ? "cursor-not-allowed text-slate-400"
+                                      : "cursor-pointer hover:bg-slate-100"
+                                  }`}
+                                  aria-disabled={isSelected}
+                                >
+                                  <span>{option.attributes.Title}</span>
+                                  {isSelected && (
+                                    <span className="mr-2 text-[11px] text-green-600">
+                                      افزوده شده
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })
+                          ) : (
+                            <div className="px-3 py-2 text-xs text-neutral-500">موردی یافت نشد</div>
+                          )}
+                          <button
+                            type="button"
+                            disabled={creationLoading.models}
+                            onClick={() => handleCreateTextOption("models", inputValues.models)}
+                            className={`flex w-full items-center justify-between border-t border-slate-100 px-3 py-2 text-xs ${
+                              creationLoading.models
+                                ? "cursor-not-allowed text-slate-400"
+                                : "text-blue-600 hover:bg-blue-50"
+                            }`}
+                          >
+                            <span>افزودن مدل «{inputValues.models}»</span>
+                            <span aria-hidden="true">+</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              {availableGenericAttributes.some(
+                (attribute) =>
+                  !features.generic.some((group) => group.attributeId === attribute.id),
+              ) && (
+                <tr className="border-t border-slate-100">
+                  <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
+                    ویژگی عمومی
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <select
+                        value={selectedGenericAttributeId}
+                        onChange={(event) => setSelectedGenericAttributeId(event.target.value)}
+                        className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      >
+                        <option value="">انتخاب ویژگی تعریف‌شده</option>
+                        {availableGenericAttributes
+                          .filter(
+                            (attribute) =>
+                              !features.generic.some((group) => group.attributeId === attribute.id),
+                          )
+                          .map((attribute) => (
+                            <option key={attribute.id} value={attribute.id}>
+                              {attribute.title}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!selectedGenericAttributeId || isSavingAssignment}
+                        onClick={addGenericAssignment}
+                        className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white disabled:opacity-50"
+                      >
+                        افزودن به محصول
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {features.generic.map((group) => (
+                <tr key={group.attributeId} className="border-t border-slate-100">
+                  <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{group.title}</span>
+                      <button
+                        type="button"
+                        disabled={isSavingAssignment}
+                        onClick={() => removeGenericAssignment(group.assignmentId)}
+                        className="text-xs text-red-500 disabled:opacity-50"
+                      >
+                        حذف از محصول
+                      </button>
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-400">ویژگی عمومی</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {group.terms.map((term) => (
+                        <div
+                          key={term.id}
+                          className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-100 px-2 py-1"
+                        >
+                          {group.type === "Color" &&
+                            /^#[0-9a-f]{6}$/i.test(term.colorCode || "") && (
+                              <span
+                                className="h-4 w-4 rounded-full border border-black/10"
+                                style={{ backgroundColor: term.colorCode }}
+                                aria-hidden="true"
+                              />
+                            )}
+                          <span className="text-sm text-slate-500">{term.value}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeGenericTerm(group.attributeId, term.id)}
+                            className="text-slate-400"
+                            aria-label={`حذف ${term.value}`}
+                          >
+                            <DeleteIcon />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between rounded-xl border border-slate-100 p-4">
+          <div className="text-sm text-slate-600">
+            <p>
+              تعداد تنوع‌های محصول: <span className="font-semibold">{variationsCount}</span>
+            </p>
+            {variationsCount > 0 && (
+              <p className="mt-1 text-xs">
+                با ترکیب ویژگی‌های انتخاب شده {variationsCount} تنوع محصول ایجاد خواهد شد
+              </p>
+            )}
+          </div>
+          <button
+            onClick={generateVariations}
+            disabled={isGeneratingVariations || variationsCount === 0}
+            className={`rounded-lg px-4 py-2 text-sm text-white ${
+              isGeneratingVariations || variationsCount === 0
+                ? "bg-blue-300"
+                : "bg-blue-600 hover:bg-blue-700"
+            }`}
+          >
+            {isGeneratingVariations ? "در حال ایجاد تنوع‌ها..." : "ایجاد تنوع‌های محصول"}
+          </button>
+        </div>
+      </div>
+
+      <Transition appear show={colorModal.isOpen} as={Fragment}>
+        <Dialog as="div" className="relative z-[1300]" onClose={closeColorModal}>
+          <Transition.Child
+            as={Fragment}
+            enter="ease-out duration-200"
+            enterFrom="opacity-0"
+            enterTo="opacity-100"
+            leave="ease-in duration-150"
+            leaveFrom="opacity-100"
+            leaveTo="opacity-0"
+          >
+            <div className="fixed inset-0 bg-black/30" />
+          </Transition.Child>
+
+          <div className="fixed inset-0 overflow-y-auto">
+            <div className="flex min-h-full items-center justify-center p-4">
+              <Transition.Child
+                as={Fragment}
+                enter="ease-out duration-200"
+                enterFrom="opacity-0 scale-95"
+                enterTo="opacity-100 scale-100"
+                leave="ease-in duration-150"
+                leaveFrom="opacity-100 scale-100"
+                leaveTo="opacity-0 scale-95"
+              >
+                <Dialog.Panel className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+                  <Dialog.Title className="text-lg font-medium text-neutral-900">
+                    افزودن رنگ جدید
+                  </Dialog.Title>
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <label className="text-sm text-neutral-600">نام رنگ</label>
+                      <input
+                        type="text"
+                        value={colorModal.name}
+                        onChange={(e) => {
+                          const newName = e.target.value;
+                          // Auto-check "No Color" if name contains " کد" or starts with "کد"
+                          const shouldAutoCheck =
+                            newName.includes(" کد") || newName.startsWith("کد");
+
+                          if (process.env.NODE_ENV === "development") {
+                            console.log(
+                              "Color name changed:",
+                              newName,
+                              "| Should auto-check:",
+                              shouldAutoCheck,
+                            );
+                          }
+
+                          setColorModal((prev) => ({
+                            ...prev,
+                            name: newName,
+                            noColor: shouldAutoCheck ? true : prev.noColor,
+                            colorCode: shouldAutoCheck ? "" : prev.colorCode,
+                          }));
+                        }}
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
+                        placeholder="مثلاً آبی آسمانی"
+                      />
+                    </div>
+
+                    {/* No Color Checkbox */}
+                    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <input
+                        type="checkbox"
+                        id="noColorCheckboxFeature"
+                        checked={colorModal.noColor}
+                        onChange={(e) =>
+                          setColorModal((prev) => ({
+                            ...prev,
+                            noColor: e.target.checked,
+                            colorCode: e.target.checked ? "" : prev.colorCode,
+                          }))
+                        }
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <label
+                        htmlFor="noColorCheckboxFeature"
+                        className="cursor-pointer text-sm text-neutral-700"
+                      >
+                        بدون رنگ
+                      </label>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-neutral-600">انتخاب رنگ</label>
+                      {!colorModal.noColor ? (
+                        <>
+                          <div className="mt-3 flex flex-col gap-4 md:flex-row">
+                            <div className="flex-1">
+                              <HexColorPicker
+                                color={colorModal.colorCode}
+                                onChange={handleColorChange}
+                              />
+                            </div>
+                            <div className="flex-1 space-y-3">
+                              <div>
+                                <span className="text-xs text-neutral-500">کد HEX</span>
+                                <HexColorInput
+                                  prefixed
+                                  color={colorModal.colorCode}
+                                  onChange={handleColorChange}
+                                  aria-label="کد رنگ"
+                                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm uppercase focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
+                                />
+                              </div>
+                              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <span
+                                  className="h-10 w-10 rounded-lg border border-slate-200"
+                                  style={{ backgroundColor: colorModal.colorCode }}
+                                  aria-hidden="true"
+                                />
+                                <div className="text-xs text-neutral-500">
+                                  <p className="font-medium text-neutral-700">نمونه رنگ انتخابی</p>
+                                  <p>{colorModal.colorCode.toUpperCase()}</p>
+                                </div>
+                              </div>
+                              <p className="text-xs text-neutral-500">
+                                می‌توانید کد رنگ را بچسبانید یا از انتخاب‌گر برای پیدا کردن
+                                دقیق‌ترین طیف استفاده کنید.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="mt-4">
+                            <p className="text-xs font-medium text-neutral-600">
+                              رنگ‌های پر استفاده
+                            </p>
+                            <div className="mt-2 grid grid-cols-5 gap-2">
+                              {COLOR_PALETTE.map((color) => (
+                                <button
+                                  type="button"
+                                  key={color}
+                                  onClick={() => handleColorChange(color)}
+                                  className={`h-10 w-full rounded-lg border ${
+                                    colorModal.colorCode.toLowerCase() === color.toLowerCase()
+                                      ? "border-blue-500 ring-2 ring-blue-200"
+                                      : "border-slate-200"
+                                  }`}
+                                  style={{ backgroundColor: color }}
+                                  aria-label={`انتخاب رنگ ${color}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="mt-3 rounded-xl border border-slate-300 bg-slate-100 p-8">
+                          <div className="flex flex-col items-center justify-center text-center">
+                            <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-slate-200">
+                              <svg
+                                className="h-8 w-8 text-slate-500"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                                />
+                              </svg>
+                            </div>
+                            <p className="text-sm font-medium text-slate-600">
+                              برای تعیین رنگ گزینه بدون رنگ را خاموش کنید
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-6 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={closeColorModal}
+                      className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-neutral-600"
+                    >
+                      انصراف
+                    </button>
+                    <button
+                      type="button"
+                      disabled={creationLoading.colors}
+                      onClick={handleSaveColor}
+                      className={`rounded-lg px-4 py-2 text-sm text-white ${
+                        creationLoading.colors ? "bg-blue-300" : "bg-blue-600 hover:bg-blue-700"
+                      }`}
+                    >
+                      ذخیره رنگ
+                    </button>
+                  </div>
+                </Dialog.Panel>
+              </Transition.Child>
+            </div>
+          </div>
+        </Dialog>
+      </Transition>
+    </>
+  );
+};
+
+export default FeaturesTable;

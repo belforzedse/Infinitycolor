@@ -5,13 +5,18 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "build:admin": "pnpm --filter @repo/admin build",
     "e2e": "turbo run e2e",
     "e2e:smoke": "turbo run e2e:smoke",
+    "e2e:admin": "pnpm --filter @repo/e2e e2e:admin",
+    "e2e:admin:smoke": "pnpm --filter @repo/e2e e2e:admin:smoke",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:admin": "pnpm --filter @repo/admin test",
     "check-types": "turbo run check-types",
     "install:workspace": "bash .cursor/scripts/pnpm-install-with-fallback.sh",
     "install:frontend": "bash .cursor/scripts/pnpm-install-with-fallback.sh --filter @repo/frontend...",
+    "install:admin": "bash .cursor/scripts/pnpm-install-with-fallback.sh --filter @repo/admin...",
     "install:social": "bash .cursor/scripts/pnpm-install-with-fallback.sh --filter @repo/social..."
   },
   "devDependencies": {

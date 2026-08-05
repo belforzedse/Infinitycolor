@@ -377,18 +377,11 @@ async function seedHomepageProductSettings(client, productId, now) {
   const payload = JSON.stringify([productId]);
   const newestColumn = meta.find((item) => item.column_name === "home_newest_product_ids");
   const newestJsonCast = newestColumn?.data_type === "json" ? "::json" : "::jsonb";
-  const discountedColumn = meta.find(
-    (item) => item.column_name === "home_discounted_product_ids",
-  );
-  const discountedJsonCast =
-    discountedColumn?.data_type === "json" ? "::json" : "::jsonb";
-  const productIdAssignments = [
-    `home_newest_product_ids = $1${newestJsonCast}`,
-  ];
+  const discountedColumn = meta.find((item) => item.column_name === "home_discounted_product_ids");
+  const discountedJsonCast = discountedColumn?.data_type === "json" ? "::json" : "::jsonb";
+  const productIdAssignments = [`home_newest_product_ids = $1${newestJsonCast}`];
   if (discountedColumn) {
-    productIdAssignments.push(
-      `home_discounted_product_ids = $1${discountedJsonCast}`,
-    );
+    productIdAssignments.push(`home_discounted_product_ids = $1${discountedJsonCast}`);
   }
   const existing = await client.query(`SELECT id FROM site_settings ORDER BY id ASC LIMIT 1`);
   const updatedAtClause = available.has("updated_at") ? `, updated_at = $2` : "";
@@ -404,9 +397,7 @@ async function seedHomepageProductSettings(client, productId, now) {
        WHERE id = ${idParam}`,
       params,
     );
-    console.log(
-      `[seed:e2e] Curated homepage newest and discounted product ids: [${productId}].`,
-    );
+    console.log(`[seed:e2e] Curated homepage newest and discounted product ids: [${productId}].`);
     return [productId];
   }
 
@@ -435,9 +426,7 @@ async function seedHomepageProductSettings(client, productId, now) {
      VALUES (${params.join(", ")})`,
     values,
   );
-  console.log(
-    `[seed:e2e] Curated homepage newest and discounted product ids: [${productId}].`,
-  );
+  console.log(`[seed:e2e] Curated homepage newest and discounted product ids: [${productId}].`);
   return [productId];
 }
 
@@ -885,37 +874,6 @@ async function roleIdByNameOptional(client, roleName) {
   return Number.isFinite(roleId) ? roleId : null;
 }
 
-async function ensureRolePermission(client, roleName, action, now) {
-  const roleId = await roleIdByName(client, roleName);
-  let permissionId = Number(
-    (await client.query(`SELECT id FROM up_permissions WHERE action = $1 LIMIT 1`, [action]))
-      .rows[0]?.id,
-  );
-
-  if (!Number.isFinite(permissionId)) {
-    const permission = await insertRow(client, "up_permissions", {
-      action,
-      created_at: now,
-      updated_at: now,
-    });
-    permissionId = permission.id;
-  }
-
-  await insertLink(client, "up_permissions_role_links", {
-    permission_id: permissionId,
-    role_id: roleId,
-  });
-}
-
-async function ensureE2ERolePermissions(client, now) {
-  await ensureRolePermission(
-    client,
-    FIXTURE.auth.customer.roleName,
-    "api::order.order.getActiveReserve",
-    now,
-  );
-}
-
 async function seedUser(client, userDef, now) {
   const roleId = await roleIdByName(client, userDef.roleName);
   const passwordHash = await bcrypt.hash(userDef.password, 10);
@@ -1136,8 +1094,6 @@ async function seedCustomerCart(client, userId, variationId, now) {
 
 async function seed(client) {
   const now = new Date();
-  await ensureE2ERolePermissions(client, now);
-
   const category = await insertRow(client, "product_categories", {
     title: FIXTURE.category.title,
     slug: FIXTURE.category.slug,

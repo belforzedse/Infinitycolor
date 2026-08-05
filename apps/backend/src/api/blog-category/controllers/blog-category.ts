@@ -4,7 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { MANAGEMENT_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import { CONTENT_EDITOR_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
 
 export default factories.createCoreController("api::blog-category.blog-category", ({ strapi }) => ({
   async getActorRoleName(userId?: number, fallback?: any) {
@@ -23,7 +23,7 @@ export default factories.createCoreController("api::blog-category.blog-category"
     // Allow API tokens (no user) or users with proper roles
     if (user) {
       const actorRoleName = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
+      if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
         return ctx.forbidden("You don't have permission to create blog categories");
       }
     }
@@ -39,7 +39,7 @@ export default factories.createCoreController("api::blog-category.blog-category"
     // Allow API tokens (no user) or users with proper roles
     if (user) {
       const actorRoleName = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
+      if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
         return ctx.forbidden("You don't have permission to update blog categories");
       }
     }
@@ -52,11 +52,11 @@ export default factories.createCoreController("api::blog-category.blog-category"
   async delete(ctx) {
     const user = ctx.state.user;
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    if (!user || !roleIsAllowed(actorRoleName, MANAGEMENT_ROLES)) {
+    if (!user || !roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
       return ctx.forbidden("You don't have permission to delete blog categories");
     }
-    
+
     const { data, meta } = await super.delete(ctx);
     return { data, meta };
-  }
+  },
 }));

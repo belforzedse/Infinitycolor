@@ -44,6 +44,8 @@ export interface ApiClientConfig {
     | Promise<string | null>
     | string
     | null;
+  /** Optional per-attempt headers such as a non-sensitive correlation id. */
+  getRequestHeaders?: () => Record<string, string>;
   /** Invalidates the provider's cached token before the single safe 401 retry. */
   onAuthTokenRejected?: () => void;
   /**
@@ -79,6 +81,7 @@ export class ApiClient {
   };
   private readonly errorMessages: ErrorMessages;
   private readonly getAuthToken?: ApiClientConfig["getAuthToken"];
+  private readonly getRequestHeaders?: ApiClientConfig["getRequestHeaders"];
   private readonly onAuthTokenRejected?: ApiClientConfig["onAuthTokenRejected"];
   private readonly onHttpError?: ApiClientConfig["onHttpError"];
   private readonly apiCache?: ApiCache;
@@ -89,6 +92,7 @@ export class ApiClient {
     this.retryConfig = config.retryConfig ?? defaultRetryConfig;
     this.errorMessages = config.errorMessages ?? ERROR_MESSAGES;
     this.getAuthToken = config.getAuthToken;
+    this.getRequestHeaders = config.getRequestHeaders;
     this.onAuthTokenRejected = config.onAuthTokenRejected;
     this.onHttpError = config.onHttpError;
     this.apiCache = config.apiCache;
@@ -460,6 +464,7 @@ export class ApiClient {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...this.getRequestHeaders?.(),
       ...customHeaders,
     };
 

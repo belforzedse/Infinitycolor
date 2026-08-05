@@ -29,6 +29,8 @@ export const MANAGEMENT_ROLES: RoleName[] = [
   ROLE_NAMES.EDITOR,
 ];
 
+export const CONTENT_EDITOR_ROLES: RoleName[] = [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.EDITOR];
+
 export const CUSTOMER_CAPABLE_ROLES: RoleName[] = [
   ROLE_NAMES.CUSTOMER,
   ROLE_NAMES.STORE_MANAGER,
@@ -54,7 +56,10 @@ export function normalizeRoleName(name?: string | null): RoleName | null {
     return null;
   }
 
-  const compactKey = name.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const compactKey = name
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
   const aliasMatch = ROLE_ALIAS_MAP[compactKey];
   if (aliasMatch) {
     return aliasMatch;
@@ -96,20 +101,15 @@ export async function fetchUserWithRole(strapi: Strapi, userId?: number) {
     return null;
   }
 
-  return strapi
-    .query("plugin::users-permissions.user")
-    .findOne({
-      where: { id: userId },
-      populate: ["role", "user_role", "user_info"],
-    });
+  return strapi.query("plugin::users-permissions.user").findOne({
+    where: { id: userId },
+    populate: ["role", "user_role", "user_info"],
+  });
 }
 
 export async function resolveUserRoleName(strapi: Strapi, user?: any): Promise<RoleName | null> {
   const roleName =
-    user?.role?.name ||
-    user?.role?.type ||
-    user?.user_role?.Name ||
-    user?.user_role?.name;
+    user?.role?.name || user?.role?.type || user?.user_role?.Name || user?.user_role?.name;
 
   const normalized = normalizeRoleName(roleName);
   if (normalized) {
@@ -137,7 +137,13 @@ function readTargetUserId(ctx: any): unknown {
   );
 }
 
-function setContextError(ctx: any, method: "badRequest" | "forbidden" | "unauthorized", status: number, message: string, payload?: object) {
+function setContextError(
+  ctx: any,
+  method: "badRequest" | "forbidden" | "unauthorized",
+  status: number,
+  message: string,
+  payload?: object,
+) {
   const handler = ctx?.[method];
   if (typeof handler === "function") {
     try {
@@ -158,7 +164,10 @@ function setContextError(ctx: any, method: "badRequest" | "forbidden" | "unautho
   ctx.body = payload ? { error: message, ...payload } : { error: message };
 }
 
-export async function resolveCustomerTargetUserId(ctx: any, strapi: Strapi): Promise<number | null> {
+export async function resolveCustomerTargetUserId(
+  ctx: any,
+  strapi: Strapi,
+): Promise<number | null> {
   const actorId = Number(ctx?.state?.user?.id);
   if (!Number.isInteger(actorId) || actorId <= 0) {
     setContextError(ctx, "unauthorized", 401, "Authentication required");
@@ -183,7 +192,7 @@ export async function resolveCustomerTargetUserId(ctx: any, strapi: Strapi): Pro
   }
 
   const roleName = await resolveUserRoleName(strapi, ctx.state.user);
-  if (roleIsAllowed(roleName, STORE_MANAGER_PLUS_ROLES)) {
+  if (roleIsAllowed(roleName, [ROLE_NAMES.SUPERADMIN])) {
     return targetUserId;
   }
 
@@ -200,7 +209,5 @@ export async function resolveCustomerTargetUserId(ctx: any, strapi: Strapi): Pro
  * @returns The role record matching `roleName`, or `null` if no matching role is found
  */
 export async function fetchRoleByName(strapi: Strapi, roleName: RoleName) {
-  return strapi
-    .query("plugin::users-permissions.role")
-    .findOne({ where: { name: roleName } });
+  return strapi.query("plugin::users-permissions.role").findOne({ where: { name: roleName } });
 }

@@ -133,6 +133,62 @@ function providerSummary<T>(result: SnappayCallResult<T>) {
   };
 }
 
+export function extractSnappayPaymentTokenFromRedirectUrl(
+  value: unknown,
+): string {
+  let url: URL;
+  try {
+    url = new URL(String(value || ""));
+  } catch {
+    return "";
+  }
+  if (url.protocol !== "https:") return "";
+  const token = String(url.searchParams.get("paymentToken") || "").trim();
+  if (!token || token.length > 255 || /\s/.test(token)) return "";
+  return token;
+}
+
+async function resolveSnappayPaymentToken(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+): Promise<string> {
+  const stored = String(bundle.transaction.TrackId || "").trim();
+  if (stored) return stored;
+
+  const recovered = extractSnappayPaymentTokenFromRedirectUrl(
+    bundle.attempt.redirectUrl,
+  );
+  if (!recovered) return "";
+
+  const expectedFingerprint = String(
+    bundle.attempt.providerResponse?.tokenFingerprint || "",
+  ).trim();
+  const actualFingerprint = displaySnappayFingerprint(
+    snappayTokenFingerprint(recovered),
+  );
+  if (expectedFingerprint && expectedFingerprint !== actualFingerprint) {
+    strapi.log.error("Refused mismatched SnappPay token recovery", {
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order.id,
+      transactionId: bundle.attempt.providerReference,
+    });
+    return "";
+  }
+
+  await strapi.db.query(TX_UID).update({
+    where: { id: bundle.transaction.id },
+    data: { TrackId: recovered },
+  } as any);
+  bundle.transaction.TrackId = recovered;
+  strapi.log.warn("Recovered missing SnappPay payment token", {
+    attemptId: bundle.attempt.attemptId,
+    orderId: bundle.order.id,
+    transactionId: bundle.attempt.providerReference,
+    tokenFingerprint: actualFingerprint,
+  });
+  return recovered;
+}
+
 function isAmbiguousResult<T>(result: SnappayCallResult<T>): boolean {
   return (
     result.diagnostic.timedOut === true ||
@@ -1941,7 +1997,7 @@ export async function processSnappayOperation(
       return { status: "completed", replayed: true };
     }
 
-    const token = String(bundle.transaction.TrackId || "").trim();
+    const token = await resolveSnappayPaymentToken(strapi, bundle);
     if (!token) {
       if (operatorAction) {
         await markOperatorOperation(

@@ -6,7 +6,6 @@ import type { RoleName } from "../../../utils/roles";
 import {
   MANAGEMENT_ROLES,
   ROLE_NAMES,
-  STORE_MANAGER_PLUS_ROLES,
   roleIsAllowed,
   fetchUserWithRole,
 } from "../../../utils/roles";
@@ -39,14 +38,9 @@ const TRAFFIC_REALTIME_CACHE_TTL_MS = parsePositiveInt(
 );
 const trafficCache = new Map<string, { expiresAt: number; payload: any }>();
 
-const PRODUCT_REPORT_ROLES: RoleName[] = [
-  ROLE_NAMES.SUPERADMIN,
-  ROLE_NAMES.STORE_MANAGER,
-  ROLE_NAMES.FOUNDER,
-];
+const PRODUCT_REPORT_ROLES: RoleName[] = [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.FOUNDER];
 
-const PRODUCT_REPORT_ACCESS_MESSAGE =
-  "Access denied - Superadmin, Store manager or Founder role required";
+const PRODUCT_REPORT_ACCESS_MESSAGE = "Access denied - Superadmin or Founder role required";
 
 function parseDate(value?: string, fallbackDays = 30): Date {
   if (!value) {
@@ -93,7 +87,9 @@ function setTrafficCache(key: string, payload: any, ttlMs: number) {
 }
 
 const normalizeResourceScope = (value: unknown): AdminActivityResourceScope => {
-  const normalized = String(value || "all").trim().toLowerCase();
+  const normalized = String(value || "all")
+    .trim()
+    .toLowerCase();
   if (normalized === "order" || normalized === "product") return normalized;
   return "all";
 };
@@ -350,7 +346,11 @@ async function attachCoverImages(rows: productAnalytics.ProductPerformanceRow[])
 export default {
   async liquidity(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, STORE_MANAGER_PLUS_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureRoleAccess(
+        ctx,
+        [ROLE_NAMES.SUPERADMIN],
+        "Access denied - Superadmin role required",
+      );
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
@@ -404,11 +404,7 @@ export default {
 
   async productSales(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.STORE_MANAGER, ROLE_NAMES.FOUNDER],
-        "Access denied - Superadmin, Store manager or Founder role required",
-      );
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
@@ -743,8 +739,8 @@ export default {
     try {
       const user = await ensureRoleAccess(
         ctx,
-        STORE_MANAGER_PLUS_ROLES,
-        PRODUCT_REPORT_ACCESS_MESSAGE,
+        [ROLE_NAMES.SUPERADMIN],
+        "Access denied - Superadmin role required",
       );
       if (!user) return;
 
@@ -1225,7 +1221,8 @@ export default {
           notes: {
             gatewaySales:
               "مبلغ تسویه‌شده هر درگاه بر مبنای «سفارش‌های پرداخت‌شده، خالص از مرجوعی» است و شامل هزینه ارسال نیز می‌شود.",
-            shippingRevenue: "درآمد ارسال بر مبنای هزینه ارسال ثبت‌شده روی سفارش است (نه فروش محصول).",
+            shippingRevenue:
+              "درآمد ارسال بر مبنای هزینه ارسال ثبت‌شده روی سفارش است (نه فروش محصول).",
           },
         },
       };
@@ -1460,10 +1457,7 @@ export default {
         columns,
         rows: dataRows,
       });
-      ctx.set(
-        "Content-Type",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      );
+      ctx.set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       ctx.set("Content-Disposition", `attachment; filename="product-report-${Date.now()}.xlsx"`);
       ctx.body = buffer;
     } catch (error) {

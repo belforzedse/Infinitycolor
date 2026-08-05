@@ -105,9 +105,7 @@ describe("report controller - Founder access", () => {
 
     await controller.trafficDashboard(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith(
-      expect.stringContaining("Superadmin"),
-    );
+    expect(ctx.forbidden).toHaveBeenCalledWith(expect.stringContaining("Superadmin"));
   });
 
   it("blocks Founder from realtime traffic", async () => {
@@ -117,9 +115,7 @@ describe("report controller - Founder access", () => {
 
     await controller.trafficRealtime(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith(
-      expect.stringContaining("Superadmin"),
-    );
+    expect(ctx.forbidden).toHaveBeenCalledWith(expect.stringContaining("Superadmin"));
   });
 
   it("blocks Founder from the global admin-activity report", async () => {
@@ -152,6 +148,19 @@ describe("report controller - Founder access", () => {
     expect(ctx.forbidden).toHaveBeenCalled();
   });
 
+  it("blocks Store manager from product and liquidity reports", async () => {
+    mockStrapiForRole("Store manager");
+    const controller = loadController();
+    const productCtx = createCtx();
+    const liquidityCtx = createCtx();
+
+    await controller.productSales(productCtx);
+    await controller.liquidity(liquidityCtx);
+
+    expect(productCtx.forbidden).toHaveBeenCalled();
+    expect(liquidityCtx.forbidden).toHaveBeenCalledWith(expect.stringContaining("Superadmin"));
+  });
+
   it("filters admin activity by product search and related order ids", async () => {
     const { entityFindMany } = mockStrapiForAdminActivitySearch();
     const controller = loadController();
@@ -171,9 +180,7 @@ describe("report controller - Founder access", () => {
       "api::product.product",
       expect.objectContaining({
         filters: expect.objectContaining({
-          $or: expect.arrayContaining([
-            { product_variations: { SKU: { $containsi: "SKU-100" } } },
-          ]),
+          $or: expect.arrayContaining([{ product_variations: { SKU: { $containsi: "SKU-100" } } }]),
         }),
       }),
     );

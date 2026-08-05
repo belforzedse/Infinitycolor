@@ -6,7 +6,7 @@ export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: "ثبت موفق سفارش",
-  description: "سفارش شما با موفقیت ثبت شد و در حال پردازش است.",
+  description: "سفارش شما با موفقیت ثبت شد و در حال انجام است.",
   robots: { index: false, follow: false },
   alternates: { canonical: "/orders/success" },
 };

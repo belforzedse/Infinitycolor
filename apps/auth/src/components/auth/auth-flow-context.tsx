@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { authGet } from "./auth-api";
+import { authPost } from "./auth-api";
 
 interface AuthFlowContextValue {
   phone: string;
@@ -30,7 +30,7 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    authGet<{ phone: string | null }>("/infinity/flow")
+    authPost<{ phone: string | null }>("/infinity/flow/start", { returnTo })
       .then((flow) => {
         if (active && flow.phone) setPhone(flow.phone);
       })
@@ -41,7 +41,7 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [returnTo]);
 
   const href = useCallback(
     (path: string) => {

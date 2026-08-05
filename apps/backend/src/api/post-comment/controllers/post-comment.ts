@@ -5,7 +5,7 @@
 
 import { factories } from "@strapi/strapi";
 import {
-  STORE_MANAGER_PLUS_ROLES,
+  CONTENT_EDITOR_ROLES,
   fetchUserWithRole,
   resolveCustomerTargetUserId,
   roleIsAllowed,
@@ -37,9 +37,10 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     if (ctx.state?.user) return ctx.state.user;
 
     const authHeader = ctx.request?.header?.authorization || ctx.request?.headers?.authorization;
-    const token = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
+    const token =
+      typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+        ? authHeader.split(" ")[1]
+        : null;
 
     if (!token) return null;
 
@@ -63,7 +64,9 @@ export default factories.createCoreController("api::post-comment.post-comment", 
 
   async getActorRoleName(userId?: number, fallback?: any) {
     if (!userId) {
-      return fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null;
+      return (
+        fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null
+      );
     }
 
     const userWithRole = await fetchUserWithRole(strapi, userId);
@@ -77,7 +80,7 @@ export default factories.createCoreController("api::post-comment.post-comment", 
 
   async hasManagementRole(user?: any) {
     const actorRoleName = await this.getActorRoleName(user?.id, user);
-    return roleIsAllowed(actorRoleName, STORE_MANAGER_PLUS_ROLES);
+    return roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
   },
 
   async find(ctx) {
@@ -145,9 +148,13 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     const parentCommentId = relationId(data.parent_comment);
     let parentComment: any = null;
     if (parentCommentId) {
-      parentComment = await strapi.entityService.findOne("api::post-comment.post-comment", parentCommentId, {
-        populate: ["post", "user"],
-      });
+      parentComment = await strapi.entityService.findOne(
+        "api::post-comment.post-comment",
+        parentCommentId,
+        {
+          populate: ["post", "user"],
+        },
+      );
       if (!parentComment) {
         return ctx.notFound("Parent comment not found");
       }
@@ -198,9 +205,13 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
     if (!targetUserId) return;
 
-    const existingComment = await strapi.entityService.findOne("api::post-comment.post-comment", id, {
-      populate: ["user"],
-    });
+    const existingComment = await strapi.entityService.findOne(
+      "api::post-comment.post-comment",
+      id,
+      {
+        populate: ["user"],
+      },
+    );
 
     if (!existingComment) {
       return ctx.notFound("Comment not found");
@@ -244,9 +255,13 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     const targetUserId = await resolveCustomerTargetUserId(ctx, strapi);
     if (!targetUserId) return;
 
-    const existingComment = await strapi.entityService.findOne("api::post-comment.post-comment", id, {
-      populate: ["user"],
-    });
+    const existingComment = await strapi.entityService.findOne(
+      "api::post-comment.post-comment",
+      id,
+      {
+        populate: ["user"],
+      },
+    );
 
     if (!existingComment) {
       return ctx.notFound("Comment not found");

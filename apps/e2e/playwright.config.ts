@@ -46,6 +46,9 @@ function resolveWebServerApiEnv(): Record<string, string> {
 
 export default defineConfig({
   testDir: "./tests",
+  // Admin CRUD now belongs to the independently runnable admin application.
+  // Its dedicated config owns these files and their root-relative URLs.
+  testIgnore: ["super-admin/**/*.spec.ts"],
   outputDir: "test-results",
   globalSetup: "./scripts/global-setup.ts",
   fullyParallel: true,

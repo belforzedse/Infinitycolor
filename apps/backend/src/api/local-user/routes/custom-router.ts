@@ -1,10 +1,10 @@
-import { MANAGEMENT_ROLES } from "../../../utils/roles";
+import { ROLE_NAMES } from "../../../utils/roles";
 
 const adminPolicy = [
   {
     name: "global::role-based",
     config: {
-      roles: MANAGEMENT_ROLES,
+      roles: [ROLE_NAMES.SUPERADMIN],
     },
   },
 ];

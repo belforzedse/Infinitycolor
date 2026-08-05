@@ -1,3 +1,5 @@
+import { STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
+
 export default {
   routes: [
     {
@@ -9,7 +11,7 @@ export default {
         policies: [
           {
             name: "global::role-based",
-            config: { roles: ["superadmin"] },
+            config: { roles: STORE_MANAGER_PLUS_ROLES },
           },
         ],
         middlewares: [],

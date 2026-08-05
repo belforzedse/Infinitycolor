@@ -7,8 +7,6 @@ import { toast } from "react-hot-toast";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/services";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
-import StoreManagerNotice from "@/components/SuperAdmin/StoreManagerNotice";
 import CouponProductSelector, {
   type SelectedProduct,
 } from "@/components/SuperAdmin/Coupons/ProductSelector";
@@ -33,7 +31,6 @@ export type Coupon = {
 };
 
 export default function Page() {
-  const { isStoreManager, isLoading } = useCurrentUser();
   const router = useRouter();
   const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
   const [selectedDeliveries, setSelectedDeliveries] = useState<SelectedDelivery[]>([]);
@@ -45,16 +42,6 @@ export default function Page() {
     minCartTotal: null,
     maxCartTotal: null,
   };
-
-  if (isLoading) {
-    return <div>در حال بارگذاری...</div>;
-  }
-
-  if (isStoreManager) {
-    return (
-      <StoreManagerNotice description="برای مدیریت یا ایجاد کد تخفیف باید با نقش سوپر ادمین وارد شوید." />
-    );
-  }
 
   return (
     <>
@@ -107,7 +94,7 @@ export default function Page() {
             toast.error(message);
           }
         }}
-        />
+      />
       <div className="mt-6 space-y-6">
         <CouponProductSelector
           products={selectedProducts}

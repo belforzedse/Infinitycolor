@@ -507,7 +507,7 @@ describe("Auth Controller - Real Implementation", () => {
       expect(mockStrapi.entityService.findOne).toHaveBeenCalledWith(
         "plugin::users-permissions.user",
         userId,
-        expect.objectContaining({ populate: ["role"] }),
+        expect.objectContaining({ populate: { role: { populate: ["permissions"] } } }),
       );
       expect(ctx.body).toMatchObject({
         FirstName: "John",

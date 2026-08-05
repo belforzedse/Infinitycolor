@@ -1,12 +1,12 @@
 import { adminPaymentOperationHandler } from "../controllers/helpers/adminPaymentOperation";
 
 describe("SnappPay admin payment-operation status", () => {
-  it("returns separate HTTP and provider diagnostics to an operational admin", async () => {
+  it("returns separate HTTP and provider diagnostics to Superadmin", async () => {
     const queries: Record<string, any> = {
       "plugin::users-permissions.user": {
         findOne: jest.fn().mockResolvedValue({
           id: 7,
-          role: { name: "Store manager" },
+          role: { name: "Superadmin" },
         }),
       },
       "api::payment-operation.payment-operation": {
@@ -53,5 +53,34 @@ describe("SnappPay admin payment-operation status", () => {
         updatedAt: "2026-07-27T09:00:01.000Z",
       },
     });
+  });
+
+  it("blocks Store manager from raw payment-operation records", async () => {
+    const paymentFind = jest.fn();
+    const strapi = {
+      db: {
+        query: jest.fn((uid: string) =>
+          uid === "plugin::users-permissions.user"
+            ? {
+                findOne: jest.fn().mockResolvedValue({
+                  id: 7,
+                  role: { name: "Store manager" },
+                }),
+              }
+            : { findOne: paymentFind },
+        ),
+      },
+    } as any;
+    const ctx = {
+      params: { id: "41", operationId: "91" },
+      state: { user: { id: 7 } },
+      badRequest: jest.fn(),
+      forbidden: jest.fn(),
+    } as any;
+
+    await adminPaymentOperationHandler(strapi, ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalledWith("Admin access required");
+    expect(paymentFind).not.toHaveBeenCalled();
   });
 });

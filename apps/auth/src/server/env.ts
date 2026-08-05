@@ -13,6 +13,8 @@ export interface AuthEnvironment {
   databaseUrl: string;
   flowSecret: string;
   trustedStorefrontOrigins: readonly string[];
+  trustedAdminOrigins: readonly string[];
+  trustedApplicationOrigins: readonly string[];
   defaultStorefrontOrigin: string;
   strapiInternalUrl: string;
   bridgeSecret: string;
@@ -147,6 +149,25 @@ export function getAuthEnv(): AuthEnvironment {
     }
   }
 
+  const defaultAdminOrigin =
+    environment === "production"
+      ? "https://admin.infinitycolor.co"
+      : environment === "staging"
+        ? "https://admin.staging.infinitycolor.co"
+        : "http://localhost:2891";
+  const trustedAdminOrigins = parseExactOrigins(
+    process.env.AUTH_TRUSTED_ADMIN_ORIGINS?.trim() || defaultAdminOrigin,
+  );
+  if (
+    environment !== "development" &&
+    (trustedAdminOrigins.length !== 1 || trustedAdminOrigins[0] !== defaultAdminOrigin)
+  ) {
+    throw new Error(`${environment} admin origins must match its frozen allowlist`);
+  }
+  const trustedApplicationOrigins = Array.from(
+    new Set([...trustedStorefrontOrigins, ...trustedAdminOrigins]),
+  );
+
   const betterAuthUrl = exactOrigin("BETTER_AUTH_URL");
   const jwtIssuer = exactOrigin("AUTH_JWT_ISSUER");
   if (betterAuthUrl !== jwtIssuer) {
@@ -184,6 +205,8 @@ export function getAuthEnv(): AuthEnvironment {
     databaseUrl: required("AUTH_DATABASE_URL"),
     flowSecret: strongSecret("AUTH_FLOW_SECRET"),
     trustedStorefrontOrigins,
+    trustedAdminOrigins,
+    trustedApplicationOrigins,
     defaultStorefrontOrigin,
     strapiInternalUrl: serviceOrigin("STRAPI_INTERNAL_URL"),
     bridgeSecret: strongSecret("AUTH_STRAPI_BRIDGE_SECRET"),

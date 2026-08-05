@@ -27,7 +27,18 @@ function withCsp(response: NextResponse, policy: string): NextResponse {
 }
 
 function trustedOrigins(): Set<string> {
-  const configured = (process.env.AUTH_TRUSTED_STOREFRONT_ORIGINS ?? "")
+  const deployment = process.env.AUTH_DEPLOYMENT_ENV?.trim();
+  const defaultAdminOrigin =
+    deployment === "production"
+      ? "https://admin.infinitycolor.co"
+      : deployment === "staging"
+        ? "https://admin.staging.infinitycolor.co"
+        : "http://localhost:2891";
+  const configured = [
+    process.env.AUTH_TRUSTED_STOREFRONT_ORIGINS ?? "",
+    process.env.AUTH_TRUSTED_ADMIN_ORIGINS?.trim() || defaultAdminOrigin,
+  ]
+    .join(",")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean)

@@ -68,6 +68,44 @@ describe("ShoppingCartBillPaymentGateway", () => {
     expect(screen.getByTestId("payment-gateway-snappay")).toBeDisabled();
   });
 
+  it("renders the provider title first and preserves the description as the secondary line", () => {
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="snappay"
+        onChange={onChange}
+        availableGateways={["snappay"]}
+        snappEligible
+        snappTitle="  پرداخت اعتباری اسنپ پی  "
+        snappDescription="  تا سقف اعتبار قابل استفاده  "
+      />,
+    );
+
+    const title = screen.getByText("پرداخت اعتباری اسنپ پی");
+    const description = screen.getByText("تا سقف اعتبار قابل استفاده");
+
+    expect(title.parentElement).toBe(description.parentElement);
+    expect(Array.from(title.parentElement?.children || [])).toEqual([title, description]);
+    expect(screen.queryByText("اسنپ پی")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the default SnappPay title until a provider title is received", () => {
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="snappay"
+        onChange={onChange}
+        availableGateways={["snappay"]}
+        snappEligible
+        snappTitle=" "
+        snappDescription="تا سقف اعتبار قابل استفاده"
+      />,
+    );
+
+    const gateway = screen.getByTestId("payment-gateway-snappay");
+    expect(screen.getByText("اسنپ پی")).toBeInTheDocument();
+    expect(screen.getByText("تا سقف اعتبار قابل استفاده")).toBeInTheDocument();
+    expect(gateway).toHaveAccessibleName(/اسنپ پی/);
+  });
+
   it("renders no gateway cards when availableGateways is omitted", () => {
     expect(() => {
       render(<ShoppingCartBillPaymentGateway selected="samankish" onChange={onChange} />);

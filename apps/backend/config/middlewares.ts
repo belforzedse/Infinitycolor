@@ -1,15 +1,51 @@
 const frontendUrl = process.env.FRONTEND_URL || process.env.FRONTEND_BASE_URL || "https://infinitycolor.co";
-const corsOrigins = [
-  frontendUrl.replace(/\/$/, ""),
-  "https://new.infinitycolor.co",
-  "https://infinitycolor.co",
-  "https://infinitygram.co",
-  "http://localhost:2888",
-  "http://127.0.0.1:2888",
-  // @repo/social (`next dev -p 2890`)
-  "http://localhost:2890",
-  "http://127.0.0.1:2890",
-].filter((origin, i, arr) => arr.indexOf(origin) === i); // dedupe
+const adminUrl =
+  process.env.ADMIN_URL ||
+  (frontendUrl.includes("staging.infinitycolor.co")
+    ? "https://admin.staging.infinitycolor.co"
+    : process.env.NODE_ENV === "production"
+      ? "https://admin.infinitycolor.co"
+      : "http://localhost:2891");
+
+function exactOrigin(name: string, value: string): string {
+  const url = new URL(value);
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(`${name} must be an exact HTTP(S) origin`);
+  }
+  return url.origin;
+}
+
+const exactFrontendOrigin = exactOrigin("FRONTEND_URL", frontendUrl);
+const exactAdminOrigin = exactOrigin("ADMIN_URL", adminUrl);
+const corsOrigins = (
+  exactAdminOrigin === "https://admin.staging.infinitycolor.co"
+    ? [exactFrontendOrigin, exactAdminOrigin, "https://staging.infinitycolor.co"]
+    : exactAdminOrigin === "https://admin.infinitycolor.co"
+      ? [
+          exactFrontendOrigin,
+          exactAdminOrigin,
+          "https://new.infinitycolor.co",
+          "https://infinitycolor.co",
+          "https://infinitygram.co",
+        ]
+      : [
+          exactFrontendOrigin,
+          exactAdminOrigin,
+          "http://localhost:2888",
+          "http://127.0.0.1:2888",
+          "http://localhost:2891",
+          "http://127.0.0.1:2891",
+          "http://localhost:2890",
+          "http://127.0.0.1:2890",
+        ]
+).filter((origin, i, arr) => arr.indexOf(origin) === i);
 
 const allowedOriginsSet = new Set(corsOrigins);
 
@@ -44,6 +80,7 @@ export default [
         "Accept",
         "Accept-Language",
         "x-skip-global-loader",
+        "X-Correlation-Id",
       ],
       keepHeaderOnError: true,
     },

@@ -1,0 +1,319 @@
+"use client";
+
+import React, { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import toast from "react-hot-toast";
+import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
+import { Edit, Trash2, Eye, EyeOff, Image, Video } from "lucide-react";
+import { storyService } from "@/services/story/story.service";
+import type { Story } from "@/types/story";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { translateErrorMessage, extractErrorMessage } from "@/lib/errorTranslations";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
+
+function resolveMediaUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  return resolveAssetUrl(url) || url.trim().replace(/\s+/g, "");
+}
+
+function formatDate(iso?: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("fa-IR", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+export default function StoriesPage() {
+  const router = useRouter();
+  const { user, isStoreManager } = useCurrentUser();
+
+  const isSuperAdmin =
+    (user?.roleName ?? "").toLowerCase() === "superadmin";
+  const hasAccess = isSuperAdmin || isStoreManager;
+
+  useEffect(() => {
+    if (user && !hasAccess) {
+      router.replace("/");
+    }
+  }, [user, hasAccess, router]);
+
+  const [stories, setStories] = useState<Story[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
+
+  const fetchStories = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const res = await storyService.listStories({
+        pageSize: 100,
+        sort: "SortOrder:asc",
+        isActive: activeFilter === "all" ? undefined : activeFilter === "active",
+        search: searchTerm || undefined,
+      });
+      setStories(res.data ?? []);
+    } catch (err) {
+      toast.error(translateErrorMessage(extractErrorMessage(err), "خطا در دریافت استوری‌ها. دوباره تلاش کنید."));
+      setStories([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeFilter, searchTerm]);
+
+  useEffect(() => {
+    if (hasAccess) {
+      fetchStories();
+    }
+  }, [fetchStories, hasAccess]);
+
+  const handleDelete = async (story: Story) => {
+    if (!window.confirm(`آیا مطمئن هستید که استوری "${story.Title}" حذف شود؟`)) return;
+    try {
+      await storyService.deleteStory(story.id);
+      toast.success("استوری با موفقیت حذف شد");
+      fetchStories();
+    } catch (err) {
+      toast.error(translateErrorMessage(extractErrorMessage(err), "خطا در حذف استوری. دوباره تلاش کنید."));
+    }
+  };
+
+  const handleToggleActive = async (story: Story) => {
+    try {
+      await storyService.updateStory(story.id, { IsActive: !story.IsActive });
+      toast.success(story.IsActive ? "استوری غیرفعال شد" : "استوری فعال شد");
+      fetchStories();
+    } catch (err) {
+      toast.error(translateErrorMessage(extractErrorMessage(err), "خطا در تغییر وضعیت. دوباره تلاش کنید."));
+    }
+  };
+
+  const filtered = stories.filter((s) =>
+    s.Title.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  if (!hasAccess) return null;
+
+  return (
+    <ContentWrapper
+      title="استوری‌ها"
+      hasAddButton
+      addButtonText="استوری جدید"
+      addButtonPath="/stories/add"
+      hasPagination={false}
+    >
+      <div dir="rtl" className="space-y-4 p-0 md:p-4">
+        {/* Filters bar */}
+        <div className="flex flex-col gap-3 rounded-2xl bg-white/70 p-3 sm:flex-row sm:flex-wrap sm:items-center md:bg-transparent md:p-0">
+          <div className="relative min-w-0 flex-1">
+            <input
+              type="text"
+              placeholder="جستجو در عنوان..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm placeholder:text-slate-400 focus:border-infinity-primary-light focus:outline-none focus:ring-1 focus:ring-infinity-primary-light"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(["all", "active", "inactive"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setActiveFilter(f)}
+                className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                  activeFilter === f
+                    ? "bg-infinity-primary text-white"
+                    : "border border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {f === "all" ? "همه" : f === "active" ? "فعال" : "غیرفعال"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Table */}
+        {isLoading ? (
+          <div className="space-y-3">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-16 animate-pulse rounded-xl bg-slate-100" />
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 py-12 text-center text-slate-400">
+            استوری‌ای یافت نشد
+          </div>
+        ) : (
+          <>
+          <div className="grid gap-3 md:hidden">
+            {filtered.map((story) => {
+              const mediaUrl = resolveMediaUrl(story.Thumbnail?.url ?? story.Media?.url);
+
+              return (
+                <article
+                  key={story.id}
+                  className="overflow-hidden rounded-2xl border border-slate-100 bg-white p-3 shadow-sm"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    {mediaUrl ? (
+                      <img
+                        src={mediaUrl}
+                        alt={story.Title}
+                        className="h-12 w-12 shrink-0 rounded-xl object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100">
+                        {story.MediaType === "video" ? (
+                          <Video className="h-5 w-5 text-slate-400" />
+                        ) : (
+                          <Image className="h-5 w-5 text-slate-400" />
+                        )}
+                      </div>
+                    )}
+
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="flex min-w-0 items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h2 className="break-words text-sm font-medium text-slate-800">
+                            {story.Title}
+                          </h2>
+                          <p className="mt-1 text-xs text-slate-400">
+                            {story.MediaType === "video" ? "ویدیو" : "تصویر"} | ترتیب {story.SortOrder}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleActive(story)}
+                          title={story.IsActive ? "غیرفعال کردن" : "فعال کردن"}
+                          className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                            story.IsActive
+                              ? "bg-green-100 text-green-700 hover:bg-green-200"
+                              : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                          }`}
+                        >
+                          {story.IsActive ? "فعال" : "غیرفعال"}
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        <span>شروع: {formatDate(story.StartAt)}</span>
+                        <span>پایان: {formatDate(story.EndAt)}</span>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2">
+                        <Link
+                          href={`/stories/${story.id}/edit`}
+                          className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                          title="ویرایش"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(story)}
+                          className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                          title="حذف"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="hidden overflow-x-auto rounded-xl border border-slate-100 md:block">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50 text-xs text-slate-500">
+                  <th className="px-4 py-3 text-right font-medium">عنوان</th>
+                  <th className="px-4 py-3 text-right font-medium">نوع</th>
+                  <th className="px-4 py-3 text-center font-medium">ترتیب</th>
+                  <th className="px-4 py-3 text-right font-medium">شروع</th>
+                  <th className="px-4 py-3 text-right font-medium">پایان</th>
+                  <th className="px-4 py-3 text-center font-medium">وضعیت</th>
+                  <th className="px-4 py-3 text-center font-medium">عملیات</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filtered.map((story) => (
+                  <tr key={story.id} className="bg-white transition-colors hover:bg-slate-50">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {story.Thumbnail?.url || story.Media?.url ? (
+                          <img
+                            src={resolveMediaUrl(story.Thumbnail?.url ?? story.Media?.url)}
+                            alt={story.Title}
+                            className="h-10 w-10 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100">
+                            {story.MediaType === "video" ? (
+                              <Video className="h-5 w-5 text-slate-400" />
+                            ) : (
+                              <Image className="h-5 w-5 text-slate-400" />
+                            )}
+                          </div>
+                        )}
+                        <span className="font-medium text-slate-800">{story.Title}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {story.MediaType === "video" ? "ویدیو" : "تصویر"}
+                    </td>
+                    <td className="px-4 py-3 text-center text-slate-500">{story.SortOrder}</td>
+                    <td className="px-4 py-3 text-slate-500">{formatDate(story.StartAt)}</td>
+                    <td className="px-4 py-3 text-slate-500">{formatDate(story.EndAt)}</td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleActive(story)}
+                        title={story.IsActive ? "غیرفعال کردن" : "فعال کردن"}
+                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                          story.IsActive
+                            ? "bg-green-100 text-green-700 hover:bg-green-200"
+                            : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                        }`}
+                      >
+                        {story.IsActive ? (
+                          <><Eye className="h-3 w-3" /> فعال</>
+                        ) : (
+                          <><EyeOff className="h-3 w-3" /> غیرفعال</>
+                        )}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-center gap-2">
+                        <Link
+                          href={`/stories/${story.id}/edit`}
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                          title="ویرایش"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(story)}
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                          title="حذف"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </>
+        )}
+      </div>
+    </ContentWrapper>
+  );
+}

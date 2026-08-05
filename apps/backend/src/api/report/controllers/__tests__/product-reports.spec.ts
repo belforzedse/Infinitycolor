@@ -158,7 +158,7 @@ describe("product reporting endpoints", () => {
     await controller.productPerformance(ctx);
 
     expect(ctx.forbidden).toHaveBeenCalledWith(
-      "Access denied - Superadmin, Store manager or Founder role required",
+      "Access denied - Superadmin or Founder role required",
     );
     expect(ctx.body).toBeUndefined();
   });

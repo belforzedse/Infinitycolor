@@ -4,6 +4,23 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
+
+const OPERATIONAL_DISCOUNT_FIELDS = [
+  "Code",
+  "Type",
+  "Amount",
+  "LimitAmount",
+  "StartDate",
+  "EndDate",
+  "IsActive",
+  "products",
+  "delivery_methods",
+  "removedAt",
+  "LimitUsage",
+  "MinCartTotal",
+  "MaxCartTotal",
+] as const;
 
 type DiscountNumericField =
   | "Amount"
@@ -64,9 +81,7 @@ const coerceNumericValue = (
       return undefined;
     }
 
-    const normalized = trimmed
-      .replace(/[,٬\s]/g, "")
-      .replace(/[%٪]/g, "");
+    const normalized = trimmed.replace(/[,٬\s]/g, "").replace(/[%٪]/g, "");
 
     if (!normalized) {
       return null;
@@ -104,6 +119,7 @@ const normalizeDiscountInput = (data: Record<string, unknown> | undefined) => {
 
 export default factories.createCoreController("api::discount.discount", ({ strapi }) => ({
   async create(ctx) {
+    if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_DISCOUNT_FIELDS))) return;
     try {
       normalizeDiscountInput(ctx.request.body?.data);
     } catch (error) {
@@ -112,9 +128,14 @@ export default factories.createCoreController("api::discount.discount", ({ strap
         field: error instanceof DiscountNumericValidationError ? error.field : undefined,
       });
       return ctx.badRequest(
-        error instanceof DiscountNumericValidationError ? error.message : "Invalid discount payload",
+        error instanceof DiscountNumericValidationError
+          ? error.message
+          : "Invalid discount payload",
         {
-          data: { success: false, field: error instanceof DiscountNumericValidationError ? error.field : undefined },
+          data: {
+            success: false,
+            field: error instanceof DiscountNumericValidationError ? error.field : undefined,
+          },
         },
       );
     }
@@ -123,6 +144,7 @@ export default factories.createCoreController("api::discount.discount", ({ strap
   },
 
   async update(ctx) {
+    if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_DISCOUNT_FIELDS))) return;
     try {
       normalizeDiscountInput(ctx.request.body?.data);
     } catch (error) {
@@ -132,9 +154,14 @@ export default factories.createCoreController("api::discount.discount", ({ strap
         field: error instanceof DiscountNumericValidationError ? error.field : undefined,
       });
       return ctx.badRequest(
-        error instanceof DiscountNumericValidationError ? error.message : "Invalid discount payload",
+        error instanceof DiscountNumericValidationError
+          ? error.message
+          : "Invalid discount payload",
         {
-          data: { success: false, field: error instanceof DiscountNumericValidationError ? error.field : undefined },
+          data: {
+            success: false,
+            field: error instanceof DiscountNumericValidationError ? error.field : undefined,
+          },
         },
       );
     }

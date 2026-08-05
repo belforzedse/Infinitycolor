@@ -70,9 +70,7 @@ describe("Order Controller", () => {
 
         const orderOwnerId = fetchedOrder.user?.id;
         if (!orderOwnerId || orderOwnerId !== requesterId) {
-          ctx.forbidden(
-            "You do not have permission to access this order"
-          );
+          ctx.forbidden("You do not have permission to access this order");
         }
       }
 
@@ -110,9 +108,7 @@ describe("Order Controller", () => {
 
       await expect(async () => {
         if (!isAdminUser && orderOwnerId !== requesterId) {
-          throw ctx.forbidden(
-            "You do not have permission to access this order"
-          );
+          throw ctx.forbidden("You do not have permission to access this order");
         }
       }).rejects.toMatchObject({
         message: "You do not have permission to access this order",
@@ -146,8 +142,7 @@ describe("Order Controller", () => {
       });
 
       const isAdminUser =
-        ctx.state.user.isAdmin === true ||
-        ctx.state.user.role?.type === "superadmin";
+        ctx.state.user.isAdmin === true || ctx.state.user.role?.type === "superadmin";
 
       const fetchedOrder = await strapi.db
         .query("api::order.order")
@@ -240,9 +235,7 @@ describe("Order Controller", () => {
         contract: {
           id: 5,
           Amount: 200_000,
-          contract_transactions: [
-            { id: 1, payment_gateway: { Title: "Mellat" } },
-          ],
+          contract_transactions: [{ id: 1, payment_gateway: { Title: "Mellat" } }],
         },
         order_items: [
           {
@@ -270,23 +263,98 @@ describe("Order Controller", () => {
         state: { user: { id: 10 } },
       });
 
-      const fetchedOrder = await strapi.db
-        .query("api::order.order")
-        .findOne({
-          where: { id: ctx.params.id },
-          populate: {
-            user: { populate: { user_info: true } },
-            contract: { populate: { contract_transactions: { populate: { payment_gateway: true } } } },
-            order_items: { populate: { product_variation: { populate: { product: { populate: ["CoverImage"] }, product_color: true } } } },
-            shipping: true,
-            delivery_address: { populate: { shipping_city: { populate: { shipping_province: true } } } },
+      const fetchedOrder = await strapi.db.query("api::order.order").findOne({
+        where: { id: ctx.params.id },
+        populate: {
+          user: { populate: { user_info: true } },
+          contract: {
+            populate: { contract_transactions: { populate: { payment_gateway: true } } },
           },
-        });
+          order_items: {
+            populate: {
+              product_variation: {
+                populate: { product: { populate: ["CoverImage"] }, product_color: true },
+              },
+            },
+          },
+          shipping: true,
+          delivery_address: {
+            populate: { shipping_city: { populate: { shipping_province: true } } },
+          },
+        },
+      });
 
       expect(fetchedOrder.user.user_info).toBeDefined();
       expect(fetchedOrder.contract.contract_transactions).toHaveLength(1);
       expect(fetchedOrder.order_items).toHaveLength(1);
       expect(fetchedOrder.delivery_address.shipping_city.Title).toBe("Tehran");
+    });
+
+    it("sanitizes customer and payment internals for Store Manager order detail", async () => {
+      const { strapi, registerQuery } = createStrapiMock();
+      const orderFindOne = jest.fn().mockResolvedValue({
+        id: 41,
+        external_id: "legacy-order-secret",
+        user: {
+          id: 22,
+          phone: "+989121234567",
+          email: "private@example.test",
+          username: "private-user",
+          user_info: {
+            id: 9,
+            FirstName: "Store",
+            LastName: "Customer",
+            NationalCode: "0012345678",
+          },
+        },
+        contract: {
+          id: 5,
+          Amount: 200_000,
+          Status: "Confirmed",
+          contract_transactions: [{ id: 8, TrackId: "private-track" }],
+        },
+        order_items: [],
+      });
+      registerQuery("api::order.order", { findOne: orderFindOne });
+      const controller = loadOrderController(strapi);
+      const ctx = createCtx({
+        params: { id: 41 },
+        state: {
+          user: { id: 7, role: { name: "Store manager", type: "store-manager" } },
+        },
+      });
+
+      await controller.findOne(ctx);
+
+      expect(orderFindOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          populate: expect.objectContaining({
+            contract: { select: ["id", "Amount", "Status"] },
+          }),
+        }),
+      );
+      expect(ctx.body.data.contract).toEqual({
+        id: 5,
+        Amount: 200_000,
+        Status: "Confirmed",
+      });
+      expect(ctx.body.data.user.data.attributes).toEqual({
+        Phone: "+989121234567",
+        phone: "+989121234567",
+        user_info: {
+          data: {
+            id: 9,
+            attributes: {
+              id: 9,
+              FirstName: "Store",
+              LastName: "Customer",
+            },
+          },
+        },
+      });
+      expect(JSON.stringify(ctx.body)).not.toContain("private-track");
+      expect(JSON.stringify(ctx.body)).not.toContain("NationalCode");
+      expect(JSON.stringify(ctx.body)).not.toContain("private@example.test");
     });
   });
 
@@ -320,14 +388,12 @@ describe("Order Controller", () => {
       const start = (page - 1) * pageSize;
       const pageCount = Math.ceil(totalOrders / pageSize);
 
-      const fetchedOrders = await strapi.db
-        .query("api::order.order")
-        .findMany({
-          where: { user: { id: userId } },
-          orderBy: { Date: "desc" },
-          limit: pageSize,
-          offset: start,
-        });
+      const fetchedOrders = await strapi.db.query("api::order.order").findMany({
+        where: { user: { id: userId } },
+        orderBy: { Date: "desc" },
+        limit: pageSize,
+        offset: start,
+      });
 
       expect(fetchedOrders).toHaveLength(3);
       expect(totalOrders).toBe(15);
@@ -352,14 +418,12 @@ describe("Order Controller", () => {
         query: { page: 1, pageSize: 10 },
       });
 
-      const fetchedOrders = await strapi.db
-        .query("api::order.order")
-        .findMany({
-          where: { user: { id: 5 } },
-          orderBy: { Date: "desc" },
-          limit: 10,
-          offset: 0,
-        });
+      const fetchedOrders = await strapi.db.query("api::order.order").findMany({
+        where: { user: { id: 5 } },
+        orderBy: { Date: "desc" },
+        limit: 10,
+        offset: 0,
+      });
 
       expect(fetchedOrders[0].id).toBe(3); // Most recent first
       expect(fetchedOrders[2].id).toBe(1); // Oldest last
@@ -381,14 +445,12 @@ describe("Order Controller", () => {
         .query("api::order.order")
         .count({ where: { user: { id: 999 } } });
 
-      const fetchedOrders = await strapi.db
-        .query("api::order.order")
-        .findMany({
-          where: { user: { id: 999 } },
-          orderBy: { Date: "desc" },
-          limit: 10,
-          offset: 0,
-        });
+      const fetchedOrders = await strapi.db.query("api::order.order").findMany({
+        where: { user: { id: 999 } },
+        orderBy: { Date: "desc" },
+        limit: 10,
+        offset: 0,
+      });
 
       expect(fetchedOrders).toHaveLength(0);
       expect(totalOrders).toBe(0);
@@ -458,21 +520,17 @@ describe("Order Controller", () => {
         state: { user: { id: 8 } },
       });
 
-      const fetchedOrder = await strapi.db
-        .query("api::order.order")
-        .findOne({
-          where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
-          populate: {
-            contract: { populate: { contract_transactions: { orderBy: { Date: "asc" } } } },
-          },
-        });
+      const fetchedOrder = await strapi.db.query("api::order.order").findOne({
+        where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
+        populate: {
+          contract: { populate: { contract_transactions: { orderBy: { Date: "asc" } } } },
+        },
+      });
 
-      const logs = await strapi.db
-        .query("api::order-log.order-log")
-        .findMany({
-          where: { order: { id: ctx.params.id } },
-          orderBy: { createdAt: "asc" },
-        });
+      const logs = await strapi.db.query("api::order-log.order-log").findMany({
+        where: { order: { id: ctx.params.id } },
+        orderBy: { createdAt: "asc" },
+      });
 
       expect(fetchedOrder).toBeDefined();
       expect(fetchedOrder.contract.contract_transactions).toHaveLength(2);
@@ -511,11 +569,9 @@ describe("Order Controller", () => {
         state: { user: { id: 5 } },
       });
 
-      const fetchedOrder = await strapi.db
-        .query("api::order.order")
-        .findOne({
-          where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
-        });
+      const fetchedOrder = await strapi.db.query("api::order.order").findOne({
+        where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
+      });
 
       await expect(async () => {
         if (!fetchedOrder) {
@@ -800,15 +856,11 @@ describe("Order Controller", () => {
         state: { user: { id: 10 } },
       });
 
-      const fetchedOrder = await strapi.db
-        .query("api::order.order")
-        .findOne({
-          where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
-        });
+      const fetchedOrder = await strapi.db.query("api::order.order").findOne({
+        where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
+      });
 
-      const isPaid = ["Started", "Shipment", "Done"].includes(
-        fetchedOrder.Status
-      );
+      const isPaid = ["Started", "Shipment", "Done"].includes(fetchedOrder.Status);
 
       expect(fetchedOrder).toBeDefined();
       expect(fetchedOrder.Status).toBe("Started");
@@ -833,15 +885,11 @@ describe("Order Controller", () => {
         state: { user: { id: 11 } },
       });
 
-      const fetchedOrder = await strapi.db
-        .query("api::order.order")
-        .findOne({
-          where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
-        });
+      const fetchedOrder = await strapi.db.query("api::order.order").findOne({
+        where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
+      });
 
-      const isPaid = ["Started", "Shipment", "Done"].includes(
-        fetchedOrder.Status
-      );
+      const isPaid = ["Started", "Shipment", "Done"].includes(fetchedOrder.Status);
 
       expect(fetchedOrder.Status).toBe("Pending");
       expect(isPaid).toBe(false);
@@ -858,23 +906,18 @@ describe("Order Controller", () => {
         state: { user: { id: 5 } },
       });
 
-      const fetchedOrder = await strapi.db
-        .query("api::order.order")
-        .findOne({
-          where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
-        });
+      const fetchedOrder = await strapi.db.query("api::order.order").findOne({
+        where: { id: ctx.params.id, user: { id: ctx.state.user.id } },
+      });
 
       await expect(async () => {
         if (!fetchedOrder) {
-          throw ctx.forbidden(
-            "You do not have permission to access this order",
-            {
-              data: {
-                success: false,
-                error: "You do not have permission to access this order",
-              },
-            }
-          );
+          throw ctx.forbidden("You do not have permission to access this order", {
+            data: {
+              success: false,
+              error: "You do not have permission to access this order",
+            },
+          });
         }
       }).rejects.toMatchObject({
         message: "You do not have permission to access this order",

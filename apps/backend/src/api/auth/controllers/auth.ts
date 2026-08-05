@@ -21,6 +21,7 @@ import {
   verifyOtpIdentity,
   verifyPasswordIdentity,
 } from "../services/credential-flow";
+import { recordAdminAudit } from "../../../utils/adminAudit";
 
 export default {
   otp,
@@ -133,7 +134,7 @@ async function self(ctx) {
       "plugin::users-permissions.user",
       Number(pluginUserId),
       {
-        populate: ["role"],
+        populate: { role: { populate: ["permissions"] } },
       },
     );
 
@@ -161,6 +162,13 @@ async function self(ctx) {
       typeof fullUser?.phone === "string" && fullUser.phone.trim().length > 0
         ? fullUser.phone.trim()
         : undefined;
+    const effectivePermissions = Array.from(
+      new Set(
+        (Array.isArray(fullUser?.role?.permissions) ? fullUser.role.permissions : [])
+          .map((permission: any) => permission?.action)
+          .filter((action: unknown): action is string => typeof action === "string" && action.length > 0),
+      ),
+    ).sort();
 
     ctx.body = {
       ...ctx.state.user,
@@ -169,8 +177,10 @@ async function self(ctx) {
       phone: phone || profile?.phone || null,
       UserName: fullUser?.username ?? profile?.UserName,
       Email: fullUser?.email ?? profile?.Email,
+      confirmed: Boolean(fullUser?.confirmed),
       isAdmin,
       roleName: roleName ?? null,
+      effectivePermissions,
     };
   } catch (err) {
     strapi.log.error(err);
@@ -189,6 +199,37 @@ async function updateSelf(ctx) {
     }
 
     const body = ctx.request.body ?? {};
+    const allowedFields = new Set([
+      "FirstName",
+      "LastName",
+      "NationalCode",
+      "BirthDate",
+      "Sex",
+      "Bio",
+    ]);
+    const rejectedFields =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? Object.keys(body).filter((field) => !allowedFields.has(field))
+        : ["requestBody"];
+    if (rejectedFields.length > 0) {
+      await recordAdminAudit(strapi, {
+        resourceType: "User",
+        resourceId: pluginUserId,
+        action: "Update",
+        title: "Rejected self-profile field update",
+        messageEn: "A self-profile update attempted to write protected or unknown fields.",
+        severity: "warning",
+        actor: { id: pluginUserId },
+        metadata: { rejectedFields: rejectedFields.sort() },
+      });
+      ctx.status = 400;
+      ctx.body = {
+        message: "فقط فیلدهای مجاز پروفایل قابل ویرایش هستند.",
+        error: "PROFILE_FIELDS_NOT_ALLOWED",
+        fields: rejectedFields.sort(),
+      };
+      return;
+    }
     const profilePayload: Record<string, any> = {};
     const hasOwn = Object.prototype.hasOwnProperty.call.bind(Object.prototype.hasOwnProperty);
 
@@ -259,24 +300,16 @@ async function updateSelf(ctx) {
       });
     }
 
-    if (hasOwn(body, "Phone")) {
-      let normalizedPhone = String(body.Phone ?? "").trim();
-      if (normalizedPhone.length > 0) {
-        if (normalizedPhone.startsWith("0")) {
-          normalizedPhone = `+98${normalizedPhone.substring(1)}`;
-        }
-        if (!normalizedPhone.startsWith("+")) {
-          normalizedPhone = `+${normalizedPhone}`;
-        }
-        await strapi.entityService.update("plugin::users-permissions.user", pluginUserId, {
-          data: {
-            phone: normalizedPhone,
-            username: normalizedPhone,
-            email: `${normalizedPhone.replace(/\D/g, "") || "user"}@placeholder.local`,
-          },
-        });
-      }
-    }
+    await recordAdminAudit(strapi, {
+      resourceType: "User",
+      resourceId: pluginUserId,
+      action: "Update",
+      title: "Self-profile updated",
+      messageEn: "An administrator updated their own allowed profile fields.",
+      severity: "success",
+      actor: { id: pluginUserId },
+      metadata: { fields: Object.keys(profilePayload).sort() },
+    });
 
     await self(ctx);
   } catch (err) {

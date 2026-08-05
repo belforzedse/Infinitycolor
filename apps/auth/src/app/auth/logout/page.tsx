@@ -11,7 +11,7 @@ export default async function LogoutPage({
   const query = await searchParams;
   const target = resolveReturnTarget(
     query.returnTo,
-    env.trustedStorefrontOrigins,
+    env.trustedApplicationOrigins,
     env.defaultStorefrontOrigin,
   );
   const callback = new URL("/auth/logout-callback", new URL(target).origin);

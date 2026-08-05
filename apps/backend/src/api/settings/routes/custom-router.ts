@@ -28,7 +28,7 @@ export default {
       config: {
         auth: { scope: [] },
         middlewares: [],
-        policies: [],
+        policies: superadminOnlyPolicy,
       },
     },
     {

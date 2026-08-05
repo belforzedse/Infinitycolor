@@ -48,7 +48,7 @@ export default function OrderSuccess() {
 
           <div className="mb-6 text-gray-700">
             <p className="mb-2">
-              از خرید شما متشکریم! سفارش شما با موفقیت ثبت شده و در حال پردازش است.
+              از خرید شما متشکریم! سفارش شما با موفقیت ثبت شده و در حال انجام است.
             </p>
             <p className="text-sm">
               شماره سفارش: <span className="font-semibold">{resolvedOrderNumber || "-"}</span>

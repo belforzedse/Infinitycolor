@@ -3,13 +3,13 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { MANAGEMENT_ROLES } from "../../../utils/roles";
+import { ROLE_NAMES } from "../../../utils/roles";
 
 const adminPolicy = [
   {
     name: "global::role-based",
     config: {
-      roles: MANAGEMENT_ROLES,
+      roles: [ROLE_NAMES.SUPERADMIN],
     },
   },
 ];
@@ -18,6 +18,8 @@ const adminRouteConfig = {
   auth: { scope: [] },
   policies: adminPolicy,
 };
+
+export const __localUserRouteTestUtils = { adminRouteConfig };
 
 export default factories.createCoreRouter("api::local-user.local-user", {
   config: {

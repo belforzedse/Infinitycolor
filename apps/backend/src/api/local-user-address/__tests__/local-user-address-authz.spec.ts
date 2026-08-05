@@ -85,7 +85,7 @@ describe("local-user-address ownership scoping", () => {
       expect(ctx.query.filters).toEqual({ id: { $in: [-1] } });
     });
 
-    it("does not scope management roles", async () => {
+    it("does not scope Superadmin", async () => {
       const ctx = createCtx({ state: { user: { id: 7, role: { name: "Superadmin" } } } });
 
       await addressController.find(ctx);
@@ -114,23 +114,28 @@ describe("local-user-address ownership scoping", () => {
       expect(Object.getPrototypeOf(addressController)[action]).toHaveBeenCalledWith(ctx);
     });
 
-    it.each(cases)("%s: blocks a Customer from another user's address (404, not 403)", async (action) => {
-      baseStrapi.db.query.mockReturnValue(
-        queryMock({ findOne: jest.fn().mockResolvedValue({ id: 3, user: { id: 11 } }) }),
-      );
-      const ctx = createCtx({
-        params: { id: "3" },
-        state: { user: { id: 6, role: { name: "Customer" } } },
-      });
+    it.each(cases)(
+      "%s: blocks a Customer from another user's address (404, not 403)",
+      async (action) => {
+        baseStrapi.db.query.mockReturnValue(
+          queryMock({ findOne: jest.fn().mockResolvedValue({ id: 3, user: { id: 11 } }) }),
+        );
+        const ctx = createCtx({
+          params: { id: "3" },
+          state: { user: { id: 6, role: { name: "Customer" } } },
+        });
 
-      await addressController[action](ctx);
+        await addressController[action](ctx);
 
-      expect(ctx.notFound).toHaveBeenCalledWith("Address not found");
-      expect(Object.getPrototypeOf(addressController)[action]).not.toHaveBeenCalled();
-    });
+        expect(ctx.notFound).toHaveBeenCalledWith("Address not found");
+        expect(Object.getPrototypeOf(addressController)[action]).not.toHaveBeenCalled();
+      },
+    );
 
     it.each(cases)("%s: blocks a Customer when the address does not exist", async (action) => {
-      baseStrapi.db.query.mockReturnValue(queryMock({ findOne: jest.fn().mockResolvedValue(null) }));
+      baseStrapi.db.query.mockReturnValue(
+        queryMock({ findOne: jest.fn().mockResolvedValue(null) }),
+      );
       const ctx = createCtx({
         params: { id: "999" },
         state: { user: { id: 6, role: { name: "Customer" } } },
@@ -142,7 +147,10 @@ describe("local-user-address ownership scoping", () => {
       expect(Object.getPrototypeOf(addressController)[action]).not.toHaveBeenCalled();
     });
 
-    it.each(cases)("%s: management roles bypass ownership entirely", async (action) => {
+    it.each(cases)("%s: Store Manager remains scoped to owned addresses", async (action) => {
+      baseStrapi.db.query.mockReturnValue(
+        queryMock({ findOne: jest.fn().mockResolvedValue({ id: 3, user: { id: 11 } }) }),
+      );
       const ctx = createCtx({
         params: { id: "3" },
         state: { user: { id: 9, role: { name: "Store manager" } } },
@@ -150,9 +158,8 @@ describe("local-user-address ownership scoping", () => {
 
       await addressController[action](ctx);
 
-      expect(baseStrapi.db.query).not.toHaveBeenCalled();
-      expect(ctx.notFound).not.toHaveBeenCalled();
-      expect(Object.getPrototypeOf(addressController)[action]).toHaveBeenCalledWith(ctx);
+      expect(ctx.notFound).toHaveBeenCalledWith("Address not found");
+      expect(Object.getPrototypeOf(addressController)[action]).not.toHaveBeenCalled();
     });
   });
 });

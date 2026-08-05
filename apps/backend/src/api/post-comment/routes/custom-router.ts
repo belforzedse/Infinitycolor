@@ -1,3 +1,12 @@
+import { CONTENT_EDITOR_ROLES } from "../../../utils/roles";
+
+const contentEditorPolicy = [
+  {
+    name: "global::role-based",
+    config: { roles: CONTENT_EDITOR_ROLES },
+  },
+];
+
 export default {
   routes: [
     {
@@ -17,7 +26,7 @@ export default {
       config: {
         auth: { scope: [] },
         middlewares: [],
-        policies: [],
+        policies: contentEditorPolicy,
       },
     },
     {
@@ -27,7 +36,7 @@ export default {
       config: {
         auth: { scope: [] },
         middlewares: [],
-        policies: [],
+        policies: contentEditorPolicy,
       },
     },
   ],

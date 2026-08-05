@@ -7,6 +7,7 @@ import {
 import bcrypt from "bcryptjs";
 import { normalizeRequiredProfileName } from "../../api/auth/utils/profile-names";
 import { validatePhone } from "../../api/auth/utils/validations";
+import { recordAdminAudit } from "../../utils/adminAudit";
 
 const PROFILE_COMPLETION_PATHS = new Set([
   "/api/auth/self",
@@ -195,13 +196,46 @@ async function assertSuperadmin(ctx: any) {
 const wrapUserController =
   (controllerFn: (ctx: any, next?: any) => Promise<unknown>) => async (ctx: any, next?: any) => {
     if (wantsPluginRoleChange(ctx)) {
+      const actorId = Number(ctx.state?.user?.id);
+      const targetId = Number(ctx.params?.id);
+      if (Number.isSafeInteger(actorId) && actorId > 0 && actorId === targetId) {
+        await recordAdminAudit(strapi, {
+          resourceType: "User",
+          resourceId: targetId,
+          action: "Update",
+          title: "Rejected self-role change",
+          messageEn: "An administrator attempted to change their own role.",
+          severity: "warning",
+          actor: { id: actorId },
+          metadata: { rejectedFields: ["role"] },
+        });
+        ctx.forbidden("Administrators cannot change their own role");
+        return;
+      }
       const allowed = await assertSuperadmin(ctx);
       if (!allowed) {
         return;
       }
     }
 
-    return controllerFn(ctx, next);
+    const result = await controllerFn(ctx, next);
+    if (
+      wantsPluginRoleChange(ctx) &&
+      Number(ctx.params?.id) > 0 &&
+      (!ctx.status || ctx.status < 400)
+    ) {
+      await recordAdminAudit(strapi, {
+        resourceType: "User",
+        resourceId: Number(ctx.params.id),
+        action: "Update",
+        title: "User role updated",
+        messageEn: "A Superadmin changed another user's role.",
+        severity: "success",
+        actor: { id: Number(ctx.state?.user?.id) },
+        metadata: { fields: ["role"] },
+      });
+    }
+    return result;
   };
 
 export default (plugin: any) => {

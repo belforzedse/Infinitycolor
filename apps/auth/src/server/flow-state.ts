@@ -129,12 +129,15 @@ export function clearFlowState(ctx: CookieContext): void {
   });
 }
 
-export function returnTargetFromHeaders(headers?: Headers): string {
-  const env = getAuthEnv();
+export function returnTargetFromHeaders(
+  headers?: Headers,
+  currentReturnTo?: string,
+): string {
   let requested: string | null = null;
   const referer = headers?.get("referer");
   if (referer) {
     try {
+      const env = getAuthEnv();
       const url = new URL(referer);
       if (url.origin === env.betterAuthUrl)
         requested = url.searchParams.get("returnTo");
@@ -142,9 +145,17 @@ export function returnTargetFromHeaders(headers?: Headers): string {
       requested = null;
     }
   }
+  return resolveFlowReturnTarget(requested, currentReturnTo);
+}
+
+export function resolveFlowReturnTarget(
+  requested?: string | null,
+  currentReturnTo?: string,
+): string {
+  const env = getAuthEnv();
   return resolveReturnTarget(
-    requested,
-    env.trustedStorefrontOrigins,
+    requested ?? currentReturnTo,
+    env.trustedApplicationOrigins,
     env.defaultStorefrontOrigin,
   );
 }

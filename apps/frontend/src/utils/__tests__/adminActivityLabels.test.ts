@@ -58,7 +58,7 @@ describe("formatChangeValue", () => {
 describe("summarizeChange", () => {
   it("produces a meaningful status sentence", () => {
     expect(summarizeChange("Status", { from: "paying", to: "started" })).toBe(
-      "وضعیت سفارش از «در انتظار پرداخت» به «در حال پردازش» تغییر کرد",
+      "وضعیت سفارش از «در انتظار پرداخت» به «در حال انجام» تغییر کرد",
     );
   });
 
@@ -81,7 +81,7 @@ describe("summarizeActivity", () => {
   it("derives from a single change when no title/message", () => {
     expect(
       summarizeActivity({ Changes: { Status: { from: "paying", to: "started" } } }),
-    ).toBe("وضعیت سفارش از «در انتظار پرداخت» به «در حال پردازش» تغییر کرد");
+    ).toBe("وضعیت سفارش از «در انتظار پرداخت» به «در حال انجام» تغییر کرد");
   });
 
   it("derives from action + resource as the last resort", () => {

@@ -8,11 +8,20 @@ import {
 import { apiGet, apiPut, expectApiOk } from "../../helpers/api";
 
 function sidebarParent(page: import("@playwright/test").Page, id: string) {
-  return page.locator(`[data-testid="super-admin-sidebar-item"][data-sidebar-id="${id}"]`);
+  return page.locator(
+    `[data-testid="super-admin-sidebar-item"][data-sidebar-id="${id}"]`,
+  );
 }
 
-function visibleSidebarParent(page: import("@playwright/test").Page, id: string) {
-  return page.locator(`[data-testid="super-admin-sidebar-item"][data-sidebar-id="${id}"]:visible`).first();
+function visibleSidebarParent(
+  page: import("@playwright/test").Page,
+  id: string,
+) {
+  return page
+    .locator(
+      `[data-testid="super-admin-sidebar-item"][data-sidebar-id="${id}"]:visible`,
+    )
+    .first();
 }
 
 test.describe("role permission enforcement", () => {
@@ -38,7 +47,9 @@ test.describe("role permission enforcement", () => {
       const fixture = await createRuntimeProductFixture(request);
 
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(visibleSidebarParent(page, "manage-products")).toBeVisible({ timeout: 30_000 });
+      await expect(visibleSidebarParent(page, "manage-products")).toBeVisible({
+        timeout: 30_000,
+      });
       await expect(sidebarParent(page, "users")).toHaveCount(0);
       await expect(sidebarParent(page, "customization")).toHaveCount(0);
       await expect(visibleSidebarParent(page, "reports")).toHaveAttribute(
@@ -49,10 +60,24 @@ test.describe("role permission enforcement", () => {
       await page.goto("/super-admin/users", { waitUntil: "domcontentloaded" });
       await expect(page).toHaveURL(/\/super-admin\/?$/, { timeout: 30_000 });
 
-      await expectForbiddenForRole(request, "founder", "get", "/admin-activities");
-      await expectForbiddenForRole(request, "founder", "delete", `/products/${fixture.productId}`);
+      await expectForbiddenForRole(
+        request,
+        "founder",
+        "get",
+        "/admin-activities",
+      );
+      await expectForbiddenForRole(
+        request,
+        "founder",
+        "delete",
+        `/products/${fixture.productId}`,
+      );
 
-      const salesReport = await apiGet(request, "founder", "/reports/product-sales");
+      const salesReport = await apiGet(
+        request,
+        "founder",
+        "/reports/product-sales",
+      );
       await expectApiOk(salesReport, "Founder product-sales report");
     });
   });
@@ -67,13 +92,20 @@ test.describe("role permission enforcement", () => {
       const fixture = await createRuntimeProductFixture(request);
 
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(visibleSidebarParent(page, "manage-products")).toBeVisible({ timeout: 30_000 });
+      await expect(visibleSidebarParent(page, "manage-products")).toBeVisible({
+        timeout: 30_000,
+      });
       await expect(sidebarParent(page, "users")).toHaveCount(0);
       await expect(sidebarParent(page, "reports")).toHaveCount(0);
 
-      const updateResponse = await apiPut(request, "store-manager", `/products/${fixture.productId}`, {
-        data: { Title: `${fixture.productTitle} Store Manager Update` },
-      });
+      const updateResponse = await apiPut(
+        request,
+        "store-manager",
+        `/products/${fixture.productId}`,
+        {
+          data: { Title: `${fixture.productTitle} Store Manager Update` },
+        },
+      );
       await expectApiOk(updateResponse, "Store manager product update");
 
       await expectForbiddenForRole(
@@ -82,29 +114,41 @@ test.describe("role permission enforcement", () => {
         "delete",
         `/products/${fixture.productId}`,
       );
-      await expectForbiddenForRole(request, "store-manager", "get", "/admin-activities");
+      await expectForbiddenForRole(
+        request,
+        "store-manager",
+        "get",
+        "/admin-activities",
+      );
     });
   });
 
   test.describe("Editor", () => {
     test.use({ storageState: authStorageStatePath("editor") });
 
-    test("@permissions Editor can read product pages but cannot mutate products", async ({
+    test("@permissions Editor stays in the blog workspace and cannot mutate products", async ({
       page,
       request,
     }) => {
       const fixture = await createRuntimeProductFixture(request);
 
-      await page.goto("/super-admin/products", { waitUntil: "domcontentloaded" });
-      await expect(page).toHaveURL(/\/super-admin\/products/, { timeout: 30_000 });
-      await expect(page.locator('[data-testid="admin-product-row"]:visible').first()).toBeVisible({
+      await page.goto("/super-admin/products", {
+        waitUntil: "domcontentloaded",
+      });
+      await expect(page).toHaveURL(/\/super-admin\/blog\/?$/, {
         timeout: 30_000,
       });
       await expect(sidebarParent(page, "manage-products")).toHaveCount(0);
 
-      await expectForbiddenForRole(request, "editor", "put", `/products/${fixture.productId}`, {
-        data: { Title: `${fixture.productTitle} Editor Update` },
-      });
+      await expectForbiddenForRole(
+        request,
+        "editor",
+        "put",
+        `/products/${fixture.productId}`,
+        {
+          data: { Title: `${fixture.productTitle} Editor Update` },
+        },
+      );
     });
   });
 
@@ -118,9 +162,16 @@ test.describe("role permission enforcement", () => {
       const fixture = await createRuntimeProductFixture(request);
 
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(page).not.toHaveURL(/\/super-admin\/?$/, { timeout: 30_000 });
+      await expect(page).not.toHaveURL(/\/super-admin\/?$/, {
+        timeout: 30_000,
+      });
 
-      await expectForbiddenForRole(request, "customer", "delete", `/products/${fixture.productId}`);
+      await expectForbiddenForRole(
+        request,
+        "customer",
+        "delete",
+        `/products/${fixture.productId}`,
+      );
       await expectForbiddenForRole(request, "customer", "get", "/users");
     });
   });
@@ -128,9 +179,14 @@ test.describe("role permission enforcement", () => {
   test.describe("Superadmin", () => {
     test.use({ storageState: authStorageStatePath("admin") });
 
-    test("@permissions Superadmin keeps full navigation and API access", async ({ page, request }) => {
+    test("@permissions Superadmin keeps full navigation and API access", async ({
+      page,
+      request,
+    }) => {
       await page.goto("/super-admin", { waitUntil: "domcontentloaded" });
-      await expect(visibleSidebarParent(page, "manage-products")).toBeVisible({ timeout: 30_000 });
+      await expect(visibleSidebarParent(page, "manage-products")).toBeVisible({
+        timeout: 30_000,
+      });
       await expect(visibleSidebarParent(page, "users")).toBeVisible();
       await expect(visibleSidebarParent(page, "reports")).toBeVisible();
 

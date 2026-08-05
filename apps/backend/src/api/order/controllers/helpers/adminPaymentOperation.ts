@@ -1,5 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
-import { OPERATIONAL_ROLES, roleIsAllowed } from "../../../../utils/roles";
+import { ROLE_NAMES, roleIsAllowed } from "../../../../utils/roles";
 
 export async function adminPaymentOperationHandler(strapi: Strapi, ctx: any) {
   const orderId = Number(ctx.params.id);
@@ -13,7 +13,7 @@ export async function adminPaymentOperationHandler(strapi: Strapi, ctx: any) {
   const fullUser: any = await strapi.db
     .query("plugin::users-permissions.user")
     .findOne({ where: { id: pluginUser.id }, populate: ["role"] } as any);
-  if (!fullUser || !roleIsAllowed(fullUser?.role?.name, OPERATIONAL_ROLES)) {
+  if (!fullUser || !roleIsAllowed(fullUser?.role?.name, [ROLE_NAMES.SUPERADMIN])) {
     return ctx.forbidden("Admin access required");
   }
 

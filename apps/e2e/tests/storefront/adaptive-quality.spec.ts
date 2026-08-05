@@ -13,6 +13,10 @@ import {
   resetCartToVariation,
 } from "../../helpers/api";
 import {
+  selectFirstShipping,
+  selectSeededAddress,
+} from "../../helpers/checkout";
+import {
   finalizeToZarinpalRedirect,
   stubSuccessfulCallback,
 } from "../../helpers/payment";
@@ -1267,6 +1271,55 @@ test.describe("adaptive quality commerce isolation", () => {
       window.__INFINITY_AQ_E2E__?.downgrade("raf-jank"),
     );
     await expect(submit).toBeVisible();
+    runtime.assertClean();
+  });
+
+  test("SnappPay renders the provider title above its unchanged description", async ({
+    page,
+    request,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "chromium-desktop",
+      "Checkout copy is browser-independent.",
+    );
+    const runtime = collectStrictRuntimeErrors(page);
+    await installAdaptiveCapabilities(page, {
+      memory: 8,
+      cores: 8,
+    });
+    const variation = await findProductVariationBySku(request);
+    await resetCartToVariation(request, variation.id, 1, "customer");
+    await page.route(/\/api\/payment-gateway\/available/i, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          gateways: [{ code: "snappay", title: "SnappPay" }],
+        }),
+      }),
+    );
+    await page.route(/\/api\/payment-gateway\/snapp-eligible/i, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          eligible: true,
+          title: "پرداخت اعتباری اسنپ پی",
+          description: "تا سقف اعتبار قابل استفاده",
+        }),
+      }),
+    );
+
+    await page.goto("/checkout", { waitUntil: "domcontentloaded" });
+    await selectSeededAddress(page);
+    await selectFirstShipping(page);
+
+    const gateway = page.getByTestId("payment-gateway-snappay");
+    await expect(gateway).toBeVisible();
+    const details = gateway.locator("div.text-right > div");
+    await expect(details).toHaveCount(2);
+    await expect(details.nth(0)).toHaveText("پرداخت اعتباری اسنپ پی");
+    await expect(details.nth(1)).toHaveText("تا سقف اعتبار قابل استفاده");
     runtime.assertClean();
   });
 });

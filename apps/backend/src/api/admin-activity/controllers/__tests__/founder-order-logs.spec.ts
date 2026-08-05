@@ -9,7 +9,8 @@
 
 jest.mock("@strapi/strapi", () => ({
   factories: {
-    createCoreController: (_uid: string, factory: any) => factory({ strapi: (global as any).strapi }),
+    createCoreController: (_uid: string, factory: any) =>
+      factory({ strapi: (global as any).strapi }),
   },
 }));
 
@@ -36,9 +37,7 @@ function createCtx(overrides: Partial<any> = {}) {
 function mockStrapiForRole(roleName: string | null) {
   (global as any).strapi = {
     query: () => ({
-      findOne: jest
-        .fn()
-        .mockResolvedValue(roleName ? { id: 1, role: { name: roleName } } : null),
+      findOne: jest.fn().mockResolvedValue(roleName ? { id: 1, role: { name: roleName } } : null),
     }),
     entityService: {
       findMany: jest.fn().mockResolvedValue([{ id: 1, ResourceType: "Order", ResourceId: "42" }]),
@@ -87,6 +86,17 @@ describe("admin-activity.findOrderActivities - Founder access", () => {
     await controller.findOrderActivities(ctx);
 
     expect(ctx.forbidden).toHaveBeenCalled();
+    expect(ctx.send).not.toHaveBeenCalled();
+  });
+
+  it("forbids Store managers from the personal audit endpoint", async () => {
+    mockStrapiForRole("Store manager");
+    const controller = loadController();
+    const ctx = createCtx();
+
+    await controller.findMyActivities(ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalledWith("Only superadmins can view admin activities");
     expect(ctx.send).not.toHaveBeenCalled();
   });
 });

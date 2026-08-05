@@ -52,9 +52,24 @@ describe("role hierarchy helpers", () => {
     expect(ctx.status).toBe(403);
   });
 
-  it("allows manager-plus roles to target another customer explicitly", async () => {
+  it("keeps operational roles scoped to their own user id", async () => {
     const ctx: any = {
       state: { user: { id: 10, role: { name: ROLE_NAMES.FOUNDER } } },
+      request: { body: { targetUserId: 20 } },
+      forbidden: jest.fn((message: string) => {
+        const error: any = new Error(message);
+        error.status = 403;
+        throw error;
+      }),
+    };
+
+    await expect(resolveCustomerTargetUserId(ctx, {} as any)).resolves.toBeNull();
+    expect(ctx.forbidden).toHaveBeenCalled();
+  });
+
+  it("allows Superadmin to target another customer explicitly", async () => {
+    const ctx: any = {
+      state: { user: { id: 10, role: { name: ROLE_NAMES.SUPERADMIN } } },
       request: { body: { targetUserId: 20 } },
     };
 

@@ -14,6 +14,7 @@ import {
   clearFlowState,
   purposeFromHeaders,
   readFlowState,
+  resolveFlowReturnTarget,
   returnTargetFromHeaders,
   writeFlowState,
 } from "./flow-state";
@@ -127,8 +128,10 @@ export function infinityCredentialsPlugin(
             writeFlowState(ctx, {
               phone: ctx.body.phone,
               purpose: purposeFromHeaders(ctx.headers),
-              returnTo:
-                current?.returnTo ?? returnTargetFromHeaders(ctx.headers),
+              returnTo: returnTargetFromHeaders(
+                ctx.headers,
+                current?.returnTo,
+              ),
             });
             return ctx.json({ message: "welcome", hasUser: response.hasUser });
           } catch (error) {
@@ -153,8 +156,10 @@ export function infinityCredentialsPlugin(
               phone: ctx.body.phone,
               challengeId: response.challengeId,
               purpose: purposeFromHeaders(ctx.headers),
-              returnTo:
-                current?.returnTo ?? returnTargetFromHeaders(ctx.headers),
+              returnTo: returnTargetFromHeaders(
+                ctx.headers,
+                current?.returnTo,
+              ),
             });
             return ctx.json({ message: "otp sent" });
           } catch (error) {
@@ -216,8 +221,10 @@ export function infinityCredentialsPlugin(
               ctx.body.phone,
               ctx.body.password,
             );
-            const returnTo =
-              flow?.returnTo ?? returnTargetFromHeaders(ctx.headers);
+            const returnTo = returnTargetFromHeaders(
+              ctx.headers,
+              flow?.returnTo,
+            );
             const { session } = await completeSignIn(
               ctx,
               verified.strapiUserId,
@@ -358,6 +365,29 @@ export function infinityCredentialsPlugin(
             returnTo: exchanged.returnTo,
             authenticated: true as const,
           });
+        },
+      ),
+      infinityFlowStart: createAuthEndpoint(
+        "/infinity/flow/start",
+        {
+          method: "POST",
+          body: z.object({
+            returnTo: z.string().max(2_048).nullable().optional(),
+          }),
+        },
+        async (ctx) => {
+          assertTrustedRequest(ctx);
+          const current = readFlowState(ctx);
+          writeFlowState(ctx, {
+            phone: current?.phone,
+            challengeId: current?.challengeId,
+            purpose: current?.purpose ?? purposeFromHeaders(ctx.headers),
+            returnTo: resolveFlowReturnTarget(
+              ctx.body.returnTo,
+              current?.returnTo,
+            ),
+          });
+          return ctx.json({ phone: current?.phone ?? null });
         },
       ),
       infinityFlowInfo: createAuthEndpoint(
