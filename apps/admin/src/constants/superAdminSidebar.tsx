@@ -95,11 +95,6 @@ const superAdminSidebar: SidebarItem[] = [
 
     children: [
       {
-        id: "product-attributes",
-        label: "ویژگی ها",
-        href: "/products/attributes",
-      },
-      {
         id: "productس",
         label: " محصولات",
         href: "/products",
@@ -138,6 +133,11 @@ const superAdminSidebar: SidebarItem[] = [
         id: "product-colors",
         label: "مدیریت رنگ‌ها",
         href: "/products/colors",
+      },
+      {
+        id: "product-attributes",
+        label: "ویژگی ها",
+        href: "/products/attributes",
       },
     ],
   },

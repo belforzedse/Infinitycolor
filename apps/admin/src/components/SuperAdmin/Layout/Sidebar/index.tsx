@@ -1,6 +1,5 @@
 "use client";
 
-import { SuperAdminLogo } from "@repo/brand";
 import superAdminSidebar, {
   getSidebarItemsForRole,
   type SidebarItem as SuperAdminSidebarItem,
@@ -39,7 +38,7 @@ function activeEdgeClass(variant: "mobile" | "desktop", heightClass: string): st
   if (variant === "mobile") {
     return `pointer-events-none absolute left-0 top-1/2 ${heightClass} w-2 -translate-y-1/2 rounded-l-full`;
   }
-  return `pointer-events-none absolute -right-1.5 top-1/2 ${heightClass} w-2 -translate-y-1/2 rounded-r-full`;
+  return `pointer-events-none absolute right-0 top-1/2 ${heightClass} w-1.5 -translate-y-1/2 rounded-l-full`;
 }
 
 function SidebarNav({
@@ -94,7 +93,7 @@ function SidebarNav({
   };
 
   const menuItems = (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-2.5">
       {sidebarItems.map((item) => {
         const hasChildren = item.children.length > 0;
         const isOpenMenu = !!openMenus[item.id];
@@ -122,9 +121,11 @@ function SidebarNav({
               data-sidebar-href={item.href ?? ""}
               onClick={() => onNavigate?.()}
               className={clsx(
-                "relative mb-2 flex items-center justify-between rounded-lg px-2 py-1.5 transition-colors duration-150",
-                "hover:bg-neutral-50",
-                isActive ? "bg-infinity-primary-lighter/20 text-infinity-primary" : "text-neutral-600",
+                "relative flex min-h-11 items-center justify-between rounded-xl border px-3 py-2.5 transition-all duration-150",
+                "focus-visible:ring-2 focus-visible:ring-infinity-primary/30",
+                isActive
+                  ? "border-infinity-primary-lighter/30 bg-infinity-primary-lighter/20 text-infinity-primary shadow-sm"
+                  : "border-transparent text-neutral-600 hover:border-neutral-100 hover:bg-neutral-50",
                 isCollapsed && variant === "desktop" && "md:justify-center md:px-2",
               )}
               title={isCollapsed && variant === "desktop" ? item.label : undefined}
@@ -139,12 +140,12 @@ function SidebarNav({
               )}
               <div
                 className={clsx(
-                  "flex w-full items-center gap-2",
+                  "flex min-w-0 w-full items-center gap-2.5",
                   isCollapsed && variant === "desktop" && "md:justify-center md:gap-0",
                 )}
               >
                 {item.icon}
-                {showLabels && <span className="text-sm font-medium">{item.label}</span>}
+                {showLabels && <span className="text-sm font-medium leading-6">{item.label}</span>}
               </div>
             </Link>
           );
@@ -159,10 +160,11 @@ function SidebarNav({
               data-sidebar-id={item.id}
               data-sidebar-href={item.href ?? ""}
               className={clsx(
-                "relative mb-2 flex items-center justify-between rounded-lg px-2 py-1.5",
-                "cursor-pointer transition-colors duration-150",
-                "hover:bg-neutral-50",
-                isActive && showLabels && "bg-infinity-primary-lighter/20 text-infinity-primary",
+                "relative flex min-h-11 items-center justify-between rounded-xl border px-3 py-2.5",
+                "cursor-pointer transition-all duration-150 focus-visible:ring-2 focus-visible:ring-infinity-primary/30",
+                isActive && showLabels
+                  ? "border-infinity-primary-lighter/30 bg-infinity-primary-lighter/20 text-infinity-primary shadow-sm"
+                  : "border-transparent hover:border-neutral-100 hover:bg-neutral-50",
                 !isActive && "text-neutral-600",
                 isCollapsed && variant === "desktop" && "md:justify-center md:px-2",
               )}
@@ -177,7 +179,7 @@ function SidebarNav({
             >
               <div
                 className={clsx(
-                  "flex items-center gap-2",
+                  "flex min-w-0 items-center gap-2.5",
                   isCollapsed && variant === "desktop" && "md:justify-center md:gap-0",
                 )}
               >
@@ -186,6 +188,7 @@ function SidebarNav({
                   <span
                     className={clsx(
                       "text-sm font-medium",
+                      "leading-6",
                       isActive ? "text-infinity-primary" : "text-neutral-600",
                     )}
                   >
@@ -238,7 +241,7 @@ function SidebarNav({
 
             {hasChildren && isOpenMenu && showLabels && (
               <div
-                className="mt-2 overflow-hidden rounded-xl border border-neutral-100 bg-neutral-50"
+                className="mt-1 overflow-hidden rounded-2xl border border-neutral-200/70 bg-neutral-50/80 p-1 shadow-sm shadow-neutral-200/30"
                 id={`submenu-${item.id}`}
               >
                 {item.children.map((child, index) => {
@@ -257,9 +260,9 @@ function SidebarNav({
                           onNavigate?.();
                         }}
                         className={clsx(
-                          "text-sm block px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary",
+                          "text-sm relative block rounded-xl px-4 py-2.5 leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary",
                           "transition-colors duration-150",
-                          "relative pl-6 pr-2",
+                          "pl-6 pr-3",
                           active
                             ? "bg-neutral-100 font-medium text-neutral-900"
                             : "text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900",
@@ -273,7 +276,7 @@ function SidebarNav({
                         )}
                       </Link>
                       {index !== item.children.length - 1 && (
-                        <div className="mx-4 h-px bg-neutral-100" />
+                        <div className="mx-3 h-px bg-neutral-200/60" />
                       )}
                     </Fragment>
                   );
@@ -320,18 +323,11 @@ function SidebarNav({
     </>
   );
 
-  if (variant === "mobile") {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col gap-3">
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{menuItems}</div>
-        {logoutSection}
-      </div>
-    );
-  }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      {menuItems}
+      <div className="scrollbar-neutral min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-0.5">
+        {menuItems}
+      </div>
       {logoutSection}
     </div>
   );
@@ -388,7 +384,7 @@ function SuperAdminMobileSidebarDrawer({
           >
             <Dialog.Panel
                 dir="rtl"
-                className="fixed right-0 top-0 z-50 flex h-dvh w-[280px] max-w-[85vw] flex-col bg-white shadow-2xl"
+                className="fixed right-0 top-0 z-50 flex h-dvh w-[300px] max-w-[88vw] flex-col overflow-hidden border-l border-neutral-100 bg-white shadow-2xl"
                 style={{
                   paddingBottom: "env(safe-area-inset-bottom)",
                 }}
@@ -399,7 +395,7 @@ function SuperAdminMobileSidebarDrawer({
                     paddingTop: "max(0.75rem, env(safe-area-inset-top))",
                   }}
                 >
-                  <SuperAdminLogo compact />
+                  <span className="text-sm font-semibold text-neutral-700">منوی مدیریت</span>
                   <button
                     type="button"
                     onClick={onClose}
@@ -484,52 +480,53 @@ export default function SuperAdminLayoutSidebar({
         className={clsx(
           "relative hidden md:flex md:flex-col",
           "md:static md:z-auto lg:static lg:z-auto",
-          "h-full w-full transition-all duration-300 ease-in-out",
-          isCollapsed ? "md:w-[80px] lg:w-[80px]" : "md:w-[280px] lg:w-[250px]",
-          "rounded-bl-xl rounded-tl-xl bg-white",
+          "h-full w-full overflow-hidden transition-all duration-300 ease-in-out",
+          isCollapsed
+            ? "md:w-[80px] lg:w-[80px]"
+            : "md:w-[288px] lg:w-[288px] xl:w-[304px]",
+          "rounded-bl-2xl rounded-tl-2xl border-l border-neutral-100 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.04)]",
         )}
       >
-        {onToggleCollapse && (
-          <button
-            className="absolute left-0 top-4 z-10 flex h-8 items-center justify-center rounded-l-none rounded-r-full border border-neutral-200 bg-white pl-1 pr-2 shadow-sm hover:bg-neutral-50"
-            onClick={onToggleCollapse}
-            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              className={clsx("transition-transform duration-200", isCollapsed ? "" : "rotate-180")}
-              aria-hidden
+        <div
+          className={clsx(
+            "flex h-14 shrink-0 items-center border-b border-neutral-100/80 px-3",
+            isCollapsed ? "justify-center" : "justify-between",
+          )}
+        >
+          {!isCollapsed && (
+            <span className="pr-1 text-xs font-semibold tracking-wide text-neutral-500">منوی مدیریت</span>
+          )}
+          {onToggleCollapse && (
+            <button
+              type="button"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 shadow-sm transition-colors hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800"
+              onClick={onToggleCollapse}
+              aria-label={isCollapsed ? "باز کردن منوی کناری" : "بستن منوی کناری"}
             >
-              <path
-                d="M9 18L15 12L9 6"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        )}
-
-        {!isCollapsed && (
-          <div className="flex flex-shrink-0 items-center justify-center p-3 pb-4">
-            <SuperAdminLogo />
-          </div>
-        )}
-
-        {isCollapsed && (
-          <div className="flex flex-shrink-0 items-center justify-center border-b border-neutral-100 px-2 py-3">
-            <SuperAdminLogo compact />
-          </div>
-        )}
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className={clsx("transition-transform duration-200", isCollapsed ? "" : "rotate-180")}
+                aria-hidden
+              >
+                <path
+                  d="M9 18L15 12L9 6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
 
         <div
           className={clsx(
-            "flex min-h-0 flex-1 flex-col gap-3 bg-white p-3 pt-0",
+            "flex min-h-0 flex-1 flex-col gap-3 bg-white p-3 pt-3",
             "md:sticky md:top-0 lg:sticky lg:top-0",
           )}
         >

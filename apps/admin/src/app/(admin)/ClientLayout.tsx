@@ -290,8 +290,8 @@ function Tablet({ children }: { children: React.ReactNode }) {
       <div
         ref={sidebarRef}
         className={clsx(
-          "sticky top-0 z-10 h-screen flex-shrink-0 overflow-y-auto transition-all duration-300",
-          isSidebarCollapsed ? "w-[80px]" : "w-[280px]",
+          "sticky top-0 z-10 h-screen flex-shrink-0 overflow-hidden transition-all duration-300",
+          isSidebarCollapsed ? "w-[80px]" : "w-[288px]",
         )}
       >
         <Sidebar
@@ -318,8 +318,8 @@ function Desktop({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen gap-5 bg-neutral-50 pl-6 lg:pl-10">
       <div
         className={clsx(
-          "sticky top-0 z-10 h-screen flex-shrink-0 overflow-y-auto transition-all duration-300",
-          isSidebarCollapsed ? "w-[80px]" : "w-[250px]",
+          "sticky top-0 z-10 h-screen flex-shrink-0 overflow-hidden transition-all duration-300",
+          isSidebarCollapsed ? "w-[80px]" : "w-[288px] xl:w-[304px]",
         )}
       >
         <Sidebar

@@ -169,9 +169,9 @@ export default function AdminAccountClient() {
   }
 
   return (
-    <div className="space-y-6" dir="rtl">
-      <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="text-2xl font-semibold text-slate-900">حساب مدیریتی</h1>
+    <div className="min-w-0 space-y-4 sm:space-y-6" dir="rtl">
+      <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">حساب مدیریتی</h1>
         <p className="mt-2 text-sm text-slate-500">
           اطلاعات هویتی و نشست‌های فعال حساب خود را مدیریت کنید.
         </p>
@@ -190,7 +190,7 @@ export default function AdminAccountClient() {
 
       <form
         onSubmit={saveProfile}
-        className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-2"
+        className="grid min-w-0 gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 md:grid-cols-2"
       >
         <h2 className="text-lg font-semibold text-slate-900 md:col-span-2">پروفایل</h2>
         <label className="space-y-2 text-sm text-slate-700">
@@ -237,17 +237,17 @@ export default function AdminAccountClient() {
           درباره
           <textarea className="input min-h-28" value={form.Bio || ""} onChange={(event) => updateField("Bio", event.target.value || null)} />
         </label>
-        <div className="flex flex-wrap gap-3 md:col-span-2">
-          <button disabled={saving} className="btn btn-primary px-5 py-2" type="submit">
+        <div className="grid grid-cols-1 gap-3 sm:flex sm:flex-wrap md:col-span-2">
+          <button disabled={saving} className="btn btn-primary w-full px-5 py-2 sm:w-auto" type="submit">
             {saving ? "در حال ذخیره..." : "ذخیره پروفایل"}
           </button>
-          <a className="btn btn-outline px-5 py-2" href={passwordUrl.toString()}>
+          <a className="btn btn-outline w-full px-5 py-2 sm:w-auto" href={passwordUrl.toString()}>
             تغییر رمز با کد یک‌بارمصرف
           </a>
         </div>
       </form>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h2 className="text-lg font-semibold text-slate-900">نقش و دسترسی موثر</h2>
         <p className="mt-2 text-sm text-slate-600">نقش: <strong>{user?.roleName || "نامشخص"}</strong></p>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -255,39 +255,43 @@ export default function AdminAccountClient() {
             <span key={section} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">{section}</span>
           ))}
         </div>
-        <details className="mt-4 rounded-xl border border-slate-200 p-3">
-          <summary className="cursor-pointer text-sm font-medium text-slate-700">
+        <details className="mt-4 min-w-0 overflow-hidden rounded-xl border border-slate-200 p-3">
+          <summary className="cursor-pointer break-words text-sm font-medium text-slate-700">
             مجوزهای موثر Strapi ({user?.effectivePermissions?.length || 0})
           </summary>
-          <ul className="mt-3 max-h-64 space-y-1 overflow-auto font-mono text-xs text-slate-600" dir="ltr">
+          <ul className="mt-3 max-h-64 max-w-full space-y-1 overflow-auto font-mono text-xs text-slate-600" dir="ltr">
             {(user?.effectivePermissions || []).map((permission) => <li key={permission}>{permission}</li>)}
           </ul>
         </details>
         <p className="mt-3 text-xs text-slate-500">مجوز نهایی هر عملیات در Strapi دوباره بررسی می‌شود.</p>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+      <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold text-slate-900">نشست‌های فعال</h2>
             <p className="mt-1 text-sm text-slate-500">توکن نشست نمایش داده یا ذخیره نمی‌شود.</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn btn-outline px-4 py-2" disabled={Boolean(sessionBusy)} onClick={revokeOthers}>لغو نشست‌های دیگر</button>
-            <button type="button" className="btn border border-red-200 px-4 py-2 text-red-700" disabled={Boolean(sessionBusy)} onClick={signOutEverywhere}>خروج از همه دستگاه‌ها</button>
+          <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+            <button type="button" className="btn btn-outline w-full px-4 py-2 sm:w-auto" disabled={Boolean(sessionBusy)} onClick={revokeOthers}>لغو نشست‌های دیگر</button>
+            <button type="button" className="btn w-full border border-red-200 px-4 py-2 text-red-700 sm:w-auto" disabled={Boolean(sessionBusy)} onClick={signOutEverywhere}>خروج از همه دستگاه‌ها</button>
           </div>
         </div>
-        <div className="mt-4 grid gap-3">
+        <div className="mt-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
           {sessions.length === 0 ? (
             <p className="text-sm text-slate-500">نشست فعالی یافت نشد.</p>
           ) : (
             sessions.map((session) => (
-              <article key={session.id} className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-slate-800">{session.userAgent || "دستگاه ناشناس"}</p>
-                  <p className="mt-1 text-xs text-slate-500">IP: {session.ipAddress || "نامشخص"} · ایجاد: {formatDate(session.createdAt)} · انقضا: {formatDate(session.expiresAt)}</p>
+              <article key={session.id} className="flex w-full min-w-0 max-w-full flex-col gap-3 overflow-hidden rounded-xl border border-slate-200 p-3 sm:p-4 md:flex-row md:items-center md:justify-between">
+                <div className="w-full min-w-0">
+                  <p className="break-words text-sm font-medium leading-6 text-slate-800 sm:truncate">{session.userAgent || "دستگاه ناشناس"}</p>
+                  <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs leading-5 text-slate-500">
+                    <span>IP: {session.ipAddress || "نامشخص"}</span>
+                    <span>ایجاد: {formatDate(session.createdAt)}</span>
+                    <span>انقضا: {formatDate(session.expiresAt)}</span>
+                  </p>
                 </div>
-                <button type="button" className="btn btn-outline px-4 py-2" disabled={Boolean(sessionBusy)} onClick={() => revokeOne(session)}>
+                <button type="button" className="btn btn-outline w-full shrink-0 px-4 py-2 sm:w-auto" disabled={Boolean(sessionBusy)} onClick={() => revokeOne(session)}>
                   {sessionBusy === session.id ? "در حال لغو..." : "لغو نشست"}
                 </button>
               </article>
