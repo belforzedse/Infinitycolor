@@ -14,6 +14,7 @@ import {
   clearFlowState,
   purposeFromHeaders,
   readFlowState,
+  resolveFlowReturnTarget,
   returnTargetFromHeaders,
   writeFlowState,
 } from "./flow-state";
@@ -364,6 +365,29 @@ export function infinityCredentialsPlugin(
             returnTo: exchanged.returnTo,
             authenticated: true as const,
           });
+        },
+      ),
+      infinityFlowStart: createAuthEndpoint(
+        "/infinity/flow/start",
+        {
+          method: "POST",
+          body: z.object({
+            returnTo: z.string().max(2_048).nullable().optional(),
+          }),
+        },
+        async (ctx) => {
+          assertTrustedRequest(ctx);
+          const current = readFlowState(ctx);
+          writeFlowState(ctx, {
+            phone: current?.phone,
+            challengeId: current?.challengeId,
+            purpose: current?.purpose ?? purposeFromHeaders(ctx.headers),
+            returnTo: resolveFlowReturnTarget(
+              ctx.body.returnTo,
+              current?.returnTo,
+            ),
+          });
+          return ctx.json({ phone: current?.phone ?? null });
         },
       ),
       infinityFlowInfo: createAuthEndpoint(

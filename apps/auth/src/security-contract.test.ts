@@ -14,6 +14,7 @@ import { createTokenManager } from "@repo/auth-core/token-manager";
 import { createCentralAuthBrowserClient } from "@repo/auth-core/browser";
 import { getAuthEnv, resetAuthEnvForTests } from "./server/env";
 import {
+  resolveFlowReturnTarget,
   returnTargetFromHeaders,
   sealFlowState,
   unsealFlowState,
@@ -334,6 +335,14 @@ test("staging uses its own exact auth, API, and storefront authorities", () => {
   );
 
   assert.equal(
+    resolveFlowReturnTarget(
+      "https://admin.staging.infinitycolor.co/orders?page=3",
+      staleLegacyTarget,
+    ),
+    "https://admin.staging.infinitycolor.co/orders?page=3",
+  );
+
+  assert.equal(
     returnTargetFromHeaders(
       new Headers({
         referer: "https://auth.staging.infinitycolor.co/auth/login",
@@ -354,6 +363,29 @@ test("staging uses its own exact auth, API, and storefront authorities", () => {
     ),
     "https://staging.infinitycolor.co/",
   );
+});
+
+test("no-referrer auth initializes the validated return target explicitly", () => {
+  const nextConfig = fs.readFileSync(
+    path.resolve(process.cwd(), "next.config.ts"),
+    "utf8",
+  );
+  const flowContext = fs.readFileSync(
+    path.resolve(
+      process.cwd(),
+      "src/components/auth/auth-flow-context.tsx",
+    ),
+    "utf8",
+  );
+  const plugin = fs.readFileSync(
+    path.resolve(process.cwd(), "src/server/infinity-plugin.ts"),
+    "utf8",
+  );
+
+  assert.match(nextConfig, /Referrer-Policy"\s*,\s*value:\s*"no-referrer"/);
+  assert.match(flowContext, /authPost<\{ phone: string \| null \}>\("\/infinity\/flow\/start", \{ returnTo \}\)/);
+  assert.match(plugin, /"\/infinity\/flow\/start"/);
+  assert.match(plugin, /returnTo:\s*resolveFlowReturnTarget\(/);
 });
 
 test("Better Auth source freezes absolute sessions and the native secure cookie name", () => {

@@ -83,7 +83,7 @@ export function PhoneStatusForm({
 }: {
   storefrontOrigin: string;
 }) {
-  const { setPhone, go } = useAuthFlow();
+  const { flowReady, setPhone, go } = useAuthFlow();
   const [phoneValue, setPhoneValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -91,6 +91,7 @@ export function PhoneStatusForm({
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
+    if (!flowReady) return;
     if (!PHONE_PATTERN.test(phoneValue)) {
       setError("شماره همراه وارد شده معتبر نیست");
       return;
@@ -156,7 +157,7 @@ export function PhoneStatusForm({
         </div>
         <AuthButton
           type="submit"
-          disabled={loading}
+          disabled={loading || !flowReady}
           icon={loading ? <Spinner /> : undefined}
         >
           {loading ? "در حال بررسی..." : "بررسی شماره همراه"}

@@ -133,11 +133,11 @@ export function returnTargetFromHeaders(
   headers?: Headers,
   currentReturnTo?: string,
 ): string {
-  const env = getAuthEnv();
   let requested: string | null = null;
   const referer = headers?.get("referer");
   if (referer) {
     try {
+      const env = getAuthEnv();
       const url = new URL(referer);
       if (url.origin === env.betterAuthUrl)
         requested = url.searchParams.get("returnTo");
@@ -145,6 +145,14 @@ export function returnTargetFromHeaders(
       requested = null;
     }
   }
+  return resolveFlowReturnTarget(requested, currentReturnTo);
+}
+
+export function resolveFlowReturnTarget(
+  requested?: string | null,
+  currentReturnTo?: string,
+): string {
+  const env = getAuthEnv();
   return resolveReturnTarget(
     requested ?? currentReturnTo,
     env.trustedApplicationOrigins,
