@@ -33,14 +33,24 @@ async function fillCategoryForm(page: Page, title: string, slug: string) {
   await page.locator('[data-testid="admin-category-save"]:visible').first().click();
 }
 
-async function gotoExpandedCategoriesList(page: Page) {
-  await page.goto(expandedCategoriesPath, { waitUntil: "domcontentloaded" });
+async function waitForCategoriesListReady(page: Page) {
+  await expect(page).toHaveURL(categoriesURLPattern);
   await expect(visibleAddCategoryLink(page)).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() => new URL(page.url()).searchParams.has("totalSize"))
+    .toBe(true);
+}
+
+async function gotoExpandedCategoriesList(page: Page) {
+  // The table writes totalSize into the URL after its request completes. Waiting
+  // only for DOMContentLoaded lets that client-side URL update cancel a second
+  // hard navigation in WebKit, so resolve at commit and wait for the list state.
+  await page.goto(expandedCategoriesPath, { waitUntil: "commit" });
+  await waitForCategoriesListReady(page);
 }
 
 async function waitForCategoriesListNavigation(page: Page) {
-  await expect(page).toHaveURL(categoriesURLPattern);
-  await page.waitForLoadState("domcontentloaded");
+  await waitForCategoriesListReady(page);
 }
 
 test.describe("super-admin category CRUD smoke", () => {
@@ -62,8 +72,8 @@ test.describe("super-admin category CRUD smoke", () => {
     const updatedCategoryTitle = `${E2E_ADMIN_CATEGORY_UPDATED_TITLE} ${fixtureSuffix}`;
     const updatedCategorySlug = `${E2E_ADMIN_CATEGORY_UPDATED_SLUG}-${fixtureSuffix}`;
 
-    await page.goto(categoriesPath, { waitUntil: "domcontentloaded" });
-    await expect(visibleAddCategoryLink(page)).toBeVisible({ timeout: 30_000 });
+    await page.goto(categoriesPath, { waitUntil: "commit" });
+    await waitForCategoriesListReady(page);
 
     await page.goto(addCategoryPath, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`${addCategoryPath}$`));

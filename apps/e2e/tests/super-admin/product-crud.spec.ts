@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { authStorageStatePath } from "../../helpers/auth";
 import {
   cleanupRuntimeProducts,
@@ -7,6 +7,12 @@ import {
 } from "../../helpers/admin";
 import { apiGet, apiPut, expectApiOk, getProductVariationStock } from "../../helpers/api";
 import { prepareStorefrontPage } from "../../helpers/page";
+
+async function waitForProductsListURLToSettle(page: Page) {
+  await expect
+    .poll(() => new URL(page.url()).searchParams.has("totalSize"))
+    .toBe(true);
+}
 
 test.describe("super-admin product CRUD", () => {
   test.use({ storageState: authStorageStatePath("admin") });
@@ -30,18 +36,24 @@ test.describe("super-admin product CRUD", () => {
     await prepareStorefrontPage(page);
     const fixture = await createRuntimeProductFixture(request);
 
-    await page.goto("/products?pageSize=100", { waitUntil: "domcontentloaded" });
+    await page.goto("/products?pageSize=100", { waitUntil: "commit" });
     const row = page
       .locator('[data-testid="admin-product-row"]:visible')
       .filter({ hasText: fixture.productTitle })
       .first();
     await expect(row).toBeVisible({ timeout: 30_000 });
+    await waitForProductsListURLToSettle(page);
 
-    await page
+    const editLink = page
       .locator(`[data-testid="admin-product-edit"][data-id="${fixture.productId}"]:visible`)
-      .first()
-      .click();
-    await expect(page).toHaveURL(new RegExp(`/products/${fixture.productId}$`));
+      .first();
+    const editURLPattern = new RegExp(`/products/${fixture.productId}$`);
+    await expect(editLink).toHaveAttribute("href", `/products/${fixture.productId}`);
+    await Promise.all([
+      page.waitForURL(editURLPattern, { waitUntil: "commit", timeout: 30_000 }),
+      editLink.click(),
+    ]);
+    await expect(page).toHaveURL(editURLPattern);
 
     const updatedTitle = `${fixture.productTitle} Updated`;
     const updateResponse = await apiPut(request, "admin", `/products/${fixture.productId}`, {
@@ -49,7 +61,8 @@ test.describe("super-admin product CRUD", () => {
     });
     await expectApiOk(updateResponse, "update runtime product");
 
-    await page.goto("/products?pageSize=100", { waitUntil: "domcontentloaded" });
+    await page.goto("/products?pageSize=100", { waitUntil: "commit" });
+    await waitForProductsListURLToSettle(page);
     await expect(
       page.locator('[data-testid="admin-product-row"]:visible').filter({ hasText: updatedTitle }).first(),
     ).toBeVisible({ timeout: 30_000 });
