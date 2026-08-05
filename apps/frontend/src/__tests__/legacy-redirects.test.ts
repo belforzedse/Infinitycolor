@@ -58,7 +58,7 @@ function mockRequest(path: string, hasAuthMarker = false, origin?: string, metho
   };
 }
 
-describe("disabled admin cutover redirect", () => {
+describe("admin cutover redirect", () => {
   const previous = {
     enabled: process.env.ADMIN_REDIRECT_ENABLED,
     environment: process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT,
