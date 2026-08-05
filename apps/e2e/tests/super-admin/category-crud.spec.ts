@@ -38,6 +38,11 @@ async function gotoExpandedCategoriesList(page: Page) {
   await expect(visibleAddCategoryLink(page)).toBeVisible({ timeout: 30_000 });
 }
 
+async function waitForCategoriesListNavigation(page: Page) {
+  await expect(page).toHaveURL(categoriesURLPattern);
+  await page.waitForLoadState("domcontentloaded");
+}
+
 test.describe("super-admin category CRUD smoke", () => {
   test.use({ storageState: authStorageStatePath("admin") });
 
@@ -47,33 +52,39 @@ test.describe("super-admin category CRUD smoke", () => {
       "Super-admin CRUD smoke is desktop-only in Phase 1.5",
     );
 
+    const testInfo = test.info();
+    const projectSlug = testInfo.project.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-");
+    const fixtureSuffix = `${projectSlug}-${testInfo.retry}`;
+    const categoryTitle = `${E2E_ADMIN_CATEGORY_TITLE} ${fixtureSuffix}`;
+    const categorySlug = `${E2E_ADMIN_CATEGORY_SLUG}-${fixtureSuffix}`;
+    const updatedCategoryTitle = `${E2E_ADMIN_CATEGORY_UPDATED_TITLE} ${fixtureSuffix}`;
+    const updatedCategorySlug = `${E2E_ADMIN_CATEGORY_UPDATED_SLUG}-${fixtureSuffix}`;
+
     await page.goto(categoriesPath, { waitUntil: "domcontentloaded" });
     await expect(visibleAddCategoryLink(page)).toBeVisible({ timeout: 30_000 });
 
     await page.goto(addCategoryPath, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`${addCategoryPath}$`));
-    await fillCategoryForm(page, E2E_ADMIN_CATEGORY_TITLE, E2E_ADMIN_CATEGORY_SLUG);
+    await fillCategoryForm(page, categoryTitle, categorySlug);
 
-    await expect(page).toHaveURL(categoriesURLPattern);
+    await waitForCategoriesListNavigation(page);
     await gotoExpandedCategoriesList(page);
-    const createdCard = visibleCategoryCard(page, E2E_ADMIN_CATEGORY_SLUG);
+    const createdCard = visibleCategoryCard(page, categorySlug);
     await expect(createdCard).toBeVisible({ timeout: 30_000 });
 
     await createdCard.getByTestId("admin-category-edit").click();
     await expect(page).toHaveURL(/\/products\/categories\/edit\/\d+$/);
-    await fillCategoryForm(
-      page,
-      E2E_ADMIN_CATEGORY_UPDATED_TITLE,
-      E2E_ADMIN_CATEGORY_UPDATED_SLUG,
-    );
+    await fillCategoryForm(page, updatedCategoryTitle, updatedCategorySlug);
 
-    await expect(page).toHaveURL(categoriesURLPattern);
+    await waitForCategoriesListNavigation(page);
     await gotoExpandedCategoriesList(page);
-    const updatedCard = visibleCategoryCard(page, E2E_ADMIN_CATEGORY_UPDATED_SLUG);
+    const updatedCard = visibleCategoryCard(page, updatedCategorySlug);
     await expect(updatedCard).toBeVisible({ timeout: 30_000 });
     await expect(updatedCard).toHaveAttribute(
       "data-category-title",
-      E2E_ADMIN_CATEGORY_UPDATED_TITLE,
+      updatedCategoryTitle,
     );
 
     await updatedCard.getByTestId("admin-category-delete").click();
@@ -90,6 +101,6 @@ test.describe("super-admin category CRUD smoke", () => {
     await page.locator('[data-testid="delete-category-confirm"]:visible:enabled').first().click();
 
     await expect(updatedCard).toHaveCount(0, { timeout: 30_000 });
-    await expect(categoryCard(page, E2E_ADMIN_CATEGORY_UPDATED_SLUG)).toHaveCount(0);
+    await expect(categoryCard(page, updatedCategorySlug)).toHaveCount(0);
   });
 });
