@@ -13,7 +13,7 @@ const FROZEN_STOREFRONT_ORIGINS: Record<Exclude<AdminEnvironment, "development">
 };
 
 const FROZEN_API_URLS: Record<Exclude<AdminEnvironment, "development">, string> = {
-  e2e: "http://127.0.0.1:1337/api",
+  e2e: "http://backend:1337/api",
   staging: "https://api.staging.infinitycolor.co/api",
   production: "https://api.infinitycolor.co/api",
 };
