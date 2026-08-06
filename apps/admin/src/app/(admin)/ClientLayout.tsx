@@ -13,6 +13,36 @@ import { canRoleAccessPath, getRoleAdminLandingPath } from "@/constants/roleAcce
 import clsx from "clsx";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 
+type AdminViewport = "mobile" | "tablet" | "desktop";
+
+function useAdminViewport(): AdminViewport | null {
+  const [viewport, setViewport] = useState<AdminViewport | null>(null);
+
+  useEffect(() => {
+    const tabletQuery = window.matchMedia("(min-width: 768px)");
+    const desktopQuery = window.matchMedia("(min-width: 1024px)");
+    const updateViewport = () => {
+      setViewport(
+        desktopQuery.matches
+          ? "desktop"
+          : tabletQuery.matches
+            ? "tablet"
+            : "mobile",
+      );
+    };
+
+    updateViewport();
+    tabletQuery.addEventListener("change", updateViewport);
+    desktopQuery.addEventListener("change", updateViewport);
+    return () => {
+      tabletQuery.removeEventListener("change", updateViewport);
+      desktopQuery.removeEventListener("change", updateViewport);
+    };
+  }, []);
+
+  return viewport;
+}
+
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -21,6 +51,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const setCurrentUser = useSetAtom(currentUserAtom);
   const setUserLoading = useSetAtom(userLoadingAtom);
   const currentUser = useAtomValue(currentUserAtom);
+  const viewport = useAdminViewport();
   const hasRunRef = useRef(false);
   const lastCheckRef = useRef<number>(0);
   const isCheckingRef = useRef(false);
@@ -204,7 +235,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     }
   }, [currentUser?.roleName, isAuthorized, roleBlocked, router]);
 
-  if (isLoading) {
+  if (isLoading || !viewport) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-neutral-50">
         <div
@@ -227,17 +258,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   return (
     <>
       <Suspense fallback={<div>Loading...</div>}>
-        <div className="block md:hidden">
-          <Mobile>{children}</Mobile>
-        </div>
-
-        <div className="hidden md:block lg:hidden">
-          <Tablet>{children}</Tablet>
-        </div>
-
-        <div className="hidden lg:block">
-          <Desktop>{children}</Desktop>
-        </div>
+        <ResponsiveAdminShell viewport={viewport}>
+          {children}
+        </ResponsiveAdminShell>
       </Suspense>
       <div className="[&_button]:!left-4 [&_button]:!right-auto">
         <ScrollToTop />
@@ -246,31 +269,25 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   );
 }
 
-function Mobile({ children }: { children: React.ReactNode }) {
+export function ResponsiveAdminShell({
+  children,
+  viewport,
+}: {
+  children: React.ReactNode;
+  viewport: AdminViewport;
+}) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  return (
-    <div className="min-h-screen bg-neutral-50 p-4">
-      <div className="flex w-full flex-col gap-4">
-        <Header onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)} />
-        {children}
-        <Sidebar
-          isOpen={isSidebarOpen}
-          onClose={() => setIsSidebarOpen(false)}
-          enableMobileDrawer
-        />
-      </div>
-    </div>
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    viewport === "tablet",
   );
-}
-
-function Tablet({ children }: { children: React.ReactNode }) {
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const isMobile = viewport === "mobile";
+  const isTablet = viewport === "tablet";
 
   // Handle click outside to collapse sidebar on tablets
   useEffect(() => {
     // Only add listener when sidebar is expanded
-    if (isSidebarCollapsed) return;
+    if (!isTablet || isSidebarCollapsed) return;
 
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       // Only collapse if click is outside sidebar
@@ -287,57 +304,80 @@ function Tablet({ children }: { children: React.ReactNode }) {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("touchstart", handleClickOutside);
     };
-  }, [isSidebarCollapsed]);
+  }, [isSidebarCollapsed, isTablet]);
 
   return (
-    <div className="flex min-h-screen gap-3 bg-neutral-50 pl-4 md:pl-6">
+    <div
+      className={clsx(
+        "min-h-screen bg-neutral-50",
+        isMobile && "p-4",
+        isTablet && "flex gap-3 pl-4 md:pl-6",
+        viewport === "desktop" && "flex gap-5 pl-6 lg:pl-10",
+      )}
+    >
       <div
+        key="desktop-sidebar"
         ref={sidebarRef}
         className={clsx(
           "sticky top-0 z-10 h-screen flex-shrink-0 overflow-hidden transition-all duration-300",
-          isSidebarCollapsed ? "w-[80px]" : "w-[288px]",
+          isMobile && "hidden",
+          !isMobile && isSidebarCollapsed && "w-[80px]",
+          isTablet && !isSidebarCollapsed && "w-[288px]",
+          viewport === "desktop" &&
+            !isSidebarCollapsed &&
+            "w-[288px] xl:w-[304px]",
         )}
       >
-        <Sidebar
-          isOpen={true}
-          onClose={() => {}}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-        />
+        {!isMobile && (
+          <Sidebar
+            isOpen={true}
+            onClose={() => {}}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={() =>
+              setIsSidebarCollapsed(!isSidebarCollapsed)
+            }
+          />
+        )}
       </div>
-      <div className="flex w-full min-w-0 flex-1 flex-col gap-3 overflow-visible p-4">
-        <div className="mx-auto w-full min-w-0 max-w-screen-3xl space-y-3">
-          <Header onMenuClick={() => {}} />
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Desktop({ children }: { children: React.ReactNode }) {
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-
-  return (
-    <div className="flex min-h-screen gap-5 bg-neutral-50 pl-6 lg:pl-10">
       <div
+        key="page-content"
         className={clsx(
-          "sticky top-0 z-10 h-screen flex-shrink-0 overflow-hidden transition-all duration-300",
-          isSidebarCollapsed ? "w-[80px]" : "w-[288px] xl:w-[304px]",
+          "w-full",
+          isMobile && "flex flex-col gap-4",
+          !isMobile && "flex min-w-0 flex-1 flex-col overflow-visible p-4",
+          isTablet && "gap-3",
+          viewport === "desktop" && "gap-4 lg:gap-7",
         )}
       >
-        <Sidebar
-          isOpen={true}
-          onClose={() => {}}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-        />
-      </div>
-      <div className="flex w-full min-w-0 flex-1 flex-col gap-4 p-4 lg:gap-7">
-        <div className="mx-auto w-full min-w-0 max-w-screen-3xl space-y-4 lg:space-y-7">
-          <Header onMenuClick={() => {}} />
+        <div
+          className={clsx(
+            "w-full",
+            isMobile && "flex flex-col gap-4",
+            isTablet &&
+              "mx-auto min-w-0 max-w-screen-3xl space-y-3",
+            viewport === "desktop" &&
+              "mx-auto min-w-0 max-w-screen-3xl space-y-4 lg:space-y-7",
+          )}
+        >
+          <Header
+            onMenuClick={
+              isMobile ? () => setIsSidebarOpen(!isSidebarOpen) : () => {}
+            }
+          />
           {children}
         </div>
+      </div>
+      <div
+        key="mobile-sidebar"
+        className={clsx(!isMobile && "hidden")}
+      >
+        {isMobile && (
+          <Sidebar
+            isOpen={isSidebarOpen}
+            onClose={() => setIsSidebarOpen(false)}
+            enableMobileDrawer
+          />
+        )}
       </div>
     </div>
   );
