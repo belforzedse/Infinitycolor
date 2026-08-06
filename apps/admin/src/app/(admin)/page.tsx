@@ -28,7 +28,7 @@ const statusToneBadge: Record<string, string> = {
 export default function SuperAdminPage() {
   const router = useRouter();
   const { data: me, isLoading, error } = useMe();
-  const { roleName, isLoading: roleLoading } = useCurrentUser();
+  const { roleName } = useCurrentUser();
   const showUserMetric = canSeeDashboardUserMetric(roleName);
   const {
     metrics,
@@ -37,10 +37,7 @@ export default function SuperAdminPage() {
     loading: metricsLoading,
     error: metricsError,
   } = useDashboardMetrics({
-    enabled:
-      !roleLoading &&
-      Boolean(roleName) &&
-      roleName?.trim().toLowerCase() !== "editor",
+    enabled: Boolean(roleName) && roleName?.trim().toLowerCase() !== "editor",
     includeUserMetric: showUserMetric,
   });
 

@@ -7,7 +7,7 @@ import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { UserService } from "@/services";
 import { HTTP_STATUS } from "@/constants/api";
-import { currentUserAtom } from "@/lib/atoms/auth";
+import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { useAtomValue, useSetAtom } from "jotai";
 import { canRoleAccessPath, getRoleAdminLandingPath } from "@/constants/roleAccess";
 import clsx from "clsx";
@@ -19,6 +19,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const setCurrentUser = useSetAtom(currentUserAtom);
+  const setUserLoading = useSetAtom(userLoadingAtom);
   const currentUser = useAtomValue(currentUserAtom);
   const hasRunRef = useRef(false);
   const lastCheckRef = useRef<number>(0);
@@ -94,6 +95,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
     let isMounted = true;
     setIsLoading(true);
+    setUserLoading(true);
 
     const run = async () => {
       const token = await centralAuth.tokenManager.getToken();
@@ -109,6 +111,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         if (!isMounted || !me) return;
         // Update the cached user data with fresh data
         setCurrentUser(me);
+        setUserLoading(false);
 
         if (!me?.isAdmin) {
           redirectToPrevious();
@@ -123,6 +126,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         if (!isMounted) return;
         // Clear user data on auth errors
         setCurrentUser(null);
+        setUserLoading(false);
 
         if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
           window.location.replace(centralLoginUrl(pathname));
