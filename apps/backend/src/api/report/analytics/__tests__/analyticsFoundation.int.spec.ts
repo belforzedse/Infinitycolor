@@ -14,6 +14,10 @@ import { setupStrapi, teardownStrapi, getStrapi } from "../../../../__tests__/in
 import { makeFactories, type Factories, TEST_PREFIX } from "../../../../__tests__/integration/factories";
 import { runAnalyticsDailyRollupTick } from "../../../../jobs/analyticsDailyRollup";
 
+const externalIdentityMigration = require(
+  "../../../../../database/migrations/2026.08.06T09.10.00.convert-external-identity-indexes-to-constraints.js",
+);
+
 let strapi: any;
 let f: Factories;
 
@@ -164,6 +168,21 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
 
   it("survives a full schema reconciliation against an existing database", async () => {
     const knex = strapi.db.connection;
+
+    // Reproduce the staging shape produced by the original WooCommerce
+    // migration: named standalone partial indexes, not table constraints.
+    const externalIdentityConstraints =
+      externalIdentityMigration.__private.EXTERNAL_IDENTITY_CONSTRAINTS;
+    for (const [tableName, constraintName] of externalIdentityConstraints) {
+      await knex.raw("ALTER TABLE ?? DROP CONSTRAINT ??", [tableName, constraintName]);
+      await knex.raw(
+        `CREATE UNIQUE INDEX ?? ON ?? (external_source, external_id)
+          WHERE external_source IS NOT NULL AND external_id IS NOT NULL`,
+        [constraintName, tableName],
+      );
+    }
+    await knex.transaction((transaction: any) => externalIdentityMigration.up(transaction));
+
     await knex("strapi_database_schema").del();
 
     await teardownStrapi();
@@ -192,15 +211,18 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
       "uq_order_items_external_source_id",
       "uq_users_external_source_id",
     ];
-    const indexResult = await reloadedKnex.raw(
-      `SELECT indexname
-         FROM pg_indexes
-        WHERE schemaname = current_schema()
-          AND indexname = ANY(?)`,
+    const constraintResult = await reloadedKnex.raw(
+      `SELECT constraint_name
+         FROM information_schema.table_constraints
+        WHERE constraint_schema = current_schema()
+          AND constraint_type = 'UNIQUE'
+          AND constraint_name = ANY(?)`,
       [expectedIndexes],
     );
-    expect(indexResult.rows.map((row: { indexname: string }) => row.indexname).sort()).toEqual(
-      expectedIndexes.sort(),
-    );
+    expect(
+      constraintResult.rows
+        .map((row: { constraint_name: string }) => row.constraint_name)
+        .sort(),
+    ).toEqual(expectedIndexes.sort());
   });
 });

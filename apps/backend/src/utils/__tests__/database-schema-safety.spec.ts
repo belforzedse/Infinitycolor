@@ -3,6 +3,9 @@ import databaseConfig from "../../../config/database";
 const persistedTablesMigration = require(
   "../../../database/migrations/2026.08.06T09.00.00.persist-custom-database-tables.js",
 );
+const externalIdentityMigration = require(
+  "../../../database/migrations/2026.08.06T09.10.00.convert-external-identity-indexes-to-constraints.js",
+);
 
 const externalIdentitySchemas = [
   {
@@ -96,4 +99,12 @@ describe("Strapi database schema safety", () => {
       expect(schema.attributes.external_id.unique).not.toBe(true);
     },
   );
+
+  it("converts every declared external identity index to a Strapi-manageable constraint", () => {
+    expect(
+      externalIdentityMigration.__private.EXTERNAL_IDENTITY_CONSTRAINTS.map(
+        ([, constraintName]: [string, string]) => constraintName,
+      ),
+    ).toEqual(externalIdentitySchemas.map(({ indexName }) => indexName));
+  });
 });
