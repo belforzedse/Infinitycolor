@@ -10,9 +10,9 @@ const variations = require("../fixtures/variations.json");
 
 const byId = (arr, id) => arr.find((x) => x.id === id);
 
-test("mapProduct: slug imported verbatim (URL-decoded), not regenerated", () => {
+test("mapProduct: slug imported exactly without decoding or regeneration", () => {
   const { data } = T.mapProduct(byId(products, 101));
-  assert.equal(data.Slug, "کیف-دستی"); // decoded from percent-encoded WC slug
+  assert.equal(data.Slug, "%da%a9%db%8c%d9%81-%d8%af%d8%b3%d8%aa%db%8c");
 });
 
 test("mapProduct: writes ProductType, IsSimpleProduct, Weight, Status", () => {
@@ -151,6 +151,15 @@ test("mapVariation: stable SKU, no per-run mutation; IsPublished default true", 
 
   const noStatus = T.mapVariation({ id: 7, regular_price: "100", attributes: [] }, { parentStrapiId: 1 });
   assert.equal(noStatus.data.IsPublished, true); // missing status defaults to published
+});
+
+test("mapVariation: an existing variation clears DiscountPrice when its Woo sale ends", () => {
+  const result = T.mapVariation(
+    { id: 7, regular_price: "100", sale_price: "", on_sale: false, attributes: [] },
+    { parentStrapiId: 1, preserveMissingPrice: true },
+  );
+  assert.equal(result.data.Price, 100);
+  assert.equal(result.data.DiscountPrice, null);
 });
 
 test("mapVariation and synthetic simple variations preserve Woo timestamps", () => {

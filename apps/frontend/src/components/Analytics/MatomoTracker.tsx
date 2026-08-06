@@ -16,8 +16,6 @@ import {
   trackPageView,
 } from "@/lib/analytics/matomo";
 
-const DEFAULT_MATOMO_URL = "https://matomo.alpagency.net";
-const DEFAULT_MATOMO_SITE_ID = "2";
 type MatomoCommand = [string, ...unknown[]];
 
 function trimTrailingSlash(value: string) {
@@ -54,10 +52,10 @@ export function MatomoTracker() {
   const previousUrlRef = useRef<string>("");
   const [shouldLoadScript, setShouldLoadScript] = useState(false);
 
-  const baseUrl = trimTrailingSlash(
-    (process.env.NEXT_PUBLIC_MATOMO_URL || DEFAULT_MATOMO_URL).trim(),
-  );
-  const siteId = (process.env.NEXT_PUBLIC_MATOMO_SITE_ID || DEFAULT_MATOMO_SITE_ID).trim();
+  // Fail closed: an unconfigured build must never silently ship hits to a
+  // stale/wrong Matomo instance (see docs/analytics — Matomo config drift).
+  const baseUrl = trimTrailingSlash((process.env.NEXT_PUBLIC_MATOMO_URL || "").trim());
+  const siteId = (process.env.NEXT_PUBLIC_MATOMO_SITE_ID || "").trim();
   const enabled = isAnalyticsEnabled() && Boolean(baseUrl && siteId);
 
   const currentPath = useMemo(() => {

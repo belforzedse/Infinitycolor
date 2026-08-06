@@ -82,6 +82,18 @@ export function makeFactories(strapi: any) {
     return row;
   }
 
+  async function createUserInfo(opts: { userId: number; firstName?: string; lastName?: string }) {
+    const row = await q("api::local-user-info.local-user-info").create({
+      data: {
+        user: opts.userId,
+        FirstName: opts.firstName ?? `${TEST_PREFIX}first`,
+        LastName: opts.lastName ?? `${TEST_PREFIX}last`,
+      },
+    });
+    track("api::local-user-info.local-user-info", row.id);
+    return row;
+  }
+
   async function createContract(
     opts: { amount?: number; status?: string; type?: string; userId?: number } = {},
   ) {
@@ -158,6 +170,8 @@ export function makeFactories(strapi: any) {
       userId?: number;
       contractId?: number;
       paymentGateway?: string;
+      discountCode?: string;
+      deliveryAddressId?: number;
     } = {},
   ) {
     const row = await q("api::order.order").create({
@@ -170,6 +184,8 @@ export function makeFactories(strapi: any) {
         ...(opts.userId ? { user: opts.userId } : {}),
         ...(opts.contractId ? { contract: opts.contractId } : {}),
         ...(opts.paymentGateway ? { PaymentGateway: opts.paymentGateway } : {}),
+        ...(opts.discountCode ? { DiscountCode: opts.discountCode } : {}),
+        ...(opts.deliveryAddressId ? { delivery_address: opts.deliveryAddressId } : {}),
         Type: "Automatic",
         Date: new Date().toISOString(),
         external_source: TEST_PREFIX,
@@ -178,6 +194,37 @@ export function makeFactories(strapi: any) {
     track("api::order.order", row.id);
     createdOrderIds.push(row.id);
     return row;
+  }
+
+  async function createShippingProvince(opts: { title?: string } = {}) {
+    const row = await q("api::shipping-province.shipping-province").create({
+      data: { Title: opts.title ?? uniq(), Code: uniq() },
+    });
+    track("api::shipping-province.shipping-province", row.id);
+    return row;
+  }
+
+  async function createShippingCity(opts: { title?: string; provinceId?: number } = {}) {
+    const provinceId = opts.provinceId ?? (await createShippingProvince()).id;
+    const row = await q("api::shipping-city.shipping-city").create({
+      data: { Title: opts.title ?? uniq(), Code: uniq(), shipping_province: provinceId },
+    });
+    track("api::shipping-city.shipping-city", row.id);
+    return { ...row, provinceId };
+  }
+
+  async function createAddress(opts: { userId: number; cityId?: number; postalCode?: string }) {
+    const cityId = opts.cityId ?? (await createShippingCity()).id;
+    const row = await q("api::local-user-address.local-user-address").create({
+      data: {
+        user: opts.userId,
+        shipping_city: cityId,
+        PostalCode: opts.postalCode ?? uniq(),
+        FullAddress: `${TEST_PREFIX}address`,
+      },
+    });
+    track("api::local-user-address.local-user-address", row.id);
+    return { ...row, cityId };
   }
 
   async function createOrderItem(opts: {
@@ -443,11 +490,15 @@ export function makeFactories(strapi: any) {
     createStock,
     createVariation,
     createUser,
+    createUserInfo,
     createContract,
     createContractTransaction,
     createPaymentGateway,
     createOrder,
     createOrderItem,
+    createShippingProvince,
+    createShippingCity,
+    createAddress,
     createReservedOrder,
     createPayableOrder,
     createWallet,

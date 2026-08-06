@@ -23,6 +23,8 @@ describe("scheduler registration", () => {
         QUEUE_CRON_STOCK_RESERVATION_EXPIRY: "*/2 * * * *",
         QUEUE_CRON_RESERVE_ORDER_EXPIRY: "*/10 * * * *",
         QUEUE_CRON_VIEW_COUNTER_FLUSH: "*/3 * * * *",
+        QUEUE_CRON_ANALYTICS_DAILY_ROLLUP: "20 0 * * *",
+        QUEUE_CRON_ANALYTICS_RECONCILIATION: "50 0 * * *",
         QUEUE_CRON_SNAPPAY_SWEEP: "*/1 * * * *",
         QUEUE_TIMEZONE: "Asia/Tehran",
       } as any)
@@ -49,6 +51,22 @@ describe("scheduler registration", () => {
       { pattern: "*/3 * * * *", tz: "Asia/Tehran" },
       expect.objectContaining({
         name: ANALYTICS_MAINTENANCE_JOBS.viewCounterFlush,
+        data: {},
+      })
+    );
+    expect(analyticsQueue.upsertJobScheduler).toHaveBeenCalledWith(
+      MAINTENANCE_SCHEDULERS.analyticsDailyRollup,
+      { pattern: "20 0 * * *", tz: "Asia/Tehran" },
+      expect.objectContaining({
+        name: ANALYTICS_MAINTENANCE_JOBS.analyticsDailyRollup,
+        data: {},
+      })
+    );
+    expect(analyticsQueue.upsertJobScheduler).toHaveBeenCalledWith(
+      MAINTENANCE_SCHEDULERS.analyticsReconciliation,
+      { pattern: "50 0 * * *", tz: "Asia/Tehran" },
+      expect.objectContaining({
+        name: ANALYTICS_MAINTENANCE_JOBS.analyticsReconciliation,
         data: {},
       })
     );

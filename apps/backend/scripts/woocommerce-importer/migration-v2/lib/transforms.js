@@ -20,7 +20,10 @@ function canonicalPhone(value) {
   return /^\+989\d{9}$/.test(phone) ? phone : null;
 }
 
-function decimalToInteger(value, multiplier = 10) {
+function decimalToInteger(value, multiplier) {
+  if (!Number.isSafeInteger(multiplier) || multiplier < 1) {
+    throw new Error("MONEY_MULTIPLIER_INVALID");
+  }
   const raw = toEnglishDigits(value).trim();
   if (!/^\d+(?:\.\d+)?$/.test(raw)) throw new Error("MONEY_FORMAT_INVALID");
   const [whole, fraction = ""] = raw.split(".");
@@ -28,6 +31,14 @@ function decimalToInteger(value, multiplier = 10) {
   const numerator = BigInt(`${whole}${fraction}`) * BigInt(multiplier);
   if (numerator % scale !== 0n) throw new Error("MONEY_NOT_EXACT_AFTER_CONVERSION");
   return (numerator / scale).toString();
+}
+
+function wooMoneyToToman(value) {
+  return decimalToInteger(value, 1);
+}
+
+function wooMoneyToRial(value) {
+  return decimalToInteger(value, 10);
 }
 
 function cleanText(value, max) {
@@ -60,7 +71,7 @@ function walletPayload(walletUser) {
   if (!/^\d+$/.test(sourceId) || sourceId === "0") throw new Error("WALLET_USER_ID_INVALID");
   return {
     userSourceId: sourceId,
-    balanceRial: decimalToInteger(walletUser.balance ?? 0, 10),
+    balanceRial: wooMoneyToRial(walletUser.balance ?? 0),
   };
 }
 
@@ -129,7 +140,7 @@ function orderPayload(order) {
       sourceId: String(line.id),
       variationSourceId,
       count,
-      unitPriceRial: decimalToInteger(price || 0, 10),
+      unitPriceToman: wooMoneyToToman(price || 0),
       title: cleanText(line.name, 255) || "WooCommerce product",
       sku: cleanText(line.sku, 255) || `WC-${variationSourceId}`,
     };
@@ -138,8 +149,8 @@ function orderPayload(order) {
   const shipping = Array.isArray(order.shipping_lines) ? order.shipping_lines[0] : null;
   const sourceTimestamps = wooSourceTimestamps(order);
   const gateway = paymentGateway(order.payment_method);
-  const totalTaxRial = decimalToInteger(order.total_tax || 0, 10);
-  if (totalTaxRial !== "0") throw new Error("ORDER_NONZERO_TAX_REQUIRES_MAPPING");
+  const totalTaxToman = wooMoneyToToman(order.total_tax || 0);
+  if (totalTaxToman !== "0") throw new Error("ORDER_NONZERO_TAX_REQUIRES_MAPPING");
   return {
     sourceId,
     customerSourceId: Number(order.customer_id) > 0 ? String(order.customer_id) : null,
@@ -147,8 +158,8 @@ function orderPayload(order) {
     date: date.toISOString(),
     status: orderStatus[order.status] || "Paying",
     contractStatus: contractStatus[order.status] || "Not Ready",
-    totalRial: decimalToInteger(order.total || 0, 10),
-    shippingRial: decimalToInteger(order.shipping_total || 0, 10),
+    totalToman: wooMoneyToToman(order.total || 0),
+    shippingToman: wooMoneyToToman(order.shipping_total || 0),
     shippingMethodCode: cleanText(shipping?.method_id, 255) || null,
     shippingMethodTitle: cleanText(shipping?.method_title, 255) || null,
     paymentGateway: gateway,
@@ -202,6 +213,8 @@ function blogPostPayload(post) {
 module.exports = {
   canonicalPhone,
   decimalToInteger,
+  wooMoneyToToman,
+  wooMoneyToRial,
   customerPayload,
   walletPayload,
   walletBalanceValue,

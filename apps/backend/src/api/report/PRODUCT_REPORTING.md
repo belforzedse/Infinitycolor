@@ -105,7 +105,10 @@ KPIs compare against the immediately-preceding equal-length window
   columns are rejected, preventing SQL injection via `sort`.
 - `pageSize` is clamped to `MAX_PAGE_SIZE` (100); export is hard-capped at 10,000 rows.
 - Date ranges are normalized (swapped if reversed).
-- All endpoints require `Superadmin` or `Store manager` (`ensureRoleAccess`).
+- All endpoints require `Superadmin` or `Founder` (`ensureRoleAccess`, gated by
+  `PRODUCT_REPORT_ROLES` in `controllers/report.ts`). **Correction:** this doc
+  previously said "Superadmin or Store manager" — that has never matched the code.
+  Store manager has no access to any `/reports/*` route today.
 - Strapi link-table / FK names are resolved from `information_schema` **once per
   process** (memoized), replacing the previous per-request schema probing.
 
@@ -123,5 +126,12 @@ These cannot be computed reliably from currently-recorded data:
   records movements but reliable point-in-time reconstruction is not implemented;
   slow/fast-moving is derived from **sales velocity** in the window instead.
 
-To add any of these later: record unit cost on `product-variation`; aggregate
-`product-view` per product per day; introduce a brand content-type.
+- **Per-product conversion rate** is now available for periods after the analytics
+  expansion — see `docs/analytics/metric-dictionary.md#product_view_to_purchase_rate`
+  — via a daily `analytics_product_view_daily` rollup of `product_views`. It has no
+  history before that rollup started, and `product.SeenCount` remains cumulative-only.
+
+To add profit/margin later: record unit cost on `product-variation` (**explicitly
+declined for this release** — see `docs/analytics/analytics-decisions.md`, decision
+1: cost data is unavailable and no `CostPrice` field will be added; do not infer or
+estimate a margin figure). To add brand: introduce a brand content-type.

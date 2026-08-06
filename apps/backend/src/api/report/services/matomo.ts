@@ -337,6 +337,23 @@ function toLabeledVisits(input: unknown): LabeledVisits[] {
     .slice(0, TABLE_LIMIT);
 }
 
+/**
+ * Step-reach funnel from `Events.getAction`, not a strict ordered/deduplicated
+ * per-visit funnel (that needs the paid Funnels plugin, which is not
+ * installed — see MATOMO.md capability matrix). A true segment-based funnel
+ * (`VisitsSummary.get&segment=eventAction==X`) was considered and rejected:
+ * this Matomo instance runs with `browser_archiving_disabled_enforce=1` and
+ * `enable_browser_archiving_triggering=0` (verified against the live host,
+ * see analytics-decisions.md), so an ad-hoc `segment=` parameter that isn't a
+ * pre-registered, cron-archived stored segment silently returns zero rows for
+ * any non-today period — not an error, just empty data. None of these
+ * funnel-step segments are registered for background archiving today.
+ *
+ * Instead this counts `nb_visits` (visits that triggered the action at least
+ * once) rather than `nb_events` (raw event count, which double-counts a visit
+ * that fires `add_to_cart` more than once) — `Events.getAction` is a core
+ * report and always archived, so this needs no infrastructure change.
+ */
 function parseFunnelRows(input: unknown): TrafficDashboardPayload["funnel"] {
   const actions = normalizeRows(input);
   const totals = STEP_ORDER.reduce<Record<string, number>>((acc, step) => {
@@ -349,14 +366,18 @@ function parseFunnelRows(input: unknown): TrafficDashboardPayload["funnel"] {
     if (!rawLabel) return;
     const matchedStep = STEP_ORDER.find((step) => rawLabel === step);
     if (!matchedStep) return;
-    totals[matchedStep] += normalizeNumber(row?.nb_events);
+    totals[matchedStep] += normalizeNumber(row?.nb_visits);
   });
 
   let previous = 0;
   return STEP_ORDER.map((step, index) => {
     const current = totals[step];
     const conversionFromPrevious =
-      index === 0 ? null : previous > 0 ? Number(((current / previous) * 100).toFixed(2)) : 0;
+      index === 0
+        ? null
+        : previous > 0
+          ? Math.min(100, Number(((current / previous) * 100).toFixed(2)))
+          : 0;
     previous = current;
     return {
       step,
@@ -435,6 +456,100 @@ export async function getProductBehavioral(
       avgTimeOnPageSec: normalizeNumber(match.avg_time_on_page),
       bounceRate: normalizePercent(match.bounce_rate),
     };
+  } catch {
+    return null;
+  }
+}
+
+export type MatomoEcommerceSummary = {
+  orders: number;
+  /** Raw Matomo `revenue` for the range, in whatever currency the Matomo site
+   * is configured with. Server-side tracking sends Toman (see MATOMO.md), but
+   * this has not been independently verified against the live site's actual
+   * currency setting — callers doing reconciliation must not assume this is
+   * Toman without a sanity check (see `reconcile/commerceReconciliation.ts`). */
+  revenue: number;
+};
+
+/**
+ * Ecommerce order count + revenue for a range, for reconciliation against
+ * Strapi's authoritative figures. Fully graceful: returns `null` when Matomo
+ * is not configured or any error occurs — reconciliation must treat this as
+ * "unavailable", never as "zero orders".
+ */
+export async function getMatomoEcommerceSummary(
+  range: TrafficRange,
+): Promise<MatomoEcommerceSummary | null> {
+  if (!isMatomoConfigured()) return null;
+  try {
+    const dateRange = `${range.startDate},${range.endDate}`;
+    const result = await fetchMatomo("Goals.get", {
+      idGoal: "ecommerceOrder",
+      period: "range",
+      date: dateRange,
+    });
+    const row = Array.isArray(result) ? result[0] : result;
+    return {
+      orders: normalizeNumber(row?.nb_conversions),
+      revenue: normalizeNumber(row?.revenue),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type MatomoVisitsSummary = {
+  visits: number;
+  visitors: number;
+  pageviews: number;
+};
+
+/**
+ * Lightweight visits summary (a single `VisitsSummary.get` call) for the
+ * Founder-accessible executive overview. Deliberately not built from
+ * `getMatomoTrafficDashboardPayload` for the same reason as `getMatomoFunnel` — that
+ * function is ~20 Matomo API calls for the Superadmin-only traffic dashboard; the
+ * overview only needs 3 numbers. Returns `null` on unconfigured/error, matching the
+ * rest of this file's "unavailable, never a fabricated zero" convention.
+ */
+export async function getMatomoVisitsSummary(range: TrafficRange): Promise<MatomoVisitsSummary | null> {
+  if (!isMatomoConfigured()) return null;
+  try {
+    const dateRange = `${range.startDate},${range.endDate}`;
+    const summary = await fetchMatomo("VisitsSummary.get", { period: "range", date: dateRange });
+    const row = Array.isArray(summary) ? summary[0] : summary;
+    return {
+      visits: normalizeNumber(row?.nb_visits),
+      visitors: normalizeNumber(row?.nb_uniq_visitors),
+      pageviews: normalizeNumber(row?.nb_actions),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type MatomoFunnelStep = TrafficDashboardPayload["funnel"][number];
+
+/**
+ * Lightweight funnel fetch (a single `Events.getAction` call) for the Founder-
+ * accessible `/reports/funnel` endpoint — deliberately NOT built by calling
+ * `getMatomoTrafficDashboardPayload` (that issues ~20 Matomo API calls to build
+ * the full Superadmin-only traffic dashboard; reusing it here would waste 19 of
+ * them just to read one field). Shares `parseFunnelRows` with that function so the
+ * two can never compute the funnel differently.
+ *
+ * Returns `null` — not a zero-filled step list — when Matomo is unconfigured or
+ * the call fails, matching `getMatomoEcommerceSummary`'s convention: a funnel of
+ * all-zero counts is indistinguishable from "nobody converted" unless the caller
+ * can tell "no data" apart from "real zero". Callers MUST render an explicit
+ * "not configured / unavailable" state on `null`, never a zeroed chart.
+ */
+export async function getMatomoFunnel(range: TrafficRange): Promise<MatomoFunnelStep[] | null> {
+  if (!isMatomoConfigured()) return null;
+  try {
+    const dateRange = `${range.startDate},${range.endDate}`;
+    const events = await fetchMatomo("Events.getAction", { period: "range", date: dateRange, flat: 1 });
+    return parseFunnelRows(events);
   } catch {
     return null;
   }

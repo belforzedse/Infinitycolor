@@ -68,7 +68,7 @@ describe("PaymentCallback page", () => {
       orderNumber: "A123",
       success: true,
     });
-    paymentStatusMock.mockResolvedValue({ isPaid: true });
+    paymentStatusMock.mockResolvedValue({ isPaid: true, amountIrr: 125000 });
 
     const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -88,6 +88,7 @@ describe("PaymentCallback page", () => {
     expect(mockClearCart).toHaveBeenCalled();
     expect(trackFunnelStepMock).toHaveBeenCalledWith("purchase", {
       label: "1",
+      value: 12500,
       onceKey: "purchase:1",
     });
     expect(trackMatomoEventMock).toHaveBeenCalledWith({
@@ -125,6 +126,7 @@ describe("PaymentCallback page", () => {
     expect(mockClearCart).toHaveBeenCalled();
     expect(trackFunnelStepMock).toHaveBeenCalledWith("purchase", {
       label: "2",
+      value: undefined,
       onceKey: "purchase:2",
     });
   });

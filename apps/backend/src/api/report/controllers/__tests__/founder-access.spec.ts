@@ -148,6 +148,76 @@ describe("report controller - Founder access", () => {
     expect(ctx.forbidden).toHaveBeenCalled();
   });
 
+  it("allows Founder to call salesBreakdown (does not forbid)", async () => {
+    mockStrapiForRole("Founder");
+    const controller = loadController();
+    const ctx = createCtx({ query: { dimension: "status" } });
+
+    await controller.salesBreakdown(ctx);
+
+    expect(ctx.forbidden).not.toHaveBeenCalled();
+  });
+
+  it("blocks a Customer from salesBreakdown", async () => {
+    mockStrapiForRole("Customer");
+    const controller = loadController();
+    const ctx = createCtx({ query: { dimension: "status" } });
+
+    await controller.salesBreakdown(ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalled();
+  });
+
+  it("allows Founder to call overview (does not forbid)", async () => {
+    mockStrapiForRole("Founder");
+    const controller = loadController();
+    const ctx = createCtx();
+
+    await controller.overview(ctx);
+
+    expect(ctx.forbidden).not.toHaveBeenCalled();
+  });
+
+  it("blocks a Customer from overview", async () => {
+    mockStrapiForRole("Customer");
+    const controller = loadController();
+    const ctx = createCtx();
+
+    await controller.overview(ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalled();
+  });
+
+  it("allows Founder to call funnel (does not forbid)", async () => {
+    mockStrapiForRole("Founder");
+    const controller = loadController();
+    const ctx = createCtx();
+
+    await controller.funnel(ctx);
+
+    expect(ctx.forbidden).not.toHaveBeenCalled();
+  });
+
+  it("blocks a Customer from funnel", async () => {
+    mockStrapiForRole("Customer");
+    const controller = loadController();
+    const ctx = createCtx();
+
+    await controller.funnel(ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalled();
+  });
+
+  it("allows Founder to call salesBreakdownExport (does not forbid)", async () => {
+    mockStrapiForRole("Founder");
+    const controller = loadController();
+    const ctx = createCtx({ query: { dimension: "coupon" } });
+
+    await controller.salesBreakdownExport(ctx);
+
+    expect(ctx.forbidden).not.toHaveBeenCalled();
+  });
+
   it("blocks Store manager from product and liquidity reports", async () => {
     mockStrapiForRole("Store manager");
     const controller = loadController();

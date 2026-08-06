@@ -141,6 +141,21 @@ test("pilot category selection includes only selected categories and their paren
   assert.equal(parentOnly.entities.categories.created, 1);
 });
 
+test("hourly product rows bypass a full Woo product scan and never process categories or media", async () => {
+  const engine = makeEngine();
+  engine.woo.iterateProducts = async function* () {
+    throw new Error("full product scan must not start");
+  };
+  const report = await engine.runSync({
+    dryRun: true,
+    scope: "product-no-media",
+    sourceProducts: [products[0]],
+  });
+  assert.equal(report.entities.products.created, 1);
+  assert.equal(report.entities.categories.created, 0);
+  assert.equal(report.media.uploaded, 0);
+});
+
 test("full dry-run: counts creates, synthesizes simple variations, flags missing price", async () => {
   const engine = makeEngine();
   const report = await engine.runSync({ dryRun: true, skipMedia: true });
@@ -482,7 +497,7 @@ test("tracked sync: stale running locks are treated as resumable", () => {
   store.updateRun("tracked-stale-running", (run) => {
     run.lock.heartbeatAt = "2000-01-01T00:00:00.000Z";
     return run;
-  });
+  }, token);
 
   assert.equal(store.isResumable(store.getRun("tracked-stale-running")), true);
   assert.ok(store.listRuns({ statuses: ["resumable"] }).some((run) => run.id === "tracked-stale-running"));
@@ -530,4 +545,115 @@ test("tracked sync: validation errors mark item failed without killing the run",
   assert.equal(run.status, "resumable");
   assert.equal(run.items["product:999"].status, "failed");
   assert.match(run.items["product:999"].error, /missing name/);
+});
+
+function simulatedCrash(message) {
+  const error = new Error(message);
+  error.code = "CATALOG_SIMULATED_CRASH";
+  return error;
+}
+
+function expireLease(store, runId) {
+  const control = store.readControl(runId);
+  control.lock.heartbeatAt = "2000-01-01T00:00:00.000Z";
+  store.writeControl(runId, control);
+}
+
+test("restart after destination product success re-upserts only the running product by external_id", async () => {
+  const first = makeEngine({ products: [products[0]] });
+  const store = new CatalogRunStore(first.config.catalog.trackingDirAbs, { lockStaleMs: 1 });
+  await assert.rejects(() => first.runSync({
+    scope: "no-media",
+    runStore: store,
+    runId: "crash-product-write",
+    crashHooks: { afterProductWrite() { throw simulatedCrash("after product write"); } },
+  }), /after product write/);
+  assert.equal(store.getRun("crash-product-write").items["product:101"].status, "running");
+  expireLease(store, "crash-product-write");
+
+  const resumed = makeEngine({ products: [products[0]], withExisting: true });
+  await resumed.runSync({ runStore: store, runId: "crash-product-write", resume: true, retryFailed: true });
+  const externalIds = [
+    ...first._calls.upserts,
+    ...resumed._calls.upserts,
+  ].filter((call) => call.endpoint === "/products").map((call) => call.externalId);
+  assert.deepEqual(new Set(externalIds), new Set(["101"]));
+  assert.equal(store.getRun("crash-product-write").items["product:101"].status, "completed");
+});
+
+test("restart after variation success before stock safely retries variation then orders stock completion first", async () => {
+  const first = makeEngine({ products: [products[0]] });
+  const store = new CatalogRunStore(first.config.catalog.trackingDirAbs, { lockStaleMs: 1 });
+  let crashed = false;
+  await assert.rejects(() => first.runSync({
+    scope: "no-media",
+    runStore: store,
+    runId: "crash-variation-write",
+    crashHooks: { afterVariationWrite() { if (!crashed) { crashed = true; throw simulatedCrash("after variation write"); } } },
+  }), /after variation write/);
+  expireLease(store, "crash-variation-write");
+
+  const resumed = makeEngine({ products: [products[0]], withExisting: true });
+  await resumed.runSync({ runStore: store, runId: "crash-variation-write", resume: true, retryFailed: true });
+  const run = store.getRun("crash-variation-write");
+  assert.equal(run.items["stock:201"].status, "completed");
+  assert.equal(run.items["variation:201"].status, "completed");
+  assert.ok(new Date(run.items["stock:201"].completedAt) <= new Date(run.items["variation:201"].completedAt));
+});
+
+test("restart after stock success skips completed stock while finishing its running variation", async () => {
+  const first = makeEngine({ products: [products[0]] });
+  const store = new CatalogRunStore(first.config.catalog.trackingDirAbs, { lockStaleMs: 1 });
+  let crashed = false;
+  await assert.rejects(() => first.runSync({
+    scope: "no-media",
+    runStore: store,
+    runId: "crash-stock-commit",
+    crashHooks: {
+      afterStockCommitBeforeVariationComplete() {
+        if (!crashed) { crashed = true; throw simulatedCrash("after stock commit"); }
+      },
+    },
+  }), /after stock commit/);
+  assert.equal(store.getRun("crash-stock-commit").items["stock:201"].status, "completed");
+  expireLease(store, "crash-stock-commit");
+
+  const resumed = makeEngine({ products: [products[0]], withExisting: true });
+  await resumed.runSync({ runStore: store, runId: "crash-stock-commit", resume: true, retryFailed: true });
+  assert.equal(resumed._calls.stockUpserts.filter((call) => call.externalId === "201").length, 0);
+  assert.equal(store.getRun("crash-stock-commit").items["variation:201"].status, "completed");
+});
+
+test("completed parent with a failed child traverses children without product or media writes", async () => {
+  const engine = makeEngine({ products: [products[0]], withExisting: true });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+  store.createRun({
+    runId: "completed-parent-failed-child",
+    command: "sync:no-media",
+    environment: "local",
+    strapiBaseUrl: "http://localhost:1337/api",
+    options: { scope: "no-media", dryRun: false, limit: "all" },
+  });
+  const token = store.acquireLock("completed-parent-failed-child");
+  store.beginItem("completed-parent-failed-child", "product:101", { entity: "products", wcId: 101 }, token);
+  store.completeItem("completed-parent-failed-child", "product:101", { strapiId: 10101 }, token);
+  store.beginItem("completed-parent-failed-child", "variation:201", { entity: "variations", wcId: 201, parentWcId: 101 }, token);
+  store.failItem("completed-parent-failed-child", "variation:201", {
+    entity: "variations", wcId: 201, parentWcId: 101, stage: "sync-variation", error: "temporary",
+  }, token);
+  store.setStatus("completed-parent-failed-child", "resumable", {}, token);
+  store.releaseLock("completed-parent-failed-child", token);
+  let mediaCalls = 0;
+  engine.media.syncProductMedia = async () => { mediaCalls += 1; return { coverId: null, galleryIds: [], counts: { uploaded: 0, reused: 0, failed: 0 } }; };
+
+  await engine.runSync({
+    runStore: store,
+    runId: "completed-parent-failed-child",
+    resume: true,
+    retryFailed: true,
+  });
+  assert.equal(engine._calls.upserts.filter((call) => call.endpoint === "/products").length, 0);
+  assert.equal(mediaCalls, 0);
+  assert.equal(store.getRun("completed-parent-failed-child").items["product:101"].attempts, 1);
+  assert.equal(store.getRun("completed-parent-failed-child").items["variation:201"].status, "completed");
 });

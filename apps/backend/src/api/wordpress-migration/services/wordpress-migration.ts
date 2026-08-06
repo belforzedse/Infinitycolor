@@ -274,9 +274,9 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     throw new MigrationInputError("CONTRACT_TAX_PERCENT_INVALID");
   }
   const date = validatedDate(body?.date);
-  const totalRial = exactNonNegativeInteger(body?.totalRial, "ORDER_TOTAL_INVALID");
-  const shippingRial = Number(exactNonNegativeInteger(body?.shippingRial ?? "0", "ORDER_SHIPPING_INVALID"));
-  if (!Number.isSafeInteger(shippingRial)) throw new MigrationInputError("ORDER_SHIPPING_UNSAFE_INTEGER");
+  const totalToman = exactNonNegativeInteger(body?.totalToman, "ORDER_TOTAL_INVALID");
+  const shippingToman = Number(exactNonNegativeInteger(body?.shippingToman ?? "0", "ORDER_SHIPPING_INVALID"));
+  if (!Number.isSafeInteger(shippingToman)) throw new MigrationInputError("ORDER_SHIPPING_UNSAFE_INTEGER");
   const items = Array.isArray(body?.items) ? body.items : [];
   if (items.length === 0) throw new MigrationInputError("ORDER_ITEMS_EMPTY");
 
@@ -296,7 +296,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       Status: status,
       ReservationStatus: "Released",
       Type: "Automatic",
-      ShippingCost: shippingRial,
+      ShippingCost: shippingToman,
       ShippingMethodCode: optionalText(body?.shippingMethodCode, 255) || null,
       ShippingMethodTitle: optionalText(body?.shippingMethodTitle, 255) || null,
       PaymentGateway: paymentGateway,
@@ -321,7 +321,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     const contractData = {
       Type: contractType,
       Status: contractStatus,
-      Amount: totalRial,
+      Amount: totalToman,
       TaxPercent: taxPercent,
       Date: date,
       local_user: user?.id || null,
@@ -356,7 +356,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       if (variationMatches.length !== 1) throw new MigrationInputError("ORDER_ITEM_VARIATION_NOT_UNIQUE", 409);
       const itemData = {
         Count: positiveCount(sourceItem?.count),
-        PerAmount: exactNonNegativeInteger(sourceItem?.unitPriceRial, "ORDER_ITEM_PRICE_INVALID"),
+        PerAmount: exactNonNegativeInteger(sourceItem?.unitPriceToman, "ORDER_ITEM_PRICE_INVALID"),
         ProductTitle: optionalText(sourceItem?.title, 255) || "WooCommerce product",
         ProductSKU: optionalText(sourceItem?.sku, 255) || `WC-${variationSourceId}`,
         product_variation: variationMatches[0].id,

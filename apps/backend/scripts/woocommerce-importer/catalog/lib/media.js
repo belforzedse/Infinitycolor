@@ -4,6 +4,8 @@ const ImageUploader = require("../../utils/ImageUploader");
 const { splitWcMediaItems, extractVideoUrlsFromMeta, isEmbedVideoUrl } = require("../../utils/mediaUtils");
 const { validateMediaUrl } = require("./safeUrl");
 const { wooSourceTimestamps } = require("../../utils/sourceTimestamps");
+const { canonicalSourceUrl } = require("./mediaMappingStore");
+const { mapPoolOrdered } = require("./concurrency");
 
 /**
  * Media synchronization with persistent deduplication and an SSRF guard.
@@ -35,6 +37,10 @@ class MediaSync {
     this.uploader = new ImageUploader(config, logger);
     this.videoConfig = config.import?.videos || {};
     this.maxGallery = config.import?.images?.maxImagesPerProduct ?? 999;
+    this.imageConcurrency = opts.imageConcurrency || config.catalog?.concurrency?.images || 4;
+    this.videoConcurrency = opts.videoConcurrency || config.catalog?.concurrency?.videos || 1;
+    this.canStart = opts.canStart || null;
+    this.inFlight = new Map();
   }
 
   /**
@@ -46,11 +52,29 @@ class MediaSync {
    * @param {boolean} isCover
    */
   async syncUrl(url, altText, prefix, isCover = false, sourceTimestamps = null) {
+    let canonical;
+    try {
+      canonical = canonicalSourceUrl(url);
+    } catch {
+      return { id: null, mime: null, status: "failed" };
+    }
+    const existing = this.inFlight.get(canonical);
+    if (existing) return existing;
+    const pending = this._syncUrl(canonical, altText, prefix, isCover, sourceTimestamps);
+    this.inFlight.set(canonical, pending);
+    try {
+      return await pending;
+    } finally {
+      this.inFlight.delete(canonical);
+    }
+  }
+
+  async _syncUrl(url, altText, prefix, isCover = false, sourceTimestamps = null) {
     // 1. Persistent dedup — already uploaded in a previous run?
     const cached = this.store.get("media", url);
     if (cached && cached.strapiId) {
       await this.uploader.restoreMediaSourceTimestamps?.(cached.strapiId, sourceTimestamps);
-      this.logger.debug(`♻️ Reusing media ${url} → ${cached.strapiId}`);
+      this.logger.debug(`♻️ Reusing media source hash → ${cached.strapiId}`);
       return { id: cached.strapiId, mime: cached.mime, status: "reused" };
     }
 
@@ -72,9 +96,20 @@ class MediaSync {
     if (!uploaded || !uploaded.id) {
       return { id: null, mime: null, status: "failed" };
     }
+    if (uploaded._reusedDeterministic) {
+      await this.uploader.restoreMediaSourceTimestamps?.(uploaded.id, sourceTimestamps);
+    }
 
+    await this.observer?.afterMediaUploadBeforeMappingCommit?.({
+      sourceHash: this.uploader.sourceHash?.(url),
+      destinationId: uploaded.id,
+    });
     this.store.set("media", url, uploaded.id, { name: uploaded.name, mime: uploaded.mime });
-    return { id: uploaded.id, mime: uploaded.mime, status: "uploaded" };
+    return {
+      id: uploaded.id,
+      mime: uploaded.mime,
+      status: uploaded._reusedDeterministic ? "reused" : "uploaded",
+    };
   }
 
   /**
@@ -88,6 +123,7 @@ class MediaSync {
    */
   async syncProductMedia(wcProduct) {
     const counts = { uploaded: 0, reused: 0, failed: 0 };
+    const failures = { cover: false, gallery: false };
     const allowedVideoTypes = this.videoConfig.allowedTypes || ["mp4", "webm", "mov", "m4v"];
     const imagesEnabled = this.config.import?.images?.enableUpload !== false;
     const videosEnabled = this.videoConfig.enableUpload !== false;
@@ -104,17 +140,26 @@ class MediaSync {
       return res;
     };
 
-    // Cover = first image (fallback: first downloadable video)
+    // Images execute concurrently, but results are collected by source index so
+    // cover/gallery relations remain deterministic.
     if (imagesEnabled && split.images.length > 0) {
-      const c = split.images[0];
-      const res = track(await this.syncUrl(
-        c.src,
-        c.alt || wcProduct.name,
-        `product-${wcProduct.id}-cover`,
-        true,
-        wooSourceTimestamps(c),
-      ));
-      coverId = res.id;
+      const imageInputs = split.images.slice(0, this.maxGallery + 1);
+      const results = await mapPoolOrdered(imageInputs, this.imageConcurrency, async (image, index) => {
+        const res = await this.syncUrl(
+          image.src,
+          image.alt || (index === 0 ? wcProduct.name : `${wcProduct.name} - ${index}`),
+          index === 0 ? `product-${wcProduct.id}-cover` : `product-${wcProduct.id}-gallery-${index}`,
+          index === 0,
+          wooSourceTimestamps(image),
+        );
+        return track(res);
+      }, { canStart: this.canStart });
+      coverId = results[0]?.id || null;
+      failures.cover = Boolean(results[0] && !results[0].id);
+      for (let index = 1; index < results.length; index += 1) {
+        if (results[index]?.id) galleryIds.push(results[index].id);
+        else failures.gallery = true;
+      }
     } else if (videosEnabled && split.videos.length > 0) {
       const v = split.videos[0];
       const res = track(await this.syncUrl(
@@ -125,24 +170,7 @@ class MediaSync {
         wooSourceTimestamps(v),
       ));
       coverId = res.id;
-    }
-
-    // Gallery images (preserve order; skip the one already used as cover)
-    if (imagesEnabled) {
-      const galleryImages = split.images.slice(coverId && split.images.length > 0 ? 1 : 0);
-      for (let i = 0; i < galleryImages.length && galleryIds.length < this.maxGallery; i += 1) {
-        const img = galleryImages[i];
-        const res = track(
-          await this.syncUrl(
-            img.src,
-            img.alt || `${wcProduct.name} - ${i + 1}`,
-            `product-${wcProduct.id}-gallery-${i + 1}`,
-            false,
-            wooSourceTimestamps(img),
-          ),
-        );
-        if (res.id) galleryIds.push(res.id);
-      }
+      failures.cover = !res.id;
     }
 
     // Videos (from images array + meta), skipping embeds
@@ -153,22 +181,23 @@ class MediaSync {
         ...metaVideoUrls.filter((u) => !isEmbedVideoUrl(u)),
       ];
       const seen = new Set(split.images.map((i) => i.src));
-      for (let i = 0; i < videoUrls.length && galleryIds.length < this.maxGallery; i += 1) {
-        const u = videoUrls[i];
-        if (seen.has(u)) continue;
-        seen.add(u);
-        const res = track(await this.syncUrl(
-          u,
-          `${wcProduct.name} - video ${i + 1}`,
-          `product-${wcProduct.id}-video-${i + 1}`,
-          false,
-          null,
-        ));
-        if (res.id) galleryIds.push(res.id);
-      }
+      const uniqueVideos = videoUrls.filter((url) => {
+        if (seen.has(url)) return false;
+        seen.add(url);
+        return true;
+      }).slice(0, Math.max(0, this.maxGallery - galleryIds.length));
+      const videoResults = await mapPoolOrdered(uniqueVideos, this.videoConcurrency, async (url, index) => track(await this.syncUrl(
+        url,
+        `${wcProduct.name} - video ${index + 1}`,
+        `product-${wcProduct.id}-video-${index + 1}`,
+        false,
+        null,
+      )), { canStart: this.canStart });
+      for (const result of videoResults) if (result?.id) galleryIds.push(result.id);
+      if (videoResults.some((result) => !result?.id)) failures.gallery = true;
     }
 
-    return { coverId, galleryIds, counts };
+    return { coverId, galleryIds, counts, failures };
   }
 }
 

@@ -6,6 +6,7 @@ import useProductLike from "@/hooks/useProductLike";
 import { getLazySecondaryMediaByProductId } from "@/services/product/product";
 import { computeSaleDiscountPercent } from "@/utils/discounts";
 import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
+import { trackMatomoEvent } from "@/lib/analytics/matomo";
 
 // Components
 import ImageSlider from "./ImageSlider";
@@ -49,6 +50,8 @@ export interface ProductCardProps {
   isAvailable?: boolean;
   priority?: boolean;
   productCode?: string;
+  /** Index of this card within its rendering list (e.g. PLP grid), for select_item. */
+  listPosition?: number;
 }
 
 const ProductCard: FC<ProductCardProps> = ({
@@ -65,6 +68,7 @@ const ProductCard: FC<ProductCardProps> = ({
   colorCodes,
   isAvailable = true,
   priority = false,
+  listPosition,
 }) => {
   // State
   const [isQuickViewOpen, setIsQuickViewOpen] = useState(false);
@@ -182,6 +186,13 @@ const ProductCard: FC<ProductCardProps> = ({
   }, [maybeLoadSecondaryMedia]);
 
   const handleProductLinkClick = useCallback(() => {
+    trackMatomoEvent({
+      category: "ecommerce",
+      action: "select_item",
+      name:
+        listPosition !== undefined ? `${id}:${title}:pos=${listPosition}` : `${id}:${title}`,
+    });
+
     if (typeof window === "undefined") return;
     if (!("matchMedia" in window)) return;
     if (!window.matchMedia("(max-width: 767px)").matches) return;
@@ -191,7 +202,7 @@ const ProductCard: FC<ProductCardProps> = ({
     } catch {
       window.scrollTo(0, 0);
     }
-  }, []);
+  }, [id, title, listPosition]);
 
   return (
     <>

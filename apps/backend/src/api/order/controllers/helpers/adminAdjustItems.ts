@@ -10,6 +10,7 @@ import {
 } from "../../../payment-gateway/services/snappay-orchestrator";
 import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
 import { computePaidAmountToman } from "./paidAmount";
+import { trackRefundToMatomo } from "../../../report/services/matomo-tracker";
 
 type ItemAdjustment = {
   orderItemId: number;
@@ -275,7 +276,8 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
     }
 
     // Non-SnappPay adjustments remain an atomic local wallet operation.
-    return await strapi.db.transaction(async () => {
+    let refundTransactionId: number | null = null;
+    const result = await strapi.db.transaction(async () => {
       // Update or delete order items
       for (const change of changes) {
         if (change.newCount === 0) {
@@ -391,17 +393,20 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
           txList.length > 0 ? Math.max(...txList.map((t: any) => Number(t.Step || 0))) : 0;
 
         if (Number.isFinite(contractIdNum)) {
-          await strapi.db.query("api::contract-transaction.contract-transaction").create({
-            data: {
-              Type: "Return",
-              Amount: refundIrr,
-              Step: maxStep + 1,
-              Status: "Success",
-              external_source: "System",
-              contract: contractIdNum,
-              Date: new Date(),
-            },
-          });
+          const returnTx = await strapi.db
+            .query("api::contract-transaction.contract-transaction")
+            .create({
+              data: {
+                Type: "Return",
+                Amount: refundIrr,
+                Step: maxStep + 1,
+                Status: "Success",
+                external_source: "System",
+                contract: contractIdNum,
+                Date: new Date(),
+              },
+            });
+          refundTransactionId = Number(returnTx.id);
         }
       }
 
@@ -490,6 +495,19 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
         },
       };
     });
+
+    // Fire-and-forget, after the refund transaction has committed — never
+    // track a refund that might still roll back (see matomo-tracker.ts).
+    if (refundToman > 0 && refundTransactionId) {
+      void trackRefundToMatomo(strapi as any, {
+        orderId: orderIdNum,
+        contractTransactionId: refundTransactionId,
+        amountToman: refundToman,
+        userId: order.user?.id ?? order.user ?? null,
+      }).catch(() => {});
+    }
+
+    return result;
   } catch (error: any) {
     strapi.log.error("adminAdjustItems error", error);
     const message = String(error?.message || "");

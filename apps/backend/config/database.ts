@@ -107,5 +107,27 @@ export default ({ env }) => {
       ...connections[client],
       acquireConnectionTimeout: env.int("DATABASE_CONNECTION_TIMEOUT", 60000),
     },
+    settings: {
+      // @strapi/database defaults this to `true`. On EVERY boot, after custom
+      // migrations run, Strapi diffs the real DB schema against its own
+      // content-type schema and — because this defaults true — DROPS any table
+      // it doesn't recognize as a content-type table. Any table created by a
+      // hand-written migration in database/migrations/*.js (not a Strapi
+      // content-type) is invisible to that diff and gets silently deleted on
+      // the very next boot, even though `strapi_migrations` still records the
+      // migration as applied. This is the exact mechanism behind the
+      // "Concurrent migrations across instances" issue documented in
+      // CLAUDE.md ("this silently dropped background_job_locks in prod/staging
+      // and disabled the stock expiry jobs") — it is not actually about
+      // instance races; it reproduces deterministically on a single instance's
+      // very first boot, confirmed against @strapi/database 4.25.21's
+      // dist/index.js (createSchemaDiff/diffSchemas + schema.updateSchema).
+      // Disabling it only stops Strapi from auto-DROPPING tables/columns it
+      // doesn't recognize; it does not stop it from CREATING new content-type
+      // tables or applying column/index/FK changes to existing ones (that path
+      // — schema.builder.alterTable — is unconditional). Schema removal in this
+      // project is handled explicitly via database/migrations/*.js.
+      forceMigration: false,
+    },
   };
 };

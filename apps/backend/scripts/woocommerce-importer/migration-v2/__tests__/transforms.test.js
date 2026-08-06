@@ -14,6 +14,13 @@ test("decimalToInteger converts toman to rial exactly without floating point", (
   assert.equal(T.decimalToInteger("123456789012345678", 10), "1234567890123456780");
   assert.equal(T.decimalToInteger("12.5", 10), "125");
   assert.throws(() => T.decimalToInteger("1.23", 10), /MONEY_NOT_EXACT/);
+  assert.throws(() => T.decimalToInteger("1"), /MONEY_MULTIPLIER_INVALID/);
+});
+
+test("Woo order money remains Toman while wallet money converts to Rial", () => {
+  assert.equal(T.wooMoneyToToman("1000"), "1000");
+  assert.equal(T.wooMoneyToRial("1000"), "10000");
+  assert.throws(() => T.wooMoneyToToman("12.5"), /MONEY_NOT_EXACT/);
 });
 
 test("wallet balance extraction accepts the live TeraWallet response shape", () => {
@@ -63,8 +70,12 @@ test("order payload keeps approved core fields and excludes addresses, notes, an
     line_items: [{ id: 9, product_id: 3, variation_id: 4, quantity: 2, price: "475", name: "کالا", sku: "S" }],
     shipping_lines: [{ method_id: "flat_rate", method_title: "پست" }],
   });
-  assert.equal(payload.totalRial, "10000");
-  assert.equal(payload.items[0].unitPriceRial, "4750");
+  assert.equal(payload.totalToman, "1000");
+  assert.equal(payload.shippingToman, "50");
+  assert.equal(payload.items[0].unitPriceToman, "475");
+  assert.ok(!("totalRial" in payload));
+  assert.ok(!("shippingRial" in payload));
+  assert.ok(!("unitPriceRial" in payload.items[0]));
   assert.equal(payload.paymentGateway, "ZarinPal");
   assert.equal(payload.contractType, "Cash");
   assert.equal(payload.taxPercent, 0);

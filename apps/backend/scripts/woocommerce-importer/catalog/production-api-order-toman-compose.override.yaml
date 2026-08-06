@@ -1,0 +1,6 @@
+services:
+  api:
+    image: infinity-api-order-toman:71bd7627-20260805-v13
+    pull_policy: never
+    environment:
+      MIGRATION_CONTROL_TOKEN: ${MIGRATION_CONTROL_TOKEN:?MIGRATION_CONTROL_TOKEN is required}

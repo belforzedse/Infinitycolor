@@ -1,10 +1,24 @@
 const axios = require("axios");
+const crypto = require("crypto");
+const dns = require("dns").promises;
 const FormData = require("form-data");
 const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 const { detectMediaKind, isEmbedVideoUrl } = require("./mediaUtils");
 const { sourceTimestampHeaders } = require("./sourceTimestamps");
+const { validateMediaUrl, isPrivateHost } = require("../catalog/lib/safeUrl");
+const { canonicalSourceUrl } = require("../catalog/lib/mediaMappingStore");
+
+sharp.cache({ memory: 64, files: 0, items: 100 });
+sharp.concurrency(2);
+
+let sharpQueueDepth = 0;
+let sharpQueuePeak = 0;
+sharp.queue.on("change", (depth) => {
+  sharpQueueDepth = depth;
+  sharpQueuePeak = Math.max(sharpQueuePeak, depth);
+});
 
 /**
  * ImageUploader - Handles downloading and uploading images and videos from WooCommerce to Strapi
@@ -13,9 +27,15 @@ class ImageUploader {
   constructor(config, logger) {
     this.config = config;
     this.logger = logger;
-    this.uploadCache = new Map();
-    this.downloadCache = new Map();
     this.tempDir = path.join(__dirname, "../temp");
+    this.metrics = {
+      downloadBytes: 0,
+      downloadMs: 0,
+      conversionMs: 0,
+      uploadMs: 0,
+      sharpQueuePeak: 0,
+      sharpProcessPeak: 0,
+    };
 
     const imageConfig = this.getImageConfig();
     if (!imageConfig.retry) {
@@ -177,7 +197,7 @@ class ImageUploader {
     if (kind === "embed") {
       if (videoConfig.skipEmbedUrls !== false) {
         this.logger.warn(
-          `⚠️ ویدیوی تعبیه‌شده (YouTube/Vimeo) پشتیبانی نمی‌شود — رد شد: ${mediaUrl}`,
+          `⚠️ ویدیوی تعبیه‌شده (YouTube/Vimeo) پشتیبانی نمی‌شود — source=${this.sourceHash(mediaUrl)}`,
         );
         return null;
       }
@@ -185,7 +205,7 @@ class ImageUploader {
 
     if (kind === "video") {
       if (videoConfig.enableUpload === false) {
-        this.logger.debug(`⏭️ Video upload disabled — skipping: ${mediaUrl}`);
+        this.logger.debug(`⏭️ Video upload disabled — source=${this.sourceHash(mediaUrl)}`);
         return null;
       }
       return this.downloadAndUploadVideo(mediaUrl, altText, prefix, isCover, sourceTimestamps);
@@ -195,17 +215,12 @@ class ImageUploader {
       return this.downloadAndUploadImage(mediaUrl, altText, prefix, isCover, sourceTimestamps);
     }
 
-    this.logger.warn(`⚠️ نوع فایل پشتیبانی نمی‌شود — رد شد: ${mediaUrl}`);
+    this.logger.warn(`⚠️ نوع فایل پشتیبانی نمی‌شود — source=${this.sourceHash(mediaUrl)}`);
     return null;
   }
 
   async downloadAndUploadImage(imageUrl, altText, prefix, isCoverImage = false, sourceTimestamps = null) {
     try {
-      if (this.uploadCache.has(imageUrl)) {
-        this.logger.debug(`📸 Using cached image: ${imageUrl}`);
-        return this.uploadCache.get(imageUrl);
-      }
-
       const retryConfig = this.getImageConfig().retry || {};
       const downloadRetries = isCoverImage
         ? retryConfig.coverImageDownloadRetries || 3
@@ -233,13 +248,10 @@ class ImageUploader {
         sourceTimestamps,
       );
 
-      if (uploadedImage) {
-        this.uploadCache.set(imageUrl, uploadedImage);
-      }
-
       return uploadedImage;
     } catch (error) {
-      this.logger.error(`❌ Failed to process image ${imageUrl}:`, error.message);
+      if (error.code === "MEDIA_DESTINATION_AMBIGUOUS") throw error;
+      this.logger.error(`❌ Failed to process image source=${this.sourceHash(imageUrl)}:`, error.message);
       return null;
     }
   }
@@ -248,14 +260,9 @@ class ImageUploader {
     try {
       if (isEmbedVideoUrl(videoUrl)) {
         this.logger.warn(
-          `⚠️ ویدیوی تعبیه‌شده (YouTube/Vimeo) قابل دانلود نیست — رد شد: ${videoUrl}`,
+          `⚠️ ویدیوی تعبیه‌شده (YouTube/Vimeo) قابل دانلود نیست — source=${this.sourceHash(videoUrl)}`,
         );
         return null;
-      }
-
-      if (this.uploadCache.has(videoUrl)) {
-        this.logger.debug(`🎬 Using cached video: ${videoUrl}`);
-        return this.uploadCache.get(videoUrl);
       }
 
       const videoConfig = this.getVideoConfig();
@@ -272,7 +279,7 @@ class ImageUploader {
 
       if (!this.isValidVideoFile(fileName, contentType)) {
         this.logger.error(
-          `❌ فرمت ویدیو نامعتبر است — فقط ${(videoConfig.allowedTypes || []).join(", ")} مجاز است: ${videoUrl}`,
+          `❌ فرمت ویدیو نامعتبر است — فقط ${(videoConfig.allowedTypes || []).join(", ")} مجاز است: source=${this.sourceHash(videoUrl)}`,
         );
         return null;
       }
@@ -290,14 +297,12 @@ class ImageUploader {
         sourceTimestamps,
       );
 
-      if (uploadedVideo) {
-        this.uploadCache.set(videoUrl, uploadedVideo);
-        this.logger.success(`✅ Video uploaded: ${uploadedVideo.name}`);
-      }
+      if (uploadedVideo) this.logger.success(`✅ Video uploaded: ${uploadedVideo.name}`);
 
       return uploadedVideo;
     } catch (error) {
-      this.logger.error(`❌ Failed to process video ${videoUrl}:`, error.message);
+      if (error.code === "MEDIA_DESTINATION_AMBIGUOUS") throw error;
+      this.logger.error(`❌ Failed to process video source=${this.sourceHash(videoUrl)}:`, error.message);
       return null;
     }
   }
@@ -330,9 +335,10 @@ class ImageUploader {
         if (
           error.message?.includes("too large") ||
           error.message?.includes("HTTP 404") ||
-          error.message?.includes("نامعتبر")
+          error.message?.includes("نامعتبر") ||
+          (error.response?.status >= 400 && error.response?.status < 500 && error.response?.status !== 429)
         ) {
-          this.logger.error(`❌ Non-retryable error for ${mediaUrl}:`, error.message);
+          this.logger.error(`❌ Non-retryable media error source=${this.sourceHash(mediaUrl)}:`, error.message);
           return null;
         }
 
@@ -347,7 +353,7 @@ class ImageUploader {
         const retryDelay = Math.min(initialDelay * Math.pow(multiplier, attempt - 1), maxDelay);
 
         this.logger.warn(
-          `🔄 Media download failed (attempt ${attempt}/${maxRetries}), retrying in ${retryDelay}ms: ${mediaUrl}`,
+          `🔄 Media download failed (attempt ${attempt}/${maxRetries}), retrying in ${retryDelay}ms: source=${this.sourceHash(mediaUrl)}`,
           error.message,
         );
         await this.delay(retryDelay);
@@ -355,7 +361,7 @@ class ImageUploader {
     }
 
     this.logger.error(
-      `❌ Failed to download media after ${maxRetries} attempts: ${mediaUrl}`,
+      `❌ Failed to download media after ${maxRetries} attempts: source=${this.sourceHash(mediaUrl)}`,
       lastError?.message,
     );
     return null;
@@ -363,15 +369,6 @@ class ImageUploader {
 
   /** @returns {Buffer | { buffer: Buffer, contentType: string } | null} */
   async downloadMedia(mediaUrl, mediaKind = "image") {
-    if (this.downloadCache.has(mediaUrl)) {
-      this.logger.debug(`📥 Using cached download: ${mediaUrl}`);
-      const cached = this.downloadCache.get(mediaUrl);
-      if (mediaKind === "video") {
-        return typeof cached === "object" && cached.buffer ? cached : { buffer: cached, contentType: "" };
-      }
-      return typeof cached === "object" && cached.buffer ? cached.buffer : cached;
-    }
-
     const imageConfig = this.getImageConfig();
     const videoConfig = this.getVideoConfig();
     const timeout =
@@ -381,17 +378,10 @@ class ImageUploader {
     const maxSize =
       mediaKind === "video" ? videoConfig.maxSize || 256 * 1024 * 1024 : imageConfig.maxSize || 10 * 1024 * 1024;
 
-    this.logger.debug(`📥 Downloading ${mediaKind}: ${mediaUrl}`);
-
-    const response = await axios({
-      method: "GET",
-      url: mediaUrl,
-      responseType: "arraybuffer",
-      timeout,
-      headers: {
-        "User-Agent": "WooCommerce-Strapi-Importer/1.0.0",
-      },
-    });
+    const sourceHash = this.sourceHash(mediaUrl);
+    this.logger.debug(`📥 Downloading ${mediaKind}: source=${sourceHash}`);
+    const started = process.hrtime.bigint();
+    const response = await this.downloadFollowingSafeRedirects(mediaUrl, { timeout, maxRedirects: 5 });
 
     if (response.status !== 200) {
       throw new Error(`HTTP ${response.status}`);
@@ -410,11 +400,10 @@ class ImageUploader {
       );
     }
 
-    const cacheEntry = mediaKind === "video" ? { buffer, contentType } : buffer;
-    this.downloadCache.set(mediaUrl, cacheEntry);
-
-    this.logger.debug(`✅ Downloaded ${(buffer.length / 1024).toFixed(2)}KB from: ${mediaUrl}`);
-    return cacheEntry;
+    this.metrics.downloadBytes += buffer.length;
+    this.metrics.downloadMs += Number(process.hrtime.bigint() - started) / 1e6;
+    this.logger.debug(`✅ Downloaded ${(buffer.length / 1024).toFixed(2)}KB source=${sourceHash}`);
+    return mediaKind === "video" ? { buffer, contentType } : buffer;
   }
 
   /** @deprecated Use downloadMediaWithRetry */
@@ -428,6 +417,7 @@ class ImageUploader {
   }
 
   async processImage(imageBuffer, imageUrl, prefix) {
+    const started = process.hrtime.bigint();
     try {
       const metadata = await sharp(imageBuffer).metadata();
       const originalFormat = metadata.format;
@@ -444,6 +434,9 @@ class ImageUploader {
       this.logger.debug(`🔧 Converting ${originalFormat?.toUpperCase() || "UNKNOWN"} to WebP...`);
 
       const processedBuffer = await sharp(imageBuffer).webp({ quality: 85 }).toBuffer();
+      const sharpCounters = sharp.counters();
+      this.metrics.sharpQueuePeak = Math.max(this.metrics.sharpQueuePeak, sharpQueuePeak, sharpQueueDepth, sharpCounters.queue);
+      this.metrics.sharpProcessPeak = Math.max(this.metrics.sharpProcessPeak, sharpCounters.process);
 
       let fileName = this.generateFileName(imageUrl, prefix);
       fileName = fileName.substring(0, fileName.lastIndexOf(".")) + ".webp";
@@ -478,6 +471,8 @@ class ImageUploader {
         buffer: imageBuffer,
         fileName: this.generateFileName(imageUrl, prefix),
       };
+    } finally {
+      this.metrics.conversionMs += Number(process.hrtime.bigint() - started) / 1e6;
     }
   }
 
@@ -493,7 +488,11 @@ class ImageUploader {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        const existing = await this.findExactDestinationFile(fileName);
+        if (existing) return { ...existing, _reusedDeterministic: true };
+        const started = process.hrtime.bigint();
         const uploadedFile = await this.uploadToStrapi(fileBuffer, fileName, altText, sourceTimestamps);
+        this.metrics.uploadMs += Number(process.hrtime.bigint() - started) / 1e6;
         if (uploadedFile) {
           return uploadedFile;
         }
@@ -501,10 +500,17 @@ class ImageUploader {
       } catch (error) {
         lastError = error;
 
+        try {
+          const recovered = await this.findExactDestinationFile(fileName);
+          if (recovered) return { ...recovered, _reusedDeterministic: true };
+        } catch (lookupError) {
+          if (lookupError.code === "MEDIA_DESTINATION_AMBIGUOUS") throw lookupError;
+        }
+
         if (
           error.response?.status === 401 ||
           error.response?.status === 403 ||
-          error.response?.status === 400
+          (error.response?.status >= 400 && error.response?.status < 500 && error.response?.status !== 429)
         ) {
           this.logger.error(`❌ Non-retryable error for ${mediaKind} upload:`, error.message);
           if (error.response?.data) {
@@ -592,18 +598,6 @@ class ImageUploader {
   }
 
   generateFileName(mediaUrl, prefix, contentTypeHint = "") {
-    const sanitizeSegment = (value, fallback) => {
-      const cleaned = (value || "")
-        .toString()
-        .normalize("NFKD")
-        .replace(/[^\w-]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^[-_]+|[-_]+$/g, "")
-        .toLowerCase()
-        .slice(0, 30);
-      return cleaned || fallback;
-    };
-
     const extFromMime = () => {
       const mime = contentTypeHint.toLowerCase();
       if (mime.includes("mp4")) return ".mp4";
@@ -613,22 +607,72 @@ class ImageUploader {
     };
 
     try {
-      const url = new URL(mediaUrl);
+      const url = new URL(canonicalSourceUrl(mediaUrl));
       const originalName = path.basename(url.pathname);
-      let ext = (path.extname(originalName) || extFromMime() || ".jpg").toLowerCase();
-
-      const safePrefix = sanitizeSegment(prefix, "blog-media");
-      const timestamp = Date.now();
-      const rand = Math.random().toString(36).slice(2, 8);
-
-      return `${safePrefix}-${timestamp}-${rand}${ext}`;
-    } catch (error) {
-      const timestamp = Date.now();
-      const safePrefix = sanitizeSegment(prefix, "blog-media");
-      const rand = Math.random().toString(36).slice(2, 8);
-      const ext = extFromMime() || ".jpg";
-      return `${safePrefix}-${timestamp}-${rand}${ext}`;
+      const ext = (path.extname(originalName) || extFromMime() || ".jpg").toLowerCase();
+      return `wc-src-${this.sourceHash(mediaUrl)}${ext}`;
+    } catch {
+      return `wc-src-${this.sourceHash(mediaUrl)}${extFromMime() || ".jpg"}`;
     }
+  }
+
+  sourceHash(mediaUrl) {
+    let canonical;
+    try { canonical = canonicalSourceUrl(mediaUrl); } catch { canonical = String(mediaUrl); }
+    return crypto.createHash("sha256").update(canonical).digest("hex");
+  }
+
+  async findExactDestinationFile(fileName) {
+    const strapiConfig = this.getStrapiConfig();
+    const headers = {};
+    if (!strapiConfig.usePublicAccess && strapiConfig.auth?.token) headers.Authorization = `Bearer ${strapiConfig.auth.token}`;
+    const response = await axios.get(`${strapiConfig.baseUrl}/upload/files`, {
+      headers,
+      timeout: 30_000,
+      params: { "filters[name][$eq]": fileName, "pagination[pageSize]": 2 },
+    });
+    const rows = Array.isArray(response.data) ? response.data : response.data?.data || [];
+    if (rows.length > 1) {
+      const error = new Error(`Ambiguous deterministic destination filename: ${fileName}`);
+      error.code = "MEDIA_DESTINATION_AMBIGUOUS";
+      throw error;
+    }
+    return rows[0] || null;
+  }
+
+  async assertSafeRemoteUrl(rawUrl) {
+    const check = validateMediaUrl(rawUrl, { allowHttp: Boolean(this.config.catalog?.allowHttpMedia) });
+    if (!check.ok) throw new Error(`Unsafe media URL blocked: ${check.reason}`);
+    const addresses = await dns.lookup(check.url.hostname, { all: true, verbatim: true });
+    if (!addresses.length || addresses.some((entry) => isPrivateHost(entry.address))) {
+      throw new Error("Unsafe media URL blocked: DNS resolved to private/reserved address");
+    }
+    return { url: check.url.toString(), address: addresses[0].address, family: addresses[0].family };
+  }
+
+  async downloadFollowingSafeRedirects(rawUrl, { timeout, maxRedirects }) {
+    let current = rawUrl;
+    for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
+      const safe = await this.assertSafeRemoteUrl(current);
+      const response = await axios({
+        method: "GET",
+        url: safe.url,
+        responseType: "arraybuffer",
+        timeout,
+        maxRedirects: 0,
+        validateStatus: (status) => status >= 200 && status < 400,
+        lookup: (_hostname, _options, callback) => callback(null, safe.address, safe.family),
+        headers: { "User-Agent": "WooCommerce-Strapi-Importer/2.0.0" },
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.location;
+        if (!location || redirect === maxRedirects) throw new Error("Media redirect limit exceeded");
+        current = new URL(location, safe.url).toString();
+        continue;
+      }
+      return response;
+    }
+    throw new Error("Media redirect limit exceeded");
   }
 
   getContentType(fileName) {
@@ -658,9 +702,6 @@ class ImageUploader {
 
   cleanup() {
     try {
-      this.uploadCache.clear();
-      this.downloadCache.clear();
-
       if (fs.existsSync(this.tempDir)) {
         const files = fs.readdirSync(this.tempDir);
         for (const file of files) {
@@ -679,8 +720,8 @@ class ImageUploader {
 
   getStats() {
     return {
-      cacheSize: this.uploadCache.size,
-      downloadCacheSize: this.downloadCache.size,
+      ...this.metrics,
+      sharp: { cache: sharp.cache(), counters: sharp.counters(), queueDepth: sharpQueueDepth, queuePeak: sharpQueuePeak },
     };
   }
 

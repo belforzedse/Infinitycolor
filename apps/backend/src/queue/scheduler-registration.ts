@@ -50,6 +50,32 @@ export async function registerMaintenanceSchedulers(
     }
   );
 
+  await queues.analytics.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.analyticsDailyRollup,
+    {
+      pattern: settings.crons.analyticsDailyRollup,
+      tz: settings.timezone,
+    },
+    {
+      name: ANALYTICS_MAINTENANCE_JOBS.analyticsDailyRollup,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    }
+  );
+
+  await queues.analytics.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.analyticsReconciliation,
+    {
+      pattern: settings.crons.analyticsReconciliation,
+      tz: settings.timezone,
+    },
+    {
+      name: ANALYTICS_MAINTENANCE_JOBS.analyticsReconciliation,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    }
+  );
+
   await queues.payments.upsertJobScheduler(
     MAINTENANCE_SCHEDULERS.snappaySweep,
     {

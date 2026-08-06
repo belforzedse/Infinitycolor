@@ -6,7 +6,36 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { RunLedger } = require("../lib/ledger");
-const { runReconcile } = require("../reconcile");
+const { runReconcile, buildFullReconciliationInputs } = require("../reconcile");
+
+test("full reconciliation enumerates every source entity read-only and uses completed catalog products", async () => {
+  const pages = (rows) => async function* () { yield { page: 1, rows }; };
+  const source = {
+    customers: pages([{ id: 10 }, { id: 11 }]),
+    walletUsers: pages([{ id: 10 }]),
+    posts: pages([{ id: 20 }, { id: 21 }]),
+    orders: pages([{ id: 30 }, { id: 31 }]),
+  };
+  const fullRun = { runId: "full-1", command: "full", status: "completed" };
+  const catalogRun = {
+    acceptedExceptions: {
+      manifestSha256: "a".repeat(64),
+      dependentOrderIds: ["31"],
+      entries: [{ key: "product:2" }],
+    },
+    items: {
+      "product:1": { entity: "products", wcId: 1, status: "completed" },
+      "product:2": { entity: "products", wcId: 2, status: "failed" },
+    },
+  };
+  const inputs = await buildFullReconciliationInputs(source, fullRun, catalogRun);
+  assert.deepEqual(inputs.pilot.pilotSelection.productIds, ["1"]);
+  assert.deepEqual(inputs.pilot.pilotSelection.userIds, ["10", "11"]);
+  assert.deepEqual(inputs.pilot.pilotSelection.walletIds, ["10"]);
+  assert.deepEqual(inputs.pilot.pilotSelection.orders, [{ sourceId: "30" }]);
+  assert.equal(inputs.pilot.acceptedExceptions.manifestSha256, "a".repeat(64));
+  assert.deepEqual(inputs.dryRun.candidates.blogPosts, ["20", "21"]);
+});
 
 async function runProductReconciliation({ destinationTitle, expectedFailures = 0 }) {
   const sourceProduct = {
@@ -118,7 +147,7 @@ test("order reconciliation accepts Strapi null relation wrappers and verifies co
             updatedAt: "2026-01-02T03:04:05.000Z",
             Status: "Started",
             Date: "2026-01-02T03:04:05.000Z",
-            ShippingCost: 500,
+            ShippingCost: 50,
             PaymentGateway: "ZarinPal",
             delivery_address: { data: null },
             Description: null,
@@ -127,7 +156,7 @@ test("order reconciliation accepts Strapi null relation wrappers and verifies co
               Status: "Confirmed",
               Type: "Cash",
               TaxPercent: 0,
-              Amount: "10000",
+              Amount: "1000",
               createdAt: "2026-01-02T03:04:05.000Z",
               updatedAt: "2026-01-02T03:04:05.000Z",
             } } },
@@ -139,7 +168,7 @@ test("order reconciliation accepts Strapi null relation wrappers and verifies co
                   updatedAt: "2026-01-02T03:04:05.000Z",
                   external_id: "line_item_9",
                   Count: 2,
-                  PerAmount: "4750",
+                  PerAmount: "475",
                   product_variation: { data: { attributes: { external_id: "4" } } },
                 },
               }],

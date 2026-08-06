@@ -11,6 +11,14 @@
     "draftAndPublish": false
   },
   "pluginOptions": {},
+  "indexes": [
+    {
+      "name": "idx_products_active_slug_lookup",
+      "columns": [
+        "slug"
+      ]
+    }
+  ],
   "attributes": {
     "Title": {
       "type": "string",
@@ -19,7 +27,7 @@
     "Slug": {
       "type": "string",
       "required": false,
-      "unique": true
+      "unique": false
     },
     "Weight": {
       "type": "integer",

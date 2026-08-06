@@ -14,6 +14,8 @@ export type QueueSettings = {
     stockReservationExpiry: string;
     reserveOrderExpiry: string;
     viewCounterFlush: string;
+    analyticsDailyRollup: string;
+    analyticsReconciliation: string;
     snappaySweep: string;
   };
 };
@@ -41,6 +43,14 @@ export function getQueueSettings(env: NodeJS.ProcessEnv = process.env): QueueSet
       stockReservationExpiry: env.QUEUE_CRON_STOCK_RESERVATION_EXPIRY || "*/1 * * * *",
       reserveOrderExpiry: env.QUEUE_CRON_RESERVE_ORDER_EXPIRY || "*/5 * * * *",
       viewCounterFlush: env.QUEUE_CRON_VIEW_COUNTER_FLUSH || "*/1 * * * *",
+      // Once daily, well after Tehran midnight, so "yesterday" is a fully-closed
+      // day before it is rolled up (see src/jobs/analyticsDailyRollup.ts).
+      analyticsDailyRollup: env.QUEUE_CRON_ANALYTICS_DAILY_ROLLUP || "15 0 * * *",
+      // Staggered 30 min after the sales rollup so both jobs don't hit the DB
+      // (and, for this one, the external Matomo host) at the same moment. Not
+      // a hard dependency — reconciliation computes Strapi figures live via
+      // SQL, not from the rollup table.
+      analyticsReconciliation: env.QUEUE_CRON_ANALYTICS_RECONCILIATION || "45 0 * * *",
       snappaySweep: env.QUEUE_CRON_SNAPPAY_SWEEP || "*/1 * * * *",
     },
   };

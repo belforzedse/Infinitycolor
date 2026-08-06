@@ -30,6 +30,14 @@ function relationMany(value) {
   return Array.isArray(raw) ? raw : raw ? [raw] : [];
 }
 
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(String(value || ""));
+  } catch {
+    return String(value || "");
+  }
+}
+
 function selectedIds(dryRun, pilot, kind) {
   const explicit = pilot?.pilotSelection?.[kind];
   if (Array.isArray(explicit)) return explicit.map(String);
@@ -41,14 +49,6 @@ function selectedIds(dryRun, pilot, kind) {
 
 function mismatch(ledger, entity, sourceId, code) {
   ledger.failure(`${entity}Reconciliation`, sourceId, code);
-}
-
-function safeDecode(value) {
-  try {
-    return decodeURIComponent(String(value || ""));
-  } catch {
-    return String(value || "");
-  }
 }
 
 function sameTimestamp(actual, expected) {
@@ -63,6 +63,10 @@ function checkSourceTimestamps(check, actual, expected, prefix) {
   check(sameTimestamp(actual?.updatedAt, expected.updatedAt), `${prefix}_UPDATED_AT_MISMATCH`);
 }
 
+function acceptedExceptionKeys(pilot) {
+  return new Set((pilot?.acceptedExceptions?.entries || []).map((entry) => String(entry.key)));
+}
+
 async function reconcileProducts(source, destination, dryRun, pilot, ledger) {
   const productIds = selectedIds(dryRun, pilot, "productIds");
   const destinationProducts = (await destination.loadSnapshot("products")).map(attrs);
@@ -72,6 +76,7 @@ async function reconcileProducts(source, destination, dryRun, pilot, ledger) {
       .filter((row) => row.external_source === "woocommerce" && row.external_id)
       .map((row) => [String(row.external_id), row]),
   );
+  const acceptedKeys = acceptedExceptionKeys(pilot);
   for (const sourceId of productIds) {
     ledger.count("products", "source");
     const sourceProduct = await source.getProduct(sourceId);
@@ -130,6 +135,11 @@ async function reconcileProducts(source, destination, dryRun, pilot, ledger) {
     for (const sourceVariation of sourceVariations) {
       const variationSourceId = String(sourceVariation.id);
       ledger.count("variations", "source");
+      if (acceptedKeys.has(`variation:${variationSourceId}`) || acceptedKeys.has(`stock:${variationSourceId}`)) {
+        ledger.count("variations", "skipped");
+        ledger.issue("variations", variationSourceId, "ACCEPTED_CATALOG_EXCEPTION");
+        continue;
+      }
       const actualVariation = variationsBySource.get(variationSourceId);
       if (!actualVariation) {
         mismatch(ledger, "variations", variationSourceId, "VARIATION_NOT_FOUND");
@@ -252,14 +262,14 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
     };
     check(actual.Status === expected.status, "ORDER_STATUS_MISMATCH");
     check(new Date(actual.Date).toISOString() === expected.date, "ORDER_DATE_MISMATCH");
-    check(String(actual.ShippingCost || 0) === expected.shippingRial, "ORDER_SHIPPING_MISMATCH");
+    check(String(actual.ShippingCost || 0) === expected.shippingToman, "ORDER_SHIPPING_MISMATCH");
     check(actual.PaymentGateway === expected.paymentGateway, "ORDER_PAYMENT_GATEWAY_MISMATCH");
     check(!relationOne(actual.delivery_address), "ORDER_ADDRESS_PRESENT");
     check(actual.Description == null && actual.Note == null, "ORDER_PRIVATE_TEXT_PRESENT");
     check(contract.Status === expected.contractStatus, "ORDER_CONTRACT_STATUS_MISMATCH");
     check(contract.Type === expected.contractType, "ORDER_CONTRACT_TYPE_MISMATCH");
     check(Number(contract.TaxPercent) === expected.taxPercent, "ORDER_CONTRACT_TAX_MISMATCH");
-    check(String(contract.Amount) === expected.totalRial, "ORDER_TOTAL_MISMATCH");
+    check(String(contract.Amount) === expected.totalToman, "ORDER_TOTAL_MISMATCH");
     check(actualItems.length === expected.items.length, "ORDER_ITEM_COUNT_MISMATCH");
     const orderTimestamps = expected.sourceCreatedAt ? {
       createdAt: expected.sourceCreatedAt,
@@ -275,7 +285,7 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
       }
       const actualVariation = attrs(relationOne(actualItem.product_variation));
       check(Number(actualItem.Count) === expectedItem.count, "ORDER_ITEM_QUANTITY_MISMATCH");
-      check(String(actualItem.PerAmount) === expectedItem.unitPriceRial, "ORDER_ITEM_PRICE_MISMATCH");
+      check(String(actualItem.PerAmount) === expectedItem.unitPriceToman, "ORDER_ITEM_PRICE_MISMATCH");
       check(String(actualVariation.external_id || "") === expectedItem.variationSourceId, "ORDER_ITEM_VARIATION_MISMATCH");
       checkSourceTimestamps(check, actualItem, orderTimestamps, "ORDER_ITEM");
     }
@@ -320,12 +330,60 @@ async function runReconcile({ source, destination, ledger, pilot, dryRun }) {
   await reconcileUsersAndWallets(source, destination, dryRun, pilot, ledger);
   await reconcileOrders(source, destination, dryRun, pilot, ledger);
   await reconcileBlogs(source, destination, dryRun, ledger);
-  ledger.summary.pilotRunId = pilot.runId;
-  ledger.summary.sourceDryRunId = dryRun.runId;
+  if (pilot.command === "pilot") {
+    ledger.summary.pilotRunId = pilot.runId;
+    ledger.summary.sourceDryRunId = dryRun.runId;
+  } else {
+    ledger.summary.sourceFullRunId = pilot.runId;
+  }
+  if (pilot.acceptedExceptions) {
+    ledger.summary.acceptedExceptions = {
+      manifestSha256: pilot.acceptedExceptions.manifestSha256,
+      count: Number(pilot.acceptedExceptions.entries?.length || 0),
+      dependentOrderIds: (pilot.acceptedExceptions.dependentOrderIds || []).map(String),
+    };
+  }
   ledger.summary.metrics.source = source.metrics();
   ledger.summary.metrics.destination = destination.metrics();
   ledger.persist();
   return ledger.summary;
 }
 
-module.exports = { runReconcile };
+async function buildFullReconciliationInputs(source, fullRun, catalogRun) {
+  const productIds = Object.values(catalogRun.items || {})
+    .filter((item) => item.entity === "products" && item.status === "completed" && item.wcId !== undefined)
+    .map((item) => String(item.wcId));
+  const userIds = [];
+  for await (const page of source.customers()) {
+    for (const row of page.rows) userIds.push(String(row.id));
+  }
+  const walletIds = [];
+  for await (const page of source.walletUsers()) {
+    for (const row of page.rows) walletIds.push(String(row.id));
+  }
+  const blogPosts = [];
+  for await (const page of source.posts()) {
+    for (const row of page.rows) blogPosts.push(String(row.id));
+  }
+  const excludedOrderIds = new Set((catalogRun.acceptedExceptions?.dependentOrderIds || []).map(String));
+  const orders = [];
+  for await (const page of source.orders()) {
+    for (const row of page.rows) {
+      const sourceId = String(row.id);
+      if (!excludedOrderIds.has(sourceId)) orders.push({ sourceId });
+    }
+  }
+  return {
+    pilot: {
+      ...fullRun,
+      acceptedExceptions: catalogRun.acceptedExceptions || null,
+      pilotSelection: { productIds, userIds, walletIds, orders },
+    },
+    dryRun: {
+      runId: fullRun.runId,
+      candidates: { products: productIds, userInsert: userIds, walletZero: walletIds, blogPosts, orders },
+    },
+  };
+}
+
+module.exports = { runReconcile, buildFullReconciliationInputs };
