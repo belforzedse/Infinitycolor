@@ -39,26 +39,33 @@ function migrationStateDir() {
   return path.resolve(process.env.MIGRATION_STATE_DIR || "/var/lib/infinity-migrations/wordpress-v2");
 }
 
-function configureEnvironment() {
+function configureSourceEnvironment() {
   loadSecretFile(process.env.MIGRATION_SECRETS_FILE);
   process.env.WOOCOMMERCE_CONSUMER_KEY ||= process.env.WC_CONSUMER_KEY || "";
   process.env.WOOCOMMERCE_CONSUMER_SECRET ||= process.env.WC_CONSUMER_SECRET || "";
+  return {
+    sourceBaseUrl: String(process.env.WORDPRESS_SOURCE_URL || "https://infinitycolor.co").replace(/\/$/, ""),
+    wpUsername: requireSecret("WP_USERNAME"),
+    wpApplicationPassword: requireSecret("WP_APPLICATION_PASSWORD"),
+    wooKey: requireSecret("WOOCOMMERCE_CONSUMER_KEY"),
+    wooSecret: requireSecret("WOOCOMMERCE_CONSUMER_SECRET"),
+  };
+}
+
+function configureEnvironment() {
+  const source = configureSourceEnvironment();
   process.env.STRAPI_API_TOKEN_PRODUCTION ||= process.env.STRAPI_TOKEN || "";
 
   const controlToken = requireSecret("MIGRATION_CONTROL_TOKEN");
   if (controlToken.length < 32) throw new Error("MIGRATION_CONTROL_TOKEN must be at least 32 characters");
 
   return {
-    sourceBaseUrl: String(process.env.WORDPRESS_SOURCE_URL || "https://infinitycolor.co").replace(/\/$/, ""),
+    ...source,
     destinationBaseUrl: String(process.env.STRAPI_IMPORT_PRODUCTION_URL || "https://api.infinitycolor.co/api").replace(/\/$/, ""),
     stateDir: migrationStateDir(),
-    wpUsername: requireSecret("WP_USERNAME"),
-    wpApplicationPassword: requireSecret("WP_APPLICATION_PASSWORD"),
-    wooKey: requireSecret("WOOCOMMERCE_CONSUMER_KEY"),
-    wooSecret: requireSecret("WOOCOMMERCE_CONSUMER_SECRET"),
     strapiToken: requireSecret("STRAPI_API_TOKEN_PRODUCTION"),
     controlToken,
   };
 }
 
-module.exports = { loadSecretFile, configureEnvironment, migrationStateDir };
+module.exports = { loadSecretFile, configureEnvironment, configureSourceEnvironment, migrationStateDir };

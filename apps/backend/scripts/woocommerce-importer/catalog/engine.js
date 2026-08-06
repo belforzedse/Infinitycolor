@@ -6,7 +6,9 @@ const { HttpClient, createWooAxios, createStrapiAxios } = require("./lib/httpCli
 const WooSource = require("./lib/wooSource");
 const StrapiRepo = require("./lib/strapiRepo");
 const MappingStore = require("./lib/mapping");
+const { MediaMappingStore } = require("./lib/mediaMappingStore");
 const MediaSync = require("./lib/media");
+const { mapPoolOrdered } = require("./lib/concurrency");
 const { ImportReport } = require("./lib/report");
 const { resolveScope, needsProductLoop } = require("./lib/presets");
 const T = require("./lib/transforms");
@@ -61,8 +63,18 @@ function productHasMedia(existing) {
   return hasCover && hasGallery;
 }
 
+function productHasGallery(existing) {
+  const attrs = existing?.attributes ?? existing ?? {};
+  const gallery = attrs.Media?.data ?? attrs.Media;
+  return Array.isArray(gallery) ? gallery.length > 0 : Boolean(gallery);
+}
+
 function isRunControlError(error) {
   return error?.code === "CATALOG_RUN_CANCELLED" || error?.code === "CATALOG_RUN_PAUSED";
+}
+
+function isAbruptCrash(error) {
+  return error?.code === "CATALOG_SIMULATED_CRASH";
 }
 
 /**
@@ -111,12 +123,11 @@ class CatalogEngine {
     this.woo = new WooSource(wooHttp, { defaultPerPage: config.catalog.perPage, logger });
     this.repo = new StrapiRepo(strapiHttp, logger);
     this.mapping = new MappingStore(config.duplicateTracking.storageDir, { logger });
-    this.mediaStore = new MappingStore(config.duplicateTracking.storageDir, {
-      logger,
-      fileName: "catalog-media-mappings.json",
-    });
+    this.mediaStore = new MediaMappingStore(config.duplicateTracking.storageDir, { logger });
     this.media = new MediaSync(config, logger, this.mediaStore, {
       allowHttp: config.catalog.allowHttpMedia,
+      imageConcurrency: config.catalog.concurrency?.images || 4,
+      videoConcurrency: config.catalog.concurrency?.videos || 1,
     });
 
     this.multiplier = config.import.currency.multiplier || 1;
@@ -159,6 +170,7 @@ class CatalogEngine {
     const runStore = opts.runStore || null;
     let run = null;
     let lockToken = null;
+    let retainCrashLease = false;
 
     if (runStore && opts.resume) {
       run = runStore.getRun(opts.runId);
@@ -202,6 +214,9 @@ class CatalogEngine {
           retryFailed: Boolean(opts.retryFailed),
           pauseSignalPath: opts.pauseSignalPath,
           shouldCancel: opts.shouldCancel,
+          resumeChildrenByParent: new Set(),
+          resumeStockVariationIds: new Set(),
+          memoryPeak: { rss: 0, heapUsed: 0, heapTotal: 0 },
         }
       : null;
 
@@ -209,6 +224,18 @@ class CatalogEngine {
     if (runContext) {
       lockToken = runStore.acquireLock(run.id);
       runContext.lockToken = lockToken;
+      const current = runStore.getRun(run.id);
+      for (const item of Object.values(current.items || {})) {
+        if (["failed", "running"].includes(item.status) && item.parentWcId !== undefined && item.parentWcId !== null) {
+          runContext.resumeChildrenByParent.add(String(item.parentWcId));
+        }
+        if (item.entity === "stocks" && ["failed", "running"].includes(item.status) && item.wcId !== undefined) {
+          runContext.resumeStockVariationIds.add(String(item.wcId));
+        }
+      }
+      this.activeRunContext = runContext;
+      this.media.canStart = () => this.ensureRunCanContinue(runContext);
+      this.media.observer = opts.crashHooks || null;
     }
 
     try {
@@ -236,7 +263,9 @@ class CatalogEngine {
       await this.syncProducts(report, dryRun, flags, limit, runContext, {
         startAfterExternalId,
         observer: opts.observer || null,
+        crashHooks: opts.crashHooks || null,
         onlyExternalIds: opts.onlyExternalIds || null,
+        sourceProducts: opts.sourceProducts || null,
       });
     }
 
@@ -248,10 +277,19 @@ class CatalogEngine {
       report.printSummary();
       report.save();
       if (runContext) {
-        runStore.finalizeFromReport(run.id, report.toJSON(), report.hasFailures() ? "resumable" : "completed");
+        runStore.finalizeFromReport(
+          run.id,
+          { ...report.toJSON(), metrics: this.collectMetrics(runContext, report) },
+          report.hasFailures() ? "resumable" : "completed",
+          lockToken,
+        );
       }
       return report;
     } catch (error) {
+      if (isAbruptCrash(error)) {
+        retainCrashLease = true;
+        throw error;
+      }
       if (runContext) {
         const status = error.code === "CATALOG_RUN_PAUSED"
           ? "paused"
@@ -261,18 +299,23 @@ class CatalogEngine {
         runStore.setStatus(run.id, status, {
           currentStep: status,
           lastError: error.message,
-        });
+        }, lockToken);
       }
       throw error;
     } finally {
-      if (runContext && lockToken) {
+      if (runContext && lockToken && !retainCrashLease) {
         runStore.releaseLock(run.id, lockToken);
       }
+      this.activeRunContext = null;
     }
   }
 
   async ensureRunCanContinue(runContext) {
     if (!runContext) return;
+    const memory = process.memoryUsage();
+    runContext.memoryPeak.rss = Math.max(runContext.memoryPeak.rss, memory.rss);
+    runContext.memoryPeak.heapUsed = Math.max(runContext.memoryPeak.heapUsed, memory.heapUsed);
+    runContext.memoryPeak.heapTotal = Math.max(runContext.memoryPeak.heapTotal, memory.heapTotal);
     if (runContext.lockToken) {
       runContext.store.heartbeat(runContext.runId, runContext.lockToken);
     }
@@ -300,15 +343,30 @@ class CatalogEngine {
   }
 
   shouldSkipTrackedItem(runContext, key) {
-    if (runContext?.retryFailed && (key.startsWith("product:") || key.startsWith("variation:"))) {
-      const item = runContext.store.getItem(runContext.runId, key);
-      if (item?.status === "completed" || item?.status === "skipped") {
-        return false;
-      }
-    }
     return Boolean(runContext?.store.shouldSkipItem(runContext.runId, key, {
       retryFailed: runContext.retryFailed,
     }));
+  }
+
+  productResumeMode(runContext, productId) {
+    if (!runContext) return "full";
+    const item = runContext.store.getItem(runContext.runId, `product:${productId}`);
+    if (!item || !["completed", "skipped"].includes(item.status)) return "full";
+    if (runContext.retryFailed && runContext.resumeChildrenByParent.has(String(productId))) return "children-only";
+    return "skip";
+  }
+
+  collectMetrics(runContext, report) {
+    const memory = process.memoryUsage();
+    const elapsedMinutes = Math.max(report.durationMs() / 60_000, 1 / 60_000);
+    const products = report.entities.products.created + report.entities.products.updated;
+    return {
+      media: this.media.uploader.getStats?.() || {},
+      http: { woo: this.woo.http.metrics || {}, destination: this.repo.http.metrics || {} },
+      memory: runContext?.memoryPeak || { rss: memory.rss, heapUsed: memory.heapUsed, heapTotal: memory.heapTotal },
+      throughput: { completedProductsPerMinute: products / elapsedMinutes },
+      replay: runContext ? { eligibleChildParents: runContext.resumeChildrenByParent.size } : {},
+    };
   }
 
   async syncCategories(
@@ -319,7 +377,7 @@ class CatalogEngine {
     onlyExternalIds = null,
   ) {
     this.logger.info("Phase: categories");
-    if (runContext) runContext.store.setCurrentStep(runContext.runId, "categories");
+    if (runContext) runContext.store.setCurrentStep(runContext.runId, "categories", {}, runContext.lockToken);
     const wcCategories = await this.woo.fetchAllCategories();
     let sorted = sortCategoriesByHierarchy(wcCategories);
     if (onlyExternalIds) {
@@ -353,7 +411,7 @@ class CatalogEngine {
             wcId: wc.id,
             name: wc.name,
             stage: "upsert-category",
-          });
+          }, runContext.lockToken);
         }
         const resolveParentId = (wooParentId) => this.mapping.getStrapiId("categories", wooParentId);
         const { data } = T.mapCategory(wc, resolveParentId);
@@ -365,7 +423,8 @@ class CatalogEngine {
             runContext.store.completeItem(runContext.runId, itemKey, {
               mode: existing ? "updated" : "created",
               fingerprint: fingerprint(data),
-            });
+            }, runContext.lockToken);
+            runContext.store.syncBoundary(runContext.runId, runContext.lockToken, { mediaStore: this.mediaStore });
           }
           continue;
         }
@@ -384,7 +443,8 @@ class CatalogEngine {
             mode,
             strapiId: id,
             fingerprint: fingerprint(data),
-          });
+          }, runContext.lockToken);
+          runContext.store.syncBoundary(runContext.runId, runContext.lockToken, { mediaStore: this.mediaStore });
         }
       } catch (error) {
         if (isRunControlError(error)) throw error;
@@ -395,7 +455,8 @@ class CatalogEngine {
             wcId: wc.id,
             stage: "upsert-category",
             error,
-          });
+          }, runContext.lockToken);
+          runContext.store.syncBoundary(runContext.runId, runContext.lockToken, { mediaStore: this.mediaStore });
         }
         this.logger.error(`❌ category ${wc.id} (${wc.name}): ${error.message}`);
       }
@@ -405,7 +466,7 @@ class CatalogEngine {
 
   async syncProducts(report, dryRun, flags, limit = Infinity, runContext = null, options = {}) {
     this.logger.info("Phase: products + variations");
-    if (runContext) runContext.store.setCurrentStep(runContext.runId, "products");
+    if (runContext) runContext.store.setCurrentStep(runContext.runId, "products", {}, runContext.lockToken);
     // In "preserve" media mode we need to know whether each existing product
     // already has media, so populate (id-only) the cover/gallery relations.
     const productIndexParams = flags.mediaPolicy === "preserve"
@@ -424,13 +485,15 @@ class CatalogEngine {
           ? await this.woo.fetchGlobalAttributeRegistry()
           : new Map(),
       observer: options.observer || null,
+      crashHooks: options.crashHooks || null,
     };
 
     let processed = 0;
     const onlyExternalIds = options.onlyExternalIds
       ? new Set(Array.from(options.onlyExternalIds, (value) => String(value)))
       : null;
-    for await (const wcProduct of this.woo.iterateProducts()) {
+    const sourceProducts = options.sourceProducts || this.woo.iterateProducts();
+    for await (const wcProduct of sourceProducts) {
       try {
         await this.ensureRunCanContinue(runContext);
         if (onlyExternalIds && !onlyExternalIds.has(String(wcProduct.id))) continue;
@@ -441,8 +504,11 @@ class CatalogEngine {
         if (processed >= limit) break;
         processed += 1;
         await this.syncOneProduct(wcProduct, ctx);
+        if (runContext) {
+          runContext.store.syncBoundary(runContext.runId, runContext.lockToken, { mediaStore: this.mediaStore });
+        }
       } catch (error) {
-        if (isRunControlError(error)) throw error;
+        if (isRunControlError(error) || isAbruptCrash(error)) throw error;
         report.fail("products", { wcId: wcProduct.id, stage: "sync-product", error });
         if (runContext) {
           runContext.store.failItem(runContext.runId, `product:${wcProduct.id}`, {
@@ -450,7 +516,8 @@ class CatalogEngine {
             wcId: wcProduct.id,
             stage: "sync-product",
             error,
-          });
+          }, runContext.lockToken);
+          runContext.store.syncBoundary(runContext.runId, runContext.lockToken, { mediaStore: this.mediaStore });
         }
         this.logger.error(`❌ product ${wcProduct.id} (${wcProduct.name}): ${error.message}`);
       }
@@ -460,19 +527,21 @@ class CatalogEngine {
   async syncOneProduct(wcProduct, ctx) {
     const { report, dryRun, flags, productIndex, runContext } = ctx;
     const itemKey = `product:${wcProduct.id}`;
+    const resumeMode = this.productResumeMode(runContext, wcProduct.id);
+    const childrenOnly = resumeMode === "children-only";
 
-    if (this.shouldSkipTrackedItem(runContext, itemKey)) {
+    if (resumeMode === "skip" || (!childrenOnly && this.shouldSkipTrackedItem(runContext, itemKey))) {
       report.count("products", "skipped");
       return;
     }
 
-    if (runContext) {
+    if (runContext && !childrenOnly) {
       runContext.store.beginItem(runContext.runId, itemKey, {
         entity: "products",
         wcId: wcProduct.id,
         name: wcProduct.name,
         stage: "sync-product",
-      });
+      }, runContext.lockToken);
     }
 
     if (!wcProduct.name || wcProduct.name.trim() === "") {
@@ -483,7 +552,7 @@ class CatalogEngine {
           wcId: wcProduct.id,
           stage: "validate",
           error: "missing name",
-        });
+        }, runContext.lockToken);
       }
       return;
     }
@@ -497,12 +566,12 @@ class CatalogEngine {
     if (!stockEligibility.eligible) {
       ctx.observer?.onProduct?.({ wcProduct, wcVariations, stockEligibility });
       report.count("products", "skipped");
-      if (runContext) {
+      if (runContext && !childrenOnly) {
         runContext.store.completeItem(runContext.runId, itemKey, {
           status: "skipped",
           reason: stockEligibility.reason,
           unmanagedVariationIds: stockEligibility.unmanagedVariationIds,
-        });
+        }, runContext.lockToken);
       }
       return;
     }
@@ -510,11 +579,12 @@ class CatalogEngine {
     const attributePlan = G.buildProductAttributePlan(wcProduct, ctx.globalAttributeRegistry);
 
     const existing = productIndex.get(wcProduct.id.toString());
-    let productStrapiId = existing?.id || this.mapping.getStrapiId("products", wcProduct.id);
+    const previousProduct = runContext?.store.getItem(runContext.runId, itemKey);
+    let productStrapiId = existing?.id || this.mapping.getStrapiId("products", wcProduct.id) || previousProduct?.strapiId;
     let productFingerprint = null;
 
     // Product record write (only in scopes that touch products).
-    if (flags.products) {
+    if (flags.products && !childrenOnly) {
       const resolveCategoryId = (wooId) => this.mapping.getStrapiId("categories", wooId);
       const resolveCategoryParent = (wooId) => this.mapping.get("categories", wooId)?.parentWcId ?? null;
       const { data, sizeGuideMatrix, sourceTimestamps } = T.mapProduct(wcProduct, {
@@ -539,6 +609,7 @@ class CatalogEngine {
         report.count("sizeHelpers", sizeGuideMatrix ? "skipped" : "unchanged");
         productStrapiId = existing?.id || -1;
       } else {
+        const productWriteStarted = process.hrtime.bigint();
         const { id, mode } = await this.repo.upsert({
           endpoint: "/products",
           externalId: wcProduct.id.toString(),
@@ -549,6 +620,8 @@ class CatalogEngine {
         this.mapping.set("products", wcProduct.id, id, { name: wcProduct.name, slug: data.Slug });
         report.count("products", mode);
         productStrapiId = id;
+        ctx.productWriteMs = (ctx.productWriteMs || 0) + Number(process.hrtime.bigint() - productWriteStarted) / 1e6;
+        await ctx.crashHooks?.afterProductWrite?.({ wcProduct, productStrapiId: id, mode });
 
         try {
           const helperMode = await this.repo.syncProductSizeHelper(id, sizeGuideMatrix, sourceTimestamps);
@@ -561,8 +634,13 @@ class CatalogEngine {
     } else if (flags.onlyExisting && !productStrapiId) {
       // stock/price/media scopes: skip products that were never imported.
       report.count("products", "skipped");
-      if (runContext) {
-        runContext.store.completeItem(runContext.runId, itemKey, { status: "skipped", reason: "missing-existing-product" });
+      if (runContext && !childrenOnly) {
+        runContext.store.completeItem(
+          runContext.runId,
+          itemKey,
+          { status: "skipped", reason: "missing-existing-product" },
+          runContext.lockToken,
+        );
       }
       return;
     }
@@ -582,7 +660,7 @@ class CatalogEngine {
     }
 
     // Media — attach only when ids are present (never null existing media on failure).
-    if (flags.media && !dryRun && productStrapiId && productStrapiId > 0) {
+    if (!childrenOnly && flags.media && !dryRun && productStrapiId && productStrapiId > 0) {
       // "preserve" policy (full-sync): leave existing media untouched when a product
       // already has both a cover and a gallery; otherwise import (new products and
       // products missing a cover or gallery get backfilled).
@@ -590,13 +668,13 @@ class CatalogEngine {
         report.mediaSkippedExisting();
         this.logger.info(`🖼️  media preserved — product ${wcProduct.id} already has cover + gallery`);
       } else {
-        const { coverId, galleryIds, counts } = await this.media.syncProductMedia(wcProduct);
+        const { coverId, galleryIds, counts, failures = {} } = await this.media.syncProductMedia(wcProduct);
         report.mediaUploaded(counts.uploaded);
         report.mediaReused(counts.reused);
         report.mediaFailed(counts.failed);
         const update = {};
         if (coverId) update.CoverImage = coverId;
-        if (galleryIds.length > 0) update.Media = galleryIds;
+        if (galleryIds.length > 0 && !(failures.gallery && productHasGallery(existing))) update.Media = galleryIds;
         if (Object.keys(update).length > 0) {
           await this.repo.http.put(`/products/${productStrapiId}`, { data: update }, {
             headers: sourceTimestampHeaders(wooSourceTimestamps(wcProduct)),
@@ -617,11 +695,12 @@ class CatalogEngine {
       );
     }
 
-    if (runContext) {
+    if (runContext && !childrenOnly) {
       runContext.store.completeItem(runContext.runId, itemKey, {
         strapiId: productStrapiId,
         fingerprint: productFingerprint,
-      });
+        metrics: { productWriteMs: ctx.productWriteMs || 0 },
+      }, runContext.lockToken);
     }
   }
 
@@ -640,26 +719,45 @@ class CatalogEngine {
     if (isSimple) {
       const synthetic = T.synthesizeSimpleVariation(wcProduct);
       await this.syncOneVariation(synthetic, wcProduct, parentStrapiId, ctx, attributeContext);
+      if (ctx.runContext?.store.getItem(ctx.runContext.runId, `variation:${synthetic.id}`)?.status === "failed") {
+        const error = new Error(`Variation ${synthetic.id} failed for product ${wcProduct.id}`);
+        error.code = "CATALOG_CHILD_FAILED";
+        throw error;
+      }
       return;
     }
 
-    for (const wcVariation of prefetchedVariations) {
-      try {
-        await this.ensureRunCanContinue(ctx.runContext);
-        await this.syncOneVariation(wcVariation, wcProduct, parentStrapiId, ctx, attributeContext);
-      } catch (error) {
-        if (isRunControlError(error)) throw error;
-        ctx.report.fail("variations", { wcId: wcVariation.id, stage: "sync-variation", error });
-        if (ctx.runContext) {
-          ctx.runContext.store.failItem(ctx.runContext.runId, `variation:${wcVariation.id}`, {
-            entity: "variations",
-            wcId: wcVariation.id,
-            stage: "sync-variation",
-            error,
-          });
+    const results = await mapPoolOrdered(
+      prefetchedVariations,
+      this.config.catalog.concurrency?.variations || 8,
+      async (wcVariation) => {
+        try {
+          await this.ensureRunCanContinue(ctx.runContext);
+          await this.syncOneVariation(wcVariation, wcProduct, parentStrapiId, ctx, attributeContext);
+          const tracked = ctx.runContext?.store.getItem(ctx.runContext.runId, `variation:${wcVariation.id}`);
+          return { failed: tracked?.status === "failed" };
+        } catch (error) {
+          if (isRunControlError(error) || isAbruptCrash(error) || error.code === "CATALOG_FENCE_REJECTED") throw error;
+          ctx.report.fail("variations", { wcId: wcVariation.id, stage: "sync-variation", error });
+          if (ctx.runContext) {
+            ctx.runContext.store.failItem(ctx.runContext.runId, `variation:${wcVariation.id}`, {
+              entity: "variations",
+              wcId: wcVariation.id,
+              parentWcId: wcProduct.id,
+              stage: "sync-variation",
+              error,
+            }, ctx.runContext.lockToken);
+          }
+          this.logger.error(`❌ variation ${wcVariation.id} (parent ${wcProduct.id}): ${error.message}`);
+          return { failed: true };
         }
-        this.logger.error(`❌ variation ${wcVariation.id} (parent ${wcProduct.id}): ${error.message}`);
-      }
+      },
+      { canStart: () => this.ensureRunCanContinue(ctx.runContext) },
+    );
+    if (results.some((result) => result.failed)) {
+      const error = new Error(`One or more variations failed for product ${wcProduct.id}`);
+      error.code = "CATALOG_CHILD_FAILED";
+      throw error;
     }
   }
 
@@ -668,26 +766,32 @@ class CatalogEngine {
     const externalId = wcVariation.id.toString();
     const itemKey = `variation:${externalId}`;
     const existing = variationIndex.get(externalId);
+    const previousVariation = runContext?.store.getItem(runContext.runId, itemKey);
+    const stockOnly = Boolean(
+      runContext?.retryFailed &&
+      ["completed", "skipped"].includes(previousVariation?.status) &&
+      runContext.resumeStockVariationIds.has(externalId),
+    );
 
-    if (this.shouldSkipTrackedItem(runContext, itemKey)) {
+    if (!stockOnly && this.shouldSkipTrackedItem(runContext, itemKey)) {
       report.count("variations", "skipped");
       return;
     }
 
-    if (runContext) {
+    if (runContext && !stockOnly) {
       runContext.store.beginItem(runContext.runId, itemKey, {
         entity: "variations",
         wcId: wcVariation.id,
         parentWcId: parentProduct.id,
         stage: "sync-variation",
-      });
+      }, runContext.lockToken);
     }
 
     // onlyExisting scopes (stock/price/media) never create new variations.
     if (flags.onlyExisting && !existing) {
       report.count("variations", "skipped");
       if (runContext) {
-        runContext.store.completeItem(runContext.runId, itemKey, { status: "skipped", reason: "missing-existing-variation" });
+        runContext.store.completeItem(runContext.runId, itemKey, { status: "skipped", reason: "missing-existing-variation" }, runContext.lockToken);
       }
       return;
     }
@@ -706,7 +810,7 @@ class CatalogEngine {
               wcId: wcVariation.id,
               stage: "price",
               error: "no price in WooCommerce",
-            });
+            }, runContext.lockToken);
           }
           return;
         }
@@ -724,7 +828,7 @@ class CatalogEngine {
               wcId: wcVariation.id,
               stage: "generic-attributes",
               error: reasonCodes,
-            });
+            }, runContext.lockToken);
           }
           return;
         }
@@ -734,13 +838,13 @@ class CatalogEngine {
         report.count("stocks", existing ? "updated" : "created");
       }
       if (runContext) {
-        runContext.store.completeItem(runContext.runId, itemKey, { mode: existing ? "updated" : "created" });
+        runContext.store.completeItem(runContext.runId, itemKey, { mode: existing ? "updated" : "created" }, runContext.lockToken);
       }
       return;
     }
 
     // --- Variation record write ---
-    if (flags.variations) {
+    if (flags.variations && !stockOnly) {
       if (flags.variationFields === "price-only") {
         // Update only Price/DiscountPrice on an existing variation; never create.
         if (variationStrapiId) {
@@ -772,12 +876,13 @@ class CatalogEngine {
               wcId: wcVariation.id,
               stage: "price",
               error: "no price in WooCommerce",
-            });
+            }, runContext.lockToken);
           }
           return;
         }
         await this.attachAttributes(wcVariation, data, attributeContext);
         variationFingerprint = fingerprint(data);
+        const variationWriteStarted = process.hrtime.bigint();
         const { id, mode } = await this.repo.upsert({
           endpoint: "/product-variations",
           externalId,
@@ -788,6 +893,8 @@ class CatalogEngine {
         this.mapping.set("variations", wcVariation.id, id, { productId: parentProduct.id, sku: data.SKU });
         report.count("variations", mode);
         variationStrapiId = id;
+        ctx.variationWriteMs = (ctx.variationWriteMs || 0) + Number(process.hrtime.bigint() - variationWriteStarted) / 1e6;
+        await ctx.crashHooks?.afterVariationWrite?.({ wcVariation, variationStrapiId: id, mode });
       }
     }
 
@@ -804,31 +911,50 @@ class CatalogEngine {
             wcId: wcVariation.id,
             parentWcId: parentProduct.id,
             stage: "sync-stock",
-          });
+          }, runContext.lockToken);
         }
-        const stockMode = await this.repo.upsertStock({
-          externalId: stock.externalId,
-          count: stock.count,
-          variationId: variationStrapiId,
-          stockIndex,
-          sourceTimestamps: wooSourceTimestamps(wcVariation),
-        });
-        report.count("stocks", stockMode);
-        if (runContext) {
-          runContext.store.completeItem(runContext.runId, stockKey, {
-            mode: stockMode,
+        const stockWriteStarted = process.hrtime.bigint();
+        try {
+          const stockMode = await this.repo.upsertStock({
             externalId: stock.externalId,
-            fingerprint: fingerprint(stock),
+            count: stock.count,
+            variationId: variationStrapiId,
+            stockIndex,
+            sourceTimestamps: wooSourceTimestamps(wcVariation),
           });
+          report.count("stocks", stockMode);
+          await ctx.crashHooks?.afterStockWrite?.({ wcVariation, variationStrapiId, stockMode });
+          if (runContext) {
+            runContext.store.completeItem(runContext.runId, stockKey, {
+              mode: stockMode,
+              externalId: stock.externalId,
+              fingerprint: fingerprint(stock),
+              metrics: { writeMs: Number(process.hrtime.bigint() - stockWriteStarted) / 1e6 },
+            }, runContext.lockToken);
+          }
+          await ctx.crashHooks?.afterStockCommitBeforeVariationComplete?.({ wcVariation, variationStrapiId, stockMode });
+        } catch (error) {
+          if (isAbruptCrash(error)) throw error;
+          if (runContext) {
+            runContext.store.failItem(runContext.runId, stockKey, {
+              entity: "stocks",
+              wcId: wcVariation.id,
+              parentWcId: parentProduct.id,
+              stage: "sync-stock",
+              error,
+            }, runContext.lockToken);
+          }
+          throw error;
         }
       }
     }
 
-    if (runContext) {
+    if (runContext && !stockOnly) {
       runContext.store.completeItem(runContext.runId, itemKey, {
         strapiId: variationStrapiId,
         fingerprint: variationFingerprint,
-      });
+        metrics: { writeMs: ctx.variationWriteMs || 0 },
+      }, runContext.lockToken);
     }
   }
 

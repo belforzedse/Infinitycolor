@@ -9,6 +9,7 @@
  */
 
 const path = require("path");
+const { boundedInteger } = require("./lib/concurrency");
 
 const ENV_CONFIG = {
   production: {
@@ -68,6 +69,21 @@ function buildConfig(envName) {
     maxRetries: Number.parseInt(process.env.IMPORT_ERROR_MAX_RETRIES || "4", 10),
     baseRetryDelay: Number.parseInt(process.env.IMPORT_ERROR_RETRY_DELAY || "1000", 10),
     trackingDirAbs: path.resolve(process.cwd(), envConfig.trackingDir),
+    concurrency: {
+      products: 1,
+      variations: boundedInteger(process.env.IMPORT_CONCURRENCY_VARIATIONS, {
+        name: "IMPORT_CONCURRENCY_VARIATIONS", defaultValue: 8, max: 32,
+      }),
+      images: boundedInteger(process.env.IMPORT_CONCURRENCY_IMAGES, {
+        name: "IMPORT_CONCURRENCY_IMAGES", defaultValue: 4, max: 16,
+      }),
+      videos: boundedInteger(process.env.IMPORT_CONCURRENCY_VIDEOS, {
+        name: "IMPORT_CONCURRENCY_VIDEOS", defaultValue: 1, max: 2,
+      }),
+      entities: boundedInteger(process.env.IMPORT_CONCURRENCY_ENTITIES, {
+        name: "IMPORT_CONCURRENCY_ENTITIES", defaultValue: 8, max: 32,
+      }),
+    },
   };
   config.migration = {
     controlToken: String(process.env.MIGRATION_CONTROL_TOKEN || ""),

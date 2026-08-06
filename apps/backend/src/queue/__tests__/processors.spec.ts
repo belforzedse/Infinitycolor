@@ -12,6 +12,12 @@ jest.mock("../../api/payment-gateway/services/snappay-orchestrator", () => ({
   processSnappayOperation: jest.fn(),
   sweepSnappayOperations: jest.fn(),
 }));
+jest.mock("../../jobs/analyticsDailyRollup", () => ({
+  runAnalyticsDailyRollupTick: jest.fn(),
+}));
+jest.mock("../../jobs/analyticsReconciliation", () => ({
+  runAnalyticsReconciliationTick: jest.fn(),
+}));
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
 import { runExpireStockReservationsTick } from "../../jobs/expireStockReservations";
@@ -25,6 +31,8 @@ import {
   processSnappayOperation,
   sweepSnappayOperations,
 } from "../../api/payment-gateway/services/snappay-orchestrator";
+import { runAnalyticsDailyRollupTick } from "../../jobs/analyticsDailyRollup";
+import { runAnalyticsReconciliationTick } from "../../jobs/analyticsReconciliation";
 
 const mockedRunExpireStockReservationsTick =
   runExpireStockReservationsTick as jest.MockedFunction<typeof runExpireStockReservationsTick>;
@@ -34,6 +42,10 @@ const mockedProcessSnappayOperation =
   processSnappayOperation as jest.MockedFunction<typeof processSnappayOperation>;
 const mockedSweepSnappayOperations =
   sweepSnappayOperations as jest.MockedFunction<typeof sweepSnappayOperations>;
+const mockedRunAnalyticsDailyRollupTick =
+  runAnalyticsDailyRollupTick as jest.MockedFunction<typeof runAnalyticsDailyRollupTick>;
+const mockedRunAnalyticsReconciliationTick =
+  runAnalyticsReconciliationTick as jest.MockedFunction<typeof runAnalyticsReconciliationTick>;
 
 function createMockStrapi() {
   const viewService = {
@@ -87,6 +99,28 @@ describe("queue processors", () => {
 
     expect(strapi.service).toHaveBeenCalledWith("api::product-view.product-view");
     expect(viewService.flushQueuedCounters).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches the analytics daily rollup job", async () => {
+    const strapi = createMockStrapi();
+    mockedRunAnalyticsDailyRollupTick.mockResolvedValue({ status: "completed", stats: {} } as any);
+
+    await processMaintenanceJob(strapi, {
+      name: ANALYTICS_MAINTENANCE_JOBS.analyticsDailyRollup,
+    } as any);
+
+    expect(mockedRunAnalyticsDailyRollupTick).toHaveBeenCalledWith(strapi);
+  });
+
+  it("dispatches the analytics reconciliation job", async () => {
+    const strapi = createMockStrapi();
+    mockedRunAnalyticsReconciliationTick.mockResolvedValue({ status: "completed", stats: {} } as any);
+
+    await processMaintenanceJob(strapi, {
+      name: ANALYTICS_MAINTENANCE_JOBS.analyticsReconciliation,
+    } as any);
+
+    expect(mockedRunAnalyticsReconciliationTick).toHaveBeenCalledWith(strapi);
   });
 
   it("dispatches durable SnappPay operations by database id", async () => {

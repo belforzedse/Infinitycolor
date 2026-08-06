@@ -10,7 +10,7 @@
  * WooCommerce is always the read-only source of truth; no scope ever writes to WC.
  */
 
-const SCOPES = ["full", "full-sync", "no-media", "categories", "stock", "price", "media"];
+const SCOPES = ["full", "full-sync", "no-media", "product-no-media", "categories", "stock", "price", "media"];
 
 /**
  * Resolve a scope to concrete phase flags.
@@ -38,6 +38,8 @@ function resolveScope(scope, opts = {}) {
       });
     case "no-media":
       return f({ categories: true, products: true, variations: true, stock: true, media: false, variationFields: "all" });
+    case "product-no-media":
+      return f({ categories: false, products: true, variations: true, stock: true, media: false, variationFields: "all" });
     case "categories":
       return f({ categories: true });
     case "stock":

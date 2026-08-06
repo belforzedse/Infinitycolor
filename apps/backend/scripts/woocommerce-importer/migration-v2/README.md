@@ -117,6 +117,9 @@ after the accepted validation or a rollback decision.
   destination size relation is optional; do not invent a synthetic size.
 - Convert wallet balances from toman to rial by an exact multiplication by ten;
   transaction history is not imported.
+- Woo order totals, shipping costs, and line-item prices are already toman.
+  Preserve them as exact integers without scaling; the migration API accepts
+  only the explicit `totalToman`, `shippingToman`, and `unitPriceToman` fields.
 - Match users by WordPress source ID, then canonical unique phone. Never match by
   email. Quarantine conflicts and do not import passwords or addresses.
 - Link a guest order only when its phone identifies exactly one approved user;

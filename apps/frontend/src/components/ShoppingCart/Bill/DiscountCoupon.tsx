@@ -6,6 +6,7 @@ import { CartService } from "@/services";
 import type { ShippingAddressContext } from "@/services/shipping";
 import toast from "react-hot-toast";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
+import { trackMatomoEvent } from "@/lib/analytics/matomo";
 
 type DiscountSummary = {
   subtotal: number;
@@ -48,6 +49,12 @@ function ShoppingCartBillDiscountCoupon({
       });
       if (res?.success) {
         toast.success("کد تخفیف اعمال شد");
+        trackMatomoEvent({
+          category: "ecommerce",
+          action: "apply_coupon",
+          name: code.trim(),
+          value: res.discount,
+        });
         onApplied?.(code.trim(), {
           discount: res.discount,
           summary: res.summary,

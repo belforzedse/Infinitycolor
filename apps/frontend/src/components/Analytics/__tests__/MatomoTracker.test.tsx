@@ -110,4 +110,13 @@ describe("MatomoTracker", () => {
     flushFrames();
     expect(countPageViews()).toBe(0);
   });
+
+  it("fails closed (never falls back to a hardcoded host/site) when unconfigured", () => {
+    delete process.env.NEXT_PUBLIC_MATOMO_URL;
+    delete process.env.NEXT_PUBLIC_MATOMO_SITE_ID;
+    render(<MatomoTracker />);
+    flushFrames();
+    expect(countPageViews()).toBe(0);
+    expect((window as any).__matomoInitialized).toBeFalsy();
+  });
 });

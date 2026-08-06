@@ -49,8 +49,12 @@ class WordPressSource {
     } while (true);
   }
 
-  customers() { return this.pages(this.woo, "/customers", { orderby: "id", order: "asc" }); }
-  orders() { return this.pages(this.woo, "/orders", { orderby: "id", order: "asc" }); }
+  customers(params = {}) { return this.pages(this.woo, "/customers", { orderby: "id", order: "asc", ...params }); }
+  products(params = {}) { return this.pages(this.woo, "/products", { orderby: "id", order: "asc", ...params }); }
+  orders(params = {}) { return this.pages(this.woo, "/orders", { orderby: "id", order: "asc", ...params }); }
+  productVariations(id, params = {}) {
+    return this.pages(this.woo, `/products/${id}/variations`, { orderby: "id", order: "asc", ...params });
+  }
   walletUsers() { return this.pages(this.wallet, "/admin/users", {}, 100); }
   posts() { return this.pages(this.wp, "/posts", { context: "edit", orderby: "id", order: "asc", status: "any" }); }
   blogCategories() { return this.pages(this.wp, "/categories", { context: "edit", orderby: "id", order: "asc" }); }
@@ -62,11 +66,7 @@ class WordPressSource {
   getProduct(id) { return this.woo.get(`/products/${id}`).then((response) => response.data); }
   async getProductVariations(id) {
     const rows = [];
-    for await (const page of this.pages(
-      this.woo,
-      `/products/${id}/variations`,
-      { orderby: "id", order: "asc" },
-    )) {
+    for await (const page of this.productVariations(id)) {
       rows.push(...page.rows);
     }
     return rows;

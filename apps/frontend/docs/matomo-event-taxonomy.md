@@ -24,9 +24,25 @@ Use `trackMatomoEvent(...)` with these categories:
 - `checkout`
   - Examples: `place_order_attempt`, `add_shipping_info`, `add_payment_info`, `payment_redirect`, `payment_completed`, `payment_callback_success`, `payment_callback_failed`, `payment_callback_error`, `order_success_page_view`, `order_failure_page_view`, `error`
 - `ecommerce`
-  - Examples: `view_cart`, `remove_from_cart`, `update_quantity`
+  - Examples: `view_cart`, `remove_from_cart`, `update_quantity`, `view_item_list` (PLP grid render; `name` = pathname, `value` = item count), `select_item` (product-card click; `name` = `{id}:{title}[:pos={index}]`), `apply_coupon` (`name` = coupon code, `value` = discount amount)
+- `auth`
+  - Examples: `login` (`name` = `"password"` \| `"otp"` — fired only for a returning-user login, not the first OTP step of a new signup), `account_created` (fired once, when the register/info profile-completion form succeeds — this is the actual account-creation moment regardless of whether the user arrived via `/auth/register` or an incomplete-profile redirect from OTP login)
 - `engagement`
   - Examples: `click_add_to_cart`, `share_product`, `open_comments`, `add_to_wishlist`, `remove_from_wishlist`
+
+## Server-Side Events (Tracking API, not `_paq`)
+
+Two events are recorded from the backend via `matomo.php` directly, not through
+the browser queue — see `apps/backend/src/api/report/services/matomo-tracker.ts`
+and `MATOMO.md`. Both are fire-and-forget, idempotent (Redis `SET NX`), and
+never block the request that triggers them:
+
+- Ecommerce order (`idgoal=0`) — fired once per paid order from
+  `clearCartAfterPayment`.
+- `refund` (category `ecommerce`, sent as a plain custom event, not a second
+  ecommerce order — Matomo cannot mutate a previously-tracked order's revenue)
+  — fired once per `contract_transactions` row created with `Type: "Return"`,
+  from the admin cancel / admin adjust-items / SnappPay admin-update paths.
 
 ## Site Search (native — NOT an event)
 

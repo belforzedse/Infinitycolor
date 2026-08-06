@@ -73,6 +73,32 @@ async function releaseOrderTracking(orderId: number): Promise<void> {
   }
 }
 
+/**
+ * Claim the right to track this refund exactly once. Keyed by the
+ * `contract_transactions` row id (the `Type='Return'` row itself), not the
+ * order id — an order can be partially refunded more than once (see
+ * `adminAdjustItems.ts`), and each such row is its own distinct refund event.
+ */
+async function claimRefundTracking(contractTransactionId: number): Promise<boolean> {
+  try {
+    const client = await RedisClient;
+    const key = `matomo:refund-tracked:${contractTransactionId}`;
+    const result = await client.set(key, "1", { NX: true, EX: TRACKED_MARKER_TTL_SEC });
+    return result === "OK";
+  } catch {
+    return false;
+  }
+}
+
+async function releaseRefundTracking(contractTransactionId: number): Promise<void> {
+  try {
+    const client = await RedisClient;
+    await client.del(`matomo:refund-tracked:${contractTransactionId}`);
+  } catch {
+    /* best-effort */
+  }
+}
+
 type EcommerceOrderInput = {
   orderId: number;
   /** Opaque internal user id, to match the client-side setUserId attribution. */
@@ -165,7 +191,16 @@ export async function trackOrderToMatomo(strapi: StrapiLike, orderId: number): P
 
   try {
     const order = await strapi.entityService.findOne("api::order.order", orderId, {
-      populate: { order_items: true, user: { fields: ["id"] } },
+      populate: {
+        order_items: {
+          populate: {
+            product_variation: {
+              populate: { product: { populate: { product_main_category: true } } },
+            },
+          },
+        },
+        user: { fields: ["id"] },
+      },
     });
     if (!order) {
       await releaseOrderTracking(orderId);
@@ -176,6 +211,7 @@ export async function trackOrderToMatomo(strapi: StrapiLike, orderId: number): P
     const lineItems = items.map((it: any) => ({
       sku: String(it?.ProductSKU || ""),
       name: String(it?.ProductTitle || ""),
+      category: String(it?.product_variation?.product?.product_main_category?.Title || ""),
       priceToman: toNumber(it?.PerAmount),
       quantity: toNumber(it?.Count) || 1,
     }));
@@ -202,6 +238,91 @@ export async function trackOrderToMatomo(strapi: StrapiLike, orderId: number): P
     await releaseOrderTracking(orderId);
     strapi.log?.warn?.("[matomo] ecommerce order tracking failed (non-fatal)", {
       orderId,
+      error: (error as Error)?.message,
+    });
+    return false;
+  }
+}
+
+type RefundInput = {
+  orderId: number;
+  /** The `contract_transactions` row id of the Type='Return' record — the idempotency anchor. */
+  contractTransactionId: number;
+  amountToman: number;
+  userId?: string | number | null;
+};
+
+/**
+ * Build the Matomo Tracking API URL for a refund event. Matomo cannot mutate a
+ * previously-tracked ecommerce order's revenue (re-sending the same `ec_id`
+ * fails with "Invalid non-unique idsite/idorder combination" — see MATOMO.md),
+ * so a refund is recorded as its own custom event rather than a second
+ * ecommerce order. Strapi stays the source of truth for net-of-refund revenue;
+ * this event exists so Matomo-side reporting/reconciliation can see refunds
+ * happened at all.
+ */
+export function buildRefundTrackingUrl(input: RefundInput): string {
+  const baseUrl = process.env.MATOMO_BASE_URL as string;
+  const siteId = process.env.MATOMO_SITE_ID as string;
+  const apiToken = process.env.MATOMO_API_TOKEN as string;
+  const urlBase =
+    process.env.MATOMO_TRACKING_URL_BASE ||
+    process.env.FRONTEND_BASE_URL ||
+    process.env.FRONTEND_URL ||
+    "https://infinitycolor.co";
+
+  const endpoint = new URL("matomo.php", ensureTrailingSlash(baseUrl));
+  const p = endpoint.searchParams;
+  p.set("idsite", String(siteId));
+  p.set("rec", "1");
+  p.set("apiv", "1");
+  p.set("send_image", "0");
+  p.set("token_auth", apiToken);
+  p.set("url", `${urlBase.replace(/\/$/, "")}/orders/success?order=${input.orderId}`);
+  p.set("action_name", "Ecommerce/Refund");
+  p.set("e_c", "ecommerce");
+  p.set("e_a", "refund");
+  p.set("e_n", String(input.orderId));
+  p.set("e_v", String(Math.max(0, Math.round(input.amountToman))));
+
+  if (input.userId !== undefined && input.userId !== null && String(input.userId).trim()) {
+    p.set("uid", String(input.userId).trim());
+  }
+
+  return endpoint.toString();
+}
+
+/**
+ * Track a refund. Safe to call fire-and-forget, after the DB transaction that
+ * created the Type='Return' row has committed (never call this from inside
+ * that transaction — see call sites in adminCancel.ts / adminAdjustItems.ts /
+ * snappay-finalization.ts). Never throws.
+ */
+export async function trackRefundToMatomo(
+  strapi: StrapiLike,
+  input: RefundInput,
+): Promise<boolean> {
+  if (!isServerEcommerceTrackingEnabled()) return false;
+  if (!input.contractTransactionId || !Number.isFinite(Number(input.contractTransactionId))) {
+    return false;
+  }
+  if (!(input.amountToman > 0)) return false;
+
+  const claimed = await claimRefundTracking(input.contractTransactionId);
+  if (!claimed) return false;
+
+  try {
+    const url = buildRefundTrackingUrl(input);
+    await postTracking(url);
+    strapi.log?.info?.("[matomo] refund tracked", {
+      orderId: input.orderId,
+      contractTransactionId: input.contractTransactionId,
+    });
+    return true;
+  } catch (error) {
+    await releaseRefundTracking(input.contractTransactionId);
+    strapi.log?.warn?.("[matomo] refund tracking failed (non-fatal)", {
+      orderId: input.orderId,
       error: (error as Error)?.message,
     });
     return false;

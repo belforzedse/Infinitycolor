@@ -71,7 +71,7 @@ describe("WordPress migration write service", () => {
       contractStatus: "Finished",
       paymentGateway: "Unknown",
       date: "2026-01-01T00:00:00Z",
-      totalRial: "0",
+      totalToman: "0",
       items: [{ sourceId: "1" }],
     })).rejects.toMatchObject({ code: "ORDER_STATUS_INVALID" });
     expect(strapiMock.db.transaction).not.toHaveBeenCalled();
@@ -106,13 +106,88 @@ describe("WordPress migration write service", () => {
       contractStatus: "Finished",
       paymentGateway: "SnappPay",
       date: "2026-01-01T00:00:00Z",
-      totalRial: "0",
+      totalToman: "0",
       items: [{ sourceId: "1" }],
     };
     await expect(upsertOrder(strapiMock, base)).rejects.toMatchObject({ code: "CONTRACT_TYPE_INVALID" });
     await expect(upsertOrder(strapiMock, { ...base, contractType: "Credit", taxPercent: 1.5 }))
       .rejects.toMatchObject({ code: "CONTRACT_TAX_PERCENT_INVALID" });
     expect(strapiMock.db.transaction).not.toHaveBeenCalled();
+  });
+
+  test("rejects the legacy Rial-named order payload before starting a transaction", async () => {
+    const strapiMock = { db: { transaction: jest.fn() } };
+    await expect(upsertOrder(strapiMock, {
+      sourceId: "1",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "ZarinPal",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalRial: "10000",
+      shippingRial: "500",
+      items: [{ sourceId: "1", unitPriceRial: "4750" }],
+    })).rejects.toMatchObject({ code: "ORDER_TOTAL_INVALID" });
+    expect(strapiMock.db.transaction).not.toHaveBeenCalled();
+  });
+
+  test("writes Woo order money to destination Toman fields without scaling", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      create: jest.fn().mockResolvedValue({ id: 301 }),
+      delete: jest.fn(),
+    };
+    const variationQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 401 }]),
+    };
+    const queries: Record<string, any> = {
+      "api::order.order": orderQuery,
+      "api::contract.contract": contractQuery,
+      "api::order-item.order-item": itemQuery,
+      "api::product-variation.product-variation": variationQuery,
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid) => queries[uid]),
+      },
+    };
+
+    await expect(upsertOrder(strapiMock, {
+      sourceId: "44",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "ZarinPal",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "1000",
+      shippingToman: "50",
+      items: [{
+        sourceId: "9",
+        variationSourceId: "4",
+        count: 2,
+        unitPriceToman: "475",
+        title: "کالا",
+        sku: "S",
+      }],
+    })).resolves.toEqual(expect.objectContaining({ mode: "created", id: 101, contractId: 201 }));
+
+    expect(orderQuery.create.mock.calls[0][0].data.ShippingCost).toBe(50);
+    expect(contractQuery.create.mock.calls[0][0].data.Amount).toBe("1000");
+    expect(itemQuery.create.mock.calls[0][0].data.PerAmount).toBe("475");
   });
 
   test("restores timestamps only for an existing media record on a trusted request", async () => {

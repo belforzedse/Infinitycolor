@@ -15,6 +15,7 @@ import { useAtom } from "jotai";
 import { SubmitOrderStep } from "@/types/Order";
 import { useCart } from "@/contexts/CartContext";
 import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
+import { rialToToman } from "@/utils/price";
 
 /** Type guard for object with optional code string (e.g. PaymentError). */
 function hasCode(x: unknown): x is { code: string } {
@@ -52,7 +53,7 @@ function PaymentCallbackContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const navigateToSuccess = useCallback(async (completedOrderId?: number) => {
+  const navigateToSuccess = useCallback(async (completedOrderId?: number, amountIrr?: number) => {
     try {
       await clearCart();
     } catch (error) {
@@ -61,6 +62,7 @@ function PaymentCallbackContent() {
     if (completedOrderId) {
       trackFunnelStep("purchase", {
         label: String(completedOrderId),
+        value: amountIrr !== undefined ? rialToToman(amountIrr) : undefined,
         onceKey: `purchase:${completedOrderId}`,
       });
       trackMatomoEvent({
@@ -132,7 +134,7 @@ function PaymentCallbackContent() {
 
           // Set step based on payment status from direct API check
           if (paymentStatus.isPaid) {
-            await navigateToSuccess(verificationResult.orderId);
+            await navigateToSuccess(verificationResult.orderId, paymentStatus.amountIrr);
             return;
           }
         } catch {

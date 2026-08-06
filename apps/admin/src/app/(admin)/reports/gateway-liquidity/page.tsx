@@ -50,7 +50,7 @@ export default function GatewayLiquidityReportPage() {
   useEffect(() => {
     setLoading(true);
     getGatewayLiquidity({ start: startISO, end: endISO })
-      .then(setRows)
+      .then((result) => setRows(result.rows))
       .finally(() => setLoading(false));
   }, [startISO, endISO]);
 

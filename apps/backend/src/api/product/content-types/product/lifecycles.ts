@@ -123,6 +123,13 @@ export default {
   async beforeCreate(event) {
     const { data } = event.params;
 
+    // Trusted WooCommerce migrations preserve the source slug exactly,
+    // including an empty value. Never invoke local slug generation here.
+    if (isTrustedWordPressMigrationRequest()) {
+      event.state = { ...(event.state || {}), migrationWrite: true };
+      return;
+    }
+
     // Seed the dedicated admin-edit timestamp at creation so it is never NULL (creation is the
     // baseline "last edited" moment). Real admin edits update it later; non-admin events never do.
     if (!data.LastEditedByAdminAt) {

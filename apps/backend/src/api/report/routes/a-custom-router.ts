@@ -64,6 +64,30 @@ export default {
     },
     {
       method: "GET",
+      path: "/reports/sales/breakdown",
+      handler: "report.salesBreakdown",
+      config: { auth: { scope: [] } },
+    },
+    {
+      method: "GET",
+      path: "/reports/sales/breakdown/export",
+      handler: "report.salesBreakdownExport",
+      config: { auth: { scope: [] } },
+    },
+    {
+      method: "GET",
+      path: "/reports/overview",
+      handler: "report.overview",
+      config: { auth: { scope: [] } },
+    },
+    {
+      method: "GET",
+      path: "/reports/funnel",
+      handler: "report.funnel",
+      config: { auth: { scope: [] } },
+    },
+    {
+      method: "GET",
       path: "/reports/gateway-liquidity",
       handler: "report.gatewayLiquidity",
       config: {

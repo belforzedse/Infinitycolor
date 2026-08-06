@@ -342,6 +342,9 @@ function mapVariation(wcVariation, opts) {
     data.Price = pricing.price;
     if (pricing.discountPrice !== undefined) {
       data.DiscountPrice = pricing.discountPrice;
+    } else if (preserveMissingPrice) {
+      // Existing rows must have a stale sale price cleared when Woo ends a sale.
+      data.DiscountPrice = null;
     }
   }
 

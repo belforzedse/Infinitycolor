@@ -26,6 +26,14 @@ export async function processMaintenanceJob(
       await viewService.flushQueuedCounters();
       return { status: "completed" };
     }
+    case ANALYTICS_MAINTENANCE_JOBS.analyticsDailyRollup: {
+      const { runAnalyticsDailyRollupTick } = await import("../jobs/analyticsDailyRollup");
+      return runAnalyticsDailyRollupTick(strapi);
+    }
+    case ANALYTICS_MAINTENANCE_JOBS.analyticsReconciliation: {
+      const { runAnalyticsReconciliationTick } = await import("../jobs/analyticsReconciliation");
+      return runAnalyticsReconciliationTick(strapi);
+    }
     case SNAPPAY_PAYMENT_JOBS.operation: {
       const operationId = Number((job as any)?.data?.operationId);
       if (!Number.isInteger(operationId) || operationId <= 0) {

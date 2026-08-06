@@ -11,6 +11,8 @@ export const COMMERCE_MAINTENANCE_JOBS = {
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
   viewCounterFlush: "viewCounters.flush",
+  analyticsDailyRollup: "analyticsDailyRollup.run",
+  analyticsReconciliation: "analyticsReconciliation.run",
 } as const;
 
 export const SNAPPAY_PAYMENT_JOBS = {
@@ -22,6 +24,8 @@ export const MAINTENANCE_SCHEDULERS = {
   stockReservationExpiry: "sched:stockReservations.expire",
   reserveOrderExpiry: "sched:reserveOrders.expire",
   viewCounterFlush: "sched:viewCounters.flush",
+  analyticsDailyRollup: "sched:analyticsDailyRollup.run",
+  analyticsReconciliation: "sched:analyticsReconciliation.run",
   snappaySweep: "sched:snappay.sweep",
 } as const;
 

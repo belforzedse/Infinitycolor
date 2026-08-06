@@ -3,7 +3,7 @@ import {
   consumeOrderReservation,
   releaseOrderReservation,
 } from "../../../utils/stockReservations";
-import { trackOrderToMatomo } from "../../report/services/matomo-tracker";
+import { trackOrderToMatomo, trackRefundToMatomo } from "../../report/services/matomo-tracker";
 
 type FinalizationIds = {
   attemptId: number;
@@ -450,6 +450,7 @@ export async function applySnappayAdminUpdate(
     actorId: number;
   },
 ): Promise<void> {
+  let refundTransactionId: number | null = null;
   await strapi.db.transaction(async ({ trx }) => {
     await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [
       ids.attemptId,
@@ -599,7 +600,7 @@ export async function applySnappayAdminUpdate(
         (max, tx) => Math.max(max, Number(tx?.Step || 0)),
         0,
       );
-      await strapi.db
+      const returnTx: any = await strapi.db
         .query("api::contract-transaction.contract-transaction")
         .create({
           data: {
@@ -613,6 +614,7 @@ export async function applySnappayAdminUpdate(
           },
           ...(trx ? { transacting: trx } : {}),
         } as any);
+      refundTransactionId = Number(returnTx.id);
     }
     await strapi.db.query("api::payment-attempt.payment-attempt").update({
       where: { id: ids.attemptId },
@@ -638,4 +640,18 @@ export async function applySnappayAdminUpdate(
       ...(trx ? { transacting: trx } : {}),
     } as any);
   });
+
+  // Fire-and-forget, after the refund transaction has committed — never track
+  // a refund that might still roll back (see matomo-tracker.ts).
+  const refundToman = Math.max(
+    0,
+    Math.round(Number(input.expectedOldTotalToman) - Number(input.newTotalToman)),
+  );
+  if (refundToman > 0 && refundTransactionId) {
+    void trackRefundToMatomo(strapi as any, {
+      orderId: ids.orderId,
+      contractTransactionId: refundTransactionId,
+      amountToman: refundToman,
+    }).catch(() => {});
+  }
 }

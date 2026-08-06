@@ -3,6 +3,14 @@ packages:
   - "packages/*"
 overrides:
   sharp: 0.34.5
+peerDependencyRules:
+  allowedVersions:
+    # react-iran-maps -> react-simple-maps@3 declares peer caps at React 18
+    # (^16.8.0 || 17.x || 18.x). Verified against the published react-simple-maps@3
+    # tarball: it ships zero `defaultProps` (the actual React 19 breakage), only
+    # `propTypes` (ignored at runtime) and `forwardRef` — safe to widen.
+    react-simple-maps>react: "19"
+    react-simple-maps>react-dom: "19"
 allowBuilds:
   '@sentry/cli': false
   '@strapi/strapi': true

@@ -33,6 +33,7 @@ class HttpClient {
     this.baseDelay = opts.baseDelay ?? 1000;
     this.maxDelay = opts.maxDelay ?? 30000;
     this.sleepFn = opts.sleepFn || sleep;
+    this.metrics = { requests: 0, attempts: 0, retries: 0, latencyMs: 0, failures: 0 };
   }
 
   /**
@@ -41,17 +42,25 @@ class HttpClient {
    */
   async request(config) {
     let lastError;
+    this.metrics.requests += 1;
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
+      const started = process.hrtime.bigint();
+      this.metrics.attempts += 1;
       try {
-        return await this.instance.request(config);
+        const response = await this.instance.request(config);
+        this.metrics.latencyMs += Number(process.hrtime.bigint() - started) / 1e6;
+        return response;
       } catch (error) {
+        this.metrics.latencyMs += Number(process.hrtime.bigint() - started) / 1e6;
         lastError = error;
         const status = error.response?.status;
         const retryable = isRetryableError(error);
 
         if (!retryable || attempt === this.maxRetries) {
+          this.metrics.failures += 1;
           break;
         }
+        this.metrics.retries += 1;
 
         const retryAfter = parseRetryAfter(error.response?.headers?.["retry-after"]);
         const delay =

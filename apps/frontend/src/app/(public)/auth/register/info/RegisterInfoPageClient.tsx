@@ -15,6 +15,7 @@ import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { jalaliBirthDateToGregorianDate } from "@/utils/birthDate";
 import { safeInternalRedirect } from "@/utils/authRedirect";
+import { trackMatomoEvent } from "@/lib/analytics/matomo";
 
 interface FormData {
   firstName: string;
@@ -85,6 +86,7 @@ export default function RegisterInfoPage() {
       });
 
       if (res.token || res.message) {
+        trackMatomoEvent({ category: "auth", action: "account_created" });
         try {
           setUserLoading(true);
           setUserError(null);

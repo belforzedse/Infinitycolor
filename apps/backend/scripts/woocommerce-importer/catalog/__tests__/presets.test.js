@@ -38,6 +38,16 @@ test("resolveScope: no-media never uploads media", () => {
   assert.equal(f.variations, true);
 });
 
+test("resolveScope: product-no-media updates product children without category or media work", () => {
+  const f = resolveScope("product-no-media");
+  assert.equal(f.categories, false);
+  assert.equal(f.products, true);
+  assert.equal(f.variations, true);
+  assert.equal(f.stock, true);
+  assert.equal(f.media, false);
+  assert.ok(SCOPES.includes("product-no-media"));
+});
+
 test("resolveScope: stock only writes stock, only existing", () => {
   assert.deepEqual(resolveScope("stock"), {
     categories: false, products: false, variations: false, stock: true, media: false,

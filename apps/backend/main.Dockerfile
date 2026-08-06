@@ -108,8 +108,8 @@ RUN /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SE
 WORKDIR /app
 
 # Keep the multi-gigabyte dependency tree independent from source-only changes.
-COPY --link --from=dependencies --chown=node:node /app /app
-COPY --link --from=builder --chown=node:node /runtime /app
+COPY --link --from=dependencies --chown=1000:1000 /app /app
+COPY --link --from=builder --chown=1000:1000 /runtime /app
 RUN chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 1337

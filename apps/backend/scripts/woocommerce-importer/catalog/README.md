@@ -4,6 +4,49 @@ Idempotent WooCommerce → Strapi catalog sync. **WooCommerce is the read-only s
 of truth; Strapi is the writable target.** This is the rewrite of the legacy
 `index.js` + `sync/` importers, built around pure, unit-tested mapping functions.
 
+## Durable v2 run state
+
+Tracked runs use a dependency-free append-only layout:
+
+```text
+catalog-runs/<runId>/snapshot.json
+catalog-runs/<runId>/events.ndjson
+catalog-runs/<runId>/control.json
+```
+
+The snapshot is loaded once and subsequent events are replayed into an in-memory
+projection. Item transitions append to the journal; media mappings are synced
+first and the catalog journal is `fdatasync`ed at each product boundary. A sudden
+host or power failure can therefore replay at most the active product. Pause,
+cancel, fatal, and terminal transitions sync immediately. Compaction is atomic
+after 10,000 events, 64 MiB, or terminal completion.
+
+Legacy JSON is never changed by conversion. Preview and confirm offline:
+
+```bash
+node catalog-convert.js --run <catalog-run-id> --tracking-dir <catalog-state-dir> --dry-run
+node catalog-convert.js --run <catalog-run-id> --tracking-dir <catalog-state-dir> --confirm CatalogStateV2
+```
+
+The media recovery audit is source/destination read-only unless its local mapping
+journal is explicitly confirmed:
+
+```bash
+node catalog-media-recover.js --run <catalog-run-id> --tracking-dir <catalog-state-dir> --dry-run
+node catalog-media-recover.js --run <catalog-run-id> --tracking-dir <catalog-state-dir> --confirm CatalogMediaRecovery
+```
+
+Operational tradeoffs: custom journal replay/compaction is more complex than one
+JSON file; product-boundary sync permits active-product replay; old random media
+names can leave ambiguous recovery rows for manual review; bounded parallel media
+raises transient CPU, memory, network and database load and makes log ordering
+nondeterministic; dual-format support temporarily expands the test surface; and
+an interruption between a remote write and its checkpoint may leave orphan media
+or repeat an idempotent destination write. Removing the state bottleneck exposes
+media conversion/upload as the next limiting stage. SQLite was not selected
+because Node 20 Alpine has no built-in `node:sqlite`, while a native dependency
+adds ABI/build and WAL-backup risk.
+
 ## Commands
 
 ```bash
@@ -48,8 +91,11 @@ New optional:
    per run into an in-memory index → upsert (PUT) when matched, create (POST)
    otherwise. A persistent `catalog-mappings.json` (atomic temp+rename) is a
    cache/repair aid, not the source of truth. **Re-runs update, never duplicate.**
-2. **Slug** — the WooCommerce slug is imported verbatim (URL-decoded). No
-   regeneration → no per-run drift, SEO URLs preserved.
+2. **Slug** — the exact WooCommerce slug is imported without decoding, trimming,
+   normalization, fallback, or regeneration → no per-run drift, SEO URLs preserved.
+   Empty Woo slugs remain empty. The destination permits duplicate inactive slugs
+   but enforces uniqueness for active, non-removed products so public routes remain
+   deterministic.
 3. **Prices** — `0` is not "missing"; only-sale-price products keep a price;
    variations fall back to the parent product's price; a brand-new variation with
    no price anywhere is reported as a failure, never written as a `0`-price product.

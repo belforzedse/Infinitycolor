@@ -333,6 +333,16 @@ export interface ResolvedJoins {
   productToCategory: { join: string; titleExpr: string };
   /** orders o -> shippings s (LEFT). Empty string when the relation can't be resolved. */
   orderToShipping: string;
+  /** orders o -> users-permissions users u (LEFT). Empty string when unresolved. */
+  orderToUser: string;
+  /** orders o -> local_user_infos ui, keyed off u.id (LEFT). Empty string when unresolved. */
+  userToInfo: string;
+  /** orders o -> local_user_addresses a via delivery_address (LEFT). Empty string when unresolved. */
+  orderToAddress: string;
+  /** local_user_addresses a -> shipping_cities sc (LEFT). Empty string when unresolved. */
+  addressToCity: string;
+  /** shipping_cities sc -> shipping_provinces sp (LEFT). Empty string when unresolved. */
+  cityToProvince: string;
 }
 
 let cachedJoins: Promise<ResolvedJoins> | null = null;
@@ -536,6 +546,101 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       orderToShipping = "";
     }
 
+    // orders -> users-permissions users (owning FK is on the order side)
+    let orderToUser = "";
+    try {
+      orderToUser = await resolveRelation(knex, {
+        ownerIdCol: "order_id",
+        targetIdCol: "user_id",
+        ownerAlias: "o",
+        targetTable: "users",
+        targetAlias: "u",
+        directFkTable: "orders",
+        directFkCandidates: ["user_id", "user"],
+        directFkOn: "owner",
+        join: "LEFT JOIN",
+      });
+    } catch {
+      orderToUser = "";
+    }
+
+    // users -> local_user_infos (display name; owning FK is on the info side)
+    let userToInfo = "";
+    try {
+      userToInfo = await resolveRelation(knex, {
+        ownerIdCol: "user_id",
+        targetIdCol: "local_user_info_id",
+        ownerAlias: "u",
+        targetTable: "local_user_infos",
+        targetAlias: "ui",
+        directFkTable: "local_user_infos",
+        directFkCandidates: ["user_id", "user"],
+        directFkOn: "target",
+        join: "LEFT JOIN",
+      });
+    } catch {
+      userToInfo = "";
+    }
+
+    // orders -> local_user_addresses via delivery_address (owning FK is on the order side).
+    // Verified against a real Postgres instance: link table `orders_delivery_address_links`
+    // uses columns (order_id, local_user_address_id) — NOT the generic "address_id" this
+    // codebase's other relations use, so both id columns are spelled out explicitly.
+    let orderToAddress = "";
+    try {
+      orderToAddress = await resolveRelation(knex, {
+        ownerIdCol: "order_id",
+        targetIdCol: "local_user_address_id",
+        ownerAlias: "o",
+        targetTable: "local_user_addresses",
+        targetAlias: "a",
+        directFkTable: "orders",
+        directFkCandidates: ["delivery_address_id", "delivery_address"],
+        directFkOn: "owner",
+        join: "LEFT JOIN",
+      });
+    } catch {
+      orderToAddress = "";
+    }
+
+    // local_user_addresses -> shipping_cities. Verified: link table
+    // `local_user_addresses_shipping_city_links` uses (local_user_address_id, shipping_city_id).
+    let addressToCity = "";
+    try {
+      addressToCity = await resolveRelation(knex, {
+        ownerIdCol: "local_user_address_id",
+        targetIdCol: "shipping_city_id",
+        ownerAlias: "a",
+        targetTable: "shipping_cities",
+        targetAlias: "sc",
+        directFkTable: "local_user_addresses",
+        directFkCandidates: ["shipping_city_id", "shipping_city"],
+        directFkOn: "owner",
+        join: "LEFT JOIN",
+      });
+    } catch {
+      addressToCity = "";
+    }
+
+    // shipping_cities -> shipping_provinces. Verified: link table
+    // `shipping_cities_shipping_province_links` uses (shipping_city_id, shipping_province_id).
+    let cityToProvince = "";
+    try {
+      cityToProvince = await resolveRelation(knex, {
+        ownerIdCol: "shipping_city_id",
+        targetIdCol: "shipping_province_id",
+        ownerAlias: "sc",
+        targetTable: "shipping_provinces",
+        targetAlias: "sp",
+        directFkTable: "shipping_cities",
+        directFkCandidates: ["shipping_province_id", "shipping_province"],
+        directFkOn: "owner",
+        join: "LEFT JOIN",
+      });
+    } catch {
+      cityToProvince = "";
+    }
+
     return {
       oiToOrder,
       oiToVariation,
@@ -545,6 +650,11 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       variationToStock,
       productToCategory,
       orderToShipping,
+      orderToUser,
+      userToInfo,
+      orderToAddress,
+      addressToCity,
+      cityToProvince,
     };
   })();
   return cachedJoins;
@@ -771,7 +881,7 @@ export function performanceCoreSelect(joins: ResolvedJoins): string {
 }
 
 /** Turn an inner-JOIN fragment into LEFT JOINs (used where the left row may be null). */
-function leftify(fragment: string): string {
+export function leftify(fragment: string): string {
   // Only safe for fragments that contain plain `JOIN` (no existing LEFT/RIGHT).
   return fragment.replace(/(^|\s)JOIN\s/g, "$1LEFT JOIN ");
 }

@@ -69,6 +69,10 @@ jest.mock("../ShareModal", () => ({
     open ? <div data-testid="share-modal-stub" /> : null,
 }));
 
+jest.mock("@/lib/analytics/matomo", () => ({
+  trackMatomoEvent: jest.fn(),
+}));
+
 describe("ProductCard", () => {
   const useProductLike = require("@/hooks/useProductLike").default;
   const getLazySecondaryMediaByProductId =
@@ -217,6 +221,38 @@ describe("ProductCard", () => {
     fireEvent.click(link);
 
     expect(window.sessionStorage.getItem("pdp-scroll-top-from-product-card")).toBeNull();
+  });
+
+  it("tracks select_item on click, including list position when provided", () => {
+    const { trackMatomoEvent } = require("@/lib/analytics/matomo");
+
+    render(<ProductCard {...mockProps} id={7} title="Silk Scarf" listPosition={3} />);
+
+    const link = screen.getByTestId("product-card-link");
+    link.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(link);
+
+    expect(trackMatomoEvent).toHaveBeenCalledWith({
+      category: "ecommerce",
+      action: "select_item",
+      name: "7:Silk Scarf:pos=3",
+    });
+  });
+
+  it("tracks select_item without a position suffix when listPosition is omitted", () => {
+    const { trackMatomoEvent } = require("@/lib/analytics/matomo");
+
+    render(<ProductCard {...mockProps} id={7} title="Silk Scarf" />);
+
+    const link = screen.getByTestId("product-card-link");
+    link.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(link);
+
+    expect(trackMatomoEvent).toHaveBeenCalledWith({
+      category: "ecommerce",
+      action: "select_item",
+      name: "7:Silk Scarf",
+    });
   });
 
   it("should render ImageSlider with correct props", () => {

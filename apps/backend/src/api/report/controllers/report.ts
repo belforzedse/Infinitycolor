@@ -11,13 +11,22 @@ import {
 } from "../../../utils/roles";
 import { parsePositiveInt } from "../../../utils/parsePositiveInt";
 import {
+  getMatomoFunnel,
   getMatomoRealtimePayload,
   getMatomoTrafficDashboardPayload,
+  getMatomoVisitsSummary,
   getProductBehavioral,
   normalizeRange,
+  previousRange,
 } from "../services/matomo";
 import * as productAnalytics from "../services/product-analytics";
 import { buildStyledWorkbook, WorkbookColumn } from "../../../utils/styledWorkbook";
+import {
+  getSalesBreakdown,
+  SALES_BREAKDOWN_DIMENSIONS,
+  type SalesBreakdownDimension,
+} from "../analytics/semantic/salesBreakdown";
+import { METRIC_CATALOG } from "../analytics/metrics/catalog";
 
 type Interval = "day" | "week" | "month";
 type AdminActivityResourceScope = "all" | "order" | "product";
@@ -385,15 +394,20 @@ export default {
       const seriesRows = seriesRes.rows || seriesRes[0];
       const totalRow = (totalRes.rows || totalRes[0])[0];
 
+      // Settlement amounts are stored in IRR (contract_transactions.amount); every
+      // other report already returns Toman, so this endpoint previously returned a
+      // figure 10x too large next to them. See docs/analytics/analytics-decisions.md
+      // decision D4 — legacy IRR endpoints are normalized to Toman.
       ctx.body = {
         data: {
           interval: bucket,
           start,
           end,
-          total: Number(totalRow?.total || 0),
+          currency: "Toman",
+          total: Math.round(PA.irrToToman(Number(totalRow?.total || 0))),
           series: (seriesRows || []).map((r: any) => ({
             bucket: r.bucket,
-            total: Number(r.total || 0),
+            total: Math.round(PA.irrToToman(Number(r.total || 0))),
           })),
         },
       };
@@ -794,12 +808,16 @@ export default {
       const res = await knex.raw(query, [start, end]);
       const rows = res.rows || res[0];
 
+      // Same IRR->Toman normalization as `liquidity` above (decision D4).
       ctx.body = {
-        data: rows.map((r: any) => ({
-          gatewayId: r.gateway_id,
-          gatewayTitle: r.title,
-          total: Number(r.total || 0),
-        })),
+        data: {
+          currency: "Toman",
+          rows: rows.map((r: any) => ({
+            gatewayId: r.gateway_id,
+            gatewayTitle: r.title,
+            total: Math.round(PA.irrToToman(Number(r.total || 0))),
+          })),
+        },
       };
     } catch (error) {
       ctx.badRequest(error.message, { data: { success: false } });
@@ -1682,6 +1700,226 @@ export default {
           stockNoSales,
           fastMoving,
           slowMoving,
+        },
+      };
+    } catch (error) {
+      ctx.badRequest(error.message, { data: { success: false } });
+    }
+  },
+
+  /**
+   * WooReports-parity "sales by X" breakdown. Covers the 5 dimensions that had no
+   * existing endpoint (status, category, customer, coupon, geography) — "date",
+   * "product"/"variation" and "gateway"/"shipping" are already served by
+   * /reports/products/{trends,performance,breakdown} and are NOT duplicated here.
+   * See docs/analytics/analytics-progress.md for the full parity table.
+   */
+  async salesBreakdown(ctx) {
+    try {
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      if (!user) return;
+
+      const dimension = ctx.query.dimension as string;
+      if (!SALES_BREAKDOWN_DIMENSIONS.includes(dimension as SalesBreakdownDimension)) {
+        return ctx.badRequest(
+          `Invalid dimension. Expected one of: ${SALES_BREAKDOWN_DIMENSIONS.join(", ")}`,
+          { data: { success: false } },
+        );
+      }
+
+      const { start, end } = parseProductRange(ctx);
+      const knex = strapi.db.connection;
+      const joins = await PA.resolveJoins(knex);
+      const result = await getSalesBreakdown(knex, joins, dimension as SalesBreakdownDimension, start, end);
+
+      ctx.body = {
+        data: {
+          dimension: result.dimension,
+          range: { start, end },
+          currency: "Toman",
+          timezone: PA.REPORT_TIMEZONE,
+          definitionVersion: METRIC_CATALOG["sales.net"].definitionVersion,
+          source: "commerce",
+          refreshedAt: new Date().toISOString(),
+          partial: false,
+          truncated: result.truncated,
+          rows: result.rows,
+        },
+      };
+    } catch (error) {
+      ctx.badRequest(error.message, { data: { success: false } });
+    }
+  },
+
+  /** XLSX export of {@link salesBreakdown}, reusing the same styled-workbook builder as productExport. */
+  async salesBreakdownExport(ctx) {
+    try {
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      if (!user) return;
+
+      const dimension = ctx.query.dimension as string;
+      if (!SALES_BREAKDOWN_DIMENSIONS.includes(dimension as SalesBreakdownDimension)) {
+        return ctx.badRequest(
+          `Invalid dimension. Expected one of: ${SALES_BREAKDOWN_DIMENSIONS.join(", ")}`,
+          { data: { success: false } },
+        );
+      }
+
+      const { start, end } = parseProductRange(ctx);
+      const knex = strapi.db.connection;
+      const joins = await PA.resolveJoins(knex);
+      const result = await getSalesBreakdown(knex, joins, dimension as SalesBreakdownDimension, start, end);
+
+      const keyHeaderFa: Record<SalesBreakdownDimension, string> = {
+        status: "وضعیت سفارش",
+        category: "دسته‌بندی",
+        customer: "مشتری",
+        coupon: "کد تخفیف",
+        geography: "استان",
+      };
+      const columns: WorkbookColumn[] = [
+        { header: keyHeaderFa[dimension as SalesBreakdownDimension] },
+        { header: "سفارش‌ها", numeric: true },
+        { header: "تعداد", numeric: true },
+        { header: "فروش ناخالص (تومان)", numeric: true },
+        { header: "تخفیف (تومان)", numeric: true },
+        { header: "مرجوعی (تومان)", numeric: true },
+        { header: "خالص فروش (تومان)", numeric: true },
+      ];
+      const dataRows = result.rows.map((r) => [
+        r.label,
+        r.ordersCount,
+        r.units,
+        r.grossToman,
+        r.discountsToman,
+        r.refundsToman,
+        r.netToman,
+      ]);
+
+      const buffer = await buildStyledWorkbook({
+        sheetName: `فروش بر اساس ${keyHeaderFa[dimension as SalesBreakdownDimension]}`,
+        columns,
+        rows: dataRows,
+      });
+      ctx.set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      ctx.set("Content-Disposition", `attachment; filename="sales-${dimension}-${Date.now()}.xlsx"`);
+      ctx.body = buffer;
+    } catch (error) {
+      ctx.badRequest(error.message, { data: { success: false } });
+    }
+  },
+
+  /**
+   * Labelled step-reach funnel (view_item -> add_to_cart -> begin_checkout -> purchase),
+   * Founder-accessible unlike /reports/traffic/dashboard (Superadmin-only). NOT a strict
+   * ordered/deduplicated per-visit funnel — that needs Matomo's paid Funnels plugin,
+   * which is not installed (see MATOMO.md). `configured: false` (or `steps: null`) means
+   * "no data available", which the UI must render distinctly from a real zero-count step.
+   */
+  async funnel(ctx) {
+    try {
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      if (!user) return;
+
+      const range = normalizeRange(
+        (ctx.query.start as string) || (ctx.query.startDate as string),
+        (ctx.query.end as string) || (ctx.query.endDate as string),
+      );
+      const steps = await getMatomoFunnel(range);
+
+      ctx.body = {
+        data: {
+          range: { start: range.startDate, end: range.endDate },
+          timezone: PA.REPORT_TIMEZONE,
+          configured: steps !== null,
+          steps: steps ?? [],
+          note:
+            "این یک قیف مرحله‌ای بر اساس بازدیدهایی است که هر رویداد را حداقل یک‌بار ثبت کرده‌اند؛ " +
+            "یک قیف ترتیبی دقیق (سفر یک‌به‌یک هر کاربر) نیست.",
+        },
+      };
+    } catch (error) {
+      ctx.badRequest(error.message, { data: { success: false } });
+    }
+  },
+
+  /**
+   * Executive overview: store-wide sales KPIs with prior-period comparison (reusing
+   * the SAME `computeProductPeriod`/`paidOrdersCte` every product report already
+   * uses — no product filter applied, so this is the whole store), a lightweight
+   * traffic snapshot, and the most recent commerce-reconciliation result as a trust
+   * signal. Deliberately does NOT call `getMatomoTrafficDashboardPayload` (Superadmin-
+   * only, ~20 Matomo calls) — `traffic` is `null` when Matomo is unconfigured/down,
+   * never a fabricated zero.
+   */
+  async overview(ctx) {
+    try {
+      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      if (!user) return;
+
+      const range = normalizeRange(
+        (ctx.query.start as string) || (ctx.query.startDate as string),
+        (ctx.query.end as string) || (ctx.query.endDate as string),
+      );
+      const prevRange = previousRange(range);
+      const start = new Date(range.startDate);
+      const end = new Date(range.endDate);
+      const prevStart = new Date(prevRange.startDate);
+      const prevEnd = new Date(prevRange.endDate);
+
+      const knex = strapi.db.connection;
+      const joins = await PA.resolveJoins(knex);
+
+      const [current, previous, traffic, trafficPrev, reconciliationRes] = await Promise.all([
+        computeProductPeriod(knex, joins, start, end),
+        computeProductPeriod(knex, joins, prevStart, prevEnd),
+        getMatomoVisitsSummary(range),
+        getMatomoVisitsSummary(prevRange),
+        knex.raw(
+          `SELECT bucket_date, status, orders_delta, revenue_ratio, possible_currency_mismatch, computed_at
+           FROM analytics_reconciliation_daily
+           ORDER BY bucket_date DESC
+           LIMIT 1`,
+        ),
+      ]);
+
+      const kpi = (key: keyof typeof current) => PA.periodDelta((current as any)[key], (previous as any)[key]);
+      const reconciliationRow = rowsOf(reconciliationRes)[0] || null;
+
+      ctx.body = {
+        data: {
+          range: { start: range.startDate, end: range.endDate },
+          previous: { start: prevRange.startDate, end: prevRange.endDate },
+          timezone: PA.REPORT_TIMEZONE,
+          currency: "Toman",
+          definitionVersion: METRIC_CATALOG["sales.net"].definitionVersion,
+          sales: {
+            gross: kpi("gross"),
+            net: kpi("net"),
+            units: kpi("units"),
+            orders: kpi("orders"),
+            discounts: kpi("discounts"),
+            refunds: kpi("refunds"),
+          },
+          traffic:
+            traffic === null
+              ? null
+              : {
+                  visits: PA.periodDelta(traffic.visits, trafficPrev?.visits ?? 0),
+                  visitors: PA.periodDelta(traffic.visitors, trafficPrev?.visitors ?? 0),
+                  pageviews: PA.periodDelta(traffic.pageviews, trafficPrev?.pageviews ?? 0),
+                },
+          reconciliation: reconciliationRow
+            ? {
+                bucketDate: String(reconciliationRow.bucket_date).slice(0, 10),
+                status: reconciliationRow.status,
+                ordersDelta: Number(reconciliationRow.orders_delta),
+                revenueRatio:
+                  reconciliationRow.revenue_ratio === null ? null : Number(reconciliationRow.revenue_ratio),
+                possibleCurrencyMismatch: Boolean(reconciliationRow.possible_currency_mismatch),
+                computedAt: reconciliationRow.computed_at,
+              }
+            : null,
         },
       };
     } catch (error) {

@@ -330,6 +330,26 @@ const superAdminSidebar: SidebarItem[] = [
         href: "/reports/product-sales",
       },
       {
+        id: "sales-breakdown",
+        label: "فروش بر اساس وضعیت/دسته/مشتری",
+        href: "/reports/sales",
+      },
+      {
+        id: "overview",
+        label: "نمای کلی فروش",
+        href: "/reports/overview",
+      },
+      {
+        id: "funnel",
+        label: "قیف فروش",
+        href: "/reports/funnel",
+      },
+      {
+        id: "geography",
+        label: "گزارش جغرافیایی فروش",
+        href: "/reports/geography",
+      },
+      {
         id: "admin-activity",
         label: "گزارش فعالیت پشتیبانان",
         href: "/reports/admin-activity",
@@ -410,8 +430,9 @@ export const getSidebarItemsForRole = (roleName?: string | null): SidebarItem[] 
   }
 
   // Founder: operational admin. Keeps everything except the restricted parents, and the
-  // reports menu collapses to a single «گزارشات فروش» link (product-sales only — no traffic
-  // or admin-activity reports).
+  // reports menu collapses to «گزارشات فروش» with only the sales-report children Founders
+  // are allowed to view (product-sales, sales-breakdown, overview, funnel, geography —
+  // matching PRODUCT_REPORT_ROLES on the backend; no traffic or admin-activity reports).
   if (normalizedRole === "founder") {
     return superAdminSidebar
       .filter((item) => !FOUNDER_HIDDEN_PARENT_IDS.has(item.id))
@@ -420,9 +441,18 @@ export const getSidebarItemsForRole = (roleName?: string | null): SidebarItem[] 
           return {
             id: "reports",
             label: "گزارشات فروش",
-            href: "/reports/product-sales",
             icon: <ChartIcon />,
-            children: [],
+            children: [
+              { id: "product-sales", label: " فروش هر محصول", href: "/reports/product-sales" },
+              {
+                id: "sales-breakdown",
+                label: "فروش بر اساس وضعیت/دسته/مشتری",
+                href: "/reports/sales",
+              },
+              { id: "overview", label: "نمای کلی فروش", href: "/reports/overview" },
+              { id: "funnel", label: "قیف فروش", href: "/reports/funnel" },
+              { id: "geography", label: "گزارش جغرافیایی فروش", href: "/reports/geography" },
+            ],
           };
         }
         return cloneWithFilteredChildren(item);

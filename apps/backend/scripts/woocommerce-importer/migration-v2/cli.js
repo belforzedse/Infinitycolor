@@ -9,8 +9,9 @@ const { WordPressSource } = require("./lib/source");
 const { Destination } = require("./lib/destination");
 const { runDryRun } = require("./dry-run");
 const { runPilot } = require("./pilot");
-const { runFull } = require("./full");
-const { runReconcile } = require("./reconcile");
+const { runFull, acceptedCatalogState } = require("./full");
+const { runReconcile, buildFullReconciliationInputs } = require("./reconcile");
+const { CatalogRunStore } = require("../catalog/lib/runStore");
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -111,20 +112,34 @@ async function main() {
       }
       await runPilot({ config, source, destination, ledger, dryRun });
     } else if (command === "reconcile") {
-      const pilot = loadRun(config.stateDir, options["from-run"]);
-      if (pilot.command !== "pilot" || !String(pilot.status).startsWith("completed")) {
-        throw new Error("Reconciliation source run must be a completed pilot");
+      const sourceRun = loadRun(config.stateDir, options["from-run"]);
+      if (!String(sourceRun.status).startsWith("completed")) {
+        throw new Error("Reconciliation source run must be terminal completed");
       }
-      const dryRun = loadRun(config.stateDir, pilot.sourceDryRunId);
-      await runReconcile({ source, destination, ledger, pilot, dryRun });
+      if (sourceRun.command === "pilot") {
+        const dryRun = loadRun(config.stateDir, sourceRun.sourceDryRunId);
+        await runReconcile({ source, destination, ledger, pilot: sourceRun, dryRun });
+      } else if (["full", "resume"].includes(sourceRun.command)) {
+        const catalogRunId = sourceRun.checkpoints?.catalog?.runId || `${sourceRun.runId}-catalog`;
+        const catalogRun = new CatalogRunStore(path.join(config.stateDir, "catalog")).getRun(catalogRunId);
+        if (!acceptedCatalogState(catalogRun)) {
+          throw new Error("Full reconciliation requires a completed or accepted-exception catalog run");
+        }
+        const inputs = await buildFullReconciliationInputs(source, sourceRun, catalogRun);
+        await runReconcile({ source, destination, ledger, ...inputs });
+      } else {
+        throw new Error("Reconciliation source run must be a completed pilot, full, or resume run");
+      }
     } else {
       await runFull({ config, source, destination, ledger, resume: command === "resume" });
     }
     const failureCount = Object.values(ledger.summary.entities)
       .reduce((sum, entity) => sum + Number(entity.failed || 0), 0);
-    ledger.finish(failureCount > 0 ? "completed-with-exceptions" : "completed");
+    const hasAcceptedCatalogExceptions = Boolean(ledger.summary.catalogExceptions?.manifestSha256);
+    const completedWithExceptions = failureCount > 0 || hasAcceptedCatalogExceptions;
+    ledger.finish(completedWithExceptions ? "completed-with-exceptions" : "completed");
     printSummary(ledger.summary);
-    process.exitCode = failureCount > 0 ? 2 : 0;
+    process.exitCode = completedWithExceptions ? 2 : 0;
   } catch (error) {
     ledger.event("fatal", { code: error?.code || error?.name || "ERROR", message: String(error.message || error) });
     ledger.finish("failed");
