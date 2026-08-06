@@ -11,6 +11,16 @@
     "draftAndPublish": false
   },
   "pluginOptions": {},
+  "indexes": [
+    {
+      "name": "uq_order_items_external_source_id",
+      "columns": [
+        "external_source",
+        "external_id"
+      ],
+      "type": "unique"
+    }
+  ],
   "attributes": {
     "product_variation": {
       "type": "relation",

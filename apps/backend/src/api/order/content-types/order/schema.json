@@ -11,6 +11,16 @@
     "draftAndPublish": false
   },
   "pluginOptions": {},
+  "indexes": [
+    {
+      "name": "uq_orders_external_source_id",
+      "columns": [
+        "external_source",
+        "external_id"
+      ],
+      "type": "unique"
+    }
+  ],
   "attributes": {
     "Description": {
       "type": "text"

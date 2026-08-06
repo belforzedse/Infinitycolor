@@ -19,6 +19,19 @@ let f: Factories;
 
 const BUCKET_DATE = "2026-05-05";
 const NOW = new Date("2026-05-06T10:00:00Z"); // Tehran-local 2026-05-06 13:30 -> "yesterday" = 2026-05-05
+const CUSTOM_TABLES = [
+  "background_job_locks",
+  "analytics_refresh_state",
+  "analytics_daily_sales",
+  "analytics_product_daily",
+  "analytics_reconciliation_daily",
+  "woocommerce_sync_control",
+  "woocommerce_sync_cursors",
+  "woocommerce_sync_leases",
+  "woocommerce_sync_items",
+  "woocommerce_sync_campaigns",
+  "woocommerce_sync_metrics",
+];
 
 beforeAll(async () => {
   strapi = await setupStrapi();
@@ -147,5 +160,47 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
       [BUCKET_DATE, variation.id],
     );
     expect((productCountRes.rows || productCountRes[0])[0].n).toBe(1);
+  });
+
+  it("survives a full schema reconciliation against an existing database", async () => {
+    const knex = strapi.db.connection;
+    await knex("strapi_database_schema").del();
+
+    await teardownStrapi();
+    strapi = await setupStrapi();
+    f = makeFactories(strapi);
+
+    const reloadedKnex = strapi.db.connection;
+    for (const tableName of CUSTOM_TABLES) {
+      expect(await reloadedKnex.schema.hasTable(tableName)).toBe(true);
+    }
+
+    const persistedRow = await reloadedKnex("strapi_core_store_settings")
+      .select("value")
+      .where({ key: "core_persisted_tables" })
+      .whereNull("environment")
+      .whereNull("tag")
+      .first();
+    expect(JSON.parse(persistedRow.value)).toEqual(expect.arrayContaining(CUSTOM_TABLES));
+
+    const expectedIndexes = [
+      "uq_products_external_source_id",
+      "uq_product_variations_external_source_id",
+      "uq_product_stocks_external_source_id",
+      "uq_orders_external_source_id",
+      "uq_contracts_external_source_id",
+      "uq_order_items_external_source_id",
+      "uq_users_external_source_id",
+    ];
+    const indexResult = await reloadedKnex.raw(
+      `SELECT indexname
+         FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND indexname = ANY(?)`,
+      [expectedIndexes],
+    );
+    expect(indexResult.rows.map((row: { indexname: string }) => row.indexname).sort()).toEqual(
+      expectedIndexes.sort(),
+    );
   });
 });

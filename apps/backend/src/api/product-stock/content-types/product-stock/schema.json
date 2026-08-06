@@ -10,6 +10,16 @@
     "draftAndPublish": false
   },
   "pluginOptions": {},
+  "indexes": [
+    {
+      "name": "uq_product_stocks_external_source_id",
+      "columns": [
+        "external_source",
+        "external_id"
+      ],
+      "type": "unique"
+    }
+  ],
   "attributes": {
     "Count": {
       "type": "integer",

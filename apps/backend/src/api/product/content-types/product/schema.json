@@ -17,6 +17,14 @@
       "columns": [
         "slug"
       ]
+    },
+    {
+      "name": "uq_products_external_source_id",
+      "columns": [
+        "external_source",
+        "external_id"
+      ],
+      "type": "unique"
     }
   ],
   "attributes": {
@@ -166,7 +174,7 @@
     },
     "external_id": {
       "type": "string",
-      "unique": true
+      "unique": false
     },
     "external_source": {
       "type": "string"

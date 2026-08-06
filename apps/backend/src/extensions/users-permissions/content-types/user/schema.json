@@ -13,6 +13,16 @@
       "contentType": "user"
     }
   },
+  "indexes": [
+    {
+      "name": "uq_users_external_source_id",
+      "columns": [
+        "external_source",
+        "external_id"
+      ],
+      "type": "unique"
+    }
+  ],
   "attributes": {
     "username": {
       "type": "string"
