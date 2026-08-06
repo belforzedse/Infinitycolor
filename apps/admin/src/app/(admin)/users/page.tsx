@@ -3,22 +3,49 @@
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import { columns, MobileTable } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
-import { ENDPOINTS } from "@/constants/api";
-import { useEffect, useState } from "react";
+import {
+  parseAdvancedFiltersParam,
+  serializeAdvancedFiltersParam,
+  type AdvancedFilterItem,
+} from "@/components/SuperAdmin/Table/advancedFilters";
+import { useCallback, useEffect, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
-import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
-import { buildManagerRoleFilterQuery } from "@/constants/roleLabels";
+import {
+  listAdminUsers,
+  type AdminUsersListMeta,
+} from "@/services/super-admin/users/list";
+import { useQueryState } from "nuqs";
 
 export default function UsersPage() {
-  useFreshDataOnPageLoad();
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [managerRolesOnly, setManagerRolesOnly] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
+    [],
+  );
+  const [recycleCount, setRecycleCount] = useState(0);
+  const [recycleCountError, setRecycleCountError] = useState(false);
+  const [, setPage] = useQueryState("page", { defaultValue: "1" });
+  const [, setLegacyUrlFilters] = useQueryState<AdvancedFilterItem[]>(
+    "filter",
+    {
+      defaultValue: [],
+      parse: parseAdvancedFiltersParam,
+      serialize: serializeAdvancedFiltersParam,
+    },
+  );
+
+  useEffect(() => {
+    // Older builds stored names/phones in the URL. The bounded contract keeps
+    // filters in component state and the POST body, so remove any legacy query.
+    void setLegacyUrlFilters(null);
+  }, [setLegacyUrlFilters]);
 
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {
     setDebouncedSearchQuery(query);
+    void setPage("1");
   }, 500);
 
   // Trigger debounced search when searchQuery changes
@@ -33,6 +60,64 @@ export default function UsersPage() {
     };
   }, [debouncedSearch]);
 
+  const loadUsers = useCallback(
+    async ({
+      page,
+      pageSize,
+      filters,
+      signal,
+    }: {
+      page: number;
+      pageSize: number;
+      filters: AdvancedFilterItem[];
+      signal: AbortSignal;
+    }) => {
+      try {
+        const response = await listAdminUsers({
+          page,
+          pageSize,
+          filters,
+          signal,
+          removed: isRecycleBinOpen,
+          search: debouncedSearchQuery,
+          managerRolesOnly,
+          sort: { field: "id", direction: "desc" },
+        });
+        setRecycleCountError(false);
+        return response;
+      } catch (error) {
+        if (!signal.aborted) {
+          setRecycleCountError(true);
+        }
+        throw error;
+      }
+    },
+    [debouncedSearchQuery, isRecycleBinOpen, managerRolesOnly],
+  );
+
+  const handleMetaChange = useCallback((meta: Partial<AdminUsersListMeta>) => {
+    if (typeof meta.recycleCount === "number") {
+      setRecycleCount(meta.recycleCount);
+      setRecycleCountError(false);
+    }
+  }, []);
+
+  const handleRecycleBinChange = useCallback(
+    (next: boolean) => {
+      setIsRecycleBinOpen(next);
+      void setPage("1");
+    },
+    [setPage],
+  );
+
+  const handleFiltersChange = useCallback(
+    (next: AdvancedFilterItem[]) => {
+      setAdvancedFilters(next);
+      void setPage("1");
+    },
+    [setPage],
+  );
+
   return (
     <ContentWrapper
       title="کاربران"
@@ -42,9 +127,12 @@ export default function UsersPage() {
       hasAddButton
       addButtonText="کاربر جدید"
       addButtonPath="/users/add"
-      apiUrl={ENDPOINTS.USER.GET_ALL}
       isRecycleBinOpen={isRecycleBinOpen}
-      setIsRecycleBinOpen={setIsRecycleBinOpen}
+      setIsRecycleBinOpen={handleRecycleBinChange}
+      filters={advancedFilters}
+      onFiltersChange={handleFiltersChange}
+      recycleCount={recycleCount}
+      recycleCountError={recycleCountError}
       filterOptions={[
         {
           id: "[user_info][FirstName]",
@@ -112,7 +200,10 @@ export default function UsersPage() {
             type="checkbox"
             className="h-4 w-4"
             checked={managerRolesOnly}
-            onChange={(e) => setManagerRolesOnly(e.target.checked)}
+            onChange={(e) => {
+              setManagerRolesOnly(e.target.checked);
+              void setPage("1");
+            }}
           />
           فقط نقش‌های مدیریتی
         </label>
@@ -120,93 +211,15 @@ export default function UsersPage() {
       <SuperAdminTable
         _removeActions
         columns={columns}
-        url={(() => {
-          let baseUrl = isRecycleBinOpen
-            ? `${ENDPOINTS.USER.GET_ALL}?populate=*&filters[removedAt][$null]=false`
-            : `${ENDPOINTS.USER.GET_ALL}?populate=*&filters[removedAt][$null]=true`;
-
-          // Add search filter
-          if (debouncedSearchQuery.trim()) {
-            const searchTerm = debouncedSearchQuery.trim();
-            const searchWords = searchTerm.split(/\s+/); // Split by any whitespace
-
-            if (searchWords.length === 1) {
-              // Single word search - search in all fields
-              const encodedTerm = encodeURIComponent(searchTerm);
-              baseUrl += `&filters[$or][0][user_info][FirstName][$containsi]=${encodedTerm}`;
-              baseUrl += `&filters[$or][1][user_info][LastName][$containsi]=${encodedTerm}`;
-              baseUrl += `&filters[$or][2][phone][$containsi]=${encodedTerm}`;
-            } else if (searchWords.length === 2) {
-              // Two words: prioritize FirstName + LastName in exact order
-              let orIndex = 0;
-              const firstName = encodeURIComponent(searchWords[0]);
-              const lastName = encodeURIComponent(searchWords[1]);
-
-              // Priority 1: First word in FirstName AND second word in LastName (exact order)
-              baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstName}`;
-              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastName}`;
-
-              // Priority 2: Exact phrase in FirstName (in case someone has compound first name)
-              const encodedPhrase = encodeURIComponent(searchTerm);
-              baseUrl += `&filters[$or][${orIndex++}][user_info][FirstName][$containsi]=${encodedPhrase}`;
-
-              // Priority 3: Phone number search
-              baseUrl += `&filters[$or][${orIndex++}][phone][$containsi]=${encodedPhrase}`;
-            } else if (searchWords.length === 3) {
-              // Three words: handle patterns like "داریوش فیضی پور"
-              let orIndex = 0;
-              const word1 = encodeURIComponent(searchWords[0]);
-              const word3 = encodeURIComponent(searchWords[2]);
-
-              // Priority 1: First word in FirstName AND (second + third) words in LastName
-              const lastNameCombined = encodeURIComponent(searchWords.slice(1).join(" "));
-              baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${word1}`;
-              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastNameCombined}`;
-
-              // Priority 2: (First + second) words in FirstName AND third word in LastName
-              const firstNameCombined = encodeURIComponent(searchWords.slice(0, 2).join(" "));
-              baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstNameCombined}`;
-              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${word3}`;
-
-              // Priority 3: Exact phrase in FirstName
-              const encodedPhrase = encodeURIComponent(searchTerm);
-              baseUrl += `&filters[$or][${orIndex++}][user_info][FirstName][$containsi]=${encodedPhrase}`;
-
-              // Priority 4: Phone number search
-              baseUrl += `&filters[$or][${orIndex++}][phone][$containsi]=${encodedPhrase}`;
-            } else {
-              // More than 3 words: try different combinations
-              let orIndex = 0;
-              const encodedPhrase = encodeURIComponent(searchTerm);
-
-              // Priority 1: Exact phrase in FirstName
-              baseUrl += `&filters[$or][${orIndex++}][user_info][FirstName][$containsi]=${encodedPhrase}`;
-
-              // Priority 2: First word in FirstName, rest in LastName
-              const firstName = encodeURIComponent(searchWords[0]);
-              const lastName = encodeURIComponent(searchWords.slice(1).join(" "));
-              baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstName}`;
-              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${lastName}`;
-
-              // Priority 3: First half in FirstName, second half in LastName
-              const midPoint = Math.ceil(searchWords.length / 2);
-              const firstHalf = encodeURIComponent(searchWords.slice(0, midPoint).join(" "));
-              const secondHalf = encodeURIComponent(searchWords.slice(midPoint).join(" "));
-              baseUrl += `&filters[$or][${orIndex++}][$and][0][user_info][FirstName][$containsi]=${firstHalf}`;
-              baseUrl += `&filters[$or][${orIndex - 1}][$and][1][user_info][LastName][$containsi]=${secondHalf}`;
-
-              // Priority 4: Phone number search
-              baseUrl += `&filters[$or][${orIndex++}][phone][$containsi]=${encodedPhrase}`;
-            }
-          }
-
-          // Restrict to management/staff roles (by plugin role name)
-          if (managerRolesOnly) {
-            baseUrl += `&${buildManagerRoleFilterQuery()}`;
-          }
-
-          return baseUrl;
-        })()}
+        filters={advancedFilters}
+        dataLoader={loadUsers}
+        dataLoaderKey={JSON.stringify({
+          removed: isRecycleBinOpen,
+          search: debouncedSearchQuery,
+          managerRolesOnly,
+        })}
+        refreshOnVisibility={false}
+        onMetaChange={handleMetaChange}
         mobileTable={(data) => <MobileTable data={data} />}
       />
     </ContentWrapper>

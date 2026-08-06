@@ -57,7 +57,10 @@ interface TableProps<TData, TValue> {
   enableSelection?: boolean;
   getRowId?: (row: TData) => string;
   bulkOptions?: { id: string; title: string }[];
-  onBulkAction?: (actionId: string, selectedRows: TData[]) => void | Promise<void>;
+  onBulkAction?: (
+    actionId: string,
+    selectedRows: TData[],
+  ) => void | Promise<void>;
   // Optional client-side sorting when API sort is not feasible
   clientSort?:
     | undefined
@@ -66,11 +69,40 @@ interface TableProps<TData, TValue> {
         direction: "asc" | "desc";
         getValue: (row: TData) => number;
       };
+  filters?: AdvancedFilterItem[];
+  dataLoaderKey?: string;
+  refreshOnVisibility?: boolean;
+  dataLoader?: (input: {
+    page: number;
+    pageSize: number;
+    filters: AdvancedFilterItem[];
+    signal: AbortSignal;
+  }) => Promise<{
+    data: TData[];
+    meta?: {
+      pagination?: {
+        page: number;
+        pageSize: number;
+        pageCount: number;
+        total: number;
+      };
+      recycleCount?: number;
+    };
+  }>;
+  onMetaChange?: (meta: {
+    pagination?: {
+      page: number;
+      pageSize: number;
+      pageCount: number;
+      total: number;
+    };
+    recycleCount?: number;
+  }) => void;
 }
 
 // Strapi-like response meta is returned by our ApiClient as ApiResponse<T>
 
-export const refreshTable = atom(true);
+export const refreshTable = atom(false);
 
 export function SuperAdminTable<TData, TValue>({
   columns,
@@ -87,13 +119,19 @@ export function SuperAdminTable<TData, TValue>({
   bulkOptions,
   onBulkAction,
   clientSort,
+  filters,
+  dataLoaderKey,
+  refreshOnVisibility = true,
+  dataLoader,
+  onMetaChange,
 }: TableProps<TData, TValue>) {
   const filterFields = useAdvancedFilterFields();
-  const [filter] = useQueryState<AdvancedFilterItem[]>("filter", {
+  const [urlFilters] = useQueryState<AdvancedFilterItem[]>("filter", {
     defaultValue: [],
     parse: parseAdvancedFiltersParam,
     serialize: serializeAdvancedFiltersParam,
   });
+  const activeFilters = filters ?? urlFilters;
 
   const [, setTotalSize] = useQueryState("totalSize", {
     defaultValue: 0,
@@ -122,11 +160,9 @@ export function SuperAdminTable<TData, TValue>({
   const newRowsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pageTransitionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const isFetchingRef = useRef(false);
   const fetchSeqRef = useRef(0);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const isPageVisibleRef = useRef(true);
   const lastPageRef = useRef(page);
 
   const requestUrl = useMemo(() => {
@@ -136,12 +172,21 @@ export function SuperAdminTable<TData, TValue>({
       url,
       page,
       pageSize,
-      filters: filter,
+      filters: activeFilters,
       filterFields,
     });
-  }, [url, page, pageSize, filter, filterFields]);
+  }, [url, page, pageSize, activeFilters, filterFields]);
 
-  const lastUrlRef = useRef<string | null>(null);
+  const requestKey = useMemo(
+    () =>
+      requestUrl ??
+      (dataLoader
+        ? `data-loader:${page}:${pageSize}:${dataLoaderKey ?? "default"}:${JSON.stringify(activeFilters)}`
+        : null),
+    [activeFilters, dataLoader, dataLoaderKey, page, pageSize, requestUrl],
+  );
+
+  const lastRequestKeyRef = useRef<string | null>(null);
 
   // Helper function to resolve row keys consistently
   const resolveRowKey = useCallback(
@@ -175,7 +220,9 @@ export function SuperAdminTable<TData, TValue>({
         return;
       }
 
-      const previousIds = new Set(previousDataRef.current.map((item) => resolveRowKey(item)));
+      const previousIds = new Set(
+        previousDataRef.current.map((item) => resolveRowKey(item)),
+      );
       const addedIds = nextData
         .map((item) => resolveRowKey(item))
         .filter((id) => id && !previousIds.has(id));
@@ -183,7 +230,10 @@ export function SuperAdminTable<TData, TValue>({
       if (addedIds.length > 0) {
         setNewlyAddedIds(new Set(addedIds));
         clearNewRowsTimeout();
-        newRowsTimeoutRef.current = setTimeout(() => setNewlyAddedIds(new Set()), 700);
+        newRowsTimeoutRef.current = setTimeout(
+          () => setNewlyAddedIds(new Set()),
+          700,
+        );
       }
 
       animationContextRef.current = contextKey;
@@ -194,36 +244,51 @@ export function SuperAdminTable<TData, TValue>({
 
   const runFetch = useCallback(
     async (
-      apiUrl: string,
-      { force = false, silent = false }: { force?: boolean; silent?: boolean } = {},
+      key: string,
+      {
+        force = false,
+        silent = false,
+      }: { force?: boolean; silent?: boolean } = {},
     ) => {
       const useSilent = silent && hasLoadedOnce;
 
-      // Avoid duplicate fetch for identical URL unless forced
-      if (!force && lastUrlRef.current === apiUrl) return;
-      lastUrlRef.current = apiUrl;
-      if (isFetchingRef.current) return;
+      // Avoid duplicate fetch for identical inputs unless explicitly refreshed.
+      if (!force && lastRequestKeyRef.current === key) return;
+      lastRequestKeyRef.current = key;
+
+      // A page/filter/search change supersedes the previous read.
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
       // When forcing refresh, clear cache for this specific URL pattern
-      if (force) {
-        apiCache.clearByPattern(new RegExp(apiUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+      if (force && requestUrl) {
+        apiCache.clearByPattern(
+          new RegExp(requestUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
+        );
       }
 
       const seq = ++fetchSeqRef.current;
-      isFetchingRef.current = true;
       if (!useSilent) {
         setInternalLoading(true);
       }
       try {
-        // When forcing refresh, bypass cache to get fresh data
-        const res = await apiClient.get<TData[]>(apiUrl, {
-          cache: force ? "no-store" : "default",
-        });
+        const res = dataLoader
+          ? await dataLoader({
+              page: Number(page),
+              pageSize: Number(pageSize),
+              filters: activeFilters,
+              signal: controller.signal,
+            })
+          : await apiClient.get<TData[]>(requestUrl as string, {
+              cache: force ? "no-store" : "default",
+              signal: controller.signal,
+            });
 
         if (seq === fetchSeqRef.current) {
           const payload = Array.isArray(res) ? res : (res as any)?.data;
           const newData = (payload as TData[]) ?? [];
-          const contextKey = apiUrl || "local-data";
+          const contextKey = key || "local-data";
 
           updateAnimationState(newData, contextKey);
           setTableData(newData);
@@ -244,9 +309,14 @@ export function SuperAdminTable<TData, TValue>({
             0;
 
           setTotalSize(total);
+          onMetaChange?.((res as any)?.meta ?? {});
         }
       } catch (error) {
-        if ((error as any)?.name !== "AbortError" && process.env.NODE_ENV === "development") {
+        if (
+          !controller.signal.aborted &&
+          (error as any)?.name !== "AbortError" &&
+          process.env.NODE_ENV === "development"
+        ) {
           console.error("Failed to fetch table data:", error);
         }
       } finally {
@@ -254,23 +324,36 @@ export function SuperAdminTable<TData, TValue>({
           if (!useSilent) {
             setInternalLoading(false);
           }
-          isFetchingRef.current = false;
+          if (abortControllerRef.current === controller) {
+            abortControllerRef.current = null;
+          }
         }
       }
     },
-    [setTotalSize, hasLoadedOnce, updateAnimationState, isPageTransitioning],
+    [
+      activeFilters,
+      dataLoader,
+      hasLoadedOnce,
+      isPageTransitioning,
+      onMetaChange,
+      page,
+      pageSize,
+      requestUrl,
+      setTotalSize,
+      updateAnimationState,
+    ],
   );
 
   // Fetch on first mount and when the computed request URL changes
   useEffect(() => {
-    if (!requestUrl) return;
+    if (!requestKey) return;
 
     if (fetchDebounceRef.current) {
       clearTimeout(fetchDebounceRef.current);
     }
 
     fetchDebounceRef.current = setTimeout(() => {
-      runFetch(requestUrl);
+      runFetch(requestKey);
       fetchDebounceRef.current = null;
     }, 300);
 
@@ -280,24 +363,25 @@ export function SuperAdminTable<TData, TValue>({
         fetchDebounceRef.current = null;
       }
     };
-  }, [requestUrl, runFetch]);
+  }, [requestKey, runFetch]);
 
   // External refresh trigger (e.g. after mutations)
   useEffect(() => {
-    if (refresh && requestUrl) {
-      runFetch(requestUrl, { force: true, silent: true });
+    if (refresh && requestKey) {
+      runFetch(requestKey, { force: true, silent: true });
       setRefresh(false);
     }
-  }, [refresh, requestUrl, runFetch, setRefresh]);
+  }, [refresh, requestKey, runFetch, setRefresh]);
 
   // Set up visibility change listener for page focus - refresh when page becomes visible
   useEffect(() => {
+    if (!refreshOnVisibility) return;
+
     const handleVisibilityChange = () => {
-      isPageVisibleRef.current = !document.hidden;
       // Refresh data when page becomes visible (switched back from another tab)
-      if (!document.hidden && requestUrl) {
+      if (!document.hidden && requestKey) {
         // Silent refresh to avoid visual skeleton; animations will handle diffs
-        runFetch(requestUrl, { force: true, silent: true });
+        runFetch(requestKey, { force: true, silent: true });
       }
     };
 
@@ -305,7 +389,7 @@ export function SuperAdminTable<TData, TValue>({
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [requestUrl, runFetch]);
+  }, [refreshOnVisibility, requestKey, runFetch]);
 
   // Track page transitions to swap animation style (fade only on page change)
   useEffect(() => {
@@ -344,6 +428,8 @@ export function SuperAdminTable<TData, TValue>({
       if (pageTransitionTimeoutRef.current) {
         clearTimeout(pageTransitionTimeoutRef.current);
       }
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
     };
   }, [clearNewRowsTimeout]);
 
@@ -402,7 +488,9 @@ export function SuperAdminTable<TData, TValue>({
   const isLoading = loading ?? internalLoading;
   const showSkeleton = isLoading && (isPageTransitioning || !hasLoadedOnce);
   const useCardLayoutUntilDesktop = Boolean(mobileTable);
-  const cardLayoutClassName = useCardLayoutUntilDesktop ? "block lg:hidden" : "block md:hidden";
+  const cardLayoutClassName = useCardLayoutUntilDesktop
+    ? "block lg:hidden"
+    : "block md:hidden";
   const tableLayoutClassName = useCardLayoutUntilDesktop
     ? "hidden w-full overflow-x-auto overflow-y-clip lg:block"
     : "hidden w-full overflow-x-auto overflow-y-clip md:block";
@@ -418,7 +506,9 @@ export function SuperAdminTable<TData, TValue>({
                 <input
                   type="checkbox"
                   checked={
-                    !!tableData && selectedIds.size > 0 && selectedIds.size === tableData.length
+                    !!tableData &&
+                    selectedIds.size > 0 &&
+                    selectedIds.size === tableData.length
                   }
                   onChange={(e) => {
                     if (!tableData) return;
@@ -429,20 +519,27 @@ export function SuperAdminTable<TData, TValue>({
                     setSelectedIds(next);
                   }}
                 />
-                <span className="text-foreground-primary text-xs">انتخاب همه</span>
+                <span className="text-foreground-primary text-xs">
+                  انتخاب همه
+                </span>
               </div>
 
               <div className="flex items-center gap-2">
                 <SuperAdminTableSelect
                   selectedOption={bulkAction}
                   onOptionSelect={(id) => setBulkAction(String(id))}
-                  options={[{ id: "", title: "اقدام دسته جمعی" }, ...(bulkOptions || [])]}
+                  options={[
+                    { id: "", title: "اقدام دسته جمعی" },
+                    ...(bulkOptions || []),
+                  ]}
                 />
 
                 <button
                   onClick={() => {
                     if (!onBulkAction || !tableData || !bulkAction) return;
-                    const rows = tableData.filter((r) => selectedIds.has(resolveRowKey(r)));
+                    const rows = tableData.filter((r) =>
+                      selectedIds.has(resolveRowKey(r)),
+                    );
                     onBulkAction(bulkAction, rows);
                   }}
                   className="flex items-center justify-between rounded-lg bg-actions-primary px-3 py-2 text-white"
@@ -473,7 +570,10 @@ export function SuperAdminTable<TData, TValue>({
                       >
                         {header.isPlaceholder
                           ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
+                          : flexRender(
+                              header.column.columnDef.header,
+                              header.getContext(),
+                            )}
                       </th>
                     );
                   })}
@@ -496,25 +596,35 @@ export function SuperAdminTable<TData, TValue>({
                             if (!tableData) return;
                             const next = new Set<string>();
                             if (e.target.checked) {
-                              tableData.forEach((row) => next.add(resolveRowKey(row)));
+                              tableData.forEach((row) =>
+                                next.add(resolveRowKey(row)),
+                              );
                             }
                             setSelectedIds(next);
                           }}
                         />
-                        <span className="text-foreground-primary text-xs">انتخاب همه</span>
+                        <span className="text-foreground-primary text-xs">
+                          انتخاب همه
+                        </span>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <SuperAdminTableSelect
                           selectedOption={bulkAction}
                           onOptionSelect={(id) => setBulkAction(String(id))}
-                          options={[{ id: "", title: "اقدام دسته جمعی" }, ...(bulkOptions || [])]}
+                          options={[
+                            { id: "", title: "اقدام دسته جمعی" },
+                            ...(bulkOptions || []),
+                          ]}
                         />
 
                         <button
                           onClick={() => {
-                            if (!onBulkAction || !tableData || !bulkAction) return;
-                            const rows = tableData.filter((r) => selectedIds.has(resolveRowKey(r)));
+                            if (!onBulkAction || !tableData || !bulkAction)
+                              return;
+                            const rows = tableData.filter((r) =>
+                              selectedIds.has(resolveRowKey(r)),
+                            );
                             onBulkAction(bulkAction, rows);
                           }}
                           className="flex items-center justify-between rounded-lg bg-actions-primary px-3 py-2 text-white"
@@ -581,10 +691,16 @@ export function SuperAdminTable<TData, TValue>({
                                     setSelectedIds(next);
                                   }}
                                 />
-                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                {flexRender(
+                                  cell.column.columnDef.cell,
+                                  cell.getContext(),
+                                )}
                               </div>
                             ) : (
-                              flexRender(cell.column.columnDef.cell, cell.getContext())
+                              flexRender(
+                                cell.column.columnDef.cell,
+                                cell.getContext(),
+                              )
                             )}
                           </td>
                         ))}
@@ -682,16 +798,24 @@ export function SuperAdminTable<TData, TValue>({
                       <dl className="grid grid-cols-1 gap-2">
                         {detailCells.map((cell) => {
                           const header = cell.column.columnDef.header;
-                          const label = typeof header === "string" ? header : cell.column.id;
+                          const label =
+                            typeof header === "string"
+                              ? header
+                              : cell.column.id;
 
                           return (
                             <div
                               key={cell.id}
                               className="flex min-w-0 items-start justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2"
                             >
-                              <dt className="shrink-0 text-xs text-slate-400">{label}</dt>
+                              <dt className="shrink-0 text-xs text-slate-400">
+                                {label}
+                              </dt>
                               <dd className="min-w-0 text-left text-xs text-slate-700 [&_*]:max-w-full [&_*]:break-words">
-                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                {flexRender(
+                                  cell.column.columnDef.cell,
+                                  cell.getContext(),
+                                )}
                               </dd>
                             </div>
                           );

@@ -9,9 +9,11 @@ export const DASHBOARD_QUICK_ACTIONS = [
 const normalizeRole = (roleName?: string | null) =>
   (roleName ?? "").toString().trim().toLowerCase();
 
-export const canSeeDashboardUserMetric = (roleName?: string | null): boolean => {
+export const canSeeDashboardUserMetric = (
+  roleName?: string | null,
+): boolean => {
   const normalizedRole = normalizeRole(roleName);
-  return normalizedRole !== "store manager" && normalizedRole !== "founder";
+  return normalizedRole === "superadmin";
 };
 
 export const getDashboardQuickActionsForRole = (roleName?: string | null) => {
@@ -19,5 +21,7 @@ export const getDashboardQuickActionsForRole = (roleName?: string | null) => {
     return DASHBOARD_QUICK_ACTIONS;
   }
 
-  return DASHBOARD_QUICK_ACTIONS.filter((action) => action.href !== DASHBOARD_USER_ACTION_HREF);
+  return DASHBOARD_QUICK_ACTIONS.filter(
+    (action) => action.href !== DASHBOARD_USER_ACTION_HREF,
+  );
 };

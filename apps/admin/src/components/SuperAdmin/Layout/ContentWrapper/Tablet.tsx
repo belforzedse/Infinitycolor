@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import SuperAdminPagination from "../../Pagination";
 import SuperAdminPageSizeSelect from "../../Pagination/PageSizeSelect";
 import RecycleBinButton from "./Button/RecycleBin";
 import AddButton from "./Button/Add";
 import FilterButton from "./Button/Filter";
-import { apiClient } from "@/services";
-import { refreshTable } from "../../Table";
-import { useAtom } from "jotai";
-import type { AdvancedFilterField } from "@/components/SuperAdmin/Table/advancedFilters";
+import type {
+  AdvancedFilterField,
+  AdvancedFilterItem,
+} from "@/components/SuperAdmin/Table/advancedFilters";
 
 type Props = {
   children: React.ReactNode;
@@ -26,6 +26,11 @@ type Props = {
   isRecycleBinOpen?: boolean;
   setIsRecycleBinOpen?: (isRecycleBinOpen: boolean) => void;
   filterOptions?: AdvancedFilterField[];
+  filters?: AdvancedFilterItem[];
+  onFiltersChange?: (filters: AdvancedFilterItem[]) => void;
+  recycleCount?: number;
+  recycleCountError?: boolean;
+  renderBody?: boolean;
 };
 
 export default function SuperAdminLayoutContentWrapperTablet(props: Props) {
@@ -40,36 +45,18 @@ export default function SuperAdminLayoutContentWrapperTablet(props: Props) {
     hasFilterButton,
     hasPagination,
     totalPages,
-    apiUrl,
     isRecycleBinOpen,
     setIsRecycleBinOpen,
     filterOptions,
+    filters,
+    onFiltersChange,
+    recycleCount = 0,
+    recycleCountError = false,
+    renderBody = true,
   } = props;
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [count, setCount] = useState(0);
-  const [hasCountError, setHasCountError] = useState(false);
   const [isFilterOpen, setFilterIsOpen] = useState(false);
-
-  const [refresh] = useAtom(refreshTable);
-
-  useEffect(() => {
-    if (apiUrl) {
-      apiClient
-        .get<{
-          data: { id: number }[];
-          meta: { pagination: { total: number } };
-        }>(`${apiUrl}?filters[removedAt][$null]=false`)
-        .then((res) => {
-          setCount((res as any)?.meta?.pagination?.total);
-          setHasCountError(false);
-        })
-        .catch(() => {
-          setCount(0);
-          setHasCountError(true);
-        });
-    }
-  }, [apiUrl, refresh]);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -79,7 +66,9 @@ export default function SuperAdminLayoutContentWrapperTablet(props: Props) {
     <>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-2xl text-[#202224]">{isRecycleBinOpen ? "زباله‌دان" : title}</span>
+          <span className="text-2xl text-[#202224]">
+            {isRecycleBinOpen ? "زباله‌دان" : title}
+          </span>
 
           {titleSuffixComponent}
         </div>
@@ -87,20 +76,24 @@ export default function SuperAdminLayoutContentWrapperTablet(props: Props) {
         <div className="flex items-center gap-2">
           {hasRecycleBin && (
             <RecycleBinButton
-              count={count}
-              hasError={hasCountError}
+              count={recycleCount}
+              hasError={recycleCountError}
               isRecycleBinOpen={isRecycleBinOpen}
               setIsRecycleBinOpen={setIsRecycleBinOpen}
             />
           )}
 
-          {hasAddButton && <AddButton text={addButtonText ?? ""} path={addButtonPath ?? "#"} />}
+          {hasAddButton && (
+            <AddButton text={addButtonText ?? ""} path={addButtonPath ?? "#"} />
+          )}
 
           {hasFilterButton && !!filterOptions?.length && (
             <FilterButton
               isFilterOpen={isFilterOpen}
               setFilterIsOpen={setFilterIsOpen}
               options={filterOptions || []}
+              filters={filters}
+              onFiltersChange={onFiltersChange}
             />
           )}
         </div>
@@ -110,8 +103,8 @@ export default function SuperAdminLayoutContentWrapperTablet(props: Props) {
           <SuperAdminPageSizeSelect />
         </div>
       )}
-      <div className="card mt-2 p-4">{children}</div>
-      {hasPagination && (
+      {renderBody && <div className="card mt-2 p-4">{children}</div>}
+      {renderBody && hasPagination && (
         <div className="sticky bottom-0 z-30 mt-3 flex justify-end">
           <div className="rounded-xl border border-gray-200/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl supports-[backdrop-filter]:backdrop-blur">
             <SuperAdminPagination

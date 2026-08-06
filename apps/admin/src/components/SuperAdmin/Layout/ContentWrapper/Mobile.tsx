@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import SuperAdminPagination from "../../Pagination";
 import SuperAdminPageSizeSelect from "../../Pagination/PageSizeSelect";
 import RecycleBinButton from "./Button/RecycleBin";
 import AddButton from "./Button/Add";
 import FilterButton from "./Button/Filter";
-import { apiClient } from "@/services";
-import { refreshTable } from "../../Table";
-import { useAtom } from "jotai";
-import type { AdvancedFilterField } from "@/components/SuperAdmin/Table/advancedFilters";
+import type {
+  AdvancedFilterField,
+  AdvancedFilterItem,
+} from "@/components/SuperAdmin/Table/advancedFilters";
 
 type Props = {
   children: React.ReactNode;
@@ -23,6 +23,11 @@ type Props = {
   totalPages?: number;
   isRecycleBinOpen?: boolean;
   filterOptions?: AdvancedFilterField[];
+  filters?: AdvancedFilterItem[];
+  onFiltersChange?: (filters: AdvancedFilterItem[]) => void;
+  recycleCount?: number;
+  recycleCountError?: boolean;
+  renderBody?: boolean;
   setIsRecycleBinOpen?: (isRecycleBinOpen: boolean) => void;
 };
 
@@ -36,34 +41,20 @@ export default function SuperAdminLayoutContentWrapperMobile(props: Props) {
     addButtonPath,
     hasFilterButton,
     hasPagination,
-    apiUrl,
     totalPages,
     isRecycleBinOpen,
     setIsRecycleBinOpen,
     filterOptions,
     titleSuffixComponent,
+    filters,
+    onFiltersChange,
+    recycleCount = 0,
+    recycleCountError = false,
+    renderBody = true,
   } = props;
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [count, setCount] = useState(0);
-  const [hasCountError, setHasCountError] = useState(false);
   const [isFilterOpen, setFilterIsOpen] = useState(false);
-  const [refresh] = useAtom(refreshTable);
-
-  useEffect(() => {
-    if (!apiUrl) return;
-
-    apiClient
-      .get<{ id: number }[]>(`${apiUrl}?filters[removedAt][$null]=false`)
-      .then((res) => {
-        setCount(res.meta?.pagination?.total ?? 0);
-        setHasCountError(false);
-      })
-      .catch(() => {
-        setCount(0);
-        setHasCountError(true);
-      });
-  }, [apiUrl, refresh]);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -79,8 +70,8 @@ export default function SuperAdminLayoutContentWrapperMobile(props: Props) {
 
           {hasRecycleBin && (
             <RecycleBinButton
-              count={count}
-              hasError={hasCountError}
+              count={recycleCount}
+              hasError={recycleCountError}
               isRecycleBinOpen={isRecycleBinOpen}
               setIsRecycleBinOpen={setIsRecycleBinOpen}
             />
@@ -102,6 +93,8 @@ export default function SuperAdminLayoutContentWrapperMobile(props: Props) {
                 options={filterOptions || []}
                 isFilterOpen={isFilterOpen}
                 setFilterIsOpen={setFilterIsOpen}
+                filters={filters}
+                onFiltersChange={onFiltersChange}
               />
             </div>
           )}
@@ -114,8 +107,8 @@ export default function SuperAdminLayoutContentWrapperMobile(props: Props) {
         </div>
       )}
 
-      <div className="mt-5">{children}</div>
-      {hasPagination && (
+      {renderBody && <div className="mt-5">{children}</div>}
+      {renderBody && hasPagination && (
         <div className="sticky bottom-0 z-30 mt-4 flex justify-end">
           <div className="rounded-xl border border-gray-200/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:backdrop-blur">
             <SuperAdminPagination

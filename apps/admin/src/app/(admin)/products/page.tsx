@@ -6,32 +6,26 @@ import { MobileTable, columns } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { useDebouncedCallback } from "use-debounce";
-import { getProductSales } from "@/services/super-admin/reports/productSales";
 import { apiClient } from "@/services";
 import { useQueryState } from "nuqs";
 import toast from "react-hot-toast";
 import { useAtom } from "jotai";
 import { refreshTable } from "@/components/SuperAdmin/Table";
-import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useEditorRedirect } from "@/hooks/useEditorRedirect";
 import {
-  buildAdvancedFiltersQuery,
   parseAdvancedFiltersParam,
   serializeAdvancedFiltersParam,
   type AdvancedFilterField,
   type AdvancedFilterItem,
 } from "@/components/SuperAdmin/Table/advancedFilters";
+import {
+  listAdminProducts,
+  type AdminProductSort,
+} from "@/services/super-admin/product/list";
 
-type ProductSort =
-  | "last-edited"
-  | "newest"
-  | "oldest"
-  | "stock-asc"
-  | "stock-desc"
-  | "sales-asc"
-  | "sales-desc";
+type ProductSort = AdminProductSort;
 
 const PRODUCT_FILTER_OPTIONS: AdvancedFilterField[] = [
   { id: "[Title]", title: "نام محصول", type: "text" },
@@ -54,59 +48,68 @@ const PRODUCT_FILTER_OPTIONS: AdvancedFilterField[] = [
       { id: "Variable", title: "متغیر" },
     ],
   },
-  { id: "[product_main_category][Title]", title: "دسته‌بندی اصلی", type: "text" },
+  {
+    id: "[product_main_category][Title]",
+    title: "دسته‌بندی اصلی",
+    type: "text",
+  },
   { id: "[product_variations][SKU]", title: "SKU", type: "text" },
   { id: "[product_variations][Price]", title: "قیمت", type: "number" },
-  { id: "[product_variations][DiscountPrice]", title: "قیمت تخفیف", type: "number" },
-  { id: "[product_variations][product_stock][Count]", title: "موجودی", type: "number" },
+  {
+    id: "[product_variations][DiscountPrice]",
+    title: "قیمت تخفیف",
+    type: "number",
+  },
+  {
+    id: "[product_variations][product_stock][Count]",
+    title: "موجودی",
+    type: "number",
+  },
   { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
   { id: "[LastEditedByAdminAt]", title: "آخرین ویرایش", type: "date" },
 ];
 
 export default function ProductsPage() {
-  useFreshDataOnPageLoad();
   const { isStoreManager, isFounder } = useCurrentUser();
   const cannotHardDelete = isStoreManager || isFounder;
 
   // Redirect editors away from product pages
   useEditorRedirect();
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
-  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
+  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] =
+    useState(false);
   const [showPermissionDenied, setShowPermissionDenied] = useState(false);
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState<{
     actionId: string;
     selectedProducts: Product[];
   } | null>(null);
   const [sort, setSort] = useState<ProductSort>("last-edited");
-  const [page] = useQueryState("page", { defaultValue: "1" });
-  const [advancedFilter] = useQueryState<AdvancedFilterItem[]>("filter", {
-    defaultValue: [],
-    parse: parseAdvancedFiltersParam,
-    serialize: serializeAdvancedFiltersParam,
-  });
-  const [pageSize] = useQueryState("pageSize", { defaultValue: "25" });
-  const [, setTotalSize] = useQueryState<number>("totalSize", {
-    defaultValue: 0,
-    parse: (value: string | undefined) => Number(value) || 0,
-    serialize: (value: number) => String(value),
-  });
-
-  // For global sort modes, we build an index of product IDs sorted server-assist
-  const [sortedProductIds, setSortedProductIds] = useState<number[] | null>(null);
-  const [customPageData, setCustomPageData] = useState<Product[] | null>(null);
-  const [buildingIndex, setBuildingIndex] = useState(false);
-  const [pageLoading, setPageLoading] = useState(false);
+  const [, setPage] = useQueryState("page", { defaultValue: "1" });
+  const [, setLegacyUrlFilters] = useQueryState<AdvancedFilterItem[]>(
+    "filter",
+    {
+      defaultValue: [],
+      parse: parseAdvancedFiltersParam,
+      serialize: serializeAdvancedFiltersParam,
+    },
+  );
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
+    [],
+  );
+  const [recycleCount, setRecycleCount] = useState(0);
+  const [recycleCountError, setRecycleCountError] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
-  const [refresh, setRefresh] = useAtom(refreshTable);
-  const advancedFilterQuery = useMemo(
-    () => buildAdvancedFiltersQuery(advancedFilter, PRODUCT_FILTER_OPTIONS),
-    [advancedFilter],
-  );
+  const [, setRefresh] = useAtom(refreshTable);
+
+  useEffect(() => {
+    void setLegacyUrlFilters(null);
+  }, [setLegacyUrlFilters]);
 
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {
     setDebouncedSearchQuery(query);
+    void setPage("1");
   }, 500);
 
   // Trigger debounced search when searchQuery changes
@@ -121,192 +124,60 @@ export default function ProductsPage() {
     };
   }, [debouncedSearch]);
 
-  const getAllProductsLite = useCallback(async () => {
-    // Fetch product list with minimal payload for stock aggregation
-    // We page through the dataset and only pull IDs + variations' stock counts
-    const perPage = 200;
-    let current = 1;
-    let total = 0;
-    const items: any[] = [];
-    while (true) {
-      // Respect super-admin toggled setting for filtering public products
-      let endpoint =
-        `/products?pagination[page]=${current}&pagination[pageSize]=${perPage}` +
-        (isRecycleBinOpen
-          ? `&filters[removedAt][$null]=false`
-          : `&filters[removedAt][$null]=true`) +
-        `&fields[0]=id` +
-        `&populate[0]=product_variations` +
-        `&populate[1]=product_variations.product_stock` +
-        `&populate[2]=product_main_category`;
-
-      if (advancedFilterQuery) {
-        endpoint += `&${advancedFilterQuery}`;
-      }
-
-      if (debouncedSearchQuery.trim()) {
-        endpoint += `&filters[Title][$containsi]=${encodeURIComponent(debouncedSearchQuery.trim())}`;
-      }
-
-      const res = await apiClient.get(endpoint);
-      const data = (res as any).data as any[];
-      total = (res as any).meta?.pagination?.total || total;
-      items.push(...data);
-      const pageCount = (res as any).meta?.pagination?.pageCount || 1;
-      if (current >= pageCount) break;
-      current += 1;
-    }
-    return items;
-  }, [isRecycleBinOpen, debouncedSearchQuery, advancedFilterQuery]);
-
-  const buildStockIndex = useCallback(async () => {
-    if (buildingIndex) return; // Prevent concurrent builds
-    setBuildingIndex(true);
-
-    try {
-      const items = await getAllProductsLite();
-      const byStock = items
-        .map((p: any) => ({
-          id: Number(p.id),
-          stock: (p?.attributes?.product_variations?.data || []).reduce(
-            (acc: number, v: any) =>
-              acc + Number(v?.attributes?.product_stock?.data?.attributes?.Count || 0),
-            0,
-          ),
-        }))
-        .sort((a: any, b: any) => a.stock - b.stock);
-      const ids = byStock.map((x: any) => x.id);
-      setSortedProductIds(sort === "stock-asc" ? ids : ids.slice().reverse());
-      setTotalSize(ids.length);
-    } catch (error) {
-      console.error("Error building stock index:", error);
-    } finally {
-      setBuildingIndex(false);
-    }
-  }, [
-    getAllProductsLite,
-    sort,
-    isRecycleBinOpen,
-    debouncedSearchQuery,
-    setTotalSize,
-    buildingIndex,
-  ]);
-
-  const buildSalesIndex = useCallback(async () => {
-    if (buildingIndex) return; // Prevent concurrent builds
-    setBuildingIndex(true);
-    try {
-      const rows = await getProductSales({});
-      const allowedProducts = await getAllProductsLite();
-      const allowedProductIds = new Set(allowedProducts.map((product: any) => Number(product.id)));
-      // Aggregate by product via mapping variation -> product (batched)
-      const varIds = rows.map((r: any) => r.productVariationId);
-      const chunk = 200;
-      const varToProduct: Record<number, number> = {};
-      for (let i = 0; i < varIds.length; i += chunk) {
-        const part = varIds.slice(i, i + chunk);
-        // Fetch products that contain these variations
-        const res = await apiClient.get(
-          `/products?filters[product_variations][id][$in]=${part.join(",")}` +
-            (isRecycleBinOpen
-              ? `&filters[removedAt][$null]=false`
-              : `&filters[removedAt][$null]=true`) +
-            `&fields[0]=id&populate[0]=product_variations`,
-        );
-        const prods = (res as any).data as any[];
-        prods.forEach((p: any) => {
-          const pid = Number(p.id);
-          (p?.attributes?.product_variations?.data || []).forEach((v: any) => {
-            varToProduct[Number(v.id)] = pid;
-          });
+  const loadProducts = useCallback(
+    async ({
+      page,
+      pageSize,
+      filters,
+      signal,
+    }: {
+      page: number;
+      pageSize: number;
+      filters: AdvancedFilterItem[];
+      signal: AbortSignal;
+    }) => {
+      try {
+        const response = await listAdminProducts({
+          page,
+          pageSize,
+          filters,
+          signal,
+          removed: isRecycleBinOpen,
+          search: debouncedSearchQuery,
+          sort,
         });
+        setRecycleCountError(false);
+        return response;
+      } catch (error) {
+        if (!signal.aborted) setRecycleCountError(true);
+        throw error;
       }
-      const productSales: Record<number, number> = {};
-      rows.forEach((r: any) => {
-        const pid = varToProduct[r.productVariationId];
-        if (!pid || !allowedProductIds.has(pid)) return;
-        productSales[pid] = (productSales[pid] || 0) + Number(r.totalCount || 0);
-      });
-      const ids = Object.entries(productSales)
-        .sort((a, b) => Number(a[1]) - Number(b[1]))
-        .map(([pid]) => Number(pid));
-      setSortedProductIds(sort === "sales-asc" ? ids : ids.slice().reverse());
-      setTotalSize(ids.length);
-    } catch (error) {
-      console.error("Error building sales index:", error);
-    } finally {
-      setBuildingIndex(false);
+    },
+    [debouncedSearchQuery, isRecycleBinOpen, sort],
+  );
+
+  const handleMetaChange = useCallback((meta: { recycleCount?: number }) => {
+    if (typeof meta.recycleCount === "number") {
+      setRecycleCount(meta.recycleCount);
+      setRecycleCountError(false);
     }
-  }, [sort, isRecycleBinOpen, setTotalSize, buildingIndex, getAllProductsLite]);
+  }, []);
 
-  // Build global sorted index for stock/sales
-  useEffect(() => {
-    // Prevent infinite loops by checking if already building
-    if (buildingIndex) return;
+  const handleRecycleBinChange = useCallback(
+    (next: boolean) => {
+      setIsRecycleBinOpen(next);
+      void setPage("1");
+    },
+    [setPage],
+  );
 
-    // Reset state when dependencies change
-    setSortedProductIds(null);
-    setCustomPageData(null);
-
-    // Only rebuild if we need custom sorting
-    if (sort === "stock-asc" || sort === "stock-desc") {
-      buildStockIndex();
-    } else if (sort === "sales-asc" || sort === "sales-desc") {
-      buildSalesIndex();
-    }
-
-    // Reset refresh flag after rebuilding
-    if (refresh) {
-      setRefresh(false);
-    }
-  }, [
-    buildSalesIndex,
-    buildStockIndex,
-    sort,
-    debouncedSearchQuery,
-    isRecycleBinOpen,
-    buildingIndex,
-    refresh,
-    setRefresh,
-  ]);
-
-  // Fetch current page data when using custom index
-  useEffect(() => {
-    const run = async () => {
-      if (!sortedProductIds) return;
-      setPageLoading(true);
-      const p = Math.max(1, parseInt(page || "1", 10));
-      const ps = Math.max(1, parseInt(pageSize || "25", 10));
-      const start = (p - 1) * ps;
-      const ids = sortedProductIds.slice(start, start + ps);
-      if (ids.length === 0) {
-        setCustomPageData([]);
-        setPageLoading(false);
-        return;
-      }
-      const res = await apiClient.get(
-        (() => {
-          let ep =
-            `/products?filters[id][$in]=${ids.join(",")}` +
-            (isRecycleBinOpen
-              ? `&filters[removedAt][$null]=false`
-              : `&filters[removedAt][$null]=true`) +
-            `&populate[0]=CoverImage&populate[1]=product_variations&populate[2]=product_variations.product_stock&populate[3]=product_main_category`;
-
-          if (debouncedSearchQuery.trim()) {
-            ep += `&filters[Title][$containsi]=${encodeURIComponent(debouncedSearchQuery.trim())}`;
-          }
-          return ep;
-        })(),
-      );
-      const rows = ((res as any).data as Product[]).slice();
-      // Preserve the order of ids
-      rows.sort((a, b) => ids.indexOf(Number(a.id)) - ids.indexOf(Number(b.id)));
-      setCustomPageData(rows);
-      setPageLoading(false);
-    };
-    run();
-  }, [sortedProductIds, page, pageSize, isRecycleBinOpen, debouncedSearchQuery]);
+  const handleFiltersChange = useCallback(
+    (next: AdvancedFilterItem[]) => {
+      setAdvancedFilters(next);
+      void setPage("1");
+    },
+    [setPage],
+  );
 
   // Bulk actions handler
   const handleBulkAction = useCallback(
@@ -322,7 +193,8 @@ export default function ProductsPage() {
             // Remove stock from all selected products
             let removedStockCount = 0;
             for (const product of selectedProducts) {
-              for (const variation of product.attributes.product_variations.data) {
+              for (const variation of product.attributes.product_variations
+                .data) {
                 if (variation.attributes.product_stock?.data?.id) {
                   try {
                     await apiClient.put(
@@ -333,12 +205,17 @@ export default function ProductsPage() {
                     );
                     removedStockCount++;
                   } catch (error) {
-                    console.error(`Failed to remove stock for variation ${variation.id}:`, error);
+                    console.error(
+                      `Failed to remove stock for variation ${variation.id}:`,
+                      error,
+                    );
                   }
                 }
               }
             }
-            toast.success(`موجودی ${removedStockCount} تنوع محصول با موفقیت حذف شد`);
+            toast.success(
+              `موجودی ${removedStockCount} تنوع محصول با موفقیت حذف شد`,
+            );
             break;
 
           case "soft_delete": {
@@ -348,7 +225,9 @@ export default function ProductsPage() {
             const deletionTime = new Date().toISOString();
 
             // Show progress toast
-            const progressToast = toast.loading(`در حال حذف ${selectedProducts.length} محصول...`);
+            const progressToast = toast.loading(
+              `در حال حذف ${selectedProducts.length} محصول...`,
+            );
 
             for (const product of selectedProducts) {
               try {
@@ -375,7 +254,9 @@ export default function ProductsPage() {
             }
 
             if (failedIds.length > 0) {
-              toast.error(`خطا در حذف ${failedIds.length} محصول. لطفا دوباره سعی کنید.`);
+              toast.error(
+                `خطا در حذف ${failedIds.length} محصول. لطفا دوباره سعی کنید.`,
+              );
             }
 
             // Refresh table after deletions
@@ -402,7 +283,10 @@ export default function ProductsPage() {
                 });
                 restoredCount++;
               } catch (error) {
-                console.error(`Failed to restore product ${product.id}:`, error);
+                console.error(
+                  `Failed to restore product ${product.id}:`,
+                  error,
+                );
                 failedIds.push(product.id);
               }
             }
@@ -420,7 +304,9 @@ export default function ProductsPage() {
             }
 
             if (failedIds.length > 0) {
-              toast.error(`خطا در بازیابی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`);
+              toast.error(
+                `خطا در بازیابی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`,
+              );
             }
 
             // Refresh table after restores
@@ -449,7 +335,8 @@ export default function ProductsPage() {
               const newStock = Math.max(0, Number(stockValue));
               let updatedStockCount = 0;
               for (const product of selectedProducts) {
-                for (const variation of product.attributes.product_variations.data) {
+                for (const variation of product.attributes.product_variations
+                  .data) {
                   if (variation.attributes.product_stock?.data?.id) {
                     try {
                       await apiClient.put(
@@ -460,12 +347,17 @@ export default function ProductsPage() {
                       );
                       updatedStockCount++;
                     } catch (error) {
-                      console.error(`Failed to update stock for variation ${variation.id}:`, error);
+                      console.error(
+                        `Failed to update stock for variation ${variation.id}:`,
+                        error,
+                      );
                     }
                   }
                 }
               }
-              toast.success(`موجودی ${updatedStockCount} تنوع محصول به ${newStock} تنظیم شد`);
+              toast.success(
+                `موجودی ${updatedStockCount} تنوع محصول به ${newStock} تنظیم شد`,
+              );
             } else if (stockValue !== null) {
               toast.error("مقدار موجودی معتبر نیست");
               return;
@@ -478,14 +370,18 @@ export default function ProductsPage() {
             // Publish selected products
             let publishedCount = 0;
             for (const product of selectedProducts) {
-              for (const variation of product.attributes.product_variations.data) {
+              for (const variation of product.attributes.product_variations
+                .data) {
                 try {
                   await apiClient.put(`/product-variations/${variation.id}`, {
                     data: { IsPublished: true },
                   });
                   publishedCount++;
                 } catch (error) {
-                  console.error(`Failed to publish variation ${variation.id}:`, error);
+                  console.error(
+                    `Failed to publish variation ${variation.id}:`,
+                    error,
+                  );
                 }
               }
             }
@@ -496,14 +392,18 @@ export default function ProductsPage() {
             // Unpublish selected products
             let unpublishedCount = 0;
             for (const product of selectedProducts) {
-              for (const variation of product.attributes.product_variations.data) {
+              for (const variation of product.attributes.product_variations
+                .data) {
                 try {
                   await apiClient.put(`/product-variations/${variation.id}`, {
                     data: { IsPublished: false },
                   });
                   unpublishedCount++;
                 } catch (error) {
-                  console.error(`Failed to unpublish variation ${variation.id}:`, error);
+                  console.error(
+                    `Failed to unpublish variation ${variation.id}:`,
+                    error,
+                  );
                 }
               }
             }
@@ -522,7 +422,7 @@ export default function ProductsPage() {
         toast.error("خطا در انجام عملیات دسته‌جمعی");
       }
     },
-    [setRefresh],
+    [cannotHardDelete, setRefresh],
   );
 
   // Bulk action options
@@ -542,9 +442,6 @@ export default function ProductsPage() {
     ];
   }, [isRecycleBinOpen]);
 
-  // We prefer server-side sorting. This fallback is disabled to avoid page-only sort.
-  const _clientSort = undefined;
-
   return (
     <ContentWrapper
       title="محصولات"
@@ -556,8 +453,11 @@ export default function ProductsPage() {
       addButtonPath="/products/add"
       hasRecycleBin
       isRecycleBinOpen={isRecycleBinOpen}
-      setIsRecycleBinOpen={setIsRecycleBinOpen}
-      apiUrl={"/products"}
+      setIsRecycleBinOpen={handleRecycleBinChange}
+      filters={advancedFilters}
+      onFiltersChange={handleFiltersChange}
+      recycleCount={recycleCount}
+      recycleCountError={recycleCountError}
     >
       <div className="mb-3 space-y-3 rounded-2xl bg-white/70 p-3 md:bg-transparent md:p-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
@@ -566,7 +466,10 @@ export default function ProductsPage() {
             <select
               className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 text-sm sm:w-auto sm:min-w-48"
               value={sort}
-              onChange={(e) => setSort(e.target.value as ProductSort)}
+              onChange={(e) => {
+                setSort(e.target.value as ProductSort);
+                void setPage("1");
+              }}
             >
               <option value="last-edited">آخرین ویرایش</option>
               <option value="newest">جدیدترین</option>
@@ -618,64 +521,31 @@ export default function ProductsPage() {
           )}
         </div>
       </div>
-      {sort === "last-edited" || sort === "newest" || sort === "oldest" ? (
-        <SuperAdminTable
-          columns={columns}
-          url={(() => {
-            let sortedBase =
-              "/products?populate[0]=CoverImage&populate[1]=product_variations&populate[2]=product_variations.product_stock&populate[3]=product_main_category" +
-              (isRecycleBinOpen
-                ? "&filters[removedAt][$null]=false"
-                : "&filters[removedAt][$null]=true");
-            if (debouncedSearchQuery.trim()) {
-              sortedBase += `&filters[Title][$containsi]=${encodeURIComponent(debouncedSearchQuery.trim())}`;
-            }
-
-            if (sort === "last-edited") return sortedBase + "&sort[0]=LastEditedByAdminAt:desc";
-            if (sort === "newest") return sortedBase + "&sort[0]=createdAt:desc";
-            return sortedBase + "&sort[0]=createdAt:asc";
-          })()}
-          mobileTable={(data, selectionProps) => (
-            <MobileTable
-              data={data}
-              enableSelection={selectionProps?.enableSelection}
-              selectedIds={selectionProps?.selectedIds}
-              onSelectionChange={selectionProps?.onSelectionChange}
-            />
-          )}
-          _removeActions
-          enableSelection
-          getRowId={(row: Product) => row.id}
-          bulkOptions={bulkOptions}
-          onBulkAction={handleBulkAction}
-        />
-      ) : (
-        <div>
-          {buildingIndex && (
-            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-              در حال محاسبه مرتب‌سازی سراسری؛ لطفاً صبر کنید…
-            </div>
-          )}
-          <SuperAdminTable
-            columns={columns}
-            data={customPageData || []}
-            loading={buildingIndex || pageLoading || customPageData === null}
-            mobileTable={(data, selectionProps) => (
-              <MobileTable
-                data={data as Product[]}
-                enableSelection={selectionProps?.enableSelection}
-                selectedIds={selectionProps?.selectedIds}
-                onSelectionChange={selectionProps?.onSelectionChange}
-              />
-            )}
-            _removeActions
-            enableSelection
-            getRowId={(row: Product) => row.id}
-            bulkOptions={bulkOptions}
-            onBulkAction={handleBulkAction}
+      <SuperAdminTable
+        columns={columns}
+        filters={advancedFilters}
+        dataLoader={loadProducts}
+        dataLoaderKey={JSON.stringify({
+          removed: isRecycleBinOpen,
+          search: debouncedSearchQuery,
+          sort,
+        })}
+        refreshOnVisibility={false}
+        onMetaChange={handleMetaChange}
+        mobileTable={(data, selectionProps) => (
+          <MobileTable
+            data={data}
+            enableSelection={selectionProps?.enableSelection}
+            selectedIds={selectionProps?.selectedIds}
+            onSelectionChange={selectionProps?.onSelectionChange}
           />
-        </div>
-      )}
+        )}
+        _removeActions
+        enableSelection
+        getRowId={(row: Product) => row.id}
+        bulkOptions={bulkOptions}
+        onBulkAction={handleBulkAction}
+      />
 
       {/* Confirmation dialog for permanent delete */}
       <ConfirmDialog
@@ -701,7 +571,10 @@ export default function ProductsPage() {
               await apiClient.delete(`/products/${product.id}`);
               deletedCount++;
             } catch (error) {
-              console.error(`Failed to permanently delete product ${product.id}:`, error);
+              console.error(
+                `Failed to permanently delete product ${product.id}:`,
+                error,
+              );
               failedIds.push(product.id);
             }
           }
@@ -719,7 +592,9 @@ export default function ProductsPage() {
           }
 
           if (failedIds.length > 0) {
-            toast.error(`خطا در حذف دائمی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`);
+            toast.error(
+              `خطا در حذف دائمی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`,
+            );
           }
 
           // Refresh table after deletions

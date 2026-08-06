@@ -1,0 +1,55 @@
+import { apiClient } from "@/services";
+
+export const ADMIN_DASHBOARD_SUMMARY_ENDPOINT =
+  "/admin/dashboard-summary/query";
+
+export type DashboardSummaryOrder = {
+  id: number;
+  attributes: {
+    Status: string | null;
+    Date: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+    user: {
+      data: {
+        id: number;
+        attributes: {
+          user_info: {
+            data: {
+              id: number;
+              attributes: { FirstName: string | null; LastName: string | null };
+            } | null;
+          };
+        };
+      } | null;
+    };
+    contract: {
+      data: {
+        id: number;
+        attributes: { Amount: number };
+      } | null;
+    };
+  };
+};
+
+export type AdminDashboardSummary = {
+  metrics: {
+    ordersTotal: number;
+    doneOrdersTotal: number;
+    activeProductsTotal: number;
+    customerAccountsTotal: number | null;
+  };
+  latestOrders: DashboardSummaryOrder[];
+  latestOrdersAmount: number;
+};
+
+export async function getAdminDashboardSummary(
+  signal?: AbortSignal,
+): Promise<AdminDashboardSummary> {
+  const response = await apiClient.post<AdminDashboardSummary>(
+    ADMIN_DASHBOARD_SUMMARY_ENDPOINT,
+    {},
+    { signal, retries: 0, timeout: 20_000 },
+  );
+  return (response as unknown as { data: AdminDashboardSummary }).data;
+}

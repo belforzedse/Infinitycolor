@@ -22,6 +22,8 @@ type Props = {
   isFilterOpen: boolean;
   options: AdvancedFilterField[];
   setFilterIsOpen: (isFilterOpen: boolean) => void;
+  filters?: AdvancedFilterItem[];
+  onFiltersChange?: (filters: AdvancedFilterItem[]) => void;
 };
 
 const EMPTY_FILTER: AdvancedFilterItem = {
@@ -46,20 +48,37 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
   isFilterOpen,
   setFilterIsOpen,
   options,
+  filters,
+  onFiltersChange,
 }: Props) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(false);
 
-  const [filter, setFilter] = useQueryState<AdvancedFilterItem[]>("filter", {
-    defaultValue: [],
-    parse: parseAdvancedFiltersParam,
-    serialize: serializeAdvancedFiltersParam,
-  });
+  const [urlFilters, setUrlFilters] = useQueryState<AdvancedFilterItem[]>(
+    "filter",
+    {
+      defaultValue: [],
+      parse: parseAdvancedFiltersParam,
+      serialize: serializeAdvancedFiltersParam,
+    },
+  );
+  const filter = filters ?? urlFilters;
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
   const [draft, setDraft] = useState<AdvancedFilterItem[]>(filter);
 
-  const validDraft = useMemo(() => sanitizeAdvancedFilters(draft, options), [draft, options]);
+  const commitFilters = async (next: AdvancedFilterItem[]) => {
+    if (onFiltersChange) {
+      onFiltersChange(next);
+    } else {
+      await setUrlFilters(next);
+    }
+  };
+
+  const validDraft = useMemo(
+    () => sanitizeAdvancedFilters(draft, options),
+    [draft, options],
+  );
   const draftHasInvalidRows = draft.length !== validDraft.length;
   const activeFilters = useMemo(
     () =>
@@ -91,7 +110,10 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
     wasOpenRef.current = isFilterOpen;
   }, [filter, isFilterOpen]);
 
-  const updateDraftItem = (index: number, patch: Partial<AdvancedFilterItem>) => {
+  const updateDraftItem = (
+    index: number,
+    patch: Partial<AdvancedFilterItem>,
+  ) => {
     setDraft((prev) =>
       prev.map((item, itemIndex) => {
         if (itemIndex !== index) return item;
@@ -115,14 +137,14 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
 
   const applyFilters = async () => {
     if (draftHasInvalidRows) return;
-    await setFilter(validDraft);
+    await commitFilters(validDraft);
     await setPage("1");
     setFilterIsOpen(false);
   };
 
   const clearFilters = async () => {
     setDraft([]);
-    await setFilter([]);
+    await commitFilters([]);
     await setPage("1");
     setFilterIsOpen(false);
   };
@@ -139,7 +161,11 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
         aria-haspopup="dialog"
         aria-expanded={isFilterOpen}
         disabled={options.length === 0}
-        title={options.length === 0 ? "فیلتری برای این صفحه تعریف نشده است" : undefined}
+        title={
+          options.length === 0
+            ? "فیلتری برای این صفحه تعریف نشده است"
+            : undefined
+        }
       >
         <FilterIcon />
         <span className="text-foreground-primary">فیلتر پیشرفته</span>
@@ -159,7 +185,7 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
               className="flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700"
               onClick={async () => {
                 const next = filter.filter((candidate) => candidate !== item);
-                await setFilter(next);
+                await commitFilters(next);
                 await setPage("1");
               }}
               title="حذف فیلتر"
@@ -188,7 +214,9 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
           }}
         >
           <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-medium text-slate-800">فیلتر پیشرفته</span>
+            <span className="text-sm font-medium text-slate-800">
+              فیلتر پیشرفته
+            </span>
             <button
               type="button"
               className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-50"
@@ -207,11 +235,15 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
             )}
 
             {draft.map((item, index) => {
-              const selectedField = options.find((field) => field.id === item.field);
-              const operators = operatorsForField(selectedField).map((operator) => ({
-                id: operator,
-                title: OPERATOR_LABELS[operator] ?? operator,
-              }));
+              const selectedField = options.find(
+                (field) => field.id === item.field,
+              );
+              const operators = operatorsForField(selectedField).map(
+                (operator) => ({
+                  id: operator,
+                  title: OPERATOR_LABELS[operator] ?? operator,
+                }),
+              );
               const valueOptions = defaultOptionsForField(selectedField);
               const isNullOperator = NULL_OPERATORS.has(item.operator);
 
@@ -280,7 +312,9 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
                     type="button"
                     className="flex h-9 w-full items-center justify-center rounded-lg bg-white sm:w-9"
                     onClick={() => {
-                      setDraft((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+                      setDraft((prev) =>
+                        prev.filter((_, itemIndex) => itemIndex !== index),
+                      );
                     }}
                     aria-label="حذف فیلتر"
                   >
@@ -304,7 +338,9 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
               onClick={clearFilters}
             >
               <TrashIcon />
-              <span className="text-xs text-actions-primary">پاک کردن فیلترها</span>
+              <span className="text-xs text-actions-primary">
+                پاک کردن فیلترها
+              </span>
             </button>
 
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

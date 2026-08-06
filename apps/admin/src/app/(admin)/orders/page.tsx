@@ -6,7 +6,6 @@ import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useQueryState } from "nuqs";
 import { useDebouncedCallback } from "use-debounce";
-import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
 import { useAtom } from "jotai";
 import { refreshTable } from "@/components/SuperAdmin/Table";
 import toast from "react-hot-toast";
@@ -15,25 +14,24 @@ import {
   OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
 import { translateOrderStatus } from "@/utils/statusTranslations";
+import { listAdminOrders } from "@/services/super-admin/orders/list";
+import {
+  parseAdvancedFiltersParam,
+  serializeAdvancedFiltersParam,
+  type AdvancedFilterItem,
+} from "@/components/SuperAdmin/Table/advancedFilters";
 
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
 // the Manual order Type, so manual orders still appear in their status bucket too.
-const ORDER_TABS: { key: string; label: string; filter: string }[] = [
-  { key: "all", label: "همه", filter: "" },
-  {
-    key: "inprogress",
-    label: "در حال انجام",
-    filter:
-      "&filters[Status][$in][0]=Paying&filters[Status][$in][1]=Started&filters[Status][$in][2]=Shipment",
-  },
-  { key: "completed", label: "تکمیل شده", filter: "&filters[Status][$eq]=Done" },
-  {
-    key: "cancelled",
-    label: "لغو شده یا ناموفق",
-    filter: "&filters[Status][$in][0]=Returned&filters[Status][$in][1]=Cancelled",
-  },
-  { key: "manual", label: "سفارش‌های دستی", filter: "&filters[Type][$eq]=Manual" },
+type OrderTab = "all" | "inprogress" | "completed" | "cancelled" | "manual";
+
+const ORDER_TABS: { key: OrderTab; label: string }[] = [
+  { key: "all", label: "همه" },
+  { key: "inprogress", label: "در حال انجام" },
+  { key: "completed", label: "تکمیل شده" },
+  { key: "cancelled", label: "لغو شده یا ناموفق" },
+  { key: "manual", label: "سفارش‌های دستی" },
 ];
 
 // Bulk status changes offered on the orders list, using the 4-bucket labels.
@@ -44,13 +42,27 @@ const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
 ];
 
 export default function OrdersPage() {
-  useFreshDataOnPageLoad();
   const [, setRefresh] = useAtom(refreshTable);
-  const [activeTab, setActiveTab] = useState("all");
+  const [activeTab, setActiveTab] = useState<OrderTab>("all");
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
+    [],
+  );
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
+  const [, setLegacyUrlFilters] = useQueryState<AdvancedFilterItem[]>(
+    "filter",
+    {
+      defaultValue: [],
+      parse: parseAdvancedFiltersParam,
+      serialize: serializeAdvancedFiltersParam,
+    },
+  );
+
+  useEffect(() => {
+    void setLegacyUrlFilters(null);
+  }, [setLegacyUrlFilters]);
 
   const handleTabChange = useCallback(
-    (tabKey: string) => {
+    (tabKey: OrderTab) => {
       setActiveTab(tabKey);
       // Reset to the first page so a filtered result set never lands on an empty page.
       void setPage("1");
@@ -58,17 +70,16 @@ export default function OrdersPage() {
     [setPage],
   );
 
-  const tabFilter = useMemo(
-    () => ORDER_TABS.find((tab) => tab.key === activeTab)?.filter ?? "",
-    [activeTab],
+  const [sort, setSort] = useState<"last-edited" | "newest" | "oldest">(
+    "last-edited",
   );
-  const [sort, setSort] = useState<"last-edited" | "newest" | "oldest">("last-edited");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
 
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {
     setDebouncedSearchQuery(query);
+    void setPage("1");
   }, 500);
 
   // Trigger debounced search when searchQuery changes
@@ -100,9 +111,14 @@ export default function OrdersPage() {
       }
 
       if (actionId.startsWith("status-")) {
-        const statusKey = actionId.replace("status-", "") as OrderLifecycleStatus;
+        const statusKey = actionId.replace(
+          "status-",
+          "",
+        ) as OrderLifecycleStatus;
         try {
-          await Promise.all(selectedRows.map((row) => changeOrderStatus(row.id, statusKey)));
+          await Promise.all(
+            selectedRows.map((row) => changeOrderStatus(row.id, statusKey)),
+          );
           toast.success(
             `${selectedRows.length} سفارش به وضعیت «${translateOrderStatus(statusKey)}» منتقل شد.`,
           );
@@ -114,6 +130,38 @@ export default function OrdersPage() {
       }
     },
     [setRefresh],
+  );
+
+  const loadOrders = useCallback(
+    ({
+      page,
+      pageSize,
+      filters,
+      signal,
+    }: {
+      page: number;
+      pageSize: number;
+      filters: AdvancedFilterItem[];
+      signal: AbortSignal;
+    }) =>
+      listAdminOrders({
+        page,
+        pageSize,
+        filters,
+        signal,
+        tab: activeTab,
+        sort,
+        search: debouncedSearchQuery,
+      }),
+    [activeTab, debouncedSearchQuery, sort],
+  );
+
+  const handleFiltersChange = useCallback(
+    (next: AdvancedFilterItem[]) => {
+      setAdvancedFilters(next);
+      void setPage("1");
+    },
+    [setPage],
   );
 
   return (
@@ -129,7 +177,11 @@ export default function OrdersPage() {
         },
         { id: "[Description]", title: "توضیحات", type: "text" },
         { id: "[user][user_info][FirstName]", title: "نام", type: "text" },
-        { id: "[user][user_info][LastName]", title: "نام خانوادگی", type: "text" },
+        {
+          id: "[user][user_info][LastName]",
+          title: "نام خانوادگی",
+          type: "text",
+        },
         { id: "[user][phone]", title: "شماره تلفن", type: "text" },
         { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
       ]}
@@ -138,6 +190,8 @@ export default function OrdersPage() {
       addButtonPath="/orders/add"
       hasFilterButton
       hasPagination
+      filters={advancedFilters}
+      onFiltersChange={handleFiltersChange}
     >
       <div className="mb-3 flex flex-wrap gap-2" dir="rtl">
         {ORDER_TABS.map((tab) => {
@@ -164,7 +218,9 @@ export default function OrdersPage() {
           <select
             className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 text-sm sm:w-auto sm:min-w-40"
             value={sort}
-            onChange={(e) => setSort(e.target.value as "last-edited" | "newest" | "oldest")}
+            onChange={(e) =>
+              setSort(e.target.value as "last-edited" | "newest" | "oldest")
+            }
           >
             <option value="last-edited">آخرین ویرایش</option>
             <option value="newest">جدیدترین</option>
@@ -172,7 +228,9 @@ export default function OrdersPage() {
           </select>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-          <label className="text-sm text-neutral-600">جستجوی ایدی تراکنش اسنپ پی:</label>
+          <label className="text-sm text-neutral-600">
+            جستجوی ایدی تراکنش اسنپ پی:
+          </label>
           <div className="relative w-full sm:w-80">
             <input
               type="text"
@@ -213,24 +271,14 @@ export default function OrdersPage() {
         enableSelection
         bulkOptions={bulkOptions}
         onBulkAction={handleBulkAction}
-        url={(() => {
-          const sortQuery =
-            sort === "last-edited"
-              ? "updatedAt:desc"
-              : sort === "newest"
-                ? "createdAt:desc"
-                : "createdAt:asc";
-          const base = `/orders?sort[0]=${sortQuery}&populate[0]=user&populate[1]=contract&populate[2]=user.user_info&populate[3]=contract${tabFilter}`;
-
-          if (debouncedSearchQuery.trim()) {
-            return (
-              base +
-              `&filters[contract][external_id][$containsi]=${encodeURIComponent(debouncedSearchQuery.trim())}`
-            );
-          }
-
-          return base;
-        })()}
+        filters={advancedFilters}
+        dataLoader={loadOrders}
+        dataLoaderKey={JSON.stringify({
+          tab: activeTab,
+          sort,
+          search: debouncedSearchQuery,
+        })}
+        refreshOnVisibility={false}
         mobileTable={(data) => <MobileTable data={data} />}
       />
     </ContentWrapper>

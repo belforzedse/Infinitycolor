@@ -5,7 +5,10 @@ import { useMe } from "@/hooks/api/useMe";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import Link from "next/link";
 import { faNum } from "@/utils/faNum";
-import { DashboardMetric, useDashboardMetrics } from "@/hooks/useDashboardMetrics";
+import {
+  DashboardMetric,
+  useDashboardMetrics,
+} from "@/hooks/useDashboardMetrics";
 import { getOrderStatusMeta } from "@/utils/statusTranslations";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useRouter } from "next/navigation";
@@ -25,15 +28,21 @@ const statusToneBadge: Record<string, string> = {
 export default function SuperAdminPage() {
   const router = useRouter();
   const { data: me, isLoading, error } = useMe();
-  const { roleName } = useCurrentUser();
+  const { roleName, isLoading: roleLoading } = useCurrentUser();
   const showUserMetric = canSeeDashboardUserMetric(roleName);
   const {
     metrics,
     latestOrders,
-    latestRevenue,
+    latestOrdersAmount,
     loading: metricsLoading,
     error: metricsError,
-  } = useDashboardMetrics({ includeUserMetric: showUserMetric });
+  } = useDashboardMetrics({
+    enabled:
+      !roleLoading &&
+      Boolean(roleName) &&
+      roleName?.trim().toLowerCase() !== "editor",
+    includeUserMetric: showUserMetric,
+  });
 
   // Redirect editors to blog dashboard
   useEffect(() => {
@@ -55,21 +64,27 @@ export default function SuperAdminPage() {
     // Extract nested Strapi attributes
     const attributes = order?.attributes || {};
     const userAttributes = order?.attributes?.user?.data?.attributes || {};
-    const userInfoAttributes = userAttributes?.user_info?.data?.attributes || {};
-    const contractAttributes = order?.attributes?.contract?.data?.attributes || {};
+    const userInfoAttributes =
+      userAttributes?.user_info?.data?.attributes || {};
+    const contractAttributes =
+      order?.attributes?.contract?.data?.attributes || {};
 
     const firstName = userInfoAttributes?.FirstName || "";
     const lastName = userInfoAttributes?.LastName || "";
     const fullName = `${firstName} ${lastName}`.trim();
 
     const key =
-      order?.id ?? attributes?.OrderNumber ?? attributes?.createdAt ?? attributes?.updatedAt;
-    const time = new Date(
-      attributes?.updatedAt ?? attributes?.createdAt ?? Date.now(),
-    ).toLocaleTimeString("fa-IR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+      order?.id ??
+      attributes?.OrderNumber ??
+      attributes?.createdAt ??
+      attributes?.updatedAt;
+    const timestamp = attributes?.updatedAt ?? attributes?.createdAt;
+    const time = timestamp
+      ? new Date(timestamp).toLocaleTimeString("fa-IR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "—";
     const statusMeta = getOrderStatusMeta(attributes.Status);
     return {
       title: `سفارش #${order.id}`,
@@ -89,7 +104,9 @@ export default function SuperAdminPage() {
           {userFacingError}
         </p>
       )}
-      {isLoading && !error && <p className="text-sm text-neutral-500">در حال بارگذاری...</p>}
+      {isLoading && !error && (
+        <p className="text-sm text-neutral-500">در حال بارگذاری...</p>
+      )}
       {metricsError && (
         <p className="mt-3 text-sm text-red-500" dir="rtl">
           {metricsError}
@@ -98,7 +115,10 @@ export default function SuperAdminPage() {
 
       <section className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {(metricsLoading || !filteredMetrics
-          ? Array.from({ length: showUserMetric ? 4 : 3 }, () => null as DashboardMetric | null)
+          ? Array.from(
+              { length: showUserMetric ? 4 : 3 },
+              () => null as DashboardMetric | null,
+            )
           : filteredMetrics
         ).map((metric, index) => (
           <article
@@ -113,7 +133,9 @@ export default function SuperAdminPage() {
             <strong className="text-3xl font-semibold text-slate-900">
               {metric ? faNum(metric.value) : "\u00A0"}
             </strong>
-            <p className="text-sm text-slate-500">{metric?.helper ?? "\u00A0"}</p>
+            <p className="text-sm text-slate-500">
+              {metric?.helper ?? "\u00A0"}
+            </p>
           </article>
         ))}
       </section>
@@ -127,7 +149,10 @@ export default function SuperAdminPage() {
               href={action.href}
               className="flex items-center gap-2 rounded-2xl border border-infinity-primary-lighter/40 bg-white px-4 py-3 text-sm font-semibold text-infinity-primary transition hover:bg-infinity-primary-lighter/20"
             >
-              <span className="h-2 w-2 rounded-full bg-infinity-primary" aria-hidden />
+              <span
+                className="h-2 w-2 rounded-full bg-infinity-primary"
+                aria-hidden
+              />
               {action.label}
             </Link>
           ))}
@@ -136,13 +161,18 @@ export default function SuperAdminPage() {
 
       <section className="mt-6">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">سفارش‌های اخیر</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            سفارش‌های اخیر
+          </h2>
           {latestOrders?.length ? (
             <p className="text-sm text-slate-500">
-              جمع {faNum(latestRevenue ?? 0)} تومان · {faNum(latestOrders.length)} سفارش
+              جمع مبلغ سه سفارش اخیر: {faNum(latestOrdersAmount ?? 0)} تومان ·{" "}
+              {faNum(latestOrders.length)} سفارش
             </p>
           ) : metricsLoading ? (
-            <span className="text-sm text-slate-400">در حال دریافت داده‌ها…</span>
+            <span className="text-sm text-slate-400">
+              در حال دریافت داده‌ها…
+            </span>
           ) : (
             <span className="text-sm text-slate-400">هنوز سفارشی ثبت نشده</span>
           )}
@@ -155,7 +185,9 @@ export default function SuperAdminPage() {
                 className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white/80 px-4 py-4 shadow-sm"
               >
                 <div className="flex items-center justify-between">
-                  <strong className="text-base text-slate-900">{notification.title}</strong>
+                  <strong className="text-base text-slate-900">
+                    {notification.title}
+                  </strong>
                   <span
                     className={`rounded-full px-3 py-1 text-xs font-semibold ${notification.badge}`}
                   >
@@ -171,7 +203,9 @@ export default function SuperAdminPage() {
             ))
           ) : (
             <article className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-4 shadow-sm">
-              <p className="text-sm text-slate-500">اطلاعات سفارش‌ها هنوز در دسترس نیست.</p>
+              <p className="text-sm text-slate-500">
+                اطلاعات سفارش‌ها هنوز در دسترس نیست.
+              </p>
             </article>
           )}
         </div>
