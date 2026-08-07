@@ -41,6 +41,19 @@ export interface BlogPost {
   updatedAt: string;
 }
 
+export interface BlogCardPost {
+  id: number;
+  Title: string;
+  Slug: string;
+  Excerpt?: string;
+  ShortContent?: string;
+  FeaturedImage?: BlogPost["FeaturedImage"];
+  PublishedAt?: string;
+  createdAt: string;
+  blog_category?: Pick<BlogCategory, "id" | "Name" | "Title" | "Slug">;
+  blog_author?: Pick<BlogAuthor, "id" | "Name">;
+}
+
 export interface BlogCategory {
   id: number;
   Name?: string;
@@ -453,7 +466,53 @@ class BlogService {
     };
   }
 
+  private normalizeBlogCardPost(entry: any): BlogCardPost {
+    const post = this.normalizeBlogPost(entry);
+    return {
+      id: post.id,
+      Title: post.Title,
+      Slug: post.Slug,
+      Excerpt: post.Excerpt,
+      ShortContent: post.ShortContent,
+      FeaturedImage: post.FeaturedImage,
+      PublishedAt: post.PublishedAt,
+      createdAt: post.createdAt,
+      blog_category: post.blog_category
+        ? {
+            id: post.blog_category.id,
+            Name: post.blog_category.Name,
+            Title: post.blog_category.Title,
+            Slug: post.blog_category.Slug,
+          }
+        : undefined,
+      blog_author: post.blog_author
+        ? {
+            id: post.blog_author.id,
+            Name: post.blog_author.Name,
+          }
+        : undefined,
+    };
+  }
+
   // ==================== BLOG POSTS ====================
+
+  async getHomepageBlogPosts(): Promise<ApiResponse<BlogCardPost[]>> {
+    const response = await fetch(`${this.getBaseUrl()}/blog-posts/homepage`, {
+      headers: await this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch homepage blog posts");
+    }
+
+    const json = await response.json();
+    return {
+      data: Array.isArray(json.data)
+        ? json.data.map((item: any) => this.normalizeBlogCardPost(item))
+        : [],
+      meta: json.meta,
+    };
+  }
 
   // Get all published blog posts (public)
   async getBlogPosts(params: BlogListParams = {}): Promise<PaginatedResponse<BlogPost>> {

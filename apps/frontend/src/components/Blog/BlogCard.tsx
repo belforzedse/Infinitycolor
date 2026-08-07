@@ -6,11 +6,11 @@ import { Calendar, LayoutGrid } from "lucide-react";
 import BlurImage from "@/components/ui/BlurImage";
 import imageLoader from "@/utils/imageLoader";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
-import type { BlogPost } from "@/services/blog/blog.service";
+import type { BlogCardPost } from "@/services/blog/blog.service";
 import { resolveBlogAuthorDisplayName } from "@/utils/blogAuthorName";
 
 interface BlogCardProps {
-  post: BlogPost;
+  post: BlogCardPost;
   priority?: boolean;
   className?: string;
 }
