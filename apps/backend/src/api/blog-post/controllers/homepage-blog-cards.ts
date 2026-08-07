@@ -14,7 +14,7 @@ export function buildHomepageBlogCardQuery() {
         fields: ["url", "alternativeText", "width", "height", "formats"],
       },
       blog_category: {
-        fields: ["Name", "Title", "Slug"],
+        fields: ["Title", "Slug"],
       },
       blog_author: {
         fields: ["Name"],
@@ -39,7 +39,6 @@ function projectCategory(category: any) {
   if (!category) return undefined;
   return {
     id: category.id,
-    Name: category.Name,
     Title: category.Title,
     Slug: category.Slug,
   };
