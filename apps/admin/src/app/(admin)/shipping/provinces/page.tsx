@@ -30,7 +30,6 @@ export default function ShippingProvincesPage() {
         ]}
       >
         <SuperAdminTable
-          _removeActions
           columns={columns}
           url="/shipping-provinces"
           mobileTable={(data) => <MobileTable data={data} />}

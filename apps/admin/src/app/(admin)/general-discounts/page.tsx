@@ -43,7 +43,6 @@ export default function GeneralDiscountsPage() {
       hasPagination
     >
       <SuperAdminTable
-        _removeActions
         columns={columns}
         url={
           isRecycleBinOpen

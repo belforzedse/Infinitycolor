@@ -5,14 +5,19 @@ import SuperAdminTableCellActionButton from "@/components/SuperAdmin/Table/Cells
 import RemoveActionButton from "@/components/SuperAdmin/Table/Cells/RemoveActionButton";
 import SuperAdminTableCellSimplePrice from "@/components/SuperAdmin/Table/Cells/SimplePrice";
 import SuperAdminTableCellSwitch from "@/components/SuperAdmin/Table/Cells/Switch";
-import MobileTableRowBox from "@/components/SuperAdmin/Table/Mobile/Row/Box";
 import { apiClient } from "@/services";
+import Modal from "@/components/Kits/Modal";
 import { translatePluginRoleLabel } from "@/constants/roleLabels";
 import { rialToToman } from "@/utils/price";
 import type { ColumnDef, Row } from "@tanstack/react-table";
 import { useAtom } from "jotai";
 import { useState } from "react";
 import { toast } from "react-hot-toast";
+import {
+  ResourceList,
+  ResourceListItem,
+  StatusBadge,
+} from "@/components/admin";
 
 export type UserInfo = {
   id: number;
@@ -166,45 +171,56 @@ const ActionsCell = ({ row }: { row: Row<User> }) => {
         />
       </div>
 
-      {showPasswordModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="w-96 rounded-lg bg-white p-6">
-            <h2 className="text-lg mb-4 font-bold">تغییر رمز عبور</h2>
-            <input
-              type="password"
-              placeholder="رمز عبور جدید"
-              className="mb-4 w-full rounded border p-2"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+      {/* Was a hand-rolled `fixed inset-0` overlay with a fixed w-96 (384px)
+          panel — wider than an iPhone SE viewport — and no Escape handling,
+          focus trap or backdrop close. Kits/Modal provides all three. */}
+      <Modal
+        isOpen={showPasswordModal}
+        onClose={() => {
+          if (!isLoading) setShowPasswordModal(false);
+        }}
+        title="تغییر رمز عبور"
+        contentClassName="w-full max-w-sm"
+      >
+        <div className="flex flex-col gap-3" dir="rtl">
+          <input
+            type="password"
+            placeholder="رمز عبور جدید"
+            className="text-sm h-11 w-full rounded-lg border border-slate-200 px-3 md:h-10"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            disabled={isLoading}
+            autoComplete="new-password"
+          />
+          <input
+            type="password"
+            placeholder="تکرار رمز عبور"
+            className="text-sm h-11 w-full rounded-lg border border-slate-200 px-3 md:h-10"
+            value={retryPassword}
+            onChange={(e) => setRetryPassword(e.target.value)}
+            disabled={isLoading}
+            autoComplete="new-password"
+          />
+          <div className="mt-1 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              className="text-sm h-11 rounded-lg bg-slate-100 px-4 text-slate-700 disabled:opacity-50 md:h-10"
+              onClick={() => setShowPasswordModal(false)}
               disabled={isLoading}
-            />
-            <input
-              type="password"
-              placeholder="تکرار رمز عبور"
-              className="mb-4 w-full rounded border p-2"
-              value={retryPassword}
-              onChange={(e) => setRetryPassword(e.target.value)}
+              type="button"
+            >
+              انصراف
+            </button>
+            <button
+              className="text-sm h-11 rounded-lg bg-actions-primary px-4 text-white disabled:opacity-50 md:h-10"
+              onClick={handlePasswordUpdate}
               disabled={isLoading}
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                className="rounded bg-actions-primary px-4 py-2 text-white disabled:opacity-50"
-                onClick={handlePasswordUpdate}
-                disabled={isLoading}
-              >
-                {isLoading ? "در حال ذخیره..." : "ذخیره"}
-              </button>
-              <button
-                className="rounded bg-gray-200 px-4 py-2 disabled:opacity-50"
-                onClick={() => setShowPasswordModal(false)}
-                disabled={isLoading}
-              >
-                انصراف
-              </button>
-            </div>
+              type="button"
+            >
+              {isLoading ? "در حال ذخیره..." : "ذخیره"}
+            </button>
           </div>
         </div>
-      )}
+      </Modal>
     </>
   );
 };
@@ -262,52 +278,63 @@ type Props = {
   data: User[] | undefined;
 };
 
+/**
+ * Compact-width users list.
+ *
+ * The person's name is the anchor; phone and role become secondary. The old
+ * row put the phone number in the title slot and crammed name | role | a
+ * non-functional account-status Switch into one un-wrapped line, hidden behind
+ * an expand chevron.
+ */
 export const MobileTable = ({ data }: Props) => {
   return (
-    <div className="mt-2 flex flex-col gap-2">
+    <ResourceList className="mt-2">
       {data?.map((row) => {
-        const rowWithStringId: User = {
-          ...row,
-          id: String(row.id),
-        };
-        return (
-        <MobileTableRowBox
-          key={row.id}
-          columns={columns}
-          row={rowWithStringId}
-          header={
-            <div className="flex w-full items-center justify-between rounded-[4px] bg-stone-50 px-2 py-1">
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-neutral-400">
-                  {deriveFullName(row) || row.username || "-"}
-                </span>
-                <span className="text-xs text-neutral-400">|</span>
-                <span className="text-xs text-yellow-600">{getRoleLabel(row)}</span>
-                <span className="text-xs text-neutral-400">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-xs text-neutral-400">
-                    {row.IsActive ? "غیرفعال کردن حساب" : "فعال کردن حساب"}
-                  </span>
-                  <SuperAdminTableCellSwitch status={row.IsActive ? "active" : "inactive"} />
-                </div>
-              </div>
+        const rowWithStringId: User = { ...row, id: String(row.id) };
+        const fullName = deriveFullName(row);
+        const displayName = fullName || row.username || null;
+        const wallet = row.user_wallet?.Balance ?? 0;
 
-              <div className="text-xs flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1 text-slate-700">
-                <SuperAdminTableCellSimplePrice
-                  price={rialToToman(row.user_wallet?.Balance ?? 0)}
-                  inverse
-                />
-              </div>
-            </div>
-          }
-          headTitle={row.phone || "-"}
-          actions={<ActionsCell row={{ original: rowWithStringId } as Row<User>} />}
-        />
+        return (
+          <ResourceListItem
+            key={row.id}
+            href={`/users/edit/${row.id}`}
+            title={
+              <span className={displayName ? undefined : "text-neutral-400"}>
+                {displayName ?? "بدون نام"}
+              </span>
+            }
+            titleSuffix={row.phone ? <span dir="ltr">{row.phone}</span> : null}
+            badge={
+              <StatusBadge
+                label={
+                  row.blocked
+                    ? "مسدود"
+                    : row.IsActive
+                      ? "فعال"
+                      : "غیرفعال"
+                }
+                tone={
+                  row.blocked ? "danger" : row.IsActive ? "success" : "neutral"
+                }
+              />
+            }
+            value={
+              <SuperAdminTableCellSimplePrice price={rialToToman(wallet)} inverse />
+            }
+            valueCaption="موجودی کیف پول"
+            meta={[
+              getRoleLabel(row),
+              row.confirmed ? "تایید شده" : "تایید نشده",
+            ]}
+            actions={<ActionsCell row={{ original: rowWithStringId } as Row<User>} />}
+          />
         );
       })}
-    </div>
+    </ResourceList>
   );
 };
+
 const getRoleLabel = (user: User) => {
   if (user.user_role?.Title) return user.user_role.Title;
   return translatePluginRoleLabel(user.role?.name) || "-";

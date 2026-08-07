@@ -9,6 +9,8 @@ import { type OrderTimelineEvent } from "@/components/User/Orders/Detail/OrderTi
 import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import toast from "react-hot-toast";
+import { faNum } from "@/utils/faNum";
+import { ORDER_LOGS_QUERY } from "./orderLogsQuery";
 import { openPreInvoicePrintWindow } from "@/utils/preInvoiceTransfer";
 
 interface SuperAdminOrderSidebarProps {
@@ -58,7 +60,7 @@ export default function SuperAdminOrderSidebar({
       try {
         setLogsLoading(true);
         const res = await apiClient.get(
-          `/order-logs?filters[order][id][$eq]=${id}&sort[0]=createdAt:desc` as any,
+          ORDER_LOGS_QUERY(id) as any,
         );
         setOrderLogs(((res as any).data || []) as OrderLog[]);
       } catch (error) {
@@ -170,7 +172,7 @@ export default function SuperAdminOrderSidebar({
   };
 
   return (
-    <div className="sticky top-5 flex flex-col gap-3">
+    <div className="flex flex-col gap-3 md:sticky md:top-5">
       <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
         <div className="flex flex-col gap-2">
           <div className="flex flex-col">
@@ -179,51 +181,27 @@ export default function SuperAdminOrderSidebar({
             <span className="text-sm text-neutral-400">شماره فاکتور: 841649</span>
           </div>
 
-          <div className="flex w-full gap-2">
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (id) {
-                  try {
-                    window.open(`/orders/print/${id}`, "_blank", "noopener,noreferrer");
-                  } catch (error) {
-                    toast.error("خطا در باز کردن پنجره چاپ");
-                  }
-                } else {
-                  toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (id) {
+                try {
+                  window.open(`/orders/print/${id}`, "_blank", "noopener,noreferrer");
+                } catch {
+                  toast.error("خطا در باز کردن پنجره چاپ");
                 }
-              }}
-              className="flex flex-1 items-center justify-center gap-1 rounded-md bg-slate-100 py-1.5"
-              type="button"
-            >
-              <span className="text-sm text-neutral-500">دانلود فاکتور</span>
+              } else {
+                toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+              }
+            }}
+            className="flex h-11 w-full items-center justify-center gap-1 rounded-md bg-slate-100 md:h-10"
+            type="button"
+          >
+            <span className="text-sm text-neutral-500">چاپ فاکتور</span>
 
-              <DownloadIcon />
-            </button>
-
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (id) {
-                  try {
-                    window.open(`/orders/print/${id}`, "_blank", "noopener,noreferrer");
-                  } catch (error) {
-                    toast.error("خطا در باز کردن پنجره چاپ");
-                  }
-                } else {
-                  toast.error("لطفا ابتدا سفارش را ذخیره کنید");
-                }
-              }}
-              className="flex flex-1 items-center justify-center gap-1 rounded-md bg-slate-100 py-1.5"
-              type="button"
-            >
-              <span className="text-sm text-neutral-500">پرینت فاکتور</span>
-
-              <PrintIcon />
-            </button>
-          </div>
+            <PrintIcon />
+          </button>
 
           {/* Anipo Barcode Button - Full Width */}
           <div className="mt-2 flex w-full">
@@ -371,34 +349,6 @@ export default function SuperAdminOrderSidebar({
         loading={isGenerating}
       />
     </div>
-  );
-}
-
-function DownloadIcon() {
-  return (
-    <svg width="21" height="21" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path
-        d="M10.2502 14.6667V3"
-        stroke="#64748B"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M17.75 14.6667C17.75 16.5075 16.2575 18 14.4167 18H6.08333C4.2425 18 2.75 16.5075 2.75 14.6667"
-        stroke="#64748B"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M14.4167 10.5L10.2492 14.6675L6.08252 10.5"
-        stroke="#64748B"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }
 

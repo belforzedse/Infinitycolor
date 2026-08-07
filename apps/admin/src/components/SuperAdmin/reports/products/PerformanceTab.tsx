@@ -273,14 +273,13 @@ export default function PerformanceTab({
 
       <div className="rounded-2xl bg-white p-2 md:p-4">
         <SuperAdminTable<ProductPerformanceRow, unknown>
-          _removeActions
           columns={columns}
           url={url}
           getRowId={(r) => String(r.productVariationId ?? r.productSKU)}
         />
       </div>
 
-      <SuperAdminPagination currentPage={Number(page)} totalPages={1} onPageChange={() => {}} />
+      <SuperAdminPagination />
 
       {drawerProductId !== null && (
         <ProductDrawer

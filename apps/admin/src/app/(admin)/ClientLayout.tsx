@@ -13,34 +13,42 @@ import { canRoleAccessPath, getRoleAdminLandingPath } from "@/constants/roleAcce
 import clsx from "clsx";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 
-type AdminViewport = "mobile" | "tablet" | "desktop";
-
-function useAdminViewport(): AdminViewport | null {
-  const [viewport, setViewport] = useState<AdminViewport | null>(null);
+/**
+ * Layout is expressed in CSS (see ResponsiveAdminShell); this hook exists only
+ * for the two things CSS genuinely cannot do: mounting the mobile drawer (a
+ * focus-trapping headless-ui Dialog that must not exist at desktop widths) and
+ * seeding the tablet default-collapsed sidebar. It never gates rendering, so
+ * the shell paints on the first pass at every width.
+ */
+function useAdminViewportBehavior() {
+  const [state, setState] = useState({
+    isMobile: false,
+    isTablet: false,
+    ready: false,
+  });
 
   useEffect(() => {
-    const tabletQuery = window.matchMedia("(min-width: 768px)");
-    const desktopQuery = window.matchMedia("(min-width: 1024px)");
-    const updateViewport = () => {
-      setViewport(
-        desktopQuery.matches
-          ? "desktop"
-          : tabletQuery.matches
-            ? "tablet"
-            : "mobile",
-      );
-    };
+    const mobileQuery = window.matchMedia("(max-width: 767px)");
+    const tabletQuery = window.matchMedia(
+      "(min-width: 768px) and (max-width: 1023px)",
+    );
+    const update = () =>
+      setState({
+        isMobile: mobileQuery.matches,
+        isTablet: tabletQuery.matches,
+        ready: true,
+      });
 
-    updateViewport();
-    tabletQuery.addEventListener("change", updateViewport);
-    desktopQuery.addEventListener("change", updateViewport);
+    update();
+    mobileQuery.addEventListener("change", update);
+    tabletQuery.addEventListener("change", update);
     return () => {
-      tabletQuery.removeEventListener("change", updateViewport);
-      desktopQuery.removeEventListener("change", updateViewport);
+      mobileQuery.removeEventListener("change", update);
+      tabletQuery.removeEventListener("change", update);
     };
   }, []);
 
-  return viewport;
+  return state;
 }
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
@@ -51,7 +59,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const setCurrentUser = useSetAtom(currentUserAtom);
   const setUserLoading = useSetAtom(userLoadingAtom);
   const currentUser = useAtomValue(currentUserAtom);
-  const viewport = useAdminViewport();
   const hasRunRef = useRef(false);
   const lastCheckRef = useRef<number>(0);
   const isCheckingRef = useRef(false);
@@ -235,7 +242,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     }
   }, [currentUser?.roleName, isAuthorized, roleBlocked, router]);
 
-  if (isLoading || !viewport) {
+  if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-neutral-50">
         <div
@@ -258,9 +265,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   return (
     <>
       <Suspense fallback={<div>Loading...</div>}>
-        <ResponsiveAdminShell viewport={viewport}>
-          {children}
-        </ResponsiveAdminShell>
+        <ResponsiveAdminShell>{children}</ResponsiveAdminShell>
       </Suspense>
       <div className="[&_button]:!left-4 [&_button]:!right-auto">
         <ScrollToTop />
@@ -271,18 +276,23 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
 export function ResponsiveAdminShell({
   children,
-  viewport,
 }: {
   children: React.ReactNode;
-  viewport: AdminViewport;
 }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
-    viewport === "tablet",
-  );
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const isMobile = viewport === "mobile";
-  const isTablet = viewport === "tablet";
+  const { isMobile, isTablet, ready } = useAdminViewportBehavior();
+
+  // Tablets start with the sidebar collapsed. Seeded once the viewport is
+  // known rather than gating the first paint on it; the width transition is
+  // suppressed until then so this never reads as an animation.
+  const hasSeededCollapse = useRef(false);
+  useEffect(() => {
+    if (!ready || hasSeededCollapse.current) return;
+    hasSeededCollapse.current = true;
+    if (isTablet) setIsSidebarCollapsed(true);
+  }, [ready, isTablet]);
 
   // Handle click outside to collapse sidebar on tablets
   useEffect(() => {
@@ -307,70 +317,34 @@ export function ResponsiveAdminShell({
   }, [isSidebarCollapsed, isTablet]);
 
   return (
-    <div
-      className={clsx(
-        "min-h-screen bg-neutral-50",
-        isMobile && "p-4",
-        isTablet && "flex gap-3 pl-4 md:pl-6",
-        viewport === "desktop" && "flex gap-5 pl-6 lg:pl-10",
-      )}
-    >
+    <div className="min-h-screen bg-neutral-50 p-4 md:flex md:gap-3 md:p-0 md:pl-6 lg:gap-5 lg:pl-10">
       <div
         key="desktop-sidebar"
         ref={sidebarRef}
         className={clsx(
-          "sticky top-0 z-10 h-screen flex-shrink-0 overflow-hidden transition-all duration-300",
-          isMobile && "hidden",
-          !isMobile && isSidebarCollapsed && "w-[80px]",
-          isTablet && !isSidebarCollapsed && "w-[288px]",
-          viewport === "desktop" &&
-            !isSidebarCollapsed &&
-            "w-[288px] xl:w-[304px]",
+          "sticky top-0 z-10 hidden h-screen flex-shrink-0 overflow-hidden md:block",
+          ready && "transition-all duration-300",
+          isSidebarCollapsed ? "md:w-[80px]" : "md:w-[288px] xl:w-[304px]",
         )}
       >
-        {!isMobile && (
-          <Sidebar
-            isOpen={true}
-            onClose={() => {}}
-            isCollapsed={isSidebarCollapsed}
-            onToggleCollapse={() =>
-              setIsSidebarCollapsed(!isSidebarCollapsed)
-            }
-          />
-        )}
+        <Sidebar
+          isOpen={true}
+          onClose={() => {}}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        />
       </div>
       <div
         key="page-content"
-        className={clsx(
-          "w-full",
-          isMobile && "flex flex-col gap-4",
-          !isMobile && "flex min-w-0 flex-1 flex-col overflow-visible p-4",
-          isTablet && "gap-3",
-          viewport === "desktop" && "gap-4 lg:gap-7",
-        )}
+        className="flex w-full flex-col gap-4 md:min-w-0 md:flex-1 md:gap-3 md:overflow-visible md:p-4 lg:gap-7"
       >
-        <div
-          className={clsx(
-            "w-full",
-            isMobile && "flex flex-col gap-4",
-            isTablet &&
-              "mx-auto min-w-0 max-w-screen-3xl space-y-3",
-            viewport === "desktop" &&
-              "mx-auto min-w-0 max-w-screen-3xl space-y-4 lg:space-y-7",
-          )}
-        >
-          <Header
-            onMenuClick={
-              isMobile ? () => setIsSidebarOpen(!isSidebarOpen) : () => {}
-            }
-          />
+        <div className="flex w-full flex-col gap-4 md:mx-auto md:min-w-0 md:max-w-screen-3xl md:gap-3 lg:gap-7">
+          <Header onMenuClick={() => setIsSidebarOpen(!isSidebarOpen)} />
           {children}
         </div>
       </div>
-      <div
-        key="mobile-sidebar"
-        className={clsx(!isMobile && "hidden")}
-      >
+      {/* Focus-trapping drawer: mounted only at phone widths. */}
+      <div key="mobile-sidebar" className={clsx(!isMobile && "hidden")}>
         {isMobile && (
           <Sidebar
             isOpen={isSidebarOpen}

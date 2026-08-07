@@ -16,13 +16,29 @@ export const FOUNDER_HIDDEN_PARENT_IDS = new Set<string>([
   "users",
   "settings",
   "payment-methods",
-  "carts",
+]);
+
+/**
+ * Sales-hub children hidden from Founders. Carts, traffic and the staff
+ * activity log were all Superadmin-only before the hub existed; nesting them
+ * under /sales must not widen who can see them.
+ */
+export const FOUNDER_HIDDEN_CHILD_IDS = new Set<string>([
+  "sales-traffic",
+  "sales-carts",
+  "sales-liquidity",
+  "sales-gateways",
 ]);
 
 /**
  * Route prefixes a Founder must NOT open (even by typing the URL).
- * Note: `/reports/product-sales` is intentionally NOT here — it is the
- * single sales report Founders are allowed to view under «گزارشات فروش».
+ *
+ * The legacy `/reports/*` and `/carts` entries are kept alongside their
+ * `/sales/*` replacements: `next.config.ts` redirects the old paths, and the
+ * guard evaluates the requested path before the redirect resolves.
+ *
+ * Note: `/sales/products` is intentionally NOT here — it is the single sales
+ * report Founders are allowed to view under «گزارشات فروش».
  */
 export const FOUNDER_FORBIDDEN_PREFIXES: string[] = [
   "/customization",
@@ -39,8 +55,15 @@ export const FOUNDER_FORBIDDEN_PREFIXES: string[] = [
   "/products/gif-promo",
   "/products/homepage-custom-section",
   "/shipping/provinces",
+  "/sales/traffic",
+  "/sales/carts",
+  "/sales/liquidity",
+  "/sales/gateways",
+  // Legacy paths, retained so bookmarks stay blocked before redirecting.
   "/reports/traffic",
   "/reports/admin-activity",
+  "/reports/liquidity",
+  "/reports/gateway-liquidity",
 ];
 
 export const STORE_MANAGER_HIDDEN_PARENT_IDS = new Set<string>([
@@ -50,9 +73,8 @@ export const STORE_MANAGER_HIDDEN_PARENT_IDS = new Set<string>([
   "stories",
   "users",
   "settings",
-  "reports",
+  "sales",
   "payment-methods",
-  "carts",
 ]);
 
 export const STORE_MANAGER_HIDDEN_CHILD_IDS = new Set<string>([
@@ -61,7 +83,6 @@ export const STORE_MANAGER_HIDDEN_CHILD_IDS = new Set<string>([
   "homepage-custom-section",
   "shipping-provinces",
   "shipping-cities",
-  "admin-activity",
 ]);
 
 export const STORE_MANAGER_FORBIDDEN_PREFIXES: string[] = [
@@ -71,15 +92,19 @@ export const STORE_MANAGER_FORBIDDEN_PREFIXES: string[] = [
   "/stories",
   "/users",
   "/settings",
-  "/reports",
+  // Denies the whole Sales hub, mirroring the previous "/reports" + "/carts"
+  // denial. The staff activity log moved under /settings, already denied here.
+  "/sales",
   "/payment-methods",
-  "/carts",
   "/purgeall",
   "/orders/add",
   "/products/homepage",
   "/products/gif-promo",
   "/products/homepage-custom-section",
   "/shipping/provinces",
+  // Legacy paths, retained so bookmarks stay blocked before redirecting.
+  "/reports",
+  "/carts",
 ];
 
 export const EDITOR_ALLOWED_PREFIXES: string[] = ["/blog"];

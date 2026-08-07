@@ -4,6 +4,7 @@ import {
   STORE_MANAGER_HIDDEN_CHILD_IDS,
   STORE_MANAGER_HIDDEN_PARENT_IDS,
 } from "@/constants/roleAccess";
+import { SALES_NAV_ITEMS, getSalesNavForRole } from "@/constants/salesNav";
 import ProductIcon from "@/components/SuperAdmin/Layout/Icons/ProductIcon";
 import OrdersIcon from "@/components/SuperAdmin/Layout/Icons/OrdersIcon";
 import UsersIcon from "@/components/SuperAdmin/Layout/Icons/UsersIcon";
@@ -246,13 +247,6 @@ const superAdminSidebar: SidebarItem[] = [
     children: [],
   },
   {
-    id: "carts",
-    label: "سبد های خرید",
-    href: "/carts",
-    icon: <CartIcon />,
-    children: [],
-  },
-  {
     id: "payment-methods",
     label: "روش های پرداخت",
     href: "/payment-methods",
@@ -315,46 +309,17 @@ const superAdminSidebar: SidebarItem[] = [
     children: [],
   },
   {
-    id: "reports",
-    label: "گزارشات و تحلیل ها",
+    id: "sales",
+    label: "فروش",
+    href: "/sales",
     icon: <ChartIcon />,
-    children: [
-      {
-        id: "traffic-analytics",
-        label: "تحلیل ترافیک",
-        href: "/reports/traffic",
-      },
-      {
-        id: "product-sales",
-        label: " فروش هر محصول",
-        href: "/reports/product-sales",
-      },
-      {
-        id: "sales-breakdown",
-        label: "فروش بر اساس وضعیت/دسته/مشتری",
-        href: "/reports/sales",
-      },
-      {
-        id: "overview",
-        label: "نمای کلی فروش",
-        href: "/reports/overview",
-      },
-      {
-        id: "funnel",
-        label: "قیف فروش",
-        href: "/reports/funnel",
-      },
-      {
-        id: "geography",
-        label: "گزارش جغرافیایی فروش",
-        href: "/reports/geography",
-      },
-      {
-        id: "admin-activity",
-        label: "گزارش فعالیت پشتیبانان",
-        href: "/reports/admin-activity",
-      },
-    ],
+    // Children come from the same list the in-page sub-navigation uses, so the
+    // two cannot drift apart.
+    children: SALES_NAV_ITEMS.map(({ id, label, href }) => ({
+      id,
+      label,
+      href,
+    })),
   },
   {
     id: "settings",
@@ -366,6 +331,11 @@ const superAdminSidebar: SidebarItem[] = [
         id: "settings-general",
         label: "تنظیمات عمومی",
         href: "/settings/general",
+      },
+      {
+        id: "settings-activity",
+        label: "گزارش فعالیت پشتیبانان",
+        href: "/settings/activity",
       },
     ],
   },
@@ -429,30 +399,27 @@ export const getSidebarItemsForRole = (roleName?: string | null): SidebarItem[] 
     return superAdminSidebar;
   }
 
-  // Founder: operational admin. Keeps everything except the restricted parents, and the
-  // reports menu collapses to «گزارشات فروش» with only the sales-report children Founders
-  // are allowed to view (product-sales, sales-breakdown, overview, funnel, geography —
-  // matching PRODUCT_REPORT_ROLES on the backend; no traffic or admin-activity reports).
+  // Founder: operational admin. Keeps everything except the restricted parents.
+  // The Sales hub narrows to «گزارشات فروش» with only the sales reports Founders
+  // may view (matching PRODUCT_REPORT_ROLES on the backend — no traffic,
+  // liquidity, carts or staff-activity reports). The child list is derived from
+  // getSalesNavForRole rather than written out a second time here, which is how
+  // the old inline copy silently diverged from the real permission rules.
   if (normalizedRole === "founder") {
     return superAdminSidebar
       .filter((item) => !FOUNDER_HIDDEN_PARENT_IDS.has(item.id))
       .map((item) => {
-        if (item.id === "reports") {
+        if (item.id === "sales") {
           return {
-            id: "reports",
+            id: "sales",
             label: "گزارشات فروش",
+            href: "/sales",
             icon: <ChartIcon />,
-            children: [
-              { id: "product-sales", label: " فروش هر محصول", href: "/reports/product-sales" },
-              {
-                id: "sales-breakdown",
-                label: "فروش بر اساس وضعیت/دسته/مشتری",
-                href: "/reports/sales",
-              },
-              { id: "overview", label: "نمای کلی فروش", href: "/reports/overview" },
-              { id: "funnel", label: "قیف فروش", href: "/reports/funnel" },
-              { id: "geography", label: "گزارش جغرافیایی فروش", href: "/reports/geography" },
-            ],
+            children: getSalesNavForRole(roleName).map(({ id, label, href }) => ({
+              id,
+              label,
+              href,
+            })),
           };
         }
         return cloneWithFilteredChildren(item);

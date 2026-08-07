@@ -3,22 +3,20 @@
 import { cn } from "@/utils/tailwind";
 import ChevronRightIcon from "../Layout/Icons/ChevronRightIcon";
 import ChevronLeftIcon from "../Layout/Icons/ChevronLeftIcon";
-import { useEffect } from "react";
 import { useQueryState } from "nuqs";
 import usePageSizeQuery from "@/hooks/usePageSizeQuery";
 
 interface PaginationProps {
   className?: string;
-  currentPage: number;
-  totalPages: number;
-  onPageChange: (page: number) => void;
 }
 
-export default function SuperAdminPagination({
-  className,
-  currentPage,
-  onPageChange,
-}: PaginationProps) {
+/**
+ * Self-contained: the current page and the row total both live in nuqs URL
+ * state (`page`, `totalSize`), the latter written by SuperAdminTable. Callers
+ * used to mirror `page` into their own useState and hand it back as a prop,
+ * which meant four disconnected copies of the same value.
+ */
+export default function SuperAdminPagination({ className }: PaginationProps) {
   const [page, setPage] = useQueryState("page", { defaultValue: "1" });
   const [totalSize] = useQueryState("totalSize", {
     defaultValue: 0,
@@ -28,13 +26,10 @@ export default function SuperAdminPagination({
 
   const { pageSize: currentPageSize } = usePageSizeQuery();
   const totalPages = Math.max(1, Math.ceil(totalSize / +currentPageSize));
-
-  useEffect(() => {
-    const pageNumber = parseInt(page);
-    if (pageNumber !== currentPage) {
-      onPageChange(pageNumber);
-    }
-  }, [page, currentPage, onPageChange]);
+  const currentPage = Math.min(
+    Math.max(1, parseInt(page) || 1),
+    totalPages,
+  );
 
   const handlePageChange = async (newPage: number) => {
     await setPage(newPage.toString());
@@ -72,9 +67,10 @@ export default function SuperAdminPagination({
     <div className={cn("flex max-w-full items-center justify-center overflow-x-auto", className)}>
       <div className="flex min-w-max items-center gap-2">
         <button
-          className="shrink-0 rounded-3xl border border-slate-200 bg-white p-1 disabled:opacity-50"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-3xl border border-slate-200 bg-white disabled:opacity-50 md:h-9 md:w-9"
           onClick={() => handlePageChange(currentPage + 1)}
           disabled={currentPage === totalPages}
+          aria-label="صفحه بعد"
         >
           <ChevronRightIcon />
         </button>
@@ -84,9 +80,7 @@ export default function SuperAdminPagination({
               return (
                 <span
                   key={`ellipsis-${idx}`}
-                className={
-                    "text-xs flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-3xl border border-slate-200 bg-white text-slate-400"
-                  }
+                  className="text-xs flex h-11 w-11 shrink-0 select-none items-center justify-center rounded-3xl border border-slate-200 bg-white text-slate-400 md:h-9 md:w-9"
                 >
                   {item}
                 </span>
@@ -98,12 +92,13 @@ export default function SuperAdminPagination({
               <button
                 key={pageNumber}
                 className={cn(
-                  "text-xs flex h-8 w-8 shrink-0 items-center justify-center rounded-3xl border border-slate-200 bg-white text-slate-400",
+                  "text-xs flex h-11 w-11 shrink-0 items-center justify-center rounded-3xl border border-slate-200 bg-white text-slate-400 md:h-9 md:w-9",
                   currentPage === pageNumber
                     ? "bg-actions-primary text-white"
                     : "hover:bg-gray-100",
                 )}
                 onClick={() => handlePageChange(pageNumber)}
+                aria-current={currentPage === pageNumber ? "page" : undefined}
               >
                 {pageNumber}
               </button>
@@ -111,9 +106,10 @@ export default function SuperAdminPagination({
           })}
         </div>
         <button
-          className="shrink-0 rounded-3xl border border-slate-200 bg-white p-1 disabled:opacity-50"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-3xl border border-slate-200 bg-white disabled:opacity-50 md:h-9 md:w-9"
           onClick={() => handlePageChange(currentPage - 1)}
           disabled={currentPage === 1}
+          aria-label="صفحه قبل"
         >
           <ChevronLeftIcon />
         </button>

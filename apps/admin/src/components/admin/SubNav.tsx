@@ -1,0 +1,135 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { cn } from "@/utils/tailwind";
+import { FOCUS_RING } from "./tokens";
+
+export type SubNavItem = {
+  /** Stable key. For route-backed tabs this is usually the href. */
+  id: string;
+  label: string;
+  /** Route-backed tab. Omit for state-backed tabs and pass `onSelect`. */
+  href?: string;
+  /** Optional trailing count/indicator. */
+  badge?: React.ReactNode;
+};
+
+/**
+ * One secondary-navigation pattern for the whole admin. Replaces five separate
+ * tab implementations that each picked their own size, colour and interaction.
+ *
+ * Route-backed by default (pass `href`), because the app already keeps most
+ * section state in the URL and that survives refresh and back-navigation.
+ * State-backed usage is supported via `activeId` + `onSelect` for tabs that
+ * genuinely are not routes.
+ *
+ * On phones the strip scrolls horizontally rather than wrapping to three rows,
+ * and every tab clears a 44px touch target.
+ */
+export default function SubNav({
+  items,
+  activeId,
+  onSelect,
+  className,
+  ariaLabel = "بخش‌ها",
+}: {
+  items: SubNavItem[];
+  activeId?: string;
+  onSelect?: (id: string) => void;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  const pathname = usePathname();
+
+  if (items.length === 0) return null;
+
+  // Longest-prefix wins, so a hub landing (/sales) does not stay lit while a
+  // nested tab (/sales/breakdown) is open. Plain prefix matching would mark
+  // both active, which is how the old sidebar behaved.
+  // State-backed tab strips pass `activeId` and never consult the route.
+  const current = (pathname ?? "").replace(/\/$/, "");
+  const bestMatchId = items.reduce<{ id: string; length: number } | null>(
+    (best, item) => {
+      if (!item.href) return best;
+      const target = item.href.replace(/\/$/, "");
+      const matches = current === target || current.startsWith(`${target}/`);
+      if (!matches) return best;
+      return !best || target.length > best.length
+        ? { id: item.id, length: target.length }
+        : best;
+    },
+    null,
+  )?.id;
+
+  const isActive = (item: SubNavItem) =>
+    activeId !== undefined ? item.id === activeId : item.id === bestMatchId;
+
+  return (
+    <nav
+      aria-label={ariaLabel}
+      className={cn(
+        // Negative margin lets the strip bleed to the screen edge on phones so
+        // the last tab does not look clipped mid-scroll.
+        "-mx-4 overflow-x-auto scrollbar-hide md:mx-0",
+        "border-b border-slate-200",
+        className,
+      )}
+      dir="rtl"
+    >
+      <ul className="flex min-w-max items-stretch gap-1 px-4 md:min-w-0 md:flex-wrap md:px-0">
+        {items.map((item) => {
+          const active = isActive(item);
+          const content = (
+            <>
+              <span className="whitespace-nowrap">{item.label}</span>
+              {item.badge !== undefined && item.badge !== null && (
+                <span
+                  className={cn(
+                    "text-[11px] rounded-full px-1.5 py-0.5 font-medium",
+                    active
+                      ? "bg-infinity-primary/10 text-infinity-primary"
+                      : "bg-slate-100 text-slate-500",
+                  )}
+                >
+                  {item.badge}
+                </span>
+              )}
+            </>
+          );
+
+          const className = cn(
+            "text-sm flex min-h-[44px] items-center gap-2 border-b-2 px-3 font-medium transition-colors md:min-h-[40px]",
+            FOCUS_RING,
+            active
+              ? "border-infinity-primary text-infinity-primary"
+              : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700",
+          );
+
+          return (
+            <li key={item.id} className="flex">
+              {item.href && !onSelect ? (
+                <Link
+                  href={item.href}
+                  className={className}
+                  aria-current={active ? "page" : undefined}
+                >
+                  {content}
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSelect?.(item.id)}
+                  className={className}
+                  aria-current={active ? "true" : undefined}
+                >
+                  {content}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}

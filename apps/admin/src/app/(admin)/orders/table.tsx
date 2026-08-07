@@ -3,38 +3,48 @@ import SuperAdminTableCellFullDateTime from "@/components/SuperAdmin/Table/Cells
 import { priceFormatter } from "@/utils/price";
 import SuperAdminTableCellSimplePrice from "@/components/SuperAdmin/Table/Cells/SimplePrice";
 import type { ColumnDef } from "@tanstack/react-table";
-import { twMerge } from "tailwind-merge";
-import MobileTableRowBox from "@/components/SuperAdmin/Table/Mobile/Row/Box";
 import OrderRowActions from "@/components/SuperAdmin/Order/OrderRowActions";
-import { getOrderStatusMeta, translateOrderStatus } from "@/utils/statusTranslations";
+import { getOrderStatusMeta } from "@/utils/statusTranslations";
 import { formatFaRelativeDateTime } from "@/utils/formatFaRelativeDateTime";
-const getStatusClassName = (status?: string) => {
-  const tone = getOrderStatusMeta(status).tone;
-  switch (tone) {
-    case "success":
-      return "text-green-600";
-    case "warning":
-      return "text-amber-600";
-    case "danger":
-      return "text-red-600";
-    default:
-      return "text-blue-600";
-  }
-};
+import {
+  CopyableId,
+  ResourceList,
+  ResourceListItem,
+  StatusBadge,
+} from "@/components/admin";
+/**
+ * Buyer identity for an order row.
+ *
+ * Orders can legitimately have no person attached — manual orders created by
+ * staff, and historical imports. We label those honestly rather than inventing
+ * a customer, and fall back to the phone number when a name is missing but the
+ * account exists.
+ */
+export function getOrderBuyer(order: Order): {
+  name: string | null;
+  phone: string | null;
+  isManual: boolean;
+} {
+  const user = order?.attributes?.user?.data?.attributes;
+  const info = user?.user_info?.data?.attributes;
+  const name = `${info?.FirstName || ""} ${info?.LastName || ""}`.trim();
+  const phone = user?.Phone?.trim() || null;
+  const isManual = !order?.attributes?.contract?.data?.attributes?.Amount;
 
-const getStatusBgClassName = (status?: string) => {
-  const tone = getOrderStatusMeta(status).tone;
-  switch (tone) {
-    case "success":
-      return "bg-green-600";
-    case "warning":
-      return "bg-amber-600";
-    case "danger":
-      return "bg-red-600";
-    default:
-      return "bg-blue-600";
-  }
-};
+  return { name: name || null, phone, isManual };
+}
+
+/** The label to show as the row's primary title. */
+export function getOrderBuyerLabel(order: Order): {
+  label: string;
+  isPlaceholder: boolean;
+} {
+  const { name, phone, isManual } = getOrderBuyer(order);
+  if (name) return { label: name, isPlaceholder: false };
+  if (phone) return { label: phone, isPlaceholder: false };
+  if (isManual) return { label: "سفارش دستی", isPlaceholder: true };
+  return { label: "بدون مشتری", isPlaceholder: true };
+}
 
 export type Order = {
   id: string;
@@ -98,33 +108,36 @@ export const bulkPrintOrders = (selectedIds: string[]) => {
 
 export const columns: ColumnDef<Order>[] = [
   {
-    accessorKey: "id",
-    header: "سفارش",
+    accessorKey: "attributes.user.data.attributes.Phone",
+    header: "مشتری",
     cell: ({ row }) => {
+      const { label, isPlaceholder } = getOrderBuyerLabel(row.original);
       return (
         <span
-          className="text-sm text-foreground-primary"
-          data-testid="admin-order-row"
-          data-order-id={row.original.id}
-          data-order-status={row.original.attributes.Status}
+          className={
+            isPlaceholder
+              ? "text-sm text-neutral-400"
+              : "text-sm font-medium text-foreground-primary"
+          }
         >
-          #{row.original.id}
+          {label}
         </span>
       );
     },
   },
   {
-    accessorKey: "attributes.user.data.attributes.Phone",
-    header: "نام",
+    accessorKey: "id",
+    header: "سفارش",
     cell: ({ row }) => {
-      const firstName =
-        row.original?.attributes?.user?.data?.attributes?.user_info?.data?.attributes?.FirstName;
-      const lastName =
-        row.original?.attributes?.user?.data?.attributes?.user_info?.data?.attributes?.LastName;
-
-      const fullName = `${firstName || ""} ${lastName || ""}`;
-
-      return <span className="text-sm text-foreground-primary">{fullName.trim() || " - "}</span>;
+      return (
+        <span
+          data-testid="admin-order-row"
+          data-order-id={row.original.id}
+          data-order-status={row.original.attributes.Status}
+        >
+          <CopyableId value={row.original.id} label="کپی شماره سفارش" />
+        </span>
+      );
     },
   },
   {
@@ -150,17 +163,9 @@ export const columns: ColumnDef<Order>[] = [
     header: "وضعیت",
     cell: ({ row }) => {
       const status = row.original?.attributes?.Status;
+      const meta = getOrderStatusMeta(status);
 
-      return (
-        <div
-          className={twMerge(
-            "flex h-[29px] min-w-[92px] items-center justify-center rounded-md px-2",
-            getStatusBgClassName(status),
-          )}
-        >
-          <span className="text-xs text-white">{translateOrderStatus(status)}</span>
-        </div>
-      );
+      return <StatusBadge label={meta.label} tone={meta.tone} />;
     },
   },
   {
@@ -240,59 +245,85 @@ function DateAgo(props: { date: Date }) {
 
 type Props = {
   data: Order[] | undefined;
+  selectionProps?: {
+    enableSelection: boolean;
+    selectedIds: Set<string>;
+    onSelectionChange: (id: string, selected: boolean) => void;
+  };
 };
 
-export const MobileTable = ({ data }: Props) => {
+/**
+ * Compact-width orders list.
+ *
+ * The buyer is the title because that is how operators talk about an order;
+ * the order number stays immediately available and copyable underneath, since
+ * it is what they quote to customers and search by. This replaces a single
+ * unwrapped flex row that crammed phone | date | edited | status | barcode
+ * behind a 24px expand chevron and overflowed on any real phone.
+ */
+export const MobileTable = ({ data, selectionProps }: Props) => {
   if (!data) return null;
 
   return (
-    <div className="mt-2 flex flex-col gap-2">
-      {data.map((row) => (
-        <MobileTableRowBox
-          key={row.id}
-          columns={columns}
-          row={row}
-          header={
-            <div className="flex w-full items-center justify-between rounded-[4px] bg-stone-50 px-2 py-1">
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-neutral-400">
-                  {row?.attributes?.user?.data?.attributes?.Phone}
-                </span>
-                <span className="text-xs text-neutral-400">|</span>
-                <DateAgo date={new Date(row?.attributes?.Date)} />
-                <span className="text-xs text-neutral-400">|</span>
-                <span className="text-xs text-neutral-400">
-                  ویرایش: {formatFaRelativeDateTime(row?.attributes?.updatedAt)}
-                </span>
-                <span className="text-xs text-neutral-400">|</span>
-                <div className={twMerge("text-xs", getStatusClassName(row?.attributes?.Status))}>
-                  <span className="text-xs">
-                    {translateOrderStatus(row?.attributes?.Status)}
-                  </span>
-                </div>
-                {row?.attributes?.ShippingBarcode && (
-                  <>
-                    <span className="text-xs text-neutral-400">|</span>
-                    <span className="text-xs font-medium text-neutral-600">
-                      {row.attributes.ShippingBarcode}
-                    </span>
-                  </>
-                )}
-              </div>
+    <ResourceList className="mt-2">
+      {data.map((row) => {
+        const { label, isPlaceholder } = getOrderBuyerLabel(row);
+        const { phone } = getOrderBuyer(row);
+        const statusMeta = getOrderStatusMeta(row?.attributes?.Status);
+        const amount = row?.attributes?.contract?.data?.attributes?.Amount;
+        const barcode = row?.attributes?.ShippingBarcode;
 
-              <span className="text-xs text-neutral-800">
-                {row?.attributes?.contract?.data?.attributes?.Amount
-                  ? priceFormatter(row?.attributes?.contract?.data?.attributes?.Amount, " تومان")
-                  : "سفارش دستی"}
+        return (
+          <ResourceListItem
+            key={row.id}
+            href={`/orders/edit/${row.id}`}
+            title={
+              <span className={isPlaceholder ? "text-neutral-400" : undefined}>
+                {label}
               </span>
-            </div>
-          }
-          headTitle={"#" + row.id}
-          actions={
-            <OrderRowActions orderId={row.id} shippingBarcode={row.attributes.ShippingBarcode} />
-          }
-        />
-      ))}
-    </div>
+            }
+            titleSuffix={
+              <span
+                data-testid="admin-order-row"
+                data-order-id={row.id}
+                data-order-status={row.attributes.Status}
+              >
+                <CopyableId value={row.id} label="کپی شماره سفارش" />
+              </span>
+            }
+            badge={<StatusBadge label={statusMeta.label} tone={statusMeta.tone} />}
+            value={
+              amount ? priceFormatter(amount, " تومان") : "سفارش دستی"
+            }
+            meta={[
+              phone && !isPlaceholder ? phone : null,
+              <DateAgo key="date" date={new Date(row?.attributes?.Date)} />,
+              barcode ? `رهگیری: ${barcode}` : null,
+            ]}
+            footer={
+              <span>
+                آخرین ویرایش: {formatFaRelativeDateTime(row?.attributes?.updatedAt)}
+              </span>
+            }
+            selection={
+              selectionProps?.enableSelection
+                ? {
+                    checked: selectionProps.selectedIds.has(row.id),
+                    onChange: (checked) =>
+                      selectionProps.onSelectionChange(row.id, checked),
+                    label: `انتخاب سفارش ${row.id}`,
+                  }
+                : undefined
+            }
+            actions={
+              <OrderRowActions
+                orderId={row.id}
+                shippingBarcode={row.attributes.ShippingBarcode}
+              />
+            }
+          />
+        );
+      })}
+    </ResourceList>
   );
 };

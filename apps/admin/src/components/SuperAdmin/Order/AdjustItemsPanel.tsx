@@ -13,6 +13,8 @@ import {
 } from "@/services/super-admin/orders/adjustItems";
 import toast from "react-hot-toast";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
+import { priceFormatter } from "@/utils/price";
+import { faNum } from "@/utils/faNum";
 
 const ALLOWED_STATUSES = [
   "پرداخت شده",
@@ -269,10 +271,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm p-6 mb-6 border border-slate-200">
-      <h3 className="text-lg font-semibold mb-4 text-slate-900">
-        ویرایش اقلام سفارش
-      </h3>
+    <div>
 
       {isBlocked && !forceEdit ? (
         <div className="mb-4 rounded-md border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-900">
@@ -325,23 +324,32 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
             {order.items.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg"
+                className="flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 p-3 sm:flex-nowrap sm:gap-4"
               >
                 <img
                   src={item.image}
                   alt={item.productName}
-                  className="w-16 h-16 object-cover rounded"
+                  className="h-14 w-14 shrink-0 rounded object-cover sm:h-16 sm:w-16"
                 />
-                <div className="flex-1">
-                  <p className="font-medium text-slate-900">{item.productName}</p>
+                <div className="min-w-0 flex-1 basis-[60%]">
+                  <p className="min-w-0 break-words font-medium text-slate-900">
+                    {item.productName}
+                  </p>
                   <p className="text-sm text-slate-600">
-                    قیمت: {item.price.toLocaleString("fa-IR")} تومان
+                    قیمت: {priceFormatter(item.price, " تومان")}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-slate-700">تعداد:</label>
+                <div className="flex shrink-0 items-center gap-2">
+                  <label
+                    className="text-sm text-slate-700"
+                    htmlFor={`adjust-qty-${item.id}`}
+                  >
+                    تعداد:
+                  </label>
                   <input
+                    id={`adjust-qty-${item.id}`}
                     type="number"
+                    inputMode="numeric"
                     min={0}
                     max={item.quantity}
                     value={quantities[item.id]}
@@ -351,15 +359,15 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
                         parseInt(e.target.value) || 0
                       )
                     }
-                    className="w-20 px-3 py-1 border border-slate-300 rounded-md text-center"
+                    className="h-11 w-16 rounded-md border border-slate-300 px-2 text-center md:h-10"
                   />
-                  <span className="text-sm text-slate-500">
-                    / {item.quantity.toLocaleString("fa-IR")}
+                  <span className="text-sm shrink-0 text-slate-500">
+                    / {faNum(item.quantity)}
                   </span>
                 </div>
                 <button
                   onClick={() => handleQuantityChange(item.id, 0)}
-                  className="px-3 py-1 bg-red-100 text-red-700 rounded-md hover:bg-red-200 text-sm"
+                  className="text-sm h-11 shrink-0 rounded-md bg-red-100 px-3 text-red-700 hover:bg-red-200 md:h-10"
                 >
                   حذف
                 </button>

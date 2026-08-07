@@ -38,7 +38,6 @@ export default function SizeGuidePage() {
       ]}
     >
       <SuperAdminTable
-        _removeActions
         columns={columns}
         url={
           isRecycleBinOpen

@@ -7,7 +7,9 @@ import ArrowLeftIcon from "@/components/SuperAdmin/UpsertPage/Icons/ArrowLeftIco
 import EditIcon from "@/components/SuperAdmin/UpsertPage/Icons/EditIcon";
 
 export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
-  headTitle: "ویرایش سفارش",
+  // Empty: the page renders a DetailHeader with the buyer name and order
+  // number, so a second generic "ویرایش سفارش" title would only add chrome.
+  headTitle: "",
   addButton: {
     text: "افزودن سفارش  جدید",
     path: "/orders/add",

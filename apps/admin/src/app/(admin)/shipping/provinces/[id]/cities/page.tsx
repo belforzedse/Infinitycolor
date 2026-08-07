@@ -64,7 +64,6 @@ export default function ShippingCitiesPage() {
         }
       >
         <SuperAdminTable
-          _removeActions
           columns={columns}
           url={`/shipping-cities?filters[shipping_province][id][$eq]=${id}&populate=shipping_province`}
           mobileTable={(data) => <MobileTable data={data} />}

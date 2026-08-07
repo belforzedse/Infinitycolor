@@ -40,7 +40,8 @@ const fetchRoles = async (
 };
 
 export const config: UpsertPageConfigType<User> = {
-  headTitle: "ویرایش کاربر",
+  // Empty: the page renders a DetailHeader with the person name and phone.
+  headTitle: "",
   showTimestamp: false,
   isActiveBox: {
     key: "isActive",

@@ -27,6 +27,32 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    // The sales analytics moved from a "reports" sidebar group into the /sales
+    // workspace. Redirect server-side so existing bookmarks and any internal
+    // link we missed keep working; role guards still evaluate the requested
+    // path, and the legacy prefixes remain in roleAccess.ts for that reason.
+    return [
+      { source: "/reports", destination: "/sales", permanent: false },
+      { source: "/reports/overview", destination: "/sales", permanent: false },
+      { source: "/reports/sales", destination: "/sales/breakdown", permanent: false },
+      { source: "/reports/product-sales", destination: "/sales/products", permanent: false },
+      { source: "/reports/funnel", destination: "/sales/funnel", permanent: false },
+      { source: "/reports/geography", destination: "/sales/geography", permanent: false },
+      { source: "/reports/liquidity", destination: "/sales/liquidity", permanent: false },
+      { source: "/reports/gateway-liquidity", destination: "/sales/gateways", permanent: false },
+      { source: "/reports/traffic", destination: "/sales/traffic", permanent: false },
+      { source: "/carts", destination: "/sales/carts", permanent: false },
+      // The staff audit log is not sales; it belongs with the other
+      // administrative settings (already denied to Founder and Store manager).
+      { source: "/reports/admin-activity", destination: "/settings/activity", permanent: false },
+      {
+        source: "/reports/admin-activity/:id",
+        destination: "/settings/activity/:id",
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     const target = process.env.E2E_API_PROXY_TARGET?.trim().replace(/\/$/, "");
     if (!target) return [];

@@ -80,7 +80,6 @@ export default function CategoriesPage() {
         ]}
       >
         <SuperAdminTable
-          _removeActions
           columns={columns}
           className="w-full [&_tbody]:grid [&_tbody]:grid-cols-1 [&_tbody]:gap-5 sm:[&_tbody]:grid-cols-2 lg:[&_tbody]:grid-cols-3 [&_tbody_tr]:border-0 [&_tbody_tr]:bg-transparent [&_tbody_tr]:shadow-none [&_tbody_tr]:hover:bg-transparent [&_tbody_tr_td]:p-0 [&_thead]:hidden"
           url={`${ENDPOINTS.PRODUCT.CATEGORY}?populate[children]=*&populate[Image]=*&filters[parent][id][$null]=true`}

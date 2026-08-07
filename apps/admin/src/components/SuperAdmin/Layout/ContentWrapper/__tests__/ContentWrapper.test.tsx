@@ -13,23 +13,21 @@ jest.mock("@/components/SuperAdmin/Pagination", () => ({
   __esModule: true,
   default: () => <div data-testid="pagination" />,
 }));
-jest.mock("../Desktop", () => ({
+jest.mock("@/components/SuperAdmin/Pagination/PageSizeSelect", () => ({
   __esModule: true,
-  default: ({ children, renderBody }: any) => (
-    <div data-testid="desktop-layout">{renderBody ? children : null}</div>
-  ),
+  default: () => <div data-testid="page-size-select" />,
 }));
-jest.mock("../Tablet", () => ({
+jest.mock("../Button/RecycleBin", () => ({
   __esModule: true,
-  default: ({ children, renderBody }: any) => (
-    <div data-testid="tablet-layout">{renderBody ? children : null}</div>
-  ),
+  default: () => <button type="button">recycle</button>,
 }));
-jest.mock("../Mobile", () => ({
+jest.mock("../Button/Add", () => ({
   __esModule: true,
-  default: ({ children, renderBody }: any) => (
-    <div data-testid="mobile-layout">{renderBody ? children : null}</div>
-  ),
+  default: () => <button type="button">add</button>,
+}));
+jest.mock("../Button/Filter", () => ({
+  __esModule: true,
+  default: () => <button type="button">filter</button>,
 }));
 
 import ContentWrapper from "../index";

@@ -3,6 +3,7 @@
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import { MobileTable, columns, bulkPrintOrders, Order } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
+import { SubNav } from "@/components/admin";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useQueryState } from "nuqs";
 import { useDebouncedCallback } from "use-debounce";
@@ -193,25 +194,15 @@ export default function OrdersPage() {
       filters={advancedFilters}
       onFiltersChange={handleFiltersChange}
     >
-      <div className="mb-3 flex flex-wrap gap-2" dir="rtl">
-        {ORDER_TABS.map((tab) => {
-          const isActive = tab.key === activeTab;
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => handleTabChange(tab.key)}
-              className={
-                isActive
-                  ? "rounded-lg bg-actions-primary px-4 py-2 text-sm font-medium text-white"
-                  : "rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm text-neutral-600 transition-colors hover:bg-neutral-50"
-              }
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* Shared tab pattern: scrolls horizontally on phones instead of wrapping
+          to three rows, and every tab clears a 44px touch target. */}
+      <SubNav
+        className="mb-3"
+        ariaLabel="وضعیت سفارش‌ها"
+        items={ORDER_TABS.map((tab) => ({ id: tab.key, label: tab.label }))}
+        activeId={activeTab}
+        onSelect={(id) => handleTabChange(id as OrderTab)}
+      />
       <div className="mb-3 flex flex-col gap-3 rounded-2xl bg-white/70 p-3 md:flex-row md:flex-wrap md:items-center md:bg-transparent md:p-0">
         <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
           <label className="text-sm text-neutral-600">مرتب‌سازی:</label>
@@ -229,12 +220,12 @@ export default function OrdersPage() {
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
           <label className="text-sm text-neutral-600">
-            جستجوی ایدی تراکنش اسنپ پی:
+            جستجو:
           </label>
           <div className="relative w-full sm:w-80">
             <input
               type="text"
-              placeholder="جستجوی ایدی تراکنش اسنپ پی ..."
+              placeholder="شماره سفارش، نام مشتری، تلفن، کد رهگیری..."
               className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 pr-8 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -266,7 +257,6 @@ export default function OrdersPage() {
         </div>
       </div>
       <SuperAdminTable
-        _removeActions
         columns={columns}
         enableSelection
         bulkOptions={bulkOptions}
@@ -279,7 +269,18 @@ export default function OrdersPage() {
           search: debouncedSearchQuery,
         })}
         refreshOnVisibility={false}
-        mobileTable={(data) => <MobileTable data={data} />}
+        isFiltered={Boolean(debouncedSearchQuery) || advancedFilters.length > 0}
+        onClearFilters={() => {
+          setSearchQuery("");
+          setDebouncedSearchQuery("");
+          handleFiltersChange([]);
+        }}
+        // `selectionProps` must be threaded through: without it the mobile rows
+        // rendered an uncontrolled checkbox, so bulk print and bulk status
+        // changes silently operated on zero orders.
+        mobileTable={(data, selectionProps) => (
+          <MobileTable data={data} selectionProps={selectionProps} />
+        )}
       />
     </ContentWrapper>
   );

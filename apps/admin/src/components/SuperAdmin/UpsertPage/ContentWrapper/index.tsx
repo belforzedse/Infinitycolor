@@ -302,7 +302,9 @@ export default function UpsertPageContentWrapper<T extends { createdAt: Date; up
     return (
       <div className="mt-0 flex flex-col gap-2 md:mt-7 md:gap-4">
         <div className="flex items-center justify-between">
-          <span className="text-3xl text-foreground-primary">{config.headTitle}</span>
+          <span className="min-w-0 break-words text-xl text-foreground-primary md:text-2xl lg:text-3xl">
+            {config.headTitle}
+          </span>
           {config.addButton && (
             <AddButton text={config.addButton.text} path={config.addButton.path ?? "#"} />
           )}
@@ -341,12 +343,18 @@ export default function UpsertPageContentWrapper<T extends { createdAt: Date; up
 
   return (
     <div className="mt-0 flex flex-col gap-2 md:mt-7 md:gap-4">
-      <div className="flex items-center justify-between">
-        <span className="text-3xl text-foreground-primary">{config.headTitle}</span>
-        {config.addButton && (
-          <AddButton text={config.addButton.text} path={config.addButton.path ?? "#"} />
-        )}
-      </div>
+      {(config.headTitle || config.addButton) && (
+        <div className="flex items-center justify-between gap-3">
+          {/* Screens that render their own DetailHeader pass an empty headTitle
+              so the resource is not titled twice. */}
+          <span className="min-w-0 break-words text-xl text-foreground-primary md:text-2xl lg:text-3xl">
+            {config.headTitle}
+          </span>
+          {config.addButton && (
+            <AddButton text={config.addButton.text} path={config.addButton.path ?? "#"} />
+          )}
+        </div>
+      )}
       {formElement}
       <div className="mt-9 grid grid-cols-12">
         <div className="col-span-12 md:col-span-9">
