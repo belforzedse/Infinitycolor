@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import { RedisClient } from "../../..";
+import {
+  canonicalCustomerPhone,
+  customerPhoneAdvisoryKey,
+  customerPhoneStorageVariants,
+} from "../../../utils/customerPhoneIdentity";
 import { ROLE_NAMES, fetchRoleByName } from "../../../utils/roles";
 
 export const OTP_INVALID_MESSAGE = "کد وارد شده نامعتبر یا منقضی شده است. دوباره تلاش کنید.";
@@ -35,19 +40,11 @@ export function isAcceptedPhone(value: unknown): value is string {
 }
 
 export function normalizeOtpPhone(phone: string): string {
-  let normalizedPhone = phone.trim();
-  if (normalizedPhone.startsWith("0")) {
-    normalizedPhone = `+98${normalizedPhone.substring(1)}`;
-  }
-  if (!normalizedPhone.startsWith("+")) {
-    normalizedPhone = `+${normalizedPhone}`;
-  }
-  return normalizedPhone;
+  return canonicalCustomerPhone(phone) || phone.trim();
 }
 
 export function phoneStorageVariants(phone: string): [string, string] {
-  const international = normalizeOtpPhone(phone);
-  return [international, `0${international.slice(3)}`];
+  return customerPhoneStorageVariants(phone);
 }
 
 async function findUsersByPhone(phone: string, transacting?: any): Promise<any[]> {
@@ -166,10 +163,6 @@ export async function consumeOtpChallenge(challengeId: string, otp: string): Pro
   }
 }
 
-function advisoryKey(phone: string): string {
-  return crypto.createHash("sha256").update(phone, "utf8").digest().readBigInt64BE(0).toString();
-}
-
 interface OtpIdentityResolution {
   user: any;
   isNewUser: boolean;
@@ -199,7 +192,7 @@ async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<OtpIdent
       (strapi.db.connection as any)?.client?.config?.client || "",
     ).toLowerCase();
     if (databaseClient.includes("pg") || databaseClient.includes("postgres")) {
-      await trx.raw("select pg_advisory_xact_lock(?)", [advisoryKey(challenge.phone)]);
+      await trx.raw("select pg_advisory_xact_lock(?)", [customerPhoneAdvisoryKey(challenge.phone)]);
     }
 
     let user = await findUserByPhone(challenge.phone, trx);

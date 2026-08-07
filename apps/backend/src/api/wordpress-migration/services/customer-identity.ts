@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import {
+  canonicalCustomerPhone,
+  customerPhoneAdvisoryKey,
+  customerPhoneStorageVariants,
+} from "../../../utils/customerPhoneIdentity";
 
 export const USER_UID = "plugin::users-permissions.user";
 export const USER_INFO_UID = "api::local-user-info.local-user-info";
@@ -16,21 +21,8 @@ export class MigrationInputError extends Error {
   }
 }
 
-export function canonicalIranPhone(value: unknown): string | null {
-  let phone = String(value ?? "")
-    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
-    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
-    .replace(/[^\d+]/g, "");
-  if (phone.startsWith("0098")) phone = `+98${phone.slice(4)}`;
-  else if (phone.startsWith("98")) phone = `+${phone}`;
-  else if (phone.startsWith("09")) phone = `+98${phone.slice(1)}`;
-  else if (phone.startsWith("9")) phone = `+98${phone}`;
-  return /^\+989\d{9}$/.test(phone) ? phone : null;
-}
-
-export function phoneStorageVariants(phone: string): [string, string] {
-  return [phone, `0${phone.slice(3)}`];
-}
+export const canonicalIranPhone = canonicalCustomerPhone;
+export const phoneStorageVariants = customerPhoneStorageVariants;
 
 export function normalizedEmail(value: unknown): string | null {
   const email = String(value ?? "").trim().toLowerCase();
@@ -171,7 +163,7 @@ export async function reconcileCustomerIdentity(
   const sourceKey = input.kind === "registered" ? sourceCustomerId! : sourceKeyHash(phone);
   const locks = [
     advisoryKey(`woocommerce-identity:${sourceKind}:${sourceKey}`),
-    advisoryKey(`woocommerce-identity:phone:${phone}`),
+    customerPhoneAdvisoryKey(phone),
   ].sort();
   for (const lock of locks) await trx.raw("SELECT pg_advisory_xact_lock(?)", [lock]);
 
