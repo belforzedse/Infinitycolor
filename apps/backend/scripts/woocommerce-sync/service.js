@@ -533,6 +533,7 @@ class WooSyncService {
   }
 
   async identitySweep(token) {
+    if (this.config.identitySweepPages === 0) return { customers: 0, wallets: 0 };
     const control = await this.state.control();
     const sweep = async ({ sourceType, client, pathname, rowsFrom, revision }) => {
       const cursor = await this.state.cursor(`${sourceType}-sweep`);

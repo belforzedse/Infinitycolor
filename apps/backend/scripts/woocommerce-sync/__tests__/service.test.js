@@ -35,6 +35,7 @@ test("sync config defaults to hourly-only and enforces documented concurrency ca
     friday: false,
   });
   assert.equal(config.sourcePageConcurrency, 4);
+  assert.equal(config.identitySweepPages, 0);
   assert.deepEqual(config.concurrency, {
     products: 1,
     images: 4,
@@ -47,6 +48,23 @@ test("sync config defaults to hourly-only and enforces documented concurrency ca
   assert.throws(() => getSyncConfig({ ...baseEnv(), IMPORT_CONCURRENCY_VARIATIONS: "33" }), /between 1 and 32/);
   assert.throws(() => getSyncConfig({ ...baseEnv(), IMPORT_CONCURRENCY_VIDEOS: "3" }), /between 1 and 2/);
   assert.throws(() => getSyncConfig({ ...baseEnv(), WOOCOMMERCE_SYNC_SOURCE_PAGE_CONCURRENCY: "9" }), /between 1 and 8/);
+  assert.throws(() => getSyncConfig({ ...baseEnv(), WOOCOMMERCE_SYNC_IDENTITY_SWEEP_PAGES: "26" }), /between 0 and 25/);
+});
+
+test("historical customer and wallet sweeps require explicit opt-in", async () => {
+  const config = getSyncConfig(baseEnv());
+  const service = Object.create(WooSyncService.prototype);
+  service.config = config;
+  Object.defineProperty(service, "state", {
+    get() { throw new Error("identity sweep touched state while disabled"); },
+  });
+  await assert.doesNotReject(async () => {
+    assert.deepEqual(await service.identitySweep("unused"), { customers: 0, wallets: 0 });
+  });
+  assert.equal(
+    getSyncConfig({ ...baseEnv(), WOOCOMMERCE_SYNC_IDENTITY_SWEEP_PAGES: "5" }).identitySweepPages,
+    5,
+  );
 });
 
 test("scheduler defaults to hourly only and removes discovery and Friday schedules", async () => {
