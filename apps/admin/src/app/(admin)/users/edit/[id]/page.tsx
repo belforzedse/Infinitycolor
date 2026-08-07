@@ -12,6 +12,14 @@ import Link from "next/link";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import WalletAdjustCard from "./WalletAdjustCard";
 import {
+  AdminCard,
+  DetailHeader,
+  EmptyState,
+  ErrorState,
+  ResourceDetailSkeleton,
+  StatusBadge,
+} from "@/components/admin";
+import {
   formatBirthDateValueForStorage,
   parseStoredBirthDateToDate,
 } from "@/utils/birthDate";
@@ -102,15 +110,43 @@ export default function Page() {
   }, [id]);
 
   if (isLoading) {
-    return <div className="p-8 text-center">Loading user data...</div>;
+    return <ResourceDetailSkeleton />;
   }
 
   if (error) {
-    return <div className="p-8 text-center text-red-500">{error}</div>;
+    return (
+      <AdminCard padded={false}>
+        <ErrorState description={error} onRetry={() => setRevalidate((p) => p + 1)} />
+      </AdminCard>
+    );
   }
 
+  const displayName =
+    `${userData?.firstname ?? ""} ${userData?.lastname ?? ""}`.trim() || null;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 lg:space-y-6">
+      <DetailHeader
+        backHref="/users"
+        backLabel="بازگشت به کاربران"
+        title={displayName}
+        titleFallback="بدون نام"
+        identifier={
+          userData?.phone ? (
+            <span className="text-xs text-slate-500" dir="ltr">
+              {userData.phone}
+            </span>
+          ) : null
+        }
+        badge={
+          userData ? (
+            <StatusBadge
+              label={userData.isActive ? "فعال" : "غیرفعال"}
+              tone={userData.isActive ? "success" : "neutral"}
+            />
+          ) : null
+        }
+      />
       <UpsertPageContentWrapper
         config={config}
         data={userData}
@@ -157,7 +193,7 @@ export default function Page() {
             <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-infinity-primary"></div>
           </div>
         ) : userActivities.length === 0 ? (
-          <p className="py-8 text-center text-neutral-500">فعالیتی یافت نشد</p>
+          <EmptyState title="فعالیتی ثبت نشده است" />
         ) : (
           <div className="space-y-3">
             {userActivities.map((activity) => (
@@ -165,21 +201,23 @@ export default function Page() {
                 key={activity.id}
                 className="rounded-lg border border-neutral-200 bg-neutral-50 p-4"
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
+                <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:gap-3">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       {activity.Icon && <span className="text-xl">{activity.Icon}</span>}
                       <h3 className="font-medium text-neutral-900">{activity.Title}</h3>
                     </div>
-                    <p className="mt-1 text-sm text-neutral-600">{activity.Message}</p>
+                    <p className="mt-1 min-w-0 break-words text-sm text-neutral-600">
+                      {activity.Message}
+                    </p>
                     <p className="mt-2 text-xs text-neutral-500">
                       {new Date(activity.createdAt).toLocaleString("fa-IR")}
                     </p>
                   </div>
                   {activity.ResourceType === "order" && activity.ResourceId && (
                     <Link
-                      href={`/orders/${activity.ResourceId}`}
-                      className="text-sm text-infinity-primary hover:text-infinity-primary-dark hover:underline"
+                      href={`/orders/edit/${activity.ResourceId}`}
+                      className="text-sm shrink-0 text-infinity-primary hover:text-infinity-primary-dark hover:underline"
                     >
                       مشاهده سفارش
                     </Link>

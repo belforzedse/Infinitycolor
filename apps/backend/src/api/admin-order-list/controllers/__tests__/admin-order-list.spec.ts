@@ -75,7 +75,16 @@ describe("bounded admin orders list", () => {
       expect.arrayContaining([
         { id: { $gte: 7 } },
         { Status: { $eq: "Done" } },
-        { contract: { external_id: { $containsi: "synthetic-transaction" } } },
+        // A textual query fans out across the transaction id, customer name and
+        // shipping barcode; numeric queries take the cheaper id-first branch.
+        {
+          $or: [
+            { contract: { external_id: { $containsi: "synthetic-transaction" } } },
+            { user: { user_info: { FirstName: { $containsi: "synthetic-transaction" } } } },
+            { user: { user_info: { LastName: { $containsi: "synthetic-transaction" } } } },
+            { ShippingBarcode: { $containsi: "synthetic-transaction" } },
+          ],
+        },
       ]),
     );
     expect(ctx.set).toHaveBeenCalledWith("Cache-Control", "private, no-store");
@@ -87,6 +96,24 @@ describe("bounded admin orders list", () => {
       pageCount: 496,
       total: 49_518,
     });
+  });
+
+  it("resolves a numeric search against the order number without touching name columns", async () => {
+    const { findMany } = installStrapi();
+    const ctx = createContext({ search: "۱۲۳" });
+
+    await controller.query(ctx);
+
+    expect(findMany.mock.calls[0][0].where.$and).toEqual([
+      {
+        $or: [
+          { id: { $eq: 123 } },
+          { contract: { external_id: { $containsi: "123" } } },
+          { ShippingBarcode: { $containsi: "123" } },
+          { user: { phone: { $containsi: "123" } } },
+        ],
+      },
+    ]);
   });
 
   it("rejects unknown filters before querying", async () => {

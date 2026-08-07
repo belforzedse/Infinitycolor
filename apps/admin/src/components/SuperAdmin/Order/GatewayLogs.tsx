@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ORDER_LOGS_QUERY } from "./orderLogsQuery";
 import { apiClient } from "@/services";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import ChevronDownIcon from "@/components/Product/Icons/ChevronDownIcon";
@@ -28,10 +29,12 @@ export default function GatewayLogs({ orderId }: { orderId: number }) {
         setLoading(true);
 
         // Fetch audit logs (technical)
-        const auditRes = await apiClient.get(
-          `/order-logs?filters[order][id][$eq]=${orderId}&sort[0]=createdAt:asc` as any,
-        );
-        setAuditLogs(((auditRes as any).data || []) as OrderLog[]);
+        // Same request shape as the order sidebar so the two share one
+        // in-flight request / cache entry instead of issuing opposite-sorted
+        // duplicates; this view wants oldest-first, so reverse locally.
+        const auditRes = await apiClient.get(ORDER_LOGS_QUERY(orderId) as any);
+        const logs = ((auditRes as any).data || []) as OrderLog[];
+        setAuditLogs([...logs].reverse());
       } catch (error) {
         console.error("Error fetching logs:", error);
       } finally {

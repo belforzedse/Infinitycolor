@@ -98,6 +98,55 @@ function projectOrder(order: any) {
   };
 }
 
+/** Digits only, after normalising Persian/Arabic numerals to ASCII. */
+const ASCII_DIGITS = /^[0-9]+$/;
+
+function normalizeDigits(value: string): string {
+  return value
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+}
+
+/**
+ * Free-text order search.
+ *
+ * Previously this matched only the SnappPay transaction id, which meant an
+ * operator could not look up an order by its own number — the single most
+ * common lookup — without opening the advanced-filter dialog.
+ *
+ * The input is discriminated to keep the cheap case cheap: a numeric query is
+ * almost always an order number, so it resolves against the primary key (plus
+ * the transaction id, which is also numeric-ish) and never touches the
+ * unindexed name/phone columns. Only genuinely textual queries fan out to the
+ * relation `$containsi` predicates.
+ */
+function buildOrderSearchCondition(search: string): Record<string, unknown> {
+  const normalized = normalizeDigits(search).replace(/^#/, "").trim();
+
+  if (ASCII_DIGITS.test(normalized)) {
+    const asId = Number(normalized);
+    const numericConditions: Record<string, unknown>[] = [
+      { contract: { external_id: { $containsi: normalized } } },
+      { ShippingBarcode: { $containsi: normalized } },
+      { user: { phone: { $containsi: normalized } } },
+    ];
+    // Guard against precision loss on absurdly long digit strings.
+    if (Number.isSafeInteger(asId)) {
+      numericConditions.unshift({ id: { $eq: asId } });
+    }
+    return { $or: numericConditions };
+  }
+
+  return {
+    $or: [
+      { contract: { external_id: { $containsi: search } } },
+      { user: { user_info: { FirstName: { $containsi: search } } } },
+      { user: { user_info: { LastName: { $containsi: search } } } },
+      { ShippingBarcode: { $containsi: search } },
+    ],
+  };
+}
+
 export default {
   async query(ctx) {
     const startedAt = Date.now();
@@ -130,7 +179,7 @@ export default {
     const conditions = [...filters];
     if (TAB_FILTERS[tab]) conditions.push(TAB_FILTERS[tab]!);
     if (search) {
-      conditions.push({ contract: { external_id: { $containsi: search } } });
+      conditions.push(buildOrderSearchCondition(search));
     }
     const where = conditions.length > 0 ? { $and: conditions } : {};
     const orderQuery = strapi.query("api::order.order");

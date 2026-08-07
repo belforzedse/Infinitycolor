@@ -161,16 +161,26 @@ export default function UsersPage() {
         },
       ]}
     >
-      <div className="mb-3 space-y-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-neutral-600">جستجو:</label>
-          <div className="relative">
+      {/* This toolbar previously had no responsive classes at all: a fixed
+          w-80 input inside a non-wrapping flex row, which overflowed on every
+          phone. Mirrors the Products toolbar treatment. */}
+      <div className="mb-3 space-y-3 rounded-2xl bg-white/70 p-3 md:bg-transparent md:p-0">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <label className="text-sm text-neutral-600" htmlFor="users-search">
+            جستجو:
+          </label>
+          <div className="relative w-full sm:w-80">
             <input
+              id="users-search"
               type="text"
               placeholder="جستجو در نام، نام خانوادگی، شماره تلفن..."
-              className="w-80 rounded-lg border border-neutral-300 px-3 py-1 pr-8 text-sm"
+              className="text-sm h-11 w-full rounded-lg border border-neutral-300 px-3 pr-8 md:h-10"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              inputMode="search"
+              enterKeyHint="search"
+              autoCorrect="off"
+              spellCheck={false}
             />
             {searchQuery !== debouncedSearchQuery && (
               <div className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2">
@@ -184,21 +194,21 @@ export default function UsersPage() {
                 setSearchQuery("");
                 setDebouncedSearchQuery("");
               }}
-              className="text-sm text-neutral-500 hover:text-neutral-700"
+              className="text-sm self-start text-neutral-500 hover:text-neutral-700 sm:self-auto"
             >
               پاک کردن
             </button>
           )}
           {debouncedSearchQuery && (
-            <span className="text-xs text-green-600">
+            <span className="text-xs break-words text-green-600">
               نتایج برای: &quot;{debouncedSearchQuery}&quot;
             </span>
           )}
         </div>
-        <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-neutral-600">
+        <label className="text-sm flex w-fit min-h-[44px] cursor-pointer items-center gap-2 text-neutral-600 md:min-h-0">
           <input
             type="checkbox"
-            className="h-4 w-4"
+            className="h-5 w-5 rounded border-slate-300 accent-infinity-primary"
             checked={managerRolesOnly}
             onChange={(e) => {
               setManagerRolesOnly(e.target.checked);
@@ -209,7 +219,6 @@ export default function UsersPage() {
         </label>
       </div>
       <SuperAdminTable
-        _removeActions
         columns={columns}
         filters={advancedFilters}
         dataLoader={loadUsers}
@@ -220,6 +229,17 @@ export default function UsersPage() {
         })}
         refreshOnVisibility={false}
         onMetaChange={handleMetaChange}
+        isFiltered={
+          Boolean(debouncedSearchQuery) ||
+          managerRolesOnly ||
+          advancedFilters.length > 0
+        }
+        onClearFilters={() => {
+          setSearchQuery("");
+          setDebouncedSearchQuery("");
+          setManagerRolesOnly(false);
+          handleFiltersChange([]);
+        }}
         mobileTable={(data) => <MobileTable data={data} />}
       />
     </ContentWrapper>

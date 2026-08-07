@@ -540,7 +540,6 @@ export default function ProductsPage() {
             onSelectionChange={selectionProps?.onSelectionChange}
           />
         )}
-        _removeActions
         enableSelection
         getRowId={(row: Product) => row.id}
         bulkOptions={bulkOptions}

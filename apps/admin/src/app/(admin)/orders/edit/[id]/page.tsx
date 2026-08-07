@@ -16,9 +16,15 @@ import { ProductCoverImage } from "@/types/Product";
 import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
 import { unwrapCollection, unwrapEntity } from "@/utils/strapi";
 import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
-import { translateOrderStatus } from "@/utils/statusTranslations";
+import {
+  getOrderStatusMeta,
+  translateOrderStatus,
+} from "@/utils/statusTranslations";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { CopyableId, DetailHeader, StatusBadge } from "@/components/admin";
+import { priceFormatter } from "@/utils/price";
+import { formatFaRelativeDateTime } from "@/utils/formatFaRelativeDateTime";
 
 // Status targets that are effectively irreversible (or trigger customer-facing
 // notifications / refunds) and therefore warrant an explicit extra warning.
@@ -468,10 +474,60 @@ export default function EditOrderPage() {
         })),
       } as typeof config);
 
+  const statusMeta = getOrderStatusMeta(data?.orderStatus);
+  const buyerName = data?.userName?.trim();
+
   return (
-    <>
+    <div className="space-y-4 lg:space-y-6">
+      {/*
+        Reading order is deliberate and differs from before. The page used to
+        open with the two most destructive controls on the screen (cancel order,
+        which refunds and restocks, and the item-adjustment panel), show its own
+        title ~600px down, and put the purchased items last. Now:
+        header -> frequent status actions -> the actual items and totals ->
+        details form -> rare/destructive operations.
+      */}
+      <DetailHeader
+        backHref="/orders"
+        backLabel="بازگشت به سفارشات"
+        title={buyerName}
+        titleFallback={data ? "بدون مشتری" : "…"}
+        identifier={
+          data ? <CopyableId value={data.id} label="کپی شماره سفارش" /> : null
+        }
+        badge={
+          data ? (
+            <StatusBadge label={statusMeta.label} tone={statusMeta.tone} />
+          ) : null
+        }
+        summary={
+          data
+            ? [
+                {
+                  label: "مبلغ کل",
+                  value: priceFormatter(data.total ?? 0, " تومان"),
+                },
+                {
+                  label: "تاریخ ثبت",
+                  value: formatFaRelativeDateTime(data.orderDate),
+                },
+                { label: "شماره تماس", value: data.phoneNumber || "—" },
+                {
+                  label: "روش پرداخت",
+                  value: data.paymentGateway
+                    ? getPaymentGatewayLabel(data.paymentGateway)
+                    : "—",
+                },
+              ]
+            : undefined
+        }
+      />
+
       {data && <OrderStatusActions order={data} onSuccess={refreshAfterOrderAction} />}
-      {data && <AdjustItemsPanel order={data} onSuccess={refreshAfterOrderAction} />}
+
+      {/* Purchased items: the point of the page, previously rendered last. */}
+      <Footer order={data} onReload={refreshAfterOrderAction} />
+
       <ConfirmDialog
         isOpen={!!pendingStatusChange}
         title="تغییر وضعیت سفارش"
@@ -481,18 +537,34 @@ export default function EditOrderPage() {
         onConfirm={confirmStatusChange}
         onCancel={cancelStatusChange}
       />
+
       <UpsertPageContentWrapper<SuperAdminOrderDetail>
         config={pageConfig}
         data={data}
         onSubmit={handleOrderSubmit}
-        footer={
-          <>
-            <Footer order={data} onReload={refreshAfterOrderAction} />
-            {!isOperationalManager && data?.id ? <GatewayLogs orderId={data.id} /> : null}
-          </>
-        }
         customSidebar={<Sidebar shippingBarcode={data?.shippingBarcode} orderData={data} />}
       />
-    </>
+
+      {/*
+        Rare, irreversible operations (item adjustment with refund-to-wallet,
+        barcode voiding). Collapsed by default so they are reachable but never
+        the first thing a phone user can hit.
+      */}
+      {data && (
+        <details className="group rounded-2xl border border-slate-200 bg-white">
+          <summary className="text-sm flex min-h-[52px] cursor-pointer list-none items-center justify-between gap-3 px-4 font-medium text-slate-700 md:px-5">
+            <span>عملیات پیشرفته سفارش</span>
+            <span className="text-xs text-slate-400 transition-transform group-open:rotate-180">
+              ▾
+            </span>
+          </summary>
+          <div className="border-t border-slate-100 p-4 md:p-5">
+            <AdjustItemsPanel order={data} onSuccess={refreshAfterOrderAction} />
+          </div>
+        </details>
+      )}
+
+      {!isOperationalManager && data?.id ? <GatewayLogs orderId={data.id} /> : null}
+    </div>
   );
 }

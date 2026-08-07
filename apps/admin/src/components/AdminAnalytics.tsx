@@ -17,7 +17,9 @@ export function adminRouteGroup(pathname: string): string {
   }
   if (["users", "customers"].includes(first)) return "customers";
   if (["blog", "faq", "stories", "customization"].includes(first)) return "content";
-  if (first === "reports") return "reports";
+  // "reports" is the legacy prefix, kept so redirected bookmarks group with the
+  // Sales workspace they now land in.
+  if (first === "sales" || first === "reports") return "reports";
   if (first === "settings") return "settings";
   if (first === "account") return "account";
   if (first === "dashboard" || first === "") return "dashboard";

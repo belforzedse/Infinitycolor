@@ -19,6 +19,8 @@ import { useQueryState } from "nuqs";
 import ReportTableSkeleton from "@/components/Skeletons/ReportTableSkeleton";
 import { apiCache } from "@/lib/api-cache";
 import { AnimatedTableRow } from "./AnimatedTableRow";
+import { EmptyState, ErrorState, FilteredEmptyState } from "@/components/admin";
+import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import {
   buildSuperAdminTableRequestUrl,
   parseAdvancedFiltersParam,
@@ -41,7 +43,6 @@ interface TableProps<TData, TValue> {
   data?: TData[];
   url?: string;
   loading?: boolean;
-  _removeActions?: boolean;
   className?: string;
   draggable?: boolean;
   mobileTable?: (
@@ -70,6 +71,20 @@ interface TableProps<TData, TValue> {
         getValue: (row: TData) => number;
       };
   filters?: AdvancedFilterItem[];
+  /**
+   * Rendered when the fetch succeeded but returned nothing. Omit to get the
+   * shared default, which distinguishes a genuinely empty resource from a
+   * search/filter that matched nothing (see `isFiltered`/`onClearFilters`).
+   */
+  emptyState?: React.ReactNode;
+  /**
+   * Set when a search term or filter is narrowing the result set, so the empty
+   * state can offer to clear it instead of implying the resource is empty.
+   */
+  isFiltered?: boolean;
+  onClearFilters?: () => void;
+  /** Rendered when the fetch failed. Defaults to a retryable ErrorState. */
+  errorState?: React.ReactNode;
   dataLoaderKey?: string;
   refreshOnVisibility?: boolean;
   dataLoader?: (input: {
@@ -110,7 +125,6 @@ export function SuperAdminTable<TData, TValue>({
   url,
   loading,
   className,
-  _removeActions,
   draggable,
   onItemDrag,
   mobileTable,
@@ -120,6 +134,10 @@ export function SuperAdminTable<TData, TValue>({
   onBulkAction,
   clientSort,
   filters,
+  emptyState,
+  isFiltered,
+  onClearFilters,
+  errorState,
   dataLoaderKey,
   refreshOnVisibility = true,
   dataLoader,
@@ -152,6 +170,7 @@ export function SuperAdminTable<TData, TValue>({
   const [dragOverRow, setDragOverRow] = useState<Row<TData> | null>(null);
   const [internalLoading, setInternalLoading] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [refresh, setRefresh] = useAtom(refreshTable);
   const [isPageTransitioning, setIsPageTransitioning] = useState(false);
   const [newlyAddedIds, setNewlyAddedIds] = useState<Set<string>>(new Set());
@@ -163,6 +182,7 @@ export function SuperAdminTable<TData, TValue>({
   const fetchSeqRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const hasScheduledFetchRef = useRef(false);
   const lastPageRef = useRef(page);
 
   const requestUrl = useMemo(() => {
@@ -309,14 +329,22 @@ export function SuperAdminTable<TData, TValue>({
             0;
 
           setTotalSize(total);
+          setFetchError(null);
           onMetaChange?.((res as any)?.meta ?? {});
         }
       } catch (error) {
-        if (
-          !controller.signal.aborted &&
-          (error as any)?.name !== "AbortError" &&
-          process.env.NODE_ENV === "development"
-        ) {
+        const aborted =
+          controller.signal.aborted || (error as any)?.name === "AbortError";
+
+        if (!aborted && seq === fetchSeqRef.current) {
+          // A failed load used to be indistinguishable from an empty resource:
+          // the error was swallowed and the table rendered "no data".
+          setFetchError(
+            getUserFacingErrorMessage(error, "بارگذاری اطلاعات ناموفق بود"),
+          );
+        }
+
+        if (!aborted && process.env.NODE_ENV === "development") {
           console.error("Failed to fetch table data:", error);
         }
       } finally {
@@ -350,6 +378,15 @@ export function SuperAdminTable<TData, TValue>({
 
     if (fetchDebounceRef.current) {
       clearTimeout(fetchDebounceRef.current);
+    }
+
+    // The first request paints immediately. Pages already debounce their own
+    // search inputs, so debouncing the initial load too just added ~300ms of
+    // blank list to every navigation.
+    if (!hasScheduledFetchRef.current) {
+      hasScheduledFetchRef.current = true;
+      runFetch(requestKey);
+      return;
     }
 
     fetchDebounceRef.current = setTimeout(() => {
@@ -487,13 +524,30 @@ export function SuperAdminTable<TData, TValue>({
 
   const isLoading = loading ?? internalLoading;
   const showSkeleton = isLoading && (isPageTransitioning || !hasLoadedOnce);
-  const useCardLayoutUntilDesktop = Boolean(mobileTable);
-  const cardLayoutClassName = useCardLayoutUntilDesktop
-    ? "block lg:hidden"
-    : "block md:hidden";
-  const tableLayoutClassName = useCardLayoutUntilDesktop
-    ? "hidden w-full overflow-x-auto overflow-y-clip lg:block"
-    : "hidden w-full overflow-x-auto overflow-y-clip md:block";
+  // A search or filter narrowing the results is a different situation from an
+  // empty resource, and the two used to render the same generic box.
+  const hasNarrowingFilter =
+    isFiltered ?? (activeFilters?.length ?? 0) > 0;
+  const resolvedEmptyState = fetchError
+    ? (errorState ?? (
+        <ErrorState
+          description={fetchError}
+          onRetry={() => requestKey && runFetch(requestKey, { force: true })}
+        />
+      ))
+    : (emptyState ??
+      (hasNarrowingFilter ? (
+        <FilteredEmptyState onClearFilters={onClearFilters} />
+      ) : (
+        <EmptyState title="داده‌ای برای نمایش وجود ندارد" />
+      )));
+
+  // One boundary for every list in the admin. This used to flip between 768px
+  // and 1024px depending on whether a `mobileTable` prop happened to be passed,
+  // so two lists on the same screen width could disagree about their layout.
+  const cardLayoutClassName = "block lg:hidden";
+  const tableLayoutClassName =
+    "hidden w-full overflow-x-auto overflow-y-clip lg:block";
 
   return (
     <div className="w-full">
@@ -710,12 +764,7 @@ export function SuperAdminTable<TData, TValue>({
                 </>
               ) : (
                 <tr>
-                  <td
-                    colSpan={columns.length}
-                    className="h-24 text-center text-sm text-neutral-500"
-                  >
-                    داده‌ای برای نمایش وجود ندارد
-                  </td>
+                  <td colSpan={columns.length}>{resolvedEmptyState}</td>
                 </tr>
               )}
             </tbody>
@@ -828,8 +877,8 @@ export function SuperAdminTable<TData, TValue>({
             })}
           </div>
         ) : (
-          <div className="mt-3 rounded-2xl border border-slate-100 bg-white p-6 text-center text-sm text-neutral-500">
-            داده‌ای برای نمایش وجود ندارد
+          <div className="mt-3 rounded-2xl border border-slate-100 bg-white">
+            {resolvedEmptyState}
           </div>
         )}
       </div>
