@@ -123,7 +123,7 @@ export function infinityCredentialsPlugin(
         async (ctx) => {
           assertTrustedRequest(ctx);
           try {
-            const response = await options.bridge.phoneStatus(ctx.body.phone);
+            await options.bridge.phoneStatus(ctx.body.phone);
             const current = readFlowState(ctx);
             writeFlowState(ctx, {
               phone: ctx.body.phone,
@@ -133,7 +133,9 @@ export function infinityCredentialsPlugin(
                 current?.returnTo,
               ),
             });
-            return ctx.json({ message: "welcome", hasUser: response.hasUser });
+            // Keep the public response indistinguishable for existing and new phones.
+            // The bridge result is intentionally not exposed to prevent account enumeration.
+            return ctx.json({ message: "welcome" });
           } catch (error) {
             throw bridgeApiError(error);
           }
@@ -189,7 +191,7 @@ export function infinityCredentialsPlugin(
               verified.strapiUserId,
               flow.returnTo,
             );
-            if (verified.isNewUser === true) {
+            if (verified.needsProfileCompletion === true) {
               return ctx.json({
                 message: "login successful",
                 redirectTo: "/auth/register/info",
@@ -230,6 +232,12 @@ export function infinityCredentialsPlugin(
               verified.strapiUserId,
               returnTo,
             );
+            if (verified.needsProfileCompletion === true) {
+              return ctx.json({
+                message: "login successful",
+                redirectTo: "/auth/register/info",
+              });
+            }
             const redirectTo = await createReturn(session.id, returnTo);
             return ctx.json({ message: "login successful", redirectTo });
           } catch (error) {
@@ -277,6 +285,38 @@ export function infinityCredentialsPlugin(
           }
         },
       ),
+      infinityProfile: createAuthEndpoint(
+        "/infinity/profile",
+        { method: "GET", use: [sessionMiddleware] },
+        async (ctx) => {
+          assertTrustedRequest(ctx);
+          if (!ctx.context.session) throw new APIError("UNAUTHORIZED");
+          const token = await getJwtToken(ctx, options.jwtOptions);
+          const env = getAuthEnv();
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 5_000);
+          try {
+            const response = await (options.fetchImpl ?? fetch)(
+              `${env.strapiInternalUrl}/api/auth/self`,
+              {
+                method: "GET",
+                headers: { accept: "application/json", authorization: `Bearer ${token}` },
+                cache: "no-store",
+                signal: controller.signal,
+              },
+            );
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new APIError(response.status === 401 ? "UNAUTHORIZED" : "BAD_REQUEST", {
+                message: "بازیابی اطلاعات حساب ناموفق بود.",
+              });
+            }
+            return ctx.json(body);
+          } finally {
+            clearTimeout(timeout);
+          }
+        },
+      ),
       infinityRegisterInfo: createAuthEndpoint(
         "/infinity/register-info",
         {
@@ -285,11 +325,11 @@ export function infinityCredentialsPlugin(
           body: z.object({
             firstName: z.string().trim().min(1).max(100),
             lastName: z.string().trim().min(1).max(100),
-            password: passwordSchema,
             birthDate: z
               .string()
               .regex(/^\d{4}-\d{2}-\d{2}$/)
-              .nullable(),
+              .nullable()
+              .optional(),
           }),
         },
         async (ctx) => {
@@ -311,7 +351,7 @@ export function infinityCredentialsPlugin(
                   accept: "application/json",
                   authorization: `Bearer ${token}`,
                 },
-                body: JSON.stringify({ ...ctx.body, phone: flow.phone }),
+                body: JSON.stringify(ctx.body),
                 cache: "no-store",
                 signal: controller.signal,
               },

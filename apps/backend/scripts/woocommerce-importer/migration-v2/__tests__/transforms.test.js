@@ -35,7 +35,13 @@ test("customer payload excludes every address field and password", () => {
     email: "USER@example.com",
     first_name: "نام",
     last_name: "خانوادگی",
-    billing: { phone: "09123456789", address_1: "must-not-leak" },
+    billing: {
+      phone: "09123456789",
+      email: "buyer@example.com",
+      first_name: "نام",
+      last_name: "خانوادگی",
+      address_1: "must-not-leak",
+    },
     shipping: { address_1: "must-not-leak" },
   });
   assert.deepEqual(Object.keys(payload).sort(), ["email", "firstName", "lastName", "phone", "sourceId"]);
@@ -65,7 +71,13 @@ test("order payload keeps approved core fields and excludes addresses, notes, an
     transaction_id: "must-not-leak",
     order_key: "must-not-leak",
     customer_note: "must-not-leak",
-    billing: { phone: "09123456789", address_1: "must-not-leak" },
+    billing: {
+      phone: "09123456789",
+      email: "buyer@example.com",
+      first_name: "نام",
+      last_name: "خانوادگی",
+      address_1: "must-not-leak",
+    },
     shipping: { address_1: "must-not-leak" },
     line_items: [{ id: 9, product_id: 3, variation_id: 4, quantity: 2, price: "475", name: "کالا", sku: "S" }],
     shipping_lines: [{ method_id: "flat_rate", method_title: "پست" }],
@@ -81,6 +93,12 @@ test("order payload keeps approved core fields and excludes addresses, notes, an
   assert.equal(payload.taxPercent, 0);
   assert.equal(payload.sourceCreatedAt, "2026-01-02T03:04:05.000Z");
   assert.equal(payload.sourceUpdatedAt, "2026-01-02T03:04:05.000Z");
+  assert.deepEqual(payload.guestIdentity, {
+    phone: "+989123456789",
+    email: "buyer@example.com",
+    firstName: "نام",
+    lastName: "خانوادگی",
+  });
   const serialized = JSON.stringify(payload);
   assert.ok(!serialized.includes("must-not-leak"));
   assert.ok(!("billing" in payload));

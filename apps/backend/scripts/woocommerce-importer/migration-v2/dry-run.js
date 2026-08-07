@@ -390,12 +390,20 @@ async function scanOrders(source, destinationIndexes, userContext, catalogContex
           (item) => !catalogContext.eligibleVariationIds.has(item.variationSourceId),
         );
         if (ineligibleVariation) throw new Error("ORDER_ITEM_PRODUCT_SKIPPED_OR_MISSING");
-        if (
-          payload.guestPhone &&
-          (userContext.duplicatePhones.has(payload.guestPhone) ||
-            userContext.phoneOwners.get(payload.guestPhone) === undefined)
-        ) {
-          payload.guestPhone = null;
+        if (!payload.customerSourceId) {
+          if (!payload.guestPhone) {
+            ledger.issue("customerIdentities", sourceId, "ORDER_GUEST_PHONE_UNRESOLVED");
+            ledger.count("customerIdentities", "unresolved");
+          } else if (
+            userContext.duplicatePhones.has(payload.guestPhone) ||
+            destinationIndexes.usersByPhone.duplicates.has(payload.guestPhone)
+          ) {
+            throw new Error("ORDER_GUEST_PHONE_AMBIGUOUS");
+          } else {
+            const existingIdentity = destinationIndexes.usersByPhone.map.has(payload.guestPhone) ||
+              userContext.phoneOwners.has(payload.guestPhone);
+            ledger.count("customerIdentities", existingIdentity ? "matched" : "preprovisioned");
+          }
         }
         ledger.count("orders", "eligible");
         const existing = destinationIndexes.ordersBySource.map.get(sourceId);

@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
 import { getTrustedWordPressMigrationSourceTimestamps } from "../../../utils/migration-context";
+import {
+  canonicalIranPhone,
+  MigrationInputError,
+  reconcileCustomerIdentity,
+  resolveRegisteredCustomerForOrder,
+  USER_UID,
+} from "./customer-identity";
 
-const USER_UID = "plugin::users-permissions.user";
-const USER_INFO_UID = "api::local-user-info.local-user-info";
-const ROLE_UID = "plugin::users-permissions.role";
+export { canonicalIranPhone, MigrationInputError } from "./customer-identity";
+
 const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 const ORDER_UID = "api::order.order";
 const ORDER_ITEM_UID = "api::order-item.order-item";
@@ -16,7 +22,7 @@ const PAYMENT_GATEWAYS = new Set(["Unknown", "Wallet", "Mellat", "SnappPay", "Sa
 const CONTRACT_TYPES = new Set(["Cash", "Credit"]);
 
 const SNAPSHOT_ENTITIES: Record<string, { uid: string; select: string[] }> = {
-  users: { uid: USER_UID, select: ["id", "external_id", "external_source", "phone", "email", "createdAt", "updatedAt"] },
+  users: { uid: USER_UID, select: ["id", "external_id", "external_source", "phone", "email", "AccountOrigin", "ClaimedAt", "ProfileCompletedAt", "ProfileManagedByCustomer", "SourceCreatedAt", "SourceUpdatedAt", "createdAt", "updatedAt"] },
   wallets: { uid: WALLET_UID, select: ["id", "Balance", "createdAt", "updatedAt"] },
   orders: { uid: ORDER_UID, select: ["id", "external_id", "external_source", "createdAt", "updatedAt"] },
   variations: { uid: VARIATION_UID, select: ["id", "external_id", "external_source", "createdAt", "updatedAt"] },
@@ -27,18 +33,6 @@ const SNAPSHOT_ENTITIES: Record<string, { uid: string; select: string[] }> = {
   blogAuthors: { uid: "api::blog-author.blog-author", select: ["id", "Name", "Email", "createdAt", "updatedAt"] },
 };
 
-export class MigrationInputError extends Error {
-  status: number;
-  code: string;
-
-  constructor(code: string, status = 400) {
-    super(code);
-    this.name = "MigrationInputError";
-    this.status = status;
-    this.code = code;
-  }
-}
-
 const requiredId = (value: unknown, code: string): string => {
   const id = String(value ?? "").trim();
   if (!/^\d+$/.test(id) || id === "0") throw new MigrationInputError(code);
@@ -48,28 +42,10 @@ const requiredId = (value: unknown, code: string): string => {
 const optionalText = (value: unknown, max: number): string =>
   String(value ?? "").trim().slice(0, max);
 
-export function canonicalIranPhone(value: unknown): string | null {
-  let phone = String(value ?? "")
-    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
-    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
-    .replace(/[^\d+]/g, "");
-  if (phone.startsWith("0098")) phone = `+98${phone.slice(4)}`;
-  else if (phone.startsWith("98")) phone = `+${phone}`;
-  else if (phone.startsWith("09")) phone = `+98${phone.slice(1)}`;
-  else if (phone.startsWith("9")) phone = `+98${phone}`;
-  return /^\+989\d{9}$/.test(phone) ? phone : null;
-}
-
 export function exactNonNegativeInteger(value: unknown, code: string): string {
   const amount = String(value ?? "").trim();
   if (!/^\d+$/.test(amount)) throw new MigrationInputError(code);
   return BigInt(amount).toString();
-}
-
-function optionalEmail(value: unknown): string | null {
-  const email = String(value ?? "").trim().toLowerCase();
-  if (!email) return null;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email.slice(0, 255) : null;
 }
 
 function advisoryKey(value: string): string {
@@ -139,74 +115,23 @@ async function findUniqueUserForSource(query: any, sourceId: string, trx: any): 
 
 export async function upsertUser(strapiInstance: any, body: any) {
   const sourceId = requiredId(body?.sourceId, "USER_SOURCE_ID_INVALID");
-  const phone = canonicalIranPhone(body?.phone);
-  if (!phone) throw new MigrationInputError("USER_PHONE_INVALID");
-  const sourceEmail = optionalEmail(body?.email);
-  const email = sourceEmail || `wp-${sourceId}@placeholder.local`;
-  const firstName = optionalText(body?.firstName, 255);
-  const lastName = optionalText(body?.lastName, 255);
-
   return strapiInstance.db.transaction(async ({ trx }: { trx: any }) => {
-    const locks = [
-      advisoryKey(`wordpress-user-source:${sourceId}`),
-      advisoryKey(`wordpress-user-phone:${phone}`),
-    ].sort();
-    for (const lock of locks) {
-      await trx.raw("SELECT pg_advisory_xact_lock(?)", [lock]);
-    }
-    const userQuery = strapiInstance.db.query(USER_UID);
-    const sourceMatch = await findUniqueUserForSource(userQuery, sourceId, trx);
-    const phoneMatches = await findMany(userQuery, { phone }, trx);
-    if (phoneMatches.length > 1) throw new MigrationInputError("USER_PHONE_AMBIGUOUS", 409);
-    const phoneMatch = phoneMatches[0] || null;
-    if (sourceMatch && phoneMatch && Number(sourceMatch.id) !== Number(phoneMatch.id)) {
-      throw new MigrationInputError("USER_SOURCE_PHONE_CONFLICT", 409);
-    }
-    if (
-      !sourceMatch &&
-      phoneMatch?.external_source === "wordpress" &&
-      String(phoneMatch.external_id || "") !== sourceId
-    ) {
-      throw new MigrationInputError("USER_PHONE_SOURCE_CONFLICT", 409);
-    }
-    const existing = sourceMatch || phoneMatch;
-
-    const emailMatches = await findMany(userQuery, { email: { $eqi: email } }, trx);
-    if (emailMatches.some((candidate) => Number(candidate.id) !== Number(existing?.id))) {
-      throw new MigrationInputError("USER_EMAIL_CONFLICT", 409);
-    }
-
-    const roles = await findMany(strapiInstance.db.query(ROLE_UID), { type: "customer" }, trx);
-    if (roles.length !== 1) throw new MigrationInputError("CUSTOMER_ROLE_NOT_UNIQUE", 409);
-
-    const data = {
-      username: phone,
-      email,
-      phone,
-      provider: "local",
-      confirmed: true,
-      blocked: false,
-      IsActive: true,
-      IsVerified: false,
-      role: roles[0].id,
-      external_source: "wordpress",
-      external_id: sourceId,
+    const result = await reconcileCustomerIdentity(strapiInstance, {
+      kind: "registered",
+      sourceCustomerId: sourceId,
+      phone: body?.phone,
+      email: body?.email,
+      firstName: body?.firstName,
+      lastName: body?.lastName,
+      sourceCreatedAt: body?.sourceCreatedAt,
+      sourceUpdatedAt: body?.sourceUpdatedAt,
+    }, trx);
+    return {
+      mode: result.mode,
+      id: Number(result.user.id),
+      matchReason: result.matchReason,
+      issues: result.issues,
     };
-    const saved = existing
-      ? await userQuery.update({ where: { id: existing.id }, data, transacting: trx } as any)
-      : await userQuery.create({ data, transacting: trx } as any);
-
-    const infoQuery = strapiInstance.db.query(USER_INFO_UID);
-    const infos = await findMany(infoQuery, { user: saved.id }, trx);
-    if (infos.length > 1) throw new MigrationInputError("USER_INFO_AMBIGUOUS", 409);
-    const infoData = { FirstName: firstName, LastName: lastName, user: saved.id };
-    if (infos[0]) {
-      await infoQuery.update({ where: { id: infos[0].id }, data: infoData, transacting: trx } as any);
-    } else {
-      await infoQuery.create({ data: infoData, transacting: trx } as any);
-    }
-
-    return { mode: existing ? "updated" : "created", id: Number(saved.id) };
   });
 }
 
@@ -241,22 +166,28 @@ function positiveCount(value: unknown): number {
   return count;
 }
 
-async function resolveOrderUser(strapiInstance: any, body: any, trx: any): Promise<any | null> {
-  const userQuery = strapiInstance.db.query(USER_UID);
+async function resolveOrderUser(strapiInstance: any, body: any, trx: any): Promise<any> {
   if (body?.customerSourceId) {
-    const user = await findUniqueUserForSource(
-      userQuery,
-      requiredId(body.customerSourceId, "ORDER_CUSTOMER_SOURCE_ID_INVALID"),
+    const sourceId = requiredId(body.customerSourceId, "ORDER_CUSTOMER_SOURCE_ID_INVALID");
+    const user = await resolveRegisteredCustomerForOrder(
+      strapiInstance,
+      sourceId,
       trx,
+      body?.orderIdentity,
     );
-    if (!user) throw new MigrationInputError("ORDER_CUSTOMER_NOT_FOUND", 409);
-    return user;
+    return { user, matchReason: "source-customer-id", issues: [] };
   }
-  const guestPhone = canonicalIranPhone(body?.guestPhone);
-  if (!guestPhone) return null;
-  const matches = await findMany(userQuery, { phone: guestPhone }, trx);
-  if (matches.length > 1) throw new MigrationInputError("ORDER_GUEST_PHONE_AMBIGUOUS", 409);
-  return matches[0] || null;
+  const guest = body?.guestIdentity || body?.orderIdentity || { phone: body?.guestPhone };
+  return reconcileCustomerIdentity(strapiInstance, {
+    kind: "guest",
+    sourceOrderId: body?.sourceId,
+    phone: guest?.phone,
+    email: guest?.email,
+    firstName: guest?.firstName,
+    lastName: guest?.lastName,
+    sourceCreatedAt: body?.sourceCreatedAt,
+    sourceUpdatedAt: body?.sourceUpdatedAt,
+  }, trx);
 }
 
 export async function upsertOrder(strapiInstance: any, body: any) {
@@ -283,14 +214,21 @@ export async function upsertOrder(strapiInstance: any, body: any) {
   return strapiInstance.db.transaction(async ({ trx }: { trx: any }) => {
     await trx.raw("SELECT pg_advisory_xact_lock(?)", [advisoryKey(`woocommerce-order:${sourceId}`)]);
     const orderQuery = strapiInstance.db.query(ORDER_UID);
-    const existingOrders = await findMany(
-      orderQuery,
-      { external_source: "woocommerce", external_id: sourceId },
-      trx,
-    );
+    const existingOrders = await orderQuery.findMany({
+      where: { external_source: "woocommerce", external_id: sourceId },
+      populate: { user: { select: ["id"] } },
+      limit: 2,
+      transacting: trx,
+    } as any);
     if (existingOrders.length > 1) throw new MigrationInputError("ORDER_SOURCE_ID_AMBIGUOUS", 409);
     const existing = existingOrders[0] || null;
-    const user = await resolveOrderUser(strapiInstance, body, trx);
+    const identity = await resolveOrderUser(strapiInstance, body, trx);
+    const resolvedUser = identity.user || null;
+    const existingUser = existing?.user || null;
+    if (existingUser && resolvedUser && Number(existingUser.id) !== Number(resolvedUser.id)) {
+      throw new MigrationInputError("ORDER_USER_IDENTITY_CONFLICT", 409);
+    }
+    const user = resolvedUser || existingUser;
     const orderData = {
       Date: date,
       Status: status,
@@ -395,6 +333,8 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       itemsUpdated,
       itemsDeleted,
       userLinked: Boolean(user),
+      identityMatchReason: identity.matchReason,
+      identityIssues: identity.issues || [],
     };
   });
 }

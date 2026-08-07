@@ -18,10 +18,6 @@ function firstCandidates(dryRun, kinds) {
   return Array.from(new Set(kinds.flatMap((kind) => candidateIds(dryRun, kind))));
 }
 
-function sourceAttributes(row) {
-  return row?.attributes || row || {};
-}
-
 function rawOrderProductIds(order) {
   const ids = new Set();
   for (const line of Array.isArray(order?.line_items) ? order.line_items : []) {
@@ -306,34 +302,17 @@ async function upsertPilotBlog(source, destination, indexes, ledger, sourceId) {
   }
 }
 
-async function loadApprovedGuestPhones(destination) {
-  const rows = (await destination.loadSnapshot("users")).map(sourceAttributes);
-  const counts = new Map();
-  const wordpressPhones = new Set();
-  for (const row of rows) {
-    const phone = T.canonicalPhone(row.phone);
-    if (!phone) continue;
-    counts.set(phone, Number(counts.get(phone) || 0) + 1);
-    if (row.external_source === "wordpress" && row.external_id) wordpressPhones.add(phone);
-  }
-  return new Set(Array.from(wordpressPhones).filter((phone) => counts.get(phone) === 1));
-}
-
 async function upsertPilotOrder(
   source,
   destination,
   ledger,
   sourceId,
   importedUsers,
-  approvedGuestPhones = new Set(),
 ) {
   ledger.count("orders", "source");
   try {
     const sourceOrder = await source.getOrder(sourceId);
     const payload = T.orderPayload(sourceOrder);
-    if (payload.guestPhone && !approvedGuestPhones.has(payload.guestPhone)) {
-      payload.guestPhone = null;
-    }
     if (payload.customerSourceId && !importedUsers.has(payload.customerSourceId)) {
       const user = await upsertPilotUser(source, destination, ledger, payload.customerSourceId);
       if (!user) throw new Error("ORDER_PILOT_CUSTOMER_FAILED");
@@ -398,7 +377,6 @@ async function runPilot({ config, source, destination, ledger, dryRun }) {
   for (const sourceId of candidateIds(dryRun, "blogPosts").slice(0, 5)) {
     await upsertPilotBlog(source, destination, indexes, ledger, sourceId);
   }
-  const approvedGuestPhones = await loadApprovedGuestPhones(destination);
   for (const selectedOrder of orderSelection.orders) {
     await upsertPilotOrder(
       source,
@@ -406,7 +384,6 @@ async function runPilot({ config, source, destination, ledger, dryRun }) {
       ledger,
       selectedOrder.sourceId,
       importedUsers,
-      approvedGuestPhones,
     );
   }
   ledger.summary.metrics.source = source.metrics();
@@ -422,7 +399,6 @@ module.exports = {
   upsertPilotWallet,
   upsertPilotBlog,
   upsertPilotOrder,
-  loadApprovedGuestPhones,
   loadPilotCategoryIds,
   selectRelationAwarePilotOrders,
 };

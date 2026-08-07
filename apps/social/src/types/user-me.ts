@@ -22,4 +22,9 @@ export interface MeResponse {
   isAdmin?: boolean;
   UserName?: string;
   roleName?: string | null;
+  AccountOrigin?: "Native" | "WooRegistered" | "WooGuest";
+  ClaimedAt?: string | null;
+  ProfileCompletedAt?: string | null;
+  ProfileManagedByCustomer?: boolean;
+  needsProfileCompletion?: boolean;
 }

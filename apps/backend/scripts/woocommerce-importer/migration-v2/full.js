@@ -8,7 +8,7 @@ const { CatalogRunStore } = require("../catalog/lib/runStore");
 const Logger = require("../utils/Logger");
 const T = require("./lib/transforms");
 const { loadBlogDestinationIndexes } = require("./dry-run");
-const { loadApprovedGuestPhones, upsertPilotBlog } = require("./pilot");
+const { upsertPilotBlog } = require("./pilot");
 
 async function mapPool(items, concurrency, action) {
   let cursor = 0;
@@ -181,7 +181,6 @@ async function runOrders(
   destination,
   ledger,
   resumePage,
-  approvedGuestPhones,
   concurrency = 8,
   quarantinedOrderIds = new Set(),
 ) {
@@ -197,12 +196,14 @@ async function runOrders(
       }
       try {
         const payload = T.orderPayload(order);
-        if (payload.guestPhone && !approvedGuestPhones.has(payload.guestPhone)) {
-          payload.guestPhone = null;
-        }
         ledger.count("orders", "eligible");
         const result = await destination.upsertOrder(payload);
         ledger.count("orders", result.mode === "created" ? "inserted" : "updated");
+        ledger.count("customerIdentities", result.userLinked ? "linked" : "unresolved");
+        if (result.identityMatchReason) {
+          ledger.count("customerIdentities", String(result.identityMatchReason));
+        }
+        for (const issue of result.identityIssues || []) ledger.issue("customerIdentities", sourceId, issue);
         ledger.count("orderItems", "inserted", Number(result.itemsCreated || 0));
         ledger.count("orderItems", "updated", Number(result.itemsUpdated || 0));
         ledger.count("orderItems", "skipped", Number(result.itemsDeleted || 0));
@@ -242,13 +243,11 @@ async function runFull({ config, source, destination, ledger, resume = false }) 
   await runUsers(source, destination, ledger, checkpointPage(ledger, "users"), entityConcurrency);
   await runWallets(source, destination, ledger, checkpointPage(ledger, "wallets"), entityConcurrency);
   await runBlogs(source, destination, ledger, checkpointPage(ledger, "blogPosts"));
-  const approvedGuestPhones = await loadApprovedGuestPhones(destination);
   await runOrders(
     source,
     destination,
     ledger,
     checkpointPage(ledger, "orders"),
-    approvedGuestPhones,
     entityConcurrency,
     new Set((acceptedManifest?.dependentOrderIds || []).map(String)),
   );

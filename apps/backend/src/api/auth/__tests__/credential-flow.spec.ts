@@ -142,9 +142,12 @@ describe("shared Strapi credential flow", () => {
       try {
         const result = await verifyOtpIdentityWithStatus("challenge.value", "012345");
         expect(result).toEqual({
-          user: existingUser ?? createdUser,
+          user: expect.objectContaining(existingUser ?? createdUser),
           isNewUser: expectedIsNewUser,
+          needsProfileCompletion: true,
         });
+        const createdData = userDbQuery.create.mock.calls[0]?.[0]?.data;
+        if (createdData) expect(createdData).not.toHaveProperty("password");
       } finally {
         (global as any).strapi = originalStrapi;
       }

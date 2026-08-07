@@ -61,6 +61,9 @@ function getSyncConfig(env = process.env) {
     variationSweepProducts: boundedInt(env.WOOCOMMERCE_SYNC_VARIATION_SWEEP_PRODUCTS, {
       name: "WOOCOMMERCE_SYNC_VARIATION_SWEEP_PRODUCTS", fallback: 100, min: 10, max: 500,
     }),
+    identitySweepPages: boundedInt(env.WOOCOMMERCE_SYNC_IDENTITY_SWEEP_PAGES, {
+      name: "WOOCOMMERCE_SYNC_IDENTITY_SWEEP_PAGES", fallback: 5, min: 1, max: 25,
+    }),
     sourcePageConcurrency: boundedInt(env.WOOCOMMERCE_SYNC_SOURCE_PAGE_CONCURRENCY, {
       name: "WOOCOMMERCE_SYNC_SOURCE_PAGE_CONCURRENCY", fallback: 4, min: 1, max: 8,
     }),

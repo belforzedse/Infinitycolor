@@ -192,6 +192,10 @@ test("hourly polls changes and drains active immediate and no-media lanes in ord
     calls.push(["sweep", token]);
     return 10;
   };
+  service.identitySweep = async (token) => {
+    calls.push(["identity-sweep", token]);
+    return { customers: 5, wallets: 5 };
+  };
   service.drain = async (lane, token) => {
     calls.push(["drain", lane, token]);
     return lane === "immediate" ? { completed: 1, failed: 0 } : { completed: 2, failed: 1 };
@@ -203,6 +207,7 @@ test("hourly polls changes and drains active immediate and no-media lanes in ord
     ["lease", "drain:hourly"],
     ["poll", "drain:hourly", "hourly-fence"],
     ["sweep", "hourly-fence"],
+    ["identity-sweep", "hourly-fence"],
     ["drain", "immediate", undefined],
     ["drain", "hourly", "hourly-fence"],
   ]);

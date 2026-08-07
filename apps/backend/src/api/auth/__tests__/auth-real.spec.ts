@@ -554,21 +554,19 @@ describe("Auth Controller - Real Implementation", () => {
       const userId = 1;
       const firstName = "Jane";
       const lastName = "Smith";
-      const password = "new-password";
       const birthDate = "1990-01-01";
 
       const ctx = mockContext({
         request: {
-          body: { firstName, lastName, password, birthDate },
+          body: { firstName, lastName, birthDate },
         },
         state: { user: { id: userId } },
       });
 
       const mockQuery = mockStrapi.db.query("api::local-user-info.local-user-info");
-      mockQuery.findOne.mockResolvedValue({
-        id: 1,
-        user: userId,
-      });
+      mockQuery.findOne
+        .mockResolvedValueOnce({ id: userId, ProfileCompletedAt: null })
+        .mockResolvedValueOnce({ id: 1, user: userId });
 
       // ✅ Call REAL controller action
       await authController.registerInfo(ctx);
@@ -584,11 +582,17 @@ describe("Auth Controller - Real Implementation", () => {
           transacting: expect.anything(),
         }),
       );
-      expect(mockUpdatePasswordAndLegacyHash).toHaveBeenCalledWith(
-        userId,
-        password,
-        expect.anything(),
+      expect(mockQuery.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: userId },
+          data: expect.objectContaining({
+            ProfileCompletedAt: expect.any(String),
+            ProfileManagedByCustomer: true,
+          }),
+          transacting: expect.anything(),
+        }),
       );
+      expect(mockUpdatePasswordAndLegacyHash).not.toHaveBeenCalled();
 
       expect(ctx.body).toEqual({ message: "info updated" });
     });
@@ -601,7 +605,9 @@ describe("Auth Controller - Real Implementation", () => {
       });
 
       const mockQuery = mockStrapi.db.query("api::local-user-info.local-user-info");
-      mockQuery.findOne.mockResolvedValue(null); // No profile exists
+      mockQuery.findOne
+        .mockResolvedValueOnce({ id: userId, ProfileCompletedAt: null })
+        .mockResolvedValueOnce(null); // No profile exists
 
       await authController.registerInfo(ctx);
 
@@ -611,6 +617,16 @@ describe("Auth Controller - Real Implementation", () => {
             user: userId,
             FirstName: "New",
             LastName: "User",
+          }),
+          transacting: expect.anything(),
+        }),
+      );
+      expect(mockQuery.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: userId },
+          data: expect.objectContaining({
+            ProfileCompletedAt: expect.any(String),
+            ProfileManagedByCustomer: true,
           }),
           transacting: expect.anything(),
         }),

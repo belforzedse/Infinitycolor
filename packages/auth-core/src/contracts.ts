@@ -52,11 +52,13 @@ export type BridgeOtpRequestResponse = {
 export type BridgeVerifiedIdentityResponse = {
   strapiUserId: number;
   confirmed: boolean;
+  needsProfileCompletion?: boolean;
 };
 
 export type BridgeOtpVerifiedIdentityResponse =
   BridgeVerifiedIdentityResponse & {
     isNewUser: boolean;
+    needsProfileCompletion: boolean;
   };
 
 export type AuthStateEvent = "session-changed" | "logout";

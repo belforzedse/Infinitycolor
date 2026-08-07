@@ -51,13 +51,20 @@ describe("WordPress migration write service", () => {
       password: "must-not-be-used",
     });
 
-    expect(result).toEqual({ mode: "created", id: 51 });
+    expect(result).toEqual({
+      mode: "created",
+      id: 51,
+      matchReason: "preprovisioned",
+      issues: [],
+    });
     const created = userQuery.create.mock.calls[0][0].data;
     expect(created).toEqual(expect.objectContaining({
       phone: "+989123456789",
       external_source: "wordpress",
       external_id: "7",
       IsVerified: false,
+      AccountOrigin: "WooRegistered",
+      ProfileManagedByCustomer: false,
     }));
     expect(created).not.toHaveProperty("password");
     expect(JSON.stringify(created)).not.toContain("must-not-be-used");
@@ -95,7 +102,7 @@ describe("WordPress migration write service", () => {
       sourceId: "7",
       phone: "09123456789",
     })).rejects.toMatchObject({ code: "USER_PHONE_SOURCE_CONFLICT", status: 409 });
-    expect(trx.raw).toHaveBeenCalledTimes(2);
+    expect(trx.raw).toHaveBeenCalledTimes(3);
   });
 
   test("requires explicit contract type and a safe tax percentage", async () => {

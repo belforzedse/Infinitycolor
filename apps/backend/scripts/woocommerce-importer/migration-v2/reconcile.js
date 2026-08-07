@@ -198,8 +198,8 @@ async function reconcileUsersAndWallets(source, destination, dryRun, pilot, ledg
         updatedAt: expected.sourceUpdatedAt,
       } : null;
       if (timestamps && (
-        !sameTimestamp(actual.createdAt, timestamps.createdAt) ||
-        !sameTimestamp(actual.updatedAt, timestamps.updatedAt)
+        !sameTimestamp(actual.SourceCreatedAt, timestamps.createdAt) ||
+        !sameTimestamp(actual.SourceUpdatedAt, timestamps.updatedAt)
       )) {
         valid = false;
         mismatch(ledger, "users", sourceId, "USER_SOURCE_TIMESTAMP_MISMATCH");
@@ -298,7 +298,15 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
       );
     } else {
       const actualUser = attrs(relationOne(actual.user));
-      check(!actualUser.id || actualUser.external_source === "wordpress", "ORDER_GUEST_USER_UNAPPROVED");
+      if (expected.guestPhone) {
+        check(Boolean(actualUser.id), "ORDER_GUEST_USER_NOT_LINKED");
+        check(
+          T.canonicalPhone(actualUser.phone) === expected.guestPhone,
+          "ORDER_GUEST_USER_PHONE_MISMATCH",
+        );
+      } else {
+        check(!actualUser.id, "ORDER_UNRESOLVED_GUEST_HAS_USER");
+      }
     }
     if (valid) ledger.count("orders", "verified");
   }

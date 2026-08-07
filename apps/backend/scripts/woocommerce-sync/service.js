@@ -9,7 +9,6 @@ const { SyncStateStore } = require("./stateStore");
 const { WordPressSource } = require("../woocommerce-importer/migration-v2/lib/source");
 const { Destination } = require("../woocommerce-importer/migration-v2/lib/destination");
 const T = require("../woocommerce-importer/migration-v2/lib/transforms");
-const { loadApprovedGuestPhones } = require("../woocommerce-importer/migration-v2/pilot");
 const { CatalogEngine } = require("../woocommerce-importer/catalog/engine");
 const { buildConfig } = require("../woocommerce-importer/catalog/config");
 const Logger = require("../woocommerce-importer/utils/Logger");
@@ -85,13 +84,48 @@ function orderRevision(row) {
     total: row.total,
     shippingTotal: row.shipping_total,
     customerId: row.customer_id,
+    billing: {
+      phone: T.canonicalPhone(row?.billing?.phone),
+      email: String(row?.billing?.email || "").trim().toLowerCase(),
+      firstName: row?.billing?.first_name || "",
+      lastName: row?.billing?.last_name || "",
+    },
+    paymentMethod: row.payment_method,
     lines: (row.line_items || []).map((line) => ({
       id: line.id,
       productId: line.product_id,
       variationId: line.variation_id,
       quantity: line.quantity,
+      price: line.price,
+      total: line.total,
+      name: line.name,
+      sku: line.sku,
+    })),
+    shippingLines: (row.shipping_lines || []).map((line) => ({
+      id: line.id,
+      methodId: line.method_id,
+      methodTitle: line.method_title,
       total: line.total,
     })),
+  });
+}
+
+function customerRevision(row) {
+  return sha256({
+    id: row.id,
+    modified: sourceModifiedAt(row),
+    email: String(row.email || "").trim().toLowerCase(),
+    firstName: row.first_name || "",
+    lastName: row.last_name || "",
+    billingPhone: T.canonicalPhone(row?.billing?.phone),
+    shippingPhone: T.canonicalPhone(row?.shipping?.phone),
+  });
+}
+
+function walletRevision(row) {
+  return sha256({
+    id: row.id,
+    balance: T.walletBalanceValue(row),
   });
 }
 
@@ -327,7 +361,7 @@ class WooSyncService {
     });
   }
 
-  async syncOrderRow(row, approvedGuestPhones) {
+  async syncOrderRow(row) {
     await ensureActive(this.state);
     const order = await this.source.getOrder(row.source_id);
     const payload = T.orderPayload(order);
@@ -345,8 +379,6 @@ class WooSyncService {
       } catch (error) {
         if (!/NOT_FOUND|404/.test(String(error?.payload?.error || error?.message || ""))) throw error;
       }
-    } else if (payload.guestPhone && !approvedGuestPhones.has(payload.guestPhone)) {
-      payload.guestPhone = null;
     }
     await ensureActive(this.state);
     return this.destination.upsertOrder(payload);
@@ -380,7 +412,27 @@ class WooSyncService {
     return failures;
   }
 
-  async drain(lane, parentToken = null, sourceTypes = ["product", "product-sweep", "order"]) {
+  async syncCustomerRow(row) {
+    await ensureActive(this.state);
+    const customer = await this.source.getCustomer(row.source_id);
+    await ensureActive(this.state);
+    return this.destination.upsertUser(T.customerPayload(customer));
+  }
+
+  async syncWalletRow(row) {
+    await ensureActive(this.state);
+    const customer = await this.source.getCustomer(row.source_id);
+    await ensureActive(this.state);
+    await this.destination.upsertUser(T.customerPayload(customer));
+    const balance = await this.source.getWalletBalance(row.source_id);
+    await ensureActive(this.state);
+    return this.destination.upsertWallet(T.walletPayload({
+      id: row.source_id,
+      balance: T.walletBalanceValue(balance),
+    }));
+  }
+
+  async drain(lane, parentToken = null, sourceTypes = ["product", "product-sweep", "customer", "wallet", "order"]) {
     await ensureActive(this.state);
     const leaseName = lane === "immediate" ? "discovery" : `drain:${lane}`;
     const execute = async (token) => {
@@ -391,6 +443,8 @@ class WooSyncService {
         const rows = await this.state.claimItems({ lane, sourceTypes, limit: 50, token });
         if (rows.length === 0) break;
         const productRows = rows.filter((row) => row.source_type === "product" || row.source_type === "product-sweep");
+        const customerRows = rows.filter((row) => row.source_type === "customer");
+        const walletRows = rows.filter((row) => row.source_type === "wallet");
         const orderRows = rows.filter((row) => row.source_type === "order");
         if (productRows.length > 0) {
           let failures;
@@ -411,11 +465,29 @@ class WooSyncService {
             }
           }
         }
+        for (const [identityRows, sync, entity] of [
+          [customerRows, (row) => this.syncCustomerRow(row), "customer"],
+          [walletRows, (row) => this.syncWalletRow(row), "wallet"],
+        ]) {
+          await mapPool(identityRows, this.config.concurrency.entities, async (row) => {
+            try {
+              await sync(row);
+              await this.state.completeItem(row.id, token);
+              completed += 1;
+            } catch (error) {
+              const errorCode = safeErrorCode(error);
+              await this.state.failItem(row.id, token, errorCode);
+              failed += 1;
+              console.warn(`[WooSync] ${entity} failed`, {
+                sourceIdHash: logId(entity, row.source_id), errorCode,
+              });
+            }
+          });
+        }
         if (orderRows.length > 0) {
-          const approvedGuestPhones = await loadApprovedGuestPhones(this.destination);
           await mapPool(orderRows, this.config.concurrency.entities, async (row) => {
             try {
-              await this.syncOrderRow(row, approvedGuestPhones);
+              await this.syncOrderRow(row);
               await this.state.completeItem(row.id, token);
               completed += 1;
             } catch (error) {
@@ -460,12 +532,58 @@ class WooSyncService {
     return products.length;
   }
 
+  async identitySweep(token) {
+    const control = await this.state.control();
+    const sweep = async ({ sourceType, client, pathname, rowsFrom, revision }) => {
+      const cursor = await this.state.cursor(`${sourceType}-sweep`);
+      let pageNumber = Number(cursor.sweep_page || 1);
+      let observed = 0;
+      for (let count = 0; count < this.config.identitySweepPages; count += 1) {
+        const response = await client.get(pathname, { per_page: 100, page: pageNumber, orderby: "id", order: "asc" });
+        const rows = rowsFrom(response.data);
+        const totalPages = Math.max(1, Number(response.headers.get("x-wp-totalpages")) || 1);
+        for (const row of rows) {
+          await this.state.observe({
+            sourceType,
+            sourceId: row.id,
+            revisionSha256: revision(row),
+            modifiedAt: sourceModifiedAt(row),
+          }, control.mode, { insertLane: "hourly" });
+          observed += 1;
+        }
+        pageNumber = pageNumber >= totalPages || rows.length < 100 ? 1 : pageNumber + 1;
+        await this.state.assertLease("drain:hourly", token);
+        if (pageNumber === 1) break;
+      }
+      await this.state.saveCursor(`${sourceType}-sweep`, { sweepPage: pageNumber }, "drain:hourly", token);
+      return observed;
+    };
+    const [customers, wallets] = await Promise.all([
+      sweep({
+        sourceType: "customer",
+        client: this.source.woo,
+        pathname: "/customers",
+        rowsFrom: (data) => Array.isArray(data) ? data : [],
+        revision: customerRevision,
+      }),
+      sweep({
+        sourceType: "wallet",
+        client: this.source.wallet,
+        pathname: "/admin/users",
+        rowsFrom: (data) => Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.users) ? data.users : [],
+        revision: walletRevision,
+      }),
+    ]);
+    return { customers, wallets };
+  }
+
   async hourly() {
     return this.withLease("drain:hourly", async (token) => {
       const started = Date.now();
       const control = await this.state.control();
       const changes = await this.pollChanges("drain:hourly", token);
       const swept = await this.variationSweep(token);
+      const identitiesSwept = await this.identitySweep(token);
       const immediate = control.mode === "active"
         ? await this.drain("immediate")
         : { completed: 0, failed: 0 };
@@ -479,9 +597,9 @@ class WooSyncService {
         outcome: "completed",
         durationMs: Date.now() - started,
         itemCount: completed + failed,
-        detail: { changes, swept, immediate, hourly, source: this.source.metrics(), destination: this.destination.metrics() },
+        detail: { changes, swept, identitiesSwept, immediate, hourly, source: this.source.metrics(), destination: this.destination.metrics() },
       });
-      return { completed, failed, changes, swept, immediate, hourly, mode: control.mode };
+      return { completed, failed, changes, swept, identitiesSwept, immediate, hourly, mode: control.mode };
     });
   }
 
@@ -507,13 +625,12 @@ class WooSyncService {
   }
 
   async fullOrders() {
-    const approvedGuestPhones = await loadApprovedGuestPhones(this.destination);
     let completed = 0;
     let failed = 0;
     for await (const page of this.source.orders()) {
       await mapPool(page.rows, this.config.concurrency.entities, async (order) => {
         try {
-          await this.syncOrderRow({ source_id: order.id }, approvedGuestPhones);
+          await this.syncOrderRow({ source_id: order.id });
           completed += 1;
         } catch (error) {
           failed += 1;
@@ -662,6 +779,8 @@ module.exports = {
   redisConnection,
   productRevision,
   orderRevision,
+  customerRevision,
+  walletRevision,
   sourceModifiedAt,
   safeErrorCode,
   catalogReportSummary,

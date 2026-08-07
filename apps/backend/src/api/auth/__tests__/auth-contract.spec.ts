@@ -22,6 +22,17 @@ describe("frozen authentication contract", () => {
       role: { type: "relation", relation: "manyToOne", target: "plugin::users-permissions.role" },
       phone: { type: "string", unique: true, required: true },
       IsVerified: { type: "boolean", default: false },
+      AccountOrigin: {
+        type: "enumeration",
+        enum: ["Native", "WooRegistered", "WooGuest"],
+        default: "Native",
+        required: true,
+      },
+      ClaimedAt: { type: "datetime" },
+      ProfileCompletedAt: { type: "datetime" },
+      ProfileManagedByCustomer: { type: "boolean", default: true, required: true },
+      SourceCreatedAt: { type: "datetime" },
+      SourceUpdatedAt: { type: "datetime" },
       user_info: {
         type: "relation",
         relation: "oneToOne",

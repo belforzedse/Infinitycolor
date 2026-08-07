@@ -129,6 +129,33 @@
     },
     "removedAt": {
       "type": "datetime"
+    },
+    "AccountOrigin": {
+      "type": "enumeration",
+      "enum": [
+        "Native",
+        "WooRegistered",
+        "WooGuest"
+      ],
+      "default": "Native",
+      "required": true
+    },
+    "ClaimedAt": {
+      "type": "datetime"
+    },
+    "ProfileCompletedAt": {
+      "type": "datetime"
+    },
+    "ProfileManagedByCustomer": {
+      "type": "boolean",
+      "default": true,
+      "required": true
+    },
+    "SourceCreatedAt": {
+      "type": "datetime"
+    },
+    "SourceUpdatedAt": {
+      "type": "datetime"
     }
   }
 }

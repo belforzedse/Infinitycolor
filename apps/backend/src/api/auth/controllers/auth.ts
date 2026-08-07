@@ -17,7 +17,6 @@ import {
   CredentialFlowError,
   issueLegacyJwt,
   resetPasswordWithOtp,
-  updatePasswordAndLegacyHash,
   verifyOtpIdentity,
   verifyPasswordIdentity,
 } from "../services/credential-flow";
@@ -169,6 +168,7 @@ async function self(ctx) {
           .filter((action: unknown): action is string => typeof action === "string" && action.length > 0),
       ),
     ).sort();
+    const lifecycle = fullUser as any;
 
     ctx.body = {
       ...ctx.state.user,
@@ -181,6 +181,11 @@ async function self(ctx) {
       isAdmin,
       roleName: roleName ?? null,
       effectivePermissions,
+      AccountOrigin: lifecycle?.AccountOrigin ?? "Native",
+      ClaimedAt: lifecycle?.ClaimedAt ?? null,
+      ProfileCompletedAt: lifecycle?.ProfileCompletedAt ?? null,
+      ProfileManagedByCustomer: Boolean(lifecycle?.ProfileManagedByCustomer),
+      needsProfileCompletion: !lifecycle?.ProfileCompletedAt,
     };
   } catch (err) {
     strapi.log.error(err);
@@ -322,7 +327,7 @@ async function updateSelf(ctx) {
 }
 
 async function registerInfo(ctx) {
-  const { firstName, lastName, password, phone, birthDate } = ctx.request.body;
+  const { firstName, lastName, birthDate } = ctx.request.body;
   const user = ctx.state.user;
   const normalizedFirstName = normalizeRequiredProfileName(firstName);
   const normalizedLastName = normalizeRequiredProfileName(lastName);
@@ -347,12 +352,17 @@ async function registerInfo(ctx) {
     }
 
     const pluginUserId = Number(user.id);
+    const currentUser = await strapi.db
+      .query("plugin::users-permissions.user")
+      .findOne({ where: { id: pluginUserId } });
+    if (!currentUser) return ctx.unauthorized(UNAUTHORIZED_MESSAGE);
+
     // Find profile record that points to plugin user
     let profileRecord = await strapi.db
       .query("api::local-user-info.local-user-info")
       .findOne({ where: { user: pluginUserId } });
 
-    const wasNewProfile = !profileRecord;
+    const wasFirstCompletion = !currentUser.ProfileCompletedAt;
 
     await strapi.db.transaction(async ({ trx }) => {
       if (!profileRecord) {
@@ -377,30 +387,17 @@ async function registerInfo(ctx) {
         } as any);
       }
 
-      if (password) {
-        await updatePasswordAndLegacyHash(pluginUserId, password, trx);
-      }
+      await strapi.db.query("plugin::users-permissions.user").update({
+        where: { id: pluginUserId },
+        data: {
+          ProfileCompletedAt: currentUser.ProfileCompletedAt || new Date().toISOString(),
+          ProfileManagedByCustomer: true,
+        },
+        transacting: trx,
+      } as any);
     });
 
-    if (phone) {
-      let normalizedPhone = String(phone).trim();
-      if (normalizedPhone.startsWith("0")) {
-        normalizedPhone = `+98${normalizedPhone.substring(1)}`;
-      }
-      if (!normalizedPhone.startsWith("+")) {
-        normalizedPhone = `+${normalizedPhone}`;
-      }
-
-      await strapi.entityService.update("plugin::users-permissions.user", pluginUserId, {
-        data: {
-          phone: normalizedPhone,
-          username: normalizedPhone,
-          email: `${normalizedPhone.replace(/\D/g, "") || "user"}@placeholder.local`,
-        },
-      });
-    }
-
-    if (wasNewProfile) {
+    if (wasFirstCompletion) {
       await strapi.service("api::notification.notification").createWelcome(pluginUserId);
     }
 

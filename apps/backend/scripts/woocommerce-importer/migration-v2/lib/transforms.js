@@ -150,11 +150,21 @@ function orderPayload(order) {
   const sourceTimestamps = wooSourceTimestamps(order);
   const gateway = paymentGateway(order.payment_method);
   const totalTaxToman = wooMoneyToToman(order.total_tax || 0);
+  const registeredCustomer = Number(order.customer_id) > 0;
+  const billingIdentity = {
+    phone: canonicalPhone(order?.billing?.phone),
+    email: cleanText(order?.billing?.email, 255) || null,
+    firstName: cleanText(order?.billing?.first_name, 255),
+    lastName: cleanText(order?.billing?.last_name, 255),
+  };
+  const guestPhone = registeredCustomer ? null : billingIdentity.phone;
   if (totalTaxToman !== "0") throw new Error("ORDER_NONZERO_TAX_REQUIRES_MAPPING");
   return {
     sourceId,
-    customerSourceId: Number(order.customer_id) > 0 ? String(order.customer_id) : null,
-    guestPhone: Number(order.customer_id) > 0 ? null : canonicalPhone(order?.billing?.phone),
+    customerSourceId: registeredCustomer ? String(order.customer_id) : null,
+    guestPhone,
+    orderIdentity: billingIdentity,
+    guestIdentity: registeredCustomer ? null : billingIdentity,
     date: date.toISOString(),
     status: orderStatus[order.status] || "Paying",
     contractStatus: contractStatus[order.status] || "Not Ready",

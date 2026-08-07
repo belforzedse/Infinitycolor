@@ -53,7 +53,7 @@ test("central auth uses the canonical Infinity favicon", () => {
   assert.deepEqual(authFavicon, storefrontFavicon);
 });
 
-test("OTP signup routing uses the verified identity result instead of pre-auth state", () => {
+test("OTP onboarding routing uses durable profile completion instead of pre-auth state", () => {
   const plugin = fs.readFileSync(
     path.join(appRoot, "src/server/infinity-plugin.ts"),
     "utf8",
@@ -63,7 +63,7 @@ test("OTP signup routing uses the verified identity result instead of pre-auth s
     "utf8",
   );
 
-  assert.match(plugin, /if \(verified\.isNewUser === true\)/);
+  assert.match(plugin, /if \(verified\.needsProfileCompletion === true\)/);
   assert.doesNotMatch(plugin, /flow\.hasUser/);
   assert.doesNotMatch(flowState, /hasUser\??:/);
 });

@@ -6,7 +6,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
-  loadApprovedGuestPhones,
   selectRelationAwarePilotOrders,
   upsertPilotOrder,
 } = require("../pilot");
@@ -20,7 +19,7 @@ function order({ id, customerId, productId, variationId = 0, status = "processin
     status,
     total: "10",
     shipping_total: "0",
-    billing: { phone },
+    billing: { phone, first_name: "First", last_name: "Last" },
     line_items: [{
       id: id * 10,
       quantity: 1,
@@ -64,20 +63,7 @@ test("relation-aware pilot selection includes valid registered and guest orders 
   assert.equal(result.rejected.ORDER_ITEM_PRODUCT_REFERENCE_INVALID, 1);
 });
 
-test("approved guest phones require exactly one WordPress-sourced destination user", async () => {
-  const destination = {
-    async loadSnapshot() {
-      return [
-        { external_source: "wordpress", external_id: "1", phone: "09120000001" },
-        { external_source: "local", external_id: null, phone: "09120000001" },
-        { external_source: "wordpress", external_id: "2", phone: "09120000002" },
-      ];
-    },
-  };
-  assert.deepEqual(Array.from(await loadApprovedGuestPhones(destination)), ["+989120000002"]);
-});
-
-test("pilot order clears an unapproved guest phone before the destination write", async () => {
+test("pilot order preserves guest identity for canonical destination reconciliation", async () => {
   let written;
   const source = {
     async getOrder() {
@@ -93,8 +79,9 @@ test("pilot order clears an unapproved guest phone before the destination write"
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-pilot-order-"));
   const ledger = new RunLedger(stateDir, "pilot", "pilot-order").start();
   try {
-    await upsertPilotOrder(source, destination, ledger, "4", new Set(), new Set());
-    assert.equal(written.guestPhone, null);
+    await upsertPilotOrder(source, destination, ledger, "4", new Set());
+    assert.equal(written.guestPhone, "+989120000004");
+    assert.equal(written.guestIdentity.firstName, "First");
     assert.equal(ledger.summary.entities.orders.inserted, 1);
   } finally {
     ledger.release();

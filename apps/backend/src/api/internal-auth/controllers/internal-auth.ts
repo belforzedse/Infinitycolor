@@ -56,7 +56,7 @@ export default {
   async otpVerify(ctx) {
     const { challengeId, otp } = ctx.request.body ?? {};
     try {
-      const { user, isNewUser } = await verifyOtpIdentityWithStatus(
+      const { user, isNewUser, needsProfileCompletion } = await verifyOtpIdentityWithStatus(
         String(challengeId ?? ""),
         String(otp ?? ""),
       );
@@ -65,6 +65,7 @@ export default {
         strapiUserId: Number(user.id),
         confirmed: Boolean(user.confirmed),
         isNewUser,
+        needsProfileCompletion,
       };
     } catch (error) {
       handleCredentialError(ctx, error);
@@ -77,7 +78,11 @@ export default {
     try {
       const user = await verifyPasswordIdentity(phone, String(password ?? ""));
       await assertUserMayStartSession(user);
-      ctx.body = { strapiUserId: Number(user.id), confirmed: Boolean(user.confirmed) };
+      ctx.body = {
+        strapiUserId: Number(user.id),
+        confirmed: Boolean(user.confirmed),
+        needsProfileCompletion: !user.ProfileCompletedAt,
+      };
     } catch (error) {
       handleCredentialError(ctx, error);
     }

@@ -60,7 +60,7 @@ test("outer order stage skips only dependency-quarantined orders and continues",
     checkpoint(entity, value) { checkpoints.push([entity, value]); },
   };
 
-  await runOrders(source, destination, ledger, 0, new Set(), 8, new Set(["22"]));
+  await runOrders(source, destination, ledger, 0, 8, new Set(["22"]));
 
   assert.deepEqual(written, ["21"]);
   assert.deepEqual(issues, [["orders", "22", "CATALOG_DEPENDENCY_QUARANTINED"]]);

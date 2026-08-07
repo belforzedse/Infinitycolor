@@ -173,6 +173,23 @@ function advisoryKey(phone: string): string {
 interface OtpIdentityResolution {
   user: any;
   isNewUser: boolean;
+  needsProfileCompletion: boolean;
+}
+
+async function markUserClaimed(user: any, transacting?: any): Promise<any> {
+  const now = new Date().toISOString();
+  const data = {
+    confirmed: true,
+    IsVerified: true,
+    ClaimedAt: user.ClaimedAt || now,
+    ProfileManagedByCustomer: true,
+  };
+  const saved = await strapi.db.query("plugin::users-permissions.user").update({
+    where: { id: user.id },
+    data,
+    ...(transacting ? { transacting } : {}),
+  } as any);
+  return saved || { ...user, ...data };
 }
 
 async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<OtpIdentityResolution> {
@@ -194,29 +211,30 @@ async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<OtpIdent
           "PHONE_IDENTITY_CHANGED",
         );
       }
-      if (!user.confirmed) {
-        user = await strapi.db.query("plugin::users-permissions.user").update({
-          where: { id: user.id },
-          data: { confirmed: true },
-          transacting: trx,
-        } as any);
-      }
-      return { user, isNewUser: false };
+      user = await markUserClaimed(user, trx);
+      return {
+        user,
+        isNewUser: false,
+        needsProfileCompletion: !user.ProfileCompletedAt,
+      };
     }
 
-    const temporaryPassword = crypto.randomBytes(24).toString("base64url");
-    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
-    const email = `${challenge.phone.replace(/\D/g, "") || "user"}@placeholder.local`;
+    const email = `${challenge.phone.replace(/\D/g, "") || "user"}@identity.invalid`;
+    const now = new Date().toISOString();
     user = await strapi.db.query("plugin::users-permissions.user").create({
       data: {
         username: challenge.phone,
         email,
         phone: challenge.phone,
-        password: passwordHash,
         role: customerRole?.id,
         confirmed: true,
         blocked: false,
         IsActive: true,
+        IsVerified: true,
+        AccountOrigin: "Native",
+        ClaimedAt: now,
+        ProfileCompletedAt: null,
+        ProfileManagedByCustomer: true,
       },
       transacting: trx,
     } as any);
@@ -224,7 +242,7 @@ async function resolveOrCreateOtpUser(challenge: OtpChallenge): Promise<OtpIdent
       data: { user: user.id },
       transacting: trx,
     } as any);
-    return { user, isNewUser: true };
+    return { user, isNewUser: true, needsProfileCompletion: true };
   });
 }
 
@@ -269,7 +287,7 @@ export async function verifyPasswordIdentity(phone: string, password: string): P
   if (!valid) {
     throw new CredentialFlowError(USER_NOT_FOUND_OR_PASSWORD_INCORRECT, 401, "INVALID_CREDENTIALS");
   }
-  return user;
+  return markUserClaimed(user);
 }
 
 /** Mirrors the native Users & Permissions account-state checks before a BA session exists. */

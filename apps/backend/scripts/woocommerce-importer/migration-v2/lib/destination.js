@@ -40,14 +40,9 @@ class Destination {
   }
 
   async upsertUser(payload) {
-    const timestamps = payload?.sourceCreatedAt ? {
-      createdAt: payload.sourceCreatedAt,
-      updatedAt: payload.sourceUpdatedAt,
-    } : null;
     return (await this.http.post(
       "/internal/migrations/wordpress-v2/users/upsert",
       payload,
-      sourceTimestampHeaders(timestamps),
     )).data?.data;
   }
 

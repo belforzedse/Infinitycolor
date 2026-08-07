@@ -16,7 +16,7 @@ import {
   VerificationInput,
 } from "@repo/auth-ui";
 import { jalaliBirthDateToGregorianDate } from "@repo/auth-core/birth-date";
-import { authPost } from "./auth-api";
+import { authGet, authPost } from "./auth-api";
 import { useAuthFlow } from "./auth-flow-context";
 import { useOtpCountdown } from "./countdown";
 
@@ -98,17 +98,13 @@ export function PhoneStatusForm({
     }
     setLoading(true);
     try {
-      const result = await authPost<{ message: string; hasUser: boolean }>(
+      await authPost<{ message: string }>(
         "/infinity/phone-status",
         { phone: phoneValue },
       );
       setPhone(phoneValue);
-      if (result.hasUser) {
-        go("/auth/login");
-      } else {
-        await authPost("/infinity/otp/request", { phone: phoneValue });
-        go("/auth/register");
-      }
+      await authPost("/infinity/otp/request", { phone: phoneValue });
+      go("/auth/login/otp");
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "بررسی شماره همراه ناموفق بود",
@@ -395,6 +391,15 @@ function OtpForm({
         >
           {title}
         </AuthButton>
+        {mode === "login" ? (
+          <AuthButton
+            type="button"
+            onClick={() => go("/auth/login")}
+            className="border border-infinity-primary !bg-transparent !text-infinity-primary"
+          >
+            ورود با رمز عبور
+          </AuthButton>
+        ) : null}
       </form>
     </div>
   );
@@ -621,8 +626,6 @@ export function RegistrationInfoForm() {
     birthYear: "",
     birthMonth: "",
     birthDay: "",
-    password: "",
-    confirmation: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -630,6 +633,23 @@ export function RegistrationInfoForm() {
   useEffect(() => {
     if (flowReady && !phone) go("/auth");
   }, [phone, flowReady, go]);
+  useEffect(() => {
+    if (!flowReady || !phone) return;
+    let cancelled = false;
+    void authGet<{ FirstName?: string; LastName?: string }>("/infinity/profile")
+      .then((profile) => {
+        if (cancelled) return;
+        setForm((current) => ({
+          ...current,
+          firstName: profile.FirstName?.trim() || current.firstName,
+          lastName: profile.LastName?.trim() || current.lastName,
+        }));
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "بازیابی اطلاعات حساب ناموفق بود");
+      });
+    return () => { cancelled = true; };
+  }, [phone, flowReady]);
   const change =
     (field: keyof typeof form) =>
     (event: React.ChangeEvent<HTMLInputElement>) =>
@@ -639,10 +659,11 @@ export function RegistrationInfoForm() {
     form.birthMonth,
     form.birthDay,
   );
+  const hasBirthParts = Boolean(form.birthYear || form.birthMonth || form.birthDay);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!birthDate || form.password !== form.confirmation) return;
+    if (!form.firstName.trim() || !form.lastName.trim() || (hasBirthParts && !birthDate)) return;
     setLoading(true);
     setError("");
     try {
@@ -651,8 +672,7 @@ export function RegistrationInfoForm() {
         {
           firstName: form.firstName,
           lastName: form.lastName,
-          password: form.password,
-          birthDate,
+          birthDate: birthDate || null,
         },
       );
       routeToRedirect(response.redirectTo);
@@ -670,9 +690,7 @@ export function RegistrationInfoForm() {
   const ready = Boolean(
     form.firstName &&
       form.lastName &&
-      birthDate &&
-      form.password.length >= 6 &&
-      form.password === form.confirmation,
+      (!hasBirthParts || birthDate),
   );
   return (
     <div className="space-y-8" dir="rtl">
@@ -714,7 +732,7 @@ export function RegistrationInfoForm() {
         </div>
         <div>
           <span id="birth-date-label" className="mb-2 inline-block">
-            <Text variant="label">تاریخ تولد</Text>
+            <Text variant="label">تاریخ تولد (اختیاری)</Text>
           </span>
           <div
             className="flex gap-2"
@@ -732,7 +750,6 @@ export function RegistrationInfoForm() {
               max="1450"
               autoComplete="bday-year"
               aria-label="سال تولد"
-              required
             />
             <AuthInput
               id="birth-month"
@@ -745,7 +762,6 @@ export function RegistrationInfoForm() {
               max="12"
               autoComplete="bday-month"
               aria-label="ماه تولد"
-              required
             />
             <AuthInput
               id="birth-day"
@@ -758,7 +774,6 @@ export function RegistrationInfoForm() {
               max="31"
               autoComplete="bday-day"
               aria-label="روز تولد"
-              required
             />
           </div>
         </div>
@@ -774,39 +789,6 @@ export function RegistrationInfoForm() {
             value={phone}
             autoComplete="tel"
             disabled
-          />
-        </div>
-        <div>
-          <FieldLabel htmlFor="registration-password" className="mb-2">
-            رمز عبور
-          </FieldLabel>
-          <AuthPasswordInput
-            id="registration-password"
-            name="new-password"
-            value={form.password}
-            onChange={change("password")}
-            showStrength
-            autoComplete="new-password"
-          />
-        </div>
-        <div>
-          <FieldLabel
-            htmlFor="registration-password-confirmation"
-            className="mb-2"
-          >
-            تکرار رمز عبور
-          </FieldLabel>
-          <AuthPasswordInput
-            id="registration-password-confirmation"
-            name="new-password-confirmation"
-            value={form.confirmation}
-            onChange={change("confirmation")}
-            error={
-              form.confirmation && form.password !== form.confirmation
-                ? "رمز عبور مطابقت ندارد"
-                : undefined
-            }
-            autoComplete="new-password"
           />
         </div>
         <ErrorAlert message={error} />
