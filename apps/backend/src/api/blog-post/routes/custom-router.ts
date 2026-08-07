@@ -2,7 +2,7 @@ export default {
   routes: [
     {
       method: "GET",
-      path: "/blog-posts/homepage",
+      path: "/blog-posts/homepage/cards",
       handler: "blog-post.findHomepage",
       config: {
         auth: false,

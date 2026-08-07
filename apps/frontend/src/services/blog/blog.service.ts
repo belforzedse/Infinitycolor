@@ -497,7 +497,7 @@ class BlogService {
   // ==================== BLOG POSTS ====================
 
   async getHomepageBlogPosts(): Promise<ApiResponse<BlogCardPost[]>> {
-    const response = await fetch(`${this.getBaseUrl()}/blog-posts/homepage`, {
+    const response = await fetch(`${this.getBaseUrl()}/blog-posts/homepage/cards`, {
       headers: await this.getHeaders(),
     });
 

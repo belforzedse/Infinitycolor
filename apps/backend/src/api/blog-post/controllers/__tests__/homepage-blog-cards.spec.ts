@@ -9,7 +9,7 @@ describe("homepage blog-card contract", () => {
   it("exposes a public dedicated route before the slug route", () => {
     expect(routeConfig.routes[0]).toEqual({
       method: "GET",
-      path: "/blog-posts/homepage",
+      path: "/blog-posts/homepage/cards",
       handler: "blog-post.findHomepage",
       config: {
         auth: false,

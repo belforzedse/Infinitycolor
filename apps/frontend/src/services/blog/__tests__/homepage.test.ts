@@ -49,7 +49,7 @@ describe("homepage blog service", () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url] = mockFetch.mock.calls[0];
-    expect(new URL(url as string).pathname).toBe("/api/blog-posts/homepage");
+    expect(new URL(url as string).pathname).toBe("/api/blog-posts/homepage/cards");
     expect(response.data).toEqual([
       expect.objectContaining({
         id: 1,
