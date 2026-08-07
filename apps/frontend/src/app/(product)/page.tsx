@@ -49,11 +49,7 @@ export const metadata: Metadata = {
 
 async function getLatestBlogPosts() {
   try {
-    const response = await blogService.getBlogPosts({
-      pageSize: 8,
-      status: "Published",
-      sort: "PublishedAt:desc",
-    });
+    const response = await blogService.getHomepageBlogPosts();
     return response.data || [];
   } catch (error) {
     console.error("Error fetching latest blog posts:", error);

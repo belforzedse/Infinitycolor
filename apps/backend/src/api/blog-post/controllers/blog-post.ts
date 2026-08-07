@@ -8,6 +8,7 @@ import { CONTENT_EDITOR_ROLES, fetchUserWithRole, roleIsAllowed } from "../../..
 import { validateBlogSlug, generateUniqueBlogSlug } from "../../../utils/slugValidation";
 import { enrichBlogPostsWithAuthorNames } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
+import { buildHomepageBlogCardQuery, projectHomepageBlogCard } from "./homepage-blog-cards";
 import {
   buildCacheKey,
   getCacheTtlFromEnv,
@@ -156,6 +157,18 @@ const blogPostController = factories.createCoreController(
         userWithRole?.role?.name ||
         null
       );
+    },
+
+    // Public, bounded contract for the storefront homepage carousel. Keep this
+    // separate from the legacy blog list until that page has server pagination.
+    async findHomepage(ctx: any) {
+      const results = await strapi.entityService.findMany(
+        "api::blog-post.blog-post",
+        buildHomepageBlogCardQuery(),
+      );
+      const cards = Array.isArray(results) ? results.map(projectHomepageBlogCard) : [];
+
+      return (this as any).transformResponse(cards);
     },
 
     // Override find to filter by status for public users

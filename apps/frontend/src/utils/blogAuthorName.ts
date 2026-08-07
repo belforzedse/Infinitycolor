@@ -5,7 +5,9 @@
 
 import type { BlogAuthor } from "@/services/blog/blog.service";
 
-function unwrapAuthor(author?: BlogAuthor | null) {
+type BlogAuthorDisplay = Pick<BlogAuthor, "id" | "Name"> & Partial<BlogAuthor>;
+
+function unwrapAuthor(author?: BlogAuthorDisplay | null) {
   if (!author) return null;
   if ((author as any).data?.attributes) {
     return { ...(author as any).data.attributes, id: (author as any).data.id };
@@ -13,7 +15,7 @@ function unwrapAuthor(author?: BlogAuthor | null) {
   return author;
 }
 
-export function resolveBlogAuthorDisplayName(author?: BlogAuthor | null): string {
+export function resolveBlogAuthorDisplayName(author?: BlogAuthorDisplay | null): string {
   const normalized = unwrapAuthor(author);
   if (!normalized) return " - ";
 

@@ -7,11 +7,11 @@ import NewIcon from "@/components/PDP/Icons/NewIcon";
 import BlogCard from "./BlogCard";
 import BlogCardMobile from "./BlogCardMobile";
 import BlogPagination from "./BlogPagination";
-import { blogService, BlogPost } from "@/services/blog/blog.service";
+import { blogService, BlogCardPost } from "@/services/blog/blog.service";
 
 interface BlogCarouselProps {
   /** Pre-fetched posts - if not provided, will fetch based on category */
-  posts?: BlogPost[];
+  posts?: BlogCardPost[];
   /** Category slug for filtering - if provided, fetches posts from this category */
   category?: string;
   /** Section title */
@@ -32,7 +32,7 @@ const BlogCarousel: React.FC<BlogCarouselProps> = ({
   isCategory = false,
   className = "",
 }) => {
-  const [posts, setPosts] = useState<BlogPost[]>(initialPosts || []);
+  const [posts, setPosts] = useState<BlogCardPost[]>(initialPosts || []);
   const [loading, setLoading] = useState(!initialPosts && !!category);
   const [currentPage, setCurrentPage] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
