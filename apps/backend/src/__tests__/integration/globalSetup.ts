@@ -28,6 +28,10 @@ function setEnvDefaults() {
   process.env.ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || "test-admin-jwt-secret";
   process.env.TRANSFER_TOKEN_SALT = process.env.TRANSFER_TOKEN_SALT || "test-transfer-salt";
   process.env.JWT_SECRET = process.env.JWT_SECRET || "test-jwt-secret";
+  // Match CI defaults so middleware config can load an exact admin origin.
+  process.env.ADMIN_URL = process.env.ADMIN_URL || "http://localhost:2891";
+  process.env.NEXT_PUBLIC_ADMIN_URL =
+    process.env.NEXT_PUBLIC_ADMIN_URL || process.env.ADMIN_URL;
   // Keep boot lean & deterministic: no periodic jobs, no telemetry, no Redis,
   // and skip the slow idempotent app seeding (see src/index.ts bootstrap guard).
   process.env.DISABLE_BACKGROUND_JOBS = "true";

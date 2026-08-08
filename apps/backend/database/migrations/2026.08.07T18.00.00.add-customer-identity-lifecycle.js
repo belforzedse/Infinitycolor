@@ -1,9 +1,20 @@
 "use strict";
 
+/**
+ * Additive customer-identity lifecycle fields + durable source mappings.
+ *
+ * Strapi runs custom migrations before content-type schema sync on a cold
+ * database. `users` therefore may not exist yet; skip alterations/backfills in
+ * that case and let the users-permissions schema create the columns. The
+ * mapping table is still created (without an FK when `users` is missing) and
+ * recorded in `core_persisted_tables` so schema sync cannot drop it.
+ */
+
 const LOCK_KEY = 827453109;
 const CORE_STORE_TABLE = "strapi_core_store_settings";
 const CORE_STORE_KEY = "core_persisted_tables";
 const MAPPING_TABLE = "customer_identity_mappings";
+const USERS_TABLE = "users";
 
 function persistedName(entry) {
   return typeof entry === "string" ? entry : entry?.name;
@@ -21,12 +32,36 @@ async function ensureCoreStoreTable(knex) {
   });
 }
 
+async function ensureMappingForeignKey(knex) {
+  const result = await knex.raw(
+    `SELECT 1
+       FROM information_schema.table_constraints
+      WHERE table_schema = current_schema()
+        AND table_name = ?
+        AND constraint_type = 'FOREIGN KEY'
+        AND constraint_name = ?
+      LIMIT 1`,
+    [MAPPING_TABLE, "customer_identity_mappings_user_id_foreign"],
+  );
+  if (result.rows.length > 0) return;
+
+  await knex.raw(
+    `ALTER TABLE ??
+       ADD CONSTRAINT customer_identity_mappings_user_id_foreign
+       FOREIGN KEY (user_id) REFERENCES ??(id)
+       ON DELETE RESTRICT`,
+    [MAPPING_TABLE, USERS_TABLE],
+  );
+}
+
 module.exports = {
   async up(knex) {
     await knex.raw("SELECT pg_advisory_xact_lock(?)", [LOCK_KEY]);
 
-    if (!(await knex.schema.hasColumn("users", "account_origin"))) {
-      await knex.schema.alterTable("users", (table) => {
+    const usersExists = await knex.schema.hasTable(USERS_TABLE);
+
+    if (usersExists && !(await knex.schema.hasColumn(USERS_TABLE, "account_origin"))) {
+      await knex.schema.alterTable(USERS_TABLE, (table) => {
         table.string("account_origin", 32).notNullable().defaultTo("Native");
         table.timestamp("claimed_at", { useTz: true }).nullable();
         table.timestamp("profile_completed_at", { useTz: true }).nullable();
@@ -39,6 +74,10 @@ module.exports = {
           "users_account_origin_check",
         );
       });
+    } else if (!usersExists) {
+      console.warn(
+        "Skipping users lifecycle column migration because users table does not exist yet.",
+      );
     }
 
     if (!(await knex.schema.hasTable(MAPPING_TABLE))) {
@@ -47,7 +86,17 @@ module.exports = {
         table.string("source_system", 32).notNullable();
         table.string("source_kind", 32).notNullable();
         table.string("source_key", 128).notNullable();
-        table.bigInteger("user_id").notNullable().references("id").inTable("users").onDelete("RESTRICT");
+        if (usersExists) {
+          table
+            .bigInteger("user_id")
+            .notNullable()
+            .references("id")
+            .inTable(USERS_TABLE)
+            .onDelete("RESTRICT");
+        } else {
+          // Cold boot: users is created by schema sync after migrations.
+          table.bigInteger("user_id").notNullable();
+        }
         table.string("match_reason", 64).notNullable();
         table.timestamp("first_seen_at", { useTz: true }).notNullable().defaultTo(knex.fn.now());
         table.timestamp("last_seen_at", { useTz: true }).notNullable().defaultTo(knex.fn.now());
@@ -62,6 +111,8 @@ module.exports = {
           "customer_identity_source_kind_check",
         );
       });
+    } else if (usersExists) {
+      await ensureMappingForeignKey(knex);
     }
 
     await ensureCoreStoreTable(knex);
@@ -89,7 +140,14 @@ module.exports = {
       }
     }
 
-    await knex("users")
+    if (!usersExists) {
+      console.warn(
+        "Skipping customer identity backfill because users table does not exist yet.",
+      );
+      return;
+    }
+
+    await knex(USERS_TABLE)
       .where({ external_source: "wordpress" })
       .update({
         account_origin: "WooRegistered",
@@ -99,7 +157,7 @@ module.exports = {
       .where({ table_schema: "auth", table_name: "strapi_identity_links" })
       .first();
     if (authLinks) {
-      await knex("users")
+      await knex(USERS_TABLE)
         .whereIn("id", knex.withSchema("auth").select("strapi_user_id").from("strapi_identity_links"))
         .update({
           claimed_at: knex.raw("COALESCE(claimed_at, now())"),
@@ -130,8 +188,11 @@ module.exports = {
         });
       }
     }
-    if (await knex.schema.hasColumn("users", "account_origin")) {
-      await knex.schema.alterTable("users", (table) => {
+    if (
+      (await knex.schema.hasTable(USERS_TABLE)) &&
+      (await knex.schema.hasColumn(USERS_TABLE, "account_origin"))
+    ) {
+      await knex.schema.alterTable(USERS_TABLE, (table) => {
         table.dropColumn("source_updated_at");
         table.dropColumn("source_created_at");
         table.dropColumn("profile_managed_by_customer");

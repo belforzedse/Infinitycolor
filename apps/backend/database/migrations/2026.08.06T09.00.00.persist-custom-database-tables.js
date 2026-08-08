@@ -25,6 +25,7 @@ const CUSTOM_TABLE_NAMES = Object.freeze([
   "woocommerce_sync_items",
   "woocommerce_sync_campaigns",
   "woocommerce_sync_metrics",
+  "customer_identity_mappings",
 ]);
 
 function persistedTableName(entry) {
