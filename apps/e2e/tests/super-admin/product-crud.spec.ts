@@ -12,6 +12,22 @@ async function waitForProductsListURLToSettle(page: Page) {
   await expect
     .poll(() => new URL(page.url()).searchParams.has("totalSize"))
     .toBe(true);
+
+  // The products list can still write query params after totalSize appears
+  // (search debounce / nuqs). Wait until the URL stops changing so a soft
+  // navigation to /products/:id is not cancelled by a late replaceState.
+  let lastUrl = page.url();
+  let stableSince = Date.now();
+  await expect
+    .poll(() => {
+      const current = page.url();
+      if (current !== lastUrl) {
+        lastUrl = current;
+        stableSince = Date.now();
+      }
+      return Date.now() - stableSince >= 700;
+    }, { timeout: 15_000 })
+    .toBe(true);
 }
 
 test.describe("super-admin product CRUD", () => {

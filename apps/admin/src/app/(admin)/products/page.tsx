@@ -4,7 +4,7 @@ import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import type { Product } from "./table";
 import { MobileTable, columns } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { apiClient } from "@/services";
 import { useQueryState } from "nuqs";
@@ -101,6 +101,9 @@ export default function ProductsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [, setRefresh] = useAtom(refreshTable);
+  // Skip the mount-time empty search sync — calling setPage("1") then races
+  // Next.js Link soft-navigation to /products/:id and cancels the edit route.
+  const hasAppliedSearchRef = useRef(false);
 
   useEffect(() => {
     void setLegacyUrlFilters(null);
@@ -109,6 +112,10 @@ export default function ProductsPage() {
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {
     setDebouncedSearchQuery(query);
+    if (!hasAppliedSearchRef.current) {
+      hasAppliedSearchRef.current = true;
+      return;
+    }
     void setPage("1");
   }, 500);
 

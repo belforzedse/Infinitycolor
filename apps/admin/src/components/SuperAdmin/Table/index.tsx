@@ -151,11 +151,13 @@ export function SuperAdminTable<TData, TValue>({
   });
   const activeFilters = filters ?? urlFilters;
 
-  const [, setTotalSize] = useQueryState("totalSize", {
+  const [totalSize, setTotalSize] = useQueryState("totalSize", {
     defaultValue: 0,
     parse: (value) => parseInt(value || "0"),
     serialize: (value) => value.toString(),
   });
+  const totalSizeRef = useRef(totalSize);
+  totalSizeRef.current = totalSize;
 
   const [page] = useQueryState("page", { defaultValue: "1" });
   const [pageSize] = useQueryState("pageSize", {
@@ -328,7 +330,11 @@ export function SuperAdminTable<TData, TValue>({
             (Array.isArray(payload) ? payload.length : 0) ??
             0;
 
-          setTotalSize(total);
+          // Avoid redundant history.replaceState writes — they cancel in-flight
+          // soft navigations away from the list (e.g. row edit Links).
+          if (totalSizeRef.current !== total) {
+            void setTotalSize(total);
+          }
           setFetchError(null);
           onMetaChange?.((res as any)?.meta ?? {});
         }
