@@ -46,6 +46,14 @@ describe("scheduler registration", () => {
         data: {},
       })
     );
+    expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
+      MAINTENANCE_SCHEDULERS.scheduledProductPublish,
+      { pattern: "*/1 * * * *", tz: "Asia/Tehran" },
+      expect.objectContaining({
+        name: COMMERCE_MAINTENANCE_JOBS.scheduledProductPublish,
+        data: {},
+      })
+    );
     expect(analyticsQueue.upsertJobScheduler).toHaveBeenCalledWith(
       MAINTENANCE_SCHEDULERS.viewCounterFlush,
       { pattern: "*/3 * * * *", tz: "Asia/Tehran" },

@@ -100,6 +100,7 @@ function buildConfig(envName, envConfig) {
 }
 
 function parseCommonOptions(opts) {
+  const { parsePublicationOptions } = require("./catalog/lib/publication");
   return {
     environment: opts.env || "production",
     limit: opts.limit ? Number.parseInt(opts.limit, 10) : 999999,
@@ -112,6 +113,14 @@ function parseCommonOptions(opts) {
     strictMedia: Boolean(opts.strictMedia),
     allowStrapiOnly: Boolean(opts.allowStrapiOnly),
     logLevel: opts.logLevel || process.env.IMPORT_LOG_LEVEL || "info",
+    publication: parsePublicationOptions({
+      mode: opts.publication,
+      date: opts.publicationDate,
+      time: opts.publicationTime,
+      timezone: opts.publicationTimezone,
+      at: opts.publicationAt,
+      requireMedia: opts.requireMedia,
+    }),
   };
 }
 
@@ -130,6 +139,12 @@ async function main() {
     .option("--skip-categories", "Skip category sync")
     .option("--skip-media", "Skip image/video upload")
     .option("--repair-duplicates", "Run dedup before sync")
+    .option("--publication <mode>", "Publication mode: now|draft|scheduled")
+    .option("--publication-date <YYYY-MM-DD>", "Local date for scheduled publication")
+    .option("--publication-time <HH:mm>", "Local time for scheduled publication")
+    .option("--publication-timezone <IANA>", "Timezone for scheduled publication", "Asia/Tehran")
+    .option("--publication-at <ISO>", "Absolute ISO instant (with offset/Z) for scheduled publication")
+    .option("--require-media <bool>", "Require cover media before scheduled publish (default true)")
     .option("--log-level <level>", "Log level: error, warn, info, debug")
     .action(async (options) => {
       await runCommand("dry-run", options);
@@ -149,6 +164,12 @@ async function main() {
       "--deactivate-strapi-only",
       "Set Status=InActive on Strapi products not found in WooCommerce",
     )
+    .option("--publication <mode>", "Publication mode: now|draft|scheduled")
+    .option("--publication-date <YYYY-MM-DD>", "Local date for scheduled publication")
+    .option("--publication-time <HH:mm>", "Local time for scheduled publication")
+    .option("--publication-timezone <IANA>", "Timezone for scheduled publication", "Asia/Tehran")
+    .option("--publication-at <ISO>", "Absolute ISO instant (with offset/Z) for scheduled publication")
+    .option("--require-media <bool>", "Require cover media before scheduled publish (default true)")
     .option("--log-level <level>", "Log level: error, warn, info, debug")
     .action(async (options) => {
       await runCommand("sync", options);
@@ -183,7 +204,6 @@ async function runCommand(command, options) {
 
   const Logger = require("./utils/Logger");
   const logger = new Logger(config.logging);
-  const CatalogSyncEngine = require("./sync/CatalogSyncEngine");
 
   logger.info(`Catalog sync command: ${command}`);
   logger.info(`Environment: ${parsedOptions.environment}`);
@@ -191,10 +211,10 @@ async function runCommand(command, options) {
   logger.info(`Tracking: ${path.resolve(process.cwd(), config.duplicateTracking.storageDir)}`);
   logger.info("WooCommerce is read-only (source of truth)");
 
-  const engine = new CatalogSyncEngine(config, logger, parsedOptions);
-
   try {
     if (command === "verify") {
+      const CatalogSyncEngine = require("./sync/CatalogSyncEngine");
+      const engine = new CatalogSyncEngine(config, logger, parsedOptions);
       const result = await engine.runVerify({
         limit: parsedOptions.limit,
         strictMedia: parsedOptions.strictMedia,
@@ -203,10 +223,32 @@ async function runCommand(command, options) {
       process.exit(result.exitCode);
     }
 
+    // Product sync/dry-run always go through CatalogEngine (authoritative media pipeline).
+    // Legacy CatalogSyncEngine + ProductImporter must not write product media.
+    const { buildConfig: buildCatalogConfig } = require("./catalog/config");
+    const { CatalogEngine } = require("./catalog/engine");
+    const built = buildCatalogConfig(parsedOptions.environment);
+    const catalogConfig = built.config || built;
+    catalogConfig.strapi = { ...catalogConfig.strapi, ...config.strapi };
+    catalogConfig.duplicateTracking = config.duplicateTracking;
+    catalogConfig.logging = config.logging;
+    if (parsedOptions.skipMedia) {
+      catalogConfig.import.images.enableUpload = false;
+      catalogConfig.import.videos.enableUpload = false;
+    }
+    const engine = new CatalogEngine(catalogConfig, logger, {
+      environment: parsedOptions.environment,
+    });
     const dryRun = command === "dry-run";
-    const report = await engine.runSync(dryRun);
+    const report = await engine.runSync({
+      dryRun,
+      scope: parsedOptions.skipMedia ? "product-no-media" : "full-sync",
+      skipMedia: parsedOptions.skipMedia,
+      limit: parsedOptions.limit,
+      publication: parsedOptions.publication,
+    });
 
-    if (report.hasBlockingIssues({ allowStrapiOnly: true })) {
+    if (report.hasFailures()) {
       logger.warn("Sync completed with failures — review sync report");
       process.exit(1);
     }

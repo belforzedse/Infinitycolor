@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from 'next';
 import { SITE_URL } from '@/config/site';
 import PaymentSuccessPageClient from './PaymentSuccessPageClient';
@@ -18,6 +19,10 @@ export const metadata: Metadata = {
 };
 
 export default function PaymentSuccess() {
-  return <PaymentSuccessPageClient />;
+  return (
+    <Suspense fallback={null}>
+      <PaymentSuccessPageClient />
+    </Suspense>
+  );
 }
 

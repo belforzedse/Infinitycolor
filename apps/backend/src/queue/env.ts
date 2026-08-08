@@ -13,6 +13,7 @@ export type QueueSettings = {
   crons: {
     stockReservationExpiry: string;
     reserveOrderExpiry: string;
+    scheduledProductPublish: string;
     viewCounterFlush: string;
     analyticsDailyRollup: string;
     analyticsReconciliation: string;
@@ -42,6 +43,7 @@ export function getQueueSettings(env: NodeJS.ProcessEnv = process.env): QueueSet
     crons: {
       stockReservationExpiry: env.QUEUE_CRON_STOCK_RESERVATION_EXPIRY || "*/1 * * * *",
       reserveOrderExpiry: env.QUEUE_CRON_RESERVE_ORDER_EXPIRY || "*/5 * * * *",
+      scheduledProductPublish: env.QUEUE_CRON_SCHEDULED_PRODUCT_PUBLISH || "*/1 * * * *",
       viewCounterFlush: env.QUEUE_CRON_VIEW_COUNTER_FLUSH || "*/1 * * * *",
       // Once daily, well after Tehran midnight, so "yesterday" is a fully-closed
       // day before it is rolled up (see src/jobs/analyticsDailyRollup.ts).

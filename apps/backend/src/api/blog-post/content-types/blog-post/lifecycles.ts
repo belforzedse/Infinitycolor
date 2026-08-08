@@ -1,3 +1,4 @@
+import { getFrontendUrls } from "../../../../utils/revalidate";
 /**
  * Blog Post Lifecycle Hooks
  *
@@ -28,10 +29,7 @@ function isCounterOnlyBlogUpdate(data: Record<string, unknown> | undefined): boo
  */
 async function triggerRevalidation(slug: string) {
   // Hardcoded for now (TODO: move to environment variables)
-  const frontendUrls = [
-    "https://staging.infinitycolor.co",
-    "https://infinitycolor.co",
-  ];
+  const frontendUrls = getFrontendUrls();
 
   // Get revalidation secret from environment variable
   const revalidationSecret = process.env.REVALIDATION_SECRET;
@@ -111,10 +109,7 @@ export default {
   async afterDelete(event: any) {
     if (isTrustedWordPressMigrationRequest()) return;
     // Revalidate blog listing when a post is deleted
-    const frontendUrls = [
-      "https://staging.infinitycolor.co",
-      "https://infinitycolor.co",
-    ];
+    const frontendUrls = getFrontendUrls();
     const revalidationSecret = process.env.REVALIDATION_SECRET;
     if (!revalidationSecret) {
       strapi.log.error("[Blog Post Lifecycle] REVALIDATION_SECRET environment variable is required");

@@ -205,6 +205,49 @@ describe("legacy WooCommerce redirects", () => {
   });
 });
 
+describe("middleware PDP canonical redirects", () => {
+  const previousFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = previousFetch;
+  });
+
+  it("301s a numeric PDP id to the decoded canonical slug", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { attributes: { Slug: "scarf-around-zip-oppsi-s00518" } } }),
+    }) as any;
+
+    const response = await proxy(mockRequest("/pdp/123"));
+
+    expect(response.status).toBe(LEGACY_REDIRECT_STATUS);
+    expect(response.url.pathname).toBe("/pdp/scarf-around-zip-oppsi-s00518");
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/products/123?"),
+      expect.any(Object),
+    );
+  });
+
+  it("301s a historical percent-encoded PDP slug to the decoded Persian form", async () => {
+    const persian = "ست-تاپ-و-دامن-فلامنت-y00574";
+    const encoded =
+      "%d8%b3%d8%aa-%d8%aa%d8%a7%d9%be-%d9%88-%d8%af%d8%a7%d9%85%d9%86-%d9%81%d9%84%d8%a7%d9%85%d9%86%d8%aa-y00574";
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { attributes: { Slug: persian } } }),
+    }) as any;
+
+    const response = await proxy(mockRequest(`/pdp/${encoded}`));
+
+    expect(response.status).toBe(LEGACY_REDIRECT_STATUS);
+    expect(response.url.pathname).toBe(`/pdp/${encodeURIComponent(persian)}`);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/products/by-slug/"),
+      expect.any(Object),
+    );
+  });
+});
+
 describe("middleware security headers", () => {
   it("adds baseline security headers to pass-through responses", async () => {
     const response = await proxy(mockRequest("/"));

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import OrderFailurePageClient from "./OrderFailurePageClient";
 
@@ -12,5 +13,9 @@ export const metadata: Metadata = {
 };
 
 export default function OrderFailurePage() {
-  return <OrderFailurePageClient />;
+  return (
+    <Suspense fallback={null}>
+      <OrderFailurePageClient />
+    </Suspense>
+  );
 }

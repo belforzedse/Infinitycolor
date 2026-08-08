@@ -219,6 +219,7 @@ class ProductImporter {
       syncMode = false,
     } = options;
 
+    this.options = options;
     this.syncMode = syncMode;
     this.stats.startTime = Date.now();
 
@@ -848,16 +849,13 @@ class ProductImporter {
             try {
               const updateData = {};
 
+              // Never null existing CoverImage/Media on soft media failure (legacy data-loss bug).
               if (hasCover) {
                 updateData.CoverImage = mediaResults.coverMediaId;
-              } else if (mode === "update") {
-                updateData.CoverImage = null;
               }
 
               if (hasGallery) {
                 updateData.Media = mediaResults.galleryMediaIds;
-              } else if (mode === "update") {
-                updateData.Media = null;
               }
 
               if (Object.keys(updateData).length > 0) {
@@ -1155,12 +1153,31 @@ class ProductImporter {
       );
     }
 
+    const { resolvePublication } = require("../catalog/lib/publication");
+    const publicationFields = resolvePublication({
+      mode: this.options?.publication?.mode || "now",
+      date: this.options?.publication?.date,
+      time: this.options?.publication?.time,
+      timezone: this.options?.publication?.timezone,
+      at: this.options?.publication?.at,
+      requireMedia: this.options?.publication?.requireMedia,
+      wcStatus: wcProduct.status,
+      wcDateGmt: wcProduct.date_created_gmt,
+      wcDate: wcProduct.date_created,
+      statusMappings: this.config.import.statusMappings.product,
+    });
+
     const strapiProduct = {
       Title: normalizedName,
       Slug: slug,
       // Description is richtext in Strapi, so preserve HTML
       Description: descriptionContent,
-      Status: this.mapProductStatus(wcProduct.status),
+      Status: publicationFields.Status,
+      scheduledPublishAt: publicationFields.scheduledPublishAt,
+      scheduledPublishTimezone: publicationFields.scheduledPublishTimezone,
+      scheduledPublishRequireMedia: publicationFields.scheduledPublishRequireMedia,
+      scheduledPublishLastError: publicationFields.scheduledPublishLastError,
+      scheduledPublishLastAttemptAt: publicationFields.scheduledPublishLastAttemptAt,
       AverageRating: wcProduct.average_rating ? parseFloat(wcProduct.average_rating) : null,
       RatingCount: wcProduct.rating_count || 0,
       // Store WooCommerce ID for reference

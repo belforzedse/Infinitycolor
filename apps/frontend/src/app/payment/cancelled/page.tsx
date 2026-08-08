@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import PaymentCancelledPageClient from "./PaymentCancelledPageClient";
 
@@ -12,5 +13,9 @@ export const metadata: Metadata = {
 };
 
 export default function PaymentCancelledPage() {
-  return <PaymentCancelledPageClient />;
+  return (
+    <Suspense fallback={null}>
+      <PaymentCancelledPageClient />
+    </Suspense>
+  );
 }

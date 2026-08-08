@@ -58,7 +58,8 @@
     "diagnose:homepage-db": "node scripts/homepage-query-plans.js",
     "clean": "rm -rf .cache build dist .tmp",
     "logs": "pm2 logs infinity-backend --lines 100",
-    "validate": "pnpm run check-types && pnpm run test && pnpm run test:importer"
+    "validate": "pnpm run check-types && pnpm run test && pnpm run test:importer",
+    "repair:slugs": "node scripts/repair-product-slugs.js"
   },
   "dependencies": {
     "@repo/api": "workspace:*",

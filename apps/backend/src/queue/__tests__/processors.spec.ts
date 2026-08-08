@@ -8,6 +8,9 @@ jest.mock("../../jobs/expireStockReservations", () => ({
 jest.mock("../../jobs/expireReserveOrders", () => ({
   runExpireReserveOrdersTick: jest.fn(),
 }));
+jest.mock("../../jobs/publishScheduledProducts", () => ({
+  runPublishScheduledProductsTick: jest.fn(),
+}));
 jest.mock("../../api/payment-gateway/services/snappay-orchestrator", () => ({
   processSnappayOperation: jest.fn(),
   sweepSnappayOperations: jest.fn(),
@@ -21,6 +24,7 @@ jest.mock("../../jobs/analyticsReconciliation", () => ({
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
 import { runExpireStockReservationsTick } from "../../jobs/expireStockReservations";
+import { runPublishScheduledProductsTick } from "../../jobs/publishScheduledProducts";
 import {
   ANALYTICS_MAINTENANCE_JOBS,
   COMMERCE_MAINTENANCE_JOBS,
@@ -38,6 +42,8 @@ const mockedRunExpireStockReservationsTick =
   runExpireStockReservationsTick as jest.MockedFunction<typeof runExpireStockReservationsTick>;
 const mockedRunExpireReserveOrdersTick =
   runExpireReserveOrdersTick as jest.MockedFunction<typeof runExpireReserveOrdersTick>;
+const mockedRunPublishScheduledProductsTick =
+  runPublishScheduledProductsTick as jest.MockedFunction<typeof runPublishScheduledProductsTick>;
 const mockedProcessSnappayOperation =
   processSnappayOperation as jest.MockedFunction<typeof processSnappayOperation>;
 const mockedSweepSnappayOperations =
@@ -87,6 +93,22 @@ describe("queue processors", () => {
     } as any);
 
     expect(mockedRunExpireReserveOrdersTick).toHaveBeenCalledWith(strapi);
+  });
+
+  it("dispatches scheduled product publish jobs to the publish runner", async () => {
+    const strapi = createMockStrapi();
+    mockedRunPublishScheduledProductsTick.mockResolvedValue({
+      claimed: 0,
+      published: 0,
+      blocked: 0,
+      skipped: 0,
+    });
+
+    await processMaintenanceJob(strapi, {
+      name: COMMERCE_MAINTENANCE_JOBS.scheduledProductPublish,
+    } as any);
+
+    expect(mockedRunPublishScheduledProductsTick).toHaveBeenCalledWith(strapi);
   });
 
   it("dispatches view-counter flush jobs to the product-view service", async () => {

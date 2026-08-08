@@ -1,0 +1,27 @@
+{
+  "kind": "collectionType",
+  "collectionName": "product_slug_aliases",
+  "info": {
+    "singularName": "product-slug-alias",
+    "pluralName": "product-slug-aliases",
+    "displayName": "ProductSlugAlias",
+    "description": "Prior product slug forms that permanently redirect to the canonical Slug"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "Slug": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "product": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::product.product",
+      "inversedBy": "slug_aliases"
+    }
+  }
+}

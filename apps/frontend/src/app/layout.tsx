@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Toaster } from "react-hot-toast";
-import { Suspense } from "react";
 import "@repo/ui/styles.css";
 import "../styles/components.css";
 import "./globals.css";
@@ -232,9 +231,19 @@ export default async function RootLayout({
             <MobileMenuProvider>
               <NuqsAdapter>
                 <Providers>
-                  <Suspense fallback={null}>
-                    <div id="main-content">{children}</div>
-                  </Suspense>
+                  {/*
+                    Do NOT wrap `{children}` in Suspense here.
+
+                    Next.js flushes the response as HTTP 200 as soon as any
+                    Suspense fallback streams. A later `notFound()` can still
+                    render the not-found UI (and noindex), but it can no longer
+                    change the status code — which is exactly how this storefront
+                    was serving soft-404s for missing PDPs. Instant loading UI
+                    belongs on specific segments after their existence checks,
+                    not around the entire page tree. See:
+                    https://nextjs.org/docs/app/api-reference/file-conventions/loading#status-codes
+                  */}
+                  <div id="main-content">{children}</div>
                 </Providers>
               </NuqsAdapter>
             </MobileMenuProvider>

@@ -7,6 +7,7 @@ export const QUEUE_NAMES = {
 export const COMMERCE_MAINTENANCE_JOBS = {
   stockReservationExpiry: "stockReservations.expire",
   reserveOrderExpiry: "reserveOrders.expire",
+  scheduledProductPublish: "scheduledProducts.publish",
 } as const;
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
@@ -23,6 +24,7 @@ export const SNAPPAY_PAYMENT_JOBS = {
 export const MAINTENANCE_SCHEDULERS = {
   stockReservationExpiry: "sched:stockReservations.expire",
   reserveOrderExpiry: "sched:reserveOrders.expire",
+  scheduledProductPublish: "sched:scheduledProducts.publish",
   viewCounterFlush: "sched:viewCounters.flush",
   analyticsDailyRollup: "sched:analyticsDailyRollup.run",
   analyticsReconciliation: "sched:analyticsReconciliation.run",

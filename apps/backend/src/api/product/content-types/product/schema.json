@@ -57,8 +57,26 @@
       "type": "enumeration",
       "enum": [
         "Active",
-        "InActive"
+        "InActive",
+        "Scheduled"
       ]
+    },
+    "scheduledPublishAt": {
+      "type": "datetime"
+    },
+    "scheduledPublishTimezone": {
+      "type": "string",
+      "default": "Asia/Tehran"
+    },
+    "scheduledPublishRequireMedia": {
+      "type": "boolean",
+      "default": true
+    },
+    "scheduledPublishLastAttemptAt": {
+      "type": "datetime"
+    },
+    "scheduledPublishLastError": {
+      "type": "string"
     },
     "ProductType": {
       "type": "enumeration",
@@ -183,6 +201,12 @@
       "type": "relation",
       "relation": "oneToMany",
       "target": "api::product-view.product-view",
+      "mappedBy": "product"
+    },
+    "slug_aliases": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::product-slug-alias.product-slug-alias",
       "mappedBy": "product"
     }
   }

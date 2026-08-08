@@ -61,6 +61,7 @@ test("legacy media recovery seeds only ordered, prefix-matched attachments and q
   assert.equal(preview.quarantined, 2);
   assert.equal(preview.sourceProductsScanned, 3);
   assert.equal(mediaStore.size("media"), 0);
+  assert.ok(preview.quarantine.some((row) => row.reason === "SOURCE_IDENTITY_MISMATCH" || row.reason === "DESTINATION_MEDIA_MISSING"));
 
   const confirmed = await auditLegacyMedia({
     runStore, runId, woo, repo, mediaStore, dryRun: false, confirm: "CatalogMediaRecovery",

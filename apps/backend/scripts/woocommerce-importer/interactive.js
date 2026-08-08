@@ -19,6 +19,8 @@ const DuplicateTracker = require("./utils/DuplicateTracker");
 const { syncShippingLocations } = require("./utils/ShippingSeeder");
 const Logger = require("./utils/Logger");
 const config = require("./config");
+const { runProductsViaCatalog } = require("./catalog/lib/runProductsViaCatalog");
+const { parsePublicationOptions, DEFAULT_TIMEZONE } = require("./catalog/lib/publication");
 
 // Initialize
 const logger = new Logger();
@@ -232,13 +234,40 @@ async function showImportPreview(type, options) {
     } else if (type === "users") {
       importer = new UserImporter(config, logger);
     } else if (type === "products") {
-      importer = new ProductImporter(config, logger);
+      const dryRunStats = await runProductsViaCatalog({
+        config,
+        logger,
+        environment: selectedCredentialEnv || "local",
+        dryRun: true,
+        limit: options.limit,
+        skipCategories: true,
+        publication: options.publication || importOptions.products.publication,
+        configOverrides: {
+          images: {
+            maxImagesPerProduct: options.maxImagesPerProduct || importOptions.products.maxImagesPerProduct,
+          },
+        },
+      });
+
+      console.log("\n📊 Preview Results:");
+      console.log(`  ├─ Total to process: ${dryRunStats.total || 0}`);
+      console.log(`  ├─ Would import: ${dryRunStats.success || 0}`);
+      console.log(`  ├─ Would skip: ${dryRunStats.skipped || 0}`);
+      console.log(`  └─ Would fail: ${dryRunStats.failed || 0}`);
+
+      const proceed = await prompt("\nProceed with actual import? (y/n): ");
+      return proceed.toLowerCase() === "y";
     } else if (type === "variations") {
       importer = new VariationImporter(config, logger);
     } else if (type === "orders") {
       importer = new OrderImporter(config, logger);
     } else if (type === "blogPosts") {
       importer = new BlogPostImporter(config, logger);
+    }
+
+    if (!importer) {
+      console.log("❌ Preview failed: unknown importer type");
+      return false;
     }
 
     const dryRunStats = await importer.import({ ...options, dryRun: true });
@@ -278,6 +307,7 @@ let importOptions = {
     // Image options
     maxImagesPerProduct: 3, // Default: 3 images per product
     updateProductsWithExistingImages: true, // Always update images, even for existing products to avoid dangling references
+    publication: { mode: "now" },
   },
   variations: {
     enabled: true,
@@ -741,6 +771,36 @@ async function configureImporter(type) {
       );
     }
 
+    console.log("\n🗓️  Publication:");
+    const pubMode =
+      (await prompt(`Publication mode (now/draft/scheduled, default: ${opts.publication?.mode || "now"}): `)) ||
+      opts.publication?.mode ||
+      "now";
+    try {
+      if (pubMode === "scheduled") {
+        const at = await prompt("Absolute ISO at (with Z/offset), or blank for date+time: ");
+        if (at) {
+          opts.publication = parsePublicationOptions({ mode: "scheduled", at });
+        } else {
+          const date = await prompt("Local date YYYY-MM-DD: ");
+          const time = await prompt("Local time HH:mm: ");
+          const timezone =
+            (await prompt(`Timezone (default ${DEFAULT_TIMEZONE}): `)) || DEFAULT_TIMEZONE;
+          opts.publication = parsePublicationOptions({
+            mode: "scheduled",
+            date,
+            time,
+            timezone,
+          });
+        }
+      } else {
+        opts.publication = parsePublicationOptions({ mode: pubMode });
+      }
+      console.log(`✅ Publication mode: ${opts.publication.mode}`);
+    } catch (error) {
+      console.log(`❌ ${error.message}. Keeping previous publication settings.`);
+    }
+
     const productNameFilterInput = await prompt(
       `Use default کیف/کفش keyword filter for products? (y/n, default: y): `,
     );
@@ -939,28 +999,23 @@ async function runAllImporters() {
           dryRun: opts.dryRun,
         });
       } else if (type === "products") {
-        // Update config with image options before importing
+        // CatalogEngine is authoritative for product + media writes (never null CoverImage/Media).
         config.import.images.maxImagesPerProduct = opts.maxImagesPerProduct;
         config.import.images.updateProductsWithExistingImages =
           opts.updateProductsWithExistingImages;
-
-        // Set retry to 3 for all images in interactive mode
         config.import.images.retry.coverImageDownloadRetries = 3;
         config.import.images.retry.coverImageUploadRetries = 3;
         config.import.images.retry.galleryImageDownloadRetries = 3;
         config.import.images.retry.galleryImageUploadRetries = 3;
 
-        const importer = new ProductImporter(config, logger);
-        stats[type] = await importer.import({
-          limit: opts.limit,
-          page: opts.page,
+        stats[type] = await runProductsViaCatalog({
+          config,
+          logger,
+          environment: selectedCredentialEnv || "local",
           dryRun: opts.dryRun,
-          categoryIds: opts.categoryIds,
-          nameFilter: opts.useNameFilter ? undefined : null,
-          onlyInStock: opts.onlyInStock,
-          createdAfter: opts.createdAfter,
-          createdBefore: opts.createdBefore,
-          publishedAfter: opts.publishedAfter,
+          limit: opts.limit,
+          skipCategories: true,
+          publication: opts.publication || { mode: "now" },
         });
       } else if (type === "variations") {
         const importer = new VariationImporter(config, logger);

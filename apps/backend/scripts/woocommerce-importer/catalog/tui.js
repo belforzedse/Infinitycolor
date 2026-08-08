@@ -29,6 +29,7 @@ const { buildConfig } = require("./config");
 const { CatalogEngine } = require("./engine");
 const { PRESETS, SCOPES, resolvePreset } = require("./lib/presets");
 const { CatalogRunStore, RESUMABLE_STATUSES } = require("./lib/runStore");
+const { parsePublicationOptions, DEFAULT_TIMEZONE } = require("./lib/publication");
 const Logger = require("../utils/Logger");
 
 const OrderImporter = require("../importers/OrderImporter");
@@ -74,7 +75,7 @@ function parseOptionalPositiveIntegerInput(value, label) {
   return parsed;
 }
 
-function buildCustomRunOpts({ scope, dryRun, skipMedia, limit, startAfterExternalId }) {
+function buildCustomRunOpts({ scope, dryRun, skipMedia, limit, startAfterExternalId, publication }) {
   const resolvedScope = String(scope || "").trim();
   if (!SCOPES.includes(resolvedScope)) {
     throw new Error(`Invalid scope: ${scope}. Use one of: ${SCOPES.join(", ")}`);
@@ -89,7 +90,35 @@ function buildCustomRunOpts({ scope, dryRun, skipMedia, limit, startAfterExterna
   if (parsedStartAfter !== undefined) {
     opts.startAfterExternalId = parsedStartAfter;
   }
+  if (publication) opts.publication = publication;
   return opts;
+}
+
+async function askPublication(rl) {
+  const mode =
+    (await prompt(rl, "Publication mode (now/draft/scheduled, default: now): ")) || "now";
+  if (mode === "now" || mode === "draft") {
+    return parsePublicationOptions({ mode });
+  }
+  if (mode !== "scheduled") {
+    throw new Error("Publication mode must be now, draft, or scheduled");
+  }
+  const at = await prompt(rl, "Absolute ISO at (with Z/offset), or blank to use date+time: ");
+  if (at) {
+    return parsePublicationOptions({ mode: "scheduled", at });
+  }
+  const date = await prompt(rl, "Local date YYYY-MM-DD: ");
+  const time = await prompt(rl, "Local time HH:mm: ");
+  const timezone =
+    (await prompt(rl, `Timezone (default ${DEFAULT_TIMEZONE}): `)) || DEFAULT_TIMEZONE;
+  const requireMediaRaw = await prompt(rl, "Require cover media before publish? (y/n, default: y): ");
+  return parsePublicationOptions({
+    mode: "scheduled",
+    date,
+    time,
+    timezone,
+    requireMedia: requireMediaRaw === "" ? "true" : requireMediaRaw,
+  });
 }
 
 function prompt(rl, question) {
@@ -234,6 +263,9 @@ async function confirmLiveRun(rl, runtime, runOpts) {
   console.log(`  Strapi URL:  ${runtime.config.strapi.baseUrl}`);
   console.log(`  Scope:       ${runOpts.scope}`);
   console.log(`  Limit:       ${runOpts.limit === Infinity ? "all" : runOpts.limit}`);
+  if (runOpts.publication?.mode) {
+    console.log(`  Publication: ${runOpts.publication.mode}`);
+  }
   if (runOpts.startAfterExternalId) {
     console.log(`  Start after: ${runOpts.startAfterExternalId}`);
   }
@@ -257,6 +289,15 @@ async function runCatalogPreset(rl, runtime, presetId) {
   }
 
   const runOpts = { ...preset.run, dryRun: Boolean(preset.run?.dryRun), limit };
+  if (!preset.verify) {
+    try {
+      runOpts.publication = await askPublication(rl);
+    } catch (error) {
+      console.log(error.message);
+      await pause(rl);
+      return;
+    }
+  }
   if (!runOpts.dryRun && preset.confirm) {
     const confirmed = await confirmLiveRun(rl, runtime, runOpts);
     if (!confirmed) {
@@ -277,7 +318,22 @@ async function runCustomCatalog(rl, runtime) {
   const skipMedia = await prompt(rl, "Skip media? (y/n, default: n): ");
   const limit = await prompt(rl, "Limit products (blank = all): ");
   const startAfterExternalId = await prompt(rl, "Start after Woo external_id/id (blank = beginning): ");
-  const runOpts = buildCustomRunOpts({ scope, dryRun, skipMedia, limit, startAfterExternalId });
+  let publication = null;
+  try {
+    publication = await askPublication(rl);
+  } catch (error) {
+    console.log(error.message);
+    await pause(rl);
+    return;
+  }
+  const runOpts = buildCustomRunOpts({
+    scope,
+    dryRun,
+    skipMedia,
+    limit,
+    startAfterExternalId,
+    publication,
+  });
 
   const confirmed = await confirmLiveRun(rl, runtime, runOpts);
   if (!confirmed) {

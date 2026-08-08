@@ -31,6 +31,7 @@ const { buildConfig, ENV_CONFIG } = require("./config");
 const Logger = require("../utils/Logger");
 const { CatalogEngine } = require("./engine");
 const { CatalogRunStore, RESUMABLE_STATUSES } = require("./lib/runStore");
+const { parsePublicationOptions } = require("./lib/publication");
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -62,6 +63,7 @@ async function run(command, options) {
     process.exit(result.ok ? 0 : 1);
   }
 
+  const publication = options.publication || null;
   const report = await engine.runSync({
     dryRun: command === "dry-run",
     scope: options.scope || (options.skipCategories ? "no-media" : "full"),
@@ -70,6 +72,7 @@ async function run(command, options) {
     startAfterExternalId: options.startAfterExternalId,
     runStore,
     runId: options.runId,
+    publication,
   });
 
   process.exit(report.hasFailures() ? 1 : 0);
@@ -183,6 +186,12 @@ const CLI_OPTIONS = {
   resumable: { type: "boolean", default: false },
   confirm: { type: "string" },
   manifest: { type: "string" },
+  publication: { type: "string" },
+  "publication-date": { type: "string" },
+  "publication-time": { type: "string" },
+  "publication-timezone": { type: "string" },
+  "publication-at": { type: "string" },
+  "require-media": { type: "string" },
   help: { type: "boolean", short: "h", default: false },
 };
 
@@ -204,6 +213,9 @@ Options:
   --env <production|staging|local>  --tracking-dir <path>
   --scope <name>  --limit <n>  --log-level <level>
   --skip-media  --start-after-external-id <id>  --run-id <id>
+  --publication <now|draft|scheduled>
+  --publication-date <YYYY-MM-DD> --publication-time <HH:mm> [--publication-timezone <IANA>]
+  --publication-at <ISO-8601 with offset/Z>  --require-media <true|false>
   --pause-signal-path <path>  --confirm <phrase>  -h, --help`;
 }
 
@@ -221,6 +233,14 @@ function parseCliArgs(args) {
   if (!COMMANDS_WITH_RUN_ID.has(command) && runId) throw new Error(`Unexpected run id for ${command}: ${runId}`);
 
   const values = parsed.values;
+  const publication = parsePublicationOptions({
+    mode: values.publication,
+    date: values["publication-date"],
+    time: values["publication-time"],
+    timezone: values["publication-timezone"],
+    at: values["publication-at"],
+    requireMedia: values["require-media"],
+  });
   return {
     command,
     runId,
@@ -238,6 +258,7 @@ function parseCliArgs(args) {
       resumable: values.resumable,
       confirm: values.confirm,
       manifest: values.manifest,
+      publication,
     },
   };
 }

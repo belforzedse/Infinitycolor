@@ -1,5 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath, revalidateTag } from "next/cache";
+import { timingSafeEqual } from "node:crypto";
+import {
+  HOME_PRODUCTS_TAG,
+  PRODUCT_COLLECTION_TAG,
+  PRODUCT_TAG,
+  SITEMAP_TAG,
+  decodeSlugOnce,
+  productSlugTag,
+} from "@/constants/cacheTags";
+
+/** Compare secrets without leaking length/prefix information via timing. */
+function secretsMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Build the PDP path Next.js stored the route under.
+ *
+ * Strapi sends the raw slug (Persian, possibly percent-encoded from a legacy
+ * row). Passing that straight to `revalidatePath` produced a path that never
+ * matched the stored key, so the call succeeded and invalidated nothing. We
+ * decode once and re-encode so the segment matches Next's own encoding.
+ */
+export function buildPdpPath(rawPath: string): string {
+  const withoutLeadingSlash = rawPath.replace(/^\/+/, "");
+  const withoutPrefix = withoutLeadingSlash.replace(/^pdp\//, "");
+  return `/pdp/${encodeURIComponent(decodeSlugOnce(withoutPrefix))}`;
+}
 
 /**
  * On-demand revalidation API route
@@ -33,7 +64,7 @@ export async function POST(request: NextRequest) {
     }
 
     const token = authHeader.replace("Bearer ", "");
-    if (token !== secret) {
+    if (!secretsMatch(token, secret)) {
       return NextResponse.json({ error: "Invalid authorization token" }, { status: 403 });
     }
 
@@ -59,48 +90,55 @@ export async function POST(request: NextRequest) {
       revalidatePath("/blog");
       // Revalidate sitemap
       revalidatePath("/sitemap.xml");
+      revalidateTag(SITEMAP_TAG, "max");
 
       return NextResponse.json({
         revalidated: true,
         now: Date.now(),
         paths: [normalizedPath, "/blog", "/sitemap.xml"],
+        tags: [SITEMAP_TAG],
       });
     }
 
     if (type === "product" && path) {
-      // Product PDP route is /pdp/[slug]
-      const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-      const pdpPath = normalizedPath.startsWith("/pdp/") ? normalizedPath : `/pdp${normalizedPath}`;
+      // Tags are the primary mechanism — they are exact-match strings and so are
+      // immune to the Persian-slug encoding problem that silently defeated the
+      // path-only approach. Paths stay as a secondary for the rendered routes
+      // that hold no tagged fetch of their own.
+      const pdpPath = buildPdpPath(path);
+      const slugTag = productSlugTag(path.replace(/^\/+/, "").replace(/^pdp\//, ""));
 
-      // Revalidate the specific product PDP page
+      const tags = [
+        slugTag,
+        PRODUCT_TAG,
+        PRODUCT_COLLECTION_TAG,
+        HOME_PRODUCTS_TAG,
+        SITEMAP_TAG,
+      ];
+      tags.forEach((t) => revalidateTag(t, "max"));
+
       revalidatePath(pdpPath);
-      // Also revalidate homepage product sections, PLP and sitemap
       revalidatePath("/");
       revalidatePath("/plp");
       revalidatePath("/sitemap.xml");
-      revalidateTag("home-products", "max");
-      revalidateTag("home-products-critical", "max");
-      revalidateTag("home-products-optional", "max");
 
       return NextResponse.json({
         revalidated: true,
         now: Date.now(),
         paths: [pdpPath, "/", "/plp", "/sitemap.xml"],
-        tags: ["home-products", "home-products-critical", "home-products-optional"],
+        tags,
       });
     }
 
     if (type === "home-products") {
       revalidatePath("/");
-      revalidateTag("home-products", "max");
-      revalidateTag("home-products-critical", "max");
-      revalidateTag("home-products-optional", "max");
+      revalidateTag(HOME_PRODUCTS_TAG, "max");
 
       return NextResponse.json({
         revalidated: true,
         now: Date.now(),
         paths: ["/"],
-        tags: ["home-products", "home-products-critical", "home-products-optional"],
+        tags: [HOME_PRODUCTS_TAG],
       });
     }
 
@@ -108,15 +146,20 @@ export async function POST(request: NextRequest) {
       // Revalidate blog listing and sitemap
       revalidatePath("/blog");
       revalidatePath("/sitemap.xml");
+      revalidateTag(SITEMAP_TAG, "max");
 
       return NextResponse.json({
         revalidated: true,
         now: Date.now(),
         paths: ["/blog", "/sitemap.xml"],
+        tags: [SITEMAP_TAG],
       });
     }
 
     if (type === "hero-slider") {
+      // Left as an immediate-expiry CacheLifeConfig rather than the "max" profile
+      // the other branches use: this is a working, unrelated feature and the two
+      // forms are not equivalent.
       revalidateTag("hero-slider", { expire: 0 });
 
       return NextResponse.json({
@@ -131,12 +174,13 @@ export async function POST(request: NextRequest) {
       revalidatePath("/blog");
       revalidatePath("/sitemap.xml");
       revalidateTag("site-settings", "max");
+      revalidateTag(SITEMAP_TAG, "max");
 
       return NextResponse.json({
         revalidated: true,
         now: Date.now(),
         paths: ["/", "/blog", "/sitemap.xml"],
-        tags: ["site-settings"],
+        tags: ["site-settings", SITEMAP_TAG],
       });
     }
 

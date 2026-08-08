@@ -94,17 +94,31 @@ CacheHandler.onCreation(async () => {
       disableOfflineQueue: true,
       socket: {
         connectTimeout: 1000,
-        // A cache outage must not hold storefront requests in a reconnect loop.
-        // The next deployment/restart reconnects after the dependency recovers.
-        reconnectStrategy: false,
+        // A cache outage must not hold storefront requests in a reconnect loop,
+        // but it must not permanently strand this replica either. With
+        // reconnection disabled, a single blip demoted the process to
+        // origin-only reads for the rest of its lifetime — and with 24 replicas
+        // demoting independently, they stopped agreeing on cached content.
+        //
+        // Reconnect on a capped backoff instead. `disableOfflineQueue` above
+        // still guarantees commands fail fast rather than queueing while the
+        // socket is down, so requests are served from origin meanwhile.
+        reconnectStrategy: (retries) => Math.min(200 * 2 ** Math.min(retries, 5), 5000),
       },
     });
+    // Keep the memoized config in place. The client now reconnects on its own,
+    // so tearing the config down here would discard a recovering client and
+    // build a fresh one on every error event.
     client.on('error', (err) => {
       if (typeof process.env.NEXT_PRIVATE_DEBUG_CACHE !== 'undefined') {
         console.error('[CacheHandler] Redis client error:', err);
       }
-      global.cacheHandlerConfig = null;
-      global.cacheHandlerConfigPromise = null;
+    });
+    client.on('reconnecting', () => {
+      console.warn('[CacheHandler] Redis connection lost; reconnecting.');
+    });
+    client.on('ready', () => {
+      console.info('[CacheHandler] Redis client ready.');
     });
   } catch (error) {
     console.warn('[CacheHandler] Failed to create Redis client:', error?.message ?? error);

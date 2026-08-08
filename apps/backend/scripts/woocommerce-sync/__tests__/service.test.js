@@ -235,7 +235,7 @@ test("hourly polls changes and drains active immediate and no-media lanes in ord
   assert.equal(metrics[0].itemCount, 4);
 });
 
-test("hourly product drain always uses the no-media catalog scope", async () => {
+test("hourly product drain uses full-sync preserve media scope", async () => {
   const config = getSyncConfig(baseEnv());
   const pool = { end: async () => undefined };
   const service = new WooSyncService(config, { pool, source: {}, destination: {} });
@@ -260,7 +260,7 @@ test("hourly product drain always uses the no-media catalog scope", async () => 
   assert.equal(result.completed, 1);
   assert.equal(result.failed, 0);
   assert.equal(processed.length, 1);
-  assert.equal(processed[0].scope, "product-no-media");
+  assert.equal(processed[0].scope, "full-sync");
 });
 
 test("Woo delta polling reads all pages with a bounded worker pool and checkpoints once", async () => {

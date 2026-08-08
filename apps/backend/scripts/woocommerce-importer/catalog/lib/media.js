@@ -44,23 +44,32 @@ class MediaSync {
   }
 
   /**
-   * Sync a single media URL. Returns `{ id, mime, status }` where status is one of
-   * "reused" | "uploaded" | "failed".
+   * Sync a single media URL. Returns `{ id, mime, status, stage, error, sourceImageId }` where
+   * status is one of "reused" | "uploaded" | "failed" | "skipped".
    * @param {string} url
    * @param {string} altText
    * @param {string} prefix
    * @param {boolean} isCover
+   * @param {object|null} sourceTimestamps
+   * @param {{ sourceImageId?: number|string|null }} [meta]
    */
-  async syncUrl(url, altText, prefix, isCover = false, sourceTimestamps = null) {
+  async syncUrl(url, altText, prefix, isCover = false, sourceTimestamps = null, meta = {}) {
     let canonical;
     try {
       canonical = canonicalSourceUrl(url);
     } catch {
-      return { id: null, mime: null, status: "failed" };
+      return {
+        id: null,
+        mime: null,
+        status: "failed",
+        stage: "canonicalize",
+        error: "invalid-source-url",
+        sourceImageId: meta.sourceImageId ?? null,
+      };
     }
     const existing = this.inFlight.get(canonical);
     if (existing) return existing;
-    const pending = this._syncUrl(canonical, altText, prefix, isCover, sourceTimestamps);
+    const pending = this._syncUrl(canonical, altText, prefix, isCover, sourceTimestamps, meta);
     this.inFlight.set(canonical, pending);
     try {
       return await pending;
@@ -69,32 +78,84 @@ class MediaSync {
     }
   }
 
-  async _syncUrl(url, altText, prefix, isCover = false, sourceTimestamps = null) {
+  async _syncUrl(url, altText, prefix, isCover = false, sourceTimestamps = null, meta = {}) {
+    const sourceImageId = meta.sourceImageId ?? null;
+
     // 1. Persistent dedup — already uploaded in a previous run?
     const cached = this.store.get("media", url);
     if (cached && cached.strapiId) {
-      await this.uploader.restoreMediaSourceTimestamps?.(cached.strapiId, sourceTimestamps);
-      this.logger.debug(`♻️ Reusing media source hash → ${cached.strapiId}`);
-      return { id: cached.strapiId, mime: cached.mime, status: "reused" };
+      let stillExists = true;
+      if (typeof this.uploader.findDestinationFileById === "function") {
+        try {
+          const remote = await this.uploader.findDestinationFileById(cached.strapiId);
+          stillExists = Boolean(remote?.id);
+        } catch (error) {
+          this.logger.warn(
+            `⚠️ Unable to verify cached media id=${cached.strapiId}: ${error.message}`,
+          );
+          // Fall through to re-upload rather than attaching a dangling id.
+          stillExists = false;
+        }
+      }
+      if (stillExists) {
+        await this.uploader.restoreMediaSourceTimestamps?.(cached.strapiId, sourceTimestamps);
+        this.logger.debug(`♻️ Reusing media source hash → ${cached.strapiId}`);
+        return {
+          id: cached.strapiId,
+          mime: cached.mime,
+          status: "reused",
+          stage: "reuse",
+          error: null,
+          sourceImageId,
+        };
+      }
+      this.logger.warn(`♻️ Cached media id=${cached.strapiId} missing in Strapi; re-uploading`);
     }
 
     // 2. SSRF guard before any network access
     const check = validateMediaUrl(url, { allowHttp: this.allowHttp });
     if (!check.ok) {
       this.logger.warn(`🚫 Blocked unsafe media URL (${check.reason})`);
-      return { id: null, mime: null, status: "failed" };
+      return {
+        id: null,
+        mime: null,
+        status: "failed",
+        stage: "ssrf-guard",
+        error: check.reason || "unsafe-url",
+        sourceImageId,
+      };
     }
 
     // 3. Delegate download/convert/upload to the existing uploader
-    const uploaded = await this.uploader.downloadAndUploadMedia(
-      url,
-      altText,
-      prefix,
-      isCover,
-      sourceTimestamps,
-    );
+    let uploaded;
+    try {
+      uploaded = await this.uploader.downloadAndUploadMedia(
+        url,
+        altText,
+        prefix,
+        isCover,
+        sourceTimestamps,
+      );
+    } catch (error) {
+      if (error.code === "MEDIA_DESTINATION_AMBIGUOUS") throw error;
+      return {
+        id: null,
+        mime: null,
+        status: "failed",
+        stage: "download-upload",
+        error: error.message,
+        sourceImageId,
+      };
+    }
     if (!uploaded || !uploaded.id) {
-      return { id: null, mime: null, status: "failed" };
+      return {
+        id: null,
+        mime: null,
+        status: "failed",
+        stage: "download-upload",
+        error: "upload-returned-null",
+        sourceImageId,
+      };
     }
     if (uploaded._reusedDeterministic) {
       await this.uploader.restoreMediaSourceTimestamps?.(uploaded.id, sourceTimestamps);
@@ -104,25 +165,41 @@ class MediaSync {
       sourceHash: this.uploader.sourceHash?.(url),
       destinationId: uploaded.id,
     });
-    this.store.set("media", url, uploaded.id, { name: uploaded.name, mime: uploaded.mime });
+    this.store.set("media", url, uploaded.id, {
+      name: uploaded.name,
+      mime: uploaded.mime,
+      sourceImageId,
+    });
     return {
       id: uploaded.id,
       mime: uploaded.mime,
       status: uploaded._reusedDeterministic ? "reused" : "uploaded",
+      stage: uploaded._reusedDeterministic ? "reuse-deterministic" : "upload",
+      error: null,
+      sourceImageId,
     };
   }
 
   /**
    * Resolve all media for a product into an ordered set of ids.
    *
-   * Returns `{ coverId, galleryIds, counts }`. The caller attaches these to the
-   * Strapi product ONLY when ids are present — it never nulls existing media on a
-   * failed re-download (the legacy data-loss bug).
+   * Returns `{ coverId, galleryIds, counts, failures, expected, complete, sourceHadNoImages }`.
+   * The caller attaches these to the Strapi product ONLY when ids are present — it never
+   * nulls existing media on a failed re-download (the legacy data-loss bug).
    *
    * @param {object} wcProduct
    */
   async syncProductMedia(wcProduct) {
-    const counts = { uploaded: 0, reused: 0, failed: 0 };
+    const counts = {
+      expected: 0,
+      uploaded: 0,
+      reused: 0,
+      failed: 0,
+      skipped: 0,
+      downloaded: 0,
+      associated: 0,
+    };
+    const failureDetails = [];
     const failures = { cover: false, gallery: false };
     const allowedVideoTypes = this.videoConfig.allowedTypes || ["mp4", "webm", "mov", "m4v"];
     const imagesEnabled = this.config.import?.images?.enableUpload !== false;
@@ -134,9 +211,19 @@ class MediaSync {
     let coverId = null;
     const galleryIds = [];
     const track = (res) => {
-      if (res.status === "uploaded") counts.uploaded += 1;
-      else if (res.status === "reused") counts.reused += 1;
-      else counts.failed += 1;
+      if (res.status === "uploaded") {
+        counts.uploaded += 1;
+        counts.downloaded += 1;
+      } else if (res.status === "reused") counts.reused += 1;
+      else if (res.status === "skipped") counts.skipped += 1;
+      else {
+        counts.failed += 1;
+        failureDetails.push({
+          sourceImageId: res.sourceImageId ?? null,
+          stage: res.stage || "unknown",
+          error: res.error || "failed",
+        });
+      }
       return res;
     };
 
@@ -144,6 +231,7 @@ class MediaSync {
     // cover/gallery relations remain deterministic.
     if (imagesEnabled && split.images.length > 0) {
       const imageInputs = split.images.slice(0, this.maxGallery + 1);
+      counts.expected += imageInputs.length;
       const results = await mapPoolOrdered(imageInputs, this.imageConcurrency, async (image, index) => {
         const res = await this.syncUrl(
           image.src,
@@ -151,6 +239,7 @@ class MediaSync {
           index === 0 ? `product-${wcProduct.id}-cover` : `product-${wcProduct.id}-gallery-${index}`,
           index === 0,
           wooSourceTimestamps(image),
+          { sourceImageId: image.id ?? null },
         );
         return track(res);
       }, { canStart: this.canStart });
@@ -161,6 +250,7 @@ class MediaSync {
         else failures.gallery = true;
       }
     } else if (videosEnabled && split.videos.length > 0) {
+      counts.expected += 1;
       const v = split.videos[0];
       const res = track(await this.syncUrl(
         v.src,
@@ -168,6 +258,7 @@ class MediaSync {
         `product-${wcProduct.id}-cover-video`,
         true,
         wooSourceTimestamps(v),
+        { sourceImageId: v.id ?? null },
       ));
       coverId = res.id;
       failures.cover = !res.id;
@@ -186,18 +277,42 @@ class MediaSync {
         seen.add(url);
         return true;
       }).slice(0, Math.max(0, this.maxGallery - galleryIds.length));
+      counts.expected += uniqueVideos.length;
       const videoResults = await mapPoolOrdered(uniqueVideos, this.videoConcurrency, async (url, index) => track(await this.syncUrl(
         url,
         `${wcProduct.name} - video ${index + 1}`,
         `product-${wcProduct.id}-video-${index + 1}`,
         false,
         null,
+        { sourceImageId: null },
       )), { canStart: this.canStart });
       for (const result of videoResults) if (result?.id) galleryIds.push(result.id);
       if (videoResults.some((result) => !result?.id)) failures.gallery = true;
     }
 
-    return { coverId, galleryIds, counts, failures };
+    if (coverId) counts.associated += 1;
+    counts.associated += galleryIds.length;
+
+    const sourceHadNoImages =
+      (!imagesEnabled || split.images.length === 0) &&
+      (!videosEnabled || (split.videos.length === 0 && metaVideoUrls.length === 0));
+    const complete = counts.failed === 0 && (sourceHadNoImages || Boolean(coverId) || galleryIds.length > 0 || counts.expected === 0);
+    // Stricter: if we expected media, every expected item must succeed.
+    const mediaComplete = counts.expected === 0
+      ? true
+      : counts.failed === 0 && (Boolean(coverId) || galleryIds.length > 0) &&
+        (counts.uploaded + counts.reused) >= counts.expected;
+
+    return {
+      coverId,
+      galleryIds,
+      counts,
+      failures,
+      failureDetails,
+      expected: counts.expected,
+      complete: mediaComplete,
+      sourceHadNoImages,
+    };
   }
 }
 

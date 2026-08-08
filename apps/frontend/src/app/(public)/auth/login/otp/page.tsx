@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import OtpLoginPageClient from "./OtpLoginPageClient";
 import { redirectLegacyAuthPage } from "@/lib/central-auth-redirect";
@@ -11,5 +12,9 @@ export const metadata: Metadata = {
 
 export default async function OtpLoginPage({ searchParams }: { searchParams: Promise<{ redirect?: string }> }) {
   redirectLegacyAuthPage(await searchParams);
-  return <OtpLoginPageClient />;
+  return (
+    <Suspense fallback={null}>
+      <OtpLoginPageClient />
+    </Suspense>
+  );
 }

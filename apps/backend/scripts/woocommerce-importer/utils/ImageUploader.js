@@ -9,6 +9,7 @@ const { detectMediaKind, isEmbedVideoUrl } = require("./mediaUtils");
 const { sourceTimestampHeaders } = require("./sourceTimestamps");
 const { validateMediaUrl, isPrivateHost } = require("../catalog/lib/safeUrl");
 const { canonicalSourceUrl } = require("../catalog/lib/mediaMappingStore");
+const { computeBackoffDelay } = require("../catalog/lib/backoff");
 
 sharp.cache({ memory: 64, files: 0, items: 100 });
 sharp.concurrency(2);
@@ -347,10 +348,12 @@ class ImageUploader {
         }
 
         const retryConfig = this.getImageConfig().retry || {};
-        const initialDelay = retryConfig.initialRetryDelay || 1000;
-        const multiplier = retryConfig.retryMultiplier || 2;
-        const maxDelay = retryConfig.maxRetryDelay || 10000;
-        const retryDelay = Math.min(initialDelay * Math.pow(multiplier, attempt - 1), maxDelay);
+        const retryDelay = computeBackoffDelay(attempt, {
+          baseDelay: retryConfig.initialRetryDelay || 1000,
+          maxDelay: retryConfig.maxRetryDelay || 10000,
+          factor: retryConfig.retryMultiplier || 2,
+          jitter: true,
+        });
 
         this.logger.warn(
           `🔄 Media download failed (attempt ${attempt}/${maxRetries}), retrying in ${retryDelay}ms: source=${this.sourceHash(mediaUrl)}`,
@@ -390,8 +393,23 @@ class ImageUploader {
     const buffer = Buffer.from(response.data);
     const contentType = (response.headers["content-type"] || "").toLowerCase().split(";")[0].trim();
 
-    if (mediaKind === "video" && contentType && !contentType.startsWith("video/")) {
-      throw new Error(`نوع MIME ویدیو نامعتبر است: ${contentType || "unknown"}`);
+    if (!buffer.length) {
+      throw new Error("Downloaded media payload is empty");
+    }
+
+    if (mediaKind === "video") {
+      if (contentType && !contentType.startsWith("video/")) {
+        throw new Error(`نوع MIME ویدیو نامعتبر است: ${contentType || "unknown"}`);
+      }
+    } else if (mediaKind === "image") {
+      if (contentType && !contentType.startsWith("image/")) {
+        throw new Error(`نوع MIME تصویر نامعتبر است: ${contentType || "unknown"}`);
+      }
+      // Reject obvious HTML/error bodies even when Content-Type is missing/wrong.
+      const head = buffer.subarray(0, Math.min(buffer.length, 256)).toString("utf8").trimStart().toLowerCase();
+      if (head.startsWith("<!doctype") || head.startsWith("<html") || head.startsWith("<?xml")) {
+        throw new Error("Downloaded payload looks like HTML/XML, not an image");
+      }
     }
 
     if (buffer.length > maxSize) {
@@ -467,10 +485,8 @@ class ImageUploader {
       };
     } catch (error) {
       this.logger.error(`❌ Failed to convert image to WebP:`, error.message);
-      return {
-        buffer: imageBuffer,
-        fileName: this.generateFileName(imageUrl, prefix),
-      };
+      // Do not upload unverified/non-image payloads. Require sharp to parse the buffer.
+      throw new Error(`Image payload failed validation/processing: ${error.message}`);
     } finally {
       this.metrics.conversionMs += Number(process.hrtime.bigint() - started) / 1e6;
     }
@@ -524,10 +540,12 @@ class ImageUploader {
         }
 
         const retryConfig = this.getImageConfig().retry || {};
-        const initialDelay = retryConfig.initialRetryDelay || 1000;
-        const multiplier = retryConfig.retryMultiplier || 2;
-        const maxDelay = retryConfig.maxRetryDelay || 10000;
-        const retryDelay = Math.min(initialDelay * Math.pow(multiplier, attempt - 1), maxDelay);
+        const retryDelay = computeBackoffDelay(attempt, {
+          baseDelay: retryConfig.initialRetryDelay || 1000,
+          maxDelay: retryConfig.maxRetryDelay || 10000,
+          factor: retryConfig.retryMultiplier || 2,
+          jitter: true,
+        });
 
         this.logger.warn(
           `🔄 ${mediaKind} upload failed (attempt ${attempt}/${maxRetries}), retrying in ${retryDelay}ms: ${fileName}`,
@@ -638,6 +656,30 @@ class ImageUploader {
       throw error;
     }
     return rows[0] || null;
+  }
+
+  /**
+   * Confirm a previously mapped Strapi file id still exists.
+   * @param {number|string} mediaId
+   * @returns {Promise<object|null>}
+   */
+  async findDestinationFileById(mediaId) {
+    if (mediaId === undefined || mediaId === null || mediaId === "") return null;
+    const strapiConfig = this.getStrapiConfig();
+    const headers = {};
+    if (!strapiConfig.usePublicAccess && strapiConfig.auth?.token) headers.Authorization = `Bearer ${strapiConfig.auth.token}`;
+    try {
+      const response = await axios.get(`${strapiConfig.baseUrl}/upload/files/${mediaId}`, {
+        headers,
+        timeout: 30_000,
+        validateStatus: (status) => status === 200 || status === 404,
+      });
+      if (response.status === 404) return null;
+      return response.data || null;
+    } catch (error) {
+      if (error.response?.status === 404) return null;
+      throw error;
+    }
   }
 
   async assertSafeRemoteUrl(rawUrl) {

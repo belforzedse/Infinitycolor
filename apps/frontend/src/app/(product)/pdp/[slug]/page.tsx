@@ -7,10 +7,12 @@ import FavoriteIcon from "@/components/PDP/Icons/FavoriteIcon";
 import PDPComment from "@/components/PDP/Comment";
 import PageContainer from "@/components/layout/PageContainer";
 import { productReviewService, type ProductReview } from "@/services/product/product-review.service";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { cache, Suspense } from "react";
 import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
+import { PRODUCT_TAG, productIdTag, productSlugTag } from "@/constants/cacheTags";
+import { fetchWithTimeout } from "@repo/api";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { SITE_NAME } from "@/config/site";
 import logger from "@/utils/logger";
@@ -24,24 +26,45 @@ import {
   getRelatedProductsByOtherCategories,
 } from "@/services/product/product";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import {
+  buildCanonicalPdpPath,
+  canonicalProductSlug,
+  shouldRedirectToCanonicalSlug,
+} from "@/utils/productSlug";
 
 const PDP_REVALIDATE_SECONDS = 30;
+/**
+ * Without this the PDP fetch had no timeout at all, so a hung Strapi held the
+ * render open until the platform killed it — which is how a slow backend
+ * surfaced as a gateway 504 rather than a retryable error.
+ *
+ * Kept meaningfully under the observed ~16s gateway budget so the timeout fires
+ * first and the customer gets the retry boundary instead of a raw 504. The warm
+ * by-slug call measures ~1.8s, so this is generous headroom.
+ */
+const PDP_FETCH_TIMEOUT_MS = 10000;
 const PDP_PRODUCT_SHELL_QUERY = "view=shell";
 const PDP_ID_FALLBACK_POPULATE_QUERY =
   "populate[0]=CoverImage&populate[1]=Media&populate[2]=product_main_category&populate[3]=product_tags&populate[4]=product_variations&populate[5]=product_variations.product_stock&populate[6]=product_variations.product_variation_color&populate[7]=product_variations.product_variation_size&populate[8]=product_variations.product_variation_model&populate[9]=product_other_categories&populate[10]=product_size_helper&populate[11]=Files&populate[12]=product_faqs";
 
+/**
+ * How a product lookup failed. The PDP must only render a 404 for `missing`;
+ * every other outcome is an infrastructure problem and has to reach the error
+ * boundary so a transient backend fault is never cached as "no such product".
+ */
+type ProductLookupFailure = "missing" | "unavailable";
+
 type ProductLookupResult = {
   product: ProductDetail | null;
-  errorDetails?: { message?: string; status?: number; endpoint?: string };
+  errorDetails?: {
+    message?: string;
+    status?: number;
+    endpoint?: string;
+    failure?: ProductLookupFailure;
+  };
 };
 
-const decodeProductSlug = (slug: string) => {
-  try {
-    return decodeURIComponent(slug);
-  } catch {
-    return slug;
-  }
-};
+const decodeProductSlug = (slug: string) => canonicalProductSlug(slug);
 
 const stripHtml = (value: unknown) =>
   String(value || "")
@@ -174,6 +197,19 @@ const normalizeProductDetail = (rawProduct: any): ProductDetail | null => {
 const isActiveProduct = (product: ProductDetail | null) =>
   product?.attributes?.Status === "Active" && !product?.attributes?.removedAt;
 
+/**
+ * Whether a lookup proves the product has no public PDP.
+ *
+ * True for a genuine backend 404 and for a product that exists but is inactive
+ * or soft-deleted. Deliberately false for every transport/server failure, so an
+ * outage can never be published as a durable 404.
+ */
+const isMissingProduct = (lookup: ProductLookupResult) => {
+  if (lookup.errorDetails?.failure === "missing") return true;
+  if (lookup.product && !isActiveProduct(lookup.product)) return true;
+  return false;
+};
+
 const fetchPdpProduct = async (
   decodedSlug: string,
   revalidateSeconds: number,
@@ -183,14 +219,33 @@ const fetchPdpProduct = async (
   const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/by-slug/${encodedSlug}?${PDP_PRODUCT_SHELL_QUERY}`;
   const apiUrl = `${strapiBaseUrl}${endpoint}`;
 
-  const response = await fetch(apiUrl, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    next: { revalidate: revalidateSeconds },
-  });
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(apiUrl, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      timeoutMs: PDP_FETCH_TIMEOUT_MS,
+      // Tags let a product mutation invalidate this entry without having to
+      // reproduce Next's exact encoding of the Persian slug in a path.
+      next: {
+        revalidate: revalidateSeconds,
+        tags: [PRODUCT_TAG, productSlugTag(decodedSlug)],
+      },
+    });
+  } catch (error) {
+    // Timeout / DNS / TLS / connection reset. Never a 404.
+    return {
+      product: null,
+      errorDetails: {
+        message: (error as Error)?.message || "Product request failed",
+        endpoint: apiUrl,
+        failure: "unavailable",
+      },
+    };
+  }
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
@@ -200,12 +255,30 @@ const fetchPdpProduct = async (
         message: errorData?.error?.message || `HTTP ${response.status}: ${response.statusText}`,
         status: response.status,
         endpoint: apiUrl,
+        // Only a literal 404 means the product does not exist. 4xx/5xx of any
+        // other shape is a backend fault and must not become a cached 404.
+        failure: response.status === 404 ? "missing" : "unavailable",
       },
     };
   }
 
   const data = await response.json();
-  return { product: normalizeProductDetail(data?.data), errorDetails: { endpoint: apiUrl } };
+  const product = normalizeProductDetail(data?.data);
+
+  // A 200 with no usable payload is a malformed response, not an absent product.
+  if (!product) {
+    return {
+      product: null,
+      errorDetails: {
+        message: "Product response contained no data",
+        status: response.status,
+        endpoint: apiUrl,
+        failure: "unavailable",
+      },
+    };
+  }
+
+  return { product, errorDetails: { endpoint: apiUrl } };
 };
 
 const getCachedPdpProduct = cache((decodedSlug: string) =>
@@ -430,33 +503,49 @@ export async function generateMetadata({
   const { slug } = await params;
   const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
 
-  let product: ProductDetail | null = null;
   const decodedSlug = decodeProductSlug(slug);
   const isNumericId = /^\d+$/.test(decodedSlug);
-  const requestedUrl = `${SITE_URL}/pdp/${slug}`;
+  const requestedUrl = `${SITE_URL}/pdp/${encodeURIComponent(decodedSlug)}`;
+
+  // The lookup and the 404 decision deliberately sit OUTSIDE the try/catch below.
+  //
+  // `notFound()` signals by throwing. While this lived inside the try, the catch
+  // swallowed that signal and returned "محصول یافت نشد" metadata instead, so the
+  // response committed as HTTP 200 and the page body's later notFound() could no
+  // longer change the status. Result: every missing product — and every
+  // nonexistent slug — was served as a soft-404 that crawlers read as a real page.
+  //
+  // `getCachedPdpProduct` is wrapped in React `cache`, so the page body reuses
+  // this lookup rather than issuing a second request.
+  const lookup = await getCachedPdpProduct(decodedSlug);
+  if (isMissingProduct(lookup)) {
+    notFound();
+  }
+
+  const product: ProductDetail | null =
+    lookup.product && isActiveProduct(lookup.product) ? lookup.product : null;
+
+  if (!product) {
+    // Not missing, so this is an infrastructure failure. Emit placeholder,
+    // non-indexable metadata and let the page body throw into the error
+    // boundary — a transient backend fault must never become a durable 404.
+    logger.warn("[PDP Metadata] Product unavailable for metadata", {
+      slug,
+      status: lookup.errorDetails?.status,
+      failure: lookup.errorDetails?.failure,
+    });
+    return {
+      title: "محصول یافت نشد",
+      description: `محصول مورد نظر در ${SITE_NAME} یافت نشد.`,
+      robots: {
+        index: false,
+        follow: false,
+      },
+      alternates: { canonical: requestedUrl },
+    };
+  }
 
   try {
-    const lookup = await getCachedPdpProduct(decodedSlug);
-    if (lookup.product && isActiveProduct(lookup.product)) {
-      product = lookup.product;
-    } else if (lookup.errorDetails?.status) {
-      logger.warn("[PDP Metadata] Failed to fetch product for metadata", {
-        slug,
-        status: lookup.errorDetails.status,
-      });
-    }
-
-    if (!product) {
-      return {
-        title: "محصول یافت نشد",
-        description: `محصول مورد نظر در ${SITE_NAME} یافت نشد.`,
-        robots: {
-          index: false,
-          follow: false,
-        },
-        alternates: { canonical: requestedUrl },
-      };
-    }
 
     const titleRaw = product.attributes?.Title?.trim() || "";
     const title = titleRaw || `محصول ${product.id || decodedSlug}`;
@@ -574,7 +663,7 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
 
   // Fetch product data from API using server-safe fetch
   let productData: ProductDetail | null = null;
-  let errorDetails: { message?: string; status?: number; endpoint?: string } = {};
+  let errorDetails: NonNullable<ProductLookupResult["errorDetails"]> = {};
 
   try {
     logger.info("[PDP] Making API request", {
@@ -613,6 +702,7 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
         message: "Product has been removed or is inactive",
         status: 404,
         endpoint: lookup.errorDetails?.endpoint,
+        failure: "missing",
       };
       logger.warn("[PDP] Product is inactive or removed", {
         slug,
@@ -634,7 +724,12 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
       status: err?.status || (err as any)?.response?.status || errorDetails.status,
       endpoint:
         errorDetails.endpoint ||
-        `${strapiBaseUrl}${ENDPOINTS.PRODUCT.PRODUCT}/by-slug/${encodeURIComponent(slug)}`,
+        `${strapiBaseUrl}${ENDPOINTS.PRODUCT.PRODUCT}/by-slug/${encodeURIComponent(decodedSlug)}`,
+      // Preserve the classification the lookup already made. An unclassified
+      // throw from this block is an unexpected fault, so it defaults to
+      // "unavailable" — the safe side, since it renders a retry instead of
+      // caching a 404.
+      failure: errorDetails.failure ?? "unavailable",
     };
     logger.error("[PDP] Error fetching product", {
       slug,
@@ -653,13 +748,17 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
         const fallbackEndpoint = `${ENDPOINTS.PRODUCT.PRODUCT}/${decodedSlug}?${PDP_ID_FALLBACK_POPULATE_QUERY}`;
         const fallbackUrl = `${strapiBaseUrl}${fallbackEndpoint}`;
 
-        const fallbackResponse = await fetch(fallbackUrl, {
+        const fallbackResponse = await fetchWithTimeout(fallbackUrl, {
           method: "GET",
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          next: { revalidate: 30 },
+          timeoutMs: PDP_FETCH_TIMEOUT_MS,
+          next: {
+            revalidate: PDP_REVALIDATE_SECONDS,
+            tags: [PRODUCT_TAG, productIdTag(decodedSlug)],
+          },
         });
 
         if (!fallbackResponse.ok) {
@@ -694,18 +793,24 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
   // Missing/inactive products are durable 404s. Transport/server failures must
   // reach the route boundary so the customer gets a retry action instead of a
   // misleading "product not found" message.
+  //
+  // The decision is keyed on the structured `failure` discriminator, never on
+  // substring-matching the error text: a database timeout whose message happened
+  // to contain "not found" used to be classified as a durable 404 and cached as
+  // one.
   if (!productData || !productData.attributes) {
-    const normalizedMessage = errorDetails.message?.toLowerCase() || "";
-    if (
-      errorDetails.status === 404 ||
-      normalizedMessage.includes("not found") ||
-      normalizedMessage.includes("inactive") ||
-      normalizedMessage.includes("removed")
-    ) {
+    if (errorDetails.failure === "missing") {
       notFound();
     }
 
     throw new Error("PRODUCT_DATA_UNAVAILABLE");
+  }
+
+  // SEO: prior slug forms (percent-encoded imports, renamed slugs) permanently
+  // redirect to the decoded canonical Slug. Candidate-set / alias lookup already
+  // resolved the product; this only normalizes the public URL.
+  if (shouldRedirectToCanonicalSlug(slug, productData.attributes.Slug)) {
+    permanentRedirect(buildCanonicalPdpPath(productData.attributes.Slug));
   }
 
   // Get category name from either Title or Name field (no fallback placeholder)

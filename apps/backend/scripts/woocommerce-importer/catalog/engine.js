@@ -46,27 +46,35 @@ function fingerprint(value) {
   return crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
-/**
- * True when an existing Strapi product already has BOTH a cover image and a
- * non-empty media gallery. Tolerant of Strapi v4 relation shapes
- * (`{ data: {...} }` / `{ data: [...] }`) and raw values. Used by the `full-sync`
- * scope to decide whether media import can be safely skipped.
- *
- * @param {{ attributes?: object } | object} existing index entry
- */
-function productHasMedia(existing) {
+function productHasCover(existing) {
   const attrs = existing?.attributes ?? existing ?? {};
-  const cover = attrs.CoverImage?.data ?? attrs.CoverImage;
-  const gallery = attrs.Media?.data ?? attrs.Media;
-  const hasCover = Array.isArray(cover) ? cover.length > 0 : Boolean(cover);
-  const hasGallery = Array.isArray(gallery) ? gallery.length > 0 : Boolean(gallery);
-  return hasCover && hasGallery;
+  const coverRaw = attrs.CoverImage;
+  const cover =
+    coverRaw && typeof coverRaw === "object" && Object.prototype.hasOwnProperty.call(coverRaw, "data")
+      ? coverRaw.data
+      : coverRaw;
+  return Array.isArray(cover) ? cover.length > 0 : Boolean(cover);
 }
 
 function productHasGallery(existing) {
   const attrs = existing?.attributes ?? existing ?? {};
-  const gallery = attrs.Media?.data ?? attrs.Media;
+  const galleryRaw = attrs.Media;
+  const gallery =
+    galleryRaw && typeof galleryRaw === "object" && Object.prototype.hasOwnProperty.call(galleryRaw, "data")
+      ? galleryRaw.data
+      : galleryRaw;
   return Array.isArray(gallery) ? gallery.length > 0 : Boolean(gallery);
+}
+
+/**
+ * True when an existing Strapi product already has a usable cover image.
+ * Gallery may be empty for single-image WooCommerce products. Used by the
+ * `full-sync` preserve policy to skip media re-download when the cover is present.
+ *
+ * @param {{ attributes?: object } | object} existing index entry
+ */
+function productHasMedia(existing) {
+  return productHasCover(existing);
 }
 
 function isRunControlError(error) {
@@ -167,6 +175,7 @@ class CatalogEngine {
     let scope = opts.scope || "full";
     let skipMedia = Boolean(opts.skipMedia);
     let startAfterExternalId = parseOptionalPositiveInt(opts.startAfterExternalId);
+    const publication = opts.publication || null;
     const runStore = opts.runStore || null;
     let run = null;
     let lockToken = null;
@@ -266,6 +275,7 @@ class CatalogEngine {
         crashHooks: opts.crashHooks || null,
         onlyExternalIds: opts.onlyExternalIds || null,
         sourceProducts: opts.sourceProducts || null,
+        publication,
       });
     }
 
@@ -477,6 +487,7 @@ class CatalogEngine {
       dryRun,
       flags,
       runContext,
+      publication: options.publication || null,
       productIndex: await this.repo.buildExternalIndex("/products", productIndexParams),
       variationIndex: await this.repo.buildExternalIndex("/product-variations"),
       stockIndex: await this.repo.buildExternalIndex("/product-stocks"),
@@ -503,6 +514,8 @@ class CatalogEngine {
         }
         if (processed >= limit) break;
         processed += 1;
+        report.productDiscovered(1);
+        report.productProcessed(1);
         await this.syncOneProduct(wcProduct, ctx);
         if (runContext) {
           runContext.store.syncBoundary(runContext.runId, runContext.lockToken, { mediaStore: this.mediaStore });
@@ -591,6 +604,7 @@ class CatalogEngine {
         resolveCategoryId,
         resolveCategoryParent,
         statusMappings: this.statusMappings,
+        publication: ctx.publication || this.options.publication || null,
       });
       if (dryRun) {
         const tagCounters = this.repo.inspectProductTags(wcProduct.tags);
@@ -610,6 +624,7 @@ class CatalogEngine {
         productStrapiId = existing?.id || -1;
       } else {
         const productWriteStarted = process.hrtime.bigint();
+        const previousSlug = existing?.attributes?.Slug ?? existing?.Slug ?? null;
         const { id, mode } = await this.repo.upsert({
           endpoint: "/products",
           externalId: wcProduct.id.toString(),
@@ -617,6 +632,17 @@ class CatalogEngine {
           index: productIndex,
           sourceTimestamps,
         });
+        // When the canonical slug changes (including decode-on-import), keep the
+        // prior form as a permanent alias so old sitemap/bookmark URLs 301.
+        if (previousSlug && data.Slug && previousSlug !== data.Slug) {
+          try {
+            await this.repo.ensureProductSlugAlias(previousSlug, id);
+          } catch (aliasError) {
+            this.logger.warn(
+              `⚠️ slug alias ${wcProduct.id} (${previousSlug} → ${data.Slug}): ${aliasError.message}`,
+            );
+          }
+        }
         this.mapping.set("products", wcProduct.id, id, { name: wcProduct.name, slug: data.Slug });
         report.count("products", mode);
         productStrapiId = id;
@@ -660,29 +686,131 @@ class CatalogEngine {
     }
 
     // Media — attach only when ids are present (never null existing media on failure).
+    let mediaOutcome = { complete: true, sourceHadNoImages: true, incompleteReason: null };
     if (!childrenOnly && flags.media && !dryRun && productStrapiId && productStrapiId > 0) {
       // "preserve" policy (full-sync): leave existing media untouched when a product
-      // already has both a cover and a gallery; otherwise import (new products and
-      // products missing a cover or gallery get backfilled).
+      // already has a cover; otherwise import (new products and products missing a
+      // cover get backfilled).
       if (flags.mediaPolicy === "preserve" && existing && productHasMedia(existing)) {
         report.mediaSkippedExisting();
-        this.logger.info(`🖼️  media preserved — product ${wcProduct.id} already has cover + gallery`);
+        this.logger.info(`🖼️  media preserved — product ${wcProduct.id} already has cover`);
       } else {
-        const { coverId, galleryIds, counts, failures = {} } = await this.media.syncProductMedia(wcProduct);
+        const mediaResult = await this.media.syncProductMedia(wcProduct);
+        const {
+          coverId,
+          galleryIds,
+          counts,
+          failures = {},
+          failureDetails = [],
+          complete: mediaCompleteFlag,
+          sourceHadNoImages,
+        } = mediaResult;
+        const complete =
+          mediaCompleteFlag !== undefined
+            ? Boolean(mediaCompleteFlag)
+            : (counts.failed || 0) === 0;
+        report.mediaExpected(counts.expected || 0);
         report.mediaUploaded(counts.uploaded);
         report.mediaReused(counts.reused);
+        report.mediaDownloaded(counts.downloaded || 0);
+        report.mediaAssociated(counts.associated || 0);
         report.mediaFailed(counts.failed);
+        if (sourceHadNoImages) report.mediaSourceHadNone();
+
+        mediaOutcome = {
+          complete: Boolean(complete),
+          sourceHadNoImages: Boolean(sourceHadNoImages),
+          incompleteReason: complete
+            ? null
+            : (failureDetails[0]?.error || (counts.failed ? "media-import-incomplete" : "media-missing")),
+        };
+
+        for (const detail of failureDetails) {
+          report.failures.push({
+            entity: "products",
+            wcId: wcProduct.id,
+            stage: `media:${detail.stage || "sync"}`,
+            error: detail.error || "media-failed",
+            strapiId: productStrapiId,
+            sourceImageId: detail.sourceImageId,
+            ...(wcProduct.sku ? { sku: wcProduct.sku } : {}),
+          });
+        }
+
         const update = {};
         if (coverId) update.CoverImage = coverId;
-        if (galleryIds.length > 0 && !(failures.gallery && productHasGallery(existing))) update.Media = galleryIds;
+        if (galleryIds.length > 0 && !(failures.gallery && productHasGallery(existing))) {
+          update.Media = galleryIds;
+        }
         if (Object.keys(update).length > 0) {
-          await this.repo.http.put(`/products/${productStrapiId}`, { data: update }, {
-            headers: sourceTimestampHeaders(wooSourceTimestamps(wcProduct)),
-          });
-        } else {
-          this.logger.info(`ℹ️  no media available in WooCommerce for product ${wcProduct.id}`);
+          try {
+            await this.repo.http.put(`/products/${productStrapiId}`, { data: update }, {
+              headers: sourceTimestampHeaders(wooSourceTimestamps(wcProduct)),
+            });
+            // Read-back verification of attached relations when we expected media.
+            if (counts.expected > 0) {
+              const verified = await this.verifyProductMediaRelations(productStrapiId, {
+                coverId,
+                galleryIds: update.Media || undefined,
+              });
+              if (!verified.ok) {
+                mediaOutcome.complete = false;
+                mediaOutcome.incompleteReason = verified.error || "media-relation-verify-failed";
+                report.fail("products", {
+                  wcId: wcProduct.id,
+                  stage: "media:verify",
+                  error: mediaOutcome.incompleteReason,
+                  strapiId: productStrapiId,
+                  sku: wcProduct.sku || undefined,
+                });
+              }
+            }
+          } catch (error) {
+            mediaOutcome.complete = false;
+            mediaOutcome.incompleteReason = error.message || "media-relation-attach-failed";
+            report.fail("products", {
+              wcId: wcProduct.id,
+              stage: "media:attach",
+              error: mediaOutcome.incompleteReason,
+              strapiId: productStrapiId,
+              sku: wcProduct.sku || undefined,
+            });
+            // Preserve last-known-good: do not clear relations on attach failure.
+            this.logger.warn(`⚠️ media attach failed for product ${wcProduct.id}: ${error.message}`);
+          }
+        } else if (counts.expected > 0) {
+          this.logger.warn(
+            `⚠️ source had ${counts.expected} media item(s) but none attached for product ${wcProduct.id}`,
+          );
+        } else if (sourceHadNoImages) {
+          this.logger.info(`ℹ️  source product ${wcProduct.id} has no images`);
+        }
+
+        // New products with required media incomplete must not stay Active.
+        // Scheduled products keep their schedule but remain unpublished until media is complete.
+        const isNewProduct = !existing;
+        if (isNewProduct && counts.expected > 0 && !mediaOutcome.complete) {
+          try {
+            const keepScheduled = ctx.publication?.mode === "scheduled";
+            await this.repo.http.put(`/products/${productStrapiId}`, {
+              data: keepScheduled
+                ? {
+                    scheduledPublishRequireMedia: true,
+                    scheduledPublishLastError: mediaOutcome.incompleteReason || "media-import-incomplete",
+                  }
+                : { Status: "InActive" },
+            }, {
+              headers: sourceTimestampHeaders(wooSourceTimestamps(wcProduct)),
+            });
+          } catch (error) {
+            this.logger.warn(
+              `⚠️ failed to mark incomplete product ${wcProduct.id}: ${error.message}`,
+            );
+          }
         }
       }
+    } else if (!childrenOnly && flags.media === false) {
+      report.mediaSkippedIntentionally();
     }
 
     if (flags.variations || flags.stock) {
@@ -696,11 +824,66 @@ class CatalogEngine {
     }
 
     if (runContext && !childrenOnly) {
-      runContext.store.completeItem(runContext.runId, itemKey, {
-        strapiId: productStrapiId,
-        fingerprint: productFingerprint,
-        metrics: { productWriteMs: ctx.productWriteMs || 0 },
-      }, runContext.lockToken);
+      const incomplete = flags.media && !dryRun && mediaOutcome && mediaOutcome.complete === false;
+      if (incomplete) {
+        report.count("products", "incomplete");
+        runContext.store.failItem(runContext.runId, itemKey, {
+          entity: "products",
+          wcId: wcProduct.id,
+          stage: "media-incomplete",
+          error: mediaOutcome.incompleteReason || "media-import-incomplete",
+          strapiId: productStrapiId,
+        }, runContext.lockToken);
+      } else {
+        report.count("products", "successful");
+        runContext.store.completeItem(runContext.runId, itemKey, {
+          strapiId: productStrapiId,
+          fingerprint: productFingerprint,
+          metrics: { productWriteMs: ctx.productWriteMs || 0 },
+        }, runContext.lockToken);
+      }
+    } else if (!childrenOnly) {
+      if (flags.media && !dryRun && mediaOutcome && mediaOutcome.complete === false) {
+        report.count("products", "incomplete");
+      } else if (flags.products) {
+        report.count("products", "successful");
+      }
+    }
+  }
+
+  /**
+   * Best-effort read-back of CoverImage / Media after attach.
+   * @param {number} productStrapiId
+   * @param {{ coverId?: number|null, galleryIds?: number[] }} expected
+   */
+  async verifyProductMediaRelations(productStrapiId, expected) {
+    try {
+      const response = await this.repo.http.get(`/products/${productStrapiId}`, {
+        params: {
+          "populate[CoverImage][fields][0]": "id",
+          "populate[Media][fields][0]": "id",
+        },
+      });
+      const raw = response?.data?.data || response?.data || response;
+      const attrs = raw?.attributes || raw || {};
+      const cover = attrs.CoverImage?.data ?? attrs.CoverImage;
+      const coverId = Array.isArray(cover) ? cover[0]?.id : cover?.id ?? cover;
+      if (expected.coverId && Number(coverId) !== Number(expected.coverId)) {
+        return { ok: false, error: `cover-mismatch expected=${expected.coverId} got=${coverId}` };
+      }
+      if (Array.isArray(expected.galleryIds) && expected.galleryIds.length > 0) {
+        const galleryRaw = attrs.Media?.data ?? attrs.Media;
+        const gallery = Array.isArray(galleryRaw) ? galleryRaw : galleryRaw ? [galleryRaw] : [];
+        const gotIds = gallery.map((entry) => Number(entry?.id ?? entry));
+        for (const id of expected.galleryIds) {
+          if (!gotIds.includes(Number(id))) {
+            return { ok: false, error: `gallery-missing-id=${id}` };
+          }
+        }
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error.message || "media-verify-request-failed" };
     }
   }
 
@@ -1036,4 +1219,10 @@ class CatalogEngine {
   }
 }
 
-module.exports = { CatalogEngine, sortCategoriesByHierarchy };
+module.exports = {
+  CatalogEngine,
+  sortCategoriesByHierarchy,
+  productHasMedia,
+  productHasCover,
+  productHasGallery,
+};

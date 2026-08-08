@@ -22,6 +22,8 @@ const UserImporter = require('../woocommerce-importer/importers/UserImporter');
 const Logger = require('../woocommerce-importer/utils/Logger');
 const DuplicateTracker = require('../woocommerce-importer/utils/DuplicateTracker');
 const config = require('../woocommerce-importer/config');
+const { runProductsViaCatalog } = require('../woocommerce-importer/catalog/lib/runProductsViaCatalog');
+const { parsePublicationOptions, DEFAULT_TIMEZONE } = require('../woocommerce-importer/catalog/lib/publication');
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -152,6 +154,7 @@ async function configureAndRun(type, ImporterClass) {
 
   // Name filter for products
   let nameFilter = [];
+  let publication = { mode: "now" };
   if (type === 'products') {
     const nameInput = await prompt(
       `Filter by name keywords? (comma-separated, e.g. "کیف,کفش", or leave blank): `
@@ -162,6 +165,28 @@ async function configureAndRun(type, ImporterClass) {
         .map(keyword => keyword.trim())
         .filter(keyword => keyword.length > 0);
     }
+
+    const pubMode =
+      (await prompt(`Publication mode (now/draft/scheduled, default: now): `)) || "now";
+    try {
+      if (pubMode === "scheduled") {
+        const at = await prompt("Absolute ISO at (with Z/offset), or blank for date+time: ");
+        if (at) {
+          publication = parsePublicationOptions({ mode: "scheduled", at });
+        } else {
+          const date = await prompt("Local date YYYY-MM-DD: ");
+          const time = await prompt("Local time HH:mm: ");
+          const timezone =
+            (await prompt(`Timezone (default ${DEFAULT_TIMEZONE}): `)) || DEFAULT_TIMEZONE;
+          publication = parsePublicationOptions({ mode: "scheduled", date, time, timezone });
+        }
+      } else {
+        publication = parsePublicationOptions({ mode: pubMode });
+      }
+    } catch (error) {
+      console.log(`❌ ${error.message}. Using publish-now.`);
+      publication = { mode: "now" };
+    }
   }
 
   const options = {
@@ -169,7 +194,8 @@ async function configureAndRun(type, ImporterClass) {
     page,
     dryRun,
     categoryIds: categoryIds.length > 0 ? categoryIds : undefined,
-    nameFilter: nameFilter.length > 0 ? nameFilter : undefined
+    nameFilter: nameFilter.length > 0 ? nameFilter : undefined,
+    publication,
   };
 
   // Show summary
@@ -178,6 +204,7 @@ async function configureAndRun(type, ImporterClass) {
   console.log(`  Limit: ${limit}`);
   console.log(`  Page: ${page}`);
   console.log(`  Dry Run: ${dryRun ? 'Yes' : 'No'}`);
+  if (type === 'products') console.log(`  Publication: ${publication.mode}`);
   if (categoryIds.length > 0) console.log(`  Categories: [${categoryIds.join(', ')}]`);
   if (nameFilter.length > 0) console.log(`  Keywords: [${nameFilter.join(', ')}]`);
 
@@ -197,17 +224,28 @@ async function configureAndRun(type, ImporterClass) {
 
   console.log('\n🚀 Starting import... Check the dashboard for live updates!\n');
 
-  // Create importer
-  const importer = new ImporterClass(config, dashboardLogger);
-
-  // Wrap import with tracker
-  const tracker = new ImportTracker(importer);
-  const wrappedImport = tracker.wrapImport(importer.import);
-
-  // Run import
   try {
     const startTime = Date.now();
-    const stats = await wrappedImport.call(importer, options);
+    let stats;
+
+    if (type === 'products') {
+      // CatalogEngine is authoritative for product + media (avoids legacy CoverImage nulling).
+      stats = await runProductsViaCatalog({
+        config,
+        logger: dashboardLogger,
+        environment: 'local',
+        dryRun: options.dryRun,
+        limit: options.limit,
+        skipCategories: true,
+        publication: options.publication || { mode: 'now' },
+      });
+    } else {
+      const importer = new ImporterClass(config, dashboardLogger);
+      const tracker = new ImportTracker(importer);
+      const wrappedImport = tracker.wrapImport(importer.import);
+      stats = await wrappedImport.call(importer, options);
+    }
+
     const duration = Math.round((Date.now() - startTime) / 1000);
 
     // Save record

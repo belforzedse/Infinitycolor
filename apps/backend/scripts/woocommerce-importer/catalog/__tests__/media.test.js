@@ -184,3 +184,136 @@ test("restart after upload before mapping commit reuses the deterministic remote
   assert.equal(recovered.id, 88);
   assert.equal(store.get("media", url).strapiId, 88);
 });
+
+test("normal product with multiple images reports complete ordered media", async () => {
+  const { media } = makeMedia();
+  let n = 0;
+  media.uploader.downloadAndUploadMedia = async () => {
+    n += 1;
+    return { id: 100 + n, name: `f${n}.webp`, mime: "image/webp" };
+  };
+  const result = await media.syncProductMedia({
+    id: 9,
+    name: "multi",
+    images: [
+      { id: 1, src: "https://cdn.example.com/a.jpg", alt: "a" },
+      { id: 2, src: "https://cdn.example.com/b.jpg", alt: "b" },
+      { id: 3, src: "https://cdn.example.com/c.jpg", alt: "c" },
+    ],
+  });
+  assert.equal(result.coverId, 101);
+  assert.deepEqual(result.galleryIds, [102, 103]);
+  assert.equal(result.complete, true);
+  assert.equal(result.counts.expected, 3);
+  assert.equal(result.counts.uploaded, 3);
+});
+
+test("source product with no images is a complete intentional empty result", async () => {
+  const { media, uploads } = makeMedia();
+  const result = await media.syncProductMedia({ id: 1, name: "empty", images: [] });
+  assert.equal(result.sourceHadNoImages, true);
+  assert.equal(result.complete, true);
+  assert.equal(result.coverId, null);
+  assert.equal(uploads(), 0);
+});
+
+test("transient download failure then success is complete", async () => {
+  const { media } = makeMedia();
+  let attempts = 0;
+  media.uploader.downloadAndUploadMedia = async () => {
+    attempts += 1;
+    if (attempts === 1) return null;
+    return { id: 55, name: "ok.webp", mime: "image/webp" };
+  };
+  // First call fails soft; MediaSync does not retry itself — ImageUploader does.
+  // Simulate ImageUploader eventual success on second product sync after remounting.
+  const failed = await media.syncProductMedia({
+    id: 2,
+    name: "retry",
+    images: [{ id: 9, src: "https://cdn.example.com/t.jpg" }],
+  });
+  assert.equal(failed.complete, false);
+  assert.equal(failed.counts.failed, 1);
+
+  media.uploader.downloadAndUploadMedia = async () => ({ id: 55, name: "ok.webp", mime: "image/webp" });
+  const ok = await media.syncProductMedia({
+    id: 2,
+    name: "retry",
+    images: [{ id: 9, src: "https://cdn.example.com/t.jpg" }],
+  });
+  assert.equal(ok.complete, true);
+  assert.equal(ok.coverId, 55);
+});
+
+test("permanent upload null marks media incomplete without inventing ids", async () => {
+  const { media } = makeMedia();
+  media.uploader.downloadAndUploadMedia = async () => null;
+  const result = await media.syncProductMedia({
+    id: 3,
+    name: "404",
+    images: [
+      { id: 1, src: "https://cdn.example.com/missing.jpg" },
+      { id: 2, src: "https://cdn.example.com/missing2.jpg" },
+    ],
+  });
+  assert.equal(result.complete, false);
+  assert.equal(result.coverId, null);
+  assert.deepEqual(result.galleryIds, []);
+  assert.equal(result.counts.failed, 2);
+});
+
+test("stale cached mapping is re-uploaded when destination file is missing", async () => {
+  const { media, store } = makeMedia();
+  store.set("media", "https://cdn.example.com/gone.jpg", 999, { name: "gone.webp" });
+  let uploads = 0;
+  media.uploader.findDestinationFileById = async () => null;
+  media.uploader.downloadAndUploadMedia = async () => {
+    uploads += 1;
+    return { id: 1001, name: "new.webp", mime: "image/webp" };
+  };
+  const result = await media.syncUrl("https://cdn.example.com/gone.jpg", "a", "p", true);
+  assert.equal(result.status, "uploaded");
+  assert.equal(result.id, 1001);
+  assert.equal(uploads, 1);
+});
+
+test("ImportReport treats media.failed as hasFailures", () => {
+  const { ImportReport } = require("../lib/report");
+  const report = new ImportReport({
+    command: "sync",
+    environment: "local",
+    trackingDir: fs.mkdtempSync(path.join(os.tmpdir(), "rep-")),
+  });
+  assert.equal(report.hasFailures(), false);
+  report.mediaFailed(1);
+  assert.equal(report.hasFailures(), true);
+});
+
+test("reconcileMissingProductMedia dry-run lists cover-less products only", async () => {
+  const { reconcileMissingProductMedia } = require("../lib/mediaRecovery");
+  const woo = {
+    async *iterateProducts() {
+      yield { id: 1, images: [{ src: "https://cdn.example.com/a.jpg" }] };
+      yield { id: 2, images: [] };
+      yield { id: 3, images: [{ src: "https://cdn.example.com/b.jpg" }] };
+    },
+  };
+  const repo = {
+    async buildExternalIndex() {
+      return new Map([
+        ["1", { id: 101, attributes: { CoverImage: { data: null }, Media: { data: [] } } }],
+        ["3", { id: 103, attributes: { CoverImage: { data: { id: 9 } }, Media: { data: [] } } }],
+      ]);
+    },
+  };
+  const summary = await reconcileMissingProductMedia({
+    woo,
+    repo,
+    media: {},
+    dryRun: true,
+  });
+  assert.equal(summary.sourceWithImages, 2);
+  assert.equal(summary.targetMissingMedia, 1);
+  assert.equal(summary.candidates, 1);
+  assert.equal(summary.unresolved[0].wcId, "1");
+});

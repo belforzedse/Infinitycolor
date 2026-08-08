@@ -15,6 +15,7 @@
 const { resolveSlug } = require("./slug");
 const { resolveColorMapping, DEFAULT_COLOR } = require("../../utils/colorMappings");
 const { wooSourceTimestamps } = require("../../utils/sourceTimestamps");
+const { resolvePublication } = require("./publication");
 
 const EXTERNAL_SOURCE = "woocommerce";
 
@@ -83,16 +84,40 @@ function mapProductStatus(wcStatus, statusMappings = {}) {
  * @param {(wooCategoryId:number)=>(number|null)} [opts.resolveCategoryId]
  * @param {(wooCategoryId:number)=>(number|null)} [opts.resolveCategoryParent] - returns WC parent id
  * @param {Record<string,string>} [opts.statusMappings]
- * @returns {{ data: object, mainCategoryMissing: boolean, otherCategoryMisses: number[] }}
+ * @param {object} [opts.publication] publication mode override from importer entry points
+ * @returns {{ data: object, mainCategoryMissing: boolean, otherCategoryMisses: number[], sourceTimestamps: object|null }}
  */
 function mapProduct(wcProduct, opts = {}) {
-  const { resolveCategoryId = () => null, resolveCategoryParent = () => null, statusMappings = {} } = opts;
+  const {
+    resolveCategoryId = () => null,
+    resolveCategoryParent = () => null,
+    statusMappings = {},
+    publication = null,
+  } = opts;
+
+  const publicationFields = resolvePublication({
+    mode: publication?.mode || "now",
+    date: publication?.date,
+    time: publication?.time,
+    timezone: publication?.timezone,
+    at: publication?.at,
+    requireMedia: publication?.requireMedia,
+    wcStatus: wcProduct.status,
+    wcDateGmt: wcProduct.date_created_gmt,
+    wcDate: wcProduct.date_created,
+    statusMappings,
+  });
 
   const data = {
     Title: normalizeName(wcProduct.name),
     Slug: resolveSlug(wcProduct, "product"),
     Description: prepareRichtext(wcProduct.description || wcProduct.short_description || ""),
-    Status: mapProductStatus(wcProduct.status, statusMappings),
+    Status: publicationFields.Status,
+    scheduledPublishAt: publicationFields.scheduledPublishAt,
+    scheduledPublishTimezone: publicationFields.scheduledPublishTimezone,
+    scheduledPublishRequireMedia: publicationFields.scheduledPublishRequireMedia,
+    scheduledPublishLastError: publicationFields.scheduledPublishLastError,
+    scheduledPublishLastAttemptAt: publicationFields.scheduledPublishLastAttemptAt,
     ProductType: wcProduct.type === "simple" ? "Simple" : "Variable",
     IsSimpleProduct: wcProduct.type === "simple",
     AverageRating: toNumber(wcProduct.average_rating) || null,

@@ -342,23 +342,26 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  // Redirect ID-based product URLs to slug-based URLs (SEO canonicalization)
-  // Pattern: /pdp/123 → /pdp/product-slug
+  // Redirect ID-based and non-canonical product URLs to the canonical slug.
+  // Patterns:
+  //   /pdp/123              → /pdp/<canonical-slug>
+  //   /pdp/%d8%b3…-y00574   → /pdp/<decoded Persian slug>  (historical imports)
   if (pathname.startsWith("/pdp/")) {
     const segments = pathname.split("/");
-    const identifier = segments[2]; // e.g., "123" or "product-slug"
+    // Keep the raw path segment (may still contain literal %xx from old sitemaps).
+    const identifier = segments[2];
+    const looksNumeric = Boolean(identifier && /^\d+$/.test(identifier));
+    const looksEncodedAlias = Boolean(identifier && /%[0-9A-Fa-f]{2}/.test(identifier));
 
-    // Check if identifier is numeric (ID-based URL)
-    if (identifier && /^\d+$/.test(identifier)) {
+    if (identifier && (looksNumeric || looksEncodedAlias)) {
       try {
-        // Fetch product slug from API using internal URL (bypasses TLS/DNS)
-        const productId = identifier;
-        // Use internal URL for server-side middleware calls to avoid hairpin routing
         const apiBaseUrl =
           process.env.STRAPI_INTERNAL_URL ||
           process.env.NEXT_PUBLIC_API_BASE_URL ||
           "https://api.infinitycolor.co/api";
-        const apiUrl = `${apiBaseUrl}/products/${productId}?fields[0]=Slug`;
+        const apiUrl = looksNumeric
+          ? `${apiBaseUrl}/products/${identifier}?fields[0]=Slug`
+          : `${apiBaseUrl}/products/by-slug/${encodeURIComponent(identifier)}?view=shell`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), PDP_REDIRECT_TIMEOUT_MS);
 
@@ -375,16 +378,21 @@ export async function proxy(request: NextRequest) {
         if (apiResponse.ok) {
           const data = await apiResponse.json();
           const slug = data?.data?.attributes?.Slug;
-
           if (slug) {
-            const url = request.nextUrl.clone();
-            url.pathname = `/pdp/${slug}`;
-            return redirectWithSecurityHeaders(url, LEGACY_REDIRECT_STATUS); // Permanent redirect
+            const canonical = safeDecodeURIComponent(String(slug));
+            // Redirect numeric IDs always, and any path segment that is not
+            // already the canonical (decoded) slug — including historical
+            // percent-encoded imports like `%d8%b3…-y00574`.
+            if (looksNumeric || identifier !== canonical) {
+              const url = request.nextUrl.clone();
+              url.pathname = `/pdp/${encodePathSegment(canonical)}`;
+              return redirectWithSecurityHeaders(url, LEGACY_REDIRECT_STATUS);
+            }
           }
         }
       } catch (error) {
         // Log error but don't block request - let it pass through
-        console.error("[Middleware] Error redirecting ID-based URL:", error);
+        console.error("[Middleware] Error redirecting product URL:", error);
       }
     }
   }

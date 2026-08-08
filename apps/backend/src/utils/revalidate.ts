@@ -15,12 +15,24 @@ type RevalidatePayload = Record<string, unknown> & {
   tag?: string;
 };
 
-function getFrontendUrls(): string[] {
-  return [
-    process.env.NEXTJS_REVALIDATION_URL,
-    "https://staging.infinitycolor.co",
-    "https://infinitycolor.co",
-  ].filter(Boolean) as string[];
+/**
+ * Frontend origins to notify, from configuration only.
+ *
+ * This used to append `https://staging.infinitycolor.co` and
+ * `https://infinitycolor.co` unconditionally, so production Strapi POSTed an
+ * authenticated revalidation to staging on every write and staging POSTed to
+ * production. Each environment must only ever invalidate its own storefront.
+ *
+ * `NEXTJS_REVALIDATION_URL` accepts a comma-separated list for deployments that
+ * genuinely front more than one storefront origin.
+ */
+export function getFrontendUrls(): string[] {
+  const configured = process.env.NEXTJS_REVALIDATION_URL || process.env.FRONTEND_URL || "";
+
+  return configured
+    .split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
 }
 
 export async function triggerFrontendRevalidation(
@@ -34,6 +46,12 @@ export async function triggerFrontendRevalidation(
   }
 
   const frontendUrls = getFrontendUrls();
+  if (frontendUrls.length === 0) {
+    strapi.log.warn(
+      `[${logPrefix}] No storefront origin configured (set NEXTJS_REVALIDATION_URL); skipping revalidation`,
+    );
+    return;
+  }
 
   const revalidationPromises = frontendUrls.map(async (frontendUrl) => {
     try {

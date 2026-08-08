@@ -1,9 +1,6 @@
+import { getFrontendUrls } from "../../../../utils/revalidate";
 async function triggerSiteSettingsRevalidation() {
-  const frontendUrls = [
-    process.env.NEXTJS_REVALIDATION_URL,
-    "https://staging.infinitycolor.co",
-    "https://infinitycolor.co",
-  ].filter(Boolean);
+  const frontendUrls = getFrontendUrls();
 
   const revalidationSecret = process.env.REVALIDATION_SECRET;
   if (!revalidationSecret) {

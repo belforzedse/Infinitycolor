@@ -37,6 +37,19 @@ export async function registerMaintenanceSchedulers(
     }
   );
 
+  await queues.commerce.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.scheduledProductPublish,
+    {
+      pattern: settings.crons.scheduledProductPublish,
+      tz: settings.timezone,
+    },
+    {
+      name: COMMERCE_MAINTENANCE_JOBS.scheduledProductPublish,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    }
+  );
+
   await queues.analytics.upsertJobScheduler(
     MAINTENANCE_SCHEDULERS.viewCounterFlush,
     {

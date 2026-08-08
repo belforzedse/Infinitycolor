@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import ForgotPasswordVerifyPageClient from "./ForgotPasswordVerifyPageClient";
 import { redirectLegacyAuthPage } from "@/lib/central-auth-redirect";
@@ -11,5 +12,9 @@ export const metadata: Metadata = {
 
 export default async function ForgotPasswordVerifyPage({ searchParams }: { searchParams: Promise<{ redirect?: string }> }) {
   redirectLegacyAuthPage(await searchParams);
-  return <ForgotPasswordVerifyPageClient />;
+  return (
+    <Suspense fallback={null}>
+      <ForgotPasswordVerifyPageClient />
+    </Suspense>
+  );
 }

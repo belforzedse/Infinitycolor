@@ -11,6 +11,7 @@ const { Destination } = require("../woocommerce-importer/migration-v2/lib/destin
 const T = require("../woocommerce-importer/migration-v2/lib/transforms");
 const { CatalogEngine } = require("../woocommerce-importer/catalog/engine");
 const { buildConfig } = require("../woocommerce-importer/catalog/config");
+const { publicationFromEnv } = require("../woocommerce-importer/catalog/lib/publication");
 const Logger = require("../woocommerce-importer/utils/Logger");
 
 const QUEUE_NAME = "woocommerce-sync";
@@ -390,11 +391,13 @@ class WooSyncService {
     const products = [];
     for (const row of rows) products.push(await this.source.getProduct(row.source_id));
     const engine = createCatalogEngine(this.config);
+    const publication = publicationFromEnv(process.env);
     const report = await engine.runSync({
       dryRun: false,
       scope,
-      skipMedia: scope === "product-no-media",
+      skipMedia: false,
       sourceProducts: products,
+      publication,
     });
     const metrics = engine.collectMetrics(null, report);
     await this.state.metric({
@@ -449,7 +452,7 @@ class WooSyncService {
         if (productRows.length > 0) {
           let failures;
           try {
-            failures = await this.processProductRows(productRows, lane === "immediate" ? "full" : "product-no-media");
+            failures = await this.processProductRows(productRows, lane === "immediate" ? "full" : "full-sync");
           } catch (error) {
             failures = new Map(productRows.map((row) => [String(row.source_id), safeErrorCode(error)]));
           }

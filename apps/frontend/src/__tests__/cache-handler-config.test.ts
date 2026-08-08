@@ -59,6 +59,17 @@ describe("shared storefront cache configuration", () => {
       "isBuild ? createLruOnlyConfig() : createOriginFallbackConfig()",
     );
     expect(handler).not.toContain("global.cacheHandlerConfig = createLruOnlyConfig()");
-    expect(handler).toContain("reconnectStrategy: false");
+  });
+
+  // Previously this asserted `reconnectStrategy: false`. That made a single
+  // Redis blip permanently demote a replica to origin-only reads for the rest of
+  // its process lifetime, and with 24 replicas demoting independently the fleet
+  // stopped agreeing on cached content. The handler must now recover on its own.
+  it("recovers from a transient cache outage instead of demoting the replica for good", () => {
+    const handler = read("apps/frontend/cache-handler.mjs");
+    expect(handler).not.toContain("reconnectStrategy: false");
+    expect(handler).toContain("reconnectStrategy: (retries)");
+    // Commands must still fail fast while the socket is down rather than queue.
+    expect(handler).toContain("disableOfflineQueue: true");
   });
 });

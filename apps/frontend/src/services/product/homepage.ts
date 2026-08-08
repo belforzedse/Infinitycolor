@@ -10,6 +10,7 @@ import type {
   HomeGifPromoAssignment,
   SuperAdminSettings,
 } from "@/types/super-admin/settings";
+import { HOME_PRODUCTS_TAG, PRODUCT_TAG } from "@/constants/cacheTags";
 
 const PRODUCT_CARD_VIEW = "view=card";
 export type HomepageProductSectionId =
@@ -77,7 +78,7 @@ const homepageFetchOptions = (): RequestInit & {
 } => ({
   ...(shouldBypassHomepageFetchCache()
     ? { cache: "no-store" as const }
-    : { next: { revalidate: 90, tags: ["home-products"] } }),
+    : { next: { revalidate: 90, tags: [HOME_PRODUCTS_TAG, PRODUCT_TAG] } }),
   headers: {
     "Content-Type": "application/json",
     Accept: "application/json",

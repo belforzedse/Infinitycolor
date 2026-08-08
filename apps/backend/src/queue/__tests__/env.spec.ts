@@ -28,6 +28,7 @@ describe("queue env", () => {
     expect(settings.concurrency.payments).toBe(1);
     expect(settings.crons.stockReservationExpiry).toBe("*/1 * * * *");
     expect(settings.crons.reserveOrderExpiry).toBe("*/5 * * * *");
+    expect(settings.crons.scheduledProductPublish).toBe("*/1 * * * *");
     expect(settings.crons.viewCounterFlush).toBe("*/1 * * * *");
     expect(settings.crons.analyticsDailyRollup).toBe("15 0 * * *");
     expect(settings.crons.analyticsReconciliation).toBe("45 0 * * *");

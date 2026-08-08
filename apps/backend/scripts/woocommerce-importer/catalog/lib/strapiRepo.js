@@ -427,6 +427,36 @@ class StrapiRepo {
     }, requestConfig);
     return "created";
   }
+
+  /**
+   * Record a prior product slug so the storefront can 301 it to the canonical
+   * Slug. Idempotent on the unique Slug field.
+   */
+  async ensureProductSlugAlias(fromSlug, productId) {
+    const slug = String(fromSlug ?? "");
+    if (!slug || !productId) return "unchanged";
+    try {
+      await this.http.post("/product-slug-aliases", {
+        data: { Slug: slug, product: productId },
+      });
+      return "created";
+    } catch (error) {
+      const status = error.response?.status;
+      if (status !== 400 && status !== 409) throw error;
+      const response = await this.http.get("/product-slug-aliases", {
+        params: {
+          "filters[Slug][$eq]": slug,
+          "pagination[pageSize]": 1,
+        },
+      });
+      const row = response.data?.data?.[0];
+      if (!row?.id) throw error;
+      await this.http.put(`/product-slug-aliases/${row.id}`, {
+        data: { product: productId },
+      });
+      return "updated";
+    }
+  }
 }
 
 module.exports = StrapiRepo;

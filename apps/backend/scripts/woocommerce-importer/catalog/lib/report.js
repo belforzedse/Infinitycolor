@@ -4,7 +4,32 @@ const fs = require("fs");
 const path = require("path");
 
 function emptyCounters() {
-  return { created: 0, updated: 0, unchanged: 0, skipped: 0, failed: 0, duplicate: 0, deleted: 0 };
+  return {
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    skipped: 0,
+    failed: 0,
+    duplicate: 0,
+    deleted: 0,
+    incomplete: 0,
+    successful: 0,
+  };
+}
+
+function emptyMediaCounters() {
+  return {
+    expected: 0,
+    uploaded: 0,
+    reused: 0,
+    downloaded: 0,
+    associated: 0,
+    repaired: 0,
+    failed: 0,
+    skippedExisting: 0,
+    skippedIntentionally: 0,
+    sourceHadNone: 0,
+  };
 }
 
 /**
@@ -38,8 +63,10 @@ class ImportReport {
       attributes: emptyCounters(),
       sizeHelpers: emptyCounters(),
     };
-    this.media = { uploaded: 0, reused: 0, failed: 0, skippedExisting: 0 };
-    /** @type {Array<{ entity:string, wcId:any, stage:string, error:string }>} */
+    this.media = emptyMediaCounters();
+    this.discovered = 0;
+    this.processed = 0;
+    /** @type {Array<{ entity:string, wcId:any, stage:string, error:string, sku?:string, strapiId?:any, sourceImageId?:any }>} */
     this.failures = [];
   }
 
@@ -49,10 +76,18 @@ class ImportReport {
     }
   }
 
+  productDiscovered(n = 1) {
+    this.discovered += n;
+  }
+
+  productProcessed(n = 1) {
+    this.processed += n;
+  }
+
   /**
    * Record a failure. Always include the WooCommerce id and the stage.
    * @param {string} entity
-   * @param {{ wcId:any, stage:string, error: string|Error }} detail
+   * @param {{ wcId:any, stage:string, error: string|Error, sku?:string, strapiId?:any, sourceImageId?:any }} detail
    */
   fail(entity, detail) {
     this.count(entity, "failed");
@@ -61,14 +96,29 @@ class ImportReport {
       wcId: detail.wcId,
       stage: detail.stage,
       error: detail.error instanceof Error ? detail.error.message : String(detail.error),
+      ...(detail.sku ? { sku: detail.sku } : {}),
+      ...(detail.strapiId !== undefined ? { strapiId: detail.strapiId } : {}),
+      ...(detail.sourceImageId !== undefined ? { sourceImageId: detail.sourceImageId } : {}),
     });
   }
 
+  mediaExpected(n = 1) {
+    this.media.expected += n;
+  }
   mediaUploaded(n = 1) {
     this.media.uploaded += n;
   }
   mediaReused(n = 1) {
     this.media.reused += n;
+  }
+  mediaDownloaded(n = 1) {
+    this.media.downloaded += n;
+  }
+  mediaAssociated(n = 1) {
+    this.media.associated += n;
+  }
+  mediaRepaired(n = 1) {
+    this.media.repaired += n;
   }
   mediaFailed(n = 1) {
     this.media.failed += n;
@@ -76,6 +126,12 @@ class ImportReport {
   /** Media left untouched because the product already had a cover + gallery (full-sync). */
   mediaSkippedExisting(n = 1) {
     this.media.skippedExisting += n;
+  }
+  mediaSkippedIntentionally(n = 1) {
+    this.media.skippedIntentionally += n;
+  }
+  mediaSourceHadNone(n = 1) {
+    this.media.sourceHadNone += n;
   }
 
   durationMs() {
@@ -88,6 +144,8 @@ class ImportReport {
       command: this.command,
       environment: this.environment,
       durationMs: this.durationMs(),
+      discovered: this.discovered,
+      processed: this.processed,
       entities: this.entities,
       media: this.media,
       failures: this.failures,
@@ -100,15 +158,19 @@ class ImportReport {
     }
     const seconds = (this.durationMs() / 1000).toFixed(1);
     this.logger.info("=== Catalog Import Summary ===");
+    this.logger.info(`products    discovered=${this.discovered} processed=${this.processed}`);
     for (const [entity, c] of Object.entries(this.entities)) {
       this.logger.info(
         `${entity.padEnd(11)} created=${c.created} updated=${c.updated} unchanged=${c.unchanged} ` +
-          `skipped=${c.skipped} duplicate=${c.duplicate} deleted=${c.deleted} failed=${c.failed}`,
+          `skipped=${c.skipped} incomplete=${c.incomplete} successful=${c.successful} ` +
+          `duplicate=${c.duplicate} deleted=${c.deleted} failed=${c.failed}`,
       );
     }
     this.logger.info(
-      `media        uploaded=${this.media.uploaded} reused=${this.media.reused} ` +
-        `skipped=${this.media.skippedExisting} failed=${this.media.failed}`,
+      `media        expected=${this.media.expected} uploaded=${this.media.uploaded} reused=${this.media.reused} ` +
+        `downloaded=${this.media.downloaded} associated=${this.media.associated} repaired=${this.media.repaired} ` +
+        `skipped=${this.media.skippedExisting} intentionalSkip=${this.media.skippedIntentionally} ` +
+        `sourceNone=${this.media.sourceHadNone} failed=${this.media.failed}`,
     );
     this.logger.info(`duration     ${seconds}s`);
 
@@ -136,8 +198,8 @@ class ImportReport {
   }
 
   hasFailures() {
-    return this.failures.length > 0;
+    return this.failures.length > 0 || this.media.failed > 0 || (this.entities.products?.incomplete || 0) > 0;
   }
 }
 
-module.exports = { ImportReport, emptyCounters };
+module.exports = { ImportReport, emptyCounters, emptyMediaCounters };

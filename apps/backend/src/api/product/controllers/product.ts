@@ -24,6 +24,7 @@ import {
 import { generateVariationCombinations } from "../services/variation-combinations";
 import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
+import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
 
 const OPERATIONAL_PRODUCT_FIELDS = [
   "Title",
@@ -241,14 +242,40 @@ function getProductPopulateForView(view: unknown) {
     : PRODUCT_POPULATE;
 }
 
+async function loadProductById(
+  strapi: any,
+  productId: number,
+  isAdmin: boolean,
+  populate: typeof PRODUCT_POPULATE | typeof PRODUCT_SHELL_POPULATE,
+): Promise<any | null> {
+  const foundFilters: any = {
+    id: productId,
+    removedAt: { $null: true },
+  };
+  if (!isAdmin) {
+    foundFilters.Status = "Active";
+  }
+  const foundProducts = await strapi.entityService.findMany("api::product.product", {
+    filters: foundFilters,
+    populate,
+    pagination: { limit: 1 },
+  });
+  return (foundProducts as unknown[])[0] || null;
+}
+
 async function findProductBySlugInternal(
   strapi: any,
-  decodedSlug: string,
+  inboundSlug: string,
   isAdmin: boolean,
   populate: typeof PRODUCT_POPULATE | typeof PRODUCT_SHELL_POPULATE = PRODUCT_POPULATE,
 ): Promise<any | null> {
+  // Try every encoding/normalization of the inbound slug in one query. Historical
+  // imports stored WooCommerce's percent-encoded form verbatim; the storefront
+  // always sends the decoded Persian form. Matching only one of those meant
+  // ~half the catalog was unreachable from every URL shape.
+  const candidates = buildProductSlugCandidates(inboundSlug);
   const filters: any = {
-    Slug: decodedSlug,
+    Slug: { $in: candidates },
     removedAt: { $null: true },
   };
 
@@ -266,11 +293,11 @@ async function findProductBySlugInternal(
 
   if (!product) {
     strapi.log.info(
-      `[Product.findBySlug] No exact match for slug: "${decodedSlug}", trying raw SQL query...`,
+      `[Product.findBySlug] No match for slug candidates of: "${inboundSlug}", trying raw SQL…`,
     );
     try {
       const knex = strapi.db.connection;
-      let rawQuery = knex("products").where("slug", decodedSlug).whereNull("removed_at");
+      let rawQuery = knex("products").whereIn("slug", candidates).whereNull("removed_at");
 
       if (!isAdmin) {
         rawQuery = rawQuery.where("status", "Active");
@@ -279,18 +306,7 @@ async function findProductBySlugInternal(
       const rawProducts = await rawQuery.limit(1);
       if (rawProducts.length > 0) {
         const productId = rawProducts[0].id;
-        const foundFilters: any = { id: productId };
-
-        if (!isAdmin) {
-          foundFilters.Status = "Active";
-        }
-
-        const foundProducts = await strapi.entityService.findMany("api::product.product", {
-          filters: foundFilters,
-          populate,
-          pagination: { limit: 1 },
-        });
-        product = (foundProducts as unknown[])[0] || null;
+        product = await loadProductById(strapi, productId, isAdmin, populate);
         if (product) {
           strapi.log.info(`[Product.findBySlug] Found product via raw SQL query: ${productId}`);
         }
@@ -300,44 +316,46 @@ async function findProductBySlugInternal(
     }
   }
 
+  // Prior slug forms (e.g. percent-encoded imports after repair, or a renamed
+  // slug) live in ProductSlugAlias and permanently resolve to the product.
   if (!product) {
-    strapi.log.info(
-      `[Product.findBySlug] No product found with slug: "${decodedSlug}", trying ID fallback...`,
-    );
+    try {
+      const aliases = await strapi.entityService.findMany(
+        "api::product-slug-alias.product-slug-alias",
+        {
+          filters: { Slug: { $in: candidates } },
+          populate: { product: true },
+          pagination: { limit: 1 },
+        },
+      );
+      const alias = (aliases as any[])[0];
+      const aliasProductId = alias?.product?.id ?? alias?.product;
+      if (aliasProductId) {
+        product = await loadProductById(strapi, Number(aliasProductId), isAdmin, populate);
+        if (product) {
+          strapi.log.info(
+            `[Product.findBySlug] Found product ${aliasProductId} via slug alias "${alias.Slug}"`,
+          );
+        }
+      }
+    } catch (aliasError) {
+      strapi.log.warn("[Product.findBySlug] Slug alias lookup failed:", aliasError);
+    }
+  }
 
-    const idMatch = decodedSlug.match(/^\d+$/);
+  if (!product) {
+    const idMatch = inboundSlug.match(/^\d+$/);
     if (idMatch) {
-      const productId = parseInt(decodedSlug, 10);
+      const productId = parseInt(inboundSlug, 10);
       strapi.log.info(
         `[Product.findBySlug] Attempting ID-based lookup for product ID: ${productId}`,
       );
 
-      const idFilters: any = {
-        id: productId,
-        removedAt: { $null: true },
-      };
-
-      if (!isAdmin) {
-        idFilters.Status = "Active";
-      }
-
-      const productsById = await strapi.entityService.findMany("api::product.product", {
-        filters: idFilters,
-        populate,
-        pagination: { limit: 1 },
-      });
-
-      const productById = (productsById as unknown[])[0] || null;
+      const productById = await loadProductById(strapi, productId, isAdmin, populate);
       if (productById) {
         strapi.log.info(`[Product.findBySlug] Found product by ID: ${productId}`);
         return productById;
       }
-
-      strapi.log.warn(`[Product.findBySlug] Product with ID ${productId} not found or is trashed`);
-    } else {
-      strapi.log.warn(
-        `[Product.findBySlug] Slug "${decodedSlug}" is not numeric, cannot use ID fallback`,
-      );
     }
   }
 
@@ -785,9 +803,20 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       return payload;
     } catch (error) {
       strapi.log.error("[Product.findBySlug] Error finding product by slug:", error);
-      return ctx.badRequest("An error occurred while finding the product", {
-        error: (error as Error).message,
-      });
+      // 503, not 400. Any throw here is an infrastructure fault (DB timeout,
+      // connection loss, serialization error) — never evidence that the product
+      // does not exist. Returning a 4xx let the storefront classify a transient
+      // backend failure as a durable "product not found" and cache it as one.
+      ctx.status = 503;
+      ctx.set("Retry-After", "5");
+      ctx.body = {
+        error: {
+          status: 503,
+          name: "ServiceUnavailable",
+          message: "Product lookup temporarily unavailable",
+        },
+      };
+      return;
     }
   },
 }));

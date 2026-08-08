@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import OrderSuccessPageClient from "./OrderSuccessPageClient";
 
@@ -12,5 +13,9 @@ export const metadata: Metadata = {
 };
 
 export default function OrderSuccessPage() {
-  return <OrderSuccessPageClient />;
+  return (
+    <Suspense fallback={null}>
+      <OrderSuccessPageClient />
+    </Suspense>
+  );
 }

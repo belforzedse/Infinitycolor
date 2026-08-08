@@ -3,6 +3,7 @@
  * settings controller
  */
 
+import { getFrontendUrls } from "../../../utils/revalidate";
 import type { Attribute } from "@strapi/types";
 import { factories } from "@strapi/strapi";
 import {
@@ -38,11 +39,7 @@ function extractPayloadFromRequestBody(body: any) {
 
 /** Trigger Next.js on-demand revalidation for hero slider (home page). */
 async function triggerHeroSliderRevalidation(strapi: { log: { warn: (msg: string) => void; error: (msg: string, ...args: unknown[]) => void; info: (msg: string) => void } }) {
-  const frontendUrls = [
-    process.env.NEXTJS_REVALIDATION_URL,
-    "https://staging.infinitycolor.co",
-    "https://infinitycolor.co",
-  ].filter(Boolean) as string[];
+  const frontendUrls = getFrontendUrls();
 
   if (frontendUrls.length === 0) {
     strapi.log.warn("[Settings] No NEXTJS_REVALIDATION_URL or fallback URLs configured");

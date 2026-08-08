@@ -12,6 +12,7 @@ import { getCategoryPlpHref } from "@/utils/plpRoutes";
 import { getProductCategories, type ProductCategorySummary } from "./categories";
 import { formatProductsToCardProps } from "./product";
 import type { ProductSmallCardProps } from "@/components/Product/SmallCard";
+import { PRODUCT_COLLECTION_TAG, PRODUCT_TAG } from "@/constants/cacheTags";
 
 export interface PLPProduct {
   id: number;
@@ -356,7 +357,7 @@ export async function getPLPProducts(
   try {
     response = await fetchWithTimeout(url, {
       timeoutMs: 15000,
-      next: { revalidate: 120 },
+      next: { revalidate: 120, tags: [PRODUCT_TAG, PRODUCT_COLLECTION_TAG] },
     });
     data = await response.json();
   } catch (error) {

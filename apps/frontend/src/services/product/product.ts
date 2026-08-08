@@ -7,6 +7,7 @@ import logger from "@/utils/logger";
 import { parseStockCount } from "@/utils/product";
 import { computeDiscountForVariation, parseNumber } from "@/utils/discounts";
 import { resolveAssetUrl } from "@/utils/resolveAssetUrl";
+import { PRODUCT_COLLECTION_TAG, PRODUCT_TAG } from "@/constants/cacheTags";
 
 export interface ProductMedia {
   id: number;
@@ -425,7 +426,7 @@ export const formatProductCardProjection = (
 const DEFAULT_LAZY_SECONDARY_MEDIA_LIMIT = 3;
 
 const CARD_FETCH_OPTIONS = {
-  next: { revalidate: 30 } as const,
+  next: { revalidate: 30, tags: [PRODUCT_TAG, PRODUCT_COLLECTION_TAG] },
   headers: {
     "Content-Type": "application/json",
     Accept: "application/json",

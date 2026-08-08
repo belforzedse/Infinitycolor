@@ -92,6 +92,12 @@ function detectMediaKind(url, contentType, allowedVideoTypes = ["mp4", "webm", "
     return "image";
   }
 
+  // Extension-less CDN URLs are common in WooCommerce; treat as image candidates
+  // and validate Content-Type / payload after download.
+  if (!ext && /^https?:\/\//i.test(url)) {
+    return "image";
+  }
+
   return "unsupported";
 }
 

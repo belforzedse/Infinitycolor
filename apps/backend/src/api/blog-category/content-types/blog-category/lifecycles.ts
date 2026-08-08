@@ -1,3 +1,4 @@
+import { getFrontendUrls } from "../../../../utils/revalidate";
 import { generateUnicodeSlug } from "../../../../utils/unicodeSlug";
 import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
 
@@ -18,10 +19,7 @@ function ensureSlug(data: Record<string, any>) {
 }
 
 async function triggerBlogListingRevalidation() {
-  const frontendUrls = [
-    "https://staging.infinitycolor.co",
-    "https://infinitycolor.co",
-  ];
+  const frontendUrls = getFrontendUrls();
 
   const revalidationSecret = process.env.REVALIDATION_SECRET;
   if (!revalidationSecret) {

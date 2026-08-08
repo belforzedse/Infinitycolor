@@ -275,7 +275,26 @@ test("price scope: PUTs only {Price,DiscountPrice} on existing variations, creat
 test("media scope: attaches media to existing products, creates nothing", async () => {
   const engine = makeEngine({ withExisting: true });
   // Stub media resolution to return ids so an attach PUT happens.
-  engine.media.syncProductMedia = async () => ({ coverId: 1, galleryIds: [2, 3], counts: { uploaded: 1, reused: 2, failed: 0 } });
+  engine.media.syncProductMedia = async () => ({
+    coverId: 1,
+    galleryIds: [2, 3],
+    counts: { uploaded: 1, reused: 2, failed: 0 },
+    complete: true,
+  });
+  engine.repo.http.get = async (url) => {
+    const id = Number(String(url).split("/").pop());
+    return {
+      data: {
+        data: {
+          id,
+          attributes: {
+            CoverImage: { data: { id: 1 } },
+            Media: { data: [{ id: 2 }, { id: 3 }] },
+          },
+        },
+      },
+    };
+  };
   const report = await engine.runSync({ scope: "media" });
 
   assert.equal(engine._calls.upserts.length, 0);
@@ -290,9 +309,9 @@ test("media scope: attaches media to existing products, creates nothing", async 
   assert.equal(report.media.reused, 6);
 });
 
-test("full-sync: existing product with cover + gallery keeps its media (no media write)", async () => {
+test("full-sync: existing product with cover keeps its media (no media write)", async () => {
   const engine = makeEngine({ products: [products[0]] }); // product 101
-  // Existing product already has BOTH a cover and a gallery.
+  // Existing product already has a cover (gallery optional for preserve).
   engine.repo.buildExternalIndex = async (endpoint) => {
     const map = new Map();
     if (endpoint === "/products") {
@@ -303,7 +322,7 @@ test("full-sync: existing product with cover + gallery keeps its media (no media
   let mediaCalls = 0;
   engine.media.syncProductMedia = async () => {
     mediaCalls += 1;
-    return { coverId: 7, galleryIds: [8, 9], counts: { uploaded: 3, reused: 0, failed: 0 } };
+    return { coverId: 7, galleryIds: [8, 9], counts: { uploaded: 3, reused: 0, failed: 0 }, complete: true };
   };
 
   const report = await engine.runSync({ dryRun: false, scope: "full-sync" });
@@ -316,16 +335,32 @@ test("full-sync: existing product with cover + gallery keeps its media (no media
   assert.equal(engine._calls.upserts.filter((u) => u.endpoint === "/products").length, 1);
 });
 
-test("full-sync: existing product missing the gallery gets media backfilled", async () => {
+test("full-sync: existing product missing the cover gets media backfilled", async () => {
   const engine = makeEngine({ products: [products[0]] });
   engine.repo.buildExternalIndex = async (endpoint) => {
     const map = new Map();
     if (endpoint === "/products") {
-      map.set("101", { id: 10101, attributes: { CoverImage: { data: { id: 1 } }, Media: { data: [] } } });
+      map.set("101", { id: 10101, attributes: { CoverImage: { data: null }, Media: { data: [] } } });
     }
     return map;
   };
-  engine.media.syncProductMedia = async () => ({ coverId: 7, galleryIds: [8, 9], counts: { uploaded: 3, reused: 0, failed: 0 } });
+  engine.media.syncProductMedia = async () => ({
+    coverId: 7,
+    galleryIds: [8, 9],
+    counts: { uploaded: 3, reused: 0, failed: 0 },
+    complete: true,
+  });
+  engine.repo.http.get = async () => ({
+    data: {
+      data: {
+        id: 10101,
+        attributes: {
+          CoverImage: { data: { id: 7 } },
+          Media: { data: [{ id: 8 }, { id: 9 }] },
+        },
+      },
+    },
+  });
 
   const report = await engine.runSync({ dryRun: false, scope: "full-sync" });
 
@@ -341,7 +376,23 @@ test("full-sync: existing product missing the gallery gets media backfilled", as
 test("full-sync: new product is created and its media imported", async () => {
   const engine = makeEngine({ products: [products[0]] });
   engine.repo.buildExternalIndex = async () => new Map(); // nothing exists yet
-  engine.media.syncProductMedia = async () => ({ coverId: 7, galleryIds: [8, 9], counts: { uploaded: 3, reused: 0, failed: 0 } });
+  engine.media.syncProductMedia = async () => ({
+    coverId: 7,
+    galleryIds: [8, 9],
+    counts: { uploaded: 3, reused: 0, failed: 0 },
+    complete: true,
+  });
+  engine.repo.http.get = async () => ({
+    data: {
+      data: {
+        id: 10101,
+        attributes: {
+          CoverImage: { data: { id: 7 } },
+          Media: { data: [{ id: 8 }, { id: 9 }] },
+        },
+      },
+    },
+  });
 
   const report = await engine.runSync({ dryRun: false, scope: "full-sync" });
 

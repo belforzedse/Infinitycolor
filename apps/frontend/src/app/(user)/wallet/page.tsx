@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import WalletPageClient from "./WalletPageClient";
 
@@ -9,5 +10,9 @@ export const metadata: Metadata = {
 };
 
 export default function WalletPage() {
-  return <WalletPageClient />;
+  return (
+    <Suspense fallback={null}>
+      <WalletPageClient />
+    </Suspense>
+  );
 }

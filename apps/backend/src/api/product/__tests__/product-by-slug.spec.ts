@@ -140,6 +140,60 @@ describe("product.findBySlug", () => {
     );
   });
 
+  it("looks up every encoding candidate so percent-encoded stored slugs resolve", async () => {
+    const persian = "ست-تاپ-و-دامن-فلامنت-y00574";
+    const ctx = makeCtx({ view: "shell" });
+    ctx.params.slug = persian;
+
+    await (productController as any).findBySlug(ctx);
+
+    const filters = mockStrapi.entityService.findMany.mock.calls[0][1].filters;
+    expect(filters.Slug.$in).toEqual(expect.arrayContaining([persian]));
+    // WooCommerce stored lowercase percent-encoding; the candidate set must include it.
+    expect(filters.Slug.$in.some((c: string) => c.includes("%d8") || c.includes("%D8"))).toBe(
+      true,
+    );
+  });
+
+  it("falls back to ProductSlugAlias when the canonical slug no longer matches", async () => {
+    const encoded =
+      "%d8%b3%d8%aa-%d8%aa%d8%a7%d9%be-%d9%88-%d8%af%d8%a7%d9%85%d9%86-%d9%81%d9%84%d8%a7%d9%85%d9%86%d8%aa-y00574";
+    const product = { ...makeActiveProduct(), id: 2833, Slug: "ست-تاپ-و-دامن-فلامنت-y00574" };
+    mockStrapi.entityService.findMany
+      .mockResolvedValueOnce([]) // product candidate miss
+      .mockResolvedValueOnce([{ id: 9, Slug: encoded, product: { id: 2833 } }]) // alias hit
+      .mockResolvedValueOnce([product]); // load by id
+
+    const ctx = makeCtx({ view: "shell" });
+    ctx.params.slug = encoded;
+
+    const result = await (productController as any).findBySlug(ctx);
+
+    expect(result).toEqual({ data: product });
+    expect(mockStrapi.entityService.findMany).toHaveBeenCalledWith(
+      "api::product-slug-alias.product-slug-alias",
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          Slug: expect.objectContaining({ $in: expect.any(Array) }),
+        }),
+      }),
+    );
+  });
+
+  it("returns 503 instead of 400 when the lookup throws", async () => {
+    mockStrapi.entityService.findMany.mockRejectedValueOnce(new Error("db timeout"));
+    const ctx = makeCtx();
+    ctx.status = 200;
+    ctx.set = jest.fn();
+    ctx.body = undefined;
+
+    await (productController as any).findBySlug(ctx);
+
+    expect(ctx.status).toBe(503);
+    expect(ctx.body?.error?.status).toBe(503);
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+  });
+
   it("uses the lean shell populate when view=shell is requested", async () => {
     const ctx = makeCtx({ view: "shell" });
 
