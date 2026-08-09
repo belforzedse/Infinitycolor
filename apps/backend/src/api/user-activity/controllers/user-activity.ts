@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { factories } from "@strapi/strapi";
 import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../utils/roles";
+import { requireCapability } from "../../../utils/adminAuthorization";
 
 export default factories.createCoreController("api::user-activity.user-activity" as any, ({ strapi }) => ({
   async findUserActivities(ctx) {
@@ -80,7 +81,10 @@ export default factories.createCoreController("api::user-activity.user-activity"
     const { userId } = ctx.params;
     const requestedUserId = Number(userId);
     const authenticatedUserId = authenticatedUser.id;
-    const authenticatedUserRole = authenticatedUser?.role?.name || null;
+    const mayReadOtherUsers = requestedUserId === authenticatedUserId
+      ? false
+      : Boolean(await requireCapability(ctx, strapi, "system.users.manage"));
+    if (requestedUserId !== authenticatedUserId && !mayReadOtherUsers) return;
 
     const page = Number(ctx.query.page ?? 1);
     const pageSize = Number(ctx.query.pageSize ?? 20);
@@ -90,7 +94,7 @@ export default factories.createCoreController("api::user-activity.user-activity"
       const activities = await service.findUserActivitiesByUserId(
         requestedUserId,
         authenticatedUserId,
-        authenticatedUserRole,
+        mayReadOtherUsers,
         { page, pageSize }
       );
       return ctx.send(activities);

@@ -67,6 +67,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.build-cjs.json && node scripts/write-cjs-package.mjs",
     "check-types": "tsc --noEmit",
+    "docs:check": "pnpm run build && node scripts/check-admin-authorization-doc.mjs",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

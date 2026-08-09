@@ -33,6 +33,7 @@ import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 import {
   ADMIN_ROLE_DEFINITIONS,
   capabilitiesForRole,
+  normalizeAdminRole,
   type AdminCapability,
   type AdminRoleId,
 } from "@repo/auth-core";
@@ -109,6 +110,15 @@ const CAPABILITY_GRANTS: Partial<
   },
   "content.blog.banners.manage": {
     "api::settings": { settings: ["getBlogBanners", "updateBlogBanners"] },
+  },
+  "content.stories.manage": {
+    "api::story": { story: CHILD_CRUD_ACTIONS },
+    "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
+  },
+  "content.faq.manage": {
+    "api::faq-category": { "faq-category": CHILD_CRUD_ACTIONS },
+    "api::faq-question": { "faq-question": CHILD_CRUD_ACTIONS },
+    "api::site-faq": { "site-faq": ["find", "update"] },
   },
   "product.read": PRODUCT_READ_GRANTS,
   "product.create": { "api::product": { product: ["create"] } },
@@ -667,7 +677,8 @@ async function captureRoleSyncSnapshot(
       (role) =>
         role.type === "public" ||
         role.type === "customer" ||
-        Boolean(ROLE_PERMISSION_SPECS[role.type]),
+        Boolean(ROLE_PERMISSION_SPECS[role.type]) ||
+        Boolean(normalizeAdminRole(role.type) ?? normalizeAdminRole(role.name)),
     )
     .map((role) => Number(role.id));
   const userQuery = strapi.query("plugin::users-permissions.user") as any;
@@ -784,8 +795,9 @@ async function verifyPersistedRolePermissions(
 async function assignRolePermissions(
   strapi: Strapi,
   role: { id: number; name: string; type?: string | null },
+  permissionSpecType = role.type,
 ) {
-  const roleType = role?.type;
+  const roleType = permissionSpecType;
   if (!roleType || !ROLE_PERMISSION_SPECS[roleType]) {
     strapi.log.debug(`No permission template configured for role: ${role?.name ?? roleType}`);
     return;
@@ -917,11 +929,19 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
             data: {
               name: roleDefinition.name,
               description: roleDefinition.description,
-              type: roleDefinition.type,
+              // The existing Store manager row is renamed in place while its
+              // persisted type remains stable for compatibility.
+              ...(roleDefinition.type === "store-manager"
+                ? {}
+                : { type: roleDefinition.type }),
             },
           })
         : await strapi.query("plugin::users-permissions.role").create({
-            data: roleDefinition,
+            data: {
+              name: roleDefinition.name,
+              description: roleDefinition.description,
+              type: roleDefinition.type,
+            },
           });
       if (!existing) createdRoleIds.push(Number(role.id));
 
@@ -929,7 +949,7 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
         `${existing ? "✓ Role already exists" : "✓ Created users-permissions role"}: ${roleDefinition.name}`,
         { roleId: role.id },
       );
-      await assignRolePermissions(strapi, role as any);
+      await assignRolePermissions(strapi, role as any, roleDefinition.type);
     }
 
     const publicRole = await strapi

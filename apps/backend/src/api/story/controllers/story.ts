@@ -3,18 +3,8 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { CONTENT_EDITOR_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
-
-async function getActorRoleName(strapi: any, userId?: number): Promise<string | null> {
-  if (!userId) return null;
-  const userWithRole = await fetchUserWithRole(strapi, userId);
-  return (
-    userWithRole?.user_role?.Title ||
-    userWithRole?.user_role?.Name ||
-    userWithRole?.role?.name ||
-    null
-  );
-}
+import { hasCapability } from "@repo/auth-core";
+import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 
 function slugify(input: string): string {
   return input
@@ -58,8 +48,8 @@ export default factories.createCoreController(
   ({ strapi }: { strapi: any }) => ({
     async find(ctx: any) {
       const { user } = ctx.state;
-      const actorRoleName = await getActorRoleName(strapi, user?.id);
-      const hasAdminRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+      const actor = user?.id ? await resolveAdminActor(strapi, user) : null;
+      const hasAdminRole = Boolean(actor && hasCapability(actor.role, "content.stories.manage"));
 
       if (!hasAdminRole) {
         ctx.query.filters = {
@@ -74,8 +64,8 @@ export default factories.createCoreController(
     async findOne(ctx: any) {
       const { user } = ctx.state;
       const { id } = ctx.params;
-      const actorRoleName = await getActorRoleName(strapi, user?.id);
-      const hasAdminRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+      const actor = user?.id ? await resolveAdminActor(strapi, user) : null;
+      const hasAdminRole = Boolean(actor && hasCapability(actor.role, "content.stories.manage"));
 
       const story = await strapi.entityService.findOne("api::story.story", id, {
         populate: { Media: true, Thumbnail: true },
@@ -95,10 +85,7 @@ export default factories.createCoreController(
     async create(ctx: any) {
       const { user } = ctx.state;
       if (user) {
-        const actorRoleName = await getActorRoleName(strapi, user.id);
-        if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
-          return ctx.forbidden("شما مجاز به ایجاد استوری نیستید.");
-        }
+        if (!(await requireCapability(ctx, strapi, "content.stories.manage"))) return;
       }
 
       const data = ctx.request?.body?.data as { Title?: string; Slug?: string } | undefined;
@@ -115,10 +102,7 @@ export default factories.createCoreController(
     async update(ctx: any) {
       const { user } = ctx.state;
       if (user) {
-        const actorRoleName = await getActorRoleName(strapi, user.id);
-        if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
-          return ctx.forbidden("شما مجاز به ویرایش استوری نیستید.");
-        }
+        if (!(await requireCapability(ctx, strapi, "content.stories.manage"))) return;
       }
 
       const storyId = Number(ctx.params?.id);
@@ -132,10 +116,8 @@ export default factories.createCoreController(
 
     async delete(ctx: any) {
       const { user } = ctx.state;
-      const actorRoleName = await getActorRoleName(strapi, user?.id);
-      if (!user || !roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
-        return ctx.forbidden("شما مجاز به حذف استوری نیستید.");
-      }
+      if (!user) return ctx.forbidden("شما مجاز به حذف استوری نیستید.");
+      if (!(await requireCapability(ctx, strapi, "content.stories.manage"))) return;
       return await super.delete(ctx);
     },
 

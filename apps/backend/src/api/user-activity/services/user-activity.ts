@@ -1,6 +1,5 @@
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
-import { ROLE_NAMES, roleIsAllowed } from "../../../utils/roles";
 
 type Severity = "info" | "success" | "warning" | "error";
 
@@ -195,14 +194,14 @@ export default factories.createCoreService(
     async findUserActivitiesByUserId(
       requestedUserId: number,
       authenticatedUserId: number,
-      authenticatedUserRole: string | null,
+      mayReadOtherUsers: boolean,
       options?: { page?: number; pageSize?: number },
     ) {
       // Operational roles inherit customer self-service access. Only Superadmin may
       // inspect another user's private activity stream through this endpoint.
       if (
         requestedUserId !== authenticatedUserId &&
-        !roleIsAllowed(authenticatedUserRole, [ROLE_NAMES.SUPERADMIN])
+        !mayReadOtherUsers
       ) {
         throw new Error("You can only view your own activities");
       }

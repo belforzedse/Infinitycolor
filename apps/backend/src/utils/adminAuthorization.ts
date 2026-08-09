@@ -23,7 +23,7 @@ export async function resolveAdminActor(strapi: Strapi, tokenUser: any): Promise
   });
   if (!user || user.blocked || user.IsActive === false) return null;
 
-  const role = normalizeAdminRole(user.role?.type || user.role?.name);
+  const role = normalizeAdminRole(user.role?.type) ?? normalizeAdminRole(user.role?.name);
   if (!role) return null;
   return { user, role, capabilities: capabilitiesForRole(role) };
 }

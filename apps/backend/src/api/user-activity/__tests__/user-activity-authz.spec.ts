@@ -17,20 +17,20 @@ describe("user activity ownership", () => {
     mockFindMany.mockResolvedValue([]);
   });
 
-  it.each(["Store manager", "Founder"])(
-    "keeps %s scoped to its own activity stream",
-    async (roleName) => {
+  it.each(["Store Manager", "Founder"])(
+    "keeps %s scoped when the controller has not granted system user access",
+    async () => {
       await expect(
-        (userActivityService as any).findUserActivitiesByUserId(20, 10, roleName),
+        (userActivityService as any).findUserActivitiesByUserId(20, 10, false),
       ).rejects.toThrow("You can only view your own activities");
 
       expect(mockFindMany).not.toHaveBeenCalled();
     },
   );
 
-  it("allows Superadmin to inspect another user's activity stream", async () => {
+  it("allows a capability-authorized caller to inspect another user's activity stream", async () => {
     await expect(
-      (userActivityService as any).findUserActivitiesByUserId(20, 10, "Superadmin"),
+      (userActivityService as any).findUserActivitiesByUserId(20, 10, true),
     ).resolves.toEqual([]);
 
     expect(mockFindMany).toHaveBeenCalledWith(

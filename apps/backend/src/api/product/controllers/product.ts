@@ -100,7 +100,7 @@ function rejectPublicationFields(ctx: any): boolean {
  */
 function isAdminUser(user: any): boolean {
   if (!user) return false;
-  const role = normalizeAdminRole(user?.role?.type || user?.role?.name);
+  const role = normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name);
   return role ? hasCapability(role, "product.read") : false;
 }
 
@@ -266,7 +266,9 @@ function getProductPopulateForView(view: unknown) {
 }
 
 function isUnrestrictedAdminUser(user: any): boolean {
-  return normalizeAdminRole(user?.role?.type || user?.role?.name) === "superadmin";
+  return (
+    normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name)
+  ) === "superadmin";
 }
 
 async function loadProductById(
@@ -409,7 +411,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     let user = ctx.state?.user;
     const body = ctx.request?.body?.data || ctx.request?.body || {};
     const action = String(body.action || "");
-    const requiredCapability = action === "schedule" || action === "retry"
+    const requiredCapability = ["schedule", "retry", "cancel"].includes(action)
       ? "product.schedule"
       : "product.publish";
     if (!trustedImporter) {

@@ -4,14 +4,15 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { resolveUserRoleName, roleIsAllowed, ROLE_NAMES } from "../../../utils/roles";
+import { hasCapability } from "@repo/auth-core";
+import { resolveAdminActor } from "../../../utils/adminAuthorization";
 
 const TRANSACTION_UID = "api::local-user-wallet-transaction.local-user-wallet-transaction";
 const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 
 async function isSuperadminCaller(strapi, ctx): Promise<boolean> {
-  const roleName = await resolveUserRoleName(strapi, ctx.state?.user);
-  return roleIsAllowed(roleName, [ROLE_NAMES.SUPERADMIN]);
+  const actor = await resolveAdminActor(strapi, ctx.state?.user);
+  return Boolean(actor && hasCapability(actor.role, "system.users.manage"));
 }
 
 // Ownership is via transaction.user_wallet.user; the content-API query sanitizer rejects any

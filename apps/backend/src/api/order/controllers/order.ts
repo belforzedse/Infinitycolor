@@ -126,7 +126,9 @@ export default factories.createCoreController(
       const requesterId = requester?.id ? Number(requester.id) : null;
       const actor = await resolveAdminActor(strapi, requester);
       const requesterRole =
-        actor?.role || normalizeAdminRole(requester?.role?.type || requester?.role?.name);
+        actor?.role ||
+        normalizeAdminRole(requester?.role?.type) ||
+        normalizeAdminRole(requester?.role?.name);
       const operationalManager = await isOperationalManagerRequest(ctx, strapi);
       const isAdminUser = requesterRole ? hasCapability(requesterRole, "order.read") : false;
       const canReadFinancials = requesterRole

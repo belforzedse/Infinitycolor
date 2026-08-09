@@ -20,14 +20,9 @@ export type RoleName = (typeof ROLE_NAMES)[keyof typeof ROLE_NAMES];
 
 const ROLE_ALIAS_MAP: Record<string, RoleName> = {
   superadmin: ROLE_NAMES.SUPERADMIN,
-  superadministrator: ROLE_NAMES.SUPERADMIN,
-  manager: ROLE_NAMES.STORE_MANAGER,
   storemanager: ROLE_NAMES.STORE_MANAGER,
-  "store-manager": ROLE_NAMES.STORE_MANAGER,
   seller1: ROLE_NAMES.SELLER_1,
-  "seller-1": ROLE_NAMES.SELLER_1,
   seller2: ROLE_NAMES.SELLER_2,
-  "seller-2": ROLE_NAMES.SELLER_2,
   finance: ROLE_NAMES.FINANCE,
   editor: ROLE_NAMES.EDITOR,
   founder: ROLE_NAMES.FOUNDER,
@@ -145,7 +140,7 @@ export async function resolveUserRoleName(strapi: Strapi, user?: any): Promise<R
 }
 
 export function resolveAdminRoleId(user?: any): AdminRoleId | null {
-  return normalizeAdminRole(user?.role?.type || user?.role?.name || null);
+  return normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name);
 }
 
 function readTargetUserId(ctx: any): unknown {

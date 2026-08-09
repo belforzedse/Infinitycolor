@@ -3,7 +3,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { CONTENT_EDITOR_ROLES, roleIsAllowed } from "../../../utils/roles";
+import { requireCapability } from "../../../utils/adminAuthorization";
 
 export default factories.createCoreController("api::blog-author.blog-author", ({ strapi }) => ({
   // Create author (Superadmin/Store manager or API token)
@@ -12,9 +12,7 @@ export default factories.createCoreController("api::blog-author.blog-author", ({
 
     // Allow API tokens (no user) or users with proper roles
     if (user) {
-      if (!roleIsAllowed(user.user_role?.Name || user.role?.name, CONTENT_EDITOR_ROLES)) {
-        return ctx.forbidden("You don't have permission to create blog authors");
-      }
+      if (!(await requireCapability(ctx, strapi, "content.blog.taxonomy.manage"))) return;
     }
 
     const { data, meta } = await super.create(ctx);
@@ -27,9 +25,7 @@ export default factories.createCoreController("api::blog-author.blog-author", ({
 
     // Allow API tokens (no user) or users with proper roles
     if (user) {
-      if (!roleIsAllowed(user.user_role?.Name || user.role?.name, CONTENT_EDITOR_ROLES)) {
-        return ctx.forbidden("You don't have permission to update blog authors");
-      }
+      if (!(await requireCapability(ctx, strapi, "content.blog.taxonomy.manage"))) return;
     }
 
     const { data, meta } = await super.update(ctx);
@@ -40,9 +36,8 @@ export default factories.createCoreController("api::blog-author.blog-author", ({
   async delete(ctx) {
     const { user } = ctx.state;
 
-    if (!user || !roleIsAllowed(user.user_role?.Name || user.role?.name, CONTENT_EDITOR_ROLES)) {
-      return ctx.forbidden("You don't have permission to delete blog authors");
-    }
+    if (!user) return ctx.forbidden("You don't have permission to delete blog authors");
+    if (!(await requireCapability(ctx, strapi, "content.blog.taxonomy.manage"))) return;
 
     const { data, meta } = await super.delete(ctx);
     return { data, meta };

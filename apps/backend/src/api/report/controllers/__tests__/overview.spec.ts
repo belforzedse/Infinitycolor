@@ -131,7 +131,7 @@ describe("report.overview", () => {
     expect(ctx.body.data.traffic).toBeNull();
   });
 
-  it("computes traffic deltas when Matomo answers for both periods", async () => {
+  it("keeps commerce overview independent from Matomo", async () => {
     getMatomoVisitsSummaryMock
       .mockResolvedValueOnce({ visits: 500, visitors: 300, pageviews: 1200 }) // current
       .mockResolvedValueOnce({ visits: 400, visitors: 250, pageviews: 1000 }); // previous
@@ -140,11 +140,8 @@ describe("report.overview", () => {
 
     await controller.overview(ctx);
 
-    expect(ctx.body.data.traffic).toEqual({
-      visits: { current: 500, previous: 400, change: 100, changePct: 25 },
-      visitors: { current: 300, previous: 250, change: 50, changePct: 20 },
-      pageviews: { current: 1200, previous: 1000, change: 200, changePct: 20 },
-    });
+    expect(ctx.body.data.traffic).toBeNull();
+    expect(getMatomoVisitsSummaryMock).not.toHaveBeenCalled();
   });
 
   it("surfaces the latest reconciliation row as a trust signal", async () => {

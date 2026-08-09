@@ -1,7 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
 import { logAdminOrderFieldUpdate } from "../../../../utils/adminActivity";
 import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
-import { OPERATIONAL_ROLES, roleIsAllowed } from "../../../../utils/roles";
+import { requireCapability } from "../../../../utils/adminAuthorization";
 import { notifyOrderStatusSms } from "../../../../services/sms/notifications";
 
 const NEXT_STATUS: Record<string, string[]> = {
@@ -16,16 +16,9 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
     return ctx.badRequest("Invalid order id");
   }
 
-  const actor = ctx.state?.user;
-  const fullUser = actor?.id
-    ? await strapi.db.query("plugin::users-permissions.user").findOne({
-        where: { id: actor.id },
-        populate: ["role"],
-      })
-    : null;
-  if (!fullUser || !roleIsAllowed(fullUser.role?.name, OPERATIONAL_ROLES)) {
-    return ctx.forbidden("Admin access required");
-  }
+  const actor = await requireCapability(ctx, strapi, "order.status.update");
+  if (!actor) return;
+  const fullUser = actor.user;
 
   const order: any = await strapi.db.query("api::order.order").findOne({
     where: { id: orderId },

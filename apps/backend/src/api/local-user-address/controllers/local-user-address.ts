@@ -4,20 +4,17 @@
  */
 
 import { factories } from "@strapi/strapi";
-import {
-  resolveCustomerTargetUserId,
-  resolveUserRoleName,
-  roleIsAllowed,
-  ROLE_NAMES,
-} from "../../../utils/roles";
+import { hasCapability } from "@repo/auth-core";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import { resolveAdminActor } from "../../../utils/adminAuthorization";
 
 const ADDRESS_UID = "api::local-user-address.local-user-address";
 
 // Only Superadmin bypasses ownership scoping. Operational roles inherit the
 // customer contract and therefore remain limited to their own addresses.
 async function isSuperadminCaller(strapi, ctx): Promise<boolean> {
-  const roleName = await resolveUserRoleName(strapi, ctx.state?.user);
-  return roleIsAllowed(roleName, [ROLE_NAMES.SUPERADMIN]);
+  const actor = await resolveAdminActor(strapi, ctx.state?.user);
+  return Boolean(actor && hasCapability(actor.role, "system.users.manage"));
 }
 
 // Ownership check via a direct db query: the content-API query sanitizer rejects any

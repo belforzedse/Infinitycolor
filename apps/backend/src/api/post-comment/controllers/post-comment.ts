@@ -4,12 +4,12 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { hasCapability } from "@repo/auth-core";
 import {
-  CONTENT_EDITOR_ROLES,
   fetchUserWithRole,
   resolveCustomerTargetUserId,
-  roleIsAllowed,
 } from "../../../utils/roles";
+import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import { resolveUserDisplayName } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
 
@@ -62,25 +62,10 @@ export default factories.createCoreController("api::post-comment.post-comment", 
     }
   },
 
-  async getActorRoleName(userId?: number, fallback?: any) {
-    if (!userId) {
-      return (
-        fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null
-      );
-    }
-
-    const userWithRole = await fetchUserWithRole(strapi, userId);
-    return (
-      userWithRole?.user_role?.Title ||
-      userWithRole?.user_role?.Name ||
-      userWithRole?.role?.name ||
-      null
-    );
-  },
-
   async hasManagementRole(user?: any) {
-    const actorRoleName = await this.getActorRoleName(user?.id, user);
-    return roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+    if (!user?.id) return false;
+    const actor = await resolveAdminActor(strapi, user);
+    return Boolean(actor && hasCapability(actor.role, "content.blog.comments.manage"));
   },
 
   async find(ctx) {
@@ -305,10 +290,7 @@ export default factories.createCoreController("api::post-comment.post-comment", 
   },
 
   async approve(ctx) {
-    const { user } = ctx.state;
-    if (!(await this.hasManagementRole(user))) {
-      return ctx.forbidden("You don't have permission to approve comments");
-    }
+    if (!(await requireCapability(ctx, strapi, "content.blog.comments.manage"))) return;
 
     const { id } = ctx.params;
     const comment = await strapi.entityService.update("api::post-comment.post-comment", id, {
@@ -328,10 +310,7 @@ export default factories.createCoreController("api::post-comment.post-comment", 
   },
 
   async reject(ctx) {
-    const { user } = ctx.state;
-    if (!(await this.hasManagementRole(user))) {
-      return ctx.forbidden("You don't have permission to reject comments");
-    }
+    if (!(await requireCapability(ctx, strapi, "content.blog.comments.manage"))) return;
 
     const { id } = ctx.params;
     const comment = await strapi.entityService.update("api::post-comment.post-comment", id, {

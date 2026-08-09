@@ -926,12 +926,31 @@ describe("role permission templates", () => {
     expect(walletCtrl(superadmin).adminGetUserWallet.enabled).toBe(true);
   });
 
-  it("fails bootstrap when an operational role cannot be synchronized", async () => {
+  it("restores the exact pre-sync role state when an operational role cannot be synchronized", async () => {
     const roles = [
-      { id: 1, name: "Superadmin", type: "superadmin" },
-      { id: 2, name: "Store manager", type: "store-manager" },
+      {
+        id: 1,
+        name: "Superadmin",
+        type: "superadmin",
+        description: "legacy superadmin",
+        permissions: [{ action: "api::product.product.find" }],
+      },
+      {
+        id: 2,
+        name: "Store manager",
+        type: "store-manager",
+        description: "legacy store manager",
+        permissions: [{ action: "api::product.product.findOne" }],
+      },
     ];
-    const persisted = new Map<number, string[]>();
+    const users = [
+      { id: 10, blocked: false, IsActive: true, role: { id: 1 } },
+      { id: 11, blocked: false, IsActive: true, role: { id: 2 } },
+    ];
+    const persisted = new Map<number, string[]>([
+      [1, ["api::product.product.find"]],
+      [2, ["api::product.product.findOne"]],
+    ]);
     const roleQuery = {
       findMany: jest.fn(async () => roles),
       findOne: jest.fn(async ({ where }: any) => {
@@ -948,12 +967,14 @@ describe("role permission templates", () => {
         }
         return roles.find((entry) => entry.name === where.name || entry.type === where.type);
       }),
-      update: jest.fn(async ({ where, data }: any) => ({
-        ...roles.find((entry) => entry.id === where.id),
-        ...data,
-      })),
+      update: jest.fn(async ({ where, data }: any) => {
+        const role = roles.find((entry) => entry.id === where.id);
+        if (!role) return null;
+        Object.assign(role, data);
+        return { ...role };
+      }),
       create: jest.fn(async ({ data }: any) => {
-        const role = { id: roles.length + 1, ...data };
+        const role = { id: Math.max(...roles.map((entry) => entry.id)) + 1, permissions: [], ...data };
         roles.push(role);
         return role;
       }),
@@ -961,6 +982,21 @@ describe("role permission templates", () => {
         const index = roles.findIndex((entry) => entry.id === where.id);
         return index >= 0 ? roles.splice(index, 1)[0] : null;
       }),
+    };
+    const userQuery = {
+      count: jest.fn(async ({ where }: any) => {
+        if (!where?.role) return users.length;
+        return users.filter(
+          (user) =>
+            user.role.id === Number(where.role) &&
+            user.blocked !== true &&
+            user.IsActive !== false,
+        ).length;
+      }),
+      findMany: jest.fn(async () => users),
+      findOne: jest.fn(async ({ where }: any) =>
+        users.find((user) => user.id === Number(where.id)),
+      ),
     };
     let persistenceFailureInjected = false;
     const roleService = {
@@ -995,12 +1031,22 @@ describe("role permission templates", () => {
         return tree;
       }),
     };
+    const storedSnapshots = new Map<string, unknown>();
+    const authorizationStore = {
+      get: jest.fn(async ({ key }: { key: string }) => storedSnapshots.get(key)),
+      set: jest.fn(async ({ key, value }: { key: string; value: unknown }) => {
+        storedSnapshots.set(key, value);
+      }),
+    };
     const strapi = {
       log: { warn: jest.fn(), debug: jest.fn(), info: jest.fn(), error: jest.fn() },
-      query: jest.fn(() => roleQuery),
+      query: jest.fn((uid: string) =>
+        uid === "plugin::users-permissions.user" ? userQuery : roleQuery,
+      ),
       plugin: jest.fn(() => ({
         service: jest.fn((name: string) => (name === "role" ? roleService : permissionsService)),
       })),
+      store: jest.fn(() => authorizationStore),
     };
 
     await expect(
@@ -1009,6 +1055,29 @@ describe("role permission templates", () => {
     expect(roleService.updateRole).toHaveBeenCalledWith(
       2,
       expect.objectContaining({ permissions: expect.any(Object) }),
+    );
+    expect(roles).toEqual([
+      expect.objectContaining({
+        id: 1,
+        name: "Superadmin",
+        type: "superadmin",
+        description: "legacy superadmin",
+      }),
+      expect.objectContaining({
+        id: 2,
+        name: "Store manager",
+        type: "store-manager",
+        description: "legacy store manager",
+      }),
+    ]);
+    expect(persisted.get(1)).toEqual(["api::product.product.find"]);
+    expect(persisted.get(2)).toEqual(["api::product.product.findOne"]);
+    expect(users.map((user) => [user.id, user.role.id])).toEqual([
+      [10, 1],
+      [11, 2],
+    ]);
+    expect(storedSnapshots.get("admin-capability-v1-initial-snapshot")).toEqual(
+      storedSnapshots.get("admin-capability-v1-latest-pre-sync"),
     );
   });
 });

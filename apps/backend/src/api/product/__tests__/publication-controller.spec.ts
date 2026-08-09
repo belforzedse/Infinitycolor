@@ -109,7 +109,7 @@ describe("product publication controller contract", () => {
     expect(mockExecute).not.toHaveBeenCalled();
   });
 
-  it("requires Store Manager plus even when an Editor carries a legacy isAdmin flag", async () => {
+  it("rejects an Editor even when it carries a legacy isAdmin flag", async () => {
     mockAdminUser = {
       id: 5,
       username: "editor",
@@ -131,7 +131,7 @@ describe("product publication controller contract", () => {
     expect(mockExecute).not.toHaveBeenCalled();
   });
 
-  it("lets a Store Manager publish and drains effects without a second transition", async () => {
+  it("lets a Store Manager inherit immediate publishing from Seller 1", async () => {
     const ctx = makeCtx({
       request: { body: { data: { action: "publish-now" } }, headers: {} },
       state: {
@@ -158,6 +158,30 @@ describe("product publication controller contract", () => {
     }));
   });
 
+  it("does not let a Store Manager schedule publication", async () => {
+    const ctx = makeCtx({
+      request: {
+        body: {
+          data: {
+            action: "schedule",
+            publishAt: "2026-08-09T12:00:00.000Z",
+            timezone: "Asia/Tehran",
+          },
+        },
+        headers: {},
+      },
+      state: { user: { id: 7, role: { name: "Store Manager" } } },
+    });
+
+    await (productController as any).publication(ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "Publication action is not allowed",
+      { code: "PUBLICATION_FORBIDDEN" },
+    );
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
   it("fails closed when a trusted importer omits the matching Woo identity", async () => {
     mockTrusted.mockReturnValue(true);
     const ctx = makeCtx({
@@ -172,6 +196,13 @@ describe("product publication controller contract", () => {
   });
 
   it("reports pending reconciliation when delayed enqueue is unavailable", async () => {
+    mockAdminUser = {
+      id: 1,
+      username: "superadmin",
+      IsActive: true,
+      blocked: false,
+      role: { name: "Superadmin" },
+    };
     mockExecute.mockResolvedValue({
       productId: 12,
       status: "Scheduled",
@@ -195,7 +226,7 @@ describe("product publication controller contract", () => {
         },
         headers: {},
       },
-      state: { user: { id: 7, role: { name: "Store Manager" } } },
+      state: { user: { id: 1, role: { name: "Superadmin" } } },
     });
 
     await (productController as any).publication(ctx);

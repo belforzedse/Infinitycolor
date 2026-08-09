@@ -4,28 +4,16 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { STORE_MANAGER_PLUS_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import { requireCapability } from "../../../utils/adminAuthorization";
 
 export default factories.createCoreController("api::faq-category.faq-category" as any, ({ strapi }) => ({
-  async getActorRoleName(userId?: number, fallback?: any): Promise<string | null> {
-    if (!userId) {
-      return fallback?.user_role?.Name || fallback?.role?.name || null;
-    }
-
-    const userWithRole = await fetchUserWithRole(strapi, userId);
-    return userWithRole?.role?.name || userWithRole?.user_role?.Name || null;
-  },
-
   // Create category (Superadmin+ or API token)
   async create(ctx) {
     const user = ctx.state.user;
 
     // Allow API tokens (no user) or users with proper roles
     if (user) {
-      const actorRoleName: string | null = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, STORE_MANAGER_PLUS_ROLES)) {
-        return ctx.forbidden("You don't have permission to create FAQ categories");
-      }
+      if (!(await requireCapability(ctx, strapi, "content.faq.manage"))) return;
     }
 
     const { data, meta } = await super.create(ctx);
@@ -38,10 +26,7 @@ export default factories.createCoreController("api::faq-category.faq-category" a
 
     // Allow API tokens (no user) or users with proper roles
     if (user) {
-      const actorRoleName: string | null = await this.getActorRoleName(user?.id, user);
-      if (!roleIsAllowed(actorRoleName, STORE_MANAGER_PLUS_ROLES)) {
-        return ctx.forbidden("You don't have permission to update FAQ categories");
-      }
+      if (!(await requireCapability(ctx, strapi, "content.faq.manage"))) return;
     }
 
     const { data, meta } = await super.update(ctx);
@@ -51,10 +36,8 @@ export default factories.createCoreController("api::faq-category.faq-category" a
   // Delete category (Superadmin+ only)
   async delete(ctx) {
     const user = ctx.state.user;
-    const actorRoleName: string | null = await this.getActorRoleName(user?.id, user);
-    if (!user || !roleIsAllowed(actorRoleName, STORE_MANAGER_PLUS_ROLES)) {
-      return ctx.forbidden("You don't have permission to delete FAQ categories");
-    }
+    if (!user) return ctx.forbidden("You don't have permission to delete FAQ categories");
+    if (!(await requireCapability(ctx, strapi, "content.faq.manage"))) return;
     
     const { data, meta } = await super.delete(ctx);
     return { data, meta };

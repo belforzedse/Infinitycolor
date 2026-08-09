@@ -39,6 +39,7 @@ function createHarness(
   };
   const strapi = {
     log: { error: jest.fn() },
+    query: jest.fn((uid: string) => queries[uid]),
     service: jest.fn().mockReturnValue({
       logOrderShipped: jest.fn().mockResolvedValue(undefined),
       logOrderDelivered: jest.fn().mockResolvedValue(undefined),
@@ -125,7 +126,9 @@ describe("adminTransitionOrderHandler", () => {
 
     await adminTransitionOrderHandler(strapi, ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith("Admin access required");
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
+    );
     expect(raw).not.toHaveBeenCalled();
   });
 

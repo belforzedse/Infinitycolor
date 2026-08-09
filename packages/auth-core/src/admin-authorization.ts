@@ -218,17 +218,12 @@ const compactRoleKey = (value: string): string =>
 const ROLE_ALIASES: Readonly<Record<string, AdminRoleId>> = {
   editor: "editor",
   seller1: "seller1",
-  sellerone: "seller1",
   seller2: "seller2",
-  sellertwo: "seller2",
-  manager: "store_manager",
   storemanager: "store_manager",
   finance: "finance",
-  financial: "finance",
   founder: "founder",
   founders: "founder",
   superadmin: "superadmin",
-  superadministrator: "superadmin",
 };
 
 export function isAdminRoleId(value: unknown): value is AdminRoleId {

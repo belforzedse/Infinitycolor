@@ -148,7 +148,7 @@ async function self(ctx) {
     // Resolve the live plugin role. Better Auth proves identity; Strapi remains
     // the authorization authority and capabilities are never embedded in JWTs.
     const roleName = fullUser?.role?.name;
-    const adminRole = normalizeAdminRole(fullUser?.role?.type || roleName);
+    const adminRole = normalizeAdminRole(fullUser?.role?.type) ?? normalizeAdminRole(roleName);
     const capabilities = adminRole ? [...capabilitiesForRole(adminRole)] : [];
     const isAdmin = adminRole !== null;
 

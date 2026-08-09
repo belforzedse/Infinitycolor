@@ -4,12 +4,12 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { hasCapability } from "@repo/auth-core";
 import {
-  CONTENT_EDITOR_ROLES,
   fetchUserWithRole,
   resolveCustomerTargetUserId,
-  roleIsAllowed,
 } from "../../../utils/roles";
+import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import { resolveUserDisplayName } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
 import {
@@ -57,20 +57,10 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     }
   },
 
-  async getActorRoleName(userId?: number, fallback?: any) {
-    if (!userId) {
-      return (
-        fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null
-      );
-    }
-
-    const userWithRole = await fetchUserWithRole(strapi, userId);
-    return (
-      userWithRole?.user_role?.Title ||
-      userWithRole?.user_role?.Name ||
-      userWithRole?.role?.name ||
-      null
-    );
+  async hasCommentManagementCapability(user?: any) {
+    if (!user?.id) return false;
+    const actor = await resolveAdminActor(strapi, user);
+    return Boolean(actor && hasCapability(actor.role, "content.blog.comments.manage"));
   },
 
   // Override find to filter by status for public users
@@ -80,8 +70,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     }
 
     const user = (await this.resolveUserFromAuthHeader(ctx)) || ctx.state.user;
-    const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+    const hasEditorRole = await this.hasCommentManagementCapability(user);
 
     // If not Editor+, only show approved comments
     if (!hasEditorRole) {
@@ -152,7 +141,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     }
 
     // Check if user owns the comment or has Editor+ role
-    const hasEditorRole = roleIsAllowed(user?.role?.name, CONTENT_EDITOR_ROLES);
+    const hasEditorRole = await this.hasCommentManagementCapability(user);
 
     if (String(existingComment.user.id) !== String(targetUserId) && !hasEditorRole) {
       return ctx.forbidden("You can only edit your own comments");
@@ -196,7 +185,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     }
 
     // Check if user owns the comment or has Editor+ role
-    const hasEditorRole = roleIsAllowed(user?.role?.name, CONTENT_EDITOR_ROLES);
+    const hasEditorRole = await this.hasCommentManagementCapability(user);
 
     if (String(existingComment.user.id) !== String(targetUserId) && !hasEditorRole) {
       return ctx.forbidden("You can only delete your own comments");
@@ -247,8 +236,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     }
 
     const user = (await this.resolveUserFromAuthHeader(ctx)) || ctx.state.user;
-    const actorRoleName = await this.getActorRoleName(user?.id, user);
-    const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+    const hasEditorRole = await this.hasCommentManagementCapability(user);
 
     const filters: any = { blog_post: postId };
     if (!hasEditorRole) {
@@ -269,11 +257,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
   async approve(ctx) {
     const { user } = ctx.state;
 
-    const hasEditorRole = roleIsAllowed(user?.role?.name, CONTENT_EDITOR_ROLES);
-
-    if (!hasEditorRole) {
-      return ctx.forbidden("You don't have permission to approve comments");
-    }
+    if (!(await requireCapability(ctx, strapi, "content.blog.comments.manage"))) return;
 
     const { id } = ctx.params;
 
@@ -289,11 +273,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
   async reject(ctx) {
     const { user } = ctx.state;
 
-    const hasEditorRole = roleIsAllowed(user?.role?.name, CONTENT_EDITOR_ROLES);
-
-    if (!hasEditorRole) {
-      return ctx.forbidden("You don't have permission to reject comments");
-    }
+    if (!(await requireCapability(ctx, strapi, "content.blog.comments.manage"))) return;
 
     const { id } = ctx.params;
 

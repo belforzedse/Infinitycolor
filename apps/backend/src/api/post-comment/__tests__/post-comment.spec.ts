@@ -1,4 +1,7 @@
 const mockStrapi = {
+  query: jest.fn(() => ({
+    findOne: jest.fn(async ({ where }: any) => mockFetchUserWithRole(undefined, where.id)),
+  })),
   entityService: {
     findOne: jest.fn(),
     create: jest.fn(),
@@ -131,6 +134,12 @@ describe("post-comment controller", () => {
 
   describe("update", () => {
     it("does not let management updates change IsInfinity", async () => {
+      mockFetchUserWithRole.mockResolvedValue({
+        id: 7,
+        IsActive: true,
+        blocked: false,
+        role: { name: "Superadmin" },
+      });
       mockStrapi.entityService.findOne.mockResolvedValue({
         id: 22,
         user: { id: 7 },

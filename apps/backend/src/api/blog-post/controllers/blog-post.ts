@@ -4,7 +4,8 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { CONTENT_EDITOR_ROLES, fetchUserWithRole, roleIsAllowed } from "../../../utils/roles";
+import { hasCapability } from "@repo/auth-core";
+import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import { validateBlogSlug, generateUniqueBlogSlug } from "../../../utils/slugValidation";
 import { enrichBlogPostsWithAuthorNames } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
@@ -143,20 +144,10 @@ const blogPostController = factories.createCoreController(
       return newAuthor;
     },
 
-    async getActorRoleName(userId?: number, fallback?: any): Promise<string | null> {
-      if (!userId) {
-        return (
-          fallback?.user_role?.Title || fallback?.user_role?.Name || fallback?.role?.name || null
-        );
-      }
-
-      const userWithRole = await fetchUserWithRole(strapi, userId);
-      return (
-        userWithRole?.user_role?.Title ||
-        userWithRole?.user_role?.Name ||
-        userWithRole?.role?.name ||
-        null
-      );
+    async hasBlogReadCapability(user?: any): Promise<boolean> {
+      if (!user?.id) return false;
+      const actor = await resolveAdminActor(strapi, user);
+      return Boolean(actor && hasCapability(actor.role, "content.blog.read"));
     },
 
     // Public, bounded contract for the storefront homepage carousel. Keep this
@@ -177,8 +168,7 @@ const blogPostController = factories.createCoreController(
 
       const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
 
-      const actorRoleName = await this.getActorRoleName(user?.id, user);
-      const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+      const hasEditorRole = await this.hasBlogReadCapability(user);
 
       // If not Editor+, only show published posts
       if (!hasEditorRole) {
@@ -227,8 +217,7 @@ const blogPostController = factories.createCoreController(
       const { id } = ctx.params;
       (this as any).ensureDefaultPopulate(ctx);
 
-      const actorRoleName = await this.getActorRoleName(user?.id, user);
-      const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+      const hasEditorRole = await this.hasBlogReadCapability(user);
 
       // Get the post
       const post = await strapi.entityService.findOne("api::blog-post.blog-post", id, {
@@ -266,13 +255,13 @@ const blogPostController = factories.createCoreController(
 
       // Allow API tokens (no user) or users with proper roles
       if (user) {
-        const actorRoleName = await this.getActorRoleName(user?.id, user);
-        if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
-          return ctx.forbidden("You don't have permission to create blog posts");
-        }
+        if (!(await requireCapability(ctx, strapi, "content.blog.create"))) return;
       }
 
       const { data } = ctx.request.body;
+      if (user && data?.Status === "Published") {
+        if (!(await requireCapability(ctx, strapi, "content.blog.publish"))) return;
+      }
 
       // Validate or generate slug
       if (data.Slug) {
@@ -329,13 +318,13 @@ const blogPostController = factories.createCoreController(
 
       // Allow API tokens (no user) or users with proper roles
       if (user) {
-        const actorRoleName = await this.getActorRoleName(user?.id, user);
-        if (!roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
-          return ctx.forbidden("You don't have permission to update blog posts");
-        }
+        if (!(await requireCapability(ctx, strapi, "content.blog.update"))) return;
       }
 
       const { data } = ctx.request.body;
+      if (user && data?.Status === "Published") {
+        if (!(await requireCapability(ctx, strapi, "content.blog.publish"))) return;
+      }
 
       // Validate slug if it's being changed
       if (data.Slug) {
@@ -384,10 +373,8 @@ const blogPostController = factories.createCoreController(
     async delete(ctx: any) {
       const { user } = ctx.state;
 
-      const actorRoleName = await this.getActorRoleName(user?.id, user);
-      if (!user || !roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES)) {
-        return ctx.forbidden("You don't have permission to delete blog posts");
-      }
+      if (!user) return ctx.forbidden("You don't have permission to delete blog posts");
+      if (!(await requireCapability(ctx, strapi, "content.blog.delete"))) return;
 
       const { id } = ctx.params;
       const post = await strapi.entityService.delete("api::blog-post.blog-post", id);
@@ -456,8 +443,7 @@ const blogPostController = factories.createCoreController(
       }
 
       const user = (await (this as any).resolveUserFromAuthHeader(ctx)) || ctx.state.user;
-      const actorRoleName = await this.getActorRoleName(user?.id, user);
-      const hasEditorRole = roleIsAllowed(actorRoleName, CONTENT_EDITOR_ROLES);
+      const hasEditorRole = await this.hasBlogReadCapability(user);
 
       const posts = await strapi.entityService.findMany("api::blog-post.blog-post", {
         filters: { Slug: slug },

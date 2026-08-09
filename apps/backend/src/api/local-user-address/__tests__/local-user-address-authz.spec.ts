@@ -8,6 +8,16 @@
  */
 
 const baseStrapi = {
+  query: jest.fn(() => ({
+    findOne: jest.fn(async ({ where }: any) => ({
+      id: where.id,
+      IsActive: true,
+      blocked: false,
+      role: {
+        name: where.id === 7 ? "Superadmin" : where.id === 9 ? "Store Manager" : "Customer",
+      },
+    })),
+  })),
   db: {
     query: jest.fn(),
   },
