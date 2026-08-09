@@ -639,6 +639,12 @@ type RoleSyncSnapshot = {
   assignments: Array<{ userId: number; roleId: number }>;
 };
 
+type RoleDuplicateConsolidation = {
+  definitionName: string;
+  canonicalRoleId: number;
+  duplicateRoleIds: number[];
+};
+
 function permissionTreeForActions(strapi: Strapi, actionNames: readonly string[]) {
   const tree = strapi
     .plugin("users-permissions")
@@ -758,8 +764,100 @@ async function restoreRoleSyncSnapshot(
       populate: { role: { select: ["id"] } },
     });
     if (Number(user?.role?.id ?? user?.role) !== assignment.roleId) {
-      throw new Error(`Role rollback assignment verification failed for user ${assignment.userId}`);
+      await userQuery.update({
+        where: { id: assignment.userId },
+        data: { role: assignment.roleId },
+      });
+      const restoredUser = await userQuery.findOne({
+        where: { id: assignment.userId },
+        populate: { role: { select: ["id"] } },
+      });
+      if (Number(restoredUser?.role?.id ?? restoredUser?.role) !== assignment.roleId) {
+        throw new Error(
+          `Role rollback assignment verification failed for user ${assignment.userId}`,
+        );
+      }
     }
+  }
+}
+
+function planRoleDuplicateConsolidation(
+  definition: {
+    name: string;
+    type: string;
+    legacyNames: string[];
+  },
+  matches: any[],
+): RoleDuplicateConsolidation | null {
+  // A rollback to the pre-capability release can recreate the legacy
+  // "Store manager" row after the canonical "Store Manager" row has already
+  // been created. Only that exact, same-type pair is safe to consolidate.
+  if (definition.type !== "store-manager" || matches.length !== 2) return null;
+
+  const allowedNames = new Set([definition.name, ...definition.legacyNames]);
+  const canonical = matches.find(
+    (role) => role.name === definition.name && role.type === definition.type,
+  );
+  const duplicates = matches.filter((role) => Number(role.id) !== Number(canonical?.id));
+  const isExpectedRollbackPair =
+    canonical &&
+    duplicates.length === 1 &&
+    matches.every(
+      (role) => role.type === definition.type && allowedNames.has(String(role.name)),
+    ) &&
+    new Set(matches.map((role) => String(role.name))).size === matches.length;
+
+  if (!isExpectedRollbackPair) return null;
+  return {
+    definitionName: definition.name,
+    canonicalRoleId: Number(canonical.id),
+    duplicateRoleIds: duplicates.map((role) => Number(role.id)),
+  };
+}
+
+async function consolidateRoleDuplicates(
+  strapi: Strapi,
+  consolidations: RoleDuplicateConsolidation[],
+) {
+  const roleQuery = strapi.query("plugin::users-permissions.role") as any;
+  const userQuery = strapi.query("plugin::users-permissions.user") as any;
+
+  for (const consolidation of consolidations) {
+    for (const duplicateRoleId of consolidation.duplicateRoleIds) {
+      const users = await userQuery.findMany({
+        where: { role: duplicateRoleId },
+        select: ["id"],
+        populate: { role: { select: ["id"] } },
+      });
+      for (const user of users || []) {
+        await userQuery.update({
+          where: { id: Number(user.id) },
+          data: { role: consolidation.canonicalRoleId },
+        });
+        const reassigned = await userQuery.findOne({
+          where: { id: Number(user.id) },
+          populate: { role: { select: ["id"] } },
+        });
+        if (
+          Number(reassigned?.role?.id ?? reassigned?.role) !== consolidation.canonicalRoleId
+        ) {
+          throw new Error(
+            `Role consolidation assignment verification failed for user ${user.id}`,
+          );
+        }
+      }
+    }
+  }
+
+  // Deletions are deliberately last: every permission and assignment write is
+  // verified while the pre-sync snapshot can still be restored exactly.
+  for (const consolidation of consolidations) {
+    for (const duplicateRoleId of consolidation.duplicateRoleIds) {
+      await roleQuery.delete({ where: { id: duplicateRoleId } });
+    }
+    strapi.log.info(
+      `Consolidated rollback-created duplicate role: ${consolidation.definitionName}`,
+    );
   }
 }
 
@@ -875,6 +973,7 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
   const persistedRoles = await strapi
     .query("plugin::users-permissions.role")
     .findMany({ populate: ["permissions"] });
+  const duplicateConsolidations: RoleDuplicateConsolidation[] = [];
   for (const definition of roles) {
     const matches = (persistedRoles as any[]).filter(
       (role) =>
@@ -883,9 +982,13 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
         definition.legacyNames.includes(role.name),
     );
     if (matches.length > 1) {
-      throw new Error(
-        `Role synchronization refused duplicate name/type collision for ${definition.name}`,
-      );
+      const consolidation = planRoleDuplicateConsolidation(definition, matches);
+      if (!consolidation) {
+        throw new Error(
+          `Role synchronization refused duplicate name/type collision for ${definition.name}`,
+        );
+      }
+      duplicateConsolidations.push(consolidation);
     }
   }
 
@@ -968,6 +1071,7 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
       throw new Error("Public role not found; permissions could not be synchronized");
     }
     await assignRolePermissions(strapi, publicRole as any);
+    await consolidateRoleDuplicates(strapi, duplicateConsolidations);
   } catch (error) {
     try {
       await restoreRoleSyncSnapshot(strapi, snapshot, createdRoleIds);

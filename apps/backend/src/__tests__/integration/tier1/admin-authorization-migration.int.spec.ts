@@ -12,7 +12,7 @@ afterAll(async () => {
 });
 
 describe("admin authorization migration on isolated PostgreSQL", () => {
-  it("renames the legacy Store manager in place and synchronizes all seven roles idempotently", async () => {
+  it("consolidates the rollback-created Store Manager pair and synchronizes roles idempotently", async () => {
     const roleQuery = strapi.query("plugin::users-permissions.role");
     const userQuery = strapi.query("plugin::users-permissions.user");
 
@@ -23,11 +23,18 @@ describe("admin authorization migration on isolated PostgreSQL", () => {
         description: "isolated migration superadmin",
       },
     });
-    const legacyStoreManager = await roleQuery.create({
+    const canonicalStoreManager = await roleQuery.create({
+      data: {
+        name: "Store Manager",
+        type: "store-manager",
+        description: "canonical manager role",
+      },
+    });
+    const rollbackStoreManager = await roleQuery.create({
       data: {
         name: "Store manager",
         type: "store-manager",
-        description: "legacy manager role",
+        description: "role recreated by an old rollback",
       },
     });
 
@@ -52,7 +59,7 @@ describe("admin authorization migration on isolated PostgreSQL", () => {
         confirmed: true,
         blocked: false,
         IsActive: true,
-        role: legacyStoreManager.id,
+        role: rollbackStoreManager.id,
       },
     });
 
@@ -76,12 +83,13 @@ describe("admin authorization migration on isolated PostgreSQL", () => {
     const migratedStoreManager = byType.get("store-manager") as any;
     expect(migratedStoreManager).toEqual(
       expect.objectContaining({
-        id: legacyStoreManager.id,
+        id: canonicalStoreManager.id,
         name: "Store Manager",
         type: "store-manager",
       }),
     );
     expect(migratedStoreManager.permissions.length).toBeGreaterThan(0);
+    expect(migratedRoles.find((role: any) => role.id === rollbackStoreManager.id)).toBeUndefined();
 
     const assignments = await userQuery.findMany({
       where: { id: { $in: [superadminUser.id, managerUser.id] } },
@@ -92,7 +100,7 @@ describe("admin authorization migration on isolated PostgreSQL", () => {
       expect.objectContaining({ id: superadmin.id, type: "superadmin" }),
     );
     expect(assignmentById.get(managerUser.id)).toEqual(
-      expect.objectContaining({ id: legacyStoreManager.id, name: "Store Manager" }),
+      expect.objectContaining({ id: canonicalStoreManager.id, name: "Store Manager" }),
     );
 
     const authorizationStore = strapi.store({ type: "core", name: "admin-authorization" });
