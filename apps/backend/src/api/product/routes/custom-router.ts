@@ -1,19 +1,30 @@
-import { STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
+const capabilityPolicy = (capability: string) => ({
+  name: "global::require-capability",
+  config: { capability },
+});
 
 export default {
   routes: [
+    {
+      method: "POST",
+      path: "/products/:id/publication",
+      handler: "product.publication",
+      config: {
+        auth: { scope: [] },
+        // Admin role and trusted-importer authorization diverge here, so the
+        // controller performs the capability/credential decision after the
+        // normal content-API authentication strategy succeeds.
+        policies: [],
+        middlewares: [],
+      },
+    },
     {
       method: "POST",
       path: "/products/:id/variation-combinations",
       handler: "product.generateVariationCombinations",
       config: {
         auth: { scope: [] },
-        policies: [
-          {
-            name: "global::role-based",
-            config: { roles: STORE_MANAGER_PLUS_ROLES },
-          },
-        ],
+        policies: [capabilityPolicy("product.variation.manage")],
         middlewares: [],
       },
     },

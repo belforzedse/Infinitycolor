@@ -8,7 +8,7 @@ import { useAtom } from "jotai";
 import { refreshTable } from "..";
 import { useState } from "react";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 
 type Props = {
   isRemoved: boolean;
@@ -23,8 +23,7 @@ export default function RemoveActionButton(props: Props) {
   const { testIdPrefix } = props;
   const { isRemoved, id, apiUrl, itemName = "محصول", payloadFormatter } = props;
   const [, setRefresh] = useAtom(refreshTable);
-  const { isStoreManager, isFounder } = useCurrentUser();
-  const cannotHardDelete = isStoreManager || isFounder;
+  const canHardDelete = useCan("system.purge.execute");
   const [isDeleting, setIsDeleting] = useState(false);
   const [showActionDialog, setShowActionDialog] = useState(false);
   const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
@@ -90,7 +89,7 @@ export default function RemoveActionButton(props: Props) {
 
   const handlePermanentDeleteClick = () => {
     // Check if user is store manager - deny permanent delete
-    if (cannotHardDelete) {
+    if (!canHardDelete) {
       setShowPermissionDenied(true);
       return;
     }

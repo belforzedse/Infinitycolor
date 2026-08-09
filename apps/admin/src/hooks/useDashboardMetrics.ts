@@ -39,21 +39,21 @@ export function useDashboardMetrics(options: UseDashboardMetricsOptions = {}) {
       .then((summary) => {
         if (controller.signal.aborted) return;
         const metrics: DashboardMetric[] = [
-          {
+          ...(summary.metrics.ordersTotal !== null ? [{
             label: "کل سفارش‌ها",
             value: summary.metrics.ordersTotal,
             helper: "تعداد سفارش‌های ثبت‌شده",
-          },
-          {
+          }] : []),
+          ...(summary.metrics.doneOrdersTotal !== null ? [{
             label: "سفارش‌های انجام‌شده",
             value: summary.metrics.doneOrdersTotal,
             helper: "سفارش‌هایی که وضعیت آن‌ها Done است",
-          },
-          {
+          }] : []),
+          ...(summary.metrics.activeProductsTotal !== null ? [{
             label: "محصولات فعال",
             value: summary.metrics.activeProductsTotal,
             helper: "محصولات فعال و حذف‌نشده",
-          },
+          }] : []),
         ];
 
         if (

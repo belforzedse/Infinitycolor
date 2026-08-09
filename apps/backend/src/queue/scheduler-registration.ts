@@ -38,13 +38,13 @@ export async function registerMaintenanceSchedulers(
   );
 
   await queues.commerce.upsertJobScheduler(
-    MAINTENANCE_SCHEDULERS.scheduledProductPublish,
+    MAINTENANCE_SCHEDULERS.scheduledProductReconcile,
     {
       pattern: settings.crons.scheduledProductPublish,
       tz: settings.timezone,
     },
     {
-      name: COMMERCE_MAINTENANCE_JOBS.scheduledProductPublish,
+      name: COMMERCE_MAINTENANCE_JOBS.scheduledProductReconcile,
       data: {},
       opts: defaultMaintenanceJobOptions,
     }

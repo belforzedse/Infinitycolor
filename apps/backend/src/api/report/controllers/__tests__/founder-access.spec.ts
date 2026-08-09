@@ -7,7 +7,8 @@
  *
  * Contract:
  *  - Founder MAY call productSales (sales report under «گزارشات فروش»).
- *  - Founder MUST NOT call traffic or standalone admin-activity reports (Superadmin-only).
+ *  - Founder MAY call traffic through report.traffic.read.
+ *  - Founder MUST NOT call standalone admin-activity reports (Superadmin-only).
  */
 
 jest.mock("../../services/matomo", () => ({
@@ -98,24 +99,24 @@ describe("report controller - Founder access", () => {
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
-  it("blocks Founder from the traffic dashboard", async () => {
+  it("allows Founder to call the traffic dashboard", async () => {
     mockStrapiForRole("Founder");
     const controller = loadController();
     const ctx = createCtx();
 
     await controller.trafficDashboard(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith(expect.stringContaining("Superadmin"));
+    expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
-  it("blocks Founder from realtime traffic", async () => {
+  it("allows Founder to call realtime traffic", async () => {
     mockStrapiForRole("Founder");
     const controller = loadController();
     const ctx = createCtx();
 
     await controller.trafficRealtime(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith(expect.stringContaining("Superadmin"));
+    expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
   it("blocks Founder from the global admin-activity report", async () => {
@@ -218,8 +219,8 @@ describe("report controller - Founder access", () => {
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
-  it("blocks Store manager from product and liquidity reports", async () => {
-    mockStrapiForRole("Store manager");
+  it("allows Store Manager product insights but blocks finance liquidity", async () => {
+    mockStrapiForRole("Store Manager");
     const controller = loadController();
     const productCtx = createCtx();
     const liquidityCtx = createCtx();
@@ -227,8 +228,10 @@ describe("report controller - Founder access", () => {
     await controller.productSales(productCtx);
     await controller.liquidity(liquidityCtx);
 
-    expect(productCtx.forbidden).toHaveBeenCalled();
-    expect(liquidityCtx.forbidden).toHaveBeenCalledWith(expect.stringContaining("Superadmin"));
+    expect(productCtx.forbidden).not.toHaveBeenCalled();
+    expect(liquidityCtx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
+    );
   });
 
   it("filters admin activity by product search and related order ids", async () => {

@@ -34,10 +34,17 @@ function makeConfig() {
  * Build an engine whose network layers are stubbed against the fixtures.
  * @param {object} [opts]
  * @param {boolean} [opts.withExisting=false] preload indexes so existing entities are present
+ * @param {"Active"|"InActive"|"Scheduled"} [opts.existingProductStatus="InActive"]
  */
 function makeEngine(opts = {}) {
   const engine = new CatalogEngine(makeConfig(), noopLogger, { environment: "local" });
-  const calls = { upserts: [], stockUpserts: [], puts: [], sizeHelpers: [] };
+  const calls = {
+    upserts: [],
+    stockUpserts: [],
+    puts: [],
+    sizeHelpers: [],
+    publicationCommands: [],
+  };
   let generatedId = 30000;
 
   // Every variation id that "exists" in Strapi (variable variations + simple synth ids).
@@ -51,7 +58,12 @@ function makeEngine(opts = {}) {
   engine.repo.syncProductTags = async () => ({ ids: [], counters: { created: 0, unchanged: 0 } });
   engine.repo.buildExternalIndex = async (endpoint) => {
     const map = new Map();
-    if (endpoint === "/products") existingProductIds.forEach((id) => map.set(id, { id: Number(id) + 10000 }));
+    if (endpoint === "/products") {
+      existingProductIds.forEach((id) => map.set(id, {
+        id: Number(id) + 10000,
+        attributes: { Status: opts.existingProductStatus || "InActive" },
+      }));
+    }
     if (endpoint === "/product-variations") existingVariationIds.forEach((id) => map.set(id, { id: Number(id) + 10000 }));
     return map;
   };
@@ -70,6 +82,16 @@ function makeEngine(opts = {}) {
   engine.repo.syncProductSizeHelper = async (productId, helperMatrix) => {
     calls.sizeHelpers.push({ productId, helperMatrix });
     return helperMatrix ? "created" : "unchanged";
+  };
+  engine.repo.changeProductPublication = async (productId, externalId, intent) => {
+    calls.publicationCommands.push({ productId, externalId, intent });
+    return {
+      Status: intent.action === "publish-now"
+        ? "Active"
+        : intent.action === "schedule"
+          ? "Scheduled"
+          : "InActive",
+    };
   };
   engine.repo.resolveAttributeId = async () => 1;
   engine.repo.http = { put: async (url, body) => { calls.puts.push({ url, body }); return {}; } };
@@ -176,6 +198,47 @@ test("full sync: upserts categories + products + variations + stock, records map
   assert.equal(engine._calls.sizeHelpers.length, 3);
   assert.equal(engine.mapping.getStrapiId("products", 101), 10101);
   assert.equal(engine.mapping.getStrapiId("variations", 201), 10201);
+});
+
+test("publication: existing Active product ignores a future Woo schedule", async () => {
+  const futureProduct = {
+    ...products[0],
+    status: "future",
+    date_created_gmt: "2099-01-01T08:30:00",
+  };
+  const engine = makeEngine({
+    products: [futureProduct],
+    withExisting: true,
+    existingProductStatus: "Active",
+  });
+  const store = new CatalogRunStore(engine.config.catalog.trackingDirAbs);
+
+  await engine.runSync({
+    scope: "no-media",
+    runStore: store,
+    runId: "active-future-protection",
+  });
+
+  assert.deepEqual(engine._calls.publicationCommands, []);
+  assert.equal(
+    store.getRun("active-future-protection").items["product:101"].metrics.publicationIssue,
+    "scheduled-update-unsupported",
+  );
+});
+
+test("publication: a due Woo future product publishes after catalog writes", async () => {
+  const dueProduct = {
+    ...products[0],
+    status: "future",
+    date_created_gmt: "2020-01-01T08:30:00",
+  };
+  const engine = makeEngine({ products: [dueProduct] });
+
+  await engine.runSync({ scope: "no-media" });
+
+  assert.equal(engine._calls.publicationCommands.length, 1);
+  assert.equal(engine._calls.publicationCommands[0].externalId, 101);
+  assert.equal(engine._calls.publicationCommands[0].intent.action, "publish-now");
 });
 
 test("full sync: mirrors WooCommerce color attributes exactly", async () => {

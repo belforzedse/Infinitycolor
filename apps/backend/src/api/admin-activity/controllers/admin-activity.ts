@@ -3,22 +3,15 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { ROLE_NAMES } from "../../../utils/roles";
-import { fetchUserWithRole, normalizeRoleName, roleIsAllowed } from "../../../utils/roles";
+import { requireCapability } from "../../../utils/adminAuthorization";
 
 export default factories.createCoreController(
   "api::admin-activity.admin-activity" as any,
   ({ strapi }) => ({
     async findMyActivities(ctx) {
-      const user = await fetchUserWithRole(strapi, ctx.state.user?.id);
-      if (!user) {
-        return ctx.unauthorized("Authentication required");
-      }
-
-      const roleName = normalizeRoleName(user?.role?.name);
-      if (roleName !== ROLE_NAMES.SUPERADMIN) {
-        return ctx.forbidden("Only superadmins can view admin activities");
-      }
+      const actor = await requireCapability(ctx, strapi, "system.audit.read");
+      if (!actor) return;
+      const user = actor.user;
 
       const page = Number(ctx.query.page ?? 1);
       const pageSize = Number(ctx.query.pageSize ?? 20);
@@ -37,17 +30,7 @@ export default factories.createCoreController(
     },
 
     async findOrderActivities(ctx) {
-      const user = await fetchUserWithRole(strapi, ctx.state.user?.id);
-      if (!user) {
-        return ctx.unauthorized("Authentication required");
-      }
-
-      const roleName = normalizeRoleName(user?.role?.name);
-      // Superadmins and Founders can view order-specific event logs.
-      // (Founders are blocked from the global admin-activity report; this is order-scoped only.)
-      if (!roleIsAllowed(roleName, [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.FOUNDER])) {
-        return ctx.forbidden("You do not have permission to view these activities");
-      }
+      if (!(await requireCapability(ctx, strapi, "order.audit.read"))) return;
 
       const { orderId } = ctx.params;
       const page = Number(ctx.query.page ?? 1);
@@ -86,16 +69,7 @@ export default factories.createCoreController(
     },
 
     async findUserActivities(ctx) {
-      const user = await fetchUserWithRole(strapi, ctx.state.user?.id);
-      if (!user) {
-        return ctx.unauthorized("Authentication required");
-      }
-
-      const roleName = normalizeRoleName(user?.role?.name);
-      // Only superadmins can view admin activities for other users
-      if (roleName !== ROLE_NAMES.SUPERADMIN) {
-        return ctx.forbidden("Only superadmins can view admin activities");
-      }
+      if (!(await requireCapability(ctx, strapi, "system.audit.read"))) return;
 
       const { userId } = ctx.params;
       const page = Number(ctx.query.page ?? 1);
@@ -118,16 +92,7 @@ export default factories.createCoreController(
     },
 
     async findProductActivities(ctx) {
-      const user = await fetchUserWithRole(strapi, ctx.state.user?.id);
-      if (!user) {
-        return ctx.unauthorized("Authentication required");
-      }
-
-      const roleName = normalizeRoleName(user?.role?.name);
-      // Only superadmins can view admin activities
-      if (roleName !== ROLE_NAMES.SUPERADMIN) {
-        return ctx.forbidden("Only superadmins can view admin activities");
-      }
+      if (!(await requireCapability(ctx, strapi, "system.audit.read"))) return;
 
       const { productId } = ctx.params;
       const page = Number(ctx.query.page ?? 1);
@@ -150,16 +115,7 @@ export default factories.createCoreController(
     },
 
     async findReport(ctx) {
-      const user = await fetchUserWithRole(strapi, ctx.state.user?.id);
-      if (!user) {
-        return ctx.unauthorized("Authentication required");
-      }
-
-      const roleName = normalizeRoleName(user?.role?.name);
-      // Only superadmins can view admin activity reports
-      if (roleName !== ROLE_NAMES.SUPERADMIN) {
-        return ctx.forbidden("Only superadmins can view admin activity reports");
-      }
+      if (!(await requireCapability(ctx, strapi, "system.audit.read"))) return;
 
       const page = Number(ctx.query.page ?? 1);
       const pageSize = Number(ctx.query.pageSize ?? 50);

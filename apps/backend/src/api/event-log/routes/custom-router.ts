@@ -2,12 +2,10 @@
  * Custom router for event-log APIs
  */
 
-import { ROLE_NAMES } from "../../../utils/roles";
-
 const superadminPolicy = [
   {
-    name: "global::role-based",
-    config: { roles: [ROLE_NAMES.SUPERADMIN] },
+    name: "global::require-capability",
+    config: { capability: "system.audit.read" },
   },
 ];
 

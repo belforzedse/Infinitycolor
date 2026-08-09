@@ -1,7 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
 import { decrementStockAtomic } from "../../../cart/services/lib/stock";
 import { logManualActivity } from "../../../../utils/manualAdminActivity";
-import { roleIsAllowed, OPERATIONAL_ROLES } from "../../../../utils/roles";
+import { requireCapability } from "../../../../utils/adminAuthorization";
 
 /**
  * Decrement stock for manual orders
@@ -12,34 +12,10 @@ export async function decrementManualOrderStockHandler(strapi: Strapi, ctx: any)
   let orderId: number | undefined;
 
   try {
-    // Admin guard: ensure plugin user has an admin/store-manager role
-    const pluginUser = ctx.state.user;
-    if (!pluginUser) {
-      ctx.status = 403;
-      ctx.body = {
-        data: {
-          success: false,
-          error: "Admin access required",
-        },
-      };
-      return;
-    }
-
-    const fullUser = await strapi.db
-      .query("plugin::users-permissions.user")
-      .findOne({ where: { id: pluginUser.id }, populate: ["role"] });
-
+    const actor = await requireCapability(ctx, strapi, "order.manual.create");
+    if (!actor) return;
+    const fullUser = actor.user;
     const roleName = fullUser?.role?.name;
-    if (!fullUser || !roleIsAllowed(roleName, OPERATIONAL_ROLES)) {
-      ctx.status = 403;
-      ctx.body = {
-        data: {
-          success: false,
-          error: "Admin access required",
-        },
-      };
-      return;
-    }
 
     orderId = Number(id);
     if (Number.isNaN(orderId)) {
@@ -265,4 +241,3 @@ export async function decrementManualOrderStockHandler(strapi: Strapi, ctx: any)
     return;
   }
 }
-

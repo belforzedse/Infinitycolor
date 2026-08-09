@@ -12,6 +12,12 @@ interface TransformedProductData
     | "Media"
     | "Files"
     | "CoverImage"
+    | "Status"
+    | "scheduledPublishAt"
+    | "scheduledPublishTimezone"
+    | "scheduledPublishLastAttemptAt"
+    | "scheduledPublishLastError"
+    | "scheduledPublishFailureKind"
   > {
   product_main_category: number | null;
   product_tags: number[];
@@ -33,6 +39,12 @@ function transformProductDataForApi(data: EditProductData): TransformedProductDa
     SimpleDiscountPrice,
     SimpleStock,
     SimpleIsPublished,
+    Status: _publicationStatus,
+    scheduledPublishAt: _scheduledPublishAt,
+    scheduledPublishTimezone: _scheduledPublishTimezone,
+    scheduledPublishLastAttemptAt: _scheduledPublishLastAttemptAt,
+    scheduledPublishLastError: _scheduledPublishLastError,
+    scheduledPublishFailureKind: _scheduledPublishFailureKind,
     ...rest
   } = data;
 

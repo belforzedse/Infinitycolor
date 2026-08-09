@@ -110,13 +110,13 @@ const contractStatus = {
   failed: "Failed",
 };
 
-function paymentGateway(value) {
-  const key = String(value || "").toLowerCase();
-  if (key.includes("wallet")) return "Wallet";
-  if (key.includes("snapp")) return "SnappPay";
-  if (key.includes("mellat") || key.includes("behpardakht")) return "Mellat";
-  if (key.includes("saman") || key.includes("sep")) return "SamanKish";
-  if (key.includes("zarin")) return "ZarinPal";
+function paymentGateway(value, title = "") {
+  const key = `${value || ""} ${title || ""}`.toLowerCase();
+  if (key.includes("wallet") || key.includes("کیف پول")) return "Wallet";
+  if (key.includes("snapp") || key.includes("اسنپ")) return "SnappPay";
+  if (key.includes("mellat") || key.includes("behpardakht") || key.includes("ملت")) return "Mellat";
+  if (key.includes("saman") || key.includes("sep") || key.includes("سامان")) return "SamanKish";
+  if (key.includes("zarin") || key.includes("زرین")) return "ZarinPal";
   return "Unknown";
 }
 
@@ -148,7 +148,7 @@ function orderPayload(order) {
   if (items.length === 0) throw new Error("ORDER_ITEMS_EMPTY");
   const shipping = Array.isArray(order.shipping_lines) ? order.shipping_lines[0] : null;
   const sourceTimestamps = wooSourceTimestamps(order);
-  const gateway = paymentGateway(order.payment_method);
+  const gateway = paymentGateway(order.payment_method, order.payment_method_title);
   const totalTaxToman = wooMoneyToToman(order.total_tax || 0);
   const registeredCustomer = Number(order.customer_id) > 0;
   const billingIdentity = {

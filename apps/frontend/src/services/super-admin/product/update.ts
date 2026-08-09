@@ -12,6 +12,7 @@ interface TransformedProductData
     | "Media"
     | "Files"
     | "CoverImage"
+    | "Status"
   > {
   product_main_category: number | null;
   product_tags: number[];
@@ -33,6 +34,7 @@ function transformProductDataForApi(data: EditProductData): TransformedProductDa
     SimpleDiscountPrice,
     SimpleStock,
     SimpleIsPublished,
+    Status: _publicationStatus,
     ...rest
   } = data;
 
@@ -80,7 +82,7 @@ export const updateProduct = async (id: string, body: EditProductData) => {
     return {
       success: false,
       error,
-      errorMessage: error.response?.data?.error?.message || "ویرایش محصول با خطا مواجه شد"
+      errorMessage: error.response?.data?.error?.message || "ویرایش محصول با خطا مواجه شد",
     };
   }
 };

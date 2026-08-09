@@ -4,7 +4,8 @@
 
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
-import { ROLE_NAMES, resolveUserRoleName, roleIsAllowed } from "../../../utils/roles";
+import { hasCapability } from "@repo/auth-core";
+import { resolveAdminActor, requireCapability } from "../../../utils/adminAuthorization";
 
 export default factories.createCoreController(
   "api::event-log.event-log" as any,
@@ -53,11 +54,8 @@ export default factories.createCoreController(
       const userId = Number(user.id);
 
       // Verify user owns the order or is admin
-      const requesterRoleName = await resolveUserRoleName(strapi, user);
-      const isAdminUser = roleIsAllowed(requesterRoleName, [
-        ROLE_NAMES.SUPERADMIN,
-        ROLE_NAMES.FOUNDER,
-      ]);
+      const actor = await resolveAdminActor(strapi, user);
+      const isAdminUser = Boolean(actor && hasCapability(actor.role, "order.audit.read"));
 
       if (!isAdminUser) {
         // Check if user owns the order
@@ -103,12 +101,7 @@ export default factories.createCoreController(
         return ctx.unauthorized("Authentication required");
       }
 
-      const requesterRoleName = await resolveUserRoleName(strapi, user);
-      const isAdminUser = roleIsAllowed(requesterRoleName, [ROLE_NAMES.SUPERADMIN]);
-
-      if (!isAdminUser) {
-        return ctx.forbidden("Admin access required");
-      }
+      if (!(await requireCapability(ctx, strapi, "system.audit.read"))) return;
 
       const { page = 1, pageSize = 20, sort = "createdAt:desc" } = ctx.query;
 

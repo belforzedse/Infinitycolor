@@ -38,7 +38,7 @@ describe("product variation operational field contract", () => {
     const ctx = createCtx({ product: 4, AttributeSignature: "color=1" });
     await controller.update(ctx as any);
     expect(ctx.badRequest).toHaveBeenCalledWith(
-      "Store manager cannot write protected fields: product, AttributeSignature",
+      "This role cannot write protected fields: product, AttributeSignature",
     );
     expect(base.update).not.toHaveBeenCalled();
   });

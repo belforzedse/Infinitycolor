@@ -1,8 +1,16 @@
 import { Strapi } from "@strapi/strapi";
+import {
+  ADMIN_ROLE_DEFINITIONS,
+  normalizeAdminRole,
+  type AdminRoleId,
+} from "@repo/auth-core";
 
 export const ROLE_NAMES = {
   SUPERADMIN: "Superadmin",
-  STORE_MANAGER: "Store manager",
+  SELLER_1: "Seller 1",
+  SELLER_2: "Seller 2",
+  STORE_MANAGER: "Store Manager",
+  FINANCE: "Finance",
   EDITOR: "Editor",
   FOUNDER: "Founder",
   CUSTOMER: "Customer",
@@ -16,6 +24,11 @@ const ROLE_ALIAS_MAP: Record<string, RoleName> = {
   manager: ROLE_NAMES.STORE_MANAGER,
   storemanager: ROLE_NAMES.STORE_MANAGER,
   "store-manager": ROLE_NAMES.STORE_MANAGER,
+  seller1: ROLE_NAMES.SELLER_1,
+  "seller-1": ROLE_NAMES.SELLER_1,
+  seller2: ROLE_NAMES.SELLER_2,
+  "seller-2": ROLE_NAMES.SELLER_2,
+  finance: ROLE_NAMES.FINANCE,
   editor: ROLE_NAMES.EDITOR,
   founder: ROLE_NAMES.FOUNDER,
   founders: ROLE_NAMES.FOUNDER,
@@ -24,7 +37,10 @@ const ROLE_ALIAS_MAP: Record<string, RoleName> = {
 
 export const MANAGEMENT_ROLES: RoleName[] = [
   ROLE_NAMES.SUPERADMIN,
+  ROLE_NAMES.SELLER_1,
+  ROLE_NAMES.SELLER_2,
   ROLE_NAMES.STORE_MANAGER,
+  ROLE_NAMES.FINANCE,
   ROLE_NAMES.FOUNDER,
   ROLE_NAMES.EDITOR,
 ];
@@ -33,7 +49,11 @@ export const CONTENT_EDITOR_ROLES: RoleName[] = [ROLE_NAMES.SUPERADMIN, ROLE_NAM
 
 export const CUSTOMER_CAPABLE_ROLES: RoleName[] = [
   ROLE_NAMES.CUSTOMER,
+  ROLE_NAMES.EDITOR,
+  ROLE_NAMES.SELLER_1,
+  ROLE_NAMES.SELLER_2,
   ROLE_NAMES.STORE_MANAGER,
+  ROLE_NAMES.FINANCE,
   ROLE_NAMES.FOUNDER,
   ROLE_NAMES.SUPERADMIN,
 ];
@@ -65,6 +85,11 @@ export function normalizeRoleName(name?: string | null): RoleName | null {
     return aliasMatch;
   }
 
+  const adminRole = normalizeAdminRole(name);
+  if (adminRole) {
+    return ADMIN_ROLE_DEFINITIONS[adminRole].strapiName as RoleName;
+  }
+
   // If the incoming role already matches our canonical names (case-insensitive), preserve casing
   const canonical = Object.values(ROLE_NAMES).find(
     (role) => role.toLowerCase().replace(/\s+/g, "") === compactKey,
@@ -94,7 +119,7 @@ export function roleIsAllowed(roleName: string | null | undefined, allowed: stri
  * Fetches a user by ID and returns the user record with role-related relations populated.
  *
  * @param userId - The ID of the user to fetch; if not provided, the function returns `null`.
- * @returns The user record with `role`, `user_role`, and `user_info` populated, or `null` if `userId` was not provided or the user does not exist.
+ * @returns The user record with canonical plugin `role` and `user_info` populated, or `null`.
  */
 export async function fetchUserWithRole(strapi: Strapi, userId?: number) {
   if (!userId) {
@@ -103,13 +128,12 @@ export async function fetchUserWithRole(strapi: Strapi, userId?: number) {
 
   return strapi.query("plugin::users-permissions.user").findOne({
     where: { id: userId },
-    populate: ["role", "user_role", "user_info"],
+    populate: ["role", "user_info"],
   });
 }
 
 export async function resolveUserRoleName(strapi: Strapi, user?: any): Promise<RoleName | null> {
-  const roleName =
-    user?.role?.name || user?.role?.type || user?.user_role?.Name || user?.user_role?.name;
+  const roleName = user?.role?.name || user?.role?.type;
 
   const normalized = normalizeRoleName(roleName);
   if (normalized) {
@@ -117,13 +141,11 @@ export async function resolveUserRoleName(strapi: Strapi, user?: any): Promise<R
   }
 
   const fullUser = await fetchUserWithRole(strapi, user?.id);
-  return normalizeRoleName(
-    fullUser?.role?.name ||
-      fullUser?.role?.type ||
-      fullUser?.user_role?.Name ||
-      fullUser?.user_role?.name ||
-      null,
-  );
+  return normalizeRoleName(fullUser?.role?.name || fullUser?.role?.type || null);
+}
+
+export function resolveAdminRoleId(user?: any): AdminRoleId | null {
+  return normalizeAdminRole(user?.role?.type || user?.role?.name || null);
 }
 
 function readTargetUserId(ctx: any): unknown {
@@ -188,11 +210,6 @@ export async function resolveCustomerTargetUserId(
   }
 
   if (targetUserId === actorId) {
-    return targetUserId;
-  }
-
-  const roleName = await resolveUserRoleName(strapi, ctx.state.user);
-  if (roleIsAllowed(roleName, [ROLE_NAMES.SUPERADMIN])) {
     return targetUserId;
   }
 

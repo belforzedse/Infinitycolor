@@ -27,7 +27,7 @@ export async function startMaintenanceWorkers(): Promise<void> {
   const workers = [
     new Worker(
       QUEUE_NAMES.commerceMaintenance,
-      (job) => processMaintenanceJob(strapi, job),
+      (job, token) => processMaintenanceJob(strapi, job, token),
       {
         connection,
         prefix: settings.prefix,
@@ -36,7 +36,7 @@ export async function startMaintenanceWorkers(): Promise<void> {
     ),
     new Worker(
       QUEUE_NAMES.analyticsMaintenance,
-      (job) => processMaintenanceJob(strapi, job),
+      (job, token) => processMaintenanceJob(strapi, job, token),
       {
         connection,
         prefix: settings.prefix,
@@ -45,7 +45,7 @@ export async function startMaintenanceWorkers(): Promise<void> {
     ),
     new Worker(
       QUEUE_NAMES.payments,
-      (job) => processMaintenanceJob(strapi, job),
+      (job, token) => processMaintenanceJob(strapi, job, token),
       {
         connection,
         prefix: settings.prefix,

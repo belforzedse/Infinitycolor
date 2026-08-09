@@ -1,13 +1,13 @@
 import {
-  fetchUserWithRole,
   MANAGEMENT_ROLES,
   normalizeRoleName,
-  ROLE_NAMES,
 } from "../../utils/roles";
 import bcrypt from "bcryptjs";
 import { normalizeRequiredProfileName } from "../../api/auth/utils/profile-names";
 import { validatePhone } from "../../api/auth/utils/validations";
 import { recordAdminAudit } from "../../utils/adminAudit";
+import { ADMIN_ROLE_DEFINITIONS } from "@repo/auth-core";
+import { requireCapability } from "../../utils/adminAuthorization";
 
 const PROFILE_COMPLETION_PATHS = new Set([
   "/api/auth/self",
@@ -176,20 +176,28 @@ function wantsPluginRoleChange(ctx: any) {
 }
 
 async function assertSuperadmin(ctx: any) {
-  const actorId = ctx.state?.user?.id;
-  if (!actorId) {
-    ctx.unauthorized("Authentication required");
+  return Boolean(await requireCapability(ctx, strapi, "system.roles.manage"));
+}
+
+async function assertAssignablePluginRole(ctx: any) {
+  const rawRoleId = ctx.request?.body?.role;
+  const roleId = Number(typeof rawRoleId === "object" ? rawRoleId?.id : rawRoleId);
+  if (!Number.isSafeInteger(roleId) || roleId <= 0) {
+    ctx.badRequest("A valid role id is required");
     return false;
   }
-
-  const actor = await fetchUserWithRole(strapi, Number(actorId));
-  const actorRoleName = actor?.role?.name || null;
-
-  if (actorRoleName !== ROLE_NAMES.SUPERADMIN) {
-    ctx.forbidden("Only Superadmins can change user roles");
+  const role = await strapi.query("plugin::users-permissions.role").findOne({
+    where: { id: roleId },
+    select: ["id", "name", "type"],
+  });
+  const allowedTypes = new Set([
+    "customer",
+    ...Object.values(ADMIN_ROLE_DEFINITIONS).map((definition) => definition.strapiType),
+  ]);
+  if (!role || !allowedTypes.has(role.type)) {
+    ctx.badRequest("The selected role is not assignable");
     return false;
   }
-
   return true;
 }
 
@@ -214,6 +222,29 @@ const wrapUserController =
       }
       const allowed = await assertSuperadmin(ctx);
       if (!allowed) {
+        await recordAdminAudit(strapi, {
+          resourceType: "User",
+          resourceId: Number.isSafeInteger(targetId) ? targetId : null,
+          action: "Update",
+          title: "Rejected user role assignment",
+          messageEn: "An actor without role-management capability attempted to assign a role.",
+          severity: "warning",
+          actor: Number.isSafeInteger(actorId) ? { id: actorId } : undefined,
+          metadata: { requestedRole: ctx.request?.body?.role ?? null },
+        });
+        return;
+      }
+      if (!(await assertAssignablePluginRole(ctx))) {
+        await recordAdminAudit(strapi, {
+          resourceType: "User",
+          resourceId: Number.isSafeInteger(targetId) ? targetId : null,
+          action: "Update",
+          title: "Rejected user role assignment",
+          messageEn: "A Superadmin attempted to assign an unknown or non-assignable role.",
+          severity: "warning",
+          actor: { id: actorId },
+          metadata: { requestedRole: ctx.request?.body?.role ?? null },
+        });
         return;
       }
     }

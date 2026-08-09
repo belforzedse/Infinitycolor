@@ -1,13 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
 
 type ProductTag = {
@@ -21,9 +20,7 @@ const normalizeTag = (entry: any): ProductTag => ({
 });
 
 export default function TagsPage() {
-  const router = useRouter();
-  const { roleName } = useCurrentUser();
-  const isSuperadmin = (roleName || "").toLowerCase().trim() === "superadmin";
+  const canDeleteTags = useCan("product.delete");
   const [tags, setTags] = useState<ProductTag[]>([]);
   const [search, setSearch] = useState("");
   const [title, setTitle] = useState("");
@@ -31,12 +28,6 @@ export default function TagsPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if ((roleName || "").toLowerCase().trim() === "editor") {
-      router.replace("/blog");
-    }
-  }, [roleName, router]);
 
   const loadTags = useCallback(async () => {
     setLoading(true);
@@ -97,7 +88,7 @@ export default function TagsPage() {
   };
 
   const deleteTag = async () => {
-    if (!deleteId || !isSuperadmin) return;
+    if (!deleteId || !canDeleteTags) return;
     setSaving(true);
     try {
       await apiClient.delete(`${ENDPOINTS.PRODUCT.TAG}/${deleteId}`);
@@ -180,7 +171,7 @@ export default function TagsPage() {
                     >
                       ویرایش
                     </button>
-                    {isSuperadmin && (
+              {canDeleteTags && (
                       <button
                         type="button"
                         className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700"

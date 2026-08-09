@@ -64,6 +64,11 @@ export interface ProductDataResponse {
   Title: string;
   Description: string;
   Status: string;
+  scheduledPublishAt?: string | null;
+  scheduledPublishTimezone?: string | null;
+  scheduledPublishLastAttemptAt?: string | null;
+  scheduledPublishLastError?: string | null;
+  scheduledPublishFailureKind?: "Transient" | "Permanent" | null;
   ProductType?: "Variable" | "Simple" | null;
   IsSimpleProduct?: boolean | null;
   Weight?: number;

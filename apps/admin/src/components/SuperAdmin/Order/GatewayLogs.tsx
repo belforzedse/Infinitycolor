@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ORDER_LOGS_QUERY } from "./orderLogsQuery";
 import { apiClient } from "@/services";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import ChevronDownIcon from "@/components/Product/Icons/ChevronDownIcon";
 
 type OrderLog = {
@@ -19,11 +19,11 @@ export default function GatewayLogs({ orderId }: { orderId: number }) {
   const [auditLogs, setAuditLogs] = useState<OrderLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const { isStoreManager } = useCurrentUser();
+  const canReadAudit = useCan("order.audit.read");
 
   useEffect(() => {
     const fetchLogs = async () => {
-      if (!orderId) return;
+      if (!orderId || !canReadAudit) return;
 
       try {
         setLoading(true);
@@ -45,9 +45,9 @@ export default function GatewayLogs({ orderId }: { orderId: number }) {
     if (isOpen && orderId) {
       fetchLogs();
     }
-  }, [orderId, isOpen]);
+  }, [orderId, isOpen, canReadAudit]);
 
-  if (!orderId || isStoreManager) return null;
+  if (!orderId || !canReadAudit) return null;
 
   const formatDateTime = (value: string) => {
     try {

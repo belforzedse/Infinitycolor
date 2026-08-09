@@ -454,6 +454,11 @@ class StrapiClient extends BaseApiClient {
     if (!config.strapi.usePublicAccess && config.strapi.auth?.token) {
       headers.Authorization = `Bearer ${config.strapi.auth.token}`;
     }
+    const migrationControlToken = String(process.env.MIGRATION_CONTROL_TOKEN || "");
+    if (migrationControlToken.length >= 32) {
+      headers["X-Infinity-Migration-Mode"] = "wordpress-v2";
+      headers["X-Infinity-Migration-Control"] = migrationControlToken;
+    }
 
     this.client = axios.create({
       baseURL: config.strapi.baseUrl,
@@ -582,6 +587,22 @@ class StrapiClient extends BaseApiClient {
   async updateProduct(productId, updateData) {
     const response = await this.retryRequest(() =>
       this.client.put(`/products/${productId}`, { data: updateData }),
+    );
+    return response.data;
+  }
+
+  async changeProductPublication(productId, externalId, intent) {
+    const response = await this.retryRequest(() =>
+      this.client.post(`/products/${productId}/publication`, {
+        data: {
+          action: intent.action,
+          ...(intent.publishAt ? { publishAt: intent.publishAt } : {}),
+          ...(intent.timezone ? { timezone: intent.timezone } : {}),
+          requireMedia: intent.requireMedia === true,
+          expectedExternalSource: "woocommerce",
+          expectedExternalId: String(externalId),
+        },
+      }),
     );
     return response.data;
   }

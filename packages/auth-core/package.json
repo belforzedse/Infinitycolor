@@ -56,6 +56,12 @@
       "import": "./dist/birth-date.js",
       "require": "./dist-cjs/birth-date.js",
       "default": "./dist/birth-date.js"
+    },
+    "./admin-authorization": {
+      "types": "./dist/admin-authorization.d.ts",
+      "import": "./dist/admin-authorization.js",
+      "require": "./dist-cjs/admin-authorization.js",
+      "default": "./dist/admin-authorization.js"
     }
   },
   "scripts": {

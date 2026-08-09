@@ -9,7 +9,7 @@ import { UserService } from "@/services";
 import { HTTP_STATUS } from "@/constants/api";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { useAtomValue, useSetAtom } from "jotai";
-import { canRoleAccessPath, getRoleAdminLandingPath } from "@/constants/roleAccess";
+import { canCapabilitiesAccessPath, getAdminLandingPath } from "@/constants/roleAccess";
 import clsx from "clsx";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 
@@ -232,15 +232,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     }
   }, [isLoading, isAuthorized, redirectToPrevious]);
 
-  // Backend permissions are authoritative; this centralized route guard keeps
-  // Store manager and Founder navigation consistent with those grants.
-  const roleBlocked = !canRoleAccessPath(currentUser?.roleName, pathname);
-
-  useEffect(() => {
-    if (isAuthorized && roleBlocked) {
-      router.replace(getRoleAdminLandingPath(currentUser?.roleName));
-    }
-  }, [currentUser?.roleName, isAuthorized, roleBlocked, router]);
+  const roleBlocked = !canCapabilitiesAccessPath(
+    currentUser?.capabilities,
+    pathname,
+    currentUser?.adminRole,
+  );
 
   if (isLoading) {
     return (
@@ -257,20 +253,49 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     return null;
   }
 
-  // Don't render restricted content while the guard redirects.
-  if (roleBlocked) {
-    return null;
-  }
-
   return (
     <>
       <Suspense fallback={<div>Loading...</div>}>
-        <ResponsiveAdminShell>{children}</ResponsiveAdminShell>
+        <ResponsiveAdminShell>
+          {roleBlocked ? (
+            <ForbiddenAdminView
+              landingPath={getAdminLandingPath(
+                currentUser?.capabilities,
+                currentUser?.adminRole,
+              )}
+            />
+          ) : (
+            children
+          )}
+        </ResponsiveAdminShell>
       </Suspense>
       <div className="[&_button]:!left-4 [&_button]:!right-auto">
         <ScrollToTop />
       </div>
     </>
+  );
+}
+
+function ForbiddenAdminView({ landingPath }: { landingPath: string }) {
+  return (
+    <main className="flex min-h-[55vh] items-center justify-center p-4" dir="rtl">
+      <section
+        className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm"
+        role="alert"
+      >
+        <p className="text-sm font-semibold text-amber-700">دسترسی محدود شده است</p>
+        <h1 className="mt-2 text-2xl font-bold text-neutral-900">اجازه مشاهده این بخش را ندارید</h1>
+        <p className="mt-3 text-sm leading-7 text-neutral-600">
+          سطح دسترسی حساب شما شامل این صفحه نیست. هیچ داده‌ای از این بخش بارگذاری نشده است.
+        </p>
+        <a
+          href={landingPath}
+          className="mt-5 inline-flex min-h-11 items-center justify-center rounded-xl bg-infinity-primary px-5 py-2.5 text-sm font-semibold text-white"
+        >
+          رفتن به صفحه مجاز
+        </a>
+      </section>
+    </main>
   );
 }
 

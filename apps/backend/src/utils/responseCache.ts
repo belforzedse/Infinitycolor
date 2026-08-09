@@ -134,18 +134,22 @@ export async function setJson(key: string, value: unknown, ttlSec: number): Prom
   }
 }
 
-export async function delByPattern(prefix: string): Promise<number> {
+export async function delByPatternStrict(prefix: string): Promise<number> {
   if (!prefix) return 0;
 
+  const client = await RedisClient;
+  let removed = 0;
+
+  for await (const key of client.scanIterator({ MATCH: `${prefix}*`, COUNT: 100 })) {
+    removed += await client.del(key);
+  }
+
+  return removed;
+}
+
+export async function delByPattern(prefix: string): Promise<number> {
   try {
-    const client = await RedisClient;
-    let removed = 0;
-
-    for await (const key of client.scanIterator({ MATCH: `${prefix}*`, COUNT: 100 })) {
-      removed += await client.del(key);
-    }
-
-    return removed;
+    return await delByPatternStrict(prefix);
   } catch {
     return 0;
   }

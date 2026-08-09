@@ -33,7 +33,9 @@ test("sync config defaults to hourly-only and enforces documented concurrency ca
     discovery: false,
     hourly: true,
     friday: false,
+    reconcile: false,
   });
+  assert.equal(config.reconcileCron, "30 2 * * *");
   assert.equal(config.sourcePageConcurrency, 4);
   assert.equal(config.identitySweepPages, 0);
   assert.deepEqual(config.concurrency, {
@@ -67,7 +69,41 @@ test("historical customer and wallet sweeps require explicit opt-in", async () =
   );
 });
 
-test("scheduler defaults to hourly only and removes discovery and Friday schedules", async () => {
+test("identitySweep uses Woo orderby=id and TeraWallet orderby=registered", async () => {
+  const config = getSyncConfig({ ...baseEnv(), WOOCOMMERCE_SYNC_IDENTITY_SWEEP_PAGES: "1" });
+  const service = Object.create(WooSyncService.prototype);
+  service.config = config;
+  const walletQueries = [];
+  const customerQueries = [];
+  service.source = {
+    woo: {
+      async get(_pathname, query) {
+        customerQueries.push(query);
+        return { data: [{ id: 11 }], headers: { get: () => "1" } };
+      },
+    },
+    wallet: {
+      async get(_pathname, query) {
+        walletQueries.push(query);
+        return { data: [{ id: 22, balance: 0 }], headers: { get: () => "1" } };
+      },
+    },
+  };
+  service.state = {
+    async control() { return { mode: "active" }; },
+    async cursor() { return { sweep_page: 1 }; },
+    async observe() {},
+    async assertLease() {},
+    async saveCursor() {},
+  };
+  const result = await service.identitySweep("token");
+  assert.deepEqual(result, { customers: 1, wallets: 1 });
+  assert.deepEqual(customerQueries[0], { per_page: 100, page: 1, orderby: "id", order: "asc" });
+  assert.deepEqual(walletQueries[0], { per_page: 100, page: 1, orderby: "registered", order: "asc" });
+  assert.notEqual(walletQueries[0].orderby, "id");
+});
+
+test("scheduler defaults to hourly only and removes discovery, Friday, and reconcile schedules", async () => {
   const calls = [];
   const removed = [];
   const queue = {
@@ -79,10 +115,14 @@ test("scheduler defaults to hourly only and removes discovery and Friday schedul
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0][1], { pattern: "0 * * * *", tz: "Asia/Tehran" });
   assert.equal(calls[0][2].name, JOBS.hourly);
-  assert.deepEqual(removed, ["sched:woocommerce.discovery", "sched:woocommerce.friday-cutover"]);
+  assert.deepEqual(removed, [
+    "sched:woocommerce.discovery",
+    "sched:woocommerce.friday-cutover",
+    "sched:woocommerce.reconcile",
+  ]);
 });
 
-test("30-second discovery and Friday schedules require explicit opt-in", async () => {
+test("30-second discovery, Friday, and reconcile schedules require explicit opt-in", async () => {
   const calls = [];
   const queue = {
     async upsertJobScheduler(...args) { calls.push(args); },
@@ -92,13 +132,33 @@ test("30-second discovery and Friday schedules require explicit opt-in", async (
     ...baseEnv(),
     WOOCOMMERCE_SYNC_ENABLE_DISCOVERY: "true",
     WOOCOMMERCE_SYNC_ENABLE_FRIDAY: "true",
+    WOOCOMMERCE_SYNC_ENABLE_RECONCILE: "true",
   });
   await registerSchedulers(queue, config);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.deepEqual(calls[0][1], { every: 30_000 });
   assert.deepEqual(calls[1][1], { pattern: "0 * * * *", tz: "Asia/Tehran" });
   assert.deepEqual(calls[2][1], { pattern: "59 23 * * 5", tz: "Asia/Tehran" });
   assert.equal(calls[2][2].opts.attempts, 3);
+  assert.deepEqual(calls[3][1], { pattern: "30 2 * * *", tz: "Asia/Tehran" });
+  assert.equal(calls[3][2].name, JOBS.reconcile);
+});
+
+test("reconcile cadence is configurable via WOOCOMMERCE_SYNC_RECONCILE_CRON", async () => {
+  const calls = [];
+  const queue = {
+    async upsertJobScheduler(...args) { calls.push(args); },
+    async removeJobScheduler() {},
+  };
+  const config = getSyncConfig({
+    ...baseEnv(),
+    WOOCOMMERCE_SYNC_ENABLE_RECONCILE: "true",
+    WOOCOMMERCE_SYNC_RECONCILE_CRON: "0 4 * * 0",
+  });
+  assert.equal(config.reconcileCron, "0 4 * * 0");
+  await registerSchedulers(queue, config);
+  const reconcileCall = calls.find((call) => call[2].name === JOBS.reconcile);
+  assert.deepEqual(reconcileCall[1], { pattern: "0 4 * * 0", tz: "Asia/Tehran" });
 });
 
 test("Friday catalog stages fail closed before dependent identity and order work", () => {
@@ -379,4 +439,92 @@ test("variation sweep routes active first sightings to the no-media hourly lane"
   assert.equal(observations[0][0].sourceType, "product-sweep");
   assert.equal(observations[0][1], "active");
   assert.deepEqual(observations[0][2], { insertLane: "hourly" });
+});
+
+test("reconcile refuses to touch CatalogEngine or the source when sync is not active", async () => {
+  const config = getSyncConfig(baseEnv());
+  const service = new WooSyncService(config, { pool: { end: async () => undefined }, source: {}, destination: {} });
+  service.withLease = async (name, action) => action("reconcile-fence");
+  service.state = {
+    control: async () => ({ mode: "shadow" }),
+    metric: async () => undefined,
+  };
+  service.runCatalogVerify = async () => { throw new Error("must not reach CatalogEngine while inactive"); };
+
+  await assert.rejects(service.reconcile(), /gated until historical reconciliation/);
+});
+
+test("reconcile observes missed WooCommerce products into the hourly lane and drains them in the same run", async () => {
+  const config = getSyncConfig(baseEnv());
+  const service = new WooSyncService(config, { pool: { end: async () => undefined }, source: {}, destination: {} });
+  const observed = [];
+  const drainCalls = [];
+  const metrics = [];
+  service.withLease = async (name, action) => action("reconcile-fence");
+  service.state = {
+    control: async () => ({ mode: "active", reconciliation_run_id: "r1", reconciliation_sha256: "a".repeat(64) }),
+    observe: async (...args) => observed.push(args),
+    metric: async (m) => metrics.push(m),
+  };
+  service.source = { getProduct: async (id) => ({ id, date_modified_gmt: "2026-08-08T00:00:00" }) };
+  service.runCatalogVerify = async () => ({ engine: {}, wcOnly: [101, 102], strapiOnly: [] });
+  service.repairMissingProductMedia = async () => ({ repaired: 0 });
+  service.drain = async (lane) => {
+    drainCalls.push(lane);
+    return { completed: 2, failed: 0 };
+  };
+
+  const result = await service.reconcile();
+
+  assert.deepEqual(result.missed, { found: 2, observed: 2, failed: 0 });
+  assert.deepEqual(drainCalls, ["hourly"]);
+  assert.equal(observed.length, 2);
+  assert.equal(observed[0][0].sourceType, "product");
+  assert.equal(observed[0][1], "active");
+  assert.deepEqual(observed[0][2], { insertLane: "hourly" });
+  assert.deepEqual(result.media, { repaired: 0 });
+  assert.equal(metrics.length, 1);
+  assert.equal(metrics[0].stage, "reconcile");
+  assert.equal(metrics[0].outcome, "completed");
+});
+
+test("reconcile classifies target orphans by re-fetch outcome and never mutates any of them", async () => {
+  const config = getSyncConfig(baseEnv());
+  const service = new WooSyncService(config, { pool: { end: async () => undefined }, source: {}, destination: {} });
+  const metrics = [];
+  service.withLease = async (name, action) => action("reconcile-fence");
+  service.state = {
+    control: async () => ({ mode: "active", reconciliation_run_id: "r1", reconciliation_sha256: "a".repeat(64) }),
+    observe: async () => { throw new Error("must not observe for strapiOnly ids"); },
+    metric: async (m) => metrics.push(m),
+  };
+  service.source = {
+    getProduct: async (id) => {
+      // 201: genuinely gone (clean 404). 202: source unreachable (5xx) — must
+      // NOT be inferred as deletion. 203: the compare just missed it — found.
+      if (id === 201) {
+        const error = new Error("HTTP_404");
+        error.status = 404;
+        throw error;
+      }
+      if (id === 202) {
+        const error = new Error("HTTP_503");
+        error.status = 503;
+        throw error;
+      }
+      return { id, date_modified_gmt: "2026-08-08T00:00:00" };
+    },
+  };
+  service.runCatalogVerify = async () => ({ engine: {}, wcOnly: [], strapiOnly: [201, 202, 203] });
+  service.repairMissingProductMedia = async () => ({ repaired: 0 });
+  service.drain = async () => { throw new Error("must not drain when nothing was observed"); };
+
+  const result = await service.reconcile();
+
+  assert.equal(result.orphans.candidates, 3);
+  assert.deepEqual(result.orphans.byStatus, {
+    source_confirmed_missing: 1,
+    source_unknown: 1,
+  });
+  assert.deepEqual(result.drained, { completed: 0, failed: 0 });
 });

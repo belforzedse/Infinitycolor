@@ -42,6 +42,7 @@ const makeCtx = (body: any) => {
     state: { user: { id: 99, role: { name: "Superadmin" } } },
     badRequest: jest.fn((message: string, payload?: unknown) => ({ status: 400, message, payload })),
     notFound: jest.fn((message: string, payload?: unknown) => ({ status: 404, message, payload })),
+    forbidden: jest.fn((message: string, payload?: unknown) => ({ status: 403, message, payload })),
     internalServerError: jest.fn((message: string) => ({ status: 500, message })),
     send: jest.fn((data: any) => data),
   };
@@ -181,5 +182,28 @@ describe("adminAdjustWallet", () => {
 
     expect(ctx.notFound).toHaveBeenCalled();
     expect(creditWalletBalanceAtomic).not.toHaveBeenCalled();
+  });
+
+  it("rejects self-wallet adjustment for every administrative actor", async () => {
+    const c = build();
+    const ctx = makeCtx({ userId: 99, mode: "credit", amountToman: 5_000, reason: "self" });
+
+    await c.adminAdjustWallet(ctx);
+
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "Administrators cannot adjust their own wallet",
+      expect.objectContaining({
+        data: expect.objectContaining({ errorCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN" }),
+      }),
+    );
+    expect(recordAdminAudit).toHaveBeenCalledWith(
+      mockStrapi,
+      expect.objectContaining({
+        title: "Rejected self-wallet adjustment",
+        metadata: expect.objectContaining({ rejected: true }),
+      }),
+    );
+    expect(creditWalletBalanceAtomic).not.toHaveBeenCalled();
+    expect(deductWalletBalanceAtomic).not.toHaveBeenCalled();
   });
 });

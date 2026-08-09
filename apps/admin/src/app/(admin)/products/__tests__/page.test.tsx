@@ -27,6 +27,9 @@ jest.mock("@/services", () => ({
 jest.mock("@/hooks/useCurrentUser", () => ({
   useCurrentUser: () => ({ isStoreManager: false, isFounder: false }),
 }));
+jest.mock("@/hooks/useCan", () => ({
+  useCan: () => true,
+}));
 jest.mock("@/hooks/useEditorRedirect", () => ({
   useEditorRedirect: jest.fn(),
 }));

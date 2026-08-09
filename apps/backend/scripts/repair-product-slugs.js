@@ -151,9 +151,9 @@ async function ensureAlias(http, fromSlug, productId) {
     return "created";
   } catch (error) {
     const status = error.response?.status;
-    // Content type not deployed yet — caller treats this as skippable.
-    if (status === 404) {
-      const skipErr = new Error("product-slug-aliases endpoint not found");
+    // Content type not deployed yet (404) or method not routed (405) — skippable.
+    if (status === 404 || status === 405) {
+      const skipErr = new Error("product-slug-aliases endpoint unavailable");
       skipErr.code = "ALIAS_ENDPOINT_MISSING";
       throw skipErr;
     }

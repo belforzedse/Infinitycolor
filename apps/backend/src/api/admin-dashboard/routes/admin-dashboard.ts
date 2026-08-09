@@ -1,5 +1,3 @@
-import { STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
-
 export default {
   routes: [
     {
@@ -9,10 +7,7 @@ export default {
       config: {
         auth: { scope: [] },
         policies: [
-          {
-            name: "global::role-based",
-            config: { roles: STORE_MANAGER_PLUS_ROLES },
-          },
+          { name: "global::require-capability", config: { capability: "account.self.read" } },
         ],
       },
     },

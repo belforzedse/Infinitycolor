@@ -18,20 +18,26 @@ import { useRouter } from "next/navigation";
 import { useProductCategory } from "@/hooks/product/useCategory";
 import { useProductTag } from "@/hooks/product/useTag";
 import logger from "@/utils/logger";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import toast from "react-hot-toast";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import ProductActivityLogs from "@/components/SuperAdmin/Activity/ProductActivityLogs";
 import ProductDisplayDateCard from "@/components/SuperAdmin/Product/ProductDisplayDateCard";
+import ProductPublicationCard from "@/components/SuperAdmin/Product/ProductPublicationCard";
+import type { ProductPublicationAction } from "@/services/super-admin/product/publication";
 
 export default function EditProductsPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const { id } = resolvedParams;
   const [productData, setProductData] = useAtom(editProductDataAtom);
   const router = useRouter();
-  const { roleName } = useCurrentUser();
-  const normalizedRole = (roleName ?? "").toLowerCase().trim();
-  const isOperationalManager = normalizedRole === "store manager" || normalizedRole === "founder";
+  const canUpdate = useCan("product.update");
+  const canDuplicate = useCan("product.duplicate");
+  const canPublish = useCan("product.publish");
+  const canSchedule = useCan("product.schedule");
+  const canManageVariations = useCan("product.variation.manage");
+  const canManageSizeGuide = useCan("product.size-guide.manage");
+  const canReadAudit = useCan("system.audit.read");
   const { fetchAllCategories } = useProductCategory();
   const { handleFetchTags } = useProductTag();
   const sizeGuideRef = useRef<SizeGuideHandle | null>(null);
@@ -44,14 +50,6 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
 
   const isDirty = () =>
     savedSnapshotRef.current !== null && JSON.stringify(productData) !== savedSnapshotRef.current;
-
-  // Redirect editors away from product pages
-  useEffect(() => {
-    const normalizedRole = (roleName ?? "").toLowerCase().trim();
-    if (normalizedRole === "editor") {
-      router.replace("/blog");
-    }
-  }, [roleName, router]);
 
   const getProductParams = useMemo(
     () => ({
@@ -114,7 +112,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productData]);
 
-  const handleUpdateProduct = async () => {
+  const handleUpdateProduct = async (): Promise<boolean> => {
     const loadingToast = toast.loading("در حال ذخیره...");
 
     try {
@@ -122,11 +120,13 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         logger.info("productData2", { productData });
       }
 
-      const sizeSaveResult = await sizeGuideRef.current?.save?.();
+    const sizeSaveResult = canManageSizeGuide
+      ? await sizeGuideRef.current?.save?.()
+      : undefined;
       if (sizeSaveResult === false) {
         toast.dismiss(loadingToast);
         toast.error("خطا در ذخیره راهنمای سایز");
-        return;
+        return false;
       }
 
       const result = await updateProduct(id, productData);
@@ -148,17 +148,32 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           toast.success("محصول با موفقیت ذخیره شد");
           console.error("Error refreshing product data:", refreshError);
         }
+        return true;
       } else {
         // Show error toast with the error message
         toast.dismiss(loadingToast);
         const errorMessage = result.errorMessage || "خطا در ذخیره محصول";
         toast.error(errorMessage);
+        return false;
       }
     } catch (error) {
       toast.dismiss(loadingToast);
       toast.error("خطا در ذخیره محصول");
       console.error("Error updating product:", error);
+      return false;
     }
+  };
+
+  const handleBeforePublication = async (_action: ProductPublicationAction) => {
+    if (!isDirty()) return true;
+    return handleUpdateProduct();
+  };
+
+  const handlePublicationChanged = async () => {
+    const refreshedResult = await getProduct(id, getProductParams);
+    const refreshed = transformToProductData(refreshedResult.data.attributes);
+    setProductData(refreshed);
+    savedSnapshotRef.current = JSON.stringify(refreshed);
   };
 
   const handleDuplicateProduct = async () => {
@@ -201,10 +216,9 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           },
         ]
       : []),
-    {
-      key: "3",
-      value: "راهنمای سایز",
-    },
+    ...(canManageSizeGuide
+      ? [{ key: "3", value: "راهنمای سایز" }]
+      : []),
   ];
 
   return (
@@ -229,15 +243,28 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
       />
       <div className="order-2 flex flex-col gap-4 lg:order-1">
         <IndexPhotoUploader isEditMode />
-        {!isSimpleProduct && <PublishAllVariations productId={Number(id)} />}
+        {(canPublish || canSchedule) && (
+          <ProductPublicationCard
+            productId={id}
+            status={productData.Status}
+            scheduledPublishAt={productData.scheduledPublishAt}
+            scheduledPublishLastError={productData.scheduledPublishLastError}
+            scheduledPublishFailureKind={productData.scheduledPublishFailureKind}
+            canPublish={canPublish}
+            canSchedule={canSchedule}
+            beforeAction={handleBeforePublication}
+            onChanged={handlePublicationChanged}
+          />
+        )}
+        {!isSimpleProduct && canManageVariations && (
+          <PublishAllVariations productId={Number(id)} />
+        )}
         {/* <SetPrice />
         <SetStatus /> */}
         <SetDetails isEditMode />
-        {!isOperationalManager && (
-          <>
-            <ProductDisplayDateCard productId={id} initialDate={displayDate} />
-            <ProductActivityLogs productId={id} pageSize={20} title="رویدادهای محصول" />
-          </>
+        {canUpdate && <ProductDisplayDateCard productId={id} initialDate={displayDate} />}
+        {canReadAudit && (
+          <ProductActivityLogs productId={id} pageSize={20} title="رویدادهای محصول" />
         )}
       </div>
       <div className="order-1 col-span-2 h-fit flex-1 lg:order-2">
@@ -245,7 +272,9 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           {[
             <Overall key={"overall"} productData={productData} isEditMode />,
             ...(!isSimpleProduct ? [<Variables key={"variables"} productId={Number(id)} />] : []),
-            <Sizes key={"sizes"} ref={sizeGuideRef} productId={Number(id)} />,
+            ...(canManageSizeGuide
+              ? [<Sizes key={"sizes"} ref={sizeGuideRef} productId={Number(id)} />]
+              : []),
           ]}
         </Tabs>
       </div>
@@ -259,20 +288,24 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           >
             بیخیال شدن
           </button>
-          <button
-            onClick={() => setShowDuplicateConfirm(true)}
-            className="w-full rounded-xl border-2 border-blue-200 bg-blue-500/10 px-3 py-2 text-sm text-blue-500 hover:bg-blue-500/80 hover:text-white md:w-fit md:px-5"
-            data-testid="admin-product-detail-duplicate"
-          >
-            کپی محصول
-          </button>
-          <button
-            onClick={handleUpdateProduct}
-            className="w-full rounded-xl border-2 border-infinity-primary-lighter/60 bg-infinity-primary/10 px-3 py-2 text-sm text-infinity-primary-darker hover:bg-infinity-primary/80 hover:text-white md:w-fit md:px-5"
-            data-testid="admin-product-save"
-          >
-            ذخیره
-          </button>
+          {canDuplicate && (
+            <button
+              onClick={() => setShowDuplicateConfirm(true)}
+              className="w-full rounded-xl border-2 border-blue-200 bg-blue-500/10 px-3 py-2 text-sm text-blue-500 hover:bg-blue-500/80 hover:text-white md:w-fit md:px-5"
+              data-testid="admin-product-detail-duplicate"
+            >
+              کپی محصول
+            </button>
+          )}
+          {canUpdate && (
+            <button
+              onClick={() => void handleUpdateProduct()}
+              className="w-full rounded-xl border-2 border-infinity-primary-lighter/60 bg-infinity-primary/10 px-3 py-2 text-sm text-infinity-primary-darker hover:bg-infinity-primary/80 hover:text-white md:w-fit md:px-5"
+              data-testid="admin-product-save"
+            >
+              ذخیره تغییرات
+            </button>
+          )}
         </div>
       </div>
     </div>

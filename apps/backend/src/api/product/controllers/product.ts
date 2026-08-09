@@ -4,7 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { roleIsAllowed, STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
+import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
 import {
   buildCacheKey,
   getCacheTtlFromEnv,
@@ -25,6 +25,16 @@ import { generateVariationCombinations } from "../services/variation-combination
 import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
+import { resolveAdminActor } from "../../../utils/adminAuthorization";
+import {
+  executePublicationCommand,
+  PublicationCommandError,
+  runPublicationEffects,
+} from "../services/product-publication";
+import {
+  enqueueScheduledProductPublication,
+  removeScheduledProductPublication,
+} from "../../../queue/product-publication-queue";
 
 const OPERATIONAL_PRODUCT_FIELDS = [
   "Title",
@@ -32,7 +42,6 @@ const OPERATIONAL_PRODUCT_FIELDS = [
   "Weight",
   "CoverImage",
   "Description",
-  "Status",
   "ProductType",
   "IsSimpleProduct",
   "Media",
@@ -47,8 +56,40 @@ const OPERATIONAL_PRODUCT_FIELDS = [
   "product_faqs",
   "product_other_categories",
   "discounts",
-  "removedAt",
 ] as const;
+
+const PUBLICATION_CONTROL_FIELDS = new Set([
+  "Status",
+  "scheduledPublishAt",
+  "scheduledPublishTimezone",
+  "scheduledPublishRequireMedia",
+  "scheduledPublishRevision",
+  "scheduledPublishLastAttemptAt",
+  "scheduledPublishLastError",
+  "scheduledPublishFailureKind",
+  "scheduledPublishAttemptCount",
+  "scheduledPublishNextRetryAt",
+  "publicationRevision",
+  "publicationEffectsCompletedRevision",
+  "publicationEffectsLastError",
+]);
+
+function rejectPublicationFields(ctx: any): boolean {
+  const data = ctx.request?.body?.data;
+  if (!data || typeof data !== "object") return false;
+  const found = Object.keys(data).filter((field) => PUBLICATION_CONTROL_FIELDS.has(field));
+  if (found.length === 0) return false;
+  ctx.status = 400;
+  ctx.body = {
+    error: {
+      status: 400,
+      name: "PublicationCommandRequired",
+      message: "Publication state must be changed through /products/:id/publication",
+      details: { code: "PUBLICATION_COMMAND_REQUIRED", fields: found },
+    },
+  };
+  return true;
+}
 
 /**
  * Check whether the user can access operational catalog records, including
@@ -59,26 +100,8 @@ const OPERATIONAL_PRODUCT_FIELDS = [
  */
 function isAdminUser(user: any): boolean {
   if (!user) return false;
-
-  // Prefer the authoritative content-API role. Editors are administrative UI
-  // users, but do not belong to the operational-commerce role hierarchy.
-  const roleName = user?.role?.name;
-  if (roleName) {
-    return roleIsAllowed(roleName, STORE_MANAGER_PLUS_ROLES);
-  }
-
-  // Check explicit isAdmin flag (set by auth/self endpoint)
-  if (user?.isAdmin === true) {
-    return true;
-  }
-
-  // Check local-user role (role ID 2 is admin)
-  const userRoleId = user?.user_role?.id;
-  if (userRoleId === 2) {
-    return true;
-  }
-
-  return false;
+  const role = normalizeAdminRole(user?.role?.type || user?.role?.name);
+  return role ? hasCapability(role, "product.read") : false;
 }
 
 function readProductStatus(product: any): string | undefined {
@@ -156,7 +179,7 @@ const PRODUCT_POPULATE = {
   product_reviews: {
     populate: {
       user: {
-        fields: ["id", "username", "phone", "email"],
+        fields: ["id"],
         populate: {
           user_info: {
             fields: ["FirstName", "LastName"],
@@ -240,6 +263,10 @@ function getProductPopulateForView(view: unknown) {
     .toLowerCase() === "shell"
     ? PRODUCT_SHELL_POPULATE
     : PRODUCT_POPULATE;
+}
+
+function isUnrestrictedAdminUser(user: any): boolean {
+  return normalizeAdminRole(user?.role?.type || user?.role?.name) === "superadmin";
 }
 
 async function loadProductById(
@@ -364,13 +391,138 @@ async function findProductBySlugInternal(
 
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
   async create(ctx) {
+    if (rejectPublicationFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
+    ctx.request.body = ctx.request.body || {};
+    ctx.request.body.data = { ...(ctx.request.body.data || {}), Status: "InActive" };
     return super.create(ctx);
   },
 
   async update(ctx) {
+    if (rejectPublicationFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     return super.update(ctx);
+  },
+
+  async publication(ctx) {
+    const trustedImporter = isTrustedWordPressMigrationRequest();
+    let user = ctx.state?.user;
+    const body = ctx.request?.body?.data || ctx.request?.body || {};
+    const action = String(body.action || "");
+    const requiredCapability = action === "schedule" || action === "retry"
+      ? "product.schedule"
+      : "product.publish";
+    if (!trustedImporter) {
+      const adminActor = await resolveAdminActor(strapi, user);
+      if (!adminActor || !hasCapability(adminActor.role, requiredCapability)) {
+        return ctx.forbidden("Publication action is not allowed", {
+          code: "PUBLICATION_FORBIDDEN",
+        });
+      }
+      user = adminActor.user;
+    }
+
+    const productId = Number(ctx.params?.id);
+    const command = {
+      action,
+      publishAt: body.publishAt,
+      timezone: body.timezone,
+      requireMedia: trustedImporter ? body.requireMedia === true : false,
+      expectedExternalSource: body.expectedExternalSource,
+      expectedExternalId: body.expectedExternalId,
+    } as any;
+
+    if (trustedImporter) {
+      if (
+        command.expectedExternalSource !== "woocommerce" ||
+        !String(command.expectedExternalId || "").trim()
+      ) {
+        ctx.status = 400;
+        ctx.body = { error: { code: "EXTERNAL_PRODUCT_IDENTITY_REQUIRED" } };
+        return;
+      }
+    }
+
+    const actor = user?.id
+      ? {
+          id: Number(user.id),
+          name: user.username || user.email || null,
+          role: user.role?.name || null,
+          ip: ctx.request?.ip || ctx.ip || null,
+          userAgent: ctx.request?.headers?.["user-agent"] || null,
+        }
+      : undefined;
+
+    try {
+      const result = await executePublicationCommand(strapi, productId, command, {
+        origin: trustedImporter ? "importer" : "admin",
+        actor,
+      });
+      let queueState = "not-required";
+
+      if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) {
+        try {
+          await enqueueScheduledProductPublication({
+            productId,
+            scheduleRevision: result.scheduleRevision,
+            expectedPublishAt: result.scheduledPublishAt,
+          });
+          queueState = "queued";
+        } catch (error) {
+          queueState = "pending-reconciliation";
+          strapi.log.error("[product-publication] delayed job enqueue failed", {
+            productId,
+            scheduleRevision: result.scheduleRevision,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      if (result.previousScheduleRevision) {
+        await removeScheduledProductPublication(productId, result.previousScheduleRevision);
+      }
+
+      if (result.needsPublicationEffects) {
+        try {
+          await runPublicationEffects(strapi, productId, result.publicationRevision);
+        } catch {
+          queueState = "pending-reconciliation";
+        }
+      }
+
+      ctx.body = {
+        data: {
+          id: result.productId,
+          Status: result.status,
+          scheduledPublishAt: result.scheduledPublishAt,
+          scheduledPublishTimezone: result.scheduledPublishTimezone,
+          scheduledPublishRevision: result.scheduleRevision,
+          publicationRevision: result.publicationRevision,
+          queueState,
+          changed: result.changed,
+        },
+      };
+    } catch (error) {
+      if (error instanceof PublicationCommandError) {
+        ctx.status = error.status;
+        ctx.body = {
+          error: {
+            status: error.status,
+            name: "PublicationCommandError",
+            message: error.code,
+            details: { code: error.code },
+          },
+        };
+        return;
+      }
+      strapi.log.error("[product-publication] command failed", {
+        productId,
+        action,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      ctx.status = 500;
+      ctx.body = { error: { code: "PUBLICATION_COMMAND_FAILED" } };
+    }
   },
 
   async generateVariationCombinations(ctx) {
@@ -458,6 +610,18 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         requireCoverImage: restQuery.requireCoverImage,
         pagination: restQuery.pagination,
       });
+    }
+
+    const user = ctx.state.user;
+    if (isAdminUser(user) && !isUnrestrictedAdminUser(user)) {
+      const query = (ctx.query || {}) as any;
+      ctx.query = {
+        filters: query.filters,
+        sort: query.sort,
+        pagination: query.pagination,
+        locale: query.locale,
+        populate: PRODUCT_SHELL_POPULATE,
+      } as any;
     }
 
     const response = await (super.find as any)(ctx, next);
@@ -625,6 +789,14 @@ export default factories.createCoreController("api::product.product", ({ strapi 
   async findOne(ctx, next) {
     // @ts-expect-error Strapi controller typings require two args; we only need ctx for filtering
     const filtersApplied = this.applyPublicProductFilters(ctx);
+    const user = ctx.state.user;
+    if (isAdminUser(user) && !isUnrestrictedAdminUser(user)) {
+      ctx.query = {
+        filters: (ctx.query as any)?.filters,
+        locale: (ctx.query as any)?.locale,
+        populate: PRODUCT_SHELL_POPULATE,
+      } as any;
+    }
     const response: any = await (super.findOne as any)(ctx, next);
 
     if (!filtersApplied) {
@@ -638,7 +810,6 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       return ctx.notFound("Product not found");
     }
 
-    const user = ctx.state.user;
     const isAdmin = isAdminUser(user);
     if (!isAdmin && status === "Active" && product?.id) {
       try {
@@ -746,7 +917,10 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       const isAdmin = isAdminUser(user);
       const bypassCache =
         shouldBypassEndpointCache(ctx.request?.headers as Record<string, unknown>) || isAdmin;
-      const populate = getProductPopulateForView(ctx.query?.view);
+      const populate =
+        isAdmin && !isUnrestrictedAdminUser(user)
+          ? PRODUCT_SHELL_POPULATE
+          : getProductPopulateForView(ctx.query?.view);
 
       const cacheKey = buildCacheKey({
         routeId: "product.by-slug",

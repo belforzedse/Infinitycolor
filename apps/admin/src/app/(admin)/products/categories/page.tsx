@@ -6,9 +6,8 @@ import { MobileTable, getCategoryColumns } from "./table";
 import DeleteCategoryModal from "@/components/SuperAdmin/DeleteCategoryModal";
 import { ENDPOINTS } from "@/constants/api";
 import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCallback, useMemo, useState } from "react";
+import { useCan } from "@/hooks/useCan";
 import { useSetAtom } from "jotai";
 import toast from "react-hot-toast";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
@@ -17,21 +16,12 @@ import type { DeleteCategoryModalCategory } from "@/components/SuperAdmin/Delete
 
 export default function CategoriesPage() {
   useFreshDataOnPageLoad();
-  const router = useRouter();
-  const { roleName } = useCurrentUser();
-  const canDeleteCategories = (roleName ?? "").toLowerCase().trim() === "superadmin";
+  const canCreateCategories = useCan("category.create");
+  const canDeleteCategories = useCan("category.delete");
   const setRefresh = useSetAtom(refreshTable);
   const [deleteModalCategory, setDeleteModalCategory] =
     useState<DeleteCategoryModalCategory | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  // Redirect editors away from product pages
-  useEffect(() => {
-    const normalizedRole = (roleName ?? "").toLowerCase().trim();
-    if (normalizedRole === "editor") {
-      router.replace("/blog");
-    }
-  }, [roleName, router]);
 
   const handleDelete = useCallback((category: DeleteCategoryModalCategory) => {
     setDeleteModalCategory(category);
@@ -70,7 +60,7 @@ export default function CategoriesPage() {
         title="دسته‌بندی‌ها"
         hasFilterButton
         hasPagination
-        hasAddButton
+        hasAddButton={canCreateCategories}
         addButtonText="افزودن دسته‌بندی"
         addButtonPath="/products/categories/add"
         filterOptions={[

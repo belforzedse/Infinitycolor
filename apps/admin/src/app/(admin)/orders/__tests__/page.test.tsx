@@ -28,6 +28,9 @@ jest.mock("@/services/super-admin/orders/list", () => ({
 jest.mock("@/services/super-admin/orders/adjustItems", () => ({
   changeOrderStatus: jest.fn(),
 }));
+jest.mock("@/hooks/useCan", () => ({
+  useCan: () => true,
+}));
 jest.mock("jotai", () => ({ useAtom: () => [false, jest.fn()] }));
 jest.mock("nuqs", () => ({ useQueryState: () => ["1", jest.fn()] }));
 jest.mock("use-debounce", () => ({

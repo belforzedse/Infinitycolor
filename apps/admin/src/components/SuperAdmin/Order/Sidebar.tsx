@@ -7,7 +7,7 @@ import { translateOrderLogMessage } from "@/utils/statusTranslations";
 import SuperAdminOrderLogs from "./SuperAdminOrderLogs";
 import { type OrderTimelineEvent } from "@/components/User/Orders/Detail/OrderTimeline";
 import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import toast from "react-hot-toast";
 import { faNum } from "@/utils/faNum";
 import { ORDER_LOGS_QUERY } from "./orderLogsQuery";
@@ -35,8 +35,9 @@ export default function SuperAdminOrderSidebar({
 }: SuperAdminOrderSidebarProps = {}) {
   const router = useRouter();
   const { id } = useParams();
-  const { user, isLoading: isUserLoading, isStoreManager } = useCurrentUser();
-  const canViewOrderLogs = !isUserLoading && !!user && !isStoreManager;
+  const canViewOrderLogs = useCan("order.audit.read");
+  const canPrint = useCan("order.print");
+  const canManageShipping = useCan("order.shipping.manage");
   const [orderLogs, setOrderLogs] = useState<OrderLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [activeLogTab, setActiveLogTab] = useState<"events" | "audit">("events");
@@ -181,7 +182,7 @@ export default function SuperAdminOrderSidebar({
             <span className="text-sm text-neutral-400">شماره فاکتور: 841649</span>
           </div>
 
-          <button
+          {canPrint && <button
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -201,10 +202,10 @@ export default function SuperAdminOrderSidebar({
             <span className="text-sm text-neutral-500">چاپ فاکتور</span>
 
             <PrintIcon />
-          </button>
+          </button>}
 
           {/* Anipo Barcode Button - Full Width */}
-          <div className="mt-2 flex w-full">
+          {canManageShipping && <div className="mt-2 flex w-full">
             {hasBarcode ? (
               <button
                 className="flex w-full cursor-default items-center justify-center gap-1 rounded-md bg-green-50 py-1.5 text-green-600"
@@ -253,7 +254,7 @@ export default function SuperAdminOrderSidebar({
                 <span className="text-sm">صدور بارکد Anipo</span>
               </button>
             )}
-          </div>
+          </div>}
         </div>
       </div>
 
@@ -342,12 +343,14 @@ export default function SuperAdminOrderSidebar({
         </div>
       )}
 
-      <AnipoBarcodeDialog
-        isOpen={showBarcodeDialog}
-        onClose={() => setShowBarcodeDialog(false)}
-        onGenerate={handleGenerateBarcode}
-        loading={isGenerating}
-      />
+      {canManageShipping && (
+        <AnipoBarcodeDialog
+          isOpen={showBarcodeDialog}
+          onClose={() => setShowBarcodeDialog(false)}
+          onGenerate={handleGenerateBarcode}
+          loading={isGenerating}
+        />
+      )}
     </div>
   );
 }

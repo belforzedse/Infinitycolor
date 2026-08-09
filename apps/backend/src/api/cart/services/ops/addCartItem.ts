@@ -40,7 +40,7 @@ export const addCartItemOp = async (
     return { success: false, message: "Product is no longer available" };
   }
 
-  if (product.Status === "InActive") {
+  if (product.Status !== "Active") {
     return { success: false, message: "Product is currently unavailable" };
   }
 

@@ -316,6 +316,14 @@ describe("Order Controller", () => {
         order_items: [],
       });
       registerQuery("api::order.order", { findOne: orderFindOne });
+      registerQuery("plugin::users-permissions.user", {
+        findOne: jest.fn().mockResolvedValue({
+          id: 7,
+          IsActive: true,
+          blocked: false,
+          role: { name: "Store Manager", type: "store-manager" },
+        }),
+      });
       const controller = loadOrderController(strapi);
       const ctx = createCtx({
         params: { id: 41 },

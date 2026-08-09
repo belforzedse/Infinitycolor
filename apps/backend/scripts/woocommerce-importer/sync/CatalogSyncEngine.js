@@ -183,7 +183,16 @@ class CatalogSyncEngine {
       }
 
       try {
-        await this.strapiClient.updateProduct(item.strapiId, { Status: "InActive" });
+        const current = await this.strapiClient.getProductById(item.strapiId);
+        const externalId =
+          current?.data?.attributes?.external_id ??
+          current?.data?.external_id ??
+          current?.attributes?.external_id ??
+          current?.external_id;
+        if (!externalId) throw new Error("PRODUCT_EXTERNAL_ID_REQUIRED");
+        await this.strapiClient.changeProductPublication(item.strapiId, externalId, {
+          action: "unpublish",
+        });
         this.logger.info(`Deactivated Strapi-only product ID ${item.strapiId}`);
       } catch (error) {
         report.record("products", "failed", {

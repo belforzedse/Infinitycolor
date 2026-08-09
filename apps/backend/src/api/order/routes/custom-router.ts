@@ -2,20 +2,8 @@
  * Custom router for order APIs
  */
 
-import { ROLE_NAMES, STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
-
-const operationalPolicy = [
-  {
-    name: "global::role-based",
-    config: { roles: STORE_MANAGER_PLUS_ROLES },
-  },
-];
-
-const superadminPolicy = [
-  {
-    name: "global::role-based",
-    config: { roles: [ROLE_NAMES.SUPERADMIN] },
-  },
+const capabilityPolicy = (capability: string) => [
+  { name: "global::require-capability", config: { capability } },
 ];
 
 export default {
@@ -100,7 +88,7 @@ export default {
       handler: "order.generateAnipoBarcode",
       config: {
         auth: { scope: [] },
-        policies: operationalPolicy,
+        policies: capabilityPolicy("order.shipping.manage"),
       },
     },
     {
@@ -109,7 +97,7 @@ export default {
       handler: "order.adminAdjustItems",
       config: {
         auth: { scope: [] },
-        policies: operationalPolicy,
+        policies: capabilityPolicy("order.items.adjust"),
       },
     },
     {
@@ -118,7 +106,7 @@ export default {
       handler: "order.adminUpdateNotes",
       config: {
         auth: { scope: [] },
-        policies: operationalPolicy,
+        policies: capabilityPolicy("order.notes.update"),
       },
     },
     {
@@ -127,7 +115,7 @@ export default {
       handler: "order.adminTransition",
       config: {
         auth: { scope: [] },
-        policies: operationalPolicy,
+        policies: capabilityPolicy("order.status.update"),
       },
     },
     {
@@ -136,7 +124,7 @@ export default {
       handler: "order.adminCancel",
       config: {
         auth: { scope: [] },
-        policies: operationalPolicy,
+        policies: capabilityPolicy("order.cancel"),
       },
     },
     {
@@ -145,7 +133,7 @@ export default {
       handler: "order.adminPaymentOperation",
       config: {
         auth: { scope: [] },
-        policies: superadminPolicy,
+        policies: capabilityPolicy("order.financial.read"),
       },
     },
     {
@@ -154,7 +142,7 @@ export default {
       handler: "order.adminVoidBarcode",
       config: {
         auth: { scope: [] },
-        policies: operationalPolicy,
+        policies: capabilityPolicy("order.shipping.manage"),
       },
     },
     {
@@ -163,7 +151,7 @@ export default {
       handler: "order.decrementStockManual",
       config: {
         auth: { scope: [] },
-        policies: operationalPolicy,
+        policies: capabilityPolicy("order.manual.create"),
       },
     },
   ],

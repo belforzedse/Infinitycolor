@@ -117,16 +117,97 @@ describe("liquidity/gateway-liquidity Toman normalization", () => {
     ]);
   });
 
-  it("gateway-liquidity: still requires Superadmin (role gate unaffected by the currency change)", async () => {
+  it("gateway-liquidity: requires the finance-report capability", async () => {
     (global as any).strapi = {
       query: () => ({
-        findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Founder" } }),
+        findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Store Manager" } }),
       }),
       db: { connection: { raw: jest.fn() } },
     };
     const controller = loadController();
     const ctx = createCtx();
     await controller.gatewayLiquidity(ctx);
-    expect(ctx.forbidden).toHaveBeenCalledWith("Access denied - Superadmin role required");
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
+    );
+  });
+
+  it("gateway-liquidity: joins through the link table with LEFT JOIN, not INNER, so an unlinked successful transaction is kept", async () => {
+    // Regression test: this endpoint used to INNER JOIN through the link table,
+    // silently dropping any `contract_transactions` row with no `payment_gateway`
+    // relation set. That made `/sales/gateways` under-count relative to
+    // `/sales/liquidity`, which sums every successful transaction unconditionally.
+    let capturedQuery = "";
+    mockStrapi(async (sql: string) => {
+      if (sql.includes("information_schema.tables")) {
+        return { rows: [{ table_name: "contract_transactions_payment_gateway_links" }] };
+      }
+      if (sql.includes("information_schema.columns")) {
+        return {
+          rows: [
+            { column_name: "contract_transaction_id" },
+            { column_name: "payment_gateway_id" },
+          ],
+        };
+      }
+      if (sql.includes("SELECT pg.id AS gateway_id")) {
+        capturedQuery = sql;
+        return {
+          rows: [
+            { gateway_id: 1, title: "Mellat", total: 30_000_000 },
+            { gateway_id: null, title: "نامشخص", total: 5_000_000 },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const controller = loadController();
+    const ctx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31" } });
+    await controller.gatewayLiquidity(ctx);
+
+    const normalized = capturedQuery.replace(/\s+/g, " ").trim();
+    expect(normalized).toContain(
+      "LEFT JOIN contract_transactions_payment_gateway_links l ON l.contract_transaction_id = ct.id " +
+        "LEFT JOIN payment_gateways pg ON pg.id = l.payment_gateway_id",
+    );
+    expect(ctx.body.data.rows).toEqual([
+      { gatewayId: 1, gatewayTitle: "Mellat", total: 3_000_000 },
+      { gatewayId: null, gatewayTitle: "نامشخص", total: 500_000 },
+    ]);
+  });
+
+  it("gateway-liquidity reconciles with liquidity's total for an identical date range", async () => {
+    // Same WHERE predicate (`ct.status = 'Success' AND ct.date BETWEEN ? AND ?`),
+    // no join dropping rows: summing every gateway-liquidity row (including the
+    // unassigned bucket) must equal the unconditional liquidity total.
+    mockStrapi(async (sql: string) => {
+      if (sql.includes("information_schema.tables")) return { rows: [] };
+      if (sql.includes("SELECT pg.id AS gateway_id")) {
+        return {
+          rows: [
+            { gateway_id: 1, title: "Mellat", total: 30_000_000 },
+            { gateway_id: null, title: "نامشخص", total: 5_000_000 },
+          ],
+        };
+      }
+      if (sql.includes("SELECT COALESCE(SUM")) return { rows: [{ total: 35_000_000 }] };
+      if (sql.includes("date_trunc(?, ct.date)")) return { rows: [] };
+      return { rows: [] };
+    });
+
+    const controller = loadController();
+    const gatewayCtx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31" } });
+    const liquidityCtx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31" } });
+    await Promise.all([
+      controller.gatewayLiquidity(gatewayCtx),
+      controller.liquidity(liquidityCtx),
+    ]);
+
+    const gatewaySum = gatewayCtx.body.data.rows.reduce(
+      (sum: number, r: any) => sum + r.total,
+      0,
+    );
+    expect(gatewaySum).toBe(liquidityCtx.body.data.total);
   });
 });

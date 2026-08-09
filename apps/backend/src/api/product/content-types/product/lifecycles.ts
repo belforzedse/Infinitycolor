@@ -293,8 +293,26 @@ export default {
     // Use result.Slug first (updated value), then fallback to current.Slug
     const currentSlug = result.Slug || current?.Slug;
     const currentStatus = result.Status || current?.Status;
-    if (currentSlug && currentStatus === "Active") {
-      await triggerProductRevalidation(currentSlug);
+
+    // Every PDP URL that could still be serving stale content after this write must be
+    // invalidated — not just the "became Active" case. A rename leaves the OLD slug's
+    // cached response stale; an unpublish or soft-delete leaves the product's own PDP
+    // stale (previously nothing fired revalidation for either, so the storefront could
+    // keep serving a since-unpublished/deleted product until the 30s ISR window expired
+    // on its own). Dedupe into a Set since some of these conditions can overlap.
+    const slugsToRevalidate = new Set<string>();
+    if (currentSlug && currentStatus === "Active") slugsToRevalidate.add(currentSlug);
+    if (previous?.Slug && previous.Slug !== currentSlug) slugsToRevalidate.add(previous.Slug);
+    if (statusChange && statusChange.from === "Active" && statusChange.to !== "Active") {
+      const staleSlug = previous?.Slug || currentSlug;
+      if (staleSlug) slugsToRevalidate.add(staleSlug);
+    }
+    if (removedChange?.to) {
+      const staleSlug = previous?.Slug || currentSlug;
+      if (staleSlug) slugsToRevalidate.add(staleSlug);
+    }
+    for (const slug of slugsToRevalidate) {
+      await triggerProductRevalidation(slug);
     }
     scheduleHomeProductsRevalidation("product-update", {
       productId: result.id,
@@ -312,13 +330,23 @@ export default {
       event.state = { ...(event.state || {}), migrationWrite: true };
       return;
     }
-    event.state = { ...(event.state || {}), deletingProductId: id };
+    // Capture the slug before the row disappears — afterDelete has nothing left to
+    // query, and without it the deleted product's PDP was never invalidated at all.
+    const existing = await strapi.entityService.findOne("api::product.product", id, {
+      fields: ["Slug"],
+    });
+    event.state = {
+      ...(event.state || {}),
+      deletingProductId: id,
+      deletingProductSlug: existing?.Slug,
+    };
   },
 
   async afterDelete(event) {
     if ((event as any)?.state?.migrationWrite || isTrustedWordPressMigrationRequest()) return;
     const id = (event as any)?.state?.deletingProductId;
     if (!id) return;
+    const deletingProductSlug = (event as any)?.state?.deletingProductSlug as string | undefined;
     const actor = resolveAuditActor(event as any);
 
     // Try to create product-log, but don't fail if product relation validation fails
@@ -360,6 +388,9 @@ export default {
       metadata: { productId: id, isSoftDelete: false },
     });
 
+    if (deletingProductSlug) {
+      await triggerProductRevalidation(deletingProductSlug);
+    }
     scheduleHomeProductsRevalidation("product-delete", { productId: id });
   },
 };

@@ -1,22 +1,16 @@
 import type { Strapi } from "@strapi/strapi";
 import { logAdminBarcodeOperation } from "../../../../utils/adminActivity";
-import { roleIsAllowed, OPERATIONAL_ROLES } from "../../../../utils/roles";
+import { requireCapability } from "../../../../utils/adminAuthorization";
 
 export async function adminVoidBarcodeHandler(strapi: Strapi, ctx: any) {
   const { id } = ctx.params;
   const { reason } = ctx.request.body || {};
 
   try {
-    // Admin guard: ensure plugin user has an admin/store-manager role
-    const pluginUser = ctx.state.user;
-    if (!pluginUser) return ctx.forbidden("Admin access required");
-    const fullUser = await strapi.db
-      .query("plugin::users-permissions.user")
-      .findOne({ where: { id: pluginUser.id }, populate: ["role"] });
+    const actor = await requireCapability(ctx, strapi, "order.shipping.manage");
+    if (!actor) return;
+    const fullUser = actor.user;
     const roleName = fullUser?.role?.name;
-    if (!fullUser || !roleIsAllowed(roleName, OPERATIONAL_ROLES)) {
-      return ctx.forbidden("Admin access required");
-    }
 
     const order = await strapi.db.query("api::order.order").findOne({
       where: { id },

@@ -21,7 +21,7 @@ import {
   translateOrderStatus,
 } from "@/utils/statusTranslations";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import { CopyableId, DetailHeader, StatusBadge } from "@/components/admin";
 import { priceFormatter } from "@/utils/price";
 import { formatFaRelativeDateTime } from "@/utils/formatFaRelativeDateTime";
@@ -154,8 +154,14 @@ type OrderResponse = {
 };
 
 export default function EditOrderPage() {
-  const { isStoreManager, isFounder } = useCurrentUser();
-  const isOperationalManager = isStoreManager || isFounder;
+  const canChangeStatus = useCan("order.status.update");
+  const canCancel = useCan("order.cancel");
+  const canEditNotes = useCan("order.notes.update");
+  const canAdjustItems = useCan("order.items.adjust");
+  const canReadFinancials = useCan("order.financial.read");
+  const canReadAudit = useCan("order.audit.read");
+  const canCreateOrder = useCan("order.manual.create");
+  const canManageUsers = useCan("system.users.manage");
   const [data, setData] = useState<SuperAdminOrderDetail>();
 
   const [loading, setLoading] = useState(false);
@@ -456,23 +462,33 @@ export default function EditOrderPage() {
           : ""
       }`
     : "";
-  const pageConfig = !isOperationalManager
-    ? config
-    : ({
-        ...config,
-        addButton: undefined,
-        config: config.config.map((group) => ({
-          ...group,
-          sections: group.sections.map((section) => ({
-            ...section,
-            fields: section.fields.map((field) =>
-              "name" in field && field.name === "userName"
-                ? { ...field, labelAction: undefined }
-                : field,
-            ),
-          })),
-        })),
-      } as typeof config);
+  const pageConfig = {
+    ...config,
+    addButton: canCreateOrder ? config.addButton : undefined,
+    actionButtons: canEditNotes ? config.actionButtons : () => null,
+    config: config.config.map((group) => ({
+      ...group,
+      sections: group.sections.map((section) => ({
+        ...section,
+        fields: section.fields
+          .filter(
+            (field) =>
+              canReadFinancials ||
+              !("name" in field && ["paymentGateway", "transactionId"].includes(String(field.name))),
+          )
+          .map((field) => {
+            if (!("name" in field)) return field;
+            if (field.name === "userName" && !canManageUsers) {
+              return { ...field, labelAction: undefined };
+            }
+            if (["description", "note"].includes(String(field.name)) && !canEditNotes) {
+              return { ...field, readOnly: true };
+            }
+            return field;
+          }),
+      })),
+    })),
+  } as typeof config;
 
   const statusMeta = getOrderStatusMeta(data?.orderStatus);
   const buyerName = data?.userName?.trim();
@@ -523,7 +539,14 @@ export default function EditOrderPage() {
         }
       />
 
-      {data && <OrderStatusActions order={data} onSuccess={refreshAfterOrderAction} />}
+      {data && (
+        <OrderStatusActions
+          order={data}
+          onSuccess={refreshAfterOrderAction}
+          canChangeStatus={canChangeStatus}
+          canCancel={canCancel}
+        />
+      )}
 
       {/* Purchased items: the point of the page, previously rendered last. */}
       <Footer order={data} onReload={refreshAfterOrderAction} />
@@ -550,7 +573,7 @@ export default function EditOrderPage() {
         barcode voiding). Collapsed by default so they are reachable but never
         the first thing a phone user can hit.
       */}
-      {data && (
+      {data && canAdjustItems && (
         <details className="group rounded-2xl border border-slate-200 bg-white">
           <summary className="text-sm flex min-h-[52px] cursor-pointer list-none items-center justify-between gap-3 px-4 font-medium text-slate-700 md:px-5">
             <span>عملیات پیشرفته سفارش</span>
@@ -564,7 +587,7 @@ export default function EditOrderPage() {
         </details>
       )}
 
-      {!isOperationalManager && data?.id ? <GatewayLogs orderId={data.id} /> : null}
+      {canReadAudit && data?.id ? <GatewayLogs orderId={data.id} /> : null}
     </div>
   );
 }

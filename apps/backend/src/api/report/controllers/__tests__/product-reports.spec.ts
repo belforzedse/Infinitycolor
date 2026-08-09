@@ -113,8 +113,11 @@ function rawRouter(sql: string) {
   return { rows: [] };
 }
 
-function createStrapi() {
+function createStrapi(roleName = "Founder") {
   return {
+    query: () => ({
+      findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: roleName } }),
+    }),
     db: { connection: { raw: jest.fn(async (sql: string) => rawRouter(sql)) } },
     entityService: { findMany: jest.fn().mockResolvedValue([]) },
     log: { warn: jest.fn(), error: jest.fn(), info: jest.fn() },
@@ -150,15 +153,14 @@ describe("product reporting endpoints", () => {
   });
 
   it("blocks non-manager roles", async () => {
-    fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Customer" } });
-    roleIsAllowedMock.mockReturnValue(false);
+    (global as any).strapi = createStrapi("Customer");
 
     const controller = loadController();
     const ctx = createCtx();
     await controller.productPerformance(ctx);
 
     expect(ctx.forbidden).toHaveBeenCalledWith(
-      "Access denied - Superadmin or Founder role required",
+      "You do not have permission to perform this action",
     );
     expect(ctx.body).toBeUndefined();
   });
@@ -171,21 +173,16 @@ describe("product reporting endpoints", () => {
     ["productDetail", { productId: "3" }],
     ["productInventory", {}],
   ])("allows Founder through the %s access gate", async (handlerName, query) => {
-    fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Founder" } });
-    roleIsAllowedMock.mockImplementation((role, allowedRoles) => allowedRoles.includes(role));
-
     const controller = loadController();
     const ctx = createCtx({ query });
     await controller[handlerName](ctx);
 
-    expect(roleIsAllowedMock).toHaveBeenCalledWith("Founder", expect.arrayContaining(["Founder"]));
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
   describe("with an authorized manager", () => {
     beforeEach(() => {
-      fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Store manager" } });
-      roleIsAllowedMock.mockReturnValue(true);
+      (global as any).strapi = createStrapi("Store Manager");
     });
 
     it("overview converts refund IRR->Toman, computes net, and returns inventory", async () => {

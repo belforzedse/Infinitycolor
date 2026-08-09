@@ -299,7 +299,7 @@ export default function AdminActivityReportPage() {
   const visibleCount = filteredActivities.length;
 
   return (
-    <ContentWrapper title="گزارش ادمین ها">
+    <ContentWrapper title="گزارش فعالیت ادمین‌ها">
       <div className="space-y-6">
         {/* Filters Section */}
         <div className="rounded-2xl bg-white p-5">

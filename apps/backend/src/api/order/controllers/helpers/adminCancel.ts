@@ -1,7 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
 import { logAdminOrderCancel } from "../../../../utils/adminActivity";
 import { releaseReservedStockAtomic } from "../../../cart/services/lib/stock";
-import { roleIsAllowed, OPERATIONAL_ROLES } from "../../../../utils/roles";
+import { requireCapability } from "../../../../utils/adminAuthorization";
 import { queueSnappayAdminCancel } from "../../../payment-gateway/services/snappay-orchestrator";
 import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
 import { computePaidAmountToman } from "./paidAmount";
@@ -16,16 +16,10 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
   const { reason } = ctx.request.body as { reason?: string };
 
   try {
-    // Admin guard: ensure plugin user has an admin/store-manager role
-    const pluginUser = ctx.state.user;
-    if (!pluginUser) return ctx.forbidden("Admin access required");
-    const fullUser = await strapi.db
-      .query("plugin::users-permissions.user")
-      .findOne({ where: { id: pluginUser.id }, populate: ["role"] });
+    const actor = await requireCapability(ctx, strapi, "order.cancel");
+    if (!actor) return;
+    const fullUser = actor.user;
     const roleName = fullUser?.role?.name;
-    if (!fullUser || !roleIsAllowed(roleName, OPERATIONAL_ROLES)) {
-      return ctx.forbidden("Admin access required");
-    }
 
     // Load order
     const order = await strapi.db.query("api::order.order").findOne({

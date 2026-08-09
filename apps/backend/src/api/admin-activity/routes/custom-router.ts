@@ -2,19 +2,10 @@
  * Custom router for admin-activity APIs
  */
 
-import { ROLE_NAMES } from "../../../utils/roles";
-
-const superadminPolicy = [
+const capabilityPolicy = (capability: string) => [
   {
-    name: "global::role-based",
-    config: { roles: [ROLE_NAMES.SUPERADMIN] },
-  },
-];
-
-const founderReportingPolicy = [
-  {
-    name: "global::role-based",
-    config: { roles: [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.FOUNDER] },
+    name: "global::require-capability",
+    config: { capability },
   },
 ];
 
@@ -26,7 +17,7 @@ export default {
       handler: "admin-activity.findMyActivities",
       config: {
         auth: { scope: [] },
-        policies: superadminPolicy,
+        policies: capabilityPolicy("system.audit.read"),
         middlewares: [],
       },
     },
@@ -36,7 +27,7 @@ export default {
       handler: "admin-activity.findOrderActivities",
       config: {
         auth: { scope: [] },
-        policies: founderReportingPolicy,
+        policies: capabilityPolicy("order.audit.read"),
         middlewares: [],
       },
     },
@@ -46,7 +37,7 @@ export default {
       handler: "admin-activity.findUserActivities",
       config: {
         auth: { scope: [] },
-        policies: superadminPolicy,
+        policies: capabilityPolicy("system.audit.read"),
         middlewares: [],
       },
     },
@@ -56,7 +47,7 @@ export default {
       handler: "admin-activity.findProductActivities",
       config: {
         auth: { scope: [] },
-        policies: superadminPolicy,
+        policies: capabilityPolicy("system.audit.read"),
         middlewares: [],
       },
     },
@@ -66,7 +57,7 @@ export default {
       handler: "admin-activity.findReport",
       config: {
         auth: { scope: [] },
-        policies: superadminPolicy,
+        policies: capabilityPolicy("system.audit.read"),
         middlewares: [],
       },
     },

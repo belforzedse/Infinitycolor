@@ -2183,6 +2183,185 @@ export interface ApiPostPost extends Schema.CollectionType {
   };
 }
 
+export interface ApiProductAttributeAssignmentProductAttributeAssignment
+  extends Schema.CollectionType {
+  collectionName: "product_attribute_assignments";
+  info: {
+    description: "Ordered attribute configuration and allowed terms for one product";
+    displayName: "Product Attribute Assignment";
+    pluralName: "product-attribute-assignments";
+    singularName: "product-attribute-assignment";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::product-attribute-assignment.product-attribute-assignment",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    external_id: Attribute.String;
+    external_source: Attribute.String;
+    IsVariation: Attribute.Boolean & Attribute.DefaultTo<true>;
+    IsVisible: Attribute.Boolean & Attribute.DefaultTo<true>;
+    Position: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    product: Attribute.Relation<
+      "api::product-attribute-assignment.product-attribute-assignment",
+      "manyToOne",
+      "api::product.product"
+    >;
+    product_attribute: Attribute.Relation<
+      "api::product-attribute-assignment.product-attribute-assignment",
+      "manyToOne",
+      "api::product-attribute.product-attribute"
+    >;
+    terms: Attribute.Relation<
+      "api::product-attribute-assignment.product-attribute-assignment",
+      "manyToMany",
+      "api::product-attribute-term.product-attribute-term"
+    >;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::product-attribute-assignment.product-attribute-assignment",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+  };
+}
+
+export interface ApiProductAttributeTermProductAttributeTerm extends Schema.CollectionType {
+  collectionName: "product_attribute_terms";
+  info: {
+    description: "One selectable value of a product attribute";
+    displayName: "Product Attribute Term";
+    pluralName: "product-attribute-terms";
+    singularName: "product-attribute-term";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    ColorCode: Attribute.String;
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::product-attribute-term.product-attribute-term",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    external_id: Attribute.String;
+    external_source: Attribute.String;
+    Position: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    product_attribute: Attribute.Relation<
+      "api::product-attribute-term.product-attribute-term",
+      "manyToOne",
+      "api::product-attribute.product-attribute"
+    >;
+    product_attribute_assignments: Attribute.Relation<
+      "api::product-attribute-term.product-attribute-term",
+      "manyToMany",
+      "api::product-attribute-assignment.product-attribute-assignment"
+    >;
+    product_variations: Attribute.Relation<
+      "api::product-attribute-term.product-attribute-term",
+      "manyToMany",
+      "api::product-variation.product-variation"
+    >;
+    Slug: Attribute.String;
+    Title: Attribute.String & Attribute.Required;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::product-attribute-term.product-attribute-term",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+  };
+}
+
+export interface ApiProductAttributeProductAttribute extends Schema.CollectionType {
+  collectionName: "product_attributes";
+  info: {
+    description: "Reusable or product-scoped variation attribute definition";
+    displayName: "Product Attribute";
+    pluralName: "product-attributes";
+    singularName: "product-attribute";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::product-attribute.product-attribute",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    external_id: Attribute.String;
+    external_source: Attribute.String;
+    LegacyProjection: Attribute.Enumeration<["None", "Color", "Size", "Model"]> &
+      Attribute.Required &
+      Attribute.DefaultTo<"None">;
+    owner_product: Attribute.Relation<
+      "api::product-attribute.product-attribute",
+      "manyToOne",
+      "api::product.product"
+    >;
+    Position: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    product_attribute_assignments: Attribute.Relation<
+      "api::product-attribute.product-attribute",
+      "oneToMany",
+      "api::product-attribute-assignment.product-attribute-assignment"
+    >;
+    product_attribute_terms: Attribute.Relation<
+      "api::product-attribute.product-attribute",
+      "oneToMany",
+      "api::product-attribute-term.product-attribute-term"
+    >;
+    Scope: Attribute.Enumeration<["Global", "Product"]> &
+      Attribute.Required &
+      Attribute.DefaultTo<"Global">;
+    Slug: Attribute.String & Attribute.Required;
+    Title: Attribute.String & Attribute.Required;
+    Type: Attribute.Enumeration<["Text", "Color"]> &
+      Attribute.Required &
+      Attribute.DefaultTo<"Text">;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::product-attribute.product-attribute",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+  };
+}
+
 export interface ApiProductCategoryContentProductCategoryContent extends Schema.CollectionType {
   collectionName: "product_category_contents";
   info: {
@@ -2356,7 +2535,19 @@ export interface ApiProductLogProductLog extends Schema.CollectionType {
     draftAndPublish: false;
   };
   attributes: {
-    Action: Attribute.Enumeration<["Create", "Update", "Delete"]> & Attribute.Required;
+    Action: Attribute.Enumeration<
+      [
+        "Create",
+        "Update",
+        "Delete",
+        "Schedule",
+        "Reschedule",
+        "CancelSchedule",
+        "Publish",
+        "Unpublish",
+      ]
+    > &
+      Attribute.Required;
     Changes: Attribute.JSON;
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<"api::product-log.product-log", "oneToOne", "admin::user"> &
@@ -2536,6 +2727,41 @@ export interface ApiProductSizeHelperProductSizeHelper extends Schema.Collection
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<
       "api::product-size-helper.product-size-helper",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+  };
+}
+
+export interface ApiProductSlugAliasProductSlugAlias extends Schema.CollectionType {
+  collectionName: "product_slug_aliases";
+  info: {
+    description: "Prior product slug forms that permanently redirect to the canonical Slug";
+    displayName: "ProductSlugAlias";
+    pluralName: "product-slug-aliases";
+    singularName: "product-slug-alias";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::product-slug-alias.product-slug-alias",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    product: Attribute.Relation<
+      "api::product-slug-alias.product-slug-alias",
+      "manyToOne",
+      "api::product.product"
+    >;
+    Slug: Attribute.String & Attribute.Required & Attribute.Unique;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::product-slug-alias.product-slug-alias",
       "oneToOne",
       "admin::user"
     > &
@@ -2813,6 +3039,7 @@ export interface ApiProductVariationProductVariation extends Schema.CollectionTy
     draftAndPublish: false;
   };
   attributes: {
+    AttributeSignature: Attribute.String;
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<
       "api::product-variation.product-variation",
@@ -2827,7 +3054,7 @@ export interface ApiProductVariationProductVariation extends Schema.CollectionTy
         },
         string
       >;
-    external_id: Attribute.String & Attribute.Unique;
+    external_id: Attribute.String;
     external_source: Attribute.String;
     general_discounts: Attribute.Relation<
       "api::product-variation.product-variation",
@@ -2867,6 +3094,11 @@ export interface ApiProductVariationProductVariation extends Schema.CollectionTy
       "api::product-variation.product-variation",
       "oneToOne",
       "api::product-variation-size.product-variation-size"
+    >;
+    selected_attribute_terms: Attribute.Relation<
+      "api::product-variation.product-variation",
+      "manyToMany",
+      "api::product-attribute-term.product-attribute-term"
     >;
     SKU: Attribute.String & Attribute.Required & Attribute.Unique;
     updatedAt: Attribute.DateTime;
@@ -2926,12 +3158,22 @@ export interface ApiProductProduct extends Schema.CollectionType {
       Attribute.Private;
     Description: Attribute.RichText;
     discounts: Attribute.Relation<"api::product.product", "manyToMany", "api::discount.discount">;
-    external_id: Attribute.String & Attribute.Unique;
+    external_id: Attribute.String;
     external_source: Attribute.String;
     Files: Attribute.Media<"files", true>;
     IsSimpleProduct: Attribute.Boolean & Attribute.DefaultTo<false>;
     LastEditedByAdminAt: Attribute.DateTime;
     Media: Attribute.Media<"images" | "videos", true>;
+    owned_product_attributes: Attribute.Relation<
+      "api::product.product",
+      "oneToMany",
+      "api::product-attribute.product-attribute"
+    >;
+    product_attribute_assignments: Attribute.Relation<
+      "api::product.product",
+      "oneToMany",
+      "api::product-attribute-assignment.product-attribute-assignment"
+    >;
     product_faqs: Attribute.Relation<
       "api::product.product",
       "oneToMany",
@@ -2973,9 +3215,49 @@ export interface ApiProductProduct extends Schema.CollectionType {
       "api::product-view.product-view"
     >;
     ProductType: Attribute.Enumeration<["Variable", "Simple"]> & Attribute.DefaultTo<"Variable">;
+    publicationEffectsCompletedRevision: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    publicationEffectsLastError: Attribute.String;
+    publicationRevision: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
     RatingCount: Attribute.Integer;
     removedAt: Attribute.DateTime;
     ReturnConditions: Attribute.Text;
+    scheduledPublishAt: Attribute.DateTime;
+    scheduledPublishAttemptCount: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    scheduledPublishFailureKind: Attribute.Enumeration<["Transient", "Permanent"]>;
+    scheduledPublishLastAttemptAt: Attribute.DateTime;
+    scheduledPublishLastError: Attribute.String;
+    scheduledPublishNextRetryAt: Attribute.DateTime;
+    scheduledPublishRequireMedia: Attribute.Boolean & Attribute.DefaultTo<false>;
+    scheduledPublishRevision: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    scheduledPublishTimezone: Attribute.String;
     SeenCount: Attribute.Integer &
       Attribute.SetMinMax<
         {
@@ -2984,8 +3266,14 @@ export interface ApiProductProduct extends Schema.CollectionType {
         number
       > &
       Attribute.DefaultTo<0>;
-    Slug: Attribute.String & Attribute.Unique;
-    Status: Attribute.Enumeration<["Active", "InActive"]>;
+    Slug: Attribute.String;
+    slug_aliases: Attribute.Relation<
+      "api::product.product",
+      "oneToMany",
+      "api::product-slug-alias.product-slug-alias"
+    >;
+    Status: Attribute.Enumeration<["Active", "InActive", "Scheduled"]> &
+      Attribute.DefaultTo<"InActive">;
     Title: Attribute.String & Attribute.Required;
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<"api::product.product", "oneToOne", "admin::user"> &
@@ -3782,8 +4070,12 @@ export interface PluginUsersPermissionsUser extends Schema.CollectionType {
     };
   };
   attributes: {
+    AccountOrigin: Attribute.Enumeration<["Native", "WooRegistered", "WooGuest"]> &
+      Attribute.Required &
+      Attribute.DefaultTo<"Native">;
     blocked: Attribute.Boolean & Attribute.DefaultTo<false>;
     cart: Attribute.Relation<"plugin::users-permissions.user", "oneToOne", "api::cart.cart">;
+    ClaimedAt: Attribute.DateTime;
     confirmationToken: Attribute.String & Attribute.Private;
     confirmed: Attribute.Boolean & Attribute.DefaultTo<false>;
     contracts: Attribute.Relation<
@@ -3807,6 +4099,8 @@ export interface PluginUsersPermissionsUser extends Schema.CollectionType {
       "oneToMany",
       "api::product-review.product-review"
     >;
+    ProfileCompletedAt: Attribute.DateTime;
+    ProfileManagedByCustomer: Attribute.Boolean & Attribute.Required & Attribute.DefaultTo<true>;
     provider: Attribute.String;
     removedAt: Attribute.DateTime;
     resetPasswordToken: Attribute.String & Attribute.Private;
@@ -3815,6 +4109,8 @@ export interface PluginUsersPermissionsUser extends Schema.CollectionType {
       "manyToOne",
       "plugin::users-permissions.role"
     >;
+    SourceCreatedAt: Attribute.DateTime;
+    SourceUpdatedAt: Attribute.DateTime;
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<"plugin::users-permissions.user", "oneToOne", "admin::user"> &
       Attribute.Private;
@@ -3892,6 +4188,9 @@ declare module "@strapi/types" {
       "api::post-comment.post-comment": ApiPostCommentPostComment;
       "api::post-like.post-like": ApiPostLikePostLike;
       "api::post.post": ApiPostPost;
+      "api::product-attribute-assignment.product-attribute-assignment": ApiProductAttributeAssignmentProductAttributeAssignment;
+      "api::product-attribute-term.product-attribute-term": ApiProductAttributeTermProductAttributeTerm;
+      "api::product-attribute.product-attribute": ApiProductAttributeProductAttribute;
       "api::product-category-content.product-category-content": ApiProductCategoryContentProductCategoryContent;
       "api::product-category.product-category": ApiProductCategoryProductCategory;
       "api::product-faq.product-faq": ApiProductFaqProductFaq;
@@ -3901,6 +4200,7 @@ declare module "@strapi/types" {
       "api::product-review-reply.product-review-reply": ApiProductReviewReplyProductReviewReply;
       "api::product-review.product-review": ApiProductReviewProductReview;
       "api::product-size-helper.product-size-helper": ApiProductSizeHelperProductSizeHelper;
+      "api::product-slug-alias.product-slug-alias": ApiProductSlugAliasProductSlugAlias;
       "api::product-stock-log.product-stock-log": ApiProductStockLogProductStockLog;
       "api::product-stock.product-stock": ApiProductStockProductStock;
       "api::product-tag.product-tag": ApiProductTagProductTag;

@@ -10,6 +10,14 @@ describe("buildProductSlugCandidates", () => {
   /** How WooCommerce / the catalog importer stored 1402 production slugs. */
   const storedEncoded = encodeSlugLower(persian);
 
+  it("covers the live W00238 Persian slug regression", () => {
+    const adelina = "کت-آدلینا-w00238";
+    const storedAdelina = encodeSlugLower(adelina);
+
+    expect(buildProductSlugCandidates(adelina)).toContain(storedAdelina);
+    expect(buildProductSlugCandidates(storedAdelina)).toContain(adelina);
+  });
+
   it("includes both the decoded Persian form and the lowercase-encoded form", () => {
     const candidates = buildProductSlugCandidates(persian);
     expect(candidates).toContain(persian);

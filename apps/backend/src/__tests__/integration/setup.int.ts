@@ -87,7 +87,11 @@ jest.mock("axios");
 // Frontend/CDN revalidation trigger — external boundary, no network in tests.
 // Keyed by resolved absolute path, so every relative importer gets this mock.
 jest.mock("../../utils/revalidate", () => ({
-  triggerFrontendRevalidation: jest.fn(async () => undefined),
+  triggerFrontendRevalidation: jest.fn(async () => ({
+    attempted: 1,
+    successful: 1,
+    failed: 0,
+  })),
 }));
 
 // Payment SDKs — no network, no real gateways.

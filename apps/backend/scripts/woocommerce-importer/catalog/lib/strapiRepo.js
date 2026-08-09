@@ -123,6 +123,20 @@ class StrapiRepo {
     return Array.isArray(data) && data.length > 0 ? data[0] : null;
   }
 
+  async changeProductPublication(productId, externalId, intent) {
+    const response = await this.http.post(`/products/${productId}/publication`, {
+      data: {
+        action: intent.action,
+        ...(intent.publishAt ? { publishAt: intent.publishAt } : {}),
+        ...(intent.timezone ? { timezone: intent.timezone } : {}),
+        requireMedia: intent.requireMedia === true,
+        expectedExternalSource: "woocommerce",
+        expectedExternalId: String(externalId),
+      },
+    });
+    return response.data?.data || response.data;
+  }
+
   /**
    * Preload color/size/model attribute caches so attribute resolution is local.
    */

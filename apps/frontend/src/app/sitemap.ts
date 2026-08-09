@@ -1,98 +1,54 @@
-import type { MetadataRoute } from 'next'
-import { ENDPOINTS, getStrapiServerUrl } from '@/constants/api'
-import logger from '@/utils/logger'
-import { getCategoryPlpHref } from '@/utils/plpRoutes'
+import type { MetadataRoute } from "next";
+import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
+import { SITEMAP_TAG } from "@/constants/cacheTags";
+import logger from "@/utils/logger";
+import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import {
+  fetchAllPdpEligibleProducts,
+  getSitemapEligibleProducts,
+  type PdpEligibleProduct,
+} from "@/services/product/catalog";
 
-const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://new.infinitycolor.co'
-
-interface StrapiProduct {
-  id: number
-  attributes: {
-    Title: string
-    slug?: string
-    Slug?: string
-    updatedAt: string
-  }
-}
-
-interface StrapiResponse {
-  data: StrapiProduct[]
-  meta?: {
-    pagination?: {
-      total: number
-      pageCount: number
-      page: number
-      pageSize: number
-    }
-  }
-}
+const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
 
 interface BlogPost {
-  id: number
-  Slug: string
-  PublishedAt?: string
-  updatedAt: string
+  id: number;
+  Slug: string;
+  PublishedAt?: string;
+  updatedAt: string;
 }
 
 interface BlogCategory {
-  id: number
-  Slug: string
-  updatedAt: string
+  id: number;
+  Slug: string;
+  updatedAt: string;
 }
 
 interface ProductCategory {
-  id: number
-  Slug: string
-  updatedAt: string
+  id: number;
+  Slug: string;
+  updatedAt: string;
 }
 
 /**
- * Fetch all active products from the backend API
- * Handles pagination to get all products regardless of count
+ * Fetch every canonical, published, indexable product for the sitemap.
+ * Shares the same complete-pagination enumerator as generateStaticParams
+ * (apps/frontend/src/services/product/catalog.ts) so the two can't silently
+ * drift — one paginating correctly while the other truncates. Unlike the
+ * build-time caller, a Strapi failure here degrades to an empty product list
+ * (this route regenerates hourly and on-demand, so a temporarily incomplete
+ * sitemap is preferable to a broken sitemap route) rather than failing loud.
  */
-async function getAllProducts(): Promise<StrapiProduct[]> {
-  const allProducts: StrapiProduct[] = []
-  let currentPage = 1
-  const pageSize = 100 // Fetch 100 at a time
-  const strapiBaseUrl = getStrapiServerUrl()
-
+async function getAllProducts(): Promise<PdpEligibleProduct[]> {
   try {
-    while (true) {
-      const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}?` +
-        `filters[Status][$eq]=Active&` +
-        `filters[removedAt][$null]=true&` +
-        `pagination[page]=${currentPage}&` +
-        `pagination[pageSize]=${pageSize}&` +
-        `fields[0]=Title&` +
-        `fields[1]=Slug&` +
-        `fields[2]=updatedAt`
-
-      const response = await fetch(`${strapiBaseUrl}${endpoint}`, {
-        next: { revalidate: 3600 }, // Cache for 1 hour
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      }).then(res => res.json())
-
-      const data = response as StrapiResponse
-      const products = data?.data || []
-
-      if (products.length === 0) break
-
-      allProducts.push(...products)
-
-      const pageCount = data?.meta?.pagination?.pageCount || 1
-      if (currentPage >= pageCount) break
-
-      currentPage++
-    }
-
-    logger.info(`[Sitemap] Fetched ${allProducts.length} active products for sitemap`)
-    return allProducts
+    const products = getSitemapEligibleProducts(
+      await fetchAllPdpEligibleProducts({ tags: [SITEMAP_TAG] }),
+    );
+    logger.info(`[Sitemap] Fetched ${products.length} active products for sitemap`);
+    return products;
   } catch (error: string | Error | any) {
-    logger.error('[Sitemap] Error fetching products:', error)
-    return []
+    logger.error("[Sitemap] Error fetching products:", error);
+    return [];
   }
 }
 
@@ -100,50 +56,54 @@ async function getAllProducts(): Promise<StrapiProduct[]> {
  * Fetch all published blog posts from the backend API
  */
 async function getAllBlogPosts(): Promise<BlogPost[]> {
-  const allPosts: BlogPost[] = []
-  let currentPage = 1
-  const pageSize = 100
-  const strapiBaseUrl = getStrapiServerUrl()
+  const allPosts: BlogPost[] = [];
+  let currentPage = 1;
+  const pageSize = 100;
+  const strapiBaseUrl = getStrapiServerUrl();
 
   try {
     while (true) {
-      const endpoint = `${strapiBaseUrl}/blog-posts?` +
+      const endpoint =
+        `${strapiBaseUrl}/blog-posts?` +
         `filters[Status][$eq]=Published&` +
         `pagination[page]=${currentPage}&` +
         `pagination[pageSize]=${pageSize}&` +
         `fields[0]=Slug&` +
         `fields[1]=PublishedAt&` +
-        `fields[2]=updatedAt`
+        `fields[2]=updatedAt`;
 
       const response = await fetch(endpoint, {
-        next: { revalidate: 3600 },
+        next: { revalidate: 3600, tags: [SITEMAP_TAG] },
         headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          "Content-Type": "application/json",
+          Accept: "application/json",
         },
-      }).then(res => res.json())
+      }).then((res) => res.json());
 
-      const posts = response?.data || []
-      if (posts.length === 0) break
+      const posts = response?.data || [];
+      if (posts.length === 0) break;
 
-      allPosts.push(...posts.map((post: any) => ({
-        id: post.id,
-        Slug: post.attributes?.Slug || post.attributes?.slug || post.Slug || post.slug,
-        PublishedAt: post.attributes?.PublishedAt || post.attributes?.publishedAt || post.PublishedAt,
-        updatedAt: post.attributes?.updatedAt || post.updatedAt,
-      })))
+      allPosts.push(
+        ...posts.map((post: any) => ({
+          id: post.id,
+          Slug: post.attributes?.Slug || post.attributes?.slug || post.Slug || post.slug,
+          PublishedAt:
+            post.attributes?.PublishedAt || post.attributes?.publishedAt || post.PublishedAt,
+          updatedAt: post.attributes?.updatedAt || post.updatedAt,
+        })),
+      );
 
-      const pageCount = response?.meta?.pagination?.pageCount || 1
-      if (currentPage >= pageCount) break
+      const pageCount = response?.meta?.pagination?.pageCount || 1;
+      if (currentPage >= pageCount) break;
 
-      currentPage++
+      currentPage++;
     }
 
-    logger.info(`[Sitemap] Fetched ${allPosts.length} blog posts for sitemap`)
-    return allPosts
+    logger.info(`[Sitemap] Fetched ${allPosts.length} blog posts for sitemap`);
+    return allPosts;
   } catch (error: string | Error | any) {
-    logger.error('[Sitemap] Error fetching blog posts:', error)
-    return []
+    logger.error("[Sitemap] Error fetching blog posts:", error);
+    return [];
   }
 }
 
@@ -152,47 +112,49 @@ async function getAllBlogPosts(): Promise<BlogPost[]> {
  */
 async function getAllBlogCategories(): Promise<BlogCategory[]> {
   try {
-    const endpoint = `${getStrapiServerUrl()}/blog-categories?` +
+    const endpoint =
+      `${getStrapiServerUrl()}/blog-categories?` +
       `pagination[pageSize]=100&` +
       `fields[0]=Slug&` +
-      `fields[1]=updatedAt`
+      `fields[1]=updatedAt`;
 
     const response = await fetch(endpoint, {
-      next: { revalidate: 3600 },
+      next: { revalidate: 3600, tags: [SITEMAP_TAG] },
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        "Content-Type": "application/json",
+        Accept: "application/json",
       },
-    }).then(res => res.json())
+    }).then((res) => res.json());
 
     const categories = (response?.data || []).map((cat: any) => ({
       id: cat.id,
       Slug: cat.attributes?.Slug || cat.Slug,
       updatedAt: cat.attributes?.updatedAt || cat.updatedAt,
-    }))
+    }));
 
-    logger.info(`[Sitemap] Fetched ${categories.length} blog categories for sitemap`)
-    return categories
+    logger.info(`[Sitemap] Fetched ${categories.length} blog categories for sitemap`);
+    return categories;
   } catch (error: string | Error | any) {
-    logger.error('[Sitemap] Error fetching blog categories:', error)
-    return []
+    logger.error("[Sitemap] Error fetching blog categories:", error);
+    return [];
   }
 }
 
 async function getAllProductCategories(): Promise<ProductCategory[]> {
   try {
-    const endpoint = `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.CATEGORY}?` +
+    const endpoint =
+      `${getStrapiServerUrl()}${ENDPOINTS.PRODUCT.CATEGORY}?` +
       `pagination[pageSize]=100&` +
       `fields[0]=Slug&` +
-      `fields[1]=updatedAt`
+      `fields[1]=updatedAt`;
 
     const response = await fetch(endpoint, {
-      next: { revalidate: 3600 },
+      next: { revalidate: 3600, tags: [SITEMAP_TAG] },
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        "Content-Type": "application/json",
+        Accept: "application/json",
       },
-    }).then(res => res.json())
+    }).then((res) => res.json());
 
     const categories = (response?.data || [])
       .map((cat: any) => ({
@@ -200,13 +162,13 @@ async function getAllProductCategories(): Promise<ProductCategory[]> {
         Slug: cat.attributes?.Slug || cat.Slug,
         updatedAt: cat.attributes?.updatedAt || cat.updatedAt,
       }))
-      .filter((cat: ProductCategory) => Boolean(cat.Slug))
+      .filter((cat: ProductCategory) => Boolean(cat.Slug));
 
-    logger.info(`[Sitemap] Fetched ${categories.length} product categories for sitemap`)
-    return categories
+    logger.info(`[Sitemap] Fetched ${categories.length} product categories for sitemap`);
+    return categories;
   } catch (error: string | Error | any) {
-    logger.error('[Sitemap] Error fetching product categories:', error)
-    return []
+    logger.error("[Sitemap] Error fetching product categories:", error);
+    return [];
   }
 }
 
@@ -217,36 +179,39 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     getAllBlogPosts(),
     getAllBlogCategories(),
     getAllProductCategories(),
-  ])
+  ]);
 
   // Disallow-list for sitemap (must stay aligned with robots.txt)
   const disallowedPaths = new Set([
-    '/cart',
-    '/checkout',
-    '/orders',
-    '/payment',
-    '/account',
-    '/admin',
-    '/super-admin',
-    '/_next',
-    '/api',
-  ])
+    "/cart",
+    "/checkout",
+    "/orders",
+    "/payment",
+    "/account",
+    "/admin",
+    "/super-admin",
+    "/_next",
+    "/api",
+  ]);
 
   // Calculate total URL count
-  const totalUrls = 1 + // Homepage
+  const totalUrls =
+    1 + // Homepage
     1 + // PLP
     1 + // Categories
     1 + // Blog listing
     productCategories.length +
     products.length +
     blogPosts.length +
-    blogCategories.length
+    blogCategories.length;
 
   // Note: If totalUrls exceeds 50,000, consider implementing sitemap index
   // Next.js 16 supports sitemap index by returning an array of sitemap objects
   // For now, we return a single sitemap (Next.js handles up to 50,000 URLs efficiently)
   if (totalUrls > 50000) {
-    logger.warn(`[Sitemap] Total URLs (${totalUrls}) exceeds 50,000. Consider implementing sitemap index.`)
+    logger.warn(
+      `[Sitemap] Total URLs (${totalUrls}) exceeds 50,000. Consider implementing sitemap index.`,
+    );
   }
 
   // Build sitemap entries
@@ -255,7 +220,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     {
       url: BASE_URL,
       lastModified: new Date(),
-      changeFrequency: 'daily',
+      changeFrequency: "daily",
       priority: 1.0,
     },
 
@@ -263,7 +228,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     {
       url: `${BASE_URL}/plp`,
       lastModified: new Date(),
-      changeFrequency: 'daily',
+      changeFrequency: "daily",
       priority: 0.9,
     },
 
@@ -271,7 +236,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     {
       url: `${BASE_URL}/categories`,
       lastModified: new Date(),
-      changeFrequency: 'weekly',
+      changeFrequency: "weekly",
       priority: 0.9,
     },
 
@@ -279,7 +244,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...productCategories.map((category) => ({
       url: `${BASE_URL}${getCategoryPlpHref(category.Slug)}`,
       lastModified: new Date(category.updatedAt),
-      changeFrequency: 'daily' as const,
+      changeFrequency: "daily" as const,
       priority: 0.85,
     })),
 
@@ -287,36 +252,25 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     {
       url: `${BASE_URL}/blog`,
       lastModified: new Date(),
-      changeFrequency: 'daily',
+      changeFrequency: "daily",
       priority: 0.8,
     },
 
-    // Product Detail Pages (PDPs) - only include products with valid slugs
-    ...products
-      .filter((product) => {
-        // Only include products with valid slugs in sitemap (SEO best practice)
-        const slug = product.attributes?.slug || product.attributes?.Slug
-        if (!slug) {
-          logger.warn(`[Sitemap] Product ${product.id} missing slug, excluding from sitemap`)
-          return false
-        }
-        return true
-      })
-      .map((product) => {
-        const slug = product.attributes?.slug || product.attributes?.Slug
-        return {
-          url: `${BASE_URL}/pdp/${slug}`,
-          lastModified: new Date(product.attributes.updatedAt),
-          changeFrequency: 'weekly' as const,
-          priority: 0.8,
-        }
-      }),
+    // Product Detail Pages (PDPs). fetchAllPdpEligibleProducts already excludes
+    // unroutable/empty slugs and deduplicates by canonical slug, so every entry
+    // here is guaranteed valid and appears exactly once.
+    ...products.map((product) => ({
+      url: `${BASE_URL}/pdp/${product.slug}`,
+      lastModified: new Date(product.updatedAt),
+      changeFrequency: "weekly" as const,
+      priority: 0.8,
+    })),
 
     // Blog post pages
     ...blogPosts.map((post) => ({
       url: `${BASE_URL}/${post.Slug}`,
       lastModified: post.PublishedAt ? new Date(post.PublishedAt) : new Date(post.updatedAt),
-      changeFrequency: 'monthly' as const,
+      changeFrequency: "monthly" as const,
       priority: 0.7,
     })),
 
@@ -324,21 +278,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...blogCategories.map((category) => ({
       url: `${BASE_URL}/blog?category=${category.Slug}`,
       lastModified: new Date(category.updatedAt),
-      changeFrequency: 'weekly' as const,
+      changeFrequency: "weekly" as const,
       priority: 0.6,
     })),
-  ]
+  ];
 
   // Final defensive filter to drop disallowed paths (e.g., cart/checkout/account)
   const filtered = sitemap.filter((entry) => {
     try {
-      const urlObj = new URL(entry.url)
-      return !disallowedPaths.has(urlObj.pathname)
+      const urlObj = new URL(entry.url);
+      return !disallowedPaths.has(urlObj.pathname);
     } catch {
       // Drop malformed entries to avoid invalid sitemap rows
-      return false
+      return false;
     }
-  })
+  });
 
-  return filtered
+  return filtered;
 }

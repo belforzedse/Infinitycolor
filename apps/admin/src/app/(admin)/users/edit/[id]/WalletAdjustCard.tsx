@@ -3,7 +3,10 @@
 import { Fragment, useEffect, useState } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { toast } from "react-hot-toast";
-import WalletService, { type WalletAdjustMode } from "@/services/wallet";
+import WalletService, {
+  type WalletAdjustMode,
+  type WalletTransaction,
+} from "@/services/wallet";
 import { priceFormatter } from "@/utils/price";
 
 const MODE_LABELS: Record<WalletAdjustMode, string> = {
@@ -17,14 +20,15 @@ type Props = {
 };
 
 /**
- * Superadmin-only wallet editor. Shows the current balance (Toman) and lets a
- * superadmin credit / debit / set the balance with a required reason. The backend
+ * Founder/Superadmin wallet editor. Shows the current balance and fixed-projection
+ * history, and permits credit/debit/set with a required reason. The backend
  * (`/local-user-wallet/admin/*`) validates the amount, prevents negative balances,
  * records a ledger transaction, and writes an admin audit entry.
  */
 export default function WalletAdjustCard({ userId }: Props) {
   const [balanceToman, setBalanceToman] = useState<number | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(true);
+  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [mode, setMode] = useState<WalletAdjustMode>("credit");
   const [amount, setAmount] = useState<string>("");
   const [reason, setReason] = useState<string>("");
@@ -36,10 +40,14 @@ export default function WalletAdjustCard({ userId }: Props) {
     const load = async () => {
       try {
         setLoadingBalance(true);
-        const res = await WalletService.adminGetUserWallet(userId);
+        const [res, history] = await Promise.all([
+          WalletService.adminGetUserWallet(userId),
+          WalletService.adminGetUserWalletHistory(userId),
+        ]);
         if (!cancelled && res?.success && res.data) {
           setBalanceToman(res.data.balanceToman);
         }
+        if (!cancelled) setTransactions(history?.data ?? []);
       } catch (err) {
         console.error("Failed to load wallet balance:", err);
       } finally {
@@ -80,6 +88,8 @@ export default function WalletAdjustCard({ userId }: Props) {
         setAmount("");
         setReason("");
         setShowConfirm(false);
+        const history = await WalletService.adminGetUserWalletHistory(userId);
+        setTransactions(history?.data ?? []);
         toast.success("موجودی کیف پول با موفقیت بروزرسانی شد");
       } else {
         toast.error(res?.message || "خطا در بروزرسانی موجودی کیف پول");
@@ -167,6 +177,51 @@ export default function WalletAdjustCard({ userId }: Props) {
           اعمال تغییر
         </button>
       </div>
+
+      <section className="mt-6 border-t border-slate-200 pt-5">
+        <h3 className="mb-3 text-base font-bold text-neutral-900">تاریخچه تراکنش‌ها</h3>
+        {transactions.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-neutral-500">
+            تراکنشی ثبت نشده است.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-neutral-600">
+                <tr>
+                  <th className="px-3 py-2 text-right">نوع</th>
+                  <th className="px-3 py-2 text-right">مبلغ</th>
+                  <th className="px-3 py-2 text-right">دلیل</th>
+                  <th className="px-3 py-2 text-right">تاریخ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {transactions.map((transaction) => (
+                  <tr key={transaction.id}>
+                    <td className="px-3 py-2">
+                      {transaction.Type === "Add" ? "افزایش" : "کاهش"}
+                    </td>
+                    <td className="px-3 py-2 font-medium">
+                      {priceFormatter(Math.round(Number(transaction.Amount || 0) / 10), " تومان")}
+                    </td>
+                    <td className="max-w-64 px-3 py-2 text-neutral-600">
+                      {transaction.Note || transaction.Cause || "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-neutral-500">
+                      {transaction.Date
+                        ? new Intl.DateTimeFormat("fa-IR", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          }).format(new Date(transaction.Date))
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <Transition appear show={showConfirm} as={Fragment}>
         <Dialog

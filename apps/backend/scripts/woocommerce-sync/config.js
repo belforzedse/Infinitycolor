@@ -57,7 +57,18 @@ function getSyncConfig(env = process.env) {
       friday: booleanSetting(env.WOOCOMMERCE_SYNC_ENABLE_FRIDAY, {
         name: "WOOCOMMERCE_SYNC_ENABLE_FRIDAY", fallback: false,
       }),
+      // Off by default, unlike `hourly` — full-catalog reconciliation is a
+      // higher-blast-radius capability (it enumerates and can write across the
+      // entire catalog) that should be turned on deliberately after review,
+      // not silently active on every deploy.
+      reconcile: booleanSetting(env.WOOCOMMERCE_SYNC_ENABLE_RECONCILE, {
+        name: "WOOCOMMERCE_SYNC_ENABLE_RECONCILE", fallback: false,
+      }),
     },
+    // Cron cadence for full-catalog reconciliation, off-peak by default.
+    // Unlike hourly/friday's cadence (hardcoded), this is configurable per the
+    // requirement that reconciliation cadence live in normal app config.
+    reconcileCron: env.WOOCOMMERCE_SYNC_RECONCILE_CRON || "30 2 * * *",
     variationSweepProducts: boundedInt(env.WOOCOMMERCE_SYNC_VARIATION_SWEEP_PRODUCTS, {
       name: "WOOCOMMERCE_SYNC_VARIATION_SWEEP_PRODUCTS", fallback: 100, min: 10, max: 500,
     }),

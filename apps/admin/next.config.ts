@@ -43,8 +43,10 @@ const nextConfig: NextConfig = {
       { source: "/reports/gateway-liquidity", destination: "/sales/gateways", permanent: false },
       { source: "/reports/traffic", destination: "/sales/traffic", permanent: false },
       { source: "/carts", destination: "/sales/carts", permanent: false },
-      // The staff audit log is not sales; it belongs with the other
-      // administrative settings (already denied to Founder and Store manager).
+      // The staff audit log's page/route still lives under /settings (its
+      // access rules stay tied to the other administrative settings, denied
+      // to Founder and Store manager), but its nav entry point moved into
+      // گزارشات (`sales-activity` in salesNav.ts) alongside the sales reports.
       { source: "/reports/admin-activity", destination: "/settings/activity", permanent: false },
       {
         source: "/reports/admin-activity/:id",

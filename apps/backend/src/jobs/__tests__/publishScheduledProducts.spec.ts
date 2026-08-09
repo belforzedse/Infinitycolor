@@ -1,160 +1,246 @@
-jest.mock("../../utils/revalidate", () => ({
-  triggerFrontendRevalidation: jest.fn(async () => undefined),
+jest.mock("../../api/product/services/product-publication", () => ({
+  publishScheduledProduct: jest.fn(),
+  recordScheduledPublicationTransientFailure: jest.fn(),
+  runPublicationEffects: jest.fn(),
 }));
 
-import { triggerFrontendRevalidation } from "../../utils/revalidate";
-import { runPublishScheduledProductsTick } from "../publishScheduledProducts";
+jest.mock("../../queue/product-publication-queue", () => ({
+  enqueueScheduledProductPublication: jest.fn(),
+  scheduledProductJobExists: jest.fn(),
+}));
 
-describe("runPublishScheduledProductsTick", () => {
-  const now = new Date("2026-08-08T12:00:00.000Z");
+import { DelayedError, UnrecoverableError } from "bullmq";
+import {
+  publishScheduledProduct,
+  recordScheduledPublicationTransientFailure,
+  runPublicationEffects,
+} from "../../api/product/services/product-publication";
+import {
+  enqueueScheduledProductPublication,
+  scheduledProductJobExists,
+} from "../../queue/product-publication-queue";
+import {
+  processScheduledProductPublicationJob,
+  runScheduledProductsReconciliation,
+} from "../publishScheduledProducts";
 
-  function makeStrapi(overrides: Record<string, unknown> = {}) {
-    const updates: Array<{ id: number; data: Record<string, unknown> }> = [];
-    const knexUpdates: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
-    const products = new Map<number, Record<string, unknown>>();
+const mockedPublish = publishScheduledProduct as jest.MockedFunction<typeof publishScheduledProduct>;
+const mockedTransientFailure = recordScheduledPublicationTransientFailure as jest.MockedFunction<
+  typeof recordScheduledPublicationTransientFailure
+>;
+const mockedEffects = runPublicationEffects as jest.MockedFunction<typeof runPublicationEffects>;
+const mockedEnqueue = enqueueScheduledProductPublication as jest.MockedFunction<
+  typeof enqueueScheduledProductPublication
+>;
+const mockedJobExists = scheduledProductJobExists as jest.MockedFunction<
+  typeof scheduledProductJobExists
+>;
 
-    const strapi = {
-      log: { warn: jest.fn(), info: jest.fn(), error: jest.fn() },
-      entityService: {
-        findMany: jest.fn(async () => Array.from(products.values())),
-        findOne: jest.fn(async (_uid: string, id: number) => products.get(id) || null),
-        update: jest.fn(async (_uid: string, id: number, { data }: { data: Record<string, unknown> }) => {
-          updates.push({ id, data });
-          const current = products.get(id) || {};
-          products.set(id, { ...current, ...data });
-          return products.get(id);
-        }),
-      },
-      db: {
-        connection: (table: string) => {
-          expect(table).toBe("products");
-          return {
-            where(where: Record<string, unknown>) {
-              return {
-                async update(data: Record<string, unknown>) {
-                  knexUpdates.push({ where, data });
-                  const row = products.get(Number(where.id));
-                  if (!row || row.Status !== "Scheduled" || where.status !== "Scheduled") {
-                    return 0;
-                  }
-                  products.set(Number(where.id), {
-                    ...row,
-                    Status: "Active",
-                    scheduledPublishAt: null,
-                  });
-                  return 1;
-                },
-              };
-            },
-          };
-        },
-      },
-      ...overrides,
-      __products: products,
-      __updates: updates,
-      __knexUpdates: knexUpdates,
-    };
-    return strapi as unknown as Parameters<typeof runPublishScheduledProductsTick>[0] & {
-      __products: Map<number, Record<string, unknown>>;
-      __updates: Array<{ id: number; data: Record<string, unknown> }>;
-      __knexUpdates: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }>;
-    };
+const jobData = {
+  productId: 10,
+  scheduleRevision: 3,
+  expectedPublishAt: "2026-08-08T12:00:00.000Z",
+};
+
+function result(overrides: Record<string, unknown> = {}) {
+  return {
+    productId: 10,
+    status: "Scheduled" as const,
+    scheduledPublishAt: jobData.expectedPublishAt,
+    scheduledPublishTimezone: "Asia/Tehran",
+    scheduleRevision: 3,
+    publicationRevision: 0,
+    changed: false,
+    needsPublicationEffects: false,
+    ...overrides,
+  };
+}
+
+function makeStrapi(connection?: jest.Mock) {
+  return {
+    log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    db: { connection: connection || jest.fn() },
+  } as any;
+}
+
+function makeJob(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "product-publish-10-3",
+    data: jobData,
+    moveToDelayed: jest.fn().mockResolvedValue(undefined),
+    ...overrides,
+  } as any;
+}
+
+function resolvedQuery<T>(value: T) {
+  const query: any = {};
+  for (const method of [
+    "select",
+    "where",
+    "whereNotNull",
+    "andWhere",
+    "whereRaw",
+    "orderBy",
+    "limit",
+  ]) {
+    query[method] = jest.fn(() => query);
   }
+  query.then = (resolve: (value: T) => unknown, reject: (error: unknown) => unknown) =>
+    Promise.resolve(value).then(resolve, reject);
+  return query;
+}
 
+describe("scheduled product publication jobs", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("publishes a due scheduled product and revalidates", async () => {
-    const strapi = makeStrapi();
-    strapi.__products.set(10, {
+  it("publishes one due revision and completes its effects", async () => {
+    mockedPublish.mockResolvedValue({
+      outcome: "published",
+      result: result({ status: "Active", publicationRevision: 4, changed: true }),
+    });
+    mockedEffects.mockResolvedValue({ completed: true, revision: 4 });
+
+    await expect(processScheduledProductPublicationJob(makeStrapi(), makeJob())).resolves.toEqual({
+      outcome: "published",
+    });
+    expect(mockedPublish).toHaveBeenCalledWith(expect.anything(), jobData);
+    expect(mockedEffects).toHaveBeenCalledWith(expect.anything(), 10, 4);
+  });
+
+  it("treats stale and cancelled revisions as successful no-ops", async () => {
+    mockedPublish.mockResolvedValue({ outcome: "stale", result: result() });
+
+    await expect(processScheduledProductPublicationJob(makeStrapi(), makeJob())).resolves.toEqual({
+      outcome: "stale",
+    });
+    expect(mockedEffects).not.toHaveBeenCalled();
+  });
+
+  it("moves an early delivery back to the absolute due time", async () => {
+    const dueAt = "2026-08-08T13:00:00.000Z";
+    const job = makeJob();
+    mockedPublish.mockResolvedValue({ outcome: "early", dueAt, result: result() });
+
+    await expect(
+      processScheduledProductPublicationJob(makeStrapi(), job, "worker-token"),
+    ).rejects.toBeInstanceOf(DelayedError);
+    expect(job.moveToDelayed).toHaveBeenCalledWith(Date.parse(dueAt), "worker-token");
+  });
+
+  it("marks permanent validation failures as unrecoverable", async () => {
+    mockedPublish.mockResolvedValue({
+      outcome: "permanent-failure",
+      code: "PRODUCT_COVER_MEDIA_REQUIRED",
+      result: result({ changed: true }),
+    });
+
+    await expect(
+      processScheduledProductPublicationJob(makeStrapi(), makeJob()),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
+    expect(mockedEffects).not.toHaveBeenCalled();
+  });
+
+  it("persists transient delivery failures before BullMQ retries", async () => {
+    const error = new Error("database connection lost");
+    mockedPublish.mockRejectedValue(error);
+    mockedTransientFailure.mockResolvedValue(true);
+    const job = makeJob({ attemptsMade: 2 });
+
+    await expect(
+      processScheduledProductPublicationJob(makeStrapi(), job),
+    ).rejects.toBe(error);
+    expect(mockedTransientFailure).toHaveBeenCalledWith(expect.anything(), {
+      ...jobData,
+      error,
+      retryDelayMs: 120_000,
+    });
+  });
+
+  it("rejects malformed jobs before touching product state", async () => {
+    await expect(
+      processScheduledProductPublicationJob(
+        makeStrapi(),
+        makeJob({ data: { ...jobData, scheduleRevision: 0 } }),
+      ),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
+    expect(mockedPublish).not.toHaveBeenCalled();
+  });
+});
+
+describe("scheduled product reconciliation", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("repairs missing jobs and drains pending publication effects", async () => {
+    const schedules = [{
       id: 10,
-      Status: "Scheduled",
-      Slug: "test-product",
-      scheduledPublishAt: "2026-08-08T11:00:00.000Z",
-      scheduledPublishRequireMedia: true,
-      CoverImage: { id: 1 },
-    });
+      scheduled_publish_at: jobData.expectedPublishAt,
+      scheduled_publish_revision: 3,
+      scheduled_publish_failure_kind: null,
+      scheduled_publish_next_retry_at: null,
+    }];
+    const effects = [{ id: 11, publication_revision: 7 }];
+    const connection = jest.fn()
+      .mockReturnValueOnce(resolvedQuery(schedules))
+      .mockReturnValueOnce(resolvedQuery(effects));
+    mockedJobExists.mockResolvedValue(false);
+    mockedEnqueue.mockResolvedValue({} as any);
+    mockedEffects.mockResolvedValue({ completed: true, revision: 7 });
 
-    const result = await runPublishScheduledProductsTick(strapi, { now });
-    expect(result).toEqual({ claimed: 1, published: 1, blocked: 0, skipped: 0 });
-    expect(strapi.__knexUpdates).toHaveLength(1);
-    expect(triggerFrontendRevalidation).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "product", path: "/pdp/test-product" }),
-      "ScheduledProductPublish",
-    );
-  });
-
-  it("keeps product unpublished before due time", async () => {
-    const strapi = makeStrapi();
-    strapi.__products.set(11, {
-      id: 11,
-      Status: "Scheduled",
-      Slug: "later",
-      scheduledPublishAt: "2026-08-08T13:00:00.000Z",
-      scheduledPublishRequireMedia: false,
-      CoverImage: null,
-    });
-    // findMany returns it, but re-check skips because scheduledAt > now
-    const result = await runPublishScheduledProductsTick(strapi, { now });
-    expect(result.published).toBe(0);
-    expect(result.skipped).toBe(1);
-    expect(strapi.__knexUpdates).toHaveLength(0);
-  });
-
-  it("blocks when media is required and cover is missing", async () => {
-    const strapi = makeStrapi();
-    strapi.__products.set(12, {
-      id: 12,
-      Status: "Scheduled",
-      Slug: "no-cover",
-      scheduledPublishAt: "2026-08-08T11:00:00.000Z",
-      scheduledPublishRequireMedia: true,
-      CoverImage: null,
-    });
-    const result = await runPublishScheduledProductsTick(strapi, { now });
-    expect(result.blocked).toBe(1);
-    expect(result.published).toBe(0);
-    expect(strapi.__updates[0].data.scheduledPublishLastError).toMatch(/media-incomplete/);
-  });
-
-  it("second worker loses the atomic claim", async () => {
-    const strapi = makeStrapi();
-    strapi.__products.set(13, {
-      id: 13,
-      Status: "Scheduled",
-      Slug: "race",
-      scheduledPublishAt: "2026-08-08T11:00:00.000Z",
-      scheduledPublishRequireMedia: false,
-      CoverImage: null,
-    });
-    // Simulate another worker already published between findOne and claim.
-    strapi.db.connection = () => ({
-      where: () => ({
-        update: async () => 0,
+    await expect(
+      runScheduledProductsReconciliation(makeStrapi(connection), {
+        now: new Date("2026-08-08T12:00:00.000Z"),
       }),
+    ).resolves.toEqual({
+      scanned: 1,
+      queued: 1,
+      present: 0,
+      skipped: 0,
+      effects: 1,
+      effectFailures: 0,
     });
-
-    const result = await runPublishScheduledProductsTick(strapi, { now });
-    expect(result.published).toBe(0);
-    expect(result.skipped).toBe(1);
+    expect(mockedEnqueue).toHaveBeenCalledWith(jobData);
+    expect(mockedEffects).toHaveBeenCalledWith(expect.anything(), 11, 7);
   });
 
-  it("skips after cancellation (Status no longer Scheduled)", async () => {
-    const strapi = makeStrapi();
-    strapi.__products.set(14, {
-      id: 14,
-      Status: "InActive",
-      Slug: "cancelled",
-      scheduledPublishAt: "2026-08-08T11:00:00.000Z",
-      scheduledPublishRequireMedia: false,
-    });
-    // findMany still returns stale list; findOne sees cancelled.
-    (strapi.entityService.findMany as jest.Mock).mockResolvedValueOnce([
-      { id: 14, Status: "Scheduled", scheduledPublishAt: "2026-08-08T11:00:00.000Z" },
-    ]);
-    const result = await runPublishScheduledProductsTick(strapi, { now });
-    expect(result.skipped).toBe(1);
-    expect(result.published).toBe(0);
+  it("does not automatically retry a permanent schedule failure", async () => {
+    const schedules = [{
+      id: 10,
+      scheduled_publish_at: jobData.expectedPublishAt,
+      scheduled_publish_revision: 3,
+      scheduled_publish_failure_kind: "Permanent",
+      scheduled_publish_next_retry_at: null,
+    }];
+    const connection = jest.fn()
+      .mockReturnValueOnce(resolvedQuery(schedules))
+      .mockReturnValueOnce(resolvedQuery([]));
+
+    const summary = await runScheduledProductsReconciliation(makeStrapi(connection));
+
+    expect(summary.skipped).toBe(1);
+    expect(mockedJobExists).not.toHaveBeenCalled();
+    expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+
+  it("contains a queue outage so the next minute can reconcile again", async () => {
+    const schedules = [{
+      id: 10,
+      scheduled_publish_at: jobData.expectedPublishAt,
+      scheduled_publish_revision: 3,
+      scheduled_publish_failure_kind: null,
+      scheduled_publish_next_retry_at: null,
+    }];
+    const connection = jest.fn()
+      .mockReturnValueOnce(resolvedQuery(schedules))
+      .mockReturnValueOnce(resolvedQuery([]));
+    mockedJobExists.mockResolvedValue(false);
+    mockedEnqueue.mockRejectedValue(new Error("redis unavailable"));
+
+    const summary = await runScheduledProductsReconciliation(makeStrapi(connection));
+
+    expect(summary).toEqual(expect.objectContaining({ scanned: 1, queued: 0, skipped: 1 }));
   });
 });

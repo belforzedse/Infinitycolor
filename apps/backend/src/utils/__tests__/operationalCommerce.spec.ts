@@ -15,7 +15,7 @@ describe("operational commerce field authorization", () => {
     const ctx = context(role, { Count: 4, reservedCount: 0 });
     await expect(enforceOperationalDataFields(ctx, strapi, ["Count"])).resolves.toBe(false);
     expect(ctx.badRequest).toHaveBeenCalledWith(
-      "Store manager cannot write protected fields: reservedCount",
+      "This role cannot write protected fields: reservedCount",
     );
   });
 

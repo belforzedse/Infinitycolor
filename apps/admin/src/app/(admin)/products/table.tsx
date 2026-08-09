@@ -12,6 +12,7 @@ import { duplicateProduct } from "@/services/super-admin/product/duplicate";
 import { resolveAssetUrl } from "@/utils/resolveAssetUrl";
 import { formatFaRelativeDateTime } from "@/utils/formatFaRelativeDateTime";
 import { useRouter } from "next/navigation";
+import { formatTehranPublication } from "@/utils/tehranPublicationTime";
 
 export type Product = {
   id: string;
@@ -28,6 +29,10 @@ export type Product = {
     Title: string;
     Description: string;
     Status: string;
+    scheduledPublishAt?: string | null;
+    scheduledPublishTimezone?: string | null;
+    scheduledPublishLastError?: string | null;
+    scheduledPublishFailureKind?: "Transient" | "Permanent" | null;
     AverageRating: number | null;
     RatingCount: number | null;
     createdAt: string;
@@ -69,6 +74,23 @@ const handleDuplicateProduct = async (productId: string) => {
     window.location.reload(); // Simple refresh for now
   }
 };
+
+function productPublicationBadge(attributes: Product["attributes"]) {
+  if (attributes.Status === "Scheduled") {
+    const failed = Boolean(attributes.scheduledPublishLastError);
+    return {
+      text: failed ? "خطای انتشار زمان‌بندی‌شده" : "زمان‌بندی شده",
+      detail: attributes.scheduledPublishAt
+        ? formatTehranPublication(attributes.scheduledPublishAt)
+        : undefined,
+      className: failed ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700",
+    };
+  }
+  if (attributes.Status === "Active") {
+    return { text: "منتشر شده", className: "bg-green-100 text-green-700" };
+  }
+  return { text: "پیش‌نویس", className: "bg-slate-100 text-slate-700" };
+}
 
 export const columns: ColumnDef<Product>[] = [
   {
@@ -166,42 +188,26 @@ export const columns: ColumnDef<Product>[] = [
   },
   {
     accessorKey: "publicationStatus",
-    header: "وضعیت انتشار",
+    header: "انتشار محصول",
     cell: ({ row }) => {
+      const productBadge = productPublicationBadge(row.original.attributes);
       const variations = row.original?.attributes?.product_variations?.data || [];
       const totalCount = variations.length;
       const publishedCount = variations.filter(
         (v) => v?.attributes?.IsPublished === true,
       ).length;
-
-      if (totalCount === 0) {
-        return (
-          <span className="rounded-xl bg-gray-100 px-2 py-1 text-xs text-gray-700">
-            بدون تنوع
-          </span>
-        );
-      }
-
-      if (publishedCount === totalCount) {
-        return (
-          <span className="rounded-xl bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
-            منتشر شده
-          </span>
-        );
-      }
-
-      if (publishedCount === 0) {
-        return (
-          <span className="rounded-xl bg-amber-100 px-2 py-1 text-xs font-medium text-amber-700">
-            پیش نویس
-          </span>
-        );
-      }
-
       return (
-        <span className="rounded-xl bg-blue-100 px-2 py-1 text-xs font-medium text-blue-700">
-          {publishedCount} از تنوع {totalCount} منتشر شده
-        </span>
+        <div className="flex flex-col items-start gap-1">
+          <span className={`rounded-xl px-2 py-1 text-xs font-medium ${productBadge.className}`}>
+            {productBadge.text}
+          </span>
+          {productBadge.detail ? (
+            <span className="text-[10px] text-slate-500">{productBadge.detail}</span>
+          ) : null}
+          <span className="text-[10px] text-slate-400">
+            تنوع‌ها: {totalCount === 0 ? "بدون تنوع" : `${publishedCount} از ${totalCount}`}
+          </span>
+        </div>
       );
     },
   },
@@ -346,24 +352,12 @@ export const MobileTable = ({ data, enableSelection, selectedIds, onSelectionCha
         const sku = variations[0]?.attributes?.SKU || "";
         const imageUrl = getThumbnailUrl(row);
 
-        // Calculate publication status
+        // Product publication and variation publication are separate dimensions.
         const totalCount = variations.length;
         const publishedCount = variations.filter(
           (v) => v?.attributes?.IsPublished === true,
         ).length;
-        const getPublicationStatus = () => {
-          if (totalCount === 0) {
-            return { text: "بدون تنوع", className: "bg-gray-100 text-gray-700" };
-          }
-          if (publishedCount === totalCount) {
-            return { text: "منتشر شده", className: "bg-green-100 text-green-700" };
-          }
-          if (publishedCount === 0) {
-            return { text: "پیش نویس", className: "bg-gray-100 text-gray-700" };
-          }
-          return { text: `${publishedCount}/${totalCount}`, className: "bg-amber-100 text-amber-700" };
-        };
-        const publicationStatus = getPublicationStatus();
+        const publicationStatus = productPublicationBadge(row.attributes);
 
         return (
           <div
@@ -457,6 +451,9 @@ export const MobileTable = ({ data, enableSelection, selectedIds, onSelectionCha
                   <span className="text-xs text-neutral-400">|</span>
                   <span className={`text-xs rounded-lg px-1.5 py-0.5 font-medium ${publicationStatus.className}`}>
                     {publicationStatus.text}
+                  </span>
+                  <span className="text-[10px] text-neutral-400">
+                    تنوع‌ها: {totalCount === 0 ? "۰" : `${publishedCount}/${totalCount}`}
                   </span>
                 </div>
 

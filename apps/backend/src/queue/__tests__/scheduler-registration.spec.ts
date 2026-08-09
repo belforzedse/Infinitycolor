@@ -47,10 +47,10 @@ describe("scheduler registration", () => {
       })
     );
     expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
-      MAINTENANCE_SCHEDULERS.scheduledProductPublish,
+      MAINTENANCE_SCHEDULERS.scheduledProductReconcile,
       { pattern: "*/1 * * * *", tz: "Asia/Tehran" },
       expect.objectContaining({
-        name: COMMERCE_MAINTENANCE_JOBS.scheduledProductPublish,
+        name: COMMERCE_MAINTENANCE_JOBS.scheduledProductReconcile,
         data: {},
       })
     );

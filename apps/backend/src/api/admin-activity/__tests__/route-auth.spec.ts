@@ -1,27 +1,23 @@
 import routes from "../routes/custom-router";
-import { ROLE_NAMES } from "../../../utils/roles";
 
-function allowedRoles(path: string) {
+function requiredCapability(path: string) {
   const route = routes.routes.find((entry) => entry.path === path);
-  return route?.config?.policies?.[0]?.config?.roles;
+  return route?.config?.policies?.[0]?.config?.capability;
 }
 
 describe("admin activity route authorization", () => {
-  it("keeps global audit routes Superadmin-only", () => {
+  it("keeps global audit routes behind system audit access", () => {
     for (const path of [
       "/admin-activities/me",
       "/admin-activities/user/:userId",
       "/admin-activities/product/:productId",
       "/admin-activities/report",
     ]) {
-      expect(allowedRoles(path)).toEqual([ROLE_NAMES.SUPERADMIN]);
+      expect(requiredCapability(path)).toBe("system.audit.read");
     }
   });
 
-  it("retains Founder access only for order-scoped reporting", () => {
-    expect(allowedRoles("/admin-activities/order/:orderId")).toEqual([
-      ROLE_NAMES.SUPERADMIN,
-      ROLE_NAMES.FOUNDER,
-    ]);
+  it("uses the narrower order-audit capability for order-scoped reporting", () => {
+    expect(requiredCapability("/admin-activities/order/:orderId")).toBe("order.audit.read");
   });
 });

@@ -1,5 +1,6 @@
 import { sanitize } from "@strapi/utils";
-import { ROLE_NAMES, resolveUserRoleName } from "../../../utils/roles";
+import { hasCapability } from "@repo/auth-core";
+import { resolveAdminActor } from "../../../utils/adminAuthorization";
 
 function projectLatestOrder(order: any) {
   const userInfo = order.user?.user_info;
@@ -50,24 +51,37 @@ function firstRow(result: any): Record<string, unknown> {
 export default {
   async query(ctx) {
     const startedAt = Date.now();
-    const roleName = await resolveUserRoleName(strapi, ctx.state?.user);
-    const includeCustomerAccounts = roleName === ROLE_NAMES.SUPERADMIN;
+    const actor = await resolveAdminActor(strapi, ctx.state?.user);
+    if (!actor) return ctx.forbidden("Administrative role required");
+    const includeOrders = hasCapability(actor.role, "order.read");
+    const includeProducts = hasCapability(actor.role, "product.read");
+    const includeCustomerAccounts = hasCapability(actor.role, "system.users.manage");
     const knex = strapi.db.connection;
 
-    const countsSql = includeCustomerAccounts
-      ? `SELECT
-           (SELECT COUNT(*) FROM orders)::bigint AS orders_total,
-           (SELECT COUNT(*) FROM orders WHERE status = 'Done')::bigint AS done_orders_total,
-           (SELECT COUNT(*) FROM products WHERE status = 'Active' AND removed_at IS NULL)::bigint AS active_products_total,
-           (SELECT COUNT(*) FROM users WHERE blocked = false AND removed_at IS NULL)::bigint AS customer_accounts_total`
-      : `SELECT
-           (SELECT COUNT(*) FROM orders)::bigint AS orders_total,
-           (SELECT COUNT(*) FROM orders WHERE status = 'Done')::bigint AS done_orders_total,
-           (SELECT COUNT(*) FROM products WHERE status = 'Active' AND removed_at IS NULL)::bigint AS active_products_total`;
+    const countExpressions = [
+      ...(includeOrders
+        ? [
+            "(SELECT COUNT(*) FROM orders)::bigint AS orders_total",
+            "(SELECT COUNT(*) FROM orders WHERE status = 'Done')::bigint AS done_orders_total",
+          ]
+        : []),
+      ...(includeProducts
+        ? [
+            "(SELECT COUNT(*) FROM products WHERE status = 'Active' AND removed_at IS NULL)::bigint AS active_products_total",
+          ]
+        : []),
+      ...(includeCustomerAccounts
+        ? [
+            "(SELECT COUNT(*) FROM users WHERE blocked = false AND removed_at IS NULL)::bigint AS customer_accounts_total",
+          ]
+        : []),
+    ];
 
-    const [countsResult, latestRows] = await Promise.all([
-      knex.raw(countsSql),
-      strapi.query("api::order.order").findMany({
+    const countsPromise = countExpressions.length
+      ? knex.raw(`SELECT ${countExpressions.join(", ")}`)
+      : Promise.resolve({ rows: [{}] });
+    const latestOrdersPromise = includeOrders
+      ? strapi.query("api::order.order").findMany({
         select: ["id", "Status", "Date", "createdAt", "updatedAt"],
         populate: {
           user: {
@@ -80,7 +94,12 @@ export default {
         },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         limit: 3,
-      }),
+      })
+      : Promise.resolve([]);
+
+    const [countsResult, latestRows] = await Promise.all([
+      countsPromise,
+      latestOrdersPromise,
     ]);
 
     const schema = strapi.contentType("api::order.order");
@@ -94,9 +113,9 @@ export default {
     ctx.body = {
       data: {
         metrics: {
-          ordersTotal: Number(counts.orders_total) || 0,
-          doneOrdersTotal: Number(counts.done_orders_total) || 0,
-          activeProductsTotal: Number(counts.active_products_total) || 0,
+          ordersTotal: includeOrders ? Number(counts.orders_total) || 0 : null,
+          doneOrdersTotal: includeOrders ? Number(counts.done_orders_total) || 0 : null,
+          activeProductsTotal: includeProducts ? Number(counts.active_products_total) || 0 : null,
           customerAccountsTotal: includeCustomerAccounts
             ? Number(counts.customer_accounts_total) || 0
             : null,
@@ -106,6 +125,16 @@ export default {
           (sum, order) => sum + Number(order.attributes.contract.data?.attributes.Amount || 0),
           0,
         ),
+        authorizedModules: {
+          orders: includeOrders,
+          products: includeProducts,
+          users: includeCustomerAccounts,
+          content: hasCapability(actor.role, "content.blog.read"),
+          productReports: hasCapability(actor.role, "report.product.read"),
+          finance: hasCapability(actor.role, "report.finance.read"),
+          traffic: hasCapability(actor.role, "report.traffic.read"),
+          wallets: hasCapability(actor.role, "wallet.read"),
+        },
       },
     };
 
@@ -113,6 +142,7 @@ export default {
       durationMs: Date.now() - startedAt,
       returnedLatestOrders: latestOrders.length,
       includeCustomerAccounts,
+      role: actor.role,
     });
   },
 };

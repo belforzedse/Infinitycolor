@@ -49,7 +49,7 @@ export const getOrCreateUserCart = async (strapi: Strapi, userId: number) => {
       }
 
       // Check if product is soft-deleted or inactive
-      const isProductAvailable = !product?.removedAt && product?.Status !== "InActive";
+      const isProductAvailable = !product?.removedAt && product?.Status === "Active";
       if (!isProductAvailable) {
         strapi.log.warn(`Filtering out cart item ${item.id}: product is soft-deleted or inactive`, {
           productId: product?.id,

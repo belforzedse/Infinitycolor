@@ -40,6 +40,7 @@ const FILTER_FIELDS: Record<string, AdminFilterDefinition> = {
     type: "number",
   },
   "[createdAt]": { path: ["createdAt"], type: "date" },
+  "[scheduledPublishAt]": { path: ["scheduledPublishAt"], type: "date" },
   "[LastEditedByAdminAt]": {
     path: ["LastEditedByAdminAt"],
     type: "date",
@@ -58,6 +59,11 @@ const PRODUCT_SELECT = [
   "removedAt",
   "Title",
   "Status",
+  "scheduledPublishAt",
+  "scheduledPublishTimezone",
+  "scheduledPublishLastAttemptAt",
+  "scheduledPublishLastError",
+  "scheduledPublishFailureKind",
   "ProductType",
   "AverageRating",
   "RatingCount",
@@ -94,6 +100,11 @@ function projectProduct(product: any) {
       removedAt: product.removedAt ?? null,
       Title: product.Title ?? null,
       Status: product.Status ?? null,
+      scheduledPublishAt: product.scheduledPublishAt ?? null,
+      scheduledPublishTimezone: product.scheduledPublishTimezone ?? null,
+      scheduledPublishLastAttemptAt: product.scheduledPublishLastAttemptAt ?? null,
+      scheduledPublishLastError: product.scheduledPublishLastError ?? null,
+      scheduledPublishFailureKind: product.scheduledPublishFailureKind ?? null,
       ProductType: product.ProductType ?? null,
       AverageRating:
         product.AverageRating === null || product.AverageRating === undefined

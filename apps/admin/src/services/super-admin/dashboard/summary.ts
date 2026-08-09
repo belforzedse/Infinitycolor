@@ -34,13 +34,23 @@ export type DashboardSummaryOrder = {
 
 export type AdminDashboardSummary = {
   metrics: {
-    ordersTotal: number;
-    doneOrdersTotal: number;
-    activeProductsTotal: number;
+    ordersTotal: number | null;
+    doneOrdersTotal: number | null;
+    activeProductsTotal: number | null;
     customerAccountsTotal: number | null;
   };
   latestOrders: DashboardSummaryOrder[];
   latestOrdersAmount: number;
+  authorizedModules: {
+    orders: boolean;
+    products: boolean;
+    users: boolean;
+    content: boolean;
+    productReports: boolean;
+    finance: boolean;
+    traffic: boolean;
+    wallets: boolean;
+  };
 };
 
 export async function getAdminDashboardSummary(

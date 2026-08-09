@@ -12,19 +12,16 @@ import { getSidebarItemsForRole } from "../superAdminSidebar";
  * These assertions are the regression guard for apps/admin.
  */
 
-const SUPERADMIN_ONLY_SALES = [
-  "/sales/traffic",
-  "/sales/carts",
-  "/sales/liquidity",
-  "/sales/gateways",
-];
-
 const FOUNDER_ALLOWED_SALES = [
   "/sales",
   "/sales/breakdown",
   "/sales/products",
   "/sales/funnel",
   "/sales/geography",
+  "/sales/liquidity",
+  "/sales/gateways",
+  "/sales/traffic",
+  "/sales/carts",
 ];
 
 describe("canRoleAccessPath", () => {
@@ -44,9 +41,9 @@ describe("canRoleAccessPath", () => {
       }
     });
 
-    it("cannot reach Superadmin-only sales destinations", () => {
-      for (const path of SUPERADMIN_ONLY_SALES) {
-        expect(canRoleAccessPath("Founder", path)).toBe(false);
+    it("inherits product, finance, traffic, and carts reporting", () => {
+      for (const path of FOUNDER_ALLOWED_SALES) {
+        expect(canRoleAccessPath("Founder", path)).toBe(true);
       }
     });
 
@@ -55,17 +52,18 @@ describe("canRoleAccessPath", () => {
       expect(canRoleAccessPath("Founder", "/settings/activity")).toBe(false);
     });
 
-    it("keeps the legacy paths blocked so redirected bookmarks do not leak", () => {
-      expect(canRoleAccessPath("Founder", "/reports/traffic")).toBe(false);
-      expect(canRoleAccessPath("Founder", "/carts")).toBe(false);
-      expect(canRoleAccessPath("Founder", "/reports/liquidity")).toBe(false);
-      expect(canRoleAccessPath("Founder", "/reports/gateway-liquidity")).toBe(false);
+    it("applies the same capabilities to compatible legacy report paths", () => {
+      expect(canRoleAccessPath("Founder", "/reports/traffic")).toBe(true);
+      expect(canRoleAccessPath("Founder", "/carts")).toBe(true);
+      expect(canRoleAccessPath("Founder", "/reports/liquidity")).toBe(true);
+      expect(canRoleAccessPath("Founder", "/reports/gateway-liquidity")).toBe(true);
     });
   });
 
   describe("Store manager", () => {
-    it("cannot reach any sales destination, old path or new", () => {
-      for (const item of SALES_NAV_ITEMS) {
+    it("can reach product reporting but not broader sales destinations", () => {
+      expect(canRoleAccessPath("Store manager", "/sales/products")).toBe(true);
+      for (const item of SALES_NAV_ITEMS.filter((item) => item.href !== "/sales/products")) {
         expect(canRoleAccessPath("Store manager", item.href)).toBe(false);
       }
       for (const path of ["/reports", "/reports/sales", "/carts"]) {
@@ -74,8 +72,11 @@ describe("canRoleAccessPath", () => {
     });
 
     it("retains its operational resources", () => {
-      for (const path of ["/orders", "/products", "/shipping", "/coupons", "/general-discounts"]) {
+      for (const path of ["/orders", "/products"]) {
         expect(canRoleAccessPath("Store manager", path)).toBe(true);
+      }
+      for (const path of ["/shipping", "/coupons", "/general-discounts"]) {
+        expect(canRoleAccessPath("Store manager", path)).toBe(false);
       }
     });
   });
@@ -110,8 +111,10 @@ describe("getSalesNavForRole", () => {
     );
   });
 
-  it("gives a Store manager nothing", () => {
-    expect(getSalesNavForRole("Store manager")).toHaveLength(0);
+  it("gives a Store manager product reporting only", () => {
+    expect(getSalesNavForRole("Store manager").map((item) => item.href)).toEqual([
+      "/sales/products",
+    ]);
   });
 });
 
@@ -134,8 +137,8 @@ describe("sidebar", () => {
     expect(sales?.href).toBe("/sales");
   });
 
-  it("hides the Sales hub from a Store manager", () => {
-    expect(parentIds("Store manager")).not.toContain("sales");
+  it("shows the product-report Sales hub to a Store manager", () => {
+    expect(parentIds("Store manager")).toContain("sales");
   });
 
   it("derives the Founder sales children from the permission rules", () => {

@@ -5,7 +5,7 @@ import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/aut
 import { jotaiStore } from "@/lib/jotaiStore";
 import { centralAuth, centralAuthOrigin, initializeCentralAuthBrowser, publishAuthState } from "@/lib/central-auth";
 import UserService from "@/services/user";
-import { getRoleAdminLandingPath } from "@/constants/roleAccess";
+import { getAdminLandingPath } from "@/constants/roleAccess";
 import { adminOrigin, storefrontOrigin } from "@/config/admin-env";
 
 export default function AuthCompleteClient({
@@ -41,7 +41,11 @@ export default function AuthCompleteClient({
         jotaiStore.set(userErrorAtom, null);
         publishAuthState("session-changed");
         await fetch("/api/auth/route-hint", { method: "PUT", credentials: "same-origin" });
-        window.location.replace(returnPath === "/" ? getRoleAdminLandingPath(me.roleName) : returnPath);
+        window.location.replace(
+          returnPath === "/"
+            ? getAdminLandingPath(me.capabilities, me.adminRole)
+            : returnPath,
+        );
       } catch (cause) {
         centralAuth.tokenManager.expire();
         await fetch("/api/auth/route-hint", { method: "POST", credentials: "same-origin" }).catch(() => undefined);

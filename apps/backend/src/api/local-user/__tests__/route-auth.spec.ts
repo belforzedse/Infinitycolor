@@ -1,23 +1,22 @@
 import { __localUserRouteTestUtils } from "../routes/local-user";
 import customRouteConfig from "../routes/custom-router";
-import { ROLE_NAMES } from "../../../utils/roles";
 
-const superadminPolicy = [
+const userManagementPolicy = [
   {
-    name: "global::role-based",
-    config: { roles: [ROLE_NAMES.SUPERADMIN] },
+    name: "global::require-capability",
+    config: { capability: "system.users.manage" },
   },
 ];
 
 describe("legacy user route authorization", () => {
-  it("keeps all legacy core CRUD Superadmin-only", () => {
-    expect(__localUserRouteTestUtils.adminRouteConfig.policies).toEqual(superadminPolicy);
+  it("requires user-management capability for all legacy core CRUD", () => {
+    expect(__localUserRouteTestUtils.adminRouteConfig.policies).toEqual(userManagementPolicy);
   });
 
-  it("keeps legacy create and update helpers Superadmin-only", () => {
+  it("requires user-management capability for legacy create and update helpers", () => {
     for (const path of ["/sp/local-users", "/sp/local-users/:id"]) {
       const route = customRouteConfig.routes.find((entry) => entry.path === path);
-      expect(route?.config.policies).toEqual(superadminPolicy);
+      expect(route?.config.policies).toEqual(userManagementPolicy);
     }
   });
 });

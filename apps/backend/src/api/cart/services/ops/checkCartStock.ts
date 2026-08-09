@@ -15,7 +15,7 @@ export const checkCartStockOp = async (strapi: Strapi, userId: number) => {
     const product = variation?.product;
 
     // Check if product is soft-deleted or inactive
-    if (product?.removedAt || product?.Status === "InActive") {
+    if (product?.removedAt || product?.Status !== "Active") {
       await strapi.service("api::cart.cart").removeCartItem(item.id);
       removals.push({
         cartItemId: item.id,

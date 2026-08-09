@@ -7,7 +7,6 @@ const mockUseUser = jest.fn();
 jest.mock("next/navigation", () => ({
   usePathname: () => "/account",
   useRouter: () => ({ replace: mockReplace }),
-  useSearchParams: () => new URLSearchParams("tab=profile"),
 }));
 
 jest.mock(
@@ -62,6 +61,7 @@ jest.mock(
 describe("AuthenticatedUserLayout", () => {
   beforeEach(() => {
     mockReplace.mockReset();
+    window.history.replaceState({}, "", "/account?tab=profile");
   });
 
   it("never renders account content while authentication is unresolved", () => {

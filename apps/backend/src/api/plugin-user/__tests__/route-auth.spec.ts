@@ -1,23 +1,22 @@
 import routeConfig from "../routes/plugin-user";
-import { ROLE_NAMES, STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
 
 describe("plugin user operational routes", () => {
-  it("keeps arbitrary user creation Superadmin-only", () => {
+  it("keeps arbitrary user creation behind user-management capability", () => {
     const route = routeConfig.routes.find((entry) => entry.path === "/sp/plugin-users");
     expect(route?.config.policies).toEqual([
       {
-        name: "global::role-based",
-        config: { roles: [ROLE_NAMES.SUPERADMIN] },
+        name: "global::require-capability",
+        config: { capability: "system.users.manage" },
       },
     ]);
   });
 
-  it("allows manager-plus roles to use sanitized customer search", () => {
+  it("requires customer-wallet search capability for sanitized customer search", () => {
     const route = routeConfig.routes.find((entry) => entry.path === "/sp/customers/search");
     expect(route?.config.policies).toEqual([
       {
-        name: "global::role-based",
-        config: { roles: STORE_MANAGER_PLUS_ROLES },
+        name: "global::require-capability",
+        config: { capability: "wallet.customer.search" },
       },
     ]);
   });

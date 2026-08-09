@@ -1,16 +1,36 @@
-import { ROLE_NAMES } from "../../../utils/roles";
-
-const superadminOnlyPolicy = [
+const capabilityPolicy = (capability: string) => [
   {
-    name: "global::role-based",
+    name: "global::require-capability",
     config: {
-      roles: [ROLE_NAMES.SUPERADMIN],
+      capability,
     },
   },
 ];
 
 export default {
   routes: [
+    {
+      method: "GET",
+      path: "/settings/blog-banners",
+      handler: "settings.getBlogBanners",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "content.blog.banners.manage" } },
+        ],
+      },
+    },
+    {
+      method: "PUT",
+      path: "/settings/blog-banners",
+      handler: "settings.updateBlogBanners",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "content.blog.banners.manage" } },
+        ],
+      },
+    },
     {
       method: "GET",
       path: "/site-settings",
@@ -28,7 +48,7 @@ export default {
       config: {
         auth: { scope: [] },
         middlewares: [],
-        policies: superadminOnlyPolicy,
+        policies: capabilityPolicy("system.settings.manage"),
       },
     },
     {
@@ -38,7 +58,7 @@ export default {
       config: {
         auth: { scope: [] },
         middlewares: [],
-        policies: superadminOnlyPolicy,
+        policies: capabilityPolicy("system.customization.manage"),
       },
     },
     {
@@ -48,7 +68,7 @@ export default {
       config: {
         auth: { scope: [] },
         middlewares: [],
-        policies: superadminOnlyPolicy,
+        policies: capabilityPolicy("system.customization.manage"),
       },
     },
     {
@@ -58,7 +78,7 @@ export default {
       config: {
         auth: { scope: [] },
         middlewares: [],
-        policies: superadminOnlyPolicy,
+        policies: capabilityPolicy("system.customization.manage"),
       },
     },
   ],

@@ -799,6 +799,7 @@ class ProductImporter {
 
     try {
       const strapiProduct = await this.transformProduct(wcProduct);
+      const publicationIntent = strapiProduct._publicationIntent;
       const payload = this.prepareProductPayload(strapiProduct);
 
       if (dryRun) {
@@ -931,6 +932,23 @@ class ProductImporter {
               `⚠️ Variation import failed for product ${wcProduct.name}, but product import succeeded:`,
               variationError.message,
             );
+          }
+        }
+
+        if (publicationIntent) {
+          const currentResponse = await this.strapiClient.getProductById(productId);
+          const currentStatus =
+            currentResponse?.data?.attributes?.Status ??
+            currentResponse?.data?.Status ??
+            currentResponse?.attributes?.Status ??
+            currentResponse?.Status ??
+            "InActive";
+          if (currentStatus === "Active" && publicationIntent.action === "schedule") {
+            this.logger.warn(
+              `⚠️ publication schedule skipped for active product ${wcProduct.id}: scheduled-update-unsupported`,
+            );
+          } else {
+            await this.strapiClient.changeProductPublication(productId, wcProduct.id, publicationIntent);
           }
         }
       }
@@ -1071,6 +1089,7 @@ class ProductImporter {
       _attributes,
       _additionalCategories,
       _sizeGuideMatrix,
+      _publicationIntent,
       ...payload
     } = strapiProduct;
 
@@ -1153,8 +1172,8 @@ class ProductImporter {
       );
     }
 
-    const { resolvePublication } = require("../catalog/lib/publication");
-    const publicationFields = resolvePublication({
+    const { resolvePublicationIntent } = require("../catalog/lib/publication");
+    const publicationIntent = resolvePublicationIntent({
       mode: this.options?.publication?.mode || "now",
       date: this.options?.publication?.date,
       time: this.options?.publication?.time,
@@ -1172,12 +1191,7 @@ class ProductImporter {
       Slug: slug,
       // Description is richtext in Strapi, so preserve HTML
       Description: descriptionContent,
-      Status: publicationFields.Status,
-      scheduledPublishAt: publicationFields.scheduledPublishAt,
-      scheduledPublishTimezone: publicationFields.scheduledPublishTimezone,
-      scheduledPublishRequireMedia: publicationFields.scheduledPublishRequireMedia,
-      scheduledPublishLastError: publicationFields.scheduledPublishLastError,
-      scheduledPublishLastAttemptAt: publicationFields.scheduledPublishLastAttemptAt,
+      _publicationIntent: publicationIntent,
       AverageRating: wcProduct.average_rating ? parseFloat(wcProduct.average_rating) : null,
       RatingCount: wcProduct.rating_count || 0,
       // Store WooCommerce ID for reference

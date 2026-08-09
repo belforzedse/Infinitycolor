@@ -10,24 +10,28 @@ const variations = require("../fixtures/variations.json");
 
 const byId = (arr, id) => arr.find((x) => x.id === id);
 
-test("mapProduct: slug imported exactly without decoding or regeneration", () => {
+test("mapProduct: normalizes percent-encoded Woo slugs", () => {
   const { data } = T.mapProduct(byId(products, 101));
-  assert.equal(data.Slug, "%da%a9%db%8c%d9%81-%d8%af%d8%b3%d8%aa%db%8c");
+  assert.equal(data.Slug, "کیف-دستی");
 });
 
-test("mapProduct: writes ProductType, IsSimpleProduct, Weight, Status", () => {
-  const variable = T.mapProduct(byId(products, 101)).data;
+test("mapProduct: keeps publication out of catalog data and returns an intent", () => {
+  const variableResult = T.mapProduct(byId(products, 101));
+  const variable = variableResult.data;
   assert.equal(variable.ProductType, "Variable");
   assert.equal(variable.IsSimpleProduct, false);
   assert.equal(variable.Weight, 1); // round(0.5) -> 1; numeric weight is written
-  assert.equal(variable.Status, "InActive"); // no status mapping passed → safe default
+  assert.equal("Status" in variable, false);
+  assert.equal(variableResult.publicationIntent.action, "unpublish");
 
-  const simple = T.mapProduct(byId(products, 102), {
+  const simpleResult = T.mapProduct(byId(products, 102), {
     statusMappings: { publish: "Active", draft: "InActive" },
-  }).data;
+  });
+  const simple = simpleResult.data;
   assert.equal(simple.ProductType, "Simple");
   assert.equal(simple.IsSimpleProduct, true);
-  assert.equal(simple.Status, "Active");
+  assert.equal("Status" in simple, false);
+  assert.equal(simpleResult.publicationIntent.action, "publish-now");
   assert.ok(!("Weight" in simple)); // blank weight → schema default kept (not written)
 });
 

@@ -59,7 +59,7 @@ export async function mergeGuestCart(
         transacting: trx,
       } as any);
       const product = variation?.product;
-      if (!variation || variation.IsPublished === false || !product || product.removedAt || product.Status === "InActive") {
+      if (!variation || variation.IsPublished === false || !product || product.removedAt || product.Status !== "Active") {
         rejected.push({ ...item, reason: "UNAVAILABLE" });
         continue;
       }

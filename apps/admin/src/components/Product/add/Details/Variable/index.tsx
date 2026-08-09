@@ -3,7 +3,7 @@ import type { ProductVariable, ProductVariableDisplay } from "./types";
 import { ProductVariableTable } from "./Table";
 import { apiClient } from "@/services";
 import toast from "react-hot-toast";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import Modal from "@/components/Kits/Modal";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { Ruler, Settings } from "lucide-react";
@@ -27,8 +27,7 @@ const BULK_FORM_DEFAULT = {
 };
 
 const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshKey = 0 }) => {
-  const { isStoreManager, isAdmin } = useCurrentUser();
-  const canDeleteVariations = isStoreManager || isAdmin;
+  const canDeleteVariations = useCan("product.variation.delete");
 
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const [variables, setVariables] = useState<ProductVariableDisplay[]>([]);

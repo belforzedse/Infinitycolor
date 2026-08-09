@@ -26,6 +26,7 @@ describe("SnappPay admin payment-operation status", () => {
       },
     };
     const strapi = {
+      query: jest.fn((uid: string) => queries[uid]),
       db: {
         query: jest.fn((uid: string) => queries[uid]),
       },
@@ -58,6 +59,16 @@ describe("SnappPay admin payment-operation status", () => {
   it("blocks Store manager from raw payment-operation records", async () => {
     const paymentFind = jest.fn();
     const strapi = {
+      query: jest.fn((uid: string) =>
+        uid === "plugin::users-permissions.user"
+          ? {
+              findOne: jest.fn().mockResolvedValue({
+                id: 7,
+                role: { name: "Store Manager" },
+              }),
+            }
+          : { findOne: paymentFind },
+      ),
       db: {
         query: jest.fn((uid: string) =>
           uid === "plugin::users-permissions.user"
@@ -80,7 +91,9 @@ describe("SnappPay admin payment-operation status", () => {
 
     await adminPaymentOperationHandler(strapi, ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith("Admin access required");
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
+    );
     expect(paymentFind).not.toHaveBeenCalled();
   });
 });

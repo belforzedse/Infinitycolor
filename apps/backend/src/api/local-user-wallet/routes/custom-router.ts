@@ -1,12 +1,5 @@
-import { ROLE_NAMES } from "../../../utils/roles";
-
-const superadminPolicy = [
-  {
-    name: "global::role-based",
-    config: {
-      roles: [ROLE_NAMES.SUPERADMIN],
-    },
-  },
+const capabilityPolicy = (capability: string) => [
+  { name: "global::require-capability", config: { capability } },
 ];
 
 export default {
@@ -21,11 +14,20 @@ export default {
     },
     {
       method: "GET",
+      path: "/local-user-wallet/admin/:userId/history",
+      handler: "local-user-wallet.adminGetUserWalletHistory",
+      config: {
+        auth: { scope: [] },
+        policies: capabilityPolicy("wallet.history.read"),
+      },
+    },
+    {
+      method: "GET",
       path: "/local-user-wallet/admin/:userId",
       handler: "local-user-wallet.adminGetUserWallet",
       config: {
         auth: { scope: [] },
-        policies: superadminPolicy,
+        policies: capabilityPolicy("wallet.read"),
       },
     },
     {
@@ -34,7 +36,7 @@ export default {
       handler: "local-user-wallet.adminAdjustWallet",
       config: {
         auth: { scope: [] },
-        policies: superadminPolicy,
+        policies: capabilityPolicy("wallet.adjust"),
       },
     },
   ],

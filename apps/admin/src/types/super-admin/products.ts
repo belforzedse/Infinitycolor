@@ -6,7 +6,7 @@ export interface ProductData {
   Title: string;
   CoverImage: CoverImageField | null;
   Description: string;
-  Status: "Active";
+  Status: "Active" | "InActive" | "Scheduled";
   ProductType: "Variable" | "Simple";
   IsSimpleProduct: boolean;
   SimpleSKU?: string;
@@ -25,7 +25,12 @@ export interface EditProductData {
   Title: string;
   CoverImage: CoverImageField | null;
   Description: string;
-  Status: "Active";
+  Status: "Active" | "InActive" | "Scheduled";
+  scheduledPublishAt?: string | null;
+  scheduledPublishTimezone?: string | null;
+  scheduledPublishLastAttemptAt?: string | null;
+  scheduledPublishLastError?: string | null;
+  scheduledPublishFailureKind?: "Transient" | "Permanent" | null;
   ProductType: "Variable" | "Simple";
   IsSimpleProduct: boolean;
   SimpleVariationId?: number;

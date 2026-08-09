@@ -46,7 +46,7 @@ describe("product stock operational field contract", () => {
     const ctx = createCtx({ Count: 9, reservedCount: 0 });
     await controller.update(ctx);
     expect(ctx.badRequest).toHaveBeenCalledWith(
-      "Store manager cannot write protected fields: reservedCount",
+      "This role cannot write protected fields: reservedCount",
     );
     expect(base.update).not.toHaveBeenCalled();
   });

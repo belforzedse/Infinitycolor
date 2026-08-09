@@ -8,17 +8,30 @@ export const updateCartItemOp = async (
 ) => {
   const cartItem = await strapi.db.query("api::cart-item.cart-item").findOne({
     where: { id: cartItemId },
-    populate: { product_variation: { populate: { product_stock: true } } },
+    populate: {
+      product_variation: {
+        populate: { product_stock: true, product: true },
+      },
+    },
   });
 
   if (!cartItem) {
     return { success: false, message: "Cart item not found" };
   }
 
+  const variation = cartItem.product_variation;
+  const product = variation?.product;
+  if (!product || product.removedAt || product.Status !== "Active") {
+    return { success: false, message: "Product is not available" };
+  }
+  if (variation?.IsPublished === false) {
+    return { success: false, message: "Product variation is not available" };
+  }
+
   let available = 0;
   try {
-    available = cartItem.product_variation?.product_stock
-      ? getAvailableStockCount(cartItem.product_variation.product_stock)
+    available = variation?.product_stock
+      ? getAvailableStockCount(variation.product_stock)
       : 0;
   } catch (error) {
     strapi.log.error("Failed to get available stock count", {
@@ -28,11 +41,11 @@ export const updateCartItemOp = async (
     return { success: false, message: "Unable to verify stock" };
   }
 
-  if (!cartItem.product_variation?.product_stock || available < count) {
+  if (!variation?.product_stock || available < count) {
     return { success: false, message: "Insufficient stock" };
   }
 
-  const price = cartItem.product_variation.Price || 0;
+  const price = variation.Price || 0;
   const updatedItem = await strapi.entityService.update(
     "api::cart-item.cart-item",
     cartItemId,

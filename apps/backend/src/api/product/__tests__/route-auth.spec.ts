@@ -1,8 +1,18 @@
 import routeConfig from "../routes/custom-router";
-import { STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
 
 describe("product operational routes", () => {
-  it("allows Store manager plus roles to generate variation combinations", () => {
+  it("protects the publication command and leaves role/importer authorization to the controller", () => {
+    const route = routeConfig.routes.find(
+      (entry) => entry.path === "/products/:id/publication",
+    );
+
+    expect(route).toBeDefined();
+    expect(route?.method).toBe("POST");
+    expect(route?.config.auth).toEqual({ scope: [] });
+    expect(route?.config.policies).toEqual([]);
+  });
+
+  it("requires the variation-management capability", () => {
     const route = routeConfig.routes.find(
       (entry) => entry.path === "/products/:id/variation-combinations",
     );
@@ -11,8 +21,8 @@ describe("product operational routes", () => {
     expect(route?.config.auth).toEqual({ scope: [] });
     expect(route?.config.policies).toEqual([
       {
-        name: "global::role-based",
-        config: { roles: STORE_MANAGER_PLUS_ROLES },
+        name: "global::require-capability",
+        config: { capability: "product.variation.manage" },
       },
     ]);
   });

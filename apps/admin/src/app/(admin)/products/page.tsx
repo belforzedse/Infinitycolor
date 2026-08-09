@@ -12,8 +12,7 @@ import toast from "react-hot-toast";
 import { useAtom } from "jotai";
 import { refreshTable } from "@/components/SuperAdmin/Table";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { useEditorRedirect } from "@/hooks/useEditorRedirect";
+import { useCan } from "@/hooks/useCan";
 import {
   parseAdvancedFiltersParam,
   serializeAdvancedFiltersParam,
@@ -37,6 +36,7 @@ const PRODUCT_FILTER_OPTIONS: AdvancedFilterField[] = [
     options: [
       { id: "Active", title: "فعال" },
       { id: "InActive", title: "غیرفعال" },
+      { id: "Scheduled", title: "زمان‌بندی شده" },
     ],
   },
   {
@@ -66,15 +66,17 @@ const PRODUCT_FILTER_OPTIONS: AdvancedFilterField[] = [
     type: "number",
   },
   { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
+  { id: "[scheduledPublishAt]", title: "تاریخ انتشار زمان‌بندی‌شده", type: "date" },
   { id: "[LastEditedByAdminAt]", title: "آخرین ویرایش", type: "date" },
 ];
 
 export default function ProductsPage() {
-  const { isStoreManager, isFounder } = useCurrentUser();
-  const cannotHardDelete = isStoreManager || isFounder;
-
-  // Redirect editors away from product pages
-  useEditorRedirect();
+  const canCreateProduct = useCan("product.create");
+  const canDeleteProduct = useCan("product.delete");
+  const canRestoreProduct = useCan("product.restore");
+  const canUpdateStock = useCan("product.stock.update");
+  const canPublishProduct = useCan("product.publish");
+  const cannotHardDelete = !canDeleteProduct;
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
   const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] =
     useState(false);
@@ -436,29 +438,39 @@ export default function ProductsPage() {
   const bulkOptions = useMemo(() => {
     if (isRecycleBinOpen) {
       return [
-        { id: "restore", title: "بازیابی محصولات" },
-        { id: "permanent_delete", title: "حذف دائمی محصولات" },
+        ...(canRestoreProduct ? [{ id: "restore", title: "بازیابی محصولات" }] : []),
+        ...(canDeleteProduct
+          ? [{ id: "permanent_delete", title: "حذف دائمی محصولات" }]
+          : []),
       ];
     }
     return [
-      { id: "remove_stock", title: "حذف موجودی" },
-      { id: "set_stock", title: "تنظیم موجودی" },
-      { id: "publish", title: "انتشار محصولات" },
-      { id: "unpublish", title: "لغو انتشار محصولات" },
-      { id: "soft_delete", title: "حذف محصولات" },
+      ...(canUpdateStock
+        ? [
+            { id: "remove_stock", title: "حذف موجودی" },
+            { id: "set_stock", title: "تنظیم موجودی" },
+          ]
+        : []),
+      ...(canPublishProduct
+        ? [
+            { id: "publish", title: "انتشار محصولات" },
+            { id: "unpublish", title: "لغو انتشار محصولات" },
+          ]
+        : []),
+      ...(canDeleteProduct ? [{ id: "soft_delete", title: "حذف محصولات" }] : []),
     ];
-  }, [isRecycleBinOpen]);
+  }, [canDeleteProduct, canPublishProduct, canRestoreProduct, canUpdateStock, isRecycleBinOpen]);
 
   return (
     <ContentWrapper
       title="محصولات"
-      hasAddButton
+      hasAddButton={canCreateProduct}
       addButtonText="محصول جدید"
       hasFilterButton
       filterOptions={PRODUCT_FILTER_OPTIONS}
       hasPagination
       addButtonPath="/products/add"
-      hasRecycleBin
+      hasRecycleBin={canDeleteProduct || canRestoreProduct}
       isRecycleBinOpen={isRecycleBinOpen}
       setIsRecycleBinOpen={handleRecycleBinChange}
       filters={advancedFilters}
@@ -547,7 +559,7 @@ export default function ProductsPage() {
             onSelectionChange={selectionProps?.onSelectionChange}
           />
         )}
-        enableSelection
+        enableSelection={bulkOptions.length > 0}
         getRowId={(row: Product) => row.id}
         bulkOptions={bulkOptions}
         onBulkAction={handleBulkAction}

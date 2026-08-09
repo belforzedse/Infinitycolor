@@ -1,5 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
-import { ROLE_NAMES, roleIsAllowed } from "../../../../utils/roles";
+import { requireCapability } from "../../../../utils/adminAuthorization";
 
 export async function adminPaymentOperationHandler(strapi: Strapi, ctx: any) {
   const orderId = Number(ctx.params.id);
@@ -8,14 +8,7 @@ export async function adminPaymentOperationHandler(strapi: Strapi, ctx: any) {
     return ctx.badRequest("Invalid payment operation");
   }
 
-  const pluginUser = ctx.state.user;
-  if (!pluginUser) return ctx.forbidden("Admin access required");
-  const fullUser: any = await strapi.db
-    .query("plugin::users-permissions.user")
-    .findOne({ where: { id: pluginUser.id }, populate: ["role"] } as any);
-  if (!fullUser || !roleIsAllowed(fullUser?.role?.name, [ROLE_NAMES.SUPERADMIN])) {
-    return ctx.forbidden("Admin access required");
-  }
+  if (!(await requireCapability(ctx, strapi, "order.financial.read"))) return;
 
   const operation: any = await strapi.db
     .query("api::payment-operation.payment-operation" as any)

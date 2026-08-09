@@ -18,6 +18,8 @@ import { resolvePaymentGateway } from "@/utils/paymentGateways";
 type Props = {
   order: SuperAdminOrderDetail;
   onSuccess: () => void;
+  canChangeStatus: boolean;
+  canCancel: boolean;
 };
 
 type PendingAction =
@@ -33,7 +35,12 @@ const STATUS_ACTIONS: { status: OrderLifecycleStatus; label: string; bucket: Per
     { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.DELIVERED },
   ];
 
-export default function OrderStatusActions({ order, onSuccess }: Props) {
+export default function OrderStatusActions({
+  order,
+  onSuccess,
+  canChangeStatus,
+  canCancel,
+}: Props) {
   const [pending, setPending] = useState<PendingAction>(null);
   const [loading, setLoading] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -128,6 +135,8 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
     return `وضعیت سفارش از «${translateOrderStatus(order.orderStatus)}» به «${pending.label}» تغییر می‌کند.`;
   })();
 
+  if (!canChangeStatus && !canCancel) return null;
+
   return (
     <div
       dir="rtl"
@@ -141,7 +150,7 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        {STATUS_ACTIONS.map((action) => {
+        {canChangeStatus && STATUS_ACTIONS.map((action) => {
           const isCurrent = order.orderStatus === action.status;
           const isAllowed =
             (order.orderStatus === "Started" && action.status === "Shipment") ||
@@ -160,15 +169,17 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
           );
         })}
 
-        <button
-          type="button"
-          disabled={loading || isCancelled}
-          onClick={() => setPending({ kind: "cancel" })}
-          className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-          title={isCancelled ? "این سفارش قبلاً لغو شده است" : undefined}
-        >
-          لغو سفارش
-        </button>
+        {canCancel && (
+          <button
+            type="button"
+            disabled={loading || isCancelled}
+            onClick={() => setPending({ kind: "cancel" })}
+            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+            title={isCancelled ? "این سفارش قبلاً لغو شده است" : undefined}
+          >
+            لغو سفارش
+          </button>
+        )}
       </div>
 
       <ConfirmDialog

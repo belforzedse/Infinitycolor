@@ -2,13 +2,11 @@
  * Custom router for payment gateway APIs
  */
 
-import { ROLE_NAMES } from "../../../utils/roles";
-
 const superadminOnlyPolicy = [
   {
-    name: "global::role-based",
+    name: "global::require-capability",
     config: {
-      roles: [ROLE_NAMES.SUPERADMIN],
+      capability: "system.payments.manage",
     },
   },
 ];

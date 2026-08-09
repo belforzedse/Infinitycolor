@@ -14,7 +14,11 @@ jest.mock("@/hooks/api/useMe", () => ({
   }),
 }));
 jest.mock("@/hooks/useCurrentUser", () => ({
-  useCurrentUser: () => ({ roleName: "Superadmin", isLoading: true }),
+  useCurrentUser: () => ({
+    adminRole: "superadmin",
+    capabilities: ["order.read", "system.users.manage"],
+    isLoading: false,
+  }),
 }));
 jest.mock("@/hooks/useDashboardMetrics", () => ({
   useDashboardMetrics: (options: unknown) => mockUseDashboardMetrics(options),

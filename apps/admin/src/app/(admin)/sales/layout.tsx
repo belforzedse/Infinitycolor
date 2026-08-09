@@ -8,7 +8,7 @@ import {
   toDateOnly,
   parseDateOnly,
 } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
-import { getSalesNavForRole } from "@/constants/salesNav";
+import { getSalesNavForCapabilities } from "@/constants/salesNav";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 /**
@@ -45,8 +45,8 @@ export default function SalesLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const { roleName } = useCurrentUser();
-  const items = getSalesNavForRole(roleName);
+  const { adminRole, capabilities } = useCurrentUser();
+  const items = getSalesNavForCapabilities(capabilities, adminRole);
   const { start, end, setRange } = useReportQueryState<never>({ tab: false });
 
   const showDateRange = DATE_SCOPED_ROUTES.includes(
@@ -57,7 +57,7 @@ export default function SalesLayout({
     <div className="w-full" dir="rtl">
       <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
         <h1 className="min-w-0 break-words text-xl text-[#202224] md:text-2xl lg:text-3xl">
-          فروش
+          گزارشات
         </h1>
       </div>
 

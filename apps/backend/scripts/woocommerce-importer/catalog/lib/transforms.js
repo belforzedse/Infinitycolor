@@ -15,7 +15,7 @@
 const { resolveSlug } = require("./slug");
 const { resolveColorMapping, DEFAULT_COLOR } = require("../../utils/colorMappings");
 const { wooSourceTimestamps } = require("../../utils/sourceTimestamps");
-const { resolvePublication } = require("./publication");
+const { resolvePublicationIntent } = require("./publication");
 
 const EXTERNAL_SOURCE = "woocommerce";
 
@@ -95,7 +95,7 @@ function mapProduct(wcProduct, opts = {}) {
     publication = null,
   } = opts;
 
-  const publicationFields = resolvePublication({
+  const publicationIntent = resolvePublicationIntent({
     mode: publication?.mode || "now",
     date: publication?.date,
     time: publication?.time,
@@ -112,12 +112,6 @@ function mapProduct(wcProduct, opts = {}) {
     Title: normalizeName(wcProduct.name),
     Slug: resolveSlug(wcProduct, "product"),
     Description: prepareRichtext(wcProduct.description || wcProduct.short_description || ""),
-    Status: publicationFields.Status,
-    scheduledPublishAt: publicationFields.scheduledPublishAt,
-    scheduledPublishTimezone: publicationFields.scheduledPublishTimezone,
-    scheduledPublishRequireMedia: publicationFields.scheduledPublishRequireMedia,
-    scheduledPublishLastError: publicationFields.scheduledPublishLastError,
-    scheduledPublishLastAttemptAt: publicationFields.scheduledPublishLastAttemptAt,
     ProductType: wcProduct.type === "simple" ? "Simple" : "Variable",
     IsSimpleProduct: wcProduct.type === "simple",
     AverageRating: toNumber(wcProduct.average_rating) || null,
@@ -187,6 +181,7 @@ function mapProduct(wcProduct, opts = {}) {
     otherCategoryMisses,
     sizeGuideMatrix: extractSizeGuideMatrix(wcProduct),
     sourceTimestamps,
+    publicationIntent,
   };
 }
 

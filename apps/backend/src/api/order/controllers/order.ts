@@ -18,12 +18,9 @@ import { releaseReserveHandler } from "./handlers/releaseReserve";
 import { logAdminOrderCreate, logAdminOrderFieldUpdate } from "../../../utils/adminActivity";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import { adminTransitionOrderHandler } from "./helpers/adminTransition";
-import {
-  STORE_MANAGER_PLUS_ROLES,
-  resolveCustomerTargetUserId,
-  resolveUserRoleName,
-  roleIsAllowed,
-} from "../../../utils/roles";
+import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
+import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
 import {
   findOrderPaymentAttempt,
   reconcileOrderPaymentAttempt,
@@ -127,9 +124,14 @@ export default factories.createCoreController(
       const requester = ctx.state.user;
 
       const requesterId = requester?.id ? Number(requester.id) : null;
-      const requesterRole = await resolveUserRoleName(strapi, requester);
+      const actor = await resolveAdminActor(strapi, requester);
+      const requesterRole =
+        actor?.role || normalizeAdminRole(requester?.role?.type || requester?.role?.name);
       const operationalManager = await isOperationalManagerRequest(ctx, strapi);
-      const isAdminUser = roleIsAllowed(requesterRole, STORE_MANAGER_PLUS_ROLES);
+      const isAdminUser = requesterRole ? hasCapability(requesterRole, "order.read") : false;
+      const canReadFinancials = requesterRole
+        ? hasCapability(requesterRole, "order.financial.read")
+        : false;
 
       try {
         // Query with all necessary relations populated
@@ -145,7 +147,7 @@ export default factories.createCoreController(
             // Legacy support - populate at order level too, but only with the
             // names the operational order UI needs.
             user_info: operationalManager ? { select: ["id", "FirstName", "LastName"] } : true,
-            contract: operationalManager
+            contract: operationalManager && !canReadFinancials
               ? { select: ["id", "Amount", "Status"] }
               : {
                   populate: {
@@ -205,7 +207,7 @@ export default factories.createCoreController(
         // Check both order.user_info (legacy) and order.user.user_info (correct structure)
         const userInfo = order.user?.user_info || order.user_info;
         const sanitizedContract =
-          operationalManager && order.contract
+          operationalManager && !canReadFinancials && order.contract
             ? {
                 id: order.contract.id,
                 Amount: order.contract.Amount,
@@ -271,6 +273,7 @@ export default factories.createCoreController(
      * `entityService.create` and bypasses this controller), so there is no double-logging.
      */
     async create(ctx) {
+      if (!(await requireCapability(ctx, strapi, "order.manual.create"))) return;
       const response = await super.create(ctx);
 
       try {
@@ -380,10 +383,7 @@ export default factories.createCoreController(
     },
 
     async adminUpdateNotes(ctx) {
-      const requesterRole = await resolveUserRoleName(strapi, ctx.state?.user);
-      if (!roleIsAllowed(requesterRole, STORE_MANAGER_PLUS_ROLES)) {
-        return ctx.forbidden("You do not have permission to update this order");
-      }
+      if (!(await requireCapability(ctx, strapi, "order.notes.update"))) return;
 
       const orderId = Number(ctx.params.id);
       if (!Number.isInteger(orderId) || orderId <= 0) {

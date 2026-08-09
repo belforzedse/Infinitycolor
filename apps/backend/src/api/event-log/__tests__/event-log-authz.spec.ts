@@ -1,11 +1,21 @@
 const mockGetOrderEvents = jest.fn().mockResolvedValue({ data: [] });
 const mockGetAdminEvents = jest.fn().mockResolvedValue({ data: [] });
+let persistedRoleName = "Customer";
 const mockStrapi: any = {
   service: jest.fn(() => ({
     getOrderEvents: mockGetOrderEvents,
     getAdminEvents: mockGetAdminEvents,
   })),
   entityService: { findOne: jest.fn() },
+  query: jest.fn((uid: string) => {
+    if (uid !== "plugin::users-permissions.user") throw new Error(`Unexpected query: ${uid}`);
+    return {
+      findOne: jest.fn().mockImplementation(async () => ({
+        id: 10,
+        role: { name: persistedRoleName },
+      })),
+    };
+  }),
 };
 
 jest.mock("@strapi/strapi", () => ({
@@ -18,6 +28,7 @@ import eventLogController from "../controllers/event-log";
 import eventLogRoutes from "../routes/custom-router";
 
 function createCtx(roleName: string, overrides: Record<string, unknown> = {}) {
+  persistedRoleName = roleName;
   return {
     state: { user: { id: 10, isAdmin: true, role: { name: roleName } } },
     params: { orderId: "42" },
@@ -37,23 +48,25 @@ describe("event log authorization", () => {
 
     await (eventLogController as any).getAdminEvents(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith("Admin access required");
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
+    );
     expect(mockGetAdminEvents).not.toHaveBeenCalled();
   });
 
-  it("guards the global admin event route with a Superadmin policy", () => {
+  it("guards the global admin event route with the audit capability", () => {
     const route = eventLogRoutes.routes.find((entry) => entry.path === "/event-logs/admin");
 
     expect(route?.config?.policies).toEqual([
       {
-        name: "global::role-based",
-        config: { roles: ["Superadmin"] },
+        name: "global::require-capability",
+        config: { capability: "system.audit.read" },
       },
     ]);
   });
 
-  it("retains Founder access to order-scoped events", async () => {
-    const ctx = createCtx("Founder");
+  it("retains Superadmin access to order-scoped events", async () => {
+    const ctx = createCtx("Superadmin");
 
     await (eventLogController as any).getOrderEvents(ctx);
 

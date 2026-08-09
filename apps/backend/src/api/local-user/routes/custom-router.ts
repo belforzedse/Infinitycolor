@@ -1,10 +1,8 @@
-import { ROLE_NAMES } from "../../../utils/roles";
-
 const adminPolicy = [
   {
-    name: "global::role-based",
+    name: "global::require-capability",
     config: {
-      roles: [ROLE_NAMES.SUPERADMIN],
+      capability: "system.users.manage",
     },
   },
 ];

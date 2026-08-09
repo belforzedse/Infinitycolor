@@ -21,6 +21,10 @@ import {
   verifyPasswordIdentity,
 } from "../services/credential-flow";
 import { recordAdminAudit } from "../../../utils/adminAudit";
+import {
+  capabilitiesForRole,
+  normalizeAdminRole,
+} from "@repo/auth-core";
 
 export default {
   otp,
@@ -141,14 +145,12 @@ async function self(ctx) {
       return ctx.unauthorized(UNAUTHORIZED_MESSAGE);
     }
 
-    // Determine administrative flag based on plugin role name
+    // Resolve the live plugin role. Better Auth proves identity; Strapi remains
+    // the authorization authority and capabilities are never embedded in JWTs.
     const roleName = fullUser?.role?.name;
-    const normalizedRoleName = roleName?.toLowerCase().trim();
-    const isAdmin =
-      normalizedRoleName === "superadmin" ||
-      normalizedRoleName === "store manager" ||
-      normalizedRoleName === "editor" ||
-      normalizedRoleName === "founder";
+    const adminRole = normalizeAdminRole(fullUser?.role?.type || roleName);
+    const capabilities = adminRole ? [...capabilitiesForRole(adminRole)] : [];
+    const isAdmin = adminRole !== null;
 
     // Load profile from local-user-info which now points to plugin user
     const localUserInfo = await strapi.db
@@ -180,6 +182,8 @@ async function self(ctx) {
       confirmed: Boolean(fullUser?.confirmed),
       isAdmin,
       roleName: roleName ?? null,
+      adminRole,
+      capabilities,
       effectivePermissions,
       AccountOrigin: lifecycle?.AccountOrigin ?? "Native",
       ClaimedAt: lifecycle?.ClaimedAt ?? null,

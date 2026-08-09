@@ -1,4 +1,5 @@
-import { canRoleAccessPath } from "@/constants/roleAccess";
+import { capabilitiesForRole, normalizeAdminRole, type AdminCapability, type AdminRoleId } from "@repo/auth-core";
+import { canCapabilitiesAccessPath, canRoleAccessPath } from "@/constants/roleAccess";
 
 export type SalesNavItem = {
   id: string;
@@ -7,7 +8,7 @@ export type SalesNavItem = {
 };
 
 /**
- * The Sales workspace.
+ * The گزارشات (Reports) workspace.
  *
  * These destinations previously sat in a `reports` sidebar group that had no
  * `href`, which made `/reports` itself unreachable — and `/reports` was the
@@ -16,7 +17,13 @@ export type SalesNavItem = {
  *
  * Order is deliberate: the overview lands first, then the analytical cuts of
  * "how are we selling", then the money-movement reports, then the pre-purchase
- * surfaces (traffic, carts).
+ * surfaces (traffic, carts), then the non-sales admin audit report.
+ *
+ * `sales-activity` intentionally points at `/settings/activity`, not a
+ * `/sales/*` path — the audit log's own page/route did not move, only its
+ * entry point did. Founder access is still narrowed automatically:
+ * `getSalesNavForRole` filters every item through `canRoleAccessPath`, and
+ * `/settings` is already in `FOUNDER_FORBIDDEN_PREFIXES`.
  */
 export const SALES_NAV_ITEMS: SalesNavItem[] = [
   { id: "sales-overview", label: "نمای کلی", href: "/sales" },
@@ -28,6 +35,7 @@ export const SALES_NAV_ITEMS: SalesNavItem[] = [
   { id: "sales-gateways", label: "نقدینگی درگاه‌ها", href: "/sales/gateways" },
   { id: "sales-traffic", label: "تحلیل ترافیک", href: "/sales/traffic" },
   { id: "sales-carts", label: "سبدهای خرید", href: "/sales/carts" },
+  { id: "sales-activity", label: "گزارش فعالیت ادمین‌ها", href: "/settings/activity" },
 ];
 
 /**
@@ -41,3 +49,16 @@ export const getSalesNavForRole = (
   roleName?: string | null,
 ): SalesNavItem[] =>
   SALES_NAV_ITEMS.filter((item) => canRoleAccessPath(roleName, item.href));
+
+export const getSalesNavForCapabilities = (
+  capabilities: readonly AdminCapability[] | null | undefined,
+  role?: AdminRoleId | string | null,
+): SalesNavItem[] =>
+  SALES_NAV_ITEMS.filter((item) =>
+    canCapabilitiesAccessPath(capabilities, item.href, role),
+  );
+
+export const getSalesNavForAdminRole = (role?: string | null): SalesNavItem[] => {
+  const normalized = normalizeAdminRole(role);
+  return getSalesNavForCapabilities(capabilitiesForRole(normalized), normalized);
+};

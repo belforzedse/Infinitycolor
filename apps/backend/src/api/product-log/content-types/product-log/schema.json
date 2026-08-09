@@ -24,7 +24,16 @@
     },
     "Action": {
       "type": "enumeration",
-      "enum": ["Create", "Update", "Delete"],
+      "enum": [
+        "Create",
+        "Update",
+        "Delete",
+        "Schedule",
+        "Reschedule",
+        "CancelSchedule",
+        "Publish",
+        "Unpublish"
+      ],
       "required": true
     },
     "Changes": {
@@ -44,5 +53,4 @@
     }
   }
 }
-
 

@@ -2,19 +2,14 @@
  * Report controller
  */
 
-import type { RoleName } from "../../../utils/roles";
-import {
-  MANAGEMENT_ROLES,
-  ROLE_NAMES,
-  roleIsAllowed,
-  fetchUserWithRole,
-} from "../../../utils/roles";
+import { MANAGEMENT_ROLES } from "../../../utils/roles";
+import { hasCapability, type AdminCapability } from "@repo/auth-core";
+import { requireCapability } from "../../../utils/adminAuthorization";
 import { parsePositiveInt } from "../../../utils/parsePositiveInt";
 import {
   getMatomoFunnel,
   getMatomoRealtimePayload,
   getMatomoTrafficDashboardPayload,
-  getMatomoVisitsSummary,
   getProductBehavioral,
   normalizeRange,
   previousRange,
@@ -47,10 +42,6 @@ const TRAFFIC_REALTIME_CACHE_TTL_MS = parsePositiveInt(
 );
 const trafficCache = new Map<string, { expiresAt: number; payload: any }>();
 
-const PRODUCT_REPORT_ROLES: RoleName[] = [ROLE_NAMES.SUPERADMIN, ROLE_NAMES.FOUNDER];
-
-const PRODUCT_REPORT_ACCESS_MESSAGE = "Access denied - Superadmin or Founder role required";
-
 function parseDate(value?: string, fallbackDays = 30): Date {
   if (!value) {
     const d = new Date();
@@ -61,15 +52,8 @@ function parseDate(value?: string, fallbackDays = 30): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
-async function ensureRoleAccess(ctx: any, allowedRoles: RoleName[], errorMessage: string) {
-  const userId = ctx.state?.user?.id;
-  const user = await fetchUserWithRole(strapi, userId);
-  if (!user || !roleIsAllowed(user.role?.name, allowedRoles)) {
-    ctx.forbidden(errorMessage);
-    return null;
-  }
-
-  return user;
+async function ensureCapability(ctx: any, capability: AdminCapability) {
+  return requireCapability(ctx, strapi, capability);
 }
 
 function getTrafficCacheKey(prefix: string, params: Record<string, string>) {
@@ -355,11 +339,7 @@ async function attachCoverImages(rows: productAnalytics.ProductPerformanceRow[])
 export default {
   async liquidity(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN],
-        "Access denied - Superadmin role required",
-      );
+      const user = await ensureCapability(ctx, "report.finance.read");
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
@@ -418,7 +398,7 @@ export default {
 
   async productSales(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
@@ -751,11 +731,7 @@ export default {
 
   async gatewayLiquidity(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN],
-        "Access denied - Superadmin role required",
-      );
+      const user = await ensureCapability(ctx, "report.finance.read");
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
@@ -788,15 +764,21 @@ export default {
           cols.find((c: string) => c.startsWith("payment_gateway") && c.endsWith("_id")) ||
           "payment_gateway_id";
 
+        // LEFT JOIN, not INNER: a successful transaction with no linked gateway
+        // must still be counted, or this total silently falls out of step with
+        // `liquidity` above, which sums every `ct.status = 'Success'` row with no
+        // join at all. Bucket the unlinked rows under a stable "unassigned" key
+        // instead of dropping them (see `/sales/gateways` vs `/sales/liquidity`
+        // reconciliation test).
         txGatewayJoin = `
-          JOIN ${link} l ON l.${contractTxFk} = ct.id
-          JOIN payment_gateways pg ON pg.id = l.${gatewayFk}
+          LEFT JOIN ${link} l ON l.${contractTxFk} = ct.id
+          LEFT JOIN payment_gateways pg ON pg.id = l.${gatewayFk}
         `;
       }
 
       const query = `
         SELECT pg.id AS gateway_id,
-               COALESCE(pg.title, 'Unknown') AS title,
+               COALESCE(pg.title, 'نامشخص') AS title,
                SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END)::bigint AS total
         FROM contract_transactions ct
         ${txGatewayJoin}
@@ -826,11 +808,7 @@ export default {
 
   async trafficDashboard(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN],
-        "Access denied - Superadmin role required",
-      );
+      const user = await ensureCapability(ctx, "report.traffic.read");
       if (!user) return;
 
       const normalizedRange = normalizeRange(
@@ -885,11 +863,7 @@ export default {
 
   async trafficRealtime(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN],
-        "Access denied - Superadmin role required",
-      );
+      const user = await ensureCapability(ctx, "report.traffic.read");
       if (!user) return;
 
       const forceFresh = isForceFresh(ctx.query.fresh);
@@ -917,11 +891,7 @@ export default {
 
   async adminActivity(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN],
-        "Access denied - Superadmin role required",
-      );
+      const user = await ensureCapability(ctx, "system.audit.read");
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
@@ -1060,11 +1030,7 @@ export default {
 
   async adminActivityById(ctx) {
     try {
-      const user = await ensureRoleAccess(
-        ctx,
-        [ROLE_NAMES.SUPERADMIN],
-        "Access denied - Superadmin role required",
-      );
+      const user = await ensureCapability(ctx, "system.audit.read");
       if (!user) return;
 
       const id = Number(ctx.params.id);
@@ -1122,7 +1088,7 @@ export default {
 
   async productOverview(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1190,7 +1156,7 @@ export default {
 
   async productBreakdown(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1251,7 +1217,7 @@ export default {
 
   async productTrends(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1314,7 +1280,7 @@ export default {
 
   async productPerformance(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1393,7 +1359,7 @@ export default {
 
   async productExport(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1485,7 +1451,7 @@ export default {
 
   async productDetail(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
       const productId = Number(ctx.query.productId);
@@ -1585,10 +1551,12 @@ export default {
 
       // Optional Matomo behavioral data for this product page. Fully graceful:
       // `null` when Matomo is unconfigured/unavailable — never blocks the report.
-      const behavioral = await getProductBehavioral(String(info.slug || ""), {
-        startDate: start.toISOString().slice(0, 10),
-        endDate: end.toISOString().slice(0, 10),
-      });
+      const behavioral = hasCapability(user.role, "report.traffic.read")
+        ? await getProductBehavioral(String(info.slug || ""), {
+            startDate: start.toISOString().slice(0, 10),
+            endDate: end.toISOString().slice(0, 10),
+          })
+        : null;
 
       ctx.body = {
         data: {
@@ -1616,7 +1584,7 @@ export default {
 
   async productInventory(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
@@ -1716,7 +1684,7 @@ export default {
    */
   async salesBreakdown(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.sales.read");
       if (!user) return;
 
       const dimension = ctx.query.dimension as string;
@@ -1754,7 +1722,7 @@ export default {
   /** XLSX export of {@link salesBreakdown}, reusing the same styled-workbook builder as productExport. */
   async salesBreakdownExport(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.sales.read");
       if (!user) return;
 
       const dimension = ctx.query.dimension as string;
@@ -1811,14 +1779,14 @@ export default {
 
   /**
    * Labelled step-reach funnel (view_item -> add_to_cart -> begin_checkout -> purchase),
-   * Founder-accessible unlike /reports/traffic/dashboard (Superadmin-only). NOT a strict
+   * Founder/Superadmin-only. This is NOT a strict
    * ordered/deduplicated per-visit funnel — that needs Matomo's paid Funnels plugin,
    * which is not installed (see MATOMO.md). `configured: false` (or `steps: null`) means
    * "no data available", which the UI must render distinctly from a real zero-count step.
    */
   async funnel(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.traffic.read");
       if (!user) return;
 
       const range = normalizeRange(
@@ -1846,15 +1814,14 @@ export default {
   /**
    * Executive overview: store-wide sales KPIs with prior-period comparison (reusing
    * the SAME `computeProductPeriod`/`paidOrdersCte` every product report already
-   * uses — no product filter applied, so this is the whole store), a lightweight
-   * traffic snapshot, and the most recent commerce-reconciliation result as a trust
-   * signal. Deliberately does NOT call `getMatomoTrafficDashboardPayload` (Superadmin-
-   * only, ~20 Matomo calls) — `traffic` is `null` when Matomo is unconfigured/down,
-   * never a fabricated zero.
+   * uses — no product filter applied, so this is the whole store), plus the most
+   * recent commerce-reconciliation result as a trust signal. Traffic is
+   * deliberately fetched from its separately capability-gated endpoint so Matomo
+   * cannot fail or delay this commerce dashboard for Finance.
    */
   async overview(ctx) {
     try {
-      const user = await ensureRoleAccess(ctx, PRODUCT_REPORT_ROLES, PRODUCT_REPORT_ACCESS_MESSAGE);
+      const user = await ensureCapability(ctx, "report.sales.read");
       if (!user) return;
 
       const range = normalizeRange(
@@ -1870,11 +1837,9 @@ export default {
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
 
-      const [current, previous, traffic, trafficPrev, reconciliationRes] = await Promise.all([
+      const [current, previous, reconciliationRes] = await Promise.all([
         computeProductPeriod(knex, joins, start, end),
         computeProductPeriod(knex, joins, prevStart, prevEnd),
-        getMatomoVisitsSummary(range),
-        getMatomoVisitsSummary(prevRange),
         knex.raw(
           `SELECT bucket_date, status, orders_delta, revenue_ratio, possible_currency_mismatch, computed_at
            FROM analytics_reconciliation_daily
@@ -1901,14 +1866,7 @@ export default {
             discounts: kpi("discounts"),
             refunds: kpi("refunds"),
           },
-          traffic:
-            traffic === null
-              ? null
-              : {
-                  visits: PA.periodDelta(traffic.visits, trafficPrev?.visits ?? 0),
-                  visitors: PA.periodDelta(traffic.visitors, trafficPrev?.visitors ?? 0),
-                  pageviews: PA.periodDelta(traffic.pageviews, trafficPrev?.pageviews ?? 0),
-                },
+          traffic: null,
           reconciliation: reconciliationRow
             ? {
                 bucketDate: String(reconciliationRow.bucket_date).slice(0, 10),

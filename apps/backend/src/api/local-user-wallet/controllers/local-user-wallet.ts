@@ -10,6 +10,7 @@ import {
 } from "../services/local-user-wallet";
 import { recordAdminAudit } from "../../../utils/adminAudit";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
+import { requireCapability } from "../../../utils/adminAuthorization";
 
 const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 const WALLET_TRANSACTION_UID =
@@ -64,8 +65,7 @@ export default factories.createCoreController(
     },
 
     /**
-     * Superadmin-only: read any user's wallet balance for the admin editor UI.
-     * Gated by the `global::role-based` policy ([Superadmin]) on the route.
+     * Founder/Superadmin: read any customer's wallet balance for the admin UI.
      */
     async adminGetUserWallet(ctx: any) {
       try {
@@ -75,7 +75,6 @@ export default factories.createCoreController(
             data: { success: false, errorCode: "INVALID_USER" },
           });
         }
-
         const user = await strapi.db
           .query("plugin::users-permissions.user")
           .findOne({ where: { id: userId }, select: ["id"] });
@@ -98,8 +97,68 @@ export default factories.createCoreController(
       }
     },
 
+    async adminGetUserWalletHistory(ctx: any) {
+      if (!(await requireCapability(ctx, strapi, "wallet.history.read"))) return;
+
+      const userId = Number(ctx.params.userId);
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return ctx.badRequest("Invalid user id", {
+          data: { success: false, errorCode: "INVALID_USER" },
+        });
+      }
+
+      const page = Math.max(1, Number.parseInt(String(ctx.query?.page ?? "1"), 10) || 1);
+      const pageSize = Math.min(
+        100,
+        Math.max(1, Number.parseInt(String(ctx.query?.pageSize ?? "25"), 10) || 25),
+      );
+      const wallet = await strapi.db.query(WALLET_UID).findOne({
+        where: { user: userId },
+        select: ["id"],
+      });
+      if (!wallet) {
+        return ctx.send({
+          data: [],
+          meta: { pagination: { page, pageSize, pageCount: 0, total: 0 } },
+        });
+      }
+
+      const where = { user_wallet: wallet.id };
+      const [transactions, total] = await Promise.all([
+        strapi.db.query(WALLET_TRANSACTION_UID).findMany({
+          where,
+          select: [
+            "id",
+            "Amount",
+            "Type",
+            "Date",
+            "Cause",
+            "Note",
+            "ReferenceId",
+            "createdAt",
+          ],
+          orderBy: [{ Date: "desc" }, { id: "desc" }],
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+        }),
+        strapi.db.query(WALLET_TRANSACTION_UID).count({ where }),
+      ]);
+
+      return ctx.send({
+        data: transactions,
+        meta: {
+          pagination: {
+            page,
+            pageSize,
+            pageCount: Math.ceil(total / pageSize),
+            total,
+          },
+        },
+      });
+    },
+
     /**
-     * Superadmin-only: adjust a user's wallet balance.
+     * Founder/Superadmin: adjust another customer's wallet balance.
      * Supports credit/debit by an amount, or set-to-exact (implemented as the
      * credit/debit delta needed). Always records a ledger transaction and an
      * admin audit entry. Amounts are entered in Toman and stored in Rial (×10).
@@ -116,6 +175,24 @@ export default factories.createCoreController(
         if (!Number.isInteger(userId) || userId <= 0) {
           return ctx.badRequest("Invalid user id", {
             data: { success: false, errorCode: "INVALID_USER" },
+          });
+        }
+        const actorId = Number(ctx.state?.user?.id);
+        if (Number.isSafeInteger(actorId) && actorId > 0 && actorId === userId) {
+          await recordAdminAudit(strapi, {
+            resourceType: "User",
+            resourceId: userId,
+            action: "Adjust",
+            title: "Rejected self-wallet adjustment",
+            messageEn: "An administrator attempted to adjust their own wallet.",
+            severity: "warning",
+            actor: { id: actorId },
+            metadata: { rejected: true, reasonCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN" },
+            ip: getClientIp(ctx),
+            userAgent: getUserAgent(ctx),
+          });
+          return ctx.forbidden("Administrators cannot adjust their own wallet", {
+            data: { success: false, errorCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN" },
           });
         }
         if (!["credit", "debit", "set"].includes(mode)) {

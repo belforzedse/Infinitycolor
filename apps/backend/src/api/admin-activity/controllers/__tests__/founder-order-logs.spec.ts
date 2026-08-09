@@ -1,10 +1,9 @@
 /**
- * Founder access to order-specific event logs.
+ * Capability access to order-specific event logs.
  *
  * `findOrderActivities` powers the event-logs panel inside the order detail UI.
- * Founders MUST be able to read these (order-scoped), while still being blocked
- * from the global admin-activity report. Uses the REAL roles util so the assertion
- * exercises the actual allowed-role check.
+ * The capability matrix deliberately reserves audit-log access for Superadmin.
+ * Uses the real authorization helper so persisted role checks stay covered.
  */
 
 jest.mock("@strapi/strapi", () => ({
@@ -46,25 +45,22 @@ function mockStrapiForRole(roleName: string | null) {
   };
 }
 
-describe("admin-activity.findOrderActivities - Founder access", () => {
+describe("admin-activity audit capability", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("returns order event logs for a Founder", async () => {
+  it("forbids a Founder without order-audit capability", async () => {
     mockStrapiForRole("Founder");
     const controller = loadController();
     const ctx = createCtx();
 
     await controller.findOrderActivities(ctx);
 
-    expect(ctx.forbidden).not.toHaveBeenCalled();
-    expect(ctx.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.any(Array),
-        meta: expect.objectContaining({ pagination: expect.any(Object) }),
-      }),
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
     );
+    expect(ctx.send).not.toHaveBeenCalled();
   });
 
   it("returns order event logs for a Superadmin (regression)", async () => {
@@ -96,7 +92,9 @@ describe("admin-activity.findOrderActivities - Founder access", () => {
 
     await controller.findMyActivities(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith("Only superadmins can view admin activities");
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
+    );
     expect(ctx.send).not.toHaveBeenCalled();
   });
 });

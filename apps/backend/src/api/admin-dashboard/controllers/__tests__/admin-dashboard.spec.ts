@@ -1,16 +1,10 @@
 jest.mock("@strapi/utils", () => ({
   sanitize: { contentAPI: { output: jest.fn(async (rows) => rows) } },
 }));
-jest.mock("../../../../utils/roles", () => {
-  const actual = jest.requireActual("../../../../utils/roles");
-  return { ...actual, resolveUserRoleName: jest.fn() };
-});
 
 import controller from "../admin-dashboard";
 import routeConfig from "../../routes/admin-dashboard";
-import { ROLE_NAMES, STORE_MANAGER_PLUS_ROLES, resolveUserRoleName } from "../../../../utils/roles";
-
-const mockResolveRole = resolveUserRoleName as jest.Mock;
+import { ROLE_NAMES } from "../../../../utils/roles";
 
 function createContext() {
   return {
@@ -21,12 +15,40 @@ function createContext() {
   };
 }
 
+function installStrapi({
+  raw,
+  findMany,
+  role = ROLE_NAMES.SUPERADMIN,
+}: {
+  raw: jest.Mock;
+  findMany: jest.Mock;
+  role?: string;
+}) {
+  (global as any).strapi = {
+    db: { connection: { raw } },
+    query: jest.fn((uid: string) =>
+      uid === "plugin::users-permissions.user"
+        ? {
+            findOne: jest.fn().mockResolvedValue({
+              id: 1,
+              IsActive: true,
+              blocked: false,
+              role: { name: role },
+            }),
+          }
+        : { findMany },
+    ),
+    contentType: jest.fn(() => ({})),
+    log: { info: jest.fn() },
+  };
+}
+
 describe("bounded admin dashboard summary", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("uses the operational role policy", () => {
+  it("uses the authenticated account capability policy", () => {
     expect(routeConfig.routes[0]).toEqual(
       expect.objectContaining({
         method: "POST",
@@ -35,8 +57,8 @@ describe("bounded admin dashboard summary", () => {
           auth: { scope: [] },
           policies: [
             {
-              name: "global::role-based",
-              config: { roles: STORE_MANAGER_PLUS_ROLES },
+              name: "global::require-capability",
+              config: { capability: "account.self.read" },
             },
           ],
         },
@@ -45,7 +67,6 @@ describe("bounded admin dashboard summary", () => {
   });
 
   it("returns one private summary with correctly named customer-account data", async () => {
-    mockResolveRole.mockResolvedValue(ROLE_NAMES.SUPERADMIN);
     const raw = jest.fn().mockResolvedValue({
       rows: [
         {
@@ -67,12 +88,7 @@ describe("bounded admin dashboard summary", () => {
         user: { id: 2, phone: "synthetic", user_info: null },
       },
     ]);
-    (global as any).strapi = {
-      db: { connection: { raw } },
-      query: jest.fn(() => ({ findMany })),
-      contentType: jest.fn(() => ({})),
-      log: { info: jest.fn() },
-    };
+    installStrapi({ raw, findMany });
     const ctx = createContext();
 
     await controller.query(ctx);
@@ -87,16 +103,14 @@ describe("bounded admin dashboard summary", () => {
   });
 
   it("does not scan or return customer-account totals for non-Superadmin roles", async () => {
-    mockResolveRole.mockResolvedValue(ROLE_NAMES.FOUNDER);
     const raw = jest.fn().mockResolvedValue({
       rows: [{ orders_total: 1, done_orders_total: 0, active_products_total: 1 }],
     });
-    (global as any).strapi = {
-      db: { connection: { raw } },
-      query: jest.fn(() => ({ findMany: jest.fn().mockResolvedValue([]) })),
-      contentType: jest.fn(() => ({})),
-      log: { info: jest.fn() },
-    };
+    installStrapi({
+      raw,
+      findMany: jest.fn().mockResolvedValue([]),
+      role: ROLE_NAMES.FOUNDER,
+    });
     const ctx = createContext();
 
     await controller.query(ctx);

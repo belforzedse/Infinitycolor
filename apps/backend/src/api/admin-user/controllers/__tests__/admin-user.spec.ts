@@ -8,7 +8,7 @@ jest.mock("@strapi/utils", () => ({
 
 import controller from "../admin-user";
 import routeConfig from "../../routes/admin-user";
-import { MANAGEMENT_ROLES, ROLE_NAMES } from "../../../../utils/roles";
+import { MANAGEMENT_ROLES } from "../../../../utils/roles";
 
 function createContext(body: Record<string, unknown> = {}) {
   return {
@@ -33,7 +33,7 @@ function installStrapi(rows: any[] = []) {
 }
 
 describe("bounded admin users list", () => {
-  it("is protected by the Superadmin policy", () => {
+  it("is protected by the user-management capability policy", () => {
     const route = routeConfig.routes.find((entry) => entry.path === "/admin/users-list/query");
     expect(route).toEqual(
       expect.objectContaining({
@@ -43,8 +43,8 @@ describe("bounded admin users list", () => {
           auth: { scope: [] },
           policies: [
             {
-              name: "global::role-based",
-              config: { roles: [ROLE_NAMES.SUPERADMIN] },
+              name: "global::require-capability",
+              config: { capability: "system.users.manage" },
             },
           ],
         },

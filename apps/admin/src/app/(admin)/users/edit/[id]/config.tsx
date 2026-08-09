@@ -4,7 +4,7 @@ import type { UpsertPageConfigType } from "@/components/SuperAdmin/UpsertPage/Co
 import type { User } from "./page";
 import EditIcon from "@/components/SuperAdmin/UpsertPage/Icons/EditIcon";
 import { apiClient } from "@/services";
-import { translatePluginRoleLabel } from "@/constants/roleLabels";
+import { isAssignablePluginRole, translatePluginRoleLabel } from "@/constants/roleLabels";
 
 // Function to fetch roles from the API
 const fetchRoles = async (
@@ -21,10 +21,7 @@ const fetchRoles = async (
         : [];
 
     return roles
-      .filter((role: any) => {
-        const roleName = (role?.name ?? role?.attributes?.name ?? "").toLowerCase();
-        return roleName !== "authenticated" && roleName !== "public";
-      })
+      .filter(isAssignablePluginRole)
       .map((role: any) => {
         const id = role?.id ?? role?.attributes?.id;
         const name = role?.name ?? role?.attributes?.name ?? `نقش ${id ?? ""}`;

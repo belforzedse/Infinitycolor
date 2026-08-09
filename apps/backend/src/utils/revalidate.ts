@@ -15,6 +15,12 @@ type RevalidatePayload = Record<string, unknown> & {
   tag?: string;
 };
 
+export type FrontendRevalidationSummary = {
+  attempted: number;
+  successful: number;
+  failed: number;
+};
+
 /**
  * Frontend origins to notify, from configuration only.
  *
@@ -38,11 +44,11 @@ export function getFrontendUrls(): string[] {
 export async function triggerFrontendRevalidation(
   payload: RevalidatePayload,
   logPrefix = "Revalidation",
-): Promise<void> {
+): Promise<FrontendRevalidationSummary> {
   const revalidationSecret = process.env.REVALIDATION_SECRET;
   if (!revalidationSecret) {
     strapi.log.error(`[${logPrefix}] REVALIDATION_SECRET environment variable is required`);
-    return;
+    return { attempted: 0, successful: 0, failed: 1 };
   }
 
   const frontendUrls = getFrontendUrls();
@@ -50,7 +56,7 @@ export async function triggerFrontendRevalidation(
     strapi.log.warn(
       `[${logPrefix}] No storefront origin configured (set NEXTJS_REVALIDATION_URL); skipping revalidation`,
     );
-    return;
+    return { attempted: 0, successful: 0, failed: 1 };
   }
 
   const revalidationPromises = frontendUrls.map(async (frontendUrl) => {
@@ -89,5 +95,13 @@ export async function triggerFrontendRevalidation(
     }
   });
 
-  await Promise.allSettled(revalidationPromises);
+  const settled = await Promise.allSettled(revalidationPromises);
+  const values = settled.map((entry) =>
+    entry.status === "fulfilled" ? entry.value : { success: false },
+  );
+  return {
+    attempted: frontendUrls.length,
+    successful: values.filter((value) => value?.success === true).length,
+    failed: values.filter((value) => value?.success !== true).length,
+  };
 }

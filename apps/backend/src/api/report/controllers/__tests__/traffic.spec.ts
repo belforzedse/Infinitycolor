@@ -48,6 +48,9 @@ describe("report traffic endpoints", () => {
     jest.clearAllMocks();
 
     (global as any).strapi = {
+      query: () => ({
+        findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Superadmin" } }),
+      }),
       db: {
         connection: {
           raw: jest.fn(async (query: string) => {
@@ -65,14 +68,17 @@ describe("report traffic endpoints", () => {
   });
 
   it("blocks non-superadmin users from realtime endpoint", async () => {
-    fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Store manager" } });
-    roleIsAllowedMock.mockReturnValue(false);
+    (global as any).strapi.query = () => ({
+      findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Store Manager" } }),
+    });
 
     const controller = loadController();
     const ctx = createCtx();
     await controller.trafficRealtime(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith("Access denied - Superadmin role required");
+    expect(ctx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
+    );
   });
 
   it("serves realtime data and uses cache for repeated requests", async () => {

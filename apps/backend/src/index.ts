@@ -30,6 +30,12 @@ import {
 import { backfillLegacySnappayAttempts } from "./api/payment-gateway/services/snappay-legacy-backfill";
 import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/snappay-database";
 import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
+import {
+  ADMIN_ROLE_DEFINITIONS,
+  capabilitiesForRole,
+  type AdminCapability,
+  type AdminRoleId,
+} from "@repo/auth-core";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -44,7 +50,7 @@ const READ_ACTIONS = ["find", "findOne"] as const;
 const CREATE_UPDATE_ACTIONS = [...READ_ACTIONS, "create", "update"] as const;
 const CHILD_CRUD_ACTIONS = [...CREATE_UPDATE_ACTIONS, "delete"] as const;
 
-const FOUNDER_REPORT_ACTIONS = [
+const PRODUCT_REPORT_ACTIONS = [
   "productSales",
   "productOverview",
   "productTrends",
@@ -55,95 +61,172 @@ const FOUNDER_REPORT_ACTIONS = [
   "productExport",
 ] as const;
 
-/**
- * Store managers inherit the normal customer surface and receive only the
- * operational commerce actions listed here. Keep this list explicit: using
- * mode=all caused newly-added financial and role-management controllers to be
- * granted automatically.
- */
-const STORE_MANAGER_GRANTS: Record<string, ControllerActions> = {
-  "api::product": {
-    product: [...CREATE_UPDATE_ACTIONS, "search", "generateVariationCombinations"],
+const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
+  "api::product": { product: [...READ_ACTIONS, "search"] },
+  "api::product-category-content": { "product-category-content": READ_ACTIONS },
+  "api::product-faq": { "product-faq": READ_ACTIONS },
+  "api::product-size-helper": { "product-size-helper": READ_ACTIONS },
+  "api::product-tag": { "product-tag": READ_ACTIONS },
+  "api::product-variation": { "product-variation": READ_ACTIONS },
+  "api::product-variation-color": { "product-variation-color": READ_ACTIONS },
+  "api::product-variation-size": { "product-variation-size": READ_ACTIONS },
+  "api::product-variation-model": { "product-variation-model": READ_ACTIONS },
+  "api::product-attribute": { "product-attribute": READ_ACTIONS },
+  "api::product-attribute-term": { "product-attribute-term": READ_ACTIONS },
+  "api::product-attribute-assignment": { "product-attribute-assignment": READ_ACTIONS },
+  "api::product-stock": { "product-stock": READ_ACTIONS },
+};
+
+const BLOG_READ_GRANTS: Record<string, ControllerActions> = {
+  "api::blog-post": { "blog-post": READ_ACTIONS },
+  "api::blog-category": { "blog-category": READ_ACTIONS },
+  "api::blog-tag": { "blog-tag": READ_ACTIONS },
+  "api::blog-author": { "blog-author": READ_ACTIONS },
+  "api::blog-comment": { "blog-comment": READ_ACTIONS },
+};
+
+const CAPABILITY_GRANTS: Partial<
+  Record<AdminCapability, Record<string, ControllerActions>>
+> = {
+  "content.blog.read": BLOG_READ_GRANTS,
+  "content.blog.create": {
+    "api::blog-post": { "blog-post": ["create"] },
+    "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
   },
-  "api::product-category": {
-    "product-category": CREATE_UPDATE_ACTIONS,
+  "content.blog.update": {
+    "api::blog-post": { "blog-post": ["update"] },
+    "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
   },
-  "api::product-category-content": {
-    "product-category-content": CHILD_CRUD_ACTIONS,
+  "content.blog.publish": { "api::blog-post": { "blog-post": ["update"] } },
+  "content.blog.delete": { "api::blog-post": { "blog-post": ["delete"] } },
+  "content.blog.taxonomy.manage": {
+    "api::blog-category": { "blog-category": CHILD_CRUD_ACTIONS },
+    "api::blog-tag": { "blog-tag": CHILD_CRUD_ACTIONS },
+    "api::blog-author": { "blog-author": CHILD_CRUD_ACTIONS },
   },
-  "api::product-faq": {
-    "product-faq": CHILD_CRUD_ACTIONS,
+  "content.blog.comments.manage": {
+    "api::blog-comment": { "blog-comment": CHILD_CRUD_ACTIONS },
   },
-  "api::product-size-helper": {
-    "product-size-helper": CHILD_CRUD_ACTIONS,
+  "content.blog.banners.manage": {
+    "api::settings": { settings: ["getBlogBanners", "updateBlogBanners"] },
   },
-  "api::product-tag": {
-    "product-tag": CREATE_UPDATE_ACTIONS,
+  "product.read": PRODUCT_READ_GRANTS,
+  "product.create": { "api::product": { product: ["create"] } },
+  "product.update": { "api::product": { product: ["update"] } },
+  "product.publish": { "api::product": { product: ["publication"] } },
+  "product.stock.update": {
+    "api::product-stock": { "product-stock": CREATE_UPDATE_ACTIONS },
   },
-  "api::product-variation": {
-    "product-variation": CHILD_CRUD_ACTIONS,
+  "product.media.manage": {
+    "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
   },
-  "api::product-variation-color": {
-    "product-variation-color": CREATE_UPDATE_ACTIONS,
+  "product.variation.manage": {
+    "api::product": { product: ["generateVariationCombinations"] },
+    "api::product-variation": { "product-variation": CREATE_UPDATE_ACTIONS },
+    "api::product-variation-color": { "product-variation-color": CREATE_UPDATE_ACTIONS },
+    "api::product-variation-size": { "product-variation-size": CREATE_UPDATE_ACTIONS },
+    "api::product-variation-model": { "product-variation-model": CREATE_UPDATE_ACTIONS },
+    "api::product-attribute": { "product-attribute": CREATE_UPDATE_ACTIONS },
+    "api::product-attribute-term": { "product-attribute-term": CREATE_UPDATE_ACTIONS },
+    "api::product-attribute-assignment": {
+      "product-attribute-assignment": CREATE_UPDATE_ACTIONS,
+    },
   },
-  "api::product-variation-size": {
-    "product-variation-size": CREATE_UPDATE_ACTIONS,
+  "product.size-guide.manage": {
+    "api::product-size-helper": { "product-size-helper": CREATE_UPDATE_ACTIONS },
+    "api::product-category-content": { "product-category-content": CREATE_UPDATE_ACTIONS },
+    "api::product-faq": { "product-faq": CREATE_UPDATE_ACTIONS },
+    "api::product-tag": { "product-tag": CREATE_UPDATE_ACTIONS },
   },
-  "api::product-variation-model": {
-    "product-variation-model": CREATE_UPDATE_ACTIONS,
+  "product.variation.delete": {
+    "api::product-variation": { "product-variation": ["delete"] },
   },
-  "api::product-attribute": {
-    "product-attribute": CREATE_UPDATE_ACTIONS,
+  "product.size-guide.delete": {
+    "api::product-size-helper": { "product-size-helper": ["delete"] },
   },
-  "api::product-attribute-term": {
-    "product-attribute-term": CREATE_UPDATE_ACTIONS,
+  "product.delete": { "api::product": { product: ["delete"] } },
+  "category.read": { "api::product-category": { "product-category": READ_ACTIONS } },
+  "category.create": { "api::product-category": { "product-category": ["create"] } },
+  "category.update": { "api::product-category": { "product-category": ["update"] } },
+  "category.delete": {
+    "api::product-category": {
+      "product-category": ["delete", "deleteWithReassign"],
+    },
   },
-  "api::product-attribute-assignment": {
-    "product-attribute-assignment": CHILD_CRUD_ACTIONS,
+  "order.read": {
+    "api::admin-order-list": { "admin-order-list": ["query"] },
+    "api::order": { order: ["findOne"] },
   },
-  "api::product-stock": {
-    "product-stock": CREATE_UPDATE_ACTIONS,
+  "order.financial.read": {
+    "api::order": { order: ["adminPaymentOperation"] },
   },
-  "api::discount": {
-    discount: CREATE_UPDATE_ACTIONS,
+  "order.status.update": { "api::order": { order: ["adminTransition"] } },
+  "order.notes.update": { "api::order": { order: ["adminUpdateNotes"] } },
+  "order.items.adjust": { "api::order": { order: ["adminAdjustItems"] } },
+  "order.cancel": { "api::order": { order: ["adminCancel"] } },
+  "order.manual.create": {
+    "api::order": { order: ["create", "decrementStockManual"] },
+    "api::order-item": { "order-item": ["create"] },
+    "api::contract": { contract: ["create"] },
+    "api::contract-transaction": { "contract-transaction": ["create"] },
   },
-  "api::general-discount": {
-    "general-discount": CREATE_UPDATE_ACTIONS,
+  "order.shipping.manage": {
+    "api::order": {
+      order: ["generateAnipoBarcode", "adminVoidBarcode"],
+    },
   },
-  "api::shipping": {
-    shipping: CREATE_UPDATE_ACTIONS,
+  "report.product.read": { "api::report": { report: PRODUCT_REPORT_ACTIONS } },
+  "report.sales.read": {
+    "api::report": {
+      report: ["salesBreakdown", "salesBreakdownExport", "overview"],
+    },
   },
-  "api::shipping-city": {
-    "shipping-city": READ_ACTIONS,
+  "report.finance.read": {
+    "api::report": { report: ["liquidity", "gatewayLiquidity"] },
   },
-  "api::shipping-province": {
-    "shipping-province": READ_ACTIONS,
+  "report.carts.read": { "api::cart": { cart: ["find"] } },
+  "report.traffic.read": {
+    "api::report": { report: ["trafficDashboard", "trafficRealtime", "funnel"] },
   },
-  "api::order": {
-    order: [
-      ...READ_ACTIONS,
-      "generateAnipoBarcode",
-      "adminAdjustItems",
-      "adminUpdateNotes",
-      "adminTransition",
-      "adminCancel",
-      "adminVoidBarcode",
-      "decrementStockManual",
-    ],
+  "wallet.customer.search": {
+    "api::plugin-user": { "plugin-user": ["searchCustomers"] },
   },
-  "api::product-review": {
-    "product-review": [...READ_ACTIONS, "update"],
+  "wallet.read": {
+    "api::local-user-wallet": { "local-user-wallet": ["adminGetUserWallet"] },
   },
-  "api::product-review-reply": {
-    "product-review-reply": CHILD_CRUD_ACTIONS,
+  "wallet.history.read": {
+    "api::local-user-wallet": { "local-user-wallet": ["adminGetUserWalletHistory"] },
   },
-  "api::plugin-user": {
-    "plugin-user": ["searchCustomers"],
-  },
-  "plugin::upload": {
-    "content-api": ["find", "findOne", "upload"],
+  "wallet.adjust": {
+    "api::local-user-wallet": { "local-user-wallet": ["adminAdjustWallet"] },
   },
 };
+
+function mergeGrants(
+  target: Record<string, ControllerActions>,
+  source: Record<string, ControllerActions>,
+) {
+  for (const [typeKey, controllers] of Object.entries(source)) {
+    const targetControllers = (target[typeKey] ||= {});
+    for (const [controllerName, actions] of Object.entries(controllers)) {
+      const existing = targetControllers[controllerName];
+      if (existing === "*" || actions === "*") {
+        targetControllers[controllerName] = "*";
+      } else {
+        targetControllers[controllerName] = [...new Set([...(existing || []), ...actions])];
+      }
+    }
+  }
+}
+
+function grantsForAdminRole(role: AdminRoleId): Record<string, ControllerActions> {
+  const grants: Record<string, ControllerActions> = {};
+  for (const capability of capabilitiesForRole(role)) {
+    const mapping = CAPABILITY_GRANTS[capability];
+    if (mapping) mergeGrants(grants, mapping);
+  }
+  return grants;
+}
 
 const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
   public: {
@@ -348,9 +431,6 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       "api::local-user-wallet-transaction": {
         "local-user-wallet-transaction": READ_ACTIONS,
       },
-      "api::wallet-topup": {
-        "wallet-topup": ["chargeIntent"],
-      },
       "api::payment-gateway": {
         "payment-gateway": ["snappEligible", "availableGateways"],
       },
@@ -359,33 +439,36 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       },
     },
   },
-  editor: {
+  "staff-self": {
     inherits: ["customer"],
     grants: {
-      "api::blog-post": { "blog-post": CHILD_CRUD_ACTIONS },
-      "api::blog-category": { "blog-category": CHILD_CRUD_ACTIONS },
-      "api::blog-tag": { "blog-tag": CHILD_CRUD_ACTIONS },
-      "api::blog-author": { "blog-author": CHILD_CRUD_ACTIONS },
-      "api::blog-comment": { "blog-comment": CHILD_CRUD_ACTIONS },
-      "plugin::upload": {
-        "content-api": ["find", "findOne", "upload"],
-      },
+      "api::auth": { auth: ["self", "updateSelf", "registerInfo"] },
+      "api::admin-dashboard": { "admin-dashboard": ["query"] },
     },
+  },
+  editor: {
+    inherits: ["staff-self"],
+    grants: grantsForAdminRole("editor"),
+  },
+  "seller-1": {
+    inherits: ["staff-self"],
+    grants: grantsForAdminRole("seller1"),
+  },
+  "seller-2": {
+    inherits: ["staff-self"],
+    grants: grantsForAdminRole("seller2"),
   },
   "store-manager": {
-    inherits: ["customer"],
-    grants: STORE_MANAGER_GRANTS,
+    inherits: ["staff-self"],
+    grants: grantsForAdminRole("store_manager"),
+  },
+  finance: {
+    inherits: ["staff-self"],
+    grants: grantsForAdminRole("finance"),
   },
   founder: {
-    inherits: ["store-manager"],
-    grants: {
-      "api::admin-activity": {
-        "admin-activity": ["findOrderActivities"],
-      },
-      "api::report": {
-        report: FOUNDER_REPORT_ACTIONS,
-      },
-    },
+    inherits: ["staff-self"],
+    grants: grantsForAdminRole("founder"),
   },
   superadmin: { mode: "all" },
 };
@@ -434,8 +517,7 @@ function applyControllerActions(
 ) {
   const typeEntry = tree[typeKey];
   if (!typeEntry?.controllers?.[controllerName]) {
-    strapi.log.warn(`Permission template skipped unknown controller: ${typeKey}.${controllerName}`);
-    return;
+    throw new Error(`Permission template references unknown controller: ${typeKey}.${controllerName}`);
   }
 
   const controllerEntry = typeEntry.controllers[controllerName];
@@ -449,10 +531,9 @@ function applyControllerActions(
 
   actions.forEach((actionName) => {
     if (!controllerEntry[actionName]) {
-      strapi.log.warn(
-        `Permission template skipped unknown action: ${typeKey}.${controllerName}.${actionName}`,
+      throw new Error(
+        `Permission template references unknown action: ${typeKey}.${controllerName}.${actionName}`,
       );
-      return;
     }
     controllerEntry[actionName].enabled = true;
   });
@@ -534,6 +615,141 @@ function collectEnabledPermissionActions(tree: Record<string, any>): string[] {
   });
 
   return actions.sort();
+}
+
+type RoleSyncSnapshot = {
+  capturedAt: string;
+  roles: Array<{
+    id: number;
+    name: string;
+    type: string;
+    description?: string | null;
+    permissionActions: string[];
+  }>;
+  assignments: Array<{ userId: number; roleId: number }>;
+};
+
+function permissionTreeForActions(strapi: Strapi, actionNames: readonly string[]) {
+  const tree = strapi
+    .plugin("users-permissions")
+    .service("users-permissions")
+    .getActions({ defaultEnable: false });
+  const expected = new Set(actionNames);
+
+  Object.entries(tree).forEach(([typeKey, typeEntry]: [string, any]) => {
+    Object.entries(typeEntry?.controllers || {}).forEach(
+      ([controllerName, controller]: [string, any]) => {
+        Object.entries(controller || {}).forEach(([actionName, action]: [string, any]) => {
+          const fullName = `${typeKey}.${controllerName}.${actionName}`;
+          if (expected.has(fullName)) {
+            action.enabled = true;
+            expected.delete(fullName);
+          }
+        });
+      },
+    );
+  });
+
+  if (expected.size > 0) {
+    throw new Error(
+      `Role rollback preflight failed for unknown persisted actions: ${[...expected].join(",")}`,
+    );
+  }
+  return tree;
+}
+
+async function captureRoleSyncSnapshot(
+  strapi: Strapi,
+  persistedRoles: any[],
+): Promise<RoleSyncSnapshot> {
+  const staffRoleIds = persistedRoles
+    .filter(
+      (role) =>
+        role.type === "public" ||
+        role.type === "customer" ||
+        Boolean(ROLE_PERMISSION_SPECS[role.type]),
+    )
+    .map((role) => Number(role.id));
+  const userQuery = strapi.query("plugin::users-permissions.user") as any;
+  const assignmentRows =
+    staffRoleIds.length > 0 && typeof userQuery?.findMany === "function"
+      ? await userQuery.findMany({
+          where: { role: { id: { $in: staffRoleIds } } },
+          select: ["id"],
+          populate: { role: { select: ["id"] } },
+        })
+      : [];
+
+  const snapshot: RoleSyncSnapshot = {
+    capturedAt: new Date().toISOString(),
+    roles: persistedRoles.filter((role) => staffRoleIds.includes(Number(role.id))).map((role) => ({
+      id: Number(role.id),
+      name: String(role.name),
+      type: String(role.type),
+      description: role.description ?? null,
+      permissionActions: ((role.permissions || []) as any[])
+        .map((permission) => String(permission.action || ""))
+        .filter(Boolean)
+        .sort(),
+    })),
+    assignments: (assignmentRows as any[])
+      .map((user) => ({ userId: Number(user.id), roleId: Number(user.role?.id ?? user.role) }))
+      .filter(
+        (assignment) =>
+          Number.isSafeInteger(assignment.userId) && Number.isSafeInteger(assignment.roleId),
+      ),
+  };
+
+  // Prove before the first write that the current controller tree can restore
+  // every persisted permission action represented in the snapshot.
+  snapshot.roles.forEach((role) => permissionTreeForActions(strapi, role.permissionActions));
+
+  const storeFactory = (strapi as any).store;
+  if (typeof storeFactory === "function") {
+    const store = storeFactory({ type: "core", name: "admin-authorization" });
+    const initialKey = "admin-capability-v1-initial-snapshot";
+    if (!(await store.get({ key: initialKey }))) {
+      await store.set({ key: initialKey, value: snapshot });
+    }
+    await store.set({ key: "admin-capability-v1-latest-pre-sync", value: snapshot });
+    const persistedSnapshot = await store.get({ key: "admin-capability-v1-latest-pre-sync" });
+    if (!persistedSnapshot || JSON.stringify(persistedSnapshot) !== JSON.stringify(snapshot)) {
+      throw new Error("Role synchronization snapshot readback verification failed");
+    }
+  }
+
+  return snapshot;
+}
+
+async function restoreRoleSyncSnapshot(
+  strapi: Strapi,
+  snapshot: RoleSyncSnapshot,
+  createdRoleIds: readonly number[],
+) {
+  const roleQuery = strapi.query("plugin::users-permissions.role") as any;
+  for (const roleId of [...createdRoleIds].reverse()) {
+    await roleQuery.delete({ where: { id: roleId } });
+  }
+  for (const role of snapshot.roles) {
+    await roleQuery.update({
+      where: { id: role.id },
+      data: { name: role.name, type: role.type, description: role.description },
+    });
+    const permissions = permissionTreeForActions(strapi, role.permissionActions);
+    await strapi.plugin("users-permissions").service("role").updateRole(role.id, { permissions });
+    await verifyPersistedRolePermissions(strapi, role, permissions);
+  }
+
+  const userQuery = strapi.query("plugin::users-permissions.user") as any;
+  for (const assignment of snapshot.assignments) {
+    const user = await userQuery.findOne({
+      where: { id: assignment.userId },
+      populate: { role: { select: ["id"] } },
+    });
+    if (Number(user?.role?.id ?? user?.role) !== assignment.roleId) {
+      throw new Error(`Role rollback assignment verification failed for user ${assignment.userId}`);
+    }
+  }
 }
 
 async function verifyPersistedRolePermissions(
@@ -619,62 +835,121 @@ function isCounterOnlyUpdate(uid: string, payload: Record<string, unknown> | und
 }
 
 async function ensurePluginRolesAndPermissions(strapi: Strapi) {
+  const descriptions: Record<string, string> = {
+    superadmin: "Full system administration",
+    editor: "Blog-only content administration",
+    "seller-1": "Non-destructive catalog administration",
+    "seller-2": "Seller 1 plus categories, storefront, and read-only orders",
+    "store-manager": "Seller 2 plus operational order transitions and product insights",
+    finance: "Seller 2 plus product, sales, cart, and finance reporting",
+    founder: "Store Manager and Finance capabilities plus wallets, traffic, and manual orders",
+    customer: "End customer role",
+  };
   const roles = [
+    ...Object.values(ADMIN_ROLE_DEFINITIONS).map((definition) => ({
+      name: definition.strapiName,
+      description: descriptions[definition.strapiType],
+      type: definition.strapiType,
+      legacyNames: definition.id === "store_manager" ? ["Store manager"] : [],
+    })),
     {
-      name: "Superadmin",
-      description: "Full access to the system (internal use)",
-      type: "superadmin",
+      name: "Customer",
+      description: descriptions.customer,
+      type: "customer",
+      legacyNames: [] as string[],
     },
-    {
-      name: "Store manager",
-      description: "Operational commerce access without financial or destructive administration",
-      type: "store-manager",
-    },
-    {
-      name: "Editor",
-      description:
-        "Blog content editor - can manage blog posts, categories, tags, authors, and comments",
-      type: "editor",
-    },
-    {
-      name: "Founder",
-      description:
-        "Store manager plus founder-specific operational access, without superadmin-only destructive actions",
-      type: "founder",
-    },
-    { name: "Customer", description: "End customer role", type: "customer" },
   ];
 
-  for (const roleDefinition of roles) {
-    const existing = await strapi
-      .query("plugin::users-permissions.role")
-      .findOne({ where: { name: roleDefinition.name } });
-    const role = existing
-      ? await strapi.query("plugin::users-permissions.role").update({
-          where: { id: existing.id },
-          data: {
-            description: roleDefinition.description,
-            type: roleDefinition.type,
-          },
-        })
-      : await strapi.query("plugin::users-permissions.role").create({
-          data: roleDefinition,
-        });
-
-    strapi.log.info(
-      `${existing ? "✓ Role already exists" : "✓ Created users-permissions role"}: ${roleDefinition.name}`,
-      { roleId: role.id },
-    );
-    await assignRolePermissions(strapi, role as any);
-  }
-
-  const publicRole = await strapi
+  const persistedRoles = await strapi
     .query("plugin::users-permissions.role")
-    .findOne({ where: { type: "public" } });
-  if (!publicRole) {
-    throw new Error("Public role not found; permissions could not be synchronized");
+    .findMany({ populate: ["permissions"] });
+  for (const definition of roles) {
+    const matches = (persistedRoles as any[]).filter(
+      (role) =>
+        role.type === definition.type ||
+        role.name === definition.name ||
+        definition.legacyNames.includes(role.name),
+    );
+    if (matches.length > 1) {
+      throw new Error(
+        `Role synchronization refused duplicate name/type collision for ${definition.name}`,
+      );
+    }
   }
-  await assignRolePermissions(strapi, publicRole as any);
+
+  const existingSuperadmin = (persistedRoles as any[]).find(
+    (role) => role.type === "superadmin" || role.name === "Superadmin",
+  );
+  if ((persistedRoles as any[]).some((role) => ROLE_PERMISSION_SPECS[role.type]) && !existingSuperadmin) {
+    throw new Error("Role synchronization requires an existing Superadmin role");
+  }
+
+  if (existingSuperadmin) {
+    const userQuery = strapi.query("plugin::users-permissions.user") as any;
+    if (typeof userQuery.count === "function") {
+      const totalUsers = await userQuery.count({ where: {} });
+      const activeSuperadmins = await userQuery.count({
+        where: {
+          role: existingSuperadmin.id,
+          blocked: { $ne: true },
+          IsActive: { $ne: false },
+        },
+      });
+      if (totalUsers > 0 && activeSuperadmins < 1) {
+        throw new Error("Role synchronization requires at least one active Superadmin user");
+      }
+    }
+  }
+
+  const snapshot = await captureRoleSyncSnapshot(strapi, persistedRoles as any[]);
+  const createdRoleIds: number[] = [];
+  try {
+    for (const roleDefinition of roles) {
+      const existing = (persistedRoles as any[]).find(
+        (role) =>
+          role.type === roleDefinition.type ||
+          role.name === roleDefinition.name ||
+          roleDefinition.legacyNames.includes(role.name),
+      );
+      const role = existing
+        ? await strapi.query("plugin::users-permissions.role").update({
+            where: { id: existing.id },
+            data: {
+              name: roleDefinition.name,
+              description: roleDefinition.description,
+              type: roleDefinition.type,
+            },
+          })
+        : await strapi.query("plugin::users-permissions.role").create({
+            data: roleDefinition,
+          });
+      if (!existing) createdRoleIds.push(Number(role.id));
+
+      strapi.log.info(
+        `${existing ? "✓ Role already exists" : "✓ Created users-permissions role"}: ${roleDefinition.name}`,
+        { roleId: role.id },
+      );
+      await assignRolePermissions(strapi, role as any);
+    }
+
+    const publicRole = await strapi
+      .query("plugin::users-permissions.role")
+      .findOne({ where: { type: "public" } });
+    if (!publicRole) {
+      throw new Error("Public role not found; permissions could not be synchronized");
+    }
+    await assignRolePermissions(strapi, publicRole as any);
+  } catch (error) {
+    try {
+      await restoreRoleSyncSnapshot(strapi, snapshot, createdRoleIds);
+      strapi.log.error("Role synchronization failed; pre-sync snapshot restored and verified");
+    } catch (rollbackError) {
+      throw new Error(
+        `Role synchronization failed and rollback verification failed: ${(rollbackError as Error).message}; original error: ${(error as Error).message}`,
+      );
+    }
+    throw error;
+  }
 }
 
 export const RedisClient = createClient({

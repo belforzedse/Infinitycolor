@@ -60,7 +60,7 @@ function baseOrder(overrides: Record<string, any> = {}) {
 function createHarness(order: any, ctxOverrides: Record<string, any> = {}) {
   const queries: Record<string, any> = {
     "plugin::users-permissions.user": {
-      findOne: jest.fn().mockResolvedValue({ id: 7, role: { name: "Store manager" } }),
+      findOne: jest.fn().mockResolvedValue({ id: 7, role: { name: "Superadmin" } }),
     },
     "api::order.order": {
       findOne: jest.fn().mockResolvedValue(order),
@@ -93,6 +93,7 @@ function createHarness(order: any, ctxOverrides: Record<string, any> = {}) {
     },
   };
   const strapi = {
+    query: jest.fn((uid: string) => queries[uid]),
     db: {
       query: jest.fn((uid: string) => queries[uid]),
       transaction: jest.fn(async (callback: any) => callback({})),

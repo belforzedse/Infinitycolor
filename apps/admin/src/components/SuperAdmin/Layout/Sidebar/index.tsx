@@ -1,7 +1,7 @@
 "use client";
 
 import superAdminSidebar, {
-  getSidebarItemsForRole,
+  getSidebarItemsForCapabilities,
   type SidebarItem as SuperAdminSidebarItem,
 } from "@/constants/superAdminSidebar";
 import Link from "next/link";
@@ -448,8 +448,11 @@ export default function SuperAdminLayoutSidebar({
 }: SuperAdminLayoutSidebarProps) {
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const pathname = usePathname();
-  const { roleName } = useCurrentUser();
-  const sidebarItems = useMemo(() => getSidebarItemsForRole(roleName), [roleName]);
+  const { adminRole, capabilities } = useCurrentUser();
+  const sidebarItems = useMemo(
+    () => getSidebarItemsForCapabilities(capabilities, adminRole),
+    [adminRole, capabilities],
+  );
 
   useEffect(() => {
     const next: Record<string, boolean> = {};

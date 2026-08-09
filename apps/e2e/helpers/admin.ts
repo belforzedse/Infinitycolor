@@ -4,7 +4,14 @@ import {
   E2E_RUNTIME_CODE_PREFIX,
   E2E_RUNTIME_PREFIX,
 } from "../fixtures/storefront";
-import { apiDelete, apiGet, apiPost, apiPut, expectApiForbidden, expectApiOk } from "./api";
+import {
+  apiDelete,
+  apiGet,
+  apiPost,
+  apiPut,
+  expectApiForbidden,
+  expectApiOk,
+} from "./api";
 import type { E2EAuthRole } from "./auth";
 import { strapiOrigin } from "./env";
 
@@ -37,6 +44,10 @@ export type RuntimeProductFixture = {
   stockId: number;
 };
 
+export type RuntimeProductFixtureOptions = {
+  initialPublication?: "Active" | "InActive";
+};
+
 export type RuntimeOrderFixture = {
   orderId: number;
   initialStatus: "Started";
@@ -48,7 +59,9 @@ function uniqueSuffix() {
 
 export async function gotoSuperAdmin(page: Page, path: string) {
   await page.goto(path, { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  await expect(page).toHaveURL(
+    new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
 }
 
 export async function seededCategoryId(request: APIRequestContext) {
@@ -66,10 +79,12 @@ export async function seededCategoryId(request: APIRequestContext) {
 
 export async function createRuntimeProductFixture(
   request: APIRequestContext,
+  options: RuntimeProductFixtureOptions = {},
 ): Promise<RuntimeProductFixture> {
   const suffix = uniqueSuffix();
   const productTitle = `${E2E_RUNTIME_PREFIX}Product ${suffix}`;
-  const productSlug = `${E2E_RUNTIME_PREFIX.toLowerCase()}product-${suffix}`.replace(/_/g, "-");
+  const productSlug =
+    `${E2E_RUNTIME_PREFIX.toLowerCase()}product-${suffix}`.replace(/_/g, "-");
   const variationSku = `${E2E_RUNTIME_PREFIX}SKU-${suffix}`;
   const categoryId = await seededCategoryId(request);
 
@@ -77,7 +92,6 @@ export async function createRuntimeProductFixture(
     data: {
       Title: productTitle,
       Slug: productSlug,
-      Status: "Active",
       ProductType: "Variable",
       product_main_category: categoryId,
       external_source: E2E_SOURCE,
@@ -85,7 +99,9 @@ export async function createRuntimeProductFixture(
     },
   });
   await expectApiOk(productResponse, "create runtime product");
-  const productPayload = (await productResponse.json()) as { data?: { id: number } };
+  const productPayload = (await productResponse.json()) as {
+    data?: { id: number };
+  };
   const productId = Number(productPayload.data?.id);
   expect(productId, "created product id").toBeGreaterThan(0);
 
@@ -97,28 +113,54 @@ export async function createRuntimeProductFixture(
     },
   });
   await expectApiOk(stockResponse, "create runtime product stock");
-  const stockPayload = (await stockResponse.json()) as { data?: { id: number } };
+  const stockPayload = (await stockResponse.json()) as {
+    data?: { id: number };
+  };
   const stockId = Number(stockPayload.data?.id);
   expect(stockId, "created stock id").toBeGreaterThan(0);
 
-  const variationResponse = await apiPost(request, "admin", "/product-variations", {
-    data: {
-      SKU: variationSku,
-      Price: 750000,
-      DiscountPrice: 700000,
-      IsPublished: true,
-      product: productId,
-      product_stock: stockId,
-      external_source: E2E_SOURCE,
-      external_id: variationSku,
+  const variationResponse = await apiPost(
+    request,
+    "admin",
+    "/product-variations",
+    {
+      data: {
+        SKU: variationSku,
+        Price: 750000,
+        DiscountPrice: 700000,
+        IsPublished: true,
+        product: productId,
+        product_stock: stockId,
+        external_source: E2E_SOURCE,
+        external_id: variationSku,
+      },
     },
-  });
+  );
   await expectApiOk(variationResponse, "create runtime product variation");
-  const variationPayload = (await variationResponse.json()) as { data?: { id: number } };
+  const variationPayload = (await variationResponse.json()) as {
+    data?: { id: number };
+  };
   const variationId = Number(variationPayload.data?.id);
   expect(variationId, "created variation id").toBeGreaterThan(0);
 
-  return { productId, productSlug, productTitle, variationId, variationSku, stockId };
+  if ((options.initialPublication ?? "Active") === "Active") {
+    const publicationResponse = await apiPost(
+      request,
+      "admin",
+      `/products/${productId}/publication`,
+      { action: "publish-now" },
+    );
+    await expectApiOk(publicationResponse, "publish runtime product");
+  }
+
+  return {
+    productId,
+    productSlug,
+    productTitle,
+    variationId,
+    variationSku,
+    stockId,
+  };
 }
 
 export async function cleanupRuntimeProducts(request: APIRequestContext) {
@@ -128,7 +170,9 @@ export async function cleanupRuntimeProducts(request: APIRequestContext) {
     "pagination[pageSize]": 100,
   });
   if (variations.ok()) {
-    const payload = (await variations.json()) as { data?: Array<{ id: number }> };
+    const payload = (await variations.json()) as {
+      data?: Array<{ id: number }>;
+    };
     for (const variation of payload.data ?? []) {
       await apiDelete(request, "admin", `/product-variations/${variation.id}`);
     }
@@ -164,9 +208,14 @@ export async function updateRuntimeVariationStock(
   stockId: number,
   count: number,
 ) {
-  const response = await apiPut(request, "admin", `/product-stocks/${stockId}`, {
-    data: { Count: count },
-  });
+  const response = await apiPut(
+    request,
+    "admin",
+    `/product-stocks/${stockId}`,
+    {
+      data: { Count: count },
+    },
+  );
   await expectApiOk(response, `update stock ${stockId}`);
 }
 
@@ -175,13 +224,20 @@ export async function updateOrderStatus(
   orderId: number,
   status: "Shipment" | "Done",
 ) {
-  const response = await apiPost(request, "admin", `/orders/${orderId}/admin/transition`, {
-    status,
-  });
+  const response = await apiPost(
+    request,
+    "admin",
+    `/orders/${orderId}/admin/transition`,
+    {
+      status,
+    },
+  );
   await expectApiOk(response, `transition order ${orderId} to ${status}`);
 }
 
-export async function createRuntimeOrder(request: APIRequestContext): Promise<RuntimeOrderFixture> {
+export async function createRuntimeOrder(
+  request: APIRequestContext,
+): Promise<RuntimeOrderFixture> {
   const response = await apiPost(request, "admin", "/orders", {
     data: {
       Date: new Date().toISOString(),

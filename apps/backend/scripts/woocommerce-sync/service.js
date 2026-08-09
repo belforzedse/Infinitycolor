@@ -11,7 +11,7 @@ const { Destination } = require("../woocommerce-importer/migration-v2/lib/destin
 const T = require("../woocommerce-importer/migration-v2/lib/transforms");
 const { CatalogEngine } = require("../woocommerce-importer/catalog/engine");
 const { buildConfig } = require("../woocommerce-importer/catalog/config");
-const { publicationFromEnv } = require("../woocommerce-importer/catalog/lib/publication");
+const { reconcileMissingProductMedia } = require("../woocommerce-importer/catalog/lib/mediaRecovery");
 const Logger = require("../woocommerce-importer/utils/Logger");
 
 const QUEUE_NAME = "woocommerce-sync";
@@ -19,11 +19,22 @@ const JOBS = {
   discovery: "woocommerce.discovery",
   hourly: "woocommerce.hourly",
   friday: "woocommerce.friday-cutover",
+  reconcile: "woocommerce.reconcile",
 };
 const SCHEDULERS = {
   discovery: "sched:woocommerce.discovery",
   hourly: "sched:woocommerce.hourly",
   friday: "sched:woocommerce.friday-cutover",
+  reconcile: "sched:woocommerce.reconcile",
+};
+/**
+ * Candidate target-orphan classification (a Strapi product carrying an
+ * external_id we couldn't find in this reconciliation's WooCommerce
+ * enumeration). Never auto-mutated — only reported. See reconcile().
+ */
+const ORPHAN_STATUS = {
+  CONFIRMED_MISSING: "source_confirmed_missing", // clean 404 refetch — Woo genuinely doesn't have it
+  UNKNOWN: "source_unknown", // timeout/5xx/auth/network — cannot safely infer deletion
 };
 
 function redisConnection(config) {
@@ -391,13 +402,11 @@ class WooSyncService {
     const products = [];
     for (const row of rows) products.push(await this.source.getProduct(row.source_id));
     const engine = createCatalogEngine(this.config);
-    const publication = publicationFromEnv(process.env);
     const report = await engine.runSync({
       dryRun: false,
       scope,
       skipMedia: false,
       sourceProducts: products,
-      publication,
     });
     const metrics = engine.collectMetrics(null, report);
     await this.state.metric({
@@ -538,12 +547,16 @@ class WooSyncService {
   async identitySweep(token) {
     if (this.config.identitySweepPages === 0) return { customers: 0, wallets: 0 };
     const control = await this.state.control();
-    const sweep = async ({ sourceType, client, pathname, rowsFrom, revision }) => {
+    const sweep = async ({ sourceType, client, pathname, rowsFrom, revision, query = {} }) => {
       const cursor = await this.state.cursor(`${sourceType}-sweep`);
       let pageNumber = Number(cursor.sweep_page || 1);
       let observed = 0;
       for (let count = 0; count < this.config.identitySweepPages; count += 1) {
-        const response = await client.get(pathname, { per_page: 100, page: pageNumber, orderby: "id", order: "asc" });
+        const response = await client.get(pathname, {
+          per_page: 100,
+          page: pageNumber,
+          ...query,
+        });
         const rows = rowsFrom(response.data);
         const totalPages = Math.max(1, Number(response.headers.get("x-wp-totalpages")) || 1);
         for (const row of rows) {
@@ -567,6 +580,8 @@ class WooSyncService {
         sourceType: "customer",
         client: this.source.woo,
         pathname: "/customers",
+        // WooCommerce customers support orderby=id.
+        query: { orderby: "id", order: "asc" },
         rowsFrom: (data) => Array.isArray(data) ? data : [],
         revision: customerRevision,
       }),
@@ -574,6 +589,8 @@ class WooSyncService {
         sourceType: "wallet",
         client: this.source.wallet,
         pathname: "/admin/users",
+        // TeraWallet only allows login|email|display_name|registered|balance.
+        query: { orderby: "registered", order: "asc" },
         rowsFrom: (data) => Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.users) ? data.users : [],
         revision: walletRevision,
       }),
@@ -701,6 +718,127 @@ class WooSyncService {
     });
   }
 
+  /**
+   * Periodic full-catalog reconciliation — the safety net behind the delta poll.
+   * `hourly()`'s pollWooEntity only sees products WooCommerce reports modified
+   * since the last cursor; a cursor gap, a skipped page, or (once webhooks exist)
+   * a dropped delivery can leave a product permanently unobserved. This composes
+   * CatalogEngine's own read-only compare (`runVerify`, already paginates the
+   * complete WooCommerce and Strapi catalogs) with the exact same repair
+   * primitives every other method in this file uses — it is not a second
+   * importer and it does not write to Strapi directly.
+   *
+   *  - wcOnly (Woo has it, Strapi doesn't): observed into the same "hourly"
+   *    queue lane pollWooEntity uses, then drained through the normal,
+   *    authoritative sync pipeline (processProductRows / CatalogEngine).
+   *  - strapiOnly (Strapi has it, this run's Woo enumeration didn't): NEVER
+   *    inferred as deleted from the compare alone. Each id is re-fetched
+   *    individually; only a clean 404 counts as confirmed-missing. Every other
+   *    outcome (timeout, 5xx, auth failure, network error) is recorded as
+   *    "unknown". This job never unpublishes or deletes anything — orphans are
+   *    reported for human review only.
+   */
+  /** Seam kept separate from reconcile() so tests can stub the CatalogEngine-touching
+   * parts without a real Woo/Strapi connection — mirrors how hourly() stubs
+   * pollChanges/variationSweep/drain rather than reaching into CatalogEngine inline. */
+  async runCatalogVerify() {
+    const engine = createCatalogEngine(this.config);
+    const { wcOnly, strapiOnly } = await engine.runVerify({ status: "any" });
+    return { engine, wcOnly, strapiOnly };
+  }
+
+  async repairMissingProductMedia(engine) {
+    return reconcileMissingProductMedia({
+      woo: engine.woo,
+      repo: engine.repo,
+      media: engine.media,
+      logger: console,
+      dryRun: false,
+      confirm: "CatalogMediaRepair",
+    });
+  }
+
+  async reconcile() {
+    return this.withLease("reconcile", async (token) => {
+      const started = Date.now();
+      try {
+        await ensureActive(this.state);
+        const { engine, wcOnly, strapiOnly } = await this.runCatalogVerify();
+
+        let missedObserved = 0;
+        let missedFailed = 0;
+        await mapPool(wcOnly, this.config.concurrency.entities, async (wcIdRaw) => {
+          if (this.stopping) return;
+          const wcId = Number(wcIdRaw);
+          try {
+            const row = await this.source.getProduct(wcId);
+            await this.state.observe({
+              sourceType: "product",
+              sourceId: wcId,
+              revisionSha256: productRevision(row),
+              modifiedAt: sourceModifiedAt(row),
+            }, "active", { insertLane: "hourly" });
+            missedObserved += 1;
+          } catch (error) {
+            missedFailed += 1;
+            console.warn("[WooSync] reconcile: failed to observe missing product", {
+              sourceIdHash: logId("product", wcId), errorCode: safeErrorCode(error),
+            });
+          }
+        });
+
+        const orphansByStatus = { [ORPHAN_STATUS.CONFIRMED_MISSING]: 0, [ORPHAN_STATUS.UNKNOWN]: 0 };
+        const orphanExamples = [];
+        await mapPool(strapiOnly, this.config.concurrency.entities, async (idRaw) => {
+          if (this.stopping) return;
+          const id = Number(idRaw);
+          let status;
+          try {
+            await this.source.getProduct(id);
+            // Woo actually has it — this run's enumeration missed it (e.g. a
+            // status this reconciliation pass didn't request); not an orphan.
+            return;
+          } catch (error) {
+            status = error?.status === 404 ? ORPHAN_STATUS.CONFIRMED_MISSING : ORPHAN_STATUS.UNKNOWN;
+          }
+          orphansByStatus[status] += 1;
+          if (orphanExamples.length < 20) orphanExamples.push({ sourceIdHash: logId("product", id), status });
+        });
+
+        // Give missed products a real chance to reach Strapi in this same run
+        // rather than waiting for the next scheduled hourly tick.
+        const drained = missedObserved > 0 ? await this.drain("hourly") : { completed: 0, failed: 0 };
+
+        const mediaSummary = await this.repairMissingProductMedia(engine);
+
+        await this.state.metric({
+          stage: "reconcile",
+          outcome: "completed",
+          durationMs: Date.now() - started,
+          itemCount: wcOnly.length + strapiOnly.length,
+          detail: {
+            missed: { found: wcOnly.length, observed: missedObserved, failed: missedFailed },
+            orphans: { candidates: strapiOnly.length, byStatus: orphansByStatus, examples: orphanExamples },
+            drained,
+            media: mediaSummary,
+          },
+        });
+
+        return {
+          missed: { found: wcOnly.length, observed: missedObserved, failed: missedFailed },
+          orphans: { candidates: strapiOnly.length, byStatus: orphansByStatus },
+          drained,
+          media: mediaSummary,
+        };
+      } catch (error) {
+        await this.state.metric({
+          stage: "reconcile", outcome: "failed", durationMs: Date.now() - started, errorCode: safeErrorCode(error),
+        });
+        throw error;
+      }
+    });
+  }
+
   async close() {
     this.stopping = true;
     await this.pool.end();
@@ -718,6 +856,7 @@ async function registerSchedulers(queue, config) {
     ["discovery", { every: config.pollMs }, JOBS.discovery],
     ["hourly", { pattern: "0 * * * *", tz: config.timezone }, JOBS.hourly],
     ["friday", { pattern: "59 23 * * 5", tz: config.timezone }, JOBS.friday],
+    ["reconcile", { pattern: config.reconcileCron, tz: config.timezone }, JOBS.reconcile],
   ];
   for (const [schedule, repeat, jobName] of definitions) {
     if (config.schedules[schedule]) {
@@ -745,6 +884,7 @@ async function start() {
     if (job.name === JOBS.discovery) return service.discovery();
     if (job.name === JOBS.hourly) return service.hourly();
     if (job.name === JOBS.friday) return service.friday(job.timestamp);
+    if (job.name === JOBS.reconcile) return service.reconcile();
     throw new UnrecoverableError(`Unknown Woo sync job: ${job.name}`);
   }, { connection, prefix: config.queuePrefix, concurrency: 1, lockDuration: config.leaseSeconds * 1000 });
 

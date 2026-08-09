@@ -3,7 +3,7 @@ import { computeTotals } from "../../../cart/services/lib/financials";
 import { logAdminOrderEdit } from "../../../../utils/adminActivity";
 import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
 import { releaseReservedStockAtomic } from "../../../cart/services/lib/stock";
-import { roleIsAllowed, OPERATIONAL_ROLES } from "../../../../utils/roles";
+import { requireCapability } from "../../../../utils/adminAuthorization";
 import {
   queueSnappayAdminCancel,
   queueSnappayAdminUpdate,
@@ -27,16 +27,10 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
   const isDryRun = ctx.query.dryRun === "true";
 
   try {
-    // Admin guard: ensure plugin user has an admin/store-manager role
-    const pluginUser = ctx.state.user;
-    if (!pluginUser) return ctx.forbidden("Admin access required");
-    const fullUser = await strapi.db
-      .query("plugin::users-permissions.user")
-      .findOne({ where: { id: pluginUser.id }, populate: ["role"] });
+    const actor = await requireCapability(ctx, strapi, "order.items.adjust");
+    if (!actor) return;
+    const fullUser = actor.user;
     const roleName = fullUser?.role?.name;
-    if (!fullUser || !roleIsAllowed(roleName, OPERATIONAL_ROLES)) {
-      return ctx.forbidden("Admin access required");
-    }
     if (!Array.isArray(items) || items.length === 0) {
       return ctx.badRequest("At least one item adjustment is required", {
         data: { error: "invalid_items" },

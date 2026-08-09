@@ -22,7 +22,9 @@ export const useCurrentUser = () => {
     isAuthenticated: !!user,
     isAdmin: user?.isAdmin ?? false,
     roleName: user?.roleName ?? null,
-    isStoreManager: (user?.roleName ?? "").toLowerCase() === "store manager",
-    isFounder: (user?.roleName ?? "").toLowerCase() === "founder",
+    adminRole: user?.adminRole ?? null,
+    capabilities: user?.capabilities ?? [],
+    isStoreManager: user?.adminRole === "store_manager",
+    isFounder: user?.adminRole === "founder",
   };
 };

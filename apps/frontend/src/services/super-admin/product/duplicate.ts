@@ -60,7 +60,6 @@ export const duplicateProduct = async (productId: string) => {
     const duplicateData = {
       Title: `${originalData.Title} - کپی`,
       Description: originalData.Description,
-      Status: originalData.Status,
       ProductType: duplicatedProductType,
       IsSimpleProduct: duplicatedProductType === "Simple",
       Weight: originalData.Weight ?? 100,
@@ -157,7 +156,7 @@ export const duplicateProduct = async (productId: string) => {
     // Duplicate product variations
     if (originalData.product_variations?.data?.length) {
       const variationErrors: string[] = [];
-      
+
       for (const variation of originalData.product_variations.data) {
         try {
           const variationResponse = await apiClient.get<any>(
@@ -203,10 +202,9 @@ export const duplicateProduct = async (productId: string) => {
             newVariationData.product_variation_model = productVariationModel;
           }
 
-          const newVariationResponse = await apiClient.post<any>(
-            `/product-variations`,
-            { data: newVariationData },
-          );
+          const newVariationResponse = await apiClient.post<any>(`/product-variations`, {
+            data: newVariationData,
+          });
 
           // apiClient.post returns response.data, which is { data: { id, attributes } } from Strapi
           const newVariationItem = newVariationResponse.data || newVariationResponse;
@@ -218,18 +216,18 @@ export const duplicateProduct = async (productId: string) => {
 
           // Duplicate stock with 0 count
           if (variationData.product_stock?.data) {
-            await apiClient.post<any>(
-              `/product-stocks`,
-              {
-                data: {
-                  Count: 0,
-                  product_variation: newVariationId,
-                },
+            await apiClient.post<any>(`/product-stocks`, {
+              data: {
+                Count: 0,
+                product_variation: newVariationId,
               },
-            );
+            });
           }
         } catch (variationError: any) {
-          const errorMsg = variationError?.response?.data?.error?.message || variationError?.message || "Unknown error";
+          const errorMsg =
+            variationError?.response?.data?.error?.message ||
+            variationError?.message ||
+            "Unknown error";
           console.error(`Failed to duplicate variation ${variation.id}:`, variationError);
           variationErrors.push(`Variation ${variation.id}: ${errorMsg}`);
           // Continue with next variation instead of failing entire operation
@@ -255,15 +253,12 @@ export const duplicateProduct = async (productId: string) => {
         const sizeHelperData = sizeHelperItem.attributes || sizeHelperItem;
 
         if (sizeHelperData?.Helper) {
-          await apiClient.post<any>(
-            `/product-size-helpers`,
-            {
-              data: {
-                product: newProductId,
-                Helper: sizeHelperData.Helper,
-              },
+          await apiClient.post<any>(`/product-size-helpers`, {
+            data: {
+              product: newProductId,
+              Helper: sizeHelperData.Helper,
             },
-          );
+          });
         }
       } catch (sizeHelperError: any) {
         // Log error but don't fail the entire operation

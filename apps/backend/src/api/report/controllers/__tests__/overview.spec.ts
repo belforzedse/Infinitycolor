@@ -69,7 +69,12 @@ function rawRouter(sql: string) {
 }
 
 function createStrapi() {
-  return { db: { connection: { raw: jest.fn(async (sql: string) => rawRouter(sql)) } } };
+  return {
+    query: () => ({
+      findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Finance" } }),
+    }),
+    db: { connection: { raw: jest.fn(async (sql: string) => rawRouter(sql)) } },
+  };
 }
 
 function loadController() {
@@ -160,8 +165,12 @@ describe("report.overview", () => {
   });
 
   it("blocks a Customer", async () => {
-    fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Customer" } });
-    roleIsAllowedMock.mockReturnValue(false);
+    (global as any).strapi = {
+      ...createStrapi(),
+      query: () => ({
+        findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Customer" } }),
+      }),
+    };
     const controller = loadController();
     const ctx = createCtx();
 

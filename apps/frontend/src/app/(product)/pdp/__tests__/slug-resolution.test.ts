@@ -19,6 +19,14 @@ const Y00574_ENCODED =
   "%d8%b3%d8%aa-%d8%aa%d8%a7%d9%be-%d9%88-%d8%af%d8%a7%d9%85%d9%86-%d9%81%d9%84%d8%a7%d9%85%d9%86%d8%aa-y00574";
 
 describe("PDP slug resolution (Y00574 class)", () => {
+  it("canonicalizes the live W00238 slug regression", () => {
+    const persian = "کت-آدلینا-w00238";
+    const encoded = "%da%a9%d8%aa-%d8%a2%d8%af%d9%84%db%8c%d9%86%d8%a7-w00238";
+
+    expect(canonicalProductSlug(encoded)).toBe(persian);
+    expect(buildCanonicalPdpPath(encoded)).toBe(`/pdp/${encodeURIComponent(persian)}`);
+  });
+
   it("canonicalizes Y00574's encoded historical slug to Persian", () => {
     expect(canonicalProductSlug(Y00574_ENCODED)).toBe(Y00574_PERSIAN);
     expect(buildCanonicalPdpPath(Y00574_ENCODED)).toBe(

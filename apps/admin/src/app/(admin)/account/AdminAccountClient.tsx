@@ -10,7 +10,7 @@ import {
 } from "@/lib/central-auth";
 import UserService from "@/services/user";
 import type { MeResponse, UpdateMePayload } from "@/services/user/me";
-import { getSidebarItemsForRole } from "@/constants/superAdminSidebar";
+import { getSidebarItemsForCapabilities } from "@/constants/superAdminSidebar";
 import { adminOrigin } from "@/config/admin-env";
 
 const EMPTY_FORM: UpdateMePayload = {
@@ -87,8 +87,11 @@ export default function AdminAccountClient() {
   }, [load]);
 
   const accessibleSections = useMemo(
-    () => getSidebarItemsForRole(user?.roleName).map((item) => item.label),
-    [user?.roleName],
+    () =>
+      getSidebarItemsForCapabilities(user?.capabilities, user?.adminRole).map(
+        (item) => item.label,
+      ),
+    [user?.adminRole, user?.capabilities],
   );
 
   const updateField = <K extends keyof UpdateMePayload>(key: K, value: UpdateMePayload[K]) => {

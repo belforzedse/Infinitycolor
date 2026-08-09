@@ -1,20 +1,14 @@
-import { ROLE_NAMES, STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
-
 const superadminPolicy = [
   {
-    name: "global::role-based",
-    config: {
-      roles: [ROLE_NAMES.SUPERADMIN],
-    },
+    name: "global::require-capability",
+    config: { capability: "system.users.manage" },
   },
 ];
 
 const operationalPolicy = [
   {
-    name: "global::role-based",
-    config: {
-      roles: STORE_MANAGER_PLUS_ROLES,
-    },
+    name: "global::require-capability",
+    config: { capability: "wallet.customer.search" },
   },
 ];
 

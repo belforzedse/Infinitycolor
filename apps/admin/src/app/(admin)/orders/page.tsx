@@ -21,6 +21,7 @@ import {
   serializeAdvancedFiltersParam,
   type AdvancedFilterItem,
 } from "@/components/SuperAdmin/Table/advancedFilters";
+import { useCan } from "@/hooks/useCan";
 
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
@@ -43,6 +44,9 @@ const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
 ];
 
 export default function OrdersPage() {
+  const canCreateManualOrder = useCan("order.manual.create");
+  const canBulkUpdateOrders = useCan("order.bulk.update");
+  const canPrintOrders = useCan("order.print");
   const [, setRefresh] = useAtom(refreshTable);
   const [activeTab, setActiveTab] = useState<OrderTab>("all");
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
@@ -96,22 +100,28 @@ export default function OrdersPage() {
   }, [debouncedSearch]);
 
   const bulkOptions = useMemo(() => {
-    const statusOptions = BULK_STATUS_OPTIONS.map(({ status, label }) => ({
-      id: `status-${status}`,
-      title: `تغییر وضعیت به «${label}»`,
-    }));
-
-    return [{ id: "print", title: "پرینت دسته‌ای" }, ...statusOptions];
-  }, []);
+    const statusOptions = canBulkUpdateOrders
+      ? BULK_STATUS_OPTIONS.map(({ status, label }) => ({
+          id: `status-${status}`,
+          title: `تغییر وضعیت به «${label}»`,
+        }))
+      : [];
+    return [
+      ...(canPrintOrders ? [{ id: "print", title: "پرینت دسته‌ای" }] : []),
+      ...statusOptions,
+    ];
+  }, [canBulkUpdateOrders, canPrintOrders]);
 
   const handleBulkAction = useCallback(
     async (actionId: string, selectedRows: Order[]) => {
       if (actionId === "print") {
+        if (!canPrintOrders) return;
         bulkPrintOrders(selectedRows.map((row) => row.id));
         return;
       }
 
       if (actionId.startsWith("status-")) {
+        if (!canBulkUpdateOrders) return;
         const statusKey = actionId.replace(
           "status-",
           "",
@@ -130,7 +140,7 @@ export default function OrdersPage() {
         }
       }
     },
-    [setRefresh],
+    [canBulkUpdateOrders, canPrintOrders, setRefresh],
   );
 
   const loadOrders = useCallback(
@@ -186,7 +196,7 @@ export default function OrdersPage() {
         { id: "[user][phone]", title: "شماره تلفن", type: "text" },
         { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
       ]}
-      hasAddButton
+      hasAddButton={canCreateManualOrder}
       addButtonText="افزودن سفارش جدید"
       addButtonPath="/orders/add"
       hasFilterButton
@@ -258,7 +268,7 @@ export default function OrdersPage() {
       </div>
       <SuperAdminTable
         columns={columns}
-        enableSelection
+        enableSelection={bulkOptions.length > 0}
         bulkOptions={bulkOptions}
         onBulkAction={handleBulkAction}
         filters={advancedFilters}

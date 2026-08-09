@@ -3,7 +3,6 @@ import {
   createHeroSliderMeta,
   sanitizeHeroSliderPayload,
 } from "../services/hero-slider-schema";
-import { ROLE_NAMES } from "../../../utils/roles";
 
 describe("hero slider schema sanitizer", () => {
   it("sanitizes a valid v3 payload without errors", () => {
@@ -143,7 +142,7 @@ describe("hero slider publish meta", () => {
 });
 
 describe("hero slider custom routes", () => {
-  it("protects hero slider endpoints with superadmin-only policy", () => {
+  it("protects hero slider endpoints with customization capability", () => {
     const heroRoutes = routesConfig.routes.filter((route) =>
       String(route.path).startsWith("/settings/hero-slider"),
     );
@@ -154,9 +153,9 @@ describe("hero slider custom routes", () => {
       expect(route.config.auth).toEqual({ scope: [] });
       expect(route.config.policies).toEqual([
         {
-          name: "global::role-based",
+          name: "global::require-capability",
           config: {
-            roles: [ROLE_NAMES.SUPERADMIN],
+            capability: "system.customization.manage",
           },
         },
       ]);

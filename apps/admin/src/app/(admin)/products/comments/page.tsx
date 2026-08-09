@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
@@ -22,7 +21,6 @@ import {
 } from "lucide-react";
 import { productReviewService, ProductReview } from "@/services/product/product-review.service";
 import { resolveProductReviewUserDisplayName } from "@/utils/productReviewAuthorName";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { translateCommentStatus } from "@/utils/statusTranslations";
 
 const statusConfig = {
@@ -32,21 +30,11 @@ const statusConfig = {
 };
 
 export default function ProductsCommentsPage() {
-  const router = useRouter();
-  const { roleName } = useCurrentUser();
   const [reviews, setReviews] = useState<ProductReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [viewReview, setViewReview] = useState<ProductReview | null>(null);
-
-  // Redirect editors away from product pages
-  useEffect(() => {
-    const normalizedRole = (roleName ?? "").toLowerCase().trim();
-    if (normalizedRole === "editor") {
-      router.replace("/blog");
-    }
-  }, [roleName, router]);
 
   const fetchReviews = useCallback(async () => {
     try {

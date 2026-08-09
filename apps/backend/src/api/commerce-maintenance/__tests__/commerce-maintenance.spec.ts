@@ -180,7 +180,7 @@ describe("commerce-maintenance purge service", () => {
 });
 
 describe("commerce-maintenance route", () => {
-  it("uses the shared content API auth strategy and Superadmin policy", () => {
+  it("uses the shared content API auth strategy and purge capability policy", () => {
     const route = routeConfig.routes.find(
       (entry) => entry.path === "/admin/commerce-data/purge"
     );
@@ -191,8 +191,8 @@ describe("commerce-maintenance route", () => {
     expect(route?.config.middlewares).toBeUndefined();
     expect(route?.config.policies).toEqual([
       {
-        name: "global::role-based",
-        config: { roles: ["Superadmin"] },
+        name: "global::require-capability",
+        config: { capability: "system.purge.execute" },
       },
     ]);
   });

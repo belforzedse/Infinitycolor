@@ -14,10 +14,26 @@ function action(enabled = false) {
 }
 
 function createActionTree() {
-  return {
+  const tree: Record<string, any> = {
+    "api::auth": {
+      controllers: {
+        auth: {
+          welcome: action(),
+          otp: action(),
+          login: action(),
+          loginWithPassword: action(),
+          resetPassword: action(),
+          self: action(),
+          updateSelf: action(),
+          registerInfo: action(),
+        },
+      },
+    },
     "api::cart": {
       controllers: {
         cart: {
+          find: action(),
+          findOne: action(),
           getMyCart: action(),
           addItem: action(),
           updateItem: action(),
@@ -69,6 +85,7 @@ function createActionTree() {
           create: action(),
           update: action(),
           search: action(),
+          publication: action(),
           generateVariationCombinations: action(),
           delete: action(),
         },
@@ -265,6 +282,11 @@ function createActionTree() {
         },
       },
     },
+    "api::admin-order-list": {
+      controllers: {
+        "admin-order-list": { query: action() },
+      },
+    },
     "api::product-review": {
       controllers: {
         "product-review": {
@@ -398,6 +420,10 @@ function createActionTree() {
           adminActivityById: action(),
           trafficDashboard: action(),
           trafficRealtime: action(),
+          salesBreakdown: action(),
+          salesBreakdownExport: action(),
+          overview: action(),
+          funnel: action(),
         },
       },
     },
@@ -435,6 +461,7 @@ function createActionTree() {
         "local-user-wallet": {
           getCurrentUserWallet: action(),
           adminGetUserWallet: action(),
+          adminGetUserWalletHistory: action(),
           adminAdjustWallet: action(),
         },
       },
@@ -464,6 +491,57 @@ function createActionTree() {
       },
     },
   };
+
+  const addController = (typeKey: string, controllerName: string, actions: string[]) => {
+    tree[typeKey] ||= { controllers: {} };
+    tree[typeKey].controllers[controllerName] ||= {};
+    for (const actionName of actions) {
+      tree[typeKey].controllers[controllerName][actionName] ||= action();
+    }
+  };
+  const crud = ["find", "findOne", "create", "update", "delete"];
+
+  for (const [typeKey, controllerName, actions] of [
+    ["api::admin-dashboard", "admin-dashboard", ["query"]],
+    ["api::cart-item", "cart-item", crud],
+    ["api::order-item", "order-item", crud],
+    ["api::product-review-like", "product-review-like", crud],
+    ["api::navigation", "navigation", crud],
+    ["api::footer", "footer", crud],
+    ["api::site-identity", "site-identity", crud],
+    ["api::site-faq", "site-faq", crud],
+    ["api::settings", "settings", [...crud, "getBlogBanners", "updateBlogBanners"]],
+    ["api::blog-post", "blog-post", crud],
+    ["api::blog-category", "blog-category", crud],
+    ["api::blog-tag", "blog-tag", crud],
+    ["api::blog-author", "blog-author", crud],
+    ["api::blog-comment", "blog-comment", crud],
+    ["api::post", "post", crud],
+    ["api::post-comment", "post-comment", crud],
+    ["api::faq-category", "faq-category", crud],
+    ["api::faq-question", "faq-question", crud],
+    ["api::story", "story", [...crud, "getActive"]],
+    ["api::product-like", "product-like", ["toggleFavorite", "getUserLikes"]],
+    ["api::post-like", "post-like", ["toggle", "getUserLikes"]],
+    ["api::post-bookmark", "post-bookmark", ["toggle", "getUserBookmarks"]],
+    ["api::post-comment-like", "post-comment-like", ["toggle", "getUserLikes"]],
+    ["api::notification", "notification", ["listMine", "unreadCount", "markAllRead", "markRead"]],
+    [
+      "api::user-activity",
+      "user-activity",
+      ["findUserActivities", "findUserActivitiesByUserId", "unreadCount", "markRead", "markAllRead"],
+    ],
+    [
+      "api::local-user-address",
+      "local-user-address",
+      [...crud, "getMyAddresses", "createAddress"],
+    ],
+    ["api::story-seen", "story-seen", ["markSeen", "getMine"]],
+  ] as Array<[string, string, string[]]>) {
+    addController(typeKey, controllerName, actions);
+  }
+
+  return tree;
 }
 
 function createStrapiForPermissions() {
@@ -495,7 +573,7 @@ function enabledActionNames(controller: Record<string, { enabled: boolean }>) {
 }
 
 describe("role permission templates", () => {
-  it("keeps store managers away from admin activity and reports", () => {
+  it("gives store managers product insights without traffic or audit reports", () => {
     const storeManager = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "store-manager",
@@ -511,7 +589,7 @@ describe("role permission templates", () => {
     expect(
       storeManager["api::admin-activity"].controllers["admin-activity"].findReport.enabled,
     ).toBe(false);
-    expect(storeManager["api::report"].controllers.report.productSales.enabled).toBe(false);
+    expect(storeManager["api::report"].controllers.report.productSales.enabled).toBe(true);
     expect(storeManager["api::report"].controllers.report.trafficDashboard.enabled).toBe(false);
   });
 
@@ -565,14 +643,14 @@ describe("role permission templates", () => {
     expect(editor["plugin::users-permissions"].controllers.role.update.enabled).toBe(false);
   });
 
-  it("allows founders to read order-scoped admin activity but not standalone activity reports", () => {
+  it("keeps founder activity access behind the separate audit capability", () => {
     const founder = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "founder",
     );
 
     const adminActivity = founder["api::admin-activity"].controllers["admin-activity"];
-    expect(adminActivity.findOrderActivities.enabled).toBe(true);
+    expect(adminActivity.findOrderActivities.enabled).toBe(false);
     expect(adminActivity.find.enabled).toBe(false);
     expect(adminActivity.findOne.enabled).toBe(false);
     expect(adminActivity.findReport.enabled).toBe(false);
@@ -580,7 +658,7 @@ describe("role permission templates", () => {
     expect(adminActivity.findProductActivities.enabled).toBe(false);
   });
 
-  it("allows founders to use sales reports without traffic or admin-activity reports", () => {
+  it("allows founders to use inherited product, finance, sales, and traffic reports", () => {
     const founder = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "founder",
@@ -595,12 +673,12 @@ describe("role permission templates", () => {
     expect(report.productInventory.enabled).toBe(true);
     expect(report.productDetail.enabled).toBe(true);
     expect(report.productExport.enabled).toBe(true);
-    expect(report.liquidity.enabled).toBe(false);
-    expect(report.gatewayLiquidity.enabled).toBe(false);
+    expect(report.liquidity.enabled).toBe(true);
+    expect(report.gatewayLiquidity.enabled).toBe(true);
     expect(report.adminActivity.enabled).toBe(false);
     expect(report.adminActivityById.enabled).toBe(false);
-    expect(report.trafficDashboard.enabled).toBe(false);
-    expect(report.trafficRealtime.enabled).toBe(false);
+    expect(report.trafficDashboard.enabled).toBe(true);
+    expect(report.trafficRealtime.enabled).toBe(true);
   });
 
   it("keeps manager-plus roles customer-capable but away from superadmin-only actions", () => {
@@ -621,7 +699,7 @@ describe("role permission templates", () => {
     expect(founder["plugin::users-permissions"].controllers.user.update.enabled).toBe(false);
   });
 
-  it("grants the complete operational commerce matrix without raw financial or master deletion", () => {
+  it("grants the non-destructive operational commerce matrix without raw financial access", () => {
     const storeManager = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "store-manager",
@@ -629,7 +707,7 @@ describe("role permission templates", () => {
     const controller = (typeKey: string, name: string) => storeManager[typeKey].controllers[name];
 
     expect(controller("api::product", "product").generateVariationCombinations.enabled).toBe(true);
-    expect(controller("api::product-variation", "product-variation").delete.enabled).toBe(true);
+    expect(controller("api::product-variation", "product-variation").delete.enabled).toBe(false);
     expect(controller("api::product-stock", "product-stock").create.enabled).toBe(true);
     expect(controller("api::product-stock", "product-stock").update.enabled).toBe(true);
     expect(controller("api::product-stock", "product-stock").delete.enabled).toBe(false);
@@ -637,12 +715,14 @@ describe("role permission templates", () => {
     for (const [typeKey, name] of [
       ["api::product-category-content", "product-category-content"],
       ["api::product-faq", "product-faq"],
-      ["api::product-size-helper", "product-size-helper"],
     ]) {
       expect(controller(typeKey, name).create.enabled).toBe(true);
       expect(controller(typeKey, name).update.enabled).toBe(true);
-      expect(controller(typeKey, name).delete.enabled).toBe(true);
+      expect(controller(typeKey, name).delete.enabled).toBe(false);
     }
+    expect(controller("api::product-size-helper", "product-size-helper").create.enabled).toBe(true);
+    expect(controller("api::product-size-helper", "product-size-helper").update.enabled).toBe(true);
+    expect(controller("api::product-size-helper", "product-size-helper").delete.enabled).toBe(false);
 
     expect(controller("api::product-tag", "product-tag").create.enabled).toBe(true);
     expect(controller("api::product-tag", "product-tag").update.enabled).toBe(true);
@@ -663,27 +743,27 @@ describe("role permission templates", () => {
     expect(
       controller("api::product-attribute-assignment", "product-attribute-assignment").delete
         .enabled,
-    ).toBe(true);
-    expect(controller("api::discount", "discount").create.enabled).toBe(true);
-    expect(controller("api::discount", "discount").update.enabled).toBe(true);
+    ).toBe(false);
+    expect(controller("api::discount", "discount").create.enabled).toBe(false);
+    expect(controller("api::discount", "discount").update.enabled).toBe(false);
     expect(controller("api::discount", "discount").delete.enabled).toBe(false);
-    expect(controller("api::general-discount", "general-discount").create.enabled).toBe(true);
-    expect(controller("api::shipping", "shipping").create.enabled).toBe(true);
+    expect(controller("api::general-discount", "general-discount").create.enabled).toBe(false);
+    expect(controller("api::shipping", "shipping").create.enabled).toBe(false);
     expect(controller("api::shipping", "shipping").delete.enabled).toBe(false);
     expect(controller("api::shipping-province", "shipping-province").update.enabled).toBe(false);
     expect(controller("api::shipping-city", "shipping-city").create.enabled).toBe(false);
 
     const order = controller("api::order", "order");
-    expect(order.find.enabled).toBe(true);
-    expect(order.adminAdjustItems.enabled).toBe(true);
-    expect(order.adminUpdateNotes.enabled).toBe(true);
+    expect(order.find.enabled).toBe(false);
+    expect(order.adminAdjustItems.enabled).toBe(false);
+    expect(order.adminUpdateNotes.enabled).toBe(false);
     expect(order.adminTransition.enabled).toBe(true);
     expect(order.create.enabled).toBe(false);
     expect(order.update.enabled).toBe(false);
     expect(order.delete.enabled).toBe(false);
     expect(order.adminPaymentOperation.enabled).toBe(false);
 
-    expect(controller("api::plugin-user", "plugin-user").searchCustomers.enabled).toBe(true);
+    expect(controller("api::plugin-user", "plugin-user").searchCustomers.enabled).toBe(false);
     expect(controller("api::plugin-user", "plugin-user").createPluginUser.enabled).toBe(false);
     expect(controller("api::local-user", "local-user").createUser.enabled).toBe(false);
     expect(controller("api::local-user", "local-user").update.enabled).toBe(false);
@@ -731,6 +811,7 @@ describe("role permission templates", () => {
       "find",
       "findOne",
       "generateVariationCombinations",
+      "publication",
       "search",
       "update",
     ]);
@@ -742,7 +823,6 @@ describe("role permission templates", () => {
     ]);
     expect(enabled("api::product-variation", "product-variation")).toEqual([
       "create",
-      "delete",
       "find",
       "findOne",
       "update",
@@ -753,27 +833,15 @@ describe("role permission templates", () => {
       "findOne",
       "update",
     ]);
-    expect(enabled("api::discount", "discount")).toEqual(["create", "find", "findOne", "update"]);
-    expect(enabled("api::general-discount", "general-discount")).toEqual([
-      "create",
-      "find",
-      "findOne",
-      "update",
-    ]);
-    expect(enabled("api::shipping", "shipping")).toEqual(["create", "find", "findOne", "update"]);
+    expect(enabled("api::discount", "discount")).toEqual([]);
+    expect(enabled("api::general-discount", "general-discount")).toEqual([]);
+    expect(enabled("api::shipping", "shipping")).toEqual(["find", "findOne"]);
     expect(enabled("api::shipping-province", "shipping-province")).toEqual(["find", "findOne"]);
     expect(enabled("api::shipping-city", "shipping-city")).toEqual(["find", "findOne"]);
     expect(enabled("api::order", "order")).toEqual([
-      "adminAdjustItems",
-      "adminCancel",
       "adminTransition",
-      "adminUpdateNotes",
-      "adminVoidBarcode",
       "checkPaymentStatus",
-      "decrementStockManual",
-      "find",
       "findOne",
-      "generateAnipoBarcode",
       "getActiveReserve",
       "getMyOrderDetail",
       "getMyOrders",
@@ -786,14 +854,10 @@ describe("role permission templates", () => {
       "findOne",
       "getUserReviews",
       "submitReview",
-      "update",
     ]);
     expect(enabled("api::product-review-reply", "product-review-reply")).toEqual([
-      "create",
-      "delete",
       "find",
       "findOne",
-      "update",
     ]);
     expect(enabled("plugin::upload", "content-api")).toEqual(["find", "findOne", "upload"]);
     expect(enabled("api::payment-gateway", "payment-gateway")).toEqual([
@@ -801,7 +865,6 @@ describe("role permission templates", () => {
       "snappEligible",
     ]);
     expect(enabled("api::wallet-topup", "wallet-topup")).toEqual([
-      "chargeIntent",
       "paymentCallback",
     ]);
     expect(enabled("api::local-user-wallet", "local-user-wallet")).toEqual([
@@ -814,11 +877,20 @@ describe("role permission templates", () => {
     expect(enabled("plugin::users-permissions", "user")).toEqual([]);
     expect(enabled("plugin::users-permissions", "role")).toEqual([]);
     expect(enabled("api::admin-activity", "admin-activity")).toEqual([]);
-    expect(enabled("api::report", "report")).toEqual([]);
+    expect(enabled("api::report", "report")).toEqual([
+      "productBreakdown",
+      "productDetail",
+      "productExport",
+      "productInventory",
+      "productOverview",
+      "productPerformance",
+      "productSales",
+      "productTrends",
+    ]);
     expect(enabled("api::commerce-maintenance", "commerce-maintenance")).toEqual([]);
   });
 
-  it("restricts admin wallet management to superadmin only", () => {
+  it("restricts admin wallet management to Founder and Superadmin", () => {
     const walletCtrl = (tree: any) =>
       tree["api::local-user-wallet"].controllers["local-user-wallet"];
 
@@ -839,12 +911,15 @@ describe("role permission templates", () => {
       "superadmin",
     );
 
-    // Non-superadmin management roles retain only their customer-facing wallet action.
-    for (const tree of [storeManager, founder, editor]) {
+    // Lower management roles retain only their customer-facing wallet action.
+    for (const tree of [storeManager, editor]) {
       expect(walletCtrl(tree).getCurrentUserWallet.enabled).toBe(true);
       expect(walletCtrl(tree).adminAdjustWallet.enabled).toBe(false);
       expect(walletCtrl(tree).adminGetUserWallet.enabled).toBe(false);
     }
+
+    expect(walletCtrl(founder).adminAdjustWallet.enabled).toBe(true);
+    expect(walletCtrl(founder).adminGetUserWallet.enabled).toBe(true);
 
     // Superadmin (full access) keeps them.
     expect(walletCtrl(superadmin).adminAdjustWallet.enabled).toBe(true);
@@ -858,6 +933,7 @@ describe("role permission templates", () => {
     ];
     const persisted = new Map<number, string[]>();
     const roleQuery = {
+      findMany: jest.fn(async () => roles),
       findOne: jest.fn(async ({ where }: any) => {
         if (where.id) {
           const role = roles.find((entry) => entry.id === where.id);
@@ -876,11 +952,23 @@ describe("role permission templates", () => {
         ...roles.find((entry) => entry.id === where.id),
         ...data,
       })),
-      create: jest.fn(),
+      create: jest.fn(async ({ data }: any) => {
+        const role = { id: roles.length + 1, ...data };
+        roles.push(role);
+        return role;
+      }),
+      delete: jest.fn(async ({ where }: any) => {
+        const index = roles.findIndex((entry) => entry.id === where.id);
+        return index >= 0 ? roles.splice(index, 1)[0] : null;
+      }),
     };
+    let persistenceFailureInjected = false;
     const roleService = {
       updateRole: jest.fn(async (roleId: number, { permissions }: any) => {
-        if (roleId === 2) throw new Error("permission persistence failed");
+        if (roleId === 2 && !persistenceFailureInjected) {
+          persistenceFailureInjected = true;
+          throw new Error("permission persistence failed");
+        }
         const enabledActions: string[] = [];
         for (const [typeKey, typeEntry] of Object.entries(permissions) as any) {
           for (const [controllerName, controller] of Object.entries(typeEntry.controllers) as any) {

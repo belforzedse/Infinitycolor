@@ -592,20 +592,25 @@ class CatalogEngine {
     const attributePlan = G.buildProductAttributePlan(wcProduct, ctx.globalAttributeRegistry);
 
     const existing = productIndex.get(wcProduct.id.toString());
+    const existingPublicationStatus =
+      existing?.attributes?.Status ?? existing?.Status ?? "InActive";
     const previousProduct = runContext?.store.getItem(runContext.runId, itemKey);
     let productStrapiId = existing?.id || this.mapping.getStrapiId("products", wcProduct.id) || previousProduct?.strapiId;
     let productFingerprint = null;
+    let publicationIntent = null;
 
     // Product record write (only in scopes that touch products).
     if (flags.products && !childrenOnly) {
       const resolveCategoryId = (wooId) => this.mapping.getStrapiId("categories", wooId);
       const resolveCategoryParent = (wooId) => this.mapping.get("categories", wooId)?.parentWcId ?? null;
-      const { data, sizeGuideMatrix, sourceTimestamps } = T.mapProduct(wcProduct, {
+      const mappedProduct = T.mapProduct(wcProduct, {
         resolveCategoryId,
         resolveCategoryParent,
         statusMappings: this.statusMappings,
         publication: ctx.publication || this.options.publication || null,
       });
+      const { data, sizeGuideMatrix, sourceTimestamps } = mappedProduct;
+      publicationIntent = mappedProduct.publicationIntent;
       if (dryRun) {
         const tagCounters = this.repo.inspectProductTags(wcProduct.tags);
         report.count("productTags", "created", tagCounters.created);
@@ -786,28 +791,9 @@ class CatalogEngine {
           this.logger.info(`ℹ️  source product ${wcProduct.id} has no images`);
         }
 
-        // New products with required media incomplete must not stay Active.
-        // Scheduled products keep their schedule but remain unpublished until media is complete.
-        const isNewProduct = !existing;
-        if (isNewProduct && counts.expected > 0 && !mediaOutcome.complete) {
-          try {
-            const keepScheduled = ctx.publication?.mode === "scheduled";
-            await this.repo.http.put(`/products/${productStrapiId}`, {
-              data: keepScheduled
-                ? {
-                    scheduledPublishRequireMedia: true,
-                    scheduledPublishLastError: mediaOutcome.incompleteReason || "media-import-incomplete",
-                  }
-                : { Status: "InActive" },
-            }, {
-              headers: sourceTimestampHeaders(wooSourceTimestamps(wcProduct)),
-            });
-          } catch (error) {
-            this.logger.warn(
-              `⚠️ failed to mark incomplete product ${wcProduct.id}: ${error.message}`,
-            );
-          }
-        }
+        // Publication is applied only after the entire content/media/variation
+        // pass. New products are created InActive, so incomplete media can never
+        // accidentally expose a half-imported product here.
       }
     } else if (!childrenOnly && flags.media === false) {
       report.mediaSkippedIntentionally();
@@ -821,6 +807,64 @@ class CatalogEngine {
         wcVariations,
         attributeContext,
       );
+    }
+
+    if (
+      flags.products &&
+      !childrenOnly &&
+      !dryRun &&
+      productStrapiId &&
+      productStrapiId > 0 &&
+      publicationIntent
+    ) {
+      let intended = publicationIntent;
+      const mediaIncomplete = flags.media && mediaOutcome?.complete === false;
+
+      if (mediaIncomplete) {
+        // Preserve an already-public product's last-known-good media/state. New,
+        // inactive, and previously scheduled targets stay unpublished until the
+        // retrying control-plane item completes its media step.
+        if (existingPublicationStatus === "Active") {
+          intended = null;
+        } else {
+          intended = { action: "unpublish" };
+        }
+      } else if (
+        existingPublicationStatus === "Active" &&
+        publicationIntent.action === "schedule"
+      ) {
+        // Scheduling an update to an already-public product is explicitly out of
+        // scope. Never demote the live product to Scheduled.
+        this.logger.warn(
+          `⚠️ publication schedule skipped for active product ${wcProduct.id}: scheduled-update-unsupported`,
+        );
+        ctx.publicationIssue = "scheduled-update-unsupported";
+        intended = null;
+      } else if (publicationIntent.errorCode) {
+        this.logger.warn(
+          `⚠️ publication mapping issue for product ${wcProduct.id}: ${publicationIntent.errorCode}`,
+        );
+        ctx.publicationIssue = publicationIntent.errorCode;
+        if (existingPublicationStatus === "Active") intended = null;
+      }
+
+      if (intended) {
+        intended = {
+          ...intended,
+          requireMedia:
+            intended.requireMedia === true &&
+            flags.media &&
+            mediaOutcome?.sourceHadNoImages !== true,
+        };
+        const publicationResult = await this.repo.changeProductPublication(
+          productStrapiId,
+          wcProduct.id,
+          intended,
+        );
+        this.logger.info(
+          `📅 publication ${wcProduct.id}: ${publicationResult?.Status || intended.action}`,
+        );
+      }
     }
 
     if (runContext && !childrenOnly) {
@@ -839,7 +883,10 @@ class CatalogEngine {
         runContext.store.completeItem(runContext.runId, itemKey, {
           strapiId: productStrapiId,
           fingerprint: productFingerprint,
-          metrics: { productWriteMs: ctx.productWriteMs || 0 },
+          metrics: {
+            productWriteMs: ctx.productWriteMs || 0,
+            ...(ctx.publicationIssue ? { publicationIssue: ctx.publicationIssue } : {}),
+          },
         }, runContext.lockToken);
       }
     } else if (!childrenOnly) {
@@ -1144,14 +1191,20 @@ class CatalogEngine {
   /**
    * Compare WooCommerce and Strapi catalogs (read-only). Reports products present
    * in one store but not the other (by external_id). Returns `{ ok, wcOnly, strapiOnly }`.
+   *
+   * `status` defaults to WooCommerce's own default listing scope. Pass
+   * `status: "any"` for reconciliation callers — otherwise a Woo product that's
+   * merely draft/pending/private (but already imported, e.g. later unpublished
+   * upstream) is invisible to `iterateProducts()` and reads as a false-positive
+   * `strapiOnly` "orphan" even though the source product still exists.
    */
-  async runVerify({ limit = Infinity } = {}) {
+  async runVerify({ limit = Infinity, status = null } = {}) {
     await this.preflight();
     this.logger.info("Verify: comparing WooCommerce ↔ Strapi products by external_id");
 
     const wcIds = new Set();
     let processed = 0;
-    for await (const wcProduct of this.woo.iterateProducts()) {
+    for await (const wcProduct of this.woo.iterateProducts(status ? { params: { status } } : {})) {
       if (processed >= limit) break;
       processed += 1;
       wcIds.add(wcProduct.id.toString());

@@ -13,13 +13,29 @@ test("resolveSlug: decodes a percent-encoded Persian WooCommerce slug", () => {
   assert.equal(resolveSlug({ id: 1, slug: "%da%a9%db%8c%d9%81" }, "product"), "کیف");
 });
 
+test("resolveSlug: decodes the Adelina W00238 production regression", () => {
+  assert.equal(
+    resolveSlug(
+      {
+        id: 2487,
+        slug: "%da%a9%d8%aa-%d8%a2%d8%af%d9%84%db%8c%d9%86%d8%a7-w00238",
+      },
+      "product",
+    ),
+    "کت-آدلینا-w00238",
+  );
+});
+
 test("resolveSlug: leaves malformed percent-encoding untouched", () => {
   assert.equal(resolveSlug({ id: 3, slug: "%E0%A4%A" }, "product"), "%E0%A4%A");
 });
 
 test("resolveSlug: preserves surrounding whitespace from the source (no trim)", () => {
   // Whitespace is unusual but decoding must not invent a different value.
-  assert.equal(resolveSlug({ id: 2, slug: "  exact-source-value  " }, "product"), "  exact-source-value  ");
+  assert.equal(
+    resolveSlug({ id: 2, slug: "  exact-source-value  " }, "product"),
+    "  exact-source-value  ",
+  );
 });
 
 test("resolveSlug: is deterministic (same input → same output)", () => {

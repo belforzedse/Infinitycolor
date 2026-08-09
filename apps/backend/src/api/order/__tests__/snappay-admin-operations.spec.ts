@@ -70,7 +70,7 @@ function createHarness(body: Record<string, unknown>) {
     "plugin::users-permissions.user": {
       findOne: jest.fn().mockResolvedValue({
         id: 7,
-        role: { name: "Store manager" },
+        role: { name: "Superadmin" },
       }),
     },
     "api::order.order": {
@@ -80,6 +80,7 @@ function createHarness(body: Record<string, unknown>) {
   };
   const transaction = jest.fn();
   const strapi = {
+    query: jest.fn((uid: string) => queries[uid]),
     db: {
       query: jest.fn((uid: string) => queries[uid]),
       transaction,

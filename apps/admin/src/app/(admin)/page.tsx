@@ -11,11 +11,9 @@ import {
 } from "@/hooks/useDashboardMetrics";
 import { getOrderStatusMeta } from "@/utils/statusTranslations";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import {
   canSeeDashboardUserMetric,
-  getDashboardQuickActionsForRole,
+  getDashboardQuickActions,
 } from "@/constants/superAdminDashboard";
 
 const statusToneBadge: Record<string, string> = {
@@ -26,10 +24,10 @@ const statusToneBadge: Record<string, string> = {
 };
 
 export default function SuperAdminPage() {
-  const router = useRouter();
   const { data: me, isLoading, error } = useMe();
-  const { roleName } = useCurrentUser();
-  const showUserMetric = canSeeDashboardUserMetric(roleName);
+  const { adminRole, capabilities } = useCurrentUser();
+  const showUserMetric = canSeeDashboardUserMetric(capabilities);
+  const canReadOrders = capabilities.includes("order.read");
   const {
     metrics,
     latestOrders,
@@ -37,17 +35,9 @@ export default function SuperAdminPage() {
     loading: metricsLoading,
     error: metricsError,
   } = useDashboardMetrics({
-    enabled: Boolean(roleName) && roleName?.trim().toLowerCase() !== "editor",
+    enabled: Boolean(adminRole),
     includeUserMetric: showUserMetric,
   });
-
-  // Redirect editors to blog dashboard
-  useEffect(() => {
-    const normalizedRole = (roleName ?? "").toLowerCase().trim();
-    if (normalizedRole === "editor") {
-      router.replace("/blog");
-    }
-  }, [roleName, router]);
 
   const name = `${me?.FirstName || ""} ${me?.LastName || ""}`;
   const userFacingError = error
@@ -55,7 +45,7 @@ export default function SuperAdminPage() {
     : null;
 
   const filteredMetrics = metrics;
-  const filteredQuickActions = getDashboardQuickActionsForRole(roleName);
+  const filteredQuickActions = getDashboardQuickActions(capabilities);
 
   const notifications = (latestOrders ?? []).map((order: any) => {
     // Extract nested Strapi attributes
@@ -156,7 +146,7 @@ export default function SuperAdminPage() {
         </div>
       </section>
 
-      <section className="mt-6">
+      {canReadOrders && <section className="mt-6">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">
             سفارش‌های اخیر
@@ -206,7 +196,7 @@ export default function SuperAdminPage() {
             </article>
           )}
         </div>
-      </section>
+      </section>}
     </ContentWrapper>
   );
 }

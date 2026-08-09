@@ -10,6 +10,7 @@ export default {
       handler: "report.liquidity",
       config: {
         auth: { scope: [] },
+        policies: [{ name: "global::require-capability", config: { capability: "report.finance.read" } }],
       },
     },
     {
@@ -18,73 +19,74 @@ export default {
       handler: "report.productSales",
       config: {
         auth: { scope: [] },
+        policies: [{ name: "global::require-capability", config: { capability: "report.product.read" } }],
       },
     },
     {
       method: "GET",
       path: "/reports/products/overview",
       handler: "report.productOverview",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.product.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/products/trends",
       handler: "report.productTrends",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.product.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/products/breakdown",
       handler: "report.productBreakdown",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.product.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/products/performance",
       handler: "report.productPerformance",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.product.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/products/export",
       handler: "report.productExport",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.product.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/products/detail",
       handler: "report.productDetail",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.product.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/products/inventory",
       handler: "report.productInventory",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.product.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/sales/breakdown",
       handler: "report.salesBreakdown",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.sales.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/sales/breakdown/export",
       handler: "report.salesBreakdownExport",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.sales.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/overview",
       handler: "report.overview",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.sales.read" } }] },
     },
     {
       method: "GET",
       path: "/reports/funnel",
       handler: "report.funnel",
-      config: { auth: { scope: [] } },
+      config: { auth: { scope: [] }, policies: [{ name: "global::require-capability", config: { capability: "report.traffic.read" } }] },
     },
     {
       method: "GET",
@@ -92,6 +94,7 @@ export default {
       handler: "report.gatewayLiquidity",
       config: {
         auth: { scope: [] },
+        policies: [{ name: "global::require-capability", config: { capability: "report.finance.read" } }],
       },
     },
     {
@@ -100,6 +103,7 @@ export default {
       handler: "report.adminActivity",
       config: {
         auth: { scope: [] },
+        policies: [{ name: "global::require-capability", config: { capability: "system.audit.read" } }],
       },
     },
     {
@@ -108,6 +112,7 @@ export default {
       handler: "report.adminActivityById",
       config: {
         auth: { scope: [] },
+        policies: [{ name: "global::require-capability", config: { capability: "system.audit.read" } }],
       },
     },
     {
@@ -116,6 +121,7 @@ export default {
       handler: "report.trafficDashboard",
       config: {
         auth: { scope: [] },
+        policies: [{ name: "global::require-capability", config: { capability: "report.traffic.read" } }],
       },
     },
     {
@@ -124,6 +130,7 @@ export default {
       handler: "report.trafficRealtime",
       config: {
         auth: { scope: [] },
+        policies: [{ name: "global::require-capability", config: { capability: "report.traffic.read" } }],
       },
     },
   ],

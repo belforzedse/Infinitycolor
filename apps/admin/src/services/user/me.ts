@@ -6,6 +6,7 @@ import {
 import { handleAuthErrors } from "@/utils/auth";
 import type { ApiError } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
+import type { AdminCapability, AdminRoleId } from "@repo/auth-core";
 export interface MeResponse {
   Bio: string | null;
   BirthDate: string | null;
@@ -22,6 +23,8 @@ export interface MeResponse {
   isAdmin?: boolean;
   UserName?: string;
   roleName?: string | null;
+  adminRole?: AdminRoleId | null;
+  capabilities?: AdminCapability[];
   Email?: string | null;
   email?: string | null;
   confirmed?: boolean;

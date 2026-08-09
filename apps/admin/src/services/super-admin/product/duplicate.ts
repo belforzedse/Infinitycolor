@@ -60,7 +60,6 @@ export const duplicateProduct = async (productId: string) => {
     const duplicateData = {
       Title: `${originalData.Title} - کپی`,
       Description: originalData.Description,
-      Status: originalData.Status,
       ProductType: duplicatedProductType,
       IsSimpleProduct: duplicatedProductType === "Simple",
       Weight: originalData.Weight ?? 100,

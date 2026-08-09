@@ -59,23 +59,56 @@
         "Active",
         "InActive",
         "Scheduled"
-      ]
+      ],
+      "default": "InActive"
     },
     "scheduledPublishAt": {
       "type": "datetime"
     },
     "scheduledPublishTimezone": {
-      "type": "string",
-      "default": "Asia/Tehran"
+      "type": "string"
     },
     "scheduledPublishRequireMedia": {
       "type": "boolean",
-      "default": true
+      "default": false
+    },
+    "scheduledPublishRevision": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
     },
     "scheduledPublishLastAttemptAt": {
       "type": "datetime"
     },
     "scheduledPublishLastError": {
+      "type": "string"
+    },
+    "scheduledPublishFailureKind": {
+      "type": "enumeration",
+      "enum": [
+        "Transient",
+        "Permanent"
+      ]
+    },
+    "scheduledPublishAttemptCount": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
+    },
+    "scheduledPublishNextRetryAt": {
+      "type": "datetime"
+    },
+    "publicationRevision": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
+    },
+    "publicationEffectsCompletedRevision": {
+      "type": "integer",
+      "default": 0,
+      "min": 0
+    },
+    "publicationEffectsLastError": {
       "type": "string"
     },
     "ProductType": {

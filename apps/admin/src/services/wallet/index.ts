@@ -97,6 +97,17 @@ export const adminGetUserWallet = async (
   return res as any;
 };
 
+export const adminGetUserWalletHistory = async (
+  userId: number,
+  pageSize = 25,
+): Promise<WalletTransactionsResponse> => {
+  const res = await apiClient.get<WalletTransactionsResponse>(
+    `/local-user-wallet/admin/${userId}/history?page=1&pageSize=${Math.min(100, Math.max(1, pageSize))}`,
+    { cache: "no-store" },
+  );
+  return res as any;
+};
+
 export const adminAdjustWallet = async (
   userId: number,
   payload: { mode: WalletAdjustMode; amountToman: number; reason: string },
@@ -113,6 +124,7 @@ const WalletService = {
   startTopup,
   getWalletTransactions,
   adminGetUserWallet,
+  adminGetUserWalletHistory,
   adminAdjustWallet,
 };
 export default WalletService;

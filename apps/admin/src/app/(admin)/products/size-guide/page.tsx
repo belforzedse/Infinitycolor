@@ -4,31 +4,21 @@ import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import { MobileTable, columns } from "./table";
 import { ENDPOINTS } from "@/constants/api";
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { useFreshDataOnPageLoad } from "@/hooks/useFreshDataOnPageLoad";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 
 export default function SizeGuidePage() {
   useFreshDataOnPageLoad();
-  const router = useRouter();
-  const { roleName } = useCurrentUser();
+  const canDeleteSizeGuides = useCan("product.size-guide.delete");
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
-
-  // Redirect editors away from product pages
-  useEffect(() => {
-    const normalizedRole = (roleName ?? "").toLowerCase().trim();
-    if (normalizedRole === "editor") {
-      router.replace("/blog");
-    }
-  }, [roleName, router]);
 
   return (
     <ContentWrapper
       title="راهنمای اندازه"
       hasFilterButton
       hasPagination
-      hasRecycleBin
+      hasRecycleBin={canDeleteSizeGuides}
       apiUrl={ENDPOINTS.PRODUCT.SIZE_HELPER}
       isRecycleBinOpen={isRecycleBinOpen}
       setIsRecycleBinOpen={setIsRecycleBinOpen}

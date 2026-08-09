@@ -1,15 +1,14 @@
 import routeConfig from "../routes/custom-router";
-import { ROLE_NAMES } from "../../../utils/roles";
 
 describe("site settings route authorization", () => {
-  it("keeps the legacy settings update route Superadmin-only", () => {
+  it("keeps the legacy settings update route behind settings management", () => {
     const route = routeConfig.routes.find(
       (entry) => entry.method === "PUT" && entry.path === "/site-settings",
     );
     expect(route?.config.policies).toEqual([
       {
-        name: "global::role-based",
-        config: { roles: [ROLE_NAMES.SUPERADMIN] },
+        name: "global::require-capability",
+        config: { capability: "system.settings.manage" },
       },
     ]);
   });

@@ -47,7 +47,7 @@ const normalizeRelationIds = (values?: RawRelationValue[]): number[] | undefined
 interface TransformedProductData
   extends Omit<
     ProductData,
-    "product_main_category" | "product_tags" | "product_other_categories" | "CoverImage" | "Media" | "Files"
+    "product_main_category" | "product_tags" | "product_other_categories" | "CoverImage" | "Media" | "Files" | "Status"
   > {
   product_main_category: number | null;
   product_tags: number[];
@@ -69,6 +69,7 @@ function transformProductDataForApi(data: ProductData): TransformedProductData {
     SimpleDiscountPrice,
     SimpleStock,
     SimpleIsPublished,
+    Status: _publicationStatus,
     ...rest
   } = data;
 

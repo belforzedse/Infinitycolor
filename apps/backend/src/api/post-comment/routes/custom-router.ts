@@ -1,9 +1,7 @@
-import { CONTENT_EDITOR_ROLES } from "../../../utils/roles";
-
 const contentEditorPolicy = [
   {
-    name: "global::role-based",
-    config: { roles: CONTENT_EDITOR_ROLES },
+    name: "global::require-capability",
+    config: { capability: "content.blog.comments.manage" },
   },
 ];
 

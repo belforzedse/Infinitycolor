@@ -4,7 +4,6 @@ jest.mock("@strapi/utils", () => ({
 
 import controller from "../admin-product-list";
 import routeConfig from "../../routes/admin-product-list";
-import { STORE_MANAGER_PLUS_ROLES } from "../../../../utils/roles";
 
 function createContext(body: Record<string, unknown> = {}) {
   return {
@@ -29,10 +28,10 @@ function installStrapi(rows: any[] = []) {
 }
 
 describe("bounded admin products list", () => {
-  it("uses the operational role policy", () => {
+  it("uses the product-read capability policy", () => {
     expect(routeConfig.routes[0].config.policies[0]).toEqual({
-      name: "global::role-based",
-      config: { roles: STORE_MANAGER_PLUS_ROLES },
+      name: "global::require-capability",
+      config: { capability: "product.read" },
     });
   });
 

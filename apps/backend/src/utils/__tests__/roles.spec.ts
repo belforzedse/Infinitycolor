@@ -17,7 +17,11 @@ describe("role hierarchy helpers", () => {
   it("defines customer and manager-plus role groups", () => {
     expect(CUSTOMER_CAPABLE_ROLES).toEqual([
       ROLE_NAMES.CUSTOMER,
+      ROLE_NAMES.EDITOR,
+      ROLE_NAMES.SELLER_1,
+      ROLE_NAMES.SELLER_2,
       ROLE_NAMES.STORE_MANAGER,
+      ROLE_NAMES.FINANCE,
       ROLE_NAMES.FOUNDER,
       ROLE_NAMES.SUPERADMIN,
     ]);
@@ -67,12 +71,19 @@ describe("role hierarchy helpers", () => {
     expect(ctx.forbidden).toHaveBeenCalled();
   });
 
-  it("allows Superadmin to target another customer explicitly", async () => {
+  it("keeps Superadmin customer self-service scoped to its own identity", async () => {
     const ctx: any = {
       state: { user: { id: 10, role: { name: ROLE_NAMES.SUPERADMIN } } },
       request: { body: { targetUserId: 20 } },
     };
 
-    await expect(resolveCustomerTargetUserId(ctx, {} as any)).resolves.toBe(20);
+    ctx.forbidden = jest.fn((message: string) => {
+      const error: any = new Error(message);
+      error.status = 403;
+      throw error;
+    });
+
+    await expect(resolveCustomerTargetUserId(ctx, {} as any)).resolves.toBeNull();
+    expect(ctx.forbidden).toHaveBeenCalled();
   });
 });

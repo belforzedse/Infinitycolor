@@ -1,158 +1,135 @@
-/**
- * Centralized role-based access rules for the super-admin area.
- *
- * Single source of truth shared by the sidebar (which parents to hide) and the
- * ClientLayout route guard (which URL prefixes to block). Backend enforcement is
- * the real protection; these rules keep the UI consistent and block direct-URL
- * navigation for every non-Superadmin administrative role.
- */
+import {
+  capabilitiesForRole,
+  hasCapability,
+  normalizeAdminRole,
+  type AdminCapability,
+  type AdminRoleId,
+} from "@repo/auth-core";
 
-/** Sidebar parent ids hidden from Founders (mirrors the restricted sections). */
-export const FOUNDER_HIDDEN_PARENT_IDS = new Set<string>([
-  "customization",
-  "blog",
-  "faq",
-  "stories",
-  "users",
-  "settings",
-  "payment-methods",
-]);
+type AdminRouteRule = Readonly<{
+  prefix: string;
+  capability: AdminCapability | null;
+  exact?: boolean;
+}>;
 
 /**
- * Sales-hub children hidden from Founders. Carts, traffic and the staff
- * activity log were all Superadmin-only before the hub existed; nesting them
- * under /sales must not widen who can see them.
+ * Registered admin routes. Rules are ordered from most specific to least
+ * specific. Unknown paths deny every non-Superadmin role by default.
  */
-export const FOUNDER_HIDDEN_CHILD_IDS = new Set<string>([
-  "sales-traffic",
-  "sales-carts",
-  "sales-liquidity",
-  "sales-gateways",
-]);
-
-/**
- * Route prefixes a Founder must NOT open (even by typing the URL).
- *
- * The legacy `/reports/*` and `/carts` entries are kept alongside their
- * `/sales/*` replacements: `next.config.ts` redirects the old paths, and the
- * guard evaluates the requested path before the redirect resolves.
- *
- * Note: `/sales/products` is intentionally NOT here — it is the single sales
- * report Founders are allowed to view under «گزارشات فروش».
- */
-export const FOUNDER_FORBIDDEN_PREFIXES: string[] = [
-  "/customization",
-  "/blog",
-  "/faq",
-  "/stories",
-  "/settings",
-  "/users",
-  "/payment-methods",
-  "/carts",
-  "/purgeall",
-  "/orders/add",
-  "/products/homepage",
-  "/products/gif-promo",
-  "/products/homepage-custom-section",
-  "/shipping/provinces",
-  "/sales/traffic",
-  "/sales/carts",
-  "/sales/liquidity",
-  "/sales/gateways",
-  // Legacy paths, retained so bookmarks stay blocked before redirecting.
-  "/reports/traffic",
-  "/reports/admin-activity",
-  "/reports/liquidity",
-  "/reports/gateway-liquidity",
+export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
+  { prefix: "/account", capability: "account.self.read" },
+  { prefix: "/orders/add", capability: "order.manual.create" },
+  { prefix: "/orders/print", capability: "order.print" },
+  { prefix: "/orders/anipo-barcode", capability: "order.print" },
+  { prefix: "/orders", capability: "order.read" },
+  { prefix: "/products/homepage-custom-section", capability: "system.customization.manage" },
+  { prefix: "/products/homepage", capability: "system.customization.manage" },
+  { prefix: "/products/gif-promo", capability: "system.customization.manage" },
+  { prefix: "/products/comments", capability: "system.reviews.manage" },
+  { prefix: "/products/size-guide", capability: "product.size-guide.manage" },
+  { prefix: "/products/colors", capability: "product.variation.manage" },
+  { prefix: "/products/attributes", capability: "product.variation.manage" },
+  { prefix: "/products/tags", capability: "product.update" },
+  { prefix: "/products/categories", capability: "category.read" },
+  { prefix: "/products/add", capability: "product.create" },
+  { prefix: "/products", capability: "product.read" },
+  { prefix: "/blog", capability: "content.blog.read" },
+  { prefix: "/stories", capability: "content.stories.manage" },
+  { prefix: "/faq", capability: "content.faq.manage" },
+  { prefix: "/sales/traffic", capability: "report.traffic.read" },
+  { prefix: "/sales/funnel", capability: "report.traffic.read" },
+  { prefix: "/sales/carts", capability: "report.carts.read" },
+  { prefix: "/sales/liquidity", capability: "report.finance.read" },
+  { prefix: "/sales/gateways", capability: "report.finance.read" },
+  { prefix: "/sales/products", capability: "report.product.read" },
+  { prefix: "/sales", capability: "report.sales.read" },
+  { prefix: "/reports/traffic", capability: "report.traffic.read" },
+  { prefix: "/reports/liquidity", capability: "report.finance.read" },
+  { prefix: "/reports/gateway-liquidity", capability: "report.finance.read" },
+  { prefix: "/reports/admin-activity", capability: "system.audit.read" },
+  { prefix: "/reports", capability: "report.sales.read" },
+  { prefix: "/carts", capability: "report.carts.read" },
+  { prefix: "/wallets", capability: "wallet.read" },
+  { prefix: "/users", capability: "system.users.manage" },
+  { prefix: "/settings/activity", capability: "system.audit.read" },
+  { prefix: "/settings", capability: "system.settings.manage" },
+  { prefix: "/customization", capability: "system.customization.manage" },
+  { prefix: "/coupons", capability: "system.discounts.manage" },
+  { prefix: "/general-discounts", capability: "system.discounts.manage" },
+  { prefix: "/shipping", capability: "system.shipping.manage" },
+  { prefix: "/payment-methods", capability: "system.payments.manage" },
+  { prefix: "/purgeall", capability: "system.purge.execute" },
+  { prefix: "/", capability: null, exact: true },
 ];
 
-export const STORE_MANAGER_HIDDEN_PARENT_IDS = new Set<string>([
-  "customization",
-  "blog",
-  "faq",
-  "stories",
-  "users",
-  "settings",
-  "sales",
-  "payment-methods",
-]);
+const matchesRule = (pathname: string, rule: AdminRouteRule): boolean =>
+  rule.exact
+    ? pathname === rule.prefix
+    : pathname === rule.prefix || pathname.startsWith(`${rule.prefix}/`);
 
-export const STORE_MANAGER_HIDDEN_CHILD_IDS = new Set<string>([
-  "homepage-products",
-  "homepage-gif-promo-products",
-  "homepage-custom-section",
-  "shipping-provinces",
-  "shipping-cities",
-]);
+export function canCapabilitiesAccessPath(
+  capabilities: readonly AdminCapability[] | null | undefined,
+  pathname?: string | null,
+  role?: AdminRoleId | string | null,
+): boolean {
+  const adminRole = normalizeAdminRole(role);
+  if (!adminRole || !pathname) return false;
+  if (adminRole === "superadmin") return true;
+  const rule = ADMIN_ROUTE_RULES.find((candidate) => matchesRule(pathname, candidate));
+  if (!rule) return false;
+  if (rule.capability === null) return true;
+  return (capabilities ?? []).includes(rule.capability);
+}
 
-export const STORE_MANAGER_FORBIDDEN_PREFIXES: string[] = [
-  "/customization",
-  "/blog",
-  "/faq",
-  "/stories",
-  "/users",
-  "/settings",
-  // Denies the whole Sales hub, mirroring the previous "/reports" + "/carts"
-  // denial. The staff activity log moved under /settings, already denied here.
-  "/sales",
-  "/payment-methods",
-  "/purgeall",
-  "/orders/add",
-  "/products/homepage",
-  "/products/gif-promo",
-  "/products/homepage-custom-section",
-  "/shipping/provinces",
-  // Legacy paths, retained so bookmarks stay blocked before redirecting.
-  "/reports",
-  "/carts",
-];
+export function getAdminLandingPath(
+  capabilities: readonly AdminCapability[] | null | undefined,
+  role?: AdminRoleId | string | null,
+): string {
+  const adminRole = normalizeAdminRole(role);
+  const preferredByRole: Partial<Record<AdminRoleId, string>> = {
+    editor: "/blog",
+    seller1: "/products",
+    seller2: "/products",
+    store_manager: "/orders",
+    finance: "/sales",
+    founder: "/",
+    superadmin: "/",
+  };
+  const candidates = [
+    adminRole ? preferredByRole[adminRole] : null,
+    "/",
+    "/blog",
+    "/products",
+    "/orders",
+    "/sales",
+    "/account",
+  ].filter((value): value is string => Boolean(value));
+  return (
+    candidates.find((candidate) =>
+      canCapabilitiesAccessPath(capabilities, candidate, adminRole),
+    ) ?? "/account"
+  );
+}
 
-export const EDITOR_ALLOWED_PREFIXES: string[] = ["/blog"];
+/** Compatibility helpers for remaining call sites while the UI migrates. */
+export const canRoleAccessPath = (
+  roleName?: string | null,
+  pathname?: string | null,
+): boolean => {
+  const role = normalizeAdminRole(roleName);
+  return canCapabilitiesAccessPath(capabilitiesForRole(role), pathname, role);
+};
 
-const normalizeRole = (roleName?: string | null): string =>
-  (roleName ?? "").toString().trim().toLowerCase();
+export const getRoleAdminLandingPath = (roleName?: string | null): string => {
+  const role = normalizeAdminRole(roleName);
+  return getAdminLandingPath(capabilitiesForRole(role), role);
+};
 
-/** True when the given role name is the Founder role (case/spacing tolerant). */
 export const isFounderRole = (roleName?: string | null): boolean =>
-  normalizeRole(roleName) === "founder";
-
+  normalizeAdminRole(roleName) === "founder";
 export const isStoreManagerRole = (roleName?: string | null): boolean =>
-  ["store manager", "store-manager", "storemanager"].includes(normalizeRole(roleName));
-
+  normalizeAdminRole(roleName) === "store_manager";
 export const isEditorRole = (roleName?: string | null): boolean =>
-  normalizeRole(roleName) === "editor";
+  normalizeAdminRole(roleName) === "editor";
 
-/**
- * Whether a Founder may access the given super-admin pathname.
- * Returns true for any path not matching a forbidden prefix.
- */
-export const canFounderAccessPath = (pathname?: string | null): boolean => {
-  if (!pathname) return true;
-  return !FOUNDER_FORBIDDEN_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-};
-
-export const canStoreManagerAccessPath = (pathname?: string | null): boolean => {
-  if (!pathname) return true;
-  return !STORE_MANAGER_FORBIDDEN_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-};
-
-export const canEditorAccessPath = (pathname?: string | null): boolean => {
-  if (!pathname) return true;
-  return EDITOR_ALLOWED_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-};
-
-export const getRoleAdminLandingPath = (roleName?: string | null): string =>
-  isEditorRole(roleName) ? "/blog" : "/";
-
-export const canRoleAccessPath = (roleName?: string | null, pathname?: string | null): boolean => {
-  if (isFounderRole(roleName)) return canFounderAccessPath(pathname);
-  if (isStoreManagerRole(roleName)) return canStoreManagerAccessPath(pathname);
-  if (isEditorRole(roleName)) return canEditorAccessPath(pathname);
-  return true;
-};
+export { hasCapability };

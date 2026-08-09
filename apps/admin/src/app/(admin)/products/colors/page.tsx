@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
@@ -10,7 +9,7 @@ import { HexColorPicker, HexColorInput } from "react-colorful";
 import { Dialog, Transition } from "@headlessui/react";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
 import { COLOR_CATEGORIES, QUICK_COLORS } from "@/lib/colorPalettes";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import { apiCache } from "@/lib/api-cache";
 
 type ApiColor = {
@@ -39,9 +38,7 @@ const INITIAL_MODAL_STATE: ModalState = {
 };
 
 export default function ProductColorsPage() {
-  const router = useRouter();
-  const { roleName } = useCurrentUser();
-  const canDeleteColors = (roleName || "").toLowerCase().trim() === "superadmin";
+  const canDeleteColors = useCan("product.variation.delete");
   const [colors, setColors] = useState<ApiColor[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -55,14 +52,6 @@ export default function ProductColorsPage() {
     apiCache.clearByPattern(/product-variation-colors/i);
     apiCache.clearByPattern(/product-variations/i);
   }, []);
-
-  // Redirect editors away from product pages
-  useEffect(() => {
-    const normalizedRole = (roleName ?? "").toLowerCase().trim();
-    if (normalizedRole === "editor") {
-      router.replace("/blog");
-    }
-  }, [roleName, router]);
 
   const fetchColors = useCallback(async () => {
     setLoading(true);

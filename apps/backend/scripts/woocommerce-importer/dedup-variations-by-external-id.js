@@ -270,6 +270,9 @@ async function dedupProducts(options = {}) {
 
   const groups = new Map();
   for (const product of products) {
+    if (getAttr(product, "external_source") !== "woocommerce") {
+      continue;
+    }
     const externalId = getAttr(product, "external_id");
     if (!externalId || externalId.toString().trim() === "") {
       continue;
@@ -312,10 +315,12 @@ async function dedupProducts(options = {}) {
         );
 
         if (!runDry) {
+          await strapiClient.changeProductPublication(duplicate.id, externalId, {
+            action: "unpublish",
+          });
           await updateProduct(
             duplicate.id,
             {
-              Status: "InActive",
               external_id: newExternalId,
             },
             { useDirectWrite },

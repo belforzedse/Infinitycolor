@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
+import { canCapabilitiesAccessPath } from "@/constants/roleAccess";
+import { SALES_NAV_ITEMS } from "@/constants/salesNav";
 import {
-  FOUNDER_HIDDEN_PARENT_IDS,
-  STORE_MANAGER_HIDDEN_CHILD_IDS,
-  STORE_MANAGER_HIDDEN_PARENT_IDS,
-} from "@/constants/roleAccess";
-import { SALES_NAV_ITEMS, getSalesNavForRole } from "@/constants/salesNav";
+  capabilitiesForRole,
+  normalizeAdminRole,
+  type AdminCapability,
+  type AdminRoleId,
+} from "@repo/auth-core";
 import ProductIcon from "@/components/SuperAdmin/Layout/Icons/ProductIcon";
 import OrdersIcon from "@/components/SuperAdmin/Layout/Icons/OrdersIcon";
 import UsersIcon from "@/components/SuperAdmin/Layout/Icons/UsersIcon";
@@ -24,10 +26,6 @@ import {
   FiBell,
   FiBarChart,
   FiDatabase,
-  FiFileText,
-  FiTag,
-  FiEdit3,
-  FiMessageSquare,
   FiPlayCircle,
   FiSliders,
 } from "react-icons/fi";
@@ -302,6 +300,13 @@ const superAdminSidebar: SidebarItem[] = [
   //   children: [],
   // },
   {
+    id: "wallets",
+    label: "مدیریت کیف پول",
+    href: "/wallets",
+    icon: <PaymentIcon />,
+    children: [],
+  },
+  {
     id: "users",
     label: "مدیریت کاربران",
     href: "/users",
@@ -310,11 +315,13 @@ const superAdminSidebar: SidebarItem[] = [
   },
   {
     id: "sales",
-    label: "فروش",
+    label: "گزارشات",
     href: "/sales",
     icon: <ChartIcon />,
     // Children come from the same list the in-page sub-navigation uses, so the
-    // two cannot drift apart.
+    // two cannot drift apart. Includes the admin activity report
+    // (`sales-activity`, pointing at /settings/activity) alongside the sales
+    // reports proper — this is the one place both live.
     children: SALES_NAV_ITEMS.map(({ id, label, href }) => ({
       id,
       label,
@@ -331,11 +338,6 @@ const superAdminSidebar: SidebarItem[] = [
         id: "settings-general",
         label: "تنظیمات عمومی",
         href: "/settings/general",
-      },
-      {
-        id: "settings-activity",
-        label: "گزارش فعالیت پشتیبانان",
-        href: "/settings/activity",
       },
     ],
   },
@@ -370,126 +372,30 @@ const superAdminSidebar: SidebarItem[] = [
   // },
 ];
 
-const cloneWithFilteredChildren = (item: SidebarItem) => {
-  const filteredChildren = item.children
-    .filter((child) => !STORE_MANAGER_HIDDEN_CHILD_IDS.has(child.id))
-    .map((child) => ({ ...child }));
-
-  return {
-    ...item,
-    children: filteredChildren,
-  };
-};
-
-const normalizeRole = (roleName?: string | null) => {
-  if (!roleName) return "";
-  // Handle various formats: "Editor", "editor", "EDITOR", " Editor ", etc.
-  return roleName.toString().trim().toLowerCase();
-};
-
-export const getSidebarItemsForRole = (roleName?: string | null): SidebarItem[] => {
-  const normalizedRole = normalizeRole(roleName);
-
-  // Debug logging (remove in production if needed)
-  if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
-    console.log("[Sidebar] Role detection:", { roleName, normalizedRole });
-  }
-
-  if (normalizedRole === "superadmin") {
-    return superAdminSidebar;
-  }
-
-  // Founder: operational admin. Keeps everything except the restricted parents.
-  // The Sales hub narrows to «گزارشات فروش» with only the sales reports Founders
-  // may view (matching PRODUCT_REPORT_ROLES on the backend — no traffic,
-  // liquidity, carts or staff-activity reports). The child list is derived from
-  // getSalesNavForRole rather than written out a second time here, which is how
-  // the old inline copy silently diverged from the real permission rules.
-  if (normalizedRole === "founder") {
-    return superAdminSidebar
-      .filter((item) => !FOUNDER_HIDDEN_PARENT_IDS.has(item.id))
-      .map((item) => {
-        if (item.id === "sales") {
-          return {
-            id: "sales",
-            label: "گزارشات فروش",
-            href: "/sales",
-            icon: <ChartIcon />,
-            children: getSalesNavForRole(roleName).map(({ id, label, href }) => ({
-              id,
-              label,
-              href,
-            })),
-          };
-        }
-        return cloneWithFilteredChildren(item);
-      });
-  }
-
-  // Check for editor role (handle "Editor", "editor", etc.)
-  if (normalizedRole === "editor" || normalizedRole.includes("editor")) {
-    // Editor role sees blog items as separate menu items (not nested)
-    // Dashboard points to blog dashboard
-
-    // Create separate menu items for each blog section with unique icons
-    const editorSidebar: SidebarItem[] = [
+export const getSidebarItemsForCapabilities = (
+  capabilities: readonly AdminCapability[] | null | undefined,
+  role?: AdminRoleId | string | null,
+): SidebarItem[] =>
+  superAdminSidebar.flatMap((item) => {
+    const children = item.children
+      .filter((child) => canCapabilitiesAccessPath(capabilities, child.href, role))
+      .map((child) => ({ ...child }));
+    const parentAllowed = item.href
+      ? canCapabilitiesAccessPath(capabilities, item.href, role)
+      : false;
+    if (!parentAllowed && children.length === 0) return [];
+    return [
       {
-        id: "dashboard",
-        label: "پیشخوان",
-        href: "/blog", // Blog dashboard for editors
-        icon: <DashboardIcon />,
-        children: [],
-      },
-      {
-        id: "blog-posts",
-        label: "مدیریت پست‌ها",
-        href: "/blog/posts",
-        icon: <FiFileText className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />,
-        children: [],
-      },
-      {
-        id: "blog-categories",
-        label: "دسته‌بندی‌ها",
-        href: "/blog/categories",
-        icon: <FiLayers className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />,
-        children: [],
-      },
-      {
-        id: "blog-category-banners",
-        label: "بنر دسته‌بندی‌ها",
-        href: "/blog/categories/banners",
-        icon: <FiEdit3 className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />,
-        children: [],
-      },
-      {
-        id: "blog-tags",
-        label: "برچسب‌ها",
-        href: "/blog/tags",
-        icon: <FiTag className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />,
-        children: [],
-      },
-      {
-        id: "blog-authors",
-        label: "نویسندگان",
-        href: "/blog/authors",
-        icon: <FiUsers className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />,
-        children: [],
-      },
-      {
-        id: "blog-comments",
-        label: "مدیریت نظرات",
-        href: "/blog/comments",
-        icon: <FiMessageSquare className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />,
-        children: [],
+        ...item,
+        href: parentAllowed ? item.href : children[0]?.href,
+        children,
       },
     ];
+  });
 
-    return editorSidebar;
-  }
-
-  return superAdminSidebar
-    .filter((item) => !STORE_MANAGER_HIDDEN_PARENT_IDS.has(item.id))
-    .map((item) => cloneWithFilteredChildren(item));
+export const getSidebarItemsForRole = (roleName?: string | null): SidebarItem[] => {
+  const role = normalizeAdminRole(roleName);
+  return getSidebarItemsForCapabilities(capabilitiesForRole(role), role);
 };
 
 export default superAdminSidebar;

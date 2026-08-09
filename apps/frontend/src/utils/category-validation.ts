@@ -19,16 +19,63 @@ function safeDecodeURIComponent(value: string): string {
   }
 }
 
-function buildCategorySlugCandidates(slug: string) {
+const ARABIC_YEH = /\u064A/g;
+const ARABIC_KAF = /\u0643/g;
+
+function encodeURIComponentLower(value: string): string {
+  return encodeURIComponent(value).replace(/%[0-9A-Fa-f]{2}/g, (match) => match.toLowerCase());
+}
+
+function foldArabicToPersian(value: string): string {
+  return value.replace(ARABIC_YEH, "\u06CC").replace(ARABIC_KAF, "\u06A9");
+}
+
+/**
+ * Build every safe spelling of a category slug that can exist in Strapi.
+ *
+ * WooCommerce historically stored percent-encoded Persian slugs with
+ * lowercase hexadecimal escapes, while encodeURIComponent emits uppercase
+ * escapes. Strapi's `$eq` comparison is case-sensitive, so treating those URI
+ * spellings as interchangeable in the browser was not enough: the database
+ * lookup also needs both forms.
+ *
+ * NFC and Arabic yeh/kaf variants are lookup-only. They are never used to
+ * rewrite the stored canonical slug, and ZWNJ is deliberately preserved.
+ */
+export function buildCategorySlugCandidates(slug: string) {
+  const candidates = new Set<string>();
+
+  const addForms = (value: string) => {
+    if (!value) return;
+
+    const decoded = safeDecodeURIComponent(value);
+    const normalized = decoded.normalize("NFC");
+    const folded = foldArabicToPersian(normalized);
+
+    for (const candidate of [value, decoded, normalized, folded]) {
+      if (!candidate) continue;
+      candidates.add(candidate);
+      candidates.add(encodeURIComponent(candidate));
+      candidates.add(encodeURIComponentLower(candidate));
+    }
+  };
+
+  addForms(slug);
+
   const decodedSlug = safeDecodeURIComponent(slug);
-  const candidates = new Set<string>([slug, decodedSlug, encodeURIComponent(decodedSlug)]);
+  if (decodedSlug !== slug) {
+    // Covers a historical slug that reached this helper still encoded, as
+    // well as a double-encoded inbound URL after the router decoded once.
+    addForms(decodedSlug);
+    addForms(safeDecodeURIComponent(decodedSlug));
+  }
+
   const legacyMatch = decodedSlug.match(/^(.+)-(\d+)$/);
 
   if (legacyMatch) {
     const baseSlug = legacyMatch[1]?.trim();
     if (baseSlug) {
-      candidates.add(baseSlug);
-      candidates.add(encodeURIComponent(baseSlug));
+      addForms(baseSlug);
     }
   }
 
@@ -58,7 +105,8 @@ function sanitizeCategorySlug(slug: string | undefined): string | null {
   // Reject slugs that contain no letters/numbers (Unicode-aware)
   // This allows Persian/Arabic slugs like "جشنواره-2880".
   // Using a workaround for ES5 compatibility (Unicode flag not available)
-  const hasAlphanumeric = /[a-zA-Z0-9\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(sanitized);
+  const hasAlphanumeric =
+    /[a-zA-Z0-9\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(sanitized);
   if (!hasAlphanumeric) return null;
 
   return sanitized;
@@ -69,9 +117,7 @@ function sanitizeCategorySlug(slug: string | undefined): string | null {
  * @param slug - The category slug to validate (may include trailing slashes)
  * @returns Category data if exists, null otherwise
  */
-export async function validateCategorySlug(
-  slug: string | undefined
-): Promise<CategoryData | null> {
+export async function validateCategorySlug(slug: string | undefined): Promise<CategoryData | null> {
   // Sanitize the slug (remove trailing slashes, trim)
   const sanitizedSlug = sanitizeCategorySlug(slug);
   if (!sanitizedSlug) {
@@ -126,10 +172,9 @@ export async function validateCategorySlug(
       },
     };
   } catch (error) {
-    logger.error(
-      `[Category Validation] Error validating category slug "${sanitizedSlug}":`,
-      { error }
-    );
+    logger.error(`[Category Validation] Error validating category slug "${sanitizedSlug}":`, {
+      error,
+    });
     // On error, return null to be safe (will trigger 404)
     return null;
   }

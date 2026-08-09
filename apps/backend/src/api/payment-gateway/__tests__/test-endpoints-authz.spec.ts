@@ -7,7 +7,6 @@
  */
 
 import routesConfig from "../routes/custom-router";
-import { ROLE_NAMES } from "../../../utils/roles";
 
 describe("payment-gateway test-* routes", () => {
   const testRoutes = routesConfig.routes.filter((route) =>
@@ -23,14 +22,14 @@ describe("payment-gateway test-* routes", () => {
     ]);
   });
 
-  it("requires authentication and a superadmin-only policy on every test endpoint", () => {
+  it("requires authentication and payment-management capability on every test endpoint", () => {
     testRoutes.forEach((route) => {
       expect(route.config.auth).toEqual({ scope: [] });
       expect(route.config.policies).toEqual([
         {
-          name: "global::role-based",
+          name: "global::require-capability",
           config: {
-            roles: [ROLE_NAMES.SUPERADMIN],
+            capability: "system.payments.manage",
           },
         },
       ]);

@@ -12,16 +12,21 @@ import {
 
 export async function processMaintenanceJob(
   strapi: Strapi,
-  job: Pick<Job<MaintenanceJobData, unknown, MaintenanceJobName | string>, "name">
+  job: Job<MaintenanceJobData, unknown, MaintenanceJobName | string>,
+  token?: string,
 ): Promise<unknown> {
   switch (job.name) {
     case COMMERCE_MAINTENANCE_JOBS.stockReservationExpiry:
       return runExpireStockReservationsTick(strapi);
     case COMMERCE_MAINTENANCE_JOBS.reserveOrderExpiry:
       return runExpireReserveOrdersTick(strapi);
-    case COMMERCE_MAINTENANCE_JOBS.scheduledProductPublish: {
-      const { runPublishScheduledProductsTick } = await import("../jobs/publishScheduledProducts");
-      return runPublishScheduledProductsTick(strapi);
+    case COMMERCE_MAINTENANCE_JOBS.scheduledProductPublishOne: {
+      const { processScheduledProductPublicationJob } = await import("../jobs/publishScheduledProducts");
+      return processScheduledProductPublicationJob(strapi, job as any, token);
+    }
+    case COMMERCE_MAINTENANCE_JOBS.scheduledProductReconcile: {
+      const { runScheduledProductsReconciliation } = await import("../jobs/publishScheduledProducts");
+      return runScheduledProductsReconciliation(strapi);
     }
     case ANALYTICS_MAINTENANCE_JOBS.viewCounterFlush: {
       const viewService = strapi.service("api::product-view.product-view") as {

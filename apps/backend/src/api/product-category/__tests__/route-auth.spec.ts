@@ -1,7 +1,7 @@
 import routeConfig from "../routes/custom-router";
 
 describe("product-category destructive route", () => {
-  it("uses the shared content API auth strategy and Superadmin policy", () => {
+  it("uses the shared content API auth strategy and category-delete capability", () => {
     const route = routeConfig.routes.find(
       (entry) => entry.path === "/product-categories/:id/delete-with-reassign",
     );
@@ -11,8 +11,8 @@ describe("product-category destructive route", () => {
     expect(route?.config.middlewares).toBeUndefined();
     expect(route?.config.policies).toEqual([
       {
-        name: "global::role-based",
-        config: { roles: ["Superadmin"] },
+        name: "global::require-capability",
+        config: { capability: "category.delete" },
       },
     ]);
   });

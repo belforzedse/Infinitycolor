@@ -6,7 +6,10 @@ import OffersListHomePage from "@/components/PDP/OffersListHomePage";
 import FavoriteIcon from "@/components/PDP/Icons/FavoriteIcon";
 import PDPComment from "@/components/PDP/Comment";
 import PageContainer from "@/components/layout/PageContainer";
-import { productReviewService, type ProductReview } from "@/services/product/product-review.service";
+import {
+  productReviewService,
+  type ProductReview,
+} from "@/services/product/product-review.service";
 import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { cache, Suspense } from "react";
@@ -25,6 +28,10 @@ import {
   getRelatedProductsByMainCategory,
   getRelatedProductsByOtherCategories,
 } from "@/services/product/product";
+import {
+  fetchAllPdpEligibleProducts,
+  getPdpStaticParamsProducts,
+} from "@/services/product/catalog";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
 import {
   buildCanonicalPdpPath,
@@ -430,68 +437,35 @@ function ReviewsFallback() {
 }
 
 /**
- * Generate static params for popular products to pre-render at build time
- * Pre-generates top 200 products (newest, highest rated)
- * Remaining products will use ISR with 30s revalidation
- * Uses actual product slugs for SEO-friendly URLs
+ * Generate static params for EVERY currently published product so the whole
+ * catalog is pre-rendered at build time. Products published after the build
+ * still become routable on demand — `dynamicParams` defaults to `true` and the
+ * page's `revalidate = 30` ISR window handles them; this only controls what's
+ * pre-warmed at build time, not what's reachable at runtime.
+ *
+ * A Strapi outage during the build fails the build by default (rather than
+ * silently shipping zero pre-rendered PDPs) — see fetchAllPdpEligibleProducts.
+ * Set STATIC_PARAMS_FAIL_ON_INCOMPLETE=false to degrade to the old
+ * empty-array-on-error behavior instead, as an operational escape hatch.
  */
 export async function generateStaticParams() {
   try {
-    const strapiBaseUrl = getStrapiServerUrl();
-    // Fetch top products by different criteria to get a diverse set
-    // Include Slug field for SEO-friendly URLs
-    const endpoints = [
-      // Newest products
-      `${ENDPOINTS.PRODUCT.PRODUCT}?filters[Status][$eq]=Active&filters[removedAt][$null]=true&sort[0]=createdAt:desc&pagination[limit]=100&fields[0]=id&fields[1]=Slug`,
-      // Highest rated products
-      `${ENDPOINTS.PRODUCT.PRODUCT}?filters[Status][$eq]=Active&filters[removedAt][$null]=true&sort[0]=AverageRating:desc&pagination[limit]=100&fields[0]=id&fields[1]=Slug`,
-    ];
+    const products = getPdpStaticParamsProducts(await fetchAllPdpEligibleProducts());
+    const params = products.map((product) => ({ slug: product.slug }));
 
-    const responses = await Promise.all(
-      endpoints.map((endpoint) =>
-        fetch(`${strapiBaseUrl}${endpoint}`, {
-          next: { revalidate: 3600 }, // Cache for 1 hour
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-        }).then((res) => res.json()),
-      ),
-    );
-
-    const allProducts: Array<{ id: number; slug: string }> = [];
-    const seenIds = new Set<number>();
-
-    // Combine and deduplicate products
-    responses.forEach((response) => {
-      const products = response?.data || [];
-      products.forEach((product: { id: number; attributes?: { Slug?: string } }) => {
-        if (product.id && !seenIds.has(product.id)) {
-          seenIds.add(product.id);
-          // Use Slug if available, otherwise fall back to ID
-          const slug = product.attributes?.Slug || product.id.toString();
-          allProducts.push({ id: product.id, slug });
-        }
-      });
+    logger.info(`[generateStaticParams] Generated static params for product pages`, {
+      count: params.length,
     });
-
-    // Generate params using actual slugs for SEO-friendly URLs
-    const params = allProducts
-      .slice(0, 200) // Limit to top 200 for build performance
-      .map((product) => ({
-        slug: product.slug,
-      }));
-
-    logger.info(
-      `[generateStaticParams] Generated ${params.length} static params for product pages`,
-    );
     return params;
   } catch (error) {
-    logger.error("[generateStaticParams] Error generating static params:", {
-      error: String(error),
-    });
-    // Return empty array on error - ISR will handle remaining products
-    return [];
+    if (process.env.STATIC_PARAMS_FAIL_ON_INCOMPLETE === "false") {
+      logger.error(
+        "[generateStaticParams] Incomplete product enumeration; degrading to zero pre-rendered PDPs",
+        { error: String(error) },
+      );
+      return [];
+    }
+    throw error;
   }
 }
 
@@ -546,7 +520,6 @@ export async function generateMetadata({
   }
 
   try {
-
     const titleRaw = product.attributes?.Title?.trim() || "";
     const title = titleRaw || `محصول ${product.id || decodedSlug}`;
     const descRaw = stripHtml(product.attributes?.Description);

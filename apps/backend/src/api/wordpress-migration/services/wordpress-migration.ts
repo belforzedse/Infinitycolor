@@ -229,6 +229,9 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       throw new MigrationInputError("ORDER_USER_IDENTITY_CONFLICT", 409);
     }
     const user = resolvedUser || existingUser;
+    // Do not set delivery_address here. Historical Woo sync intentionally omitted
+    // addresses; clearing the relation on every upsert would wipe backfills and
+    // any later address import. Address attachment is handled separately.
     const orderData = {
       Date: date,
       Status: status,
@@ -239,7 +242,6 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       ShippingMethodTitle: optionalText(body?.shippingMethodTitle, 255) || null,
       PaymentGateway: paymentGateway,
       user: user?.id || null,
-      delivery_address: null,
       Description: null,
       Note: null,
       external_source: "woocommerce",

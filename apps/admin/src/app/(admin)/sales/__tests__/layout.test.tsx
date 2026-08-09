@@ -13,7 +13,8 @@ jest.mock("zaman", () => ({
 }));
 
 let mockPathname = "/sales";
-let mockRoleName: string | null = null;
+let mockAdminRole: string | null = null;
+let mockCapabilities: string[] = [];
 const setRangeMock = jest.fn();
 
 jest.mock("next/navigation", () => ({
@@ -22,7 +23,10 @@ jest.mock("next/navigation", () => ({
 }));
 
 jest.mock("@/hooks/useCurrentUser", () => ({
-  useCurrentUser: () => ({ roleName: mockRoleName }),
+  useCurrentUser: () => ({
+    adminRole: mockAdminRole,
+    capabilities: mockCapabilities,
+  }),
 }));
 
 jest.mock("@/components/SuperAdmin/reports/shared/useReportQueryState", () => ({
@@ -44,24 +48,35 @@ describe("Sales workspace layout", () => {
   beforeEach(() => {
     setRangeMock.mockReset();
     mockPathname = "/sales";
-    mockRoleName = null;
+    mockAdminRole = null;
+    mockCapabilities = [];
   });
 
   describe("role-filtered sub-navigation", () => {
     // This surface is new and has no sidebar filter behind it. If it is not
     // filtered, Founder and Store manager see tabs whose endpoints return 403.
     it("shows every section to a Superadmin", () => {
-      mockRoleName = "Superadmin";
+      mockAdminRole = "superadmin";
       render(<SalesLayout>{null}</SalesLayout>);
 
       expect(screen.getByRole("link", { name: "نمای کلی" })).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "تحلیل ترافیک" })).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "سبدهای خرید" })).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "نقدینگی" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "گزارش فعالیت ادمین‌ها" }),
+      ).toBeInTheDocument();
     });
 
-    it("hides Superadmin-only sections from a Founder", () => {
-      mockRoleName = "Founder";
+    it("shows inherited finance, traffic, and cart reports to a Founder", () => {
+      mockAdminRole = "founder";
+      mockCapabilities = [
+        "report.sales.read",
+        "report.product.read",
+        "report.finance.read",
+        "report.traffic.read",
+        "report.carts.read",
+      ];
       render(<SalesLayout>{null}</SalesLayout>);
 
       // Founders keep the sales reports they were already allowed to view.
@@ -69,26 +84,30 @@ describe("Sales workspace layout", () => {
       expect(screen.getByRole("link", { name: "فروش محصولات" })).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "تفکیک فروش" })).toBeInTheDocument();
 
-      // …and must not gain the ones that 403 on the backend.
-      expect(screen.queryByRole("link", { name: "تحلیل ترافیک" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: "سبدهای خرید" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: "نقدینگی" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "تحلیل ترافیک" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "سبدهای خرید" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "نقدینگی" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "نقدینگی درگاه‌ها" })).toBeInTheDocument();
+      // The admin activity log lives under /settings, already forbidden to
+      // Founder — a visible link here would 403 on click.
       expect(
-        screen.queryByRole("link", { name: "نقدینگی درگاه‌ها" }),
+        screen.queryByRole("link", { name: "گزارش فعالیت ادمین‌ها" }),
       ).not.toBeInTheDocument();
     });
 
-    it("shows no sections at all to a Store manager", () => {
-      mockRoleName = "Store manager";
+    it("shows product reporting only to a Store manager", () => {
+      mockAdminRole = "store_manager";
+      mockCapabilities = ["report.product.read"];
       render(<SalesLayout>{null}</SalesLayout>);
 
-      expect(screen.queryAllByRole("link")).toHaveLength(0);
+      expect(screen.getAllByRole("link")).toHaveLength(1);
+      expect(screen.getByRole("link", { name: "فروش محصولات" })).toBeInTheDocument();
     });
   });
 
   describe("shared reporting period", () => {
     it("picking a preset reports the LOCAL calendar date, not a UTC-shifted one", () => {
-      mockRoleName = "Superadmin";
+      mockAdminRole = "superadmin";
       render(<SalesLayout>{null}</SalesLayout>);
 
       fireEvent.click(screen.getByText("این ماه"));
@@ -103,7 +122,7 @@ describe("Sales workspace layout", () => {
     });
 
     it("is rendered once for every period-scoped subpage", () => {
-      mockRoleName = "Superadmin";
+      mockAdminRole = "superadmin";
       for (const pathname of [
         "/sales",
         "/sales/breakdown",
@@ -121,7 +140,7 @@ describe("Sales workspace layout", () => {
     });
 
     it("is omitted where the period does not apply", () => {
-      mockRoleName = "Superadmin";
+      mockAdminRole = "superadmin";
       // Traffic owns its own controls (including realtime refresh); carts is
       // not period-scoped at all.
       for (const pathname of ["/sales/traffic", "/sales/carts"]) {

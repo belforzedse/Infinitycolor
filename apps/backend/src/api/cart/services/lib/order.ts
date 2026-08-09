@@ -77,7 +77,7 @@ export const createOrderAndItems = async (
     }
 
     // Validate product is active
-    if (variation.product?.Status === "InActive") {
+    if (variation.product?.Status !== "Active") {
       strapi.log.error("=== VALIDATION ERROR: Product is inactive ===", {
         variationId: variation.id,
         productId: variation.product?.id,

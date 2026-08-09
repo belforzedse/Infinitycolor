@@ -78,6 +78,8 @@ export default {
               confirmed: true,
               blocked: false,
               IsActive: userData.isActive !== false,
+              AccountOrigin: "Native",
+              ProfileManagedByCustomer: true,
             },
           });
 

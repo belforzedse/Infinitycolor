@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { Save, Image as ImageIcon, ArrowRightLeft } from "lucide-react";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
@@ -9,8 +8,10 @@ import CategoriesListField from "@/components/SuperAdmin/UpsertPage/ContentWrapp
 import ImageUploadField from "@/components/SuperAdmin/UpsertPage/ContentWrapper/Fields/ImageUploadField";
 import FeaturedImagePanel from "@/components/SuperAdmin/Blog/Sidebar/FeaturedImagePanel";
 import { blogService, type BlogCategory } from "@/services/blog/blog.service";
-import { getSuperAdminSettings } from "@/services/super-admin/settings/get";
-import { updateSuperAdminSettings } from "@/services/super-admin/settings/update";
+import {
+  getBlogBannerSettings,
+  updateBlogBannerSettings,
+} from "@/services/super-admin/settings/blogBanners";
 import {
   type BlogCategoryBannerOrderItem,
   type SuperAdminSettings,
@@ -18,7 +19,6 @@ import {
   normalizeBlogCategoryBannerOrder,
 } from "@/types/super-admin/settings";
 import { sortBlogCategoriesByBannerOrder } from "@/utils/blogCategoryBanners";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 const trimmed = (value?: string) => (typeof value === "string" ? value.trim() : "");
 
@@ -75,27 +75,18 @@ function BannerField({
 }
 
 export default function BlogCategoryBannersPage() {
-  const router = useRouter();
-  const { isStoreManager } = useCurrentUser();
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [categories, setCategories] = useState<BlogCategory[]>([]);
   const [settings, setSettings] = useState<SuperAdminSettings>(defaultSettings());
   const [orderValue, setOrderValue] = useState("[]");
 
-  useEffect(() => {
-    if (isStoreManager) {
-      router.replace("/");
-    }
-  }, [isStoreManager, router]);
-
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const [categoriesResponse, settingsResponse] = await Promise.all([
         blogService.getBlogCategories(),
-        getSuperAdminSettings(),
+        getBlogBannerSettings(),
       ]);
 
       const loadedCategories = (categoriesResponse.data || []).filter((category) =>
@@ -172,7 +163,7 @@ export default function BlogCategoryBannersPage() {
         ),
       );
 
-      const saved = await updateSuperAdminSettings({
+      const saved = await updateBlogBannerSettings({
         blogCategoryBannerOrder: normalizedOrder,
         blogDefaultBannerImage: trimmed(settings.blogDefaultBannerImage),
         blogDefaultBannerTitle: trimmed(settings.blogDefaultBannerTitle),
@@ -184,7 +175,7 @@ export default function BlogCategoryBannersPage() {
       });
 
       toast.success("بنرهای بلاگ با موفقیت ذخیره شدند");
-      setSettings(saved ?? (await getSuperAdminSettings()));
+      setSettings(saved);
     } catch (error) {
       console.error(error);
       toast.error("خطا در ذخیره بنرهای بلاگ");

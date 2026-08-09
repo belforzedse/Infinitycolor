@@ -44,7 +44,12 @@ function createCtx(overrides: Partial<any> = {}) {
 describe("report.funnel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (global as any).strapi = { db: { connection: { raw: jest.fn() } } };
+    (global as any).strapi = {
+      query: () => ({
+        findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Founder" } }),
+      }),
+      db: { connection: { raw: jest.fn() } },
+    };
     fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Founder" } });
     roleIsAllowedMock.mockReturnValue(true);
   });
@@ -80,8 +85,9 @@ describe("report.funnel", () => {
   });
 
   it("blocks a Customer", async () => {
-    fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Customer" } });
-    roleIsAllowedMock.mockReturnValue(false);
+    (global as any).strapi.query = () => ({
+      findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Customer" } }),
+    });
     const controller = loadController();
     const ctx = createCtx();
 

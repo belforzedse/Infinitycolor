@@ -1,11 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { apiClient } from "@/services";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
 
 type AttributeTerm = {
@@ -59,8 +57,6 @@ const emptyAttribute: AttributeForm = {
 const emptyTerm: TermForm = { Title: "", Slug: "", ColorCode: "", Position: 0 };
 
 export default function AttributesPage() {
-  const router = useRouter();
-  const { roleName } = useCurrentUser();
   const [attributes, setAttributes] = useState<ProductAttribute[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -69,12 +65,6 @@ export default function AttributesPage() {
   const [termParentId, setTermParentId] = useState<number | null>(null);
   const [editingTermId, setEditingTermId] = useState<number | null>(null);
   const [termForm, setTermForm] = useState<TermForm>({ ...emptyTerm });
-
-  useEffect(() => {
-    if ((roleName || "").toLowerCase().trim() === "editor") {
-      router.replace("/blog");
-    }
-  }, [roleName, router]);
 
   const load = useCallback(async () => {
     setLoading(true);

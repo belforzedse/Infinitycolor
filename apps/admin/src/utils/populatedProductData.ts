@@ -121,7 +121,15 @@ export function transformToProductData(strapiProduct: ProductDataResponse): Edit
     Title: strapiProduct.Title,
     CoverImage: coverImageUrl,
     Description: strapiProduct.Description,
-    Status: "Active",
+    Status:
+      strapiProduct.Status === "Active" || strapiProduct.Status === "Scheduled"
+        ? strapiProduct.Status
+        : "InActive",
+    scheduledPublishAt: strapiProduct.scheduledPublishAt ?? null,
+    scheduledPublishTimezone: strapiProduct.scheduledPublishTimezone ?? null,
+    scheduledPublishLastAttemptAt: strapiProduct.scheduledPublishLastAttemptAt ?? null,
+    scheduledPublishLastError: strapiProduct.scheduledPublishLastError ?? null,
+    scheduledPublishFailureKind: strapiProduct.scheduledPublishFailureKind ?? null,
     ProductType: productType,
     IsSimpleProduct: isSimpleProduct,
     SimpleVariationId: simpleVariation?.id,

@@ -24,6 +24,8 @@ COPY apps/backend/scripts/woocommerce-importer/catalog/lib/backoff.js \
   /app/scripts/woocommerce-importer/catalog/lib/backoff.js
 COPY apps/backend/scripts/woocommerce-importer/catalog/lib/transforms.js \
   /app/scripts/woocommerce-importer/catalog/lib/transforms.js
+COPY apps/backend/scripts/woocommerce-importer/catalog/lib/slug.js \
+  /app/scripts/woocommerce-importer/catalog/lib/slug.js
 COPY apps/backend/scripts/woocommerce-importer/catalog/lib/publication.js \
   /app/scripts/woocommerce-importer/catalog/lib/publication.js
 COPY apps/backend/scripts/woocommerce-importer/catalog/lib/mediaRecovery.js \
@@ -44,6 +46,8 @@ COPY apps/backend/scripts/woocommerce-importer/importers/ProductImporter.js \
   /app/scripts/woocommerce-importer/importers/ProductImporter.js
 COPY apps/backend/scripts/woocommerce-importer/catalog/__tests__/transforms.test.js \
   /app/scripts/woocommerce-importer/catalog/__tests__/transforms.test.js
+COPY apps/backend/scripts/woocommerce-importer/catalog/__tests__/slug.test.js \
+  /app/scripts/woocommerce-importer/catalog/__tests__/slug.test.js
 COPY apps/backend/scripts/woocommerce-importer/catalog/__tests__/media.test.js \
   /app/scripts/woocommerce-importer/catalog/__tests__/media.test.js
 COPY apps/backend/scripts/woocommerce-importer/catalog/__tests__/publication.test.js \

@@ -18,6 +18,22 @@ function toStrapiJson<T>(v: T): Attribute.JsonValue {
 }
 
 const SETTINGS_UID = "api::settings.settings";
+const BLOG_BANNER_FIELDS = [
+  "blogCategoryBannerOrder",
+  "blogDefaultBannerImage",
+  "blogDefaultBannerTitle",
+  "blogDefaultBannerSubtitle",
+  "blogDefaultBannerTitleColor",
+  "blogDefaultBannerSubtitleColor",
+  "blogDefaultBannerLinkText",
+  "blogDefaultBannerLinkColor",
+] as const;
+
+function projectBlogBannerSettings(settings: any) {
+  return Object.fromEntries(
+    BLOG_BANNER_FIELDS.map((field) => [field, settings?.[field] ?? (field === "blogCategoryBannerOrder" ? [] : "")]),
+  );
+}
 
 async function ensureSettingsEntity(strapi: any) {
   const existing = await strapi.db.query(SETTINGS_UID).findOne({ where: {} });
@@ -94,6 +110,50 @@ async function triggerHeroSliderRevalidation(strapi: { log: { warn: (msg: string
 }
 
 export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
+  async getBlogBanners(ctx) {
+    const settingsEntity = await ensureSettingsEntity(strapi);
+    ctx.body = {
+      data: {
+        id: settingsEntity.id,
+        attributes: projectBlogBannerSettings(settingsEntity),
+      },
+    };
+  },
+
+  async updateBlogBanners(ctx) {
+    const payload = extractPayloadFromRequestBody(ctx.request.body);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return ctx.badRequest("Blog banner payload must be an object");
+    }
+    const allowed = new Set<string>(BLOG_BANNER_FIELDS);
+    const rejectedFields = Object.keys(payload).filter((field) => !allowed.has(field));
+    if (rejectedFields.length > 0) {
+      return ctx.badRequest("Blog banner payload contains protected settings fields", {
+        fields: rejectedFields.sort(),
+      });
+    }
+    const data: Record<string, unknown> = {};
+    for (const field of BLOG_BANNER_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      const value = payload[field];
+      if (field === "blogCategoryBannerOrder") {
+        if (!Array.isArray(value)) return ctx.badRequest("Blog category banner order must be an array");
+        data[field] = value;
+      } else {
+        if (typeof value !== "string") return ctx.badRequest(`${field} must be a string`);
+        data[field] = value.trim();
+      }
+    }
+    const settingsEntity = await ensureSettingsEntity(strapi);
+    const updated = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, { data });
+    ctx.body = {
+      data: {
+        id: updated.id,
+        attributes: projectBlogBannerSettings(updated),
+      },
+    };
+  },
+
   async getHeroSlider(ctx) {
     const settingsEntity = await ensureSettingsEntity(strapi);
 

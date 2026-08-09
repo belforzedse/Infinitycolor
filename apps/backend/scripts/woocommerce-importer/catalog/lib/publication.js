@@ -105,19 +105,40 @@ function zonedLocalToUtcIso(date, time, timeZone) {
  * @param {Record<string,string>} [opts.statusMappings]
  */
 function resolvePublication(opts = {}) {
+  const intent = resolvePublicationIntent(opts);
+  if (intent.action === "schedule") {
+    return {
+      Status: "Scheduled",
+      scheduledPublishAt: intent.publishAt,
+      scheduledPublishTimezone: intent.timezone,
+      scheduledPublishRequireMedia: intent.requireMedia,
+      scheduledPublishLastError: null,
+      scheduledPublishLastAttemptAt: null,
+    };
+  }
+  return {
+    Status: intent.action === "publish-now" ? "Active" : "InActive",
+    scheduledPublishAt: null,
+    scheduledPublishTimezone: null,
+    scheduledPublishRequireMedia: false,
+    scheduledPublishLastError: intent.errorCode || null,
+    scheduledPublishLastAttemptAt: null,
+  };
+}
+
+/**
+ * Resolve source publication semantics without mutating a destination payload.
+ * CatalogEngine applies this intent only after content/media/variation upserts,
+ * through Infinity's canonical publication command endpoint.
+ */
+function resolvePublicationIntent(opts = {}) {
   const mode = opts.mode || "now";
   const now = opts.now ? new Date(opts.now) : new Date();
   const statusMappings = opts.statusMappings || {};
   const timezone = opts.timezone || DEFAULT_TIMEZONE;
 
   if (mode === "draft") {
-    return {
-      Status: "InActive",
-      scheduledPublishAt: null,
-      scheduledPublishTimezone: null,
-      scheduledPublishRequireMedia: false,
-      scheduledPublishLastError: null,
-    };
+    return { action: "unpublish", timezone, requireMedia: false };
   }
 
   if (mode === "scheduled") {
@@ -138,12 +159,10 @@ function resolvePublication(opts = {}) {
       throw new Error("scheduledPublishAt must be in the future");
     }
     return {
-      Status: "Scheduled",
-      scheduledPublishAt: atIso,
-      scheduledPublishTimezone: timezone,
-      scheduledPublishRequireMedia: opts.requireMedia !== false,
-      scheduledPublishLastError: null,
-      scheduledPublishLastAttemptAt: null,
+      action: "schedule",
+      publishAt: atIso,
+      timezone,
+      requireMedia: opts.requireMedia !== false,
     };
   }
 
@@ -154,30 +173,52 @@ function resolvePublication(opts = {}) {
     // handled below
   }
   if (wcStatus === "future") {
-    const raw = opts.wcDateGmt || opts.wcDate;
-    if (raw) {
-      const instant = new Date(String(raw).endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(String(raw)) ? raw : `${raw}Z`);
-      if (!Number.isNaN(instant.getTime()) && instant.getTime() > now.getTime()) {
-        return {
-          Status: "Scheduled",
-          scheduledPublishAt: instant.toISOString(),
-          scheduledPublishTimezone: timezone,
-          scheduledPublishRequireMedia: opts.requireMedia !== false,
-          scheduledPublishLastError: null,
-          scheduledPublishLastAttemptAt: null,
-        };
+    let instant = null;
+    if (opts.wcDateGmt) {
+      const gmt = String(opts.wcDateGmt);
+      const parsed = new Date(
+        gmt.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(gmt) ? gmt : `${gmt}Z`,
+      );
+      if (!Number.isNaN(parsed.getTime())) instant = parsed;
+    }
+    if (!instant && opts.wcDate) {
+      const local = String(opts.wcDate).match(
+        /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}(?::\d{2})?)$/,
+      );
+      if (local) {
+        try {
+          instant = new Date(zonedLocalToUtcIso(local[1], local[2], timezone));
+        } catch {
+          instant = null;
+        }
       }
     }
+    if (instant) {
+      if (instant.getTime() > now.getTime()) {
+        return {
+          action: "schedule",
+          publishAt: instant.toISOString(),
+          timezone,
+          requireMedia: opts.requireMedia !== false,
+        };
+      }
+      if (instant.getTime() <= now.getTime()) {
+        return { action: "publish-now", timezone, requireMedia: opts.requireMedia !== false };
+      }
+    }
+    return {
+      action: "unpublish",
+      timezone,
+      requireMedia: opts.requireMedia !== false,
+      errorCode: "woocommerce-future-date-invalid",
+    };
   }
 
   const mapped = statusMappings[wcStatus] || "InActive";
   return {
-    Status: mapped,
-    scheduledPublishAt: null,
-    scheduledPublishTimezone: null,
-    scheduledPublishRequireMedia: false,
-    scheduledPublishLastError: null,
-    scheduledPublishLastAttemptAt: null,
+    action: mapped === "Active" ? "publish-now" : "unpublish",
+    timezone,
+    requireMedia: false,
   };
 }
 
@@ -237,12 +278,12 @@ function parsePublicationOptions(raw = {}) {
  */
 function publicationFromEnv(env = process.env) {
   return parsePublicationOptions({
-    mode: env.WOO_SYNC_PUBLICATION_MODE || env.IMPORT_PUBLICATION_MODE,
-    at: env.WOO_SYNC_PUBLICATION_AT || env.IMPORT_PUBLICATION_AT,
-    date: env.WOO_SYNC_PUBLICATION_DATE || env.IMPORT_PUBLICATION_DATE,
-    time: env.WOO_SYNC_PUBLICATION_TIME || env.IMPORT_PUBLICATION_TIME,
-    timezone: env.WOO_SYNC_PUBLICATION_TIMEZONE || env.IMPORT_PUBLICATION_TIMEZONE,
-    requireMedia: env.WOO_SYNC_PUBLICATION_REQUIRE_MEDIA || env.IMPORT_PUBLICATION_REQUIRE_MEDIA,
+    mode: env.IMPORT_PUBLICATION_MODE,
+    at: env.IMPORT_PUBLICATION_AT,
+    date: env.IMPORT_PUBLICATION_DATE,
+    time: env.IMPORT_PUBLICATION_TIME,
+    timezone: env.IMPORT_PUBLICATION_TIMEZONE,
+    requireMedia: env.IMPORT_PUBLICATION_REQUIRE_MEDIA,
   });
 }
 
@@ -251,6 +292,7 @@ module.exports = {
   assertValidTimeZone,
   zonedLocalToUtcIso,
   resolvePublication,
+  resolvePublicationIntent,
   parsePublicationOptions,
   publicationFromEnv,
 };

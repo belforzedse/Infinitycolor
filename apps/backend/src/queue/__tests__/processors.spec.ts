@@ -9,7 +9,8 @@ jest.mock("../../jobs/expireReserveOrders", () => ({
   runExpireReserveOrdersTick: jest.fn(),
 }));
 jest.mock("../../jobs/publishScheduledProducts", () => ({
-  runPublishScheduledProductsTick: jest.fn(),
+  processScheduledProductPublicationJob: jest.fn(),
+  runScheduledProductsReconciliation: jest.fn(),
 }));
 jest.mock("../../api/payment-gateway/services/snappay-orchestrator", () => ({
   processSnappayOperation: jest.fn(),
@@ -24,7 +25,10 @@ jest.mock("../../jobs/analyticsReconciliation", () => ({
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
 import { runExpireStockReservationsTick } from "../../jobs/expireStockReservations";
-import { runPublishScheduledProductsTick } from "../../jobs/publishScheduledProducts";
+import {
+  processScheduledProductPublicationJob,
+  runScheduledProductsReconciliation,
+} from "../../jobs/publishScheduledProducts";
 import {
   ANALYTICS_MAINTENANCE_JOBS,
   COMMERCE_MAINTENANCE_JOBS,
@@ -42,8 +46,10 @@ const mockedRunExpireStockReservationsTick =
   runExpireStockReservationsTick as jest.MockedFunction<typeof runExpireStockReservationsTick>;
 const mockedRunExpireReserveOrdersTick =
   runExpireReserveOrdersTick as jest.MockedFunction<typeof runExpireReserveOrdersTick>;
-const mockedRunPublishScheduledProductsTick =
-  runPublishScheduledProductsTick as jest.MockedFunction<typeof runPublishScheduledProductsTick>;
+const mockedProcessScheduledProductPublicationJob =
+  processScheduledProductPublicationJob as jest.MockedFunction<typeof processScheduledProductPublicationJob>;
+const mockedRunScheduledProductsReconciliation =
+  runScheduledProductsReconciliation as jest.MockedFunction<typeof runScheduledProductsReconciliation>;
 const mockedProcessSnappayOperation =
   processSnappayOperation as jest.MockedFunction<typeof processSnappayOperation>;
 const mockedSweepSnappayOperations =
@@ -95,20 +101,44 @@ describe("queue processors", () => {
     expect(mockedRunExpireReserveOrdersTick).toHaveBeenCalledWith(strapi);
   });
 
-  it("dispatches scheduled product publish jobs to the publish runner", async () => {
+  it("dispatches one-product scheduled publication jobs", async () => {
     const strapi = createMockStrapi();
-    mockedRunPublishScheduledProductsTick.mockResolvedValue({
-      claimed: 0,
-      published: 0,
-      blocked: 0,
+    mockedProcessScheduledProductPublicationJob.mockResolvedValue({ outcome: "published" });
+    const job = {
+      name: COMMERCE_MAINTENANCE_JOBS.scheduledProductPublishOne,
+      data: {
+        productId: 10,
+        scheduleRevision: 3,
+        expectedPublishAt: "2026-08-08T12:00:00.000Z",
+      },
+    } as any;
+
+    await processMaintenanceJob(strapi, job, "worker-token");
+
+    expect(mockedProcessScheduledProductPublicationJob).toHaveBeenCalledWith(
+      strapi,
+      job,
+      "worker-token",
+    );
+  });
+
+  it("dispatches scheduled publication reconciliation jobs", async () => {
+    const strapi = createMockStrapi();
+    mockedRunScheduledProductsReconciliation.mockResolvedValue({
+      scanned: 0,
+      queued: 0,
+      present: 0,
       skipped: 0,
+      effects: 0,
+      effectFailures: 0,
     });
 
     await processMaintenanceJob(strapi, {
-      name: COMMERCE_MAINTENANCE_JOBS.scheduledProductPublish,
+      name: COMMERCE_MAINTENANCE_JOBS.scheduledProductReconcile,
+      data: {},
     } as any);
 
-    expect(mockedRunPublishScheduledProductsTick).toHaveBeenCalledWith(strapi);
+    expect(mockedRunScheduledProductsReconciliation).toHaveBeenCalledWith(strapi);
   });
 
   it("dispatches view-counter flush jobs to the product-view service", async () => {

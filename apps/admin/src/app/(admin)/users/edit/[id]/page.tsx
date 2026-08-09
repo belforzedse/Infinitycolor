@@ -9,7 +9,7 @@ import UserService from "@/services/user";
 import { apiClient } from "@/services";
 import { getUserActivities, UserActivity } from "@/services/user-activity";
 import Link from "next/link";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import WalletAdjustCard from "./WalletAdjustCard";
 import {
   AdminCard,
@@ -43,8 +43,7 @@ export type User = {
 
 export default function Page() {
   const { id } = useParams<{ id: string }>();
-  const { roleName } = useCurrentUser();
-  const isSuperadmin = (roleName ?? "").toLowerCase() === "superadmin";
+  const canAdjustWallet = useCan("wallet.adjust");
   const [userData, setUserData] = useState<User | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -182,8 +181,7 @@ export default function Page() {
         }}
       />
 
-      {/* Wallet Editor (Superadmin only) */}
-      {isSuperadmin && id && <WalletAdjustCard userId={Number(id)} />}
+      {canAdjustWallet && id && <WalletAdjustCard userId={Number(id)} />}
 
       {/* User Activities Section */}
       <div className="rounded-2xl bg-white p-6">

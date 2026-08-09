@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const {
   zonedLocalToUtcIso,
   resolvePublication,
+  resolvePublicationIntent,
   DEFAULT_TIMEZONE,
 } = require("../lib/publication");
 
@@ -83,6 +84,36 @@ test("WC future status becomes Scheduled when date is in the future", () => {
   assert.equal(result.scheduledPublishAt, "2026-12-01T10:00:00.000Z");
 });
 
+test("WC future status falls back from invalid GMT to Tehran local time", () => {
+  const result = resolvePublicationIntent({
+    wcStatus: "future",
+    wcDateGmt: "0000-00-00T00:00:00",
+    wcDate: "2026-12-01T12:00:00",
+    now: new Date("2026-08-08T00:00:00.000Z"),
+  });
+  assert.equal(result.action, "schedule");
+  assert.equal(result.publishAt, "2026-12-01T08:30:00.000Z");
+  assert.equal(result.timezone, "Asia/Tehran");
+});
+
+test("WC future status that is already due publishes immediately", () => {
+  const result = resolvePublicationIntent({
+    wcStatus: "future",
+    wcDateGmt: "2026-08-07T10:00:00",
+    now: new Date("2026-08-08T00:00:00.000Z"),
+  });
+  assert.equal(result.action, "publish-now");
+});
+
+test("WC future status with an invalid instant remains unpublished with an exception", () => {
+  const result = resolvePublicationIntent({
+    wcStatus: "future",
+    wcDateGmt: "not-a-date",
+  });
+  assert.equal(result.action, "unpublish");
+  assert.equal(result.errorCode, "woocommerce-future-date-invalid");
+});
+
 const { parsePublicationOptions, publicationFromEnv } = require("../lib/publication");
 
 test("parsePublicationOptions returns null when mode omitted", () => {
@@ -100,9 +131,16 @@ test("parsePublicationOptions accepts scheduled date+time", () => {
   assert.equal(result.timezone, "Asia/Tehran");
 });
 
-test("publicationFromEnv reads WOO_SYNC_PUBLICATION_*", () => {
+test("publicationFromEnv ignores hourly WOO_SYNC_PUBLICATION_* overrides", () => {
   const result = publicationFromEnv({
     WOO_SYNC_PUBLICATION_MODE: "draft",
+  });
+  assert.equal(result, null);
+});
+
+test("publicationFromEnv retains explicit one-off importer overrides", () => {
+  const result = publicationFromEnv({
+    IMPORT_PUBLICATION_MODE: "draft",
   });
   assert.equal(result.mode, "draft");
 });
