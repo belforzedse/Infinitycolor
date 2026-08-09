@@ -11,6 +11,12 @@ import {
   E2E_DEFAULT_EDITOR_PHONE,
   E2E_DEFAULT_FOUNDER_PASSWORD,
   E2E_DEFAULT_FOUNDER_PHONE,
+  E2E_DEFAULT_FINANCE_PASSWORD,
+  E2E_DEFAULT_FINANCE_PHONE,
+  E2E_DEFAULT_SELLER_1_PASSWORD,
+  E2E_DEFAULT_SELLER_1_PHONE,
+  E2E_DEFAULT_SELLER_2_PASSWORD,
+  E2E_DEFAULT_SELLER_2_PHONE,
   E2E_DEFAULT_STORE_MANAGER_PASSWORD,
   E2E_DEFAULT_STORE_MANAGER_PHONE,
 } from "../fixtures/storefront";
@@ -20,6 +26,9 @@ export type E2EAuthRole =
   | "customer-b"
   | "admin"
   | "founder"
+  | "finance"
+  | "seller-1"
+  | "seller-2"
   | "store-manager"
   | "editor";
 
@@ -29,6 +38,9 @@ export const E2E_AUTH_ROLES: E2EAuthRole[] = [
   "customer-b",
   "admin",
   "founder",
+  "finance",
+  "seller-1",
+  "seller-2",
   "store-manager",
   "editor",
 ];
@@ -47,6 +59,9 @@ const DEFAULT_CREDENTIALS: Record<E2EAuthRole, Credentials> = {
   "customer-b": { phone: E2E_DEFAULT_CUSTOMER_B_PHONE, password: E2E_DEFAULT_CUSTOMER_B_PASSWORD },
   admin: { phone: E2E_DEFAULT_ADMIN_PHONE, password: E2E_DEFAULT_ADMIN_PASSWORD },
   founder: { phone: E2E_DEFAULT_FOUNDER_PHONE, password: E2E_DEFAULT_FOUNDER_PASSWORD },
+  finance: { phone: E2E_DEFAULT_FINANCE_PHONE, password: E2E_DEFAULT_FINANCE_PASSWORD },
+  "seller-1": { phone: E2E_DEFAULT_SELLER_1_PHONE, password: E2E_DEFAULT_SELLER_1_PASSWORD },
+  "seller-2": { phone: E2E_DEFAULT_SELLER_2_PHONE, password: E2E_DEFAULT_SELLER_2_PASSWORD },
   "store-manager": {
     phone: E2E_DEFAULT_STORE_MANAGER_PHONE,
     password: E2E_DEFAULT_STORE_MANAGER_PASSWORD,
@@ -60,6 +75,9 @@ const ENV_PREFIX: Record<E2EAuthRole, string> = {
   "customer-b": "E2E_CUSTOMER_B",
   admin: "E2E_ADMIN",
   founder: "E2E_FOUNDER",
+  finance: "E2E_FINANCE",
+  "seller-1": "E2E_SELLER_1",
+  "seller-2": "E2E_SELLER_2",
   "store-manager": "E2E_STORE_MANAGER",
   editor: "E2E_EDITOR",
 };

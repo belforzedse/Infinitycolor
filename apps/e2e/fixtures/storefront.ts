@@ -23,6 +23,12 @@ export const E2E_DEFAULT_STORE_MANAGER_PHONE = "+989000000203";
 export const E2E_DEFAULT_STORE_MANAGER_PASSWORD = "E2eManager!123";
 export const E2E_DEFAULT_EDITOR_PHONE = "+989000000204";
 export const E2E_DEFAULT_EDITOR_PASSWORD = "E2eEditor!123";
+export const E2E_DEFAULT_SELLER_1_PHONE = "+989000000205";
+export const E2E_DEFAULT_SELLER_1_PASSWORD = "E2eSeller1!123";
+export const E2E_DEFAULT_SELLER_2_PHONE = "+989000000206";
+export const E2E_DEFAULT_SELLER_2_PASSWORD = "E2eSeller2!123";
+export const E2E_DEFAULT_FINANCE_PHONE = "+989000000207";
+export const E2E_DEFAULT_FINANCE_PASSWORD = "E2eFinance!123";
 
 // Dedicated high-stock variation so repeated payment runs never exhaust inventory.
 export const E2E_PAYMENT_VARIATION_SKU = "E2E-STOREFRONT-PAY";

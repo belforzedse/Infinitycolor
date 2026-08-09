@@ -201,7 +201,7 @@ const FIXTURE = {
       email: "e2e.manager@infinitycolor.local",
       firstName: "E2E",
       lastName: "Manager",
-      roleName: "Store manager",
+      roleName: "Store Manager",
       externalId: "e2e-storefront:user:store-manager",
       optional: true,
     },
@@ -213,6 +213,36 @@ const FIXTURE = {
       lastName: "Editor",
       roleName: "Editor",
       externalId: "e2e-storefront:user:editor",
+      optional: true,
+    },
+    seller1: {
+      phone: envOrDefault("E2E_SELLER_1_PHONE", "+989000000205"),
+      password: envOrDefault("E2E_SELLER_1_PASSWORD", "E2eSeller1!123"),
+      email: "e2e.seller1@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "Seller1",
+      roleName: "Seller 1",
+      externalId: "e2e-storefront:user:seller-1",
+      optional: true,
+    },
+    seller2: {
+      phone: envOrDefault("E2E_SELLER_2_PHONE", "+989000000206"),
+      password: envOrDefault("E2E_SELLER_2_PASSWORD", "E2eSeller2!123"),
+      email: "e2e.seller2@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "Seller2",
+      roleName: "Seller 2",
+      externalId: "e2e-storefront:user:seller-2",
+      optional: true,
+    },
+    finance: {
+      phone: envOrDefault("E2E_FINANCE_PHONE", "+989000000207"),
+      password: envOrDefault("E2E_FINANCE_PASSWORD", "E2eFinance!123"),
+      email: "e2e.finance@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "Finance",
+      roleName: "Finance",
+      externalId: "e2e-storefront:user:finance",
       optional: true,
     },
   },
@@ -936,6 +966,9 @@ async function seedUsers(client, now) {
     ["founder", FIXTURE.auth.founder],
     ["storeManager", FIXTURE.auth.storeManager],
     ["editor", FIXTURE.auth.editor],
+    ["seller1", FIXTURE.auth.seller1],
+    ["seller2", FIXTURE.auth.seller2],
+    ["finance", FIXTURE.auth.finance],
   ]) {
     const roleId = await roleIdByNameOptional(client, userDef.roleName);
     if (!roleId) {
@@ -1297,6 +1330,9 @@ async function seed(client) {
     founderUserId: users.founder ? users.founder.id : null,
     storeManagerUserId: users.storeManager ? users.storeManager.id : null,
     editorUserId: users.editor ? users.editor.id : null,
+    seller1UserId: users.seller1 ? users.seller1.id : null,
+    seller2UserId: users.seller2 ? users.seller2.id : null,
+    financeUserId: users.finance ? users.finance.id : null,
   };
 }
 

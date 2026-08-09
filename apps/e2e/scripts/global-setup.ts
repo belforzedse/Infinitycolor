@@ -68,6 +68,9 @@ type SeedSummary = {
   customerBUserId?: number;
   adminUserId?: number;
   founderUserId?: number;
+  financeUserId?: number;
+  seller1UserId?: number;
+  seller2UserId?: number;
   storeManagerUserId?: number;
   editorUserId?: number;
 };
