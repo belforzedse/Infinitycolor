@@ -139,7 +139,10 @@ test.describe("scheduled product publication", () => {
       scheduleAgain,
       "schedule runtime product after cancellation",
     );
-    await page.reload({ waitUntil: "domcontentloaded" });
+    // Firefox can commit this Next.js navigation without reporting
+    // domcontentloaded to Playwright. The card assertion below is the stronger
+    // proof that the refreshed document hydrated with the persisted state.
+    await page.reload({ waitUntil: "commit" });
 
     const refreshedCard = page
       .locator("section:visible")

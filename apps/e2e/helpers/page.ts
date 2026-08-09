@@ -3,18 +3,8 @@ import { installLocalMediaFixture } from "./local-media";
 
 const THIRD_PARTY_HOST_PATTERN =
   /(?:matomo|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)/i;
-
-function isThirdPartyRequest(url: string | URL): boolean {
-  try {
-    const { hostname } = typeof url === "string" ? new URL(url) : url;
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return false;
-    }
-    return THIRD_PARTY_HOST_PATTERN.test(hostname);
-  } catch {
-    return false;
-  }
-}
+const THIRD_PARTY_ROUTE_PATTERN =
+  /^https?:\/\/[^/?#]*(?:matomo|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)[^/?#]*(?:[/?#]|$)/i;
 
 const IGNORED_RUNTIME_ERROR_PATTERN =
   /(?:Failed to load resource|net::ERR_ABORTED|net::ERR_BLOCKED_BY_CLIENT|favicon\.ico|ResizeObserver loop|_next\/webpack-hmr|WebSocket connection.*ERR_INVALID_HTTP_RESPONSE|A tree hydrated but some attributes)/i;
@@ -28,7 +18,12 @@ export async function prepareStorefrontPage(page: Page): Promise<RuntimeErrorCol
   const errors: string[] = [];
 
   await installLocalMediaFixture(page);
-  await page.route((url) => isThirdPartyRequest(url), (route) => route.abort());
+  // A URL predicate is implemented by Playwright as a catch-all interceptor
+  // followed by client-side filtering. WebKit can surface harmless same-origin
+  // prefetch cancellations as access-control page errors under that catch-all.
+  // Register a browser-side URL pattern so local application requests are
+  // never intercepted in the first place.
+  await page.route(THIRD_PARTY_ROUTE_PATTERN, (route) => route.abort());
 
   await page.addInitScript(() => {
     window.localStorage.setItem("analytics-consent", "denied");

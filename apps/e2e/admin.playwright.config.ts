@@ -52,6 +52,9 @@ export default defineConfig({
     timezoneId: "Asia/Tehran",
     actionTimeout: 15_000,
     navigationTimeout: 45_000,
+    // The service worker has its own source-policy tests. Blocking it here
+    // avoids controller-change reloads interfering with CRUD/navigation E2E.
+    serviceWorkers: "block",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: isCI ? "off" : "retain-on-failure",
