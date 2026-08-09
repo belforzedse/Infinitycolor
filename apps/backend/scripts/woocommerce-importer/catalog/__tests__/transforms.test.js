@@ -10,9 +10,9 @@ const variations = require("../fixtures/variations.json");
 
 const byId = (arr, id) => arr.find((x) => x.id === id);
 
-test("mapProduct: slug imported exactly without decoding or regeneration", () => {
+test("mapProduct: percent-encoded Woo slug is stored as canonical Unicode", () => {
   const { data } = T.mapProduct(byId(products, 101));
-  assert.equal(data.Slug, "%da%a9%db%8c%d9%81-%d8%af%d8%b3%d8%aa%db%8c");
+  assert.equal(data.Slug, "کیف-دستی");
 });
 
 test("mapProduct: writes ProductType, IsSimpleProduct, Weight, Status", () => {

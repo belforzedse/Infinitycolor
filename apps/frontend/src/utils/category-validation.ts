@@ -19,16 +19,48 @@ function safeDecodeURIComponent(value: string): string {
   }
 }
 
-function buildCategorySlugCandidates(slug: string) {
+const ARABIC_YEH = /\u064A/g;
+const ARABIC_KAF = /\u0643/g;
+
+function encodeURIComponentLower(value: string): string {
+  return encodeURIComponent(value).replace(/%[0-9A-Fa-f]{2}/g, (match) => match.toLowerCase());
+}
+
+function foldArabicToPersian(value: string): string {
+  return value.replace(ARABIC_YEH, "\u06CC").replace(ARABIC_KAF, "\u06A9");
+}
+
+export function buildCategorySlugCandidates(slug: string) {
+  const candidates = new Set<string>();
+
+  const addForms = (value: string) => {
+    if (!value) return;
+
+    const decoded = safeDecodeURIComponent(value);
+    const normalized = decoded.normalize("NFC");
+    const folded = foldArabicToPersian(normalized);
+
+    for (const candidate of [value, decoded, normalized, folded]) {
+      if (!candidate) continue;
+      candidates.add(candidate);
+      candidates.add(encodeURIComponent(candidate));
+      candidates.add(encodeURIComponentLower(candidate));
+    }
+  };
+
+  addForms(slug);
+
   const decodedSlug = safeDecodeURIComponent(slug);
-  const candidates = new Set<string>([slug, decodedSlug, encodeURIComponent(decodedSlug)]);
+  if (decodedSlug !== slug) {
+    addForms(decodedSlug);
+    addForms(safeDecodeURIComponent(decodedSlug));
+  }
   const legacyMatch = decodedSlug.match(/^(.+)-(\d+)$/);
 
   if (legacyMatch) {
     const baseSlug = legacyMatch[1]?.trim();
     if (baseSlug) {
-      candidates.add(baseSlug);
-      candidates.add(encodeURIComponent(baseSlug));
+      addForms(baseSlug);
     }
   }
 
