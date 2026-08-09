@@ -6,7 +6,7 @@ import { CartService } from "@/services";
 import type { ShippingAddressContext } from "@/services/shipping";
 import toast from "react-hot-toast";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 type DiscountSummary = {
   subtotal: number;
@@ -49,11 +49,10 @@ function ShoppingCartBillDiscountCoupon({
       });
       if (res?.success) {
         toast.success("کد تخفیف اعمال شد");
-        trackMatomoEvent({
+        trackAnalyticsEvent({
           category: "ecommerce",
           action: "apply_coupon",
-          name: code.trim(),
-          value: res.discount,
+          valueToman: res.discount,
         });
         onApplied?.(code.trim(), {
           discount: res.discount,
@@ -95,7 +94,7 @@ function ShoppingCartBillDiscountCoupon({
           <button
             type="button"
             onClick={handleRemove}
-            className="text-sm rounded-lg bg-slate-100 px-4 py-2 text-neutral-700 hover:bg-slate-200"
+            className="rounded-lg bg-slate-100 px-4 py-2 text-sm text-neutral-700 hover:bg-slate-200"
           >
             حذف کد
           </button>
@@ -106,7 +105,7 @@ function ShoppingCartBillDiscountCoupon({
             type="button"
             disabled={loading}
             onClick={handleApply}
-            className={`text-base h-9 text-nowrap rounded-lg bg-infinity-primary px-6 text-white lg:h-[50px] ${
+            className={`h-9 text-nowrap rounded-lg bg-infinity-primary px-6 text-base text-white lg:h-[50px] ${
               loading ? "cursor-not-allowed opacity-70" : ""
             }`}
           >

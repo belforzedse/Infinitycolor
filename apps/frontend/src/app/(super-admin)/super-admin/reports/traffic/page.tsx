@@ -6,18 +6,26 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { faNum } from "@/utils/faNum";
-import type { MetricDelta, TrafficDashboard, TrafficRealtime } from "@/types/super-admin/reports/traffic";
+import type {
+  MetricDelta,
+  TrafficDashboard,
+  TrafficRealtime,
+} from "@/types/super-admin/reports/traffic";
 import { getTrafficDashboard, getTrafficRealtime } from "@/services/super-admin/reports/traffic";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateFunnelStep } from "@/utils/statusTranslations";
 import { exportExcel } from "@/utils/exportExcel";
 
-const ResponsiveContainer = dynamic(() => import("recharts").then((m) => m.ResponsiveContainer), { ssr: false });
+const ResponsiveContainer = dynamic(() => import("recharts").then((m) => m.ResponsiveContainer), {
+  ssr: false,
+});
 const LineChart = dynamic(() => import("recharts").then((m) => m.LineChart), { ssr: false });
 const Line = dynamic(() => import("recharts").then((m) => m.Line), { ssr: false });
 const XAxis = dynamic(() => import("recharts").then((m) => m.XAxis), { ssr: false });
 const YAxis = dynamic(() => import("recharts").then((m) => m.YAxis), { ssr: false });
-const CartesianGrid = dynamic(() => import("recharts").then((m) => m.CartesianGrid), { ssr: false });
+const CartesianGrid = dynamic(() => import("recharts").then((m) => m.CartesianGrid), {
+  ssr: false,
+});
 const Tooltip = dynamic(() => import("recharts").then((m) => m.Tooltip), { ssr: false });
 const Legend = dynamic(() => import("recharts").then((m) => m.Legend as any), { ssr: false });
 const BarChart = dynamic(() => import("recharts").then((m) => m.BarChart), { ssr: false });
@@ -42,7 +50,7 @@ const METRIC_HINTS: Record<string, string> = {
   bounceRate: "درصد بازدیدهایی که تنها یک صفحه دیده و خارج شده‌اند. کمتر بهتر است.",
   avgVisitDuration: "میانگین زمان حضور در هر بازدید.",
   conversionRate: "نسبت سفارش‌های موفق به کل بازدیدها (داده تراکنش از Strapi).",
-  revenue: "درآمد قطعی از تراکنش‌های موفق (منبع: Strapi، نه تخمین Matomo).",
+  revenue: "درآمد قطعی از تراکنش‌های موفق (منبع: Strapi، نه تخمین Umami).",
 };
 
 // ---------------------------------------------------------------------------
@@ -103,7 +111,12 @@ function formatFunnelStep(step: TrafficDashboard["funnel"][number]["step"]): str
 
 // Sheet names can't exceed 31 chars or contain []*?/\: — keep it safe.
 function safeSheetName(name: string): string {
-  return name.replace(/[[\]*?/\\:]/g, " ").trim().slice(0, 31) || "گزارش";
+  return (
+    name
+      .replace(/[[\]*?/\\:]/g, " ")
+      .trim()
+      .slice(0, 31) || "گزارش"
+  );
 }
 
 // Export a simple (columns + rows) table as a beautifully-formatted .xlsx.
@@ -115,9 +128,10 @@ async function downloadTableExcel(
   columns: string[],
   rows: Array<Array<string | number>>,
 ) {
-  const isNumeric = columns.map((_, c) =>
-    rows.some((r) => typeof r[c] === "number") &&
-    rows.every((r) => r[c] == null || typeof r[c] === "number"),
+  const isNumeric = columns.map(
+    (_, c) =>
+      rows.some((r) => typeof r[c] === "number") &&
+      rows.every((r) => r[c] == null || typeof r[c] === "number"),
   );
   const excelColumns = columns.map((header, c) => ({
     header,
@@ -147,7 +161,9 @@ function TrafficReportInner() {
   const initialStart = useMemo(() => {
     const fromParam = searchParams.get("from");
     const parsed = fromParam ? new Date(fromParam) : null;
-    return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date(Date.now() - 30 * 86400000);
+    return parsed && !Number.isNaN(parsed.getTime())
+      ? parsed
+      : new Date(Date.now() - 30 * 86400000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const initialEnd = useMemo(() => {
@@ -156,7 +172,8 @@ function TrafficReportInner() {
     return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const initialTab = (TABS.find((t) => t.id === searchParams.get("tab"))?.id ?? "overview") as TabId;
+  const initialTab = (TABS.find((t) => t.id === searchParams.get("tab"))?.id ??
+    "overview") as TabId;
 
   const [start, setStart] = useState<Date>(initialStart);
   const [end, setEnd] = useState<Date>(initialEnd);
@@ -175,10 +192,14 @@ function TrafficReportInner() {
 
   const isValid = (value: Date) => value instanceof Date && !Number.isNaN(value.getTime());
   const toIso = useCallback(
-    (value: Date, fallback: Date) => (isValid(value) ? value.toISOString() : fallback.toISOString()),
+    (value: Date, fallback: Date) =>
+      isValid(value) ? value.toISOString() : fallback.toISOString(),
     [],
   );
-  const startDate = useMemo(() => toIso(start, new Date(Date.now() - 30 * 86400000)), [start, toIso]);
+  const startDate = useMemo(
+    () => toIso(start, new Date(Date.now() - 30 * 86400000)),
+    [start, toIso],
+  );
   const endDate = useMemo(() => toIso(end, new Date()), [end, toIso]);
 
   // Persist range + tab to the URL so reports are shareable and back/forward works.
@@ -268,7 +289,10 @@ function TrafficReportInner() {
   const handleManualRefresh = useCallback(async () => {
     setRefreshingNow(true);
     try {
-      await Promise.all([loadDashboard({ fresh: true, silent: true }), loadRealtime({ fresh: true })]);
+      await Promise.all([
+        loadDashboard({ fresh: true, silent: true }),
+        loadRealtime({ fresh: true }),
+      ]);
     } finally {
       setRefreshingNow(false);
     }
@@ -299,13 +323,16 @@ function TrafficReportInner() {
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
               <div>
                 <h3 className="text-lg font-medium text-neutral-700">بازه گزارش</h3>
-                <p className="text-xs mt-1 text-neutral-500">
+                <p className="mt-1 text-xs text-neutral-500">
                   منطقه زمانی: تهران (Asia/Tehran) • مقایسه با دوره قبلی هم‌طول
                 </p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:min-w-[450px]">
                 <div className="flex flex-col gap-1">
-                  <label htmlFor="auto-refresh-select" className="text-xs font-medium text-neutral-500">
+                  <label
+                    htmlFor="auto-refresh-select"
+                    className="text-xs font-medium text-neutral-500"
+                  >
                     بروزرسانی لحظه‌ای
                   </label>
                   <select
@@ -373,15 +400,21 @@ function TrafficReportInner() {
         {/* Status banners */}
         {notConfigured ? (
           <Banner tone="amber">
-            ردیابی Matomo پیکربندی نشده است. مقادیر صفر نمایش داده می‌شوند تا زمانی که اتصال برقرار شود.
+            ردیابی Umami پیکربندی نشده است. مقادیر صفر نمایش داده می‌شوند تا زمانی که اتصال برقرار
+            شود.
           </Banner>
         ) : null}
         {partial && !notConfigured ? (
           <Banner tone="amber">
-            برخی بخش‌ها بارگذاری نشدند و داده‌ها ناقص است. سایر بخش‌ها معتبر هستند. جزئیات در تب «سلامت ردیابی».
+            برخی بخش‌ها بارگذاری نشدند و داده‌ها ناقص است. سایر بخش‌ها معتبر هستند. جزئیات در تب
+            «سلامت ردیابی».
           </Banner>
         ) : null}
-        {error ? <Banner tone="red" onRetry={() => loadDashboard({ fresh: true })}>{error}</Banner> : null}
+        {error ? (
+          <Banner tone="red" onRetry={() => loadDashboard({ fresh: true })}>
+            {error}
+          </Banner>
+        ) : null}
 
         {/* Tabs */}
         <div className="flex flex-wrap gap-2 border-b border-neutral-200">
@@ -420,7 +453,9 @@ function TrafficReportInner() {
             {activeTab === "audience" && <AudienceTab dashboard={dashboard} />}
             {activeTab === "engagement" && <EngagementTab dashboard={dashboard} />}
             {activeTab === "ecommerce" && <EcommerceTab dashboard={dashboard} />}
-            {activeTab === "health" && <HealthTab dashboard={dashboard} lastUpdated={lastUpdated} />}
+            {activeTab === "health" && (
+              <HealthTab dashboard={dashboard} lastUpdated={lastUpdated} />
+            )}
           </>
         )}
       </div>
@@ -449,7 +484,11 @@ function OverviewTab({
   active30Delta,
 }: {
   dashboard: TrafficDashboard | null;
-  effectiveRealtime: { activeVisitorsLast5Min: number; activeVisitorsLast30Min: number; topPagesNow: Array<{ url: string; visits: number }> } | null;
+  effectiveRealtime: {
+    activeVisitorsLast5Min: number;
+    activeVisitorsLast30Min: number;
+    topPagesNow: Array<{ url: string; visits: number }>;
+  } | null;
   realtimeLoading: boolean;
   lastUpdated?: string;
   active5Delta: number;
@@ -460,21 +499,69 @@ function OverviewTab({
   return (
     <>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard title="بازدیدها" hint={METRIC_HINTS.visits} value={dashboard?.summary.visits ?? 0} delta={cmp?.visits} tone="blue" />
-        <MetricCard title="کاربران یکتا" hint={METRIC_HINTS.visitors} value={dashboard?.summary.visitors ?? 0} delta={cmp?.visitors} tone="green" />
-        <MetricCard title="نمایش صفحات" hint={METRIC_HINTS.pageviews} value={dashboard?.summary.pageviews ?? 0} delta={cmp?.pageviews} tone="purple" />
-        <MetricCard title="نرخ پرش" hint={METRIC_HINTS.bounceRate} value={dashboard?.summary.bounceRate ?? 0} suffix="%" delta={cmp?.bounceRate} invertDelta tone="orange" />
-        <MetricCard title="میانگین حضور" hint={METRIC_HINTS.avgVisitDuration} value={formatDurationSeconds(dashboard?.summary.avgVisitDuration ?? 0)} delta={cmp?.avgVisitDuration} tone="blue" />
-        <MetricCard title="میانگین اکشن/بازدید" value={dashboard?.summary.avgActionsPerVisit ?? 0} tone="purple" />
-        <MetricCard title="تعداد سفارش موفق" value={dashboard?.ecommerce.orders ?? 0} tone="emerald" />
-        <MetricCard title="نرخ تبدیل" hint={METRIC_HINTS.conversionRate} value={dashboard?.ecommerce.conversionRate ?? 0} suffix="%" tone="orange" />
+        <MetricCard
+          title="بازدیدها"
+          hint={METRIC_HINTS.visits}
+          value={dashboard?.summary.visits ?? 0}
+          delta={cmp?.visits}
+          tone="blue"
+        />
+        <MetricCard
+          title="کاربران یکتا"
+          hint={METRIC_HINTS.visitors}
+          value={dashboard?.summary.visitors ?? 0}
+          delta={cmp?.visitors}
+          tone="green"
+        />
+        <MetricCard
+          title="نمایش صفحات"
+          hint={METRIC_HINTS.pageviews}
+          value={dashboard?.summary.pageviews ?? 0}
+          delta={cmp?.pageviews}
+          tone="purple"
+        />
+        <MetricCard
+          title="نرخ پرش"
+          hint={METRIC_HINTS.bounceRate}
+          value={dashboard?.summary.bounceRate ?? 0}
+          suffix="%"
+          delta={cmp?.bounceRate}
+          invertDelta
+          tone="orange"
+        />
+        <MetricCard
+          title="میانگین حضور"
+          hint={METRIC_HINTS.avgVisitDuration}
+          value={formatDurationSeconds(dashboard?.summary.avgVisitDuration ?? 0)}
+          delta={cmp?.avgVisitDuration}
+          tone="blue"
+        />
+        <MetricCard
+          title="میانگین اکشن/بازدید"
+          value={dashboard?.summary.avgActionsPerVisit ?? 0}
+          tone="purple"
+        />
+        <MetricCard
+          title="تعداد سفارش موفق"
+          value={dashboard?.ecommerce.orders ?? 0}
+          tone="emerald"
+        />
+        <MetricCard
+          title="نرخ تبدیل"
+          hint={METRIC_HINTS.conversionRate}
+          value={dashboard?.ecommerce.conversionRate ?? 0}
+          suffix="%"
+          tone="orange"
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="rounded-2xl bg-white p-5 lg:col-span-2">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-lg font-medium text-neutral-700">روند بازدید و نمایش صفحه</h3>
-            <span className="text-xs text-neutral-500">آخرین بروزرسانی: {formatDateTime(lastUpdated)}</span>
+            <span className="text-xs text-neutral-500">
+              آخرین بروزرسانی: {formatDateTime(lastUpdated)}
+            </span>
           </div>
           {trendSeries.length === 0 ? (
             <EmptyState label="داده‌ای برای نمایش روند وجود ندارد" />
@@ -487,8 +574,20 @@ function OverviewTab({
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="visits" name="بازدید" stroke="#3b82f6" strokeWidth={2} />
-                  <Line type="monotone" dataKey="pageviews" name="نمایش صفحه" stroke="#ec4899" strokeWidth={2} />
+                  <Line
+                    type="monotone"
+                    dataKey="visits"
+                    name="بازدید"
+                    stroke="#3b82f6"
+                    strokeWidth={2}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="pageviews"
+                    name="نمایش صفحه"
+                    stroke="#ec4899"
+                    strokeWidth={2}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -496,18 +595,31 @@ function OverviewTab({
         </div>
 
         <div className="rounded-2xl bg-white p-5">
-          <h3 className="text-lg mb-4 font-medium text-neutral-700">وضعیت لحظه‌ای</h3>
+          <h3 className="mb-4 text-lg font-medium text-neutral-700">وضعیت لحظه‌ای</h3>
           <div className="space-y-3">
-            <RealtimeMetric label="کاربران فعال ۵ دقیقه اخیر" value={effectiveRealtime?.activeVisitorsLast5Min || 0} delta={active5Delta} />
-            <RealtimeMetric label="کاربران فعال ۳۰ دقیقه اخیر" value={effectiveRealtime?.activeVisitorsLast30Min || 0} delta={active30Delta} />
+            <RealtimeMetric
+              label="کاربران فعال ۵ دقیقه اخیر"
+              value={effectiveRealtime?.activeVisitorsLast5Min || 0}
+              delta={active5Delta}
+            />
+            <RealtimeMetric
+              label="کاربران فعال ۳۰ دقیقه اخیر"
+              value={effectiveRealtime?.activeVisitorsLast30Min || 0}
+              delta={active30Delta}
+            />
             <div className="text-xs text-neutral-500">
-              {realtimeLoading ? "در حال بروزرسانی لحظه‌ای..." : `آخرین بروزرسانی: ${formatDateTime(lastUpdated)}`}
+              {realtimeLoading
+                ? "در حال بروزرسانی لحظه‌ای..."
+                : `آخرین بروزرسانی: ${formatDateTime(lastUpdated)}`}
             </div>
           </div>
-          <h4 className="text-sm mt-5 font-medium text-neutral-700">صفحات فعال الان</h4>
+          <h4 className="mt-5 text-sm font-medium text-neutral-700">صفحات فعال الان</h4>
           <div className="mt-3 space-y-2">
             {(effectiveRealtime?.topPagesNow || []).slice(0, 5).map((row, index) => (
-              <div key={row.url} className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-xs">
+              <div
+                key={row.url}
+                className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-xs"
+              >
                 <span className="line-clamp-1">{`${faNum(index + 1)}. ${row.url}`}</span>
                 <span className="font-medium text-neutral-700">{faNum(row.visits)}</span>
               </div>
@@ -573,7 +685,11 @@ function ContentTab({ dashboard }: { dashboard: TrafficDashboard | null }) {
       <DataTable
         title="صفحات ورود (Landing)"
         columns={["صفحه ورود", "ورود", "نرخ پرش"]}
-        rows={(pages?.landing || []).map((r) => [r.url, faNum(r.entries), formatPercent(r.bounceRate)])}
+        rows={(pages?.landing || []).map((r) => [
+          r.url,
+          faNum(r.entries),
+          formatPercent(r.bounceRate),
+        ])}
         csvName="landing-pages"
       />
       <DataTable
@@ -596,11 +712,36 @@ function AudienceTab({ dashboard }: { dashboard: TrafficDashboard | null }) {
         <MetricCard title="بازدید کاربران بازگشتی" value={nv?.returningVisits ?? 0} tone="blue" />
       </div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <DataTable title="کشور" columns={["کشور", "بازدید"]} rows={(aud?.countries || []).map((r) => [r.country, faNum(r.visits)])} csvName="countries" />
-        <DataTable title="نوع دستگاه" columns={["دستگاه", "بازدید"]} rows={(aud?.devices || []).map((r) => [r.device, faNum(r.visits)])} csvName="devices" />
-        <DataTable title="مرورگر" columns={["مرورگر", "بازدید"]} rows={(aud?.browsers || []).map((r) => [r.label, faNum(r.visits)])} csvName="browsers" />
-        <DataTable title="سیستم‌عامل" columns={["سیستم‌عامل", "بازدید"]} rows={(aud?.operatingSystems || []).map((r) => [r.label, faNum(r.visits)])} csvName="os" />
-        <DataTable title="زبان" columns={["زبان", "بازدید"]} rows={(aud?.languages || []).map((r) => [r.label, faNum(r.visits)])} csvName="languages" />
+        <DataTable
+          title="کشور"
+          columns={["کشور", "بازدید"]}
+          rows={(aud?.countries || []).map((r) => [r.country, faNum(r.visits)])}
+          csvName="countries"
+        />
+        <DataTable
+          title="نوع دستگاه"
+          columns={["دستگاه", "بازدید"]}
+          rows={(aud?.devices || []).map((r) => [r.device, faNum(r.visits)])}
+          csvName="devices"
+        />
+        <DataTable
+          title="مرورگر"
+          columns={["مرورگر", "بازدید"]}
+          rows={(aud?.browsers || []).map((r) => [r.label, faNum(r.visits)])}
+          csvName="browsers"
+        />
+        <DataTable
+          title="سیستم‌عامل"
+          columns={["سیستم‌عامل", "بازدید"]}
+          rows={(aud?.operatingSystems || []).map((r) => [r.label, faNum(r.visits)])}
+          csvName="os"
+        />
+        <DataTable
+          title="زبان"
+          columns={["زبان", "بازدید"]}
+          rows={(aud?.languages || []).map((r) => [r.label, faNum(r.visits)])}
+          csvName="languages"
+        />
       </div>
     </div>
   );
@@ -631,7 +772,7 @@ function EngagementTab({ dashboard }: { dashboard: TrafficDashboard | null }) {
           </>
         ) : (
           <div className="xl:col-span-2">
-            <OptionalFeature label="گزارش جستجوی داخل سایت در این نصب Matomo فعال نیست." />
+            <OptionalFeature label="گزارش جستجوی داخل سایت در این نصب Umami فعال نیست." />
           </div>
         )}
       </div>
@@ -656,17 +797,22 @@ function EcommerceTab({ dashboard }: { dashboard: TrafficDashboard | null }) {
   );
   return (
     <div className="space-y-4">
-      <p className="text-xs rounded-lg bg-blue-50 px-3 py-2 text-blue-700">
-        ارقام فروش و درآمد از داده تراکنشی Strapi است (منبع قطعی)، نه تخمین رفتاری Matomo.
+      <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+        ارقام فروش و درآمد از داده تراکنشی Strapi است (منبع قطعی)، نه تخمین رفتاری Umami.
       </p>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="سفارش موفق" value={ec?.orders ?? 0} tone="emerald" />
         <MetricCard title="کل سفارش‌ها" value={ec?.totalOrders ?? 0} tone="blue" />
-        <MetricCard title="درآمد (تومان)" hint={METRIC_HINTS.revenue} value={ec?.revenue ?? 0} tone="brand" />
+        <MetricCard
+          title="درآمد (تومان)"
+          hint={METRIC_HINTS.revenue}
+          value={ec?.revenue ?? 0}
+          tone="brand"
+        />
         <MetricCard title="میانگین ارزش سفارش (تومان)" value={aov} tone="purple" />
       </div>
       <div className="rounded-2xl bg-white p-5">
-        <h3 className="text-lg mb-3 font-medium text-neutral-700">فانل تبدیل خرید (رفتاری)</h3>
+        <h3 className="mb-3 text-lg font-medium text-neutral-700">فانل تبدیل خرید (رفتاری)</h3>
         {funnelData.length === 0 ? (
           <EmptyState label="داده‌ای برای فانل وجود ندارد" />
         ) : (
@@ -684,11 +830,16 @@ function EcommerceTab({ dashboard }: { dashboard: TrafficDashboard | null }) {
             </div>
             <div className="space-y-2">
               {funnelData.map((row) => (
-                <div key={row.step} className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-sm">
+                <div
+                  key={row.step}
+                  className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-sm"
+                >
                   <span>{formatFunnelStep(row.step)}</span>
                   <span className="font-medium text-neutral-700">
                     {faNum(row.count)}
-                    {row.conversionFromPrevious !== null ? ` (${formatPercent(row.conversionFromPrevious)})` : ""}
+                    {row.conversionFromPrevious !== null
+                      ? ` (${formatPercent(row.conversionFromPrevious)})`
+                      : ""}
                   </span>
                 </div>
               ))}
@@ -700,7 +851,13 @@ function EcommerceTab({ dashboard }: { dashboard: TrafficDashboard | null }) {
   );
 }
 
-function HealthTab({ dashboard, lastUpdated }: { dashboard: TrafficDashboard | null; lastUpdated?: string }) {
+function HealthTab({
+  dashboard,
+  lastUpdated,
+}: {
+  dashboard: TrafficDashboard | null;
+  lastUpdated?: string;
+}) {
   const tracking = dashboard?.tracking;
   const sectionErrors = tracking?.sectionErrors || {};
   const errorKeys = Object.keys(sectionErrors);
@@ -708,11 +865,15 @@ function HealthTab({ dashboard, lastUpdated }: { dashboard: TrafficDashboard | n
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatusCard
-          label="اتصال Matomo"
+          label="اتصال Umami"
           value={tracking?.configured ? "برقرار" : "پیکربندی نشده"}
           tone={tracking?.configured ? "green" : "amber"}
         />
-        <StatusCard label="نسخه Matomo" value={tracking?.version ? toFaDigits(tracking.version) : "نامشخص"} tone="neutral" />
+        <StatusCard
+          label="نسخه Umami"
+          value={tracking?.version ? toFaDigits(tracking.version) : "نامشخص"}
+          tone="neutral"
+        />
         <StatusCard
           label="سلامت داده"
           value={tracking?.partial ? "ناقص" : "کامل"}
@@ -722,15 +883,15 @@ function HealthTab({ dashboard, lastUpdated }: { dashboard: TrafficDashboard | n
       </div>
 
       <div className="rounded-2xl bg-white p-5">
-        <h3 className="text-lg mb-3 font-medium text-neutral-700">قابلیت‌های در دسترس</h3>
+        <h3 className="mb-3 text-lg font-medium text-neutral-700">قابلیت‌های در دسترس</h3>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
           <CapabilityRow label="جستجوی داخل سایت" ok={tracking?.capabilities.siteSearch} />
           <CapabilityRow label="رویدادها (Events)" ok={tracking?.capabilities.events} />
           <CapabilityRow label="کاربر جدید/بازگشتی" ok={tracking?.capabilities.visitFrequency} />
         </div>
-        <p className="text-xs mt-3 text-neutral-500">
-          قابلیت‌هایی مانند فانل پیشرفته، A/B تست و آنالیز فرم نیازمند افزونه‌های اختیاری/تجاری Matomo هستند و در صورت
-          نبود، بدون خطا پنهان می‌شوند.
+        <p className="mt-3 text-xs text-neutral-500">
+          قابلیت‌هایی مانند فانل پیشرفته، A/B تست و آنالیز فرم نیازمند قابلیت‌های اختیاری Umami
+          هستند و در صورت نبود، بدون خطا پنهان می‌شوند.
         </p>
       </div>
 
@@ -771,11 +932,12 @@ function MetricCard({
     purple: "from-purple-50 to-indigo-50 text-purple-700",
     orange: "from-orange-50 to-amber-50 text-orange-700",
     emerald: "from-emerald-50 to-teal-50 text-emerald-700",
-    brand: "from-infinity-primary-lighter/20 to-infinity-primary-lighter/30 text-infinity-primary-dark",
+    brand:
+      "from-infinity-primary-lighter/20 to-infinity-primary-lighter/30 text-infinity-primary-dark",
   };
   return (
     <div className={`rounded-2xl bg-gradient-to-r p-5 ${toneClass[tone]}`}>
-      <p className="text-sm mb-2 flex items-center gap-1 font-medium text-neutral-700">
+      <p className="mb-2 flex items-center gap-1 text-sm font-medium text-neutral-700">
         {title}
         {hint ? (
           <span className="cursor-help text-neutral-400" title={hint} aria-label={hint}>
@@ -795,7 +957,10 @@ function MetricCard({
 function DeltaBadge({ delta, invert }: { delta: MetricDelta; invert?: boolean }) {
   if (delta.changePct === null) {
     return (
-      <p className="text-xs mt-1 text-neutral-500" title="دوره قبل مقداری نداشت؛ درصد تغییر تعریف‌نشده است">
+      <p
+        className="mt-1 text-xs text-neutral-500"
+        title="دوره قبل مقداری نداشت؛ درصد تغییر تعریف‌نشده است"
+      >
         — بدون مبنای مقایسه
       </p>
     );
@@ -803,25 +968,49 @@ function DeltaBadge({ delta, invert }: { delta: MetricDelta; invert?: boolean })
   const positive = delta.change > 0;
   const isGood = invert ? !positive && delta.change !== 0 : positive;
   const isBad = invert ? positive : !positive && delta.change !== 0;
-  const cls = delta.change === 0 ? "text-neutral-500" : isGood ? "text-emerald-600" : isBad ? "text-red-600" : "text-neutral-500";
+  const cls =
+    delta.change === 0
+      ? "text-neutral-500"
+      : isGood
+        ? "text-emerald-600"
+        : isBad
+          ? "text-red-600"
+          : "text-neutral-500";
   const arrow = delta.change === 0 ? "" : positive ? "▲" : "▼";
   return (
-    <p className={`text-xs mt-1 font-medium ${cls}`} title="نسبت به دوره قبلی هم‌طول">
-      {arrow} {faNum(Math.abs(delta.changePct).toFixed(1))}% ({positive ? "+" : delta.change < 0 ? "-" : ""}
+    <p className={`mt-1 text-xs font-medium ${cls}`} title="نسبت به دوره قبلی هم‌طول">
+      {arrow} {faNum(Math.abs(delta.changePct).toFixed(1))}% (
+      {positive ? "+" : delta.change < 0 ? "-" : ""}
       {faNum(Math.abs(delta.change))})
     </p>
   );
 }
 
-function RealtimeMetric({ label, value, delta = 0 }: { label: string; value: number; delta?: number }) {
+function RealtimeMetric({
+  label,
+  value,
+  delta = 0,
+}: {
+  label: string;
+  value: number;
+  delta?: number;
+}) {
   const deltaText = delta === 0 ? null : (delta > 0 ? "+" : "-") + faNum(Math.abs(delta));
   const deltaClassName =
-    delta > 0 ? "bg-emerald-100 text-emerald-700" : delta < 0 ? "bg-red-100 text-red-700" : "bg-neutral-100 text-neutral-600";
+    delta > 0
+      ? "bg-emerald-100 text-emerald-700"
+      : delta < 0
+        ? "bg-red-100 text-red-700"
+        : "bg-neutral-100 text-neutral-600";
   return (
     <div className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2">
       <span className="text-sm text-neutral-600">{label}</span>
       <div className="flex items-center gap-2">
-        {deltaText ? <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${deltaClassName}`}>{deltaText}</span> : null}
+        {deltaText ? (
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${deltaClassName}`}>
+            {deltaText}
+          </span>
+        ) : null}
         <span className="text-lg font-semibold text-infinity-primary">{faNum(value)}</span>
       </div>
     </div>
@@ -849,7 +1038,7 @@ function DataTable({
           <button
             type="button"
             onClick={() => downloadTableExcel(csvName, title, columns, rows)}
-            className="text-xs rounded-lg border border-neutral-200 px-2 py-1 text-neutral-500 transition hover:bg-neutral-50"
+            className="rounded-lg border border-neutral-200 px-2 py-1 text-xs text-neutral-500 transition hover:bg-neutral-50"
           >
             خروجی اکسل
           </button>
@@ -873,7 +1062,10 @@ function DataTable({
               {rows.slice(0, 10).map((row, index) => (
                 <tr key={`${title}-${index}`} className="border-b border-neutral-100">
                   {row.map((value, valueIndex) => (
-                    <td key={`${title}-${index}-${valueIndex}`} className="px-2 py-2 text-neutral-700">
+                    <td
+                      key={`${title}-${index}-${valueIndex}`}
+                      className="px-2 py-2 text-neutral-700"
+                    >
                       {value}
                     </td>
                   ))}
@@ -887,7 +1079,15 @@ function DataTable({
   );
 }
 
-function StatusCard({ label, value, tone }: { label: string; value: string; tone: "green" | "amber" | "neutral" }) {
+function StatusCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "green" | "amber" | "neutral";
+}) {
   const toneClass: Record<string, string> = {
     green: "bg-emerald-50 text-emerald-700",
     amber: "bg-amber-50 text-amber-700",
@@ -895,7 +1095,7 @@ function StatusCard({ label, value, tone }: { label: string; value: string; tone
   };
   return (
     <div className={`rounded-2xl p-5 ${toneClass[tone]}`}>
-      <p className="text-sm mb-2 font-medium text-neutral-600">{label}</p>
+      <p className="mb-2 text-sm font-medium text-neutral-600">{label}</p>
       <p className="text-lg font-bold">{value}</p>
     </div>
   );
@@ -905,7 +1105,9 @@ function CapabilityRow({ label, ok }: { label: string; ok?: boolean }) {
   return (
     <div className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-sm">
       <span className="text-neutral-600">{label}</span>
-      <span className={ok ? "text-emerald-600" : "text-neutral-400"}>{ok ? "فعال ✓" : "در دسترس نیست"}</span>
+      <span className={ok ? "text-emerald-600" : "text-neutral-400"}>
+        {ok ? "فعال ✓" : "در دسترس نیست"}
+      </span>
     </div>
   );
 }
@@ -927,12 +1129,19 @@ function Banner({
   children: React.ReactNode;
   onRetry?: () => void;
 }) {
-  const cls = tone === "red" ? "border-red-100 bg-red-50 text-red-600" : "border-amber-200 bg-amber-50 text-amber-700";
+  const cls =
+    tone === "red"
+      ? "border-red-100 bg-red-50 text-red-600"
+      : "border-amber-200 bg-amber-50 text-amber-700";
   return (
     <div className={`flex items-center justify-between gap-3 rounded-2xl border p-4 ${cls}`}>
       <span>{children}</span>
       {onRetry ? (
-        <button type="button" onClick={onRetry} className="text-sm shrink-0 rounded-lg bg-white/70 px-3 py-1 font-medium">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="shrink-0 rounded-lg bg-white/70 px-3 py-1 text-sm font-medium"
+        >
           تلاش مجدد
         </button>
       ) : null}
@@ -941,7 +1150,7 @@ function Banner({
 }
 
 function EmptyState({ label }: { label: string }) {
-  return <p className="text-sm py-6 text-center text-neutral-500">{label}</p>;
+  return <p className="py-6 text-center text-sm text-neutral-500">{label}</p>;
 }
 
 function DashboardSkeleton() {

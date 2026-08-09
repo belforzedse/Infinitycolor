@@ -25,7 +25,7 @@ import WalletService from "@/services/wallet";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
-import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
+import { getAnalyticsCorrelationId, trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateErrorMessage } from "@/lib/errorTranslations";
 
@@ -100,7 +100,8 @@ const getOrCreateCheckoutAttemptId = (quoteHash: string) => {
   const existingQuote = window.localStorage.getItem("pendingCheckoutQuoteHash");
   if (existingAttempt && existingQuote === quoteHash) return existingAttempt;
 
-  const attemptId = globalThis.crypto?.randomUUID?.() ||
+  const attemptId =
+    globalThis.crypto?.randomUUID?.() ||
     `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   window.localStorage.setItem("pendingCheckoutAttemptId", attemptId);
   window.localStorage.setItem("pendingCheckoutQuoteHash", quoteHash);
@@ -130,8 +131,7 @@ function ShoppingCartBillForm({}: Props) {
   const [hasRedirected, setHasRedirected] = useState(false);
   const [hasAccessToken, setHasAccessToken] = useState(false);
   const [isAuthTokenReady, setIsAuthTokenReady] = useState(false);
-  const canLoadProtectedCheckoutData =
-    isAuthTokenReady && Boolean(currentUser || hasAccessToken);
+  const canLoadProtectedCheckoutData = isAuthTokenReady && Boolean(currentUser || hasAccessToken);
 
   // Check authentication on mount - redirect to login if not authenticated.
   // Wait for global auth loading to finish so we don't redirect while user is still being fetched
@@ -148,16 +148,19 @@ function ShoppingCartBillForm({}: Props) {
     }
 
     let cancelled = false;
-    centralAuth.tokenManager.getToken().then((token) => {
-      if (cancelled) return;
-      setHasAccessToken(Boolean(token));
-      setIsAuthTokenReady(true);
-      if (userLoading || currentUser || hasRedirected || token) return;
-      setHasRedirected(true);
-      window.location.href = centralLoginUrl("/checkout");
-    }).catch(() => {
-      if (!cancelled) setIsAuthTokenReady(true);
-    });
+    centralAuth.tokenManager
+      .getToken()
+      .then((token) => {
+        if (cancelled) return;
+        setHasAccessToken(Boolean(token));
+        setIsAuthTokenReady(true);
+        if (userLoading || currentUser || hasRedirected || token) return;
+        setHasRedirected(true);
+        window.location.href = centralLoginUrl("/checkout");
+      })
+      .catch(() => {
+        if (!cancelled) setIsAuthTokenReady(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -482,10 +485,10 @@ function ShoppingCartBillForm({}: Props) {
   };
 
   const trackCheckoutError = (errorCode?: string) => {
-    trackMatomoEvent({
+    void errorCode;
+    trackAnalyticsEvent({
       category: "checkout",
       action: "error",
-      name: (errorCode || "UNKNOWN_ERROR").slice(0, 64),
     });
   };
 
@@ -572,11 +575,11 @@ function ShoppingCartBillForm({}: Props) {
     try {
       submitInProgressRef.current = true;
       setIsSubmitting(true);
-      trackMatomoEvent({
+      trackAnalyticsEvent({
         category: "checkout",
         action: "place_order_attempt",
-        name: gateway,
-        value: totalPrice,
+        valueToman: totalToman,
+        properties: { gateway, quantity: totalItems },
       });
 
       if (!skipStockCheck) {
@@ -646,7 +649,8 @@ function ShoppingCartBillForm({}: Props) {
       const shopperVisibleTotal = isMergeMode
         ? Math.max(0, Math.round(totalPrice - discountToman))
         : totalToman;
-      const quoteWasReviewed = reviewedServerQuote?.quoteHash === quote.quoteHash &&
+      const quoteWasReviewed =
+        reviewedServerQuote?.quoteHash === quote.quoteHash &&
         reviewedServerQuote.total === quoteTotal;
 
       if (quoteTotal !== shopperVisibleTotal && !quoteWasReviewed) {
@@ -663,6 +667,9 @@ function ShoppingCartBillForm({}: Props) {
         gateway,
         attemptId: checkoutAttemptId,
         quoteHash: quote.quoteHash,
+        // Keep anonymous attribution ephemeral in the browser, but carry the
+        // active opaque analytics identity into authoritative order creation.
+        analyticsCorrelationId: getAnalyticsCorrelationId(),
       } as any);
 
       if (!cartResponse.success) {
@@ -680,7 +687,8 @@ function ShoppingCartBillForm({}: Props) {
           trackCheckoutError(String(errorCode));
           switch (errorCode) {
             case "PAYMENT_IN_PROGRESS":
-              displayError = "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
+              displayError =
+                "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
               break;
             case "PAYMENT_UNKNOWN":
               displayError =
@@ -764,11 +772,11 @@ function ShoppingCartBillForm({}: Props) {
       setOrderNumber(cartResponse.orderId.toString());
 
       if (cartResponse.redirectUrl && cartResponse.redirectUrl.trim() !== "") {
-        trackMatomoEvent({
+        trackAnalyticsEvent({
           category: "checkout",
           action: "payment_redirect",
-          name: gateway,
-          value: totalPrice,
+          valueToman: totalToman,
+          properties: { gateway },
         });
         toast.success("در حال انتقال به درگاه پرداخت...");
         localStorage.setItem("pendingOrderId", cartResponse.orderId.toString());
@@ -798,11 +806,11 @@ function ShoppingCartBillForm({}: Props) {
           // These gateways use GET redirect with token/authority in URL
           window.location.href = cartResponse.redirectUrl!;
         } else if (gateway === "wallet") {
-          trackMatomoEvent({
+          trackAnalyticsEvent({
             category: "checkout",
             action: "payment_completed",
-            name: "wallet",
-            value: totalPrice,
+            valueToman: totalToman,
+            properties: { gateway: "wallet" },
           });
           // Wallet flow returns no redirect; just move to success
           await clearCartSafely();
@@ -812,11 +820,11 @@ function ShoppingCartBillForm({}: Props) {
           router.push("/orders/success");
         }
       } else {
-        trackMatomoEvent({
+        trackAnalyticsEvent({
           category: "checkout",
           action: "payment_completed",
-          name: "direct",
-          value: totalPrice,
+          valueToman: totalToman,
+          properties: { gateway: "direct" },
         });
         await clearCartSafely();
         if (gateway !== "snappay") {
@@ -835,8 +843,7 @@ function ShoppingCartBillForm({}: Props) {
 
       // The shared fetch client exposes Strapi product details on `data`;
       // retain the Axios fallback for older callers during migration.
-      const responseData =
-        err?.data || err?.details?.data || err?.response?.data || null;
+      const responseData = err?.data || err?.details?.data || err?.response?.data || null;
       if (responseData) {
         const errorCode = err?.errorCode || responseData.errorCode;
         const errorMessage = responseData.message || err?.message;
@@ -852,20 +859,23 @@ function ShoppingCartBillForm({}: Props) {
                   total: nextTotal,
                 });
               }
-              displayError = nextTotal > 0
-                ? `مبلغ نهایی به ${nextTotal.toLocaleString("fa-IR")} تومان تغییر کرده است. لطفاً دوباره تلاش کنید.`
-                : "قیمت یا موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.";
+              displayError =
+                nextTotal > 0
+                  ? `مبلغ نهایی به ${nextTotal.toLocaleString("fa-IR")} تومان تغییر کرده است. لطفاً دوباره تلاش کنید.`
+                  : "قیمت یا موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.";
               window.localStorage.removeItem("pendingCheckoutAttemptId");
               window.localStorage.removeItem("pendingCheckoutQuoteHash");
               break;
             }
             case "CHECKOUT_ATTEMPT_CONFLICT":
-              displayError = "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.";
+              displayError =
+                "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.";
               window.localStorage.removeItem("pendingCheckoutAttemptId");
               window.localStorage.removeItem("pendingCheckoutQuoteHash");
               break;
             case "PAYMENT_IN_PROGRESS":
-              displayError = "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
+              displayError =
+                "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
               break;
             case "PAYMENT_INITIATION_FAILED":
             case "WALLET_DEBIT_FAILED":
@@ -943,28 +953,28 @@ function ShoppingCartBillForm({}: Props) {
   useEffect(() => {
     if (!currentUser || totalItems <= 0 || totalPrice <= 0) return;
     trackFunnelStep("begin_checkout", {
-      value: totalPrice,
+      valueToman: totalToman,
+      properties: { quantity: totalItems },
       onceKey: `begin-checkout:${Math.round(totalPrice)}:${totalItems}`,
     });
-  }, [currentUser, totalItems, totalPrice]);
+  }, [currentUser, totalItems, totalPrice, totalToman]);
 
   useEffect(() => {
     if (!shippingId) return;
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "checkout",
       action: "add_shipping_info",
-      name: String(shippingId),
-      value: shippingCost || 0,
+      valueToman: shippingCost || 0,
       onceKey: `shipping-info:${shippingId}:${addressId || "new"}`,
     });
   }, [shippingId, shippingCost, addressId]);
 
   useEffect(() => {
     if (!gateway) return;
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "checkout",
       action: "add_payment_info",
-      name: gateway,
+      properties: { gateway },
       onceKey: `payment-info:${gateway}:${shippingId || "none"}`,
     });
   }, [gateway, shippingId]);

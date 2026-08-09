@@ -80,8 +80,63 @@ export function isLegacyAdminPath(pathname: string) {
 export function getAdminCutoverRedirectUrl(sourceUrl: LegacyRedirectSourceUrl) {
   if (!isLegacyAdminPath(sourceUrl.pathname)) return null;
   const suffix = sourceUrl.pathname.slice("/super-admin".length);
-  const target = new URL(suffix || "/", fixedAdminCutoverOrigin());
-  target.search = sourceUrl.search;
+  const reportDestinations = new Map<string, string>([
+    ["/reports", "/sales"],
+    ["/reports/traffic", "/sales/traffic"],
+    ["/reports/funnel", "/sales/traffic"],
+    ["/reports/product-sales", "/sales/products"],
+    ["/reports/geography", "/sales/breakdown"],
+    ["/reports/liquidity", "/sales/liquidity"],
+    ["/reports/gateway-liquidity", "/sales/liquidity"],
+    ["/reports/admin-activity", "/settings/activity"],
+  ]);
+  const normalizedSuffix = stripTrailingSlash(suffix || "/");
+  const activityDetail = normalizedSuffix.match(/^\/reports\/admin-activity\/(.+)$/);
+  const destination = activityDetail
+    ? `/settings/activity/${activityDetail[1]}`
+    : reportDestinations.get(normalizedSuffix) || suffix || "/";
+  const params = new URLSearchParams(sourceUrl.searchParams);
+  if (normalizedSuffix === "/reports/traffic" || normalizedSuffix === "/reports/funnel") {
+    if (params.has("from") && !params.has("start")) params.set("start", params.get("from") || "");
+    if (params.has("to") && !params.has("end")) params.set("end", params.get("to") || "");
+    params.delete("from");
+    params.delete("to");
+    for (const [legacy, current] of [
+      ["utm_source", "utmSource"],
+      ["utm_medium", "utmMedium"],
+      ["utm_campaign", "utmCampaign"],
+      ["utm_content", "utmContent"],
+      ["utm_term", "utmTerm"],
+    ] as const) {
+      if (params.has(legacy) && !params.has(current)) {
+        params.set(current, params.get(legacy) || "");
+      }
+      params.delete(legacy);
+    }
+    const legacyView = params.get("tab");
+    const viewMap = new Map([
+      ["overview", "overview"],
+      ["acquisition", "acquisition"],
+      ["content", "content"],
+      ["audience", "audience"],
+      ["engagement", "content"],
+      ["ecommerce", "conversion"],
+      ["health", "overview"],
+    ]);
+    params.set(
+      "view",
+      normalizedSuffix === "/reports/funnel"
+        ? "conversion"
+        : viewMap.get(legacyView || "") || "overview",
+    );
+    params.delete("tab");
+  } else if (normalizedSuffix === "/reports/geography") {
+    params.set("tab", "geography");
+  } else if (normalizedSuffix === "/reports/gateway-liquidity") {
+    params.set("section", "gateways");
+  }
+  const target = new URL(destination, fixedAdminCutoverOrigin());
+  target.search = params.toString();
   return target;
 }
 

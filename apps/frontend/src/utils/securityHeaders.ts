@@ -1,14 +1,11 @@
-import {
-  getTrustedApiSourceOrigins,
-  getTrustedImageSourceOrigins,
-} from "./imageSecurity";
+import { getTrustedApiSourceOrigins, getTrustedImageSourceOrigins } from "./imageSecurity";
 
 type SecurityHeader = {
   key: string;
   value: string;
 };
 
-const DEFAULT_MATOMO_URL = "https://matomo.alpagency.net";
+const DEFAULT_UMAMI_URL = "https://analytics.alpagency.net";
 
 function unique(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
@@ -29,8 +26,8 @@ function originFromSentryDsn(raw?: string | null): string | null {
   return originFromUrl(raw);
 }
 
-function getMatomoOrigin(): string {
-  return originFromUrl(process.env.NEXT_PUBLIC_MATOMO_URL) || DEFAULT_MATOMO_URL;
+function getUmamiOrigin(): string {
+  return originFromUrl(process.env.NEXT_PUBLIC_UMAMI_URL) || DEFAULT_UMAMI_URL;
 }
 
 function getSentryOrigin(): string | null {
@@ -47,17 +44,17 @@ export function getContentSecurityPolicyReportOnly(): string {
     "data:",
     "blob:",
     ...getTrustedImageSourceOrigins(),
-    getMatomoOrigin(),
+    getUmamiOrigin(),
   ]);
   const connectSources = unique([
     "'self'",
     ...getTrustedApiSourceOrigins(),
-    getMatomoOrigin(),
+    getUmamiOrigin(),
     getSentryOrigin(),
     getCentralAuthOrigin(),
   ]);
 
-  // Non-self sources are intentionally limited to Strapi/API media, Matomo,
+  // Non-self sources are intentionally limited to Strapi/API media, Umami,
   // Sentry transport, and the configured payment gateway form/redirect hosts.
   return [
     "default-src 'self'",
@@ -71,7 +68,7 @@ export function getContentSecurityPolicyReportOnly(): string {
       "https://sandbox.zarinpal.com",
       "https://bpm.shaparak.ir",
     ].join(" "),
-    ["script-src", "'self'", "'unsafe-inline'", "'unsafe-eval'", getMatomoOrigin()].join(" "),
+    ["script-src", "'self'", "'unsafe-inline'", "'unsafe-eval'", getUmamiOrigin()].join(" "),
     "style-src 'self' 'unsafe-inline'",
     ["img-src", ...imageSources].join(" "),
     "font-src 'self' data:",

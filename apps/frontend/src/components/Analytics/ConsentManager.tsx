@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  ANALYTICS_CONSENT_STORAGE_KEY,
-  setAnalyticsConsent,
-} from "@/lib/analytics/matomo";
+import { ANALYTICS_CONSENT_STORAGE_KEY, setAnalyticsConsent } from "@/lib/analytics";
 
 export function ConsentManager() {
   const [showBanner, setShowBanner] = useState(false);
@@ -37,30 +34,31 @@ export function ConsentManager() {
       className="fixed inset-x-0 bottom-0 z-[9999] border-t border-slate-200 bg-white shadow-lg"
       dir="rtl"
       role="dialog"
-      aria-label="Cookie consent banner"
+      aria-label="تنظیمات تحلیل تجربه کاربری"
       aria-modal="true"
     >
       <div className="container mx-auto px-4 py-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex-1">
-            <h3 className="text-sm mb-2 font-semibold text-slate-900">استفاده از کوکی‌ها</h3>
+            <h3 className="mb-2 text-sm font-semibold text-slate-900">تحلیل تجربه خرید</h3>
             <p className="text-sm leading-relaxed text-slate-600">
-              ما از کوکی‌ها برای تحلیل رفتار کاربران و بهبود تجربه خرید استفاده می‌کنیم. با پذیرش
-              کوکی‌ها، تحلیل دقیق‌تری از مسیر خرید شما خواهیم داشت.
+              تحلیل پایه بدون کوکی انجام می‌شود. رد کردن، فقط جزئیات تکمیلی و سنجش عملکرد را غیرفعال
+              می‌کند؛ بازدیدها، رویدادهای اصلی و شناسه داخلی حساب واردشده همچنان برای بهبود فروشگاه
+              ثبت می‌شوند.
             </p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-shrink-0">
+          <div className="flex flex-col gap-2 sm:flex-shrink-0 sm:flex-row">
             <button
               onClick={denyConsent}
-              className="px-6 py-2.5 text-sm rounded-lg border border-slate-300 bg-white font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
-              aria-label="رد کوکی‌ها"
+              className="rounded-lg border border-slate-300 bg-white px-6 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
+              aria-label="رد تحلیل تکمیلی"
             >
               رد
             </button>
             <button
               onClick={grantConsent}
-              className="px-6 py-2.5 text-sm rounded-lg bg-infinity-primary font-medium text-white transition-colors hover:bg-infinity-primary-dark focus:outline-none focus:ring-2 focus:ring-infinity-primary focus:ring-offset-2"
-              aria-label="پذیرش کوکی‌ها"
+              className="rounded-lg bg-infinity-primary px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-infinity-primary-dark focus:outline-none focus:ring-2 focus:ring-infinity-primary focus:ring-offset-2"
+              aria-label="پذیرش تحلیل تکمیلی"
             >
               پذیرش
             </button>

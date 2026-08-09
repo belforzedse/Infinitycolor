@@ -6,7 +6,7 @@ import useProductLike from "@/hooks/useProductLike";
 import { getLazySecondaryMediaByProductId } from "@/services/product/product";
 import { computeSaleDiscountPercent } from "@/utils/discounts";
 import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 // Components
 import ImageSlider from "./ImageSlider";
@@ -186,11 +186,14 @@ const ProductCard: FC<ProductCardProps> = ({
   }, [maybeLoadSecondaryMedia]);
 
   const handleProductLinkClick = useCallback(() => {
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "ecommerce",
       action: "select_item",
-      name:
-        listPosition !== undefined ? `${id}:${title}:pos=${listPosition}` : `${id}:${title}`,
+      properties: {
+        product_id: id,
+        ...(listPosition !== undefined ? { position: listPosition } : {}),
+        placement: "product_list",
+      },
     });
 
     if (typeof window === "undefined") return;
@@ -202,7 +205,7 @@ const ProductCard: FC<ProductCardProps> = ({
     } catch {
       window.scrollTo(0, 0);
     }
-  }, [id, title, listPosition]);
+  }, [id, listPosition]);
 
   return (
     <>

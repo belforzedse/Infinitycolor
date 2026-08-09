@@ -13,7 +13,7 @@ import { hasStockForVariation, getAvailableStockCount } from "@/services/product
 import toast from "react-hot-toast";
 import logger from "@/utils/logger";
 import { scrollIntoViewWithOffset } from "@/utils/scroll";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 type ShareModalComponent = (typeof import("@/components/Product/ShareModal"))["default"];
 
@@ -187,20 +187,23 @@ export default function PDPHeroInfoAction({
     }
 
     // Call the original add to cart function
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "engagement",
       action: "click_add_to_cart",
-      name: `${productId}:${variationId || "no-variation"}`,
-      value: requestedQuantity,
+      properties: {
+        product_id: productId,
+        ...(variationId ? { variant_id: variationId } : {}),
+        quantity: requestedQuantity,
+      },
     });
     addToCart(requestedQuantity);
   };
 
   const handleShare = () => {
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "engagement",
       action: "share_product",
-      name: `${productId}:${name}`,
+      properties: { product_id: productId },
     });
     setIsShareOpen(true);
     void loadShareModule()
@@ -214,10 +217,10 @@ export default function PDPHeroInfoAction({
    * Uses data attribute if available, falls back to class selector
    */
   const handleScrollToComments = () => {
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "engagement",
       action: "open_comments",
-      name: `${productId}:${name}`,
+      properties: { product_id: productId },
       onceKey: `open-comments:${productId}`,
     });
     const commentsSection = document.querySelector<HTMLElement>("[data-comments-section]");
@@ -262,10 +265,10 @@ export default function PDPHeroInfoAction({
   const handleToggleLike = async (e: React.MouseEvent<HTMLButtonElement>) => {
     try {
       await toggleLike(e);
-      trackMatomoEvent({
+      trackAnalyticsEvent({
         category: "engagement",
         action: isLiked ? "remove_from_wishlist" : "add_to_wishlist",
-        name: `${productId}:${name}`,
+        properties: { product_id: productId },
       });
     } catch (err) {
       logger.error("Failed to toggle like", { productId, name, error: err });

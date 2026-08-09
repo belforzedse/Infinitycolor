@@ -1,7 +1,7 @@
 import React from "react";
 import { render, waitFor, screen } from "@testing-library/react";
 import { useCart } from "@/contexts/CartContext";
-import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 const mockPush = jest.fn();
 const mockClearCart = jest.fn();
@@ -33,9 +33,8 @@ jest.mock("@/contexts/CartContext", () => ({
   useCart: jest.fn(),
 }));
 
-jest.mock("@/lib/analytics/matomo", () => ({
-  trackFunnelStep: jest.fn(),
-  trackMatomoEvent: jest.fn(),
+jest.mock("@/lib/analytics", () => ({
+  trackAnalyticsEvent: jest.fn(),
 }));
 
 import { OrderService } from "@/services";
@@ -44,8 +43,7 @@ import PaymentCallback from "./page";
 const verifyPaymentMock = OrderService.verifyPayment as jest.Mock;
 const paymentStatusMock = OrderService.getOrderPaymentStatus as jest.Mock;
 const useCartMock = useCart as jest.Mock;
-const trackFunnelStepMock = trackFunnelStep as jest.Mock;
-const trackMatomoEventMock = trackMatomoEvent as jest.Mock;
+const trackAnalyticsEventMock = trackAnalyticsEvent as jest.Mock;
 
 describe("PaymentCallback page", () => {
   beforeEach(() => {
@@ -55,8 +53,7 @@ describe("PaymentCallback page", () => {
     mockClearCart.mockResolvedValue(undefined);
     useCartMock.mockReset();
     useCartMock.mockReturnValue({ clearCart: mockClearCart });
-    trackFunnelStepMock.mockReset();
-    trackMatomoEventMock.mockReset();
+    trackAnalyticsEventMock.mockReset();
     verifyPaymentMock.mockReset();
     paymentStatusMock.mockReset();
     localStorage.clear();
@@ -86,15 +83,12 @@ describe("PaymentCallback page", () => {
 
     expect(paymentStatusMock).toHaveBeenCalledWith(1);
     expect(mockClearCart).toHaveBeenCalled();
-    expect(trackFunnelStepMock).toHaveBeenCalledWith("purchase", {
-      label: "1",
-      value: 12500,
-      onceKey: "purchase:1",
-    });
-    expect(trackMatomoEventMock).toHaveBeenCalledWith({
+    expect(trackAnalyticsEventMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "purchase" }),
+    );
+    expect(trackAnalyticsEventMock).toHaveBeenCalledWith({
       category: "checkout",
       action: "payment_callback_success",
-      name: "verified",
       onceKey: "payment-callback-success:1",
     });
     expect(logSpy).not.toHaveBeenCalled();
@@ -124,11 +118,9 @@ describe("PaymentCallback page", () => {
     });
 
     expect(mockClearCart).toHaveBeenCalled();
-    expect(trackFunnelStepMock).toHaveBeenCalledWith("purchase", {
-      label: "2",
-      value: undefined,
-      onceKey: "purchase:2",
-    });
+    expect(trackAnalyticsEventMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "purchase" }),
+    );
   });
 
   it("routes to failure when backend verification returns unsuccessful", async () => {
@@ -149,10 +141,9 @@ describe("PaymentCallback page", () => {
     });
 
     expect(mockClearCart).not.toHaveBeenCalled();
-    expect(trackMatomoEventMock).toHaveBeenCalledWith({
+    expect(trackAnalyticsEventMock).toHaveBeenCalledWith({
       category: "checkout",
       action: "payment_callback_failed",
-      name: "verification_failed",
       onceKey: "payment-callback-failed:3",
     });
   });
@@ -167,11 +158,10 @@ describe("PaymentCallback page", () => {
     });
 
     expect(verifyPaymentMock).not.toHaveBeenCalled();
-    expect(trackMatomoEventMock).toHaveBeenCalledWith(
+    expect(trackAnalyticsEventMock).toHaveBeenCalledWith(
       expect.objectContaining({
         category: "checkout",
         action: "payment_callback_error",
-        name: "MISSING_PARAMS",
         onceKey: "payment-callback-error:unknown:MISSING_PARAMS",
       }),
     );
@@ -205,11 +195,10 @@ describe("PaymentCallback page", () => {
     });
 
     expect(mockClearCart).not.toHaveBeenCalled();
-    expect(trackMatomoEventMock).toHaveBeenCalledWith(
+    expect(trackAnalyticsEventMock).toHaveBeenCalledWith(
       expect.objectContaining({
         category: "checkout",
         action: "payment_callback_error",
-        name: "NETWORK_ERROR",
         onceKey: "payment-callback-error:123:NETWORK_ERROR",
       }),
     );

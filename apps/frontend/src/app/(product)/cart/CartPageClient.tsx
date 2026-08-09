@@ -12,7 +12,7 @@ import { getRandomProducts } from "@/services/product/homepage";
 import HeartIcon from "@/components/PDP/Icons/HeartIcon";
 import PageContainer from "@/components/layout/PageContainer";
 import OrderSummaryCard from "@/components/ShoppingCart/OrderSummaryCard";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
 
 // Lazy load offers section - not critical for initial render
@@ -60,10 +60,13 @@ export default function CartPageClient() {
   useEffect(() => {
     if (isLoading) return;
     if (cartItems.length <= 0) return;
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "ecommerce",
       action: "view_cart",
-      value: totalValue,
+      valueToman: totalValue,
+      properties: {
+        quantity: cartItems.reduce((sum, item) => sum + item.quantity, 0),
+      },
       onceKey: `view-cart:${cartItems.length}:${Math.round(totalValue)}`,
     });
   }, [isLoading, cartItems.length, totalValue]);
@@ -77,7 +80,10 @@ export default function CartPageClient() {
   }
   if (cartItems.length === 0) {
     return (
-      <PageContainer variant="wide" className="flex min-h-[60vh] items-center justify-center pb-16 pt-8">
+      <PageContainer
+        variant="wide"
+        className="flex min-h-[60vh] items-center justify-center pb-16 pt-8"
+      >
         <EmptyShoppingCart />
       </PageContainer>
     );

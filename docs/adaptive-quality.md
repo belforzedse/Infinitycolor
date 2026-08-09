@@ -222,7 +222,7 @@ The list lives in
 `apps/frontend/src/lib/adaptive-quality/high-end-user-agent.ts`. Changes require
 primary vendor evidence, positive/negative unit cases, production Chromium
 UA-CH coverage, and iPhone Safari verification. Raw reports and the matched
-family are never persisted or included in Matomo payloads.
+family are never persisted or included in analytics payloads.
 
 ## Rendering and motion mapping
 
@@ -346,10 +346,10 @@ interaction-lazy.
 
 ## Telemetry
 
-Telemetry uses existing Matomo and `useReportWebVitals`; no SDK or custom
-dimension was added. It runs only after the existing analytics consent is
-`granted`, fails silently, and may inherit only the tracker’s existing
-pseudonymous association.
+Telemetry uses the provider-neutral analytics adapter backed by Umami and
+`useReportWebVitals`; no second analytics SDK is added. It runs only after the
+existing analytics consent is `granted`, fails silently, and may inherit only
+the tracker’s existing opaque account or app-lifetime association.
 
 Allowed route groups are `home`, `plp`, `search`, `pdp`, `cart`, `checkout`,
 `auth`, `account`, `blog`, and `other`. Payment/callback/results map to
@@ -368,7 +368,7 @@ Payloads contain only fixed route group, from/to tiers, observer kind, coarse
 transition reason, downgrade/recovery/overlay marker, aggregate
 sample/issue/severe counters, and Web Vitals. They exclude pathnames, raw
 capabilities/timing history, search text, product/order/payment/user IDs, and
-new Matomo custom dimensions.
+all properties outside the fixed analytics allowlist.
 
 ## CSP and browser support
 

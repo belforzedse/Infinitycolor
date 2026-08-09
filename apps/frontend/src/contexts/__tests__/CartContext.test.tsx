@@ -40,9 +40,9 @@ jest.mock("@/utils/haptics", () => ({
   hapticError: jest.fn(),
 }));
 
-jest.mock("@/lib/analytics/matomo", () => ({
+jest.mock("@/lib/analytics", () => ({
   trackFunnelStep: jest.fn(),
-  trackMatomoEvent: jest.fn(),
+  trackAnalyticsEvent: jest.fn(),
 }));
 
 jest.mock("@/lib/central-auth", () => ({
@@ -136,8 +136,12 @@ function VariantCartProbe() {
       <span data-testid="variant-cart-lines">
         {cartItems.map((item) => `${item.variationId}:${item.quantity}`).join("|")}
       </span>
-      <button type="button" onClick={() => addVariant("variation-1")}>add first</button>
-      <button type="button" onClick={() => addVariant("variation-2")}>add second</button>
+      <button type="button" onClick={() => addVariant("variation-1")}>
+        add first
+      </button>
+      <button type="button" onClick={() => addVariant("variation-2")}>
+        add second
+      </button>
     </div>
   );
 }

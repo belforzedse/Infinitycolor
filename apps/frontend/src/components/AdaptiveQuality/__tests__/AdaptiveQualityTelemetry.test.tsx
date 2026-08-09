@@ -4,10 +4,7 @@ import {
   ADAPTIVE_QUALITY_EVENT,
   ADAPTIVE_QUALITY_PROMOTION_EVENT,
 } from "@/lib/adaptive-quality/config";
-import type {
-  AdaptiveQualityChange,
-  AdaptiveQualitySnapshot,
-} from "@/lib/adaptive-quality";
+import type { AdaptiveQualityChange, AdaptiveQualitySnapshot } from "@/lib/adaptive-quality";
 
 let mockPathname = "/";
 let mockSearchParams = new URLSearchParams();
@@ -22,7 +19,7 @@ let mockQuality: AdaptiveQualitySnapshot = {
 };
 type MockWebVital = { name: string; value: number; rating?: string };
 const mockReportCallbacks: Array<(metric: MockWebVital) => void> = [];
-const mockTrackMatomoEvent = jest.fn();
+const mockTrackAnalyticsEvent = jest.fn();
 
 jest.mock("next/navigation", () => ({
   usePathname: () => mockPathname,
@@ -46,10 +43,10 @@ jest.mock("@/lib/adaptive-quality", () => ({
   useAdaptiveQuality: () => mockQuality,
 }));
 
-jest.mock("@/lib/analytics/matomo", () => ({
+jest.mock("@/lib/analytics", () => ({
   ANALYTICS_CONSENT_EVENT: "analytics-consent-changed",
   getAnalyticsConsent: () => "granted",
-  trackMatomoEvent: (event: unknown) => mockTrackMatomoEvent(event),
+  trackAnalyticsEvent: (event: unknown) => mockTrackAnalyticsEvent(event),
 }));
 
 import AdaptiveQualityTelemetry from "../AdaptiveQualityTelemetry";
@@ -69,7 +66,7 @@ describe("AdaptiveQualityTelemetry", () => {
       routeGeneration: 0,
     };
     mockReportCallbacks.length = 0;
-    mockTrackMatomoEvent.mockClear();
+    mockTrackAnalyticsEvent.mockClear();
   });
 
   afterEach(() => {
@@ -101,18 +98,20 @@ describe("AdaptiveQualityTelemetry", () => {
       });
     });
 
-    expect(mockTrackMatomoEvent).toHaveBeenCalledTimes(1);
-    expect(mockTrackMatomoEvent).toHaveBeenCalledWith({
+    expect(mockTrackAnalyticsEvent).toHaveBeenCalledTimes(1);
+    expect(mockTrackAnalyticsEvent).toHaveBeenCalledWith({
       category: "adaptive_quality",
       action: "web_vital_lcp",
-      name: "cart|r:safe|m:economy|o:minimal",
-      value: 2501,
+      properties: {
+        route_group: "cart",
+        experiment: "aq:r:safe|m:economy|o:minimal|rating:needs-improvement",
+      },
     });
   });
 
   it("emits consent-granted downgrade and recovery telemetry with fixed fields", () => {
     render(<AdaptiveQualityTelemetry />);
-    mockTrackMatomoEvent.mockClear();
+    mockTrackAnalyticsEvent.mockClear();
 
     const previous = { ...mockQuality };
     const current = {
@@ -133,13 +132,14 @@ describe("AdaptiveQualityTelemetry", () => {
       );
     });
 
-    expect(mockTrackMatomoEvent).toHaveBeenCalledWith(
+    expect(mockTrackAnalyticsEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         category: "adaptive_quality",
         action: "tier_change",
-        name: expect.stringContaining(
-          "home|from:r:enhanced|m:high|o:enhanced|to:r:enhanced|m:high|o:standard|reason:repeated-loaf|marker:downgrade",
-        ),
+        properties: {
+          route_group: "home",
+          experiment: "aq:r:enhanced|m:high|o:standard|reason:repeated-loaf|marker:downgrade",
+        },
       }),
     );
 
@@ -151,10 +151,13 @@ describe("AdaptiveQualityTelemetry", () => {
     act(() => {
       window.dispatchEvent(new Event(ADAPTIVE_QUALITY_PROMOTION_EVENT));
     });
-    expect(mockTrackMatomoEvent).toHaveBeenCalledWith(
+    expect(mockTrackAnalyticsEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "recovery_step",
-        name: expect.stringContaining("marker:recovery"),
+        properties: expect.objectContaining({
+          route_group: "home",
+          experiment: expect.stringContaining("marker:recovery"),
+        }),
       }),
     );
   });

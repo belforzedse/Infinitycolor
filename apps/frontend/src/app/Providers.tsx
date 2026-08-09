@@ -14,7 +14,7 @@ import AuthInitializer from "@/components/ui/AuthInitializer";
 import { Suspense } from "react";
 import { useFreshDataOnVisibility } from "@/hooks/useFreshDataOnVisibility";
 import { ConsentManager } from "@/components/Analytics/ConsentManager";
-import { MatomoTracker } from "@/components/Analytics/MatomoTracker";
+import { AnalyticsTracker } from "@/components/Analytics/AnalyticsTracker";
 import PWAInstallPrompt from "@/components/ui/PWAInstallPrompt";
 import { SharedElementTransitionProvider } from "@/contexts/SharedElementTransitionContext";
 import NetworkStatusBanner from "@/components/ui/NetworkStatusBanner";
@@ -29,28 +29,28 @@ export default function Providers({ children }: { children: ReactNode }) {
         {/* Consent Manager for GDPR/CCPA compliance */}
         <ConsentManager />
         <Suspense fallback={null}>
-          <MatomoTracker />
+          <AnalyticsTracker />
         </Suspense>
-      {/*
-       * Global UI helpers are registered here so that pages throughout the app
-       * can rely on shared behavior without needing to include these components
-       * individually. The order of these components generally reflects the
-       * desired rendering priority for visual elements.
-       */}
-      <AuthInitializer />
-      <ServiceWorkerRegistration />
-      <PreloadBlur />
-      <TopProgressBar />
-      {/* Intercepts fetch calls to show global error/loading states */}
-      <GlobalFetchInterceptor />
-      {/* Displays friendly error notifications for 401/403/etc */}
-      <GlobalErrorDisplay />
-      <ImageEffects />
-      {children}
-      <GlobalLoadingOverlay />
-      <NetworkStatusBanner />
-      <VersionCheck />
-      <PWAInstallPrompt />
+        {/*
+         * Global UI helpers are registered here so that pages throughout the app
+         * can rely on shared behavior without needing to include these components
+         * individually. The order of these components generally reflects the
+         * desired rendering priority for visual elements.
+         */}
+        <AuthInitializer />
+        <ServiceWorkerRegistration />
+        <PreloadBlur />
+        <TopProgressBar />
+        {/* Intercepts fetch calls to show global error/loading states */}
+        <GlobalFetchInterceptor />
+        {/* Displays friendly error notifications for 401/403/etc */}
+        <GlobalErrorDisplay />
+        <ImageEffects />
+        {children}
+        <GlobalLoadingOverlay />
+        <NetworkStatusBanner />
+        <VersionCheck />
+        <PWAInstallPrompt />
       </SharedElementTransitionProvider>
     </Provider>
   );

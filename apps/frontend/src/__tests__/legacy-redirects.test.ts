@@ -73,9 +73,9 @@ describe("admin cutover redirect", () => {
 
   it("maps the old prefix to fixed root paths while preserving queries", () => {
     process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT = "production";
-    expect(getAdminCutoverRedirectUrl(new URL("/super-admin?tab=1", "https://untrusted.example"))?.href).toBe(
-      "https://admin.infinitycolor.co/?tab=1",
-    );
+    expect(
+      getAdminCutoverRedirectUrl(new URL("/super-admin?tab=1", "https://untrusted.example"))?.href,
+    ).toBe("https://admin.infinitycolor.co/?tab=1");
     expect(
       getAdminCutoverRedirectUrl(
         new URL("/super-admin/products/edit/12?return=orders", "https://untrusted.example"),
@@ -100,6 +100,40 @@ describe("admin cutover redirect", () => {
       expect(response.url.href).toBe("https://admin.staging.infinitycolor.co/orders?page=2");
       expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
     }
+  });
+
+  it("moves legacy storefront report bookmarks to the extracted admin", async () => {
+    process.env.ADMIN_REDIRECT_ENABLED = "true";
+    process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT = "production";
+    const response = await proxy(
+      mockRequest("/super-admin/reports/traffic?range=30d", true, "https://untrusted.example"),
+    );
+    expect(response.status).toBe(ADMIN_CUTOVER_REDIRECT_STATUS);
+    expect(response.url.href).toBe(
+      "https://admin.infinitycolor.co/sales/traffic?range=30d&view=overview",
+    );
+  });
+
+  it("maps old report views and ranges directly into the consolidated admin", () => {
+    process.env.NEXT_PUBLIC_AUTH_ENVIRONMENT = "production";
+    expect(
+      getAdminCutoverRedirectUrl(
+        new URL(
+          "/super-admin/reports/traffic?from=2026-01-01&to=2026-01-31&tab=ecommerce&utm_source=email",
+          "https://untrusted.example",
+        ),
+      )?.href,
+    ).toBe(
+      "https://admin.infinitycolor.co/sales/traffic?start=2026-01-01&end=2026-01-31&utmSource=email&view=conversion",
+    );
+    expect(
+      getAdminCutoverRedirectUrl(
+        new URL(
+          "/super-admin/reports/gateway-liquidity?start=2026-01-01",
+          "https://untrusted.example",
+        ),
+      )?.href,
+    ).toBe("https://admin.infinitycolor.co/sales/liquidity?start=2026-01-01&section=gateways");
   });
 
   it("rejects methods that must never cross the application boundary", async () => {

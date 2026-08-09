@@ -13,7 +13,7 @@ import { useEffect } from "react";
 import { isProfileIncomplete } from "@/utils/profile";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { safeInternalRedirect } from "@/utils/authRedirect";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -47,7 +47,7 @@ export default function LoginPage() {
           setUserData(me);
           setLoadingUser(false);
           setUserError(null);
-          trackMatomoEvent({ category: "auth", action: "login", name: "password" });
+          trackAnalyticsEvent({ category: "auth", action: "login" });
 
           // Redirect incomplete profiles to complete their info (non-admin only)
           if (!me.isAdmin && isProfileIncomplete(me)) {

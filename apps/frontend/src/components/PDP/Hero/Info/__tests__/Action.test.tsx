@@ -3,8 +3,7 @@ import PDPHeroInfoAction from "../Action";
 
 jest.mock("@/components/Product/ShareModal", () => ({
   __esModule: true,
-  default: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="share-modal-stub" /> : null,
+  default: ({ open }: { open: boolean }) => (open ? <div data-testid="share-modal-stub" /> : null),
 }));
 
 jest.mock("@/hooks/useProductLike", () => ({
@@ -34,8 +33,8 @@ jest.mock("@/services/product/product", () => ({
   hasStockForVariation: () => true,
 }));
 
-jest.mock("@/lib/analytics/matomo", () => ({
-  trackMatomoEvent: jest.fn(),
+jest.mock("@/lib/analytics", () => ({
+  trackAnalyticsEvent: jest.fn(),
 }));
 
 jest.mock("../../../Icons/ShareIcon", () => ({
@@ -73,8 +72,6 @@ describe("PDPHeroInfoAction", () => {
 
     fireEvent.click(screen.getByTestId("share-icon").closest("button")!);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("share-modal-stub")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByTestId("share-modal-stub")).toBeInTheDocument());
   });
 });

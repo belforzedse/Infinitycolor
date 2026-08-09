@@ -98,7 +98,7 @@ const GENERIC_TRANSLATIONS: Record<string, string> = {
   canceled: "لغو شده",
 };
 
-/** Funnel step keys used in traffic/Matomo reports. */
+/** Funnel step keys used in behavioral analytics reports. */
 export const FUNNEL_STEP_MAP: Record<string, string> = {
   view_item: "مشاهده محصول",
   add_to_cart: "افزودن به سبد",

@@ -2,9 +2,9 @@ import { expect, type Page } from "@playwright/test";
 import { installLocalMediaFixture } from "./local-media";
 
 const THIRD_PARTY_HOST_PATTERN =
-  /(?:matomo|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)/i;
+  /(?:analytics\.alpagency|umami|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)/i;
 const THIRD_PARTY_ROUTE_PATTERN =
-  /^https?:\/\/[^/?#]*(?:matomo|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)[^/?#]*(?:[/?#]|$)/i;
+  /^https?:\/\/[^/?#]*(?:analytics\.alpagency|umami|googletagmanager|google-analytics|sentry|clarity|facebook|doubleclick)[^/?#]*(?:[/?#]|$)/i;
 
 const IGNORED_RUNTIME_ERROR_PATTERN =
   /(?:Failed to load resource|net::ERR_ABORTED|net::ERR_BLOCKED_BY_CLIENT|favicon\.ico|ResizeObserver loop|_next\/webpack-hmr|WebSocket connection.*ERR_INVALID_HTTP_RESPONSE|A tree hydrated but some attributes)/i;
@@ -14,7 +14,9 @@ export type RuntimeErrorCollector = {
   assertClean: () => void;
 };
 
-export async function prepareStorefrontPage(page: Page): Promise<RuntimeErrorCollector> {
+export async function prepareStorefrontPage(
+  page: Page,
+): Promise<RuntimeErrorCollector> {
   const errors: string[] = [];
 
   await installLocalMediaFixture(page);
@@ -44,7 +46,9 @@ export async function prepareStorefrontPage(page: Page): Promise<RuntimeErrorCol
   return {
     errors,
     assertClean: () => {
-      const critical = errors.filter((error) => !IGNORED_RUNTIME_ERROR_PATTERN.test(error));
+      const critical = errors.filter(
+        (error) => !IGNORED_RUNTIME_ERROR_PATTERN.test(error),
+      );
       expect(critical).toEqual([]);
     },
   };

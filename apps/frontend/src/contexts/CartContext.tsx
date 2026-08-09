@@ -10,7 +10,7 @@ import { cartRequestQueue } from "@/utils/requestQueue";
 import { centralAuth, subscribeToAuthState } from "@/lib/central-auth";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
 import { isOnline } from "@/utils/offlineQueue";
-import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
 
 export interface CartItem {
   id: string;
@@ -127,9 +127,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     let active = true;
     const updateLoginState = async (forceRefresh = false) => {
-      const token = await centralAuth.tokenManager
-        .getToken({ forceRefresh })
-        .catch(() => null);
+      const token = await centralAuth.tokenManager.getToken({ forceRefresh }).catch(() => null);
       if (active) {
         setIsLoggedIn(Boolean(token));
         if (forceRefresh) setSessionGeneration((generation) => generation + 1);
@@ -232,7 +230,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       // Keep the guest cart usable in memory when storage is unavailable.
     }
   }, [cartItems, initializedMode, isLoggedIn, isCartReady]);
-
 
   // Fetch user's cart from API
   const fetchUserCart = async (shouldApply: () => boolean = () => true) => {
@@ -456,7 +453,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (!mergeItems.length) return;
       let mergeId = localStorage.getItem("guestCartMergeId");
       if (!mergeId) {
-        mergeId = globalThis.crypto?.randomUUID?.() || `merge-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        mergeId =
+          globalThis.crypto?.randomUUID?.() ||
+          `merge-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         localStorage.setItem("guestCartMergeId", mergeId);
       }
       const result = await CartService.mergeGuestCart(mergeId, mergeItems);
@@ -471,7 +470,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       await fetchUserCart();
     } catch (error) {
       console.error("Guest cart merge failed; local cart was preserved:", error);
-      notify.error("انتقال سبد مهمان کامل نشد؛ کالاهای شما حفظ شده‌اند و می‌توانید دوباره تلاش کنید");
+      notify.error(
+        "انتقال سبد مهمان کامل نشد؛ کالاهای شما حفظ شده‌اند و می‌توانید دوباره تلاش کنید",
+      );
       await fetchUserCart();
     } finally {
       setIsLoading(false);
@@ -524,16 +525,23 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       try {
         setIsLoading(true);
 
-        await cartRequestQueue.enqueue(async () => {
-          await CartService.addItemToCart(Number(newItem.variationId), newItem.quantity);
-          // Refresh cart to ensure consistency with backend
-          await fetchUserCart();
-          trackFunnelStep("add_to_cart", {
-            label: newItem.name,
-            value: newItem.price * newItem.quantity,
-          });
-          hapticSuccess();
-        }, `add-${newItem.variationId || newItem.id}`);
+        await cartRequestQueue.enqueue(
+          async () => {
+            await CartService.addItemToCart(Number(newItem.variationId), newItem.quantity);
+            // Refresh cart to ensure consistency with backend
+            await fetchUserCart();
+            trackFunnelStep("add_to_cart", {
+              valueToman: newItem.price * newItem.quantity,
+              properties: {
+                product_id: newItem.productId,
+                ...(newItem.variationId ? { variant_id: newItem.variationId } : {}),
+                quantity: newItem.quantity,
+              },
+            });
+            hapticSuccess();
+          },
+          `add-${newItem.variationId || newItem.id}`,
+        );
       } catch (error: any) {
         console.error("Failed to add item to cart:", error);
 
@@ -572,8 +580,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         return [...prev, newItem];
       });
       trackFunnelStep("add_to_cart", {
-        label: newItem.name,
-        value: newItem.price * newItem.quantity,
+        valueToman: newItem.price * newItem.quantity,
+        properties: {
+          product_id: newItem.productId,
+          ...(newItem.variationId ? { variant_id: newItem.variationId } : {}),
+          quantity: newItem.quantity,
+        },
       });
       hapticSuccess();
     }
@@ -628,11 +640,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       // Remove item optimistically
       setCartItems((prev) => prev.filter((item) => item.id !== id && item.cartItemId !== id));
       const undoToastId = showRemoveUndoToast(item);
-      trackMatomoEvent({
+      trackAnalyticsEvent({
         category: "ecommerce",
         action: "remove_from_cart",
-        name: item.name,
-        value: item.price * item.quantity,
+        valueToman: item.price * item.quantity,
+        properties: {
+          product_id: item.productId,
+          ...(item.variationId ? { variant_id: item.variationId } : {}),
+          quantity: item.quantity,
+        },
       });
 
       // Queue API call in the background
@@ -665,11 +681,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setCartItems((prev) => prev.filter((item) => item.id !== id));
       if (existing) {
         showRemoveUndoToast(existing);
-        trackMatomoEvent({
+        trackAnalyticsEvent({
           category: "ecommerce",
           action: "remove_from_cart",
-          name: existing.name,
-          value: existing.price * existing.quantity,
+          valueToman: existing.price * existing.quantity,
+          properties: {
+            product_id: existing.productId,
+            ...(existing.variationId ? { variant_id: existing.variationId } : {}),
+            quantity: existing.quantity,
+          },
         });
       }
     }
@@ -699,11 +719,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           cartItem.id === id || cartItem.cartItemId === id ? { ...cartItem, quantity } : cartItem,
         ),
       );
-      trackMatomoEvent({
+      trackAnalyticsEvent({
         category: "ecommerce",
         action: "update_quantity",
-        name: item.name,
-        value: quantity,
+        properties: {
+          product_id: item.productId,
+          ...(item.variationId ? { variant_id: item.variationId } : {}),
+          quantity,
+        },
       });
 
       // Queue API call in the background
@@ -741,11 +764,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setCartItems((prev) => prev.map((item) => (item.id === id ? { ...item, quantity } : item)));
       const existing = cartItems.find((item) => item.id === id);
       if (existing) {
-        trackMatomoEvent({
+        trackAnalyticsEvent({
           category: "ecommerce",
           action: "update_quantity",
-          name: existing.name,
-          value: quantity,
+          properties: {
+            product_id: existing.productId,
+            ...(existing.variationId ? { variant_id: existing.variationId } : {}),
+            quantity,
+          },
         });
       }
     }

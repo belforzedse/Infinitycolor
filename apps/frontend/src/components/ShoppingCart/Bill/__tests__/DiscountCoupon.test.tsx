@@ -2,7 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import DiscountCoupon from "../DiscountCoupon";
 import { CartService } from "@/services";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 jest.mock("@/services", () => ({
   CartService: {
@@ -10,8 +10,8 @@ jest.mock("@/services", () => ({
   },
 }));
 
-jest.mock("@/lib/analytics/matomo", () => ({
-  trackMatomoEvent: jest.fn(),
+jest.mock("@/lib/analytics", () => ({
+  trackAnalyticsEvent: jest.fn(),
 }));
 
 jest.mock("react-hot-toast", () => ({
@@ -20,15 +20,15 @@ jest.mock("react-hot-toast", () => ({
 }));
 
 const applyDiscountMock = CartService.applyDiscount as jest.Mock;
-const trackMatomoEventMock = trackMatomoEvent as jest.Mock;
+const trackAnalyticsEventMock = trackAnalyticsEvent as jest.Mock;
 
 describe("DiscountCoupon", () => {
   beforeEach(() => {
     applyDiscountMock.mockReset();
-    trackMatomoEventMock.mockReset();
+    trackAnalyticsEventMock.mockReset();
   });
 
-  it("tracks apply_coupon with the code and discount amount on success", async () => {
+  it("tracks apply_coupon with only the discount amount on success", async () => {
     applyDiscountMock.mockResolvedValue({
       success: true,
       discount: 15000,
@@ -49,11 +49,10 @@ describe("DiscountCoupon", () => {
     fireEvent.click(screen.getByText("اعمال کد"));
 
     await waitFor(() => {
-      expect(trackMatomoEventMock).toHaveBeenCalledWith({
+      expect(trackAnalyticsEventMock).toHaveBeenCalledWith({
         category: "ecommerce",
         action: "apply_coupon",
-        name: "SUMMER10",
-        value: 15000,
+        valueToman: 15000,
       });
     });
   });
@@ -70,6 +69,6 @@ describe("DiscountCoupon", () => {
     await waitFor(() => {
       expect(applyDiscountMock).toHaveBeenCalled();
     });
-    expect(trackMatomoEventMock).not.toHaveBeenCalled();
+    expect(trackAnalyticsEventMock).not.toHaveBeenCalled();
   });
 });

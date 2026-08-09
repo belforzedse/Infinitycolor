@@ -69,8 +69,8 @@ jest.mock("../ShareModal", () => ({
     open ? <div data-testid="share-modal-stub" /> : null,
 }));
 
-jest.mock("@/lib/analytics/matomo", () => ({
-  trackMatomoEvent: jest.fn(),
+jest.mock("@/lib/analytics", () => ({
+  trackAnalyticsEvent: jest.fn(),
 }));
 
 describe("ProductCard", () => {
@@ -224,7 +224,7 @@ describe("ProductCard", () => {
   });
 
   it("tracks select_item on click, including list position when provided", () => {
-    const { trackMatomoEvent } = require("@/lib/analytics/matomo");
+    const { trackAnalyticsEvent } = require("@/lib/analytics");
 
     render(<ProductCard {...mockProps} id={7} title="Silk Scarf" listPosition={3} />);
 
@@ -232,15 +232,15 @@ describe("ProductCard", () => {
     link.addEventListener("click", (event) => event.preventDefault());
     fireEvent.click(link);
 
-    expect(trackMatomoEvent).toHaveBeenCalledWith({
+    expect(trackAnalyticsEvent).toHaveBeenCalledWith({
       category: "ecommerce",
       action: "select_item",
-      name: "7:Silk Scarf:pos=3",
+      properties: { product_id: 7, position: 3, placement: "product_list" },
     });
   });
 
   it("tracks select_item without a position suffix when listPosition is omitted", () => {
-    const { trackMatomoEvent } = require("@/lib/analytics/matomo");
+    const { trackAnalyticsEvent } = require("@/lib/analytics");
 
     render(<ProductCard {...mockProps} id={7} title="Silk Scarf" />);
 
@@ -248,10 +248,10 @@ describe("ProductCard", () => {
     link.addEventListener("click", (event) => event.preventDefault());
     fireEvent.click(link);
 
-    expect(trackMatomoEvent).toHaveBeenCalledWith({
+    expect(trackAnalyticsEvent).toHaveBeenCalledWith({
       category: "ecommerce",
       action: "select_item",
-      name: "7:Silk Scarf",
+      properties: { product_id: 7, placement: "product_list" },
     });
   });
 

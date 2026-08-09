@@ -14,7 +14,7 @@ import { isProfileIncomplete } from "@/utils/profile";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { safeInternalRedirect } from "@/utils/authRedirect";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -61,7 +61,7 @@ export default function LoginPage() {
             // A complete profile means this OTP verification is a returning-user
             // login, not the first step of account creation (tracked separately
             // once the register/info form above is completed).
-            trackMatomoEvent({ category: "auth", action: "login", name: "otp" });
+            trackAnalyticsEvent({ category: "auth", action: "login" });
 
             // Use stored redirect URL if available, otherwise use role-based redirect
             if (storedRedirectUrl) {

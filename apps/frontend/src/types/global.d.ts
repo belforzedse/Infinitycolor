@@ -26,6 +26,24 @@ declare module "jalaliday" {
 }
 
 interface Window {
-  _paq?: Array<[string, ...any[]]>;
-  __matomoInitialized?: boolean;
+  umami?: {
+    track: {
+      (): void;
+      (eventName: string, data?: Record<string, string | number | boolean>): void;
+      (
+        payload:
+          | Record<string, unknown>
+          | ((defaults: Record<string, unknown>) => Record<string, unknown>),
+      ): void;
+    };
+    identify: {
+      (id: string, data?: Record<string, string | number | boolean>): void;
+      (data: Record<string, string | number | boolean>): void;
+    };
+  };
+  __analyticsPendingCalls?: Array<(api: NonNullable<Window["umami"]>) => void>;
+  __infinityAnalyticsBeforeSend?: (
+    type: string,
+    payload: Record<string, unknown>,
+  ) => Record<string, unknown> | null;
 }

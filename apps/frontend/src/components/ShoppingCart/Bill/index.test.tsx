@@ -67,9 +67,10 @@ jest.mock("@/services/wallet", () => ({
   },
 }));
 
-jest.mock("@/lib/analytics/matomo", () => ({
+jest.mock("@/lib/analytics", () => ({
+  getAnalyticsCorrelationId: jest.fn(() => "guest-test-correlation"),
   trackFunnelStep: jest.fn(),
-  trackMatomoEvent: jest.fn(),
+  trackAnalyticsEvent: jest.fn(),
 }));
 
 jest.mock("./InformationForm", () => ({
@@ -144,19 +145,10 @@ jest.mock("./DiscountCoupon", () => ({
 jest.mock("./PaymentGateway", () => ({
   __esModule: true,
   default: ({ availableGateways, onChange, snappEligible }: any) => (
-    <div
-      data-testid="checkout-payment-gateway"
-      data-snapp-eligible={String(snappEligible)}
-    >
-      <span data-testid="checkout-payment-gateway-count">
-        {availableGateways?.length ?? 0}
-      </span>
+    <div data-testid="checkout-payment-gateway" data-snapp-eligible={String(snappEligible)}>
+      <span data-testid="checkout-payment-gateway-count">{availableGateways?.length ?? 0}</span>
       {availableGateways?.includes("snappay") && (
-        <button
-          type="button"
-          data-testid="select-snappay"
-          onClick={() => onChange("snappay")}
-        >
+        <button type="button" data-testid="select-snappay" onClick={() => onChange("snappay")}>
           select SnappPay
         </button>
       )}
@@ -437,15 +429,12 @@ describe("ShoppingCartBillForm auth gate", () => {
         mobile: "09123456789",
         quoteHash: "sha256:snappay-quote",
         attemptId: expect.any(String),
+        analyticsCorrelationId: "guest-test-correlation",
       }),
     );
     const submitted = (CartService.finalizeCart as jest.Mock).mock.calls[0][0];
     expect(submitted.attemptId).toBeTruthy();
-    expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(
-      submitted.attemptId,
-    );
-    expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe(
-      "sha256:snappay-quote",
-    );
+    expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(submitted.attemptId);
+    expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe("sha256:snappay-quote");
   });
 });

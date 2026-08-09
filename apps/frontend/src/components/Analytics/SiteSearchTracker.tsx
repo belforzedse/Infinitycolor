@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { trackSiteSearch } from "@/lib/analytics/matomo";
+import { trackSiteSearch } from "@/lib/analytics";
 
 type Props = {
   /** The raw search keyword the visitor submitted. */
@@ -10,18 +10,23 @@ type Props = {
   resultCount: number;
   /** Current results page, so paginating the same query isn't re-counted as a new search. */
   page?: number;
-  /** Search surface, used as the Matomo Site Search category. */
+  /** Search surface, used as an allowlisted event property. */
   category?: string;
 };
 
 /**
- * Records a native Matomo Site Search from the results page, where the real
+ * Records a sanitized site-search event from the results page, where the real
  * total result count is known. This is the single, authoritative place site
  * searches are tracked — submit handlers only navigate here, so we avoid both
  * duplicate hits and count-less searches that can't populate the zero-result
  * report. PII-bearing keywords are dropped inside `trackSiteSearch`.
  */
-export default function SiteSearchTracker({ query, resultCount, page = 1, category = "plp" }: Props) {
+export default function SiteSearchTracker({
+  query,
+  resultCount,
+  page = 1,
+  category = "plp",
+}: Props) {
   const lastKeyRef = useRef<string>("");
 
   useEffect(() => {

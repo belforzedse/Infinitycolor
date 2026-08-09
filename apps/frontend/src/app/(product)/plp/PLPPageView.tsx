@@ -90,7 +90,7 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
         <SiteSearchTracker query={query.search} resultCount={pagination.total} page={query.page} />
       ) : null}
       {resolvedCategoryContext?.slug ? (
-        <CustomDimensionTracker dimension="categoryId" value={resolvedCategoryContext.slug} />
+        <CustomDimensionTracker dimension="category_id" value={resolvedCategoryContext.slug} />
       ) : null}
 
       {products.length > 0 && (

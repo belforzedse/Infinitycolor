@@ -80,18 +80,21 @@ You should see JSON with a `"data"` field.
 The frontend includes a comprehensive blog system with:
 
 ### Public Features
+
 - **Blog Listing**: `/blog` - Paginated list of published posts with filtering
 - **Individual Posts**: `/{slug}` - Root-level URLs for SEO optimization
 - **Categories & Tags**: Organized content with filtering capabilities
 - **Comments**: Authenticated user comments with real-time loading
 
 ### Admin Features
+
 - **Content Management**: Full CRUD operations for posts, categories, tags, authors
 - **Rich Text Editor**: Tiptap-based editor with comprehensive formatting
 - **SEO Optimization**: Complete metadata management with Open Graph support
 - **Comment Moderation**: Three-state approval system for user comments
 
 ### Technical Features
+
 - **Server-Side Rendering**: Full SSR support for SEO
 - **Metadata Generation**: Automatic Open Graph and Twitter Card generation
 - **Structured Data**: JSON-LD implementation for search engines
@@ -99,6 +102,7 @@ The frontend includes a comprehensive blog system with:
 - **Image Optimization**: Next.js Image component integration
 
 ### Components
+
 - `BlogList` - Post listing with search and filters
 - `BlogPostDetail` - Individual post display with sidebar
 - `BlogComments` - Comment system with threading support
@@ -123,11 +127,14 @@ Key variables:
 - `STRAPI_INTERNAL_URL`: Server-only; set in Docker runtime (leave empty for local dev)
 
 Server-side fetches use `getStrapiServerUrl()` (see `.cursor/rules/frontend-strapi-url-env.mdc`) — no extra page setup required for homepage/PLP.
-- `NEXT_PUBLIC_MATOMO_URL`: Matomo base URL (`https://matomo.alpagency.net`)
-- `NEXT_PUBLIC_MATOMO_SITE_ID`: Matomo site ID used by frontend tracker
+
+- `NEXT_PUBLIC_UMAMI_URL`: Private Umami base URL (`https://analytics.alpagency.net`)
+- `NEXT_PUBLIC_UMAMI_WEBSITE_ID`: Environment-specific Umami website ID
+- `NEXT_PUBLIC_UMAMI_ENABLE_DEV`: Set to `true` only when local development tracking is intentional
 - `REVALIDATION_SECRET`: Secret for blog post cache invalidation (must match backend)
 
 **Important**: `main.env` and `dev.env` files are gitignored. For GitHub Actions, copy the entire file contents into the corresponding GitHub secret:
+
 - `PROD_FRONTEND_ENV_FILE` (for production/main branch)
 - `STAGING_FRONTEND_ENV_FILE` (for staging/dev branch)
 - `EXPERIMENTAL_FRONTEND_ENV_FILE` (for experimental branch)
@@ -138,15 +145,17 @@ To override locally, create `.env.local`:
 # .env.local (gitignored)
 NEXT_PUBLIC_API_BASE_URL=http://localhost:1337/api
 NEXT_PUBLIC_IMAGE_BASE_URL=http://localhost:1337/
-NEXT_PUBLIC_MATOMO_URL=http://localhost:8081
-NEXT_PUBLIC_MATOMO_SITE_ID=1
+NEXT_PUBLIC_UMAMI_URL=http://localhost:8093
+NEXT_PUBLIC_UMAMI_WEBSITE_ID=
+NEXT_PUBLIC_UMAMI_ENABLE_DEV=true
 ```
 
-## Traffic Analytics (Matomo)
+## Traffic Analytics (Umami)
 
-- Frontend tracking is integrated through `src/components/Analytics/MatomoTracker.tsx` and consent-aware helpers in `src/lib/analytics/matomo.ts`.
-- Key commerce events are emitted for PDP/search/cart/checkout/purchase flows.
-- Super-admin traffic dashboard is available at `/super-admin/reports/traffic` and consumes backend endpoints:
+- Frontend tracking is integrated through `src/components/Analytics/AnalyticsTracker.tsx` and the provider-neutral helpers in `src/lib/analytics/index.ts`.
+- Pageviews are manually controlled for the App Router and the tracker has automatic pageviews/events disabled.
+- Commerce events preserve the documented storefront taxonomy; settled purchase revenue is authoritative on the backend and is not emitted by the browser.
+- The extracted admin traffic dashboard is available at `/sales/traffic` and consumes backend endpoints:
   - `/reports/traffic/dashboard`
   - `/reports/traffic/realtime`
 
@@ -168,8 +177,8 @@ docker build \
   --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.example.com/api \
   --build-arg NEXT_PUBLIC_IMAGE_BASE_URL=https://api.example.com \
   --build-arg NEXT_PUBLIC_STRAPI_TOKEN=token \
-  --build-arg NEXT_PUBLIC_MATOMO_URL=https://matomo.alpagency.net \
-  --build-arg NEXT_PUBLIC_MATOMO_SITE_ID=2 \
+  --build-arg NEXT_PUBLIC_UMAMI_URL=https://analytics.alpagency.net \
+  --build-arg NEXT_PUBLIC_UMAMI_WEBSITE_ID=replace-with-production-website-uuid \
   -f main.Dockerfile \
   -t infinity-frontend:prod .
 
@@ -191,20 +200,20 @@ Compose will forward the env values as both build args and runtime vars so the c
   - Steps: `npm ci` → resolve branch-specific `NEXT_PUBLIC_*` envs → `npm run build` → Docker build with `--build-arg NEXT_PUBLIC_*` → push to `ghcr.io/belforzedse/infinity-frontend:<sha>` and `<branch>` tags.
 - Deployment targets and Compose env files:
 
-| Branch | VM (SSH) | Image tag | Env file on server |
-| --- | --- | --- | --- |
-| `main` | `deploy@193.141.65.207:3031` | `ghcr.io/belforzedse/infinity-frontend:main` | `/opt/infinity/apps/frontend/main.env` |
-| `dev` | `deploy@193.141.65.208:3031` | `…:dev` | `/opt/infinity/apps/frontend/dev.env` |
-| `experimental` | `deploy@193.141.65.212:3031` | `…:experimental` | `/opt/infinity/apps/frontend/main.env` |
+| Branch         | VM (SSH)                     | Image tag                                    | Env file on server                     |
+| -------------- | ---------------------------- | -------------------------------------------- | -------------------------------------- |
+| `main`         | `deploy@193.141.65.207:3031` | `ghcr.io/belforzedse/infinity-frontend:main` | `/opt/infinity/apps/frontend/main.env` |
+| `dev`          | `deploy@193.141.65.208:3031` | `…:dev`                                      | `/opt/infinity/apps/frontend/dev.env`  |
+| `experimental` | `deploy@193.141.65.212:3031` | `…:experimental`                             | `/opt/infinity/apps/frontend/main.env` |
 
 - Deployment flow per branch:
   1. SCP `apps/frontend/docker-compose.yml` to `/opt/infinity/apps/frontend/`.
   2. SSH in with the `deploy` user (key stored as `*_FRONTEND_SSH_KEY` secret).
   3. Rewrite the env file with the GitHub secrets and run `docker compose pull && docker compose up -d --remove-orphans`, then prune dangling images.
 - Required repository secrets (per environment prefix `PROD_`, `STAGING_`, `EXPERIMENTAL_`): `*_FRONTEND_HOST`, `*_FRONTEND_PORT`, `*_FRONTEND_USER`, `*_FRONTEND_SSH_KEY`, `*_FRONTEND_ENV_FILE` (paste the full contents of `main.env`/`dev.env` into each).
-- Required workflow secrets for analytics build-time config: `FRONTEND_MATOMO_URL`, `FRONTEND_MATOMO_SITE_ID`.
+- Required workflow environment values for analytics build-time config: `NEXT_PUBLIC_UMAMI_URL`, `NEXT_PUBLIC_UMAMI_WEBSITE_ID` (and optionally `NEXT_PUBLIC_UMAMI_ENABLE_DEV` for non-production debugging).
 - Shared registry secrets: `GHCR_DEPLOY_USER` (GitHub username used for pulls) and `GHCR_DEPLOY_TOKEN` (PAT with `read:packages`) so the VMs can `docker login ghcr.io` before pulling.
-- Each VM must have Docker Engine + Compose v2 installed, `deploy` added to the `docker` group, and `/opt/infinity/frontend` owned by `deploy`.***
+- Each VM must have Docker Engine + Compose v2 installed, `deploy` added to the `docker` group, and `/opt/infinity/frontend` owned by `deploy`.\*\*\*
 
 - fix(pdp): add `type="button"` to variation selector buttons (color/size/model)
 - chore(a11y): add TODO to improve selected color state semantics for keyboard access

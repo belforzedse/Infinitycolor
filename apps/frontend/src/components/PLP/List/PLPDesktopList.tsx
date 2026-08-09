@@ -7,7 +7,7 @@ import { formatProductsToCardProps } from "@/services/product/product";
 import type { PLPProduct } from "@/components/PLP/types";
 import { StorefrontGrid } from "@/components/storefront";
 import { useAdaptiveQuality } from "@/lib/adaptive-quality";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 const ProductCard = dynamic(() => import("@/components/Product/Card"), {
   loading: () => <div className="skeleton-shimmer h-48 rounded-lg" />,
@@ -25,11 +25,13 @@ export default function PLPDesktopList({ products }: PLPDesktopListProps) {
 
   useEffect(() => {
     if (!productIds) return;
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "ecommerce",
       action: "view_item_list",
-      name: pathname || "/plp",
-      value: products.length,
+      properties: {
+        placement: "plp",
+        result_count: products.length,
+      },
       onceKey: `view-item-list:${pathname}:${productIds}`,
     });
     // productIds is derived from products and is the real dependency (a stable

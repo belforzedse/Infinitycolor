@@ -7,7 +7,7 @@ import { useAtom } from "jotai";
 import { useSearchParams } from "next/navigation";
 import { orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 import { StorefrontContainer } from "@/components/storefront";
 
 export default function OrderSuccess() {
@@ -23,7 +23,7 @@ export default function OrderSuccess() {
 
   useEffect(() => {
     if (!resolvedOrderId) return;
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "checkout",
       action: "order_success_page_view",
       onceKey: `order-success-page:${resolvedOrderId}`,
@@ -44,7 +44,7 @@ export default function OrderSuccess() {
             />
           </div>
 
-          <h1 className="text-2xl mb-4 font-bold text-green-600">سفارش شما با موفقیت ثبت شد</h1>
+          <h1 className="mb-4 text-2xl font-bold text-green-600">سفارش شما با موفقیت ثبت شد</h1>
 
           <div className="mb-6 text-gray-700">
             <p className="mb-2">

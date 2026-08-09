@@ -14,8 +14,7 @@ import {
 import { useAtom } from "jotai";
 import { SubmitOrderStep } from "@/types/Order";
 import { useCart } from "@/contexts/CartContext";
-import { trackFunnelStep, trackMatomoEvent } from "@/lib/analytics/matomo";
-import { rialToToman } from "@/utils/price";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 
 /** Type guard for object with optional code string (e.g. PaymentError). */
 function hasCode(x: unknown): x is { code: string } {
@@ -33,9 +32,7 @@ function hasCode(x: unknown): x is { code: string } {
  */
 function getPaymentCallbackErrorCode(error: unknown): string {
   if (hasCode(error)) return error.code;
-  const message = (
-    error instanceof Error ? error.message : String(error ?? "")
-  ).toLowerCase();
+  const message = (error instanceof Error ? error.message : String(error ?? "")).toLowerCase();
   if (message.includes("ناقص")) return "MISSING_PARAMS";
   if (message.includes("network")) return "NETWORK_ERROR";
   if (message.includes("timeout")) return "TIMEOUT";
@@ -53,28 +50,29 @@ function PaymentCallbackContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const navigateToSuccess = useCallback(async (completedOrderId?: number, amountIrr?: number) => {
-    try {
-      await clearCart();
-    } catch (error) {
-      console.error("[PaymentCallback] Failed to refresh cart after payment:", error);
-    }
-    if (completedOrderId) {
-      trackFunnelStep("purchase", {
-        label: String(completedOrderId),
-        value: amountIrr !== undefined ? rialToToman(amountIrr) : undefined,
-        onceKey: `purchase:${completedOrderId}`,
-      });
-      trackMatomoEvent({
-        category: "checkout",
-        action: "payment_callback_success",
-        name: "verified",
-        onceKey: `payment-callback-success:${completedOrderId}`,
-      });
-    }
-    setSubmitOrderStep(SubmitOrderStep.Success);
-    router.push("/orders/success");
-  }, [clearCart, router, setSubmitOrderStep]);
+  const navigateToSuccess = useCallback(
+    async (completedOrderId?: number) => {
+      try {
+        await clearCart();
+      } catch (error) {
+        console.error("[PaymentCallback] Failed to refresh cart after payment:", error);
+      }
+      if (completedOrderId) {
+        // Purchase revenue is emitted exactly once by the backend after
+        // authoritative payment settlement. The browser records only the
+        // callback outcome, so retries or duplicate tabs cannot create a
+        // client-side conversion.
+        trackAnalyticsEvent({
+          category: "checkout",
+          action: "payment_callback_success",
+          onceKey: `payment-callback-success:${completedOrderId}`,
+        });
+      }
+      setSubmitOrderStep(SubmitOrderStep.Success);
+      router.push("/orders/success");
+    },
+    [clearCart, router, setSubmitOrderStep],
+  );
 
   useEffect(() => {
     const handlePaymentCallback = async () => {
@@ -115,9 +113,7 @@ function PaymentCallbackContent() {
         setOrderId(verificationResult.orderId);
         setOrderNumber(verificationResult.orderNumber);
         setTransactionId(
-          verificationResult.transactionId
-            ? String(verificationResult.transactionId)
-            : null,
+          verificationResult.transactionId ? String(verificationResult.transactionId) : null,
         );
 
         // Clear localStorage backup data on successful verification
@@ -126,7 +122,9 @@ function PaymentCallbackContent() {
 
         // Double-check payment status
         try {
-          const paymentStatus = await OrderService.getOrderPaymentStatus(verificationResult.orderId);
+          const paymentStatus = await OrderService.getOrderPaymentStatus(
+            verificationResult.orderId,
+          );
 
           if (paymentStatus.transactionId) {
             setTransactionId(String(paymentStatus.transactionId));
@@ -134,7 +132,7 @@ function PaymentCallbackContent() {
 
           // Set step based on payment status from direct API check
           if (paymentStatus.isPaid) {
-            await navigateToSuccess(verificationResult.orderId, paymentStatus.amountIrr);
+            await navigateToSuccess(verificationResult.orderId);
             return;
           }
         } catch {
@@ -145,22 +143,19 @@ function PaymentCallbackContent() {
         if (verificationResult.success) {
           await navigateToSuccess(verificationResult.orderId);
         } else {
-          trackMatomoEvent({
+          trackAnalyticsEvent({
             category: "checkout",
             action: "payment_callback_failed",
-            name: "verification_failed",
             onceKey: `payment-callback-failed:${verificationResult.orderId || orderIdToVerify}`,
           });
           setSubmitOrderStep(SubmitOrderStep.Failure);
           router.push("/orders/failure");
         }
       } catch (err: unknown) {
-        const errorMessage =
-          err instanceof Error ? err.message : "خطا در بررسی وضعیت پرداخت";
-        trackMatomoEvent({
+        const errorMessage = err instanceof Error ? err.message : "خطا در بررسی وضعیت پرداخت";
+        trackAnalyticsEvent({
           category: "checkout",
           action: "payment_callback_error",
-          name: getPaymentCallbackErrorCode(err),
           onceKey: `payment-callback-error:${orderIdToVerify ?? "unknown"}:${getPaymentCallbackErrorCode(err)}`,
         });
         setError(errorMessage);
@@ -195,7 +190,7 @@ function PaymentCallbackContent() {
               <div className="h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
             </div>
             <p className="text-lg">در حال بررسی وضعیت پرداخت...</p>
-            <p className="text-sm mt-2 text-gray-500">لطفا صفحه را نبندید</p>
+            <p className="mt-2 text-sm text-gray-500">لطفا صفحه را نبندید</p>
           </div>
         ) : error ? (
           <div
@@ -219,7 +214,7 @@ function PaymentCallbackContent() {
               </svg>
             </div>
 
-            <h1 className="text-2xl mb-4 font-bold text-red-600">خطا در پردازش پرداخت</h1>
+            <h1 className="mb-4 text-2xl font-bold text-red-600">خطا در پردازش پرداخت</h1>
 
             <p className="mb-6 text-gray-700">{error}</p>
 

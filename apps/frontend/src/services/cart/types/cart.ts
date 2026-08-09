@@ -120,7 +120,10 @@ export interface UpdateItemRequest {
   count: number;
 }
 
-export type FinalizeCartRequest = SharedFinalizeCartRequest;
+export type FinalizeCartRequest = SharedFinalizeCartRequest & {
+  /** Ephemeral browser correlation copied into the authoritative order row. */
+  analyticsCorrelationId?: string;
+};
 export type GuestCartMergeResponse = SharedGuestCartMergeResponse;
 export type CheckoutQuoteRequest = SharedCheckoutQuoteRequest;
 export type CheckoutQuoteResponse = SharedCheckoutQuoteResponse;

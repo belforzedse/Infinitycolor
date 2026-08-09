@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { useAtom } from "jotai";
 import { orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
-import { trackMatomoEvent } from "@/lib/analytics/matomo";
+import { trackAnalyticsEvent } from "@/lib/analytics";
 import { StorefrontContainer } from "@/components/storefront";
 
 export default function OrderFailure() {
@@ -22,7 +22,7 @@ export default function OrderFailure() {
 
   useEffect(() => {
     if (!resolvedOrderId) return;
-    trackMatomoEvent({
+    trackAnalyticsEvent({
       category: "checkout",
       action: "order_failure_page_view",
       onceKey: `order-failure-page:${resolvedOrderId}`,
@@ -50,7 +50,7 @@ export default function OrderFailure() {
             </svg>
           </div>
 
-          <h1 className="text-2xl mb-4 font-bold text-red-600">پرداخت ناموفق</h1>
+          <h1 className="mb-4 text-2xl font-bold text-red-600">پرداخت ناموفق</h1>
 
           <div className="mb-6 text-gray-700">
             <p className="mb-2">
