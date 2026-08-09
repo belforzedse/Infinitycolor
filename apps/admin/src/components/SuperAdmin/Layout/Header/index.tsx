@@ -57,6 +57,7 @@ export default function SuperAdminLayoutHeader({
             <MobileBackButton />
             <button
               onClick={onMenuClick}
+              aria-label="باز کردن منوی مدیریت"
               className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-neutral-100"
             >
               <MenuIcon />

@@ -28,22 +28,41 @@ import {
   FiDatabase,
   FiPlayCircle,
   FiSliders,
+  FiBookOpen,
+  FiFileText,
+  FiFolder,
+  FiImage,
+  FiTag,
+  FiUser,
+  FiMessageCircle,
+  FiDroplet,
+  FiList,
 } from "react-icons/fi";
 
 // Create a styled layout/menu icons (unused definitions removed)
-const RarMenu = () => <FiMenu className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />;
+const RarMenu = () => (
+  <FiMenu className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
+);
 //Create a styled club icon
 const _MultiUsersIcon = () => (
   <FiUsers className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
 );
 
 //Create a styled Pages icon
-const _PagesIcon = () => <FiLayers className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />;
+const _PagesIcon = () => (
+  <FiLayers className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
+);
 
-const BellIcon = () => <FiBell className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />;
-const ChartIcon = () => <FiBarChart className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />;
+const BellIcon = () => (
+  <FiBell className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
+);
+const ChartIcon = () => (
+  <FiBarChart className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
+);
 
-const _CacheIcon = () => <FiDatabase className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />;
+const _CacheIcon = () => (
+  <FiDatabase className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
+);
 
 type SidebarChild = {
   id: string;
@@ -72,7 +91,9 @@ const superAdminSidebar: SidebarItem[] = [
     id: "customization",
     label: "شخصی‌سازی",
     href: "/customization",
-    icon: <FiSliders className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />,
+    icon: (
+      <FiSliders className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
+    ),
     children: [
       {
         id: "customization-visual-identity",
@@ -94,9 +115,10 @@ const superAdminSidebar: SidebarItem[] = [
 
     children: [
       {
-        id: "productس",
+        id: "products",
         label: " محصولات",
         href: "/products",
+        icon: <ProductIcon />,
       },
       {
         id: "homepage-products",
@@ -117,11 +139,13 @@ const superAdminSidebar: SidebarItem[] = [
         id: "product-categories",
         label: "دسته بندی ها",
         href: "/products/categories",
+        icon: <FiFolder className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "product-tags",
         label: "برچسب ها",
         href: "/products/tags",
+        icon: <FiTag className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "product-comments",
@@ -132,11 +156,19 @@ const superAdminSidebar: SidebarItem[] = [
         id: "product-colors",
         label: "مدیریت رنگ‌ها",
         href: "/products/colors",
+        icon: <FiDroplet className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "product-attributes",
         label: "ویژگی ها",
         href: "/products/attributes",
+        icon: <FiList className="h-5 w-5 text-infinity-primary" />,
+      },
+      {
+        id: "product-size-guide",
+        label: "راهنمای سایز",
+        href: "/products/size-guide",
+        icon: <FiBookOpen className="h-5 w-5 text-infinity-primary" />,
       },
     ],
   },
@@ -150,36 +182,43 @@ const superAdminSidebar: SidebarItem[] = [
         id: "blog-dashboard",
         label: "داشبورد وبلاگ",
         href: "/blog",
+        icon: <FiBookOpen className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "blog-posts",
         label: "مدیریت پست‌ها",
         href: "/blog/posts",
+        icon: <FiFileText className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "blog-categories",
         label: "دسته‌بندی‌ها",
         href: "/blog/categories",
+        icon: <FiFolder className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "blog-category-banners",
         label: "بنر دسته‌بندی‌ها",
         href: "/blog/categories/banners",
+        icon: <FiImage className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "blog-tags",
         label: "برچسب‌ها",
         href: "/blog/tags",
+        icon: <FiTag className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "blog-authors",
         label: "نویسندگان",
         href: "/blog/authors",
+        icon: <FiUser className="h-5 w-5 text-infinity-primary" />,
       },
       {
         id: "blog-comments",
         label: "مدیریت نظرات",
         href: "/blog/comments",
+        icon: <FiMessageCircle className="h-5 w-5 text-infinity-primary" />,
       },
     ],
   },
@@ -187,7 +226,12 @@ const superAdminSidebar: SidebarItem[] = [
     id: "stories",
     label: "استوری‌ها",
     href: "/stories",
-    icon: <FiPlayCircle className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />,
+    icon: (
+      <FiPlayCircle
+        className="h-5 w-5 text-infinity-primary"
+        stroke="#3d4c6e"
+      />
+    ),
     children: [
       {
         id: "stories-list",
@@ -372,18 +416,128 @@ const superAdminSidebar: SidebarItem[] = [
   // },
 ];
 
+const promoteChildren = (
+  items: SidebarItem[],
+  parentId: string,
+): SidebarItem[] =>
+  items.flatMap((item) =>
+    item.id === parentId
+      ? item.children.map((child) => ({
+          id: child.id,
+          label: child.label,
+          href: child.href,
+          icon: child.icon ?? item.icon,
+          children: [],
+        }))
+      : [item],
+  );
+
+function balanceSidebarForRole(
+  items: SidebarItem[],
+  role: AdminRoleId,
+): SidebarItem[] {
+  if (role === "editor") {
+    return promoteChildren(items, "blog");
+  }
+
+  if (["seller1", "seller2", "store_manager"].includes(role)) {
+    return promoteChildren(items, "manage-products");
+  }
+
+  if (role !== "superadmin") return items;
+
+  const storeOperations = new Set(["payment-methods", "discounts", "shipping"]);
+  const customerOperations = new Set(["wallets", "users"]);
+  const result: SidebarItem[] = [];
+
+  for (const item of items) {
+    if (storeOperations.has(item.id)) {
+      if (result.some((candidate) => candidate.id === "store-operations"))
+        continue;
+      const grouped = items.filter((candidate) =>
+        storeOperations.has(candidate.id),
+      );
+      result.push({
+        id: "store-operations",
+        label: "عملیات فروشگاه",
+        icon: <ShippingIcon />,
+        children: grouped.flatMap((candidate) =>
+          candidate.children.length
+            ? candidate.children
+            : candidate.href
+              ? [
+                  {
+                    id: candidate.id,
+                    label: candidate.label,
+                    href: candidate.href,
+                  },
+                ]
+              : [],
+        ),
+      });
+      continue;
+    }
+
+    if (customerOperations.has(item.id)) {
+      if (result.some((candidate) => candidate.id === "customer-operations"))
+        continue;
+      const grouped = items.filter((candidate) =>
+        customerOperations.has(candidate.id),
+      );
+      result.push({
+        id: "customer-operations",
+        label: "مشتریان و کیف پول",
+        icon: <UsersIcon />,
+        children: grouped.flatMap((candidate) =>
+          candidate.href
+            ? [
+                {
+                  id: candidate.id,
+                  label: candidate.label,
+                  href: candidate.href,
+                },
+              ]
+            : candidate.children,
+        ),
+      });
+      continue;
+    }
+
+    result.push(item);
+  }
+
+  return result;
+}
+
 export const getSidebarItemsForCapabilities = (
   capabilities: readonly AdminCapability[] | null | undefined,
   role?: AdminRoleId | string | null,
-): SidebarItem[] =>
-  superAdminSidebar.flatMap((item) => {
+): SidebarItem[] => {
+  const normalizedRole = normalizeAdminRole(role);
+  if (!normalizedRole) return [];
+
+  const filtered = superAdminSidebar.flatMap((item) => {
     const children = item.children
-      .filter((child) => canCapabilitiesAccessPath(capabilities, child.href, role))
+      .filter((child) =>
+        canCapabilitiesAccessPath(capabilities, child.href, role),
+      )
       .map((child) => ({ ...child }));
     const parentAllowed = item.href
       ? canCapabilitiesAccessPath(capabilities, item.href, role)
       : false;
     if (!parentAllowed && children.length === 0) return [];
+    if (!parentAllowed && children.length === 1) {
+      const child = children[0];
+      return [
+        {
+          id: child.id,
+          label: child.label,
+          href: child.href,
+          icon: child.icon ?? item.icon,
+          children: [],
+        },
+      ];
+    }
     return [
       {
         ...item,
@@ -393,7 +547,12 @@ export const getSidebarItemsForCapabilities = (
     ];
   });
 
-export const getSidebarItemsForRole = (roleName?: string | null): SidebarItem[] => {
+  return balanceSidebarForRole(filtered, normalizedRole);
+};
+
+export const getSidebarItemsForRole = (
+  roleName?: string | null,
+): SidebarItem[] => {
   const role = normalizeAdminRole(roleName);
   return getSidebarItemsForCapabilities(capabilitiesForRole(role), role);
 };

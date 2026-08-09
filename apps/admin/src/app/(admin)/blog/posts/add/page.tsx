@@ -14,7 +14,6 @@ import {
   BlogTag,
   CreateBlogPostData,
 } from "@/services/blog/blog.service";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 interface BlogPostFormData {
   Title: string;
@@ -37,17 +36,9 @@ const slugify = (input: string) =>
 
 export default function AddBlogPostPage() {
   const router = useRouter();
-  const { isStoreManager } = useCurrentUser();
   const [isLoading, setIsLoading] = useState(false);
   const [categories, setCategories] = useState<BlogCategory[]>([]);
   const [tags, setTags] = useState<BlogTag[]>([]);
-
-  // Redirect store managers away from blog pages
-  useEffect(() => {
-    if (isStoreManager) {
-      router.replace("/");
-    }
-  }, [isStoreManager, router]);
 
   // Sidebar state
   const [status, setStatus] = useState<"Draft" | "Published" | "Scheduled">("Draft");

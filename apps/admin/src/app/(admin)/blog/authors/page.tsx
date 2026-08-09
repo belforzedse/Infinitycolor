@@ -17,23 +17,13 @@ import {
 } from "lucide-react";
 import { blogService, BlogAuthor } from "@/services/blog/blog.service";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { useRouter } from "next/navigation";
+import { useCan } from "@/hooks/useCan";
 
 export default function BlogAuthorsPage() {
-  const router = useRouter();
-  const { roleName, isStoreManager } = useCurrentUser();
-  const isEditor = (roleName ?? "").toLowerCase().trim() === "editor";
+  const canManageTaxonomy = useCan("content.blog.taxonomy.manage");
   const [authors, setAuthors] = useState<BlogAuthor[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-
-  // Redirect store managers away from blog pages
-  useEffect(() => {
-    if (isStoreManager) {
-      router.replace("/");
-    }
-  }, [isStoreManager, router]);
 
   // Add/Edit form state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -245,13 +235,13 @@ export default function BlogAuthorsPage() {
     ),
   };
 
-  const columns = isEditor ? baseColumns : [...baseColumns, actionColumn];
+  const columns = canManageTaxonomy ? [...baseColumns, actionColumn] : baseColumns;
 
   return (
     <ContentWrapper
       title="مدیریت نویسندگان"
       titleSuffixComponent={
-        !isEditor ? (
+        canManageTaxonomy ? (
           <button
             type="button"
             onClick={openCreateModal}

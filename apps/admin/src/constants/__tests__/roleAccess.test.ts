@@ -81,18 +81,72 @@ describe("canRoleAccessPath", () => {
     });
   });
 
+  describe("Seller roles", () => {
+    it("keeps Seller 1 in the non-destructive catalog workspace", () => {
+      expect(canRoleAccessPath("Seller 1", "/products")).toBe(true);
+      expect(canRoleAccessPath("Seller 1", "/products/add")).toBe(true);
+      expect(canRoleAccessPath("Seller 1", "/products/categories")).toBe(false);
+      expect(canRoleAccessPath("Seller 1", "/orders")).toBe(false);
+    });
+
+    it("adds categories and read-only order pages for Seller 2", () => {
+      expect(canRoleAccessPath("Seller 2", "/products/categories")).toBe(true);
+      expect(canRoleAccessPath("Seller 2", "/orders")).toBe(true);
+      expect(canRoleAccessPath("Seller 2", "/orders/add")).toBe(false);
+      expect(canRoleAccessPath("Seller 2", "/sales")).toBe(false);
+    });
+  });
+
+  describe("Finance", () => {
+    it("inherits Seller 2 and receives financial reports without traffic or wallets", () => {
+      for (const path of [
+        "/products",
+        "/products/categories",
+        "/orders",
+        "/sales",
+        "/sales/products",
+        "/sales/liquidity",
+        "/sales/carts",
+      ]) {
+        expect(canRoleAccessPath("Finance", path)).toBe(true);
+      }
+      for (const path of ["/sales/traffic", "/sales/funnel", "/wallets", "/orders/add"]) {
+        expect(canRoleAccessPath("Finance", path)).toBe(false);
+      }
+    });
+  });
+
   describe("Editor", () => {
-    it("is denied new routes by default (allow-list)", () => {
+    it("has a blog-only admin workspace plus self-service account access", () => {
       expect(canRoleAccessPath("Editor", "/blog")).toBe(true);
+      expect(canRoleAccessPath("Editor", "/account")).toBe(true);
+      expect(canRoleAccessPath("Editor", "/products")).toBe(false);
+      expect(canRoleAccessPath("Editor", "/orders")).toBe(false);
+      expect(canRoleAccessPath("Editor", "/stories")).toBe(false);
+      expect(canRoleAccessPath("Editor", "/faq")).toBe(false);
       expect(canRoleAccessPath("Editor", "/sales")).toBe(false);
       expect(canRoleAccessPath("Editor", "/settings/activity")).toBe(false);
     });
+  });
+
+  it("denies unknown roles and unknown routes by default", () => {
+    expect(canRoleAccessPath("Manager", "/orders")).toBe(false);
+    expect(canRoleAccessPath("Editor", "/unregistered-area")).toBe(false);
+    expect(canRoleAccessPath("Superadmin", "/unregistered-area")).toBe(true);
   });
 });
 
 describe("getSalesNavForRole", () => {
   it("matches the route guard exactly for every role", () => {
-    for (const role of ["Superadmin", "Founder", "Store manager", "Editor"]) {
+    for (const role of [
+      "Superadmin",
+      "Founder",
+      "Finance",
+      "Store manager",
+      "Seller 2",
+      "Seller 1",
+      "Editor",
+    ]) {
       const nav = getSalesNavForRole(role);
       for (const item of nav) {
         expect(canRoleAccessPath(role, item.href)).toBe(true);
@@ -116,6 +170,18 @@ describe("getSalesNavForRole", () => {
       "/sales/products",
     ]);
   });
+
+  it("gives Finance its reporting branch without Founder traffic", () => {
+    expect(getSalesNavForRole("Finance").map((item) => item.href)).toEqual([
+      "/sales",
+      "/sales/breakdown",
+      "/sales/products",
+      "/sales/geography",
+      "/sales/liquidity",
+      "/sales/gateways",
+      "/sales/carts",
+    ]);
+  });
 });
 
 describe("sidebar", () => {
@@ -137,8 +203,9 @@ describe("sidebar", () => {
     expect(sales?.href).toBe("/sales");
   });
 
-  it("shows the product-report Sales hub to a Store manager", () => {
-    expect(parentIds("Store manager")).toContain("sales");
+  it("promotes the Store Manager's only report to a direct destination", () => {
+    expect(parentIds("Store manager")).toContain("sales-products");
+    expect(parentIds("Store manager")).not.toContain("sales");
   });
 
   it("derives the Founder sales children from the permission rules", () => {
@@ -157,5 +224,53 @@ describe("sidebar", () => {
     const hrefs = sales?.children.map((child) => child.href) ?? [];
     expect(hrefs).toContain("/sales/liquidity");
     expect(hrefs).toContain("/sales/gateways");
+  });
+
+  it("promotes Editor blog children to icon-backed top-level destinations", () => {
+    const items = getSidebarItemsForRole("Editor");
+    expect(items.map((item) => item.id)).toEqual([
+      "dashboard",
+      "blog-dashboard",
+      "blog-posts",
+      "blog-categories",
+      "blog-category-banners",
+      "blog-tags",
+      "blog-authors",
+      "blog-comments",
+    ]);
+    expect(items.every((item) => item.icon && item.children.length === 0)).toBe(true);
+  });
+
+  it("promotes focused catalog destinations for seller and Store Manager roles", () => {
+    for (const role of ["Seller 1", "Seller 2", "Store Manager"]) {
+      const items = getSidebarItemsForRole(role);
+      expect(items.some((item) => item.id === "manage-products")).toBe(false);
+      expect(items.some((item) => item.id === "products" && item.icon)).toBe(true);
+      expect(items.some((item) => item.id === "product-size-guide" && item.icon)).toBe(true);
+    }
+  });
+
+  it("keeps every role's top-level information architecture within a useful range", () => {
+    const expectedCounts: Record<string, number> = {
+      Editor: 8,
+      "Seller 1": 6,
+      "Seller 2": 8,
+      "Store Manager": 9,
+      Finance: 4,
+      Founder: 5,
+      Superadmin: 11,
+    };
+
+    for (const [role, count] of Object.entries(expectedCounts)) {
+      expect(getSidebarItemsForRole(role)).toHaveLength(count);
+    }
+  });
+
+  it("groups dense Superadmin commerce and customer controls", () => {
+    const ids = parentIds("Superadmin");
+    expect(ids).toContain("store-operations");
+    expect(ids).toContain("customer-operations");
+    expect(ids).not.toContain("payment-methods");
+    expect(ids).not.toContain("wallets");
   });
 });

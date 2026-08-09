@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
@@ -17,21 +16,11 @@ import {
 } from "lucide-react";
 import { blogService, BlogTag } from "@/services/blog/blog.service";
 import Modal from "@/components/Kits/Modal";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 export default function BlogTagsPage() {
-  const router = useRouter();
-  const { isStoreManager } = useCurrentUser();
   const [tags, setTags] = useState<BlogTag[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-
-  // Redirect store managers away from blog pages
-  useEffect(() => {
-    if (isStoreManager) {
-      router.replace("/");
-    }
-  }, [isStoreManager, router]);
 
   // Add/Edit form state
   const [isModalOpen, setIsModalOpen] = useState(false);

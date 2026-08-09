@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
@@ -10,7 +9,6 @@ import Modal from "@/components/Kits/Modal";
 import {
   Search,
   Trash2,
-  MessageCircle,
   Calendar,
   User,
   FileText,
@@ -21,7 +19,6 @@ import {
 } from "lucide-react";
 import { blogService, BlogComment } from "@/services/blog/blog.service";
 import { resolveBlogCommentUserDisplayName } from "@/utils/blogCommentAuthorName";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 const statusConfig = {
   Pending: { label: "در انتظار", className: "bg-yellow-100 text-yellow-700", icon: Clock },
@@ -30,18 +27,10 @@ const statusConfig = {
 };
 
 export default function BlogCommentsPage() {
-  const router = useRouter();
-  const { isStoreManager } = useCurrentUser();
   const [comments, setComments] = useState<BlogComment[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Redirect store managers away from blog pages
-  useEffect(() => {
-    if (isStoreManager) {
-      router.replace("/");
-    }
-  }, [isStoreManager, router]);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [viewComment, setViewComment] = useState<BlogComment | null>(null);
 

@@ -18,21 +18,12 @@ import {
 } from "lucide-react";
 import { blogService, BlogCategory } from "@/services/blog/blog.service";
 import Modal from "@/components/Kits/Modal";
-import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 export default function BlogCategoriesPage() {
   const router = useRouter();
-  const { isStoreManager } = useCurrentUser();
   const [categories, setCategories] = useState<BlogCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-
-  // Redirect store managers away from blog pages
-  useEffect(() => {
-    if (isStoreManager) {
-      router.replace("/");
-    }
-  }, [isStoreManager, router]);
 
   // Add/Edit form state
   const [isModalOpen, setIsModalOpen] = useState(false);

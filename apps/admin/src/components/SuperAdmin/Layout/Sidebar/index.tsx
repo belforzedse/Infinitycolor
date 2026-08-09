@@ -34,7 +34,10 @@ type SidebarNavProps = {
   variant: "mobile" | "desktop";
 };
 
-function activeEdgeClass(variant: "mobile" | "desktop", heightClass: string): string {
+function activeEdgeClass(
+  variant: "mobile" | "desktop",
+  heightClass: string,
+): string {
   if (variant === "mobile") {
     return `pointer-events-none absolute left-0 top-1/2 ${heightClass} w-2 -translate-y-1/2 rounded-l-full`;
   }
@@ -101,7 +104,10 @@ function SidebarNav({
         const itemBase = (item.href ?? "").replace(/\/$/, "");
         const hasActiveChild = item.children.some((child) => {
           const childHref = (child.href ?? "").replace(/\/$/, "");
-          return childHref && (curr === childHref || curr.startsWith(childHref + "/"));
+          return (
+            childHref &&
+            (curr === childHref || curr.startsWith(childHref + "/"))
+          );
         });
         const isDashboardItem = item.id === "dashboard";
         const isActiveBase =
@@ -126,9 +132,13 @@ function SidebarNav({
                 isActive
                   ? "border-infinity-primary-lighter/30 bg-infinity-primary-lighter/20 text-infinity-primary shadow-sm"
                   : "border-transparent text-neutral-600 hover:border-neutral-100 hover:bg-neutral-50",
-                isCollapsed && variant === "desktop" && "md:justify-center md:px-2",
+                isCollapsed &&
+                  variant === "desktop" &&
+                  "md:justify-center md:px-2",
               )}
-              title={isCollapsed && variant === "desktop" ? item.label : undefined}
+              title={
+                isCollapsed && variant === "desktop" ? item.label : undefined
+              }
             >
               {isActive && showLabels && (
                 <span
@@ -141,11 +151,17 @@ function SidebarNav({
               <div
                 className={clsx(
                   "flex min-w-0 w-full items-center gap-2.5",
-                  isCollapsed && variant === "desktop" && "md:justify-center md:gap-0",
+                  isCollapsed &&
+                    variant === "desktop" &&
+                    "md:justify-center md:gap-0",
                 )}
               >
                 {item.icon}
-                {showLabels && <span className="text-sm font-medium leading-6">{item.label}</span>}
+                {showLabels && (
+                  <span className="text-sm font-medium leading-6">
+                    {item.label}
+                  </span>
+                )}
               </div>
             </Link>
           );
@@ -166,7 +182,9 @@ function SidebarNav({
                   ? "border-infinity-primary-lighter/30 bg-infinity-primary-lighter/20 text-infinity-primary shadow-sm"
                   : "border-transparent hover:border-neutral-100 hover:bg-neutral-50",
                 !isActive && "text-neutral-600",
-                isCollapsed && variant === "desktop" && "md:justify-center md:px-2",
+                isCollapsed &&
+                  variant === "desktop" &&
+                  "md:justify-center md:px-2",
               )}
               onClick={() => handleParentClick(item)}
               onKeyDown={(e) => {
@@ -175,12 +193,16 @@ function SidebarNav({
                   handleParentClick(item);
                 }
               }}
-              title={isCollapsed && variant === "desktop" ? item.label : undefined}
+              title={
+                isCollapsed && variant === "desktop" ? item.label : undefined
+              }
             >
               <div
                 className={clsx(
                   "flex min-w-0 items-center gap-2.5",
-                  isCollapsed && variant === "desktop" && "md:justify-center md:gap-0",
+                  isCollapsed &&
+                    variant === "desktop" &&
+                    "md:justify-center md:gap-0",
                 )}
               >
                 {item.icon}
@@ -247,7 +269,9 @@ function SidebarNav({
                 {item.children.map((child, index) => {
                   const childPath = pathname.replace(/\/$/, "");
                   const href = (child.href ?? "").replace(/\/$/, "");
-                  const active = !!href && (childPath === href || childPath.startsWith(href + "/"));
+                  const active =
+                    !!href &&
+                    (childPath === href || childPath.startsWith(href + "/"));
                   return (
                     <Fragment key={child.id}>
                       <Link
@@ -271,7 +295,10 @@ function SidebarNav({
                         {child.label}
                         {active && (
                           <span
-                            className={clsx(activeEdgeClass(variant, "h-8"), "bg-infinity-primary")}
+                            className={clsx(
+                              activeEdgeClass(variant, "h-8"),
+                              "bg-infinity-primary",
+                            )}
                           />
                         )}
                       </Link>
@@ -303,12 +330,16 @@ function SidebarNav({
           onClick={openConfirm}
           className={clsx(
             "flex items-center gap-2",
-            isCollapsed && variant === "desktop" && "md:justify-center md:gap-0",
+            isCollapsed &&
+              variant === "desktop" &&
+              "md:justify-center md:gap-0",
           )}
           title={isCollapsed && variant === "desktop" ? "خروج" : undefined}
         >
           <ExitIcon />
-          {showLabels && <span className="text-sm font-medium text-neutral-600">خروج</span>}
+          {showLabels && (
+            <span className="text-sm font-medium text-neutral-600">خروج</span>
+          )}
         </button>
         <ConfirmDialog
           isOpen={showConfirm}
@@ -370,7 +401,10 @@ function SuperAdminMobileSidebarDrawer({
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
-            <div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]" aria-hidden />
+            <div
+              className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]"
+              aria-hidden
+            />
           </Transition.Child>
 
           <Transition.Child
@@ -383,54 +417,59 @@ function SuperAdminMobileSidebarDrawer({
             leaveTo="translate-x-full"
           >
             <Dialog.Panel
-                dir="rtl"
-                className="fixed right-0 top-0 z-50 flex h-dvh w-[300px] max-w-[88vw] flex-col overflow-hidden border-l border-neutral-100 bg-white shadow-2xl"
+              dir="rtl"
+              className="fixed right-0 top-0 z-50 flex h-dvh w-[300px] max-w-[88vw] flex-col overflow-hidden border-l border-neutral-100 bg-white shadow-2xl"
+              style={{
+                paddingBottom: "env(safe-area-inset-bottom)",
+              }}
+            >
+              <header
+                className="flex shrink-0 items-center justify-between border-b border-neutral-100 px-4 py-3"
                 style={{
-                  paddingBottom: "env(safe-area-inset-bottom)",
+                  paddingTop: "max(0.75rem, env(safe-area-inset-top))",
                 }}
               >
-                <header
-                  className="flex shrink-0 items-center justify-between border-b border-neutral-100 px-4 py-3"
-                  style={{
-                    paddingTop: "max(0.75rem, env(safe-area-inset-top))",
-                  }}
+                <span className="text-sm font-semibold text-neutral-700">
+                  منوی مدیریت
+                </span>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-full p-2 text-neutral-600 transition-colors hover:bg-neutral-100"
+                  aria-label="بستن منو"
                 >
-                  <span className="text-sm font-semibold text-neutral-700">منوی مدیریت</span>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-full p-2 text-neutral-600 transition-colors hover:bg-neutral-100"
-                    aria-label="بستن منو"
+                  <svg
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-hidden
                   >
-                    <svg
-                      width="24"
-                      height="24"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      aria-hidden
-                    >
-                      <path
-                        d="M6 18L18 6M6 6L18 18"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                </header>
+                    <path
+                      d="M6 18L18 6M6 6L18 18"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </header>
 
-                <nav className="flex min-h-0 flex-1 flex-col p-3" aria-label="منوی مدیریت">
-                  <SidebarNav
-                    sidebarItems={sidebarItems}
-                    openMenus={openMenus}
-                    setOpenMenus={setOpenMenus}
-                    isCollapsed={false}
-                    onNavigate={onClose}
-                    variant="mobile"
-                  />
-                </nav>
+              <nav
+                className="flex min-h-0 flex-1 flex-col p-3"
+                aria-label="منوی مدیریت"
+              >
+                <SidebarNav
+                  sidebarItems={sidebarItems}
+                  openMenus={openMenus}
+                  setOpenMenus={setOpenMenus}
+                  isCollapsed={false}
+                  onNavigate={onClose}
+                  variant="mobile"
+                />
+              </nav>
             </Dialog.Panel>
           </Transition.Child>
         </div>
@@ -459,7 +498,17 @@ export default function SuperAdminLayoutSidebar({
     const curr = pathname.replace(/\/$/, "");
     sidebarItems.forEach((it) => {
       const base = (it.href ?? "").replace(/\/$/, "");
-      if (it.children.length > 0 && base && (curr === base || curr.startsWith(base + "/"))) {
+      const hasActiveChild = it.children.some((child) => {
+        const childHref = child.href.replace(/\/$/, "");
+        return (
+          childHref && (curr === childHref || curr.startsWith(childHref + "/"))
+        );
+      });
+      if (
+        it.children.length > 0 &&
+        ((base && (curr === base || curr.startsWith(base + "/"))) ||
+          hasActiveChild)
+      ) {
         next[it.id] = true;
       }
     });
@@ -497,14 +546,18 @@ export default function SuperAdminLayoutSidebar({
           )}
         >
           {!isCollapsed && (
-            <span className="pr-1 text-xs font-semibold tracking-wide text-neutral-500">منوی مدیریت</span>
+            <span className="pr-1 text-xs font-semibold tracking-wide text-neutral-500">
+              منوی مدیریت
+            </span>
           )}
           {onToggleCollapse && (
             <button
               type="button"
               className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 shadow-sm transition-colors hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800"
               onClick={onToggleCollapse}
-              aria-label={isCollapsed ? "باز کردن منوی کناری" : "بستن منوی کناری"}
+              aria-label={
+                isCollapsed ? "باز کردن منوی کناری" : "بستن منوی کناری"
+              }
             >
               <svg
                 width="16"
@@ -512,7 +565,10 @@ export default function SuperAdminLayoutSidebar({
                 viewBox="0 0 24 24"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
-                className={clsx("transition-transform duration-200", isCollapsed ? "" : "rotate-180")}
+                className={clsx(
+                  "transition-transform duration-200",
+                  isCollapsed ? "" : "rotate-180",
+                )}
                 aria-hidden
               >
                 <path
