@@ -10,5 +10,9 @@ COPY apps/backend/database/migrations/2026.08.07T18.00.00.add-customer-identity-
   /app/database/migrations/2026.08.07T18.00.00.add-customer-identity-lifecycle.js
 COPY apps/backend/scripts/woocommerce-importer/catalog/lib/transforms.js \
   /app/scripts/woocommerce-importer/catalog/lib/transforms.js
+COPY apps/backend/scripts/woocommerce-importer/catalog/lib/slug.js \
+  /app/scripts/woocommerce-importer/catalog/lib/slug.js
 COPY apps/backend/scripts/woocommerce-importer/catalog/__tests__/transforms.test.js \
   /app/scripts/woocommerce-importer/catalog/__tests__/transforms.test.js
+COPY apps/backend/scripts/woocommerce-importer/catalog/__tests__/slug.test.js \
+  /app/scripts/woocommerce-importer/catalog/__tests__/slug.test.js

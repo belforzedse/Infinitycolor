@@ -3,11 +3,9 @@
 /**
  * Slug handling for the catalog importer.
  *
- * Design decision: the WooCommerce slug is the source of truth and is imported
- * **verbatim**, including percent-encoding and whitespace. WooCommerce slugs are
- * already URL-safe, stable across runs, and preserve existing SEO URLs. Empty
- * source slugs remain empty: the importer must never decode, normalize, derive,
- * suffix, or otherwise generate product slugs.
+ * Canonical form is decoded Unicode. WooCommerce remains the source of truth,
+ * but its percent-encoding is URL transport syntax rather than catalog data.
+ * Empty source slugs remain empty: the importer never derives or invents one.
  */
 
 /**
@@ -30,8 +28,8 @@ function safeDecode(value) {
 
 /**
  * Resolve the Strapi slug for a WooCommerce entity.
- * WooCommerce is the only source of truth. The prefix is retained in the public
- * signature for compatibility but is intentionally unused.
+ * Decode percent-encoding so Persian slugs are persisted in canonical Unicode.
+ * The prefix is retained for call-site compatibility but is intentionally unused.
  *
  * @param {{ slug?: string, name?: string, id?: number|string }} entity
  * @param {string} prefix e.g. "product" or "category"
@@ -39,9 +37,7 @@ function safeDecode(value) {
  */
 function resolveSlug(entity, prefix) {
   void prefix;
-  return entity?.slug === null || entity?.slug === undefined
-    ? ""
-    : String(entity.slug);
+  return entity?.slug === null || entity?.slug === undefined ? "" : safeDecode(String(entity.slug));
 }
 
 module.exports = { resolveSlug, safeDecode };

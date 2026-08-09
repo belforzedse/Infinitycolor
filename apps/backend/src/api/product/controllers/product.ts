@@ -24,6 +24,7 @@ import {
 import { generateVariationCombinations } from "../services/variation-combinations";
 import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
+import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
 
 const OPERATIONAL_PRODUCT_FIELDS = [
   "Title",
@@ -243,12 +244,13 @@ function getProductPopulateForView(view: unknown) {
 
 async function findProductBySlugInternal(
   strapi: any,
-  decodedSlug: string,
+  inboundSlug: string,
   isAdmin: boolean,
   populate: typeof PRODUCT_POPULATE | typeof PRODUCT_SHELL_POPULATE = PRODUCT_POPULATE,
 ): Promise<any | null> {
+  const slugCandidates = buildProductSlugCandidates(inboundSlug);
   const filters: any = {
-    Slug: decodedSlug,
+    Slug: { $in: slugCandidates },
     removedAt: { $null: true },
   };
 
@@ -266,11 +268,11 @@ async function findProductBySlugInternal(
 
   if (!product) {
     strapi.log.info(
-      `[Product.findBySlug] No exact match for slug: "${decodedSlug}", trying raw SQL query...`,
+      `[Product.findBySlug] No match for slug candidates of: "${inboundSlug}", trying raw SQL query...`,
     );
     try {
       const knex = strapi.db.connection;
-      let rawQuery = knex("products").where("slug", decodedSlug).whereNull("removed_at");
+      let rawQuery = knex("products").whereIn("slug", slugCandidates).whereNull("removed_at");
 
       if (!isAdmin) {
         rawQuery = rawQuery.where("status", "Active");
@@ -302,12 +304,12 @@ async function findProductBySlugInternal(
 
   if (!product) {
     strapi.log.info(
-      `[Product.findBySlug] No product found with slug: "${decodedSlug}", trying ID fallback...`,
+      `[Product.findBySlug] No product found with slug: "${inboundSlug}", trying ID fallback...`,
     );
 
-    const idMatch = decodedSlug.match(/^\d+$/);
+    const idMatch = inboundSlug.match(/^\d+$/);
     if (idMatch) {
-      const productId = parseInt(decodedSlug, 10);
+      const productId = parseInt(inboundSlug, 10);
       strapi.log.info(
         `[Product.findBySlug] Attempting ID-based lookup for product ID: ${productId}`,
       );
@@ -336,7 +338,7 @@ async function findProductBySlugInternal(
       strapi.log.warn(`[Product.findBySlug] Product with ID ${productId} not found or is trashed`);
     } else {
       strapi.log.warn(
-        `[Product.findBySlug] Slug "${decodedSlug}" is not numeric, cannot use ID fallback`,
+        `[Product.findBySlug] Slug "${inboundSlug}" is not numeric, cannot use ID fallback`,
       );
     }
   }
