@@ -286,7 +286,14 @@ const superAdminSidebar: SidebarItem[] = [
     label: "مدیریت سفارشات",
     href: "/orders",
     icon: <OrdersIcon />,
-    children: [],
+    children: [
+      {
+        id: "orders-carts",
+        label: "سبدهای خرید",
+        href: "/orders/carts",
+        icon: <CartIcon />,
+      },
+    ],
   },
   {
     id: "payment-methods",
@@ -362,10 +369,8 @@ const superAdminSidebar: SidebarItem[] = [
     label: "گزارشات",
     href: "/sales",
     icon: <ChartIcon />,
-    // Children come from the same list the in-page sub-navigation uses, so the
-    // two cannot drift apart. Includes the admin activity report
-    // (`sales-activity`, pointing at /settings/activity) alongside the sales
-    // reports proper — this is the one place both live.
+    // Sales children come from the same primary list the in-page
+    // sub-navigation uses, so those surfaces cannot drift apart.
     children: SALES_NAV_ITEMS.map(({ id, label, href }) => ({
       id,
       label,

@@ -1,8 +1,20 @@
 import { act, render, waitFor } from "@testing-library/react";
+import React from "react";
 
 let pathname = "/";
+const track = jest.fn();
+
 jest.mock("next/navigation", () => ({ usePathname: () => pathname }));
-jest.mock("next/script", () => ({ __esModule: true, default: () => null }));
+jest.mock("next/script", () => ({
+  __esModule: true,
+  default: function MockScript({
+    onLoad,
+    ...props
+  }: React.ComponentProps<"script"> & { onLoad?: () => void }) {
+    React.useEffect(() => onLoad?.(), [onLoad]);
+    return <script {...props} />;
+  },
+}));
 
 import AdminAnalytics, {
   ADMIN_ANALYTICS_CONSENT_EVENT,
@@ -13,16 +25,18 @@ import AdminAnalytics, {
 describe("AdminAnalytics", () => {
   beforeEach(() => {
     pathname = "/";
+    track.mockReset();
     localStorage.clear();
-    (window as Window & { _paq?: unknown[]; __adminMatomoInitialized?: boolean })._paq = [];
-    (window as Window & { __adminMatomoInitialized?: boolean }).__adminMatomoInitialized = false;
-    process.env.NEXT_PUBLIC_ADMIN_MATOMO_URL = "https://matomo.example.test";
-    process.env.NEXT_PUBLIC_ADMIN_MATOMO_SITE_ID = "41";
+    (window as Window & { umami?: { track: typeof track } }).umami = { track };
+    process.env.NEXT_PUBLIC_ADMIN_UMAMI_URL = "https://analytics.example.test";
+    process.env.NEXT_PUBLIC_ADMIN_UMAMI_WEBSITE_ID =
+      "123e4567-e89b-12d3-a456-426614174000";
   });
 
   afterEach(() => {
-    delete process.env.NEXT_PUBLIC_ADMIN_MATOMO_URL;
-    delete process.env.NEXT_PUBLIC_ADMIN_MATOMO_SITE_ID;
+    delete process.env.NEXT_PUBLIC_ADMIN_UMAMI_URL;
+    delete process.env.NEXT_PUBLIC_ADMIN_UMAMI_WEBSITE_ID;
+    delete (window as Window & { umami?: unknown }).umami;
   });
 
   it.each([
@@ -37,19 +51,27 @@ describe("AdminAnalytics", () => {
 
   it("is inert without explicit consent", () => {
     render(<AdminAnalytics />);
-    expect((window as Window & { _paq?: unknown[] })._paq).toEqual([]);
+    expect(track).not.toHaveBeenCalled();
   });
 
-  it("sends only the group after consent and never the raw route", async () => {
+  it("loads the private tracker and sends a stable group after consent", async () => {
     pathname = "/orders/customer-42?token=secret";
-    const { rerender } = render(<AdminAnalytics />);
     localStorage.setItem(ADMIN_ANALYTICS_CONSENT_KEY, "granted");
+    const { container } = render(<AdminAnalytics />);
     act(() => window.dispatchEvent(new Event(ADMIN_ANALYTICS_CONSENT_EVENT)));
-    rerender(<AdminAnalytics />);
 
     await waitFor(() => {
-      const serialized = JSON.stringify((window as Window & { _paq?: unknown[] })._paq);
-      expect(serialized).toContain("AdminNavigation");
+      const script = container.querySelector("script");
+      expect(script).toHaveAttribute(
+        "src",
+        "https://analytics.example.test/telemetry.js",
+      );
+      expect(script).toHaveAttribute(
+        "data-website-id",
+        "123e4567-e89b-12d3-a456-426614174000",
+      );
+      expect(track).toHaveBeenCalled();
+      const serialized = JSON.stringify(track.mock.calls);
       expect(serialized).toContain("commerce");
       expect(serialized).not.toContain("customer-42");
       expect(serialized).not.toContain("token=secret");

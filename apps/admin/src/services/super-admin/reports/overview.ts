@@ -16,20 +16,26 @@ export interface OverviewResponse {
     discounts: Delta;
     refunds: Delta;
   };
-  traffic: { visits: Delta; visitors: Delta; pageviews: Delta } | null;
-  reconciliation: {
-    bucketDate: string;
-    status: "matched" | "diverged" | "matomo_unavailable";
-    ordersDelta: number;
-    revenueRatio: number | null;
-    possibleCurrencyMismatch: boolean;
-    computedAt: string;
+  analyticsDelivery: {
+    status: "healthy" | "pending" | "attention";
+    total: number;
+    pending: number;
+    processing: number;
+    deadLetter: number;
+    oldestPendingAt: string | null;
+    lastSentAt: string | null;
   } | null;
 }
 
-export async function getOverview(params: { start?: string; end?: string }): Promise<OverviewResponse> {
-  const res = await apiClient.get(`/reports/overview${formatQueryParams(params as any)}`, {
-    cache: "no-store",
-  });
+export async function getOverview(params: {
+  start?: string;
+  end?: string;
+}): Promise<OverviewResponse> {
+  const res = await apiClient.get(
+    `/reports/overview${formatQueryParams(params as any)}`,
+    {
+      cache: "no-store",
+    },
+  );
   return (res as any).data as OverviewResponse;
 }

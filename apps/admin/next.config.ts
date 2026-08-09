@@ -7,7 +7,10 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "no-referrer" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
 ];
@@ -15,7 +18,13 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
-  transpilePackages: ["@repo/api", "@repo/auth-core", "@repo/brand", "@repo/fonts", "@repo/ui"],
+  transpilePackages: [
+    "@repo/api",
+    "@repo/auth-core",
+    "@repo/brand",
+    "@repo/fonts",
+    "@repo/ui",
+  ],
   reactStrictMode: true,
   poweredByHeader: false,
   async headers() {
@@ -35,19 +44,70 @@ const nextConfig: NextConfig = {
     return [
       { source: "/reports", destination: "/sales", permanent: false },
       { source: "/reports/overview", destination: "/sales", permanent: false },
-      { source: "/reports/sales", destination: "/sales/breakdown", permanent: false },
-      { source: "/reports/product-sales", destination: "/sales/products", permanent: false },
-      { source: "/reports/funnel", destination: "/sales/funnel", permanent: false },
-      { source: "/reports/geography", destination: "/sales/geography", permanent: false },
-      { source: "/reports/liquidity", destination: "/sales/liquidity", permanent: false },
-      { source: "/reports/gateway-liquidity", destination: "/sales/gateways", permanent: false },
-      { source: "/reports/traffic", destination: "/sales/traffic", permanent: false },
-      { source: "/carts", destination: "/sales/carts", permanent: false },
-      // The staff audit log's page/route still lives under /settings (its
-      // access rules stay tied to the other administrative settings, denied
-      // to Founder and Store manager), but its nav entry point moved into
-      // گزارشات (`sales-activity` in salesNav.ts) alongside the sales reports.
-      { source: "/reports/admin-activity", destination: "/settings/activity", permanent: false },
+      {
+        source: "/reports/sales",
+        destination: "/sales/breakdown",
+        permanent: false,
+      },
+      {
+        source: "/reports/product-sales",
+        destination: "/sales/products",
+        permanent: false,
+      },
+      {
+        source: "/reports/funnel",
+        destination: "/sales/traffic?view=conversion",
+        permanent: false,
+      },
+      {
+        source: "/sales/funnel",
+        destination: "/sales/traffic?view=conversion",
+        permanent: false,
+      },
+      {
+        source: "/reports/geography",
+        destination: "/sales/breakdown?tab=geography",
+        permanent: false,
+      },
+      {
+        source: "/sales/geography",
+        destination: "/sales/breakdown?tab=geography",
+        permanent: false,
+      },
+      {
+        source: "/reports/liquidity",
+        destination: "/sales/liquidity",
+        permanent: false,
+      },
+      {
+        source: "/reports/gateway-liquidity",
+        destination: "/sales/liquidity?section=gateways",
+        permanent: false,
+      },
+      {
+        source: "/sales/gateways",
+        destination: "/sales/liquidity?section=gateways",
+        permanent: false,
+      },
+      {
+        source: "/reports/traffic",
+        destination: "/sales/traffic",
+        permanent: false,
+      },
+      { source: "/carts", destination: "/orders/carts", permanent: false },
+      {
+        source: "/sales/carts",
+        destination: "/orders/carts",
+        permanent: false,
+      },
+      // The staff audit log still lives under /settings (its access rules stay
+      // tied to the other administrative settings, denied to Founder and Store
+      // manager). Preserve the retired report URL for existing bookmarks.
+      {
+        source: "/reports/admin-activity",
+        destination: "/settings/activity",
+        permanent: false,
+      },
       {
         source: "/reports/admin-activity/:id",
         destination: "/settings/activity/:id",
@@ -88,5 +148,8 @@ export default withSentryConfig(nextConfig, {
   silent: !process.env.CI,
   sourcemaps: { disable: false, deleteSourcemapsAfterUpload: true },
   widenClientFileUpload: true,
-  release: { name: process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || "development" },
+  release: {
+    name:
+      process.env.SENTRY_RELEASE || process.env.RELEASE_SHA || "development",
+  },
 });

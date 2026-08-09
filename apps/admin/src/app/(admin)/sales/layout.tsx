@@ -33,10 +33,7 @@ const DATE_SCOPED_ROUTES = [
   "/sales",
   "/sales/breakdown",
   "/sales/products",
-  "/sales/funnel",
-  "/sales/geography",
   "/sales/liquidity",
-  "/sales/gateways",
 ];
 
 export default function SalesLayout({

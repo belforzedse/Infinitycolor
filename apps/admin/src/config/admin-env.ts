@@ -1,12 +1,18 @@
 export type AdminEnvironment = "development" | "e2e" | "staging" | "production";
 
-const FROZEN_ADMIN_ORIGINS: Record<Exclude<AdminEnvironment, "development">, string> = {
+const FROZEN_ADMIN_ORIGINS: Record<
+  Exclude<AdminEnvironment, "development">,
+  string
+> = {
   e2e: "http://localhost:2891",
   staging: "https://admin.staging.infinitycolor.co",
   production: "https://admin.infinitycolor.co",
 };
 
-const FROZEN_STOREFRONT_ORIGINS: Record<Exclude<AdminEnvironment, "development">, string> = {
+const FROZEN_STOREFRONT_ORIGINS: Record<
+  Exclude<AdminEnvironment, "development">,
+  string
+> = {
   e2e: "http://localhost:2888",
   staging: "https://staging.infinitycolor.co",
   production: "https://new.infinitycolor.co",
@@ -22,15 +28,21 @@ export function adminEnvironment(): AdminEnvironment {
   const value = process.env.NEXT_PUBLIC_ADMIN_ENVIRONMENT?.trim();
   if (!value) {
     if (process.env.NODE_ENV === "production") {
-      throw new Error("NEXT_PUBLIC_ADMIN_ENVIRONMENT is required in production mode");
+      throw new Error(
+        "NEXT_PUBLIC_ADMIN_ENVIRONMENT is required in production mode",
+      );
     }
     return "development";
   }
   if (!["development", "e2e", "staging", "production"].includes(value)) {
-    throw new Error("NEXT_PUBLIC_ADMIN_ENVIRONMENT must be development, e2e, staging, or production");
+    throw new Error(
+      "NEXT_PUBLIC_ADMIN_ENVIRONMENT must be development, e2e, staging, or production",
+    );
   }
   if (process.env.NODE_ENV === "production" && value === "development") {
-    throw new Error("A production admin build cannot use the development environment");
+    throw new Error(
+      "A production admin build cannot use the development environment",
+    );
   }
   return value as AdminEnvironment;
 }
@@ -52,7 +64,9 @@ export function exactHttpOrigin(name: string, raw: string): string {
 
 function isLoopbackOrigin(origin: string): boolean {
   const hostname = new URL(origin).hostname;
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+  );
 }
 
 function validateFrozenOrigin(
@@ -76,7 +90,8 @@ function frozenOrigin(
 ): string {
   const environment = adminEnvironment();
   if (!configured?.trim()) {
-    if (environment !== "development") throw new Error(`${name} is required outside development`);
+    if (environment !== "development")
+      throw new Error(`${name} is required outside development`);
     return developmentFallback;
   }
   const origin = exactHttpOrigin(name, configured.trim());
@@ -102,10 +117,18 @@ export function storefrontOrigin(): string {
 }
 
 export function adminRelease(): string {
-  return process.env.RELEASE_SHA?.trim() || process.env.NEXT_PUBLIC_RELEASE_SHA?.trim() || "development";
+  return (
+    process.env.RELEASE_SHA?.trim() ||
+    process.env.NEXT_PUBLIC_RELEASE_SHA?.trim() ||
+    "development"
+  );
 }
 
-function canonicalValue(name: string, canonical: string | undefined, legacy?: string): string | undefined {
+function canonicalValue(
+  name: string,
+  canonical: string | undefined,
+  legacy?: string,
+): string | undefined {
   const canonicalValue = canonical?.trim();
   const legacyValue = legacy?.trim();
   if (canonicalValue && legacyValue && canonicalValue !== legacyValue) {
@@ -141,28 +164,50 @@ export function adminApiUrl(): string {
   }
   const normalized = `${url.origin}${requiredPath}`;
   if (environment === "e2e" && isLoopbackOrigin(url.origin)) return normalized;
-  if (environment !== "development" && normalized !== FROZEN_API_URLS[environment]) {
-    throw new Error(`NEXT_PUBLIC_API_URL must match the frozen ${environment} API URL`);
+  if (
+    environment !== "development" &&
+    normalized !== FROZEN_API_URLS[environment]
+  ) {
+    throw new Error(
+      `NEXT_PUBLIC_API_URL must match the frozen ${environment} API URL`,
+    );
   }
   return normalized;
 }
 
 export function validateAdminAnalyticsProvisioning(): void {
   const environment = adminEnvironment();
-  const rawUrl = process.env.NEXT_PUBLIC_ADMIN_MATOMO_URL?.trim();
-  const siteId = process.env.NEXT_PUBLIC_ADMIN_MATOMO_SITE_ID?.trim();
-  if (!rawUrl || !siteId) {
+  const rawUrl = process.env.NEXT_PUBLIC_ADMIN_UMAMI_URL?.trim();
+  const websiteId = process.env.NEXT_PUBLIC_ADMIN_UMAMI_WEBSITE_ID?.trim();
+  if (!rawUrl || !websiteId) {
     if (environment === "staging" || environment === "production") {
-      throw new Error("Dedicated admin Matomo URL and site id are required before deployment verification");
+      throw new Error(
+        "Dedicated admin Umami URL and website id are required before deployment verification",
+      );
     }
     return;
   }
   const url = new URL(rawUrl);
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
-    throw new Error("NEXT_PUBLIC_ADMIN_MATOMO_URL must be a credential-free HTTPS URL");
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      "NEXT_PUBLIC_ADMIN_UMAMI_URL must be an exact credential-free HTTPS origin",
+    );
   }
-  if (!/^\d+$/.test(siteId)) {
-    throw new Error("NEXT_PUBLIC_ADMIN_MATOMO_SITE_ID must be a numeric, admin-specific site id");
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      websiteId,
+    )
+  ) {
+    throw new Error(
+      "NEXT_PUBLIC_ADMIN_UMAMI_WEBSITE_ID must be a canonical UUID",
+    );
   }
 }
 
@@ -171,6 +216,8 @@ export function validateAdminRuntimeConfiguration(): void {
   const storefront = storefrontOrigin();
   adminApiUrl();
   if (admin === storefront) {
-    throw new Error("ADMIN_URL and NEXT_PUBLIC_STOREFRONT_URL must be distinct origins");
+    throw new Error(
+      "ADMIN_URL and NEXT_PUBLIC_STOREFRONT_URL must be distinct origins",
+    );
   }
 }

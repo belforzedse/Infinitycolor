@@ -2,7 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 
 jest.mock("zaman", () => ({
   DatePicker: ({ onChange }: any) => (
-    <input data-testid="datepicker" onChange={(e) => onChange(new Date(e.target.value))} />
+    <input
+      data-testid="datepicker"
+      onChange={(e) => onChange(new Date(e.target.value))}
+    />
   ),
 }));
 
@@ -17,7 +20,11 @@ jest.mock("@/components/SuperAdmin/Layout/ContentWrapper", () => ({
 }));
 
 jest.mock("@/components/SuperAdmin/reports/shared/useReportQueryState", () => ({
-  useReportQueryState: () => ({ start: "2026-01-01", end: "2026-01-31", setRange: jest.fn() }),
+  useReportQueryState: () => ({
+    start: "2026-01-01",
+    end: "2026-01-31",
+    setRange: jest.fn(),
+  }),
 }));
 
 const getOverviewMock = jest.fn();
@@ -33,7 +40,8 @@ function makeDelta(current: number, previous: number) {
     current,
     previous,
     change,
-    changePct: previous === 0 ? null : Number(((change / previous) * 100).toFixed(2)),
+    changePct:
+      previous === 0 ? null : Number(((change / previous) * 100).toFixed(2)),
   };
 }
 
@@ -52,8 +60,15 @@ function makeResponse(overrides: Partial<any> = {}) {
       discounts: makeDelta(50_000, 40_000),
       refunds: makeDelta(50_000, 60_000),
     },
-    traffic: null,
-    reconciliation: null,
+    analyticsDelivery: {
+      status: "healthy",
+      total: 2,
+      pending: 0,
+      processing: 0,
+      deadLetter: 0,
+      oldestPendingAt: null,
+      lastSentAt: "2026-01-31T00:00:00.000Z",
+    },
     ...overrides,
   };
 }
@@ -68,64 +83,44 @@ describe("OverviewReportPage", () => {
     render(<OverviewReportPage />);
 
     await waitFor(() =>
-      expect(getOverviewMock).toHaveBeenCalledWith({ start: "2026-01-01", end: "2026-01-31" }),
+      expect(getOverviewMock).toHaveBeenCalledWith({
+        start: "2026-01-01",
+        end: "2026-01-31",
+      }),
     );
     await screen.findByText("فروش ناخالص");
   });
 
-  it("shows an explicit 'Matomo unavailable' message instead of zeroed traffic KPIs", async () => {
-    getOverviewMock.mockResolvedValue(makeResponse({ traffic: null }));
+  it("shows the durable commerce delivery health", async () => {
+    getOverviewMock.mockResolvedValue(makeResponse());
     render(<OverviewReportPage />);
-    await screen.findByText(/ماتومو پیکربندی نشده یا در دسترس نیست/);
+    await screen.findByText("صف تحویل سالم است");
   });
 
-  it("renders traffic KPIs when Matomo answered", async () => {
+  it("shows dead-letter delivery as requiring attention", async () => {
     getOverviewMock.mockResolvedValue(
       makeResponse({
-        traffic: {
-          visits: makeDelta(500, 400),
-          visitors: makeDelta(300, 250),
-          pageviews: makeDelta(1200, 1000),
+        analyticsDelivery: {
+          status: "attention",
+          total: 3,
+          pending: 0,
+          processing: 0,
+          deadLetter: 1,
+          oldestPendingAt: null,
+          lastSentAt: null,
         },
       }),
     );
     render(<OverviewReportPage />);
-    await screen.findByText("بازدیدها");
-    expect(screen.queryByText(/ماتومو پیکربندی نشده/)).not.toBeInTheDocument();
+    await screen.findByText(/نیازمند رسیدگی/);
   });
 
-  it("renders the reconciliation status badge", async () => {
+  it("does not fabricate delivery health when the queue table is unavailable", async () => {
     getOverviewMock.mockResolvedValue(
-      makeResponse({
-        reconciliation: {
-          bucketDate: "2026-01-30",
-          status: "diverged",
-          ordersDelta: 3,
-          revenueRatio: 0.8,
-          possibleCurrencyMismatch: false,
-          computedAt: "2026-01-31T00:20:00.000Z",
-        },
-      }),
+      makeResponse({ analyticsDelivery: null }),
     );
     render(<OverviewReportPage />);
-    await screen.findByText("واگرا");
-  });
-
-  it("flags a possible currency mismatch distinctly", async () => {
-    getOverviewMock.mockResolvedValue(
-      makeResponse({
-        reconciliation: {
-          bucketDate: "2026-01-30",
-          status: "diverged",
-          ordersDelta: 0,
-          revenueRatio: 10.1,
-          possibleCurrencyMismatch: true,
-          computedAt: "2026-01-31T00:20:00.000Z",
-        },
-      }),
-    );
-    render(<OverviewReportPage />);
-    await screen.findByText(/احتمال ناهماهنگی واحد پول/);
+    await screen.findByText("وضعیت صف تحویل در دسترس نیست.");
   });
 
   it("shows an error message when the fetch fails", async () => {

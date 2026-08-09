@@ -59,13 +59,16 @@ describe("Sales workspace layout", () => {
       mockAdminRole = "superadmin";
       render(<SalesLayout>{null}</SalesLayout>);
 
-      expect(screen.getByRole("link", { name: "نمای کلی" })).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "تحلیل ترافیک" })).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "سبدهای خرید" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "نمای کلی" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "رفتار کاربران" }),
+      ).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "نقدینگی" })).toBeInTheDocument();
       expect(
-        screen.getByRole("link", { name: "گزارش فعالیت ادمین‌ها" }),
-      ).toBeInTheDocument();
+        screen.queryByRole("link", { name: "سبدهای خرید" }),
+      ).not.toBeInTheDocument();
     });
 
     it("shows inherited finance, traffic, and cart reports to a Founder", () => {
@@ -80,14 +83,20 @@ describe("Sales workspace layout", () => {
       render(<SalesLayout>{null}</SalesLayout>);
 
       // Founders keep the sales reports they were already allowed to view.
-      expect(screen.getByRole("link", { name: "نمای کلی" })).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "فروش محصولات" })).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "تفکیک فروش" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "نمای کلی" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "فروش محصولات" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "تفکیک فروش" }),
+      ).toBeInTheDocument();
 
-      expect(screen.getByRole("link", { name: "تحلیل ترافیک" })).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "سبدهای خرید" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "رفتار کاربران" }),
+      ).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "نقدینگی" })).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "نقدینگی درگاه‌ها" })).toBeInTheDocument();
       // The admin activity log lives under /settings, already forbidden to
       // Founder — a visible link here would 403 on click.
       expect(
@@ -101,7 +110,9 @@ describe("Sales workspace layout", () => {
       render(<SalesLayout>{null}</SalesLayout>);
 
       expect(screen.getAllByRole("link")).toHaveLength(1);
-      expect(screen.getByRole("link", { name: "فروش محصولات" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: "فروش محصولات" }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -127,10 +138,7 @@ describe("Sales workspace layout", () => {
         "/sales",
         "/sales/breakdown",
         "/sales/products",
-        "/sales/funnel",
-        "/sales/geography",
         "/sales/liquidity",
-        "/sales/gateways",
       ]) {
         mockPathname = pathname;
         const { unmount } = render(<SalesLayout>{null}</SalesLayout>);
@@ -141,9 +149,8 @@ describe("Sales workspace layout", () => {
 
     it("is omitted where the period does not apply", () => {
       mockAdminRole = "superadmin";
-      // Traffic owns its own controls (including realtime refresh); carts is
-      // not period-scoped at all.
-      for (const pathname of ["/sales/traffic", "/sales/carts"]) {
+      // Behavior owns its own range, comparison and realtime controls.
+      for (const pathname of ["/sales/traffic"]) {
         mockPathname = pathname;
         const { unmount } = render(<SalesLayout>{null}</SalesLayout>);
         expect(screen.queryByText("این ماه")).not.toBeInTheDocument();

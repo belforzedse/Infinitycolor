@@ -10,7 +10,12 @@ interface StatusMeta {
 
 const normalizeKey = (value?: string | null) => {
   if (!value) return "";
-  return value.toString().trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  return value
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
 };
 
 // Customer-facing lifecycle labels remain granular while tabs continue to use
@@ -98,7 +103,7 @@ const GENERIC_TRANSLATIONS: Record<string, string> = {
   canceled: "لغو شده",
 };
 
-/** Funnel step keys used in traffic/Matomo reports. */
+/** Funnel step keys used in behavior reports. */
 export const FUNNEL_STEP_MAP: Record<string, string> = {
   view_item: "مشاهده محصول",
   add_to_cart: "افزودن به سبد",
@@ -111,7 +116,10 @@ export const translateFunnelStep = (step?: string | null): string => {
   return FUNNEL_STEP_MAP[step] ?? step;
 };
 
-const getMeta = (map: Record<string, StatusMeta>, value?: string | null): StatusMeta => {
+const getMeta = (
+  map: Record<string, StatusMeta>,
+  value?: string | null,
+): StatusMeta => {
   if (!value) {
     return { label: "نامشخص", tone: "info" };
   }
@@ -119,7 +127,13 @@ const getMeta = (map: Record<string, StatusMeta>, value?: string | null): Status
   return map[normalized] ?? { label: value, tone: "info" };
 };
 
-const DELIVERED_KEYS = ["done", "delivered", "completed", "success", "تحویل داده شده"];
+const DELIVERED_KEYS = [
+  "done",
+  "delivered",
+  "completed",
+  "success",
+  "تحویل داده شده",
+];
 const CANCELLED_KEYS = [
   "cancelled",
   "canceled",
@@ -141,7 +155,9 @@ export const translateOrderStatus = (status?: string | null): string =>
   getOrderStatusMeta(status).label;
 
 /** Maps raw backend order Status to the UI category enum (tabs / row display). */
-export const getOrderStatusCategory = (status?: string | null): PersianOrderStatus => {
+export const getOrderStatusCategory = (
+  status?: string | null,
+): PersianOrderStatus => {
   const normalized = normalizeKey(status);
   if (DELIVERED_KEYS.includes(normalized)) {
     return PersianOrderStatus.DELIVERED;
@@ -193,7 +209,8 @@ export const translateBackendValue = (value?: string | null): string => {
   const normalized = normalizeKey(value);
 
   if (ORDER_STATUS_MAP[normalized]) return ORDER_STATUS_MAP[normalized].label;
-  if (PAYMENT_STATUS_MAP[normalized]) return PAYMENT_STATUS_MAP[normalized].label;
+  if (PAYMENT_STATUS_MAP[normalized])
+    return PAYMENT_STATUS_MAP[normalized].label;
   if (CONTRACT_STATUS_MAP[normalized]) return CONTRACT_STATUS_MAP[normalized];
   if (CART_STATUS_MAP[normalized]) return CART_STATUS_MAP[normalized];
   if (COMMENT_STATUS_MAP[normalized]) return COMMENT_STATUS_MAP[normalized];

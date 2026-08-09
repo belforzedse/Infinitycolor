@@ -44,7 +44,7 @@ function contentSecurityPolicy(nonce: string): string {
   const image = sourceOrigin(process.env.NEXT_PUBLIC_IMAGE_BASE_URL);
   const media = sourceOrigin(process.env.NEXT_PUBLIC_MEDIA_CDN_URL);
   const sentry = sourceOrigin(process.env.NEXT_PUBLIC_SENTRY_TUNNEL_ORIGIN);
-  const matomo = sourceOrigin(process.env.NEXT_PUBLIC_ADMIN_MATOMO_URL);
+  const umami = sourceOrigin(process.env.NEXT_PUBLIC_ADMIN_UMAMI_URL);
   const developmentScript =
     process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
   const developmentConnect =
@@ -59,7 +59,7 @@ function contentSecurityPolicy(nonce: string): string {
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${developmentScript}`,
-    `connect-src 'self' ${[auth, api, sentry, matomo].filter(Boolean).join(" ")}${developmentConnect}`.trim(),
+    `connect-src 'self' ${[auth, api, sentry, umami].filter(Boolean).join(" ")}${developmentConnect}`.trim(),
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     "media-src 'self' blob:",

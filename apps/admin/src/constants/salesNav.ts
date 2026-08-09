@@ -1,5 +1,13 @@
-import { capabilitiesForRole, normalizeAdminRole, type AdminCapability, type AdminRoleId } from "@repo/auth-core";
-import { canCapabilitiesAccessPath, canRoleAccessPath } from "@/constants/roleAccess";
+import {
+  capabilitiesForRole,
+  normalizeAdminRole,
+  type AdminCapability,
+  type AdminRoleId,
+} from "@repo/auth-core";
+import {
+  canCapabilitiesAccessPath,
+  canRoleAccessPath,
+} from "@/constants/roleAccess";
 
 export type SalesNavItem = {
   id: string;
@@ -10,32 +18,19 @@ export type SalesNavItem = {
 /**
  * The گزارشات (Reports) workspace.
  *
- * These destinations previously sat in a `reports` sidebar group that had no
- * `href`, which made `/reports` itself unreachable — and `/reports` was the
- * only inbound link to the liquidity and gateway-liquidity pages, so both were
- * dead in the navigation despite working.
+ * Primary sales navigation. Older report destinations remain routable through
+ * the redirects in `next.config.ts`, but no longer compete with the core
+ * overview/products/breakdown/behavior/liquidity workflow.
  *
- * Order is deliberate: the overview lands first, then the analytical cuts of
- * "how are we selling", then the money-movement reports, then the pre-purchase
- * surfaces (traffic, carts), then the non-sales admin audit report.
- *
- * `sales-activity` intentionally points at `/settings/activity`, not a
- * `/sales/*` path — the audit log's own page/route did not move, only its
- * entry point did. Founder access is still narrowed automatically:
- * `getSalesNavForRole` filters every item through `canRoleAccessPath`, and
- * `/settings` is already in `FOUNDER_FORBIDDEN_PREFIXES`.
+ * Carts are an operational commerce surface and intentionally live below the
+ * Orders item in the sidebar, not in this analytics nav.
  */
 export const SALES_NAV_ITEMS: SalesNavItem[] = [
   { id: "sales-overview", label: "نمای کلی", href: "/sales" },
-  { id: "sales-breakdown", label: "تفکیک فروش", href: "/sales/breakdown" },
   { id: "sales-products", label: "فروش محصولات", href: "/sales/products" },
-  { id: "sales-funnel", label: "قیف فروش", href: "/sales/funnel" },
-  { id: "sales-geography", label: "فروش جغرافیایی", href: "/sales/geography" },
+  { id: "sales-breakdown", label: "تفکیک فروش", href: "/sales/breakdown" },
+  { id: "sales-traffic", label: "رفتار کاربران", href: "/sales/traffic" },
   { id: "sales-liquidity", label: "نقدینگی", href: "/sales/liquidity" },
-  { id: "sales-gateways", label: "نقدینگی درگاه‌ها", href: "/sales/gateways" },
-  { id: "sales-traffic", label: "تحلیل ترافیک", href: "/sales/traffic" },
-  { id: "sales-carts", label: "سبدهای خرید", href: "/sales/carts" },
-  { id: "sales-activity", label: "گزارش فعالیت ادمین‌ها", href: "/settings/activity" },
 ];
 
 /**
@@ -45,9 +40,7 @@ export const SALES_NAV_ITEMS: SalesNavItem[] = [
  * list, so the sidebar, the in-page sub-navigation and the route guard cannot
  * drift apart and show a role a tab whose endpoint will 403.
  */
-export const getSalesNavForRole = (
-  roleName?: string | null,
-): SalesNavItem[] =>
+export const getSalesNavForRole = (roleName?: string | null): SalesNavItem[] =>
   SALES_NAV_ITEMS.filter((item) => canRoleAccessPath(roleName, item.href));
 
 export const getSalesNavForCapabilities = (
@@ -58,7 +51,12 @@ export const getSalesNavForCapabilities = (
     canCapabilitiesAccessPath(capabilities, item.href, role),
   );
 
-export const getSalesNavForAdminRole = (role?: string | null): SalesNavItem[] => {
+export const getSalesNavForAdminRole = (
+  role?: string | null,
+): SalesNavItem[] => {
   const normalized = normalizeAdminRole(role);
-  return getSalesNavForCapabilities(capabilitiesForRole(normalized), normalized);
+  return getSalesNavForCapabilities(
+    capabilitiesForRole(normalized),
+    normalized,
+  );
 };

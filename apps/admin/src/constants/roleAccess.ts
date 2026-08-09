@@ -21,8 +21,12 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: "/orders/add", capability: "order.manual.create" },
   { prefix: "/orders/print", capability: "order.print" },
   { prefix: "/orders/anipo-barcode", capability: "order.print" },
+  { prefix: "/orders/carts", capability: "report.carts.read" },
   { prefix: "/orders", capability: "order.read" },
-  { prefix: "/products/homepage-custom-section", capability: "system.customization.manage" },
+  {
+    prefix: "/products/homepage-custom-section",
+    capability: "system.customization.manage",
+  },
   { prefix: "/products/homepage", capability: "system.customization.manage" },
   { prefix: "/products/gif-promo", capability: "system.customization.manage" },
   { prefix: "/products/comments", capability: "system.reviews.manage" },
@@ -75,7 +79,9 @@ export function canCapabilitiesAccessPath(
   const adminRole = normalizeAdminRole(role);
   if (!adminRole || !pathname) return false;
   if (adminRole === "superadmin") return true;
-  const rule = ADMIN_ROUTE_RULES.find((candidate) => matchesRule(pathname, candidate));
+  const rule = ADMIN_ROUTE_RULES.find((candidate) =>
+    matchesRule(pathname, candidate),
+  );
   if (!rule) return false;
   if (rule.capability === null) return true;
   return (capabilities ?? []).includes(rule.capability);

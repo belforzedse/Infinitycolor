@@ -14,14 +14,10 @@ import { getSidebarItemsForRole } from "../superAdminSidebar";
 
 const FOUNDER_ALLOWED_SALES = [
   "/sales",
-  "/sales/breakdown",
   "/sales/products",
-  "/sales/funnel",
-  "/sales/geography",
-  "/sales/liquidity",
-  "/sales/gateways",
+  "/sales/breakdown",
   "/sales/traffic",
-  "/sales/carts",
+  "/sales/liquidity",
 ];
 
 describe("canRoleAccessPath", () => {
@@ -41,29 +37,36 @@ describe("canRoleAccessPath", () => {
       }
     });
 
-    it("inherits product, finance, traffic, and carts reporting", () => {
+    it("inherits product, finance, and behavior reporting", () => {
       for (const path of FOUNDER_ALLOWED_SALES) {
         expect(canRoleAccessPath("Founder", path)).toBe(true);
       }
     });
 
     it("still cannot reach the staff activity log after it moved to settings", () => {
-      expect(canRoleAccessPath("Founder", "/reports/admin-activity")).toBe(false);
+      expect(canRoleAccessPath("Founder", "/reports/admin-activity")).toBe(
+        false,
+      );
       expect(canRoleAccessPath("Founder", "/settings/activity")).toBe(false);
     });
 
     it("applies the same capabilities to compatible legacy report paths", () => {
       expect(canRoleAccessPath("Founder", "/reports/traffic")).toBe(true);
       expect(canRoleAccessPath("Founder", "/carts")).toBe(true);
+      expect(canRoleAccessPath("Founder", "/orders/carts")).toBe(true);
       expect(canRoleAccessPath("Founder", "/reports/liquidity")).toBe(true);
-      expect(canRoleAccessPath("Founder", "/reports/gateway-liquidity")).toBe(true);
+      expect(canRoleAccessPath("Founder", "/reports/gateway-liquidity")).toBe(
+        true,
+      );
     });
   });
 
   describe("Store manager", () => {
     it("can reach product reporting but not broader sales destinations", () => {
       expect(canRoleAccessPath("Store manager", "/sales/products")).toBe(true);
-      for (const item of SALES_NAV_ITEMS.filter((item) => item.href !== "/sales/products")) {
+      for (const item of SALES_NAV_ITEMS.filter(
+        (item) => item.href !== "/sales/products",
+      )) {
         expect(canRoleAccessPath("Store manager", item.href)).toBe(false);
       }
       for (const path of ["/reports", "/reports/sales", "/carts"]) {
@@ -105,12 +108,17 @@ describe("canRoleAccessPath", () => {
         "/orders",
         "/sales",
         "/sales/products",
+        "/sales/breakdown",
         "/sales/liquidity",
-        "/sales/carts",
       ]) {
         expect(canRoleAccessPath("Finance", path)).toBe(true);
       }
-      for (const path of ["/sales/traffic", "/sales/funnel", "/wallets", "/orders/add"]) {
+      for (const path of [
+        "/sales/traffic",
+        "/sales/funnel",
+        "/wallets",
+        "/orders/add",
+      ]) {
         expect(canRoleAccessPath("Finance", path)).toBe(false);
       }
     });
@@ -155,7 +163,9 @@ describe("getSalesNavForRole", () => {
       const allowed = SALES_NAV_ITEMS.filter((item) =>
         canRoleAccessPath(role, item.href),
       );
-      expect(nav.map((item) => item.id)).toEqual(allowed.map((item) => item.id));
+      expect(nav.map((item) => item.id)).toEqual(
+        allowed.map((item) => item.id),
+      );
     }
   });
 
@@ -166,20 +176,17 @@ describe("getSalesNavForRole", () => {
   });
 
   it("gives a Store manager product reporting only", () => {
-    expect(getSalesNavForRole("Store manager").map((item) => item.href)).toEqual([
-      "/sales/products",
-    ]);
+    expect(
+      getSalesNavForRole("Store manager").map((item) => item.href),
+    ).toEqual(["/sales/products"]);
   });
 
   it("gives Finance its reporting branch without Founder traffic", () => {
     expect(getSalesNavForRole("Finance").map((item) => item.href)).toEqual([
       "/sales",
-      "/sales/breakdown",
       "/sales/products",
-      "/sales/geography",
+      "/sales/breakdown",
       "/sales/liquidity",
-      "/sales/gateways",
-      "/sales/carts",
     ]);
   });
 });
@@ -189,7 +196,7 @@ describe("sidebar", () => {
     getSidebarItemsForRole(role).map((item) => item.id);
 
   it("no longer exposes carts as a top-level destination", () => {
-    // It lives inside the Sales hub now, where it inherits /sales denial.
+    // It lives inside the Orders/commerce surface now.
     expect(parentIds("Superadmin")).not.toContain("carts");
   });
 
@@ -217,13 +224,19 @@ describe("sidebar", () => {
     );
   });
 
-  it("surfaces the liquidity reports that were previously unreachable", () => {
+  it("keeps carts under the commerce orders surface", () => {
     const sales = getSidebarItemsForRole("Superadmin").find(
       (item) => item.id === "sales",
     );
     const hrefs = sales?.children.map((child) => child.href) ?? [];
     expect(hrefs).toContain("/sales/liquidity");
-    expect(hrefs).toContain("/sales/gateways");
+    expect(hrefs).not.toContain("/sales/carts");
+    const orders = getSidebarItemsForRole("Superadmin").find(
+      (item) => item.id === "orders",
+    );
+    expect(orders?.children.map((child) => child.href)).toContain(
+      "/orders/carts",
+    );
   });
 
   it("promotes Editor blog children to icon-backed top-level destinations", () => {
@@ -238,15 +251,21 @@ describe("sidebar", () => {
       "blog-authors",
       "blog-comments",
     ]);
-    expect(items.every((item) => item.icon && item.children.length === 0)).toBe(true);
+    expect(items.every((item) => item.icon && item.children.length === 0)).toBe(
+      true,
+    );
   });
 
   it("promotes focused catalog destinations for seller and Store Manager roles", () => {
     for (const role of ["Seller 1", "Seller 2", "Store Manager"]) {
       const items = getSidebarItemsForRole(role);
       expect(items.some((item) => item.id === "manage-products")).toBe(false);
-      expect(items.some((item) => item.id === "products" && item.icon)).toBe(true);
-      expect(items.some((item) => item.id === "product-size-guide" && item.icon)).toBe(true);
+      expect(items.some((item) => item.id === "products" && item.icon)).toBe(
+        true,
+      );
+      expect(
+        items.some((item) => item.id === "product-size-guide" && item.icon),
+      ).toBe(true);
     }
   });
 
