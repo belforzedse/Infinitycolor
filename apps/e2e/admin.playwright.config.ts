@@ -11,6 +11,18 @@ const isCI = !!process.env.CI;
 const authServerCommand = process.env.E2E_AUTH_SERVER_COMMAND?.trim();
 const adminServerCommand = process.env.E2E_ADMIN_SERVER_COMMAND?.trim();
 
+function browserApiURL(): string {
+  if (!process.env.E2E_API_PROXY_TARGET?.trim()) return strapiApiURL();
+  return `${adminBaseURL().replace(/\/$/, "")}/api/backend`;
+}
+
+function browserImageOrigin(): string {
+  if (process.env.E2E_API_PROXY_TARGET?.trim()) {
+    return adminBaseURL().replace(/\/$/, "");
+  }
+  return process.env.NEXT_PUBLIC_IMAGE_BASE_URL?.trim() || strapiOrigin();
+}
+
 function stringProcessEnvironment(): Record<string, string> {
   return Object.fromEntries(
     Object.entries(process.env).filter(
@@ -97,10 +109,12 @@ export default defineConfig({
               ADMIN_URL: adminBaseURL(),
               NEXT_PUBLIC_ADMIN_URL: adminBaseURL(),
               NEXT_PUBLIC_STOREFRONT_URL: storefrontBaseURL(),
-              NEXT_PUBLIC_API_BASE_URL: strapiApiURL(),
-              NEXT_PUBLIC_API_URL: strapiApiURL(),
-              NEXT_PUBLIC_IMAGE_BASE_URL:
-                process.env.NEXT_PUBLIC_IMAGE_BASE_URL?.trim() || strapiOrigin(),
+              // Node-side fixtures still use the Docker service URL. Browser
+              // traffic must stay on the admin origin and pass through Next's
+              // E2E-only rewrite so every engine observes the same CORS policy.
+              NEXT_PUBLIC_API_BASE_URL: browserApiURL(),
+              NEXT_PUBLIC_API_URL: browserApiURL(),
+              NEXT_PUBLIC_IMAGE_BASE_URL: browserImageOrigin(),
               NEXT_PUBLIC_AUTH_ENVIRONMENT: "e2e",
               NEXT_PUBLIC_AUTH_ORIGIN: centralAuthOrigin(),
               NEXT_PUBLIC_AUTH_URL: centralAuthOrigin(),

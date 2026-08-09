@@ -115,15 +115,19 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
 
   const selectedCategory = useMemo(() => {
     if (!selectedMainCategoryId || !Array.isArray(CategoriesData)) {
-      return undefined;
+      return null;
     }
-    return CategoriesData.find((cat: categoryResponseType) => cat.id.toString() === selectedMainCategoryId) || undefined;
+    return (
+      CategoriesData.find(
+        (cat: categoryResponseType) => cat.id.toString() === selectedMainCategoryId,
+      ) ?? null
+    );
   }, [selectedMainCategoryId, CategoriesData]);
 
   return (
     <>
       <div className="flex flex-col gap-1">
-        <Combobox<categoryResponseType, false>
+        <Combobox<categoryResponseType | null, false>
           value={selectedCategory}
           onChange={onChangeMainCategory}
         >

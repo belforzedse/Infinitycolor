@@ -26,17 +26,22 @@ describe("admin environment contract", () => {
     expect(() => validateAdminRuntimeConfiguration()).toThrow(/frozen production authority/);
   });
 
-  it("accepts only loopback or the frozen GitLab service URL for e2e API traffic", () => {
+  it("accepts only a loopback same-origin proxy for e2e browser API traffic", () => {
     process.env.NODE_ENV = "production";
     process.env.NEXT_PUBLIC_ADMIN_ENVIRONMENT = "e2e";
-    process.env.NEXT_PUBLIC_API_URL = "http://backend:1337/api";
+    process.env.NEXT_PUBLIC_API_URL = "http://localhost:2891/api/backend";
     let { adminApiUrl } = require("./admin-env");
-    expect(adminApiUrl()).toBe("http://backend:1337/api");
+    expect(adminApiUrl()).toBe("http://localhost:2891/api/backend");
 
     jest.resetModules();
-    process.env.NEXT_PUBLIC_API_URL = "http://untrusted-service:1337/api";
+    process.env.NEXT_PUBLIC_API_URL = "http://untrusted-service:1337/api/backend";
     ({ adminApiUrl } = require("./admin-env"));
     expect(() => adminApiUrl()).toThrow(/frozen e2e API URL/);
+
+    jest.resetModules();
+    process.env.NEXT_PUBLIC_API_URL = "http://backend:1337/api";
+    ({ adminApiUrl } = require("./admin-env"));
+    expect(() => adminApiUrl()).toThrow(/ending exactly in \/api\/backend/);
   });
 
   it("makes dedicated analytics provisioning a staging and production readiness gate", () => {

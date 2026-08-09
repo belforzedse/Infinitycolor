@@ -27,8 +27,8 @@ const SimilarCategorySelector: React.FC<SimilarCategorySelectorProps> = ({
       <h2 className="text-base text-neutral-600">دسته بندی های مشابه</h2>
 
       <div className="flex flex-col gap-2 rounded-lg border border-slate-100 bg-white px-5 py-3">
-        <Combobox<categoryResponseType, false>
-          value={undefined}
+        <Combobox<categoryResponseType | null, false>
+          value={null}
           onChange={handleSelectOtherCategory}
         >
           <div className="relative">

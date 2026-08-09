@@ -91,6 +91,18 @@ function rejectPublicationFields(ctx: any): boolean {
   return true;
 }
 
+function discardLegacyDraftStatusOnCreate(ctx: any): void {
+  const data = ctx.request?.body?.data;
+  if (!data || typeof data !== "object" || data.Status !== "InActive") return;
+
+  // Older admin releases included the default draft status in the generic
+  // create payload. Accept that one safe legacy value during rolling deploys;
+  // this controller still forces every new product to InActive below. All
+  // other publication values and fields remain command-only.
+  const { Status: _legacyDraftStatus, ...operationalData } = data;
+  ctx.request.body = { ...ctx.request.body, data: operationalData };
+}
+
 /**
  * Check whether the user can access operational catalog records, including
  * inactive and soft-deleted products.
@@ -393,6 +405,7 @@ async function findProductBySlugInternal(
 
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
   async create(ctx) {
+    discardLegacyDraftStatusOnCreate(ctx);
     if (rejectPublicationFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     ctx.request.body = ctx.request.body || {};

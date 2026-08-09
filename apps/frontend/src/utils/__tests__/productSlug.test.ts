@@ -23,9 +23,9 @@ describe("productSlug helpers", () => {
     expect(canonicalProductSlug(withZwnj)).toBe(withZwnj);
   });
 
-  it("redirects literal encoded route segments to the canonical form", () => {
-    expect(shouldRedirectToCanonicalSlug(ENCODED, ENCODED)).toBe(true);
-    expect(shouldRedirectToCanonicalSlug(ENCODED, PERSIAN)).toBe(true);
+  it("treats an encoded Next.js route parameter as the canonical URL", () => {
+    expect(shouldRedirectToCanonicalSlug(ENCODED, ENCODED)).toBe(false);
+    expect(shouldRedirectToCanonicalSlug(ENCODED, PERSIAN)).toBe(false);
     expect(buildCanonicalPdpPath(ENCODED)).toBe(`/pdp/${encodeURIComponent(PERSIAN)}`);
   });
 

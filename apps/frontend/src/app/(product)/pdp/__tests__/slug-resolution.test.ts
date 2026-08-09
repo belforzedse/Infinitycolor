@@ -40,8 +40,8 @@ describe("PDP slug resolution (Y00574 class)", () => {
     expect(shouldRedirectToCanonicalSlug(Y00574_PERSIAN, Y00574_ENCODED)).toBe(false);
   });
 
-  it("redirects the literal encoded route segment after repair", () => {
-    expect(shouldRedirectToCanonicalSlug(Y00574_ENCODED, Y00574_PERSIAN)).toBe(true);
+  it("does not self-redirect an encoded Next.js route parameter after repair", () => {
+    expect(shouldRedirectToCanonicalSlug(Y00574_ENCODED, Y00574_PERSIAN)).toBe(false);
   });
 
   it("preserves ZWNJ in the canonical slug", () => {

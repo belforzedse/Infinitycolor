@@ -6,6 +6,7 @@ const mockExecute = jest.fn();
 const mockEffects = jest.fn();
 const mockEnqueue = jest.fn();
 const mockRemove = jest.fn();
+const mockCoreCreate = jest.fn();
 let mockAdminUser: any;
 
 mockStrapi.query = jest.fn((uid: string) => {
@@ -57,6 +58,10 @@ jest.mock("../../../utils/responseCache", () => ({
 
 import productController from "../controllers/product";
 
+Object.setPrototypeOf(productController as object, {
+  create: mockCoreCreate,
+});
+
 function makeCtx(overrides: Record<string, unknown> = {}) {
   return {
     params: { id: "12" },
@@ -92,6 +97,37 @@ describe("product publication controller contract", () => {
     mockEffects.mockResolvedValue({ completed: true, revision: 4 });
     mockEnqueue.mockResolvedValue("job-id");
     mockRemove.mockResolvedValue(true);
+    mockCoreCreate.mockResolvedValue({ data: { id: 12 } });
+  });
+
+  it("accepts the legacy default draft status during product creation", async () => {
+    const ctx = makeCtx({
+      request: { body: { data: { Title: "Legacy admin draft", Status: "InActive" } } },
+    });
+
+    await (productController as any).create(ctx);
+
+    expect(mockCoreCreate).toHaveBeenCalledWith(ctx);
+    expect(ctx.status).toBeUndefined();
+    expect(ctx.request.body.data).toEqual({
+      Title: "Legacy admin draft",
+      Status: "InActive",
+    });
+  });
+
+  it("still rejects attempts to publish through generic product creation", async () => {
+    const ctx = makeCtx({
+      request: { body: { data: { Title: "Invalid published product", Status: "Active" } } },
+    });
+
+    await (productController as any).create(ctx);
+
+    expect(ctx.status).toBe(400);
+    expect(ctx.body.error.details).toEqual({
+      code: "PUBLICATION_COMMAND_REQUIRED",
+      fields: ["Status"],
+    });
+    expect(mockCoreCreate).not.toHaveBeenCalled();
   });
 
   it("rejects publication fields through generic update", async () => {

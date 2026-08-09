@@ -34,13 +34,14 @@ export function shouldRedirectToCanonicalSlug(
 ): boolean {
   const canonical = canonicalProductSlug(storedSlug);
   if (!canonical) return false;
-  if (/^\d+$/.test(routeSlug) || /^\d+$/.test(safeDecodeProductSlug(routeSlug))) {
+  const decodedRouteSlug = safeDecodeProductSlug(routeSlug);
+  if (/^\d+$/.test(routeSlug) || /^\d+$/.test(decodedRouteSlug)) {
     return false;
   }
-  // Redirect whenever the raw route segment is not already the canonical
-  // string. Includes: literal percent-encoded historical slugs, and any
-  // case where Strapi still stores the encoded form (pre-repair).
-  return routeSlug !== canonical;
+  // Next.js can expose an encoded route segment even when the browser is
+  // already at the canonical Persian URL. Compare decoded values so we do not
+  // redirect that request back to the exact same URL forever.
+  return decodedRouteSlug !== canonical;
 }
 
 export function buildCanonicalPdpPath(storedSlug: string | null | undefined): string {

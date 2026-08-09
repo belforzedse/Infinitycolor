@@ -13,7 +13,7 @@ const FROZEN_STOREFRONT_ORIGINS: Record<Exclude<AdminEnvironment, "development">
 };
 
 const FROZEN_API_URLS: Record<Exclude<AdminEnvironment, "development">, string> = {
-  e2e: "http://backend:1337/api",
+  e2e: "http://localhost:2891/api/backend",
   staging: "https://api.staging.infinitycolor.co/api",
   production: "https://api.infinitycolor.co/api",
 };
@@ -124,6 +124,8 @@ export function adminApiUrl(): string {
     process.env.NEXT_PUBLIC_API_BASE_URL,
   );
   if (!raw) return "http://127.0.0.1:1337/api";
+  const environment = adminEnvironment();
+  const requiredPath = environment === "e2e" ? "/api/backend" : "/api";
   const url = new URL(raw);
   if (
     !["http:", "https:"].includes(url.protocol) ||
@@ -131,12 +133,13 @@ export function adminApiUrl(): string {
     url.password ||
     url.search ||
     url.hash ||
-    url.pathname.replace(/\/$/, "") !== "/api"
+    url.pathname.replace(/\/$/, "") !== requiredPath
   ) {
-    throw new Error("NEXT_PUBLIC_API_URL must be an HTTP(S) URL ending exactly in /api");
+    throw new Error(
+      `NEXT_PUBLIC_API_URL must be an HTTP(S) URL ending exactly in ${requiredPath}`,
+    );
   }
-  const normalized = `${url.origin}/api`;
-  const environment = adminEnvironment();
+  const normalized = `${url.origin}${requiredPath}`;
   if (environment === "e2e" && isLoopbackOrigin(url.origin)) return normalized;
   if (environment !== "development" && normalized !== FROZEN_API_URLS[environment]) {
     throw new Error(`NEXT_PUBLIC_API_URL must match the frozen ${environment} API URL`);

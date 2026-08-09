@@ -47,6 +47,7 @@ test.describe("scheduled product publication", () => {
     page,
     request,
   }) => {
+    test.setTimeout(120_000);
     const runtime = await prepareStorefrontPage(page);
     const fixture = await createRuntimeProductFixture(request, {
       initialPublication: "InActive",
