@@ -1,4 +1,3 @@
-import logo from "/public/images/cropped-021.webp";
 import Image from "next/image";
 const ContactHeader = () => {
   return (

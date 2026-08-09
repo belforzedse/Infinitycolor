@@ -2,6 +2,12 @@ packages:
   - "apps/*"
   - "packages/*"
 overrides:
+  # The browser applications are React 19. A transitive Strapi declaration
+  # otherwise wins pnpm's shared type hoist and makes both deploy builds resolve
+  # two incompatible ReactNode universes. These are declaration packages only;
+  # Strapi's React 18 runtime remains unchanged and separately built.
+  "@types/react": 19.2.14
+  "@types/react-dom": 19.2.3
   sharp: 0.34.5
 peerDependencyRules:
   allowedVersions:
