@@ -5,15 +5,6 @@
 import { MANAGEMENT_ROLES } from "../../../utils/roles";
 import { hasCapability, type AdminCapability } from "@repo/auth-core";
 import { requireCapability } from "../../../utils/adminAuthorization";
-import { parsePositiveInt } from "../../../utils/parsePositiveInt";
-import {
-  getMatomoFunnel,
-  getMatomoRealtimePayload,
-  getMatomoTrafficDashboardPayload,
-  getProductBehavioral,
-  normalizeRange,
-  previousRange,
-} from "../services/matomo";
 import * as productAnalytics from "../services/product-analytics";
 import { buildStyledWorkbook, WorkbookColumn } from "../../../utils/styledWorkbook";
 import {
@@ -22,25 +13,312 @@ import {
   type SalesBreakdownDimension,
 } from "../analytics/semantic/salesBreakdown";
 import { METRIC_CATALOG } from "../analytics/metrics/catalog";
+import {
+  getUmamiBehaviorReport,
+  getUmamiRealtimeReport,
+  isUmamiConfigured,
+  normalizeRange,
+  normalizeUmamiFilters,
+  previousRange,
+  UMAMI_DEFINITION_VERSION,
+  UMAMI_REPORT_TIMEZONE,
+} from "../services/umami";
+
+async function getProductBehavioralUmami(
+  slug: string,
+  range: { startDate: string; endDate: string },
+) {
+  if (!slug || !isUmamiConfigured()) return null;
+  try {
+    const report = await getUmamiBehaviorReport("content", range);
+    const rows = Array.isArray(report.sections.path) ? (report.sections.path as Array<any>) : [];
+    const needle = `/pdp/${slug}`.toLowerCase();
+    const match = rows.find((row) =>
+      String(row?.label || "")
+        .toLowerCase()
+        .includes(needle),
+    );
+    if (!match) return { pageviews: 0, uniquePageviews: 0, avgTimeOnPageSec: 0, bounceRate: 0 };
+    return {
+      pageviews: Number(match.pageviews || 0),
+      uniquePageviews: Number(match.visits || match.visitors || 0),
+      avgTimeOnPageSec:
+        Number(match.visits || 0) > 0 ? Number(match.totaltime || 0) / Number(match.visits) : 0,
+      bounceRate:
+        Number(match.visits || 0) > 0
+          ? (Number(match.bounces || 0) / Number(match.visits)) * 100
+          : 0,
+    };
+  } catch {
+    return null;
+  }
+}
 
 type Interval = "day" | "week" | "month";
 type AdminActivityResourceScope = "all" | "order" | "product";
 
-function isForceFresh(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
+const behaviorCache = new Map<string, { createdAt: number; payload: any }>();
+const behaviorPromises = new Map<string, Promise<any>>();
+const BEHAVIOR_CACHE_LIMIT = 500;
+
+type BehaviorKind =
+  | "overview"
+  | "acquisition"
+  | "conversion"
+  | "content"
+  | "audience"
+  | "performance";
+
+function hasMeaningfulBehaviorValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasMeaningfulBehaviorValue);
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(hasMeaningfulBehaviorValue);
+  }
+  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+  if (typeof value === "string") return value.trim().length > 0;
+  return value === true;
 }
 
-const TRAFFIC_DASHBOARD_CACHE_TTL_MS = parsePositiveInt(
-  process.env.TRAFFIC_DASHBOARD_CACHE_TTL_MS,
-  30_000,
-);
-const TRAFFIC_REALTIME_CACHE_TTL_MS = parsePositiveInt(
-  process.env.TRAFFIC_REALTIME_CACHE_TTL_MS,
-  10_000,
-);
-const trafficCache = new Map<string, { expiresAt: number; payload: any }>();
+function behaviorStatus(report: any): "ok" | "empty" | "partial" | "unavailable" {
+  if (!isUmamiConfigured() || report?.errors?.source) return "unavailable";
+  const sectionValues = Object.entries(report?.sections || {}).filter(([key]) => key !== "summary");
+  if (
+    Object.keys(report?.sections || {}).length === 0 &&
+    Object.keys(report?.errors || {}).length > 0
+  ) {
+    return "unavailable";
+  }
+  if (Object.keys(report?.errors || {}).length > 0) return "partial";
+  const hasData = sectionValues.some(([, value]) => hasMeaningfulBehaviorValue(value));
+  const summary = report?.summary || report?.sections?.summary;
+  const hasSummary = hasMeaningfulBehaviorValue(summary);
+  return hasData || hasSummary ? "ok" : "empty";
+}
+
+function setBehaviorCache(key: string, payload: any, createdAt = Date.now()) {
+  behaviorCache.delete(key);
+  behaviorCache.set(key, { createdAt, payload });
+  while (behaviorCache.size > BEHAVIOR_CACHE_LIMIT) {
+    const oldestKey = behaviorCache.keys().next().value;
+    if (typeof oldestKey !== "string") break;
+    behaviorCache.delete(oldestKey);
+  }
+}
+
+function behaviorMeta(
+  status: "ok" | "empty" | "partial" | "unavailable",
+  range: { startDate: string; endDate: string },
+  cache: "fresh" | "stale" | "miss",
+  refreshedAt: string,
+  comparisonRange: { startDate: string; endDate: string } | null = null,
+) {
+  return {
+    source: "umami",
+    timezone: UMAMI_REPORT_TIMEZONE,
+    unit: "count",
+    currency: "IRR",
+    definitionVersion: UMAMI_DEFINITION_VERSION,
+    dataStart: /^\d{4}-\d{2}-\d{2}$/.test(String(process.env.UMAMI_DATA_START_DATE || ""))
+      ? String(process.env.UMAMI_DATA_START_DATE)
+      : "2026-08-09",
+    refreshedAt,
+    cache,
+    status,
+    requestedRange: { start: range.startDate, end: range.endDate },
+    comparisonRange: comparisonRange
+      ? { start: comparisonRange.startDate, end: comparisonRange.endDate }
+      : null,
+  };
+}
+
+function behaviorCacheKey(
+  kind: BehaviorKind,
+  range: { startDate: string; endDate: string },
+  filters: Record<string, string>,
+  advanced: boolean,
+  comparison: boolean,
+) {
+  const filterKey = Object.entries(filters)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+  return `${process.env.UMAMI_BASE_URL || process.env.UMAMI_URL || ""}:${process.env.UMAMI_WEBSITE_ID || ""}:${kind}:${range.startDate}:${range.endDate}:${advanced ? "advanced" : "basic"}:${comparison ? "previous" : "none"}:${filterKey}`;
+}
+
+type BehaviorReadOptions = {
+  advanced?: boolean;
+  filters?: Record<string, unknown>;
+  fresh?: boolean;
+  comparison?: boolean;
+};
+
+async function readBehaviorReport(
+  kind: BehaviorKind,
+  range: { startDate: string; endDate: string },
+  options: BehaviorReadOptions = {},
+) {
+  const filters = normalizeUmamiFilters(options.filters || {});
+  const wantsComparison = Boolean(options.comparison);
+  const comparisonRange = wantsComparison ? previousRange(range) : null;
+  const key = behaviorCacheKey(kind, range, filters, Boolean(options.advanced), wantsComparison);
+  const now = Date.now();
+  const cached = behaviorCache.get(key);
+  const freshTtl = options.advanced ? 5 * 60_000 : 60_000;
+  const staleTtl = options.advanced ? 5 * 60_000 : 5 * 60_000;
+  if (!options.fresh && cached && now - cached.createdAt <= freshTtl) {
+    return { ...cached.payload, meta: { ...cached.payload.meta, cache: "fresh" } };
+  }
+
+  const existingPromise = behaviorPromises.get(key);
+  if (existingPromise) return existingPromise;
+
+  const reportPromise = (async () => {
+    const providerOptions = { advanced: options.advanced, filters };
+    const [report, comparisonReport] = await Promise.all([
+      getUmamiBehaviorReport(kind, range, providerOptions),
+      comparisonRange
+        ? getUmamiBehaviorReport(kind, comparisonRange, providerOptions)
+        : Promise.resolve(null),
+    ]);
+    const currentStatus = behaviorStatus(report);
+    const comparisonStatus = comparisonReport ? behaviorStatus(comparisonReport) : null;
+    if (
+      currentStatus === "unavailable" &&
+      cached &&
+      now - cached.createdAt <= freshTtl + staleTtl
+    ) {
+      return {
+        ...cached.payload,
+        meta: {
+          ...cached.payload.meta,
+          cache: "stale",
+          status: "partial",
+          warnings: [
+            ...(cached.payload.meta?.warnings || []),
+            "Umami is unavailable; showing the last successful response.",
+          ],
+        },
+      };
+    }
+    const status =
+      currentStatus === "unavailable"
+        ? "unavailable"
+        : currentStatus === "partial" ||
+            comparisonStatus === "partial" ||
+            comparisonStatus === "unavailable"
+          ? "partial"
+          : currentStatus;
+    const data =
+      currentStatus === "unavailable"
+        ? null
+        : {
+            ...report,
+            ...(comparisonReport
+              ? {
+                  comparison:
+                    comparisonStatus === "unavailable"
+                      ? null
+                      : { ...comparisonReport, status: comparisonStatus },
+                  comparisonStatus,
+                }
+              : {}),
+          };
+    const payload = {
+      data,
+      meta: behaviorMeta(status, range, "miss", new Date().toISOString(), comparisonRange),
+    };
+    if (currentStatus !== "unavailable") {
+      setBehaviorCache(key, payload);
+    }
+    return payload;
+  })().finally(() => {
+    if (behaviorPromises.get(key) === reportPromise) behaviorPromises.delete(key);
+  });
+  behaviorPromises.set(key, reportPromise);
+  return reportPromise;
+}
+
+function behaviorRequestOptions(ctx: any, advanced = false): BehaviorReadOptions {
+  const comparison = String(ctx.query.comparison || "none");
+  if (!["none", "previous_period"].includes(comparison)) {
+    throw new Error("INVALID_COMPARISON");
+  }
+  return {
+    advanced,
+    filters: ctx.query,
+    fresh: String(ctx.query.fresh || "") === "1",
+    comparison: comparison === "previous_period",
+  };
+}
+
+async function readBehaviorRealtime() {
+  const key = `realtime:${process.env.UMAMI_BASE_URL || process.env.UMAMI_URL || ""}:${process.env.UMAMI_WEBSITE_ID || ""}`;
+  const now = Date.now();
+  const cached = behaviorCache.get(key);
+  if (cached && now - cached.createdAt <= 10_000) {
+    return { ...cached.payload, meta: { ...cached.payload.meta, cache: "fresh" } };
+  }
+  const result = await getUmamiRealtimeReport();
+  const status = result.error
+    ? "unavailable"
+    : result.activeVisitors || result.topPages.length
+      ? "ok"
+      : "empty";
+  if (result.error && cached && now - cached.createdAt <= 5 * 60_000) {
+    return {
+      ...cached.payload,
+      meta: {
+        ...cached.payload.meta,
+        cache: "stale",
+        status: "partial",
+        warnings: [
+          ...(cached.payload.meta?.warnings || []),
+          "Umami realtime is unavailable; showing the last successful response.",
+        ],
+      },
+    };
+  }
+  const range = normalizeRange();
+  const payload = {
+    data: result.error ? null : result,
+    meta: behaviorMeta(status, range, "miss", new Date().toISOString()),
+  };
+  if (!result.error) setBehaviorCache(key, payload, now);
+  return payload;
+}
+
+async function getAnalyticsDeliveryHealth(knex: any) {
+  try {
+    const result = await knex.raw(
+      `SELECT
+         COUNT(*)::bigint AS total,
+         COUNT(*) FILTER (WHERE status = 'pending')::bigint AS pending,
+         COUNT(*) FILTER (WHERE status = 'processing')::bigint AS processing,
+         COUNT(*) FILTER (WHERE status = 'dead_letter')::bigint AS dead_letter,
+         MIN(created_at) FILTER (WHERE status = 'pending') AS oldest_pending_at,
+         MAX(sent_at) AS last_sent_at
+       FROM analytics_outbox`,
+    );
+    const row = rowsOf(result)[0] || {};
+    const pending = Number(row.pending || 0);
+    const processing = Number(row.processing || 0);
+    const deadLetter = Number(row.dead_letter || 0);
+    return {
+      status: deadLetter > 0 ? "attention" : pending > 0 || processing > 0 ? "pending" : "healthy",
+      total: Number(row.total || 0),
+      pending,
+      processing,
+      deadLetter,
+      oldestPendingAt: row.oldest_pending_at || null,
+      lastSentAt: row.last_sent_at || null,
+    };
+  } catch (error: any) {
+    strapi.log?.warn?.("[analytics] delivery health unavailable", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+    return null;
+  }
+}
 
 function parseDate(value?: string, fallbackDays = 30): Date {
   if (!value) {
@@ -54,29 +332,6 @@ function parseDate(value?: string, fallbackDays = 30): Date {
 
 async function ensureCapability(ctx: any, capability: AdminCapability) {
   return requireCapability(ctx, strapi, capability);
-}
-
-function getTrafficCacheKey(prefix: string, params: Record<string, string>) {
-  const entries = Object.entries(params).sort(([a], [b]) => a.localeCompare(b));
-  return `${prefix}:${entries.map(([k, v]) => `${k}=${v}`).join("&")}`;
-}
-
-function getFromTrafficCache(key: string): any | null {
-  const now = Date.now();
-  const cached = trafficCache.get(key);
-  if (!cached) return null;
-  if (cached.expiresAt <= now) {
-    trafficCache.delete(key);
-    return null;
-  }
-  return cached.payload;
-}
-
-function setTrafficCache(key: string, payload: any, ttlMs: number) {
-  trafficCache.set(key, {
-    expiresAt: Date.now() + ttlMs,
-    payload,
-  });
 }
 
 const normalizeResourceScope = (value: unknown): AdminActivityResourceScope => {
@@ -259,6 +514,22 @@ async function getRevenueToman(start: Date, end: Date) {
   );
   const row = (revenueRes.rows || revenueRes[0] || [])[0] || {};
   return Number(row.total_irr || 0) / 10;
+}
+
+async function getBehaviorCommerce(range: { startDate: string; endDate: string }) {
+  const start = new Date(`${range.startDate}T00:00:00+03:30`);
+  const end = new Date(`${range.endDate}T23:59:59.999+03:30`);
+  const [orderStats, revenueToman] = await Promise.all([
+    getOrderStats(start, end),
+    getRevenueToman(start, end),
+  ]);
+  return {
+    source: "commerce",
+    currency: "Toman",
+    paidOrders: orderStats.paidOrders,
+    totalOrders: orderStats.totalOrders,
+    revenueToman,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -806,86 +1077,189 @@ export default {
     }
   },
 
-  async trafficDashboard(ctx) {
+  async behaviorOverview(ctx) {
     try {
-      const user = await ensureCapability(ctx, "report.traffic.read");
-      if (!user) return;
-
-      const normalizedRange = normalizeRange(
+      if (!(await ensureCapability(ctx, "report.traffic.read"))) return;
+      const range = normalizeRange(
         (ctx.query.startDate as string) || (ctx.query.start as string),
         (ctx.query.endDate as string) || (ctx.query.end as string),
       );
-      const forceFresh = isForceFresh(ctx.query.fresh);
-
-      const cacheKey = getTrafficCacheKey("dashboard", normalizedRange);
-      if (!forceFresh) {
-        const cached = getFromTrafficCache(cacheKey);
-        if (cached) {
-          ctx.body = { data: cached };
-          return;
-        }
-      }
-
-      const startDate = new Date(normalizedRange.startDate);
-      const endDate = new Date(normalizedRange.endDate);
-      const [matomoPayload, orderStats, revenueToman] = await Promise.all([
-        getMatomoTrafficDashboardPayload(normalizedRange),
-        getOrderStats(startDate, endDate),
-        getRevenueToman(startDate, endDate),
+      const [payload, analyticsDelivery] = await Promise.all([
+        readBehaviorReport("overview", range, behaviorRequestOptions(ctx)),
+        getAnalyticsDeliveryHealth(strapi.db.connection),
       ]);
-
-      const conversionRate =
-        matomoPayload.summary.visits > 0
-          ? Number(((orderStats.paidOrders / matomoPayload.summary.visits) * 100).toFixed(2))
-          : 0;
-
-      const payload = {
-        ...matomoPayload,
-        ecommerce: {
-          orders: orderStats.paidOrders,
-          totalOrders: orderStats.totalOrders,
-          revenue: revenueToman,
-          conversionRate,
+      if (!analyticsDelivery) {
+        ctx.body = payload;
+        return;
+      }
+      const data = payload.data
+        ? {
+            ...(payload.data as any),
+            sections: {
+              ...((payload.data as any).sections || {}),
+              analyticsDelivery,
+            },
+          }
+        : {
+            kind: "overview",
+            range,
+            sections: { analyticsDelivery },
+            errors: { source: "UMAMI_UNAVAILABLE" },
+          };
+      ctx.body = {
+        data,
+        meta: {
+          ...payload.meta,
+          status: payload.data ? payload.meta.status : "partial",
+          ...(!payload.data
+            ? { warnings: ["Umami is unavailable; delivery health remains current."] }
+            : {}),
         },
-        updatedAt: new Date().toISOString(),
       };
-
-      setTrafficCache(cacheKey, payload, TRAFFIC_DASHBOARD_CACHE_TTL_MS);
-      ctx.body = { data: payload };
     } catch (error: any) {
       if (error?.message === "INVALID_DATE_RANGE") {
         ctx.badRequest("Invalid date range", { data: { success: false } });
         return;
       }
-      ctx.badRequest(error.message, { data: { success: false } });
+      ctx.badRequest(error?.message || String(error), { data: { success: false } });
     }
   },
 
-  async trafficRealtime(ctx) {
+  async behaviorAcquisition(ctx) {
     try {
-      const user = await ensureCapability(ctx, "report.traffic.read");
-      if (!user) return;
-
-      const forceFresh = isForceFresh(ctx.query.fresh);
-      const cacheKey = "realtime";
-      if (!forceFresh) {
-        const cached = getFromTrafficCache(cacheKey);
-        if (cached) {
-          ctx.body = { data: cached };
-          return;
-        }
-      }
-
-      const realtime = await getMatomoRealtimePayload();
-      const payload = {
-        ...realtime,
-        updatedAt: new Date().toISOString(),
-      };
-
-      setTrafficCache(cacheKey, payload, TRAFFIC_REALTIME_CACHE_TTL_MS);
-      ctx.body = { data: payload };
+      if (!(await ensureCapability(ctx, "report.traffic.read"))) return;
+      const range = normalizeRange(
+        (ctx.query.startDate as string) || (ctx.query.start as string),
+        (ctx.query.endDate as string) || (ctx.query.end as string),
+      );
+      ctx.body = await readBehaviorReport("acquisition", range, behaviorRequestOptions(ctx));
     } catch (error: any) {
-      ctx.badRequest(error.message, { data: { success: false } });
+      ctx.badRequest(error?.message || String(error), { data: { success: false } });
+    }
+  },
+
+  async behaviorConversion(ctx) {
+    try {
+      if (!(await ensureCapability(ctx, "report.traffic.read"))) return;
+      const range = normalizeRange(
+        (ctx.query.startDate as string) || (ctx.query.start as string),
+        (ctx.query.endDate as string) || (ctx.query.end as string),
+      );
+      const options = behaviorRequestOptions(ctx);
+      const comparisonRange = options.comparison ? previousRange(range) : null;
+      const [payload, commerce, comparisonCommerce] = await Promise.all([
+        readBehaviorReport("conversion", range, options),
+        getBehaviorCommerce(range),
+        comparisonRange ? getBehaviorCommerce(comparisonRange) : Promise.resolve(null),
+      ]);
+      // Commerce is the authority for successful purchases and revenue. Umami
+      // event counts are directional only and never replace this ledger.
+      const providerData = payload.data as any;
+      const providerComparison = providerData?.comparison as any;
+      const comparison = comparisonRange
+        ? {
+            ...(providerComparison || {
+              kind: "conversion",
+              range: comparisonRange,
+              errors: { source: "UMAMI_UNAVAILABLE" },
+            }),
+            sections: {
+              ...(providerComparison?.sections || {}),
+              commerce: comparisonCommerce,
+            },
+            status: providerComparison?.status || (providerComparison ? "empty" : "partial"),
+          }
+        : undefined;
+      const data = {
+        ...(providerData || {
+          kind: "conversion",
+          range,
+          errors: { source: "UMAMI_UNAVAILABLE" },
+        }),
+        sections: { ...(providerData?.sections || {}), commerce },
+        ...(comparisonRange
+          ? {
+              comparison,
+              comparisonStatus: comparison?.status,
+            }
+          : {}),
+      };
+      const commerceHasData = Boolean(
+        commerce.paidOrders || commerce.totalOrders || commerce.revenueToman,
+      );
+      const providerStatus = payload.meta.status;
+      const status =
+        providerStatus === "unavailable"
+          ? "partial"
+          : providerStatus === "empty" && commerceHasData
+            ? "ok"
+            : providerStatus;
+      ctx.body = {
+        data,
+        meta: {
+          ...payload.meta,
+          status,
+          ...(providerStatus === "unavailable"
+            ? { warnings: ["Umami is unavailable; commerce totals remain current."] }
+            : {}),
+        },
+      };
+    } catch (error: any) {
+      ctx.badRequest(error?.message || String(error), { data: { success: false } });
+    }
+  },
+
+  async behaviorContent(ctx) {
+    try {
+      if (!(await ensureCapability(ctx, "report.traffic.read"))) return;
+      const range = normalizeRange(
+        (ctx.query.startDate as string) || (ctx.query.start as string),
+        (ctx.query.endDate as string) || (ctx.query.end as string),
+      );
+      ctx.body = await readBehaviorReport("content", range, {
+        ...behaviorRequestOptions(ctx, true),
+      });
+    } catch (error: any) {
+      ctx.badRequest(error?.message || String(error), { data: { success: false } });
+    }
+  },
+
+  async behaviorAudience(ctx) {
+    try {
+      if (!(await ensureCapability(ctx, "report.traffic.read"))) return;
+      const range = normalizeRange(
+        (ctx.query.startDate as string) || (ctx.query.start as string),
+        (ctx.query.endDate as string) || (ctx.query.end as string),
+      );
+      ctx.body = await readBehaviorReport("audience", range, {
+        ...behaviorRequestOptions(ctx, true),
+      });
+    } catch (error: any) {
+      ctx.badRequest(error?.message || String(error), { data: { success: false } });
+    }
+  },
+
+  async behaviorPerformance(ctx) {
+    try {
+      if (!(await ensureCapability(ctx, "report.traffic.read"))) return;
+      const range = normalizeRange(
+        (ctx.query.startDate as string) || (ctx.query.start as string),
+        (ctx.query.endDate as string) || (ctx.query.end as string),
+      );
+      ctx.body = await readBehaviorReport("performance", range, {
+        ...behaviorRequestOptions(ctx, true),
+      });
+    } catch (error: any) {
+      ctx.badRequest(error?.message || String(error), { data: { success: false } });
+    }
+  },
+
+  async behaviorRealtime(ctx) {
+    try {
+      if (!(await ensureCapability(ctx, "report.traffic.read"))) return;
+      ctx.body = { ...(await readBehaviorRealtime()) };
+    } catch (error: any) {
+      ctx.badRequest(error?.message || String(error), { data: { success: false } });
     }
   },
 
@@ -1549,10 +1923,10 @@ export default {
         { units: 0, gross: 0, discounts: 0, refunds: 0, net: 0, currentStock: 0 },
       );
 
-      // Optional Matomo behavioral data for this product page. Fully graceful:
-      // `null` when Matomo is unconfigured/unavailable — never blocks the report.
+      // Optional Umami behavioral data for this product page. Fully graceful:
+      // `null` when Umami is unconfigured/unavailable — never blocks the report.
       const behavioral = hasCapability(user.role, "report.traffic.read")
-        ? await getProductBehavioral(String(info.slug || ""), {
+        ? await getProductBehavioralUmami(String(info.slug || ""), {
             startDate: start.toISOString().slice(0, 10),
             endDate: end.toISOString().slice(0, 10),
           })
@@ -1573,7 +1947,7 @@ export default {
           totals,
           variations,
           trend,
-          // Behavioral engagement from Matomo (distinct from transactional truth above).
+          // Behavioral engagement from Umami (distinct from transactional truth above).
           behavioral,
         },
       };
@@ -1698,7 +2072,13 @@ export default {
       const { start, end } = parseProductRange(ctx);
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
-      const result = await getSalesBreakdown(knex, joins, dimension as SalesBreakdownDimension, start, end);
+      const result = await getSalesBreakdown(
+        knex,
+        joins,
+        dimension as SalesBreakdownDimension,
+        start,
+        end,
+      );
 
       ctx.body = {
         data: {
@@ -1736,7 +2116,13 @@ export default {
       const { start, end } = parseProductRange(ctx);
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
-      const result = await getSalesBreakdown(knex, joins, dimension as SalesBreakdownDimension, start, end);
+      const result = await getSalesBreakdown(
+        knex,
+        joins,
+        dimension as SalesBreakdownDimension,
+        start,
+        end,
+      );
 
       const keyHeaderFa: Record<SalesBreakdownDimension, string> = {
         status: "وضعیت سفارش",
@@ -1770,42 +2156,11 @@ export default {
         rows: dataRows,
       });
       ctx.set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      ctx.set("Content-Disposition", `attachment; filename="sales-${dimension}-${Date.now()}.xlsx"`);
-      ctx.body = buffer;
-    } catch (error) {
-      ctx.badRequest(error.message, { data: { success: false } });
-    }
-  },
-
-  /**
-   * Labelled step-reach funnel (view_item -> add_to_cart -> begin_checkout -> purchase),
-   * Founder/Superadmin-only. This is NOT a strict
-   * ordered/deduplicated per-visit funnel — that needs Matomo's paid Funnels plugin,
-   * which is not installed (see MATOMO.md). `configured: false` (or `steps: null`) means
-   * "no data available", which the UI must render distinctly from a real zero-count step.
-   */
-  async funnel(ctx) {
-    try {
-      const user = await ensureCapability(ctx, "report.traffic.read");
-      if (!user) return;
-
-      const range = normalizeRange(
-        (ctx.query.start as string) || (ctx.query.startDate as string),
-        (ctx.query.end as string) || (ctx.query.endDate as string),
+      ctx.set(
+        "Content-Disposition",
+        `attachment; filename="sales-${dimension}-${Date.now()}.xlsx"`,
       );
-      const steps = await getMatomoFunnel(range);
-
-      ctx.body = {
-        data: {
-          range: { start: range.startDate, end: range.endDate },
-          timezone: PA.REPORT_TIMEZONE,
-          configured: steps !== null,
-          steps: steps ?? [],
-          note:
-            "این یک قیف مرحله‌ای بر اساس بازدیدهایی است که هر رویداد را حداقل یک‌بار ثبت کرده‌اند؛ " +
-            "یک قیف ترتیبی دقیق (سفر یک‌به‌یک هر کاربر) نیست.",
-        },
-      };
+      ctx.body = buffer;
     } catch (error) {
       ctx.badRequest(error.message, { data: { success: false } });
     }
@@ -1814,10 +2169,8 @@ export default {
   /**
    * Executive overview: store-wide sales KPIs with prior-period comparison (reusing
    * the SAME `computeProductPeriod`/`paidOrdersCte` every product report already
-   * uses — no product filter applied, so this is the whole store), plus the most
-   * recent commerce-reconciliation result as a trust signal. Traffic is
-   * deliberately fetched from its separately capability-gated endpoint so Matomo
-   * cannot fail or delay this commerce dashboard for Finance.
+   * uses — no product filter applied, so this is the whole store). Behavioral
+   * reporting remains separately capability-gated and can never delay Finance.
    */
   async overview(ctx) {
     try {
@@ -1837,19 +2190,14 @@ export default {
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
 
-      const [current, previous, reconciliationRes] = await Promise.all([
+      const [current, previous, analyticsDelivery] = await Promise.all([
         computeProductPeriod(knex, joins, start, end),
         computeProductPeriod(knex, joins, prevStart, prevEnd),
-        knex.raw(
-          `SELECT bucket_date, status, orders_delta, revenue_ratio, possible_currency_mismatch, computed_at
-           FROM analytics_reconciliation_daily
-           ORDER BY bucket_date DESC
-           LIMIT 1`,
-        ),
+        getAnalyticsDeliveryHealth(knex),
       ]);
 
-      const kpi = (key: keyof typeof current) => PA.periodDelta((current as any)[key], (previous as any)[key]);
-      const reconciliationRow = rowsOf(reconciliationRes)[0] || null;
+      const kpi = (key: keyof typeof current) =>
+        PA.periodDelta((current as any)[key], (previous as any)[key]);
 
       ctx.body = {
         data: {
@@ -1866,18 +2214,7 @@ export default {
             discounts: kpi("discounts"),
             refunds: kpi("refunds"),
           },
-          traffic: null,
-          reconciliation: reconciliationRow
-            ? {
-                bucketDate: String(reconciliationRow.bucket_date).slice(0, 10),
-                status: reconciliationRow.status,
-                ordersDelta: Number(reconciliationRow.orders_delta),
-                revenueRatio:
-                  reconciliationRow.revenue_ratio === null ? null : Number(reconciliationRow.revenue_ratio),
-                possibleCurrencyMismatch: Boolean(reconciliationRow.possible_currency_mismatch),
-                computedAt: reconciliationRow.computed_at,
-              }
-            : null,
+          analyticsDelivery,
         },
       };
     } catch (error) {

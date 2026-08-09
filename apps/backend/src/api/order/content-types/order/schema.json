@@ -14,10 +14,7 @@
   "indexes": [
     {
       "name": "uq_orders_external_source_id",
-      "columns": [
-        "external_source",
-        "external_id"
-      ],
+      "columns": ["external_source", "external_id"],
       "type": "unique"
     }
   ],
@@ -42,24 +39,12 @@
     },
     "Status": {
       "type": "enumeration",
-      "enum": [
-        "Paying",
-        "Started",
-        "Shipment",
-        "Done",
-        "Returned",
-        "Cancelled"
-      ],
+      "enum": ["Paying", "Started", "Shipment", "Done", "Returned", "Cancelled"],
       "default": "Paying"
     },
     "ReservationStatus": {
       "type": "enumeration",
-      "enum": [
-        "Reserved",
-        "Released",
-        "Consumed",
-        "Expired"
-      ],
+      "enum": ["Reserved", "Released", "Consumed", "Expired"],
       "default": "Released"
     },
     "ReservedUntil": {
@@ -77,10 +62,7 @@
     },
     "Type": {
       "type": "enumeration",
-      "enum": [
-        "Manual",
-        "Automatic"
-      ],
+      "enum": ["Manual", "Automatic"],
       "default": "Automatic"
     },
     "shipping": {
@@ -149,14 +131,7 @@
     },
     "PaymentGateway": {
       "type": "enumeration",
-      "enum": [
-        "Unknown",
-        "Wallet",
-        "Mellat",
-        "SnappPay",
-        "SamanKish",
-        "ZarinPal"
-      ],
+      "enum": ["Unknown", "Wallet", "Mellat", "SnappPay", "SamanKish", "ZarinPal"],
       "default": "Unknown"
     },
     "isReserveOrder": {
@@ -168,6 +143,10 @@
     },
     "reserveGroupId": {
       "type": "string"
+    },
+    "analytics_correlation_id": {
+      "type": "string",
+      "maxLength": 160
     }
   }
 }

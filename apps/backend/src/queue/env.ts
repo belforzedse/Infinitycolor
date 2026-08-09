@@ -16,7 +16,7 @@ export type QueueSettings = {
     scheduledProductPublish: string;
     viewCounterFlush: string;
     analyticsDailyRollup: string;
-    analyticsReconciliation: string;
+    analyticsOutboxRepair: string;
     snappaySweep: string;
   };
 };
@@ -48,11 +48,7 @@ export function getQueueSettings(env: NodeJS.ProcessEnv = process.env): QueueSet
       // Once daily, well after Tehran midnight, so "yesterday" is a fully-closed
       // day before it is rolled up (see src/jobs/analyticsDailyRollup.ts).
       analyticsDailyRollup: env.QUEUE_CRON_ANALYTICS_DAILY_ROLLUP || "15 0 * * *",
-      // Staggered 30 min after the sales rollup so both jobs don't hit the DB
-      // (and, for this one, the external Matomo host) at the same moment. Not
-      // a hard dependency — reconciliation computes Strapi figures live via
-      // SQL, not from the rollup table.
-      analyticsReconciliation: env.QUEUE_CRON_ANALYTICS_RECONCILIATION || "45 0 * * *",
+      analyticsOutboxRepair: env.QUEUE_CRON_ANALYTICS_OUTBOX_REPAIR || "*/1 * * * *",
       snappaySweep: env.QUEUE_CRON_SNAPPAY_SWEEP || "*/1 * * * *",
     },
   };
@@ -63,8 +59,7 @@ export function toBullMqConnectionOptions(settings = getQueueSettings()): Connec
   const pathDb = parsed.pathname?.replace("/", "");
   const db = pathDb ? Number(pathDb) : undefined;
   const password =
-    settings.redisPassword ||
-    (parsed.password ? decodeURIComponent(parsed.password) : undefined);
+    settings.redisPassword || (parsed.password ? decodeURIComponent(parsed.password) : undefined);
 
   return {
     host: parsed.hostname || "localhost",

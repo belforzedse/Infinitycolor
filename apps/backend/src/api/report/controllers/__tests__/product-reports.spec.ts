@@ -16,10 +16,15 @@ jest.mock("../../../../utils/roles", () => ({
   roleIsAllowed: (...args: any[]) => roleIsAllowedMock(...args),
 }));
 
-jest.mock("../../services/matomo", () => ({
-  normalizeRange: jest.fn(),
-  getMatomoRealtimePayload: jest.fn(),
-  getMatomoTrafficDashboardPayload: jest.fn(),
+jest.mock("../../services/umami", () => ({
+  UMAMI_DEFINITION_VERSION: "umami-infinity-v1",
+  UMAMI_REPORT_TIMEZONE: "Asia/Tehran",
+  isUmamiConfigured: jest.fn(() => false),
+  normalizeRange: jest.fn(() => ({ startDate: "2026-08-09", endDate: "2026-08-31" })),
+  previousRange: jest.fn(() => ({ startDate: "2026-07-17", endDate: "2026-08-08" })),
+  normalizeUmamiFilters: jest.fn(() => ({})),
+  getUmamiBehaviorReport: jest.fn(),
+  getUmamiRealtimeReport: jest.fn(),
 }));
 
 jest.mock("../../services/product-analytics", () => {
@@ -159,9 +164,7 @@ describe("product reporting endpoints", () => {
     const ctx = createCtx();
     await controller.productPerformance(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith(
-      "You do not have permission to perform this action",
-    );
+    expect(ctx.forbidden).toHaveBeenCalledWith("You do not have permission to perform this action");
     expect(ctx.body).toBeUndefined();
   });
 
@@ -242,10 +245,7 @@ describe("product reporting endpoints", () => {
         "Content-Type",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       );
-      expect(ctx.set).toHaveBeenCalledWith(
-        "Content-Disposition",
-        expect.stringContaining(".xlsx"),
-      );
+      expect(ctx.set).toHaveBeenCalledWith("Content-Disposition", expect.stringContaining(".xlsx"));
       expect(Buffer.isBuffer(ctx.body)).toBe(true);
       // .xlsx is a ZIP archive → starts with the "PK" magic bytes.
       expect(ctx.body.slice(0, 2).toString("latin1")).toBe("PK");

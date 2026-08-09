@@ -9,7 +9,7 @@ import type { QueueSettings } from "./env";
 
 export async function registerMaintenanceSchedulers(
   queues: MaintenanceQueues,
-  settings: QueueSettings
+  settings: QueueSettings,
 ): Promise<void> {
   await queues.commerce.upsertJobScheduler(
     MAINTENANCE_SCHEDULERS.stockReservationExpiry,
@@ -21,7 +21,7 @@ export async function registerMaintenanceSchedulers(
       name: COMMERCE_MAINTENANCE_JOBS.stockReservationExpiry,
       data: {},
       opts: defaultMaintenanceJobOptions,
-    }
+    },
   );
 
   await queues.commerce.upsertJobScheduler(
@@ -34,7 +34,7 @@ export async function registerMaintenanceSchedulers(
       name: COMMERCE_MAINTENANCE_JOBS.reserveOrderExpiry,
       data: {},
       opts: defaultMaintenanceJobOptions,
-    }
+    },
   );
 
   await queues.commerce.upsertJobScheduler(
@@ -47,7 +47,7 @@ export async function registerMaintenanceSchedulers(
       name: COMMERCE_MAINTENANCE_JOBS.scheduledProductReconcile,
       data: {},
       opts: defaultMaintenanceJobOptions,
-    }
+    },
   );
 
   await queues.analytics.upsertJobScheduler(
@@ -60,7 +60,7 @@ export async function registerMaintenanceSchedulers(
       name: ANALYTICS_MAINTENANCE_JOBS.viewCounterFlush,
       data: {},
       opts: defaultMaintenanceJobOptions,
-    }
+    },
   );
 
   await queues.analytics.upsertJobScheduler(
@@ -73,20 +73,20 @@ export async function registerMaintenanceSchedulers(
       name: ANALYTICS_MAINTENANCE_JOBS.analyticsDailyRollup,
       data: {},
       opts: defaultMaintenanceJobOptions,
-    }
+    },
   );
 
   await queues.analytics.upsertJobScheduler(
-    MAINTENANCE_SCHEDULERS.analyticsReconciliation,
+    MAINTENANCE_SCHEDULERS.analyticsOutboxRepair,
     {
-      pattern: settings.crons.analyticsReconciliation,
+      pattern: settings.crons.analyticsOutboxRepair,
       tz: settings.timezone,
     },
     {
-      name: ANALYTICS_MAINTENANCE_JOBS.analyticsReconciliation,
+      name: ANALYTICS_MAINTENANCE_JOBS.analyticsOutboxRepair,
       data: {},
       opts: defaultMaintenanceJobOptions,
-    }
+    },
   );
 
   await queues.payments.upsertJobScheduler(

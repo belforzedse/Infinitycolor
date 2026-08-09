@@ -1,10 +1,10 @@
 import { adminCancelOrderHandler } from "../adminCancel";
 import { adminAdjustItemsHandler } from "../adminAdjustItems";
-import { trackRefundToMatomo } from "../../../../report/services/matomo-tracker";
+import { enqueueRefundForReturn } from "../../../../report/analytics/outbox";
 
-jest.mock("../../../../report/services/matomo-tracker", () => ({
-  trackOrderToMatomo: jest.fn(),
-  trackRefundToMatomo: jest.fn().mockResolvedValue(true),
+jest.mock("../../../../report/analytics/outbox", () => ({
+  enqueuePurchaseForOrder: jest.fn(),
+  enqueueRefundForReturn: jest.fn().mockResolvedValue(1),
 }));
 
 jest.mock("../../../../../utils/adminActivity", () => ({
@@ -12,7 +12,9 @@ jest.mock("../../../../../utils/adminActivity", () => ({
   logAdminOrderEdit: jest.fn(),
 }));
 
-const trackRefundMock = trackRefundToMatomo as jest.MockedFunction<typeof trackRefundToMatomo>;
+const enqueueRefundMock = enqueueRefundForReturn as jest.MockedFunction<
+  typeof enqueueRefundForReturn
+>;
 
 function baseOrder(overrides: Record<string, any> = {}) {
   return {
@@ -116,10 +118,10 @@ function createHarness(order: any, ctxOverrides: Record<string, any> = {}) {
   return { strapi, ctx, queries };
 }
 
-describe("Admin refund -> Matomo tracking", () => {
+describe("Admin refund analytics outbox", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    trackRefundMock.mockResolvedValue(true);
+    enqueueRefundMock.mockResolvedValue(1);
   });
 
   it("adminCancelOrderHandler tracks a refund after the transaction commits, keyed by the Return row id", async () => {
@@ -131,12 +133,11 @@ describe("Admin refund -> Matomo tracking", () => {
     expect(result).toEqual({
       data: { success: true, refundToman: 220_000, status: "cancelled" },
     });
-    expect(trackRefundMock).toHaveBeenCalledTimes(1);
-    expect(trackRefundMock).toHaveBeenCalledWith(strapi, {
+    expect(enqueueRefundMock).toHaveBeenCalledTimes(1);
+    expect(enqueueRefundMock).toHaveBeenCalledWith(strapi, {
       orderId: 41,
       contractTransactionId: 999,
       amountToman: 220_000,
-      userId: 9,
     });
   });
 
@@ -154,7 +155,7 @@ describe("Admin refund -> Matomo tracking", () => {
 
     await adminCancelOrderHandler(strapi, ctx);
 
-    expect(trackRefundMock).not.toHaveBeenCalled();
+    expect(enqueueRefundMock).not.toHaveBeenCalled();
   });
 
   it("adminAdjustItemsHandler tracks a refund sized to the adjustment, after commit", async () => {
@@ -185,16 +186,16 @@ describe("Admin refund -> Matomo tracking", () => {
     const result: any = await adminAdjustItemsHandler(strapi, ctx);
 
     expect(result.data.success).toBe(true);
-    expect(trackRefundMock).toHaveBeenCalledTimes(1);
-    const call = trackRefundMock.mock.calls[0][1];
+    expect(enqueueRefundMock).toHaveBeenCalledTimes(1);
+    const call = enqueueRefundMock.mock.calls[0][1];
     expect(call.orderId).toBe(41);
     expect(call.contractTransactionId).toBe(999);
     expect(call.amountToman).toBe(result.data.refundToman);
     expect(call.amountToman).toBeGreaterThan(0);
   });
 
-  it("does not fail the request if Matomo refund tracking rejects", async () => {
-    trackRefundMock.mockRejectedValue(new Error("matomo down"));
+  it("does not fail the request if analytics enqueue rejects", async () => {
+    enqueueRefundMock.mockRejectedValue(new Error("analytics unavailable"));
     const order = baseOrder();
     const { strapi, ctx } = createHarness(order);
 

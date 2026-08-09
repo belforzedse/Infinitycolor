@@ -1,12 +1,14 @@
 import { applySnappayAdminUpdate } from "../services/snappay-finalization";
-import { trackRefundToMatomo } from "../../report/services/matomo-tracker";
+import { enqueueRefundForReturn } from "../../report/analytics/outbox";
 
-jest.mock("../../report/services/matomo-tracker", () => ({
-  trackOrderToMatomo: jest.fn(),
-  trackRefundToMatomo: jest.fn().mockResolvedValue(true),
+jest.mock("../../report/analytics/outbox", () => ({
+  enqueuePurchaseForOrder: jest.fn(),
+  enqueueRefundForReturn: jest.fn().mockResolvedValue(1),
 }));
 
-const trackRefundMock = trackRefundToMatomo as jest.MockedFunction<typeof trackRefundToMatomo>;
+const enqueueRefundMock = enqueueRefundForReturn as jest.MockedFunction<
+  typeof enqueueRefundForReturn
+>;
 
 function createHarness() {
   const rows: Record<string, any> = {
@@ -20,9 +22,7 @@ function createHarness() {
       Status: "Started",
       ReservationStatus: "Consumed",
       ShippingBarcode: null,
-      order_items: [
-        { id: 71, Count: 2, product_variation: { product_stock: { id: 91 } } },
-      ],
+      order_items: [{ id: 71, Count: 2, product_variation: { product_stock: { id: 91 } } }],
     },
     "api::contract.contract": { id: 33, Amount: 220_000 },
     "api::contract-transaction.contract-transaction": {
@@ -38,18 +38,20 @@ function createHarness() {
       transaction: jest.fn(async (callback: any) => callback({ trx })),
       query: jest.fn((uid: string) => ({
         findOne: jest.fn().mockResolvedValue(rows[uid]),
-        findMany: jest.fn().mockResolvedValue(
-          uid === "api::contract-transaction.contract-transaction"
-            ? [{ id: 44, Step: 1, Type: "Gateway" }]
-            : [],
-        ),
+        findMany: jest
+          .fn()
+          .mockResolvedValue(
+            uid === "api::contract-transaction.contract-transaction"
+              ? [{ id: 44, Step: 1, Type: "Gateway" }]
+              : [],
+          ),
         update: jest.fn().mockResolvedValue({}),
         delete: jest.fn().mockResolvedValue({}),
-        create: jest.fn().mockResolvedValue(
-          uid === "api::contract-transaction.contract-transaction"
-            ? { id: 777 }
-            : {},
-        ),
+        create: jest
+          .fn()
+          .mockResolvedValue(
+            uid === "api::contract-transaction.contract-transaction" ? { id: 777 } : {},
+          ),
       })),
     },
   } as any;
@@ -64,10 +66,10 @@ const ids = {
   transactionId: "ABC1234567",
 };
 
-describe("applySnappayAdminUpdate -> Matomo refund tracking", () => {
+describe("applySnappayAdminUpdate -> analytics refund outbox", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    trackRefundMock.mockResolvedValue(true);
+    enqueueRefundMock.mockResolvedValue(1);
   });
 
   it("tracks a refund keyed by the new Return row id after the transaction commits", async () => {
@@ -83,8 +85,8 @@ describe("applySnappayAdminUpdate -> Matomo refund tracking", () => {
       actorId: 7,
     });
 
-    expect(trackRefundMock).toHaveBeenCalledTimes(1);
-    expect(trackRefundMock).toHaveBeenCalledWith(strapi, {
+    expect(enqueueRefundMock).toHaveBeenCalledTimes(1);
+    expect(enqueueRefundMock).toHaveBeenCalledWith(strapi, {
       orderId: 22,
       contractTransactionId: 777,
       amountToman: 110_000,
@@ -104,6 +106,6 @@ describe("applySnappayAdminUpdate -> Matomo refund tracking", () => {
       actorId: 7,
     });
 
-    expect(trackRefundMock).not.toHaveBeenCalled();
+    expect(enqueueRefundMock).not.toHaveBeenCalled();
   });
 });

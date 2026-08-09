@@ -86,9 +86,7 @@ const BLOG_READ_GRANTS: Record<string, ControllerActions> = {
   "api::blog-comment": { "blog-comment": READ_ACTIONS },
 };
 
-const CAPABILITY_GRANTS: Partial<
-  Record<AdminCapability, Record<string, ControllerActions>>
-> = {
+const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, ControllerActions>>> = {
   "content.blog.read": BLOG_READ_GRANTS,
   "content.blog.create": {
     "api::blog-post": { "blog-post": ["create"] },
@@ -196,7 +194,17 @@ const CAPABILITY_GRANTS: Partial<
   },
   "report.carts.read": { "api::cart": { cart: ["find"] } },
   "report.traffic.read": {
-    "api::report": { report: ["trafficDashboard", "trafficRealtime", "funnel"] },
+    "api::report": {
+      report: [
+        "behaviorOverview",
+        "behaviorAcquisition",
+        "behaviorConversion",
+        "behaviorContent",
+        "behaviorAudience",
+        "behaviorPerformance",
+        "behaviorRealtime",
+      ],
+    },
   },
   "wallet.customer.search": {
     "api::plugin-user": { "plugin-user": ["searchCustomers"] },
@@ -527,7 +535,9 @@ function applyControllerActions(
 ) {
   const typeEntry = tree[typeKey];
   if (!typeEntry?.controllers?.[controllerName]) {
-    throw new Error(`Permission template references unknown controller: ${typeKey}.${controllerName}`);
+    throw new Error(
+      `Permission template references unknown controller: ${typeKey}.${controllerName}`,
+    );
   }
 
   const controllerEntry = typeEntry.controllers[controllerName];
@@ -699,16 +709,18 @@ async function captureRoleSyncSnapshot(
 
   const snapshot: RoleSyncSnapshot = {
     capturedAt: new Date().toISOString(),
-    roles: persistedRoles.filter((role) => staffRoleIds.includes(Number(role.id))).map((role) => ({
-      id: Number(role.id),
-      name: String(role.name),
-      type: String(role.type),
-      description: role.description ?? null,
-      permissionActions: ((role.permissions || []) as any[])
-        .map((permission) => String(permission.action || ""))
-        .filter(Boolean)
-        .sort(),
-    })),
+    roles: persistedRoles
+      .filter((role) => staffRoleIds.includes(Number(role.id)))
+      .map((role) => ({
+        id: Number(role.id),
+        name: String(role.name),
+        type: String(role.type),
+        description: role.description ?? null,
+        permissionActions: ((role.permissions || []) as any[])
+          .map((permission) => String(permission.action || ""))
+          .filter(Boolean)
+          .sort(),
+      })),
     assignments: (assignmentRows as any[])
       .map((user) => ({ userId: Number(user.id), roleId: Number(user.role?.id ?? user.role) }))
       .filter(
@@ -1001,8 +1013,7 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
   // Any pre-existing privileged role, however, is a populated authorization
   // model and still requires an existing Superadmin safety anchor.
   const hasPersistedPrivilegedRole = (persistedRoles as any[]).some(
-    (role) =>
-      normalizeAdminRole(role.type) !== null || normalizeAdminRole(role.name) !== null,
+    (role) => normalizeAdminRole(role.type) !== null || normalizeAdminRole(role.name) !== null,
   );
   if (hasPersistedPrivilegedRole && !existingSuperadmin) {
     throw new Error("Role synchronization requires an existing Superadmin role");
@@ -1043,9 +1054,7 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
               description: roleDefinition.description,
               // The existing Store manager row is renamed in place while its
               // persisted type remains stable for compatibility.
-              ...(roleDefinition.type === "store-manager"
-                ? {}
-                : { type: roleDefinition.type }),
+              ...(roleDefinition.type === "store-manager" ? {} : { type: roleDefinition.type }),
             },
           })
         : await strapi.query("plugin::users-permissions.role").create({

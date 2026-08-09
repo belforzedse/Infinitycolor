@@ -1,27 +1,29 @@
-const fetchUserWithRoleMock = jest.fn();
-const roleIsAllowedMock = jest.fn();
-const getMatomoRealtimePayloadMock = jest.fn();
-const getMatomoTrafficDashboardPayloadMock = jest.fn();
+const requireCapabilityMock = jest.fn();
+const getUmamiBehaviorReportMock = jest.fn();
+const getUmamiRealtimeReportMock = jest.fn();
 
-jest.mock("../../../../utils/roles", () => ({
-  ROLE_NAMES: {
-    SUPERADMIN: "Superadmin",
-    STORE_MANAGER: "Store manager",
-    EDITOR: "Editor",
-    CUSTOMER: "Customer",
-  },
-  fetchUserWithRole: (...args: any[]) => fetchUserWithRoleMock(...args),
-  roleIsAllowed: (...args: any[]) => roleIsAllowedMock(...args),
+jest.mock("../../../../utils/adminAuthorization", () => ({
+  requireCapability: (...args: any[]) => requireCapabilityMock(...args),
 }));
 
-jest.mock("../../services/matomo", () => ({
+jest.mock("../../services/umami", () => ({
+  UMAMI_DEFINITION_VERSION: "umami-infinity-v1",
+  UMAMI_REPORT_TIMEZONE: "Asia/Tehran",
+  isUmamiConfigured: jest.fn(() => true),
   normalizeRange: jest.fn((start?: string, end?: string) => ({
-    startDate: start || "2026-01-01",
-    endDate: end || "2026-01-31",
+    startDate: start || "2026-08-09",
+    endDate: end || "2026-08-31",
   })),
-  getMatomoRealtimePayload: (...args: any[]) => getMatomoRealtimePayloadMock(...args),
-  getMatomoTrafficDashboardPayload: (...args: any[]) =>
-    getMatomoTrafficDashboardPayloadMock(...args),
+  normalizeUmamiFilters: jest.fn((input: Record<string, unknown> = {}) =>
+    Object.fromEntries(
+      Object.entries(input)
+        .filter(([key, value]) => ["country", "utmCampaign"].includes(key) && value)
+        .map(([key, value]) => [key, String(value)]),
+    ),
+  ),
+  previousRange: jest.fn(() => ({ startDate: "2026-07-18", endDate: "2026-08-08" })),
+  getUmamiBehaviorReport: (...args: any[]) => getUmamiBehaviorReportMock(...args),
+  getUmamiRealtimeReport: (...args: any[]) => getUmamiRealtimeReportMock(...args),
 }));
 
 function loadController() {
@@ -43,137 +45,173 @@ function createCtx(overrides: Partial<any> = {}) {
   };
 }
 
-describe("report traffic endpoints", () => {
+describe("Umami behavior report endpoints", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-
+    requireCapabilityMock.mockResolvedValue({ user: { id: 1 } });
     (global as any).strapi = {
-      query: () => ({
-        findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Superadmin" } }),
-      }),
-      db: {
-        connection: {
-          raw: jest.fn(async (query: string) => {
-            if (query.includes("total_orders")) {
-              return { rows: [{ total_orders: 120, paid_orders: 24 }] };
-            }
-            if (query.includes("total_irr")) {
-              return { rows: [{ total_irr: 2400000 }] };
-            }
-            return { rows: [] };
-          }),
-        },
-      },
+      db: { connection: { raw: jest.fn().mockResolvedValue({ rows: [] }) } },
+      log: { warn: jest.fn() },
     };
   });
 
-  it("blocks non-superadmin users from realtime endpoint", async () => {
-    (global as any).strapi.query = () => ({
-      findOne: jest.fn().mockResolvedValue({ id: 1, role: { name: "Store Manager" } }),
+  it("returns source metadata and validated filters for acquisition", async () => {
+    getUmamiBehaviorReportMock.mockResolvedValue({
+      kind: "acquisition",
+      range: { startDate: "2026-08-09", endDate: "2026-08-31" },
+      summary: { visits: 12 },
+      sections: { channel: [{ label: "direct", visits: 12 }] },
+      errors: {},
+    });
+    const controller = loadController();
+    const ctx = createCtx({
+      query: {
+        startDate: "2026-08-09",
+        endDate: "2026-08-31",
+        country: "IR",
+        ignored: "never-forwarded",
+      },
     });
 
-    const controller = loadController();
-    const ctx = createCtx();
-    await controller.trafficRealtime(ctx);
+    await controller.behaviorAcquisition(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith(
-      "You do not have permission to perform this action",
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+    expect(ctx.body.meta).toMatchObject({
+      source: "umami",
+      dataStart: "2026-08-09",
+      status: "ok",
+      currency: "IRR",
+    });
+    expect(getUmamiBehaviorReportMock).toHaveBeenCalledWith(
+      "acquisition",
+      { startDate: "2026-08-09", endDate: "2026-08-31" },
+      expect.objectContaining({ filters: { country: "IR" } }),
     );
   });
 
-  it("serves realtime data and uses cache for repeated requests", async () => {
-    fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Superadmin" } });
-    roleIsAllowedMock.mockReturnValue(true);
-    getMatomoRealtimePayloadMock.mockResolvedValue({
-      activeVisitorsLast5Min: 2,
-      activeVisitorsLast30Min: 9,
-      topPagesNow: [{ url: "/pdp/item-1", visits: 4 }],
+  it("keeps unavailable provider data null instead of converting it to zero", async () => {
+    getUmamiBehaviorReportMock.mockResolvedValue({
+      kind: "overview",
+      range: { startDate: "2026-08-09", endDate: "2026-08-31" },
+      sections: {},
+      errors: { source: "UMAMI_UNAVAILABLE" },
     });
-
+    (global as any).strapi.db.connection.raw.mockRejectedValueOnce(new Error("outbox unavailable"));
     const controller = loadController();
+    const ctx = createCtx();
 
-    const ctxFirst = createCtx();
-    await controller.trafficRealtime(ctxFirst);
+    await controller.behaviorOverview(ctx);
 
-    const ctxSecond = createCtx();
-    await controller.trafficRealtime(ctxSecond);
-
-    expect(getMatomoRealtimePayloadMock).toHaveBeenCalledTimes(1);
-    expect(ctxFirst.body.data.activeVisitorsLast5Min).toBe(2);
-    expect(ctxFirst.body.data.topPagesNow).toHaveLength(1);
-    expect(typeof ctxFirst.body.data.updatedAt).toBe("string");
-    expect(ctxSecond.body.data.activeVisitorsLast30Min).toBe(9);
-    expect(ctxSecond.badRequest).not.toHaveBeenCalled();
+    expect(ctx.body.data).toBeNull();
+    expect(ctx.body.meta.status).toBe("unavailable");
   });
 
-  it("bypasses realtime cache when fresh=1 is requested", async () => {
-    fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Superadmin" } });
-    roleIsAllowedMock.mockReturnValue(true);
-    getMatomoRealtimePayloadMock
-      .mockResolvedValueOnce({
-        activeVisitorsLast5Min: 2,
-        activeVisitorsLast30Min: 9,
-        topPagesNow: [{ url: "/pdp/item-1", visits: 4 }],
-      })
-      .mockResolvedValueOnce({
-        activeVisitorsLast5Min: 5,
-        activeVisitorsLast30Min: 12,
-        topPagesNow: [{ url: "/pdp/item-2", visits: 8 }],
-      });
-
-    const controller = loadController();
-
-    const ctxFirst = createCtx();
-    await controller.trafficRealtime(ctxFirst);
-
-    const ctxFresh = createCtx({
-      query: { fresh: "1" },
+  it("keeps commerce totals visible when the conversion provider is unavailable", async () => {
+    getUmamiBehaviorReportMock.mockResolvedValue({
+      kind: "conversion",
+      range: { startDate: "2026-08-09", endDate: "2026-08-31" },
+      sections: {},
+      errors: { source: "UMAMI_UNAVAILABLE" },
     });
-    await controller.trafficRealtime(ctxFresh);
+    (global as any).strapi.db.connection.raw.mockImplementation((sql: string) => {
+      if (sql.includes("COUNT(*)::bigint AS total_orders")) {
+        return Promise.resolve({ rows: [{ total_orders: 3, paid_orders: 2 }] });
+      }
+      if (sql.includes("AS total_irr")) {
+        return Promise.resolve({ rows: [{ total_irr: 12_500_000 }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const controller = loadController();
+    const ctx = createCtx();
 
-    expect(getMatomoRealtimePayloadMock).toHaveBeenCalledTimes(2);
-    expect(ctxFresh.body.data.activeVisitorsLast5Min).toBe(5);
+    await controller.behaviorConversion(ctx);
+
+    expect(ctx.body.meta.status).toBe("partial");
+    expect(ctx.body.data.summary).toBeUndefined();
+    expect(ctx.body.data.sections.commerce).toEqual({
+      source: "commerce",
+      currency: "Toman",
+      paidOrders: 2,
+      totalOrders: 3,
+      revenueToman: 1_250_000,
+    });
+    expect(ctx.body.meta.warnings).toContain(
+      "Umami is unavailable; commerce totals remain current.",
+    );
   });
 
-  it("returns a stable dashboard contract payload", async () => {
-    fetchUserWithRoleMock.mockResolvedValue({ role: { name: "Superadmin" } });
-    roleIsAllowedMock.mockReturnValue(true);
-
-    getMatomoTrafficDashboardPayloadMock.mockResolvedValue({
-      range: { startDate: "2026-02-01", endDate: "2026-02-07" },
-      summary: {
-        visits: 100,
-        visitors: 80,
-        pageviews: 300,
-        bounceRate: 20,
-        avgActionsPerVisit: 3,
-        avgVisitDuration: 120,
-      },
-      realtime: {
-        activeVisitorsLast5Min: 2,
-        activeVisitorsLast30Min: 10,
-        topPagesNow: [],
-      },
-      series: [],
-      acquisition: { sources: [], campaigns: [] },
-      pages: { top: [], landing: [], exit: [] },
-      funnel: [],
-      deviceBreakdown: [],
-      geoBreakdown: [],
-    });
-
+  it("fetches and labels the exact previous period only when requested", async () => {
+    getUmamiBehaviorReportMock.mockImplementation(async (_kind, range) => ({
+      kind: "overview",
+      range,
+      summary: { visits: range.startDate === "2026-07-18" ? 8 : 12 },
+      sections: { path: [] },
+      errors: {},
+    }));
     const controller = loadController();
     const ctx = createCtx({
-      query: { startDate: "2026-02-01", endDate: "2026-02-07" },
+      query: {
+        startDate: "2026-08-09",
+        endDate: "2026-08-31",
+        comparison: "previous_period",
+      },
     });
-    await controller.trafficDashboard(ctx);
 
-    expect(ctx.badRequest).not.toHaveBeenCalled();
-    expect(ctx.body.data.summary.visits).toBe(100);
-    expect(ctx.body.data.ecommerce.orders).toBe(24);
-    expect(ctx.body.data.ecommerce.totalOrders).toBe(120);
-    expect(ctx.body.data.ecommerce.revenue).toBe(240000);
-    expect(ctx.body.data.ecommerce.conversionRate).toBe(24);
-    expect(typeof ctx.body.data.updatedAt).toBe("string");
+    await controller.behaviorOverview(ctx);
+
+    expect(getUmamiBehaviorReportMock).toHaveBeenCalledTimes(2);
+    expect(getUmamiBehaviorReportMock).toHaveBeenNthCalledWith(
+      2,
+      "overview",
+      { startDate: "2026-07-18", endDate: "2026-08-08" },
+      expect.anything(),
+    );
+    expect(ctx.body.data.comparison.summary.visits).toBe(8);
+    expect(ctx.body.meta).toMatchObject({
+      requestedRange: { start: "2026-08-09", end: "2026-08-31" },
+      comparisonRange: { start: "2026-07-18", end: "2026-08-08" },
+    });
+  });
+
+  it("bypasses a fresh historical cache entry when explicitly refreshed", async () => {
+    getUmamiBehaviorReportMock.mockResolvedValue({
+      kind: "overview",
+      range: { startDate: "2026-08-09", endDate: "2026-08-31" },
+      summary: { visits: 12 },
+      sections: { path: [] },
+      errors: {},
+    });
+    const controller = loadController();
+    await controller.behaviorOverview(createCtx());
+    await controller.behaviorOverview(createCtx({ query: { fresh: "1" } }));
+    expect(getUmamiBehaviorReportMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("caches realtime provider results for ten seconds", async () => {
+    getUmamiRealtimeReportMock.mockResolvedValue({
+      activeVisitors: 3,
+      topPages: [{ path: "/products", visitors: 2 }],
+    });
+    const controller = loadController();
+    const first = createCtx();
+    const second = createCtx();
+
+    await controller.behaviorRealtime(first);
+    await controller.behaviorRealtime(second);
+
+    expect(getUmamiRealtimeReportMock).toHaveBeenCalledTimes(1);
+    expect(first.body.data.activeVisitors).toBe(3);
+    expect(second.body.meta.cache).toBe("fresh");
+  });
+
+  it("stops before provider access when capability enforcement rejects", async () => {
+    requireCapabilityMock.mockResolvedValue(null);
+    const controller = loadController();
+    const ctx = createCtx();
+
+    await controller.behaviorOverview(ctx);
+
+    expect(getUmamiBehaviorReportMock).not.toHaveBeenCalled();
   });
 });

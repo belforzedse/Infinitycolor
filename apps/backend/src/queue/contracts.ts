@@ -14,7 +14,7 @@ export const COMMERCE_MAINTENANCE_JOBS = {
 export const ANALYTICS_MAINTENANCE_JOBS = {
   viewCounterFlush: "viewCounters.flush",
   analyticsDailyRollup: "analyticsDailyRollup.run",
-  analyticsReconciliation: "analyticsReconciliation.run",
+  analyticsOutboxRepair: "analyticsOutboxRepair.run",
 } as const;
 
 export const SNAPPAY_PAYMENT_JOBS = {
@@ -28,7 +28,7 @@ export const MAINTENANCE_SCHEDULERS = {
   scheduledProductReconcile: "sched:scheduledProducts.reconcile",
   viewCounterFlush: "sched:viewCounters.flush",
   analyticsDailyRollup: "sched:analyticsDailyRollup.run",
-  analyticsReconciliation: "sched:analyticsReconciliation.run",
+  analyticsOutboxRepair: "sched:analyticsOutboxRepair.run",
   snappaySweep: "sched:snappay.sweep",
 } as const;
 

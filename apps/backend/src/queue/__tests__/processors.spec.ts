@@ -1,6 +1,10 @@
-jest.mock("bullmq", () => ({
-  UnrecoverableError: class UnrecoverableError extends Error {},
-}), { virtual: true });
+jest.mock(
+  "bullmq",
+  () => ({
+    UnrecoverableError: class UnrecoverableError extends Error {},
+  }),
+  { virtual: true },
+);
 
 jest.mock("../../jobs/expireStockReservations", () => ({
   runExpireStockReservationsTick: jest.fn(),
@@ -19,8 +23,8 @@ jest.mock("../../api/payment-gateway/services/snappay-orchestrator", () => ({
 jest.mock("../../jobs/analyticsDailyRollup", () => ({
   runAnalyticsDailyRollupTick: jest.fn(),
 }));
-jest.mock("../../jobs/analyticsReconciliation", () => ({
-  runAnalyticsReconciliationTick: jest.fn(),
+jest.mock("../../jobs/analyticsOutboxRepair", () => ({
+  runAnalyticsOutboxRepairTick: jest.fn(),
 }));
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
@@ -40,24 +44,34 @@ import {
   sweepSnappayOperations,
 } from "../../api/payment-gateway/services/snappay-orchestrator";
 import { runAnalyticsDailyRollupTick } from "../../jobs/analyticsDailyRollup";
-import { runAnalyticsReconciliationTick } from "../../jobs/analyticsReconciliation";
+import { runAnalyticsOutboxRepairTick } from "../../jobs/analyticsOutboxRepair";
 
-const mockedRunExpireStockReservationsTick =
-  runExpireStockReservationsTick as jest.MockedFunction<typeof runExpireStockReservationsTick>;
-const mockedRunExpireReserveOrdersTick =
-  runExpireReserveOrdersTick as jest.MockedFunction<typeof runExpireReserveOrdersTick>;
+const mockedRunExpireStockReservationsTick = runExpireStockReservationsTick as jest.MockedFunction<
+  typeof runExpireStockReservationsTick
+>;
+const mockedRunExpireReserveOrdersTick = runExpireReserveOrdersTick as jest.MockedFunction<
+  typeof runExpireReserveOrdersTick
+>;
 const mockedProcessScheduledProductPublicationJob =
-  processScheduledProductPublicationJob as jest.MockedFunction<typeof processScheduledProductPublicationJob>;
+  processScheduledProductPublicationJob as jest.MockedFunction<
+    typeof processScheduledProductPublicationJob
+  >;
 const mockedRunScheduledProductsReconciliation =
-  runScheduledProductsReconciliation as jest.MockedFunction<typeof runScheduledProductsReconciliation>;
-const mockedProcessSnappayOperation =
-  processSnappayOperation as jest.MockedFunction<typeof processSnappayOperation>;
-const mockedSweepSnappayOperations =
-  sweepSnappayOperations as jest.MockedFunction<typeof sweepSnappayOperations>;
-const mockedRunAnalyticsDailyRollupTick =
-  runAnalyticsDailyRollupTick as jest.MockedFunction<typeof runAnalyticsDailyRollupTick>;
-const mockedRunAnalyticsReconciliationTick =
-  runAnalyticsReconciliationTick as jest.MockedFunction<typeof runAnalyticsReconciliationTick>;
+  runScheduledProductsReconciliation as jest.MockedFunction<
+    typeof runScheduledProductsReconciliation
+  >;
+const mockedProcessSnappayOperation = processSnappayOperation as jest.MockedFunction<
+  typeof processSnappayOperation
+>;
+const mockedSweepSnappayOperations = sweepSnappayOperations as jest.MockedFunction<
+  typeof sweepSnappayOperations
+>;
+const mockedRunAnalyticsDailyRollupTick = runAnalyticsDailyRollupTick as jest.MockedFunction<
+  typeof runAnalyticsDailyRollupTick
+>;
+const mockedRunAnalyticsOutboxRepairTick = runAnalyticsOutboxRepairTick as jest.MockedFunction<
+  typeof runAnalyticsOutboxRepairTick
+>;
 
 function createMockStrapi() {
   const viewService = {
@@ -81,7 +95,10 @@ describe("queue processors", () => {
 
   it("dispatches stock reservation expiry jobs to the existing job runner", async () => {
     const strapi = createMockStrapi();
-    mockedRunExpireStockReservationsTick.mockResolvedValue({ status: "completed", stats: {} } as any);
+    mockedRunExpireStockReservationsTick.mockResolvedValue({
+      status: "completed",
+      stats: {},
+    } as any);
 
     await processMaintenanceJob(strapi, {
       name: COMMERCE_MAINTENANCE_JOBS.stockReservationExpiry,
@@ -164,15 +181,15 @@ describe("queue processors", () => {
     expect(mockedRunAnalyticsDailyRollupTick).toHaveBeenCalledWith(strapi);
   });
 
-  it("dispatches the analytics reconciliation job", async () => {
+  it("dispatches the analytics outbox repair job", async () => {
     const strapi = createMockStrapi();
-    mockedRunAnalyticsReconciliationTick.mockResolvedValue({ status: "completed", stats: {} } as any);
+    mockedRunAnalyticsOutboxRepairTick.mockResolvedValue({ status: "completed", stats: {} } as any);
 
     await processMaintenanceJob(strapi, {
-      name: ANALYTICS_MAINTENANCE_JOBS.analyticsReconciliation,
+      name: ANALYTICS_MAINTENANCE_JOBS.analyticsOutboxRepair,
     } as any);
 
-    expect(mockedRunAnalyticsReconciliationTick).toHaveBeenCalledWith(strapi);
+    expect(mockedRunAnalyticsOutboxRepairTick).toHaveBeenCalledWith(strapi);
   });
 
   it("dispatches durable SnappPay operations by database id", async () => {
@@ -217,7 +234,7 @@ describe("queue processors", () => {
 
   it("fails unknown job names without retrying forever", async () => {
     await expect(
-      processMaintenanceJob(createMockStrapi(), { name: "unknown.job" } as any)
+      processMaintenanceJob(createMockStrapi(), { name: "unknown.job" } as any),
     ).rejects.toThrow("Unknown maintenance job: unknown.job");
   });
 });

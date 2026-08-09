@@ -21,11 +21,15 @@ export async function processMaintenanceJob(
     case COMMERCE_MAINTENANCE_JOBS.reserveOrderExpiry:
       return runExpireReserveOrdersTick(strapi);
     case COMMERCE_MAINTENANCE_JOBS.scheduledProductPublishOne: {
-      const { processScheduledProductPublicationJob } = await import("../jobs/publishScheduledProducts");
+      const { processScheduledProductPublicationJob } = await import(
+        "../jobs/publishScheduledProducts"
+      );
       return processScheduledProductPublicationJob(strapi, job as any, token);
     }
     case COMMERCE_MAINTENANCE_JOBS.scheduledProductReconcile: {
-      const { runScheduledProductsReconciliation } = await import("../jobs/publishScheduledProducts");
+      const { runScheduledProductsReconciliation } = await import(
+        "../jobs/publishScheduledProducts"
+      );
       return runScheduledProductsReconciliation(strapi);
     }
     case ANALYTICS_MAINTENANCE_JOBS.viewCounterFlush: {
@@ -39,9 +43,9 @@ export async function processMaintenanceJob(
       const { runAnalyticsDailyRollupTick } = await import("../jobs/analyticsDailyRollup");
       return runAnalyticsDailyRollupTick(strapi);
     }
-    case ANALYTICS_MAINTENANCE_JOBS.analyticsReconciliation: {
-      const { runAnalyticsReconciliationTick } = await import("../jobs/analyticsReconciliation");
-      return runAnalyticsReconciliationTick(strapi);
+    case ANALYTICS_MAINTENANCE_JOBS.analyticsOutboxRepair: {
+      const { runAnalyticsOutboxRepairTick } = await import("../jobs/analyticsOutboxRepair");
+      return runAnalyticsOutboxRepairTick(strapi);
     }
     case SNAPPAY_PAYMENT_JOBS.operation: {
       const operationId = Number((job as any)?.data?.operationId);

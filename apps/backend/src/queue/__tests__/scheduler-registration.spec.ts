@@ -24,10 +24,10 @@ describe("scheduler registration", () => {
         QUEUE_CRON_RESERVE_ORDER_EXPIRY: "*/10 * * * *",
         QUEUE_CRON_VIEW_COUNTER_FLUSH: "*/3 * * * *",
         QUEUE_CRON_ANALYTICS_DAILY_ROLLUP: "20 0 * * *",
-        QUEUE_CRON_ANALYTICS_RECONCILIATION: "50 0 * * *",
+        QUEUE_CRON_ANALYTICS_OUTBOX_REPAIR: "*/4 * * * *",
         QUEUE_CRON_SNAPPAY_SWEEP: "*/1 * * * *",
         QUEUE_TIMEZONE: "Asia/Tehran",
-      } as any)
+      } as any),
     );
 
     expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
@@ -36,7 +36,7 @@ describe("scheduler registration", () => {
       expect.objectContaining({
         name: COMMERCE_MAINTENANCE_JOBS.stockReservationExpiry,
         data: {},
-      })
+      }),
     );
     expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
       MAINTENANCE_SCHEDULERS.reserveOrderExpiry,
@@ -44,7 +44,7 @@ describe("scheduler registration", () => {
       expect.objectContaining({
         name: COMMERCE_MAINTENANCE_JOBS.reserveOrderExpiry,
         data: {},
-      })
+      }),
     );
     expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
       MAINTENANCE_SCHEDULERS.scheduledProductReconcile,
@@ -52,7 +52,7 @@ describe("scheduler registration", () => {
       expect.objectContaining({
         name: COMMERCE_MAINTENANCE_JOBS.scheduledProductReconcile,
         data: {},
-      })
+      }),
     );
     expect(analyticsQueue.upsertJobScheduler).toHaveBeenCalledWith(
       MAINTENANCE_SCHEDULERS.viewCounterFlush,
@@ -60,7 +60,7 @@ describe("scheduler registration", () => {
       expect.objectContaining({
         name: ANALYTICS_MAINTENANCE_JOBS.viewCounterFlush,
         data: {},
-      })
+      }),
     );
     expect(analyticsQueue.upsertJobScheduler).toHaveBeenCalledWith(
       MAINTENANCE_SCHEDULERS.analyticsDailyRollup,
@@ -68,15 +68,15 @@ describe("scheduler registration", () => {
       expect.objectContaining({
         name: ANALYTICS_MAINTENANCE_JOBS.analyticsDailyRollup,
         data: {},
-      })
+      }),
     );
     expect(analyticsQueue.upsertJobScheduler).toHaveBeenCalledWith(
-      MAINTENANCE_SCHEDULERS.analyticsReconciliation,
-      { pattern: "50 0 * * *", tz: "Asia/Tehran" },
+      MAINTENANCE_SCHEDULERS.analyticsOutboxRepair,
+      { pattern: "*/4 * * * *", tz: "Asia/Tehran" },
       expect.objectContaining({
-        name: ANALYTICS_MAINTENANCE_JOBS.analyticsReconciliation,
+        name: ANALYTICS_MAINTENANCE_JOBS.analyticsOutboxRepair,
         data: {},
-      })
+      }),
     );
     expect(paymentsQueue.upsertJobScheduler).toHaveBeenCalledWith(
       MAINTENANCE_SCHEDULERS.snappaySweep,

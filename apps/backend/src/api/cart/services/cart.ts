@@ -5,10 +5,7 @@
 import { factories } from "@strapi/strapi";
 import { getOrCreateUserCart } from "./lib/get-user-cart";
 import { createOrderAndItems } from "./lib/order";
-import {
-  computeCouponDiscount,
-  findFirstActiveGeneralDiscount,
-} from "./lib/discounts";
+import { computeCouponDiscount, findFirstActiveGeneralDiscount } from "./lib/discounts";
 import { computeTotals } from "./lib/financials";
 import { createContract } from "./lib/contract";
 import { reserveStockAtomic } from "./lib/stock";
@@ -33,11 +30,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     return getOrCreateUserCart(strapi as any, userId);
   },
 
-  async addCartItem(
-    cartId: number,
-    productVariationId: number,
-    count: number = 1
-  ) {
+  async addCartItem(cartId: number, productVariationId: number, count: number = 1) {
     return addCartItemOp(strapi as any, cartId, productVariationId, count);
   },
 
@@ -101,7 +94,9 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   },
 
   async finalizeCartToOrder(userId: number, shippingData: any) {
-    const gateway = String(shippingData?.gateway || "").trim().toLowerCase();
+    const gateway = String(shippingData?.gateway || "")
+      .trim()
+      .toLowerCase();
     const managesPaymentAttempt = gateway !== "";
     const attemptId = String(shippingData?.attemptId || "").trim();
     const expectedQuoteHash = String(shippingData?.quoteHash || "").trim();
@@ -126,10 +121,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
 
       const replay = await findPaymentAttempt(strapi as any, userId, attemptId);
       if (replay) {
-        if (
-          String(replay.quoteHash) !== expectedQuoteHash ||
-          String(replay.Gateway) !== gateway
-        ) {
+        if (String(replay.quoteHash) !== expectedQuoteHash || String(replay.Gateway) !== gateway) {
           return {
             success: false,
             status: 409,
@@ -205,12 +197,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       // Start transaction to ensure all operations succeed or fail together
       const result = await strapi.db.transaction(async ({ trx }) => {
         if (managesPaymentAttempt) {
-          const replay = await findPaymentAttempt(
-            strapi as any,
-            userId,
-            attemptId,
-            trx,
-          );
+          const replay = await findPaymentAttempt(strapi as any, userId, attemptId, trx);
           if (replay) {
             if (
               String(replay.quoteHash) !== expectedQuoteHash ||
@@ -232,29 +219,16 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         }
 
         // Using enum values explicitly
-        type OrderStatus =
-          | "Paying"
-          | "Started"
-          | "Shipment"
-          | "Done"
-          | "Returned"
-          | "Cancelled";
+        type OrderStatus = "Paying" | "Started" | "Shipment" | "Done" | "Returned" | "Cancelled";
         type OrderType = "Manual" | "Automatic";
-        type ContractStatus =
-          | "Not Ready"
-          | "Confirmed"
-          | "Finished"
-          | "Failed"
-          | "Cancelled";
+        type ContractStatus = "Not Ready" | "Confirmed" | "Finished" | "Failed" | "Cancelled";
         type ContractType = "Cash" | "Credit";
 
         // Must exceed the longest gateway payment-session lifetime. If a
         // reservation expires while the customer can still complete payment, the
         // expiry job releases the stock and the subsequent successful charge has
         // to be reversed. SAMAN_TOKEN_EXPIRY_MIN is 20, so 15 was under-set.
-        const reservationTtlMinutes = Number(
-          process.env.STOCK_RESERVATION_TTL_MINUTES || 30
-        );
+        const reservationTtlMinutes = Number(process.env.STOCK_RESERVATION_TTL_MINUTES || 30);
         const reservationTtlMs = Number.isFinite(reservationTtlMinutes)
           ? Math.max(1, reservationTtlMinutes) * 60 * 1000
           : 30 * 60 * 1000;
@@ -320,7 +294,10 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           {
             code: shippingData.shippingMethodCode,
             title: shippingData.shippingMethodTitle,
-          }
+          },
+          shippingData.analyticsCorrelationId
+            ? { analyticsCorrelationId: String(shippingData.analyticsCorrelationId) }
+            : undefined,
         );
 
         strapi.log.info("Order and items created successfully", {
@@ -355,16 +332,9 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           .sort((a, b) => a.stockId - b.stockId);
 
         for (const r of aggregatedReservations) {
-          const reserveRes = await reserveStockAtomic(
-            strapi as any,
-            r.stockId,
-            r.quantity,
-            trx
-          );
+          const reserveRes = await reserveStockAtomic(strapi as any, r.stockId, r.quantity, trx);
           if (!reserveRes.success) {
-            throw new Error(
-              `STOCK_RESERVATION_FAILED: ${reserveRes.error || "reserve_failed"}`
-            );
+            throw new Error(`STOCK_RESERVATION_FAILED: ${reserveRes.error || "reserve_failed"}`);
           }
         }
 
@@ -442,8 +412,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
 
         let discountAmount = checkoutQuote?.financialSummary.discount || 0;
         let discountCode: string | undefined = checkoutQuote?.discountCode;
-        let appliedGeneralDiscountId: number | undefined =
-          checkoutQuote?.appliedGeneralDiscountId;
+        let appliedGeneralDiscountId: number | undefined = checkoutQuote?.appliedGeneralDiscountId;
 
         if (!checkoutQuote && shippingData?.discountCode) {
           discountCode = String(shippingData.discountCode);
@@ -454,7 +423,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
               discountCode,
               subtotal,
               cart.cart_items,
-              shippingData?.shippingId
+              shippingData?.shippingId,
             );
           } catch (discountError: any) {
             // Discount validation failed - throw error to prevent order creation
@@ -465,9 +434,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
 
         // If no coupon applied, find active general discounts
         if (!checkoutQuote && !discountAmount) {
-          const generalDiscounts = await findFirstActiveGeneralDiscount(
-            strapi as any
-          );
+          const generalDiscounts = await findFirstActiveGeneralDiscount(strapi as any);
           for (const discount of generalDiscounts) {
             const d: any = discount;
             if (d.MinimumAmount <= subtotal) {
@@ -485,7 +452,8 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           }
         }
 
-        const totals = checkoutQuote?.financialSummary ||
+        const totals =
+          checkoutQuote?.financialSummary ||
           computeTotals(subtotal, discountAmount, finalShippingCost);
 
         const contract = await createContract(
@@ -494,7 +462,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           Number(order.id),
           totals.total,
           0,
-          trx
+          trx,
         );
 
         strapi.log.info("Contract created successfully", {
@@ -533,9 +501,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
                   ? {
                       providerReference: snappayInitiation.transactionId,
                       providerStatus: "CREATED",
-                      callbackNonceHash: hashSnappayCallbackNonce(
-                        snappayInitiation.callbackNonce,
-                      ),
+                      callbackNonceHash: hashSnappayCallbackNonce(snappayInitiation.callbackNonce),
                       // Kept so a replayed initiation can rebuild the same return
                       // URL. Private in the schema, so it never leaves the server.
                       callbackNonce: snappayInitiation.callbackNonce,
@@ -551,10 +517,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             .query("api::payment-gateway.payment-gateway")
             .findOne({
               where: {
-                $or: [
-                  { Title: { $containsi: "snapp" } },
-                  { Title: { $containsi: "اسنپ" } },
-                ],
+                $or: [{ Title: { $containsi: "snapp" } }, { Title: { $containsi: "اسنپ" } }],
               },
               ...(trx ? { transacting: trx } : {}),
             } as any);
@@ -563,30 +526,28 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
               "SNAPPAY_GATEWAY_RECORD_MISSING: Enable the SnappPay gateway before checkout",
             );
           }
-          await strapi.db
-            .query("api::contract-transaction.contract-transaction")
-            .create({
-              data: {
-                Type: "Gateway",
-                Amount: Math.round(totals.total * 10),
-                DiscountAmount: Math.round(totals.discount * 10),
-                Step: 1,
-                Status: "Pending",
-                TrackId: null,
-                GatewayStatus: "CREATED",
-                GatewayResponse: {
-                  endpoint: "token",
-                  successful: false,
-                  initialized: true,
-                },
-                external_id: snappayInitiation.transactionId,
-                external_source: "SnappPay",
-                contract: contract.id,
-                payment_gateway: gatewayRecord.id,
-                Date: new Date(),
+          await strapi.db.query("api::contract-transaction.contract-transaction").create({
+            data: {
+              Type: "Gateway",
+              Amount: Math.round(totals.total * 10),
+              DiscountAmount: Math.round(totals.discount * 10),
+              Step: 1,
+              Status: "Pending",
+              TrackId: null,
+              GatewayStatus: "CREATED",
+              GatewayResponse: {
+                endpoint: "token",
+                successful: false,
+                initialized: true,
               },
-              ...(trx ? { transacting: trx } : {}),
-            } as any);
+              external_id: snappayInitiation.transactionId,
+              external_source: "SnappPay",
+              contract: contract.id,
+              payment_gateway: gatewayRecord.id,
+              Date: new Date(),
+            },
+            ...(trx ? { transacting: trx } : {}),
+          } as any);
           await strapi.db.query("api::contract.contract").update({
             where: { id: contract.id },
             data: {
@@ -606,9 +567,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           order,
           contract,
           paymentAttempt,
-          ...(snappayInitiation
-            ? { snappayCallbackNonce: snappayInitiation.callbackNonce }
-            : {}),
+          ...(snappayInitiation ? { snappayCallbackNonce: snappayInitiation.callbackNonce } : {}),
           financialSummary: totals,
         };
       });
@@ -616,11 +575,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       return result;
     } catch (error: any) {
       if (managesPaymentAttempt) {
-        const replay = await findPaymentAttempt(
-          strapi as any,
-          userId,
-          attemptId,
-        ).catch(() => null);
+        const replay = await findPaymentAttempt(strapi as any, userId, attemptId).catch(() => null);
         if (
           replay &&
           String(replay.quoteHash) === expectedQuoteHash &&
@@ -653,10 +608,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       console.error("=== ORDER CREATION FAILED ===");
       console.error("Error Message:", error.message);
       console.error("Error Code:", error.message?.split(":")[0]);
-      console.error(
-        "Full Context:",
-        JSON.stringify(safeErrorContext, null, 2),
-      );
+      console.error("Full Context:", JSON.stringify(safeErrorContext, null, 2));
 
       // Parse error message to extract error code and details
       const errorMessage = error.message || "Unknown error";
@@ -707,9 +659,9 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           case "INVALID_TAX_PERCENT":
             userMessage = "درصد مالیات نامعتبر است";
             break;
-case "INVALID_RESERVATION":
-           userMessage = "خطا در رزرو موجودی. لطفاً مجدداً تلاش کنید";
-           break;
+          case "INVALID_RESERVATION":
+            userMessage = "خطا در رزرو موجودی. لطفاً مجدداً تلاش کنید";
+            break;
           default:
             userMessage = "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید";
         }

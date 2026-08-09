@@ -133,9 +133,7 @@ function providerSummary<T>(result: SnappayCallResult<T>) {
   };
 }
 
-export function extractSnappayPaymentTokenFromRedirectUrl(
-  value: unknown,
-): string {
+export function extractSnappayPaymentTokenFromRedirectUrl(value: unknown): string {
   let url: URL;
   try {
     url = new URL(String(value || ""));
@@ -148,24 +146,17 @@ export function extractSnappayPaymentTokenFromRedirectUrl(
   return token;
 }
 
-async function resolveSnappayPaymentToken(
-  strapi: Strapi,
-  bundle: AttemptBundle,
-): Promise<string> {
+async function resolveSnappayPaymentToken(strapi: Strapi, bundle: AttemptBundle): Promise<string> {
   const stored = String(bundle.transaction.TrackId || "").trim();
   if (stored) return stored;
 
-  const recovered = extractSnappayPaymentTokenFromRedirectUrl(
-    bundle.attempt.redirectUrl,
-  );
+  const recovered = extractSnappayPaymentTokenFromRedirectUrl(bundle.attempt.redirectUrl);
   if (!recovered) return "";
 
   const expectedFingerprint = String(
     bundle.attempt.providerResponse?.tokenFingerprint || "",
   ).trim();
-  const actualFingerprint = displaySnappayFingerprint(
-    snappayTokenFingerprint(recovered),
-  );
+  const actualFingerprint = displaySnappayFingerprint(snappayTokenFingerprint(recovered));
   if (expectedFingerprint && expectedFingerprint !== actualFingerprint) {
     strapi.log.error("Refused mismatched SnappPay token recovery", {
       attemptId: bundle.attempt.attemptId,
@@ -1293,14 +1284,11 @@ async function updateAttemptUnlessSettled(
     data,
   } as any);
   if (!updated) {
-    strapi.log.warn(
-      "Refused to downgrade a settled SnappPay attempt from a failure path",
-      {
-        attemptId: bundle.attempt.attemptId,
-        orderId: bundle.order.id,
-        attemptedStatus: data.Status,
-      },
-    );
+    strapi.log.warn("Refused to downgrade a settled SnappPay attempt from a failure path", {
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order.id,
+      attemptedStatus: data.Status,
+    });
   }
 }
 
@@ -1491,7 +1479,7 @@ async function finalizeAndComplete(strapi: Strapi, operation: any, bundle: Attem
   bundle.attempt.Status = "Succeeded";
   await markOperationSucceeded(strapi, operation.id, "SETTLE");
   // Money is captured and the order is Started at this point. Side effects
-  // (cart clear, Matomo revenue, activity log) are cosmetic by comparison and
+  // (cart clear, analytics delivery, activity log) are cosmetic by comparison and
   // must never turn a completed settlement into a retry or a manual review.
   // `sweepSnappaySideEffects` re-queues anything missed here, so swallowing is
   // safe rather than lossy — including when the process dies mid-way.
@@ -2134,8 +2122,7 @@ export async function processSnappayOperation(
       callbackState,
       providerStatus,
       providerCode: statusResult.diagnostic.providerCode || operation.providerCode,
-      attemptAgeMs:
-        attemptCreatedAt !== null ? Date.now() - attemptCreatedAt : null,
+      attemptAgeMs: attemptCreatedAt !== null ? Date.now() - attemptCreatedAt : null,
     });
     await executeRecoveryAction(strapi, operation, bundle, token, action);
     return { status: "completed", operationId, providerStatus, action };

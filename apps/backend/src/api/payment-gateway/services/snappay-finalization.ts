@@ -1,9 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
-import {
-  consumeOrderReservation,
-  releaseOrderReservation,
-} from "../../../utils/stockReservations";
-import { trackOrderToMatomo, trackRefundToMatomo } from "../../report/services/matomo-tracker";
+import { consumeOrderReservation, releaseOrderReservation } from "../../../utils/stockReservations";
+import { enqueuePurchaseForOrder, enqueueRefundForReturn } from "../../report/analytics/outbox";
 
 type FinalizationIds = {
   attemptId: number;
@@ -13,11 +10,7 @@ type FinalizationIds = {
   transactionId: string;
 };
 
-async function incrementDiscountUsage(
-  strapi: Strapi,
-  order: any,
-  trx: any,
-): Promise<void> {
+async function incrementDiscountUsage(strapi: Strapi, order: any, trx: any): Promise<void> {
   const code = String(order?.DiscountCode || "").trim();
   if (!code) return;
   const discount: any = await strapi.db.query("api::discount.discount").findOne({
@@ -52,21 +45,16 @@ export async function finalizeSnappaySettlement(
   ids: FinalizationIds,
 ): Promise<{ replayed: boolean }> {
   return strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [
-      ids.attemptId,
-    ]);
+    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
     await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [ids.orderId]);
-    await trx.raw(
-      "SELECT id FROM contract_transactions WHERE id = ? FOR UPDATE",
-      [ids.transactionRowId],
-    );
+    await trx.raw("SELECT id FROM contract_transactions WHERE id = ? FOR UPDATE", [
+      ids.transactionRowId,
+    ]);
 
-    const attempt: any = await strapi.db
-      .query("api::payment-attempt.payment-attempt")
-      .findOne({
-        where: { id: ids.attemptId },
-        ...(trx ? { transacting: trx } : {}),
-      } as any);
+    const attempt: any = await strapi.db.query("api::payment-attempt.payment-attempt").findOne({
+      where: { id: ids.attemptId },
+      ...(trx ? { transacting: trx } : {}),
+    } as any);
     if (!attempt) throw new Error("SNAPPAY_ATTEMPT_NOT_FOUND");
     if (attempt.Status === "Succeeded") return { replayed: true };
 
@@ -99,29 +87,17 @@ export async function finalizeSnappaySettlement(
 
     const reservationStatus = String(order.ReservationStatus || "");
     if (reservationStatus === "Reserved") {
-      const consumed = await consumeOrderReservation(
-        strapi,
-        ids.orderId,
-        trx,
-      );
-      if (
-        !consumed.success ||
-        consumed.expired ||
-        consumed.skipped
-      ) {
+      const consumed = await consumeOrderReservation(strapi, ids.orderId, trx);
+      if (!consumed.success || consumed.expired || consumed.skipped) {
         throw new Error(
           `SNAPPAY_STOCK_FINALIZATION_FAILED:${
             consumed.error ||
-            (consumed.expired
-              ? "reservation_expired"
-              : "reservation_not_consumed")
+            (consumed.expired ? "reservation_expired" : "reservation_not_consumed")
           }`,
         );
       }
     } else if (reservationStatus !== "Consumed") {
-      throw new Error(
-        `SNAPPAY_RESERVATION_STATE_CONFLICT:${reservationStatus || "missing"}`,
-      );
+      throw new Error(`SNAPPAY_RESERVATION_STATE_CONFLICT:${reservationStatus || "missing"}`);
     }
 
     await incrementDiscountUsage(strapi, order, trx);
@@ -146,19 +122,17 @@ export async function finalizeSnappaySettlement(
       },
       ...(trx ? { transacting: trx } : {}),
     } as any);
-    await strapi.db
-      .query("api::contract-transaction.contract-transaction")
-      .update({
-        where: { id: ids.transactionRowId },
-        data: {
-          Status: "Success",
-          GatewayStatus: "SETTLE",
-          SettledAt: transaction.SettledAt || now,
-          LastReconciledAt: now,
-          VerifiedAt: transaction.VerifiedAt || now,
-        },
-        ...(trx ? { transacting: trx } : {}),
-      } as any);
+    await strapi.db.query("api::contract-transaction.contract-transaction").update({
+      where: { id: ids.transactionRowId },
+      data: {
+        Status: "Success",
+        GatewayStatus: "SETTLE",
+        SettledAt: transaction.SettledAt || now,
+        LastReconciledAt: now,
+        VerifiedAt: transaction.VerifiedAt || now,
+      },
+      ...(trx ? { transacting: trx } : {}),
+    } as any);
     await strapi.db.query("api::payment-attempt.payment-attempt").update({
       where: { id: ids.attemptId },
       data: {
@@ -224,11 +198,7 @@ async function logStockMovement(
   }
 }
 
-async function restockConsumedOrder(
-  strapi: Strapi,
-  order: any,
-  trx: any,
-): Promise<void> {
+async function restockConsumedOrder(strapi: Strapi, order: any, trx: any): Promise<void> {
   for (const item of order?.order_items || []) {
     const stockId = Number(item?.product_variation?.product_stock?.id);
     const quantity = Number(item?.Count || 0);
@@ -258,22 +228,15 @@ export async function applySnappayCancellation(
   reason: string,
 ): Promise<{ replayed: boolean }> {
   return strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [
-      ids.attemptId,
-    ]);
+    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
     await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [ids.orderId]);
 
-    const attempt: any = await strapi.db
-      .query("api::payment-attempt.payment-attempt")
-      .findOne({
-        where: { id: ids.attemptId },
-        ...(trx ? { transacting: trx } : {}),
-      } as any);
+    const attempt: any = await strapi.db.query("api::payment-attempt.payment-attempt").findOne({
+      where: { id: ids.attemptId },
+      ...(trx ? { transacting: trx } : {}),
+    } as any);
     if (!attempt) throw new Error("SNAPPAY_ATTEMPT_NOT_FOUND");
-    if (
-      attempt.Status === "Cancelled" &&
-      attempt.providerStatus === providerStatus
-    ) {
+    if (attempt.Status === "Cancelled" && attempt.providerStatus === providerStatus) {
       return { replayed: true };
     }
 
@@ -295,16 +258,9 @@ export async function applySnappayCancellation(
 
     const reservationStatus = String(order.ReservationStatus || "");
     if (reservationStatus === "Reserved") {
-      const released = await releaseOrderReservation(
-        strapi,
-        ids.orderId,
-        "Released",
-        trx,
-      );
+      const released = await releaseOrderReservation(strapi, ids.orderId, "Released", trx);
       if (!released.success) {
-        throw new Error(
-          `SNAPPAY_RESERVATION_RELEASE_FAILED:${released.error || "unknown"}`,
-        );
+        throw new Error(`SNAPPAY_RESERVATION_RELEASE_FAILED:${released.error || "unknown"}`);
       }
     } else if (reservationStatus === "Consumed") {
       await restockConsumedOrder(strapi, order, trx);
@@ -334,20 +290,16 @@ export async function applySnappayCancellation(
       data: { Status: "Cancelled" },
       ...(trx ? { transacting: trx } : {}),
     } as any);
-    await strapi.db
-      .query("api::contract-transaction.contract-transaction")
-      .update({
-        where: { id: ids.transactionRowId },
-        data: {
-          Status: "Failed",
-          GatewayStatus: providerStatus,
-          ...(providerStatus === "CANCEL"
-            ? { CancelledAt: now }
-            : { RevertedAt: now }),
-          LastReconciledAt: now,
-        },
-        ...(trx ? { transacting: trx } : {}),
-      } as any);
+    await strapi.db.query("api::contract-transaction.contract-transaction").update({
+      where: { id: ids.transactionRowId },
+      data: {
+        Status: "Failed",
+        GatewayStatus: providerStatus,
+        ...(providerStatus === "CANCEL" ? { CancelledAt: now } : { RevertedAt: now }),
+        LastReconciledAt: now,
+      },
+      ...(trx ? { transacting: trx } : {}),
+    } as any);
     await strapi.db.query("api::payment-attempt.payment-attempt").update({
       where: { id: ids.attemptId },
       data: {
@@ -402,9 +354,7 @@ export async function runSnappaySideEffects(
   if (userId) {
     const cartService: any = strapi.service("api::cart.cart");
     await cartService.clearCart(userId);
-    const activityService: any = strapi.service(
-      "api::user-activity.user-activity",
-    );
+    const activityService: any = strapi.service("api::user-activity.user-activity");
     const existingPaymentActivity: any = await strapi.db
       .query("api::user-activity.user-activity")
       .findOne({
@@ -423,7 +373,9 @@ export async function runSnappaySideEffects(
       );
     }
   }
-  await trackOrderToMatomo(strapi as any, orderId);
+  // Analytics is durable-but-asynchronous; a provider/DB outage must never
+  // hold the commerce side-effects lease or replay cart/stock work.
+  void enqueuePurchaseForOrder(strapi as any, orderId).catch(() => undefined);
   await strapi.db.query("api::payment-attempt.payment-attempt").update({
     where: { id: attemptId },
     data: { sideEffectsCompletedAt: new Date() },
@@ -452,14 +404,10 @@ export async function applySnappayAdminUpdate(
 ): Promise<void> {
   let refundTransactionId: number | null = null;
   await strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [
-      ids.attemptId,
-    ]);
+    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
     await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [ids.orderId]);
 
-    const attempt: any = await strapi.db.query(
-      "api::payment-attempt.payment-attempt",
-    ).findOne({
+    const attempt: any = await strapi.db.query("api::payment-attempt.payment-attempt").findOne({
       where: { id: ids.attemptId },
       ...(trx ? { transacting: trx } : {}),
     } as any);
@@ -474,12 +422,10 @@ export async function applySnappayAdminUpdate(
       },
       ...(trx ? { transacting: trx } : {}),
     } as any);
-    const contract: any = await strapi.db
-      .query("api::contract.contract")
-      .findOne({
-        where: { id: ids.contractId },
-        ...(trx ? { transacting: trx } : {}),
-      } as any);
+    const contract: any = await strapi.db.query("api::contract.contract").findOne({
+      where: { id: ids.contractId },
+      ...(trx ? { transacting: trx } : {}),
+    } as any);
     if (
       !attempt ||
       attempt.Status !== "Succeeded" ||
@@ -500,9 +446,7 @@ export async function applySnappayAdminUpdate(
       throw new Error("SNAPPAY_ADMIN_UPDATE_AMOUNT_INVALID");
     }
 
-    const itemById = new Map(
-      (order.order_items || []).map((item: any) => [Number(item.id), item]),
-    );
+    const itemById = new Map((order.order_items || []).map((item: any) => [Number(item.id), item]));
     for (const change of input.changes) {
       const item: any = itemById.get(Number(change.orderItemId));
       if (
@@ -579,9 +523,7 @@ export async function applySnappayAdminUpdate(
     const refundIrr = Math.round(
       (Number(input.expectedOldTotalToman) - Number(input.newTotalToman)) * 10,
     );
-    await strapi.db.query(
-      "api::contract-transaction.contract-transaction",
-    ).update({
+    await strapi.db.query("api::contract-transaction.contract-transaction").update({
       where: { id: ids.transactionRowId },
       data: {
         GatewayStatus: "SETTLE",
@@ -596,10 +538,7 @@ export async function applySnappayAdminUpdate(
           where: { contract: { id: ids.contractId } },
           ...(trx ? { transacting: trx } : {}),
         } as any);
-      const maxStep = siblings.reduce(
-        (max, tx) => Math.max(max, Number(tx?.Step || 0)),
-        0,
-      );
+      const maxStep = siblings.reduce((max, tx) => Math.max(max, Number(tx?.Step || 0)), 0);
       const returnTx: any = await strapi.db
         .query("api::contract-transaction.contract-transaction")
         .create({
@@ -641,14 +580,14 @@ export async function applySnappayAdminUpdate(
     } as any);
   });
 
-  // Fire-and-forget, after the refund transaction has committed — never track
-  // a refund that might still roll back (see matomo-tracker.ts).
+  // Enqueue after the refund transaction commits; provider delivery is retried
+  // independently and never extends the operator request.
   const refundToman = Math.max(
     0,
     Math.round(Number(input.expectedOldTotalToman) - Number(input.newTotalToman)),
   );
   if (refundToman > 0 && refundTransactionId) {
-    void trackRefundToMatomo(strapi as any, {
+    void enqueueRefundForReturn(strapi as any, {
       orderId: ids.orderId,
       contractTransactionId: refundTransactionId,
       amountToman: refundToman,

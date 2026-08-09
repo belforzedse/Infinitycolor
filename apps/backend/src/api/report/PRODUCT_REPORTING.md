@@ -26,7 +26,7 @@ Consequences:
 
 - Orders with no successful transaction are **excluded**. In practice that means
   `Paying` orders — but note the CTE filters on `ct.status`, **not** on
-  `orders.status`, so an order left at `Paying` *after* a successful charge (see
+  `orders.status`, so an order left at `Paying` _after_ a successful charge (see
   `handleStockDecrementFailure`, which deliberately does this when stock cannot be
   decremented) **is still counted**. The exclusion follows from "no Success row",
   not from the order status.
@@ -78,20 +78,20 @@ paid orders, using the immutable snapshot fields (`ProductTitle`, `ProductSKU`,
 
 ## Metric matrix
 
-| Metric | Formula | Source | Included / excluded | Refund/cancel | Limitations |
-|---|---|---|---|---|---|
-| Units sold | `Σ oi.Count` | order_items of paid_orders | paid only | net of fully-refunded orders | — |
-| **Gross product sales** (Toman) | `Σ (oi.PerAmount × oi.Count)` | order_items | product lines only — **excludes shipping & tax** | gross (pre-refund) | — |
-| Discounts (allocated) | `Σ order.AppliedDiscountAmount × lineGross / orderGross` | orders + order_items | paid only | — | order-level only; no per-item discount field → **pro-rated** |
-| Refunds (allocated) | `Σ (refund_irr/10) × lineGross / orderGross` | contract_transactions `type='Return'`, `status='Success'` | paid only | this *is* the refund | refunds are order/contract-level → **pro-rated** to items |
-| **Net product sales** | `Gross − allocDiscount − allocRefund` | derived | paid only | net | **estimate** (flagged “تخمینی”) due to pro-rating |
-| Orders with product | `COUNT(DISTINCT order_id)` | order_items | paid only | — | — |
-| Avg selling price | `Gross / Units` | derived | — | — | gross basis |
-| AOV | `Gross / paid orders` | derived | — | — | product-gross basis (excludes shipping/tax) |
-| Current stock / status | `product_stocks.Count`, `reserved_count` | product_variation → product_stock | live snapshot | n/a | deleted variations → `unknown` |
-| In / Low / Out | `Count > T` / `0 < Count ≤ T` / `Count ≤ 0`; `T = REPORT_LOW_STOCK_THRESHOLD` (default 5) | product_stocks | active variations | n/a | threshold configurable |
-| Days of cover | `Count ÷ (unitsSold ÷ windowDays)` | derived | — | n/a | estimate; `null`/∞ when no sales in window |
-| Trend bucket | `date_trunc(grp, (orders.date AT TIME ZONE 'UTC') AT TIME ZONE tz)` | orders | paid only | net | day/week/month auto-chosen by range |
+| Metric                          | Formula                                                                                   | Source                                                    | Included / excluded                              | Refund/cancel                | Limitations                                                  |
+| ------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------ | ---------------------------- | ------------------------------------------------------------ |
+| Units sold                      | `Σ oi.Count`                                                                              | order_items of paid_orders                                | paid only                                        | net of fully-refunded orders | —                                                            |
+| **Gross product sales** (Toman) | `Σ (oi.PerAmount × oi.Count)`                                                             | order_items                                               | product lines only — **excludes shipping & tax** | gross (pre-refund)           | —                                                            |
+| Discounts (allocated)           | `Σ order.AppliedDiscountAmount × lineGross / orderGross`                                  | orders + order_items                                      | paid only                                        | —                            | order-level only; no per-item discount field → **pro-rated** |
+| Refunds (allocated)             | `Σ (refund_irr/10) × lineGross / orderGross`                                              | contract_transactions `type='Return'`, `status='Success'` | paid only                                        | this _is_ the refund         | refunds are order/contract-level → **pro-rated** to items    |
+| **Net product sales**           | `Gross − allocDiscount − allocRefund`                                                     | derived                                                   | paid only                                        | net                          | **estimate** (flagged “تخمینی”) due to pro-rating            |
+| Orders with product             | `COUNT(DISTINCT order_id)`                                                                | order_items                                               | paid only                                        | —                            | —                                                            |
+| Avg selling price               | `Gross / Units`                                                                           | derived                                                   | —                                                | —                            | gross basis                                                  |
+| AOV                             | `Gross / paid orders`                                                                     | derived                                                   | —                                                | —                            | product-gross basis (excludes shipping/tax)                  |
+| Current stock / status          | `product_stocks.Count`, `reserved_count`                                                  | product_variation → product_stock                         | live snapshot                                    | n/a                          | deleted variations → `unknown`                               |
+| In / Low / Out                  | `Count > T` / `0 < Count ≤ T` / `Count ≤ 0`; `T = REPORT_LOW_STOCK_THRESHOLD` (default 5) | product_stocks                                            | active variations                                | n/a                          | threshold configurable                                       |
+| Days of cover                   | `Count ÷ (unitsSold ÷ windowDays)`                                                        | derived                                                   | —                                                | n/a                          | estimate; `null`/∞ when no sales in window                   |
+| Trend bucket                    | `date_trunc(grp, (orders.date AT TIME ZONE 'UTC') AT TIME ZONE tz)`                       | orders                                                    | paid only                                        | net                          | day/week/month auto-chosen by range                          |
 
 ## Previous-period comparison
 
@@ -117,9 +117,9 @@ KPIs compare against the immediately-preceding equal-length window
 These cannot be computed reliably from currently-recorded data:
 
 - **Profit / margin** — no cost-of-goods field exists on product or variation.
-- **Per-product conversion rate** — only a site-wide Matomo funnel exists;
-  `product.SeenCount` is cumulative (not time-bounded) and `product_views` is not
-  yet aggregated here.
+- **Per-product conversion rate** — the behavior area exposes Umami product events,
+  while this commerce report continues to use the authoritative, time-bounded
+  `product_views` rollup described below.
 - **Per-product brand** — there is no brand entity (only `site-identity` branding);
   filtering/grouping is by **category** only.
 - **Historical stock-on-a-past-date / inventory aging** — `product_stock_log`

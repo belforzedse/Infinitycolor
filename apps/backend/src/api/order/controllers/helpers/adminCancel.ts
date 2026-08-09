@@ -5,7 +5,7 @@ import { requireCapability } from "../../../../utils/adminAuthorization";
 import { queueSnappayAdminCancel } from "../../../payment-gateway/services/snappay-orchestrator";
 import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
 import { computePaidAmountToman } from "./paidAmount";
-import { trackRefundToMatomo } from "../../../report/services/matomo-tracker";
+import { enqueueRefundForReturn } from "../../../report/analytics/outbox";
 
 export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
   const { id } = ctx.params;
@@ -66,9 +66,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
     const isSnappay =
       isSnappayGatewayValue(order.PaymentGateway) ||
       isSnappayGatewayValue(contract?.external_source) ||
-      txList.some((tx: any) =>
-        isSnappayGatewayValue(tx?.external_source),
-      );
+      txList.some((tx: any) => isSnappayGatewayValue(tx?.external_source));
 
     if (isSnappay) {
       const normalizedReason = String(reason || "").trim();
@@ -81,9 +79,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
         orderId: orderIdNum,
         reason: normalizedReason,
         actorId: Number(fullUser.id),
-        requestKey: String(
-          ctx.request?.headers?.["x-idempotency-key"] || "",
-        ),
+        requestKey: String(ctx.request?.headers?.["x-idempotency-key"] || ""),
       });
       ctx.status = 202;
       return {
@@ -123,7 +119,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
               const releaseResult = await releaseReservedStockAtomic(
                 strapi as any,
                 Number(stockId),
-                qty
+                qty,
               );
               if (!releaseResult.success) {
                 strapi.log.error("Failed to release reserved stock during admin cancel", {
@@ -237,7 +233,8 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       // Log admin activity
       try {
         const ip = ctx.request?.ip || ctx.ip || null;
-        const userAgent = ctx.request?.headers?.["user-agent"] || ctx.headers?.["user-agent"] || null;
+        const userAgent =
+          ctx.request?.headers?.["user-agent"] || ctx.headers?.["user-agent"] || null;
 
         await logAdminOrderCancel(
           strapi,
@@ -264,14 +261,13 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       };
     });
 
-    // Fire-and-forget, after the refund transaction has committed — never
-    // track a refund that might still roll back (see matomo-tracker.ts).
+    // Enqueue only after the refund transaction commits. Delivery is retried by
+    // the analytics worker and can never block the cancellation response.
     if (paidAmount > 0 && refundTransactionId) {
-      void trackRefundToMatomo(strapi as any, {
+      void enqueueRefundForReturn(strapi as any, {
         orderId: orderIdNum,
         contractTransactionId: refundTransactionId,
         amountToman: paidAmount,
-        userId: order.user?.id ?? order.user ?? null,
       }).catch(() => {});
     }
 

@@ -34,7 +34,17 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     reserveGroupId,
     attemptId,
     quoteHash,
+    analyticsCorrelationId,
   } = ctx.request.body;
+
+  // The browser correlation id is opaque and never used for authorization. It
+  // is persisted only to join a later server-side settlement event with the
+  // storefront guest session. Reject control characters/URLs and keep the
+  // bounded size expected by the analytics outbox.
+  const rawAnalyticsCorrelationId = String(analyticsCorrelationId || "").trim();
+  const normalizedAnalyticsCorrelationId = /^[A-Za-z0-9_-]{1,64}$/.test(rawAnalyticsCorrelationId)
+    ? rawAnalyticsCorrelationId
+    : undefined;
 
   let user = ctx.state.user;
   try {
@@ -45,8 +55,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     const requestedGateway = String(gateway || "mellat").toLowerCase();
-    const selectedGateway =
-      normalizeCheckoutGatewayCode(requestedGateway) || "mellat";
+    const selectedGateway = normalizeCheckoutGatewayCode(requestedGateway) || "mellat";
     const managesPaymentAttempt = true;
     const normalizedAttemptId = String(attemptId || "").trim();
     const normalizedQuoteHash = String(quoteHash || "").trim();
@@ -89,7 +98,11 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       });
       if (parentOrders.length === 0) {
         return ctx.badRequest("سفارش رزروی معتبر یافت نشد یا منقضی شده است", {
-          data: { success: false, errorCode: "RESERVE_NOT_FOUND", message: "سفارش رزروی معتبر یافت نشد یا منقضی شده است" },
+          data: {
+            success: false,
+            errorCode: "RESERVE_NOT_FOUND",
+            message: "سفارش رزروی معتبر یافت نشد یا منقضی شده است",
+          },
         });
       }
       const parent = parentOrders[0];
@@ -134,7 +147,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       try {
         const shippingMethod = await strapi.entityService.findOne(
           "api::shipping.shipping",
-          resolvedShippingId
+          resolvedShippingId,
         );
         if (!shippingMethod) {
           return ctx.badRequest("روش ارسال انتخاب شده معتبر نیست", {
@@ -182,9 +195,13 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       }
 
       // Validate city exists
-      const city = await strapi.entityService.findOne("api::shipping-city.shipping-city", shipping_city, {
-        populate: { shipping_province: true },
-      });
+      const city = await strapi.entityService.findOne(
+        "api::shipping-city.shipping-city",
+        shipping_city,
+        {
+          populate: { shipping_province: true },
+        },
+      );
 
       if (!city) {
         return ctx.badRequest("شهر انتخاب شده معتبر نیست", {
@@ -208,7 +225,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       try {
         const createdAddress = await strapi.entityService.create(
           "api::local-user-address.local-user-address",
-          { data: addressData }
+          { data: addressData },
         );
         resolvedAddressId = createdAddress.id;
       } catch (err) {
@@ -229,7 +246,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         const address = await strapi.entityService.findOne(
           "api::local-user-address.local-user-address",
           resolvedAddressId,
-          { populate: { user: true, shipping_city: true } }
+          { populate: { user: true, shipping_city: true } },
         );
         if (!address) {
           return ctx.badRequest("آدرس انتخاب شده یافت نشد", {
@@ -246,8 +263,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           typeof address.user === "object" && address.user?.id
             ? address.user.id
             : typeof address.user === "number"
-            ? address.user
-            : null;
+              ? address.user
+              : null;
 
         if (!addressUserId || Number(addressUserId) !== Number(user.id)) {
           strapi.log.warn("Address ownership validation failed", {
@@ -283,7 +300,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         const calculatedShipping = await shippingService.calculateMethodForCart(
           user.id,
           resolvedShippingId,
-          { addressId: resolvedAddressId }
+          { addressId: resolvedAddressId },
         );
         resolvedShippingCost = Number(calculatedShipping.price || 0);
         shippingSnapshot = {
@@ -338,6 +355,9 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             quoteHash: normalizedQuoteHash,
           }
         : {}),
+      ...(normalizedAnalyticsCorrelationId
+        ? { analyticsCorrelationId: normalizedAnalyticsCorrelationId }
+        : {}),
     };
     if (reserveOrderData) {
       shippingData.reserveOrderData = reserveOrderData;
@@ -383,26 +403,18 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       });
     }
 
-    if (
-      result.replayed &&
-      String(paymentAttempt.Status || "") !== "Created"
-    ) {
+    if (result.replayed && String(paymentAttempt.Status || "") !== "Created") {
       return { data: paymentAttemptResponse(paymentAttempt) };
     }
 
     let snappayCallbackNonce = String(result.snappayCallbackNonce || "");
-    if (
-      result.replayed &&
-      selectedGateway === "snappay" &&
-      !snappayCallbackNonce
-    ) {
+    if (result.replayed && selectedGateway === "snappay" && !snappayCallbackNonce) {
       snappayCallbackNonce = String(paymentAttempt.callbackNonce || "");
       if (!snappayCallbackNonce) {
         await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
           Status: "Unknown",
           failureCode: "SNAPPAY_CALLBACK_NONCE_UNRECOVERABLE",
-          failureMessage:
-            "SnappPay callback correlation secret could not be recovered",
+          failureMessage: "SnappPay callback correlation secret could not be recovered",
           nextAction: "manual_review",
         }).catch(() => undefined);
         ctx.status = 202;
@@ -447,12 +459,12 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       selectedGateway === "snappay"
         ? "SnappPay"
         : selectedGateway === "samankish"
-        ? "SamanKish"
-        : selectedGateway === "zarinpal"
-        ? "ZarinPal"
-        : selectedGateway === "wallet"
-        ? "Wallet"
-        : "Mellat";
+          ? "SamanKish"
+          : selectedGateway === "zarinpal"
+            ? "ZarinPal"
+            : selectedGateway === "wallet"
+              ? "Wallet"
+              : "Mellat";
     try {
       await strapi.entityService.update("api::order.order", order.id, {
         data: { PaymentGateway: paymentGatewayLabel },
@@ -466,10 +478,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     if (managesPaymentAttempt && selectedGateway !== "wallet") {
-      const claimed = await claimPaymentAttemptForInitiation(
-        strapi,
-        Number(paymentAttempt.id),
-      );
+      const claimed = await claimPaymentAttemptForInitiation(strapi, Number(paymentAttempt.id));
       if (!claimed) {
         const currentAttempt = await findPaymentAttempt(
           strapi,
@@ -580,9 +589,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             message: initiation.message || "شروع پرداخت اسنپ‌پی انجام نشد",
             errorCode:
               initiation.errorCode ||
-              (initiation.status === "Unknown"
-                ? "PAYMENT_UNKNOWN"
-                : "PAYMENT_INITIATION_FAILED"),
+              (initiation.status === "Unknown" ? "PAYMENT_UNKNOWN" : "PAYMENT_INITIATION_FAILED"),
             orderId: order.id,
             contractId: contract.id,
             attemptId: normalizedAttemptId,
@@ -675,7 +682,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         contract.id,
         user.id,
         "payment_gateway_failure",
-        { createAuditLogs: true }
+        { createAuditLogs: true },
       );
 
       return ctx.badRequest(errMsg, {
@@ -762,15 +769,9 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     if (error?.status) {
       // Convert structured errors to ctx.badRequest() format per payment error guideline
       const errorCode =
-        error?.payload?.data?.errorCode ||
-        error.errorCode ||
-        error.code ||
-        "PAYMENT_ERROR";
+        error?.payload?.data?.errorCode || error.errorCode || error.code || "PAYMENT_ERROR";
       const message =
-        error?.payload?.data?.message ||
-        error.message ||
-        error.error ||
-        "خطا در پردازش درخواست";
+        error?.payload?.data?.message || error.message || error.error || "خطا در پردازش درخواست";
       return ctx.badRequest(message, {
         data: {
           success: false,

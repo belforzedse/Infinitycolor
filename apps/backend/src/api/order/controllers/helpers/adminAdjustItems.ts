@@ -10,7 +10,7 @@ import {
 } from "../../../payment-gateway/services/snappay-orchestrator";
 import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
 import { computePaidAmountToman } from "./paidAmount";
-import { trackRefundToMatomo } from "../../../report/services/matomo-tracker";
+import { enqueueRefundForReturn } from "../../../report/analytics/outbox";
 
 type ItemAdjustment = {
   orderItemId: number;
@@ -110,14 +110,8 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
       if (!item) continue;
 
       const oldCount = Number(item.Count || 0);
-      const requestedCount = adj.remove
-        ? 0
-        : Number(adj.newCount ?? oldCount);
-      if (
-        !Number.isInteger(requestedCount) ||
-        requestedCount < 0 ||
-        requestedCount > oldCount
-      ) {
+      const requestedCount = adj.remove ? 0 : Number(adj.newCount ?? oldCount);
+      if (!Number.isInteger(requestedCount) || requestedCount < 0 || requestedCount > oldCount) {
         return ctx.badRequest("Cannot increase quantity", {
           data: { error: "invalid_count", itemId: adj.orderItemId },
         });
@@ -222,9 +216,7 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
     const isSnappay =
       isSnappayGatewayValue(order.PaymentGateway) ||
       isSnappayGatewayValue(contract?.external_source) ||
-      txList.some((tx: any) =>
-        isSnappayGatewayValue(tx?.external_source),
-      );
+      txList.some((tx: any) => isSnappayGatewayValue(tx?.external_source));
 
     if (isSnappay) {
       const normalizedReason = String(reason || "").trim();
@@ -237,22 +229,18 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
         orderId: orderIdNum,
         reason: normalizedReason,
         actorId: Number(fullUser.id),
-        requestKey: String(
-          ctx.request?.headers?.["x-idempotency-key"] || "",
-        ),
+        requestKey: String(ctx.request?.headers?.["x-idempotency-key"] || ""),
       };
       const operation: any = allRemoved
         ? await queueSnappayAdminCancel(strapi, common)
         : await queueSnappayAdminUpdate(strapi, {
             ...common,
-            changes: changes.map(
-              ({ orderItemId, oldCount, newCount, restockDelta }) => ({
-                orderItemId,
-                oldCount,
-                newCount,
-                restockDelta,
-              }),
-            ),
+            changes: changes.map(({ orderItemId, oldCount, newCount, restockDelta }) => ({
+              orderItemId,
+              oldCount,
+              newCount,
+              restockDelta,
+            })),
             newTotalToman: Number(newTotals.total),
             newDiscountToman: Number(newTotals.discount),
             newShippingToman: Number(newShipping),
@@ -307,7 +295,7 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
               const releaseResult = await releaseReservedStockAtomic(
                 strapi as any,
                 Number(stockId),
-                change.restockDelta
+                change.restockDelta,
               );
               if (!releaseResult.success) {
                 strapi.log.error("Failed to release reserved stock during admin adjust", {
@@ -490,14 +478,13 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
       };
     });
 
-    // Fire-and-forget, after the refund transaction has committed — never
-    // track a refund that might still roll back (see matomo-tracker.ts).
+    // Enqueue only after the refund transaction commits. Delivery is retried by
+    // the analytics worker and can never block the item-adjustment response.
     if (refundToman > 0 && refundTransactionId) {
-      void trackRefundToMatomo(strapi as any, {
+      void enqueueRefundForReturn(strapi as any, {
         orderId: orderIdNum,
         contractTransactionId: refundTransactionId,
         amountToman: refundToman,
-        userId: order.user?.id ?? order.user ?? null,
       }).catch(() => {});
     }
 

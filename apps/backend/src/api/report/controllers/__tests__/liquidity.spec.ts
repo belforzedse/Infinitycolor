@@ -10,11 +10,15 @@
  * about the query (date basis, grouping, gateway attribution) may change.
  */
 
-jest.mock("../../services/matomo", () => ({
-  normalizeRange: jest.fn(),
-  getMatomoRealtimePayload: jest.fn(),
-  getMatomoTrafficDashboardPayload: jest.fn(),
-  getProductBehavioral: jest.fn(),
+jest.mock("../../services/umami", () => ({
+  UMAMI_DEFINITION_VERSION: "umami-infinity-v1",
+  UMAMI_REPORT_TIMEZONE: "Asia/Tehran",
+  isUmamiConfigured: jest.fn(() => false),
+  normalizeRange: jest.fn(() => ({ startDate: "2026-08-09", endDate: "2026-08-31" })),
+  previousRange: jest.fn(() => ({ startDate: "2026-07-17", endDate: "2026-08-08" })),
+  normalizeUmamiFilters: jest.fn(() => ({})),
+  getUmamiBehaviorReport: jest.fn(),
+  getUmamiRealtimeReport: jest.fn(),
 }));
 
 function loadController() {
@@ -127,9 +131,7 @@ describe("liquidity/gateway-liquidity Toman normalization", () => {
     const controller = loadController();
     const ctx = createCtx();
     await controller.gatewayLiquidity(ctx);
-    expect(ctx.forbidden).toHaveBeenCalledWith(
-      "You do not have permission to perform this action",
-    );
+    expect(ctx.forbidden).toHaveBeenCalledWith("You do not have permission to perform this action");
   });
 
   it("gateway-liquidity: joins through the link table with LEFT JOIN, not INNER, so an unlinked successful transaction is kept", async () => {
@@ -144,10 +146,7 @@ describe("liquidity/gateway-liquidity Toman normalization", () => {
       }
       if (sql.includes("information_schema.columns")) {
         return {
-          rows: [
-            { column_name: "contract_transaction_id" },
-            { column_name: "payment_gateway_id" },
-          ],
+          rows: [{ column_name: "contract_transaction_id" }, { column_name: "payment_gateway_id" }],
         };
       }
       if (sql.includes("SELECT pg.id AS gateway_id")) {
@@ -204,10 +203,7 @@ describe("liquidity/gateway-liquidity Toman normalization", () => {
       controller.liquidity(liquidityCtx),
     ]);
 
-    const gatewaySum = gatewayCtx.body.data.rows.reduce(
-      (sum: number, r: any) => sum + r.total,
-      0,
-    );
+    const gatewaySum = gatewayCtx.body.data.rows.reduce((sum: number, r: any) => sum + r.total, 0);
     expect(gatewaySum).toBe(liquidityCtx.body.data.total);
   });
 });

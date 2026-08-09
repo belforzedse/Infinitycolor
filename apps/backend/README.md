@@ -23,13 +23,11 @@ up and down and up and down and
   - **Important**: `main.env` and `dev.env` files are gitignored. Copy the entire file contents into the corresponding GitHub secret (e.g., `PROD_BACKEND_ENV_FILE`, `STAGING_BACKEND_ENV_FILE`).
 - **Compose variables**: `ENV_FILE` (defaults to `main.env`), `IMAGE_TAG` (`main` by default), `STRAPI_PORT`, `POSTGRES_PORT`, `REDIS_PORT`. Override locally, e.g. `ENV_FILE=dev.env STRAPI_PORT=1338 docker compose up`.
 - **Ports**: Strapi exposes `${STRAPI_PORT:-1337}`; Postgres/Redis still publish `5432/6379` for local development. Remove those `ports` lines on production if you do not want them reachable from the host network.
-- **Matomo integration**: backend traffic report endpoints can read metrics from an external Matomo instance. Configure:
-  - `MATOMO_BASE_URL` (for backend report API calls)
-  - `MATOMO_SITE_ID`
-  - `MATOMO_API_TOKEN`
-  - `MATOMO_TIMEOUT_MS` (default `8000`)
-  - `TRAFFIC_DASHBOARD_CACHE_TTL_MS` (default `30000`)
-  - `TRAFFIC_REALTIME_CACHE_TTL_MS` (default `10000`)
+- **Umami integration**: behavior reports use the private read-only account, while
+  purchase/refund events are delivered through the durable analytics outbox. Configure
+  `UMAMI_BASE_URL`, `UMAMI_WEBSITE_ID`, `UMAMI_WEBSITE_ALLOWLIST`,
+  `UMAMI_USERNAME`, `UMAMI_PASSWORD`, `UMAMI_HOSTNAME`, and
+  `UMAMI_DATA_START_DATE`. See `src/api/report/UMAMI.md`.
 - **Endpoint cache and async counters**: configure conservative anonymous-only response caching + batched view counters:
   - `ENABLE_ENDPOINT_RESPONSE_CACHE` (default `true`)
   - `CACHE_ONLY_ANONYMOUS` (default `true`)
@@ -114,6 +112,7 @@ yarn build
 The backend includes a comprehensive blog system with the following content types:
 
 ### Content Types
+
 - **blog-post**: Main blog posts with rich text content, SEO metadata, and relations
 - **blog-category**: Post categories for organization
 - **blog-tag**: Post tags for flexible categorization
@@ -121,6 +120,7 @@ The backend includes a comprehensive blog system with the following content type
 - **blog-comment**: User comments with moderation support
 
 ### Features
+
 - Rich text content with Strapi's built-in editor
 - SEO metadata fields (title, description, keywords)
 - Role-based access control (Editor role for content management)
@@ -129,12 +129,15 @@ The backend includes a comprehensive blog system with the following content type
 - View counting and analytics support
 
 ### API Endpoints
+
 - Public endpoints for published content
 - Authenticated endpoints for comments
 - Admin endpoints for content management (Editor+ role required)
 
 ### Role Management
+
 The system includes an "Editor" role with permissions to:
+
 - Create, read, update, and delete blog content
 - Moderate comments
 - Manage categories, tags, and authors

@@ -1,25 +1,16 @@
 import type { Strapi } from "@strapi/strapi";
 
-type OrderStatus =
-  | "Paying"
-  | "Started"
-  | "Shipment"
-  | "Done"
-  | "Returned"
-  | "Cancelled";
+type OrderStatus = "Paying" | "Started" | "Shipment" | "Done" | "Returned" | "Cancelled";
 type OrderType = "Manual" | "Automatic";
 
 export const resolveShippingCost = async (
   strapi: Strapi,
   shippingId?: number,
-  providedCost?: number
+  providedCost?: number,
 ) => {
   const cost = providedCost ? parseInt(String(providedCost)) : 0;
   if (cost || !shippingId) return cost;
-  const shipping = await strapi.entityService.findOne(
-    "api::shipping.shipping",
-    shippingId
-  );
+  const shipping = await strapi.entityService.findOne("api::shipping.shipping", shippingId);
   return shipping?.Price || 0;
 };
 
@@ -35,7 +26,8 @@ export const createOrderAndItems = async (
   reservation?: { status: "Reserved"; until: Date },
   trx?: any,
   reserveData?: { reserveGroupId: string; reserveExpiresAt: Date },
-  shippingSnapshot?: { code?: unknown; title?: unknown }
+  shippingSnapshot?: { code?: unknown; title?: unknown },
+  analyticsData?: { analyticsCorrelationId?: string },
 ) => {
   // Validate cart items before proceeding
   if (!cart.cart_items || cart.cart_items.length === 0) {
@@ -44,7 +36,9 @@ export const createOrderAndItems = async (
   }
 
   // Pre-validate all items have required data
-  console.log(`[Order Validation] Checking ${cart.cart_items.length} cart items for userId=${userId}`);
+  console.log(
+    `[Order Validation] Checking ${cart.cart_items.length} cart items for userId=${userId}`,
+  );
 
   for (let i = 0; i < cart.cart_items.length; i++) {
     const item = cart.cart_items[i];
@@ -73,7 +67,9 @@ export const createOrderAndItems = async (
         productTitle: variation.product?.Title,
         removedAt: variation.product?.removedAt,
       });
-      throw new Error(`PRODUCT_DELETED: Product "${variation.product?.Title || variation.id}" has been removed`);
+      throw new Error(
+        `PRODUCT_DELETED: Product "${variation.product?.Title || variation.id}" has been removed`,
+      );
     }
 
     // Validate product is active
@@ -84,7 +80,9 @@ export const createOrderAndItems = async (
         productTitle: variation.product?.Title,
         status: variation.product?.Status,
       });
-      throw new Error(`PRODUCT_INACTIVE: Product "${variation.product?.Title || variation.id}" is currently unavailable`);
+      throw new Error(
+        `PRODUCT_INACTIVE: Product "${variation.product?.Title || variation.id}" is currently unavailable`,
+      );
     }
 
     // Validate variation is published
@@ -93,7 +91,9 @@ export const createOrderAndItems = async (
         variationId: variation.id,
         productTitle: variation.product?.Title,
       });
-      throw new Error(`VARIATION_UNPUBLISHED: Product variation ${variation.id} is not available for purchase`);
+      throw new Error(
+        `VARIATION_UNPUBLISHED: Product variation ${variation.id} is not available for purchase`,
+      );
     }
 
     if (!variation.product?.Title) {
@@ -102,16 +102,18 @@ export const createOrderAndItems = async (
         hasProduct: !!variation.product,
         productId: variation.product?.id || "NONE",
         productKeys: variation.product ? Object.keys(variation.product) : [],
-        cartItemId: item.id
+        cartItemId: item.id,
       };
       strapi.log.error("=== VALIDATION ERROR: Missing product title ===", errorInfo);
-      throw new Error(`MISSING_PRODUCT_TITLE: Product variation ${variation.id} (cart item ${item.id}) missing title. Product may have been deleted.`);
+      throw new Error(
+        `MISSING_PRODUCT_TITLE: Product variation ${variation.id} (cart item ${item.id}) missing title. Product may have been deleted.`,
+      );
     }
     if (!variation.SKU && !variation.product?.SKU) {
       console.warn("=== WARNING: Missing product SKU ===", {
         variationId: variation.id,
         productTitle: variation.product?.Title,
-        willUseDefault: true
+        willUseDefault: true,
       });
       // Use a default SKU if missing instead of failing
       // You can change this to throw an error if SKU is mandatory
@@ -120,23 +122,23 @@ export const createOrderAndItems = async (
       console.error("=== VALIDATION ERROR: Invalid price ===", {
         variationId: variation.id,
         price: variation.Price,
-        priceType: typeof variation.Price
+        priceType: typeof variation.Price,
       });
       throw new Error(`INVALID_PRICE: Product variation ${variation.id} has invalid price`);
     }
   }
 
   console.log("[Order Validation] ✓ All cart items validated successfully");
-if (reservation) {
-   if (reservation.until <= new Date()) {
-     strapi.log.error("=== VALIDATION ERROR: Invalid reservation date ===", {
-       reservedUntil: reservation.until,
-       currentTime: new Date(),
-       userId: userId,
-     });
-     throw new Error("INVALID_RESERVATION: Reservation date must be in the future");
-   }
- }
+  if (reservation) {
+    if (reservation.until <= new Date()) {
+      strapi.log.error("=== VALIDATION ERROR: Invalid reservation date ===", {
+        reservedUntil: reservation.until,
+        currentTime: new Date(),
+        userId: userId,
+      });
+      throw new Error("INVALID_RESERVATION: Reservation date must be in the future");
+    }
+  }
   const orderData: Record<string, unknown> = {
     user: userId,
     Status: "Paying" as OrderStatus,
@@ -151,6 +153,9 @@ if (reservation) {
     Description: description || "",
     Note: note || "",
     delivery_address: deliveryAddressId || undefined,
+    ...(analyticsData?.analyticsCorrelationId
+      ? { analytics_correlation_id: analyticsData.analyticsCorrelationId }
+      : {}),
   };
   if (reserveData) {
     orderData.isReserveOrder = true;

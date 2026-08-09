@@ -18,7 +18,7 @@ const CUSTOM_TABLE_NAMES = Object.freeze([
   "analytics_refresh_state",
   "analytics_daily_sales",
   "analytics_product_daily",
-  "analytics_reconciliation_daily",
+  "analytics_outbox",
   "woocommerce_sync_control",
   "woocommerce_sync_cursors",
   "woocommerce_sync_leases",
@@ -59,10 +59,7 @@ function parsePersistedTables(value) {
 
 function addCustomTables(entries) {
   const names = new Set(entries.map(persistedTableName));
-  return [
-    ...entries,
-    ...CUSTOM_TABLE_NAMES.filter((tableName) => !names.has(tableName)),
-  ];
+  return [...entries, ...CUSTOM_TABLE_NAMES.filter((tableName) => !names.has(tableName))];
 }
 
 function removeCustomTables(entries) {

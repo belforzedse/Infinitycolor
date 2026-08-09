@@ -418,12 +418,16 @@ function createActionTree() {
           gatewayLiquidity: action(),
           adminActivity: action(),
           adminActivityById: action(),
-          trafficDashboard: action(),
-          trafficRealtime: action(),
+          behaviorOverview: action(),
+          behaviorAcquisition: action(),
+          behaviorConversion: action(),
+          behaviorContent: action(),
+          behaviorAudience: action(),
+          behaviorPerformance: action(),
+          behaviorRealtime: action(),
           salesBreakdown: action(),
           salesBreakdownExport: action(),
           overview: action(),
-          funnel: action(),
         },
       },
     },
@@ -529,13 +533,15 @@ function createActionTree() {
     [
       "api::user-activity",
       "user-activity",
-      ["findUserActivities", "findUserActivitiesByUserId", "unreadCount", "markRead", "markAllRead"],
+      [
+        "findUserActivities",
+        "findUserActivitiesByUserId",
+        "unreadCount",
+        "markRead",
+        "markAllRead",
+      ],
     ],
-    [
-      "api::local-user-address",
-      "local-user-address",
-      [...crud, "getMyAddresses", "createAddress"],
-    ],
+    ["api::local-user-address", "local-user-address", [...crud, "getMyAddresses", "createAddress"]],
     ["api::story-seen", "story-seen", ["markSeen", "getMine"]],
   ] as Array<[string, string, string[]]>) {
     addController(typeKey, controllerName, actions);
@@ -590,7 +596,7 @@ describe("role permission templates", () => {
       storeManager["api::admin-activity"].controllers["admin-activity"].findReport.enabled,
     ).toBe(false);
     expect(storeManager["api::report"].controllers.report.productSales.enabled).toBe(true);
-    expect(storeManager["api::report"].controllers.report.trafficDashboard.enabled).toBe(false);
+    expect(storeManager["api::report"].controllers.report.behaviorOverview.enabled).toBe(false);
   });
 
   it("lets manager-plus roles edit products without opening product activity logs", () => {
@@ -677,8 +683,13 @@ describe("role permission templates", () => {
     expect(report.gatewayLiquidity.enabled).toBe(true);
     expect(report.adminActivity.enabled).toBe(false);
     expect(report.adminActivityById.enabled).toBe(false);
-    expect(report.trafficDashboard.enabled).toBe(true);
-    expect(report.trafficRealtime.enabled).toBe(true);
+    expect(report.behaviorOverview.enabled).toBe(true);
+    expect(report.behaviorAcquisition.enabled).toBe(true);
+    expect(report.behaviorConversion.enabled).toBe(true);
+    expect(report.behaviorContent.enabled).toBe(true);
+    expect(report.behaviorAudience.enabled).toBe(true);
+    expect(report.behaviorPerformance.enabled).toBe(true);
+    expect(report.behaviorRealtime.enabled).toBe(true);
   });
 
   it("keeps manager-plus roles customer-capable but away from superadmin-only actions", () => {
@@ -722,7 +733,9 @@ describe("role permission templates", () => {
     }
     expect(controller("api::product-size-helper", "product-size-helper").create.enabled).toBe(true);
     expect(controller("api::product-size-helper", "product-size-helper").update.enabled).toBe(true);
-    expect(controller("api::product-size-helper", "product-size-helper").delete.enabled).toBe(false);
+    expect(controller("api::product-size-helper", "product-size-helper").delete.enabled).toBe(
+      false,
+    );
 
     expect(controller("api::product-tag", "product-tag").create.enabled).toBe(true);
     expect(controller("api::product-tag", "product-tag").update.enabled).toBe(true);
@@ -864,9 +877,7 @@ describe("role permission templates", () => {
       "availableGateways",
       "snappEligible",
     ]);
-    expect(enabled("api::wallet-topup", "wallet-topup")).toEqual([
-      "paymentCallback",
-    ]);
+    expect(enabled("api::wallet-topup", "wallet-topup")).toEqual(["paymentCallback"]);
     expect(enabled("api::local-user-wallet", "local-user-wallet")).toEqual([
       "getCurrentUserWallet",
     ]);
@@ -954,7 +965,11 @@ describe("role permission templates", () => {
         return { ...role };
       }),
       create: jest.fn(async ({ data }: any) => {
-        const role = { id: Math.max(...roles.map((entry) => entry.id)) + 1, permissions: [], ...data };
+        const role = {
+          id: Math.max(...roles.map((entry) => entry.id)) + 1,
+          permissions: [],
+          ...data,
+        };
         roles.push(role);
         return role;
       }),
@@ -1072,7 +1087,11 @@ describe("role permission templates", () => {
         return { ...role };
       }),
       create: jest.fn(async ({ data }: any) => {
-        const role = { id: Math.max(...roles.map((entry) => entry.id)) + 1, permissions: [], ...data };
+        const role = {
+          id: Math.max(...roles.map((entry) => entry.id)) + 1,
+          permissions: [],
+          ...data,
+        };
         roles.push(role);
         return role;
       }),
@@ -1086,9 +1105,7 @@ describe("role permission templates", () => {
         if (!where?.role) return users.length;
         return users.filter(
           (user) =>
-            user.role.id === Number(where.role) &&
-            user.blocked !== true &&
-            user.IsActive !== false,
+            user.role.id === Number(where.role) && user.blocked !== true && user.IsActive !== false,
         ).length;
       }),
       findMany: jest.fn(async () => users),

@@ -10,13 +10,19 @@
  * file is the one place that proves the query actually executes against Strapi's
  * real link-table schema end to end.
  */
-import { setupStrapi, teardownStrapi, getStrapi } from "../../../../__tests__/integration/strapiInstance";
-import { makeFactories, type Factories, TEST_PREFIX } from "../../../../__tests__/integration/factories";
+import {
+  setupStrapi,
+  teardownStrapi,
+  getStrapi,
+} from "../../../../__tests__/integration/strapiInstance";
+import {
+  makeFactories,
+  type Factories,
+  TEST_PREFIX,
+} from "../../../../__tests__/integration/factories";
 import { runAnalyticsDailyRollupTick } from "../../../../jobs/analyticsDailyRollup";
 
-const externalIdentityMigration = require(
-  "../../../../../database/migrations/2026.08.06T09.10.00.convert-external-identity-indexes-to-constraints.js",
-);
+const externalIdentityMigration = require("../../../../../database/migrations/2026.08.06T09.10.00.convert-external-identity-indexes-to-constraints.js");
 
 let strapi: any;
 let f: Factories;
@@ -28,7 +34,7 @@ const CUSTOM_TABLES = [
   "analytics_refresh_state",
   "analytics_daily_sales",
   "analytics_product_daily",
-  "analytics_reconciliation_daily",
+  "analytics_outbox",
   "woocommerce_sync_control",
   "woocommerce_sync_cursors",
   "woocommerce_sync_leases",
@@ -62,13 +68,20 @@ afterEach(async () => {
 describe("analytics foundation migration + daily rollup (real Postgres)", () => {
   it("creates the three tables with the expected shape", async () => {
     const knex = strapi.db.connection;
-    for (const table of ["analytics_refresh_state", "analytics_daily_sales", "analytics_product_daily"]) {
+    for (const table of [
+      "analytics_refresh_state",
+      "analytics_daily_sales",
+      "analytics_product_daily",
+    ]) {
       const exists = await knex.schema.hasTable(table);
       expect(exists).toBe(true);
     }
     expect(await knex.schema.hasColumn("analytics_daily_sales", "currency")).toBe(true);
     expect(await knex.schema.hasColumn("analytics_daily_sales", "net_toman")).toBe(true);
-    expect(await knex.schema.hasColumn("analytics_product_daily", "product_variation_id")).toBe(true);
+    expect(await knex.schema.hasColumn("analytics_product_daily", "product_variation_id")).toBe(
+      true,
+    );
+    expect(await knex.schema.hasColumn("analytics_outbox", "source_id")).toBe(true);
   });
 
   it("rolls up a real eligible order (via Strapi's real link tables) into analytics_daily_sales and analytics_product_daily", async () => {
@@ -83,10 +96,18 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
       type: "Gateway",
     });
     const order = await f.createOrder({ status: "Started", contractId: contract.id });
-    await f.createOrderItem({ orderId: order.id, variationId: variation.id, count: 2, perAmount: 800_000 });
+    await f.createOrderItem({
+      orderId: order.id,
+      variationId: variation.id,
+      count: 2,
+      perAmount: 800_000,
+    });
 
     // Pin the order date to a fixed calendar day; the factory always stamps "now".
-    await knex.raw("UPDATE orders SET date = ? WHERE id = ?", [`${BUCKET_DATE}T09:00:00Z`, order.id]);
+    await knex.raw("UPDATE orders SET date = ? WHERE id = ?", [
+      `${BUCKET_DATE}T09:00:00Z`,
+      order.id,
+    ]);
 
     const result = await runAnalyticsDailyRollupTick(strapi, {
       now: NOW,
@@ -96,10 +117,9 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
 
     expect(result.status).toBe("completed");
 
-    const salesRows = await knex.raw(
-      "SELECT * FROM analytics_daily_sales WHERE bucket_date = ?",
-      [BUCKET_DATE],
-    );
+    const salesRows = await knex.raw("SELECT * FROM analytics_daily_sales WHERE bucket_date = ?", [
+      BUCKET_DATE,
+    ]);
     const salesRow = (salesRows.rows || salesRows[0])[0];
     expect(salesRow).toBeDefined();
     expect(Number(salesRow.gross_toman)).toBe(1_600_000);
@@ -139,19 +159,35 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
       type: "Gateway",
     });
     const order = await f.createOrder({ status: "Started", contractId: contract.id });
-    await f.createOrderItem({ orderId: order.id, variationId: variation.id, count: 1, perAmount: 350_000 });
-    await knex.raw("UPDATE orders SET date = ? WHERE id = ?", [`${BUCKET_DATE}T09:00:00Z`, order.id]);
+    await f.createOrderItem({
+      orderId: order.id,
+      variationId: variation.id,
+      count: 1,
+      perAmount: 350_000,
+    });
+    await knex.raw("UPDATE orders SET date = ? WHERE id = ?", [
+      `${BUCKET_DATE}T09:00:00Z`,
+      order.id,
+    ]);
 
-    await runAnalyticsDailyRollupTick(strapi, { now: NOW, initialLookbackDays: 3, maxDaysPerTick: 10 });
+    await runAnalyticsDailyRollupTick(strapi, {
+      now: NOW,
+      initialLookbackDays: 3,
+      maxDaysPerTick: 10,
+    });
 
     // Reset the watermark so the SAME window is reprocessed rather than skipped,
     // proving the upsert itself (not the watermark skip) is what prevents duplicates.
-    await knex.raw(
-      "UPDATE analytics_refresh_state SET watermark = ? WHERE source_type = ?",
-      [`${BUCKET_DATE}T00:00:00Z`.replace(BUCKET_DATE, "2026-05-03"), "analytics_daily_rollup"],
-    );
+    await knex.raw("UPDATE analytics_refresh_state SET watermark = ? WHERE source_type = ?", [
+      `${BUCKET_DATE}T00:00:00Z`.replace(BUCKET_DATE, "2026-05-03"),
+      "analytics_daily_rollup",
+    ]);
 
-    await runAnalyticsDailyRollupTick(strapi, { now: NOW, initialLookbackDays: 3, maxDaysPerTick: 10 });
+    await runAnalyticsDailyRollupTick(strapi, {
+      now: NOW,
+      initialLookbackDays: 3,
+      maxDaysPerTick: 10,
+    });
 
     const countRes = await knex.raw(
       "SELECT COUNT(*)::int AS n FROM analytics_daily_sales WHERE bucket_date = ?",
@@ -220,9 +256,7 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
       [expectedIndexes],
     );
     expect(
-      constraintResult.rows
-        .map((row: { constraint_name: string }) => row.constraint_name)
-        .sort(),
+      constraintResult.rows.map((row: { constraint_name: string }) => row.constraint_name).sort(),
     ).toEqual(expectedIndexes.sort());
   });
 });

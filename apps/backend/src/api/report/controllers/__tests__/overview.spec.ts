@@ -3,7 +3,6 @@ export {}; // module scope so test-local mocks don't collide with sibling specs
 const fetchUserWithRoleMock = jest.fn();
 const roleIsAllowedMock = jest.fn();
 const resolveJoinsMock = jest.fn();
-const getMatomoVisitsSummaryMock = jest.fn();
 
 jest.mock("../../../../utils/roles", () => ({
   ROLE_NAMES: {
@@ -17,7 +16,13 @@ jest.mock("../../../../utils/roles", () => ({
   roleIsAllowed: (...args: any[]) => roleIsAllowedMock(...args),
 }));
 
-jest.mock("../../services/matomo", () => ({
+jest.mock("../../services/umami", () => ({
+  UMAMI_DEFINITION_VERSION: "umami-infinity-v1",
+  UMAMI_REPORT_TIMEZONE: "Asia/Tehran",
+  isUmamiConfigured: jest.fn(() => false),
+  normalizeUmamiFilters: jest.fn(() => ({})),
+  getUmamiBehaviorReport: jest.fn(),
+  getUmamiRealtimeReport: jest.fn(),
   normalizeRange: jest.fn((start?: string, end?: string) => ({
     startDate: start || "2026-01-01",
     endDate: end || "2026-01-31",
@@ -26,7 +31,6 @@ jest.mock("../../services/matomo", () => ({
     startDate: "2025-12-01",
     endDate: "2025-12-31",
   })),
-  getMatomoVisitsSummary: (...args: any[]) => getMatomoVisitsSummaryMock(...args),
 }));
 
 jest.mock("../../services/product-analytics", () => {
@@ -53,18 +57,18 @@ const PERIOD_ROW = {
   refund_irr: "2400000", // -> 240,000 Toman
 };
 
-const RECONCILIATION_ROW = {
-  bucket_date: "2026-01-30T00:00:00.000Z",
-  status: "matched",
-  orders_delta: "0",
-  revenue_ratio: "1.02",
-  possible_currency_mismatch: false,
-  computed_at: "2026-01-31T00:20:00.000Z",
+const DELIVERY_ROW = {
+  total: "7",
+  pending: "1",
+  processing: "0",
+  dead_letter: "0",
+  oldest_pending_at: "2026-08-09T10:00:00.000Z",
+  last_sent_at: "2026-08-09T09:59:00.000Z",
 };
 
 function rawRouter(sql: string) {
   if (sql.includes("SUM(line_gross) FROM itemized")) return { rows: [PERIOD_ROW] };
-  if (sql.includes("analytics_reconciliation_daily")) return { rows: [RECONCILIATION_ROW] };
+  if (sql.includes("FROM analytics_outbox")) return { rows: [DELIVERY_ROW] };
   return { rows: [] };
 }
 
@@ -106,7 +110,6 @@ describe("report.overview", () => {
   });
 
   it("computes store-wide sales KPIs (IRR->Toman, net = gross - discounts - refunds)", async () => {
-    getMatomoVisitsSummaryMock.mockResolvedValue(null);
     const controller = loadController();
     const ctx = createCtx({ query: { start: "2026-01-01", end: "2026-01-31" } });
 
@@ -121,43 +124,29 @@ describe("report.overview", () => {
     expect(sales.gross.change).toBe(0);
   });
 
-  it("reports traffic as null (not zeroed) when Matomo is unavailable", async () => {
-    getMatomoVisitsSummaryMock.mockResolvedValue(null);
+  it("keeps behavioral reporting in its purpose-specific workspace", async () => {
     const controller = loadController();
     const ctx = createCtx();
 
     await controller.overview(ctx);
 
-    expect(ctx.body.data.traffic).toBeNull();
+    expect(ctx.body.data).not.toHaveProperty("traffic");
   });
 
-  it("keeps commerce overview independent from Matomo", async () => {
-    getMatomoVisitsSummaryMock
-      .mockResolvedValueOnce({ visits: 500, visitors: 300, pageviews: 1200 }) // current
-      .mockResolvedValueOnce({ visits: 400, visitors: 250, pageviews: 1000 }); // previous
+  it("surfaces durable analytics delivery health as a trust signal", async () => {
     const controller = loadController();
     const ctx = createCtx();
 
     await controller.overview(ctx);
 
-    expect(ctx.body.data.traffic).toBeNull();
-    expect(getMatomoVisitsSummaryMock).not.toHaveBeenCalled();
-  });
-
-  it("surfaces the latest reconciliation row as a trust signal", async () => {
-    getMatomoVisitsSummaryMock.mockResolvedValue(null);
-    const controller = loadController();
-    const ctx = createCtx();
-
-    await controller.overview(ctx);
-
-    expect(ctx.body.data.reconciliation).toEqual({
-      bucketDate: "2026-01-30",
-      status: "matched",
-      ordersDelta: 0,
-      revenueRatio: 1.02,
-      possibleCurrencyMismatch: false,
-      computedAt: "2026-01-31T00:20:00.000Z",
+    expect(ctx.body.data.analyticsDelivery).toEqual({
+      status: "pending",
+      total: 7,
+      pending: 1,
+      processing: 0,
+      deadLetter: 0,
+      oldestPendingAt: "2026-08-09T10:00:00.000Z",
+      lastSentAt: "2026-08-09T09:59:00.000Z",
     });
   });
 

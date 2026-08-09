@@ -27,8 +27,8 @@ export interface MetricDefinition {
   formula: string;
   /** What one row represents, e.g. "one Tehran-local calendar day". */
   grain: string;
-  source: "commerce" | "matomo" | "commerce+matomo";
-  /** Strapi tables / Matomo modules this metric reads. */
+  source: "commerce" | "umami" | "commerce+umami";
+  /** Strapi tables or external behavioral analytics dimensions this metric reads. */
   sourceTables: string[];
   includedStatuses: string;
   excludedStatuses: string;
@@ -72,7 +72,8 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     excludedStatuses: "orders with no Status='Success' transaction; orders net-refunded to <= 0",
     dateBasis: "orders.Date",
     refundTreatment: "Type='Return' transactions subtracted from settlement before the >0 test",
-    discountTreatment: "not applied at this grain (order-level AppliedDiscountAmount reduces sales.net, not eligibility)",
+    discountTreatment:
+      "not applied at this grain (order-level AppliedDiscountAmount reduces sales.net, not eligibility)",
     taxTreatment: "n/a to eligibility",
     shippingTreatment: "n/a to eligibility",
     currency: "n/a",
@@ -108,7 +109,9 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     currency: "Toman",
     timezone: "Asia/Tehran",
     missingDataBehavior: "0, never null",
-    limitations: ["order_items has no line-total column; this is always PerAmount x Count, computed, not stored"],
+    limitations: [
+      "order_items has no line-total column; this is always PerAmount x Count, computed, not stored",
+    ],
     status: "implemented",
     implementation: "src/api/report/services/product-analytics.ts#itemizedCte,aggCte",
   },
@@ -117,7 +120,8 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     id: "sales.discounts",
     definitionVersion: "sales.discounts@1",
     businessName: "تخفیف",
-    formula: "SUM(orders.applied_discount_amount) over eligible orders, pro-rated to line when itemized",
+    formula:
+      "SUM(orders.applied_discount_amount) over eligible orders, pro-rated to line when itemized",
     grain: "one row per eligible order (or per day when aggregated)",
     source: "commerce",
     sourceTables: ["orders"],
@@ -125,7 +129,8 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     excludedStatuses: "n/a",
     dateBasis: "orders.Date",
     refundTreatment: "independent of refunds",
-    discountTreatment: "order-level only; there is no per-line discount field, so per-product discount is a pro-rated estimate",
+    discountTreatment:
+      "order-level only; there is no per-line discount field, so per-product discount is a pro-rated estimate",
     taxTreatment: "n/a",
     shippingTreatment: "n/a",
     currency: "Toman",
@@ -140,7 +145,8 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     id: "sales.refunds",
     definitionVersion: "sales.refunds@1",
     businessName: "مرجوعی",
-    formula: "SUM(contract_transactions.amount) WHERE type='Return' AND status='Success', divided by 10 for Toman",
+    formula:
+      "SUM(contract_transactions.amount) WHERE type='Return' AND status='Success', divided by 10 for Toman",
     grain: "one row per eligible order (or per day when aggregated)",
     source: "commerce",
     sourceTables: ["contract_transactions"],
@@ -150,7 +156,8 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     refundTreatment: "this IS the refund figure",
     discountTreatment: "n/a",
     taxTreatment: "n/a",
-    shippingTreatment: "refund of shipping cost is not separately tracked; treated as part of the transaction amount",
+    shippingTreatment:
+      "refund of shipping cost is not separately tracked; treated as part of the transaction amount",
     currency: "Toman",
     timezone: "Asia/Tehran",
     missingDataBehavior: "0, never null",
@@ -199,14 +206,17 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     includedStatuses: "eligible orders only",
     excludedStatuses: "n/a",
     dateBasis: "orders.Date",
-    refundTreatment: "not decremented on partial refund (units shipped, not units kept) — no return-quantity field exists",
+    refundTreatment:
+      "not decremented on partial refund (units shipped, not units kept) — no return-quantity field exists",
     discountTreatment: "n/a",
     taxTreatment: "n/a",
     shippingTreatment: "n/a",
     currency: "n/a",
     timezone: "Asia/Tehran",
     missingDataBehavior: "0, never null",
-    limitations: ["no per-line return-quantity field; a fully-refunded order's units still count here even though it is excluded from sales.gross via eligibility"],
+    limitations: [
+      "no per-line return-quantity field; a fully-refunded order's units still count here even though it is excluded from sales.gross via eligibility",
+    ],
     status: "implemented",
     implementation: "src/api/report/services/product-analytics.ts#itemizedCte,aggCte",
   },
@@ -229,7 +239,9 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     currency: "Toman",
     timezone: "Asia/Tehran",
     missingDataBehavior: "0 when the denominator is 0, never Infinity/NaN",
-    limitations: ["computed on product-gross, not net-of-refund settlement, matching the existing /reports/products/overview convention"],
+    limitations: [
+      "computed on product-gross, not net-of-refund settlement, matching the existing /reports/products/overview convention",
+    ],
     status: "implemented",
     implementation: "src/api/report/controllers/report.ts#computeProductPeriod",
   },
@@ -238,19 +250,23 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     id: "liquidity.settled",
     definitionVersion: "liquidity.settled@1",
     businessName: "نقدینگی تسویه‌شده",
-    formula: "SUM(contract_transactions.amount, Return rows negated) WHERE status='Success', divided by 10 for Toman",
+    formula:
+      "SUM(contract_transactions.amount, Return rows negated) WHERE status='Success', divided by 10 for Toman",
     grain: "one row per bucket (day/week/month) by settlement date",
     source: "commerce",
     sourceTables: ["contract_transactions"],
     includedStatuses: "Status='Success' only",
     excludedStatuses: "Pending/Failed",
-    dateBasis: "contract_transactions.date (settlement date, NOT orders.Date — this is a cash-movement view, distinct from sales.* which is an order-date sales view)",
+    dateBasis:
+      "contract_transactions.date (settlement date, NOT orders.Date — this is a cash-movement view, distinct from sales.* which is an order-date sales view)",
     refundTreatment: "Return rows subtracted",
     discountTreatment: "n/a (transaction amount is already net of discount at settlement)",
     taxTreatment: "n/a",
-    shippingTreatment: "included in the settled amount (shipping is charged through the same gateway transaction)",
+    shippingTreatment:
+      "included in the settled amount (shipping is charged through the same gateway transaction)",
     currency: "Toman",
-    timezone: "n/a (bucketed on the raw transaction date, not Tehran-shifted — pre-existing behavior, unchanged by this work)",
+    timezone:
+      "n/a (bucketed on the raw transaction date, not Tehran-shifted — pre-existing behavior, unchanged by this work)",
     missingDataBehavior: "0, never null",
     limitations: [
       "corrected from IRR to Toman as of decision D4 — see docs/analytics/analytics-decisions.md",
@@ -264,7 +280,8 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     id: "liquidity.byGateway",
     definitionVersion: "liquidity.byGateway@1",
     businessName: "نقدینگی به تفکیک درگاه",
-    formula: "SUM(contract_transactions.amount, Return rows negated) WHERE status='Success', grouped by payment_gateways.title, divided by 10 for Toman",
+    formula:
+      "SUM(contract_transactions.amount, Return rows negated) WHERE status='Success', grouped by payment_gateways.title, divided by 10 for Toman",
     grain: "one row per payment gateway",
     source: "commerce",
     sourceTables: ["contract_transactions", "payment_gateways"],
@@ -277,7 +294,8 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     shippingTreatment: "included",
     currency: "Toman",
     timezone: "n/a",
-    missingDataBehavior: "0, never null; a gateway with no settled transactions in range does not appear as a row (unlike products/breakdown's gateway table, which explicitly zero-fills — this endpoint was not changed beyond the currency fix)",
+    missingDataBehavior:
+      "0, never null; a gateway with no settled transactions in range does not appear as a row (unlike products/breakdown's gateway table, which explicitly zero-fills — this endpoint was not changed beyond the currency fix)",
     limitations: ["corrected from IRR to Toman as of decision D4"],
     status: "implemented",
     implementation: "src/api/report/controllers/report.ts#gatewayLiquidity",
@@ -302,7 +320,9 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     currency: "Toman",
     timezone: "Asia/Tehran",
     missingDataBehavior: "n/a — not computed in this release",
-    limitations: ["Phase 5, not implemented in this release — see docs/analytics/analytics-decisions.md decision D6"],
+    limitations: [
+      "Phase 5, not implemented in this release — see docs/analytics/analytics-decisions.md decision D6",
+    ],
     status: "planned",
   },
   "customer.contributionLtv": {

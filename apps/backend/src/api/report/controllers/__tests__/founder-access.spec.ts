@@ -2,7 +2,7 @@
  * Founder role access tests for the report controller.
  *
  * Uses the REAL roles util (ROLE_NAMES / roleIsAllowed) so the assertions exercise the
- * actual allowed-role arrays wired into each handler. The matomo/product-analytics services
+ * actual allowed-role arrays wired into each handler. The analytics/product services
  * are mocked to avoid heavy imports/side effects.
  *
  * Contract:
@@ -11,11 +11,20 @@
  *  - Founder MUST NOT call standalone admin-activity reports (Superadmin-only).
  */
 
-jest.mock("../../services/matomo", () => ({
+jest.mock("../../services/umami", () => ({
+  UMAMI_DEFINITION_VERSION: "umami-infinity-v1",
+  UMAMI_REPORT_TIMEZONE: "Asia/Tehran",
+  isUmamiConfigured: jest.fn(() => true),
   normalizeRange: jest.fn(() => ({ startDate: "2026-01-01", endDate: "2026-01-31" })),
-  getMatomoRealtimePayload: jest.fn(),
-  getMatomoTrafficDashboardPayload: jest.fn(),
-  getProductBehavioral: jest.fn(),
+  previousRange: jest.fn(() => ({ startDate: "2025-12-01", endDate: "2025-12-31" })),
+  normalizeUmamiFilters: jest.fn(() => ({})),
+  getUmamiBehaviorReport: jest.fn().mockResolvedValue({
+    kind: "overview",
+    range: { startDate: "2026-01-01", endDate: "2026-01-31" },
+    sections: {},
+    errors: {},
+  }),
+  getUmamiRealtimeReport: jest.fn().mockResolvedValue({ activeVisitors: 0, topPages: [], raw: {} }),
 }));
 
 jest.mock("../../services/product-analytics", () => ({}));
@@ -99,22 +108,22 @@ describe("report controller - Founder access", () => {
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
-  it("allows Founder to call the traffic dashboard", async () => {
+  it("allows Founder to call the behavior overview", async () => {
     mockStrapiForRole("Founder");
     const controller = loadController();
     const ctx = createCtx();
 
-    await controller.trafficDashboard(ctx);
+    await controller.behaviorOverview(ctx);
 
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
-  it("allows Founder to call realtime traffic", async () => {
+  it("allows Founder to call realtime behavior", async () => {
     mockStrapiForRole("Founder");
     const controller = loadController();
     const ctx = createCtx();
 
-    await controller.trafficRealtime(ctx);
+    await controller.behaviorRealtime(ctx);
 
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
@@ -189,22 +198,22 @@ describe("report controller - Founder access", () => {
     expect(ctx.forbidden).toHaveBeenCalled();
   });
 
-  it("allows Founder to call funnel (does not forbid)", async () => {
+  it("allows Founder to call behaviorConversion (does not forbid)", async () => {
     mockStrapiForRole("Founder");
     const controller = loadController();
     const ctx = createCtx();
 
-    await controller.funnel(ctx);
+    await controller.behaviorConversion(ctx);
 
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
-  it("blocks a Customer from funnel", async () => {
+  it("blocks a Customer from behaviorConversion", async () => {
     mockStrapiForRole("Customer");
     const controller = loadController();
     const ctx = createCtx();
 
-    await controller.funnel(ctx);
+    await controller.behaviorConversion(ctx);
 
     expect(ctx.forbidden).toHaveBeenCalled();
   });
