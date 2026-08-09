@@ -892,7 +892,16 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
   const existingSuperadmin = (persistedRoles as any[]).find(
     (role) => role.type === "superadmin" || role.name === "Superadmin",
   );
-  if ((persistedRoles as any[]).some((role) => ROLE_PERMISSION_SPECS[role.type]) && !existingSuperadmin) {
+  // Strapi creates Public and Authenticated roles for a blank database before
+  // this bootstrap runs. They are not evidence of an existing staff migration,
+  // so they must not prevent the initial Superadmin role from being created.
+  // Any pre-existing privileged role, however, is a populated authorization
+  // model and still requires an existing Superadmin safety anchor.
+  const hasPersistedPrivilegedRole = (persistedRoles as any[]).some(
+    (role) =>
+      normalizeAdminRole(role.type) !== null || normalizeAdminRole(role.name) !== null,
+  );
+  if (hasPersistedPrivilegedRole && !existingSuperadmin) {
     throw new Error("Role synchronization requires an existing Superadmin role");
   }
 

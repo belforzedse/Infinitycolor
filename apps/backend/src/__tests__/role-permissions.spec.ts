@@ -926,6 +926,104 @@ describe("role permission templates", () => {
     expect(walletCtrl(superadmin).adminGetUserWallet.enabled).toBe(true);
   });
 
+  it("creates the initial privileged roles when Strapi has only its default roles", async () => {
+    const roles: any[] = [
+      { id: 1, name: "Public", type: "public", permissions: [] },
+      { id: 2, name: "Authenticated", type: "authenticated", permissions: [] },
+    ];
+    const persisted = new Map<number, string[]>();
+    const roleQuery = {
+      findMany: jest.fn(async () => roles),
+      findOne: jest.fn(async ({ where }: any) => {
+        const role = where.id
+          ? roles.find((entry) => entry.id === where.id)
+          : roles.find((entry) => entry.name === where.name || entry.type === where.type);
+        return role
+          ? {
+              ...role,
+              permissions: (persisted.get(role.id) || role.permissions || []).map((action) =>
+                typeof action === "string" ? { action } : action,
+              ),
+            }
+          : null;
+      }),
+      update: jest.fn(async ({ where, data }: any) => {
+        const role = roles.find((entry) => entry.id === where.id);
+        if (!role) return null;
+        Object.assign(role, data);
+        return { ...role };
+      }),
+      create: jest.fn(async ({ data }: any) => {
+        const role = { id: Math.max(...roles.map((entry) => entry.id)) + 1, permissions: [], ...data };
+        roles.push(role);
+        return role;
+      }),
+    };
+    const userQuery = {
+      count: jest.fn(async () => 0),
+      findMany: jest.fn(async () => []),
+    };
+    const roleService = {
+      updateRole: jest.fn(async (roleId: number, { permissions }: any) => {
+        const enabledActions: string[] = [];
+        for (const [typeKey, typeEntry] of Object.entries(permissions) as any) {
+          for (const [controllerName, controller] of Object.entries(typeEntry.controllers) as any) {
+            for (const [actionName, value] of Object.entries(controller) as any) {
+              if (value.enabled) enabledActions.push(`${typeKey}.${controllerName}.${actionName}`);
+            }
+          }
+        }
+        persisted.set(roleId, enabledActions.sort());
+      }),
+    };
+    const permissionsService = {
+      getActions: jest.fn(({ defaultEnable }: { defaultEnable: boolean }) => {
+        const tree = createActionTree();
+        Object.values(tree).forEach((entry: any) => {
+          Object.values(entry.controllers).forEach((controller: any) => {
+            Object.values(controller).forEach((action: any) => {
+              action.enabled = defaultEnable;
+            });
+          });
+        });
+        return tree;
+      }),
+    };
+    const snapshots = new Map<string, unknown>();
+    const strapi = {
+      log: { warn: jest.fn(), debug: jest.fn(), info: jest.fn(), error: jest.fn() },
+      query: jest.fn((uid: string) =>
+        uid === "plugin::users-permissions.user" ? userQuery : roleQuery,
+      ),
+      plugin: jest.fn(() => ({
+        service: jest.fn((name: string) => (name === "role" ? roleService : permissionsService)),
+      })),
+      store: jest.fn(() => ({
+        get: jest.fn(async ({ key }: { key: string }) => snapshots.get(key)),
+        set: jest.fn(async ({ key, value }: { key: string; value: unknown }) => {
+          snapshots.set(key, value);
+        }),
+      })),
+    };
+
+    await expect(
+      __rolePermissionTestUtils.ensurePluginRolesAndPermissions(strapi as any),
+    ).resolves.toBeUndefined();
+
+    expect(roles.map((role) => role.type)).toEqual(
+      expect.arrayContaining([
+        "superadmin",
+        "editor",
+        "seller-1",
+        "seller-2",
+        "store-manager",
+        "finance",
+        "founder",
+        "customer",
+      ]),
+    );
+  });
+
   it("restores the exact pre-sync role state when an operational role cannot be synchronized", async () => {
     const roles = [
       {
