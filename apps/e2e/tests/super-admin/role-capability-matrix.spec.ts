@@ -298,13 +298,14 @@ for (const role of STAFF_ROLES) {
 
       if (role.forbiddenPath) {
         await page.goto(role.forbiddenPath, { waitUntil: "domcontentloaded" });
-        await expect(page.getByRole("alert")).toContainText(
+        const forbiddenAlert = page
+          .locator('section[role="alert"]')
+          .filter({ hasText: "اجازه مشاهده این بخش را ندارید" });
+        await expect(forbiddenAlert).toContainText(
           "اجازه مشاهده این بخش را ندارید",
           { timeout: 30_000 },
         );
-        await expect(page.getByRole("alert").getByRole("link")).toHaveAttribute(
-          "href",
-        );
+        await expect(forbiddenAlert.getByRole("link")).toHaveAttribute("href");
       }
     });
 
