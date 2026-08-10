@@ -45,7 +45,7 @@ const makeCtx = (query: Record<string, unknown> = {}) =>
       message,
       payload,
     })),
-  } as any);
+  }) as any;
 
 describe("product.findBySlug", () => {
   beforeEach(() => {
@@ -246,4 +246,5 @@ describe("product.findBySlug", () => {
       ]),
     );
   });
+
 });

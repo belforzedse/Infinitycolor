@@ -4,7 +4,7 @@
  */
 
 import { factories } from "@strapi/strapi";
-import { roleIsAllowed, STORE_MANAGER_PLUS_ROLES } from "../../../utils/roles";
+import { hasCapability, normalizeAdminRole } from "@repo/auth-core";
 import {
   buildCacheKey,
   getCacheTtlFromEnv,
@@ -25,6 +25,16 @@ import { generateVariationCombinations } from "../services/variation-combination
 import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
+import { resolveAdminActor } from "../../../utils/adminAuthorization";
+import {
+  executePublicationCommand,
+  PublicationCommandError,
+  runPublicationEffects,
+} from "../services/product-publication";
+import {
+  enqueueScheduledProductPublication,
+  removeScheduledProductPublication,
+} from "../../../queue/product-publication-queue";
 
 const OPERATIONAL_PRODUCT_FIELDS = [
   "Title",
@@ -32,7 +42,6 @@ const OPERATIONAL_PRODUCT_FIELDS = [
   "Weight",
   "CoverImage",
   "Description",
-  "Status",
   "ProductType",
   "IsSimpleProduct",
   "Media",
@@ -47,8 +56,52 @@ const OPERATIONAL_PRODUCT_FIELDS = [
   "product_faqs",
   "product_other_categories",
   "discounts",
-  "removedAt",
 ] as const;
+
+const PUBLICATION_CONTROL_FIELDS = new Set([
+  "Status",
+  "scheduledPublishAt",
+  "scheduledPublishTimezone",
+  "scheduledPublishRequireMedia",
+  "scheduledPublishRevision",
+  "scheduledPublishLastAttemptAt",
+  "scheduledPublishLastError",
+  "scheduledPublishFailureKind",
+  "scheduledPublishAttemptCount",
+  "scheduledPublishNextRetryAt",
+  "publicationRevision",
+  "publicationEffectsCompletedRevision",
+  "publicationEffectsLastError",
+]);
+
+function rejectPublicationFields(ctx: any): boolean {
+  const data = ctx.request?.body?.data;
+  if (!data || typeof data !== "object") return false;
+  const found = Object.keys(data).filter((field) => PUBLICATION_CONTROL_FIELDS.has(field));
+  if (found.length === 0) return false;
+  ctx.status = 400;
+  ctx.body = {
+    error: {
+      status: 400,
+      name: "PublicationCommandRequired",
+      message: "Publication state must be changed through /products/:id/publication",
+      details: { code: "PUBLICATION_COMMAND_REQUIRED", fields: found },
+    },
+  };
+  return true;
+}
+
+function discardLegacyDraftStatusOnCreate(ctx: any): void {
+  const data = ctx.request?.body?.data;
+  if (!data || typeof data !== "object" || data.Status !== "InActive") return;
+
+  // Older admin releases included the default draft status in the generic
+  // create payload. Accept that one safe legacy value during rolling deploys;
+  // this controller still forces every new product to InActive below. All
+  // other publication values and fields remain command-only.
+  const { Status: _legacyDraftStatus, ...operationalData } = data;
+  ctx.request.body = { ...ctx.request.body, data: operationalData };
+}
 
 /**
  * Check whether the user can access operational catalog records, including
@@ -59,26 +112,8 @@ const OPERATIONAL_PRODUCT_FIELDS = [
  */
 function isAdminUser(user: any): boolean {
   if (!user) return false;
-
-  // Prefer the authoritative content-API role. Editors are administrative UI
-  // users, but do not belong to the operational-commerce role hierarchy.
-  const roleName = user?.role?.name;
-  if (roleName) {
-    return roleIsAllowed(roleName, STORE_MANAGER_PLUS_ROLES);
-  }
-
-  // Check explicit isAdmin flag (set by auth/self endpoint)
-  if (user?.isAdmin === true) {
-    return true;
-  }
-
-  // Check local-user role (role ID 2 is admin)
-  const userRoleId = user?.user_role?.id;
-  if (userRoleId === 2) {
-    return true;
-  }
-
-  return false;
+  const role = normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name);
+  return role ? hasCapability(role, "product.read") : false;
 }
 
 function readProductStatus(product: any): string | undefined {
@@ -156,7 +191,7 @@ const PRODUCT_POPULATE = {
   product_reviews: {
     populate: {
       user: {
-        fields: ["id", "username", "phone", "email"],
+        fields: ["id"],
         populate: {
           user_info: {
             fields: ["FirstName", "LastName"],
@@ -242,15 +277,46 @@ function getProductPopulateForView(view: unknown) {
     : PRODUCT_POPULATE;
 }
 
+function isUnrestrictedAdminUser(user: any): boolean {
+  return (
+    normalizeAdminRole(user?.role?.type) ?? normalizeAdminRole(user?.role?.name)
+  ) === "superadmin";
+}
+
+async function loadProductById(
+  strapi: any,
+  productId: number,
+  isAdmin: boolean,
+  populate: typeof PRODUCT_POPULATE | typeof PRODUCT_SHELL_POPULATE,
+): Promise<any | null> {
+  const foundFilters: any = {
+    id: productId,
+    removedAt: { $null: true },
+  };
+  if (!isAdmin) {
+    foundFilters.Status = "Active";
+  }
+  const foundProducts = await strapi.entityService.findMany("api::product.product", {
+    filters: foundFilters,
+    populate,
+    pagination: { limit: 1 },
+  });
+  return (foundProducts as unknown[])[0] || null;
+}
+
 async function findProductBySlugInternal(
   strapi: any,
   inboundSlug: string,
   isAdmin: boolean,
   populate: typeof PRODUCT_POPULATE | typeof PRODUCT_SHELL_POPULATE = PRODUCT_POPULATE,
 ): Promise<any | null> {
-  const slugCandidates = buildProductSlugCandidates(inboundSlug);
+  // Try every encoding/normalization of the inbound slug in one query. Historical
+  // imports stored WooCommerce's percent-encoded form verbatim; the storefront
+  // always sends the decoded Persian form. Matching only one of those meant
+  // ~half the catalog was unreachable from every URL shape.
+  const candidates = buildProductSlugCandidates(inboundSlug);
   const filters: any = {
-    Slug: { $in: slugCandidates },
+    Slug: { $in: candidates },
     removedAt: { $null: true },
   };
 
@@ -268,11 +334,11 @@ async function findProductBySlugInternal(
 
   if (!product) {
     strapi.log.info(
-      `[Product.findBySlug] No match for slug candidates of: "${inboundSlug}", trying raw SQL query...`,
+      `[Product.findBySlug] No match for slug candidates of: "${inboundSlug}", trying raw SQL…`,
     );
     try {
       const knex = strapi.db.connection;
-      let rawQuery = knex("products").whereIn("slug", slugCandidates).whereNull("removed_at");
+      let rawQuery = knex("products").whereIn("slug", candidates).whereNull("removed_at");
 
       if (!isAdmin) {
         rawQuery = rawQuery.where("status", "Active");
@@ -281,18 +347,7 @@ async function findProductBySlugInternal(
       const rawProducts = await rawQuery.limit(1);
       if (rawProducts.length > 0) {
         const productId = rawProducts[0].id;
-        const foundFilters: any = { id: productId };
-
-        if (!isAdmin) {
-          foundFilters.Status = "Active";
-        }
-
-        const foundProducts = await strapi.entityService.findMany("api::product.product", {
-          filters: foundFilters,
-          populate,
-          pagination: { limit: 1 },
-        });
-        product = (foundProducts as unknown[])[0] || null;
+        product = await loadProductById(strapi, productId, isAdmin, populate);
         if (product) {
           strapi.log.info(`[Product.findBySlug] Found product via raw SQL query: ${productId}`);
         }
@@ -302,11 +357,34 @@ async function findProductBySlugInternal(
     }
   }
 
+  // Prior slug forms (e.g. percent-encoded imports after repair, or a renamed
+  // slug) live in ProductSlugAlias and permanently resolve to the product.
   if (!product) {
-    strapi.log.info(
-      `[Product.findBySlug] No product found with slug: "${inboundSlug}", trying ID fallback...`,
-    );
+    try {
+      const aliases = await strapi.entityService.findMany(
+        "api::product-slug-alias.product-slug-alias",
+        {
+          filters: { Slug: { $in: candidates } },
+          populate: { product: true },
+          pagination: { limit: 1 },
+        },
+      );
+      const alias = (aliases as any[])[0];
+      const aliasProductId = alias?.product?.id ?? alias?.product;
+      if (aliasProductId) {
+        product = await loadProductById(strapi, Number(aliasProductId), isAdmin, populate);
+        if (product) {
+          strapi.log.info(
+            `[Product.findBySlug] Found product ${aliasProductId} via slug alias "${alias.Slug}"`,
+          );
+        }
+      }
+    } catch (aliasError) {
+      strapi.log.warn("[Product.findBySlug] Slug alias lookup failed:", aliasError);
+    }
+  }
 
+  if (!product) {
     const idMatch = inboundSlug.match(/^\d+$/);
     if (idMatch) {
       const productId = parseInt(inboundSlug, 10);
@@ -314,32 +392,11 @@ async function findProductBySlugInternal(
         `[Product.findBySlug] Attempting ID-based lookup for product ID: ${productId}`,
       );
 
-      const idFilters: any = {
-        id: productId,
-        removedAt: { $null: true },
-      };
-
-      if (!isAdmin) {
-        idFilters.Status = "Active";
-      }
-
-      const productsById = await strapi.entityService.findMany("api::product.product", {
-        filters: idFilters,
-        populate,
-        pagination: { limit: 1 },
-      });
-
-      const productById = (productsById as unknown[])[0] || null;
+      const productById = await loadProductById(strapi, productId, isAdmin, populate);
       if (productById) {
         strapi.log.info(`[Product.findBySlug] Found product by ID: ${productId}`);
         return productById;
       }
-
-      strapi.log.warn(`[Product.findBySlug] Product with ID ${productId} not found or is trashed`);
-    } else {
-      strapi.log.warn(
-        `[Product.findBySlug] Slug "${inboundSlug}" is not numeric, cannot use ID fallback`,
-      );
     }
   }
 
@@ -348,13 +405,139 @@ async function findProductBySlugInternal(
 
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
   async create(ctx) {
+    discardLegacyDraftStatusOnCreate(ctx);
+    if (rejectPublicationFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
+    ctx.request.body = ctx.request.body || {};
+    ctx.request.body.data = { ...(ctx.request.body.data || {}), Status: "InActive" };
     return super.create(ctx);
   },
 
   async update(ctx) {
+    if (rejectPublicationFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     return super.update(ctx);
+  },
+
+  async publication(ctx) {
+    const trustedImporter = isTrustedWordPressMigrationRequest();
+    let user = ctx.state?.user;
+    const body = ctx.request?.body?.data || ctx.request?.body || {};
+    const action = String(body.action || "");
+    const requiredCapability = ["schedule", "retry", "cancel"].includes(action)
+      ? "product.schedule"
+      : "product.publish";
+    if (!trustedImporter) {
+      const adminActor = await resolveAdminActor(strapi, user);
+      if (!adminActor || !hasCapability(adminActor.role, requiredCapability)) {
+        return ctx.forbidden("Publication action is not allowed", {
+          code: "PUBLICATION_FORBIDDEN",
+        });
+      }
+      user = adminActor.user;
+    }
+
+    const productId = Number(ctx.params?.id);
+    const command = {
+      action,
+      publishAt: body.publishAt,
+      timezone: body.timezone,
+      requireMedia: trustedImporter ? body.requireMedia === true : false,
+      expectedExternalSource: body.expectedExternalSource,
+      expectedExternalId: body.expectedExternalId,
+    } as any;
+
+    if (trustedImporter) {
+      if (
+        command.expectedExternalSource !== "woocommerce" ||
+        !String(command.expectedExternalId || "").trim()
+      ) {
+        ctx.status = 400;
+        ctx.body = { error: { code: "EXTERNAL_PRODUCT_IDENTITY_REQUIRED" } };
+        return;
+      }
+    }
+
+    const actor = user?.id
+      ? {
+          id: Number(user.id),
+          name: user.username || user.email || null,
+          role: user.role?.name || null,
+          ip: ctx.request?.ip || ctx.ip || null,
+          userAgent: ctx.request?.headers?.["user-agent"] || null,
+        }
+      : undefined;
+
+    try {
+      const result = await executePublicationCommand(strapi, productId, command, {
+        origin: trustedImporter ? "importer" : "admin",
+        actor,
+      });
+      let queueState = "not-required";
+
+      if ((action === "schedule" || action === "retry") && result.scheduledPublishAt) {
+        try {
+          await enqueueScheduledProductPublication({
+            productId,
+            scheduleRevision: result.scheduleRevision,
+            expectedPublishAt: result.scheduledPublishAt,
+          });
+          queueState = "queued";
+        } catch (error) {
+          queueState = "pending-reconciliation";
+          strapi.log.error("[product-publication] delayed job enqueue failed", {
+            productId,
+            scheduleRevision: result.scheduleRevision,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      if (result.previousScheduleRevision) {
+        await removeScheduledProductPublication(productId, result.previousScheduleRevision);
+      }
+
+      if (result.needsPublicationEffects) {
+        try {
+          await runPublicationEffects(strapi, productId, result.publicationRevision);
+        } catch {
+          queueState = "pending-reconciliation";
+        }
+      }
+
+      ctx.body = {
+        data: {
+          id: result.productId,
+          Status: result.status,
+          scheduledPublishAt: result.scheduledPublishAt,
+          scheduledPublishTimezone: result.scheduledPublishTimezone,
+          scheduledPublishRevision: result.scheduleRevision,
+          publicationRevision: result.publicationRevision,
+          queueState,
+          changed: result.changed,
+        },
+      };
+    } catch (error) {
+      if (error instanceof PublicationCommandError) {
+        ctx.status = error.status;
+        ctx.body = {
+          error: {
+            status: error.status,
+            name: "PublicationCommandError",
+            message: error.code,
+            details: { code: error.code },
+          },
+        };
+        return;
+      }
+      strapi.log.error("[product-publication] command failed", {
+        productId,
+        action,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      ctx.status = 500;
+      ctx.body = { error: { code: "PUBLICATION_COMMAND_FAILED" } };
+    }
   },
 
   async generateVariationCombinations(ctx) {
@@ -442,6 +625,18 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         requireCoverImage: restQuery.requireCoverImage,
         pagination: restQuery.pagination,
       });
+    }
+
+    const user = ctx.state.user;
+    if (isAdminUser(user) && !isUnrestrictedAdminUser(user)) {
+      const query = (ctx.query || {}) as any;
+      ctx.query = {
+        filters: query.filters,
+        sort: query.sort,
+        pagination: query.pagination,
+        locale: query.locale,
+        populate: PRODUCT_SHELL_POPULATE,
+      } as any;
     }
 
     const response = await (super.find as any)(ctx, next);
@@ -609,6 +804,14 @@ export default factories.createCoreController("api::product.product", ({ strapi 
   async findOne(ctx, next) {
     // @ts-expect-error Strapi controller typings require two args; we only need ctx for filtering
     const filtersApplied = this.applyPublicProductFilters(ctx);
+    const user = ctx.state.user;
+    if (isAdminUser(user) && !isUnrestrictedAdminUser(user)) {
+      ctx.query = {
+        filters: (ctx.query as any)?.filters,
+        locale: (ctx.query as any)?.locale,
+        populate: PRODUCT_SHELL_POPULATE,
+      } as any;
+    }
     const response: any = await (super.findOne as any)(ctx, next);
 
     if (!filtersApplied) {
@@ -622,7 +825,6 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       return ctx.notFound("Product not found");
     }
 
-    const user = ctx.state.user;
     const isAdmin = isAdminUser(user);
     if (!isAdmin && status === "Active" && product?.id) {
       try {
@@ -730,7 +932,10 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       const isAdmin = isAdminUser(user);
       const bypassCache =
         shouldBypassEndpointCache(ctx.request?.headers as Record<string, unknown>) || isAdmin;
-      const populate = getProductPopulateForView(ctx.query?.view);
+      const populate =
+        isAdmin && !isUnrestrictedAdminUser(user)
+          ? PRODUCT_SHELL_POPULATE
+          : getProductPopulateForView(ctx.query?.view);
 
       const cacheKey = buildCacheKey({
         routeId: "product.by-slug",
@@ -787,9 +992,20 @@ export default factories.createCoreController("api::product.product", ({ strapi 
       return payload;
     } catch (error) {
       strapi.log.error("[Product.findBySlug] Error finding product by slug:", error);
-      return ctx.badRequest("An error occurred while finding the product", {
-        error: (error as Error).message,
-      });
+      // 503, not 400. Any throw here is an infrastructure fault (DB timeout,
+      // connection loss, serialization error) — never evidence that the product
+      // does not exist. Returning a 4xx let the storefront classify a transient
+      // backend failure as a durable "product not found" and cache it as one.
+      ctx.status = 503;
+      ctx.set("Retry-After", "5");
+      ctx.body = {
+        error: {
+          status: 503,
+          name: "ServiceUnavailable",
+          message: "Product lookup temporarily unavailable",
+        },
+      };
+      return;
     }
   },
 }));
