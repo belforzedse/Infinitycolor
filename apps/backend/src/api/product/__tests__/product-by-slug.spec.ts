@@ -45,7 +45,7 @@ const makeCtx = (query: Record<string, unknown> = {}) =>
       message,
       payload,
     })),
-  }) as any;
+  } as any);
 
 describe("product.findBySlug", () => {
   beforeEach(() => {
@@ -229,6 +229,21 @@ describe("product.findBySlug", () => {
       expect.objectContaining({
         query: { view: "shell" },
       }),
+    );
+  });
+
+  it("queries the lowercase WooCommerce encoding for a decoded Persian slug", async () => {
+    const ctx = makeCtx({ view: "shell" });
+    ctx.params.slug = "کت-آدلینا-w00238";
+
+    await (productController as any).findBySlug(ctx);
+
+    const filters = mockStrapi.entityService.findMany.mock.calls[0][1].filters;
+    expect(filters.Slug.$in).toEqual(
+      expect.arrayContaining([
+        "کت-آدلینا-w00238",
+        "%da%a9%d8%aa-%d8%a2%d8%af%d9%84%db%8c%d9%86%d8%a7-w00238",
+      ]),
     );
   });
 });

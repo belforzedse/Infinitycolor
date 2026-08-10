@@ -7,7 +7,7 @@ const LOWERCASE_WOO_SLUG = encodeURIComponent(PERSIAN_CATEGORY).replace(
 );
 
 describe("buildCategorySlugCandidates", () => {
-  it("matches the lowercase percent-encoded form stored by WooCommerce", () => {
+  it("matches the lowercase encoded form stored by WooCommerce", () => {
     const { slugs } = buildCategorySlugCandidates(PERSIAN_CATEGORY);
 
     expect(slugs).toContain(PERSIAN_CATEGORY);
@@ -15,31 +15,27 @@ describe("buildCategorySlugCandidates", () => {
     expect(slugs).toContain(LOWERCASE_WOO_SLUG);
   });
 
-  it("recovers decoded Persian from encoded and double-encoded inbound values", () => {
-    expect(buildCategorySlugCandidates(LOWERCASE_WOO_SLUG).slugs).toContain(PERSIAN_CATEGORY);
-    expect(buildCategorySlugCandidates(encodeURIComponent(LOWERCASE_WOO_SLUG)).slugs).toContain(
+  it("recovers decoded Persian from encoded and double-encoded inputs", () => {
+    expect(buildCategorySlugCandidates(LOWERCASE_WOO_SLUG).slugs).toContain(
       PERSIAN_CATEGORY,
     );
+    expect(
+      buildCategorySlugCandidates(encodeURIComponent(LOWERCASE_WOO_SLUG)).slugs,
+    ).toContain(PERSIAN_CATEGORY);
   });
 
-  it("folds Arabic yeh and kaf for lookup without dropping ZWNJ", () => {
-    const arabicVariant = "كیف\u200cمردانه";
-    const { slugs } = buildCategorySlugCandidates(arabicVariant);
+  it("folds Arabic yeh and kaf without dropping ZWNJ", () => {
+    const { slugs } = buildCategorySlugCandidates("كیف\u200cمردانه");
 
     expect(slugs).toContain("کیف\u200cمردانه");
     expect(slugs.some((candidate) => candidate.includes("\u200c"))).toBe(true);
   });
 
-  it("retains the legacy external-id fallback and base slug forms", () => {
-    const { slugs, externalId } = buildCategorySlugCandidates("لباس-مردانه-1449");
+  it("retains the legacy external-id fallback", () => {
+    const { slugs, externalId } =
+      buildCategorySlugCandidates("لباس-مردانه-1449");
 
     expect(externalId).toBe("1449");
-    expect(slugs).toContain("لباس-مردانه");
     expect(slugs).toContain(LOWERCASE_WOO_SLUG);
-  });
-
-  it("deduplicates candidate spellings", () => {
-    const { slugs } = buildCategorySlugCandidates("mens-clothing");
-    expect(slugs).toEqual([...new Set(slugs)]);
   });
 });

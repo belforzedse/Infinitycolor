@@ -1,27 +1,16 @@
 /**
- * Build the set of slug strings that might identify the same product.
+ * Build the safe spellings that may identify the same product slug.
  *
- * Why this exists: 1402 production products were imported with WooCommerce's
- * percent-encoded slug stored verbatim (e.g. `%d8%b3%d8%aa-…-y00574`). The
- * storefront and Koa both decode URL path segments, so a request for the
- * human Persian URL never matched the stored literal — and a request for the
- * encoded form was decoded before the lookup, so that missed too. Every form
- * 404'd.
+ * Historical WooCommerce imports stored Persian slugs as literal lowercase
+ * percent-encoded strings. Routers decode URL path segments before lookup, so
+ * both the decoded Unicode form and the stored URI spelling must be queried.
  *
- * Candidates cover:
- * - the raw inbound value (already-decoded OR still-encoded)
- * - decode-once
- * - re-encode (JS's uppercase hex AND lowercase hex matching WooCommerce)
- * - NFC normalization
- * - Arabic ي/ك → Persian ی/ک folding (lookup only — never persisted)
- *
- * ZWNJ is preserved; we do not strip it.
+ * ZWNJ is preserved. Arabic yeh/kaf folding is lookup-only and is never written
+ * back to the catalog.
  */
 
-const ARABIC_YEH = /\u064A/g; // ي
-const ARABIC_KAF = /\u0643/g; // ك
-const PERSIAN_YEH = "\u06CC"; // ی
-const PERSIAN_KAF = "\u06A9"; // ک
+const ARABIC_YEH = /\u064A/g;
+const ARABIC_KAF = /\u0643/g;
 
 export function safeDecodeSlug(value: string): string {
   try {
@@ -31,56 +20,40 @@ export function safeDecodeSlug(value: string): string {
   }
 }
 
-/** encodeURIComponent, then force hex escapes to lowercase to match WooCommerce. */
 export function encodeSlugLower(value: string): string {
-  return encodeURIComponent(value).replace(/%[0-9A-Fa-f]{2}/g, (m) => m.toLowerCase());
+  return encodeURIComponent(value).replace(/%[0-9A-Fa-f]{2}/g, (match) => match.toLowerCase());
 }
 
 export function foldArabicToPersian(value: string): string {
-  return value.replace(ARABIC_YEH, PERSIAN_YEH).replace(ARABIC_KAF, PERSIAN_KAF);
+  return value.replace(ARABIC_YEH, "\u06CC").replace(ARABIC_KAF, "\u06A9");
 }
 
-/**
- * Ordered, deduplicated candidate list for a product-slug lookup.
- */
 export function buildProductSlugCandidates(rawSlug: string): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
+  const candidates = new Set<string>();
 
-  const add = (value: string | null | undefined) => {
+  const addForms = (value: string) => {
     if (!value) return;
-    if (seen.has(value)) return;
-    seen.add(value);
-    out.push(value);
+
+    const decoded = safeDecodeSlug(value);
+    const normalized = decoded.normalize("NFC");
+    const folded = foldArabicToPersian(normalized);
+
+    for (const candidate of [value, decoded, normalized, folded]) {
+      if (!candidate) continue;
+      candidates.add(candidate);
+      candidates.add(encodeURIComponent(candidate));
+      candidates.add(encodeSlugLower(candidate));
+    }
   };
 
   const raw = String(rawSlug ?? "");
-  add(raw);
+  addForms(raw);
 
   const decoded = safeDecodeSlug(raw);
-  add(decoded);
-
-  const nfc = decoded.normalize("NFC");
-  add(nfc);
-
-  add(encodeURIComponent(decoded));
-  add(encodeSlugLower(decoded));
-  add(encodeURIComponent(nfc));
-  add(encodeSlugLower(nfc));
-
-  const folded = foldArabicToPersian(nfc);
-  add(folded);
-  add(encodeURIComponent(folded));
-  add(encodeSlugLower(folded));
-
-  // If the inbound value was itself percent-encoded Persian text stored as a
-  // literal, decoding once yields the canonical form; encoding that again is
-  // already covered. Also try decoding twice for double-encoded inbound URLs.
   if (decoded !== raw) {
-    const decodedTwice = safeDecodeSlug(decoded);
-    add(decodedTwice);
-    add(decodedTwice.normalize("NFC"));
+    addForms(decoded);
+    addForms(safeDecodeSlug(decoded));
   }
 
-  return out;
+  return Array.from(candidates);
 }
