@@ -183,7 +183,7 @@ export default function OrdersPage() {
         { id: "[contract][Amount]", title: "مبلغ", type: "number" },
         {
           id: "[contract][external_id]",
-          title: "ایدی تراکنش اسنپ پی",
+          title: "ایدی تراکنش",
           type: "text",
         },
         { id: "[Description]", title: "توضیحات", type: "text" },

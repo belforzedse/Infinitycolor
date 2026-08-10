@@ -1,5 +1,49 @@
 import type { Strapi } from "@strapi/strapi";
 import { logAdminBarcodeOperation } from "../../../../utils/adminActivity";
+import {
+  mapOrderStatusToAnipo,
+  normalizePhoneForAnipo,
+  type AnipoCreateOrderPayload,
+} from "../../../shipping/services/anipo";
+
+type AnipoService = {
+  createOrUpdateOrder: (
+    payload: AnipoCreateOrderPayload
+  ) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  getOrderBarcode: (
+    orderCode: string
+  ) => Promise<{
+    ok: boolean;
+    data?: { issued: boolean; barcode?: string };
+    error?: string;
+  }>;
+};
+
+function computeOrderWeight(orderItems: unknown[]): number {
+  let weight = 0;
+  for (const it of orderItems) {
+    const item = it as {
+      Count?: number;
+      product_variation?: { product?: { Weight?: number } };
+    };
+    const product = item?.product_variation?.product;
+    const w = Number(product?.Weight ?? 100) || 100;
+    const count = Number(item?.Count || 0);
+    weight += w * count;
+  }
+  return weight > 0 ? weight : 100;
+}
+
+function computeOrderTotal(orderItems: unknown[], shippingCost: number): number {
+  let sum = 0;
+  for (const it of orderItems) {
+    const item = it as { PerAmount?: number; Count?: number };
+    const per = Number(item?.PerAmount || 0);
+    const count = Number(item?.Count || 0);
+    sum += per * count;
+  }
+  return sum + Number(shippingCost || 0);
+}
 
 export async function generateAnipoBarcodeHandler(strapi: Strapi, ctx: any) {
   const { id } = ctx.params;
@@ -34,66 +78,130 @@ export async function generateAnipoBarcodeHandler(strapi: Strapi, ctx: any) {
       return;
     }
 
-    // Compute weight based on items (default 100g each product if missing)
-    let weight = 0;
-    for (const it of order.order_items || []) {
-      const product = it?.product_variation?.product;
-      const w = Number(product?.Weight ?? 100) || 100;
-      const count = Number(it?.Count || 0);
-      weight += w * count;
-    }
-    if (weight <= 0) weight = 100;
-
+    const weight = computeOrderWeight(order.order_items || []);
     const address = order?.delivery_address;
     const cityName = address?.shipping_city?.Title || "";
     const provinceName = address?.shipping_city?.shipping_province?.Title || "";
-    const provinceCode = address?.shipping_city?.shipping_province?.Code || "";
+    const mobile = normalizePhoneForAnipo(
+      address?.Phone || order?.user?.Phone || ""
+    );
+    const fullAddress = String(address?.FullAddress || "").trim();
 
-    if (!provinceCode || !cityName) {
-      return ctx.badRequest("missing address province/city for anipo");
+    if (!provinceName || !cityName) {
+      return ctx.badRequest("نام استان یا شهر برای آنیپو ناقص است. دوباره تلاش کنید", {
+        data: {
+          success: false,
+          errorCode: "ANIPO_MISSING_PROVINCE_CITY",
+          message: "نام استان یا شهر برای آنیپو ناقص است. دوباره تلاش کنید",
+        },
+      });
     }
 
-    // Compute declared value (sum) from order items + shipping as fallback
-    let sum = 0;
-    for (const it of order.order_items || []) {
-      const per = Number(it?.PerAmount || 0);
-      const count = Number(it?.Count || 0);
-      sum += per * count;
+    if (!mobile) {
+      return ctx.badRequest(
+        "موبایل گیرنده برای صدور بارکد آنیپو لازم است. دوباره تلاش کنید",
+        {
+          data: {
+            success: false,
+            errorCode: "ANIPO_MISSING_MOBILE",
+            message:
+              "موبایل گیرنده برای صدور بارکد آنیپو لازم است. دوباره تلاش کنید",
+          },
+        }
+      );
     }
-    sum += Number(order?.ShippingCost || 0);
-    const anipo = strapi.service("api::shipping.anipo") as any;
-    const res = await anipo.getBarcode({
-      orderId: Number(order.id),
-      provinceCode,
-      provinceName,
-      cityName,
-      name: address?.FullName || order?.user?.Phone || "کاربر",
-      postcode: address?.PostalCode || "",
-      nationalCode: "",
-      callNumber: address?.Phone || order?.user?.Phone || "",
-      address: address?.FullAddress || "",
-      weight,
-      boxSizeId: order?.ShippingBoxSizeId || undefined,
-      isnonstandard: 0,
-      sum,
+
+    if (!fullAddress) {
+      return ctx.badRequest(
+        "نشانی گیرنده برای صدور بارکد آنیپو لازم است. دوباره تلاش کنید",
+        {
+          data: {
+            success: false,
+            errorCode: "ANIPO_MISSING_ADDRESS",
+            message:
+              "نشانی گیرنده برای صدور بارکد آنیپو لازم است. دوباره تلاش کنید",
+          },
+        }
+      );
+    }
+
+    const orderCode = String(order.id);
+    const orderTotal = computeOrderTotal(
+      order.order_items || [],
+      Number(order?.ShippingCost || 0)
+    );
+    const boxType = order?.ShippingBoxSizeId
+      ? Number(order.ShippingBoxSizeId)
+      : undefined;
+
+    const anipo = strapi.service("api::shipping.anipo") as AnipoService;
+    const createRes = await anipo.createOrUpdateOrder({
+      order_code: orderCode,
+      receiver_name: address?.FullName || order?.user?.Phone || "کاربر",
+      receiver_province: provinceName,
+      receiver_city: cityName,
+      receiver_mobile: mobile,
+      receiver_address: fullAddress,
+      receiver_postal_code: address?.PostalCode || undefined,
+      weight_g: weight,
+      box_type: boxType,
+      parcel_content: "پوشاک",
+      order_total: orderTotal,
+      order_status: mapOrderStatusToAnipo(order?.Status),
     });
 
-    if (!res?.ok || !res?.data) {
-      return ctx.badRequest("anipo_barcode_error", { data: res });
+    if (!createRes?.ok) {
+      return ctx.badRequest(
+        createRes?.error || "خطا در ثبت سفارش آنیپو. دوباره تلاش کنید",
+        {
+          data: {
+            success: false,
+            errorCode: "ANIPO_REGISTER_ERROR",
+            message:
+              createRes?.error || "خطا در ثبت سفارش آنیپو. دوباره تلاش کنید",
+            anipo: createRes,
+          },
+        }
+      );
     }
 
-    const updateData: any = {
-      ShippingBarcode: res.data.barcode,
-      ShippingPostPrice: Number(res.data.postprice || 0),
-      ShippingTax: Number(res.data.tax || 0),
+    const barcodeRes = await anipo.getOrderBarcode(orderCode);
+    if (!barcodeRes?.ok) {
+      return ctx.badRequest(
+        barcodeRes?.error || "خطا در دریافت بارکد آنیپو. دوباره تلاش کنید",
+        {
+          data: {
+            success: false,
+            errorCode: "ANIPO_BARCODE_ERROR",
+            message:
+              barcodeRes?.error || "خطا در دریافت بارکد آنیپو. دوباره تلاش کنید",
+            anipo: barcodeRes,
+          },
+        }
+      );
+    }
+
+    if (!barcodeRes.data?.issued || !barcodeRes.data.barcode) {
+      ctx.body = {
+        success: true,
+        pending: true,
+        issued: false,
+        message:
+          "سفارش در آنیپو ثبت شد؛ بارکد هنوز صادر نشده — بعداً دوباره تلاش کنید",
+      };
+      return;
+    }
+
+    const barcode = barcodeRes.data.barcode;
+    const updateData = {
+      ShippingBarcode: barcode,
       ShippingWeight: weight,
-      ShippingBoxSizeId: res.data.boxSizeId || order?.ShippingBoxSizeId || 0,
+      ShippingBoxSizeId: boxType || order?.ShippingBoxSizeId || 0,
     };
     await strapi.entityService.update("api::order.order", Number(id), {
       data: updateData as any,
     });
 
-    // Log admin activity
     try {
       const pluginUser = ctx.state?.user;
       if (pluginUser?.id) {
@@ -102,18 +210,21 @@ export async function generateAnipoBarcodeHandler(strapi: Strapi, ctx: any) {
           .findOne({ where: { id: pluginUser.id }, populate: ["role"] });
         if (fullUser) {
           const ip = ctx.request?.ip || ctx.ip || null;
-          const userAgent = ctx.request?.headers?.["user-agent"] || ctx.headers?.["user-agent"] || null;
+          const userAgent =
+            ctx.request?.headers?.["user-agent"] ||
+            ctx.headers?.["user-agent"] ||
+            null;
 
           await logAdminBarcodeOperation(
             strapi,
             Number(id),
             "generate",
             fullUser.id,
-            res.data.barcode,
+            barcode,
             undefined,
             ip,
             userAgent,
-            fullUser.role?.name,
+            fullUser.role?.name
           );
         }
       }
@@ -124,13 +235,22 @@ export async function generateAnipoBarcodeHandler(strapi: Strapi, ctx: any) {
       });
     }
 
-    ctx.body = { success: true, data: res.data };
+    ctx.body = {
+      success: true,
+      issued: true,
+      data: { barcode, weight_g: weight, box_type: boxType },
+    };
   } catch (error: any) {
     strapi.log.error(
       `[anipo] generate barcode error orderId=${ctx?.params?.id} message=${error?.message}`
     );
-    return ctx.badRequest("generate_barcode_failed", {
-      data: { error: error?.message },
+    return ctx.badRequest("صدور بارکد آنیپو ناموفق بود. دوباره تلاش کنید", {
+      data: {
+        success: false,
+        errorCode: "GENERATE_BARCODE_FAILED",
+        message: "صدور بارکد آنیپو ناموفق بود. دوباره تلاش کنید",
+        error: error?.message,
+      },
     });
   }
 }

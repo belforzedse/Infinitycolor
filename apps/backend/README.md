@@ -174,20 +174,22 @@ The project includes JSON data files in the `database` directory that can be use
   - Auth: via `global::authentication` middleware
   - Body: `{ addressId: number, shippingId: number }`
   - Returns: `{ success: boolean, shipping: number, weight?: number }`
-  - Declared value uses `DiscountPrice` when available to align with checkout.
+  - Shipping cost is rule-based (Anipo v1 has no live price endpoint).
 
-Environment variables for Anipo:
+Environment variables for Anipo (adminpnx web service):
 
 ```
-ANIPO_KEYWORD=
-# Optional (defaults to https://panel.anipo.ir)
+ANIPO_TOKEN=
+# Optional (defaults to https://adminpnx.anipo.ir/api/v1)
 ANIPO_BASE_URL=
 ```
+
+Barcode issuance: `POST /api/orders/:id/anipo-barcode` registers the order via `POST /orders`, then fetches `GET /orders/{code}/barcode`. Barcode may be pending (`issued: false`) until Anipo operator approval.
 
 Behavior notes:
 
 - Shipping method id=4 (buy-in-person) returns zero shipping.
-- If Anipo preview is unavailable during finalize, an order-log is recorded for observability.
+- Province/city titles must match Anipo’s `/provinces` and `/cities` lists exactly.
 
 ## 🛠️ Migrations
 

@@ -84,6 +84,15 @@ export default function SuperAdminOrderSidebar({
       const mod = await import("@/services/order");
       const res = await mod.default.generateAnipoBarcode(parseInt(String(id)), weight, boxSizeId);
 
+      if (res?.pending) {
+        toast.success(
+          res.message ||
+            "سفارش در آنیپو ثبت شد؛ بارکد هنوز صادر نشده — بعداً دوباره تلاش کنید"
+        );
+        setShowBarcodeDialog(false);
+        return;
+      }
+
       if (res?.success || res?.already) {
         setHasBarcode(true);
         toast.success(res?.already ? "بارکد قبلاً ثبت شده است" : "بارکد با موفقیت ایجاد شد");
@@ -95,7 +104,7 @@ export default function SuperAdminOrderSidebar({
       // Refresh page to reflect barcode changes
       router.refresh();
     } catch (e) {
-      toast.error("خطا در ایجاد بارکد Anipo");
+      toast.error("خطا در ایجاد بارکد Anipo. دوباره تلاش کنید");
     } finally {
       setIsGenerating(false);
     }

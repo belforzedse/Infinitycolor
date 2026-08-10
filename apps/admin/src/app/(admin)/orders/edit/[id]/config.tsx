@@ -149,7 +149,7 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
             {
               name: "transactionId",
               type: "copy-text",
-              label: "ایدی تراکنش اسنپ پی",
+              label: "ایدی تراکنش",
               colSpan: 6,
               mobileColSpan: 12,
               readOnly: true,

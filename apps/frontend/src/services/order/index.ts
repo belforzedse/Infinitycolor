@@ -61,6 +61,21 @@ export interface OrderItem {
   };
 }
 
+/** Response from POST /orders/:id/anipo-barcode (Anipo adminpnx v1). */
+export interface AnipoBarcodeGenerateResponse {
+  success?: boolean;
+  already?: boolean;
+  pending?: boolean;
+  issued?: boolean;
+  barcode?: string;
+  message?: string;
+  data?: {
+    barcode?: string;
+    weight_g?: number;
+    box_type?: number;
+  };
+}
+
 export interface Order {
   id: number;
   Status: string;
@@ -360,20 +375,31 @@ const OrderService = {
   getOrderDetail,
   getActiveReserve,
   releaseReserve,
-  async generateAnipoBarcode(orderId: number, weight?: number, boxSizeId?: number): Promise<any> {
+  async generateAnipoBarcode(
+    orderId: number,
+    weight?: number,
+    boxSizeId?: number
+  ): Promise<AnipoBarcodeGenerateResponse> {
     try {
-      const body: any = {};
+      const body: Record<string, number> = {};
       if (weight !== undefined) body.weight = weight;
       if (boxSizeId !== undefined) body.boxSizeId = boxSizeId;
 
-      const res = await apiClient.post(`/orders/${orderId}/anipo-barcode`, body);
-      return res as any;
-    } catch (error: any) {
+      const res = await apiClient.post<AnipoBarcodeGenerateResponse>(
+        `/orders/${orderId}/anipo-barcode`,
+        body
+      );
+      return res as AnipoBarcodeGenerateResponse;
+    } catch (error: unknown) {
+      const err = error as {
+        message?: string;
+        response?: { data?: unknown; status?: number };
+      };
       console.error("Error generating Anipo barcode:", {
         error,
-        message: error?.message,
-        response: error?.response?.data,
-        status: error?.response?.status,
+        message: err?.message,
+        response: err?.response?.data,
+        status: err?.response?.status,
         orderId,
         weight,
         boxSizeId,

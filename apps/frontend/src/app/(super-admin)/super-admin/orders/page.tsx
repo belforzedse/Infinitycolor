@@ -124,7 +124,7 @@ export default function OrdersPage() {
         { id: "[contract][Amount]", title: "مبلغ", type: "number" },
         {
           id: "[contract][external_id]",
-          title: "ایدی تراکنش اسنپ پی",
+          title: "ایدی تراکنش",
           type: "text",
         },
         { id: "[Description]", title: "توضیحات", type: "text" },
@@ -172,11 +172,11 @@ export default function OrdersPage() {
           </select>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-          <label className="text-sm text-neutral-600">جستجوی ایدی تراکنش اسنپ پی:</label>
+          <label className="text-sm text-neutral-600">جستجوی ایدی تراکنش:</label>
           <div className="relative w-full sm:w-80">
             <input
               type="text"
-              placeholder="جستجوی ایدی تراکنش اسنپ پی ..."
+              placeholder="جستجوی ایدی تراکنش ..."
               className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 pr-8 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}

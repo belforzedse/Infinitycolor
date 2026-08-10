@@ -178,7 +178,11 @@ describe("OrderService", () => {
 
   describe("generateAnipoBarcode", () => {
     it("should generate barcode successfully", async () => {
-      const mockResponse = { barcode: "BARCODE123" };
+      const mockResponse = {
+        success: true,
+        issued: true,
+        data: { barcode: "BARCODE123" },
+      };
       (apiClient.post as jest.Mock).mockResolvedValue(mockResponse);
 
       const result = await OrderService.generateAnipoBarcode(123, 1.5, 2);
@@ -188,6 +192,23 @@ describe("OrderService", () => {
         boxSizeId: 2,
       });
       expect(result).toEqual(mockResponse);
+    });
+
+    it("should return pending when barcode is not issued yet", async () => {
+      const mockResponse = {
+        success: true,
+        pending: true,
+        issued: false,
+        message:
+          "سفارش در آنیپو ثبت شد؛ بارکد هنوز صادر نشده — بعداً دوباره تلاش کنید",
+      };
+      (apiClient.post as jest.Mock).mockResolvedValue(mockResponse);
+
+      const result = await OrderService.generateAnipoBarcode(123);
+
+      expect(result.pending).toBe(true);
+      expect(result.issued).toBe(false);
+      expect(result.message).toContain("بارکد هنوز صادر نشده");
     });
 
     it("should handle missing optional parameters", async () => {

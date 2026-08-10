@@ -28,11 +28,20 @@ export default function OrderRowActions({ orderId, shippingBarcode }: OrderRowAc
       const mod = await import("@/services/order");
       const res = await mod.default.generateAnipoBarcode(parseInt(orderId), weight, boxSizeId);
 
+      if (res?.pending) {
+        alert(
+          res.message ||
+            "سفارش در آنیپو ثبت شد؛ بارکد هنوز صادر نشده — بعداً دوباره تلاش کنید"
+        );
+        setShowBarcodeDialog(false);
+        return;
+      }
+
       if (res?.success || res?.already) {
         setHasBarcode(true);
-        // If API returns the barcode number, update it
-        if (res?.barcode) {
-          setCurrentBarcode(res.barcode);
+        const barcode = res?.barcode || res?.data?.barcode;
+        if (barcode) {
+          setCurrentBarcode(barcode);
         }
         alert(res?.already ? "بارکد قبلاً ثبت شده است" : "بارکد با موفقیت ایجاد شد");
       } else {
@@ -41,7 +50,7 @@ export default function OrderRowActions({ orderId, shippingBarcode }: OrderRowAc
 
       setShowBarcodeDialog(false);
     } catch (e) {
-      alert("خطا در ایجاد بارکد Anipo");
+      alert("خطا در ایجاد بارکد Anipo. دوباره تلاش کنید");
     } finally {
       setIsGenerating(false);
     }
