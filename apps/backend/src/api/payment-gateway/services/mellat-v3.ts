@@ -526,7 +526,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
         saleReferenceId: normalizeNumericParam(params.saleReferenceId),
       };
 
-      const response = await mellat.reversePayment(reverseRequest);
+      const response = await mellat.reversalRequest(reverseRequest);
 
       strapi.log.info(`[${requestId}] Reversal response:`, {
         resCode: response.ResCode ?? response.resCode,

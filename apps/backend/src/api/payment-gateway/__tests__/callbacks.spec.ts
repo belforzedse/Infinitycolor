@@ -105,6 +105,16 @@ const createStrapiMock = () => {
   return { strapi, registerService, getDbQuery };
 };
 
+/** Registers the payment_attempts row that Mellat correlation looks up by RefId. */
+const mockMellatAttempt = (
+  getDbQuery: ReturnType<typeof createStrapiMock>["getDbQuery"],
+  attempt: any,
+) => {
+  (getDbQuery("api::payment-attempt.payment-attempt").findOne as jest.Mock).mockResolvedValue(
+    attempt,
+  );
+};
+
 describe("verifyPaymentHandler", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -125,7 +135,15 @@ describe("verifyPaymentHandler", () => {
   });
 
   it("cancels the order and redirects when Mellat reports a failure", async () => {
-    const { strapi } = createStrapiMock();
+    const { strapi, getDbQuery } = createStrapiMock();
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 100 } });
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValue({
+      id: 100,
+      Status: "Paying",
+      user: { id: 9 },
+    });
+    strapi.db.connection.raw.mockResolvedValue({ rows: [{ id: 55 }] });
+
     const ctx = createCtx({
       request: {
         body: {
@@ -155,12 +173,69 @@ describe("verifyPaymentHandler", () => {
       }),
     );
     expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/cancelled?orderId=100&reason=user-cancelled",
+      "https://infinitycolor.co/payment/result?resultHint=cancelled&orderId=100&reason=user-cancelled",
     );
   });
 
-  it("settles a successful Mellat callback and decrements stock", async () => {
-    const { strapi, registerService } = createStrapiMock();
+  it("ignores a Mellat failure callback that cannot be correlated to a known attempt (Finding B)", async () => {
+    const { strapi, getDbQuery } = createStrapiMock();
+    mockMellatAttempt(getDbQuery, null);
+
+    const ctx = createCtx({
+      request: {
+        body: {
+          ResCode: "17",
+          OrderId: "100",
+          SaleOrderId: "100",
+          RefId: "UNKNOWN-REFID",
+        },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(strapi.entityService.update).not.toHaveBeenCalled();
+    expect(strapi.entityService.create).not.toHaveBeenCalledWith(
+      "api::order-log.order-log",
+      expect.anything(),
+    );
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/result?resultHint=cancelled&reason=user-cancelled",
+    );
+  });
+
+  it("ignores a Mellat failure callback for an order that already settled (stale/duplicate)", async () => {
+    const { strapi, getDbQuery } = createStrapiMock();
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 100 } });
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValue({
+      id: 100,
+      Status: "Started",
+      user: { id: 9 },
+    });
+
+    const ctx = createCtx({
+      request: {
+        body: {
+          ResCode: "17",
+          OrderId: "100",
+          SaleOrderId: "100",
+          RefId: "XYZ",
+        },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    // Order already paid — a stale/duplicate failure callback must never cancel it.
+    expect(strapi.entityService.update).not.toHaveBeenCalledWith(
+      "api::order.order",
+      100,
+      expect.objectContaining({ data: expect.objectContaining({ Status: "Cancelled" }) }),
+    );
+  });
+
+  it("settles a successful Mellat callback and consumes the reservation", async () => {
+    const { strapi, registerService, getDbQuery } = createStrapiMock();
     const mellatService = {
       verifyTransaction: jest.fn().mockResolvedValue({ success: true }),
       settleTransaction: jest.fn().mockResolvedValue({
@@ -169,9 +244,13 @@ describe("verifyPaymentHandler", () => {
       }),
     };
     registerService("api::payment-gateway.mellat-v3", mellatService);
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 }, Amount: "1200000" });
+    strapi.db.connection.raw.mockResolvedValue({ rows: [{ id: 55 }] });
 
     const orderWithItems = {
       id: 200,
+      ReservationStatus: "Reserved",
+      ReservedUntil: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       contract: { id: 77, Amount: 120000 },
       order_items: [
         {
@@ -194,6 +273,7 @@ describe("verifyPaymentHandler", () => {
           OrderId: "200",
           SaleOrderId: "200",
           SaleReferenceId: "REF-123",
+          RefId: "MELLAT-REFID-200",
         },
       },
     });
@@ -207,7 +287,10 @@ describe("verifyPaymentHandler", () => {
     });
     expect(mellatService.settleTransaction).toHaveBeenCalled();
 
-    expect(decrementStockAtomic).toHaveBeenCalledWith(strapi, 5, 2);
+    // Reserved orders consume the reservation atomically; the legacy direct
+    // decrement path is unreachable for Mellat (Task 7 / Finding D).
+    expect(consumeOrderReservation).toHaveBeenCalledWith(strapi, 200, expect.anything());
+    expect(decrementStockAtomic).not.toHaveBeenCalled();
     expect(strapi.entityService.update).toHaveBeenCalledWith(
       "api::order.order",
       200,
@@ -244,7 +327,7 @@ describe("verifyPaymentHandler", () => {
       }),
     );
     expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/success?orderId=200",
+      "https://infinitycolor.co/payment/result?resultHint=success&orderId=200",
     );
   });
 
@@ -258,7 +341,13 @@ describe("verifyPaymentHandler", () => {
 
     // The settled transaction written by a previous callback.
     (strapi.entityService.findMany as jest.Mock).mockResolvedValueOnce([
-      { id: 900, external_source: "Mellat", external_id: "REF-123", Status: "Success" },
+      {
+        id: 900,
+        external_source: "Mellat",
+        external_id: "REF-123",
+        Status: "Success",
+        contract: { order: { id: 200 } },
+      },
     ]);
 
     const ctx = createCtx({
@@ -268,6 +357,7 @@ describe("verifyPaymentHandler", () => {
           OrderId: "200",
           SaleOrderId: "200",
           SaleReferenceId: "REF-123",
+          RefId: "MELLAT-REFID-200",
         },
       },
     });
@@ -279,7 +369,271 @@ describe("verifyPaymentHandler", () => {
     expect(mellatService.settleTransaction).not.toHaveBeenCalled();
     expect(decrementStockAtomic).not.toHaveBeenCalled();
     expect(ctx.redirect).toHaveBeenCalledWith(
-      "https://infinitycolor.co/payment/success?orderId=200",
+      "https://infinitycolor.co/payment/result?resultHint=success&orderId=200",
+    );
+  });
+
+  it("rejects a Mellat callback whose RefId is unknown (Test 3: unknown attempt)", async () => {
+    const { strapi, registerService, getDbQuery } = createStrapiMock();
+    const mellatService = {
+      verifyTransaction: jest.fn(),
+      settleTransaction: jest.fn(),
+    };
+    registerService("api::payment-gateway.mellat-v3", mellatService);
+    mockMellatAttempt(getDbQuery, null);
+
+    const ctx = createCtx({
+      request: {
+        body: {
+          ResCode: "0",
+          OrderId: "200",
+          SaleOrderId: "200",
+          SaleReferenceId: "REF-UNKNOWN",
+          RefId: "REFID-NEVER-ISSUED",
+        },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(mellatService.verifyTransaction).not.toHaveBeenCalled();
+    expect(ctx.badRequest).toHaveBeenCalledWith(
+      "Invalid payment reference",
+      expect.objectContaining({ data: expect.objectContaining({ success: false }) }),
+    );
+  });
+
+  it("rejects a Mellat callback whose OrderId doesn't match the attempt's own order (Test 1: cross-order)", async () => {
+    const { strapi, registerService, getDbQuery } = createStrapiMock();
+    const mellatService = {
+      verifyTransaction: jest.fn(),
+      settleTransaction: jest.fn(),
+    };
+    registerService("api::payment-gateway.mellat-v3", mellatService);
+    // RefId genuinely belongs to order 200, but the caller supplies order 999.
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 }, Amount: "1200000" });
+
+    const ctx = createCtx({
+      request: {
+        body: {
+          ResCode: "0",
+          OrderId: "999",
+          SaleOrderId: "999",
+          SaleReferenceId: "REF-123",
+          RefId: "MELLAT-REFID-200",
+        },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(mellatService.verifyTransaction).not.toHaveBeenCalled();
+    expect(strapi.entityService.update).not.toHaveBeenCalled();
+    expect(ctx.badRequest).toHaveBeenCalledWith(
+      "Invalid order reference",
+      expect.objectContaining({ data: expect.objectContaining({ success: false }) }),
+    );
+  });
+
+  it("rejects a Mellat callback with no RefId at all (malformed input)", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const mellatService = {
+      verifyTransaction: jest.fn(),
+      settleTransaction: jest.fn(),
+    };
+    registerService("api::payment-gateway.mellat-v3", mellatService);
+
+    const ctx = createCtx({
+      request: {
+        body: { ResCode: "0", OrderId: "200", SaleOrderId: "200", SaleReferenceId: "REF-123" },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(mellatService.verifyTransaction).not.toHaveBeenCalled();
+    expect(ctx.badRequest).toHaveBeenCalledWith(
+      "Invalid payment reference",
+      expect.objectContaining({ data: expect.objectContaining({ success: false }) }),
+    );
+  });
+
+  it("only lets one of two concurrent duplicate Mellat successes finalize the order (Test 5)", async () => {
+    const { strapi, registerService, getDbQuery } = createStrapiMock();
+    const mellatService = {
+      verifyTransaction: jest.fn().mockResolvedValue({ success: true }),
+      settleTransaction: jest.fn().mockResolvedValue({ success: true, resCode: 0 }),
+    };
+    registerService("api::payment-gateway.mellat-v3", mellatService);
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 }, Amount: "1200000" });
+
+    const orderWithItems = {
+      id: 200,
+      ReservationStatus: "Reserved",
+      ReservedUntil: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      contract: { id: 77, Amount: 120000 },
+      order_items: [],
+    };
+    (strapi.entityService.findOne as jest.Mock).mockImplementation(async (uid: string) => {
+      if (uid === "api::order.order") return orderWithItems;
+      if (uid === "api::payment-attempt.payment-attempt") return { Status: "Succeeded" };
+      return null;
+    });
+
+    // Simulate the guarded CAS UPDATE: the first caller's raw claim wins
+    // (returns a row), the second caller's identical claim loses (0 rows) —
+    // this is the same primitive that would serialize two real concurrent
+    // Postgres transactions racing the same UPDATE...WHERE...RETURNING, but
+    // this suite mocks the raw-SQL layer rather than a live database, so it
+    // demonstrates the winner/loser branching, not live-DB atomicity.
+    strapi.db.connection.raw
+      .mockResolvedValueOnce({ rows: [{ id: 55 }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const body = {
+      ResCode: "0",
+      OrderId: "200",
+      SaleOrderId: "200",
+      SaleReferenceId: "REF-123",
+      RefId: "MELLAT-REFID-200",
+    };
+
+    const ctxA = createCtx({ request: { body } });
+    const ctxB = createCtx({ request: { body } });
+
+    await Promise.all([
+      verifyPaymentHandler(strapi as any, ctxA),
+      verifyPaymentHandler(strapi as any, ctxB),
+    ]);
+
+    // Only the winner transitions the order to Started.
+    const startedCalls = (strapi.entityService.update as jest.Mock).mock.calls.filter(
+      ([uid, id, payload]: any[]) =>
+        uid === "api::order.order" && id === 200 && payload?.data?.Status === "Started",
+    );
+    expect(startedCalls).toHaveLength(1);
+    expect(ctxA.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/result?resultHint=success&orderId=200",
+    );
+    expect(ctxB.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/result?resultHint=success&orderId=200",
+    );
+    // Pin the actual concurrency primitive, not just its observed effect —
+    // this would still pass if a future edit accidentally widened the
+    // guarded status set, so assert the claim's WHERE clause directly.
+    const claimSql = strapi.db.connection.raw.mock.calls
+      .map(([sql]: any[]) => String(sql))
+      .find((sql: string) => sql.includes("payment_attempts") && sql.includes("SET status"));
+    expect(claimSql).toEqual(expect.stringContaining("status IN ('Pending', 'Redirected')"));
+  });
+
+  it("does not cancel an already-succeeded Mellat attempt on a stale duplicate failure (Test 7)", async () => {
+    const { strapi, getDbQuery } = createStrapiMock();
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 } });
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValue({
+      id: 200,
+      Status: "Started",
+      user: { id: 9 },
+    });
+    // The claim-to-Failed CAS loses because the attempt is already Succeeded.
+    strapi.db.connection.raw.mockResolvedValue({ rows: [] });
+
+    const ctx = createCtx({
+      request: {
+        body: { ResCode: "17", OrderId: "200", SaleOrderId: "200", RefId: "MELLAT-REFID-200" },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(strapi.entityService.update).not.toHaveBeenCalledWith(
+      "api::order.order",
+      200,
+      expect.objectContaining({ data: expect.objectContaining({ Status: "Cancelled" }) }),
+    );
+  });
+
+  it("does not settle when the reservation was already released before Mellat could consume it (Test 9: skipped)", async () => {
+    const { strapi, registerService, getDbQuery } = createStrapiMock();
+    const mellatService = {
+      verifyTransaction: jest.fn().mockResolvedValue({ success: true }),
+      settleTransaction: jest.fn().mockResolvedValue({ success: true, resCode: 0 }),
+    };
+    registerService("api::payment-gateway.mellat-v3", mellatService);
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 }, Amount: "1200000" });
+    strapi.db.connection.raw.mockResolvedValue({ rows: [{ id: 55 }] });
+
+    const orderWithItems = {
+      id: 200,
+      ReservationStatus: "Reserved",
+      ReservedUntil: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      contract: { id: 77, Amount: 120000 },
+      order_items: [],
+    };
+    (strapi.entityService.findOne as jest.Mock).mockImplementation(async (uid: string) => {
+      if (uid === "api::order.order") return orderWithItems;
+      return null;
+    });
+    // The reservation was already released/expired by something else (an
+    // expiry-job tick, a duplicate callback) between the pre-check and the
+    // atomic consume attempt — nothing was actually decremented.
+    (consumeOrderReservation as jest.Mock).mockResolvedValueOnce({
+      success: true,
+      skipped: true,
+      expired: false,
+    });
+
+    const ctx = createCtx({
+      request: {
+        body: {
+          ResCode: "0",
+          OrderId: "200",
+          SaleOrderId: "200",
+          SaleReferenceId: "REF-123",
+          RefId: "MELLAT-REFID-200",
+        },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(strapi.entityService.update).not.toHaveBeenCalledWith(
+      "api::order.order",
+      200,
+      expect.objectContaining({ data: expect.objectContaining({ Status: "Started" }) }),
+    );
+  });
+
+  it("treats a Mellat callback for an already-consumed order as an idempotent no-op (Test 10)", async () => {
+    const { strapi, registerService, getDbQuery } = createStrapiMock();
+    const mellatService = {
+      verifyTransaction: jest.fn(),
+      settleTransaction: jest.fn(),
+    };
+    registerService("api::payment-gateway.mellat-v3", mellatService);
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 }, Amount: "1200000" });
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValue({
+      id: 200,
+      ReservationStatus: "Consumed",
+    });
+
+    const ctx = createCtx({
+      request: {
+        body: {
+          ResCode: "0",
+          OrderId: "200",
+          SaleOrderId: "200",
+          SaleReferenceId: "REF-123",
+          RefId: "MELLAT-REFID-200",
+        },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(mellatService.verifyTransaction).not.toHaveBeenCalled();
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/result?resultHint=success&orderId=200",
     );
   });
 

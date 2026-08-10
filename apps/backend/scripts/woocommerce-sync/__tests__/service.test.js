@@ -12,6 +12,7 @@ const {
   orderRevision,
   catalogReportSummary,
   assertCatalogReportSucceeded,
+  safeErrorCode,
 } = require("../service");
 
 function baseEnv() {
@@ -45,7 +46,10 @@ test("sync config defaults to hourly-only and enforces documented concurrency ca
     videos: 1,
     entities: 8,
     fridayInventory: 32,
+    fridayImages: 12,
+    fridayEntities: 24,
   });
+  assert.equal(config.fridayCron, "59 23 * * *");
   assert.throws(() => getSyncConfig({ ...baseEnv(), IMPORT_CONCURRENCY_IMAGES: "17" }), /between 1 and 16/);
   assert.throws(() => getSyncConfig({ ...baseEnv(), IMPORT_CONCURRENCY_VARIATIONS: "33" }), /between 1 and 32/);
   assert.throws(() => getSyncConfig({ ...baseEnv(), IMPORT_CONCURRENCY_VIDEOS: "3" }), /between 1 and 2/);
@@ -138,10 +142,27 @@ test("30-second discovery, Friday, and reconcile schedules require explicit opt-
   assert.equal(calls.length, 4);
   assert.deepEqual(calls[0][1], { every: 30_000 });
   assert.deepEqual(calls[1][1], { pattern: "0 * * * *", tz: "Asia/Tehran" });
-  assert.deepEqual(calls[2][1], { pattern: "59 23 * * 5", tz: "Asia/Tehran" });
+  assert.deepEqual(calls[2][1], { pattern: "59 23 * * *", tz: "Asia/Tehran" });
   assert.equal(calls[2][2].opts.attempts, 3);
   assert.deepEqual(calls[3][1], { pattern: "30 2 * * *", tz: "Asia/Tehran" });
   assert.equal(calls[3][2].name, JOBS.reconcile);
+});
+
+test("nightly cutover cadence is configurable via WOOCOMMERCE_SYNC_FRIDAY_CRON", async () => {
+  const calls = [];
+  const queue = {
+    async upsertJobScheduler(...args) { calls.push(args); },
+    async removeJobScheduler() {},
+  };
+  const config = getSyncConfig({
+    ...baseEnv(),
+    WOOCOMMERCE_SYNC_ENABLE_FRIDAY: "true",
+    WOOCOMMERCE_SYNC_FRIDAY_CRON: "30 1 * * *",
+  });
+  assert.equal(config.fridayCron, "30 1 * * *");
+  await registerSchedulers(queue, config);
+  const fridayCall = calls.find((call) => call[2].name === JOBS.friday);
+  assert.deepEqual(fridayCall[1], { pattern: "30 1 * * *", tz: "Asia/Tehran" });
 });
 
 test("reconcile cadence is configurable via WOOCOMMERCE_SYNC_RECONCILE_CRON", async () => {
@@ -527,4 +548,94 @@ test("reconcile classifies target orphans by re-fetch outcome and never mutates 
     source_unknown: 1,
   });
   assert.deepEqual(result.drained, { completed: 0, failed: 0 });
+});
+
+test("safeErrorCode prefers SCREAMING_SNAKE error.message over Error.name", () => {
+  assert.equal(safeErrorCode(new Error("USER_PHONE_INVALID")), "USER_PHONE_INVALID");
+  assert.equal(safeErrorCode({ code: "USER_PHONE_SOURCE_CONFLICT" }), "USER_PHONE_SOURCE_CONFLICT");
+  assert.equal(safeErrorCode({ payload: { error: "HTTP_404" } }), "HTTP_404");
+  assert.equal(safeErrorCode(new Error("something went wrong")), "ERROR");
+});
+
+test("fullUsersAndWallets skips phoneless customers and continues", async () => {
+  const config = getSyncConfig(baseEnv());
+  const service = new WooSyncService(config, { pool: { end: async () => undefined }, source: {}, destination: {} });
+  const upserted = [];
+  service.state = {
+    control: async () => ({ mode: "active", reconciliation_run_id: "r1", reconciliation_sha256: "a".repeat(64) }),
+  };
+  service.source = {
+    async *customers() {
+      yield {
+        page: 1,
+        rows: [
+          { id: 1, billing: { phone: "09121234567" }, shipping: {}, email: "ok@example.com", first_name: "A", last_name: "B" },
+          { id: 2, billing: {}, shipping: {}, email: "nophone@example.com", first_name: "C", last_name: "D" },
+        ],
+      };
+    },
+    getWalletBalance: async () => {
+      const error = new Error("NOT_FOUND");
+      error.payload = { error: "NOT_FOUND" };
+      throw error;
+    },
+  };
+  service.destination = {
+    upsertUser: async (payload) => {
+      upserted.push(payload);
+      return { mode: "created" };
+    },
+    upsertWallet: async () => {
+      throw new Error("wallet should not be required when balance is missing");
+    },
+  };
+
+  const result = await service.fullUsersAndWallets();
+  assert.equal(result.users, 1);
+  assert.equal(result.wallets, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(upserted.length, 1);
+  assert.equal(upserted[0].sourceId, "1");
+  assert.equal(upserted[0].phone, "+989121234567");
+});
+
+test("friday finishes completed-with-exceptions when users fail but orders succeed", async () => {
+  const config = getSyncConfig(baseEnv());
+  const service = new WooSyncService(config, { pool: { end: async () => undefined }, source: {}, destination: {} });
+  const finished = [];
+  const steps = [];
+  const scheduledAt = Date.parse("2026-08-10T20:29:00.000Z");
+  service.withLease = async (_name, action) => action("friday-fence");
+  service.state = {
+    control: async () => ({ mode: "active", reconciliation_run_id: "r1", reconciliation_sha256: "a".repeat(64) }),
+    startCampaign: async () => ({ status: "running" }),
+    campaignStep: async (_key, _token, step, metrics = {}) => {
+      steps.push({ step, metrics });
+    },
+    finishCampaign: async (_key, _token, status, errorCode = null) => {
+      finished.push({ status, errorCode });
+    },
+    markMissedCampaign: async () => null,
+  };
+  service.drain = async () => ({ completed: 0, failed: 0, skipped: false });
+  service.fullUsersAndWallets = async () => ({ users: 1, wallets: 0, failed: 3 });
+  service.fullOrders = async () => ({ completed: 2, failed: 0 });
+  service.createCatalogEngine = () => ({
+    runSync: async ({ scope }) => ({
+      toJSON: () => ({ failures: scope === "full-sync" ? [{ wcId: 9 }] : [], totals: {} }),
+      hasFailures: () => scope === "full-sync",
+      durationMs: () => 1,
+    }),
+  });
+
+  const result = await service.friday(scheduledAt);
+
+  assert.equal(result.status, "completed-with-exceptions");
+  assert.equal(result.catalog.failed, 1);
+  assert.deepEqual(result.identities, { users: 1, wallets: 0, failed: 3 });
+  assert.deepEqual(result.orders, { completed: 2, failed: 0 });
+  assert.deepEqual(finished, [{ status: "completed-with-exceptions", errorCode: null }]);
+  assert.equal(steps.some((entry) => entry.step === "catalog-full"), true);
+  assert.equal(steps.some((entry) => entry.step === "users-wallets"), true);
+  assert.equal(steps.some((entry) => entry.step === "orders"), true);
 });

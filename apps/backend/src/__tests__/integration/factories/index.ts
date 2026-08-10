@@ -248,6 +248,37 @@ export function makeFactories(strapi: any) {
     return row;
   }
 
+  async function createCart(opts: { userId?: number; status?: string } = {}) {
+    const row = await q("api::cart.cart").create({
+      data: {
+        ...(opts.userId ? { user: opts.userId } : {}),
+        Status: opts.status ?? "Pending",
+      },
+    });
+    track("api::cart.cart", row.id);
+    return row;
+  }
+
+  async function createCartItem(opts: {
+    cartId: number;
+    variationId: number;
+    count?: number;
+    price?: number;
+  }) {
+    const count = opts.count ?? 1;
+    const price = opts.price ?? 100000;
+    const row = await q("api::cart-item.cart-item").create({
+      data: {
+        cart: opts.cartId,
+        product_variation: opts.variationId,
+        Count: count,
+        Sum: count * price,
+      },
+    });
+    track("api::cart-item.cart-item", row.id);
+    return row;
+  }
+
   /**
    * High-level helper: an order in a "Reserved" state with N items, each backed
    * by its own variation + product-stock whose reservedCount already reflects
@@ -423,6 +454,57 @@ export function makeFactories(strapi: any) {
     return row;
   }
 
+  async function createDiscount(
+    opts: {
+      code?: string;
+      type?: "Discount" | "Cash";
+      amount?: number;
+      limitUsage?: number;
+      usedTimes?: number;
+      limitAmount?: number;
+      minCartTotal?: number;
+      maxCartTotal?: number;
+      isActive?: boolean;
+      startDate?: Date;
+      endDate?: Date;
+      productIds?: number[];
+      deliveryMethodIds?: number[];
+    } = {},
+  ) {
+    const now = Date.now();
+    const row = await q("api::discount.discount").create({
+      data: {
+        Code: opts.code ?? uniq(),
+        Type: opts.type ?? "Discount",
+        Amount: opts.amount ?? 10,
+        ...(opts.limitAmount !== undefined ? { LimitAmount: opts.limitAmount } : {}),
+        ...(opts.limitUsage !== undefined ? { LimitUsage: opts.limitUsage } : {}),
+        UsedTimes: opts.usedTimes ?? 0,
+        StartDate: (opts.startDate ?? new Date(now - 24 * 60 * 60 * 1000)).toISOString(),
+        EndDate: (opts.endDate ?? new Date(now + 24 * 60 * 60 * 1000)).toISOString(),
+        IsActive: opts.isActive ?? true,
+        ...(opts.minCartTotal !== undefined ? { MinCartTotal: opts.minCartTotal } : {}),
+        ...(opts.maxCartTotal !== undefined ? { MaxCartTotal: opts.maxCartTotal } : {}),
+        ...(opts.productIds?.length ? { products: opts.productIds } : {}),
+        ...(opts.deliveryMethodIds?.length ? { delivery_methods: opts.deliveryMethodIds } : {}),
+      },
+    });
+    track("api::discount.discount", row.id);
+    return row;
+  }
+
+  async function getDiscount(discountId: number) {
+    return q("api::discount.discount").findOne({ where: { id: discountId } });
+  }
+
+  async function getCartItem(cartItemId: number) {
+    return q("api::cart-item.cart-item").findOne({ where: { id: cartItemId } });
+  }
+
+  async function getCartItems(cartId: number) {
+    return q("api::cart-item.cart-item").findMany({ where: { cart: { id: cartId } } });
+  }
+
   async function getStock(stockId: number) {
     return q("api::product-stock.product-stock").findOne({ where: { id: stockId } });
   }
@@ -496,6 +578,8 @@ export function makeFactories(strapi: any) {
     createPaymentGateway,
     createOrder,
     createOrderItem,
+    createCart,
+    createCartItem,
     createShippingProvince,
     createShippingCity,
     createAddress,
@@ -503,12 +587,16 @@ export function makeFactories(strapi: any) {
     createPayableOrder,
     createWallet,
     createPaymentAttempt,
+    createDiscount,
     getStock,
     getOrder,
     getContract,
     getContractTransaction,
     getContractTransactions,
     getOrderLogs,
+    getDiscount,
+    getCartItem,
+    getCartItems,
     cleanup,
   };
 }

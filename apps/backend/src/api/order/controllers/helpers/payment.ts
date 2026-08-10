@@ -7,7 +7,9 @@ import { decrementStockAtomic } from "../../../cart/services/lib/stock";
 import { enqueuePurchaseForOrder } from "../../../report/analytics/outbox";
 import {
   findOrderPaymentAttempt,
+  findPaymentAttemptByProviderReference,
   updatePaymentAttempt,
+  claimPaymentAttemptForSettlement,
 } from "../../../payment-attempt/services/payment-attempt";
 import { settleZarinPalPayment, ZarinPalSettlementError } from "./zarinpalSettlement";
 const getFrontendBaseUrl = () =>
@@ -16,22 +18,14 @@ const getFrontendBaseUrl = () =>
     "",
   );
 
-const buildPaymentRedirectUrl = (
-  type: "success" | "failure" | "cancelled" | "issue",
-  params?: Record<string, string | number | null | undefined>,
-) => {
-  const base = getFrontendBaseUrl();
-  const url = new URL(`${base}/payment/${type}`);
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === "") return;
-      url.searchParams.set(key, String(value));
-    });
-  }
-  return url.toString();
-};
-
-const buildZarinPalPaymentRedirectUrl = (
+// Shared by every gateway (Saman, Mellat, ZarinPal — SnappPay's own
+// `paymentResultUrl` in snappay-orchestrator.ts targets the same page
+// independently). `/payment/result` re-fetches the order's real payment
+// status from the backend and polls until terminal; it does not trust
+// `resultHint` or any other query param as ground truth, so it's safe for
+// every gateway to redirect through, including ones with weaker callback
+// integrity guarantees than the trusted post-verify state that sets it.
+const buildPaymentResultRedirectUrl = (
   type: "success" | "failure" | "cancelled" | "issue",
   params?: Record<string, string | number | null | undefined>,
 ) => {
@@ -192,8 +186,8 @@ async function clearCartAfterPayment(strapi: Strapi, orderId?: number) {
       typeof userRelation === "object" && userRelation
         ? userRelation.id
         : typeof userRelation === "number"
-          ? userRelation
-          : undefined;
+        ? userRelation
+        : undefined;
 
     if (!userId) {
       strapi.log.error("clearCartAfterPayment: Could not extract userId from order", {
@@ -235,7 +229,8 @@ async function handlePostPaymentStock(
   strapi: Strapi,
   orderId: number,
   gateway: string,
-): Promise<{ success: boolean; errors?: any[]; expired?: boolean }> {
+  options?: { requireReservation?: boolean },
+): Promise<{ success: boolean; errors?: any[]; expired?: boolean; skipped?: boolean }> {
   try {
     // Load order with ReservationStatus field only (lightweight query)
     const orderMeta: any = await strapi.entityService.findOne("api::order.order", orderId, {
@@ -255,6 +250,23 @@ async function handlePostPaymentStock(
         return { success: false, expired: true, errors: [{ error: "Reservation expired" }] };
       }
 
+      if (consumeRes?.skipped) {
+        // The guarded UPDATE didn't match: the reservation was already
+        // released/expired/consumed by something else (an expiry-job tick,
+        // a duplicate callback) between our read above and the atomic
+        // consume attempt. Nothing was actually decremented — this must
+        // NOT be treated as a successful consumption.
+        strapi.log.error(
+          `Reservation already resolved elsewhere before ${gateway} could consume it`,
+          { orderId },
+        );
+        return {
+          success: false,
+          skipped: true,
+          errors: [{ error: "Reservation already resolved" }],
+        };
+      }
+
       if (consumeRes?.success === false) {
         strapi.log.error(`Failed to consume reservation after ${gateway} settlement`, {
           orderId,
@@ -267,6 +279,25 @@ async function handlePostPaymentStock(
       }
 
       return { success: true };
+    } else if (options?.requireReservation) {
+      // Saman/Mellat orders always go through finalizeCartToOrder's
+      // reservation flow, so a non-"Reserved" status here can only mean the
+      // reservation was already released/expired/consumed out from under
+      // this settlement — never "this order never had a reservation"
+      // (ReservationStatus schema-defaults to "Released", the same value as
+      // an actively-released hold, so the two cases are indistinguishable
+      // by value alone). Falling into the legacy direct-decrement branch
+      // below would double-decrement stock already released back into the
+      // pool. Treat as a hard stop instead.
+      strapi.log.error(
+        `${gateway} settlement reached stock handling with a non-Reserved reservation status`,
+        { orderId, reservationStatus: orderMeta?.ReservationStatus },
+      );
+      return {
+        success: false,
+        skipped: true,
+        errors: [{ error: "Reservation not active" }],
+      };
     } else {
       // Legacy path: decrement stock atomically
       // Load order with populated order_items
@@ -447,7 +478,7 @@ async function handleStockDecrementFailure(
 
   // Redirect to issue page with appropriate error code
   return ctx.redirect(
-    buildPaymentRedirectUrl("issue", {
+    buildPaymentResultRedirectUrl("issue", {
       orderId,
       code: "stock_decrement_failed",
     }),
@@ -573,15 +604,6 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
     b.RefNum ?? q.RefNum ?? b.refNum ?? q.refnum ?? q.RefNum ?? b.RefNum;
   const samanResNumInput: any =
     b.ResNum ?? q.ResNum ?? b.resNum ?? q.resnum ?? q.ResNum ?? b.ResNum;
-  const samanTerminalInput: any =
-    b.TerminalId ??
-    q.TerminalId ??
-    b.terminalId ??
-    q.terminalId ??
-    b.MID ??
-    q.MID ??
-    b.mid ??
-    q.mid;
 
   try {
     const legacySnappayInput =
@@ -623,7 +645,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           callbackStatus,
         });
         return ctx.redirect(
-          buildZarinPalPaymentRedirectUrl("failure", {
+          buildPaymentResultRedirectUrl("failure", {
             error: "Missing ZarinPal authority",
           }),
         );
@@ -670,7 +692,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       if (!contractTransaction) {
         strapi.log.error("ZarinPal callback authority not found", { authority });
         return ctx.redirect(
-          buildZarinPalPaymentRedirectUrl("failure", {
+          buildPaymentResultRedirectUrl("failure", {
             error: "ZarinPal transaction not found",
           }),
         );
@@ -694,7 +716,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           contractId,
         });
         return ctx.redirect(
-          buildZarinPalPaymentRedirectUrl("failure", {
+          buildPaymentResultRedirectUrl("failure", {
             error: "Invalid ZarinPal order reference",
           }),
         );
@@ -706,7 +728,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           orderId,
           txId: contractTransaction.id,
         });
-        return ctx.redirect(buildZarinPalPaymentRedirectUrl("success", { orderId }));
+        return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
       }
 
       const orderEntity = (await strapi.entityService.findOne("api::order.order", orderId, {
@@ -717,7 +739,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       if (!orderEntity) {
         strapi.log.error("ZarinPal order not found", { orderId, authority });
         return ctx.redirect(
-          buildZarinPalPaymentRedirectUrl("failure", {
+          buildPaymentResultRedirectUrl("failure", {
             error: "ZarinPal order not found",
           }),
         );
@@ -809,7 +831,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         }
 
         return ctx.redirect(
-          buildZarinPalPaymentRedirectUrl(redirectType, {
+          buildPaymentResultRedirectUrl(redirectType, {
             orderId,
             error: reason,
             reason: redirectType === "cancelled" ? "user-cancelled" : undefined,
@@ -863,7 +885,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
             });
           }
           return ctx.redirect(
-            buildZarinPalPaymentRedirectUrl("issue", {
+            buildPaymentResultRedirectUrl("issue", {
               orderId,
               code: "zarinpal_verification_ambiguous",
             }),
@@ -919,7 +941,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           error: (error as Error)?.message || error,
         });
         return ctx.redirect(
-          buildZarinPalPaymentRedirectUrl("issue", {
+          buildPaymentResultRedirectUrl("issue", {
             orderId,
             code: settlementCode.toLowerCase(),
           }),
@@ -954,7 +976,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       await clearCartAfterPayment(strapi, orderId);
 
       return ctx.redirect(
-        buildZarinPalPaymentRedirectUrl("success", {
+        buildPaymentResultRedirectUrl("success", {
           orderId,
           transactionId: finalReference,
         }),
@@ -990,60 +1012,98 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         String(samanStatusInput).trim() !== ""
           ? Number(String(samanStatusInput).replace(/\s+/g, ""))
           : NaN;
-      const terminalNumber =
-        samanTerminalInput !== undefined && samanTerminalInput !== null
-          ? Number(String(samanTerminalInput).replace(/\s+/g, ""))
-          : undefined;
 
-      let orderId: number | undefined;
-      if (resNumRaw) {
-        const candidate = Number(resNumRaw.split("-")[0]);
-        if (!Number.isNaN(candidate)) {
-          orderId = candidate;
-        }
+      if (!resNumRaw) {
+        strapi.log.error("Saman callback missing ResNum; cannot correlate to an order", {
+          refNum,
+        });
+        return ctx.badRequest("Invalid order reference", {
+          data: { success: false, error: "Invalid order reference (Saman)" },
+        });
       }
 
+      // Idempotency check FIRST, keyed on the exact resNum recorded at
+      // initiation (contract_transactions.external_id keeps that value even
+      // after a successful settlement overwrites orders.external_id with the
+      // RefNum below) — a replayed/duplicate callback for an already-settled
+      // transaction must short-circuit here, before the correlation anchor
+      // lookup, or it would be rejected by its own prior success.
       let contractTransaction: any = undefined;
-      if (resNumRaw) {
-        try {
-          const txMatches = (await strapi.entityService.findMany(
-            "api::contract-transaction.contract-transaction",
-            {
-              filters: {
-                external_source: "SamanKish",
-                external_id: resNumRaw,
-              },
-              populate: { contract: { populate: { order: true } } },
-              sort: { createdAt: "desc" },
-              limit: 1,
+      try {
+        const txMatches = (await strapi.entityService.findMany(
+          "api::contract-transaction.contract-transaction",
+          {
+            filters: {
+              external_source: "SamanKish",
+              external_id: resNumRaw,
             },
-          )) as any[];
-          if (txMatches?.length) {
-            contractTransaction = txMatches[0];
+            populate: { contract: { populate: { order: true } } },
+            sort: { createdAt: "desc" },
+            limit: 1,
+          },
+        )) as any[];
+        if (txMatches?.length) {
+          contractTransaction = txMatches[0];
 
-            // Idempotency check: If transaction already processed successfully, skip
-            if (contractTransaction.Status === "Success") {
-              const existingOrderId =
-                contractTransaction.contract?.order?.id || contractTransaction.contract?.order;
-              if (existingOrderId) {
-                strapi.log.info(
-                  `Saman callback already processed (idempotency check): resNum=${resNumRaw}, orderId=${existingOrderId}`,
-                  {
-                    resNum: resNumRaw,
-                    orderId: existingOrderId,
-                    existingTxId: contractTransaction.id,
-                  },
-                );
-                // Redirect to success page - transaction already processed
-                return ctx.redirect(
-                  buildPaymentRedirectUrl("success", { orderId: existingOrderId }),
-                );
-              }
+          if (contractTransaction.Status === "Success") {
+            const existingOrderId =
+              contractTransaction.contract?.order?.id || contractTransaction.contract?.order;
+            if (existingOrderId) {
+              strapi.log.info(
+                `Saman callback already processed (idempotency check): resNum=${resNumRaw}, orderId=${existingOrderId}`,
+                {
+                  resNum: resNumRaw,
+                  orderId: existingOrderId,
+                  existingTxId: contractTransaction.id,
+                },
+              );
+              return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId: existingOrderId }));
             }
           }
-        } catch (err) {
-          strapi.log.error("Failed to locate Saman contract transaction by resNum", err);
         }
+      } catch (err) {
+        strapi.log.error("Failed to locate Saman contract transaction by resNum", err);
+      }
+
+      // Correlation anchor: the exact resNum minted at initiation is
+      // persisted on the order itself (requestSamanPayment in
+      // gateway-helpers.ts), before any callback can exist. Saman's own
+      // VerifyTransaction response has no ResNum field to cross-check
+      // (confirmed against the official SEP doc), so this local anchor is
+      // the only defense against a caller-supplied ResNum selecting an
+      // arbitrary order. A resNum that doesn't match any order's current
+      // external_id is forged, stale (superseded by a retry), or unknown —
+      // reject without mutating anything.
+      const anchorOrders = (await strapi.entityService.findMany("api::order.order", {
+        filters: { external_id: resNumRaw, external_source: "SamanKish" },
+        limit: 1,
+      })) as any[];
+
+      if (!anchorOrders?.length) {
+        strapi.log.error("Saman callback ResNum does not match any known order", {
+          resNum: resNumRaw,
+          refNum,
+        });
+        return ctx.badRequest("Invalid order reference", {
+          data: { success: false, error: "Invalid order reference (Saman)" },
+        });
+      }
+
+      const orderId = Number(anchorOrders[0].id);
+
+      // Defense in depth: only trust a found contract-transaction as an
+      // update target once it's confirmed to belong to the anchor-resolved
+      // order, never as a source of correlation itself.
+      if (
+        contractTransaction &&
+        Number(contractTransaction.contract?.order?.id ?? contractTransaction.contract?.order) !==
+          orderId
+      ) {
+        strapi.log.error(
+          "Saman contract-transaction/order anchor mismatch; ignoring stale transaction",
+          { resNum: resNumRaw, orderId, contractTransactionId: contractTransaction.id },
+        );
+        contractTransaction = undefined;
       }
 
       if (!contractTransaction && refNum) {
@@ -1060,34 +1120,15 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
               limit: 1,
             },
           )) as any[];
-          if (txMatches?.length) {
+          if (
+            txMatches?.length &&
+            Number(txMatches[0].contract?.order?.id ?? txMatches[0].contract?.order) === orderId
+          ) {
             contractTransaction = txMatches[0];
           }
         } catch (err) {
           strapi.log.error("Failed to locate Saman contract transaction by refNum", err);
         }
-      }
-
-      if ((!orderId || Number.isNaN(orderId)) && contractTransaction?.contract?.order) {
-        const co = contractTransaction.contract.order;
-        const derivedOrderId = typeof co === "object" && co ? Number(co.id) : Number(co);
-        if (!Number.isNaN(derivedOrderId)) {
-          orderId = derivedOrderId;
-        }
-      }
-
-      if (!orderId || Number.isNaN(orderId)) {
-        strapi.log.error("Saman callback missing orderId", {
-          refNum,
-          resNumRaw,
-          normalizedState,
-        });
-        return ctx.badRequest("Invalid order reference", {
-          data: {
-            success: false,
-            error: "Invalid order reference (Saman)",
-          },
-        });
       }
 
       const orderEntity = (await strapi.entityService.findOne("api::order.order", orderId, {
@@ -1108,6 +1149,17 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         });
       }
 
+      if (String(orderEntity?.ReservationStatus) === "Consumed") {
+        // Already fully settled by a prior callback — idempotent no-op.
+        strapi.log.info("Saman callback for already-consumed order; idempotent no-op", {
+          orderId,
+          resNum: resNumRaw,
+        });
+        return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
+      }
+
+      const attempt: any = await findOrderPaymentAttempt(strapi, orderId);
+
       const contractId =
         contractTransaction?.contract?.id ||
         (typeof orderEntity.contract === "object" && orderEntity.contract
@@ -1118,6 +1170,26 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       const contractAmountIrr = contractAmountToman * 10;
 
       const markOrderCancelled = async (reason: string) => {
+        // Guard against destructive mutation of an order that already
+        // settled successfully (e.g. this is a stale/duplicate failure
+        // callback arriving after a legitimate success elsewhere). Re-read
+        // fresh rather than trusting the orderEntity snapshot taken above,
+        // since that snapshot may predate a concurrent settlement.
+        try {
+          const current: any = await strapi.entityService.findOne("api::order.order", orderId!, {
+            fields: ["Status"],
+          } as any);
+          if (current && ["Started", "Shipment", "Done"].includes(String(current.Status))) {
+            strapi.log.info("Saman failure callback ignored: order already settled", {
+              orderId,
+              reason,
+              currentStatus: current.Status,
+            });
+            return;
+          }
+        } catch (err) {
+          strapi.log.error("Failed to check order status before cancelling (Saman)", err);
+        }
         try {
           await strapi.entityService.update("api::order.order", orderId!, {
             data: { Status: "Cancelled" },
@@ -1173,32 +1245,45 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         (!Number.isNaN(statusNumeric) && statusNumeric === 2);
 
       if (!stateSuccessful) {
-        await markOrderCancelled(normalizedState || `Status ${samanStatusInput || "Unknown"}`);
+        // Claim the attempt to Failed before cancelling — idempotent against
+        // duplicate failure callbacks, and against racing a concurrent
+        // success (if the attempt is already Succeeded, this claim loses and
+        // markOrderCancelled must not run). Scoped to this branch only: the
+        // post-verify callers below (reservation_expired,
+        // reservation_consume_failed) reach markOrderCancelled after the
+        // attempt has already been claimed Succeeded and downgraded to
+        // Unknown, where a fresh Pending/Redirected-gated claim would always
+        // lose and wrongly suppress a cancellation they still need.
+        const claimedFailed = attempt?.id
+          ? await claimPaymentAttemptForSettlement(strapi, Number(attempt.id), "Failed")
+          : true;
+        if (attempt?.id && !claimedFailed) {
+          strapi.log.info(
+            "Saman failure callback: attempt already finalized elsewhere; no mutation",
+            { orderId, attemptId: attempt.id },
+          );
+        } else {
+          await markOrderCancelled(normalizedState || `Status ${samanStatusInput || "Unknown"}`);
+        }
         return ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
+          buildPaymentResultRedirectUrl("failure", {
             orderId,
             error: normalizedState || String(samanStatusInput || "FAILED"),
           }),
         );
       }
 
-      const verifyResult = await samanService.verifyTransaction({
-        refNum,
-        terminalNumber,
-      });
+      const verifyResult = await samanService.verifyTransaction({ refNum });
 
       if (!verifyResult?.success || verifyResult?.resultCode !== 0) {
         await markOrderCancelled(verifyResult?.resultDescription || "Verification failed");
         try {
-          await samanService.reverseTransaction({
-            refNum,
-            terminalNumber,
-          });
+          await samanService.reverseTransaction({ refNum });
         } catch (reverseErr) {
           strapi.log.error("Saman reverse attempt failed", reverseErr);
         }
         return ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
+          buildPaymentResultRedirectUrl("failure", {
             orderId,
             error: verifyResult?.resultDescription || "Verification failed",
           }),
@@ -1206,47 +1291,155 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       }
 
       const detail = verifyResult.transactionDetail || verifyResult.TransactionDetail || {};
-      const affectiveAmountIrr = Number(detail?.AffectiveAmount ?? detail?.OrginalAmount ?? 0);
+      const affectiveAmountRaw = detail?.AffectiveAmount ?? detail?.OrginalAmount;
+      const affectiveAmountIrr = Number(affectiveAmountRaw);
+      const expectedAmountIrr =
+        attempt?.Amount != null ? Number(attempt.Amount) : contractAmountIrr;
+
+      // Amount check: this, together with the ResNum anchor above and a
+      // genuine provider verify success, is what actually closes Finding A
+      // — a caller who knows their own order's ResNum but supplies a
+      // different RefNum cannot pass all three simultaneously. Only enforce
+      // when the provider gave us a positive parseable amount; a malformed
+      // or absent field must not cause a false-positive reversal of a real
+      // payment.
+      if (Number.isFinite(affectiveAmountIrr) && affectiveAmountIrr > 0) {
+        if (affectiveAmountIrr !== expectedAmountIrr) {
+          strapi.log.error("Saman settled amount does not match expected amount; reversing", {
+            orderId,
+            resNum: resNumRaw,
+            refNum,
+            affectiveAmountIrr,
+            expectedAmountIrr,
+          });
+          try {
+            await samanService.reverseTransaction({ refNum });
+          } catch (reverseErr) {
+            strapi.log.error("Saman reverse attempt failed (amount mismatch)", reverseErr);
+          }
+          try {
+            await strapi.entityService.create("api::order-log.order-log", {
+              data: {
+                order: orderId,
+                Action: "Update",
+                Description:
+                  "Saman gateway amount mismatch; payment reversed, order left untouched for manual review",
+                Changes: { resNum: resNumRaw, refNum, affectiveAmountIrr, expectedAmountIrr },
+              },
+            });
+          } catch {}
+          return ctx.redirect(
+            buildPaymentResultRedirectUrl("issue", { orderId, code: "amount_mismatch" }),
+          );
+        }
+      } else {
+        strapi.log.error(
+          "Saman verify response did not include a parseable settled amount; proceeding without amount check",
+          { orderId, resNum: resNumRaw, refNum, detail },
+        );
+      }
 
       // If order is already expired/cancelled (reservation released), reverse and inform user.
       if (
         String(orderEntity?.Status) === "Cancelled" ||
-        (orderEntity?.ReservationStatus &&
-          !["Reserved", "Consumed"].includes(String(orderEntity.ReservationStatus)))
+        (orderEntity?.ReservationStatus && orderEntity.ReservationStatus !== "Reserved")
       ) {
         try {
-          await samanService.reverseTransaction({ refNum, terminalNumber });
+          await samanService.reverseTransaction({ refNum });
         } catch (reverseErr) {
           strapi.log.error("Saman reverse attempt failed (invalid reservation)", reverseErr);
         }
         await markOrderCancelled("reservation_invalid");
         return ctx.redirect(
-          buildPaymentRedirectUrl("issue", {
+          buildPaymentResultRedirectUrl("issue", {
             orderId,
             code: "reservation_invalid_reversed",
           }),
         );
       }
 
+      // Atomic one-time claim: only the caller that wins this guarded CAS
+      // may proceed to consume stock and finalize the order/contract. A
+      // losing claim means another (concurrent or replayed) callback for
+      // this exact attempt already finalized it — idempotent replay, no
+      // side effects. This is called standalone (not inside a DB
+      // transaction) because it uses the raw connection pool directly, so a
+      // later rollback would not undo it — claim durably first, then run
+      // side effects.
+      if (attempt?.id) {
+        const claimed = await claimPaymentAttemptForSettlement(
+          strapi,
+          Number(attempt.id),
+          "Succeeded",
+        );
+        if (!claimed) {
+          const current: any = await strapi.entityService.findOne(
+            "api::payment-attempt.payment-attempt",
+            Number(attempt.id),
+            { fields: ["Status"] } as any,
+          );
+          if (String(current?.Status) === "Succeeded") {
+            strapi.log.info("Saman settlement already claimed by a concurrent/duplicate callback", {
+              orderId,
+              attemptId: attempt.id,
+            });
+            return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
+          }
+          strapi.log.error("Saman payment attempt not claimable at settlement time", {
+            orderId,
+            attemptId: attempt.id,
+            status: current?.Status,
+          });
+          return ctx.redirect(
+            buildPaymentResultRedirectUrl("issue", { orderId, code: "attempt_not_claimable" }),
+          );
+        }
+      } else {
+        strapi.log.error(
+          "Saman settlement proceeding without a payment_attempts row (legacy order predating attempt tracking)",
+          { orderId, resNum: resNumRaw },
+        );
+      }
+
       // Stock handling:
       // - Reserved orders: consume reservation (Count-- and ReservedCount--) atomically
       // - Legacy orders: fallback to direct decrement
-      const stockResult = await handlePostPaymentStock(strapi, orderId, "Saman");
+      const stockResult = await handlePostPaymentStock(strapi, orderId, "Saman", {
+        requireReservation: true,
+      });
 
       if (!stockResult.success) {
+        // We already claimed the attempt as Succeeded above (money was
+        // taken), but local stock consumption failed — this is ambiguous,
+        // not a clean failure, so downgrade to "Unknown" rather than
+        // asserting a false terminal state. Never write "Failed" here: a
+        // successful claim must never be undone by a later local error.
+        if (attempt?.id) {
+          try {
+            await updatePaymentAttempt(strapi, Number(attempt.id), {
+              Status: "Unknown",
+              failureCode: stockResult.expired ? "RESERVATION_EXPIRED" : "STOCK_CONSUME_FAILED",
+              failureMessage:
+                "Payment claimed but stock could not be consumed; needs reconciliation",
+              lastReconciledAt: new Date(),
+            });
+          } catch (err) {
+            strapi.log.error("Failed to downgrade Saman payment attempt after stock failure", err);
+          }
+        }
         if (stockResult.expired) {
           // Reservation expired -> reverse transaction (automatic refund) and inform user
           try {
             await releaseOrderReservation(strapi as any, Number(orderId), "Expired");
           } catch {}
           try {
-            await samanService.reverseTransaction({ refNum, terminalNumber });
+            await samanService.reverseTransaction({ refNum });
           } catch (reverseErr) {
             strapi.log.error("Saman reverse attempt failed (expired reservation)", reverseErr);
           }
           await markOrderCancelled("reservation_expired");
           return ctx.redirect(
-            buildPaymentRedirectUrl("issue", {
+            buildPaymentResultRedirectUrl("issue", {
               orderId,
               code: "reservation_expired_reversed",
             }),
@@ -1257,13 +1450,13 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
             await releaseOrderReservation(strapi as any, Number(orderId), "Expired");
           } catch {}
           try {
-            await samanService.reverseTransaction({ refNum, terminalNumber });
+            await samanService.reverseTransaction({ refNum });
           } catch (reverseErr) {
             strapi.log.error("Saman reverse attempt failed (consume failure)", reverseErr);
           }
           await markOrderCancelled("reservation_consume_failed");
           return ctx.redirect(
-            buildPaymentRedirectUrl("issue", {
+            buildPaymentResultRedirectUrl("issue", {
               orderId,
               code: "reservation_consume_failed",
             }),
@@ -1276,17 +1469,26 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           refNum,
           paymentMethod: "SamanKish",
           externalSource: "SamanKish",
-          externalId: refNum,
+          // Preserve the resNum anchor (orders.external_id), not refNum — a
+          // duplicate/retried callback must still resolve this order after
+          // this write. RefNum is already durable on the contract-transaction
+          // (TrackId) and contract, so nothing is lost.
+          externalId: resNumRaw,
         });
       }
 
-      // Only proceed to "Started" if no stock errors occurred
+      // Only proceed to "Started" if no stock errors occurred. Deliberately
+      // does NOT overwrite external_id with refNum: the correlation anchor
+      // (orders.external_id = resNumRaw, set at initiation) must survive
+      // settlement so a duplicate/retried callback for this same resNum
+      // still resolves this order via the anchor lookup above, instead of
+      // 400ing a paid customer who hits back/refresh. RefNum is already
+      // durable on the contract-transaction (TrackId) and contract.
       try {
         await strapi.entityService.update("api::order.order", orderId, {
           data: {
             Status: "Started",
             external_source: "SamanKish",
-            external_id: refNum,
           },
         });
       } catch (err) {
@@ -1378,7 +1580,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       await clearCartAfterPayment(strapi, orderId);
 
       return ctx.redirect(
-        buildPaymentRedirectUrl("success", {
+        buildPaymentResultRedirectUrl("success", {
           orderId,
           transactionId: refNum || "",
         }),
@@ -1386,60 +1588,145 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
     }
 
     // Check if payment was successful (ResCode = 0) - Mellat
+    //
+    // Correlation anchor: RefId is minted by Mellat at PayRequest time and
+    // echoed back to the customer's browser; payment_attempts.providerReference
+    // stores that exact value for this order's specific attempt
+    // (finalizeToOrder.ts). Neither bpVerifyRequest nor bpSettleRequest echo
+    // back any identifier we can cross-check (official doc: bare ResCode
+    // only), so this is the only local defense against an attacker supplying
+    // an arbitrary OrderId/SaleOrderId in this unauthenticated callback.
+    const mellatRefIdRaw = RefId !== undefined && RefId !== null ? String(RefId).trim() : "";
+    const mellatCallbackOrderId = parseInt(String(OrderId ?? SaleOrderId ?? ""), 10);
+
     if (ResCode !== "0") {
-      // Handle different failure scenarios
-      const orderId = parseInt(OrderId || SaleOrderId, 10);
-
-      // Update order status to Cancelled if we have a valid order ID
-      if (!isNaN(orderId)) {
+      let failureAttempt: any = null;
+      if (mellatRefIdRaw) {
         try {
-          // Log payment failure to user activity feed before cancelling
-          try {
-            const order = (await strapi.entityService.findOne("api::order.order", orderId, {
-              populate: { user: true },
-            })) as any;
-            const userId = order?.user?.id ? Number(order.user.id) : null;
-
-            if (userId) {
-              const activityService = strapi.service("api::user-activity.user-activity") as any;
-              const reason = ResCode === "17" ? "لغو شده توسط کاربر" : "خطا در پرداخت";
-              if (activityService?.logPaymentFailed) {
-                await activityService.logPaymentFailed(userId, orderId, reason);
-              }
-            }
-          } catch (activityError) {
-            strapi.log.error("Failed to log payment failure to user activity", {
-              orderId,
-              error: (activityError as Error).message,
-            });
-          }
-
-          await strapi.entityService.update("api::order.order", orderId, {
-            data: { Status: "Cancelled" },
-          });
-          try {
-            await releaseOrderReservation(strapi as any, Number(orderId), "Released");
-          } catch {}
-          strapi.log.info(
-            `Order ${orderId} marked as Cancelled due to payment failure/cancellation`,
+          failureAttempt = await findPaymentAttemptByProviderReference(
+            strapi,
+            "mellat",
+            mellatRefIdRaw,
           );
-        } catch (updateError) {
-          strapi.log.error(`Failed to update order ${orderId} status:`, updateError);
+        } catch (err) {
+          strapi.log.error(
+            "Failed to locate Mellat payment attempt by RefId (failure callback)",
+            err,
+          );
         }
+      }
+
+      const correlatedOrderId = failureAttempt?.order?.id
+        ? Number(failureAttempt.order.id)
+        : undefined;
+
+      if (
+        !failureAttempt ||
+        !correlatedOrderId ||
+        (Number.isFinite(mellatCallbackOrderId) && mellatCallbackOrderId !== correlatedOrderId)
+      ) {
+        // Cannot correlate this failure to a known attempt/order — do not
+        // mutate anything. A caller-supplied OrderId alone must never be
+        // enough to cancel an order (Finding B).
+        strapi.log.error(
+          "Mellat failure callback could not be correlated to a known payment attempt; ignoring",
+          {
+            refId: mellatRefIdRaw,
+            callbackOrderId: mellatCallbackOrderId,
+            correlatedOrderId,
+            ResCode,
+          },
+        );
+        if (ResCode === "17") {
+          ctx.redirect(buildPaymentResultRedirectUrl("cancelled", { reason: "user-cancelled" }));
+        } else {
+          ctx.redirect(
+            buildPaymentResultRedirectUrl("failure", {
+              error: `Payment failed with code: ${ResCode}`,
+            }),
+          );
+        }
+        return;
+      }
+
+      const orderId = correlatedOrderId;
+
+      const currentOrder: any = await strapi.entityService.findOne("api::order.order", orderId, {
+        fields: ["Status"],
+        populate: { user: true },
+      } as any);
+
+      const alreadySettled =
+        currentOrder && ["Started", "Shipment", "Done"].includes(String(currentOrder.Status));
+
+      // Atomic claim to Failed: idempotent against duplicate failure
+      // callbacks, and against racing a concurrent success (if the attempt
+      // is already Succeeded, this claim loses and we must not cancel).
+      const claimedFailed = alreadySettled
+        ? false
+        : failureAttempt?.id
+        ? await claimPaymentAttemptForSettlement(strapi, Number(failureAttempt.id), "Failed")
+        : true;
+
+      if (alreadySettled || !claimedFailed) {
+        strapi.log.info("Mellat failure callback ignored: order/attempt already finalized", {
+          orderId,
+          ResCode,
+          currentStatus: currentOrder?.Status,
+          attemptId: failureAttempt?.id,
+        });
+        if (ResCode === "17") {
+          ctx.redirect(buildPaymentResultRedirectUrl("cancelled", { orderId, reason: "user-cancelled" }));
+        } else {
+          ctx.redirect(
+            buildPaymentResultRedirectUrl("failure", {
+              orderId,
+              error: `Payment failed with code: ${ResCode}`,
+            }),
+          );
+        }
+        return;
+      }
+
+      // Log payment failure to user activity feed before cancelling
+      try {
+        const userId = currentOrder?.user?.id ? Number(currentOrder.user.id) : null;
+        if (userId) {
+          const activityService = strapi.service("api::user-activity.user-activity") as any;
+          const reason = ResCode === "17" ? "لغو شده توسط کاربر" : "خطا در پرداخت";
+          if (activityService?.logPaymentFailed) {
+            await activityService.logPaymentFailed(userId, orderId, reason);
+          }
+        }
+      } catch (activityError) {
+        strapi.log.error("Failed to log payment failure to user activity", {
+          orderId,
+          error: (activityError as Error).message,
+        });
+      }
+
+      try {
+        await strapi.entityService.update("api::order.order", orderId, {
+          data: { Status: "Cancelled" },
+        });
+        try {
+          await releaseOrderReservation(strapi as any, Number(orderId), "Released");
+        } catch {}
+        strapi.log.info(`Order ${orderId} marked as Cancelled due to payment failure/cancellation`);
+      } catch (updateError) {
+        strapi.log.error(`Failed to update order ${orderId} status:`, updateError);
       }
 
       // Log the specific error/cancellation
       try {
-        if (!isNaN(orderId)) {
-          await strapi.entityService.create("api::order-log.order-log", {
-            data: {
-              order: orderId,
-              Action: "Update",
-              Description: "Gateway callback failure/cancellation",
-              Changes: { ResCode, SaleOrderId, SaleReferenceId, RefId },
-            },
-          });
-        }
+        await strapi.entityService.create("api::order-log.order-log", {
+          data: {
+            order: orderId,
+            Action: "Update",
+            Description: "Gateway callback failure/cancellation",
+            Changes: { ResCode, SaleOrderId, SaleReferenceId, RefId },
+          },
+        });
       } catch (e) {
         strapi.log.error("Failed to persist gateway failure log", e);
       }
@@ -1447,12 +1734,12 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       if (ResCode === "17") {
         strapi.log.info("Payment cancelled by user:", { orderId, ResCode });
         // User cancelled - redirect to frontend cancellation page
-        ctx.redirect(buildPaymentRedirectUrl("cancelled", { orderId, reason: "user-cancelled" }));
+        ctx.redirect(buildPaymentResultRedirectUrl("cancelled", { orderId, reason: "user-cancelled" }));
       } else {
         strapi.log.error("Payment failed with ResCode:", ResCode);
         // Other payment failures - redirect to frontend failure page
         ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
+          buildPaymentResultRedirectUrl("failure", {
             orderId,
             error: `Payment failed with code: ${ResCode}`,
           }),
@@ -1472,23 +1759,31 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
               external_id: String(SaleReferenceId),
               Status: "Success",
             },
+            populate: { contract: { populate: { order: true } } },
             limit: 1,
           },
         );
 
         if (existingTx && existingTx.length > 0) {
-          const orderId = parseInt(OrderId || SaleOrderId, 10);
+          const existingOrderRelation: any = (existingTx[0] as any)?.contract?.order;
+          const existingOrderId = existingOrderRelation
+            ? Number(
+                typeof existingOrderRelation === "object"
+                  ? existingOrderRelation.id
+                  : existingOrderRelation,
+              )
+            : undefined;
           strapi.log.info(
-            `Mellat callback already processed (idempotency check): SaleReferenceId=${SaleReferenceId}, orderId=${orderId}`,
+            `Mellat callback already processed (idempotency check): SaleReferenceId=${SaleReferenceId}, orderId=${existingOrderId}`,
             {
               saleReferenceId: String(SaleReferenceId),
-              orderId,
+              orderId: existingOrderId,
               existingTxId: existingTx[0].id,
             },
           );
-          // Redirect to success page - transaction already processed
-          if (!isNaN(orderId)) {
-            return ctx.redirect(buildPaymentRedirectUrl("success", { orderId }));
+          // Redirect to the transaction's own order, never a caller-supplied one.
+          if (existingOrderId && !Number.isNaN(existingOrderId)) {
+            return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId: existingOrderId }));
           }
           return ctx.badRequest("Callback already processed");
         }
@@ -1498,26 +1793,69 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       }
     }
 
+    if (!mellatRefIdRaw) {
+      strapi.log.error("Mellat callback missing RefId; cannot correlate to a payment attempt", {
+        OrderId,
+        SaleOrderId,
+        SaleReferenceId,
+      });
+      return ctx.badRequest("Invalid payment reference", {
+        data: { success: false, error: "Invalid payment reference (Mellat)" },
+      });
+    }
+
+    const attempt: any = await findPaymentAttemptByProviderReference(
+      strapi,
+      "mellat",
+      mellatRefIdRaw,
+    );
+    const correlatedOrderId = attempt?.order?.id ? Number(attempt.order.id) : undefined;
+
+    if (!attempt || !correlatedOrderId) {
+      strapi.log.error("Mellat callback RefId does not match any known payment attempt", {
+        refId: mellatRefIdRaw,
+        callbackOrderId: mellatCallbackOrderId,
+      });
+      return ctx.badRequest("Invalid payment reference", {
+        data: { success: false, error: "Invalid payment reference (Mellat)" },
+      });
+    }
+
+    if (Number.isFinite(mellatCallbackOrderId) && mellatCallbackOrderId !== correlatedOrderId) {
+      strapi.log.error(
+        "Mellat callback OrderId does not match the order bound to this RefId; rejecting",
+        { refId: mellatRefIdRaw, callbackOrderId: mellatCallbackOrderId, correlatedOrderId },
+      );
+      return ctx.badRequest("Invalid order reference", {
+        data: { success: false, error: "Invalid order reference (Mellat)" },
+      });
+    }
+
+    const orderId = correlatedOrderId;
+
+    const orderForConsumedCheck: any = await strapi.entityService.findOne(
+      "api::order.order",
+      orderId,
+      { fields: ["ReservationStatus"] } as any,
+    );
+
+    if (String(orderForConsumedCheck?.ReservationStatus) === "Consumed") {
+      strapi.log.info("Mellat callback for already-consumed order; idempotent no-op", {
+        orderId,
+        refId: mellatRefIdRaw,
+      });
+      return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
+    }
+
     // Mellat: verify and settle
     const paymentService = strapi.service("api::payment-gateway.mellat-v3");
     const verificationResult = await paymentService.verifyTransaction({
-      orderId: OrderId || SaleOrderId,
+      orderId: String(orderId),
       saleOrderId: SaleOrderId,
       saleReferenceId: SaleReferenceId,
     });
 
     if (verificationResult.success) {
-      // Get the order from OrderId
-      const orderId = parseInt(OrderId || SaleOrderId, 10);
-      if (isNaN(orderId)) {
-        return ctx.badRequest("Invalid order ID", {
-          data: {
-            success: false,
-            error: "Invalid order ID",
-          },
-        });
-      }
-
       // Settle the transaction
       // Reservation check BEFORE settlement: if reservation expired, reverse payment and inform user.
       try {
@@ -1548,7 +1886,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
 
             try {
               await paymentService.reverseTransaction({
-                orderId: OrderId || SaleOrderId,
+                orderId: String(orderId),
                 saleOrderId: SaleOrderId,
                 saleReferenceId: SaleReferenceId,
               });
@@ -1585,7 +1923,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
             } catch {}
 
             return ctx.redirect(
-              buildPaymentRedirectUrl("issue", {
+              buildPaymentResultRedirectUrl("issue", {
                 orderId,
                 code: "reservation_expired_reversed",
               }),
@@ -1597,29 +1935,93 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       }
 
       const settlementResult = await paymentService.settleTransaction({
-        orderId: OrderId || SaleOrderId,
+        orderId: String(orderId),
         saleOrderId: SaleOrderId,
         saleReferenceId: SaleReferenceId,
       });
 
       if (settlementResult.success) {
+        // Atomic one-time claim: only the caller that wins this guarded CAS
+        // may proceed to consume stock and finalize the order/contract. A
+        // losing claim means another (concurrent or replayed) callback for
+        // this exact attempt already finalized it — idempotent replay, no
+        // side effects. Called standalone (not inside a DB transaction)
+        // because it uses the raw connection pool directly.
+        if (attempt?.id) {
+          const claimed = await claimPaymentAttemptForSettlement(
+            strapi,
+            Number(attempt.id),
+            "Succeeded",
+          );
+          if (!claimed) {
+            const current: any = await strapi.entityService.findOne(
+              "api::payment-attempt.payment-attempt",
+              Number(attempt.id),
+              { fields: ["Status"] } as any,
+            );
+            if (String(current?.Status) === "Succeeded") {
+              strapi.log.info(
+                "Mellat settlement already claimed by a concurrent/duplicate callback",
+                { orderId, attemptId: attempt.id },
+              );
+              return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
+            }
+            strapi.log.error("Mellat payment attempt not claimable at settlement time", {
+              orderId,
+              attemptId: attempt.id,
+              status: current?.Status,
+            });
+            return ctx.redirect(
+              buildPaymentResultRedirectUrl("issue", { orderId, code: "attempt_not_claimable" }),
+            );
+          }
+        } else {
+          strapi.log.error(
+            "Mellat settlement proceeding without a payment_attempts row (legacy order predating attempt tracking)",
+            { orderId, refId: mellatRefIdRaw },
+          );
+        }
+
         // Update order status to Started (Paid)
         // Stock handling:
         // - Reserved orders: consume reservation (Count-- and ReservedCount--) atomically
         // - Legacy orders: fallback to direct decrement
-        const stockResult = await handlePostPaymentStock(strapi, orderId, "Mellat");
+        const stockResult = await handlePostPaymentStock(strapi, orderId, "Mellat", {
+          requireReservation: true,
+        });
         const stockErrors =
           stockResult.errors && stockResult.errors.length > 0
             ? stockResult.errors
             : stockResult.success
-              ? []
-              : [
-                  {
-                    error: stockResult.expired ? "Reservation expired" : "Stock decrement failed",
-                  },
-                ];
+            ? []
+            : [
+                {
+                  error: stockResult.expired ? "Reservation expired" : "Stock decrement failed",
+                },
+              ];
 
         if (!stockResult.success || stockErrors.length > 0) {
+          // We already claimed the attempt as Succeeded above (money was
+          // taken), but local stock consumption failed — ambiguous, not a
+          // clean failure. Downgrade to "Unknown" rather than asserting a
+          // false terminal state; never write "Failed" after a successful
+          // claim.
+          if (attempt?.id) {
+            try {
+              await updatePaymentAttempt(strapi, Number(attempt.id), {
+                Status: "Unknown",
+                failureCode: stockResult.expired ? "RESERVATION_EXPIRED" : "STOCK_CONSUME_FAILED",
+                failureMessage:
+                  "Payment claimed but stock could not be consumed; needs reconciliation",
+                lastReconciledAt: new Date(),
+              });
+            } catch (err) {
+              strapi.log.error(
+                "Failed to downgrade Mellat payment attempt after stock failure",
+                err,
+              );
+            }
+          }
           const referenceId = SaleReferenceId || RefId || OrderId || SaleOrderId;
           return handleStockDecrementFailure(strapi, ctx, {
             orderId,
@@ -1703,10 +2105,30 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         await clearCartAfterPayment(strapi, orderId);
 
         // Redirect to frontend success page
-        ctx.redirect(buildPaymentRedirectUrl("success", { orderId }));
+        ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
       } else {
-        // Settlement failed
+        // Settlement failed after a genuine verify success — ambiguous
+        // (bank ResCode 45 can mean "already settled elsewhere"), so mark
+        // the attempt "Unknown" for reconciliation rather than "Failed".
+        // bpReversalRequest only works same-day and pre-settle per the
+        // official doc, so no automatic reversal is attempted here; this
+        // intentionally routes to manual reconciliation.
         console.error("Payment settlement failed:", settlementResult.error);
+        if (attempt?.id) {
+          try {
+            await updatePaymentAttempt(strapi, Number(attempt.id), {
+              Status: "Unknown",
+              failureCode: "SETTLE_FAILED",
+              failureMessage: settlementResult.error || "Settlement failed",
+              lastReconciledAt: new Date(),
+            });
+          } catch (err) {
+            strapi.log.error(
+              "Failed to mark Mellat payment attempt Unknown after settle failure",
+              err,
+            );
+          }
+        }
         try {
           await strapi.entityService.create("api::order-log.order-log", {
             data: {
@@ -1725,38 +2147,48 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           strapi.log.error("Failed to persist gateway settlement failure log", e);
         }
         ctx.redirect(
-          buildPaymentRedirectUrl("failure", {
+          buildPaymentResultRedirectUrl("failure", {
+            orderId,
             error: settlementResult.error || "Settlement failed",
           }),
         );
       }
     } else {
-      // Log the failure
+      // Verification failed. Correlation already happened above, so
+      // `orderId`/`attempt` are trustworthy — no order mutation here (this
+      // mirrors prior behavior; the reservation expiry job reclaims
+      // genuinely-abandoned stock), just a best-effort attempt claim so a
+      // concurrent success can never be undone by this branch.
       console.error("Payment verification failed:", verificationResult.error);
-      const orderId = parseInt(OrderId || SaleOrderId, 10);
-      try {
-        if (!isNaN(orderId)) {
-          await strapi.entityService.create("api::order-log.order-log", {
-            data: {
-              order: orderId,
-              Action: "Update",
-              Description: "Gateway verification failed",
-              Changes: {
-                error: verificationResult.error,
-                SaleOrderId,
-                SaleReferenceId,
-                RefId,
-              },
-            },
-          });
+      if (attempt?.id) {
+        try {
+          await claimPaymentAttemptForSettlement(strapi, Number(attempt.id), "Failed");
+        } catch (err) {
+          strapi.log.error("Failed to claim Mellat payment attempt after verify failure", err);
         }
+      }
+      try {
+        await strapi.entityService.create("api::order-log.order-log", {
+          data: {
+            order: orderId,
+            Action: "Update",
+            Description: "Gateway verification failed",
+            Changes: {
+              error: verificationResult.error,
+              SaleOrderId,
+              SaleReferenceId,
+              RefId,
+            },
+          },
+        });
       } catch (e) {
         strapi.log.error("Failed to persist gateway verification failure log", e);
       }
 
       // Redirect to frontend failure page
       ctx.redirect(
-        buildPaymentRedirectUrl("failure", {
+        buildPaymentResultRedirectUrl("failure", {
+          orderId,
           error: verificationResult.error || "Verification failed",
         }),
       );
@@ -1778,6 +2210,6 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
     } catch (e) {
       strapi.log.error("Failed to persist gateway internal error log", e);
     }
-    ctx.redirect(buildPaymentRedirectUrl("failure", { error: "Internal server error" }));
+    ctx.redirect(buildPaymentResultRedirectUrl("failure", { error: "Internal server error" }));
   }
 }

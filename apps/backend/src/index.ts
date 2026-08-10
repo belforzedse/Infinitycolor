@@ -29,6 +29,7 @@ import {
 } from "./api/payment-gateway/services/snappay-orchestrator";
 import { backfillLegacySnappayAttempts } from "./api/payment-gateway/services/snappay-legacy-backfill";
 import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/snappay-database";
+import { ensurePaymentAttemptDatabaseInvariants } from "./api/payment-attempt/services/payment-attempt-database";
 import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 import {
   ADMIN_ROLE_DEFINITIONS,
@@ -1161,6 +1162,9 @@ export default {
       // PostgreSQL boot. A non-Postgres database still fails closed if hardened
       // initiation is explicitly enabled.
       await ensureSnappayDatabaseInvariants(strapi as any);
+      // Mellat is always active (no feature flag), so its own payment-attempt
+      // provider-reference invariant runs unconditionally alongside SnappPay's.
+      await ensurePaymentAttemptDatabaseInvariants(strapi as any);
     }
 
     if (snappayHardenedInitiationEnabled) {

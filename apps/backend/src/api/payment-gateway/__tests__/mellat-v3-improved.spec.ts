@@ -8,7 +8,7 @@
 const mockPaymentRequest = jest.fn();
 const mockVerifyPayment = jest.fn();
 const mockSettlePayment = jest.fn();
-const mockReversePayment = jest.fn();
+const mockReversalRequest = jest.fn();
 const mockInitialize = jest.fn();
 
 jest.mock("mellat-checkout", () => {
@@ -18,7 +18,7 @@ jest.mock("mellat-checkout", () => {
     paymentRequest: mockPaymentRequest,
     verifyPayment: mockVerifyPayment,
     settlePayment: mockSettlePayment,
-    reversePayment: mockReversePayment,
+    reversalRequest: mockReversalRequest,
   }));
 });
 

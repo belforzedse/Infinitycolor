@@ -54,6 +54,8 @@ function getSyncConfig(env = process.env) {
       hourly: booleanSetting(env.WOOCOMMERCE_SYNC_ENABLE_HOURLY, {
         name: "WOOCOMMERCE_SYNC_ENABLE_HOURLY", fallback: true,
       }),
+      // Nightly full cutover (products/media/stock/price/users/orders). Off by
+      // default in code; production enables it explicitly.
       friday: booleanSetting(env.WOOCOMMERCE_SYNC_ENABLE_FRIDAY, {
         name: "WOOCOMMERCE_SYNC_ENABLE_FRIDAY", fallback: false,
       }),
@@ -65,6 +67,9 @@ function getSyncConfig(env = process.env) {
         name: "WOOCOMMERCE_SYNC_ENABLE_RECONCILE", fallback: false,
       }),
     },
+    // Nightly cutover wall-clock (Asia/Tehran by default). Daily at 23:59 —
+    // once per night, not rapid/frequent.
+    fridayCron: env.WOOCOMMERCE_SYNC_FRIDAY_CRON || "59 23 * * *",
     // Cron cadence for full-catalog reconciliation, off-peak by default.
     // Unlike hourly/friday's cadence (hardcoded), this is configurable per the
     // requirement that reconciliation cadence live in normal app config.
@@ -84,8 +89,15 @@ function getSyncConfig(env = process.env) {
       variations: boundedInt(env.IMPORT_CONCURRENCY_VARIATIONS, { name: "IMPORT_CONCURRENCY_VARIATIONS", fallback: 8, max: 32 }),
       videos: boundedInt(env.IMPORT_CONCURRENCY_VIDEOS, { name: "IMPORT_CONCURRENCY_VIDEOS", fallback: 1, max: 2 }),
       entities: boundedInt(env.IMPORT_CONCURRENCY_ENTITIES, { name: "IMPORT_CONCURRENCY_ENTITIES", fallback: 8, max: 32 }),
+      // Nightly cutover runs off-peak with a large catalog — allow high parallelism.
       fridayInventory: boundedInt(env.WOOCOMMERCE_SYNC_FRIDAY_INVENTORY_CONCURRENCY, {
         name: "WOOCOMMERCE_SYNC_FRIDAY_INVENTORY_CONCURRENCY", fallback: 32, max: 32,
+      }),
+      fridayImages: boundedInt(env.WOOCOMMERCE_SYNC_FRIDAY_IMAGE_CONCURRENCY, {
+        name: "WOOCOMMERCE_SYNC_FRIDAY_IMAGE_CONCURRENCY", fallback: 12, max: 16,
+      }),
+      fridayEntities: boundedInt(env.WOOCOMMERCE_SYNC_FRIDAY_ENTITY_CONCURRENCY, {
+        name: "WOOCOMMERCE_SYNC_FRIDAY_ENTITY_CONCURRENCY", fallback: 24, max: 32,
       }),
     },
     postgres: env.DATABASE_URL ? { connectionString: env.DATABASE_URL } : {

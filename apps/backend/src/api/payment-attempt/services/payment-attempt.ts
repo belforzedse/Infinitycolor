@@ -1,15 +1,16 @@
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
 import type { PaymentAttemptStatus } from "@repo/api/commerce";
-export { claimPaymentAttemptForInitiation } from "./claim-payment-attempt";
+export {
+  claimPaymentAttemptForInitiation,
+  claimPaymentAttemptForSettlement,
+} from "./claim-payment-attempt";
 export {
   findOrderPaymentAttempt,
+  findPaymentAttemptByProviderReference,
   updatePaymentAttempt,
 } from "./payment-attempt-store";
-import {
-  findOrderPaymentAttempt,
-  updatePaymentAttempt,
-} from "./payment-attempt-store";
+import { findOrderPaymentAttempt, updatePaymentAttempt } from "./payment-attempt-store";
 import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
 
 export type { PaymentAttemptStatus } from "@repo/api/commerce";
@@ -53,19 +54,14 @@ export const paymentAttemptResponse = (attempt: any) => {
     redirectUrl: attempt?.redirectUrl || "",
     refId: attempt?.providerReference || "",
     requestId: attempt?.providerReference || attempt?.attemptId,
-    errorCode:
-      attempt?.failureCode || (inProgress ? "PAYMENT_IN_PROGRESS" : undefined),
+    errorCode: attempt?.failureCode || (inProgress ? "PAYMENT_IN_PROGRESS" : undefined),
     message:
-      attempt?.failureMessage ||
-      (inProgress ? "پرداخت قبلی هنوز در حال بررسی است" : undefined),
+      attempt?.failureMessage || (inProgress ? "پرداخت قبلی هنوز در حال بررسی است" : undefined),
     financialSummary: attempt?.quoteSnapshot?.financialSummary,
   };
 };
 
-export async function reconcileOrderPaymentAttempt(
-  strapi: Strapi,
-  order: any,
-) {
+export async function reconcileOrderPaymentAttempt(strapi: Strapi, order: any) {
   const orderId = Number(order?.id);
   if (!orderId) return null;
   const attempt: any = await findOrderPaymentAttempt(strapi, orderId);

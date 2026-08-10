@@ -142,7 +142,11 @@ function walletRevision(row) {
 }
 
 function safeErrorCode(error) {
-  const raw = String(error?.code || error?.payload?.error || error?.name || "UNKNOWN").toUpperCase();
+  const message = String(error?.message || "");
+  const screamingMessage = /^[A-Z][A-Z0-9_.:-]*$/.test(message) ? message : null;
+  const raw = String(
+    error?.code || error?.payload?.error || screamingMessage || error?.name || "UNKNOWN",
+  ).toUpperCase();
   return raw.replace(/[^A-Z0-9_.:-]/g, "_").slice(0, 128);
 }
 
@@ -624,32 +628,47 @@ class WooSyncService {
     });
   }
 
-  async fullUsersAndWallets() {
+  async fullUsersAndWallets({ concurrency } = {}) {
     let users = 0;
     let wallets = 0;
+    let failed = 0;
+    const poolSize = concurrency ?? this.config.concurrency.entities;
     for await (const page of this.source.customers()) {
-      await mapPool(page.rows, this.config.concurrency.entities, async (customer) => {
-        await ensureActive(this.state);
-        await this.destination.upsertUser(T.customerPayload(customer));
-        users += 1;
+      await mapPool(page.rows, poolSize, async (customer) => {
         try {
-          const balance = await this.source.getWalletBalance(customer.id);
           await ensureActive(this.state);
-          await this.destination.upsertWallet(T.walletPayload({ id: customer.id, balance: T.walletBalanceValue(balance) }));
-          wallets += 1;
+          await this.destination.upsertUser(T.customerPayload(customer));
+          users += 1;
+          try {
+            const balance = await this.source.getWalletBalance(customer.id);
+            await ensureActive(this.state);
+            await this.destination.upsertWallet(T.walletPayload({
+              id: customer.id,
+              balance: T.walletBalanceValue(balance),
+            }));
+            wallets += 1;
+          } catch (error) {
+            if (/NOT_FOUND|404/.test(String(error?.payload?.error || error?.message || ""))) return;
+            throw error;
+          }
         } catch (error) {
-          if (!/NOT_FOUND|404/.test(String(error?.payload?.error || error?.message || ""))) throw error;
+          failed += 1;
+          console.warn("[WooSync] campaign user failed", {
+            sourceIdHash: logId("customer", customer.id),
+            errorCode: safeErrorCode(error),
+          });
         }
       });
     }
-    return { users, wallets };
+    return { users, wallets, failed };
   }
 
-  async fullOrders() {
+  async fullOrders({ concurrency } = {}) {
     let completed = 0;
     let failed = 0;
+    const poolSize = concurrency ?? this.config.concurrency.entities;
     for await (const page of this.source.orders()) {
-      await mapPool(page.rows, this.config.concurrency.entities, async (order) => {
+      await mapPool(page.rows, poolSize, async (order) => {
         try {
           await this.syncOrderRow({ source_id: order.id });
           completed += 1;
@@ -688,29 +707,52 @@ class WooSyncService {
           error.code = immediate.skipped ? "FRIDAY_NEW_PRODUCTS_LEASE_HELD" : "FRIDAY_NEW_PRODUCTS_HAS_FAILURES";
           throw error;
         }
-        await this.state.campaignStep(campaignKey, token, "inventory", { immediate });
+        // Nightly cutover runs off-peak with a large catalog — push concurrency hard.
+        // Product parents stay serial (CatalogEngine safety); media/variations/entities scale up.
+        const campaignConcurrency = {
+          ...this.config.concurrency,
+          variations: this.config.concurrency.fridayInventory,
+          images: this.config.concurrency.fridayImages,
+          entities: this.config.concurrency.fridayEntities,
+        };
         const campaignConfig = {
           ...this.config,
-          concurrency: { ...this.config.concurrency, variations: this.config.concurrency.fridayInventory },
+          concurrency: campaignConcurrency,
+          sourcePageConcurrency: Math.max(this.config.sourcePageConcurrency, 8),
         };
+        const engineFactory = this.createCatalogEngine || createCatalogEngine;
+        // full-sync: every product + backfill missing media; preserve existing covers.
+        // Soft-fail — media flake must not abort wallets/orders for the night.
+        await this.state.campaignStep(campaignKey, token, "catalog-full", { immediate });
+        const catalog = catalogReportSummary(
+          "full-sync",
+          await engineFactory(campaignConfig).runSync({ dryRun: false, scope: "full-sync" }),
+        );
+        await this.state.campaignStep(campaignKey, token, "inventory", { catalog });
         const stock = catalogReportSummary(
           "stock",
-          await createCatalogEngine(campaignConfig).runSync({ dryRun: false, scope: "stock" }),
+          await engineFactory(campaignConfig).runSync({ dryRun: false, scope: "stock" }),
         );
         assertCatalogReportSucceeded(stock);
         const price = catalogReportSummary(
           "price",
-          await createCatalogEngine(campaignConfig).runSync({ dryRun: false, scope: "price" }),
+          await engineFactory(campaignConfig).runSync({ dryRun: false, scope: "price" }),
         );
         assertCatalogReportSucceeded(price);
         await this.state.campaignStep(campaignKey, token, "inventory-complete", { stock, price });
         await this.state.campaignStep(campaignKey, token, "users-wallets");
-        const identities = await this.fullUsersAndWallets();
+        const identities = await this.fullUsersAndWallets({ concurrency: campaignConcurrency.entities });
         await this.state.campaignStep(campaignKey, token, "orders", { identities });
-        const orders = await this.fullOrders();
-        const status = orders.failed > 0 ? "completed-with-exceptions" : "completed";
+        const orders = await this.fullOrders({ concurrency: campaignConcurrency.entities });
+        const status = (
+          Number(catalog.failed || 0) > 0
+          || Number(identities.failed || 0) > 0
+          || Number(orders.failed || 0) > 0
+        )
+          ? "completed-with-exceptions"
+          : "completed";
         await this.state.finishCampaign(campaignKey, token, status);
-        return { campaignKey, status, identities, orders };
+        return { campaignKey, status, catalog, identities, orders };
       } catch (error) {
         await this.state.finishCampaign(campaignKey, token, "failed", safeErrorCode(error)).catch(() => undefined);
         throw error;
@@ -855,7 +897,7 @@ async function registerSchedulers(queue, config) {
   const definitions = [
     ["discovery", { every: config.pollMs }, JOBS.discovery],
     ["hourly", { pattern: "0 * * * *", tz: config.timezone }, JOBS.hourly],
-    ["friday", { pattern: "59 23 * * 5", tz: config.timezone }, JOBS.friday],
+    ["friday", { pattern: config.fridayCron, tz: config.timezone }, JOBS.friday],
     ["reconcile", { pattern: config.reconcileCron, tz: config.timezone }, JOBS.reconcile],
   ];
   for (const [schedule, repeat, jobName] of definitions) {

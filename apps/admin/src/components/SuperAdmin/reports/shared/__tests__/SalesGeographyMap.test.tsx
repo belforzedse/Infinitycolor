@@ -3,6 +3,8 @@ import type { SalesBreakdownRow } from "@/services/super-admin/reports/salesBrea
 
 let lastChoroplethProps: {
   data?: Array<{ name: string; value: number }>;
+  width?: number;
+  height?: number;
   renderTooltipContent?: (provinceData: { name: string; value: number } | null) => string;
 } | null = null;
 
@@ -33,6 +35,8 @@ jest.mock("next/dynamic", () => {
 jest.mock("react-iran-maps", () => ({
   ChoroplethMap: (props: {
     data?: Array<{ name: string; value: number }>;
+    width?: number;
+    height?: number;
     renderTooltipContent?: (provinceData: { name: string; value: number } | null) => string;
   }) => {
     lastChoroplethProps = props;
@@ -65,7 +69,7 @@ describe("SalesGeographyMap", () => {
     render(
       <SalesGeographyMap
         rows={[
-          row({ key: "تهران", label: "تهران", ordersCount: 5, netToman: 500 }),
+          row({ key: "تهران", label: "تهران", ordersCount: 5, units: 8, netToman: 500 }),
           row({ key: "", label: "نامشخص", ordersCount: 2, netToman: 200 }),
         ]}
       />,
@@ -74,6 +78,21 @@ describe("SalesGeographyMap", () => {
     expect(await screen.findByTestId("choropleth")).toBeInTheDocument();
     expect(lastChoroplethProps?.data).toEqual([{ name: "تهران", value: 500 }]);
     expect(screen.getByText(/سفارش بدون آدرس تحویل قابل‌شناسایی/)).toBeInTheDocument();
+    expect(screen.getByText("برترین استان")).toBeInTheDocument();
+    expect(screen.getByText("تهران")).toBeInTheDocument();
+  });
+
+  it("renders a large map frame and passes wide choropleth dimensions", async () => {
+    render(
+      <SalesGeographyMap
+        rows={[row({ key: "تهران", label: "تهران", ordersCount: 5, netToman: 500 })]}
+      />,
+    );
+
+    await screen.findByTestId("choropleth");
+    expect(screen.getByTestId("geography-map-frame")).toHaveStyle({ minHeight: "560px" });
+    expect(lastChoroplethProps?.width).toBeGreaterThanOrEqual(800);
+    expect(lastChoroplethProps?.height).toBeGreaterThanOrEqual(560);
   });
 
   it("renders nothing when there are no mappable rows and no unmapped orders", () => {
@@ -82,13 +101,15 @@ describe("SalesGeographyMap", () => {
     expect(screen.queryByTestId("choropleth")).not.toBeInTheDocument();
   });
 
-  it("escapes an interpolated province name in the tooltip HTML (XSS guard)", async () => {
+  it("escapes tooltip HTML and includes order/unit details", async () => {
     render(
       <SalesGeographyMap
         rows={[
           row({
             key: "x",
             label: '<img src=x onerror=alert(1)>',
+            ordersCount: 4,
+            units: 7,
             netToman: 1000,
           }),
         ]}
@@ -102,5 +123,7 @@ describe("SalesGeographyMap", () => {
     });
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img");
+    expect(html).toContain("سفارش‌ها");
+    expect(html).toContain("تعداد کالا");
   });
 });

@@ -16,12 +16,29 @@ jest.mock('mellat-checkout', () => {
     paymentRequest: mockMellatPayment,
     verifyPayment: mockMellatVerify,
     settlePayment: mockMellatSettle,
-    reversePayment: mockMellatReverse,
+    reversalRequest: mockMellatReverse,
   }));
 });
 
 // Import service AFTER mocking
 let mellatServiceFactory: any;
+
+describe('mellat-checkout SDK surface (regression guard)', () => {
+  it('exposes reversalRequest, not a reversePayment method that was never real', () => {
+    // Bypasses the jest.mock above to inspect the actual installed package.
+    // mellat-v3.ts previously called `mellat.reversePayment(...)`, a method
+    // this SDK has never exported; every real reversal call threw a
+    // TypeError, silently caught into `{success:false}`. Both spec files'
+    // mocks fabricated a `reversePayment` key, which is exactly how that
+    // masked the bug — this test reads the real export list so a future
+    // rename typo (in either direction) fails loudly here instead.
+    const RealMellatCheckout = jest.requireActual('mellat-checkout');
+    const methods = Object.getOwnPropertyNames(RealMellatCheckout.prototype);
+
+    expect(methods).toContain('reversalRequest');
+    expect(methods).not.toContain('reversePayment');
+  });
+});
 
 describe('Mellat v3 Payment Gateway - Real Service', () => {
   let mockStrapi: any;

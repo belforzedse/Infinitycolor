@@ -36,10 +36,12 @@ export default function CopyTextField({ value, onChange, readOnly }: Props) {
   };
 
   return (
-    <div className="flex w-full items-center gap-2 rounded-lg border border-neutral-200 px-5 py-3">
+    <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg border border-neutral-200 px-4 py-3">
       <button
-        className="flex h-5 w-5 items-center justify-center"
+        type="button"
+        className="flex h-5 w-5 shrink-0 items-center justify-center"
         onClick={handleCopy}
+        aria-label="کپی"
       >
         <CopyIcon />
       </button>
@@ -47,7 +49,7 @@ export default function CopyTextField({ value, onChange, readOnly }: Props) {
       <input
         type="text"
         dir="ltr"
-        className={`text-sm flex-1 ${readOnly ? "text-slate-500" : ""}`}
+        className={`min-w-0 flex-1 truncate text-sm ${readOnly ? "text-slate-500" : ""}`}
         disabled={readOnly}
         readOnly={readOnly}
         value={safeValue}
