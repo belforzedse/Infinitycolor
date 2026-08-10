@@ -28,6 +28,7 @@ export const AreaChart = dynamic(() => import("recharts").then((m) => m.AreaChar
 export const Area = dynamic(() => import("recharts").then((m) => m.Area), { ssr: false });
 export const PieChart = dynamic(() => import("recharts").then((m) => m.PieChart), { ssr: false });
 export const Pie = dynamic(() => import("recharts").then((m) => m.Pie), { ssr: false });
+export const Sankey = dynamic(() => import("recharts").then((m) => m.Sankey), { ssr: false });
 export const XAxis = dynamic(() => import("recharts").then((m) => m.XAxis), { ssr: false });
 export const YAxis = dynamic(() => import("recharts").then((m) => m.YAxis), { ssr: false });
 export const CartesianGrid = dynamic(() => import("recharts").then((m) => m.CartesianGrid), {

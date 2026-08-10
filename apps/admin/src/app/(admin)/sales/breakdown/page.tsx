@@ -7,6 +7,7 @@ import { BarChart3, TicketPercent } from "lucide-react";
 import SalesPage from "../_components/SalesPage";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import ReportExportButton from "@/components/SuperAdmin/reports/shared/ReportExportButton";
+import SalesGeographyMap from "@/components/SuperAdmin/reports/shared/SalesGeographyMap";
 import {
   useReportQueryState,
 } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
@@ -228,7 +229,11 @@ export default function SalesBreakdownReportPage() {
             </div>
           )}
 
-          {!loading && chartRows.length > 0 ? (
+          {!loading && dimension === "geography" ? (
+            <SalesGeographyMap rows={data?.rows ?? []} />
+          ) : null}
+
+          {!loading && dimension !== "geography" && chartRows.length > 0 ? (
             <RankedBreakdownChart dimension={dimension} rows={chartRows} />
           ) : null}
 

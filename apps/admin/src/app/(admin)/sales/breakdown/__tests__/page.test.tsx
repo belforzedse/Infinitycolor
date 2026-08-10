@@ -42,6 +42,13 @@ jest.mock("@/components/SuperAdmin/reports/shared/charts", () => ({
   REPORT_CHART_COLORS: ["#000000"],
 }));
 
+jest.mock("@/components/SuperAdmin/reports/shared/SalesGeographyMap", () => ({
+  __esModule: true,
+  default: ({ rows }: { rows: Array<{ key: string }> }) => (
+    <div data-testid="geography-map">{rows.length} rows</div>
+  ),
+}));
+
 let mockTab = "status";
 const setTabMock = jest.fn((t: string) => {
   mockTab = t;
@@ -146,6 +153,41 @@ describe("SalesBreakdownReportPage", () => {
     expect(screen.getByText("SUMMER10")).toBeInTheDocument();
     expect(screen.getByText(/۴ سفارش · ۱۰۰٬۰۰۰ تومان تخفیف/)).toBeInTheDocument();
     expect(screen.getByText("۹۰۰٬۰۰۰ تومان")).toBeInTheDocument();
+  });
+
+  it("shows the Iran map above the table on the geography tab", async () => {
+    mockTab = "geography";
+    getSalesBreakdownMock.mockResolvedValue(
+      makeResponse({
+        dimension: "geography",
+        rows: [
+          {
+            key: "تهران",
+            label: "تهران",
+            ordersCount: 5,
+            units: 5,
+            grossToman: 500,
+            discountsToman: 0,
+            refundsToman: 0,
+            netToman: 500,
+          },
+          {
+            key: "",
+            label: "نامشخص",
+            ordersCount: 2,
+            units: 2,
+            grossToman: 200,
+            discountsToman: 0,
+            refundsToman: 0,
+            netToman: 200,
+          },
+        ],
+      }),
+    );
+    render(<SalesBreakdownReportPage />);
+    expect(await screen.findByTestId("geography-map")).toHaveTextContent("2 rows");
+    expect(screen.getAllByTestId("table-row")).toHaveLength(2);
+    expect(screen.queryByText(/بیشترین فروش بر اساس/)).not.toBeInTheDocument();
   });
 
   it("shows the truncation warning when the response is truncated", async () => {

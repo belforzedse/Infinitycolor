@@ -187,6 +187,44 @@ describe("behavior report page", () => {
     expect(screen.getByText("افزودن به سبد خرید")).toBeInTheDocument();
     expect(screen.getAllByText(/ریزش این مرحله/)).toHaveLength(3);
     expect(screen.getByText(/تبدیل از ابتدا تا خرید/)).toHaveTextContent("۳۰٪");
+    expect(
+      screen.getByText(/بیشترین ریزش در مرحله «افزودن به سبد خرید» بوده است؛ ۴۰ کاربر/),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the journey flow with Persian labels and the 4-step cap footnote", async () => {
+    getBehaviorViewMock.mockImplementation(async (view: string) =>
+      view === "content"
+        ? ok({
+            kind: "content",
+            summary: { visits: 50 },
+            sections: {
+              journeys: [
+                {
+                  e1: "view_item",
+                  e2: "add_to_cart",
+                  e3: "begin_checkout",
+                  e4: "purchase",
+                  count: 20,
+                },
+                { e1: "view_item", e2: "add_to_wishlist", count: 8 },
+              ],
+            },
+            errors: {},
+          })
+        : overview,
+    );
+    render(<BehaviorReportPage />);
+    await screen.findAllByText("نمایش صفحه");
+    fireEvent.click(screen.getByRole("tab", { name: /صفحات و محصولات/ }));
+    expect(
+      await screen.findByText("پرتکرارترین توالی اقدام‌های کاربران"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/مشاهده محصول/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/افزودن به علاقه‌مندی‌ها/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/آنچه پس از اقدام چهارم رخ داده، در این داده دیده نمی‌شود/),
+    ).toBeInTheDocument();
   });
 
   it("uses p75 Core Web Vitals values and readable device, browser, and path labels", async () => {

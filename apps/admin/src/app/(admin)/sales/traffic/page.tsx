@@ -32,6 +32,7 @@ import {
 import { SiAndroid, SiApple, SiLinux } from "react-icons/si";
 import SalesPage from "../_components/SalesPage";
 import ReportDateRangeField from "@/components/SuperAdmin/reports/shared/ReportDateRangeField";
+import JourneyFlow from "@/components/SuperAdmin/reports/shared/JourneyFlow";
 import {
   parseDateOnly,
   toDateOnly,
@@ -684,6 +685,22 @@ function FunnelVisualization({ value }: { value: unknown }) {
   const firstCount = Math.max(funnelStepCount(steps[0]), 1);
   const lastCount = funnelStepCount(steps[steps.length - 1]);
   const overallRate = (lastCount / firstCount) * 100;
+
+  let biggestDropoff: { label: string; count: number; rate: number | null } | null = null;
+  for (let index = 1; index < steps.length; index += 1) {
+    const count = funnelStepCount(steps[index]);
+    const previousCount = funnelStepCount(steps[index - 1]);
+    const dropoffCount = Math.max(0, previousCount - count);
+    if (dropoffCount <= 0) continue;
+    if (!biggestDropoff || dropoffCount > biggestDropoff.count) {
+      biggestDropoff = {
+        label: presentBehaviorValue(steps[index].value ?? steps[index].label ?? steps[index].name, "event"),
+        count: dropoffCount,
+        rate: previousCount ? (dropoffCount / previousCount) * 100 : null,
+      };
+    }
+  }
+
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
       <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -697,6 +714,12 @@ function FunnelVisualization({ value }: { value: unknown }) {
           تبدیل از ابتدا تا خرید: <strong className="text-infinity-primary">{percentText(overallRate)}</strong>
         </div>
       </div>
+      {biggestDropoff ? (
+        <p className="border-b border-slate-100 bg-rose-50/60 px-4 py-2.5 text-xs text-rose-800 md:px-5">
+          بیشترین ریزش در مرحله «{biggestDropoff.label}» بوده است؛{" "}
+          {numberText(biggestDropoff.count, 0)} کاربر ({percentText(biggestDropoff.rate)}) ادامه نداده‌اند.
+        </p>
+      ) : null}
       <ol className="space-y-3 p-4 md:p-5" aria-label="مراحل مسیر خرید">
         {steps.map((row, index) => {
           const count = funnelStepCount(row);
@@ -749,22 +772,6 @@ function FunnelVisualization({ value }: { value: unknown }) {
         })}
       </ol>
     </div>
-  );
-}
-
-function JourneyTable({ value }: { value: unknown }) {
-  return (
-    <SimpleTable
-      title="مسیرهای پرتکرار کاربر"
-      rows={asRows(value)}
-      label={(row) =>
-        [row.e1, row.e2, row.e3, row.e4]
-          .filter(Boolean)
-          .map((item) => presentBehaviorValue(item, "event"))
-          .join(" ← ")
-      }
-      value={(row) => numberText(row.count, 0)}
-    />
   );
 }
 
@@ -1129,7 +1136,7 @@ function ViewContent({ view, data }: { view: BehaviorView; data: Row }) {
           />
           <MetricTable title="نسخه‌ها و آزمایش‌ها" rows={asRows(sections.tag)} dimension="tag" />
         </div>
-        <JourneyTable value={sections.journeys} />
+        <JourneyFlow rows={asRows(sections.journeys)} label={(v) => presentBehaviorValue(v, "event")} />
       </div>
     );
   }
