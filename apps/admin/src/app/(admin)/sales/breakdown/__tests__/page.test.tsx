@@ -122,6 +122,32 @@ describe("SalesBreakdownReportPage", () => {
     expect(setTabMock).toHaveBeenCalledWith("coupon");
   });
 
+  it("shows a directly labelled coupon impact visualization", async () => {
+    mockTab = "coupon";
+    getSalesBreakdownMock.mockResolvedValue(
+      makeResponse({
+        dimension: "coupon",
+        rows: [
+          {
+            key: "SUMMER10",
+            label: "SUMMER10",
+            ordersCount: 4,
+            units: 6,
+            grossToman: 1_000_000,
+            discountsToman: 100_000,
+            refundsToman: 0,
+            netToman: 900_000,
+          },
+        ],
+      }),
+    );
+    render(<SalesBreakdownReportPage />);
+    expect(await screen.findByText("اثر کدهای تخفیف بر فروش")).toBeInTheDocument();
+    expect(screen.getByText("SUMMER10")).toBeInTheDocument();
+    expect(screen.getByText(/۴ سفارش · ۱۰۰٬۰۰۰ تومان تخفیف/)).toBeInTheDocument();
+    expect(screen.getByText("۹۰۰٬۰۰۰ تومان")).toBeInTheDocument();
+  });
+
   it("shows the truncation warning when the response is truncated", async () => {
     getSalesBreakdownMock.mockResolvedValue(makeResponse({ truncated: true }));
     render(<SalesBreakdownReportPage />);

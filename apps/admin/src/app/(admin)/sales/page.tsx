@@ -4,12 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import SalesPage from "./_components/SalesPage";
 import KpiCard from "@/components/SuperAdmin/reports/products/KpiCard";
-import ReportDateRangeField from "@/components/SuperAdmin/reports/shared/ReportDateRangeField";
 import { useReportQueryState } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
-import {
-  toDateOnly,
-  parseDateOnly,
-} from "@/components/SuperAdmin/reports/shared/reportDates";
 import {
   getOverview,
   type OverviewResponse,
@@ -17,7 +12,7 @@ import {
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 
 export default function OverviewReportPage() {
-  const { start, end, setRange } = useReportQueryState<never>({ tab: false });
+  const { start, end } = useReportQueryState<never>({ tab: false });
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +109,7 @@ export default function OverviewReportPage() {
 
             <div>
               <h3 className="mb-3 text-lg font-medium text-neutral-700">
-                تحویل رویدادهای قطعی تجارت
+                وضعیت ثبت آمار خرید و مرجوعی
               </h3>
               {data.analyticsDelivery ? (
                 <div
@@ -122,24 +117,24 @@ export default function OverviewReportPage() {
                 >
                   <p className="text-sm font-medium text-slate-800">
                     {data.analyticsDelivery.status === "healthy"
-                      ? "صف تحویل سالم است"
+                      ? "همه خریدها و مرجوعی‌ها در آمار ثبت شده‌اند"
                       : data.analyticsDelivery.status === "attention"
-                        ? "رویداد ناموفق نهایی نیازمند رسیدگی است"
-                        : "رویداد در صف تحویل قرار دارد"}
+                        ? "ثبت بعضی خریدها یا مرجوعی‌ها نیازمند بررسی است"
+                        : "بعضی خریدها یا مرجوعی‌ها هنوز در انتظار ثبت هستند"}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-600">
                     <span>
-                      در انتظار:{" "}
+                      منتظر ثبت:{" "}
                       {data.analyticsDelivery.pending.toLocaleString("fa-IR")}
                     </span>
                     <span>
-                      در حال پردازش:{" "}
+                      در حال ثبت:{" "}
                       {data.analyticsDelivery.processing.toLocaleString(
                         "fa-IR",
                       )}
                     </span>
                     <span>
-                      ناموفق نهایی:{" "}
+                      نیازمند بررسی:{" "}
                       {data.analyticsDelivery.deadLetter.toLocaleString(
                         "fa-IR",
                       )}
@@ -148,7 +143,7 @@ export default function OverviewReportPage() {
                 </div>
               ) : (
                 <div className="rounded-2xl border border-neutral-100 bg-white p-5 text-sm text-neutral-500">
-                  وضعیت صف تحویل در دسترس نیست.
+                  وضعیت ثبت آمار خرید و مرجوعی در دسترس نیست.
                 </div>
               )}
             </div>

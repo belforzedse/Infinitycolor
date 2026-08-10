@@ -3,25 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
+import { BarChart3, TicketPercent } from "lucide-react";
 import SalesPage from "../_components/SalesPage";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
-import ReportDateRangeField from "@/components/SuperAdmin/reports/shared/ReportDateRangeField";
 import ReportExportButton from "@/components/SuperAdmin/reports/shared/ReportExportButton";
 import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  REPORT_CHART_COLORS,
-} from "@/components/SuperAdmin/reports/shared/charts";
-import {
   useReportQueryState,
-  toDateOnly,
-  parseDateOnly,
 } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
 import {
   getSalesBreakdown,
@@ -44,8 +31,85 @@ const DIMENSION_LABELS: Record<SalesBreakdownDimension, string> = {
 
 const CHART_TOP_N = 8;
 
+function toman(value: number): string {
+  return `${priceFormatter(value)} تومان`;
+}
+
+function RankedBreakdownChart({
+  dimension,
+  rows,
+}: {
+  dimension: SalesBreakdownDimension;
+  rows: SalesBreakdownResponse["rows"];
+}) {
+  if (!rows.length) return null;
+  const maximum = Math.max(...rows.map((row) => Math.abs(row.netToman)), 1);
+  const isCoupon = dimension === "coupon";
+  const Icon = isCoupon ? TicketPercent : BarChart3;
+  return (
+    <figure
+      className="mb-6 overflow-hidden rounded-2xl border border-neutral-100 bg-neutral-50/60"
+      aria-labelledby="sales-breakdown-chart-title"
+    >
+      <figcaption className="flex items-start gap-3 border-b border-neutral-100 bg-white px-4 py-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-infinity-primary/10 text-infinity-primary">
+          <Icon aria-hidden className="size-5" />
+        </span>
+        <div>
+          <h2 id="sales-breakdown-chart-title" className="text-sm font-semibold text-neutral-800">
+            {isCoupon ? "اثر کدهای تخفیف بر فروش" : `بیشترین فروش بر اساس ${DIMENSION_LABELS[dimension]}`}
+          </h2>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">
+            {isCoupon
+              ? "فروش خالص، تعداد سفارش و مبلغ تخفیف هر کد را در یک نگاه مقایسه کنید."
+              : "طول هر نوار فروش خالص را نشان می‌دهد؛ مبلغ و تعداد سفارش کنار همان مورد نوشته شده است."}
+          </p>
+        </div>
+      </figcaption>
+      <ol className="divide-y divide-neutral-100 p-2">
+        {rows.map((row, index) => {
+          const width = Math.max(0, Math.min(100, (Math.abs(row.netToman) / maximum) * 100));
+          return (
+            <li key={row.key || `${row.label}-${index}`} className="relative overflow-hidden rounded-xl px-3 py-3">
+              <span
+                aria-hidden
+                className={`absolute inset-y-1 right-1 rounded-lg ${row.netToman < 0 ? "bg-rose-100" : "bg-infinity-primary/[0.075]"}`}
+                style={{ width: `${width}%` }}
+              />
+              <div className="relative flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="grid size-7 shrink-0 place-items-center rounded-full bg-white text-xs font-semibold text-neutral-500 shadow-sm">
+                    {faNum(index + 1)}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-neutral-800" title={row.label}>
+                      {row.label}
+                    </p>
+                    <p className="mt-1 text-[11px] text-neutral-500">
+                      {faNum(row.ordersCount)} سفارش
+                      {isCoupon ? ` · ${toman(row.discountsToman)} تخفیف` : ` · ${faNum(row.units)} کالا`}
+                    </p>
+                  </div>
+                </div>
+                <div className="shrink-0 text-left sm:text-right">
+                  <p className={`text-sm font-semibold tabular-nums ${row.netToman < 0 ? "text-rose-700" : "text-neutral-800"}`}>
+                    {toman(row.netToman)}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-neutral-400">
+                    {row.netToman < 0 ? "فروش خالص منفی" : "فروش خالص"}
+                  </p>
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </figure>
+  );
+}
+
 export default function SalesBreakdownReportPage() {
-  const { start, end, tab, setTab, setRange } = useReportQueryState<never>({
+  const { start, end, tab, setTab } = useReportQueryState<never>({
     tab: { defaultValue: "status" },
   });
   const dimension = (tab as SalesBreakdownDimension) || "status";
@@ -110,13 +174,16 @@ export default function SalesBreakdownReportPage() {
     [dimension],
   );
 
-  const chartData = useMemo(
-    () => (data?.rows ?? []).slice(0, CHART_TOP_N).map((r) => ({ name: r.label, net: r.netToman })),
+  const chartRows = useMemo(
+    () => (data?.rows ?? []).slice(0, CHART_TOP_N),
     [data],
   );
 
   return (
-    <SalesPage title="فروش بر اساس وضعیت / دسته‌بندی / مشتری / کوپن / استان">
+    <SalesPage
+      title="تفکیک فروش"
+      description="فروش را بر اساس وضعیت سفارش، دسته‌بندی، مشتری، کد تخفیف یا استان مقایسه کنید."
+    >
       <div className="space-y-6" dir="rtl">
         <div className="rounded-2xl bg-white p-5">
           <p className="text-xs text-neutral-500">
@@ -161,23 +228,9 @@ export default function SalesBreakdownReportPage() {
             </div>
           )}
 
-          {!loading && chartData.length > 0 && (
-            <div className="mb-6 h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tickFormatter={(v: number) => faNum(v)} />
-                  <Tooltip formatter={((v: number) => priceFormatter(Number(v))) as any} />
-                  <Bar dataKey="net" radius={[4, 4, 0, 0]}>
-                    {chartData.map((entry, i) => (
-                      <Cell key={entry.name} fill={REPORT_CHART_COLORS[i % REPORT_CHART_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
+          {!loading && chartRows.length > 0 ? (
+            <RankedBreakdownChart dimension={dimension} rows={chartRows} />
+          ) : null}
 
           <SuperAdminTable columns={columns} data={data?.rows ?? []} loading={loading} />
         </div>

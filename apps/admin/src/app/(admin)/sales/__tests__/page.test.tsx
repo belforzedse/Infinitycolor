@@ -94,7 +94,7 @@ describe("OverviewReportPage", () => {
   it("shows the durable commerce delivery health", async () => {
     getOverviewMock.mockResolvedValue(makeResponse());
     render(<OverviewReportPage />);
-    await screen.findByText("صف تحویل سالم است");
+    await screen.findByText("همه خریدها و مرجوعی‌ها در آمار ثبت شده‌اند");
   });
 
   it("shows dead-letter delivery as requiring attention", async () => {
@@ -112,7 +112,7 @@ describe("OverviewReportPage", () => {
       }),
     );
     render(<OverviewReportPage />);
-    await screen.findByText(/نیازمند رسیدگی/);
+    await screen.findByText("ثبت بعضی خریدها یا مرجوعی‌ها نیازمند بررسی است");
   });
 
   it("does not fabricate delivery health when the queue table is unavailable", async () => {
@@ -120,7 +120,7 @@ describe("OverviewReportPage", () => {
       makeResponse({ analyticsDelivery: null }),
     );
     render(<OverviewReportPage />);
-    await screen.findByText("وضعیت صف تحویل در دسترس نیست.");
+    await screen.findByText("وضعیت ثبت آمار خرید و مرجوعی در دسترس نیست.");
   });
 
   it("shows an error message when the fetch fails", async () => {

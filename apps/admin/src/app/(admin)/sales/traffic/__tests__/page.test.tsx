@@ -91,23 +91,23 @@ describe("behavior report page", () => {
 
   it("renders the seven exact views, shared Tehran range, and comparison", async () => {
     render(<BehaviorReportPage />);
-    expect(await screen.findByText("بازدید صفحات")).toBeInTheDocument();
-    expect(screen.getByText("ارجاع ابزارهای هوش مصنوعی")).toBeInTheDocument();
+    expect((await screen.findAllByText("نمایش صفحه")).length).toBeGreaterThan(0);
+    expect(screen.getByText("ابزارهای هوش مصنوعی")).toBeInTheDocument();
     expect(screen.getByText("مشاهده محصول")).toBeInTheDocument();
     for (const label of [
-      "نمای کلی",
-      "جذب و بازاریابی",
-      "تبدیل",
-      "محصول و محتوا",
-      "مخاطبان",
-      "عملکرد",
-      "لحظه‌ای",
+      "خلاصه بازدیدها",
+      "ورودی‌ها و تبلیغات",
+      "مسیر خرید",
+      "صفحات و محصولات",
+      "شناخت کاربران",
+      "سرعت و تجربه کاربری",
+      "اکنون در سایت",
     ]) {
       expect(
         screen.getByRole("tab", { name: new RegExp(label) }),
       ).toBeInTheDocument();
     }
-    expect(screen.getAllByText(/Asia\/Tehran/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/به وقت تهران/).length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("date")).toHaveLength(2);
     expect(
       screen.getByRole("checkbox", { name: "مقایسه با دوره قبل" }),
@@ -116,8 +116,8 @@ describe("behavior report page", () => {
 
   it("requests the selected purpose view with the shared query", async () => {
     render(<BehaviorReportPage />);
-    await screen.findByText("بازدید صفحات");
-    fireEvent.click(screen.getByRole("tab", { name: /مخاطبان/ }));
+    await screen.findAllByText("نمایش صفحه");
+    fireEvent.click(screen.getByRole("tab", { name: /شناخت کاربران/ }));
     await waitFor(() =>
       expect(getBehaviorViewMock).toHaveBeenCalledWith(
         "audience",
@@ -152,11 +152,75 @@ describe("behavior report page", () => {
         : overview,
     );
     render(<BehaviorReportPage />);
-    await screen.findByText("بازدید صفحات");
-    fireEvent.click(screen.getByRole("tab", { name: /تبدیل/ }));
-    expect(await screen.findByText("فروش قطعی Infinity")).toBeInTheDocument();
+    await screen.findAllByText("نمایش صفحه");
+    fireEvent.click(screen.getByRole("tab", { name: /مسیر خرید/ }));
+    expect(await screen.findByText("فروش قطعی فروشگاه")).toBeInTheDocument();
     expect(screen.getByText(/۱٬۲۵۰٬۰۰۰ تومان/)).toBeInTheDocument();
-    expect(screen.getByText(/Umami مرجع مالی نیست/)).toBeInTheDocument();
+    expect(screen.getByText(/مستقیماً از سفارش‌ها و پرداخت‌های فروشگاه/)).toBeInTheDocument();
+  });
+
+  it("renders a directly labelled purchase funnel with step drop-off", async () => {
+    getBehaviorViewMock.mockImplementation(async (view: string) =>
+      view === "conversion"
+        ? ok({
+            kind: "conversion",
+            summary: { visits: 100 },
+            sections: {
+              commerce: { paidOrders: 30, totalOrders: 40, revenueToman: 5_000_000 },
+              purchaseGoal: { num: 30, total: 100 },
+              checkoutFunnel: [
+                { value: "view_item", visitors: 100 },
+                { value: "add_to_cart", visitors: 60 },
+                { value: "begin_checkout", visitors: 45 },
+                { value: "purchase", visitors: 30 },
+              ],
+              event: [],
+            },
+            errors: {},
+          })
+        : overview,
+    );
+    render(<BehaviorReportPage />);
+    await screen.findAllByText("نمایش صفحه");
+    fireEvent.click(screen.getByRole("tab", { name: /مسیر خرید/ }));
+    expect(await screen.findByText("مسیر خرید کاربران")).toBeInTheDocument();
+    expect(screen.getByText("افزودن به سبد خرید")).toBeInTheDocument();
+    expect(screen.getAllByText(/ریزش این مرحله/)).toHaveLength(3);
+    expect(screen.getByText(/تبدیل از ابتدا تا خرید/)).toHaveTextContent("۳۰٪");
+  });
+
+  it("uses p75 Core Web Vitals values and readable device, browser, and path labels", async () => {
+    getBehaviorViewMock.mockImplementation(async (view: string) =>
+      view === "performance"
+        ? ok({
+            kind: "performance",
+            summary: { visits: 5 },
+            sections: {
+              performance: {
+                summary: {
+                  lcp: { p50: 120, p75: 180, p95: 300 },
+                  cls: { p50: 0.01, p75: 0.04, p95: 0.1 },
+                },
+                pages: [{ name: "/payment", p75: 180, count: 4 }],
+                devices: [{ name: "laptop", p75: 150, count: 3 }],
+                browsers: [{ name: "opera", p75: 170, count: 2 }],
+                pageTitles: [],
+              },
+            },
+            errors: {},
+          })
+        : overview,
+    );
+    const { container } = render(<BehaviorReportPage />);
+    await screen.findAllByText("نمایش صفحه");
+    fireEvent.click(screen.getByRole("tab", { name: /سرعت و تجربه کاربری/ }));
+    expect(await screen.findByText("LCP صفحه‌ها")).toBeInTheDocument();
+    expect(screen.getAllByText("۱۸۰ ms").length).toBeGreaterThan(0);
+    expect(screen.getByText("پرداخت")).toBeInTheDocument();
+    expect(screen.getByText("رایانه همراه")).toBeInTheDocument();
+    expect(screen.getByText("Opera")).toBeInTheDocument();
+    expect(container.querySelectorAll("[data-dimension-icon]").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/ms —/)).not.toBeInTheDocument();
   });
 
   it("renders unavailable without inventing zero values", async () => {
@@ -173,7 +237,7 @@ describe("behavior report page", () => {
 
   it("polls realtime every 30 seconds and pauses while hidden", async () => {
     render(<BehaviorReportPage />);
-    fireEvent.click(screen.getByRole("tab", { name: /لحظه‌ای/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /اکنون در سایت/ }));
     await waitFor(() =>
       expect(getBehaviorViewMock).toHaveBeenCalledWith(
         "realtime",
