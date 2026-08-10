@@ -617,6 +617,8 @@ function getDefaultPermissions(strapi: Strapi, roleType: string): Record<string,
 export const __rolePermissionTestUtils = {
   getDefaultPermissions,
   ensurePluginRolesAndPermissions: (strapi: Strapi) => ensurePluginRolesAndPermissions(strapi),
+  permissionTreeForActions: (strapi: Strapi, actions: readonly string[]) =>
+    permissionTreeForActions(strapi, actions),
 };
 
 function collectEnabledPermissionActions(tree: Record<string, any>): string[] {

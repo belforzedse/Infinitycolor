@@ -607,7 +607,7 @@ async function attachCoverImages(rows: productAnalytics.ProductPerformanceRow[])
   return rows;
 }
 
-export default {
+const reportController = {
   async liquidity(ctx) {
     try {
       const user = await ensureCapability(ctx, "report.finance.read");
@@ -2221,4 +2221,15 @@ export default {
       ctx.badRequest(error.message, { data: { success: false } });
     }
   },
+};
+
+// Keep the previous controller action identifiers registered for one-way role
+// migration and rollback snapshot compatibility. Compatibility URLs route to
+// the canonical behavior actions, and the role template grants only those new
+// actions, so a successful synchronization removes these legacy permissions.
+export default {
+  ...reportController,
+  trafficDashboard: reportController.behaviorOverview,
+  trafficRealtime: reportController.behaviorRealtime,
+  funnel: reportController.behaviorConversion,
 };

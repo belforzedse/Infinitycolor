@@ -23,6 +23,7 @@ import {
 import { runAnalyticsDailyRollupTick } from "../../../../jobs/analyticsDailyRollup";
 
 const externalIdentityMigration = require("../../../../../database/migrations/2026.08.06T09.10.00.convert-external-identity-indexes-to-constraints.js");
+const outboxRepairMigration = require("../../../../../database/migrations/2026.08.10T09.00.00.repair-umami-analytics-outbox.js");
 
 let strapi: any;
 let f: Factories;
@@ -82,6 +83,33 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
       true,
     );
     expect(await knex.schema.hasColumn("analytics_outbox", "source_id")).toBe(true);
+  });
+
+  it("repairs an upgrade where schema sync removed an already-recorded outbox", async () => {
+    const knex = strapi.db.connection;
+    const coreStoreQuery = knex("strapi_core_store_settings")
+      .where({ key: "core_persisted_tables" })
+      .whereNull("environment")
+      .whereNull("tag");
+    const row = await coreStoreQuery.clone().select("id", "value").first();
+    const persisted = JSON.parse(row.value).filter(
+      (entry: string | { name?: string }) =>
+        (typeof entry === "string" ? entry : entry?.name) !== "analytics_outbox",
+    );
+    await coreStoreQuery.clone().update({ value: JSON.stringify(persisted) });
+    await knex.schema.dropTableIfExists("analytics_outbox");
+
+    await knex.transaction((transaction: any) => outboxRepairMigration.up(transaction));
+    await knex.transaction((transaction: any) => outboxRepairMigration.up(transaction));
+
+    expect(await knex.schema.hasTable("analytics_outbox")).toBe(true);
+    expect(await knex.schema.hasColumn("analytics_outbox", "source_id")).toBe(true);
+    const repaired = await coreStoreQuery.clone().select("value").first();
+    const outboxEntries = JSON.parse(repaired.value).filter(
+      (entry: string | { name?: string }) =>
+        (typeof entry === "string" ? entry : entry?.name) === "analytics_outbox",
+    );
+    expect(outboxEntries).toEqual(["analytics_outbox"]);
   });
 
   it("rolls up a real eligible order (via Strapi's real link tables) into analytics_daily_sales and analytics_product_daily", async () => {

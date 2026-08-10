@@ -46,6 +46,13 @@ function createCtx(overrides: Partial<any> = {}) {
 }
 
 describe("Umami behavior report endpoints", () => {
+  it("registers the legacy controller actions as exact compatibility aliases", () => {
+    const controller = loadController();
+    expect(controller.trafficDashboard).toBe(controller.behaviorOverview);
+    expect(controller.trafficRealtime).toBe(controller.behaviorRealtime);
+    expect(controller.funnel).toBe(controller.behaviorConversion);
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     requireCapabilityMock.mockResolvedValue({ user: { id: 1 } });

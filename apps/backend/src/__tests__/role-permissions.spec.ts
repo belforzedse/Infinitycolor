@@ -418,6 +418,9 @@ function createActionTree() {
           gatewayLiquidity: action(),
           adminActivity: action(),
           adminActivityById: action(),
+          trafficDashboard: action(),
+          trafficRealtime: action(),
+          funnel: action(),
           behaviorOverview: action(),
           behaviorAcquisition: action(),
           behaviorConversion: action(),
@@ -690,6 +693,27 @@ describe("role permission templates", () => {
     expect(report.behaviorAudience.enabled).toBe(true);
     expect(report.behaviorPerformance.enabled).toBe(true);
     expect(report.behaviorRealtime.enabled).toBe(true);
+    expect(report.trafficDashboard.enabled).toBe(false);
+    expect(report.trafficRealtime.enabled).toBe(false);
+    expect(report.funnel.enabled).toBe(false);
+  });
+
+  it("can snapshot legacy traffic permissions before synchronizing the Umami actions", () => {
+    const strapi = createStrapiForPermissions() as any;
+    const legacyActions = [
+      "api::report.report.trafficDashboard",
+      "api::report.report.trafficRealtime",
+      "api::report.report.funnel",
+    ];
+
+    const snapshotTree = __rolePermissionTestUtils.permissionTreeForActions(
+      strapi,
+      legacyActions,
+    );
+    const report = snapshotTree["api::report"].controllers.report;
+    expect(report.trafficDashboard.enabled).toBe(true);
+    expect(report.trafficRealtime.enabled).toBe(true);
+    expect(report.funnel.enabled).toBe(true);
   });
 
   it("keeps manager-plus roles customer-capable but away from superadmin-only actions", () => {
