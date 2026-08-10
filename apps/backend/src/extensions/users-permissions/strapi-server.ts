@@ -1,7 +1,4 @@
-import {
-  MANAGEMENT_ROLES,
-  normalizeRoleName,
-} from "../../utils/roles";
+import { MANAGEMENT_ROLES, normalizeRoleName } from "../../utils/roles";
 import bcrypt from "bcryptjs";
 import { normalizeRequiredProfileName } from "../../api/auth/utils/profile-names";
 import { validatePhone } from "../../api/auth/utils/validations";
@@ -179,12 +176,12 @@ async function assertSuperadmin(ctx: any) {
   return Boolean(await requireCapability(ctx, strapi, "system.roles.manage"));
 }
 
-async function assertAssignablePluginRole(ctx: any) {
+async function resolveAssignablePluginRole(ctx: any) {
   const rawRoleId = ctx.request?.body?.role;
   const roleId = Number(typeof rawRoleId === "object" ? rawRoleId?.id : rawRoleId);
   if (!Number.isSafeInteger(roleId) || roleId <= 0) {
     ctx.badRequest("A valid role id is required");
-    return false;
+    return null;
   }
   const role = await strapi.query("plugin::users-permissions.role").findOne({
     where: { id: roleId },
@@ -196,9 +193,38 @@ async function assertAssignablePluginRole(ctx: any) {
   ]);
   if (!role || !allowedTypes.has(role.type)) {
     ctx.badRequest("The selected role is not assignable");
-    return false;
+    return null;
   }
-  return true;
+  return role;
+}
+
+async function preservesActiveSuperadmin(ctx: any, targetId: number, nextRole: any) {
+  if (nextRole?.type === ADMIN_ROLE_DEFINITIONS.superadmin.strapiType) return true;
+
+  const userQuery = strapi.query("plugin::users-permissions.user");
+  const target = await userQuery.findOne({
+    where: { id: targetId },
+    select: ["id", "blocked", "IsActive"],
+    populate: { role: { select: ["id", "name", "type"] } },
+  });
+  const targetIsActiveSuperadmin =
+    target?.role?.type === ADMIN_ROLE_DEFINITIONS.superadmin.strapiType &&
+    target.blocked !== true &&
+    target.IsActive !== false;
+  if (!targetIsActiveSuperadmin) return true;
+
+  const activeAlternatives = await userQuery.count({
+    where: {
+      id: { $ne: targetId },
+      role: target.role.id,
+      blocked: { $ne: true },
+      IsActive: { $ne: false },
+    },
+  });
+  if (activeAlternatives > 0) return true;
+
+  ctx.forbidden("At least one active Superadmin must remain");
+  return false;
 }
 
 const wrapUserController =
@@ -206,20 +232,6 @@ const wrapUserController =
     if (wantsPluginRoleChange(ctx)) {
       const actorId = Number(ctx.state?.user?.id);
       const targetId = Number(ctx.params?.id);
-      if (Number.isSafeInteger(actorId) && actorId > 0 && actorId === targetId) {
-        await recordAdminAudit(strapi, {
-          resourceType: "User",
-          resourceId: targetId,
-          action: "Update",
-          title: "Rejected self-role change",
-          messageEn: "An administrator attempted to change their own role.",
-          severity: "warning",
-          actor: { id: actorId },
-          metadata: { rejectedFields: ["role"] },
-        });
-        ctx.forbidden("Administrators cannot change their own role");
-        return;
-      }
       const allowed = await assertSuperadmin(ctx);
       if (!allowed) {
         await recordAdminAudit(strapi, {
@@ -234,7 +246,8 @@ const wrapUserController =
         });
         return;
       }
-      if (!(await assertAssignablePluginRole(ctx))) {
+      const nextRole = await resolveAssignablePluginRole(ctx);
+      if (!nextRole) {
         await recordAdminAudit(strapi, {
           resourceType: "User",
           resourceId: Number.isSafeInteger(targetId) ? targetId : null,
@@ -244,6 +257,23 @@ const wrapUserController =
           severity: "warning",
           actor: { id: actorId },
           metadata: { requestedRole: ctx.request?.body?.role ?? null },
+        });
+        return;
+      }
+      if (
+        !Number.isSafeInteger(targetId) ||
+        targetId <= 0 ||
+        !(await preservesActiveSuperadmin(ctx, targetId, nextRole))
+      ) {
+        await recordAdminAudit(strapi, {
+          resourceType: "User",
+          resourceId: Number.isSafeInteger(targetId) ? targetId : null,
+          action: "Update",
+          title: "Rejected last Superadmin role change",
+          messageEn: "A role change would have removed the last active Superadmin.",
+          severity: "warning",
+          actor: { id: actorId },
+          metadata: { requestedRole: nextRole.id },
         });
         return;
       }
@@ -260,7 +290,7 @@ const wrapUserController =
         resourceId: Number(ctx.params.id),
         action: "Update",
         title: "User role updated",
-        messageEn: "A Superadmin changed another user's role.",
+        messageEn: "A Superadmin changed a user's role.",
         severity: "success",
         actor: { id: Number(ctx.state?.user?.id) },
         metadata: { fields: ["role"] },

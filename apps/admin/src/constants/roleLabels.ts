@@ -15,6 +15,19 @@ export const translatePluginRoleLabel = (roleName?: string | null) => {
   return PLUGIN_ROLE_LABELS[roleName] ?? roleName;
 };
 
+type UserRoleLabelSource = {
+  role?: { name?: string | null } | null;
+  user_role?: { Title?: string | null } | null;
+};
+
+/**
+ * Plugin roles are the authorization source of truth. `user_role` belongs to
+ * the retired local-user model and is retained only as a display fallback for
+ * records that have not been migrated yet.
+ */
+export const resolveUserRoleLabel = (user: UserRoleLabelSource): string =>
+  translatePluginRoleLabel(user.role?.name) || user.user_role?.Title || "-";
+
 /**
  * Plugin role names considered "management" (staff) roles.
  * Mirrors backend `MANAGEMENT_ROLES` in apps/backend/src/utils/roles.ts.

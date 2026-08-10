@@ -173,28 +173,155 @@ describe("Infinity Users & Permissions creation guards", () => {
     expect(registrations).toEqual(["infinity-legacy-profile-guard", "users-permissions"]);
   });
 
-  it("rejects a Superadmin changing their own role and audits only field names", async () => {
+  it("allows a Superadmin to demote themselves when another active Superadmin remains", async () => {
+    const update = jest.fn(async (ctx: any) => {
+      ctx.status = 200;
+      ctx.body = { id: 7, role: { id: 4, type: "store-manager" } };
+    });
+    const rawPlugin = pluginWithRegister(jest.fn());
+    rawPlugin.controllers.user.update = update;
+    const plugin = extendUsersPermissions(rawPlugin);
+    const userQuery = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 7,
+        blocked: false,
+        IsActive: true,
+        role: { id: 2, name: "Superadmin", type: "superadmin" },
+      }),
+      count: jest.fn().mockResolvedValue(1),
+    };
+    (global as any).strapi.query = jest.fn((uid: string) =>
+      uid === "plugin::users-permissions.user"
+        ? userQuery
+        : {
+            findOne: jest
+              .fn()
+              .mockResolvedValue({ id: 4, name: "Store Manager", type: "store-manager" }),
+          },
+    );
+    const ctx: any = {
+      state: { user: { id: 7 } },
+      params: { id: "7" },
+      request: { body: { role: 4 } },
+      forbidden: jest.fn(),
+      badRequest: jest.fn(),
+    };
+
+    await plugin.controllers.user.update(ctx);
+
+    expect(update).toHaveBeenCalledWith(ctx, undefined);
+    expect(userQuery.count).toHaveBeenCalledWith({
+      where: {
+        id: { $ne: 7 },
+        role: 2,
+        blocked: { $ne: true },
+        IsActive: { $ne: false },
+      },
+    });
+    expect(recordAdminAuditMock).toHaveBeenCalledWith(
+      (global as any).strapi,
+      expect.objectContaining({
+        resourceId: 7,
+        severity: "success",
+        metadata: { fields: ["role"] },
+      }),
+    );
+  });
+
+  it("rejects demoting the last active Superadmin", async () => {
     const update = jest.fn();
     const rawPlugin = pluginWithRegister(jest.fn());
     rawPlugin.controllers.user.update = update;
     const plugin = extendUsersPermissions(rawPlugin);
+    const userQuery = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 7,
+        blocked: false,
+        IsActive: true,
+        role: { id: 2, name: "Superadmin", type: "superadmin" },
+      }),
+      count: jest.fn().mockResolvedValue(0),
+    };
+    (global as any).strapi.query = jest.fn((uid: string) =>
+      uid === "plugin::users-permissions.user"
+        ? userQuery
+        : {
+            findOne: jest
+              .fn()
+              .mockResolvedValue({ id: 4, name: "Store Manager", type: "store-manager" }),
+          },
+    );
     const ctx: any = {
       state: { user: { id: 7 } },
       params: { id: "7" },
-      request: { body: { role: 3 } },
+      request: { body: { role: 4 } },
       forbidden: jest.fn(),
+      badRequest: jest.fn(),
     };
 
     await plugin.controllers.user.update(ctx);
 
     expect(update).not.toHaveBeenCalled();
-    expect(ctx.forbidden).toHaveBeenCalledWith("Administrators cannot change their own role");
+    expect(ctx.forbidden).toHaveBeenCalledWith("At least one active Superadmin must remain");
     expect(recordAdminAuditMock).toHaveBeenCalledWith(
       (global as any).strapi,
       expect.objectContaining({
         resourceId: 7,
         severity: "warning",
-        metadata: { rejectedFields: ["role"] },
+        metadata: { requestedRole: 4 },
+      }),
+    );
+  });
+
+  it("passes an assignable role change to the native user update controller", async () => {
+    const update = jest.fn(async (ctx: any) => {
+      ctx.status = 200;
+      ctx.body = { id: 9, role: { id: 4, type: "finance" } };
+    });
+    const rawPlugin = pluginWithRegister(jest.fn());
+    rawPlugin.controllers.user.update = update;
+    const plugin = extendUsersPermissions(rawPlugin);
+    const actor = {
+      id: 7,
+      blocked: false,
+      IsActive: true,
+      role: { id: 2, name: "Superadmin", type: "superadmin" },
+    };
+    const userQuery = {
+      findOne: jest.fn(({ where }: any) =>
+        Promise.resolve(where.id === 7 ? actor : { id: 9, role: { id: 4, type: "finance" } }),
+      ),
+      count: jest.fn(),
+    };
+    (global as any).strapi.query = jest.fn((uid: string) => {
+      if (uid === "plugin::users-permissions.user") {
+        return userQuery;
+      }
+      if (uid === "plugin::users-permissions.role") {
+        return {
+          findOne: jest.fn().mockResolvedValue({ id: 4, name: "Finance", type: "finance" }),
+        };
+      }
+      return { delete: jest.fn().mockResolvedValue({}) };
+    });
+    const ctx: any = {
+      state: { user: { id: 7 } },
+      params: { id: "9" },
+      request: { body: { role: 4 } },
+      forbidden: jest.fn(),
+      badRequest: jest.fn(),
+    };
+
+    await plugin.controllers.user.update(ctx);
+
+    expect(update).toHaveBeenCalledWith(ctx, undefined);
+    expect(ctx.request.body.role).toBe(4);
+    expect(recordAdminAuditMock).toHaveBeenCalledWith(
+      (global as any).strapi,
+      expect.objectContaining({
+        resourceId: 9,
+        severity: "success",
+        metadata: { fields: ["role"] },
       }),
     );
   });

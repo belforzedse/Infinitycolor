@@ -7,7 +7,7 @@ import SuperAdminTableCellSimplePrice from "@/components/SuperAdmin/Table/Cells/
 import SuperAdminTableCellSwitch from "@/components/SuperAdmin/Table/Cells/Switch";
 import { apiClient } from "@/services";
 import Modal from "@/components/Kits/Modal";
-import { translatePluginRoleLabel } from "@/constants/roleLabels";
+import { resolveUserRoleLabel } from "@/constants/roleLabels";
 import { rialToToman } from "@/utils/price";
 import type { ColumnDef, Row } from "@tanstack/react-table";
 import { useAtom } from "jotai";
@@ -249,7 +249,7 @@ export const columns: ColumnDef<User>[] = [
     },
   },
   {
-    accessorKey: "user_role",
+    accessorKey: "role",
     header: "نقش",
     cell: ({ row }) => getRoleLabel(row.original),
   },
@@ -335,7 +335,4 @@ export const MobileTable = ({ data }: Props) => {
   );
 };
 
-const getRoleLabel = (user: User) => {
-  if (user.user_role?.Title) return user.user_role.Title;
-  return translatePluginRoleLabel(user.role?.name) || "-";
-};
+const getRoleLabel = resolveUserRoleLabel;

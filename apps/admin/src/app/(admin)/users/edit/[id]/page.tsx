@@ -6,10 +6,11 @@ import { useEffect } from "react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import UserService from "@/services/user";
-import { apiClient } from "@/services";
+import { updateAdminUser } from "@/services/super-admin/user/update";
 import { getUserActivities, UserActivity } from "@/services/user-activity";
 import Link from "next/link";
 import { useCan } from "@/hooks/useCan";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 import WalletAdjustCard from "./WalletAdjustCard";
 import {
   AdminCard,
@@ -44,6 +45,7 @@ export type User = {
 export default function Page() {
   const { id } = useParams<{ id: string }>();
   const canAdjustWallet = useCan("wallet.adjust");
+  const { user: currentUser } = useCurrentUser();
   const [userData, setUserData] = useState<User | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +76,9 @@ export default function Page() {
           updatedAt: _user.updatedAt ? new Date(_user.updatedAt) : new Date(),
           nationalCode: userInfo.NationalCode || "",
           isActive: _user.IsActive ?? false,
-          legacyRoleId: _user.user_role?.id ? _user.user_role.id.toString() : null,
+          legacyRoleId: _user.user_role?.id
+            ? _user.user_role.id.toString()
+            : null,
         };
 
         setUserData(formattedData);
@@ -97,7 +101,10 @@ export default function Page() {
       if (!id) return;
       try {
         setActivitiesLoading(true);
-        const response = await getUserActivities(Number(id), { page: 1, pageSize: 20 });
+        const response = await getUserActivities(Number(id), {
+          page: 1,
+          pageSize: 20,
+        });
         setUserActivities(response.data || []);
       } catch (err) {
         console.error("Error fetching user activities:", err);
@@ -115,7 +122,10 @@ export default function Page() {
   if (error) {
     return (
       <AdminCard padded={false}>
-        <ErrorState description={error} onRetry={() => setRevalidate((p) => p + 1)} />
+        <ErrorState
+          description={error}
+          onRetry={() => setRevalidate((p) => p + 1)}
+        />
       </AdminCard>
     );
   }
@@ -150,7 +160,9 @@ export default function Page() {
         config={config}
         data={userData}
         onSubmit={async (data) => {
-          const birthDateString = formatBirthDateValueForStorage(data.birthDate);
+          const birthDateString = formatBirthDateValueForStorage(
+            data.birthDate,
+          );
 
           const localPayload = {
             firstName: data.firstname,
@@ -164,17 +176,35 @@ export default function Page() {
 
           try {
             setIsLoading(true);
-            await Promise.all([
-              apiClient.put(`/users/${id}`, {
+            // Keep the role update last. If the signed-in Superadmin demotes
+            // themselves, later privileged requests would correctly lose access.
+            await updateAdminUser({
+              id,
+              profile: localPayload,
+              user: {
                 ...(data.role ? { role: Number(data.role) } : {}),
                 IsActive: data.isActive,
-              }),
-              apiClient.put(`/sp/local-users/${id}`, localPayload),
-            ]);
+              },
+            });
+
+            const changedOwnRole =
+              Number(currentUser?.id) === Number(id) &&
+              Number(userData?.role) !== Number(data.role);
+            if (changedOwnRole) {
+              // Reload the shell from a fresh /users/me response so stale
+              // Superadmin navigation/capabilities cannot survive demotion.
+              window.location.assign("/");
+              return;
+            }
             setRevalidate((prev) => prev + 1);
           } catch (err) {
             console.error("Failed to update user:", err);
-            setError("خطا در بروزرسانی اطلاعات کاربر");
+            setError(
+              (err as { message?: string })?.message ===
+                "At least one active Superadmin must remain"
+                ? "برای تغییر این نقش، باید حداقل یک سوپر ادمین فعال دیگر وجود داشته باشد."
+                : "خطا در بروزرسانی اطلاعات کاربر",
+            );
           } finally {
             setIsLoading(false);
           }
@@ -185,7 +215,9 @@ export default function Page() {
 
       {/* User Activities Section */}
       <div className="rounded-2xl bg-white p-6">
-        <h2 className="mb-4 text-xl font-bold text-neutral-900">فعالیت‌های کاربر</h2>
+        <h2 className="mb-4 text-xl font-bold text-neutral-900">
+          فعالیت‌های کاربر
+        </h2>
         {activitiesLoading ? (
           <div className="flex items-center justify-center py-8">
             <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-infinity-primary"></div>
@@ -202,8 +234,12 @@ export default function Page() {
                 <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      {activity.Icon && <span className="text-xl">{activity.Icon}</span>}
-                      <h3 className="font-medium text-neutral-900">{activity.Title}</h3>
+                      {activity.Icon && (
+                        <span className="text-xl">{activity.Icon}</span>
+                      )}
+                      <h3 className="font-medium text-neutral-900">
+                        {activity.Title}
+                      </h3>
                     </div>
                     <p className="mt-1 min-w-0 break-words text-sm text-neutral-600">
                       {activity.Message}
