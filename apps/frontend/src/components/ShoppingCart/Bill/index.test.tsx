@@ -236,6 +236,7 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(screen.getByTestId("checkout-auth-gate")).toBeInTheDocument();
     });
     expect(CartService.getAvailableGateways).not.toHaveBeenCalled();
+    expect(CartService.getSnappEligible).not.toHaveBeenCalled();
     expect(WalletService.getMyWallet).not.toHaveBeenCalled();
   });
 
@@ -309,7 +310,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     });
   });
 
-  it("does not duplicate SnappPay eligibility for the same payable total and mode", async () => {
+  it("checks SnappPay on checkout entry and refreshes when payable inputs change", async () => {
     const store = createStore();
     store.set(currentUserAtom, { id: 1 });
     store.set(userLoadingAtom, false);
@@ -324,11 +325,24 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(screen.getByTestId("checkout-submit")).toBeVisible();
     });
 
-    fireEvent.click(screen.getByTestId("select-shipping"));
-
     await waitFor(() => {
       expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
     });
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 100_000 });
+
+    fireEvent.click(screen.getByTestId("select-shipping"));
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(2);
+    });
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 120_000 });
+
+    fireEvent.click(screen.getByTestId("apply-discount"));
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(3);
+    });
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 110_000 });
 
     rerender(
       <Provider store={store}>
@@ -339,7 +353,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
+    expect(CartService.getSnappEligible).toHaveBeenCalledTimes(3);
   });
 
   it("shows no gateway options and blocks submit when no backend gateways are active", async () => {

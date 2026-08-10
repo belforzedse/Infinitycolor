@@ -391,16 +391,15 @@ function ShoppingCartBillForm({}: Props) {
     run();
   }, [discountCode, discountPreview, discountPreviewKey, shippingId, shippingAddressContext]);
 
-  // Re-check SnappPay eligibility when shipping, discount, or merge choice changes
-  // In merge mode we don't have shippingId (shipping comes from parent order), so allow eligibility check by amount only
+  // Check SnappPay as soon as authenticated checkout data can load, then refresh
+  // whenever an input to the payable checkout state changes. The backend accepts
+  // the current payable amount even before a delivery method has been selected.
   useEffect(() => {
     const run = async () => {
       let requestSeq = 0;
 
       try {
-        const isMergeMode = mergeChoice === "merge";
-        const eligibilityKey = `${isMergeMode ? "merge" : "new"}:${Math.round(totalToman)}`;
-        if (!isMergeMode && !shippingId) {
+        if (!canLoadProtectedCheckoutData) {
           snappEligibilitySeqRef.current += 1;
           lastSnappEligibilityKeyRef.current = null;
           setSnappEligible(undefined);
@@ -408,6 +407,16 @@ function ShoppingCartBillForm({}: Props) {
           setSnappDescription(undefined);
           return;
         }
+
+        const isMergeMode = mergeChoice === "merge";
+        const eligibilityKey = [
+          isMergeMode ? "merge" : "new",
+          cartSignature,
+          discountCode || "no-discount",
+          shippingId || "no-shipping",
+          addressContextKey,
+          Math.round(totalToman),
+        ].join(":");
         if (totalToman <= 0) {
           snappEligibilitySeqRef.current += 1;
           lastSnappEligibilityKeyRef.current = null;
@@ -440,7 +449,15 @@ function ShoppingCartBillForm({}: Props) {
       }
     };
     run();
-  }, [shippingId, totalToman, mergeChoice]);
+  }, [
+    addressContextKey,
+    canLoadProtectedCheckoutData,
+    cartSignature,
+    discountCode,
+    shippingId,
+    totalToman,
+    mergeChoice,
+  ]);
 
   // Load wallet balance once
   useEffect(() => {
