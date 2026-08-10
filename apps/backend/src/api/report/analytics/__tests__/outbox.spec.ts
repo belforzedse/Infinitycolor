@@ -1,4 +1,4 @@
-import { enqueuePurchaseForOrder, enqueueRefundForReturn } from "../outbox";
+import { __private, enqueuePurchaseForOrder, enqueueRefundForReturn } from "../outbox";
 
 function createKnex(returning: unknown[]) {
   const insertPayloads: unknown[] = [];
@@ -33,6 +33,41 @@ describe("analytics outbox commerce events", () => {
   afterEach(() => {
     delete process.env.UMAMI_BASE_URL;
     delete process.env.UMAMI_WEBSITE_ID;
+  });
+
+  it("decodes PostgreSQL JSON values before collector delivery", () => {
+    const event = {
+      type: "event" as const,
+      payload: {
+        website: websiteId,
+        url: "/commerce/purchase",
+        name: "purchase",
+        data: { revenue: 120_000, currency: "IRR" },
+      },
+    };
+    expect(__private.parseStoredCollectorEvent(event)).toEqual(event);
+    expect(__private.parseStoredCollectorEvent(JSON.stringify(event))).toEqual(event);
+    expect(__private.parseStoredCollectorEvent(Buffer.from(JSON.stringify(event)))).toEqual(event);
+  });
+
+  it.each([
+    "not-json",
+    null,
+    [],
+    { type: "event", payload: { website: websiteId, url: "/commerce/purchase" } },
+    {
+      type: "event",
+      payload: {
+        website: websiteId,
+        url: "/commerce/purchase",
+        name: "purchase",
+        data: [],
+      },
+    },
+  ])("rejects an invalid stored collector payload without forwarding it (%p)", (value) => {
+    expect(() => __private.parseStoredCollectorEvent(value)).toThrow(
+      "ANALYTICS_OUTBOX_PAYLOAD_INVALID",
+    );
   });
 
   it("stores one privacy-safe IRR purchase event keyed by the settlement", async () => {

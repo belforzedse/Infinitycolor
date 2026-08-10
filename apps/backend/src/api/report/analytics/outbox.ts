@@ -381,11 +381,47 @@ async function claimDueRows(knex: KnexLike, limit: number): Promise<any[]> {
   });
 }
 
+function parseStoredCollectorEvent(value: unknown): UmamiCollectorEvent {
+  let candidate = Buffer.isBuffer(value) ? value.toString("utf8") : value;
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      throw new Error("ANALYTICS_OUTBOX_PAYLOAD_INVALID");
+    }
+  }
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new Error("ANALYTICS_OUTBOX_PAYLOAD_INVALID");
+  }
+  const event = candidate as Record<string, unknown>;
+  const payload = event.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("ANALYTICS_OUTBOX_PAYLOAD_INVALID");
+  }
+  const collectorPayload = payload as Record<string, unknown>;
+  if (
+    event.type !== "event" ||
+    typeof collectorPayload.website !== "string" ||
+    !collectorPayload.website.trim() ||
+    typeof collectorPayload.name !== "string" ||
+    !collectorPayload.name.trim() ||
+    typeof collectorPayload.url !== "string" ||
+    !collectorPayload.url.trim() ||
+    (collectorPayload.data !== undefined &&
+      (!collectorPayload.data ||
+        typeof collectorPayload.data !== "object" ||
+        Array.isArray(collectorPayload.data)))
+  ) {
+    throw new Error("ANALYTICS_OUTBOX_PAYLOAD_INVALID");
+  }
+  return candidate as UmamiCollectorEvent;
+}
+
 async function processClaimedRow(strapi: Strapi, row: any): Promise<"sent" | "retry" | "dead"> {
   const knex = resolveKnex(strapi);
   try {
     const client = getUmamiClient();
-    await client.sendEvent(row.payload as UmamiCollectorEvent);
+    await client.sendEvent(parseStoredCollectorEvent(row.payload));
     await knex("analytics_outbox").where({ id: row.id }).update({
       status: "sent",
       sent_at: new Date(),
@@ -445,4 +481,5 @@ export const __private = {
   toCollectorTimestamp,
   toPositiveInteger,
   toCollectorEvent,
+  parseStoredCollectorEvent,
 };
