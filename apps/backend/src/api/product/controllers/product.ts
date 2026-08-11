@@ -481,6 +481,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
             productId,
             scheduleRevision: result.scheduleRevision,
             expectedPublishAt: result.scheduledPublishAt,
+            auditContext: result.auditJobContext,
           });
           queueState = "queued";
         } catch (error) {

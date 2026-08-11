@@ -39,7 +39,12 @@ describe("logAdminOrderFieldUpdate", () => {
     expect(payload.data.ResourceType).toBe("Order");
     expect(payload.data.ResourceId).toBe("42");
     expect(payload.data.Action).toBe("StatusChange");
-    expect(payload.data.Changes).toEqual(changes);
+    expect(payload.data.Changes).toEqual([
+      { field: "Status", from: "Paying", to: "Started" },
+    ]);
+    expect(payload.data.actorType).toBe("human");
+    expect(payload.data.initiatorType).toBe("human");
+    expect(payload.data.origin).toBe("admin_ui");
     expect(payload.data.performed_by).toBe(7);
     expect(payload.data.PerformedByRole).toBe("Superadmin");
     expect(payload.data.IP).toBe("1.2.3.4");
@@ -55,7 +60,9 @@ describe("logAdminOrderFieldUpdate", () => {
     expect(strapi.entityService.create).toHaveBeenCalledTimes(1);
     const payload = strapi.entityService.create.mock.calls[0][1];
     expect(payload.data.Action).toBe("Update");
-    expect(payload.data.Changes).toEqual(changes);
+    expect(payload.data.Changes).toEqual([
+      { field: "Note", from: "", to: "ارسال فوری" },
+    ]);
   });
 
   it("does nothing when there are no changes", async () => {

@@ -9,6 +9,7 @@ import {
   createInfinityJwtOptions,
   infinityCredentialsPlugin,
 } from "./infinity-plugin";
+import { startAuthAuditDeliveryLoop } from "./audit-outbox";
 
 const env = getAuthEnv();
 const pool = getAuthPool();
@@ -104,6 +105,7 @@ export const auth = betterAuth({
       identities,
       grants,
       jwtOptions,
+      pool,
     }),
     jwt({
       ...jwtOptions,
@@ -121,5 +123,7 @@ export const auth = betterAuth({
     }),
   ],
 });
+
+startAuthAuditDeliveryLoop(pool);
 
 export type InfinityAuth = typeof auth;

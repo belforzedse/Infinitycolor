@@ -68,24 +68,6 @@ function registerOrderLifecycle(strapi: Strapi) {
         },
       });
 
-      // Only logs when the actor is a verified admin (e.g. an admin-created order); customer
-      // checkout orders are intentionally not recorded in the admin audit log.
-      await recordAdminAudit(strapi as any, {
-        event,
-        resourceType: "Order",
-        resourceId: result.id,
-        action: "Create",
-        title: "سفارش ایجاد شد",
-        message: `سفارش #${result.id} توسط ادمین ایجاد شد`,
-        messageEn: `Order #${result.id} created`,
-        severity: "success",
-        metadata: {
-          orderId: result.id,
-          orderType: result.Type,
-          orderStatus: result.Status,
-        },
-      });
-
       const orderUserId = typeof result.user === "object" && result.user?.id
         ? result.user.id
         : typeof result.user === "number"
@@ -229,26 +211,6 @@ function registerOrderLifecycle(strapi: Strapi) {
           Changes: changes,
           Description: "Order updated",
         },
-      });
-
-      const orderStatusChange = changes.Status as
-        | { from?: unknown; to?: unknown }
-        | undefined;
-      await recordAdminAudit(strapi as any, {
-        event,
-        resourceType: "Order",
-        resourceId: result.id,
-        action: orderStatusChange ? "StatusChange" : "Update",
-        title: orderStatusChange ? "وضعیت سفارش تغییر کرد" : "سفارش بروزرسانی شد",
-        message: orderStatusChange
-          ? `وضعیت سفارش #${result.id} از ${orderStatusChange.from ?? "-"} به ${orderStatusChange.to ?? "-"} تغییر کرد`
-          : `سفارش #${result.id} توسط ادمین بروزرسانی شد`,
-        messageEn: orderStatusChange
-          ? `Order #${result.id} status changed from ${orderStatusChange.from ?? "-"} to ${orderStatusChange.to ?? "-"}`
-          : `Order #${result.id} updated`,
-        severity: "info",
-        changes,
-        metadata: { orderId: result.id, status: (current as any)?.Status },
       });
 
       const orderUserId = typeof (current as any)?.user === "object" && (current as any).user?.id

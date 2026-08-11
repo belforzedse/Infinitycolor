@@ -2,6 +2,7 @@ import routeConfig from "../routes/custom-router";
 describe("order operational route authorization", () => {
   it.each([
     ["/orders/:id/anipo-barcode", "order.shipping.manage"],
+    ["/orders/:id/anipo-barcode/check", "order.shipping.manage"],
     ["/orders/:id/admin/adjust-items", "order.items.adjust"],
     ["/orders/:id/admin/notes", "order.notes.update"],
     ["/orders/:id/admin/transition", "order.status.update"],

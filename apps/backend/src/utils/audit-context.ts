@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks";
+import type { AuditContext as CanonicalAuditContext } from "../audit/types";
 
 export interface AuditContext {
   userId: number | null;
@@ -16,6 +17,13 @@ export interface AuditContext {
   roleName?: string | null;
   /** Display name resolved alongside `roleName` (e.g. "First Last"), memoized. */
   resolvedName?: string | null;
+  /** Stable IDs used to join direct and asynchronous work caused by this request. */
+  requestId: string;
+  interactionId: string | null;
+  correlationId: string;
+  route: string | null;
+  method: string | null;
+  canonical?: CanonicalAuditContext;
 }
 
 // Global storage for audit context
@@ -57,6 +65,11 @@ export const createAuditContext = (user: any, isAdmin = false): AuditContext => 
     isAdmin,
     ip: null,
     userAgent: null,
+    requestId: "",
+    interactionId: null,
+    correlationId: "",
+    route: null,
+    method: null,
   };
 };
 

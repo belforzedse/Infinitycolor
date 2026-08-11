@@ -39,6 +39,7 @@ import {
   type AdminCapability,
   type AdminRoleId,
 } from "@repo/auth-core";
+import { ensureAuditEventStorage } from "./audit/storage";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -187,7 +188,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "order.shipping.manage": {
     "api::order": {
-      order: ["generateAnipoBarcode", "adminVoidBarcode"],
+      order: ["generateAnipoBarcode", "checkAnipoBarcode", "adminVoidBarcode"],
     },
   },
   "report.product.read": { "api::report": { report: PRODUCT_REPORT_ACTIONS } },
@@ -236,6 +237,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "api::local-user": { "local-user": ["createUser", "updateUser"] },
   },
   "system.audit.read": {
+    "api::audit-event": {
+      "audit-event": ["find", "findOne", "related", "summary", "filterOptions"],
+    },
     "api::admin-activity": {
       "admin-activity": [
         "findMyActivities",
@@ -246,6 +250,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     },
     "api::report": { report: ["adminActivity", "adminActivityById"] },
     "api::event-log": { "event-log": ["getAdminEvents"] },
+  },
+  "system.audit.export": {
+    "api::audit-event": { "audit-event": ["exportReport"] },
   },
   "system.settings.manage": {
     "api::settings": { settings: ["find", "update"] },
@@ -1156,21 +1163,27 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
   }
 }
 
-export const RedisClient = createClient({
+const authenticationRedisClient = createClient({
   url: process.env.REDIS_URL,
   ...(process.env.REDIS_PASSWORD && { password: process.env.REDIS_PASSWORD }),
 })
-  .on("error", (err) => console.log("Redis Client Error", err))
-  .connect()
-  .then((client) => {
-    console.log("Redis connected");
-    return client;
-  })
-  .catch((err) => {
-    console.error("Failed to connect to Redis:", err.message);
-    // Return a mock client that fails gracefully for development
-    throw err;
-  });
+  .on("error", (err) => console.log("Redis Client Error", err));
+
+// Type generation imports the application entrypoint but never uses runtime
+// authentication/cache services. Do not open a socket that would keep the CLI
+// alive after it has written the generated declarations.
+export const RedisClient = process.argv.includes("ts:generate-types")
+  ? Promise.resolve(authenticationRedisClient)
+  : authenticationRedisClient
+      .connect()
+      .then((client) => {
+        console.log("Redis connected");
+        return client;
+      })
+      .catch((err) => {
+        console.error("Failed to connect to Redis:", err.message);
+        throw err;
+      });
 
 export default {
   /**
@@ -1216,6 +1229,10 @@ export default {
       databaseClient.includes("pg") ||
       databaseClient.includes("postgres")
     ) {
+      const auditStorage = await ensureAuditEventStorage(strapi);
+      if (auditStorage.repaired) {
+        strapi.log.info("Canonical audit storage protections installed after schema sync");
+      }
       // These constraints also protect the shared payment-attempt workflow when
       // hardened SnappPay initiation is disabled, so keep them on every
       // PostgreSQL boot. A non-Postgres database still fails closed if hardened

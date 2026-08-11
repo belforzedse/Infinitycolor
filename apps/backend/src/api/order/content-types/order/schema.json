@@ -111,6 +111,39 @@
       "min": 0,
       "default": 0
     },
+    "AnipoBarcodeState": {
+      "type": "enumeration",
+      "enum": ["Pending", "Issued", "NeedsAttention", "Stopped", "Voided"]
+    },
+    "AnipoSubmittedAt": {
+      "type": "datetime"
+    },
+    "AnipoLastCheckedAt": {
+      "type": "datetime"
+    },
+    "AnipoPollingDeadlineAt": {
+      "type": "datetime"
+    },
+    "AnipoIssuedAt": {
+      "type": "datetime"
+    },
+    "AnipoCheckCount": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoReadyToIssue": {
+      "type": "boolean"
+    },
+    "AnipoProviderStatus": {
+      "type": "string"
+    },
+    "AnipoLastMessage": {
+      "type": "text"
+    },
+    "AnipoLastError": {
+      "type": "text"
+    },
     "external_id": {
       "type": "string",
       "unique": false
@@ -133,6 +166,9 @@
       "type": "integer"
     },
     "CartCleanupCompletedAt": {
+      "type": "datetime"
+    },
+    "ManualStockAppliedAt": {
       "type": "datetime"
     },
     "PaymentGateway": {

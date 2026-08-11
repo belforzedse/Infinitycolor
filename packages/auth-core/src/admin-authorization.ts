@@ -58,6 +58,7 @@ export const ADMIN_CAPABILITIES = [
   "system.roles.manage",
   "system.settings.manage",
   "system.audit.read",
+  "system.audit.export",
   "system.purge.execute",
   "system.customization.manage",
   "system.discounts.manage",

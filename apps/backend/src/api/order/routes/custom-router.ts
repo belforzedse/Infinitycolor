@@ -93,6 +93,15 @@ export default {
     },
     {
       method: "POST",
+      path: "/orders/:id/anipo-barcode/check",
+      handler: "order.checkAnipoBarcode",
+      config: {
+        auth: { scope: [] },
+        policies: capabilityPolicy("order.shipping.manage"),
+      },
+    },
+    {
+      method: "POST",
       path: "/orders/:id/admin/adjust-items",
       handler: "order.adminAdjustItems",
       config: {

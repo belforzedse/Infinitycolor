@@ -2,7 +2,9 @@ import { MANAGEMENT_ROLES, normalizeRoleName } from "../../utils/roles";
 import bcrypt from "bcryptjs";
 import { normalizeRequiredProfileName } from "../../api/auth/utils/profile-names";
 import { validatePhone } from "../../api/auth/utils/validations";
-import { recordAdminAudit } from "../../utils/adminAudit";
+import { writeAuditEvent } from "../../audit/writer";
+import { getAuditContext } from "../../utils/audit-context";
+import { randomUUID } from "node:crypto";
 import { ADMIN_ROLE_DEFINITIONS } from "@repo/auth-core";
 import { requireCapability } from "../../utils/adminAuthorization";
 
@@ -227,6 +229,59 @@ async function preservesActiveSuperadmin(ctx: any, targetId: number, nextRole: a
   return false;
 }
 
+async function auditRoleDenial(
+  ctx: any,
+  input: { targetId: number | null; requestedRole: unknown; reasonCode: string },
+) {
+  const actorId = Number(ctx.state?.user?.id);
+  if (!Number.isSafeInteger(actorId) || actorId <= 0) return;
+  const request = getAuditContext();
+  try {
+    await writeAuditEvent(strapi, {
+      eventKey: "security.access_denied",
+      result: "denied",
+      importance: "critical",
+      initiator: {
+        type: "human",
+        id: actorId,
+        label: ctx.state?.user?.username || ctx.state?.user?.email,
+        role: ctx.state?.adminActor?.role,
+        roleId: ctx.state?.user?.role?.id,
+      },
+      actor: {
+        type: "service_account",
+        id: "role-management-policy",
+        label: "سیاست مدیریت نقش‌ها",
+      },
+      origin: "admin_ui",
+      target: {
+        type: "administrator",
+        id: input.targetId,
+        label: input.targetId ? `User ${input.targetId}` : "کاربر جدید",
+      },
+      reasonCode: input.reasonCode,
+      requestId: request?.requestId,
+      correlationId: request?.correlationId,
+      route: ctx.request?.path || ctx.path,
+      httpMethod: ctx.request?.method || ctx.method,
+      ip: request?.ip || ctx.request?.ip || ctx.ip,
+      userAgent: request?.userAgent || ctx.request?.headers?.["user-agent"],
+      metadata: {
+        requestedRoleId:
+          typeof input.requestedRole === "object"
+            ? (input.requestedRole as any)?.id ?? null
+            : input.requestedRole ?? null,
+      },
+      dedupeKey: `role-denied:${request?.requestId || randomUUID()}:${input.reasonCode}`,
+    });
+  } catch (error) {
+    strapi.log.error("Required role-denial audit write failed", {
+      reasonCode: input.reasonCode,
+      error: error instanceof Error ? error.name : "UNKNOWN",
+    });
+  }
+}
+
 const wrapUserController =
   (controllerFn: (ctx: any, next?: any) => Promise<unknown>) => async (ctx: any, next?: any) => {
     if (wantsPluginRoleChange(ctx)) {
@@ -234,29 +289,19 @@ const wrapUserController =
       const targetId = Number(ctx.params?.id);
       const allowed = await assertSuperadmin(ctx);
       if (!allowed) {
-        await recordAdminAudit(strapi, {
-          resourceType: "User",
-          resourceId: Number.isSafeInteger(targetId) ? targetId : null,
-          action: "Update",
-          title: "Rejected user role assignment",
-          messageEn: "An actor without role-management capability attempted to assign a role.",
-          severity: "warning",
-          actor: Number.isSafeInteger(actorId) ? { id: actorId } : undefined,
-          metadata: { requestedRole: ctx.request?.body?.role ?? null },
+        await auditRoleDenial(ctx, {
+          targetId: Number.isSafeInteger(targetId) ? targetId : null,
+          requestedRole: ctx.request?.body?.role,
+          reasonCode: "ROLE_MANAGEMENT_CAPABILITY_REQUIRED",
         });
         return;
       }
       const nextRole = await resolveAssignablePluginRole(ctx);
       if (!nextRole) {
-        await recordAdminAudit(strapi, {
-          resourceType: "User",
-          resourceId: Number.isSafeInteger(targetId) ? targetId : null,
-          action: "Update",
-          title: "Rejected user role assignment",
-          messageEn: "A Superadmin attempted to assign an unknown or non-assignable role.",
-          severity: "warning",
-          actor: { id: actorId },
-          metadata: { requestedRole: ctx.request?.body?.role ?? null },
+        await auditRoleDenial(ctx, {
+          targetId: Number.isSafeInteger(targetId) ? targetId : null,
+          requestedRole: ctx.request?.body?.role,
+          reasonCode: "ROLE_NOT_ASSIGNABLE",
         });
         return;
       }
@@ -265,38 +310,79 @@ const wrapUserController =
         targetId <= 0 ||
         !(await preservesActiveSuperadmin(ctx, targetId, nextRole))
       ) {
-        await recordAdminAudit(strapi, {
-          resourceType: "User",
-          resourceId: Number.isSafeInteger(targetId) ? targetId : null,
-          action: "Update",
-          title: "Rejected last Superadmin role change",
-          messageEn: "A role change would have removed the last active Superadmin.",
-          severity: "warning",
-          actor: { id: actorId },
-          metadata: { requestedRole: nextRole.id },
+        await auditRoleDenial(ctx, {
+          targetId: Number.isSafeInteger(targetId) ? targetId : null,
+          requestedRole: nextRole.id,
+          reasonCode: "LAST_ACTIVE_SUPERADMIN",
         });
         return;
       }
     }
 
-    const result = await controllerFn(ctx, next);
-    if (
-      wantsPluginRoleChange(ctx) &&
-      Number(ctx.params?.id) > 0 &&
-      (!ctx.status || ctx.status < 400)
-    ) {
-      await recordAdminAudit(strapi, {
-        resourceType: "User",
-        resourceId: Number(ctx.params.id),
-        action: "Update",
-        title: "User role updated",
-        messageEn: "A Superadmin changed a user's role.",
-        severity: "success",
-        actor: { id: Number(ctx.state?.user?.id) },
-        metadata: { fields: ["role"] },
-      });
-    }
-    return result;
+    const targetId = Number(ctx.params?.id);
+    const shouldAuditRoleChange = wantsPluginRoleChange(ctx) && targetId > 0;
+    return strapi.db.transaction(async ({ trx }) => {
+      const userQuery = strapi.query("plugin::users-permissions.user");
+      const before = shouldAuditRoleChange
+        ? await userQuery.findOne({
+            where: { id: targetId },
+            select: ["id", "username", "email"],
+            populate: { role: { select: ["id", "name", "type"] } },
+            transacting: trx,
+          } as any)
+        : null;
+      const result = await controllerFn(ctx, next);
+      if (shouldAuditRoleChange && (!ctx.status || ctx.status < 400)) {
+        const after = await userQuery.findOne({
+          where: { id: targetId },
+          select: ["id", "username", "email"],
+          populate: { role: { select: ["id", "name", "type"] } },
+          transacting: trx,
+        } as any);
+        const request = getAuditContext();
+        const actor = ctx.state?.adminActor;
+        await writeAuditEvent(strapi, {
+          eventKey: "administrators.role_changed",
+          result: "success",
+          initiator: {
+            type: "human",
+            id: Number(ctx.state?.user?.id),
+            label: actor?.user?.username || actor?.user?.email,
+            role: actor?.role,
+            roleId: actor?.user?.role?.id,
+          },
+          actor: {
+            type: "human",
+            id: Number(ctx.state?.user?.id),
+            label: actor?.user?.username || actor?.user?.email,
+            role: actor?.role,
+            roleId: actor?.user?.role?.id,
+          },
+          origin: "admin_ui",
+          target: {
+            type: "administrator",
+            id: targetId,
+            label: after?.username || after?.email || `User ${targetId}`,
+          },
+          changes: [{
+            field: "role",
+            label: "نقش و سطح دسترسی",
+            from: before?.role
+              ? { id: before.role.id, name: before.role.name, type: before.role.type }
+              : null,
+            to: after?.role
+              ? { id: after.role.id, name: after.role.name, type: after.role.type }
+              : null,
+          }],
+          requestId: request?.requestId,
+          correlationId: request?.correlationId,
+          ip: request?.ip || ctx.request?.ip || ctx.ip,
+          userAgent: request?.userAgent || ctx.request?.headers?.["user-agent"],
+          dedupeKey: `role-change:${request?.requestId || randomUUID()}:${targetId}`,
+        }, { trx });
+      }
+      return result;
+    });
   };
 
 export default (plugin: any) => {

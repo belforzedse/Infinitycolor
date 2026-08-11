@@ -8,6 +8,8 @@ import { deleteSessionCookie, setSessionCookie } from "better-auth/cookies";
 import { getJwtToken, type JwtOptions } from "better-auth/plugins/jwt";
 import { z } from "zod";
 import type { BetterAuthPlugin } from "better-auth";
+import type { Pool } from "pg";
+import type { BridgeVerifiedIdentityResponse } from "@repo/auth-core/contracts";
 import { getAuthEnv } from "./env";
 import { authEvent, keyedSubjectTag } from "./event-logger";
 import {
@@ -21,6 +23,13 @@ import {
 import { IdentityRepository } from "./identity-repository";
 import { ReturnGrantRepository } from "./return-grants";
 import { StrapiBridgeClient, StrapiBridgeError } from "./bridge-client";
+import {
+  isAdminReturnTarget,
+  kickAuthAuditDelivery,
+  recordAdminLoginFailure,
+  recordAdminSecurityChange,
+  recordAdminSessionCreated,
+} from "./audit-outbox";
 
 const phoneSchema = z
   .string()
@@ -33,7 +42,19 @@ interface InfinityPluginOptions {
   identities: IdentityRepository;
   grants: ReturnGrantRepository;
   jwtOptions: JwtOptions;
+  pool: Pool;
   fetchImpl?: typeof fetch;
+}
+
+function auditRequestId(ctx: { headers?: Headers }): string {
+  const supplied = ctx.headers?.get("x-request-id");
+  return supplied && /^[A-Za-z0-9._:-]{8,160}$/.test(supplied) ? supplied : randomUUID();
+}
+
+function auditFailureCode(error: unknown): string {
+  if (error instanceof StrapiBridgeError) return error.reasonCode;
+  if (error instanceof APIError) return String((error as any).body?.code || error.status || "AUTH_FAILED");
+  return error instanceof Error ? error.name : "AUTH_FAILED";
 }
 
 function bridgeApiError(error: unknown): APIError {
@@ -84,9 +105,10 @@ export function infinityCredentialsPlugin(
 ): BetterAuthPlugin {
   const completeSignIn = async (
     ctx: any,
-    strapiUserId: number,
+    verified: BridgeVerifiedIdentityResponse,
     returnTo: string,
   ) => {
+    const strapiUserId = verified.strapiUserId;
     const identity =
       await options.identities.getOrCreateVerifiedIdentity(strapiUserId);
     const user = await ctx.context.internalAdapter.findUserById(
@@ -101,6 +123,24 @@ export function infinityCredentialsPlugin(
       false,
     );
     await setSessionCookie(ctx, { session, user }, false);
+    if (verified.admin && isAdminReturnTarget(returnTo)) {
+      try {
+        await recordAdminSessionCreated(options.pool, {
+          sessionId: session.id,
+          identity: verified,
+          requestId: auditRequestId(ctx),
+          userAgent: ctx.headers?.get("user-agent"),
+          ipAddress: session.ipAddress || null,
+        });
+      } catch (error) {
+        await ctx.context.internalAdapter.deleteSession(session.token).catch(() => undefined);
+        deleteSessionCookie(ctx);
+        throw new APIError("INTERNAL_SERVER_ERROR", {
+          message: "ثبت رویداد امنیتی ورود ناموفق بود. دوباره تلاش کنید.",
+        });
+      }
+      kickAuthAuditDelivery(options.pool);
+    }
     authEvent("session_created", { subjectTag: keyedSubjectTag(strapiUserId) });
     return { identity, session };
   };
@@ -186,11 +226,7 @@ export function infinityCredentialsPlugin(
               flow.challengeId,
               ctx.body.otp,
             );
-            const { session } = await completeSignIn(
-              ctx,
-              verified.strapiUserId,
-              flow.returnTo,
-            );
+            const { session } = await completeSignIn(ctx, verified, flow.returnTo);
             if (verified.needsProfileCompletion === true) {
               return ctx.json({
                 message: "login successful",
@@ -200,6 +236,18 @@ export function infinityCredentialsPlugin(
             const redirectTo = await createReturn(session.id, flow.returnTo);
             return ctx.json({ message: "login successful", redirectTo });
           } catch (error) {
+            if (isAdminReturnTarget(flow.returnTo)) {
+              await recordAdminLoginFailure(options.pool, {
+                subject: flow.phone,
+                reasonCode: auditFailureCode(error),
+                requestId: auditRequestId(ctx),
+              }).then(() => kickAuthAuditDelivery(options.pool)).catch((auditError) => {
+                console.error(JSON.stringify({
+                  event: "auth_audit_enqueue_failed",
+                  reasonCode: auditError instanceof Error ? auditError.name : "UNKNOWN",
+                }));
+              });
+            }
             throw bridgeApiError(error);
           }
         },
@@ -213,6 +261,7 @@ export function infinityCredentialsPlugin(
         async (ctx) => {
           assertTrustedRequest(ctx);
           const flow = readFlowState(ctx);
+          const returnTo = returnTargetFromHeaders(ctx.headers, flow?.returnTo);
           if (flow?.phone && flow.phone !== ctx.body.phone) {
             throw new APIError("BAD_REQUEST", {
               message: "شماره همراه با جریان جاری مطابقت ندارد",
@@ -223,15 +272,7 @@ export function infinityCredentialsPlugin(
               ctx.body.phone,
               ctx.body.password,
             );
-            const returnTo = returnTargetFromHeaders(
-              ctx.headers,
-              flow?.returnTo,
-            );
-            const { session } = await completeSignIn(
-              ctx,
-              verified.strapiUserId,
-              returnTo,
-            );
+            const { session } = await completeSignIn(ctx, verified, returnTo);
             if (verified.needsProfileCompletion === true) {
               return ctx.json({
                 message: "login successful",
@@ -241,6 +282,18 @@ export function infinityCredentialsPlugin(
             const redirectTo = await createReturn(session.id, returnTo);
             return ctx.json({ message: "login successful", redirectTo });
           } catch (error) {
+            if (isAdminReturnTarget(returnTo)) {
+              await recordAdminLoginFailure(options.pool, {
+                subject: ctx.body.phone,
+                reasonCode: auditFailureCode(error),
+                requestId: auditRequestId(ctx),
+              }).then(() => kickAuthAuditDelivery(options.pool)).catch((auditError) => {
+                console.error(JSON.stringify({
+                  event: "auth_audit_enqueue_failed",
+                  reasonCode: auditError instanceof Error ? auditError.name : "UNKNOWN",
+                }));
+              });
+            }
             throw bridgeApiError(error);
           }
         },
@@ -279,6 +332,14 @@ export function infinityCredentialsPlugin(
               reasonCode: "PASSWORD_RESET",
               subjectTag: keyedSubjectTag(verified.strapiUserId),
             });
+            if (verified.admin && isAdminReturnTarget(flow.returnTo)) {
+              await recordAdminSecurityChange(options.pool, {
+                identity: verified,
+                reasonCode: "PASSWORD_RESET",
+                requestId: auditRequestId(ctx),
+              });
+              kickAuthAuditDelivery(options.pool);
+            }
             return ctx.json({ message: "رمز عبور با موفقیت تغییر کرد." });
           } catch (error) {
             throw bridgeApiError(error);

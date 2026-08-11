@@ -35,6 +35,10 @@ const migrationPath = path.resolve(
   "../migrations/0001_better_auth.sql",
 );
 const migration = await fs.readFile(migrationPath, "utf8");
+const auditMigration = await fs.readFile(
+  path.resolve(path.dirname(new URL(import.meta.url).pathname), "../migrations/0002_audit_outbox.sql"),
+  "utf8",
+);
 const client = new Client({
   ...(migrationUrl ? { connectionString: migrationUrl } : {}),
   application_name: "infinity-auth-migration",
@@ -55,6 +59,7 @@ try {
   if (present === 0) {
     await client.query(migration);
   }
+  await client.query(auditMigration);
 
   const statement = await client.query(
     "select format('alter role %I password %L', 'infinity_auth_app', $1::text) as sql",
@@ -62,7 +67,9 @@ try {
   );
   await client.query(statement.rows[0].sql);
   console.log(
-    present === 0 ? "auth migration applied" : "auth migration already applied",
+    present === 0
+      ? "auth migrations applied"
+      : "auth migrations verified and additive migrations applied",
   );
 } finally {
   await client

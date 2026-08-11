@@ -1486,7 +1486,7 @@ export interface ApiLocalUserLocalUser extends Schema.CollectionType {
 export interface ApiManualAdminActivityManualAdminActivity extends Schema.CollectionType {
   collectionName: "manual_admin_activities";
   info: {
-    description: "Structured log for manual actions performed through super-admin/store manager interfaces";
+    description: "Canonical append-only business and administrative audit event store";
     displayName: "ManualAdminActivity";
     pluralName: "manual-admin-activities";
     singularName: "manual-admin-activity";
@@ -1510,7 +1510,16 @@ export interface ApiManualAdminActivityManualAdminActivity extends Schema.Collec
       ]
     > &
       Attribute.Required;
+    actorAuthMethod: Attribute.String & Attribute.Private;
+    actorId: Attribute.String & Attribute.Private;
+    actorLabel: Attribute.String & Attribute.Private;
+    actorRoleId: Attribute.String & Attribute.Private;
+    actorRoleName: Attribute.String & Attribute.Private;
+    actorType: Attribute.String & Attribute.Private;
+    batchId: Attribute.String & Attribute.Private;
+    causationId: Attribute.String & Attribute.Private;
     Changes: Attribute.JSON;
+    correlationId: Attribute.String & Attribute.Private;
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<
       "api::manual-admin-activity.manual-admin-activity",
@@ -1518,11 +1527,31 @@ export interface ApiManualAdminActivityManualAdminActivity extends Schema.Collec
       "admin::user"
     > &
       Attribute.Private;
+    dedupeKey: Attribute.String & Attribute.Private & Attribute.Unique;
     Description: Attribute.Text;
+    domain: Attribute.String & Attribute.Private;
+    environment: Attribute.String & Attribute.Private;
+    eventId: Attribute.String & Attribute.Required & Attribute.Private & Attribute.Unique;
+    eventKey: Attribute.String & Attribute.Private;
+    httpMethod: Attribute.String & Attribute.Private;
+    importance: Attribute.Enumeration<["normal", "important", "sensitive", "critical"]> &
+      Attribute.Private &
+      Attribute.DefaultTo<"normal">;
+    initiatorId: Attribute.String & Attribute.Private;
+    initiatorLabel: Attribute.String & Attribute.Private;
+    initiatorRoleId: Attribute.String & Attribute.Private;
+    initiatorRoleName: Attribute.String & Attribute.Private;
+    initiatorType: Attribute.String & Attribute.Private;
+    interactionId: Attribute.String & Attribute.Private;
     IP: Attribute.String;
+    jobId: Attribute.String & Attribute.Private;
     Message: Attribute.Text;
     MessageEn: Attribute.String;
     Metadata: Attribute.JSON;
+    occurredAt: Attribute.DateTime & Attribute.Private;
+    operation: Attribute.String & Attribute.Private;
+    origin: Attribute.String & Attribute.Private;
+    parentEventId: Attribute.String & Attribute.Private;
     performed_by: Attribute.Relation<
       "api::manual-admin-activity.manual-admin-activity",
       "manyToOne",
@@ -1530,14 +1559,37 @@ export interface ApiManualAdminActivityManualAdminActivity extends Schema.Collec
     >;
     PerformedByName: Attribute.String;
     PerformedByRole: Attribute.String;
+    reasonCode: Attribute.String & Attribute.Private;
+    recordedAt: Attribute.DateTime & Attribute.Private;
+    relatedId: Attribute.String & Attribute.Private;
+    relatedLabel: Attribute.String & Attribute.Private;
+    relatedSnapshot: Attribute.JSON & Attribute.Private;
+    relatedType: Attribute.String & Attribute.Private;
+    requestId: Attribute.String & Attribute.Private;
     ResourceId: Attribute.String;
     ResourceType: Attribute.Enumeration<
       ["Order", "Product", "User", "Contract", "Discount", "Stock", "Other"]
     > &
       Attribute.Required;
+    resultStatus: Attribute.Enumeration<
+      ["success", "partial", "failure", "denied", "queued", "cancelled", "no_op"]
+    > &
+      Attribute.Private &
+      Attribute.DefaultTo<"success">;
+    rootEventId: Attribute.String & Attribute.Private;
+    route: Attribute.String & Attribute.Private;
+    schemaVersion: Attribute.Integer & Attribute.Private & Attribute.DefaultTo<2>;
+    scope: Attribute.JSON & Attribute.Private;
+    searchText: Attribute.Text & Attribute.Private;
+    serviceName: Attribute.String & Attribute.Private;
     Severity: Attribute.Enumeration<["info", "success", "warning", "error"]> &
       Attribute.DefaultTo<"info">;
+    targetId: Attribute.String & Attribute.Private;
+    targetLabel: Attribute.String & Attribute.Private;
+    targetSnapshot: Attribute.JSON & Attribute.Private;
+    targetType: Attribute.String & Attribute.Private;
     Title: Attribute.String;
+    traceId: Attribute.String & Attribute.Private;
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<
       "api::manual-admin-activity.manual-admin-activity",
@@ -1727,6 +1779,25 @@ export interface ApiOrderOrder extends Schema.CollectionType {
       Attribute.SetMinMaxLength<{
         maxLength: 160;
       }>;
+    AnipoBarcodeState: Attribute.Enumeration<
+      ["Pending", "Issued", "NeedsAttention", "Stopped", "Voided"]
+    >;
+    AnipoCheckCount: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    AnipoIssuedAt: Attribute.DateTime;
+    AnipoLastCheckedAt: Attribute.DateTime;
+    AnipoLastError: Attribute.Text;
+    AnipoLastMessage: Attribute.Text;
+    AnipoPollingDeadlineAt: Attribute.DateTime;
+    AnipoProviderStatus: Attribute.String;
+    AnipoReadyToIssue: Attribute.Boolean;
+    AnipoSubmittedAt: Attribute.DateTime;
     AppliedDiscountAmount: Attribute.Integer &
       Attribute.SetMinMax<
         {
@@ -1753,6 +1824,7 @@ export interface ApiOrderOrder extends Schema.CollectionType {
     external_id: Attribute.String;
     external_source: Attribute.String;
     isReserveOrder: Attribute.Boolean & Attribute.DefaultTo<false>;
+    ManualStockAppliedAt: Attribute.DateTime;
     Note: Attribute.Text;
     order_items: Attribute.Relation<"api::order.order", "oneToMany", "api::order-item.order-item">;
     PaymentGateway: Attribute.Enumeration<
@@ -3259,6 +3331,7 @@ export interface ApiProductProduct extends Schema.CollectionType {
         number
       > &
       Attribute.DefaultTo<0>;
+    scheduledPublishAuditContext: Attribute.JSON & Attribute.Private;
     scheduledPublishFailureKind: Attribute.Enumeration<["Transient", "Permanent"]>;
     scheduledPublishLastAttemptAt: Attribute.DateTime;
     scheduledPublishLastError: Attribute.String;
@@ -3745,11 +3818,24 @@ export interface ApiWalletTopupWalletTopup extends Schema.CollectionType {
     createdBy: Attribute.Relation<"api::wallet-topup.wallet-topup", "oneToOne", "admin::user"> &
       Attribute.Private;
     Date: Attribute.DateTime;
+    LastProviderCode: Attribute.Integer;
+    LastProviderError: Attribute.Text;
+    NextReconcileAt: Attribute.DateTime;
     Note: Attribute.Text;
+    ReconcileAttempts: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
     RefId: Attribute.String;
     SaleOrderId: Attribute.String & Attribute.Unique;
     SaleReferenceId: Attribute.String;
-    Status: Attribute.Enumeration<["Pending", "Success", "Failed", "Cancelled"]> &
+    Status: Attribute.Enumeration<
+      ["Pending", "Processing", "Unknown", "Success", "Failed", "Cancelled"]
+    > &
       Attribute.Required &
       Attribute.DefaultTo<"Pending">;
     updatedAt: Attribute.DateTime;

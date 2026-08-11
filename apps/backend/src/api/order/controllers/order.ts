@@ -6,6 +6,7 @@
 import { factories } from "@strapi/strapi";
 import { Strapi } from "@strapi/strapi";
 import { generateAnipoBarcodeHandler } from "./helpers/generateBarcode";
+import { checkAnipoBarcodeHandler } from "./helpers/checkAnipoBarcode";
 import { verifyPaymentHandler } from "./helpers/payment";
 import { snappayCallbackHandler } from "./helpers/snappayCallback";
 import { adminAdjustItemsHandler } from "./helpers/adminAdjustItems";
@@ -96,6 +97,16 @@ export default factories.createCoreController(
             "ShippingTax",
             "ShippingWeight",
             "ShippingBoxSizeId",
+            "AnipoBarcodeState",
+            "AnipoSubmittedAt",
+            "AnipoLastCheckedAt",
+            "AnipoPollingDeadlineAt",
+            "AnipoIssuedAt",
+            "AnipoCheckCount",
+            "AnipoReadyToIssue",
+            "AnipoProviderStatus",
+            "AnipoLastMessage",
+            "AnipoLastError",
             "DiscountCode",
             "AppliedGeneralDiscountId",
             "AppliedDiscountAmount",
@@ -279,31 +290,27 @@ export default factories.createCoreController(
      */
     async create(ctx) {
       if (!(await requireCapability(ctx, strapi, "order.manual.create"))) return;
-      const response = await super.create(ctx);
-
-      try {
+      return strapi.db.transaction(async ({ trx }) => {
+        const response = await super.create(ctx);
         const actorId = ctx.state?.user?.id ? Number(ctx.state.user.id) : null;
         const orderId = Number((response as any)?.data?.id ?? (response as any)?.id);
         if (actorId && orderId) {
           const requestData = (ctx.request?.body as any)?.data ?? {};
           const ip = getClientIp(ctx);
           const userAgent = getUserAgent(ctx);
-          void logAdminOrderCreate(
+          await logAdminOrderCreate(
             strapi,
             orderId,
             actorId,
             { type: requestData.Type ?? null, status: requestData.Status ?? null },
             ip,
             userAgent,
+            ctx.state?.user?.role?.name,
+            trx,
           );
         }
-      } catch (activityError) {
-        strapi.log.error("Failed to log admin activity for order create", {
-          error: (activityError as Error).message,
-        });
-      }
-
-      return response;
+        return response;
+      });
     },
 
     /**
@@ -317,17 +324,6 @@ export default factories.createCoreController(
       const requestData = (ctx.request?.body as any)?.data ?? {};
       const requestsStatusChange = Object.prototype.hasOwnProperty.call(requestData, "Status");
 
-      // Snapshot the whitelisted fields before the write so we can diff afterwards.
-      let before: Record<string, any> | null = null;
-      try {
-        before = await strapi.db.query("api::order.order").findOne({
-          where: { id },
-          select: [...AUDITED_ORDER_FIELDS, "PaymentGateway"],
-        });
-      } catch (e) {
-        before = null;
-      }
-
       if (requestsStatusChange) {
         return ctx.badRequest("Use the order transition or cancellation operation", {
           data: {
@@ -337,12 +333,12 @@ export default factories.createCoreController(
         });
       }
 
-      const response = await super.update(ctx);
-
-      // Fire-and-forget: build a normalized diff of only the whitelisted fields the caller actually
-      // changed, then record it. `recordAdminAudit` (via the helper) verifies the actor is an admin
-      // and silently no-ops otherwise, so non-admin/customer updates never produce an entry.
-      try {
+      return strapi.db.transaction(async ({ trx }) => {
+        const before = await strapi.db.query("api::order.order").findOne({
+          where: { id },
+          select: [...AUDITED_ORDER_FIELDS, "PaymentGateway"],
+        }) as Record<string, any> | null;
+        const response = await super.update(ctx);
         const actorId = ctx.state?.user?.id ? Number(ctx.state.user.id) : null;
         if (before && actorId) {
           const changes: Record<string, { from?: any; to?: any }> = {};
@@ -358,21 +354,28 @@ export default factories.createCoreController(
           if (Object.keys(changes).length > 0) {
             const ip = getClientIp(ctx);
             const userAgent = getUserAgent(ctx);
-            void logAdminOrderFieldUpdate(strapi, Number(id), changes, actorId, ip, userAgent);
+            await logAdminOrderFieldUpdate(
+              strapi,
+              Number(id),
+              changes,
+              actorId,
+              ip,
+              userAgent,
+              ctx.state?.user?.role?.name,
+              trx,
+            );
           }
         }
-      } catch (activityError) {
-        strapi.log.error("Failed to log admin activity for order update", {
-          orderId: id,
-          error: (activityError as Error).message,
-        });
-      }
-
-      return response;
+        return response;
+      });
     },
 
     async generateAnipoBarcode(ctx) {
       return generateAnipoBarcodeHandler(strapi as any, ctx);
+    },
+
+    async checkAnipoBarcode(ctx) {
+      return checkAnipoBarcodeHandler(strapi as any, ctx);
     },
 
     async verifyPayment(ctx) {
@@ -403,41 +406,48 @@ export default factories.createCoreController(
         return ctx.badRequest(`Protected order fields cannot be updated: ${rejected.join(", ")}`);
       }
 
-      const before = await strapi.db.query("api::order.order").findOne({
-        where: { id: orderId },
-        select: ["Description", "Note"],
-      });
-      if (!before) return ctx.notFound("Order not found");
+      return strapi.db.transaction(async ({ trx }) => {
+        const before = await strapi.db.query("api::order.order").findOne({
+          where: { id: orderId },
+          select: ["Description", "Note"],
+          transacting: trx,
+        } as any);
+        if (!before) return ctx.notFound("Order not found");
 
-      const updated = await strapi.entityService.update("api::order.order", orderId, {
-        data: {
-          ...(Object.prototype.hasOwnProperty.call(input, "Description")
-            ? { Description: input.Description }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(input, "Note") ? { Note: input.Note } : {}),
-        },
-      });
+        const updated = await strapi.db.query("api::order.order").update({
+          where: { id: orderId },
+          data: {
+            ...(Object.prototype.hasOwnProperty.call(input, "Description")
+              ? { Description: input.Description }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(input, "Note") ? { Note: input.Note } : {}),
+          },
+          transacting: trx,
+        } as any);
 
-      const changes: Record<string, { from?: any; to?: any }> = {};
-      for (const field of ["Description", "Note"] as const) {
-        if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
-        if (String(before[field] ?? "") !== String(input[field] ?? "")) {
-          changes[field] = { from: before[field] ?? null, to: input[field] ?? null };
+        const changes: Record<string, { from?: any; to?: any }> = {};
+        for (const field of ["Description", "Note"] as const) {
+          if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
+          if (String(before[field] ?? "") !== String(input[field] ?? "")) {
+            changes[field] = { from: before[field] ?? null, to: input[field] ?? null };
+          }
         }
-      }
-      if (Object.keys(changes).length > 0) {
-        await logAdminOrderFieldUpdate(
-          strapi,
-          orderId,
-          changes,
-          Number(ctx.state.user.id),
-          getClientIp(ctx),
-          getUserAgent(ctx),
-        );
-      }
+        if (Object.keys(changes).length > 0) {
+          await logAdminOrderFieldUpdate(
+            strapi,
+            orderId,
+            changes,
+            Number(ctx.state.user.id),
+            getClientIp(ctx),
+            getUserAgent(ctx),
+            ctx.state?.user?.role?.name,
+            trx,
+          );
+        }
 
-      const sanitized = await this.sanitizeOutput(updated, ctx);
-      return this.transformResponse(sanitized);
+        const sanitized = await this.sanitizeOutput(updated, ctx);
+        return this.transformResponse(sanitized);
+      });
     },
 
     async adminCancel(ctx) {

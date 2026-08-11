@@ -4,6 +4,8 @@
  */
 
 import { factories } from "@strapi/strapi";
+import { writeAuditEvent } from "../../../audit/writer";
+import { getAuditContext } from "../../../utils/audit-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 
 const OPERATIONAL_CATEGORY_FIELDS = [
@@ -79,53 +81,131 @@ export default factories.createCoreController(
         );
       }
 
-      let reassignedCount = 0;
+      const categoryLabel = String((category as any).Title || (category as any).Slug || `#${id}`);
+      const targetLabel = String(
+        (targetCategory as any).Title || (targetCategory as any).Slug || `#${targetId}`,
+      );
+      const requestId = getAuditContext()?.requestId;
 
-      const productsWithMain = await strapi.db.query("api::product.product").findMany({
-        where: { product_main_category: id },
-        select: ["id"],
-      });
-
-      for (const p of productsWithMain) {
-        await strapi.entityService.update("api::product.product", p.id, {
-          data: { product_main_category: targetId },
-        });
-        reassignedCount += 1;
-      }
-
-      const productsWithOther = await strapi.db.query("api::product.product").findMany({
-        where: {
-          product_other_categories: {
-            id: id,
-          },
-        },
-        populate: ["product_other_categories"],
-      });
-
-      for (const p of productsWithOther) {
-        const others =
-          (p as { product_other_categories?: { id: number }[] }).product_other_categories ?? [];
-        const newOthers = others.filter((c) => c.id !== id).map((c) => c.id);
-        await strapi.entityService.update("api::product.product", p.id, {
-          data: { product_other_categories: newOthers },
-        });
-      }
-
-      const contents = await strapi.db
-        .query("api::product-category-content.product-category-content")
-        .findMany({
-          where: { product_category: id },
+      const { reassignedCount } = await strapi.db.transaction(async ({ trx }) => {
+        const productsWithMain = await strapi.db.query("api::product.product").findMany({
+          where: { product_main_category: id },
           select: ["id"],
+          transacting: trx,
         });
 
-      for (const c of contents) {
-        await strapi.entityService.delete(
-          "api::product-category-content.product-category-content",
-          c.id,
-        );
-      }
+        for (const product of productsWithMain) {
+          await strapi.entityService.update("api::product.product", product.id, {
+            data: { product_main_category: targetId },
+            transacting: trx,
+          });
+        }
 
-      await strapi.entityService.delete("api::product-category.product-category", id);
+        const productsWithOther = await strapi.db.query("api::product.product").findMany({
+          where: {
+            product_other_categories: {
+              id,
+            },
+          },
+          populate: ["product_other_categories"],
+          transacting: trx,
+        });
+
+        for (const product of productsWithOther) {
+          const others =
+            (product as { product_other_categories?: { id: number }[] })
+              .product_other_categories ?? [];
+          const newOthers = others.filter((item) => item.id !== id).map((item) => item.id);
+          await strapi.entityService.update("api::product.product", product.id, {
+            data: { product_other_categories: newOthers },
+            transacting: trx,
+          });
+        }
+
+        const contents = await strapi.db
+          .query("api::product-category-content.product-category-content")
+          .findMany({
+            where: { product_category: id },
+            select: ["id"],
+            transacting: trx,
+          });
+
+        for (const content of contents) {
+          await strapi.db
+            .query("api::product-category-content.product-category-content")
+            .delete({ where: { id: content.id }, transacting: trx });
+        }
+
+        await strapi.db
+          .query("api::product-category.product-category")
+          .delete({ where: { id }, transacting: trx });
+
+        const affectedProductCount = new Set([
+          ...productsWithMain.map((product) => String(product.id)),
+          ...productsWithOther.map((product) => String(product.id)),
+        ]).size;
+
+        await writeAuditEvent(
+          strapi,
+          {
+            eventKey: "categories.deleted_with_reassignment",
+            result: "success",
+            target: {
+              type: "category",
+              id,
+              label: categoryLabel,
+              snapshot: { title: categoryLabel, slug: (category as any).Slug || null },
+            },
+            related: {
+              type: "category",
+              id: targetId,
+              label: targetLabel,
+              snapshot: {
+                title: targetLabel,
+                slug: (targetCategory as any).Slug || null,
+              },
+            },
+            changes: [
+              ...(productsWithMain.length > 0
+                ? [{
+                    field: "product_main_category",
+                    label: "دسته‌بندی اصلی محصولات",
+                    from: { id, label: categoryLabel },
+                    to: { id: targetId, label: targetLabel },
+                  }]
+                : []),
+              ...(productsWithOther.length > 0
+                ? [{
+                    field: "product_other_categories",
+                    label: "ارجاع دسته‌بندی جانبی",
+                    from: { id, label: categoryLabel },
+                    to: null,
+                  }]
+                : []),
+              {
+                field: "category_status",
+                label: "وضعیت دسته‌بندی",
+                from: "موجود",
+                to: "حذف‌شده",
+              },
+            ],
+            metadata: {
+              affectedProductCount,
+              mainCategoryReassignedCount: productsWithMain.length,
+              otherCategoryReferencesRemoved: productsWithOther.length,
+              categoryContentRecordsDeleted: contents.length,
+            },
+            summaryFa: `دسته‌بندی «${categoryLabel}» حذف شد؛ دسته‌بندی اصلی ${productsWithMain.length} محصول به «${targetLabel}» منتقل و ارجاع جانبی از ${productsWithOther.length} محصول حذف شد`,
+            summaryEn: `Category “${categoryLabel}” was deleted; ${productsWithMain.length} products moved to “${targetLabel}” as their main category and ${productsWithOther.length} secondary references were removed`,
+            dedupeKey: requestId
+              ? `category-delete-reassign:${id}:${targetId}:${requestId}`
+              : null,
+          },
+          { trx },
+        );
+
+        return { reassignedCount: productsWithMain.length };
+      });
 
       return {
         data: { success: true, reassignedCount },

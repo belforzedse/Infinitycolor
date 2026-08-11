@@ -1,4 +1,5 @@
 import type { Context } from "koa";
+import { randomUUID } from "node:crypto";
 import {
   getAuditContext,
   runWithAuditContext,
@@ -40,12 +41,26 @@ export default (config: any, { strapi }: any) => {
     // Extract the real client IP + User-Agent via the centralized, proxy-aware helper.
     const ip = getClientIp(ctx);
     const userAgent = getUserAgent(ctx);
+    const requestId = randomUUID();
+    const interactionHeader = ctx.get("x-interaction-id");
+    const interactionId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      interactionHeader,
+    )
+      ? interactionHeader.toLowerCase()
+      : null;
+    const correlationId = interactionId || requestId;
+    ctx.set("x-request-id", requestId);
 
     // Create audit context
     const auditContext: AuditContext = {
       ...createAuditContext(user, isAdmin),
       ip,
       userAgent,
+      requestId,
+      interactionId,
+      correlationId,
+      route: ctx.path || null,
+      method: ctx.method || null,
     };
 
     // Run next middleware/handler within audit context
