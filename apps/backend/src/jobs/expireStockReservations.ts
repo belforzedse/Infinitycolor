@@ -79,7 +79,7 @@ async function expireStockReservationsBatch(
       continue;
     }
 
-    let shouldWriteExpiryLog = false;
+    let stage = "transaction";
     try {
       const activeSnappayAttempt: any = await strapi.db
         .query("api::payment-attempt.payment-attempt")
@@ -172,12 +172,9 @@ async function expireStockReservationsBatch(
             expiresBefore: cutoff,
           }
         );
-        if (rel.skipped) {
+        if (rel.outcome === "skipped") {
           skipped += 1;
           return;
-        }
-        if (!rel.success) {
-          throw new Error(rel.error || "release_order_reservation_failed");
         }
 
         const order = await strapi.db.query("api::order.order").findOne({
@@ -218,40 +215,35 @@ async function expireStockReservationsBatch(
           );
         }
 
+        stage = "order_log";
+        await strapi.db.query("api::order-log.order-log").create({
+          data: {
+            order: orderId,
+            Action: "Update",
+            Description: "Reservation expired; order cancelled automatically",
+            Changes: { ReservationStatus: "Expired" },
+          },
+          transacting: trx,
+        } as any);
         processed += 1;
-        shouldWriteExpiryLog = true;
       });
     } catch (orderErr) {
       failed += 1;
+      if (stage === "order_log") logsFailed += 1;
       incrementMetric(strapi, "expire_stock_reservations_failures_total");
       strapi.log.error("expireStockReservations per-order transaction failed", {
         orderId,
-        stage: "transaction",
+        stage,
         ...formatError(orderErr),
       });
       continue;
     }
+  }
 
-    if (!shouldWriteExpiryLog) continue;
-
-    try {
-      await strapi.db.query("api::order-log.order-log").create({
-        data: {
-          order: orderId,
-          Action: "Update",
-          Description: "Reservation expired; order cancelled automatically",
-          Changes: { ReservationStatus: "Expired" },
-        },
-      } as any);
-    } catch (logErr) {
-      logsFailed += 1;
-      incrementMetric(strapi, "expire_stock_reservations_failures_total");
-      strapi.log.error("Failed to create order-log for expired reservation", {
-        orderId,
-        stage: "post_commit_order_log",
-        ...formatError(logErr),
-      });
-    }
+  if (failed > 0) {
+    throw new Error(
+      `expire_stock_reservations_batch_failed:${failed}:logs_failed:${logsFailed}`,
+    );
   }
 
   return {
@@ -280,38 +272,31 @@ export async function runExpireStockReservationsTick(
         60
     ) || 0
   );
-  const result = await runBackgroundJob({
-    strapi,
-    jobName: JOB_NAME,
-    run: () =>
-      expireStockReservationsBatch(strapi, {
-        batchSize,
-        graceSeconds,
-        now: options.now ?? new Date(),
-      }),
-  });
-
-  if (result.status === "completed") {
-    const hadFailures = Number(result.stats.failed || 0) > 0 || Number(result.stats.logsFailed || 0) > 0;
-    if (hadFailures) {
-      consecutiveFailures += 1;
-    } else {
-      consecutiveFailures = 0;
-    }
-  } else if (result.status === "failed") {
+  try {
+    const result = await runBackgroundJob({
+      strapi,
+      jobName: JOB_NAME,
+      run: () =>
+        expireStockReservationsBatch(strapi, {
+          batchSize,
+          graceSeconds,
+          now: options.now ?? new Date(),
+        }),
+    });
+    if (result.status === "completed") consecutiveFailures = 0;
+    return result;
+  } catch (error) {
     consecutiveFailures += 1;
     incrementMetric(strapi, "expire_stock_reservations_failures_total");
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      incrementMetric(strapi, "expire_stock_reservations_failure_threshold_total");
+      strapi.log.warn("expireStockReservations consecutive failure threshold exceeded", {
+        consecutiveFailures,
+        threshold: MAX_CONSECUTIVE_FAILURES,
+      });
+    }
+    throw error;
   }
-
-  if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-    incrementMetric(strapi, "expire_stock_reservations_failure_threshold_total");
-    strapi.log.warn("expireStockReservations consecutive failure threshold exceeded", {
-      consecutiveFailures,
-      threshold: MAX_CONSECUTIVE_FAILURES,
-    });
-  }
-
-  return result;
 }
 
 export function startExpireStockReservationsJob(strapi: Strapi) {

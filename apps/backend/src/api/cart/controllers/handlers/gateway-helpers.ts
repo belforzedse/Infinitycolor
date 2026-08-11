@@ -33,7 +33,14 @@ export const cancelOrderAndRelease = async (
   contractId: number,
   userId?: number | string,
   reason?: string,
-  options: { createAuditLogs?: boolean } = {}
+  options: {
+    createAuditLogs?: boolean;
+    reservationStatus?: "Released" | "Expired";
+    orderData?: Record<string, unknown>;
+    contractData?: Record<string, unknown>;
+    contractTransactionId?: number;
+    contractTransactionData?: Record<string, unknown>;
+  } = {}
 ) => {
   const logContext = {
     orderId,
@@ -43,162 +50,95 @@ export const cancelOrderAndRelease = async (
   };
   const createAuditLogs = options.createAuditLogs === true;
   const performedBy = Number.isFinite(Number(userId)) ? Number(userId) : undefined;
+  const previous = await strapi.db.transaction(async ({ trx }) => {
+    const [currentOrder, currentContract] = await Promise.all([
+      strapi.db.query("api::order.order").findOne({
+        where: { id: orderId },
+        select: ["id", "Status"],
+        transacting: trx,
+      } as any),
+      strapi.db.query("api::contract.contract").findOne({
+        where: { id: contractId },
+        select: ["id", "Status"],
+        transacting: trx,
+      } as any),
+    ]);
 
-  let orderFromStatus: string | undefined;
-  if (createAuditLogs) {
-    try {
-      const currentOrder = await strapi.entityService.findOne(
-        "api::order.order",
-        orderId,
-        { fields: ["Status"] }
-      );
-      orderFromStatus = currentOrder?.Status;
-    } catch (error) {
-      strapi.log.error("Failed to fetch current order status", {
-        ...logContext,
-        error: (error as Error)?.message || error,
-      });
-    }
-  }
+    if (!currentOrder) throw new Error("ORDER_NOT_FOUND_DURING_CANCELLATION");
+    if (!currentContract) throw new Error("CONTRACT_NOT_FOUND_DURING_CANCELLATION");
 
-  let orderUpdated = false;
-  try {
-    await strapi.entityService.update("api::order.order", orderId, {
-      data: { Status: "Cancelled" },
-    });
-    orderUpdated = true;
-  } catch (error) {
-    strapi.log.error("Failed to update order Status", {
-      ...logContext,
-      error: (error as Error).message,
-    });
-  }
-
-  if (createAuditLogs && orderUpdated) {
-    try {
-      const orderLogData: any = {
-        order: orderId,
-        Action: "Update",
-        Description:
-          reason === "payment_gateway_failure"
-            ? "Order status changed to Cancelled due to payment gateway failure"
-            : reason === "wallet_payment_failed"
-            ? "Order status changed to Cancelled due to wallet payment failure"
-            : `Order status changed to Cancelled${reason ? ` (${reason})` : ""}`,
-        Changes: {
-          fromStatus: orderFromStatus,
-          toStatus: "Cancelled",
-          orderId,
-          userId,
-          timestamp: new Date().toISOString(),
-          reason,
-        },
-      };
-      if (performedBy !== undefined) {
-        orderLogData.performed_by = performedBy;
-      }
-      await strapi.entityService.create("api::order-log.order-log", {
-        data: orderLogData,
-      });
-      strapi.log.info("Order status changed to Cancelled", {
-        orderId,
-        userId,
-        fromStatus: orderFromStatus,
-        toStatus: "Cancelled",
-      });
-    } catch (error) {
-      strapi.log.error("Failed to create order-log for order status change", {
-        ...logContext,
-        error: (error as Error)?.message || error,
-      });
-    }
-  }
-
-  let contractFromStatus: string | undefined;
-  if (createAuditLogs) {
-    try {
-      const currentContract = await strapi.entityService.findOne(
-        "api::contract.contract",
-        contractId,
-        { fields: ["Status"] }
-      );
-      contractFromStatus = currentContract?.Status;
-    } catch (error) {
-      strapi.log.error("Failed to fetch current contract status", {
-        ...logContext,
-        error: (error as Error)?.message || error,
-      });
-    }
-  }
-
-  let contractUpdated = false;
-  try {
-    await strapi.entityService.update("api::contract.contract", contractId, {
-      data: { Status: "Cancelled" },
-    });
-    contractUpdated = true;
-  } catch (error) {
-    strapi.log.error("Failed to update contract Status", {
-      ...logContext,
-      error: (error as Error).message,
-    });
-  }
-
-  if (createAuditLogs && contractUpdated) {
-    try {
-      const contractLogData: any = {
-        order: orderId,
-        Action: "Update",
-        Description:
-          reason === "payment_gateway_failure"
-            ? "Contract status changed to Cancelled due to payment gateway failure"
-            : reason === "wallet_payment_failed"
-            ? "Contract status changed to Cancelled due to wallet payment failure"
-            : `Contract status changed to Cancelled${reason ? ` (${reason})` : ""}`,
-        Changes: {
-          fromStatus: contractFromStatus,
-          toStatus: "Cancelled",
-          orderId,
-          contractId,
-          userId,
-          timestamp: new Date().toISOString(),
-          reason,
-        },
-      };
-      if (performedBy !== undefined) {
-        contractLogData.performed_by = performedBy;
-      }
-      await strapi.entityService.create("api::order-log.order-log", {
-        data: contractLogData,
-      });
-      strapi.log.info("Contract status changed to Cancelled", {
-        orderId,
-        contractId,
-        userId,
-        fromStatus: contractFromStatus,
-        toStatus: "Cancelled",
-      });
-    } catch (error) {
-      strapi.log.error("Failed to create order-log for contract status change", {
-        ...logContext,
-        error: (error as Error)?.message || error,
-      });
-    }
-  }
-
-  try {
+    // Release stock and the limited-coupon claim before changing the order status.
+    // The discount helper intentionally refuses to release a settled order.
     await releaseOrderReservation(
       strapi as any,
       Number(orderId),
-      "Released",
-      undefined,
-      { userId }
+      options.reservationStatus ?? "Released",
+      trx,
+      { userId },
     );
-  } catch (error) {
-    strapi.log.error("Failed to release order reservation", {
-      ...logContext,
-      error: (error as Error).message,
-    });
+
+    await strapi.db.query("api::order.order").update({
+      where: { id: orderId },
+      data: { ...options.orderData, Status: "Cancelled" },
+      transacting: trx,
+    } as any);
+    await strapi.db.query("api::contract.contract").update({
+      where: { id: contractId },
+      data: { ...options.contractData, Status: "Cancelled" },
+      transacting: trx,
+    } as any);
+    if (options.contractTransactionId) {
+      await strapi.db.query("api::contract-transaction.contract-transaction").update({
+        where: { id: options.contractTransactionId },
+        data: options.contractTransactionData ?? { Status: "Failed" },
+        transacting: trx,
+      } as any);
+    }
+
+    return {
+      orderStatus: String(currentOrder.Status || ""),
+      contractStatus: String(currentContract.Status || ""),
+    };
+  });
+
+  if (!createAuditLogs) return;
+
+  const timestamp = new Date().toISOString();
+  const writeAudit = async (kind: "order" | "contract") => {
+    const fromStatus = kind === "order" ? previous.orderStatus : previous.contractStatus;
+    const descriptionPrefix = kind === "order" ? "Order" : "Contract";
+    const logData: any = {
+      order: orderId,
+      Action: "Update",
+      Description:
+        reason === "payment_gateway_failure"
+          ? `${descriptionPrefix} status changed to Cancelled due to payment gateway failure`
+          : reason === "wallet_payment_failed"
+            ? `${descriptionPrefix} status changed to Cancelled due to wallet payment failure`
+            : `${descriptionPrefix} status changed to Cancelled${reason ? ` (${reason})` : ""}`,
+      Changes: {
+        fromStatus,
+        toStatus: "Cancelled",
+        orderId,
+        ...(kind === "contract" ? { contractId } : {}),
+        userId,
+        timestamp,
+        reason,
+      },
+    };
+    if (performedBy !== undefined) logData.performed_by = performedBy;
+    await strapi.entityService.create("api::order-log.order-log", { data: logData });
+  };
+
+  for (const kind of ["order", "contract"] as const) {
+    try {
+      await writeAudit(kind);
+    } catch (error) {
+      strapi.log.error(`Failed to create ${kind} cancellation audit log`, {
+        ...logContext,
+        error: (error as Error)?.message || error,
+      });
+    }
   }
 };
 

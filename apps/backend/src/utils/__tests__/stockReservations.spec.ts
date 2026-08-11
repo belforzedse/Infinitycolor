@@ -63,7 +63,7 @@ describe("consumeOrderReservation", () => {
 
     const res = await consumeOrderReservation(strapi, 1, trx);
 
-    expect(res).toEqual({ success: true });
+    expect(res).toEqual({ outcome: "consumed" });
     expect(mockedConsume).toHaveBeenCalledTimes(1);
     expect(mockedConsume).toHaveBeenCalledWith(strapi, 5, 2, trx);
     // The transition only fires for a still-reserved, not-yet-expired order.
@@ -85,7 +85,7 @@ describe("consumeOrderReservation", () => {
 
     const res = await consumeOrderReservation(strapi, 1, trx);
 
-    expect(res).toEqual({ success: true, skipped: true, expired: true });
+    expect(res).toEqual({ outcome: "skipped", reason: "expired", expired: true });
     expect(mockedConsume).not.toHaveBeenCalled();
   });
 
@@ -100,8 +100,32 @@ describe("consumeOrderReservation", () => {
 
     const res = await consumeOrderReservation(strapi, 1, trx);
 
-    expect(res).toEqual({ success: true, skipped: true, expired: false });
+    expect(res).toEqual({
+      outcome: "skipped",
+      reason: "already_resolved",
+      expired: false,
+    });
     expect(mockedConsume).not.toHaveBeenCalled();
+  });
+
+  it("throws a mid-loop consume failure instead of returning a committable result", async () => {
+    const { strapi, orderFindOne, trx } = createStrapi();
+    trx.raw.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    orderFindOne.mockResolvedValueOnce({
+      id: 1,
+      order_items: [1, 2, 3].map((stockId) => ({
+        Count: 1,
+        product_variation: { product_stock: { id: stockId } },
+      })),
+    });
+    mockedConsume
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false, error: "line two failed" });
+
+    await expect(consumeOrderReservation(strapi, 1, trx)).rejects.toThrow(
+      "line two failed",
+    );
+    expect(mockedConsume).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -117,7 +141,7 @@ describe("releaseOrderReservation", () => {
 
     const res = await releaseOrderReservation(strapi, 1, "Released", trx);
 
-    expect(res).toEqual({ success: true });
+    expect(res).toEqual({ outcome: "released" });
     expect(mockedRelease).toHaveBeenCalledTimes(1);
     expect(mockedRelease).toHaveBeenCalledWith(strapi, 7, 3, trx, undefined);
   });
@@ -130,8 +154,28 @@ describe("releaseOrderReservation", () => {
 
     const res = await releaseOrderReservation(strapi, 1, "Released", trx);
 
-    expect(res).toEqual({ success: true, skipped: true });
+    expect(res).toEqual({ outcome: "skipped" });
     expect(mockedRelease).not.toHaveBeenCalled();
     expect(orderFindOne).not.toHaveBeenCalled();
+  });
+
+  it("throws a mid-loop release failure instead of allowing a partial commit", async () => {
+    const { strapi, orderFindOne, trx } = createStrapi();
+    trx.raw.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    orderFindOne.mockResolvedValueOnce({
+      id: 1,
+      order_items: [7, 8, 9].map((stockId) => ({
+        Count: 1,
+        product_variation: { product_stock: { id: stockId } },
+      })),
+    });
+    mockedRelease
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false, error: "line two failed" });
+
+    await expect(releaseOrderReservation(strapi, 1, "Released", trx)).rejects.toThrow(
+      "line two failed",
+    );
+    expect(mockedRelease).toHaveBeenCalledTimes(2);
   });
 });

@@ -4,6 +4,12 @@ import serviceFactory, {
 } from "../services/commerce-maintenance";
 import routeConfig from "../routes/commerce-maintenance";
 
+const logManualActivityMock = jest.fn().mockResolvedValue(undefined);
+
+jest.mock("../../../utils/manualAdminActivity", () => ({
+  logManualActivity: (...args: unknown[]) => logManualActivityMock(...args),
+}));
+
 const createKnexMock = (options?: {
   hasMediaTable?: boolean;
   mediaCount?: number;
@@ -107,6 +113,8 @@ const createServiceHarness = (options?: {
 };
 
 describe("commerce-maintenance purge service", () => {
+  beforeEach(() => logManualActivityMock.mockClear());
+
   it("dry-run counts targets and does not delete", async () => {
     const { service, transaction, deleteMany } = createServiceHarness({
       hasMediaTable: true,
@@ -149,6 +157,13 @@ describe("commerce-maintenance purge service", () => {
     expect(deleteOrder).toEqual(COMMERCE_DELETE_TARGETS.map((target) => target.uid));
     expect(result.dryRun).toBe(false);
     expect(result.summary["api::order.order"]).toBe(1);
+    expect(logManualActivityMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "Delete",
+        performedBy: { id: 1, role: "Superadmin" },
+      }),
+    );
   });
 
   it("deletes only orphaned commerce upload files after relation cleanup", async () => {

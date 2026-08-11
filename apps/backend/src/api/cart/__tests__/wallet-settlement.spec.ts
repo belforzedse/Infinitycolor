@@ -56,7 +56,7 @@ describe("settleOrderWithWallet", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedDebit.mockResolvedValue({ success: true, walletId: 11, newBalance: 9_000_000 });
-    mockedConsume.mockResolvedValue({ success: true, expired: false } as any);
+    mockedConsume.mockResolvedValue({ outcome: "consumed" } as any);
   });
 
   it("commits the debit, ledgers, stock consumption, order, contract and attempt together", async () => {

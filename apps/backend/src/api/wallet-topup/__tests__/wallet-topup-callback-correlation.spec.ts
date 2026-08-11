@@ -10,6 +10,15 @@
  * really executed rather than stubbed, which is what makes the duplicate-failure and
  * stale-failure-after-success cases meaningful.
  */
+const writeAuditEvent = jest.fn().mockResolvedValue({
+  id: 1,
+  eventId: "7b95185e-fe3c-4357-b73e-76da20b60ef9",
+  deduplicated: false,
+});
+jest.mock("../../../audit/writer", () => ({
+  writeAuditEvent: (...args: any[]) => writeAuditEvent(...args),
+}));
+
 import controllerFactory from "../controllers/wallet-topup";
 
 type TopupRow = {
@@ -17,8 +26,9 @@ type TopupRow = {
   SaleOrderId: string;
   RefId: string | null;
   Amount: number;
-  Status: "Pending" | "Success" | "Failed" | "Cancelled";
+  Status: "Pending" | "Processing" | "Unknown" | "Success" | "Failed" | "Cancelled";
   SaleReferenceId?: string | null;
+  NextReconcileAt?: Date | null;
   user: { id: number };
 };
 
@@ -27,12 +37,33 @@ function createWorld(topups: TopupRow[]) {
   const wallet = { id: 900, Balance: 0 };
 
   const applyStatusCas = (sql: string, bindings: any[]) => {
-    if (!/UPDATE wallet_topups/.test(sql) || !/status = 'Failed'/.test(sql)) return null;
-    const row = topups.find((topup) => topup.id === Number(bindings[0]));
-    // The guard is the whole point: only Pending may become Failed.
-    if (!row || row.Status !== "Pending") return { rows: [] };
-    row.Status = "Failed";
-    return { rows: [{ id: row.id }] };
+    if (!/UPDATE wallet_topups/.test(sql)) return null;
+    if (/status = 'Failed'/.test(sql)) {
+      const row = topups.find((topup) => topup.id === Number(bindings[2]));
+      const allowed = bindings.slice(3).map(String);
+      if (!row || !allowed.includes(row.Status)) return { rows: [] };
+      row.Status = "Failed";
+      row.NextReconcileAt = null;
+      return { rows: [{ id: row.id }] };
+    }
+    if (/status = 'Processing'/.test(sql) && /sale_reference_id = \?/.test(sql)) {
+      const row = topups.find((topup) => topup.id === Number(bindings[2]));
+      if (!row || row.Status !== "Pending") return { rows: [] };
+      row.Status = "Processing";
+      row.SaleReferenceId = String(bindings[0]);
+      row.NextReconcileAt = bindings[1];
+      return { rows: [{ id: row.id }] };
+    }
+    if (/status = 'Unknown'/.test(sql)) {
+      const row = topups.find((topup) => topup.id === Number(bindings[3]));
+      if (!row || !["Pending", "Processing", "Unknown"].includes(row.Status)) {
+        return { rows: [] };
+      }
+      row.Status = "Unknown";
+      row.NextReconcileAt = bindings[0];
+      return { rows: [{ id: row.id }] };
+    }
+    return { rows: [] };
   };
 
   const mellat = {
@@ -112,6 +143,9 @@ function createWorld(topups: TopupRow[]) {
         }
         if (uid === "api::wallet-topup.wallet-topup") {
           return {
+            findOne: jest.fn(async ({ where }: any) =>
+              topups.find((topup) => topup.id === Number(where.id)) || null,
+            ),
             update: jest.fn(async ({ where, data }: any) => {
               const row = topups.find((topup) => topup.id === Number(where.id));
               if (row) Object.assign(row, data);
@@ -146,6 +180,7 @@ const pendingTopup = (overrides: Partial<TopupRow> = {}): TopupRow => ({
 });
 
 describe("wallet top-up failure callback correlation", () => {
+  beforeEach(() => writeAuditEvent.mockClear());
   it("leaves attempt B untouched when the callback carries attempt A's provider identity", async () => {
     const attemptB = pendingTopup({ id: 200, SaleOrderId: "1700000000200", RefId: "REF-B" });
     const { controller, topups } = createWorld([attemptB]);
@@ -299,7 +334,7 @@ describe("wallet top-up success callback", () => {
   });
 
   it("credits only once when the same success callback is replayed", async () => {
-    const { controller, wallet, walletTransactions } = createWorld([pendingTopup()]);
+    const { controller, wallet, walletTransactions, mellat } = createWorld([pendingTopup()]);
     const body = {
       ResCode: "0",
       SaleOrderId: "1700000000100",
@@ -312,5 +347,71 @@ describe("wallet top-up success callback", () => {
 
     expect(wallet.Balance).toBe(1_000_000);
     expect(walletTransactions).toHaveLength(1);
+    expect(mellat.verifyTransaction).toHaveBeenCalledTimes(1);
+    expect(mellat.settleTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("performs provider I/O before opening the local credit transaction", async () => {
+    const world = createWorld([pendingTopup()]);
+    const events: string[] = [];
+    world.mellat.verifyTransaction.mockImplementation(async () => {
+      events.push("verify");
+      return { success: true, resCode: 0 };
+    });
+    world.mellat.settleTransaction.mockImplementation(async () => {
+      events.push("settle");
+      return { success: true, resCode: 0 };
+    });
+    world.strapi.db.transaction.mockImplementation(async (callback: any) => {
+      events.push("transaction");
+      const trx = {
+        raw: jest.fn(async (sql: string, bindings: any[]) => {
+          if (/FROM wallet_topups/.test(sql)) {
+            const row = world.topups[0];
+            return {
+              rows: [{
+                id: row.id,
+                amount: row.Amount,
+                status: row.Status,
+                sale_reference_id: row.SaleReferenceId,
+              }],
+            };
+          }
+          if (/UPDATE local_user_wallets/.test(sql)) {
+            world.wallet.Balance += Number(bindings[0]);
+            return { rows: [{ id: world.wallet.id, balance: world.wallet.Balance }] };
+          }
+          return { rows: [] };
+        }),
+      };
+      return callback({ trx });
+    });
+
+    await world.controller.paymentCallback(callbackCtx({
+      ResCode: "0",
+      SaleOrderId: "1700000000100",
+      SaleReferenceId: "BANK-REF-ORDER",
+      RefId: "MELLAT-REF-100",
+    }));
+
+    expect(events).toEqual(["verify", "settle", "transaction"]);
+  });
+
+  it("leaves a sweepable Unknown when provider settlement succeeds but local credit fails", async () => {
+    const world = createWorld([pendingTopup()]);
+    world.strapi.db.transaction.mockRejectedValueOnce(new Error("ledger insert failed"));
+    const ctx = callbackCtx({
+      ResCode: "0",
+      SaleOrderId: "1700000000100",
+      SaleReferenceId: "BANK-REF-LOCAL-FAIL",
+      RefId: "MELLAT-REF-100",
+    });
+
+    await world.controller.paymentCallback(ctx);
+
+    expect(world.topups[0].Status).toBe("Unknown");
+    expect(world.topups[0].NextReconcileAt).toBeInstanceOf(Date);
+    expect(world.wallet.Balance).toBe(0);
+    expect(lastRedirect(ctx)).toContain("status=pending");
   });
 });

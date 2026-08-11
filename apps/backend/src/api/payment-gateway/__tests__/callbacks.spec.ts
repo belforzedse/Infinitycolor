@@ -11,8 +11,8 @@ jest.mock("../../cart/services/lib/stock", () => ({
 }));
 
 jest.mock("../../../utils/stockReservations", () => ({
-  consumeOrderReservation: jest.fn().mockResolvedValue({ success: true }),
-  releaseOrderReservation: jest.fn().mockResolvedValue({ success: true }),
+  consumeOrderReservation: jest.fn().mockResolvedValue({ outcome: "consumed" }),
+  releaseOrderReservation: jest.fn().mockResolvedValue({ outcome: "released" }),
 }));
 
 jest.mock("../../order/controllers/helpers/zarinpalSettlement", () => {
@@ -81,15 +81,35 @@ const createStrapiMock = () => {
       query: jest.fn((uid: string) => {
         if (!dbQueryMap[uid]) {
           dbQueryMap[uid] = {
-            findOne: jest.fn(),
-            create: jest.fn(),
-            update: jest.fn(),
+            findOne: jest.fn(async (options: any) => {
+              if (uid === "api::contract.contract") {
+                return { id: Number(options?.where?.id), Status: "Pending" };
+              }
+              return strapi.entityService.findOne(uid, Number(options?.where?.id), options);
+            }),
+            create: jest.fn((options: any) => strapi.entityService.create(uid, options)),
+            update: jest.fn((options: any) =>
+              strapi.entityService.update(uid, Number(options?.where?.id), {
+                data: options?.data,
+              }),
+            ),
             delete: jest.fn(),
           };
         }
         return dbQueryMap[uid];
       }),
-      transaction: jest.fn(async (cb: any) => cb({ trx: { id: "trx" } })),
+      transaction: jest.fn(async (cb: any) =>
+        cb({
+          trx: {
+            id: "trx",
+            raw: jest.fn((sql: string, bindings: unknown[]) =>
+              String(sql).includes("FROM orders")
+                ? Promise.resolve({ rows: [{ id: Number(bindings?.[0]) }] })
+                : strapi.db.connection.raw(sql, bindings),
+            ),
+          },
+        }),
+      ),
       connection: {
         raw: jest.fn().mockResolvedValue({ rows: [] }),
       },
@@ -141,6 +161,7 @@ describe("verifyPaymentHandler", () => {
       id: 100,
       Status: "Paying",
       user: { id: 9 },
+      contract: { id: 75, Status: "Pending" },
     });
     strapi.db.connection.raw.mockResolvedValue({ rows: [{ id: 55 }] });
 
@@ -244,7 +265,12 @@ describe("verifyPaymentHandler", () => {
       }),
     };
     registerService("api::payment-gateway.mellat-v3", mellatService);
-    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 }, Amount: "1200000" });
+    mockMellatAttempt(getDbQuery, {
+      id: 55,
+      order: { id: 200 },
+      Amount: "1200000",
+      Status: "Succeeded",
+    });
     strapi.db.connection.raw.mockResolvedValue({ rows: [{ id: 55 }] });
 
     const orderWithItems = {
@@ -411,7 +437,12 @@ describe("verifyPaymentHandler", () => {
     };
     registerService("api::payment-gateway.mellat-v3", mellatService);
     // RefId genuinely belongs to order 200, but the caller supplies order 999.
-    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 }, Amount: "1200000" });
+    mockMellatAttempt(getDbQuery, {
+      id: 55,
+      order: { id: 200 },
+      Amount: "1200000",
+      Status: "Succeeded",
+    });
 
     const ctx = createCtx({
       request: {
@@ -465,7 +496,12 @@ describe("verifyPaymentHandler", () => {
       settleTransaction: jest.fn().mockResolvedValue({ success: true, resCode: 0 }),
     };
     registerService("api::payment-gateway.mellat-v3", mellatService);
-    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 200 }, Amount: "1200000" });
+    mockMellatAttempt(getDbQuery, {
+      id: 55,
+      order: { id: 200 },
+      Amount: "1200000",
+      Status: "Succeeded",
+    });
 
     const orderWithItems = {
       id: 200,
@@ -578,8 +614,8 @@ describe("verifyPaymentHandler", () => {
     // expiry-job tick, a duplicate callback) between the pre-check and the
     // atomic consume attempt — nothing was actually decremented.
     (consumeOrderReservation as jest.Mock).mockResolvedValueOnce({
-      success: true,
-      skipped: true,
+      outcome: "skipped",
+      reason: "not_reserved",
       expired: false,
     });
 
@@ -718,7 +754,7 @@ describe("verifyPaymentHandler", () => {
         },
       },
     ]);
-    (strapi.entityService.findOne as jest.Mock).mockResolvedValueOnce({
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValue({
       id: 702,
       Status: "Paying",
       contract: { id: 802, Amount: 15_000 },
@@ -889,7 +925,7 @@ describe("verifyPaymentHandler", () => {
         },
       },
     ]);
-    (strapi.entityService.findOne as jest.Mock).mockResolvedValueOnce({
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValue({
       id: 704,
       Status: "Paying",
       contract: { id: 804, Amount: 30_000 },

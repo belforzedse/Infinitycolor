@@ -14,6 +14,18 @@ import { releaseOrderDiscountClaim } from "../api/cart/services/lib/discount-cla
 
 type ReservationTransition = "Released" | "Expired" | "Consumed";
 
+export type ReleaseOrderReservationResult =
+  | { outcome: "released" }
+  | { outcome: "skipped" };
+
+export type ConsumeOrderReservationResult =
+  | { outcome: "consumed" }
+  | {
+      outcome: "skipped";
+      reason: "expired" | "already_resolved" | "order_not_found";
+      expired: boolean;
+    };
+
 /**
  * Valid reservation status values
  */
@@ -200,7 +212,7 @@ export async function releaseOrderReservation(
     requireOrderStatus?: "Paying";
     expiresBefore?: Date;
   }
-): Promise<{ success: boolean; skipped?: boolean; error?: string }> {
+): Promise<ReleaseOrderReservationResult> {
   if (!trx) {
     return strapi.db.transaction(async ({ trx }) =>
       releaseOrderReservation(strapi, orderId, reason, trx, context)
@@ -227,7 +239,7 @@ export async function releaseOrderReservation(
     // repeating it — or racing another failure path — decrements at most once.
     await releaseOrderDiscountClaim(strapi, orderId, trx);
 
-    if (!transitioned) return { success: true, skipped: true };
+    if (!transitioned) return { outcome: "skipped" };
 
     const order = await loadOrderItemsWithStocks(strapi, orderId, trx);
     const items = order?.order_items || [];
@@ -249,7 +261,7 @@ export async function releaseOrderReservation(
       }
     }
 
-    return { success: true };
+    return { outcome: "released" };
   } catch (e: any) {
     strapi.log.error("releaseOrderReservation failed", {
       orderId,
@@ -257,7 +269,7 @@ export async function releaseOrderReservation(
       userId: context?.userId,
       error: e?.message || e,
     });
-    return { success: false, error: e?.message || String(e) };
+    throw e instanceof Error ? e : new Error(String(e));
   }
 }
 
@@ -265,7 +277,7 @@ export async function consumeOrderReservation(
   strapi: Strapi,
   orderId: number,
   trx?: any
-): Promise<{ success: boolean; skipped?: boolean; expired?: boolean; error?: string }> {
+): Promise<ConsumeOrderReservationResult> {
   if (!trx) {
     return strapi.db.transaction(async ({ trx }) =>
       consumeOrderReservation(strapi, orderId, trx)
@@ -289,7 +301,11 @@ export async function consumeOrderReservation(
       });
 
       if (!order) {
-        return { success: true, skipped: true, expired: false };
+        return {
+          outcome: "skipped",
+          reason: "order_not_found",
+          expired: false,
+        };
       }
 
       // Extract and validate reservation fields using type guards
@@ -306,7 +322,11 @@ export async function consumeOrderReservation(
       // Check if reservation expired (status is Reserved and date is in the past)
       const expired = isReserved && until !== null && until.getTime() < Date.now();
 
-      return { success: true, skipped: true, expired: !!expired };
+      return {
+        outcome: "skipped",
+        reason: expired ? "expired" : "already_resolved",
+        expired: !!expired,
+      };
     }
 
     const order = await loadOrderItemsWithStocks(strapi, orderId, trx);
@@ -328,12 +348,12 @@ export async function consumeOrderReservation(
       }
     }
 
-    return { success: true };
+    return { outcome: "consumed" };
   } catch (e: any) {
     strapi.log.error("consumeOrderReservation failed", {
       orderId,
       error: e?.message || e,
     });
-    return { success: false, error: e?.message || String(e) };
+    throw e instanceof Error ? e : new Error(String(e));
   }
 }

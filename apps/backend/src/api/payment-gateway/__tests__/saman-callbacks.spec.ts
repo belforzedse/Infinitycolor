@@ -7,8 +7,8 @@ jest.mock("../../cart/services/lib/stock", () => ({
 }));
 
 jest.mock("../../../utils/stockReservations", () => ({
-  consumeOrderReservation: jest.fn().mockResolvedValue({ success: true }),
-  releaseOrderReservation: jest.fn().mockResolvedValue({ success: true }),
+  consumeOrderReservation: jest.fn().mockResolvedValue({ outcome: "consumed" }),
+  releaseOrderReservation: jest.fn().mockResolvedValue({ outcome: "released" }),
 }));
 
 const originalFrontendBaseUrl = process.env.FRONTEND_BASE_URL;
@@ -49,15 +49,35 @@ const createStrapiMock = () => {
       query: jest.fn((uid: string) => {
         if (!dbQueryMap[uid]) {
           dbQueryMap[uid] = {
-            findOne: jest.fn(),
-            create: jest.fn(),
-            update: jest.fn(),
+            findOne: jest.fn(async (options: any) => {
+              if (uid === "api::contract.contract") {
+                return { id: Number(options?.where?.id), Status: "Pending" };
+              }
+              return strapi.entityService.findOne(uid, Number(options?.where?.id), options);
+            }),
+            create: jest.fn((options: any) => strapi.entityService.create(uid, options)),
+            update: jest.fn((options: any) =>
+              strapi.entityService.update(uid, Number(options?.where?.id), {
+                data: options?.data,
+              }),
+            ),
             delete: jest.fn(),
           };
         }
         return dbQueryMap[uid];
       }),
-      transaction: jest.fn(async (cb: any) => cb({ trx: { id: "trx" } })),
+      transaction: jest.fn(async (cb: any) =>
+        cb({
+          trx: {
+            id: "trx",
+            raw: jest.fn((sql: string, bindings: unknown[]) =>
+              String(sql).includes("FROM orders")
+                ? Promise.resolve({ rows: [{ id: Number(bindings?.[0]) }] })
+                : strapi.db.connection.raw(sql, bindings),
+            ),
+          },
+        }),
+      ),
       connection: {
         raw: jest.fn().mockResolvedValue({ rows: [] }),
       },
@@ -181,7 +201,7 @@ describe("verifyPaymentHandler (Saman)", () => {
       reverseTransaction: jest.fn(),
     };
     registerService("api::payment-gateway.saman-kish", samanService);
-    mockSamanAttempt(getDbQuery, { id: 66, Amount: "1500000" });
+    mockSamanAttempt(getDbQuery, { id: 66, Amount: "1500000", Status: "Succeeded" });
     strapi.db.connection.raw.mockResolvedValue({ rows: [{ id: 66 }] });
 
     (strapi.entityService.findMany as jest.Mock).mockImplementation(
@@ -226,7 +246,7 @@ describe("verifyPaymentHandler (Saman)", () => {
       reverseTransaction: jest.fn().mockResolvedValue({ success: true }),
     };
     registerService("api::payment-gateway.saman-kish", samanService);
-    mockSamanAttempt(getDbQuery, { id: 66, Amount: "1500000" });
+    mockSamanAttempt(getDbQuery, { id: 66, Amount: "1500000", Status: "Succeeded" });
 
     (strapi.entityService.findMany as jest.Mock).mockImplementation(async (uid: string) => {
       if (uid === "api::order.order") return anchorOrderRow();
@@ -302,7 +322,7 @@ describe("verifyPaymentHandler (Saman)", () => {
       reverseTransaction: jest.fn(),
     };
     registerService("api::payment-gateway.saman-kish", samanService);
-    mockSamanAttempt(getDbQuery, { id: 66, Amount: "1500000" });
+    mockSamanAttempt(getDbQuery, { id: 66, Amount: "1500000", Status: "Succeeded" });
 
     (strapi.entityService.findMany as jest.Mock).mockImplementation(async (uid: string) => {
       if (uid === "api::order.order") return anchorOrderRow();
@@ -359,7 +379,7 @@ describe("verifyPaymentHandler (Saman)", () => {
       reverseTransaction: jest.fn(),
     };
     registerService("api::payment-gateway.saman-kish", samanService);
-    mockSamanAttempt(getDbQuery, { id: 66, Amount: "1500000" });
+    mockSamanAttempt(getDbQuery, { id: 66, Amount: "1500000", Status: "Succeeded" });
 
     (strapi.entityService.findMany as jest.Mock).mockImplementation(async (uid: string) => {
       if (uid === "api::order.order") return anchorOrderRow();
@@ -445,8 +465,8 @@ describe("verifyPaymentHandler (Saman)", () => {
       return null;
     });
     (consumeOrderReservation as jest.Mock).mockResolvedValueOnce({
-      success: true,
-      skipped: true,
+      outcome: "skipped",
+      reason: "not_reserved",
       expired: false,
     });
 

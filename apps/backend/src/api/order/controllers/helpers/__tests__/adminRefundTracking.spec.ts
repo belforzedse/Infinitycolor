@@ -12,6 +12,20 @@ jest.mock("../../../../../utils/adminActivity", () => ({
   logAdminOrderEdit: jest.fn(),
 }));
 
+jest.mock("../adminOrderIntegrity", () => {
+  class OrderChangedConcurrentlyError extends Error {}
+  return {
+    OrderChangedConcurrentlyError,
+    lockOrderForAdminMutation: jest.fn().mockResolvedValue(undefined),
+    restoreStockWithMandatoryAudit: jest.fn().mockResolvedValue(6),
+    creditOrderRefund: jest.fn().mockResolvedValue(999),
+  };
+});
+
+jest.mock("../../../../cart/services/lib/discount-claim", () => ({
+  releaseOrderDiscountClaim: jest.fn().mockResolvedValue({ released: false }),
+}));
+
 const enqueueRefundMock = enqueueRefundForReturn as jest.MockedFunction<
   typeof enqueueRefundForReturn
 >;
@@ -23,6 +37,7 @@ function baseOrder(overrides: Record<string, any> = {}) {
     PaymentGateway: "SamanKish",
     ShippingBarcode: null,
     ShippingCost: 20_000,
+    updatedAt: "2026-08-11T10:00:00.000Z",
     AppliedDiscountAmount: 0,
     ReservationStatus: "Consumed",
     user: { id: 9 },
@@ -98,7 +113,7 @@ function createHarness(order: any, ctxOverrides: Record<string, any> = {}) {
     query: jest.fn((uid: string) => queries[uid]),
     db: {
       query: jest.fn((uid: string) => queries[uid]),
-      transaction: jest.fn(async (callback: any) => callback({})),
+      transaction: jest.fn(async (callback: any) => callback({ trx: {} })),
     },
     log: { error: jest.fn(), info: jest.fn(), warn: jest.fn() },
   } as any;

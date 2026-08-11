@@ -85,30 +85,28 @@ export async function runExpireReserveOrdersTick(
     1,
     Number(options.batchSize ?? process.env.RESERVE_ORDER_EXPIRY_BATCH_SIZE ?? 100) || 100
   );
-  const result = await runBackgroundJob({
-    strapi,
-    jobName: JOB_NAME,
-    run: () =>
-      expireReserveOrdersBatch(strapi, {
-        batchSize,
-        now: options.now ?? new Date(),
-      }),
-  });
-
-  if (result.status === "completed") {
-    consecutiveFailures = 0;
-  } else if (result.status === "failed") {
-    consecutiveFailures += 1;
-  }
-
-  if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-    strapi.log.warn("expireReserveOrders consecutive failure threshold exceeded", {
-      consecutiveFailures,
-      threshold: MAX_CONSECUTIVE_FAILURES,
+  try {
+    const result = await runBackgroundJob({
+      strapi,
+      jobName: JOB_NAME,
+      run: () =>
+        expireReserveOrdersBatch(strapi, {
+          batchSize,
+          now: options.now ?? new Date(),
+        }),
     });
+    if (result.status === "completed") consecutiveFailures = 0;
+    return result;
+  } catch (error) {
+    consecutiveFailures += 1;
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      strapi.log.warn("expireReserveOrders consecutive failure threshold exceeded", {
+        consecutiveFailures,
+        threshold: MAX_CONSECUTIVE_FAILURES,
+      });
+    }
+    throw error;
   }
-
-  return result;
 }
 
 /**

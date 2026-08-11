@@ -96,11 +96,10 @@ export async function finalizeSnappaySettlement(
     const reservationStatus = String(order.ReservationStatus || "");
     if (reservationStatus === "Reserved") {
       const consumed = await consumeOrderReservation(strapi, ids.orderId, trx);
-      if (!consumed.success || consumed.expired || consumed.skipped) {
+      if (consumed.outcome !== "consumed") {
         throw new Error(
           `SNAPPAY_STOCK_FINALIZATION_FAILED:${
-            consumed.error ||
-            (consumed.expired ? "reservation_expired" : "reservation_not_consumed")
+            consumed.expired ? "reservation_expired" : "reservation_not_consumed"
           }`,
         );
       }
@@ -266,10 +265,7 @@ export async function applySnappayCancellation(
 
     const reservationStatus = String(order.ReservationStatus || "");
     if (reservationStatus === "Reserved") {
-      const released = await releaseOrderReservation(strapi, ids.orderId, "Released", trx);
-      if (!released.success) {
-        throw new Error(`SNAPPAY_RESERVATION_RELEASE_FAILED:${released.error || "unknown"}`);
-      }
+      await releaseOrderReservation(strapi, ids.orderId, "Released", trx);
     } else if (reservationStatus === "Consumed") {
       await restockConsumedOrder(strapi, order, trx);
       await strapi.db.query("api::order.order").update({

@@ -12,6 +12,7 @@ import Footer from "@/components/SuperAdmin/Order/SummaryFooter";
 import Sidebar from "@/components/SuperAdmin/Order/Sidebar";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
+import { requireManualOrderStockSuccess } from "@/lib/manual-order-stock";
 
 // Extended OrderItem type for form submission (includes backend relation IDs)
 type OrderFormItem = SuperAdminOrderItem & {
@@ -283,9 +284,10 @@ export default function Page() {
       try {
         logger.info("Decrementing stock for manual order", { orderId });
         const stockResponse = await apiClient.post(`/orders/${orderId}/decrement-stock-manual`);
+        const stockResult = requireManualOrderStockSuccess(stockResponse);
         logger.info("Stock decremented successfully", {
           orderId,
-          response: stockResponse,
+          response: stockResult,
         });
       } catch (stockError: any) {
         const errorDetails = stockError?.response?.data || stockError?.message || "Unknown error";
@@ -294,9 +296,10 @@ export default function Page() {
           error: errorDetails,
           status: stockError?.response?.status,
         });
-        // Show error to user since stock is critical
-        toast.error("هشدار: موجودی کاهش نیافت. لطفا به صورت دستی بررسی کنید.");
-        // Don't fail the order creation, but log the error prominently
+        toast.error(
+          `سفارش #${orderId} ایجاد شد، اما موجودی اعمال نشد. خطا را برطرف کرده و دوباره تلاش کنید.`,
+        );
+        return;
       }
 
       // Admin activity for the manual order is recorded server-side by the order controller's

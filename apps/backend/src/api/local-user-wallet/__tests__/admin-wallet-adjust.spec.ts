@@ -12,24 +12,32 @@ jest.mock("@strapi/strapi", () => ({
   },
 }));
 
-// Mock the atomic wallet service so we can assert how the controller drives it.
-const creditWalletBalanceAtomic = jest.fn();
-const deductWalletBalanceAtomic = jest.fn();
+// Mock the transactional application service so controller tests stay at the API boundary.
+const applyAdminWalletAdjustment = jest.fn();
 jest.mock("../services/local-user-wallet", () => ({
   __esModule: true,
-  creditWalletBalanceAtomic: (...args: any[]) => creditWalletBalanceAtomic(...args),
-  deductWalletBalanceAtomic: (...args: any[]) => deductWalletBalanceAtomic(...args),
+  WalletAdjustmentError: class WalletAdjustmentError extends Error {
+    constructor(readonly code: string, message: string) {
+      super(message);
+    }
+  },
+  applyAdminWalletAdjustment: (...args: any[]) => applyAdminWalletAdjustment(...args),
   default: {},
 }));
 
-// Mock the audit writer (fire-and-forget; we only assert it was called).
-const recordAdminAudit = jest.fn().mockResolvedValue(true);
-jest.mock("../../../utils/adminAudit", () => ({
+// Mock the canonical audit writer; denied attempts and committed mutations use it directly.
+const writeAuditEvent = jest.fn().mockResolvedValue({
+  id: 1,
+  eventId: "e4ff6887-7058-41f7-bba4-fbc47c3572be",
+  deduplicated: false,
+});
+jest.mock("../../../audit/writer", () => ({
   __esModule: true,
-  recordAdminAudit: (...args: any[]) => recordAdminAudit(...args),
+  writeAuditEvent: (...args: any[]) => writeAuditEvent(...args),
 }));
 
 import { createStrapiMock } from "../../../__tests__/helpers/test-utils";
+import { WalletAdjustmentError } from "../services/local-user-wallet";
 
 const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 const USER_UID = "plugin::users-permissions.user";
@@ -81,23 +89,33 @@ describe("adminAdjustWallet", () => {
 
   it("credits the wallet, converts Toman→Rial, writes an Add ledger row and audit", async () => {
     setupQueries(100_000); // 10,000 Toman current
-    creditWalletBalanceAtomic.mockResolvedValue({ success: true, newBalance: 150_000, walletId: 10 });
+    applyAdminWalletAdjustment.mockResolvedValue({
+      walletId: 10,
+      beforeBalance: 100_000,
+      afterBalance: 150_000,
+      delta: 50_000,
+      changed: true,
+      ledgerId: 1,
+      transactionType: "Add",
+    });
     const c = build();
     const ctx = makeCtx({ userId: 1, mode: "credit", amountToman: 5_000, reason: "refund" });
 
     await c.adminAdjustWallet(ctx);
 
     // 5,000 Toman → 50,000 IRR credited
-    expect(creditWalletBalanceAtomic).toHaveBeenCalledWith(mockStrapi, 1, 50_000);
-    const txCreate = mockStrapi.db.query(TX_UID).create as jest.Mock;
-    expect(txCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ Amount: 50_000, Type: "Add", Note: "refund", user_wallet: 10 }),
-      }),
-    );
-    expect(recordAdminAudit).toHaveBeenCalledWith(
+    expect(applyAdminWalletAdjustment).toHaveBeenCalledWith(
       mockStrapi,
-      expect.objectContaining({ action: "Adjust", resourceType: "User", resourceId: 1 }),
+      expect.objectContaining({
+        userId: 1,
+        mode: "credit",
+        amountIrr: 50_000,
+        reason: "refund",
+        audit: expect.objectContaining({
+          origin: "admin_ui",
+          initiator: expect.objectContaining({ type: "human", id: 99 }),
+        }),
+      }),
     );
     expect(ctx.send).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, data: expect.objectContaining({ balanceToman: 15_000 }) }),
@@ -106,34 +124,54 @@ describe("adminAdjustWallet", () => {
 
   it("debits the wallet (Minus ledger row)", async () => {
     setupQueries(100_000);
-    deductWalletBalanceAtomic.mockResolvedValue({ success: true, newBalance: 50_000, walletId: 10 });
+    applyAdminWalletAdjustment.mockResolvedValue({
+      walletId: 10,
+      beforeBalance: 100_000,
+      afterBalance: 50_000,
+      delta: -50_000,
+      changed: true,
+      ledgerId: 2,
+      transactionType: "Minus",
+    });
     const c = build();
     const ctx = makeCtx({ userId: 1, mode: "debit", amountToman: 5_000, reason: "correction" });
 
     await c.adminAdjustWallet(ctx);
 
-    expect(deductWalletBalanceAtomic).toHaveBeenCalledWith(mockStrapi, 1, 50_000);
-    expect((mockStrapi.db.query(TX_UID).create as jest.Mock)).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ Type: "Minus", Amount: 50_000 }) }),
+    expect(applyAdminWalletAdjustment).toHaveBeenCalledWith(
+      mockStrapi,
+      expect.objectContaining({ mode: "debit", amountIrr: 50_000 }),
     );
   });
 
   it("set mode computes the delta vs current balance and routes to debit when lower", async () => {
     setupQueries(100_000); // 10,000 Toman
-    deductWalletBalanceAtomic.mockResolvedValue({ success: true, newBalance: 60_000, walletId: 10 });
+    applyAdminWalletAdjustment.mockResolvedValue({
+      walletId: 10,
+      beforeBalance: 100_000,
+      afterBalance: 60_000,
+      delta: -40_000,
+      changed: true,
+      ledgerId: 3,
+      transactionType: "Minus",
+    });
     const c = build();
     const ctx = makeCtx({ userId: 1, mode: "set", amountToman: 6_000, reason: "set lower" });
 
     await c.adminAdjustWallet(ctx);
 
     // target 6,000 Toman = 60,000 IRR; current 100,000 IRR → debit 40,000 IRR
-    expect(deductWalletBalanceAtomic).toHaveBeenCalledWith(mockStrapi, 1, 40_000);
-    expect(creditWalletBalanceAtomic).not.toHaveBeenCalled();
+    expect(applyAdminWalletAdjustment).toHaveBeenCalledWith(
+      mockStrapi,
+      expect.objectContaining({ mode: "set", amountIrr: 60_000 }),
+    );
   });
 
   it("rejects debit when balance is insufficient", async () => {
     setupQueries(10_000);
-    deductWalletBalanceAtomic.mockResolvedValue({ success: false, error: "Insufficient balance: ..." });
+    applyAdminWalletAdjustment.mockRejectedValue(
+      new WalletAdjustmentError("INSUFFICIENT_BALANCE" as any, "Insufficient balance"),
+    );
     const c = build();
     const ctx = makeCtx({ userId: 1, mode: "debit", amountToman: 5_000, reason: "too much" });
 
@@ -157,7 +195,7 @@ describe("adminAdjustWallet", () => {
       expect.stringContaining("دلیل"),
       expect.objectContaining({ data: expect.objectContaining({ errorCode: "REASON_REQUIRED" }) }),
     );
-    expect(creditWalletBalanceAtomic).not.toHaveBeenCalled();
+    expect(applyAdminWalletAdjustment).not.toHaveBeenCalled();
   });
 
   it("rejects a non-positive / non-integer amount", async () => {
@@ -181,7 +219,7 @@ describe("adminAdjustWallet", () => {
     await c.adminAdjustWallet(ctx);
 
     expect(ctx.notFound).toHaveBeenCalled();
-    expect(creditWalletBalanceAtomic).not.toHaveBeenCalled();
+    expect(applyAdminWalletAdjustment).not.toHaveBeenCalled();
   });
 
   it("rejects self-wallet adjustment for every administrative actor", async () => {
@@ -196,14 +234,14 @@ describe("adminAdjustWallet", () => {
         data: expect.objectContaining({ errorCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN" }),
       }),
     );
-    expect(recordAdminAudit).toHaveBeenCalledWith(
+    expect(writeAuditEvent).toHaveBeenCalledWith(
       mockStrapi,
       expect.objectContaining({
-        title: "Rejected self-wallet adjustment",
-        metadata: expect.objectContaining({ rejected: true }),
+        eventKey: "security.access_denied",
+        result: "denied",
+        reasonCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN",
       }),
     );
-    expect(creditWalletBalanceAtomic).not.toHaveBeenCalled();
-    expect(deductWalletBalanceAtomic).not.toHaveBeenCalled();
+    expect(applyAdminWalletAdjustment).not.toHaveBeenCalled();
   });
 });
