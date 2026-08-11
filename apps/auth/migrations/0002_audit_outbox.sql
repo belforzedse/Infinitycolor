@@ -33,7 +33,10 @@ create index if not exists auth_audit_outbox_lease_idx
   where delivered_at is null;
 
 create or replace function enqueue_admin_session_revocation_audit()
-returns trigger as $$
+returns trigger
+language plpgsql
+set search_path = auth, pg_catalog
+as $$
 declare
   context_row admin_session_audit_contexts%rowtype;
   stable_dedupe text;
@@ -77,7 +80,7 @@ begin
   ) on conflict (dedupe_key) do nothing;
   return old;
 end;
-$$ language plpgsql;
+$$;
 
 drop trigger if exists sessions_admin_audit_before_delete on sessions;
 create trigger sessions_admin_audit_before_delete
