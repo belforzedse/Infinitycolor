@@ -158,7 +158,9 @@ describe("Cart Operations (Improved with Real Handlers)", () => {
       const result = await handler(ctx);
 
       expect(strapi.db.query).toHaveBeenCalledWith("api::cart-item.cart-item");
-      expect(cartService.removeCartItem).toHaveBeenCalledWith(50);
+      // The owning user id is part of the service contract: removal is scoped by
+      // ownership inside the op, not merely pre-checked by the handler.
+      expect(cartService.removeCartItem).toHaveBeenCalledWith(50, 1);
       expect(result.data.message).toBe("Cart item removed successfully");
     });
 

@@ -7,7 +7,7 @@ import { addressesAtom, addressesLoadingAtom, addressesErrorAtom } from "@/atoms
 import {
   likedProductsAtom,
   likedProductsLoadedAtom,
-  __resetUseProductLikeState,
+  likedProductsOwnerAtom,
 } from "@/hooks/useProductLike";
 import {
   submitOrderStepAtom,
@@ -39,7 +39,10 @@ function clearIdentityState() {
   invalidateAddressCache();
   jotaiStore.set(likedProductsAtom, []);
   jotaiStore.set(likedProductsLoadedAtom, false);
-  __resetUseProductLikeState();
+  // Clearing the owner is what lets the next identity fetch. There is no module-level
+  // "already fetched" flag to reset any more: the hook keys its state on the
+  // authenticated user id, so a new identity is simply a new key.
+  jotaiStore.set(likedProductsOwnerAtom, null);
   jotaiStore.set(orderIdAtom, null);
   jotaiStore.set(orderNumberAtom, null);
   jotaiStore.set(transactionIdAtom, null);

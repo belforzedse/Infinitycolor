@@ -32,6 +32,9 @@
       "min": 1,
       "default": 1
     },
+    "SourceCartItemId": {
+      "type": "integer"
+    },
     "PerAmount": {
       "type": "biginteger",
       "required": true,

@@ -129,6 +129,12 @@
       "min": 0,
       "default": 0
     },
+    "DiscountUsageClaimedDiscountId": {
+      "type": "integer"
+    },
+    "CartCleanupCompletedAt": {
+      "type": "datetime"
+    },
     "PaymentGateway": {
       "type": "enumeration",
       "enum": ["Unknown", "Wallet", "Mellat", "SnappPay", "SamanKish", "ZarinPal"],

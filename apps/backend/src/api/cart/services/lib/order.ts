@@ -189,6 +189,10 @@ export const createOrderAndItems = async (
         data: {
           order: order.id,
           product_variation: variation.id,
+          // Which cart line this order line consumed. Post-payment cleanup uses this
+          // instead of SKU identity: the customer may delete and re-add the same SKU
+          // while the payment is in flight, and the new line must survive.
+          SourceCartItemId: Number.isInteger(Number(item?.id)) ? Number(item.id) : null,
           Count: item.Count,
           PerAmount: itemPrice,
           ProductTitle: variation.product?.Title,

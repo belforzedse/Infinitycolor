@@ -126,6 +126,22 @@ interface RawNavigationResponse {
 const SERVER_CATEGORY_PAGE_SIZE = 100;
 const SERVER_CATEGORY_MAX_PAGES = 50;
 
+/**
+ * Raised when the category request itself failed (network error, non-2xx response).
+ *
+ * Distinct from a successful response that happens to contain no categories: the first
+ * must never be cached or rendered as "there are no categories", the second is real data.
+ */
+export class CategoryFetchError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "CategoryFetchError";
+    this.status = status;
+  }
+}
+
 const resolveCategoryImage = (image?: CategoryImageField | null) => {
   const attrs = image?.data?.attributes;
   if (!attrs) {
@@ -288,7 +304,10 @@ export async function getProductCategories(
             url: url.replace(baseUrl, "[BASE_URL]"),
           });
         }
-        return null;
+        throw new CategoryFetchError(
+          `Category request failed with status ${response.status}`,
+          response.status,
+        );
       }
 
       return response.json();
@@ -303,7 +322,6 @@ export async function getProductCategories(
       ) {
         params.set("pagination[page]", String(page));
         const json = await fetchCategoryJson();
-        if (!json) return [];
 
         const pageItems: RawProductCategory[] = Array.isArray(json?.data) ? json.data : [];
         items = items.concat(pageItems);
@@ -314,7 +332,6 @@ export async function getProductCategories(
       }
     } else {
       const json = await fetchCategoryJson();
-      if (!json) return [];
       items = Array.isArray(json?.data) ? json.data : [];
     }
 
@@ -353,6 +370,38 @@ export async function getProductCategories(
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    // A failed request is not an empty catalog. Returning [] here made callers — and
+    // especially useProductCategories' data cache — record a transport failure as a
+    // legitimate "this store has no categories" result, which then stuck for the life
+    // of the tab. Failure is surfaced so each caller can decide: server components fall
+    // back to their designed empty state, the client cache keeps its last known-good
+    // data and retries.
+    throw error instanceof CategoryFetchError
+      ? error
+      : new CategoryFetchError(
+          error instanceof Error ? error.message : String(error),
+        );
+  }
+}
+
+/**
+ * Server-render variant that degrades to an empty list instead of failing the page.
+ *
+ * Server components render the whole route, so a transient backend blip must not 500 a
+ * page that already has a designed empty state. The distinction still matters and is not
+ * lost: this wrapper is explicitly named, logs the failure, and is deliberately NOT what
+ * the client cache uses — `useProductCategories` needs the rejection so it can keep its
+ * last known-good data and retry rather than caching an invented [].
+ */
+export async function getProductCategoriesForRender(
+  options: FetchProductCategoriesOptions = {},
+): Promise<ProductCategorySummary[]> {
+  try {
+    return await getProductCategories(options);
+  } catch (error) {
+    logger.error("[ProductCategories] Rendering without categories after fetch failure", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
 }
@@ -410,11 +459,15 @@ export async function getNavbarProductCategories(
           url: url.replace(baseUrl, "[BASE_URL]"),
         });
       }
-      return [];
+      throw new CategoryFetchError(
+        `Navigation category request failed with status ${response.status}`,
+        response.status,
+      );
     }
 
     const json = (await response.json()) as RawNavigationResponse;
     const items = json.data?.attributes?.product_categories?.data;
+    // A successful response with no assigned categories is real, empty data.
     if (!Array.isArray(items)) return [];
 
     return items
@@ -426,6 +479,8 @@ export async function getNavbarProductCategories(
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    return [];
+    throw error instanceof CategoryFetchError
+      ? error
+      : new CategoryFetchError(error instanceof Error ? error.message : String(error));
   }
 }

@@ -4,6 +4,8 @@ import {
   releaseOrderReservation,
 } from "../../../../utils/stockReservations";
 import { decrementStockAtomic } from "../../../cart/services/lib/stock";
+import { orderHoldsDiscountClaim } from "../../../cart/services/lib/discount-claim";
+import { consumeCheckoutCartLinesSafely } from "../../../cart/services/lib/order-cart-cleanup";
 import { enqueuePurchaseForOrder } from "../../../report/analytics/outbox";
 import {
   findOrderPaymentAttempt,
@@ -48,6 +50,17 @@ async function incrementDiscountUsageCounter(
   if (!discountCode) return; // No discount code to track
 
   try {
+    // Usage-limited coupons are claimed at checkout, inside the transaction that made
+    // the discounted order and its contract amount durable. Counting them again at
+    // settlement would let the cap be exceeded by one per order.
+    if (await orderHoldsDiscountClaim(strapi, orderId)) {
+      strapi.log.debug("Discount usage already claimed at checkout; skipping settlement increment", {
+        orderId,
+        discountCode,
+      });
+      return;
+    }
+
     // Find the discount by code
     const discount = await strapi.entityService.findMany("api::discount.discount", {
       filters: { Code: discountCode },
@@ -161,7 +174,15 @@ async function incrementDiscountUsageCounter(
   }
 }
 
-async function clearCartAfterPayment(strapi: Strapi, orderId?: number) {
+/**
+ * Consumes only the cart lines this order was built from.
+ *
+ * Formerly cleared the whole live cart, which discarded anything the customer added
+ * while they were at the gateway. Cleanup failure is deliberately not propagated: a
+ * confirmed payment must stay confirmed. The work stays durably pending instead
+ * (orders.CartCleanupCompletedAt NULL) and the reconcile sweep retries it.
+ */
+async function clearCartAfterPayment(strapi: Strapi, orderId?: number, gateway?: string) {
   if (!orderId) {
     strapi.log.warn("clearCartAfterPayment called without orderId");
     return;
@@ -171,49 +192,7 @@ async function clearCartAfterPayment(strapi: Strapi, orderId?: number) {
   // scheduled repair sweep reconstructs this event if the process exits here.
   void enqueuePurchaseForOrder(strapi as any, orderId).catch(() => {});
 
-  try {
-    const order = await strapi.entityService.findOne("api::order.order", orderId, {
-      populate: { user: true },
-    });
-
-    if (!order) {
-      strapi.log.error("clearCartAfterPayment: Order not found", { orderId });
-      return;
-    }
-
-    const userRelation: any = order?.user;
-    const userId =
-      typeof userRelation === "object" && userRelation
-        ? userRelation.id
-        : typeof userRelation === "number"
-        ? userRelation
-        : undefined;
-
-    if (!userId) {
-      strapi.log.error("clearCartAfterPayment: Could not extract userId from order", {
-        orderId,
-        userRelationType: typeof userRelation,
-        userRelation: userRelation,
-      });
-      return;
-    }
-
-    strapi.log.info("clearCartAfterPayment: Attempting to clear cart", { orderId, userId });
-
-    const cartService: any = strapi.service("api::cart.cart");
-    if (cartService?.clearCart) {
-      await cartService.clearCart(userId);
-      strapi.log.info("clearCartAfterPayment: Cart cleared successfully", { orderId, userId });
-    } else {
-      strapi.log.error("clearCartAfterPayment: Cart service or clearCart method not available");
-    }
-  } catch (error: any) {
-    strapi.log.error("Failed to clear cart after payment", {
-      orderId,
-      error: error?.message || error,
-      stack: error?.stack,
-    });
-  }
+  await consumeCheckoutCartLinesSafely(strapi, orderId, { gateway });
 }
 
 /**
@@ -973,7 +952,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         strapi.log.error("Failed to log ZarinPal success", error);
       }
 
-      await clearCartAfterPayment(strapi, orderId);
+      await clearCartAfterPayment(strapi, orderId, "ZarinPal");
 
       return ctx.redirect(
         buildPaymentResultRedirectUrl("success", {
@@ -1577,7 +1556,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         strapi.log.error("Failed to log Saman success", err);
       }
 
-      await clearCartAfterPayment(strapi, orderId);
+      await clearCartAfterPayment(strapi, orderId, "SamanKish");
 
       return ctx.redirect(
         buildPaymentResultRedirectUrl("success", {
@@ -2102,7 +2081,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           strapi.log.error("Failed to persist gateway success log", e);
         }
 
-        await clearCartAfterPayment(strapi, orderId);
+        await clearCartAfterPayment(strapi, orderId, "Mellat");
 
         // Redirect to frontend success page
         ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));

@@ -1,6 +1,11 @@
 import { API_BASE_URL, ENDPOINTS } from "@/constants/api";
 import fetchWithTimeout from "@/utils/fetchWithTimeout";
-import { getNavbarProductCategories, getProductCategories } from "../categories";
+import {
+  CategoryFetchError,
+  getNavbarProductCategories,
+  getProductCategories,
+  getProductCategoriesForRender,
+} from "../categories";
 
 jest.mock("@/utils/fetchWithTimeout", () => ({
   __esModule: true,
@@ -291,5 +296,78 @@ describe("getProductCategories", () => {
 
     expect(categories).toHaveLength(2);
     expect(categories.map((c) => c.name)).toEqual(["کیف دستی", "دامن"]);
+  });
+});
+
+describe("category fetch failure is distinct from an empty catalog", () => {
+  beforeEach(() => {
+    mockedFetchWithTimeout.mockReset();
+  });
+
+  it("resolves to an empty list for a successful empty response", async () => {
+    mockedFetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [] }),
+    } as Response);
+
+    await expect(getProductCategories()).resolves.toEqual([]);
+  });
+
+  it("throws on a non-OK response instead of inventing an empty catalog", async () => {
+    mockedFetchWithTimeout.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      text: async () => "upstream down",
+    } as Response);
+
+    await expect(getProductCategories()).rejects.toBeInstanceOf(CategoryFetchError);
+  });
+
+  it("throws on a transport error", async () => {
+    mockedFetchWithTimeout.mockRejectedValueOnce(new Error("network down"));
+
+    await expect(getProductCategories()).rejects.toBeInstanceOf(CategoryFetchError);
+  });
+
+  it("throws when the navigation single type request fails", async () => {
+    mockedFetchWithTimeout.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Server Error",
+      text: async () => "boom",
+    } as Response);
+
+    await expect(getNavbarProductCategories()).rejects.toBeInstanceOf(CategoryFetchError);
+  });
+
+  it("still resolves to [] for a navigation single type with no assigned categories", async () => {
+    mockedFetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: { attributes: {} } }),
+    } as Response);
+
+    await expect(getNavbarProductCategories()).resolves.toEqual([]);
+  });
+
+  it("degrades to [] for server rendering so a transient failure cannot 500 a page", async () => {
+    mockedFetchWithTimeout.mockRejectedValueOnce(new Error("network down"));
+
+    await expect(getProductCategoriesForRender()).resolves.toEqual([]);
+  });
+
+  it("recovers on the next call after a failure", async () => {
+    mockedFetchWithTimeout.mockRejectedValueOnce(new Error("network down"));
+    await expect(getProductCategories()).rejects.toBeInstanceOf(CategoryFetchError);
+
+    mockedFetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [{ id: 1, attributes: { Title: "کیف", Slug: "bag", parent: { data: null } } }],
+      }),
+    } as Response);
+
+    const categories = await getProductCategories();
+    expect(categories.map((c) => c.slug)).toEqual(["bag"]);
   });
 });

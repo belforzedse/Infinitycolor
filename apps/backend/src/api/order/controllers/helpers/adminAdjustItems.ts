@@ -259,7 +259,7 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
 
     // Non-SnappPay adjustments remain an atomic local wallet operation.
     let refundTransactionId: number | null = null;
-    const result = await strapi.db.transaction(async () => {
+    const result = await strapi.db.transaction(async ({ trx }) => {
       // Update or delete order items
       for (const change of changes) {
         if (change.newCount === 0) {
@@ -292,10 +292,13 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
           } else if (order.Status === "Paying") {
             // For unpaid orders, only release reservation (do NOT increment Count)
             if (order.ReservationStatus === "Reserved") {
+              // See adminCancel: raw SQL must be handed the surrounding `trx`
+              // explicitly or the release escapes this transaction.
               const releaseResult = await releaseReservedStockAtomic(
                 strapi as any,
                 Number(stockId),
                 change.restockDelta,
+                trx,
               );
               if (!releaseResult.success) {
                 strapi.log.error("Failed to release reserved stock during admin adjust", {

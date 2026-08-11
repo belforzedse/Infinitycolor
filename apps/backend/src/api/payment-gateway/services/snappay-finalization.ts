@@ -1,5 +1,10 @@
 import type { Strapi } from "@strapi/strapi";
 import { consumeOrderReservation, releaseOrderReservation } from "../../../utils/stockReservations";
+import {
+  hasDiscountClaim,
+  releaseOrderDiscountClaim,
+} from "../../cart/services/lib/discount-claim";
+import { consumeCheckoutCartLines } from "../../cart/services/lib/order-cart-cleanup";
 import { enqueuePurchaseForOrder, enqueueRefundForReturn } from "../../report/analytics/outbox";
 
 type FinalizationIds = {
@@ -13,6 +18,9 @@ type FinalizationIds = {
 async function incrementDiscountUsage(strapi: Strapi, order: any, trx: any): Promise<void> {
   const code = String(order?.DiscountCode || "").trim();
   if (!code) return;
+  // Usage-limited coupons are claimed at checkout, inside the transaction that made the
+  // discounted order durable. Counting them again here would double-charge the cap.
+  if (hasDiscountClaim(order)) return;
   const discount: any = await strapi.db.query("api::discount.discount").findOne({
     where: { Code: code },
     ...(trx ? { transacting: trx } : {}),
@@ -269,14 +277,6 @@ export async function applySnappayCancellation(
         data: { ReservationStatus: "Released", ReservedUntil: null },
         ...(trx ? { transacting: trx } : {}),
       } as any);
-      if (order.DiscountCode && attempt.Status === "Succeeded") {
-        await trx.raw(
-          `UPDATE discounts
-           SET used_times = GREATEST(0, used_times - 1)
-           WHERE code = ?`,
-          [order.DiscountCode],
-        );
-      }
     }
 
     const now = new Date();
@@ -285,6 +285,22 @@ export async function applySnappayCancellation(
       data: { Status: "Cancelled" },
       ...(trx ? { transacting: trx } : {}),
     } as any);
+
+    // Coupon usage is returned after the order is Cancelled, because
+    // releaseOrderDiscountClaim deliberately refuses to release for an order still in a
+    // settled status. For a "Reserved" cancellation the claim was already handed back
+    // inside releaseOrderReservation above, so this is a no-op there.
+    const claimRelease = await releaseOrderDiscountClaim(strapi, ids.orderId, trx);
+    if (!claimRelease.released && order.DiscountCode && attempt.Status === "Succeeded") {
+      // Unlimited coupons take no checkout claim — their usage is counted at
+      // settlement, so it is returned here exactly as it always was.
+      await trx.raw(
+        `UPDATE discounts
+         SET used_times = GREATEST(0, used_times - 1)
+         WHERE code = ?`,
+        [order.DiscountCode],
+      );
+    }
     await strapi.db.query("api::contract.contract").update({
       where: { id: ids.contractId },
       data: { Status: "Cancelled" },
@@ -352,8 +368,11 @@ export async function runSnappaySideEffects(
   const userId = Number(order?.user?.id ?? order?.user);
 
   if (userId) {
-    const cartService: any = strapi.service("api::cart.cart");
-    await cartService.clearCart(userId);
+    // Order-scoped, so items added while the customer was at SnappPay survive. This runs
+    // under the existing sideEffectsCompletedAt lease; consumeCheckoutCartLines has its
+    // own CartCleanupCompletedAt marker, so the two are independently idempotent and a
+    // replayed lease cannot consume cart lines twice.
+    await consumeCheckoutCartLines(strapi, orderId);
     const activityService: any = strapi.service("api::user-activity.user-activity");
     const existingPaymentActivity: any = await strapi.db
       .query("api::user-activity.user-activity")

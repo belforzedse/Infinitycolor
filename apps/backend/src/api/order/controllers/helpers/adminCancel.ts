@@ -1,6 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
 import { logAdminOrderCancel } from "../../../../utils/adminActivity";
 import { releaseReservedStockAtomic } from "../../../cart/services/lib/stock";
+import { releaseOrderDiscountClaim } from "../../../cart/services/lib/discount-claim";
 import { requireCapability } from "../../../../utils/adminAuthorization";
 import { queueSnappayAdminCancel } from "../../../payment-gateway/services/snappay-orchestrator";
 import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
@@ -25,6 +26,10 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
     const order = await strapi.db.query("api::order.order").findOne({
       where: { id: orderIdNum },
       populate: {
+        // The refund block below resolves the customer's wallet from `order.user`.
+        // Without this populate that is always undefined, and the wallet lookup fails
+        // with an undefined-binding error that aborts the whole cancellation.
+        user: true,
         order_items: {
           populate: {
             product_variation: {
@@ -94,7 +99,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
 
     // Non-SnappPay cancellations remain an atomic local wallet operation.
     let refundTransactionId: number | null = null;
-    const result = await strapi.db.transaction(async () => {
+    const result = await strapi.db.transaction(async ({ trx }) => {
       let reservationReleased = false;
       // Restock all items
       for (const item of order.order_items) {
@@ -116,10 +121,15 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
           } else if (order.Status === "Paying") {
             // For unpaid orders, only release reservation (do NOT increment Count)
             if (order.ReservationStatus === "Reserved") {
+              // `trx` is mandatory here: releaseReservedStockAtomic issues raw SQL,
+              // and raw SQL does not inherit the ambient transaction the way
+              // strapi.db.query does. Without it the reserved_count decrement
+              // commits immediately and survives a rollback of this cancellation.
               const releaseResult = await releaseReservedStockAtomic(
                 strapi as any,
                 Number(stockId),
                 qty,
+                trx,
               );
               if (!releaseResult.success) {
                 strapi.log.error("Failed to release reserved stock during admin cancel", {
@@ -135,6 +145,14 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
           }
         }
       }
+
+      // This path releases reserved stock directly instead of going through
+      // releaseOrderReservation, so it has to hand the coupon usage back itself.
+      // Only the `Paying` branch can actually release: the helper refuses once the
+      // order has reached a settled status, and cancelling a `Started` order means the
+      // customer did pay, so its usage stays consumed. Runs before the status write
+      // regardless, so the guard reads the pre-cancellation status.
+      await releaseOrderDiscountClaim(strapi as any, orderIdNum, trx);
 
       // Update order and contract
       const orderUpdateData: Record<string, unknown> = { Status: "Cancelled" };

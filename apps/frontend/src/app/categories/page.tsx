@@ -3,7 +3,7 @@ import PageContainer from "@/components/layout/PageContainer";
 import { StorefrontGrid } from "@/components/storefront";
 import CategoryCard from "@/components/Categories/CategoryCard";
 import { SITE_NAME, SITE_URL } from "@/config/site";
-import { getProductCategories } from "@/services/product/categories";
+import { getProductCategoriesForRender } from "@/services/product/categories";
 
 export const metadata: Metadata = {
   title: "دسته‌بندی‌ها",
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 };
 
 export default async function CategoriesPage() {
-  const categories = await getProductCategories({
+  const categories = await getProductCategoriesForRender({
     parentOnly: true,
     sort: "Title:asc",
     revalidate: 60,

@@ -7,6 +7,7 @@ import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
 import { creditWalletBalanceAtomic } from "../../local-user-wallet/services/local-user-wallet";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import { runRawSql } from "../../../utils/transactionExecutor";
 
 const FRONTEND_BASE =
   process.env.FRONTEND_URL || "https://infinitycolor.co";
@@ -38,6 +39,58 @@ async function lockWalletTopupForUpdate(strapi: Strapi, topupId: number, trx: an
     [topupId]
   );
   return (result.rows || [])[0] || null;
+}
+
+/**
+ * Marks a top-up Failed, but only from Pending.
+ *
+ * `/api/wallet/payment-callback` is unauthenticated, so the failure branch is the one an
+ * attacker would aim at. The guarded UPDATE is what makes duplicate failures harmless and
+ * makes it impossible for a late or forged failure to overwrite a Success that already
+ * credited the wallet.
+ */
+async function markWalletTopupFailed(
+  strapi: Strapi,
+  topupId: number,
+  trx?: any
+): Promise<boolean> {
+  try {
+    const result = await runRawSql(
+      strapi,
+      `UPDATE wallet_topups
+       SET status = 'Failed'
+       WHERE id = ?
+         AND status = 'Pending'
+       RETURNING id`,
+      [topupId],
+      trx
+    );
+    return (result?.rows || []).length === 1;
+  } catch (error: any) {
+    strapi.log.error("Failed to transition wallet topup to Failed", {
+      topupId,
+      error: error?.message || String(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * Decides whether a callback may drive a destructive transition on this top-up.
+ *
+ * `SaleOrderId` is caller-supplied and only locates a candidate row. Mellat mints `RefId`
+ * at bpPayRequest time and echoes it back in the browser callback, and chargeIntent
+ * persists it, so it is the one field that ties a callback to this specific attempt — the
+ * same anchor the order flow uses via payment_attempts.providerReference.
+ *
+ * When no RefId was persisted (the write is best-effort at initiation) the callback
+ * cannot be correlated at all. That is deliberately not treated as permission to mutate:
+ * the row stays Pending for reconciliation instead.
+ */
+function isCallbackCorrelated(topup: any, callbackRefId: string): boolean {
+  const persistedRefId = String(topup?.RefId ?? "").trim();
+  if (!persistedRefId) return false;
+  return persistedRefId === callbackRefId;
 }
 
 function isUniqueConstraintError(error: any) {
@@ -145,9 +198,10 @@ export default factories.createCoreController(
     },
 
     async paymentCallback(ctx) {
-      const { ResCode, SaleOrderId, SaleReferenceId } = (ctx.request as any).body || {};
+      const { ResCode, SaleOrderId, SaleReferenceId, RefId } = (ctx.request as any).body || {};
       const saleOrderId = String(SaleOrderId ?? "").trim();
       const saleReferenceId = String(SaleReferenceId ?? "").trim();
+      const callbackRefId = String(RefId ?? "").trim();
 
       try {
         if (!saleOrderId) {
@@ -170,27 +224,44 @@ export default factories.createCoreController(
 
         const paymentService = strapi.service("api::payment-gateway.mellat-v3");
 
+        const correlated = isCallbackCorrelated(topup, callbackRefId);
+
         const resCode = String(ResCode ?? "").trim();
         if (resCode !== "0") {
-          try {
-            await strapi.entityService.update(
-              WALLET_TOPUP_UID,
-              topup.id,
-              { data: { Status: "Failed" } }
-            );
-          } catch (e) {
+          // A failure callback destroys local state, so it must be correlated first.
+          // Locating a row by the caller-supplied SaleOrderId is not authorization:
+          // without this check anyone could POST a failure for a guessed SaleOrderId and
+          // flip another customer's (possibly already successful) top-up to Failed.
+          if (!correlated) {
             strapi.log.error(
-              "Failed to mark wallet topup as Failed (cancelled)",
+              "Wallet topup failure callback could not be correlated; leaving attempt untouched",
               {
                 topupId: topup.id,
-                saleOrderId: String(SaleOrderId || ""),
-                error: (e as any)?.message || String(e),
+                saleOrderId,
+                hasPersistedRefId: Boolean(String(topup.RefId ?? "").trim()),
+                callbackRefIdPresent: Boolean(callbackRefId),
               }
             );
+            return ctx.redirect(
+              `${FRONTEND_BASE}/wallet?status=failure&reason=unverified`
+            );
           }
+
+          await markWalletTopupFailed(strapi, Number(topup.id));
           return ctx.redirect(
             `${FRONTEND_BASE}/wallet?status=failure&code=${encodeURIComponent(resCode)}`
           );
+        }
+
+        // A mismatched RefId on a success callback points at a different attempt than the
+        // one the SaleOrderId resolved to. Nothing is mutated: the bank verify below is
+        // keyed on this row's saleOrderId, so proceeding could only settle the wrong one.
+        if (String(topup.RefId ?? "").trim() && !correlated) {
+          strapi.log.error("Wallet topup success callback RefId does not match the attempt", {
+            topupId: topup.id,
+            saleOrderId,
+          });
+          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=failure&reason=unverified`);
         }
 
         if (!saleReferenceId) {
@@ -287,18 +358,9 @@ export default factories.createCoreController(
             saleOrderId,
             verifyResult: result.verifyResult,
           });
-          try {
-            await strapi.entityService.update(
-              WALLET_TOPUP_UID,
-              topup.id,
-              { data: { Status: "Failed" } }
-            );
-          } catch (e) {
-            strapi.log.error("Failed to mark topup as Failed after verify failure", {
-              topupId: topup.id,
-              error: (e as any)?.message || String(e),
-            });
-          }
+          // Guarded like every other failure transition: this must not be able to
+          // overwrite a Success committed by a concurrent callback.
+          await markWalletTopupFailed(strapi, Number(topup.id));
           return ctx.redirect(
             `${FRONTEND_BASE}/wallet?status=failure&reason=verify`
           );
@@ -310,18 +372,7 @@ export default factories.createCoreController(
             saleOrderId,
             settleResult: result.settleResult,
           });
-          try {
-            await strapi.entityService.update(
-              WALLET_TOPUP_UID,
-              topup.id,
-              { data: { Status: "Failed" } }
-            );
-          } catch (e) {
-            strapi.log.error("Failed to mark topup as Failed after settle failure", {
-              topupId: topup.id,
-              error: (e as any)?.message || String(e),
-            });
-          }
+          await markWalletTopupFailed(strapi, Number(topup.id));
           return ctx.redirect(
             `${FRONTEND_BASE}/wallet?status=failure&reason=settle`
           );

@@ -55,6 +55,7 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
   const cached = categoryDataCache.get(cacheKey);
   const [categories, setCategories] = useState<ProductCategorySummary[]>(initial ?? cached ?? []);
   const [isLoading, setIsLoading] = useState(enabled && !initial && !cached);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     if (initial) return;
@@ -70,26 +71,42 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
     const fetchCategories = async () => {
       try {
         setIsLoading(true);
+        setError(null);
         let request = categoryRequestCache.get(cacheKey);
         if (!request) {
-          request = navbarAssignedOnly
-            ? getNavbarProductCategories({ includeChildren })
-            : getProductCategories({
-                parentOnly,
-                mainOnly,
-                featuredOnly,
-                includeChildren,
-                allowedNameSubstrings,
-              });
+          // Evict the in-flight entry once it settles. Previously a rejected promise
+          // stayed in this map forever, so every later mount awaited the same failure and
+          // categories could not recover without a full page reload.
+          //
+          // The evicting promise is the one that gets both cached and awaited: caching a
+          // derived promise while awaiting the original would leave the derived rejection
+          // unhandled.
+          request = (
+            navbarAssignedOnly
+              ? getNavbarProductCategories({ includeChildren })
+              : getProductCategories({
+                  parentOnly,
+                  mainOnly,
+                  featuredOnly,
+                  includeChildren,
+                  allowedNameSubstrings,
+                })
+          ).finally(() => {
+            categoryRequestCache.delete(cacheKey);
+          });
           categoryRequestCache.set(cacheKey, request);
         }
         const data = await request;
+        // Only a successful response reaches the data cache. A legitimately empty
+        // collection is real data and is cached; a failed request is not.
         categoryDataCache.set(cacheKey, data);
         if (!isMounted) return;
         setCategories(data);
-      } catch (error) {
+      } catch (err) {
         if (!isMounted) return;
-        setCategories([]);
+        // Keep whatever good data we already have. Replacing it with [] turned a
+        // transient backend blip into an apparently empty catalog.
+        setError(err instanceof Error ? err : new Error(String(err)));
       } finally {
         if (!isMounted) return;
         setIsLoading(false);
@@ -113,7 +130,7 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
     allowedNameSubstrings,
   ]);
 
-  return { categories, isLoading };
+  return { categories, isLoading, error };
 };
 
 export default useProductCategories;

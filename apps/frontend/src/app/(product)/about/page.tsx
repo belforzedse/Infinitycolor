@@ -9,7 +9,7 @@ import WhyChooseSection from "@/components/About/WhyChooseSection";
 import TrustSection from "@/components/About/TrustSection";
 import CategoryShowcase from "@/components/About/CategoryShowcase";
 import { SITE_URL } from "@/config/site";
-import { getProductCategories } from "@/services/product/categories";
+import { getProductCategoriesForRender } from "@/services/product/categories";
 import { getSiteIdentity, resolveSiteName } from "@/services/site-identity";
 import { storeMapLinks } from "@/utils/identityIcons";
 
@@ -43,7 +43,7 @@ const breadcrumbItems = [
 
 export default async function AboutPage() {
   const [categories, identity] = await Promise.all([
-    getProductCategories({
+    getProductCategoriesForRender({
       parentOnly: true,
       sort: "Title:asc",
       revalidate: 60,

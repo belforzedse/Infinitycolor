@@ -9,7 +9,7 @@ import logger from "@/utils/logger";
 import { getCategoryAndDescendantSlugs } from "@/utils/category-descendants";
 import { getValidatedCategoryCached, type CategoryData } from "@/utils/category-validation";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
-import { getProductCategories, type ProductCategorySummary } from "./categories";
+import { getProductCategoriesForRender, type ProductCategorySummary } from "./categories";
 import { formatProductsToCardProps } from "./product";
 import type { ProductSmallCardProps } from "@/components/Product/SmallCard";
 import { PRODUCT_COLLECTION_TAG, PRODUCT_TAG } from "@/constants/cacheTags";
@@ -225,7 +225,9 @@ export async function getPLPCategoryContext(
   const categoryData = await getValidatedCategoryCached(slug);
   if (!categoryData) return null;
 
-  const allCategories = await getProductCategories({ revalidate: 3600 });
+  // Degrades rather than failing the PLP route: without the category list the page still
+  // renders, just without descendant-slug expansion (see the fallback below).
+  const allCategories = await getProductCategoriesForRender({ revalidate: 3600 });
   const resolvedSlug = categoryData.attributes.Slug;
   const descendantSlugs =
     allCategories.length > 0

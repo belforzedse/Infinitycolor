@@ -172,6 +172,8 @@ export function makeFactories(strapi: any) {
       paymentGateway?: string;
       discountCode?: string;
       deliveryAddressId?: number;
+      discountUsageClaimedDiscountId?: number;
+      cartCleanupCompletedAt?: Date | string | null;
     } = {},
   ) {
     const row = await q("api::order.order").create({
@@ -185,6 +187,17 @@ export function makeFactories(strapi: any) {
         ...(opts.contractId ? { contract: opts.contractId } : {}),
         ...(opts.paymentGateway ? { PaymentGateway: opts.paymentGateway } : {}),
         ...(opts.discountCode ? { DiscountCode: opts.discountCode } : {}),
+        ...(opts.discountUsageClaimedDiscountId
+          ? { DiscountUsageClaimedDiscountId: opts.discountUsageClaimedDiscountId }
+          : {}),
+        ...(opts.cartCleanupCompletedAt !== undefined
+          ? {
+              CartCleanupCompletedAt:
+                opts.cartCleanupCompletedAt instanceof Date
+                  ? opts.cartCleanupCompletedAt.toISOString()
+                  : opts.cartCleanupCompletedAt,
+            }
+          : {}),
         ...(opts.deliveryAddressId ? { delivery_address: opts.deliveryAddressId } : {}),
         Type: "Automatic",
         Date: new Date().toISOString(),
@@ -232,11 +245,14 @@ export function makeFactories(strapi: any) {
     variationId: number;
     count?: number;
     perAmount?: number;
+    /** The cart line this order line consumed; drives post-payment cart cleanup. */
+    sourceCartItemId?: number;
   }) {
     const row = await q("api::order-item.order-item").create({
       data: {
         order: opts.orderId,
         product_variation: opts.variationId,
+        ...(opts.sourceCartItemId ? { SourceCartItemId: opts.sourceCartItemId } : {}),
         Count: opts.count ?? 1,
         PerAmount: opts.perAmount ?? 100000,
         ProductTitle: `${TEST_PREFIX}product`,
@@ -497,6 +513,10 @@ export function makeFactories(strapi: any) {
     return q("api::discount.discount").findOne({ where: { id: discountId } });
   }
 
+  async function getCart(cartId: number) {
+    return q("api::cart.cart").findOne({ where: { id: cartId } });
+  }
+
   async function getCartItem(cartItemId: number) {
     return q("api::cart-item.cart-item").findOne({ where: { id: cartItemId } });
   }
@@ -595,6 +615,7 @@ export function makeFactories(strapi: any) {
     getContractTransactions,
     getOrderLogs,
     getDiscount,
+    getCart,
     getCartItem,
     getCartItems,
     cleanup,

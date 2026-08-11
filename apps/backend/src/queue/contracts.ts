@@ -9,6 +9,7 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   reserveOrderExpiry: "reserveOrders.expire",
   scheduledProductPublishOne: "scheduledProducts.publishOne",
   scheduledProductReconcile: "scheduledProducts.reconcile",
+  cartCleanupReconcile: "cartCleanup.reconcile",
 } as const;
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
@@ -26,6 +27,7 @@ export const MAINTENANCE_SCHEDULERS = {
   stockReservationExpiry: "sched:stockReservations.expire",
   reserveOrderExpiry: "sched:reserveOrders.expire",
   scheduledProductReconcile: "sched:scheduledProducts.reconcile",
+  cartCleanupReconcile: "sched:cartCleanup.reconcile",
   viewCounterFlush: "sched:viewCounters.flush",
   analyticsDailyRollup: "sched:analyticsDailyRollup.run",
   analyticsOutboxRepair: "sched:analyticsOutboxRepair.run",

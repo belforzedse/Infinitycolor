@@ -582,6 +582,44 @@ function enabledActionNames(controller: Record<string, { enabled: boolean }>) {
 }
 
 describe("role permission templates", () => {
+  it("keeps cart lines and raw inventory off the public and customer roles", () => {
+    const publicRole = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "public",
+    );
+    const customer = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "customer",
+    );
+    const enabled = (tree: Record<string, any>, typeKey: string, controllerName: string) =>
+      enabledActionNames(tree[typeKey].controllers[controllerName]);
+
+    // /cart-items is a default core router: a public find/findOne lets anyone
+    // enumerate every customer's cart lines by id. Carts are read via /carts/me.
+    expect(enabled(publicRole, "api::cart-item", "cart-item")).toEqual([]);
+    expect(enabled(customer, "api::cart-item", "cart-item")).toEqual([]);
+
+    // Raw inventory persistence stays with staff. Storefront availability reaches
+    // the client through the product / product-variation populate of product_stock.
+    expect(enabled(publicRole, "api::product-stock", "product-stock")).toEqual([]);
+    expect(enabled(customer, "api::product-stock", "product-stock")).toEqual([]);
+
+    // The catalog reads the storefront actually depends on are untouched.
+    expect(enabled(publicRole, "api::product", "product")).toEqual(["find", "findOne", "search"]);
+    expect(enabled(publicRole, "api::product-category", "product-category")).toEqual([
+      "find",
+      "findOne",
+    ]);
+    expect(enabled(publicRole, "api::product-variation", "product-variation")).toEqual([
+      "find",
+      "findOne",
+    ]);
+    // Customers still drive their own cart through the scoped cart controller.
+    expect(enabled(customer, "api::cart", "cart")).toEqual(
+      expect.arrayContaining(["getMyCart", "addItem", "updateItem", "removeItem"]),
+    );
+  });
+
   it("gives store managers product insights without traffic or audit reports", () => {
     const storeManager = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,

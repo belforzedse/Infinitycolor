@@ -30,6 +30,19 @@ export const computeCouponDiscount = async (
     throw new Error(`INVALID_OR_EXPIRED_COUPON: کد تخفیف "${code}" معتبر نیست یا منقضی شده است`);
   }
   const coupon: any = matches[0];
+
+  // Usage limits were previously only checked by the apply-discount *preview* endpoint,
+  // so an exhausted coupon still made it through the quote and into the order total that
+  // gets sent to the gateway. This is the read-side guard; the authoritative reservation
+  // is the guarded UPDATE in claimLimitedDiscountUsage, which runs inside the checkout
+  // transaction and is what actually enforces the cap under concurrency.
+  const limitUsage = Number(coupon.LimitUsage || 0);
+  if (limitUsage > 0 && Number(coupon.UsedTimes || 0) >= limitUsage) {
+    throw new Error(
+      `DISCOUNT_USAGE_EXHAUSTED: کد تخفیف "${code}" به سقف استفاده رسیده است`,
+    );
+  }
+
   let eligibleSubtotal = subtotal;
   if (Array.isArray(coupon.products) && coupon.products.length > 0) {
     const productIds = new Set(

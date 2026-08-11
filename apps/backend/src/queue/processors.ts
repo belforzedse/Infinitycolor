@@ -32,6 +32,10 @@ export async function processMaintenanceJob(
       );
       return runScheduledProductsReconciliation(strapi);
     }
+    case COMMERCE_MAINTENANCE_JOBS.cartCleanupReconcile: {
+      const { runReconcileCartCleanupTick } = await import("../jobs/reconcileCartCleanup");
+      return runReconcileCartCleanupTick(strapi);
+    }
     case ANALYTICS_MAINTENANCE_JOBS.viewCounterFlush: {
       const viewService = strapi.service("api::product-view.product-view") as {
         flushQueuedCounters: () => Promise<void>;

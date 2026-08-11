@@ -31,7 +31,7 @@ export const removeItemHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     const cartService = strapi.service("api::cart.cart");
-    const result = await cartService.removeCartItem(id);
+    const result = await cartService.removeCartItem(id, userId);
     if (!result.success) {
       return ctx.badRequest(result.message, {
         data: { success: false, error: result.message },

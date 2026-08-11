@@ -1,5 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
 import { scheduleHomeProductsRevalidation } from "../../../../utils/homepageRevalidation";
+import { runRawSql } from "../../../../utils/transactionExecutor";
 
 /**
  * Stock interface for type safety
@@ -163,12 +164,7 @@ const rawSql = async (
   sql: string,
   bindings: any[],
   trx?: any
-) => {
-  if (trx?.raw) {
-    return trx.raw(sql, bindings);
-  }
-  return strapi.db.connection.raw(sql, bindings);
-};
+) => runRawSql(strapi, sql, bindings, trx);
 
 /**
  * Atomically decrement stock with race condition protection

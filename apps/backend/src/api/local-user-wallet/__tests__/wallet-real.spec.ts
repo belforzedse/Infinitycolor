@@ -421,6 +421,7 @@ describe('Wallet Operations - Real Implementation', () => {
         {
           id: 100,
           SaleOrderId: saleOrderId,
+          RefId: 'MELLAT-REF-100',
           Amount: 1000000,
           Status: 'Pending',
         },
@@ -432,6 +433,8 @@ describe('Wallet Operations - Real Implementation', () => {
             ResCode: resCode,
             SaleOrderId: saleOrderId,
             SaleReferenceId: '123456',
+            // RefId is what ties this callback to that specific attempt.
+            RefId: 'MELLAT-REF-100',
           },
         },
       });
@@ -439,18 +442,117 @@ describe('Wallet Operations - Real Implementation', () => {
       // ✅ Call REAL controller method
       await topupController.paymentCallback(ctx);
 
-      // ✅ Should mark as Failed
-      expect(mockStrapi.entityService.update).toHaveBeenCalledWith(
-        'api::wallet-topup.wallet-topup',
-        100,
-        expect.objectContaining({
-          data: { Status: 'Failed' },
-        })
+      // ✅ Transitions via the guarded CAS, so it can only move Pending -> Failed
+      const failureUpdates = mockStrapi.db.connection.raw.mock.calls.filter(
+        ([sql]: [string]) => /UPDATE wallet_topups/.test(sql) && /status = 'Failed'/.test(sql)
       );
+      expect(failureUpdates).toHaveLength(1);
+      expect(failureUpdates[0][0]).toMatch(/AND\s+status = 'Pending'/);
+      expect(failureUpdates[0][1]).toEqual([100]);
 
       // ✅ Should redirect to frontend with failure status
       expect(ctx.redirect).toHaveBeenCalledWith(
         expect.stringContaining('wallet?status=failure&code=17')
+      );
+    });
+
+    it('should refuse a failure callback whose RefId belongs to a different attempt', async () => {
+      const saleOrderId = '1234567890123';
+
+      mockStrapi.entityService.findMany.mockResolvedValue([
+        {
+          id: 100,
+          SaleOrderId: saleOrderId,
+          RefId: 'MELLAT-REF-100',
+          Amount: 1000000,
+          Status: 'Success',
+        },
+      ]);
+
+      const ctx = mockContext({
+        request: {
+          body: {
+            ResCode: '17',
+            SaleOrderId: saleOrderId,
+            SaleReferenceId: '123456',
+            // Another attempt's provider reference pointed at this local row.
+            RefId: 'MELLAT-REF-999',
+          },
+        },
+      });
+
+      await topupController.paymentCallback(ctx);
+
+      expect(
+        mockStrapi.db.connection.raw.mock.calls.filter(([sql]: [string]) =>
+          /UPDATE wallet_topups/.test(sql)
+        )
+      ).toHaveLength(0);
+      expect(mockStrapi.entityService.update).not.toHaveBeenCalled();
+      expect(ctx.redirect).toHaveBeenCalledWith(
+        expect.stringContaining('wallet?status=failure&reason=unverified')
+      );
+    });
+
+    it('should refuse a failure callback when the attempt has no persisted RefId', async () => {
+      const saleOrderId = '1234567890123';
+
+      mockStrapi.entityService.findMany.mockResolvedValue([
+        { id: 100, SaleOrderId: saleOrderId, Amount: 1000000, Status: 'Pending' },
+      ]);
+
+      const ctx = mockContext({
+        request: {
+          body: { ResCode: '17', SaleOrderId: saleOrderId, SaleReferenceId: '123456' },
+        },
+      });
+
+      await topupController.paymentCallback(ctx);
+
+      // Unverifiable, so the attempt is left Pending for reconciliation rather than
+      // being destroyed on the strength of a caller-supplied SaleOrderId alone.
+      expect(
+        mockStrapi.db.connection.raw.mock.calls.filter(([sql]: [string]) =>
+          /UPDATE wallet_topups/.test(sql)
+        )
+      ).toHaveLength(0);
+      expect(mockStrapi.entityService.update).not.toHaveBeenCalled();
+      expect(ctx.redirect).toHaveBeenCalledWith(
+        expect.stringContaining('wallet?status=failure&reason=unverified')
+      );
+    });
+
+    it('should refuse a success callback whose RefId does not match the attempt', async () => {
+      const saleOrderId = '1234567890123';
+
+      mockStrapi.entityService.findMany.mockResolvedValue([
+        {
+          id: 100,
+          SaleOrderId: saleOrderId,
+          RefId: 'MELLAT-REF-100',
+          Amount: 1000000,
+          Status: 'Pending',
+          user: { id: 99 },
+        },
+      ]);
+
+      const ctx = mockContext({
+        request: {
+          body: {
+            ResCode: '0',
+            SaleOrderId: saleOrderId,
+            SaleReferenceId: 'REF-SUCCESS-123',
+            RefId: 'MELLAT-REF-999',
+          },
+        },
+      });
+
+      await topupController.paymentCallback(ctx);
+
+      expect(mellatService.verifyTransaction).not.toHaveBeenCalled();
+      expect(mellatService.settleTransaction).not.toHaveBeenCalled();
+      expect(ctx.redirect).toHaveBeenCalledWith(
+        expect.stringContaining('wallet?status=failure&reason=unverified')
       );
     });
 

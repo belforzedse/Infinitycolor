@@ -50,6 +50,19 @@ export async function registerMaintenanceSchedulers(
     },
   );
 
+  await queues.commerce.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.cartCleanupReconcile,
+    {
+      pattern: settings.crons.cartCleanupReconcile,
+      tz: settings.timezone,
+    },
+    {
+      name: COMMERCE_MAINTENANCE_JOBS.cartCleanupReconcile,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    },
+  );
+
   await queues.analytics.upsertJobScheduler(
     MAINTENANCE_SCHEDULERS.viewCounterFlush,
     {

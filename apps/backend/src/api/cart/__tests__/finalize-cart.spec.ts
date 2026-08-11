@@ -6,6 +6,7 @@ import {
   requestSamanPayment,
 } from "../controllers/handlers/gateway-helpers";
 import { settleOrderWithWallet } from "../controllers/handlers/wallet-settlement";
+import { consumeCheckoutCartLinesSafely } from "../services/lib/order-cart-cleanup";
 import {
   claimPaymentAttemptForInitiation,
   findPaymentAttempt,
@@ -26,6 +27,10 @@ jest.mock("../controllers/handlers/wallet-settlement", () => ({
     reference: "wallet-order-42-checkout-attempt",
     newBalance: 5_000_000,
   }),
+}));
+
+jest.mock("../services/lib/order-cart-cleanup", () => ({
+  consumeCheckoutCartLinesSafely: jest.fn().mockResolvedValue(true),
 }));
 
 jest.mock("../../payment-attempt/services/payment-attempt", () => ({
@@ -374,7 +379,14 @@ describe("finalizeToOrderHandler", () => {
         totalToman: 250_000,
       }),
     );
-    expect(cartService.clearCart).toHaveBeenCalledWith(1);
+    // Order-scoped, not the whole live cart: anything the customer added after this
+    // checkout was created must survive settlement.
+    expect(consumeCheckoutCartLinesSafely).toHaveBeenCalledWith(
+      strapi,
+      42,
+      expect.objectContaining({ gateway: "Wallet" }),
+    );
+    expect(cartService.clearCart).not.toHaveBeenCalled();
   });
 
   it("fails fast when wallet balance is insufficient", async () => {

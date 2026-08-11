@@ -4,7 +4,7 @@ export const revalidate = 60;
 
 import type { Metadata } from "next";
 import { ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS } from "@/constants/categories";
-import { getProductCategories } from "@/services/product/categories";
+import { getProductCategoriesForRender } from "@/services/product/categories";
 import { blogService } from "@/services/blog/blog.service";
 import { getActiveStories } from "@/services/story/story.service";
 import BlogCarousel from "@/components/Blog/BlogCarousel";
@@ -152,7 +152,7 @@ async function ProductSectionsBlock({
 }
 
 async function CategorySection() {
-  const parentCategories = await getProductCategories({
+  const parentCategories = await getProductCategoriesForRender({
     mainOnly: true,
     sort: "Title:asc",
     featuredOnly: true,

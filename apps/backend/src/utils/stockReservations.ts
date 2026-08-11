@@ -9,6 +9,8 @@ import {
   consumeReservedStockAtomic,
   releaseReservedStockAtomic,
 } from "../api/cart/services/lib/stock";
+import { runRawSql } from "./transactionExecutor";
+import { releaseOrderDiscountClaim } from "../api/cart/services/lib/discount-claim";
 
 type ReservationTransition = "Released" | "Expired" | "Consumed";
 
@@ -116,10 +118,7 @@ const rawSql = async (
   sql: string,
   bindings: any[],
   trx?: any
-) => {
-  if (trx?.raw) return trx.raw(sql, bindings);
-  return strapi.db.connection.raw(sql, bindings);
-};
+) => runRawSql(strapi, sql, bindings, trx);
 
 const loadOrderItemsWithStocks = async (
   strapi: Strapi,
@@ -219,6 +218,15 @@ export async function releaseOrderReservation(
         expiresBefore: context?.expiresBefore,
       }
     );
+
+    // Releasing a checkout hold also returns any limited-coupon usage the order
+    // reserved. This runs on every call, not only when the reservation transition
+    // matched, because the two holds can already be out of step (an expiry tick may
+    // have released the stock while the coupon claim is still outstanding). The helper
+    // is CAS-guarded on the claim column and refuses to release for a settled order, so
+    // repeating it — or racing another failure path — decrements at most once.
+    await releaseOrderDiscountClaim(strapi, orderId, trx);
+
     if (!transitioned) return { success: true, skipped: true };
 
     const order = await loadOrderItemsWithStocks(strapi, orderId, trx);

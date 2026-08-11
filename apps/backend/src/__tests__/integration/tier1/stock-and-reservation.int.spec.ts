@@ -20,6 +20,7 @@ import {
 } from "../../../api/cart/services/lib/stock";
 import { consumeOrderReservation, releaseOrderReservation } from "../../../utils/stockReservations";
 import { runExpireStockReservationsTick } from "../../../jobs/expireStockReservations";
+import { adminCancelOrderHandler } from "../../../api/order/controllers/helpers/adminCancel";
 import { setupStrapi, teardownStrapi, getStrapi } from "../strapiInstance";
 import { makeFactories, type Factories } from "../factories";
 
@@ -239,5 +240,157 @@ describe("expiry job (runExpireStockReservationsTick)", () => {
 
     expect((await f.getOrder(order.id)).Status).toBe("Paying");
     expect(Number((await f.getStock(items[0].stockId)).reservedCount)).toBe(1);
+  });
+});
+
+describe("transaction propagation for reserved-stock release", () => {
+  /**
+   * The defect: `releaseReservedStockAtomic` issues raw SQL, and raw SQL does not inherit
+   * the ambient transaction the way `strapi.db.query` does. The admin cancel/adjust paths
+   * opened `strapi.db.transaction(async () => …)` without destructuring `trx`, so the
+   * reserved_count decrement went straight to the pool and survived a rollback of the
+   * surrounding operation. Nothing is mocked away here — the transaction being tested is
+   * a real one on real Postgres.
+   */
+  it("rolls the release back with the outer transaction when trx is passed", async () => {
+    const stock = await f.createStock({ count: 10, reserved: 4 });
+
+    await expect(
+      strapi.db.transaction(async ({ trx }: any) => {
+        const released = await releaseReservedStockAtomic(strapi, stock.id, 4, trx);
+        expect(released.success).toBe(true);
+        throw new Error("injected failure after release");
+      }),
+    ).rejects.toThrow("injected failure after release");
+
+    expect(Number((await f.getStock(stock.id)).reservedCount)).toBe(4);
+  });
+
+  it("rolls back even when a caller forgets to pass trx", async () => {
+    const stock = await f.createStock({ count: 10, reserved: 4 });
+
+    await expect(
+      strapi.db.transaction(async () => {
+        // No trx handed over: the executor resolver must fall back to the ambient
+        // transaction rather than the base connection.
+        const released = await releaseReservedStockAtomic(strapi, stock.id, 4);
+        expect(released.success).toBe(true);
+        throw new Error("injected failure after release");
+      }),
+    ).rejects.toThrow("injected failure after release");
+
+    expect(Number((await f.getStock(stock.id)).reservedCount)).toBe(4);
+  });
+
+  it("commits normally when the transaction succeeds", async () => {
+    const stock = await f.createStock({ count: 10, reserved: 4 });
+
+    await strapi.db.transaction(async ({ trx }: any) => {
+      await releaseReservedStockAtomic(strapi, stock.id, 4, trx);
+    });
+
+    expect(Number((await f.getStock(stock.id)).reservedCount)).toBe(0);
+  });
+
+  it("still works for a legitimately standalone caller", async () => {
+    const stock = await f.createStock({ count: 10, reserved: 4 });
+
+    const released = await releaseReservedStockAtomic(strapi, stock.id, 4);
+
+    expect(released.success).toBe(true);
+    expect(Number((await f.getStock(stock.id)).reservedCount)).toBe(0);
+  });
+});
+
+describe("admin cancellation rolls back atomically", () => {
+  const createSuperadminActor = async () => {
+    const roleQuery = strapi.query("plugin::users-permissions.role");
+    let role = await roleQuery.findOne({ where: { type: "superadmin" } });
+    if (!role) {
+      role = await roleQuery.create({
+        data: { name: "Superadmin", type: "superadmin", description: "integration actor" },
+      });
+    }
+    const user = await f.createUser();
+    await strapi.query("plugin::users-permissions.user").update({
+      where: { id: user.id },
+      data: { role: role.id },
+    });
+    return user;
+  };
+
+  const cancelCtx = (orderId: number, userId: number) => ({
+    params: { id: String(orderId) },
+    request: { body: { reason: "integration cancellation" }, headers: {} },
+    state: { user: { id: userId } },
+    badRequest: jest.fn(),
+    notFound: jest.fn(),
+    conflict: jest.fn(),
+    forbidden: jest.fn(),
+    unauthorized: jest.fn(),
+    internalServerError: jest.fn((message: string, payload?: unknown) => ({
+      error: message,
+      payload,
+    })),
+  });
+
+  it("leaves order, reservation and stock untouched when a later step fails", async () => {
+    const actor = await createSuperadminActor();
+    const contract = await f.createContract({ amount: 0, status: "Not Ready" });
+    const { order, items } = await f.createReservedOrder({
+      items: [{ count: 2, stockCount: 10, stockReserved: 2 }],
+      userId: actor.id,
+      contractId: contract.id,
+    });
+
+    // Fails after the reservation release, inside the same transaction.
+    jest
+      .spyOn(strapi.db.query("api::order-log.order-log"), "create")
+      .mockRejectedValueOnce(new Error("injected order-log failure"));
+
+    const ctx = cancelCtx(order.id, actor.id);
+    // The handler reports the failure rather than throwing; what matters is that nothing
+    // it had already written survived.
+    const response: any = await adminCancelOrderHandler(strapi, ctx);
+    expect(response?.error).toBe("Failed to cancel order");
+
+    const unchangedOrder = await f.getOrder(order.id);
+    expect(unchangedOrder.Status).toBe("Paying");
+    expect(unchangedOrder.ReservationStatus).toBe("Reserved");
+
+    const stock = await f.getStock(items[0].stockId);
+    expect(Number(stock.Count)).toBe(10);
+    expect(Number(stock.reservedCount)).toBe(2);
+
+    expect((await f.getContract(contract.id)).Status).toBe("Not Ready");
+
+    jest.restoreAllMocks();
+  });
+
+  it("commits order, reservation and stock together on the happy path", async () => {
+    const actor = await createSuperadminActor();
+    const contract = await f.createContract({ amount: 0, status: "Not Ready" });
+    const { order, items } = await f.createReservedOrder({
+      items: [{ count: 2, stockCount: 10, stockReserved: 2 }],
+      userId: actor.id,
+      contractId: contract.id,
+    });
+
+    const ctx = cancelCtx(order.id, actor.id);
+    const response: any = await adminCancelOrderHandler(strapi, ctx);
+    expect(ctx.forbidden).not.toHaveBeenCalled();
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+    expect(ctx.notFound).not.toHaveBeenCalled();
+    expect(ctx.internalServerError).not.toHaveBeenCalled();
+    expect(response?.data?.success).toBe(true);
+
+    const cancelled = await f.getOrder(order.id);
+    expect(cancelled.Status).toBe("Cancelled");
+    expect(cancelled.ReservationStatus).toBe("Released");
+
+    const stock = await f.getStock(items[0].stockId);
+    expect(Number(stock.Count)).toBe(10); // never paid, so never deducted
+    expect(Number(stock.reservedCount)).toBe(0);
+    expect((await f.getContract(contract.id)).Status).toBe("Cancelled");
   });
 });

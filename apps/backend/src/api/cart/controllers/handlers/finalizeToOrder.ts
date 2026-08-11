@@ -18,6 +18,7 @@ import {
   updatePaymentAttempt,
 } from "../../../payment-attempt/services/payment-attempt";
 import { settleOrderWithWallet } from "./wallet-settlement";
+import { consumeCheckoutCartLinesSafely } from "../../services/lib/order-cart-cleanup";
 
 export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
   const {
@@ -505,7 +506,10 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           totalToman: Number(financialSummary?.total || contract.Amount || 0),
           discountToman: Number(financialSummary?.discount || 0),
         });
-        await cartService.clearCart(user.id);
+        // Consume only the cart lines this order was built from. Wallet settlement has
+        // already committed at this point, so a cleanup failure must not fail the
+        // response — it stays durably pending for the reconcile sweep.
+        await consumeCheckoutCartLinesSafely(strapi, Number(order.id), { gateway: "Wallet" });
         return {
           data: {
             success: true,

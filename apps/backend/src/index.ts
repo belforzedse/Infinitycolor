@@ -16,6 +16,7 @@ import productLifeCycles from "./api/product/lifecycles";
 import productVariationLifeCycles from "./api/product-variation/lifecycles";
 import { ensureIranLocations } from "./jobs/ensureLocations";
 import { startExpireStockReservationsJob } from "./jobs/expireStockReservations";
+import { startReconcileCartCleanupJob } from "./jobs/reconcileCartCleanup";
 import { startExpireReserveOrdersJob } from "./jobs/expireReserveOrders";
 import { startFlushViewCountersJob } from "./jobs/flushViewCounters";
 import { registerAppLifecycles } from "./lifecycles/registerAppLifecycles";
@@ -292,12 +293,14 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       "api::product-attribute-assignment": {
         "product-attribute-assignment": READ_ACTIONS,
       },
-      "api::product-stock": {
-        "product-stock": READ_ACTIONS,
-      },
-      "api::cart-item": {
-        "cart-item": READ_ACTIONS,
-      },
+      // Deliberately absent from the public role:
+      //   api::cart-item     — /cart-items is a default core router, so a public
+      //                        find/findOne let anyone enumerate every customer's
+      //                        cart lines. Carts are read through /carts/me only.
+      //   api::product-stock — raw inventory persistence (Count, reservedCount).
+      //                        Storefront availability reaches the client through
+      //                        the product / product-variation populate of
+      //                        product_stock, which is unaffected by this grant.
       "api::product-review": {
         "product-review": READ_ACTIONS,
       },
@@ -417,9 +420,9 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
           "markAllRead",
         ],
       },
-      "api::product-stock": {
-        "product-stock": READ_ACTIONS,
-      },
+      // No api::product-stock grant: customers never call /product-stocks (only the
+      // staff admin surfaces do), and the storefront gets availability through the
+      // product / product-variation populate of product_stock instead.
       "api::product-review": {
         "product-review": ["submitReview", "getUserReviews"],
       },
@@ -1241,6 +1244,11 @@ export default {
         startFlushViewCountersJob(strapi);
       } catch (error) {
         strapi.log.error("Failed to start flush view counters job", error);
+      }
+      try {
+        startReconcileCartCleanupJob(strapi);
+      } catch (error) {
+        strapi.log.error("Failed to start cart cleanup reconciliation job", error);
       }
     } else {
       strapi.log.info("In-process background jobs skipped for this process");

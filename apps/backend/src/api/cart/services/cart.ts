@@ -6,6 +6,7 @@ import { factories } from "@strapi/strapi";
 import { getOrCreateUserCart } from "./lib/get-user-cart";
 import { createOrderAndItems } from "./lib/order";
 import { computeCouponDiscount, findFirstActiveGeneralDiscount } from "./lib/discounts";
+import { claimLimitedDiscountUsage } from "./lib/discount-claim";
 import { computeTotals } from "./lib/financials";
 import { createContract } from "./lib/contract";
 import { reserveStockAtomic } from "./lib/stock";
@@ -34,12 +35,14 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     return addCartItemOp(strapi as any, cartId, productVariationId, count);
   },
 
-  async updateCartItem(cartItemId: number, count: number) {
-    return updateCartItemOp(strapi as any, cartItemId, count);
+  // `ownerUserId` is a required argument on both of these: a client-supplied cart-item
+  // id is only a candidate, and ownership is what authorizes the mutation.
+  async updateCartItem(cartItemId: number, count: number, ownerUserId: number) {
+    return updateCartItemOp(strapi as any, cartItemId, count, ownerUserId);
   },
 
-  async removeCartItem(cartItemId: number) {
-    return removeCartItemOp(strapi as any, cartItemId);
+  async removeCartItem(cartItemId: number, ownerUserId: number) {
+    return removeCartItemOp(strapi as any, cartItemId, ownerUserId);
   },
 
   async clearCart(userId: number) {
@@ -484,6 +487,17 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           ...(trx ? { transacting: trx } : {}),
         });
 
+        // Reserve the limited-coupon usage in the same transaction that just made the
+        // discounted order durable. Everything the gateway will be asked to charge —
+        // order, contract amount, payment attempt — commits with the claim or not at
+        // all, so two concurrent checkouts can never both be redirected holding the
+        // last remaining usage. Throws DISCOUNT_USAGE_EXHAUSTED when the cap is reached.
+        await claimLimitedDiscountUsage(strapi as any, {
+          orderId: Number(order.id),
+          code: discountCode,
+          trx,
+        });
+
         const paymentAttempt = managesPaymentAttempt
           ? await createPaymentAttempt(
               strapi as any,
@@ -661,6 +675,10 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             break;
           case "INVALID_RESERVATION":
             userMessage = "خطا در رزرو موجودی. لطفاً مجدداً تلاش کنید";
+            break;
+          case "DISCOUNT_USAGE_EXHAUSTED":
+            userMessage = "ظرفیت استفاده از این کد تخفیف تکمیل شده است";
+            details = { detail: errorDetail };
             break;
           default:
             userMessage = "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید";

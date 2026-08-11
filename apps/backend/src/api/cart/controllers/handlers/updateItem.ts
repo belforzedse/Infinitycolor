@@ -15,19 +15,10 @@ export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
       });
     }
 
-    // If count is less than 1, remove the cart item instead of updating
-    if (!count || count < 1) {
-      const cartService = strapi.service("api::cart.cart");
-      const result = await cartService.removeCartItem(cartItemId);
-      if (!result.success) {
-        return ctx.badRequest(result.message, {
-          data: { success: false, error: result.message },
-        });
-      }
-      return { data: { message: "Cart item removed successfully" } };
-    }
-
-    // Verify cart item belongs to user
+    // Ownership is resolved before branching on `count`. The zero-quantity branch
+    // deletes a cart line, so it needs exactly the same authorization as an explicit
+    // remove — checking it only on the update branch let any authenticated user delete
+    // another customer's cart item by posting count: 0 with its id.
     const cartItem = await strapi.db.query("api::cart-item.cart-item").findOne({
       where: { id: cartItemId, cart: { user: { id: userId } } },
       populate: { product_variation: { populate: { product_stock: true } } },
@@ -45,6 +36,19 @@ export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
       );
     }
 
+    const cartService = strapi.service("api::cart.cart");
+
+    // If count is less than 1, remove the cart item instead of updating
+    if (!count || count < 1) {
+      const result = await cartService.removeCartItem(cartItemId, userId);
+      if (!result.success) {
+        return ctx.badRequest(result.message, {
+          data: { success: false, error: result.message },
+        });
+      }
+      return { data: { message: "Cart item removed successfully" } };
+    }
+
     const available = cartItem.product_variation?.product_stock
       ? getAvailableStockCount(cartItem.product_variation.product_stock)
       : 0;
@@ -54,8 +58,7 @@ export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
       });
     }
 
-    const cartService = strapi.service("api::cart.cart");
-    const result = await cartService.updateCartItem(cartItemId, count);
+    const result = await cartService.updateCartItem(cartItemId, count, userId);
     if (!result.success) {
       return ctx.badRequest(result.message, {
         data: { success: false, error: result.message },

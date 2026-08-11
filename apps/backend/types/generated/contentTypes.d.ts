@@ -1663,6 +1663,7 @@ export interface ApiOrderItemOrderItem extends Schema.CollectionType {
     >;
     ProductSKU: Attribute.String & Attribute.Required;
     ProductTitle: Attribute.String & Attribute.Required;
+    SourceCartItemId: Attribute.Integer;
     updatedAt: Attribute.DateTime;
     updatedBy: Attribute.Relation<"api::order-item.order-item", "oneToOne", "admin::user"> &
       Attribute.Private;
@@ -1714,6 +1715,10 @@ export interface ApiOrderOrder extends Schema.CollectionType {
     draftAndPublish: false;
   };
   attributes: {
+    analytics_correlation_id: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 160;
+      }>;
     AppliedDiscountAmount: Attribute.Integer &
       Attribute.SetMinMax<
         {
@@ -1723,6 +1728,7 @@ export interface ApiOrderOrder extends Schema.CollectionType {
       > &
       Attribute.DefaultTo<0>;
     AppliedGeneralDiscountId: Attribute.Integer;
+    CartCleanupCompletedAt: Attribute.DateTime;
     contract: Attribute.Relation<"api::order.order", "oneToOne", "api::contract.contract">;
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<"api::order.order", "oneToOne", "admin::user"> &
@@ -1735,6 +1741,7 @@ export interface ApiOrderOrder extends Schema.CollectionType {
     >;
     Description: Attribute.Text;
     DiscountCode: Attribute.String;
+    DiscountUsageClaimedDiscountId: Attribute.Integer;
     external_id: Attribute.String;
     external_source: Attribute.String;
     isReserveOrder: Attribute.Boolean & Attribute.DefaultTo<false>;

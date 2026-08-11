@@ -1,13 +1,25 @@
 import type { Strapi } from "@strapi/strapi";
 import { getAvailableStockCount } from "../lib/stock";
 
+/**
+ * Updates the quantity of one cart line owned by `ownerUserId`.
+ *
+ * `ownerUserId` is required for the same reason as in removeCartItemOp: the client-supplied
+ * cart-item id identifies a candidate, ownership authorizes the mutation, and that must be
+ * enforced by the query itself rather than by a separate check a caller can skip.
+ */
 export const updateCartItemOp = async (
   strapi: Strapi,
   cartItemId: number,
-  count: number
+  count: number,
+  ownerUserId: number
 ) => {
+  if (!Number.isInteger(ownerUserId) || ownerUserId <= 0) {
+    return { success: false, message: "Cart owner is required" };
+  }
+
   const cartItem = await strapi.db.query("api::cart-item.cart-item").findOne({
-    where: { id: cartItemId },
+    where: { id: cartItemId, cart: { user: { id: ownerUserId } } },
     populate: {
       product_variation: {
         populate: { product_stock: true, product: true },
