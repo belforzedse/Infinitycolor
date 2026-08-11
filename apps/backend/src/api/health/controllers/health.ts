@@ -1,10 +1,34 @@
 import { RedisClient } from "../../../index";
 
-type HealthCheckStatus = "ok" | "fail" | "skipped";
+type HealthCheckStatus = "ok" | "fail";
+
+const dependencyTimeoutMs = () => {
+  const configured = Number(process.env.HEALTH_DEPENDENCY_TIMEOUT_MS || 1_500);
+  return Number.isFinite(configured)
+    ? Math.min(4_000, Math.max(250, configured))
+    : 1_500;
+};
+
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out`)),
+          dependencyTimeoutMs(),
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 async function pingDatabase(): Promise<HealthCheckStatus> {
   try {
-    await strapi.db.connection.raw("SELECT 1");
+    await withTimeout(strapi.db.connection.raw("SELECT 1"), "database ping");
     return "ok";
   } catch (error) {
     strapi.log.error("Healthcheck database ping failed", {
@@ -15,11 +39,12 @@ async function pingDatabase(): Promise<HealthCheckStatus> {
 }
 
 async function pingRedis(): Promise<HealthCheckStatus> {
-  if (!process.env.REDIS_URL) return "skipped";
+  if (!process.env.REDIS_URL) return "fail";
 
   try {
-    const client = await RedisClient;
-    const response = await client.ping();
+    const client: any = await withTimeout(RedisClient as any, "redis connect");
+    if (typeof client?.isReady === "boolean" && !client.isReady) return "fail";
+    const response = await withTimeout(client.ping(), "redis ping");
     return response === "PONG" ? "ok" : "fail";
   } catch (error) {
     strapi.log.error("Healthcheck redis ping failed", {
@@ -31,9 +56,8 @@ async function pingRedis(): Promise<HealthCheckStatus> {
 
 export default {
   async check(ctx: any) {
-    const db = await pingDatabase();
-    const redis = await pingRedis();
-    const ok = db === "ok";
+    const [db, redis] = await Promise.all([pingDatabase(), pingRedis()]);
+    const ok = db === "ok" && redis === "ok";
 
     ctx.status = ok ? 200 : 503;
     ctx.body = {
@@ -41,9 +65,12 @@ export default {
       service: "strapi",
       uptimeSec: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
-      checks: {
-        db,
-        redis,
+      checks: { db, redis },
+      dependencies: {
+        redis: {
+          required: true,
+          configured: Boolean(process.env.REDIS_URL),
+        },
       },
     };
   },

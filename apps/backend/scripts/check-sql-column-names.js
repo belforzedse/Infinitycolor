@@ -17,25 +17,27 @@ const { execSync } = require('child_process');
 const patterns = {
   // Quoted camelCase in raw SQL calls
   quotedInRawSQL: {
-    regex: /\.raw\([^)]*["']([A-Z][a-zA-Z]+)["']/g,
+    // PostgreSQL identifiers are double-quoted. Single quotes are values, so
+    // enum/status literals such as 'Pending' must not be reported as columns.
+    regex: /\.raw\([^)]*"([A-Z][a-zA-Z]+)"/g,
     message: "Quoted camelCase identifier in raw SQL query",
   },
 
   // UPDATE queries with quoted camelCase columns
   quotedInUpdate: {
-    regex: /UPDATE\s+\w+\s+SET\s+["']([A-Z][a-zA-Z]+)["']/gi,
+    regex: /UPDATE\s+\w+\s+SET\s+"([A-Z][a-zA-Z]+)"/gi,
     message: "UPDATE query with quoted camelCase column",
   },
 
   // RETURNING clauses with quoted camelCase columns
   quotedInReturning: {
-    regex: /RETURNING\s+["']([A-Z][a-zA-Z]+)["']/gi,
+    regex: /RETURNING\s+"([A-Z][a-zA-Z]+)"/gi,
     message: "RETURNING clause with quoted camelCase column",
   },
 
   // SET clauses with quoted camelCase
   quotedInSet: {
-    regex: /SET\s+["']([A-Z][a-zA-Z]+)["']\s*=/gi,
+    regex: /SET\s+"([A-Z][a-zA-Z]+)"\s*=/gi,
     message: "SET clause with quoted camelCase column",
   },
 };

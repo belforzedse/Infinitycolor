@@ -19,6 +19,8 @@ export type QueueSettings = {
     analyticsDailyRollup: string;
     analyticsOutboxRepair: string;
     snappaySweep: string;
+    walletTopupReconcile: string;
+    anipoBarcodeReconcile: string;
   };
 };
 
@@ -54,6 +56,10 @@ export function getQueueSettings(env: NodeJS.ProcessEnv = process.env): QueueSet
       analyticsDailyRollup: env.QUEUE_CRON_ANALYTICS_DAILY_ROLLUP || "15 0 * * *",
       analyticsOutboxRepair: env.QUEUE_CRON_ANALYTICS_OUTBOX_REPAIR || "*/1 * * * *",
       snappaySweep: env.QUEUE_CRON_SNAPPAY_SWEEP || "*/1 * * * *",
+      walletTopupReconcile:
+        env.QUEUE_CRON_WALLET_TOPUP_RECONCILE || "*/1 * * * *",
+      anipoBarcodeReconcile:
+        env.QUEUE_CRON_ANIPO_BARCODE_RECONCILE || "*/15 * * * *",
     },
   };
 }

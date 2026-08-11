@@ -3,6 +3,7 @@ import {
   COMMERCE_MAINTENANCE_JOBS,
   MAINTENANCE_SCHEDULERS,
   SNAPPAY_PAYMENT_JOBS,
+  WALLET_TOPUP_PAYMENT_JOBS,
 } from "./contracts";
 import { defaultMaintenanceJobOptions, type MaintenanceQueues } from "./queues";
 import type { QueueSettings } from "./env";
@@ -63,6 +64,19 @@ export async function registerMaintenanceSchedulers(
     },
   );
 
+  await queues.commerce.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.anipoBarcodeReconcile,
+    {
+      pattern: settings.crons.anipoBarcodeReconcile,
+      tz: settings.timezone,
+    },
+    {
+      name: COMMERCE_MAINTENANCE_JOBS.anipoBarcodeReconcile,
+      data: {},
+      opts: defaultMaintenanceJobOptions,
+    },
+  );
+
   await queues.analytics.upsertJobScheduler(
     MAINTENANCE_SCHEDULERS.viewCounterFlush,
     {
@@ -110,6 +124,22 @@ export async function registerMaintenanceSchedulers(
     },
     {
       name: SNAPPAY_PAYMENT_JOBS.sweep,
+      data: {},
+      opts: {
+        ...defaultMaintenanceJobOptions,
+        attempts: 1,
+      },
+    },
+  );
+
+  await queues.payments.upsertJobScheduler(
+    MAINTENANCE_SCHEDULERS.walletTopupReconcile,
+    {
+      pattern: settings.crons.walletTopupReconcile,
+      tz: settings.timezone,
+    },
+    {
+      name: WALLET_TOPUP_PAYMENT_JOBS.reconcile,
       data: {},
       opts: {
         ...defaultMaintenanceJobOptions,

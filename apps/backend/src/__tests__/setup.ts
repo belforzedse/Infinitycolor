@@ -80,6 +80,8 @@ jest.mock('axios');
 // Mock Redis client
 jest.mock('../index', () => ({
   RedisClient: Promise.resolve({
+    isReady: true,
+    ping: jest.fn().mockResolvedValue('PONG'),
     get: jest.fn(),
     set: jest.fn(),
     del: jest.fn(),

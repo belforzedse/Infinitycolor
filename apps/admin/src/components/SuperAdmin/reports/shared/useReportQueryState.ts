@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { parseAsString, useQueryState, useQueryStates } from "nuqs";
 import { toDateOnly, defaultReportStart, defaultReportEnd } from "./reportDates";
 
@@ -48,17 +48,17 @@ export function useReportQueryState<K extends string = never>(
   );
 
   /** Sets one extra filter key, resetting pagination to page 1 (empty string clears it from the URL). */
-  const setFilter = (key: K, value: string) => {
+  const setFilter = useCallback((key: K, value: string) => {
     setValues({ [key]: value || null, page: "1" } as Partial<Record<string, string | null>>);
-  };
+  }, [setValues]);
 
-  const setRange = (range: { start: string; end: string }) => {
+  const setRange = useCallback((range: { start: string; end: string }) => {
     setValues({ start: range.start, end: range.end, page: "1" });
-  };
+  }, [setValues]);
 
-  const setPage = (page: number | string) => {
+  const setPage = useCallback((page: number | string) => {
     setValues({ page: String(page) });
-  };
+  }, [setValues]);
 
   return {
     start: values.start,
