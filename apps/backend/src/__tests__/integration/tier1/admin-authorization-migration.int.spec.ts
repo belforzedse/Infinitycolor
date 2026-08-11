@@ -16,13 +16,15 @@ describe("admin authorization migration on isolated PostgreSQL", () => {
     const roleQuery = strapi.query("plugin::users-permissions.role");
     const userQuery = strapi.query("plugin::users-permissions.user");
 
-    const superadmin = await roleQuery.create({
-      data: {
-        name: "Superadmin",
-        type: "superadmin",
-        description: "isolated migration superadmin",
-      },
-    });
+    const superadmin =
+      (await roleQuery.findOne({ where: { type: "superadmin" } })) ||
+      (await roleQuery.create({
+        data: {
+          name: "Superadmin",
+          type: "superadmin",
+          description: "isolated migration superadmin",
+        },
+      }));
     const canonicalStoreManager = await roleQuery.create({
       data: {
         name: "Store Manager",
