@@ -216,9 +216,11 @@ export default {
     ]);
 
     const schema = strapi.contentType("api::order.order");
-    const sanitizedRows = await sanitize.contentAPI.output(rows, schema, {
-      auth: ctx.state.auth,
-    });
+    // Do not pass request auth into sanitize. Roles with only `order.read` lack
+    // direct find grants on contract / user_info, so auth-aware sanitize emptied
+    // those relations and the list rendered orders without names or amounts.
+    // The select/populate above plus projectOrder() already bound the payload.
+    const sanitizedRows = await sanitize.contentAPI.output(rows, schema);
     const data = (sanitizedRows as any[]).map(projectOrder);
 
     ctx.set("Cache-Control", "private, no-store");

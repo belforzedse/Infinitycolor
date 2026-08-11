@@ -228,7 +228,7 @@ describe("report controller - Founder access", () => {
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
-  it("allows Store Manager product insights but blocks finance liquidity", async () => {
+  it("blocks Store Manager from product insights and finance liquidity", async () => {
     mockStrapiForRole("Store Manager");
     const controller = loadController();
     const productCtx = createCtx();
@@ -237,7 +237,9 @@ describe("report controller - Founder access", () => {
     await controller.productSales(productCtx);
     await controller.liquidity(liquidityCtx);
 
-    expect(productCtx.forbidden).not.toHaveBeenCalled();
+    expect(productCtx.forbidden).toHaveBeenCalledWith(
+      "You do not have permission to perform this action",
+    );
     expect(liquidityCtx.forbidden).toHaveBeenCalledWith(
       "You do not have permission to perform this action",
     );

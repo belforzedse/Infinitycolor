@@ -62,14 +62,12 @@ describe("canRoleAccessPath", () => {
   });
 
   describe("Store manager", () => {
-    it("can reach product reporting but not broader sales destinations", () => {
-      expect(canRoleAccessPath("Store manager", "/sales/products")).toBe(true);
-      for (const item of SALES_NAV_ITEMS.filter(
-        (item) => item.href !== "/sales/products",
-      )) {
+    it("has no sales analytics destinations", () => {
+      expect(canRoleAccessPath("Store manager", "/sales/products")).toBe(false);
+      for (const item of SALES_NAV_ITEMS) {
         expect(canRoleAccessPath("Store manager", item.href)).toBe(false);
       }
-      for (const path of ["/reports", "/reports/sales", "/carts"]) {
+      for (const path of ["/sales", "/reports", "/reports/sales", "/carts"]) {
         expect(canRoleAccessPath("Store manager", path)).toBe(false);
       }
     });
@@ -92,11 +90,12 @@ describe("canRoleAccessPath", () => {
       expect(canRoleAccessPath("Seller 1", "/orders")).toBe(false);
     });
 
-    it("adds categories and read-only order pages for Seller 2", () => {
+    it("adds categories and operational order pages for Seller 2", () => {
       expect(canRoleAccessPath("Seller 2", "/products/categories")).toBe(true);
       expect(canRoleAccessPath("Seller 2", "/orders")).toBe(true);
       expect(canRoleAccessPath("Seller 2", "/orders/add")).toBe(false);
       expect(canRoleAccessPath("Seller 2", "/sales")).toBe(false);
+      expect(canRoleAccessPath("Seller 2", "/sales/products")).toBe(false);
     });
   });
 
@@ -175,10 +174,10 @@ describe("getSalesNavForRole", () => {
     );
   });
 
-  it("gives a Store manager product reporting only", () => {
-    expect(
-      getSalesNavForRole("Store manager").map((item) => item.href),
-    ).toEqual(["/sales/products"]);
+  it("gives a Store manager no sales analytics", () => {
+    expect(getSalesNavForRole("Store manager").map((item) => item.href)).toEqual(
+      [],
+    );
   });
 
   it("gives Finance its reporting branch without Founder traffic", () => {
@@ -210,8 +209,8 @@ describe("sidebar", () => {
     expect(sales?.href).toBe("/sales");
   });
 
-  it("promotes the Store Manager's only report to a direct destination", () => {
-    expect(parentIds("Store manager")).toContain("sales-products");
+  it("keeps Store Manager off sales analytics destinations", () => {
+    expect(parentIds("Store manager")).not.toContain("sales-products");
     expect(parentIds("Store manager")).not.toContain("sales");
   });
 
@@ -274,7 +273,7 @@ describe("sidebar", () => {
       Editor: 8,
       "Seller 1": 6,
       "Seller 2": 8,
-      "Store Manager": 9,
+      "Store Manager": 8,
       Finance: 4,
       Founder: 5,
       Superadmin: 11,

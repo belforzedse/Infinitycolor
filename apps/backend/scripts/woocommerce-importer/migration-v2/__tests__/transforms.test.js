@@ -59,7 +59,7 @@ test("customer payload preserves Woo creation and modification timestamps", () =
   assert.equal(payload.sourceUpdatedAt, "2024-05-06T07:08:09.000Z");
 });
 
-test("order payload keeps approved core fields and excludes addresses, notes, and payment identifiers", () => {
+test("order payload keeps the approved delivery snapshot and excludes notes and payment identifiers", () => {
   const payload = T.orderPayload({
     id: 44,
     customer_id: 0,
@@ -76,9 +76,17 @@ test("order payload keeps approved core fields and excludes addresses, notes, an
       email: "buyer@example.com",
       first_name: "نام",
       last_name: "خانوادگی",
-      address_1: "must-not-leak",
+      phone: "09123456789",
     },
-    shipping: { address_1: "must-not-leak" },
+    shipping: {
+      first_name: "زهرا",
+      last_name: "محمدی",
+      state: "abz",
+      city: "کرج",
+      address_1: "خیابان شهید بهشتی",
+      address_2: "پلاک ۱۲",
+      postcode: "۳۱۵۳۶۱۲۳۴۵",
+    },
     line_items: [{ id: 9, product_id: 3, variation_id: 4, quantity: 2, price: "475", name: "کالا", sku: "S" }],
     shipping_lines: [{ method_id: "flat_rate", method_title: "پست" }],
   });
@@ -98,6 +106,14 @@ test("order payload keeps approved core fields and excludes addresses, notes, an
     email: "buyer@example.com",
     firstName: "نام",
     lastName: "خانوادگی",
+  });
+  assert.deepEqual(payload.deliveryAddress, {
+    stateCode: "ABZ",
+    cityTitle: "کرج",
+    fullAddress: "خیابان شهید بهشتی — پلاک ۱۲",
+    postalCode: "3153612345",
+    recipientName: "زهرا محمدی",
+    recipientPhone: "+989123456789",
   });
   const serialized = JSON.stringify(payload);
   assert.ok(!serialized.includes("must-not-leak"));

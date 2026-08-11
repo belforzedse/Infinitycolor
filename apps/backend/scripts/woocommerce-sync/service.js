@@ -102,6 +102,7 @@ function orderRevision(row) {
       firstName: row?.billing?.first_name || "",
       lastName: row?.billing?.last_name || "",
     },
+    deliveryAddress: T.orderDeliveryAddress(row),
     paymentMethod: row.payment_method,
     lines: (row.line_items || []).map((line) => ({
       id: line.id,
@@ -148,6 +149,20 @@ function safeErrorCode(error) {
     error?.code || error?.payload?.error || screamingMessage || error?.name || "UNKNOWN",
   ).toUpperCase();
   return raw.replace(/[^A-Z0-9_.:-]/g, "_").slice(0, 128);
+}
+
+/**
+ * Resolve the wall-clock instant a Friday/nightly cutover was scheduled for.
+ * BullMQ's `job.timestamp` is creation time (often mid-day on redeploy); the
+ * repeatable job id suffix is the intended fire time.
+ */
+function fridayScheduledTimestamp(job) {
+  const id = String(job?.id || "");
+  const suffix = Number(id.split(":").pop());
+  if (Number.isFinite(suffix) && suffix > 1e12) return suffix;
+  const prevMillis = Number(job?.opts?.prevMillis);
+  if (Number.isFinite(prevMillis) && prevMillis > 1e12) return prevMillis;
+  return Number(job?.timestamp) || Date.now();
 }
 
 function catalogReportSummary(scope, report) {
@@ -925,7 +940,7 @@ async function start() {
   const worker = new Worker(QUEUE_NAME, async (job) => {
     if (job.name === JOBS.discovery) return service.discovery();
     if (job.name === JOBS.hourly) return service.hourly();
-    if (job.name === JOBS.friday) return service.friday(job.timestamp);
+    if (job.name === JOBS.friday) return service.friday(fridayScheduledTimestamp(job));
     if (job.name === JOBS.reconcile) return service.reconcile();
     throw new UnrecoverableError(`Unknown Woo sync job: ${job.name}`);
   }, { connection, prefix: config.queuePrefix, concurrency: 1, lockDuration: config.leaseSeconds * 1000 });
@@ -969,6 +984,7 @@ module.exports = {
   walletRevision,
   sourceModifiedAt,
   safeErrorCode,
+  fridayScheduledTimestamp,
   catalogReportSummary,
   assertCatalogReportSucceeded,
   JOBS,

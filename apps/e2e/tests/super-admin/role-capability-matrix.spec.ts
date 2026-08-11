@@ -38,6 +38,10 @@ type StaffRoleCase = {
   requiredCapabilities: string[];
   absentCapabilities: string[];
   forbiddenPath?: string;
+  allowedApi?: (
+    request: APIRequestContext,
+    role: E2EAuthRole,
+  ) => Promise<APIResponse>;
   forbiddenApi?: (
     request: APIRequestContext,
     role: E2EAuthRole,
@@ -87,6 +91,14 @@ const STAFF_ROLES: StaffRoleCase[] = [
     ],
     absentCapabilities: ["product.schedule", "product.delete", "order.read"],
     forbiddenPath: "/orders",
+    allowedApi: (request, role) =>
+      apiPost(request, role, "/admin/products-list/query", {
+        page: 1,
+        pageSize: 1,
+        removed: false,
+        sort: "last-edited",
+        filters: [],
+      }),
     forbiddenApi: (request, role) =>
       apiPost(request, role, "/admin/orders-list/query", {
         page: 1,
@@ -102,14 +114,28 @@ const STAFF_ROLES: StaffRoleCase[] = [
     label: "Seller 2",
     sidebarCount: 8,
     visibleSidebarIds: ["products", "product-categories", "orders"],
-    hiddenSidebarIds: ["manage-products", "sales", "wallets"],
-    requiredCapabilities: ["product.read", "category.update", "order.read"],
-    absentCapabilities: [
+    hiddenSidebarIds: ["manage-products", "sales", "sales-products", "wallets"],
+    requiredCapabilities: [
+      "product.read",
+      "category.update",
+      "order.read",
       "order.status.update",
+      "order.notes.update",
+    ],
+    absentCapabilities: [
       "report.product.read",
+      "order.cancel",
       "wallet.adjust",
     ],
     forbiddenPath: "/sales",
+    allowedApi: (request, role) =>
+      apiPost(request, role, "/admin/products-list/query", {
+        page: 1,
+        pageSize: 1,
+        removed: false,
+        sort: "last-edited",
+        filters: [],
+      }),
     forbiddenApi: (request, role) =>
       apiGet(request, role, "/reports/product-sales"),
   },
@@ -117,22 +143,27 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "store-manager",
     adminRole: "store_manager",
     label: "Store Manager",
-    sidebarCount: 9,
-    visibleSidebarIds: [
-      "products",
-      "product-categories",
-      "orders",
-      "sales-products",
-    ],
-    hiddenSidebarIds: ["manage-products", "sales", "wallets"],
-    requiredCapabilities: ["order.status.update", "report.product.read"],
+    sidebarCount: 8,
+    visibleSidebarIds: ["products", "product-categories", "orders"],
+    hiddenSidebarIds: ["manage-products", "sales", "sales-products", "wallets"],
+    requiredCapabilities: ["order.status.update", "order.notes.update"],
     absentCapabilities: [
+      "report.product.read",
       "order.cancel",
       "order.manual.create",
       "report.finance.read",
     ],
     forbiddenPath: "/sales",
-    forbiddenApi: (request, role) => apiGet(request, role, "/reports/overview"),
+    allowedApi: (request, role) =>
+      apiPost(request, role, "/admin/orders-list/query", {
+        page: 1,
+        pageSize: 1,
+        tab: "all",
+        sort: "last-edited",
+        filters: [],
+      }),
+    forbiddenApi: (request, role) =>
+      apiGet(request, role, "/reports/product-sales"),
   },
   {
     authRole: "finance",
@@ -147,11 +178,12 @@ const STAFF_ROLES: StaffRoleCase[] = [
       "report.carts.read",
     ],
     absentCapabilities: [
-      "order.status.update",
       "report.traffic.read",
       "wallet.adjust",
+      "system.users.manage",
     ],
     forbiddenPath: "/sales/traffic",
+    allowedApi: (request, role) => apiGet(request, role, "/reports/liquidity"),
     forbiddenApi: (request, role) =>
       apiGet(request, role, "/reports/traffic/dashboard"),
   },
@@ -175,6 +207,8 @@ const STAFF_ROLES: StaffRoleCase[] = [
       "system.audit.read",
     ],
     forbiddenPath: "/settings",
+    allowedApi: (request, role) =>
+      apiGet(request, role, "/reports/behavior/overview"),
     forbiddenApi: (request, role) => apiGet(request, role, "/users"),
   },
   {
@@ -270,6 +304,13 @@ for (const role of STAFF_ROLES) {
         ),
         `${role.label} dashboard summary`,
       );
+
+      if (role.allowedApi) {
+        await expectApiOk(
+          await role.allowedApi(request, role.authRole),
+          `${role.label} allowed API`,
+        );
+      }
 
       if (role.forbiddenApi) {
         await expectApiForbidden(

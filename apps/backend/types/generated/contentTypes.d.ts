@@ -1146,7 +1146,15 @@ export interface ApiLocalUserAddressLocalUserAddress extends Schema.CollectionTy
       Attribute.Private;
     Description: Attribute.Text;
     FullAddress: Attribute.Text;
+    FullName: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
     IsTemporary: Attribute.Boolean & Attribute.DefaultTo<false>;
+    Phone: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 32;
+      }>;
     PostalCode: Attribute.String & Attribute.Required;
     shipping_city: Attribute.Relation<
       "api::local-user-address.local-user-address",

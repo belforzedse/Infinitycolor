@@ -15,6 +15,9 @@ const ORDER_UID = "api::order.order";
 const ORDER_ITEM_UID = "api::order-item.order-item";
 const CONTRACT_UID = "api::contract.contract";
 const VARIATION_UID = "api::product-variation.product-variation";
+const ADDRESS_UID = "api::local-user-address.local-user-address";
+const PROVINCE_UID = "api::shipping-province.shipping-province";
+const CITY_UID = "api::shipping-city.shipping-city";
 
 const ORDER_STATUSES = new Set(["Paying", "Started", "Shipment", "Done", "Returned", "Cancelled"]);
 const CONTRACT_STATUSES = new Set(["Not Ready", "Confirmed", "Finished", "Failed", "Cancelled"]);
@@ -166,6 +169,104 @@ function positiveCount(value: unknown): number {
   return count;
 }
 
+function normalizePersianTitle(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFC")
+    .trim()
+    .replace(/[يى]/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[\u200c\u200d\u200e\u200f\sـ()\-]/g, "")
+    .toLowerCase();
+}
+
+function cityTitleCandidates(value: unknown): string[] {
+  const raw = optionalText(value, 255);
+  if (!raw) return [];
+  const candidates = [raw];
+  for (const separator of [" ـ ", " - ", "–", "—", "،", ","]) {
+    if (raw.includes(separator)) candidates.push(raw.split(separator)[0].trim());
+  }
+  candidates.push(raw.replace(/کاوس/g, "کاووس"));
+  candidates.push(raw.replace(/شهرجدید/g, "شهر جدید "));
+  candidates.push(raw.replace(/^بندر\s*/g, ""));
+  candidates.push(raw.replace(/^شهر\s*/g, ""));
+  return [...new Set(candidates.map(normalizePersianTitle).filter(Boolean))];
+}
+
+function orderPostalCode(value: unknown): string {
+  const digits = String(value ?? "")
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/\D/g, "");
+  return /^\d{10}$/.test(digits) ? digits : "0000000000";
+}
+
+async function resolveWooDeliveryAddress(
+  strapiInstance: any,
+  sourceId: string,
+  sourceAddress: any,
+  existingAddress: any,
+  user: any,
+  trx: any,
+): Promise<{ id: number | null; mode: string; reason: string }> {
+  if (existingAddress?.id) {
+    return { id: Number(existingAddress.id), mode: "preserved", reason: "EXISTING_ADDRESS" };
+  }
+  if (!sourceAddress) {
+    return { id: null, mode: "skipped", reason: "SOURCE_ADDRESS_EMPTY" };
+  }
+
+  const stateCode = optionalText(sourceAddress?.stateCode, 32).toUpperCase();
+  const cityTitle = optionalText(sourceAddress?.cityTitle, 255);
+  const fullAddress = optionalText(sourceAddress?.fullAddress, 4000);
+  if (!stateCode) return { id: null, mode: "skipped", reason: "PROVINCE_CODE_EMPTY" };
+  if (!cityTitle) return { id: null, mode: "skipped", reason: "CITY_TITLE_EMPTY" };
+  if (!fullAddress) return { id: null, mode: "skipped", reason: "ADDRESS_LINE_EMPTY" };
+
+  const provinces = await findMany(
+    strapiInstance.db.query(PROVINCE_UID),
+    { Code: stateCode },
+    trx,
+  );
+  if (provinces.length > 1) {
+    throw new MigrationInputError("ORDER_ADDRESS_PROVINCE_AMBIGUOUS", 409);
+  }
+  const province = provinces[0] || null;
+  if (!province) {
+    return { id: null, mode: "skipped", reason: "PROVINCE_CODE_UNKNOWN" };
+  }
+
+  const cities = await strapiInstance.db.query(CITY_UID).findMany({
+    where: { shipping_province: province.id },
+    select: ["id", "Title"],
+    limit: 1000,
+    transacting: trx,
+  } as any);
+  const candidates = new Set(cityTitleCandidates(cityTitle));
+  const matches = cities.filter((city: any) => candidates.has(normalizePersianTitle(city?.Title)));
+  if (matches.length > 1) {
+    throw new MigrationInputError("ORDER_ADDRESS_CITY_AMBIGUOUS", 409);
+  }
+  const city = matches[0] || null;
+  if (!city) return { id: null, mode: "skipped", reason: "CITY_TITLE_UNMATCHED" };
+
+  const recipientPhone = canonicalIranPhone(sourceAddress?.recipientPhone);
+  const saved = await strapiInstance.db.query(ADDRESS_UID).create({
+    data: {
+      PostalCode: orderPostalCode(sourceAddress?.postalCode),
+      FullAddress: fullAddress,
+      FullName: optionalText(sourceAddress?.recipientName, 255) || null,
+      Phone: recipientPhone || null,
+      Description: `woo-order:${sourceId}`,
+      IsTemporary: true,
+      shipping_city: city.id,
+      user: user?.id || null,
+    },
+    transacting: trx,
+  } as any);
+  return { id: Number(saved.id), mode: "created", reason: "SOURCE_ADDRESS_ATTACHED" };
+}
+
 async function resolveOrderUser(strapiInstance: any, body: any, trx: any): Promise<any> {
   if (body?.customerSourceId) {
     const sourceId = requiredId(body.customerSourceId, "ORDER_CUSTOMER_SOURCE_ID_INVALID");
@@ -216,7 +317,10 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     const orderQuery = strapiInstance.db.query(ORDER_UID);
     const existingOrders = await orderQuery.findMany({
       where: { external_source: "woocommerce", external_id: sourceId },
-      populate: { user: { select: ["id"] } },
+      populate: {
+        user: { select: ["id"] },
+        delivery_address: { select: ["id"] },
+      },
       limit: 2,
       transacting: trx,
     } as any);
@@ -229,9 +333,14 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       throw new MigrationInputError("ORDER_USER_IDENTITY_CONFLICT", 409);
     }
     const user = resolvedUser || existingUser;
-    // Do not set delivery_address here. Historical Woo sync intentionally omitted
-    // addresses; clearing the relation on every upsert would wipe backfills and
-    // any later address import. Address attachment is handled separately.
+    const address = await resolveWooDeliveryAddress(
+      strapiInstance,
+      sourceId,
+      body?.deliveryAddress,
+      existing?.delivery_address,
+      user,
+      trx,
+    );
     const orderData = {
       Date: date,
       Status: status,
@@ -246,6 +355,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       Note: null,
       external_source: "woocommerce",
       external_id: sourceId,
+      ...(address.id ? { delivery_address: address.id } : {}),
     };
     const order = existing
       ? await orderQuery.update({ where: { id: existing.id }, data: orderData, transacting: trx } as any)
@@ -337,6 +447,9 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       userLinked: Boolean(user),
       identityMatchReason: identity.matchReason,
       identityIssues: identity.issues || [],
+      addressLinked: Boolean(address.id),
+      addressMode: address.mode,
+      addressReason: address.reason,
     };
   });
 }

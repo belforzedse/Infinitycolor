@@ -26,6 +26,14 @@
     "FullAddress": {
       "type": "text"
     },
+    "FullName": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "Phone": {
+      "type": "string",
+      "maxLength": 32
+    },
     "IsTemporary": {
       "type": "boolean",
       "default": false

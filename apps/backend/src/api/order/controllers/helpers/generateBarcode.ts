@@ -2,9 +2,9 @@ import type { Strapi } from "@strapi/strapi";
 import { logAdminBarcodeOperation } from "../../../../utils/adminActivity";
 import {
   mapOrderStatusToAnipo,
-  normalizePhoneForAnipo,
   type AnipoCreateOrderPayload,
 } from "../../../shipping/services/anipo";
+import { buildAnipoOrderRecipient } from "./anipoOrder";
 
 type AnipoService = {
   createOrUpdateOrder: (
@@ -53,7 +53,7 @@ export async function generateAnipoBarcodeHandler(strapi: Strapi, ctx: any) {
       Number(id),
       {
         populate: {
-          user: true,
+          user: { populate: { user_info: true } },
           delivery_address: {
             populate: {
               shipping_city: { populate: { shipping_province: true } },
@@ -79,13 +79,14 @@ export async function generateAnipoBarcodeHandler(strapi: Strapi, ctx: any) {
     }
 
     const weight = computeOrderWeight(order.order_items || []);
-    const address = order?.delivery_address;
-    const cityName = address?.shipping_city?.Title || "";
-    const provinceName = address?.shipping_city?.shipping_province?.Title || "";
-    const mobile = normalizePhoneForAnipo(
-      address?.Phone || order?.user?.Phone || ""
-    );
-    const fullAddress = String(address?.FullAddress || "").trim();
+    const {
+      receiverName,
+      cityName,
+      provinceName,
+      mobile,
+      fullAddress,
+      postalCode,
+    } = buildAnipoOrderRecipient(order);
 
     if (!provinceName || !cityName) {
       return ctx.badRequest("نام استان یا شهر برای آنیپو ناقص است. دوباره تلاش کنید", {
@@ -137,12 +138,12 @@ export async function generateAnipoBarcodeHandler(strapi: Strapi, ctx: any) {
     const anipo = strapi.service("api::shipping.anipo") as AnipoService;
     const createRes = await anipo.createOrUpdateOrder({
       order_code: orderCode,
-      receiver_name: address?.FullName || order?.user?.Phone || "کاربر",
+      receiver_name: receiverName,
       receiver_province: provinceName,
       receiver_city: cityName,
       receiver_mobile: mobile,
       receiver_address: fullAddress,
-      receiver_postal_code: address?.PostalCode || undefined,
+      receiver_postal_code: postalCode,
       weight_g: weight,
       box_type: boxType,
       parcel_content: "پوشاک",

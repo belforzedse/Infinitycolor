@@ -240,7 +240,7 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
       "filters[external_id][$eq]": sourceId,
       "populate[contract]": "true",
       "populate[user]": "true",
-      "populate[delivery_address]": "true",
+      "populate[delivery_address][populate][shipping_city][populate][shipping_province]": "true",
       "populate[order_items][populate][product_variation]": "true",
       "pagination[pageSize]": 2,
     });
@@ -264,7 +264,15 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
     check(new Date(actual.Date).toISOString() === expected.date, "ORDER_DATE_MISMATCH");
     check(String(actual.ShippingCost || 0) === expected.shippingToman, "ORDER_SHIPPING_MISMATCH");
     check(actual.PaymentGateway === expected.paymentGateway, "ORDER_PAYMENT_GATEWAY_MISMATCH");
-    check(!relationOne(actual.delivery_address), "ORDER_ADDRESS_PRESENT");
+    if (expected.deliveryAddress) {
+      const actualAddress = attrs(relationOne(actual.delivery_address));
+      const actualCity = attrs(relationOne(actualAddress.shipping_city));
+      const actualProvince = attrs(relationOne(actualCity.shipping_province));
+      check(Boolean(relationOne(actual.delivery_address)), "ORDER_ADDRESS_MISSING");
+      check(Boolean(String(actualAddress.FullAddress || "").trim()), "ORDER_ADDRESS_LINE_MISSING");
+      check(Boolean(String(actualCity.Title || "").trim()), "ORDER_ADDRESS_CITY_MISSING");
+      check(Boolean(String(actualProvince.Title || "").trim()), "ORDER_ADDRESS_PROVINCE_MISSING");
+    }
     check(actual.Description == null && actual.Note == null, "ORDER_PRIVATE_TEXT_PRESENT");
     check(contract.Status === expected.contractStatus, "ORDER_CONTRACT_STATUS_MISMATCH");
     check(contract.Type === expected.contractType, "ORDER_CONTRACT_TYPE_MISMATCH");

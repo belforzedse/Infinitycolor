@@ -13,6 +13,7 @@ const {
   catalogReportSummary,
   assertCatalogReportSucceeded,
   safeErrorCode,
+  fridayScheduledTimestamp,
 } = require("../service");
 
 function baseEnv() {
@@ -209,6 +210,10 @@ test("source revisions change only when watched order/product fields change", ()
   };
   assert.equal(orderRevision(order), orderRevision({ ...order }));
   assert.notEqual(orderRevision(order), orderRevision({ ...order, status: "completed" }));
+  assert.notEqual(
+    orderRevision(order),
+    orderRevision({ ...order, shipping: { state: "THR", city: "تهران", address_1: "ولیعصر" } }),
+  );
 });
 
 test("shadow mode blocks destination work before any source fetch or write", async () => {
@@ -555,6 +560,23 @@ test("safeErrorCode prefers SCREAMING_SNAKE error.message over Error.name", () =
   assert.equal(safeErrorCode({ code: "USER_PHONE_SOURCE_CONFLICT" }), "USER_PHONE_SOURCE_CONFLICT");
   assert.equal(safeErrorCode({ payload: { error: "HTTP_404" } }), "HTTP_404");
   assert.equal(safeErrorCode(new Error("something went wrong")), "ERROR");
+});
+
+test("fridayScheduledTimestamp prefers repeatable job id fire time over creation timestamp", () => {
+  const fireAt = Date.parse("2026-08-10T20:29:00.000Z");
+  const createdAt = Date.parse("2026-08-10T13:28:51.900Z");
+  assert.equal(
+    fridayScheduledTimestamp({
+      id: `repeat:sched:woocommerce.friday-cutover:${fireAt}`,
+      timestamp: createdAt,
+    }),
+    fireAt,
+  );
+  assert.equal(
+    fridayScheduledTimestamp({ id: "manual-cutover", timestamp: createdAt, opts: { prevMillis: fireAt } }),
+    fireAt,
+  );
+  assert.equal(fridayScheduledTimestamp({ id: "manual", timestamp: createdAt }), createdAt);
 });
 
 test("fullUsersAndWallets skips phoneless customers and continues", async () => {

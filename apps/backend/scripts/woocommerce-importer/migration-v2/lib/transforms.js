@@ -45,6 +45,36 @@ function cleanText(value, max) {
   return String(value ?? "").trim().slice(0, max);
 }
 
+function wooPostalCode(value) {
+  const digits = toEnglishDigits(value).replace(/\D/g, "");
+  return /^\d{10}$/.test(digits) && digits !== "0000000000" ? digits : null;
+}
+
+function orderDeliveryAddress(order) {
+  const shipping = order?.shipping || {};
+  const billing = order?.billing || {};
+  const stateCode = cleanText(shipping.state || billing.state, 32).toUpperCase();
+  const cityTitle = cleanText(shipping.city || billing.city, 255);
+  const addressLine1 = cleanText(shipping.address_1 || billing.address_1, 2000);
+  const addressLine2 = cleanText(shipping.address_2 || billing.address_2, 2000);
+  const fullAddress = [addressLine1, addressLine2].filter(Boolean).join(" — ").slice(0, 4000);
+  const firstName = cleanText(shipping.first_name || billing.first_name, 255);
+  const lastName = cleanText(shipping.last_name || billing.last_name, 255);
+  const recipientName = [firstName, lastName].filter(Boolean).join(" ").slice(0, 255);
+  const recipientPhone = canonicalPhone(shipping.phone || billing.phone);
+  const postalCode = wooPostalCode(shipping.postcode || billing.postcode);
+
+  if (!stateCode && !cityTitle && !fullAddress) return null;
+  return {
+    stateCode,
+    cityTitle,
+    fullAddress,
+    postalCode,
+    recipientName,
+    recipientPhone,
+  };
+}
+
 function rendered(value) {
   return typeof value === "object" && value !== null ? String(value.rendered || "") : String(value || "");
 }
@@ -165,6 +195,7 @@ function orderPayload(order) {
     guestPhone,
     orderIdentity: billingIdentity,
     guestIdentity: registeredCustomer ? null : billingIdentity,
+    deliveryAddress: orderDeliveryAddress(order),
     date: date.toISOString(),
     status: orderStatus[order.status] || "Paying",
     contractStatus: contractStatus[order.status] || "Not Ready",
@@ -228,6 +259,8 @@ module.exports = {
   customerPayload,
   walletPayload,
   walletBalanceValue,
+  wooPostalCode,
+  orderDeliveryAddress,
   orderPayload,
   blogPostPayload,
 };

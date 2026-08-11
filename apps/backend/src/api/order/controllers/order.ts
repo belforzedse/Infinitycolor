@@ -150,7 +150,7 @@ export default factories.createCoreController(
             // names the operational order UI needs.
             user_info: operationalManager ? { select: ["id", "FirstName", "LastName"] } : true,
             contract: operationalManager && !canReadFinancials
-              ? { select: ["id", "Amount", "Status"] }
+              ? { select: ["id", "Amount", "Status", "Type", "TaxPercent", "Date"] }
               : {
                   populate: {
                     contract_transactions: {
@@ -214,6 +214,9 @@ export default factories.createCoreController(
                 id: order.contract.id,
                 Amount: order.contract.Amount,
                 Status: order.contract.Status,
+                Type: order.contract.Type ?? null,
+                TaxPercent: order.contract.TaxPercent ?? null,
+                Date: order.contract.Date ?? null,
               }
             : order.contract;
         const safeOperationalUserInfo =

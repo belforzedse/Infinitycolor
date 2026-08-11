@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Backfill WooCommerce delivery addresses (+ Unknown payment gateways) for analytics.
+ * Backfill WooCommerce delivery addresses (+ optionally Unknown payment gateways).
  *
- * Why geo sales shows "نامشخص":
- *   migration/sync intentionally omitted addresses (`delivery_address` was forced null).
+ * Why historical geo sales shows "نامشخص":
+ *   older migration/sync releases intentionally omitted delivery addresses.
  *   Geography reports join order → local_user_address → shipping_city → shipping_province.
  *
  * This script:
@@ -19,6 +19,7 @@
  *
  * Options:
  *   --apply --force --limit N --batch N --pages N --statuses done,processing,completed
+ *   --woo-order-id N --addresses-only
  */
 
 "use strict";
@@ -40,6 +41,8 @@ function parseArgs(argv) {
     batch: 100,
     pages: null,
     statuses: "completed,processing",
+    wooOrderId: null,
+    addressesOnly: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -50,6 +53,8 @@ function parseArgs(argv) {
     else if (token === "--batch" && next) { options.batch = Number(next); i += 1; }
     else if (token === "--pages" && next) { options.pages = Number(next); i += 1; }
     else if (token === "--statuses" && next) { options.statuses = next; i += 1; }
+    else if (token === "--woo-order-id" && next) { options.wooOrderId = Number(next); i += 1; }
+    else if (token === "--addresses-only") options.addressesOnly = true;
     else if (token === "--help" || token === "-h") options.help = true;
     else throw new Error(`Unexpected argument: ${token}`);
   }
@@ -61,6 +66,9 @@ function parseArgs(argv) {
   }
   if (options.pages != null && (!Number.isSafeInteger(options.pages) || options.pages < 1)) {
     throw new Error("--pages must be a positive integer");
+  }
+  if (options.wooOrderId != null && (!Number.isSafeInteger(options.wooOrderId) || options.wooOrderId < 1)) {
+    throw new Error("--woo-order-id must be a positive integer");
   }
   return options;
 }
@@ -103,9 +111,23 @@ function paymentGateway(value, title = "") {
   return "Unknown";
 }
 
+function toEnglishDigits(value) {
+  return String(value ?? "")
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)));
+}
+
+function canonicalPhone(raw) {
+  let digits = toEnglishDigits(raw).replace(/\D/g, "");
+  if (digits.startsWith("0098")) digits = digits.slice(4);
+  else if (digits.startsWith("98")) digits = digits.slice(2);
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  return /^9\d{9}$/.test(digits) ? `+98${digits}` : null;
+}
+
 function postalCode(raw) {
-  const digits = String(raw || "").replace(/\D/g, "");
-  if (digits.length >= 5 && digits.length <= 12) return digits.slice(0, 12);
+  const digits = toEnglishDigits(raw).replace(/\D/g, "");
+  if (/^\d{10}$/.test(digits) && digits !== "0000000000") return digits;
   return "0000000000";
 }
 
@@ -117,11 +139,15 @@ function addressFromOrder(order) {
   const line1 = String(shipping.address_1 || billing.address_1 || "").trim();
   const line2 = String(shipping.address_2 || billing.address_2 || "").trim();
   const postcode = shipping.postcode || billing.postcode || "";
+  const firstName = String(shipping.first_name || billing.first_name || "").trim();
+  const lastName = String(shipping.last_name || billing.last_name || "").trim();
   return {
     stateCode: state,
     cityTitle: city,
     fullAddress: [line1, line2].filter(Boolean).join(" — ").slice(0, 4000),
     postalCode: postalCode(postcode),
+    recipientName: [firstName, lastName].filter(Boolean).join(" ").slice(0, 255),
+    recipientPhone: canonicalPhone(shipping.phone || billing.phone),
   };
 }
 
@@ -199,20 +225,37 @@ async function loadStrapiOrders(client) {
   return byExternalId;
 }
 
-async function createAddress(client, { orderId, userId, cityId, postal, fullAddress, wooOrderId }) {
+async function createAddress(client, {
+  orderId,
+  userId,
+  cityId,
+  postal,
+  fullAddress,
+  fullName,
+  phone,
+  wooOrderId,
+}) {
+  await client.query(`SELECT id FROM orders WHERE id = $1 FOR UPDATE`, [orderId]);
+  const existingLink = await client.query(
+    `SELECT local_user_address_id FROM orders_delivery_address_links WHERE order_id = $1 LIMIT 1`,
+    [orderId],
+  );
+  if (existingLink.rows.length > 0) return null;
   const insert = await client.query(
     `
     INSERT INTO local_user_addresses (
-      postal_code, description, full_address, is_temporary,
+      postal_code, description, full_address, full_name, phone, is_temporary,
       created_at, updated_at, created_by_id, updated_by_id
     )
-    VALUES ($1, $2, $3, true, NOW(), NOW(), NULL, NULL)
+    VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW(), NULL, NULL)
     RETURNING id
     `,
     [
       postal,
       `woo-order:${wooOrderId}`,
       fullAddress || null,
+      fullName || null,
+      phone || null,
     ],
   );
   const addressId = Number(insert.rows[0].id);
@@ -251,7 +294,7 @@ async function createAddress(client, { orderId, userId, cityId, postal, fullAddr
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    console.log("Usage: node backfill-woo-order-addresses.js [--apply] [--force] [--limit N] [--pages N]");
+    console.log("Usage: node backfill-woo-order-addresses.js [--apply] [--force] [--limit N] [--pages N] [--woo-order-id N] [--addresses-only]");
     return;
   }
 
@@ -282,6 +325,8 @@ async function main() {
   const report = {
     startedAt,
     apply: options.apply,
+    wooOrderId: options.wooOrderId,
+    addressesOnly: options.addressesOnly,
     database: config.database,
     summary: {
       wooScanned: 0,
@@ -324,8 +369,9 @@ async function main() {
       try {
         for (const job of pendingWrites) {
           if (job.type === "address") {
-            await createAddress(client, job);
-            report.summary.addressCreated += 1;
+            const addressId = await createAddress(client, job);
+            if (addressId) report.summary.addressCreated += 1;
+            else report.summary.alreadyHadAddress += 1;
           } else if (job.type === "gateway") {
             await client.query(
               `UPDATE orders SET payment_gateway = $1, updated_at = NOW() WHERE id = $2`,
@@ -346,14 +392,19 @@ async function main() {
       if (options.pages != null && page > options.pages) break;
       if (options.limit != null && processed >= options.limit) break;
 
-      const response = await source.woo.get("/orders", {
-        per_page: 100,
-        page,
-        status: options.statuses,
-        orderby: "id",
-        order: "asc",
-        _fields: "id,payment_method,payment_method_title,shipping,billing",
-      });
+      const response = options.wooOrderId != null
+        ? {
+          data: page === 1 ? [await source.getOrder(String(options.wooOrderId))] : [],
+          headers: {},
+        }
+        : await source.woo.get("/orders", {
+          per_page: 100,
+          page,
+          status: options.statuses,
+          orderby: "id",
+          order: "asc",
+          _fields: "id,payment_method,payment_method_title,shipping,billing",
+        });
       const rows = Array.isArray(response.data) ? response.data : [];
       if (rows.length === 0) break;
 
@@ -370,7 +421,7 @@ async function main() {
         report.summary.strapiMatched += 1;
 
         // Gateway repair for Unknown.
-        if (String(strapi.payment_gateway || "") === "Unknown") {
+        if (!options.addressesOnly && String(strapi.payment_gateway || "") === "Unknown") {
           const gateway = paymentGateway(wooOrder.payment_method, wooOrder.payment_method_title);
           if (gateway !== "Unknown") {
             if (report.samples.length < 30) {
@@ -399,7 +450,7 @@ async function main() {
         }
 
         const addr = addressFromOrder(wooOrder);
-        if (!addr.stateCode && !addr.cityTitle) {
+        if ((!addr.stateCode && !addr.cityTitle) || !addr.fullAddress) {
           report.summary.addressSkippedEmpty += 1;
           continue;
         }
@@ -436,6 +487,8 @@ async function main() {
             cityId: resolved.cityId,
             postal: addr.postalCode,
             fullAddress: addr.fullAddress,
+            fullName: addr.recipientName,
+            phone: addr.recipientPhone,
             wooOrderId: externalId,
           });
           if (pendingWrites.length >= options.batch) await flush();
@@ -446,6 +499,7 @@ async function main() {
         ?? response.headers?.["x-wp-totalpages"]
         ?? response.headers?.["X-WP-TotalPages"];
       const totalPages = Number(headerTotal || 0);
+      if (options.wooOrderId != null) break;
       if (totalPages && page >= totalPages) break;
       if (rows.length < 100) break;
       page += 1;
@@ -482,7 +536,18 @@ async function main() {
   if (topUnmatched.length) console.log(JSON.stringify({ topUnmatchedCities: topUnmatched }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(`backfill-woo-order-addresses failed: ${error.message}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`backfill-woo-order-addresses failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  addressFromOrder,
+  canonicalPhone,
+  cityCandidates,
+  parseArgs,
+  postalCode,
+  resolveCity,
+};

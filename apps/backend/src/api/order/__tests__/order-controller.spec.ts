@@ -311,6 +311,9 @@ describe("Order Controller", () => {
           id: 5,
           Amount: 200_000,
           Status: "Confirmed",
+          Type: "Online",
+          TaxPercent: 9,
+          Date: "2026-08-06T00:00:00.000Z",
           contract_transactions: [{ id: 8, TrackId: "private-track" }],
         },
         order_items: [],
@@ -337,7 +340,9 @@ describe("Order Controller", () => {
       expect(orderFindOne).toHaveBeenCalledWith(
         expect.objectContaining({
           populate: expect.objectContaining({
-            contract: { select: ["id", "Amount", "Status"] },
+            contract: {
+              select: ["id", "Amount", "Status", "Type", "TaxPercent", "Date"],
+            },
           }),
         }),
       );
@@ -345,6 +350,9 @@ describe("Order Controller", () => {
         id: 5,
         Amount: 200_000,
         Status: "Confirmed",
+        Type: "Online",
+        TaxPercent: 9,
+        Date: "2026-08-06T00:00:00.000Z",
       });
       expect(ctx.body.data.user.data.attributes).toEqual({
         Phone: "+989121234567",
@@ -363,6 +371,63 @@ describe("Order Controller", () => {
       expect(JSON.stringify(ctx.body)).not.toContain("private-track");
       expect(JSON.stringify(ctx.body)).not.toContain("NationalCode");
       expect(JSON.stringify(ctx.body)).not.toContain("private@example.test");
+    });
+
+    it("lets Seller 2 read order identity and amounts without payment transaction internals", async () => {
+      const { strapi, registerQuery } = createStrapiMock();
+      const orderFindOne = jest.fn().mockResolvedValue({
+        id: 42,
+        ShippingCost: 50_000,
+        user: {
+          id: 22,
+          phone: "+989121111111",
+          email: "hidden@example.test",
+          user_info: { id: 9, FirstName: "Seller", LastName: "Two", NationalCode: "secret" },
+        },
+        contract: {
+          id: 5,
+          Amount: 350_000,
+          Status: "Confirmed",
+          Type: "Online",
+          TaxPercent: 9,
+          Date: "2026-08-10T00:00:00.000Z",
+          contract_transactions: [{ id: 8, TrackId: "tok_secret" }],
+        },
+        order_items: [
+          {
+            id: 1,
+            ProductTitle: "Shirt",
+            PerAmount: 150_000,
+            Count: 2,
+          },
+        ],
+      });
+      registerQuery("api::order.order", { findOne: orderFindOne });
+      registerQuery("plugin::users-permissions.user", {
+        findOne: jest.fn().mockResolvedValue({
+          id: 8,
+          IsActive: true,
+          blocked: false,
+          role: { name: "Seller 2", type: "seller-2" },
+        }),
+      });
+      const controller = loadOrderController(strapi);
+      const ctx = createCtx({
+        params: { id: 42 },
+        state: {
+          user: { id: 8, role: { name: "Seller 2", type: "seller-2" } },
+        },
+      });
+
+      await controller.findOne(ctx);
+
+      expect(ctx.body.data.user.data.attributes.user_info.data.attributes.FirstName).toBe("Seller");
+      expect(ctx.body.data.contract.Amount).toBe(350_000);
+      expect(ctx.body.data.contract.TaxPercent).toBe(9);
+      expect(ctx.body.data.order_items).toHaveLength(1);
+      expect(JSON.stringify(ctx.body)).not.toContain("tok_secret");
+      expect(JSON.stringify(ctx.body)).not.toContain("hidden@example.test");
+      expect(JSON.stringify(ctx.body)).not.toContain("NationalCode");
     });
   });
 

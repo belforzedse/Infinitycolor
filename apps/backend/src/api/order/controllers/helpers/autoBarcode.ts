@@ -1,9 +1,9 @@
 import type { Strapi } from "@strapi/strapi";
 import {
   mapOrderStatusToAnipo,
-  normalizePhoneForAnipo,
   type AnipoCreateOrderPayload,
 } from "../../../shipping/services/anipo";
+import { buildAnipoOrderRecipient } from "./anipoOrder";
 
 type AnipoService = {
   createOrUpdateOrder: (
@@ -30,7 +30,7 @@ export async function autoGenerateBarcodeIfEligible(
       Number(orderId),
       {
         populate: {
-          user: true,
+          user: { populate: { user_info: true } },
           shipping: true,
           delivery_address: {
             populate: {
@@ -66,22 +66,14 @@ export async function autoGenerateBarcodeIfEligible(
     }
     if (weight <= 0) weight = 100;
 
-    const address = order?.delivery_address as {
-      FullName?: string;
-      Phone?: string;
-      PostalCode?: string;
-      FullAddress?: string;
-      shipping_city?: {
-        Title?: string;
-        shipping_province?: { Title?: string };
-      };
-    } | null;
-    const cityName = address?.shipping_city?.Title || "";
-    const provinceName = address?.shipping_city?.shipping_province?.Title || "";
-    const mobile = normalizePhoneForAnipo(
-      address?.Phone || order?.user?.Phone || ""
-    );
-    const fullAddress = String(address?.FullAddress || "").trim();
+    const {
+      receiverName,
+      cityName,
+      provinceName,
+      mobile,
+      fullAddress,
+      postalCode,
+    } = buildAnipoOrderRecipient(order);
 
     if (!provinceName || !cityName || !mobile || !fullAddress) return;
 
@@ -101,12 +93,12 @@ export async function autoGenerateBarcodeIfEligible(
     const anipo = strapi.service("api::shipping.anipo") as AnipoService;
     const createRes = await anipo.createOrUpdateOrder({
       order_code: orderCode,
-      receiver_name: address?.FullName || order?.user?.Phone || "کاربر",
+      receiver_name: receiverName,
       receiver_province: provinceName,
       receiver_city: cityName,
       receiver_mobile: mobile,
       receiver_address: fullAddress,
-      receiver_postal_code: address?.PostalCode || undefined,
+      receiver_postal_code: postalCode,
       weight_g: weight,
       box_type: boxType,
       parcel_content: "پوشاک",

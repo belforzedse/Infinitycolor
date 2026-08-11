@@ -158,6 +158,8 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<Record<AdminRoleId, AdminRoleDefin
       "category.create",
       "category.update",
       "order.read",
+      "order.status.update",
+      "order.notes.update",
     ],
   },
   store_manager: {
@@ -167,7 +169,9 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<Record<AdminRoleId, AdminRoleDefin
     strapiType: "store-manager",
     strapiName: "Store Manager",
     inherits: ["seller2"],
-    capabilities: ["order.status.update", "report.product.read"],
+    // No unique capabilities today: same operational surface as Seller 2.
+    // Analytics stay on Finance+; destructive order actions stay Superadmin-only.
+    capabilities: [],
   },
   finance: {
     id: "finance",

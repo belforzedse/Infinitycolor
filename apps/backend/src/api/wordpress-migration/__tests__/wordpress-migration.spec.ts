@@ -159,11 +159,23 @@ describe("WordPress migration write service", () => {
     const variationQuery = {
       findMany: jest.fn().mockResolvedValue([{ id: 401 }]),
     };
+    const provinceQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 501, Code: "ABZ", Title: "البرز" }]),
+    };
+    const cityQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 502, Title: "کرج" }]),
+    };
+    const addressQuery = {
+      create: jest.fn().mockResolvedValue({ id: 503 }),
+    };
     const queries: Record<string, any> = {
       "api::order.order": orderQuery,
       "api::contract.contract": contractQuery,
       "api::order-item.order-item": itemQuery,
       "api::product-variation.product-variation": variationQuery,
+      "api::shipping-province.shipping-province": provinceQuery,
+      "api::shipping-city.shipping-city": cityQuery,
+      "api::local-user-address.local-user-address": addressQuery,
     };
     const strapiMock = {
       db: {
@@ -182,6 +194,14 @@ describe("WordPress migration write service", () => {
       date: "2026-01-01T00:00:00Z",
       totalToman: "1000",
       shippingToman: "50",
+      deliveryAddress: {
+        stateCode: "ABZ",
+        cityTitle: " كرج ",
+        fullAddress: "خیابان شهید بهشتی، پلاک ۱۲",
+        postalCode: "۳۱۵۳۶۱۲۳۴۵",
+        recipientName: "زهرا محمدی",
+        recipientPhone: "+989123456789",
+      },
       items: [{
         sourceId: "9",
         variationSourceId: "4",
@@ -190,11 +210,98 @@ describe("WordPress migration write service", () => {
         title: "کالا",
         sku: "S",
       }],
-    })).resolves.toEqual(expect.objectContaining({ mode: "created", id: 101, contractId: 201 }));
+    })).resolves.toEqual(expect.objectContaining({
+      mode: "created",
+      id: 101,
+      contractId: 201,
+      addressLinked: true,
+      addressMode: "created",
+      addressReason: "SOURCE_ADDRESS_ATTACHED",
+    }));
 
     expect(orderQuery.create.mock.calls[0][0].data.ShippingCost).toBe(50);
+    expect(orderQuery.create.mock.calls[0][0].data.delivery_address).toBe(503);
     expect(contractQuery.create.mock.calls[0][0].data.Amount).toBe("1000");
     expect(itemQuery.create.mock.calls[0][0].data.PerAmount).toBe("475");
+    expect(addressQuery.create.mock.calls[0][0].data).toEqual(expect.objectContaining({
+      PostalCode: "3153612345",
+      FullAddress: "خیابان شهید بهشتی، پلاک ۱۲",
+      FullName: "زهرا محمدی",
+      Phone: "+989123456789",
+      Description: "woo-order:44",
+      IsTemporary: true,
+      shipping_city: 502,
+    }));
+  });
+
+  test("preserves an existing order address instead of replacing it from Woo", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([{
+        id: 101,
+        user: null,
+        delivery_address: { id: 777 },
+      }]),
+      update: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 201 }]),
+      update: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([{ id: 301 }])
+        .mockResolvedValueOnce([{ id: 301, external_id: "line_item_9" }]),
+      update: jest.fn().mockResolvedValue({ id: 301 }),
+      delete: jest.fn(),
+    };
+    const queries: Record<string, any> = {
+      "api::order.order": orderQuery,
+      "api::contract.contract": contractQuery,
+      "api::order-item.order-item": itemQuery,
+      "api::product-variation.product-variation": {
+        findMany: jest.fn().mockResolvedValue([{ id: 401 }]),
+      },
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid) => queries[uid]),
+      },
+    };
+
+    await expect(upsertOrder(strapiMock, {
+      sourceId: "44",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "ZarinPal",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "1000",
+      shippingToman: "50",
+      deliveryAddress: {
+        stateCode: "THR",
+        cityTitle: "تهران",
+        fullAddress: "نشانی تازه از منبع",
+      },
+      items: [{
+        sourceId: "9",
+        variationSourceId: "4",
+        count: 2,
+        unitPriceToman: "475",
+        title: "کالا",
+        sku: "S",
+      }],
+    })).resolves.toEqual(expect.objectContaining({
+      addressLinked: true,
+      addressMode: "preserved",
+      addressReason: "EXISTING_ADDRESS",
+    }));
+
+    expect(orderQuery.update.mock.calls[0][0].data.delivery_address).toBe(777);
+    expect(strapiMock.db.query).not.toHaveBeenCalledWith("api::shipping-province.shipping-province");
+    expect(strapiMock.db.query).not.toHaveBeenCalledWith("api::local-user-address.local-user-address");
   });
 
   test("restores timestamps only for an existing media record on a trusted request", async () => {

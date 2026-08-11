@@ -65,6 +65,10 @@ const PRODUCT_REPORT_ACTIONS = [
 ] as const;
 
 const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
+  // Bounded admin catalog list (POST /admin/products-list/query). Same pattern as
+  // order.read → admin-order-list.query; without this, Seller 1+ pass the
+  // product.read capability policy but Strapi U&P still 403s the route.
+  "api::admin-product-list": { "admin-product-list": ["query"] },
   "api::product": { product: [...READ_ACTIONS, "search"] },
   "api::product-category-content": { "product-category-content": READ_ACTIONS },
   "api::product-faq": { "product-faq": READ_ACTIONS },
@@ -106,7 +110,8 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "api::blog-author": { "blog-author": CHILD_CRUD_ACTIONS },
   },
   "content.blog.comments.manage": {
-    "api::blog-comment": { "blog-comment": CHILD_CRUD_ACTIONS },
+    "api::blog-comment": { "blog-comment": [...CHILD_CRUD_ACTIONS, "approve", "reject"] },
+    "api::post-comment": { "post-comment": [...CHILD_CRUD_ACTIONS, "approve", "reject"] },
   },
   "content.blog.banners.manage": {
     "api::settings": { settings: ["getBlogBanners", "updateBlogBanners"] },
@@ -219,6 +224,57 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "wallet.adjust": {
     "api::local-user-wallet": { "local-user-wallet": ["adminAdjustWallet"] },
+  },
+  // Superadmin-only today (allCapabilities / mode:all). Explicit grants keep the
+  // capability→route contract testable and safe if these are ever assigned lower.
+  "order.audit.read": {
+    "api::admin-activity": { "admin-activity": ["findOrderActivities"] },
+  },
+  "system.users.manage": {
+    "api::admin-user": { "admin-user": ["query"] },
+    "api::plugin-user": { "plugin-user": ["createPluginUser"] },
+    "api::local-user": { "local-user": ["createUser", "updateUser"] },
+  },
+  "system.audit.read": {
+    "api::admin-activity": {
+      "admin-activity": [
+        "findMyActivities",
+        "findUserActivities",
+        "findProductActivities",
+        "findReport",
+      ],
+    },
+    "api::report": { report: ["adminActivity", "adminActivityById"] },
+    "api::event-log": { "event-log": ["getAdminEvents"] },
+  },
+  "system.settings.manage": {
+    "api::settings": { settings: ["find", "update"] },
+  },
+  "system.customization.manage": {
+    "api::settings": {
+      settings: ["getHeroSlider", "updateHeroSliderDraft", "publishHeroSliderDraft"],
+    },
+  },
+  "system.purge.execute": {
+    "api::commerce-maintenance": { "commerce-maintenance": ["purge"] },
+  },
+  "system.payments.manage": {
+    "api::payment-gateway": {
+      "payment-gateway": ["testMellat", "testMellatV2", "testMellatV3"],
+    },
+  },
+  "system.discounts.manage": {
+    "api::discount": { discount: CHILD_CRUD_ACTIONS },
+    "api::general-discount": { "general-discount": CHILD_CRUD_ACTIONS },
+  },
+  "system.shipping.manage": {
+    "api::shipping": { shipping: CHILD_CRUD_ACTIONS },
+    "api::shipping-city": { "shipping-city": CHILD_CRUD_ACTIONS },
+    "api::shipping-province": { "shipping-province": CHILD_CRUD_ACTIONS },
+  },
+  "system.reviews.manage": {
+    "api::product-review": { "product-review": CHILD_CRUD_ACTIONS },
+    "api::product-review-reply": { "product-review-reply": CHILD_CRUD_ACTIONS },
   },
 };
 
@@ -967,8 +1023,8 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
     superadmin: "Full system administration",
     editor: "Blog-only content administration",
     "seller-1": "Non-destructive catalog administration",
-    "seller-2": "Seller 1 plus categories, storefront, and read-only orders",
-    "store-manager": "Seller 2 plus operational order transitions and product insights",
+    "seller-2": "Seller 1 plus categories, order read, status changes, and notes",
+    "store-manager": "Same operational surface as Seller 2 (no analytics)",
     finance: "Seller 2 plus product, sales, cart, and finance reporting",
     founder: "Store Manager and Finance capabilities plus wallets, traffic, and manual orders",
     customer: "End customer role",

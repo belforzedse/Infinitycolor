@@ -89,12 +89,47 @@ describe("bounded admin orders list", () => {
     expect(ctx.set).toHaveBeenCalledWith("Cache-Control", "private, no-store");
     expect(JSON.stringify(ctx.body)).not.toContain("must-not-leak");
     expect(JSON.stringify(ctx.body)).not.toContain("NationalCode");
+    expect(ctx.body.data[0].attributes.user.data.attributes.user_info.data.attributes).toEqual({
+      FirstName: "Test",
+      LastName: "User",
+    });
+    expect(ctx.body.data[0].attributes.contract.data.attributes.Amount).toBe(1000);
     expect(ctx.body.meta.pagination).toEqual({
       page: 2,
       pageSize: 100,
       pageCount: 496,
       total: 49_518,
     });
+  });
+
+  it("keeps customer names and amounts even when auth-aware sanitize would strip relations", async () => {
+    const { sanitize } = require("@strapi/utils");
+    (sanitize.contentAPI.output as jest.Mock).mockImplementationOnce(async (rows: any[]) =>
+      rows.map((row) => ({ ...row, user: undefined, contract: undefined })),
+    );
+    // Re-install after the destructive mock so the next call uses pass-through again
+    // only for this assertion path we care about the controller not passing auth.
+    installStrapi([
+      {
+        id: 9,
+        Status: "Started",
+        user: {
+          id: 2,
+          phone: "0912",
+          user_info: { id: 3, FirstName: "Ali", LastName: "Rezaei" },
+        },
+        contract: { id: 4, Amount: 250000, Type: "Online", Status: "Confirmed", TaxPercent: 9 },
+      },
+    ]);
+    const ctx = createContext({ page: 1, pageSize: 25, tab: "all", sort: "last-edited" });
+
+    await controller.query(ctx);
+
+    expect(sanitize.contentAPI.output).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.anything(),
+    );
+    expect(sanitize.contentAPI.output.mock.calls.at(-1)).toHaveLength(2);
   });
 
   it("resolves a numeric search against the order number without touching name columns", async () => {

@@ -7,6 +7,7 @@ jest.mock("redis", () => ({
 }));
 jest.unmock("../index");
 
+import { hasCapability } from "@repo/auth-core";
 import { __rolePermissionTestUtils } from "../index";
 
 function action(enabled = false) {
@@ -287,6 +288,11 @@ function createActionTree() {
         "admin-order-list": { query: action() },
       },
     },
+    "api::admin-product-list": {
+      controllers: {
+        "admin-product-list": { query: action() },
+      },
+    },
     "api::product-review": {
       controllers: {
         "product-review": {
@@ -396,6 +402,7 @@ function createActionTree() {
         "admin-activity": {
           find: action(),
           findOne: action(),
+          findMyActivities: action(),
           findOrderActivities: action(),
           findUserActivities: action(),
           findProductActivities: action(),
@@ -510,6 +517,9 @@ function createActionTree() {
 
   for (const [typeKey, controllerName, actions] of [
     ["api::admin-dashboard", "admin-dashboard", ["query"]],
+    ["api::admin-user", "admin-user", ["query"]],
+    ["api::event-log", "event-log", ["getMyEvents", "getOrderEvents", "getAdminEvents"]],
+    ["api::commerce-maintenance", "commerce-maintenance", ["purge"]],
     ["api::cart-item", "cart-item", crud],
     ["api::order-item", "order-item", crud],
     ["api::product-review-like", "product-review-like", crud],
@@ -517,14 +527,25 @@ function createActionTree() {
     ["api::footer", "footer", crud],
     ["api::site-identity", "site-identity", crud],
     ["api::site-faq", "site-faq", crud],
-    ["api::settings", "settings", [...crud, "getBlogBanners", "updateBlogBanners"]],
+    [
+      "api::settings",
+      "settings",
+      [
+        ...crud,
+        "getBlogBanners",
+        "updateBlogBanners",
+        "getHeroSlider",
+        "updateHeroSliderDraft",
+        "publishHeroSliderDraft",
+      ],
+    ],
     ["api::blog-post", "blog-post", crud],
     ["api::blog-category", "blog-category", crud],
     ["api::blog-tag", "blog-tag", crud],
     ["api::blog-author", "blog-author", crud],
-    ["api::blog-comment", "blog-comment", crud],
+    ["api::blog-comment", "blog-comment", [...crud, "approve", "reject"]],
     ["api::post", "post", crud],
-    ["api::post-comment", "post-comment", crud],
+    ["api::post-comment", "post-comment", [...crud, "approve", "reject"]],
     ["api::faq-category", "faq-category", crud],
     ["api::faq-question", "faq-question", crud],
     ["api::story", "story", [...crud, "getActive"]],
@@ -620,7 +641,197 @@ describe("role permission templates", () => {
     );
   });
 
-  it("gives store managers product insights without traffic or audit reports", () => {
+  it("lets Seller 1 query the bounded admin products list without order access", () => {
+    const seller1 = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "seller-1",
+    );
+    const editor = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "editor",
+    );
+
+    expect(seller1["api::admin-product-list"].controllers["admin-product-list"].query.enabled).toBe(
+      true,
+    );
+    expect(seller1["api::admin-order-list"].controllers["admin-order-list"].query.enabled).toBe(
+      false,
+    );
+    expect(editor["api::admin-product-list"].controllers["admin-product-list"].query.enabled).toBe(
+      false,
+    );
+  });
+
+  it("wires capability-gated handlers for every staff role that holds the capability", () => {
+    const strapiRoleType: Record<string, string> = {
+      editor: "editor",
+      seller1: "seller-1",
+      seller2: "seller-2",
+      store_manager: "store-manager",
+      finance: "finance",
+      founder: "founder",
+      superadmin: "superadmin",
+    };
+
+    // Capability → U&P actions that must be enabled together. Keep in sync with
+    // custom routers that use global::require-capability.
+    const gated: Array<{ capability: string; actions: string[] }> = [
+      {
+        capability: "product.read",
+        actions: ["api::admin-product-list.admin-product-list.query"],
+      },
+      {
+        capability: "product.variation.manage",
+        actions: ["api::product.product.generateVariationCombinations"],
+      },
+      {
+        capability: "product.publish",
+        actions: ["api::product.product.publication"],
+      },
+      {
+        capability: "order.read",
+        actions: ["api::admin-order-list.admin-order-list.query"],
+      },
+      {
+        capability: "order.status.update",
+        actions: ["api::order.order.adminTransition"],
+      },
+      {
+        capability: "order.notes.update",
+        actions: ["api::order.order.adminUpdateNotes"],
+      },
+      {
+        capability: "order.financial.read",
+        actions: ["api::order.order.adminPaymentOperation"],
+      },
+      {
+        capability: "order.manual.create",
+        actions: ["api::order.order.create", "api::order.order.decrementStockManual"],
+      },
+      {
+        capability: "report.product.read",
+        actions: ["api::report.report.productSales", "api::report.report.productOverview"],
+      },
+      {
+        capability: "report.sales.read",
+        actions: ["api::report.report.overview", "api::report.report.salesBreakdown"],
+      },
+      {
+        capability: "report.finance.read",
+        actions: ["api::report.report.liquidity", "api::report.report.gatewayLiquidity"],
+      },
+      {
+        capability: "report.traffic.read",
+        actions: ["api::report.report.behaviorOverview"],
+      },
+      {
+        capability: "report.carts.read",
+        actions: ["api::cart.cart.find"],
+      },
+      {
+        capability: "wallet.customer.search",
+        actions: ["api::plugin-user.plugin-user.searchCustomers"],
+      },
+      {
+        capability: "wallet.read",
+        actions: ["api::local-user-wallet.local-user-wallet.adminGetUserWallet"],
+      },
+      {
+        capability: "wallet.history.read",
+        actions: ["api::local-user-wallet.local-user-wallet.adminGetUserWalletHistory"],
+      },
+      {
+        capability: "wallet.adjust",
+        actions: ["api::local-user-wallet.local-user-wallet.adminAdjustWallet"],
+      },
+      {
+        capability: "content.blog.banners.manage",
+        actions: [
+          "api::settings.settings.getBlogBanners",
+          "api::settings.settings.updateBlogBanners",
+        ],
+      },
+      {
+        capability: "content.blog.comments.manage",
+        actions: [
+          "api::blog-comment.blog-comment.approve",
+          "api::blog-comment.blog-comment.reject",
+          "api::post-comment.post-comment.approve",
+          "api::post-comment.post-comment.reject",
+        ],
+      },
+      {
+        capability: "system.users.manage",
+        actions: [
+          "api::admin-user.admin-user.query",
+          "api::plugin-user.plugin-user.createPluginUser",
+          "api::local-user.local-user.createUser",
+        ],
+      },
+      {
+        capability: "system.audit.read",
+        actions: [
+          "api::admin-activity.admin-activity.findReport",
+          "api::admin-activity.admin-activity.findProductActivities",
+        ],
+      },
+      {
+        capability: "system.customization.manage",
+        actions: [
+          "api::settings.settings.getHeroSlider",
+          "api::settings.settings.updateHeroSliderDraft",
+          "api::settings.settings.publishHeroSliderDraft",
+        ],
+      },
+      {
+        capability: "system.purge.execute",
+        actions: ["api::commerce-maintenance.commerce-maintenance.purge"],
+      },
+    ];
+
+    const parseAction = (full: string) => {
+      const match = full.match(/^(api::[^.]+|plugin::[^.]+)\.([^.]+)\.(.+)$/);
+      if (!match) throw new Error(`Bad action name ${full}`);
+      return { typeKey: match[1], controller: match[2], action: match[3] };
+    };
+
+    const gaps: string[] = [];
+    const leaks: string[] = [];
+
+    for (const role of [
+      "editor",
+      "seller1",
+      "seller2",
+      "store_manager",
+      "finance",
+      "founder",
+      "superadmin",
+    ] as const) {
+      const tree = __rolePermissionTestUtils.getDefaultPermissions(
+        createStrapiForPermissions() as any,
+        strapiRoleType[role],
+      );
+
+      for (const entry of gated) {
+        const allowed = role === "superadmin" || hasCapability(role, entry.capability as any);
+        for (const full of entry.actions) {
+          const { typeKey, controller, action } = parseAction(full);
+          const enabled = Boolean(tree[typeKey]?.controllers?.[controller]?.[action]?.enabled);
+          if (allowed && !enabled) {
+            gaps.push(`${role} has ${entry.capability} but missing ${full}`);
+          }
+          if (!allowed && enabled) {
+            leaks.push(`${role} lacks ${entry.capability} but has ${full}`);
+          }
+        }
+      }
+    }
+
+    expect(gaps).toEqual([]);
+    expect(leaks).toEqual([]);
+  });
+
+  it("gives store managers no product insights or traffic/audit reports", () => {
     const storeManager = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "store-manager",
@@ -636,7 +847,7 @@ describe("role permission templates", () => {
     expect(
       storeManager["api::admin-activity"].controllers["admin-activity"].findReport.enabled,
     ).toBe(false);
-    expect(storeManager["api::report"].controllers.report.productSales.enabled).toBe(true);
+    expect(storeManager["api::report"].controllers.report.productSales.enabled).toBe(false);
     expect(storeManager["api::report"].controllers.report.behaviorOverview.enabled).toBe(false);
   });
 
@@ -831,7 +1042,7 @@ describe("role permission templates", () => {
     const order = controller("api::order", "order");
     expect(order.find.enabled).toBe(false);
     expect(order.adminAdjustItems.enabled).toBe(false);
-    expect(order.adminUpdateNotes.enabled).toBe(false);
+    expect(order.adminUpdateNotes.enabled).toBe(true);
     expect(order.adminTransition.enabled).toBe(true);
     expect(order.create.enabled).toBe(false);
     expect(order.update.enabled).toBe(false);
@@ -915,6 +1126,7 @@ describe("role permission templates", () => {
     expect(enabled("api::shipping-city", "shipping-city")).toEqual(["find", "findOne"]);
     expect(enabled("api::order", "order")).toEqual([
       "adminTransition",
+      "adminUpdateNotes",
       "checkPaymentStatus",
       "findOne",
       "getActiveReserve",
@@ -950,16 +1162,7 @@ describe("role permission templates", () => {
     expect(enabled("plugin::users-permissions", "user")).toEqual([]);
     expect(enabled("plugin::users-permissions", "role")).toEqual([]);
     expect(enabled("api::admin-activity", "admin-activity")).toEqual([]);
-    expect(enabled("api::report", "report")).toEqual([
-      "productBreakdown",
-      "productDetail",
-      "productExport",
-      "productInventory",
-      "productOverview",
-      "productPerformance",
-      "productSales",
-      "productTrends",
-    ]);
+    expect(enabled("api::report", "report")).toEqual([]);
     expect(enabled("api::commerce-maintenance", "commerce-maintenance")).toEqual([]);
   });
 

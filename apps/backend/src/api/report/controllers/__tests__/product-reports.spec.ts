@@ -183,9 +183,9 @@ describe("product reporting endpoints", () => {
     expect(ctx.forbidden).not.toHaveBeenCalled();
   });
 
-  describe("with an authorized manager", () => {
+  describe("with an authorized finance analyst", () => {
     beforeEach(() => {
-      (global as any).strapi = createStrapi("Store Manager");
+      (global as any).strapi = createStrapi("Finance");
     });
 
     it("overview converts refund IRR->Toman, computes net, and returns inventory", async () => {

@@ -30,11 +30,18 @@ describe("canonical admin capability matrix", () => {
   });
 
   it("models Store Manager and Finance as separate Seller 2 branches", () => {
+    expect(hasCapability("seller2", "order.status.update")).toBe(true);
+    expect(hasCapability("seller2", "order.notes.update")).toBe(true);
+    expect(hasCapability("seller2", "report.product.read")).toBe(false);
     expect(hasCapability("store_manager", "category.update")).toBe(true);
     expect(hasCapability("store_manager", "order.status.update")).toBe(true);
+    expect(hasCapability("store_manager", "report.product.read")).toBe(false);
     expect(hasCapability("finance", "category.update")).toBe(true);
     expect(hasCapability("finance", "report.finance.read")).toBe(true);
-    expect(hasCapability("finance", "order.status.update")).toBe(false);
+    expect(hasCapability("finance", "report.product.read")).toBe(true);
+    // Finance does not gain status updates from the Store Manager branch; it
+    // inherits them from Seller 2 now that status lives on Seller 2.
+    expect(hasCapability("finance", "order.status.update")).toBe(true);
   });
 
   it("makes Founder the exact business union plus Founder capabilities", () => {
