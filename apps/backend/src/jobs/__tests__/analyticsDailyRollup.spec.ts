@@ -163,9 +163,9 @@ describe("runAnalyticsDailyRollupTick", () => {
     getDailySalesRollupRowsMock.mockRejectedValue(new Error("db exploded"));
     const strapi = createMockStrapi();
 
-    const result = await runAnalyticsDailyRollupTick(strapi, { now: new Date("2026-05-15T10:00:00Z") });
-
-    expect(result.status).toBe("failed");
+    await expect(
+      runAnalyticsDailyRollupTick(strapi, { now: new Date("2026-05-15T10:00:00Z") }),
+    ).rejects.toThrow("db exploded");
     expect(markRunFailedMock).toHaveBeenCalledWith(
       expect.anything(),
       "analytics_daily_rollup",

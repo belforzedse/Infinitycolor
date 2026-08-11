@@ -33,6 +33,8 @@ describe("queue env", () => {
     expect(settings.crons.analyticsDailyRollup).toBe("15 0 * * *");
     expect(settings.crons.analyticsOutboxRepair).toBe("*/1 * * * *");
     expect(settings.crons.snappaySweep).toBe("*/1 * * * *");
+    expect(settings.crons.walletTopupReconcile).toBe("*/1 * * * *");
+    expect(settings.crons.anipoBarcodeReconcile).toBe("*/15 * * * *");
   });
 
   it("parses queue Redis URL into BullMQ/ioredis connection options", () => {

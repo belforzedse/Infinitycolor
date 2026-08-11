@@ -1,4 +1,5 @@
 import type { Strapi } from "@strapi/strapi";
+import { randomUUID } from "node:crypto";
 import {
   capabilitiesForRole,
   hasCapability,
@@ -6,6 +7,8 @@ import {
   type AdminCapability,
   type AdminRoleId,
 } from "@repo/auth-core";
+import { writeAuditEvent } from "../audit/writer";
+import { getAuditContext } from "./audit-context";
 
 export type AdminActor = {
   user: any;
@@ -48,6 +51,45 @@ export async function requireCapability(
   }
   const actor = await resolveAdminActor(strapi, ctx.state.user);
   if (!actor || !hasCapability(actor.role, capability)) {
+    const request = getAuditContext();
+    try {
+      await writeAuditEvent(strapi, {
+        eventKey: "security.access_denied",
+        result: "denied",
+        importance: "sensitive",
+        initiator: {
+          type: "human",
+          id: Number(ctx.state.user.id),
+          label: actor?.user?.username || actor?.user?.email || ctx.state.user?.username,
+          role: actor?.role,
+          roleId: actor?.user?.role?.id,
+        },
+        actor: {
+          type: "service_account",
+          id: "authorization-service",
+          label: "سرویس کنترل دسترسی",
+        },
+        origin: "admin_ui",
+        target: { type: "capability", id: capability, label: capability },
+        reasonCode: actor ? "CAPABILITY_NOT_GRANTED" : "ADMIN_ACCOUNT_NOT_ACTIVE",
+        requestId: request?.requestId,
+        correlationId: request?.correlationId,
+        route: ctx.request?.path || ctx.path,
+        httpMethod: ctx.request?.method || ctx.method,
+        ip: request?.ip || ctx.request?.ip || ctx.ip,
+        userAgent: request?.userAgent || ctx.request?.headers?.["user-agent"],
+        metadata: { requiredCapability: capability },
+        dedupeKey: `access-denied:${request?.requestId || randomUUID()}:${capability}`,
+      });
+    } catch (error) {
+      // Authorization must still deny when the audit database is unavailable.
+      // Production Strapi always has a logger; optional chaining also keeps this
+      // failure policy testable with deliberately minimal controller doubles.
+      strapi.log?.error?.("Required access-denial audit write failed", {
+        capability,
+        reasonCode: error instanceof Error ? error.name : "UNKNOWN",
+      });
+    }
     deny(ctx, "forbidden", 403, "You do not have permission to perform this action");
     return null;
   }

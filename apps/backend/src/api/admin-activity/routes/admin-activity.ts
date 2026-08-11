@@ -2,9 +2,6 @@
  * admin-activity router
  */
 
-import { factories } from "@strapi/strapi";
-
-export default factories.createCoreRouter(
-  "api::admin-activity.admin-activity" as any
-);
-
+// The legacy content type remains readable through compatibility endpoints only.
+// Generic create/update/delete routes are deliberately disabled so there is one writer.
+export default { routes: [] };

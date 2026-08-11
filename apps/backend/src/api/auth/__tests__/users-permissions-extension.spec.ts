@@ -1,8 +1,12 @@
 import bcrypt from "bcryptjs";
-const recordAdminAuditMock = jest.fn().mockResolvedValue(true);
+const writeAuditEventMock = jest.fn().mockResolvedValue({
+  id: 1,
+  eventId: "ed9b1f4f-f6a0-4440-8ca9-386d2a7c6ec4",
+  deduplicated: false,
+});
 
-jest.mock("../../../utils/adminAudit", () => ({
-  recordAdminAudit: (...args: unknown[]) => recordAdminAuditMock(...args),
+jest.mock("../../../audit/writer", () => ({
+  writeAuditEvent: (...args: unknown[]) => writeAuditEventMock(...args),
 }));
 
 import extendUsersPermissions, {
@@ -42,6 +46,9 @@ describe("Infinity Users & Permissions creation guards", () => {
       return { delete: jest.fn().mockResolvedValue({}) };
     });
     (global as any).strapi.entityService.create = jest.fn().mockResolvedValue({ id: 11 });
+    (global as any).strapi.db.transaction = jest.fn(async (callback: any) =>
+      callback({ trx: { id: "role-transaction" } }),
+    );
   });
 
   it("rejects a native signup before user creation when either name is blank", async () => {
@@ -218,13 +225,14 @@ describe("Infinity Users & Permissions creation guards", () => {
         IsActive: { $ne: false },
       },
     });
-    expect(recordAdminAuditMock).toHaveBeenCalledWith(
+    expect(writeAuditEventMock).toHaveBeenCalledWith(
       (global as any).strapi,
       expect.objectContaining({
-        resourceId: 7,
-        severity: "success",
-        metadata: { fields: ["role"] },
+        eventKey: "administrators.role_changed",
+        target: expect.objectContaining({ id: 7 }),
+        changes: [expect.objectContaining({ field: "role" })],
       }),
+      { trx: { id: "role-transaction" } },
     );
   });
 
@@ -263,12 +271,13 @@ describe("Infinity Users & Permissions creation guards", () => {
 
     expect(update).not.toHaveBeenCalled();
     expect(ctx.forbidden).toHaveBeenCalledWith("At least one active Superadmin must remain");
-    expect(recordAdminAuditMock).toHaveBeenCalledWith(
+    expect(writeAuditEventMock).toHaveBeenCalledWith(
       (global as any).strapi,
       expect.objectContaining({
-        resourceId: 7,
-        severity: "warning",
-        metadata: { requestedRole: 4 },
+        eventKey: "security.access_denied",
+        result: "denied",
+        target: expect.objectContaining({ id: 7 }),
+        reasonCode: "LAST_ACTIVE_SUPERADMIN",
       }),
     );
   });
@@ -316,13 +325,14 @@ describe("Infinity Users & Permissions creation guards", () => {
 
     expect(update).toHaveBeenCalledWith(ctx, undefined);
     expect(ctx.request.body.role).toBe(4);
-    expect(recordAdminAuditMock).toHaveBeenCalledWith(
+    expect(writeAuditEventMock).toHaveBeenCalledWith(
       (global as any).strapi,
       expect.objectContaining({
-        resourceId: 9,
-        severity: "success",
-        metadata: { fields: ["role"] },
+        eventKey: "administrators.role_changed",
+        target: expect.objectContaining({ id: 9 }),
+        changes: [expect.objectContaining({ field: "role" })],
       }),
+      { trx: { id: "role-transaction" } },
     );
   });
 });

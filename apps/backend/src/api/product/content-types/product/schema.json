@@ -98,6 +98,10 @@
     "scheduledPublishNextRetryAt": {
       "type": "datetime"
     },
+    "scheduledPublishAuditContext": {
+      "type": "json",
+      "private": true
+    },
     "publicationRevision": {
       "type": "integer",
       "default": 0,

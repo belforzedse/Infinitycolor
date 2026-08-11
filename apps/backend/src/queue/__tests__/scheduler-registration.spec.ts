@@ -3,6 +3,7 @@ import {
   COMMERCE_MAINTENANCE_JOBS,
   MAINTENANCE_SCHEDULERS,
   SNAPPAY_PAYMENT_JOBS,
+  WALLET_TOPUP_PAYMENT_JOBS,
 } from "../contracts";
 import { getQueueSettings } from "../env";
 import { registerMaintenanceSchedulers } from "../scheduler-registration";
@@ -26,6 +27,8 @@ describe("scheduler registration", () => {
         QUEUE_CRON_ANALYTICS_DAILY_ROLLUP: "20 0 * * *",
         QUEUE_CRON_ANALYTICS_OUTBOX_REPAIR: "*/4 * * * *",
         QUEUE_CRON_SNAPPAY_SWEEP: "*/1 * * * *",
+        QUEUE_CRON_WALLET_TOPUP_RECONCILE: "*/6 * * * *",
+        QUEUE_CRON_ANIPO_BARCODE_RECONCILE: "*/15 * * * *",
         QUEUE_TIMEZONE: "Asia/Tehran",
       } as any),
     );
@@ -51,6 +54,14 @@ describe("scheduler registration", () => {
       { pattern: "*/1 * * * *", tz: "Asia/Tehran" },
       expect.objectContaining({
         name: COMMERCE_MAINTENANCE_JOBS.scheduledProductReconcile,
+        data: {},
+      }),
+    );
+    expect(commerceQueue.upsertJobScheduler).toHaveBeenCalledWith(
+      MAINTENANCE_SCHEDULERS.anipoBarcodeReconcile,
+      { pattern: "*/15 * * * *", tz: "Asia/Tehran" },
+      expect.objectContaining({
+        name: COMMERCE_MAINTENANCE_JOBS.anipoBarcodeReconcile,
         data: {},
       }),
     );
@@ -83,6 +94,15 @@ describe("scheduler registration", () => {
       { pattern: "*/1 * * * *", tz: "Asia/Tehran" },
       expect.objectContaining({
         name: SNAPPAY_PAYMENT_JOBS.sweep,
+        data: {},
+        opts: expect.objectContaining({ attempts: 1 }),
+      }),
+    );
+    expect(paymentsQueue.upsertJobScheduler).toHaveBeenCalledWith(
+      MAINTENANCE_SCHEDULERS.walletTopupReconcile,
+      { pattern: "*/6 * * * *", tz: "Asia/Tehran" },
+      expect.objectContaining({
+        name: WALLET_TOPUP_PAYMENT_JOBS.reconcile,
         data: {},
         opts: expect.objectContaining({ attempts: 1 }),
       }),

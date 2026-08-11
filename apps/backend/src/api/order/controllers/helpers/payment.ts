@@ -1,9 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
-import {
-  consumeOrderReservation,
-  releaseOrderReservation,
-} from "../../../../utils/stockReservations";
-import { decrementStockAtomic } from "../../../cart/services/lib/stock";
+import { consumeOrderReservation } from "../../../../utils/stockReservations";
+import { cancelOrderAndRelease } from "../../../cart/controllers/handlers/gateway-helpers";
 import { orderHoldsDiscountClaim } from "../../../cart/services/lib/discount-claim";
 import { consumeCheckoutCartLinesSafely } from "../../../cart/services/lib/order-cart-cleanup";
 import { enqueuePurchaseForOrder } from "../../../report/analytics/outbox";
@@ -14,6 +11,10 @@ import {
   claimPaymentAttemptForSettlement,
 } from "../../../payment-attempt/services/payment-attempt";
 import { settleZarinPalPayment, ZarinPalSettlementError } from "./zarinpalSettlement";
+import {
+  finalizeGatewaySettlement,
+  GatewayLocalSettlementError,
+} from "./gatewaySettlement";
 const getFrontendBaseUrl = () =>
   (process.env.FRONTEND_BASE_URL || process.env.FRONTEND_URL || "https://infinitycolor.co").replace(
     /\/$/,
@@ -193,362 +194,6 @@ async function clearCartAfterPayment(strapi: Strapi, orderId?: number, gateway?:
   void enqueuePurchaseForOrder(strapi as any, orderId).catch(() => {});
 
   await consumeCheckoutCartLinesSafely(strapi, orderId, { gateway });
-}
-
-/**
- * Handles post-payment stock decrement with reservation awareness.
- * For reserved orders, consumes the reservation atomically.
- * For legacy orders, decrements stock directly.
- * @param strapi - Strapi instance
- * @param orderId - Order ID
- * @param gateway - Gateway name for logging context (e.g., "Saman", "SnappPay", "Mellat")
- * @returns Promise with success status, errors array, and optional expired flag
- */
-async function handlePostPaymentStock(
-  strapi: Strapi,
-  orderId: number,
-  gateway: string,
-  options?: { requireReservation?: boolean },
-): Promise<{ success: boolean; errors?: any[]; expired?: boolean; skipped?: boolean }> {
-  try {
-    // Load order with ReservationStatus field only (lightweight query)
-    const orderMeta: any = await strapi.entityService.findOne("api::order.order", orderId, {
-      fields: ["ReservationStatus"],
-    } as any);
-
-    if (orderMeta?.ReservationStatus === "Reserved") {
-      // Reserved orders: consume reservation (Count-- and ReservedCount--) atomically
-      const consumeRes = await strapi.db.transaction(async ({ trx }) =>
-        consumeOrderReservation(strapi as any, Number(orderId), trx),
-      );
-
-      if (consumeRes?.expired) {
-        strapi.log.error(`Reservation expired after ${gateway} settlement`, {
-          orderId,
-        });
-        return { success: false, expired: true, errors: [{ error: "Reservation expired" }] };
-      }
-
-      if (consumeRes?.skipped) {
-        // The guarded UPDATE didn't match: the reservation was already
-        // released/expired/consumed by something else (an expiry-job tick,
-        // a duplicate callback) between our read above and the atomic
-        // consume attempt. Nothing was actually decremented — this must
-        // NOT be treated as a successful consumption.
-        strapi.log.error(
-          `Reservation already resolved elsewhere before ${gateway} could consume it`,
-          { orderId },
-        );
-        return {
-          success: false,
-          skipped: true,
-          errors: [{ error: "Reservation already resolved" }],
-        };
-      }
-
-      if (consumeRes?.success === false) {
-        strapi.log.error(`Failed to consume reservation after ${gateway} settlement`, {
-          orderId,
-          error: consumeRes?.error,
-        });
-        return {
-          success: false,
-          errors: [{ error: consumeRes?.error || "Failed to consume reservation" }],
-        };
-      }
-
-      return { success: true };
-    } else if (options?.requireReservation) {
-      // Saman/Mellat orders always go through finalizeCartToOrder's
-      // reservation flow, so a non-"Reserved" status here can only mean the
-      // reservation was already released/expired/consumed out from under
-      // this settlement — never "this order never had a reservation"
-      // (ReservationStatus schema-defaults to "Released", the same value as
-      // an actively-released hold, so the two cases are indistinguishable
-      // by value alone). Falling into the legacy direct-decrement branch
-      // below would double-decrement stock already released back into the
-      // pool. Treat as a hard stop instead.
-      strapi.log.error(
-        `${gateway} settlement reached stock handling with a non-Reserved reservation status`,
-        { orderId, reservationStatus: orderMeta?.ReservationStatus },
-      );
-      return {
-        success: false,
-        skipped: true,
-        errors: [{ error: "Reservation not active" }],
-      };
-    } else {
-      // Legacy path: decrement stock atomically
-      // Load order with populated order_items
-      const orderWithItems = await strapi.entityService.findOne("api::order.order", orderId, {
-        populate: {
-          order_items: {
-            populate: {
-              product_variation: { populate: { product_stock: true } },
-            },
-          },
-        },
-      });
-
-      const stockErrors: any[] = [];
-
-      // Map order items to decrement promises with metadata
-      const decrementPromises = (orderWithItems?.order_items || [])
-        .map((it) => {
-          const v = it?.product_variation;
-          if (v?.product_stock?.id && typeof it?.Count === "number") {
-            const stockId = v.product_stock.id as number;
-            const quantity = Number(it.Count || 0);
-            const variationId = v.id;
-
-            return {
-              promise: decrementStockAtomic(strapi, stockId, quantity),
-              metadata: { stockId, quantity, variationId, orderId },
-            };
-          }
-          return null;
-        })
-        .filter(
-          (
-            item,
-          ): item is {
-            promise: Promise<{ success: boolean; newCount?: number; error?: string }>;
-            metadata: { stockId: number; quantity: number; variationId: any; orderId: number };
-          } => item !== null,
-        );
-
-      // Execute all decrement promises in parallel
-      const settledResults = await Promise.allSettled(
-        decrementPromises.map((item) => item.promise),
-      );
-
-      // Process settled results to collect errors
-      settledResults.forEach((result, index) => {
-        const { metadata } = decrementPromises[index];
-        const { stockId, quantity, variationId } = metadata;
-
-        if (result.status === "fulfilled") {
-          if (!result.value.success) {
-            stockErrors.push({
-              stockId,
-              quantity,
-              error: result.value.error,
-              variationId,
-            });
-            strapi.log.error(`Failed to decrement stock atomically (${gateway})`, {
-              orderId,
-              stockId,
-              quantity,
-              error: result.value.error,
-            });
-          }
-        } else {
-          // Handle rejected promise
-          const errorMessage =
-            result.reason instanceof Error ? result.reason.message : String(result.reason);
-          stockErrors.push({
-            stockId,
-            quantity,
-            error: errorMessage,
-            variationId,
-          });
-          strapi.log.error(`Failed to decrement stock atomically (${gateway})`, {
-            orderId,
-            stockId,
-            quantity,
-            error: errorMessage,
-          });
-        }
-      });
-
-      if (stockErrors.length > 0) {
-        strapi.log.error(`Some stock decrements failed for ${gateway} payment`, {
-          orderId,
-          errors: stockErrors,
-        });
-      }
-
-      return {
-        success: stockErrors.length === 0,
-        errors: stockErrors.length > 0 ? stockErrors : undefined,
-      };
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    strapi.log.error(`Exception during stock handling after ${gateway} payment`, {
-      orderId,
-      error: errorMessage,
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    return {
-      success: false,
-      errors: [{ error: errorMessage }],
-    };
-  }
-}
-
-async function handleStockDecrementFailure(
-  strapi: Strapi,
-  ctx: any,
-  params: {
-    orderId: number;
-    stockErrors: any[];
-    refNum?: string | number;
-    paymentMethod: string;
-    externalSource: string;
-    externalId?: string | number;
-  },
-) {
-  const { orderId, stockErrors, refNum, paymentMethod, externalSource, externalId } = params;
-  const errorMessage = `Stock decrement failed for ${stockErrors.length} item(s). Order completion halted.`;
-  strapi.log.error(
-    `Stock decrements failed for ${paymentMethod} payment - halting order completion`,
-    {
-      orderId,
-      errors: stockErrors,
-      refNum,
-    },
-  );
-
-  // Create order-log entry for tracking and manual retry
-  try {
-    await strapi.entityService.create("api::order-log.order-log", {
-      data: {
-        order: orderId,
-        Action: "Update",
-        Description: "CRITICAL: Stock decrement failures - order completion halted",
-        Changes: {
-          stockErrors: JSON.parse(JSON.stringify(stockErrors)),
-          refNum,
-          haltedAt: new Date().toISOString(),
-          requiresManualRetry: true,
-        },
-      },
-    });
-  } catch (logErr) {
-    strapi.log.error("Failed to create order-log for stock errors", logErr);
-  }
-
-  // A stock-decrement failure during a payment callback is a SYSTEM event, not an admin action,
-  // so it is intentionally NOT written to the admin audit log. The order-log entry above is the
-  // durable record; surface it loudly in the application logs for on-call review.
-  strapi.log.error("CRITICAL: Stock decrement failure halted order completion", {
-    orderId,
-    refNum,
-    stockErrors,
-    paymentMethod,
-    errorMessage,
-    requiresManualRetry: true,
-  });
-
-  // Keep order in "Paying" status (payment succeeded but stock failed)
-  // Don't transition to "Started" to prevent fulfillment of unavailable items
-  try {
-    await strapi.entityService.update("api::order.order", orderId, {
-      data: {
-        external_source: externalSource,
-        external_id: (externalId ?? refNum) != null ? String(externalId ?? refNum) : undefined,
-        // Status remains "Paying" - will require manual intervention
-      },
-    });
-  } catch (err) {
-    strapi.log.error("Failed to update order with gateway info after stock failure", err);
-  }
-
-  // Redirect to issue page with appropriate error code
-  return ctx.redirect(
-    buildPaymentResultRedirectUrl("issue", {
-      orderId,
-      code: "stock_decrement_failed",
-    }),
-  );
-}
-
-/**
- * Records the settled Mellat transaction on the order's contract.
- *
- * Two things depend on this row existing:
- *  - Product reports define a paid sale as `contract_transaction.Status='Success'`
- *    (see `paidOrdersCte` in api/report/services/product-analytics.ts). Without a
- *    row, Mellat sales are excluded from every report and Mellat is absent from
- *    the gateway breakdown entirely.
- *  - The callback idempotency check in `verifyPaymentHandler` looks for
- *    `{ external_source: "Mellat", external_id: SaleReferenceId, Status: "Success" }`.
- *    With no writer it could never match, so a replayed callback decremented stock
- *    and consumed the discount a second time.
- *
- * Mirrors the SamanKish shape: find-or-create, then mark Success.
- */
-async function recordMellatSettlement(
-  strapi: Strapi,
-  params: {
-    orderId: number;
-    contract: any;
-    saleReferenceId?: string | number;
-    refId?: string | number;
-  },
-): Promise<void> {
-  const { orderId, contract, saleReferenceId, refId } = params;
-  const contractId = typeof contract === "object" && contract ? contract.id : contract;
-  if (!contractId) {
-    strapi.log.error("Cannot record Mellat settlement: order has no contract", {
-      orderId,
-    });
-    return;
-  }
-
-  const externalId = String(saleReferenceId ?? refId ?? "");
-  const trackId = String(refId ?? saleReferenceId ?? "");
-  const contractAmountIrr = Math.round(Number(contract?.Amount ?? 0) as number) * 10;
-
-  try {
-    const existing = (await strapi.entityService.findMany(
-      "api::contract-transaction.contract-transaction",
-      {
-        filters: {
-          external_source: "Mellat",
-          external_id: externalId,
-        },
-        limit: 1,
-      },
-    )) as any[];
-
-    if (existing && existing.length > 0) {
-      await strapi.entityService.update(
-        "api::contract-transaction.contract-transaction",
-        existing[0].id,
-        {
-          data: {
-            Status: "Success",
-            TrackId: trackId,
-            Amount: contractAmountIrr || existing[0].Amount,
-          },
-        },
-      );
-      return;
-    }
-
-    await strapi.entityService.create("api::contract-transaction.contract-transaction", {
-      data: {
-        Type: "Gateway",
-        Amount: contractAmountIrr,
-        DiscountAmount: 0,
-        Step: 1,
-        Status: "Success",
-        TrackId: trackId,
-        external_id: externalId,
-        external_source: "Mellat",
-        contract: contractId,
-        Date: new Date(),
-      },
-    });
-  } catch (err) {
-    strapi.log.error("Failed to record Mellat contract transaction", {
-      orderId,
-      externalId,
-      error: String((err as any)?.message || err).slice(0, 300),
-    });
-  }
 }
 
 export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
@@ -736,46 +381,17 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         reason: string,
         redirectType: "failure" | "cancelled" = "failure",
       ) => {
-        try {
-          await strapi.entityService.update(
-            "api::contract-transaction.contract-transaction",
-            contractTransaction.id,
-            {
-              data: {
-                Status: "Failed",
-                GatewayAuthority: authority,
-                GatewayStatus: callbackStatus || reason,
-                GatewayResponse: {
-                  callbackStatus,
-                  authority,
-                  reason,
-                },
-              } as any,
-            },
-          );
-        } catch (error) {
-          strapi.log.error("Failed to mark ZarinPal transaction failed", error);
-        }
-
-        try {
-          await strapi.entityService.update("api::order.order", orderId, {
-            data: { Status: "Cancelled", external_source: "ZarinPal", external_id: authority },
-          });
-        } catch (error) {
-          strapi.log.error("Failed to cancel ZarinPal order", error);
-        }
-
-        try {
-          await releaseOrderReservation(strapi as any, Number(orderId), "Released");
-        } catch {}
-
-        try {
-          await strapi.entityService.update("api::contract.contract", contractId, {
-            data: { Status: "Cancelled", external_source: "ZarinPal", external_id: authority },
-          });
-        } catch (error) {
-          strapi.log.error("Failed to cancel ZarinPal contract", error);
-        }
+        await cancelOrderAndRelease(strapi, orderId, contractId, undefined, reason, {
+          orderData: { external_source: "ZarinPal", external_id: authority },
+          contractData: { external_source: "ZarinPal", external_id: authority },
+          contractTransactionId: Number(contractTransaction.id),
+          contractTransactionData: {
+            Status: "Failed",
+            GatewayAuthority: authority,
+            GatewayStatus: callbackStatus || reason,
+            GatewayResponse: { callbackStatus, authority, reason },
+          },
+        });
 
         try {
           await strapi.entityService.create("api::order-log.order-log", {
@@ -973,6 +589,17 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
 
     if (isSamanFlow) {
       const samanService = strapi.service("api::payment-gateway.saman-kish") as any;
+      const reverseSamanOrThrow = async () => {
+        const reversal = await samanService.reverseTransaction({ refNum });
+        if (!reversal?.success) {
+          throw new Error(
+            reversal?.resultDescription ||
+              reversal?.error ||
+              `Saman reversal failed with code ${reversal?.resultCode ?? "unknown"}`,
+          );
+        }
+        return reversal;
+      };
       const refNum =
         samanRefNumInput !== undefined && samanRefNumInput !== null
           ? String(samanRefNumInput).trim()
@@ -1168,37 +795,19 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           }
         } catch (err) {
           strapi.log.error("Failed to check order status before cancelling (Saman)", err);
+          throw err;
         }
-        try {
-          await strapi.entityService.update("api::order.order", orderId!, {
-            data: { Status: "Cancelled" },
-          });
-        } catch (err) {
-          strapi.log.error("Failed to mark order cancelled (Saman)", err);
+        if (!contractId) {
+          throw new Error(`Saman order ${orderId} has no contract during cancellation`);
         }
-        try {
-          await releaseOrderReservation(strapi as any, Number(orderId), "Released");
-        } catch {}
-        if (contractId) {
-          try {
-            await strapi.entityService.update("api::contract.contract", contractId, {
-              data: { Status: "Cancelled", external_source: "SamanKish" },
-            });
-          } catch (err) {
-            strapi.log.error("Failed to cancel contract (Saman)", err);
-          }
-        }
-        if (contractTransaction?.id) {
-          try {
-            await strapi.entityService.update(
-              "api::contract-transaction.contract-transaction",
-              contractTransaction.id,
-              { data: { Status: "Failed" } },
-            );
-          } catch (err) {
-            strapi.log.error("Failed to update contract transaction status (Saman)", err);
-          }
-        }
+        await cancelOrderAndRelease(strapi, Number(orderId), Number(contractId), undefined, reason, {
+          reservationStatus: reason.startsWith("reservation_") ? "Expired" : "Released",
+          contractData: { external_source: "SamanKish" },
+          contractTransactionId: contractTransaction?.id
+            ? Number(contractTransaction.id)
+            : undefined,
+          contractTransactionData: { Status: "Failed" },
+        });
         try {
           await strapi.entityService.create("api::order-log.order-log", {
             data: {
@@ -1292,9 +901,15 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
             expectedAmountIrr,
           });
           try {
-            await samanService.reverseTransaction({ refNum });
+            await reverseSamanOrThrow();
           } catch (reverseErr) {
             strapi.log.error("Saman reverse attempt failed (amount mismatch)", reverseErr);
+            return ctx.redirect(
+              buildPaymentResultRedirectUrl("issue", {
+                orderId,
+                code: "amount_mismatch_reversal_unknown",
+              }),
+            );
           }
           try {
             await strapi.entityService.create("api::order-log.order-log", {
@@ -1324,9 +939,15 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         (orderEntity?.ReservationStatus && orderEntity.ReservationStatus !== "Reserved")
       ) {
         try {
-          await samanService.reverseTransaction({ refNum });
+          await reverseSamanOrThrow();
         } catch (reverseErr) {
           strapi.log.error("Saman reverse attempt failed (invalid reservation)", reverseErr);
+          return ctx.redirect(
+            buildPaymentResultRedirectUrl("issue", {
+              orderId,
+              code: "reservation_invalid_reversal_unknown",
+            }),
+          );
         }
         await markOrderCancelled("reservation_invalid");
         return ctx.redirect(
@@ -1337,141 +958,91 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         );
       }
 
-      // Atomic one-time claim: only the caller that wins this guarded CAS
-      // may proceed to consume stock and finalize the order/contract. A
-      // losing claim means another (concurrent or replayed) callback for
-      // this exact attempt already finalized it — idempotent replay, no
-      // side effects. This is called standalone (not inside a DB
-      // transaction) because it uses the raw connection pool directly, so a
-      // later rollback would not undo it — claim durably first, then run
-      // side effects.
-      if (attempt?.id) {
-        const claimed = await claimPaymentAttemptForSettlement(
-          strapi,
-          Number(attempt.id),
-          "Succeeded",
-        );
-        if (!claimed) {
-          const current: any = await strapi.entityService.findOne(
-            "api::payment-attempt.payment-attempt",
-            Number(attempt.id),
-            { fields: ["Status"] } as any,
-          );
-          if (String(current?.Status) === "Succeeded") {
-            strapi.log.info("Saman settlement already claimed by a concurrent/duplicate callback", {
-              orderId,
-              attemptId: attempt.id,
-            });
-            return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
-          }
-          strapi.log.error("Saman payment attempt not claimable at settlement time", {
-            orderId,
-            attemptId: attempt.id,
-            status: current?.Status,
-          });
-          return ctx.redirect(
-            buildPaymentResultRedirectUrl("issue", { orderId, code: "attempt_not_claimable" }),
-          );
-        }
-      } else {
-        strapi.log.error(
-          "Saman settlement proceeding without a payment_attempts row (legacy order predating attempt tracking)",
-          { orderId, resNum: resNumRaw },
-        );
+      if (!contractId) {
+        throw new Error(`Saman order ${orderId} has no contract during settlement`);
       }
 
-      // Stock handling:
-      // - Reserved orders: consume reservation (Count-- and ReservedCount--) atomically
-      // - Legacy orders: fallback to direct decrement
-      const stockResult = await handlePostPaymentStock(strapi, orderId, "Saman", {
-        requireReservation: true,
-      });
+      try {
+        const localSettlement = await finalizeGatewaySettlement(strapi, {
+          orderId,
+          contractId: Number(contractId),
+          paymentAttemptId: attempt?.id ? Number(attempt.id) : undefined,
+          contractTransactionId: contractTransaction?.id
+            ? Number(contractTransaction.id)
+            : undefined,
+          gateway: "SamanKish",
+          orderData: { external_source: "SamanKish" },
+          contractData: {
+            external_source: "SamanKish",
+            external_id: refNum,
+          },
+          contractTransactionData: {
+            Amount: affectiveAmountIrr || contractAmountIrr,
+            TrackId: refNum,
+            external_id: resNumRaw || contractTransaction?.external_id || refNum,
+            external_source: "SamanKish",
+          },
+          auditDescription: "Saman gateway verify succeeded",
+          auditChanges: {
+            refNum,
+            resNum: resNumRaw,
+            resultCode: verifyResult.resultCode,
+            detail,
+          },
+        });
 
-      if (!stockResult.success) {
-        // We already claimed the attempt as Succeeded above (money was
-        // taken), but local stock consumption failed — this is ambiguous,
-        // not a clean failure, so downgrade to "Unknown" rather than
-        // asserting a false terminal state. Never write "Failed" here: a
-        // successful claim must never be undone by a later local error.
+        if (localSettlement.outcome === "already_settled") {
+          strapi.log.info("Saman settlement already committed; idempotent callback", {
+            orderId,
+            attemptId: attempt?.id,
+          });
+          return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
+        }
+      } catch (error) {
+        const failureCode =
+          error instanceof GatewayLocalSettlementError
+            ? error.code
+            : "SAMAN_LOCAL_SETTLEMENT_FAILED";
+        strapi.log.error("Saman local settlement rolled back after provider verification", {
+          orderId,
+          failureCode,
+          error: (error as Error)?.message || error,
+        });
         if (attempt?.id) {
           try {
             await updatePaymentAttempt(strapi, Number(attempt.id), {
               Status: "Unknown",
-              failureCode: stockResult.expired ? "RESERVATION_EXPIRED" : "STOCK_CONSUME_FAILED",
-              failureMessage:
-                "Payment claimed but stock could not be consumed; needs reconciliation",
+              failureCode,
+              failureMessage: (error as Error)?.message || failureCode,
               lastReconciledAt: new Date(),
             });
           } catch (err) {
-            strapi.log.error("Failed to downgrade Saman payment attempt after stock failure", err);
+            strapi.log.error("Failed to persist Saman local-settlement recovery state", err);
           }
         }
-        if (stockResult.expired) {
-          // Reservation expired -> reverse transaction (automatic refund) and inform user
-          try {
-            await releaseOrderReservation(strapi as any, Number(orderId), "Expired");
-          } catch {}
-          try {
-            await samanService.reverseTransaction({ refNum });
-          } catch (reverseErr) {
-            strapi.log.error("Saman reverse attempt failed (expired reservation)", reverseErr);
-          }
-          await markOrderCancelled("reservation_expired");
-          return ctx.redirect(
-            buildPaymentResultRedirectUrl("issue", {
-              orderId,
-              code: "reservation_expired_reversed",
-            }),
-          );
-        } else {
-          // Consume failure -> reverse transaction and inform user
-          try {
-            await releaseOrderReservation(strapi as any, Number(orderId), "Expired");
-          } catch {}
-          try {
-            await samanService.reverseTransaction({ refNum });
-          } catch (reverseErr) {
-            strapi.log.error("Saman reverse attempt failed (consume failure)", reverseErr);
-          }
-          await markOrderCancelled("reservation_consume_failed");
-          return ctx.redirect(
-            buildPaymentResultRedirectUrl("issue", {
-              orderId,
-              code: "reservation_consume_failed",
-            }),
-          );
-        }
-      } else if (stockResult.errors && stockResult.errors.length > 0) {
-        return handleStockDecrementFailure(strapi, ctx, {
-          orderId,
-          stockErrors: stockResult.errors,
-          refNum,
-          paymentMethod: "SamanKish",
-          externalSource: "SamanKish",
-          // Preserve the resNum anchor (orders.external_id), not refNum — a
-          // duplicate/retried callback must still resolve this order after
-          // this write. RefNum is already durable on the contract-transaction
-          // (TrackId) and contract, so nothing is lost.
-          externalId: resNumRaw,
-        });
-      }
 
-      // Only proceed to "Started" if no stock errors occurred. Deliberately
-      // does NOT overwrite external_id with refNum: the correlation anchor
-      // (orders.external_id = resNumRaw, set at initiation) must survive
-      // settlement so a duplicate/retried callback for this same resNum
-      // still resolves this order via the anchor lookup above, instead of
-      // 400ing a paid customer who hits back/refresh. RefNum is already
-      // durable on the contract-transaction (TrackId) and contract.
-      try {
-        await strapi.entityService.update("api::order.order", orderId, {
-          data: {
-            Status: "Started",
-            external_source: "SamanKish",
-          },
-        });
-      } catch (err) {
-        strapi.log.error("Failed to update order status for Saman", err);
+        try {
+          await reverseSamanOrThrow();
+        } catch (reverseErr) {
+          strapi.log.error("Saman reversal is unknown after local settlement rollback", {
+            orderId,
+            failureCode,
+            error: (reverseErr as Error)?.message || reverseErr,
+          });
+          return ctx.redirect(
+            buildPaymentResultRedirectUrl("issue", {
+              orderId,
+              code: "saman_reversal_unknown",
+            }),
+          );
+        }
+        await markOrderCancelled(`local_settlement_rolled_back_${failureCode.toLowerCase()}`);
+        return ctx.redirect(
+          buildPaymentResultRedirectUrl("issue", {
+            orderId,
+            code: failureCode.toLowerCase(),
+          }),
+        );
       }
 
       // Increment discount usage counter if discount was applied
@@ -1479,82 +1050,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         await incrementDiscountUsageCounter(strapi, orderEntity.DiscountCode, orderId);
       }
 
-      if (contractId) {
-        try {
-          await strapi.entityService.update("api::contract.contract", contractId, {
-            data: {
-              Status: "Confirmed",
-              external_source: "SamanKish",
-              external_id: refNum,
-            },
-          });
-        } catch (err) {
-          strapi.log.error("Failed to update contract for Saman", err);
-        }
-      }
-
-      if (!contractTransaction && contractId) {
-        try {
-          contractTransaction = await strapi.entityService.create(
-            "api::contract-transaction.contract-transaction",
-            {
-              data: {
-                Type: "Gateway",
-                Amount: contractAmountIrr,
-                DiscountAmount: 0,
-                Step: 1,
-                Status: "Pending",
-                TrackId: refNum,
-                external_id: resNumRaw || refNum,
-                external_source: "SamanKish",
-                contract: contractId,
-                Date: new Date(),
-              },
-            },
-          );
-        } catch (err) {
-          strapi.log.error("Failed to create Saman contract transaction at verify", err);
-        }
-      }
-
-      if (contractTransaction?.id) {
-        try {
-          await strapi.entityService.update(
-            "api::contract-transaction.contract-transaction",
-            contractTransaction.id,
-            {
-              data: {
-                Status: "Success",
-                TrackId: refNum,
-                external_id: resNumRaw || contractTransaction.external_id,
-                Amount: affectiveAmountIrr || contractAmountIrr,
-              },
-            },
-          );
-        } catch (err) {
-          strapi.log.error("Failed to mark Saman contract transaction success", err);
-        }
-      }
-
       // Barcode generation is now a manual super-admin action.
-
-      try {
-        await strapi.entityService.create("api::order-log.order-log", {
-          data: {
-            order: orderId,
-            Action: "Update",
-            Description: "Saman gateway verify succeeded",
-            Changes: {
-              refNum,
-              resNum: resNumRaw,
-              resultCode: verifyResult.resultCode,
-              detail,
-            },
-          },
-        });
-      } catch (err) {
-        strapi.log.error("Failed to log Saman success", err);
-      }
 
       await clearCartAfterPayment(strapi, orderId, "SamanKish");
 
@@ -1632,7 +1128,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
 
       const currentOrder: any = await strapi.entityService.findOne("api::order.order", orderId, {
         fields: ["Status"],
-        populate: { user: true },
+        populate: { user: true, contract: true },
       } as any);
 
       const alreadySettled =
@@ -1684,17 +1180,22 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         });
       }
 
-      try {
-        await strapi.entityService.update("api::order.order", orderId, {
-          data: { Status: "Cancelled" },
-        });
-        try {
-          await releaseOrderReservation(strapi as any, Number(orderId), "Released");
-        } catch {}
-        strapi.log.info(`Order ${orderId} marked as Cancelled due to payment failure/cancellation`);
-      } catch (updateError) {
-        strapi.log.error(`Failed to update order ${orderId} status:`, updateError);
+      const failedContractId =
+        typeof currentOrder?.contract === "object"
+          ? Number(currentOrder.contract?.id)
+          : Number(currentOrder?.contract);
+      if (!Number.isInteger(failedContractId) || failedContractId <= 0) {
+        throw new Error(`Mellat order ${orderId} has no contract during cancellation`);
       }
+      await cancelOrderAndRelease(
+        strapi,
+        orderId,
+        failedContractId,
+        currentOrder?.user?.id,
+        `mellat_callback_${ResCode}`,
+        { contractData: { external_source: "Mellat" } },
+      );
+      strapi.log.info(`Order ${orderId} marked as Cancelled due to payment failure/cancellation`);
 
       // Log the specific error/cancellation
       try {
@@ -1860,10 +1361,6 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
 
           if (invalidReservation) {
             try {
-              await releaseOrderReservation(strapi as any, Number(orderId), "Expired");
-            } catch {}
-
-            try {
               await paymentService.reverseTransaction({
                 orderId: String(orderId),
                 saleOrderId: SaleOrderId,
@@ -1871,24 +1368,32 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
               });
             } catch (reverseErr) {
               strapi.log.error("Mellat reversal attempt failed (expired reservation)", reverseErr);
+              return ctx.redirect(
+                buildPaymentResultRedirectUrl("issue", {
+                  orderId,
+                  code: "reservation_expired_reversal_unknown",
+                }),
+              );
             }
 
-            try {
-              await strapi.entityService.update("api::order.order", orderId, {
-                data: { Status: "Cancelled" },
-              });
-            } catch {}
             const contractId =
               typeof orderForReservation?.contract === "object" && orderForReservation.contract
                 ? orderForReservation.contract.id
                 : orderForReservation?.contract;
-            if (contractId) {
-              try {
-                await strapi.entityService.update("api::contract.contract", contractId, {
-                  data: { Status: "Cancelled", external_source: "Mellat" },
-                });
-              } catch {}
+            if (!contractId) {
+              throw new Error(`Mellat order ${orderId} has no contract during reversal`);
             }
+            await cancelOrderAndRelease(
+              strapi,
+              orderId,
+              Number(contractId),
+              undefined,
+              "reservation_expired_reversed",
+              {
+                reservationStatus: "Expired",
+                contractData: { external_source: "Mellat" },
+              },
+            );
 
             try {
               await strapi.entityService.create("api::order-log.order-log", {
@@ -1911,6 +1416,7 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
         }
       } catch (reservationErr) {
         strapi.log.error("Failed to validate reservation before Mellat settlement", reservationErr);
+        throw reservationErr;
       }
 
       const settlementResult = await paymentService.settleTransaction({
@@ -1920,139 +1426,80 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
       });
 
       if (settlementResult.success) {
-        // Atomic one-time claim: only the caller that wins this guarded CAS
-        // may proceed to consume stock and finalize the order/contract. A
-        // losing claim means another (concurrent or replayed) callback for
-        // this exact attempt already finalized it — idempotent replay, no
-        // side effects. Called standalone (not inside a DB transaction)
-        // because it uses the raw connection pool directly.
-        if (attempt?.id) {
-          const claimed = await claimPaymentAttemptForSettlement(
-            strapi,
-            Number(attempt.id),
-            "Succeeded",
-          );
-          if (!claimed) {
-            const current: any = await strapi.entityService.findOne(
-              "api::payment-attempt.payment-attempt",
-              Number(attempt.id),
-              { fields: ["Status"] } as any,
-            );
-            if (String(current?.Status) === "Succeeded") {
-              strapi.log.info(
-                "Mellat settlement already claimed by a concurrent/duplicate callback",
-                { orderId, attemptId: attempt.id },
-              );
-              return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
-            }
-            strapi.log.error("Mellat payment attempt not claimable at settlement time", {
-              orderId,
-              attemptId: attempt.id,
-              status: current?.Status,
-            });
-            return ctx.redirect(
-              buildPaymentResultRedirectUrl("issue", { orderId, code: "attempt_not_claimable" }),
-            );
-          }
-        } else {
-          strapi.log.error(
-            "Mellat settlement proceeding without a payment_attempts row (legacy order predating attempt tracking)",
-            { orderId, refId: mellatRefIdRaw },
-          );
+        const settlementOrder: any = await strapi.entityService.findOne(
+          "api::order.order",
+          orderId,
+          { fields: ["DiscountCode"], populate: { contract: true } } as any,
+        );
+        const settlementContract = attempt?.contract || settlementOrder?.contract;
+        const settlementContractId = Number(
+          typeof settlementContract === "object" ? settlementContract?.id : settlementContract,
+        );
+        if (!Number.isInteger(settlementContractId) || settlementContractId <= 0) {
+          throw new Error(`Mellat order ${orderId} has no contract during settlement`);
         }
 
-        // Update order status to Started (Paid)
-        // Stock handling:
-        // - Reserved orders: consume reservation (Count-- and ReservedCount--) atomically
-        // - Legacy orders: fallback to direct decrement
-        const stockResult = await handlePostPaymentStock(strapi, orderId, "Mellat", {
-          requireReservation: true,
-        });
-        const stockErrors =
-          stockResult.errors && stockResult.errors.length > 0
-            ? stockResult.errors
-            : stockResult.success
-            ? []
-            : [
-                {
-                  error: stockResult.expired ? "Reservation expired" : "Stock decrement failed",
-                },
-              ];
+        try {
+          const localSettlement = await finalizeGatewaySettlement(strapi, {
+            orderId,
+            contractId: settlementContractId,
+            paymentAttemptId: attempt?.id ? Number(attempt.id) : undefined,
+            gateway: "Mellat",
+            contractData: {
+              external_source: "Mellat",
+              external_id: String(SaleReferenceId ?? RefId ?? ""),
+            },
+            contractTransactionData: {
+              Amount: Math.round(Number(settlementContract?.Amount || 0)) * 10,
+              TrackId: String(RefId ?? SaleReferenceId ?? ""),
+              external_id: String(SaleReferenceId ?? RefId ?? ""),
+              external_source: "Mellat",
+            },
+            auditDescription: "Gateway callback success (verify+settle)",
+            auditChanges: { ResCode, SaleOrderId, SaleReferenceId, RefId },
+          });
 
-        if (!stockResult.success || stockErrors.length > 0) {
-          // We already claimed the attempt as Succeeded above (money was
-          // taken), but local stock consumption failed — ambiguous, not a
-          // clean failure. Downgrade to "Unknown" rather than asserting a
-          // false terminal state; never write "Failed" after a successful
-          // claim.
+          if (localSettlement.outcome === "already_settled") {
+            strapi.log.info("Mellat settlement already committed; idempotent callback", {
+              orderId,
+              attemptId: attempt?.id,
+            });
+            return ctx.redirect(buildPaymentResultRedirectUrl("success", { orderId }));
+          }
+        } catch (error) {
+          const failureCode =
+            error instanceof GatewayLocalSettlementError
+              ? error.code
+              : "MELLAT_LOCAL_SETTLEMENT_FAILED";
+          strapi.log.error("Mellat local settlement rolled back after provider settlement", {
+            orderId,
+            failureCode,
+            error: (error as Error)?.message || error,
+          });
           if (attempt?.id) {
             try {
               await updatePaymentAttempt(strapi, Number(attempt.id), {
                 Status: "Unknown",
-                failureCode: stockResult.expired ? "RESERVATION_EXPIRED" : "STOCK_CONSUME_FAILED",
-                failureMessage:
-                  "Payment claimed but stock could not be consumed; needs reconciliation",
+                failureCode,
+                failureMessage: (error as Error)?.message || failureCode,
                 lastReconciledAt: new Date(),
               });
             } catch (err) {
-              strapi.log.error(
-                "Failed to downgrade Mellat payment attempt after stock failure",
-                err,
-              );
+              strapi.log.error("Failed to persist Mellat local-settlement recovery state", err);
             }
           }
-          const referenceId = SaleReferenceId || RefId || OrderId || SaleOrderId;
-          return handleStockDecrementFailure(strapi, ctx, {
-            orderId,
-            stockErrors,
-            refNum: referenceId,
-            paymentMethod: "Mellat",
-            externalSource: "Mellat",
-            externalId: SaleReferenceId || referenceId,
-          });
-        }
-
-        await strapi.entityService.update("api::order.order", orderId, {
-          data: {
-            Status: "Started",
-          },
-        });
-
-        const settledOrder = (await strapi.entityService.findOne("api::order.order", orderId, {
-          populate: { contract: true },
-        } as any)) as any;
-
-        // Record the settled transaction before anything that can fail, so a
-        // replayed callback is caught by the idempotency check above.
-        await recordMellatSettlement(strapi, {
-          orderId,
-          contract: settledOrder?.contract,
-          saleReferenceId: SaleReferenceId,
-          refId: RefId,
-        });
-
-        if (settledOrder?.contract) {
-          const settledContractId =
-            typeof settledOrder.contract === "object"
-              ? settledOrder.contract.id
-              : settledOrder.contract;
-          try {
-            await strapi.entityService.update("api::contract.contract", settledContractId, {
-              data: {
-                Status: "Confirmed",
-                external_source: "Mellat",
-                external_id: String(SaleReferenceId ?? RefId ?? ""),
-              },
-            });
-          } catch (err) {
-            strapi.log.error("Failed to update contract for Mellat", err);
-          }
+          return ctx.redirect(
+            buildPaymentResultRedirectUrl("issue", {
+              orderId,
+              code: failureCode.toLowerCase(),
+            }),
+          );
         }
 
         // Increment discount usage counter if discount was applied
         try {
-          if (settledOrder?.DiscountCode) {
-            await incrementDiscountUsageCounter(strapi, settledOrder.DiscountCode, orderId);
+          if (settlementOrder?.DiscountCode) {
+            await incrementDiscountUsageCounter(strapi, settlementOrder.DiscountCode, orderId);
           }
         } catch (err) {
           strapi.log.error("Failed to increment discount for Mellat order", err);
@@ -2066,20 +1513,6 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
           SaleReferenceId,
           settlementResult: settlementResult.resCode,
         });
-
-        // Audit log for successful payment callback
-        try {
-          await strapi.entityService.create("api::order-log.order-log", {
-            data: {
-              order: orderId,
-              Action: "Update",
-              Description: "Gateway callback success (verify+settle)",
-              Changes: { ResCode, SaleOrderId, SaleReferenceId, RefId },
-            },
-          });
-        } catch (e) {
-          strapi.log.error("Failed to persist gateway success log", e);
-        }
 
         await clearCartAfterPayment(strapi, orderId, "Mellat");
 

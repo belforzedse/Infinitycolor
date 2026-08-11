@@ -29,8 +29,9 @@ export async function claimPaymentAttemptForSettlement(
   strapi: Strapi,
   id: number,
   targetStatus: "Succeeded" | "Failed",
+  trx?: any,
 ) {
-  const result = await strapi.db.connection.raw(
+  const result = await (trx ?? strapi.db.connection).raw(
     `UPDATE payment_attempts
        SET status = ?, updated_at = ?
      WHERE id = ? AND status IN ('Pending', 'Redirected')

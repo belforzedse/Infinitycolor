@@ -506,15 +506,12 @@ async function failInitiation(
   message: string,
 ): Promise<void> {
   await strapi.db.transaction(async ({ trx }) => {
-    const released = await releaseOrderReservation(
+    await releaseOrderReservation(
       strapi,
       Number(bundle.order.id),
       "Released",
       trx,
     );
-    if (!released.success) {
-      throw new Error(`SNAPPAY_RESERVATION_RELEASE_FAILED:${released.error || "unknown"}`);
-    }
     const now = new Date();
     await strapi.db.query(ORDER_UID).update({
       where: { id: bundle.order.id },

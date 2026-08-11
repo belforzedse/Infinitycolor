@@ -67,11 +67,12 @@ export const COMMERCE_KEEP_TARGETS = [
   "api::footer.footer",
   "plugin::upload.file",
   "plugin::upload.folder",
+  // Audit history is append-only accountability data, never commerce fixture data.
+  "api::admin-activity.admin-activity",
+  "api::manual-admin-activity.manual-admin-activity",
 ] as const;
 
 export const COMMERCE_NEEDS_CONFIRMATION_TARGETS = [
-  "api::admin-activity.admin-activity",
-  "api::manual-admin-activity.manual-admin-activity",
   "api::event-log.event-log",
   "api::user-activity.user-activity",
   "api::wallet-topup.wallet-topup",

@@ -1,3 +1,5 @@
+import type { AuditJobContext } from "../audit/types";
+
 export const QUEUE_NAMES = {
   commerceMaintenance: "commerce-maintenance",
   analyticsMaintenance: "analytics-maintenance",
@@ -10,6 +12,7 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   scheduledProductPublishOne: "scheduledProducts.publishOne",
   scheduledProductReconcile: "scheduledProducts.reconcile",
   cartCleanupReconcile: "cartCleanup.reconcile",
+  anipoBarcodeReconcile: "anipoBarcodes.reconcile",
 } as const;
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
@@ -23,6 +26,10 @@ export const SNAPPAY_PAYMENT_JOBS = {
   sweep: "snappay.sweep",
 } as const;
 
+export const WALLET_TOPUP_PAYMENT_JOBS = {
+  reconcile: "walletTopups.reconcile",
+} as const;
+
 export const MAINTENANCE_SCHEDULERS = {
   stockReservationExpiry: "sched:stockReservations.expire",
   reserveOrderExpiry: "sched:reserveOrders.expire",
@@ -32,6 +39,8 @@ export const MAINTENANCE_SCHEDULERS = {
   analyticsDailyRollup: "sched:analyticsDailyRollup.run",
   analyticsOutboxRepair: "sched:analyticsOutboxRepair.run",
   snappaySweep: "sched:snappay.sweep",
+  walletTopupReconcile: "sched:walletTopups.reconcile",
+  anipoBarcodeReconcile: "sched:anipoBarcodes.reconcile",
 } as const;
 
 export type CommerceMaintenanceJobName =
@@ -49,6 +58,8 @@ export type ScheduledProductPublicationJobData = {
   productId: number;
   scheduleRevision: number;
   expectedPublishAt: string;
+  /** Minimal, sanitized causal context. The worker always supplies its own actor. */
+  auditContext?: AuditJobContext;
 };
 
 export type MaintenanceJobData =

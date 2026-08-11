@@ -279,6 +279,7 @@ function createActionTree() {
           adminPaymentOperation: action(),
           adminVoidBarcode: action(),
           generateAnipoBarcode: action(),
+          checkAnipoBarcode: action(),
           decrementStockManual: action(),
         },
       },

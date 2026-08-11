@@ -1,4 +1,5 @@
 export default ({ env }) => {
+  const isTypeGeneration = process.argv.includes("ts:generate-types");
   // Use Redis for REST cache in production for shared cache across Strapi instances
   // Memory provider in development for simplicity
   const restCacheProviderName = env("REST_CACHE_PROVIDER", env("NODE_ENV") === "production" ? "redis" : "memory").toLowerCase();
@@ -51,18 +52,20 @@ export default ({ env }) => {
       // Disable by default in production to avoid filesystem permission issues.
       enabled: env.bool("STRAPI_ENABLE_DOCUMENTATION", env("NODE_ENV") !== "production"),
     },
-    redis: {
-      config: {
-        connections: {
-          default: {
-            connection: redisConnection,
-            settings: {
-              debug: false,
+    redis: isTypeGeneration
+      ? { enabled: false }
+      : {
+          config: {
+            connections: {
+              default: {
+                connection: redisConnection,
+                settings: {
+                  debug: false,
+                },
+              },
             },
           },
         },
-      },
-    },
     "rest-cache": {
       config: {
         provider: {

@@ -7,6 +7,12 @@ import { queueSnappayAdminCancel } from "../../../payment-gateway/services/snapp
 import { isSnappayGatewayValue } from "../../../payment-gateway/services/checkout-gateway-availability";
 import { computePaidAmountToman } from "./paidAmount";
 import { enqueueRefundForReturn } from "../../../report/analytics/outbox";
+import {
+  creditOrderRefund,
+  lockOrderForAdminMutation,
+  OrderChangedConcurrentlyError,
+  restoreStockWithMandatoryAudit,
+} from "./adminOrderIntegrity";
 
 export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
   const { id } = ctx.params;
@@ -65,8 +71,6 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
     }
 
     const contract = order.contract;
-    const contractIdNum = Number(contract?.id);
-    const paidAmount = computePaidAmountToman(order);
     const txList = contract?.contract_transactions || [];
     const isSnappay =
       isSnappayGatewayValue(order.PaymentGateway) ||
@@ -98,29 +102,65 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
     }
 
     // Non-SnappPay cancellations remain an atomic local wallet operation.
+    const preflightUpdatedAt = new Date(order.updatedAt).getTime();
     let refundTransactionId: number | null = null;
+    let committedRefundToman = 0;
     const result = await strapi.db.transaction(async ({ trx }) => {
+      await lockOrderForAdminMutation(trx, orderIdNum);
+      const currentOrder: any = await strapi.db.query("api::order.order").findOne({
+        where: { id: orderIdNum },
+        populate: {
+          user: true,
+          order_items: {
+            populate: {
+              product_variation: { populate: { product_stock: true } },
+            },
+          },
+          contract: { populate: { contract_transactions: true } },
+        },
+        transacting: trx,
+      } as any);
+      if (
+        !currentOrder ||
+        !["Paying", "Started"].includes(String(currentOrder.Status)) ||
+        currentOrder.ShippingBarcode ||
+        !Number.isFinite(preflightUpdatedAt) ||
+        new Date(currentOrder.updatedAt).getTime() !== preflightUpdatedAt
+      ) {
+        throw new OrderChangedConcurrentlyError();
+      }
+
+      const currentContract = currentOrder.contract;
+      const currentContractId = Number(currentContract?.id);
+      const currentTransactions = currentContract?.contract_transactions || [];
+      const becameSnappay =
+        isSnappayGatewayValue(currentOrder.PaymentGateway) ||
+        isSnappayGatewayValue(currentContract?.external_source) ||
+        currentTransactions.some((tx: any) =>
+          isSnappayGatewayValue(tx?.external_source),
+        );
+      if (becameSnappay) throw new OrderChangedConcurrentlyError();
+
+      const paidAmount = computePaidAmountToman(currentOrder);
+      committedRefundToman = paidAmount;
       let reservationReleased = false;
       // Restock all items
-      for (const item of order.order_items) {
+      for (const item of currentOrder.order_items || []) {
         const stockId = item.product_variation?.product_stock?.id;
         if (stockId) {
           const qty = Number(item.Count || 0);
-          if (order.Status === "Started") {
-            const stock = await strapi.db
-              .query("api::product-stock.product-stock")
-              .findOne({ where: { id: stockId } });
-            if (stock) {
-              await strapi.db.query("api::product-stock.product-stock").update({
-                where: { id: stockId },
-                data: {
-                  Count: Number(stock.Count || 0) + qty,
-                },
-              });
-            }
-          } else if (order.Status === "Paying") {
+          if (!Number.isInteger(qty) || qty <= 0) continue;
+          if (currentOrder.Status === "Started") {
+            await restoreStockWithMandatoryAudit(strapi, {
+              stockId: Number(stockId),
+              quantity: qty,
+              orderId: orderIdNum,
+              cause: "Admin Order Cancellation",
+              trx,
+            });
+          } else if (currentOrder.Status === "Paying") {
             // For unpaid orders, only release reservation (do NOT increment Count)
-            if (order.ReservationStatus === "Reserved") {
+            if (currentOrder.ReservationStatus === "Reserved") {
               // `trx` is mandatory here: releaseReservedStockAtomic issues raw SQL,
               // and raw SQL does not inherit the ambient transaction the way
               // strapi.db.query does. Without it the reserved_count decrement
@@ -162,77 +202,32 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       await strapi.db.query("api::order.order").update({
         where: { id: orderIdNum },
         data: orderUpdateData,
-      });
+        transacting: trx,
+      } as any);
 
-      if (Number.isFinite(contractIdNum)) {
+      if (Number.isFinite(currentContractId)) {
         await strapi.db.query("api::contract.contract").update({
-          where: { id: contractIdNum },
+          where: { id: currentContractId },
           data: { Status: "Cancelled", Amount: 0 },
-        });
+          transacting: trx,
+        } as any);
       }
 
       // Refund to wallet. SnappPay orders returned above and never reach here.
-      {
-        const userId = order.user?.id || order.user;
-        let wallet = await strapi.db
-          .query("api::local-user-wallet.local-user-wallet")
-          .findOne({ where: { user: userId } });
-
-        if (!wallet) {
-          wallet = await strapi.db.query("api::local-user-wallet.local-user-wallet").create({
-            data: {
-              user: userId,
-              Balance: 0,
-              LastTransactionDate: new Date(),
-            },
-          });
-        }
-
-        if (paidAmount > 0) {
-          const refundIrr = paidAmount * 10;
-          await strapi.db.query("api::local-user-wallet.local-user-wallet").update({
-            where: { id: wallet.id },
-            data: {
-              Balance: Number(wallet.Balance || 0) + refundIrr,
-              LastTransactionDate: new Date(),
-            },
-          });
-
-          await strapi.db
-            .query("api::local-user-wallet-transaction.local-user-wallet-transaction")
-            .create({
-              data: {
-                Amount: refundIrr,
-                Type: "Add",
-                Date: new Date(),
-                Cause: "Order Cancelled (Admin)",
-                ReferenceId: `order-${orderIdNum}-cancel-${Date.now()}`,
-                user_wallet: wallet.id,
-              },
-            });
-
-          // Create contract-transaction Return record
-          const maxStep =
-            txList.length > 0 ? Math.max(...txList.map((t: any) => Number(t.Step || 0))) : 0;
-
-          if (Number.isFinite(contractIdNum)) {
-            const returnTx = await strapi.db
-              .query("api::contract-transaction.contract-transaction")
-              .create({
-                data: {
-                  Type: "Return",
-                  Amount: refundIrr,
-                  Step: maxStep + 1,
-                  Status: "Success",
-                  external_source: "System",
-                  contract: contractIdNum,
-                  Date: new Date(),
-                },
-              });
-            refundTransactionId = Number(returnTx.id);
-          }
-        }
+      const userId = Number(currentOrder.user?.id || currentOrder.user);
+      if (paidAmount > 0 && !Number.isFinite(userId)) {
+        throw new Error("ORDER_REFUND_USER_NOT_FOUND");
       }
+      refundTransactionId = await creditOrderRefund(strapi, {
+        userId,
+        orderId: orderIdNum,
+        contractId: Number.isFinite(currentContractId) ? currentContractId : null,
+        transactions: currentTransactions,
+        refundToman: paidAmount,
+        kind: "cancel",
+        note: String(reason || "") || undefined,
+        trx,
+      });
 
       // Log
       await strapi.db.query("api::order-log.order-log").create({
@@ -246,29 +241,19 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
           },
           PerformedBy: `Admin User ${fullUser.id}`,
         },
-      });
+        transacting: trx,
+      } as any);
 
-      // Log admin activity
-      try {
-        const ip = ctx.request?.ip || ctx.ip || null;
-        const userAgent =
-          ctx.request?.headers?.["user-agent"] || ctx.headers?.["user-agent"] || null;
-
-        await logAdminOrderCancel(
-          strapi,
-          orderIdNum,
-          reason || "بدون دلیل",
-          fullUser.id,
-          ip,
-          userAgent,
-          roleName,
-        );
-      } catch (activityError) {
-        strapi.log.error("Failed to log admin activity for order cancel", {
-          orderId: orderIdNum,
-          error: (activityError as Error).message,
-        });
-      }
+      await logAdminOrderCancel(
+        strapi,
+        orderIdNum,
+        reason || "بدون دلیل",
+        fullUser.id,
+        ctx.request?.ip || ctx.ip || null,
+        ctx.request?.headers?.["user-agent"] || ctx.headers?.["user-agent"] || null,
+        roleName,
+        trx,
+      );
 
       return {
         data: {
@@ -281,11 +266,11 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
 
     // Enqueue only after the refund transaction commits. Delivery is retried by
     // the analytics worker and can never block the cancellation response.
-    if (paidAmount > 0 && refundTransactionId) {
+    if (committedRefundToman > 0 && refundTransactionId) {
       void enqueueRefundForReturn(strapi as any, {
         orderId: orderIdNum,
         contractTransactionId: refundTransactionId,
-        amountToman: paidAmount,
+        amountToman: committedRefundToman,
       }).catch(() => {});
     }
 
@@ -293,6 +278,14 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
   } catch (error: any) {
     strapi.log.error("adminCancelOrder error", error);
     const message = String(error?.message || "");
+    if (error instanceof OrderChangedConcurrentlyError) {
+      return ctx.conflict("Order changed concurrently", {
+        data: {
+          error: "ORDER_CHANGED_CONCURRENTLY",
+          errorCode: "ORDER_CHANGED_CONCURRENTLY",
+        },
+      });
+    }
     if (message.startsWith("SNAPPAY_")) {
       if (
         message === "SNAPPAY_ATTEMPT_NOT_FOUND" ||

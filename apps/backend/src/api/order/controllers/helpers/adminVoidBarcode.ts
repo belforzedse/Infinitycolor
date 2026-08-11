@@ -29,31 +29,34 @@ export async function adminVoidBarcodeHandler(strapi: Strapi, ctx: any) {
       });
     }
 
-    await strapi.db.query("api::order.order").update({
-      where: { id },
-      data: {
-        ShippingBarcode: null,
-      },
-    });
-
-    await strapi.db.query("api::order-log.order-log").create({
-      data: {
-        order: id,
-        Action: "Update",
-        Description: "Admin removed shipping barcode",
-        Changes: {
-          reason: reason || "",
-          previousBarcode: order.ShippingBarcode,
+    await strapi.db.transaction(async ({ trx }) => {
+      await strapi.db.query("api::order.order").update({
+        where: { id },
+        data: {
+          ShippingBarcode: null,
+          AnipoBarcodeState: "Voided",
+          AnipoLastCheckedAt: new Date(),
+          AnipoLastMessage: reason || "Admin voided the local Anipo barcode",
         },
-              PerformedBy: `Admin User ${fullUser.id}`,
-      },
-    });
+        transacting: trx,
+      } as any);
 
-    // Log admin activity
-    try {
+      await strapi.db.query("api::order-log.order-log").create({
+        data: {
+          order: id,
+          Action: "Update",
+          Description: "Admin removed shipping barcode",
+          Changes: {
+            reason: reason || "",
+            previousBarcode: order.ShippingBarcode,
+          },
+          PerformedBy: `Admin User ${fullUser.id}`,
+        },
+        transacting: trx,
+      } as any);
+
       const ip = ctx.request?.ip || ctx.ip || null;
       const userAgent = ctx.request?.headers?.["user-agent"] || ctx.headers?.["user-agent"] || null;
-
       await logAdminBarcodeOperation(
         strapi,
         id,
@@ -64,13 +67,9 @@ export async function adminVoidBarcodeHandler(strapi: Strapi, ctx: any) {
         ip,
         userAgent,
         roleName,
+        trx,
       );
-    } catch (activityError) {
-      strapi.log.error("Failed to log admin activity for barcode void", {
-        orderId: id,
-        error: (activityError as Error).message,
-      });
-    }
+    });
 
     return {
       data: {

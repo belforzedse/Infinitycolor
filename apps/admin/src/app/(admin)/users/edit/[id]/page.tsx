@@ -11,6 +11,7 @@ import { getUserActivities, UserActivity } from "@/services/user-activity";
 import Link from "next/link";
 import { useCan } from "@/hooks/useCan";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import AuditTimeline from "@/components/SuperAdmin/Audit/AuditTimeline";
 import WalletAdjustCard from "./WalletAdjustCard";
 import {
   AdminCard,
@@ -213,11 +214,23 @@ export default function Page() {
 
       {canAdjustWallet && id && <WalletAdjustCard userId={Number(id)} />}
 
+      {id && (
+        <AuditTimeline
+          title="سابقه مدیریتی کاربر"
+          targetType="user"
+          targetId={id}
+          pageSize={12}
+        />
+      )}
+
       {/* User Activities Section */}
       <div className="rounded-2xl bg-white p-6">
         <h2 className="mb-4 text-xl font-bold text-neutral-900">
-          فعالیت‌های کاربر
+          فعالیت‌های خود کاربر در فروشگاه
         </h2>
+        <p className="mb-4 text-xs text-neutral-500">
+          این بخش رفتار مشتری در فروشگاه است و با سابقه مدیریتی بالا تفاوت دارد.
+        </p>
         {activitiesLoading ? (
           <div className="flex items-center justify-center py-8">
             <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-infinity-primary"></div>

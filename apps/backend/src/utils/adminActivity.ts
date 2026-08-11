@@ -21,6 +21,7 @@ export async function logAdminOrderEdit(
   ip?: string | null,
   userAgent?: string | null,
   adminRole?: string,
+  trx?: unknown,
 ) {
   const changesKeys = Object.keys(changes || {});
   const hasChanges = changesKeys.length > 0;
@@ -43,6 +44,7 @@ export async function logAdminOrderEdit(
     actor: { id: adminId, role: adminRole },
     ip,
     userAgent,
+    trx,
   });
 }
 
@@ -59,6 +61,7 @@ export async function logAdminOrderCreate(
   ip?: string | null,
   userAgent?: string | null,
   adminRole?: string,
+  trx?: unknown,
 ) {
   return recordAdminAudit(strapi, {
     resourceType: "Order",
@@ -73,6 +76,7 @@ export async function logAdminOrderCreate(
     actor: { id: adminId, role: adminRole },
     ip,
     userAgent,
+    trx,
   });
 }
 
@@ -101,6 +105,7 @@ export async function logAdminOrderFieldUpdate(
   ip?: string | null,
   userAgent?: string | null,
   adminRole?: string,
+  trx?: unknown,
 ) {
   const changedKeys = Object.keys(changes || {});
   if (changedKeys.length === 0) return false;
@@ -126,6 +131,7 @@ export async function logAdminOrderFieldUpdate(
     actor: { id: adminId, role: adminRole },
     ip,
     userAgent,
+    trx,
   });
 }
 
@@ -140,6 +146,7 @@ export async function logAdminOrderCancel(
   ip?: string | null,
   userAgent?: string | null,
   adminRole?: string,
+  trx?: unknown,
 ) {
   return recordAdminAudit(strapi, {
     resourceType: "Order",
@@ -154,6 +161,7 @@ export async function logAdminOrderCancel(
     actor: { id: adminId, role: adminRole },
     ip,
     userAgent,
+    trx,
   });
 }
 
@@ -170,6 +178,7 @@ export async function logAdminBarcodeOperation(
   ip?: string | null,
   userAgent?: string | null,
   adminRole?: string,
+  trx?: unknown,
 ) {
   const isGenerate = action === "generate";
 
@@ -200,6 +209,7 @@ export async function logAdminBarcodeOperation(
     actor: { id: adminId, role: adminRole },
     ip,
     userAgent,
+    trx,
   });
 }
 

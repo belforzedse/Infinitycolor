@@ -12,6 +12,7 @@ import {
   ResourceListItem,
   StatusBadge,
 } from "@/components/admin";
+import type { AnipoBarcodeState } from "@/types/super-admin/order";
 /**
  * Buyer identity for an order row.
  *
@@ -53,7 +54,19 @@ export type Order = {
     Note: string;
     Status: string;
     Date: string;
+    ShippingMethodCode?: string;
     ShippingBarcode?: string;
+    ShippingWeight?: number;
+    ShippingBoxSizeId?: number;
+    AnipoBarcodeState?: AnipoBarcodeState;
+    AnipoSubmittedAt?: string;
+    AnipoLastCheckedAt?: string;
+    AnipoPollingDeadlineAt?: string;
+    AnipoIssuedAt?: string;
+    AnipoReadyToIssue?: boolean;
+    AnipoProviderStatus?: string;
+    AnipoLastMessage?: string;
+    AnipoLastError?: string;
     createdAt: string;
     updatedAt: string;
     user: {
@@ -201,7 +214,14 @@ export const columns: ColumnDef<Order>[] = [
       return (
         <OrderRowActions
           orderId={row.original.id}
+          orderStatus={row.original.attributes.Status}
+          shippingMethodCode={row.original.attributes.ShippingMethodCode}
           shippingBarcode={row.original.attributes.ShippingBarcode}
+          shippingWeight={row.original.attributes.ShippingWeight}
+          shippingBoxSizeId={row.original.attributes.ShippingBoxSizeId}
+          anipoBarcodeState={row.original.attributes.AnipoBarcodeState}
+          anipoLastMessage={row.original.attributes.AnipoLastMessage}
+          anipoLastError={row.original.attributes.AnipoLastError}
         />
       );
     },
@@ -318,7 +338,14 @@ export const MobileTable = ({ data, selectionProps }: Props) => {
             actions={
               <OrderRowActions
                 orderId={row.id}
+                orderStatus={row.attributes.Status}
+                shippingMethodCode={row.attributes.ShippingMethodCode}
                 shippingBarcode={row.attributes.ShippingBarcode}
+                shippingWeight={row.attributes.ShippingWeight}
+                shippingBoxSizeId={row.attributes.ShippingBoxSizeId}
+                anipoBarcodeState={row.attributes.AnipoBarcodeState}
+                anipoLastMessage={row.attributes.AnipoLastMessage}
+                anipoLastError={row.attributes.AnipoLastError}
               />
             }
           />

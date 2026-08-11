@@ -59,16 +59,17 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
       },
       transacting: trx,
     } as any);
+    await logAdminOrderFieldUpdate(
+      strapi,
+      orderId,
+      { Status: { from: order.Status, to: nextStatus } },
+      Number(fullUser.id),
+      getClientIp(ctx),
+      getUserAgent(ctx),
+      fullUser?.role?.name,
+      trx,
+    );
   });
-
-  await logAdminOrderFieldUpdate(
-    strapi,
-    orderId,
-    { Status: { from: order.Status, to: nextStatus } },
-    Number(fullUser.id),
-    getClientIp(ctx),
-    getUserAgent(ctx),
-  );
 
   const customerId = Number(order.user?.id ?? order.user);
   if (Number.isFinite(customerId) && customerId > 0) {

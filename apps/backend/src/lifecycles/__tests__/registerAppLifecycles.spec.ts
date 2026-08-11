@@ -172,7 +172,7 @@ describe("registerAppLifecycles", () => {
     }
   });
 
-  it("logs order status updates using the closed-over Strapi instance", async () => {
+  it("keeps technical order effects but leaves canonical audit to the owning mutation", async () => {
     const { strapi, subscribers, activityService } = createMockStrapi();
     strapi.entityService.findOne
       .mockResolvedValueOnce({
@@ -204,14 +204,10 @@ describe("registerAppLifecycles", () => {
         }),
       })
     );
-    expect(recordAdminAudit).toHaveBeenCalledWith(
-      strapi,
-      expect.objectContaining({
-        resourceType: "Order",
-        resourceId: 10,
-        action: "StatusChange",
-      })
-    );
+    // Lifecycle observers cannot prove who owned the mutation or whether its
+    // outer transaction will commit. Canonical events are emitted explicitly by
+    // the order service; retaining this call would duplicate and misattribute it.
+    expect(recordAdminAudit).not.toHaveBeenCalled();
     expect(logOrderEvent).toHaveBeenCalledWith(
       strapi,
       expect.objectContaining({

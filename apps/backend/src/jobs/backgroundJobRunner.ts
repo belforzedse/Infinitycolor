@@ -16,12 +16,6 @@ export type BackgroundJobRunResult =
       durationMs: number;
       skippedReason: "in_process";
       stats: BackgroundJobStats;
-    }
-  | {
-      status: "failed";
-      durationMs: number;
-      error: ReturnType<typeof formatError>;
-      stats: BackgroundJobStats;
     };
 
 type RunBackgroundJobOptions = {
@@ -88,16 +82,13 @@ export async function runBackgroundJob({
     return result;
   } catch (error) {
     const formatted = formatError(error);
-    const result: BackgroundJobRunResult = {
-      status: "failed",
-      durationMs: Date.now() - startedAt,
-      error: formatted,
-      stats: { failed: 1 },
-    };
     // Include the message in the headline: the logger drops the meta object in some
     // environments, which previously hid the root cause entirely.
-    strapi.log.error(`${jobName} job failed: ${formatted.message}`, result);
-    return result;
+    strapi.log.error(`${jobName} job failed: ${formatted.message}`, {
+      durationMs: Date.now() - startedAt,
+      error: formatted,
+    });
+    throw error instanceof Error ? error : new Error(formatted.message);
   } finally {
     runningJobs.delete(jobName);
   }

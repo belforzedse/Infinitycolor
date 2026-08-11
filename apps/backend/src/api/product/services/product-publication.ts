@@ -1,5 +1,9 @@
 import type { Strapi } from "@strapi/strapi";
-import { recordAdminAudit, type AdminAuditActor } from "../../../utils/adminAudit";
+import { randomUUID } from "node:crypto";
+import type { AdminAuditActor } from "../../../utils/adminAudit";
+import { resolveCurrentAuditContext, writeAuditEvent } from "../../../audit/writer";
+import type { AuditJobContext, AuditPrincipal, AuditActorType, AuditOrigin } from "../../../audit/types";
+import { serializeAuditJobContext } from "../../../audit/sanitizer";
 import { delByPatternStrict } from "../../../utils/responseCache";
 import { triggerFrontendRevalidation } from "../../../utils/revalidate";
 
@@ -41,6 +45,8 @@ export type PublicationResult = {
   previousScheduleRevision?: number;
   changed: boolean;
   needsPublicationEffects: boolean;
+  /** Internal queue hand-off only; controllers must not expose this in API responses. */
+  auditJobContext?: AuditJobContext;
 };
 
 export class PublicationCommandError extends Error {
@@ -74,6 +80,7 @@ type ProductRow = {
   scheduled_publish_failure_kind: string | null;
   scheduled_publish_attempt_count: number | null;
   scheduled_publish_next_retry_at: string | Date | null;
+  scheduled_publish_audit_context: AuditJobContext | null;
   publication_revision: number | null;
   publication_effects_completed_revision: number | null;
   publication_effects_last_error: string | null;
@@ -156,6 +163,9 @@ async function assertRequiredMedia(strapi: Strapi, productId: number, required: 
 function resultFromRow(row: ProductRow, changed: boolean, previousScheduleRevision?: number): PublicationResult {
   const publicationRevision = Number(row.publication_revision || 0);
   const completedRevision = Number(row.publication_effects_completed_revision || 0);
+  const auditJobContext = row.status === "Scheduled"
+    ? storedPublicationAuditContext(row) || undefined
+    : undefined;
   return {
     productId: Number(row.id),
     status: (row.status || "InActive") as ProductPublicationStatus,
@@ -166,6 +176,7 @@ function resultFromRow(row: ProductRow, changed: boolean, previousScheduleRevisi
     previousScheduleRevision,
     changed,
     needsPublicationEffects: publicationRevision > completedRevision,
+    auditJobContext,
   };
 }
 
@@ -202,7 +213,7 @@ async function writePublicationLog(
       } as never,
     });
   } catch (error) {
-    strapi.log.error("[product-publication] audit log write failed", {
+    strapi.log.error("[product-publication] technical log write failed", {
       productId: result.productId,
       action,
       origin: context.origin,
@@ -210,26 +221,178 @@ async function writePublicationLog(
     });
   }
 
-  if (!actor?.id) return;
-  const adminAction =
-    action === "publish-now" ? "Publish" : action === "unpublish" ? "Unpublish" : "StatusChange";
-  await recordAdminAudit(strapi, {
-    resourceType: "Product",
-    resourceId: result.productId,
-    action: adminAction,
-    actor,
-    ip: actor.ip,
-    userAgent: actor.userAgent,
-    title: `Product publication ${action}`,
-    messageEn: `Product #${result.productId} publication action: ${action}`,
-    severity: "info",
-    metadata: {
-      origin: context.origin,
-      scheduleRevision: result.scheduleRevision,
-      scheduledPublishAt: result.scheduledPublishAt,
-      status: result.status,
-    },
+}
+
+const PUBLICATION_EVENT_KEYS: Record<PublicationAction, string> = {
+  schedule: "products.publication_scheduled",
+  retry: "products.publication_rescheduled",
+  cancel: "products.publication_cancelled",
+  "publish-now": "products.published",
+  unpublish: "products.unpublished",
+};
+
+function publicationOrigin(origin: PublicationOrigin): AuditOrigin {
+  if (origin === "admin") return "admin_ui";
+  if (origin === "scheduler") return "scheduled_task";
+  if (origin === "importer") return "import";
+  return "maintenance";
+}
+
+function automaticPublicationActor(origin: PublicationOrigin): AuditPrincipal<AuditActorType> {
+  if (origin === "importer") {
+    return { type: "background_worker", id: "product-importer", label: "Product Import Worker" };
+  }
+  if (origin === "scheduler") {
+    return { type: "scheduled_job", id: "product-publication", label: "Product Publication Scheduler" };
+  }
+  return { type: "system", id: "publication-reconciler", label: "Publication Reconciler" };
+}
+
+function publicationParties(context: PublicationCommandContext) {
+  const ambientActor = resolveCurrentAuditContext()?.actor;
+  const human = context.actor?.id
+    ? {
+        type: "human" as const,
+        id: context.actor.id,
+        label: context.actor.name || `User ${context.actor.id}`,
+        role: context.actor.role || null,
+      }
+    : ambientActor && ["human", "impersonated_human"].includes(ambientActor.type)
+      ? ambientActor
+      : null;
+  const actor = context.origin === "admin" && human ? human : automaticPublicationActor(context.origin);
+  return { actor, initiator: human || actor, origin: publicationOrigin(context.origin) };
+}
+
+function publicationJobContext(
+  context: PublicationCommandContext,
+  rootEventId: string,
+): AuditJobContext {
+  const ambient = resolveCurrentAuditContext();
+  const parties = publicationParties(context);
+  return serializeAuditJobContext({
+    schemaVersion: 1,
+    initiator: parties.initiator,
+    origin: parties.origin,
+    requestId: ambient?.requestId || undefined,
+    interactionId: ambient?.interactionId || undefined,
+    correlationId: ambient?.correlationId || rootEventId,
+    rootEventId,
+    causationId: rootEventId,
   });
+}
+
+async function writePublicationAudit(
+  strapi: Strapi,
+  before: ProductRow,
+  after: ProductRow,
+  action: PublicationAction,
+  context: PublicationCommandContext,
+  changed: boolean,
+  eventId: string,
+  trx: any,
+) {
+  const ambient = resolveCurrentAuditContext();
+  const parties = publicationParties(context);
+  await writeAuditEvent(strapi, {
+    eventId,
+    eventKey: PUBLICATION_EVENT_KEYS[action],
+    result: changed ? "success" : "no_op",
+    initiator: parties.initiator,
+    actor: parties.actor,
+    origin: parties.origin,
+    target: {
+      type: "product",
+      id: before.id,
+      label: before.title || `Product ${before.id}`,
+      snapshot: { title: before.title, slug: before.slug },
+    },
+    changes: [
+      { field: "status", label: "وضعیت انتشار", from: before.status, to: after.status },
+      {
+        field: "scheduledPublishAt",
+        label: "زمان انتشار",
+        from: isoOrNull(before.scheduled_publish_at),
+        to: isoOrNull(after.scheduled_publish_at),
+      },
+    ],
+    metadata: {
+      scheduleRevision: Number(after.scheduled_publish_revision || 0),
+      publicationRevision: Number(after.publication_revision || 0),
+      requireMedia: Boolean(after.scheduled_publish_require_media),
+    },
+    requestId: ambient?.requestId,
+    interactionId: ambient?.interactionId,
+    correlationId: ambient?.correlationId || eventId,
+    rootEventId: eventId,
+    ip: context.actor?.ip,
+    userAgent: context.actor?.userAgent,
+    dedupeKey: `publication:${PUBLICATION_EVENT_KEYS[action]}:${before.id}:${
+      ambient?.interactionId || ambient?.requestId || eventId
+    }`,
+  }, { trx });
+}
+
+function storedPublicationAuditContext(row: ProductRow): AuditJobContext | null {
+  const value: unknown = row.scheduled_publish_audit_context;
+  if (!value) return null;
+  if (typeof value === "string") {
+    try { return JSON.parse(value) as AuditJobContext; } catch { return null; }
+  }
+  return value as AuditJobContext;
+}
+
+async function writeScheduledPublicationAudit(
+  strapi: Strapi,
+  row: ProductRow,
+  result: "success" | "failure",
+  input: {
+    scheduleRevision: number;
+    expectedPublishAt: string;
+    failureCode?: string | null;
+    auditContext?: AuditJobContext;
+    jobId?: string | number | null;
+  },
+  trx: any,
+) {
+  const stored = storedPublicationAuditContext(row) || input.auditContext || null;
+  const scheduler = {
+    type: "scheduled_job" as const,
+    id: "product-publication",
+    label: "Product Publication Scheduler",
+  };
+  await writeAuditEvent(strapi, {
+    eventKey: "products.publication_executed",
+    result,
+    initiator: stored?.initiator || scheduler,
+    actor: scheduler,
+    origin: stored?.origin || "scheduled_task",
+    target: {
+      type: "product",
+      id: row.id,
+      label: row.title || `Product ${row.id}`,
+      snapshot: { title: row.title, slug: row.slug },
+    },
+    changes: result === "success"
+      ? [{ field: "status", label: "وضعیت انتشار", from: "Scheduled", to: "Active" }]
+      : [],
+    reasonCode: input.failureCode || null,
+    metadata: {
+      scheduleRevision: input.scheduleRevision,
+      expectedPublishAt: input.expectedPublishAt,
+    },
+    rootEventId: stored?.rootEventId,
+    parentEventId: stored?.rootEventId,
+    requestId: stored?.requestId,
+    interactionId: stored?.interactionId,
+    correlationId: stored?.correlationId,
+    causationId: stored?.causationId || stored?.rootEventId,
+    traceId: stored?.traceId,
+    jobId: input.jobId,
+    dedupeKey: `scheduled-publication:${row.id}:${input.scheduleRevision}:${result}:${
+      input.failureCode || "published"
+    }`,
+  }, { trx });
 }
 
 export async function executePublicationCommand(
@@ -242,6 +405,8 @@ export async function executePublicationCommand(
     throw new PublicationCommandError("PRODUCT_ID_INVALID", 400);
   }
   const now = context.now || new Date();
+  const auditEventId = randomUUID();
+  const durableAuditContext = publicationJobContext(context, auditEventId);
 
   const result = await strapi.db.transaction(async ({ trx }: any) => {
     const row = (await productTable(trx).where({ id: productId }).forUpdate().first()) as ProductRow | undefined;
@@ -283,6 +448,7 @@ export async function executePublicationCommand(
           scheduled_publish_failure_kind: null,
           scheduled_publish_attempt_count: 0,
           scheduled_publish_next_retry_at: null,
+          scheduled_publish_audit_context: durableAuditContext,
           updated_at: now,
         });
         changed = true;
@@ -298,6 +464,7 @@ export async function executePublicationCommand(
         scheduled_publish_failure_kind: null,
         scheduled_publish_attempt_count: 0,
         scheduled_publish_next_retry_at: null,
+        scheduled_publish_audit_context: durableAuditContext,
         updated_at: now,
       });
       changed = true;
@@ -317,6 +484,7 @@ export async function executePublicationCommand(
           scheduled_publish_failure_kind: null,
           scheduled_publish_attempt_count: 0,
           scheduled_publish_next_retry_at: null,
+          scheduled_publish_audit_context: null,
           updated_at: now,
         });
         changed = true;
@@ -337,6 +505,7 @@ export async function executePublicationCommand(
           scheduled_publish_next_retry_at: null,
           publication_revision: nextPublicationRevision,
           publication_effects_last_error: null,
+          scheduled_publish_audit_context: null,
           updated_at: now,
         });
         changed = true;
@@ -358,6 +527,7 @@ export async function executePublicationCommand(
           scheduled_publish_next_retry_at: null,
           publication_revision: publicationRevision + 1,
           publication_effects_last_error: null,
+          scheduled_publish_audit_context: null,
           updated_at: now,
         });
         changed = true;
@@ -367,6 +537,16 @@ export async function executePublicationCommand(
     }
 
     const updated = (await productTable(trx).where({ id: productId }).first()) as ProductRow;
+    await writePublicationAudit(
+      strapi,
+      row,
+      updated,
+      command.action,
+      context,
+      changed,
+      auditEventId,
+      trx,
+    );
     return resultFromRow(updated, changed, changed ? previousScheduleRevision : undefined);
   });
 
@@ -431,7 +611,14 @@ export async function recordScheduledPublicationTransientFailure(
 
 export async function publishScheduledProduct(
   strapi: Strapi,
-  input: { productId: number; scheduleRevision: number; expectedPublishAt: string; now?: Date },
+  input: {
+    productId: number;
+    scheduleRevision: number;
+    expectedPublishAt: string;
+    auditContext?: AuditJobContext;
+    jobId?: string | number | null;
+    now?: Date;
+  },
 ): Promise<ScheduledPublicationAttempt> {
   const now = input.now || new Date();
   let failureCode: string | null = null;
@@ -481,6 +668,13 @@ export async function publishScheduledProduct(
         updated_at: now,
       });
       const blocked = (await productTable(trx).where({ id: input.productId }).first()) as ProductRow;
+      await writeScheduledPublicationAudit(strapi, row, "failure", {
+        scheduleRevision: input.scheduleRevision,
+        expectedPublishAt: input.expectedPublishAt,
+        failureCode,
+        auditContext: input.auditContext,
+        jobId: input.jobId,
+      }, trx);
       return { outcome: "permanent-failure" as const, code: failureCode, result: resultFromRow(blocked, true) };
     }
 
@@ -497,9 +691,16 @@ export async function publishScheduledProduct(
       scheduled_publish_next_retry_at: null,
       publication_revision: nextPublicationRevision,
       publication_effects_last_error: null,
+      scheduled_publish_audit_context: null,
       updated_at: now,
     });
     const published = (await productTable(trx).where({ id: input.productId }).first()) as ProductRow;
+    await writeScheduledPublicationAudit(strapi, row, "success", {
+      scheduleRevision: input.scheduleRevision,
+      expectedPublishAt: input.expectedPublishAt,
+      auditContext: input.auditContext,
+      jobId: input.jobId,
+    }, trx);
     return { outcome: "published" as const, result: resultFromRow(published, true) };
   });
 

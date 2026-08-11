@@ -399,16 +399,17 @@ describe("expiry jobs", () => {
       .mockRejectedValueOnce(new Error("db unavailable"))
       .mockResolvedValueOnce([]);
 
-    const failed = await runExpireStockReservationsTick(strapi, {
-      now: new Date("2026-05-30T12:00:00.000Z"),
-      graceSeconds: 0,
-    });
+    await expect(
+      runExpireStockReservationsTick(strapi, {
+        now: new Date("2026-05-30T12:00:00.000Z"),
+        graceSeconds: 0,
+      }),
+    ).rejects.toThrow("db unavailable");
     const recovered = await runExpireStockReservationsTick(strapi, {
       now: new Date("2026-05-30T12:00:01.000Z"),
       graceSeconds: 0,
     });
 
-    expect(failed.status).toBe("failed");
     expect(recovered.status).toBe("completed");
   });
 

@@ -6,6 +6,8 @@
 import { getFrontendUrls } from "../../../utils/revalidate";
 import type { Attribute } from "@strapi/types";
 import { factories } from "@strapi/strapi";
+import { writeAuditEvent } from "../../../audit/writer";
+import { getAuditContext } from "../../../utils/audit-context";
 import {
   createHeroSliderMeta,
   normalizeStoredHeroSliderPayload,
@@ -51,6 +53,33 @@ function extractPayloadFromRequestBody(body: any) {
     return body.data;
   }
   return body;
+}
+
+function settingChanges(before: any, after: any, fields: readonly string[]) {
+  return fields
+    .filter((field) => JSON.stringify(before?.[field] ?? null) !== JSON.stringify(after?.[field] ?? null))
+    .map((field) => ({
+      field,
+      from: before?.[field] ?? null,
+      to: after?.[field] ?? null,
+    }));
+}
+
+function heroSliderSnapshot(payload: any) {
+  const normalized = normalizeStoredHeroSliderPayload(payload);
+  return {
+    version: normalized.version,
+    slideCount: normalized.slides.length,
+    activeSlideCount: normalized.slides.filter((slide: any) => slide.isActive !== false).length,
+    scheduledSlideCount: normalized.slides.filter(
+      (slide: any) => slide.schedule?.startAtUtc || slide.schedule?.endAtUtc,
+    ).length,
+  };
+}
+
+function settingsDedupeKey(operation: string, settingsId: number | string) {
+  const requestId = getAuditContext()?.requestId;
+  return requestId ? `settings:${operation}:${settingsId}:${requestId}` : null;
 }
 
 /** Trigger Next.js on-demand revalidation for hero slider (home page). */
@@ -145,7 +174,30 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       }
     }
     const settingsEntity = await ensureSettingsEntity(strapi);
-    const updated = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, { data });
+    const updated = await strapi.db.transaction(async ({ trx }) => {
+      const entity = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
+        data,
+        transacting: trx,
+      });
+      const changes = settingChanges(settingsEntity, entity, Object.keys(data));
+      await writeAuditEvent(
+        strapi,
+        {
+          eventKey: "content.changed",
+          result: changes.length > 0 ? "success" : "no_op",
+          target: { type: "settings", id: settingsEntity.id, label: "بنرهای وبلاگ" },
+          changes,
+          summaryFa:
+            changes.length > 0 ? "تنظیمات بنرهای وبلاگ تغییر کرد" : "تنظیمات بنرهای وبلاگ تغییری نکرد",
+          summaryEn:
+            changes.length > 0 ? "Blog banner settings changed" : "Blog banner settings did not change",
+          metadata: { section: "blog_banners", changedFieldCount: changes.length },
+          dedupeKey: settingsDedupeKey("blog-banners", settingsEntity.id),
+        },
+        { trx },
+      );
+      return entity;
+    });
     ctx.body = {
       data: {
         id: updated.id,
@@ -184,10 +236,35 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
     }
 
     const settingsEntity = await ensureSettingsEntity(strapi);
-    const updated = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
-      data: {
-        homeHeroSliderDraft: toStrapiJson(value),
-      },
+    const before = heroSliderSnapshot(settingsEntity.homeHeroSliderDraft);
+    const after = heroSliderSnapshot(value);
+    const updated = await strapi.db.transaction(async ({ trx }) => {
+      const entity = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
+        data: {
+          homeHeroSliderDraft: toStrapiJson(value),
+        },
+        transacting: trx,
+      });
+      const changed = JSON.stringify(before) !== JSON.stringify(after);
+      await writeAuditEvent(
+        strapi,
+        {
+          eventKey: "content.changed",
+          result: changed ? "success" : "no_op",
+          target: { type: "settings", id: settingsEntity.id, label: "اسلایدر صفحه اصلی" },
+          changes: [{ field: "homeHeroSliderDraft", label: "پیش‌نویس اسلایدر", from: before, to: after }],
+          summaryFa: changed
+            ? `پیش‌نویس اسلایدر صفحه اصلی با ${after.slideCount} اسلاید ویرایش شد`
+            : "پیش‌نویس اسلایدر صفحه اصلی تغییری نکرد",
+          summaryEn: changed
+            ? `Homepage slider draft changed to ${after.slideCount} slides`
+            : "Homepage slider draft did not change",
+          metadata: { section: "homepage_slider", stage: "draft" },
+          dedupeKey: settingsDedupeKey("hero-slider-draft", settingsEntity.id),
+        },
+        { trx },
+      );
+      return entity;
     });
 
     ctx.body = {
@@ -213,11 +290,32 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
         : null;
     const meta = createHeroSliderMeta(publishedBy);
 
-    const updated = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
-      data: {
-        homeHeroSliderPublished: toStrapiJson(value),
-        homeHeroSliderMeta: toStrapiJson(meta),
-      },
+    const before = heroSliderSnapshot(settingsEntity.homeHeroSliderPublished);
+    const after = heroSliderSnapshot(value);
+    const updated = await strapi.db.transaction(async ({ trx }) => {
+      const entity = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
+        data: {
+          homeHeroSliderPublished: toStrapiJson(value),
+          homeHeroSliderMeta: toStrapiJson(meta),
+        },
+        transacting: trx,
+      });
+      await writeAuditEvent(
+        strapi,
+        {
+          eventKey: "content.changed",
+          importance: "important",
+          result: "success",
+          target: { type: "settings", id: settingsEntity.id, label: "اسلایدر صفحه اصلی" },
+          changes: [{ field: "homeHeroSliderPublished", label: "نسخه منتشرشده", from: before, to: after }],
+          summaryFa: `اسلایدر صفحه اصلی با ${after.slideCount} اسلاید منتشر شد`,
+          summaryEn: `Homepage slider was published with ${after.slideCount} slides`,
+          metadata: { section: "homepage_slider", stage: "published" },
+          dedupeKey: settingsDedupeKey("hero-slider-publish", settingsEntity.id),
+        },
+        { trx },
+      );
+      return entity;
     });
 
     await triggerHeroSliderRevalidation(strapi);

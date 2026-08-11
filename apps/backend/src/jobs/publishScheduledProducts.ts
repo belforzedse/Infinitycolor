@@ -6,6 +6,7 @@ import {
   runPublicationEffects,
 } from "../api/product/services/product-publication";
 import type { ScheduledProductPublicationJobData } from "../queue/contracts";
+import type { AuditJobContext } from "../audit/types";
 import {
   enqueueScheduledProductPublication,
   scheduledProductJobExists,
@@ -20,6 +21,7 @@ type ScheduledRow = {
   scheduled_publish_revision: number;
   scheduled_publish_failure_kind: "Transient" | "Permanent" | null;
   scheduled_publish_next_retry_at: string | Date | null;
+  scheduled_publish_audit_context: AuditJobContext | string | null;
 };
 
 type EffectsRow = {
@@ -53,7 +55,10 @@ export async function processScheduledProductPublicationJob(
 
   let attempt;
   try {
-    attempt = await publishScheduledProduct(strapi, data);
+    attempt = await publishScheduledProduct(strapi, {
+      ...data,
+      jobId: job.id,
+    });
   } catch (error) {
     const attemptsMade = Number(job.attemptsMade || 0);
     const retryDelayMs = 30_000 * (2 ** Math.min(attemptsMade, 4));
@@ -121,6 +126,9 @@ async function repairScheduledRow(
     productId: row.id,
     scheduleRevision: Number(row.scheduled_publish_revision),
     expectedPublishAt: publishAt,
+    auditContext: typeof row.scheduled_publish_audit_context === "string"
+      ? JSON.parse(row.scheduled_publish_audit_context)
+      : row.scheduled_publish_audit_context || undefined,
   });
   strapi.log.warn("[product-publication] reconciliation repaired missing delayed job", {
     productId: row.id,
@@ -149,6 +157,7 @@ export async function runScheduledProductsReconciliation(
       "scheduled_publish_revision",
       "scheduled_publish_failure_kind",
       "scheduled_publish_next_retry_at",
+      "scheduled_publish_audit_context",
     ])
     .where({ status: "Scheduled" })
     .whereNotNull("scheduled_publish_at")

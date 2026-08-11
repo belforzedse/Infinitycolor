@@ -118,9 +118,9 @@ export async function settleOrderWithWallet(
     }
 
     const consumed = await consumeOrderReservation(strapi, orderId, trx);
-    if (!consumed.success || consumed.expired) {
+    if (consumed.outcome !== "consumed") {
       throw new Error(
-        `STOCK_RESERVATION_CONSUME_FAILED:${consumed.error || (consumed.expired ? "expired" : "unknown")}`,
+        `STOCK_RESERVATION_CONSUME_FAILED:${consumed.expired ? "expired" : "not_consumed"}`,
       );
     }
 

@@ -118,13 +118,12 @@ export async function settleZarinPalPayment(
 
     if (reservationStatus === "Reserved") {
       const consumed = await consumeOrderReservation(strapi, orderId, trx);
-      if (!consumed.success || consumed.expired || consumed.skipped) {
+      if (consumed.outcome !== "consumed") {
         throw new ZarinPalSettlementError(
           "ZARINPAL_STOCK_RESERVATION_FAILED",
-          consumed.error ||
-            (consumed.expired
-              ? "Stock reservation expired"
-              : "Stock reservation was not consumed"),
+          consumed.expired
+            ? "Stock reservation expired"
+            : "Stock reservation was not consumed",
         );
       }
     } else if (reservationStatus === "None" && orderStatus === "Paying") {

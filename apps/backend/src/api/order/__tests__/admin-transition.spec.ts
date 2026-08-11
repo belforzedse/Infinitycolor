@@ -87,6 +87,8 @@ describe("adminTransitionOrderHandler", () => {
       7,
       null,
       null,
+      "Store manager",
+      expect.objectContaining({ raw: expect.any(Function) }),
     );
     expect(mockedNotify).toHaveBeenCalledWith(strapi, {
       orderId: 44,

@@ -5,10 +5,11 @@
 import { factories } from "@strapi/strapi";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
 import {
-  creditWalletBalanceAtomic,
-  deductWalletBalanceAtomic,
+  applyAdminWalletAdjustment,
+  WalletAdjustmentError,
 } from "../services/local-user-wallet";
-import { recordAdminAudit } from "../../../utils/adminAudit";
+import { writeAuditEvent } from "../../../audit/writer";
+import { getAuditContext } from "../../../utils/audit-context";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import { requireCapability } from "../../../utils/adminAuthorization";
 
@@ -179,18 +180,28 @@ export default factories.createCoreController(
         }
         const actorId = Number(ctx.state?.user?.id);
         if (Number.isSafeInteger(actorId) && actorId > 0 && actorId === userId) {
-          await recordAdminAudit(strapi, {
-            resourceType: "User",
-            resourceId: userId,
-            action: "Adjust",
-            title: "Rejected self-wallet adjustment",
-            messageEn: "An administrator attempted to adjust their own wallet.",
-            severity: "warning",
-            actor: { id: actorId },
-            metadata: { rejected: true, reasonCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN" },
-            ip: getClientIp(ctx),
-            userAgent: getUserAgent(ctx),
-          });
+          try {
+            await writeAuditEvent(strapi, {
+              eventKey: "security.access_denied",
+              result: "denied",
+              importance: "critical",
+              initiator: { type: "human", id: actorId, label: ctx.state.user?.username },
+              actor: { type: "service_account", id: "wallet-service", label: "Wallet Service" },
+              origin: "admin_ui",
+              target: { type: "customer", id: userId, label: `User ${userId}` },
+              reasonCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN",
+              metadata: { operation: "wallet.adjust" },
+              ip: getClientIp(ctx),
+              userAgent: getUserAgent(ctx),
+              dedupeKey: `wallet-adjust:denied:self:${actorId}:${getAuditContext()?.requestId || Date.now()}`,
+            });
+          } catch (auditError) {
+            strapi.log.error("Required denied-action audit write failed", {
+              action: "wallet.adjust",
+              reasonCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN",
+              error: auditError instanceof Error ? auditError.message : String(auditError),
+            });
+          }
           return ctx.forbidden("Administrators cannot adjust their own wallet", {
             data: { success: false, errorCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN" },
           });
@@ -225,105 +236,59 @@ export default factories.createCoreController(
         }
 
         const amountIrr = amountToman * 10;
-        const fromIrr = await readBalanceIrr(strapi, userId);
-
-        // Resolve the signed delta to apply.
-        let deltaIrr: number;
-        if (mode === "credit") deltaIrr = amountIrr;
-        else if (mode === "debit") deltaIrr = -amountIrr;
-        else deltaIrr = amountIrr - fromIrr; // set: move current → target
-
-        let toIrr = fromIrr;
-        let txType: "Add" | "Minus" | null = null;
-
-        if (deltaIrr > 0) {
-          const result = await creditWalletBalanceAtomic(
-            strapi,
+        let adjustment;
+        try {
+          adjustment = await applyAdminWalletAdjustment(strapi, {
             userId,
-            deltaIrr
-          );
-          if (!result.success || result.walletId == null) {
-            return ctx.badRequest(
-              result.error || "Failed to credit wallet",
-              { data: { success: false, errorCode: "CREDIT_FAILED" } }
-            );
-          }
-          toIrr = Number(result.newBalance ?? fromIrr + deltaIrr);
-          txType = "Add";
-          await strapi.db.query(WALLET_TRANSACTION_UID).create({
-            data: {
-              Amount: deltaIrr,
-              Type: "Add",
-              Date: new Date(),
-              Cause: "Admin Wallet Adjustment",
-              Note: reason,
-              ReferenceId: `admin-adj-${userId}-${Date.now()}`,
-              user_wallet: result.walletId,
+            mode,
+            amountIrr,
+            reason,
+            audit: {
+              initiator: {
+                type: "human",
+                id: actorId,
+                label: ctx.state.user?.username || ctx.state.user?.email || `User ${actorId}`,
+                role: ctx.state.adminActor?.role || ctx.state.user?.role?.name || null,
+              },
+              actor: {
+                type: "human",
+                id: actorId,
+                label: ctx.state.user?.username || ctx.state.user?.email || `User ${actorId}`,
+              },
+              origin: "admin_ui",
+              ip: getClientIp(ctx),
+              userAgent: getUserAgent(ctx),
+              requestId: getAuditContext()?.requestId || null,
+              correlationId: getAuditContext()?.correlationId || null,
             },
-          } as any);
-        } else if (deltaIrr < 0) {
-          const result = await deductWalletBalanceAtomic(
-            strapi,
-            userId,
-            Math.abs(deltaIrr)
-          );
-          if (!result.success || result.walletId == null) {
-            const insufficient = (result.error || "").includes("Insufficient");
+          });
+        } catch (error) {
+          if (error instanceof WalletAdjustmentError) {
+            const insufficient = error.code === "INSUFFICIENT_BALANCE";
             return ctx.badRequest(
-              insufficient ? "موجودی کیف پول کافی نیست" : result.error || "Failed to debit wallet",
+              insufficient ? "موجودی کیف پول کافی نیست" : error.message,
               {
                 data: {
                   success: false,
-                  errorCode: insufficient ? "INSUFFICIENT_BALANCE" : "DEBIT_FAILED",
+                  errorCode: insufficient
+                    ? "INSUFFICIENT_BALANCE"
+                    : "WALLET_MUTATION_FAILED",
                 },
-              }
+              },
             );
           }
-          toIrr = Number(result.newBalance ?? fromIrr + deltaIrr);
-          txType = "Minus";
-          await strapi.db.query(WALLET_TRANSACTION_UID).create({
-            data: {
-              Amount: Math.abs(deltaIrr),
-              Type: "Minus",
-              Date: new Date(),
-              Cause: "Admin Wallet Adjustment",
-              Note: reason,
-              ReferenceId: `admin-adj-${userId}-${Date.now()}`,
-              user_wallet: result.walletId,
-            },
-          } as any);
+          throw error;
         }
-        // deltaIrr === 0 (set to current value): no-op, no transaction recorded.
 
-        // Record the admin audit entry (fire-and-forget; never blocks the response).
-        const actor = ctx.state.user;
-        const fromToman = rialToToman(fromIrr);
+        const toIrr = adjustment.afterBalance;
         const toToman = rialToToman(toIrr);
-        void recordAdminAudit(strapi, {
-          resourceType: "User",
-          resourceId: userId,
-          action: "Adjust",
-          title: "تنظیم کیف پول کاربر",
-          message: `موجودی کیف پول کاربر #${userId} از ${fromToman.toLocaleString(
-            "fa-IR"
-          )} به ${toToman.toLocaleString("fa-IR")} تومان تغییر کرد. دلیل: ${reason}`,
-          messageEn: `Wallet for user #${userId} changed from ${fromToman} to ${toToman} Toman (${mode}). Reason: ${reason}`,
-          severity: "warning",
-          changes: { Balance: { from: fromIrr, to: toIrr } },
-          metadata: { mode, amountToman, txType },
-          actor: actor
-            ? { id: Number(actor.id), name: null, role: actor.role?.name ?? null }
-            : undefined,
-          ip: getClientIp(ctx),
-          userAgent: getUserAgent(ctx),
-        });
 
         return ctx.send({
           success: true,
           data: {
             balanceIrr: toIrr,
             balanceToman: toToman,
-            changed: deltaIrr !== 0,
+            changed: adjustment.changed,
           },
         });
       } catch (error) {

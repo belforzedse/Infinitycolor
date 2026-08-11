@@ -53,6 +53,12 @@ export type BridgeVerifiedIdentityResponse = {
   strapiUserId: number;
   confirmed: boolean;
   needsProfileCompletion?: boolean;
+  /** Present only when the authoritative Strapi user has an administrative role. */
+  admin?: {
+    label: string;
+    roleId: string;
+    roleName: string;
+  };
 };
 
 export type BridgeOtpVerifiedIdentityResponse =

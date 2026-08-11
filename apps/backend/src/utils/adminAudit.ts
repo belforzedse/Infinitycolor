@@ -3,6 +3,7 @@ import type { Strapi } from "@strapi/strapi";
 import { resolveAuditActor } from "./audit";
 import { getAuditContext } from "./audit-context";
 import { redactSensitive } from "./redactSensitive";
+import { writeAuditEvent } from "../audit/writer";
 import {
   MANAGEMENT_ROLES,
   normalizeRoleName,
@@ -65,6 +66,8 @@ export type RecordAdminAuditParams = {
   actor?: AdminAuditActor;
   ip?: string | null;
   userAgent?: string | null;
+  /** Existing business transaction. Required for high-risk mutations. */
+  trx?: unknown;
 };
 
 type VerifiedAdmin = {
@@ -176,10 +179,9 @@ async function resolveVerifiedAdmin(
 /**
  * The single, canonical writer for the admin audit log (`manual_admin_activities`).
  *
- * Records an entry **only** when the acting user is a verified admin. All other callers
- * (customers, payment callbacks, background jobs, imports without an admin actor, automated
- * processes) result in a silent no-op. Logging never throws and never blocks the caller — invoke
- * fire-and-forget with `void recordAdminAudit(...)`.
+ * Compatibility adapter for existing direct-admin call sites. New code should use
+ * `writeAuditEvent` and state initiator/executor/source explicitly. Persistence failures throw;
+ * callers must await this function so sensitive mutations cannot silently lose accountability.
  *
  * @returns `true` if an entry was written (actor is a verified admin), otherwise `false`.
  */
@@ -187,45 +189,62 @@ export async function recordAdminAudit(
   strapi: Strapi,
   params: RecordAdminAuditParams,
 ): Promise<boolean> {
-  try {
-    const admin = await resolveVerifiedAdmin(strapi, params);
-    if (!admin) return false;
+  const admin = await resolveVerifiedAdmin(strapi, params);
+  if (!admin) return false;
 
-    await strapi.entityService.create(
-      "api::manual-admin-activity.manual-admin-activity" as any,
-      {
-        data: {
-          ResourceType: params.resourceType,
-          Action: params.action,
-          ResourceId:
-            params.resourceId != null ? String(params.resourceId) : undefined,
-          Title: params.title,
-          Message: params.message,
-          MessageEn: params.messageEn,
-          Severity: params.severity || "info",
-          // Defense-in-depth: strip any sensitive values before persisting. Helpers already
-          // whitelist the fields they record, so this only matters if a sensitive key ever slips in.
-          Changes: params.changes ? redactSensitive(params.changes) : null,
-          Description: params.description,
-          Metadata: params.metadata ? redactSensitive(params.metadata) : params.metadata,
-          performed_by: admin.userId,
-          PerformedByName: admin.name || `User ${admin.userId}`,
-          PerformedByRole: admin.role,
-          IP: admin.ip,
-          UserAgent: admin.userAgent,
-        },
-      },
-    );
-    return true;
-  } catch (error) {
-    strapi.log.error("Failed to record admin audit", {
-      error: error instanceof Error ? error.message : error,
-      action: params.action,
-      resourceType: params.resourceType,
-      resourceId: params.resourceId,
-    });
-    return false;
-  }
+  const resource = params.resourceType.toLowerCase();
+  const category = ({
+    order: "orders", product: "products", user: "customers", contract: "contracts",
+    discount: "discounts", stock: "products", other: "administration",
+  } as Record<string, string>)[resource] || "administration";
+  const operation = ({
+    Create: "create", Update: "update", Delete: "delete", Publish: "publish",
+    Unpublish: "unpublish", Adjust: "adjust", Import: "import", Refund: "refund",
+    StatusChange: "status_change", Other: "other",
+  } as const)[params.action];
+  let eventKey = `${category}.${operation}`;
+  if (params.resourceType === "Order" && params.action === "Create") eventKey = "orders.created_by_admin";
+  if (params.resourceType === "Order" && params.action === "StatusChange") eventKey = "orders.status_changed";
+  if (params.resourceType === "Order" && params.action === "Refund") eventKey = "orders.refund_recorded";
+  if (params.resourceType === "Product" && params.action === "StatusChange") eventKey = "products.status_changed";
+  if (params.resourceType === "User" && params.action === "StatusChange") eventKey = "customers.status_changed";
+  if (params.resourceType === "Stock" && params.action === "Adjust") eventKey = "products.inventory_changed";
+
+  await writeAuditEvent(strapi, {
+    eventKey,
+    domain: resource,
+    operation,
+    importance:
+      params.action === "Refund" || params.resourceType === "Contract" ? "critical" :
+      params.severity === "warning" || params.severity === "error" ? "important" : undefined,
+    result: params.severity === "error" ? "failure" : "success",
+    initiator: {
+      type: "human",
+      id: admin.userId,
+      label: admin.name || `User ${admin.userId}`,
+      role: admin.role,
+    },
+    actor: {
+      type: "human",
+      id: admin.userId,
+      label: admin.name || `User ${admin.userId}`,
+      role: admin.role,
+    },
+    origin: "admin_ui",
+    target: {
+      type: resource,
+      id: params.resourceId,
+      label: params.resourceId == null ? null : String(params.resourceId),
+    },
+    changes: params.changes ? redactSensitive(params.changes) : null,
+    metadata: params.metadata ? redactSensitive(params.metadata) : null,
+    description: params.description,
+    summaryFa: params.message || params.title,
+    summaryEn: params.messageEn,
+    ip: admin.ip,
+    userAgent: admin.userAgent,
+  }, { trx: params.trx });
+  return true;
 }
 
 /**

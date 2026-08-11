@@ -26,6 +26,9 @@ jest.mock("../../jobs/analyticsDailyRollup", () => ({
 jest.mock("../../jobs/analyticsOutboxRepair", () => ({
   runAnalyticsOutboxRepairTick: jest.fn(),
 }));
+jest.mock("../../api/order/services/anipoBarcodeWorkflow", () => ({
+  runAnipoBarcodeReconciliation: jest.fn(),
+}));
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
 import { runExpireStockReservationsTick } from "../../jobs/expireStockReservations";
@@ -45,6 +48,7 @@ import {
 } from "../../api/payment-gateway/services/snappay-orchestrator";
 import { runAnalyticsDailyRollupTick } from "../../jobs/analyticsDailyRollup";
 import { runAnalyticsOutboxRepairTick } from "../../jobs/analyticsOutboxRepair";
+import { runAnipoBarcodeReconciliation } from "../../api/order/services/anipoBarcodeWorkflow";
 
 const mockedRunExpireStockReservationsTick = runExpireStockReservationsTick as jest.MockedFunction<
   typeof runExpireStockReservationsTick
@@ -72,6 +76,10 @@ const mockedRunAnalyticsDailyRollupTick = runAnalyticsDailyRollupTick as jest.Mo
 const mockedRunAnalyticsOutboxRepairTick = runAnalyticsOutboxRepairTick as jest.MockedFunction<
   typeof runAnalyticsOutboxRepairTick
 >;
+const mockedRunAnipoBarcodeReconciliation =
+  runAnipoBarcodeReconciliation as jest.MockedFunction<
+    typeof runAnipoBarcodeReconciliation
+  >;
 
 function createMockStrapi() {
   const viewService = {
@@ -156,6 +164,18 @@ describe("queue processors", () => {
     } as any);
 
     expect(mockedRunScheduledProductsReconciliation).toHaveBeenCalledWith(strapi);
+  });
+
+  it("dispatches Anipo barcode reconciliation jobs", async () => {
+    const strapi = createMockStrapi();
+    mockedRunAnipoBarcodeReconciliation.mockResolvedValue({ status: "completed" } as any);
+
+    await processMaintenanceJob(strapi, {
+      name: COMMERCE_MAINTENANCE_JOBS.anipoBarcodeReconcile,
+      data: {},
+    } as any);
+
+    expect(mockedRunAnipoBarcodeReconciliation).toHaveBeenCalledWith(strapi);
   });
 
   it("dispatches view-counter flush jobs to the product-view service", async () => {

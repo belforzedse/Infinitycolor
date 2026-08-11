@@ -8,6 +8,19 @@ import {
   verifyOtpIdentityWithStatus,
   verifyPasswordIdentity,
 } from "../../auth/services/credential-flow";
+import { resolveAdminActor } from "../../../utils/adminAuthorization";
+
+async function adminSnapshot(user: any) {
+  const actor = await resolveAdminActor(strapi, user);
+  if (!actor) return undefined;
+  const info = actor.user?.user_info;
+  const fullName = `${info?.FirstName || ""} ${info?.LastName || ""}`.trim();
+  return {
+    label: fullName || actor.user?.username || actor.user?.email || `User ${actor.user.id}`,
+    roleId: String(actor.user?.role?.id || actor.role),
+    roleName: String(actor.user?.role?.name || actor.role),
+  };
+}
 
 function validatePhoneOrRespond(ctx, phone: unknown): phone is string {
   if (isAcceptedPhone(phone)) return true;
@@ -66,6 +79,7 @@ export default {
         confirmed: Boolean(user.confirmed),
         isNewUser,
         needsProfileCompletion,
+        admin: await adminSnapshot(user),
       };
     } catch (error) {
       handleCredentialError(ctx, error);
@@ -82,6 +96,7 @@ export default {
         strapiUserId: Number(user.id),
         confirmed: Boolean(user.confirmed),
         needsProfileCompletion: !user.ProfileCompletedAt,
+        admin: await adminSnapshot(user),
       };
     } catch (error) {
       handleCredentialError(ctx, error);
@@ -96,7 +111,11 @@ export default {
         String(otp ?? ""),
         String(newPassword ?? ""),
       );
-      ctx.body = { strapiUserId: Number(user.id), confirmed: Boolean(user.confirmed) };
+      ctx.body = {
+        strapiUserId: Number(user.id),
+        confirmed: Boolean(user.confirmed),
+        admin: await adminSnapshot(user),
+      };
     } catch (error) {
       handleCredentialError(ctx, error);
     }

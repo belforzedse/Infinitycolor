@@ -97,7 +97,7 @@ const settlementParams = {
 describe("settleZarinPalPayment", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedConsume.mockResolvedValue({ success: true });
+    mockedConsume.mockResolvedValue({ outcome: "consumed" } as any);
     mockedDecrement.mockResolvedValue({ success: true, newCount: 8 });
     mockedFindAttempt.mockResolvedValue(null as any);
     mockedUpdateAttempt.mockResolvedValue({} as any);

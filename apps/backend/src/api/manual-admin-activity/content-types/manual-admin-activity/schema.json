@@ -5,7 +5,7 @@
     "singularName": "manual-admin-activity",
     "pluralName": "manual-admin-activities",
     "displayName": "ManualAdminActivity",
-    "description": "Structured log for manual actions performed through super-admin/store manager interfaces"
+    "description": "Canonical append-only business and administrative audit event store"
   },
   "options": {
     "draftAndPublish": false
@@ -74,7 +74,198 @@
     },
     "UserAgent": {
       "type": "string"
+    },
+    "eventId": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "private": true
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "default": 2,
+      "private": true
+    },
+    "occurredAt": {
+      "type": "datetime",
+      "private": true
+    },
+    "recordedAt": {
+      "type": "datetime",
+      "private": true
+    },
+    "eventKey": {
+      "type": "string",
+      "private": true
+    },
+    "domain": {
+      "type": "string",
+      "private": true
+    },
+    "operation": {
+      "type": "string",
+      "private": true
+    },
+    "importance": {
+      "type": "enumeration",
+      "enum": ["normal", "important", "sensitive", "critical"],
+      "default": "normal",
+      "private": true
+    },
+    "resultStatus": {
+      "type": "enumeration",
+      "enum": ["success", "partial", "failure", "denied", "queued", "cancelled", "no_op"],
+      "default": "success",
+      "private": true
+    },
+    "initiatorType": {
+      "type": "string",
+      "private": true
+    },
+    "initiatorId": {
+      "type": "string",
+      "private": true
+    },
+    "initiatorLabel": {
+      "type": "string",
+      "private": true
+    },
+    "initiatorRoleId": {
+      "type": "string",
+      "private": true
+    },
+    "initiatorRoleName": {
+      "type": "string",
+      "private": true
+    },
+    "actorType": {
+      "type": "string",
+      "private": true
+    },
+    "actorId": {
+      "type": "string",
+      "private": true
+    },
+    "actorLabel": {
+      "type": "string",
+      "private": true
+    },
+    "actorRoleId": {
+      "type": "string",
+      "private": true
+    },
+    "actorRoleName": {
+      "type": "string",
+      "private": true
+    },
+    "actorAuthMethod": {
+      "type": "string",
+      "private": true
+    },
+    "origin": {
+      "type": "string",
+      "private": true
+    },
+    "targetType": {
+      "type": "string",
+      "private": true
+    },
+    "targetId": {
+      "type": "string",
+      "private": true
+    },
+    "targetLabel": {
+      "type": "string",
+      "private": true
+    },
+    "targetSnapshot": {
+      "type": "json",
+      "private": true
+    },
+    "relatedType": {
+      "type": "string",
+      "private": true
+    },
+    "relatedId": {
+      "type": "string",
+      "private": true
+    },
+    "relatedLabel": {
+      "type": "string",
+      "private": true
+    },
+    "relatedSnapshot": {
+      "type": "json",
+      "private": true
+    },
+    "rootEventId": {
+      "type": "string",
+      "private": true
+    },
+    "parentEventId": {
+      "type": "string",
+      "private": true
+    },
+    "requestId": {
+      "type": "string",
+      "private": true
+    },
+    "interactionId": {
+      "type": "string",
+      "private": true
+    },
+    "correlationId": {
+      "type": "string",
+      "private": true
+    },
+    "causationId": {
+      "type": "string",
+      "private": true
+    },
+    "traceId": {
+      "type": "string",
+      "private": true
+    },
+    "jobId": {
+      "type": "string",
+      "private": true
+    },
+    "batchId": {
+      "type": "string",
+      "private": true
+    },
+    "route": {
+      "type": "string",
+      "private": true
+    },
+    "httpMethod": {
+      "type": "string",
+      "private": true
+    },
+    "reasonCode": {
+      "type": "string",
+      "private": true
+    },
+    "environment": {
+      "type": "string",
+      "private": true
+    },
+    "serviceName": {
+      "type": "string",
+      "private": true
+    },
+    "scope": {
+      "type": "json",
+      "private": true
+    },
+    "searchText": {
+      "type": "text",
+      "private": true
+    },
+    "dedupeKey": {
+      "type": "string",
+      "unique": true,
+      "private": true
     }
   }
 }
-

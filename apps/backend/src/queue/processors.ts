@@ -6,6 +6,7 @@ import {
   ANALYTICS_MAINTENANCE_JOBS,
   COMMERCE_MAINTENANCE_JOBS,
   SNAPPAY_PAYMENT_JOBS,
+  WALLET_TOPUP_PAYMENT_JOBS,
   type MaintenanceJobData,
   type MaintenanceJobName,
 } from "./contracts";
@@ -35,6 +36,12 @@ export async function processMaintenanceJob(
     case COMMERCE_MAINTENANCE_JOBS.cartCleanupReconcile: {
       const { runReconcileCartCleanupTick } = await import("../jobs/reconcileCartCleanup");
       return runReconcileCartCleanupTick(strapi);
+    }
+    case COMMERCE_MAINTENANCE_JOBS.anipoBarcodeReconcile: {
+      const { runAnipoBarcodeReconciliation } = await import(
+        "../api/order/services/anipoBarcodeWorkflow"
+      );
+      return runAnipoBarcodeReconciliation(strapi);
     }
     case ANALYTICS_MAINTENANCE_JOBS.viewCounterFlush: {
       const viewService = strapi.service("api::product-view.product-view") as {
@@ -66,6 +73,12 @@ export async function processMaintenanceJob(
         "../api/payment-gateway/services/snappay-orchestrator"
       );
       return sweepSnappayOperations(strapi);
+    }
+    case WALLET_TOPUP_PAYMENT_JOBS.reconcile: {
+      const { reconcileWalletTopups } = await import(
+        "../api/wallet-topup/services/wallet-topup"
+      );
+      return reconcileWalletTopups(strapi);
     }
     default:
       throw new UnrecoverableError(`Unknown maintenance job: ${job.name}`);

@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { apiClient } from "@/services";
 import AnipoBarcodeDialog from "./AnipoBarcodeDialog";
 import { translateOrderLogMessage } from "@/utils/statusTranslations";
@@ -9,14 +9,16 @@ import { type OrderTimelineEvent } from "@/components/User/Orders/Detail/OrderTi
 import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
 import { useCan } from "@/hooks/useCan";
 import toast from "react-hot-toast";
-import { faNum } from "@/utils/faNum";
 import { ORDER_LOGS_QUERY } from "./orderLogsQuery";
 import { openPreInvoicePrintWindow } from "@/utils/preInvoiceTransfer";
+import { getAnipoBarcodeUi } from "./anipoBarcodeUi";
+import type { AnipoBarcodeWorkflowResponse } from "@/services/order";
 
 interface SuperAdminOrderSidebarProps {
   orderData?: SuperAdminOrderDetail;
   selectedItems?: SuperAdminOrderItem[];
   shippingBarcode?: string;
+  onReload?: () => void | Promise<void>;
 }
 
 type OrderLog = {
@@ -32,10 +34,11 @@ export default function SuperAdminOrderSidebar({
   orderData,
   selectedItems = [],
   shippingBarcode,
+  onReload,
 }: SuperAdminOrderSidebarProps = {}) {
-  const router = useRouter();
   const { id } = useParams();
   const canViewOrderLogs = useCan("order.audit.read");
+  const canViewAdminAudit = useCan("system.audit.read");
   const canPrint = useCan("order.print");
   const canManageShipping = useCan("order.shipping.manage");
   const [orderLogs, setOrderLogs] = useState<OrderLog[]>([]);
@@ -49,7 +52,10 @@ export default function SuperAdminOrderSidebar({
   const timelineOrderId = orderData?.id ?? (id ? Number(id) : undefined);
   const [showBarcodeDialog, setShowBarcodeDialog] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [hasBarcode, setHasBarcode] = useState(!!shippingBarcode);
+  const [localWorkflow, setLocalWorkflow] = useState<{
+    baseKey: string;
+    result: AnipoBarcodeWorkflowResponse;
+  } | null>(null);
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -78,32 +84,85 @@ export default function SuperAdminOrderSidebar({
   }, [orderData?.id]);
 
   useEffect(() => {
-    setHasBarcode(!!shippingBarcode);
-  }, [shippingBarcode]);
+    if (!canViewAdminAudit && canViewOrderLogs) setActiveLogTab("audit");
+    if (canViewAdminAudit && !canViewOrderLogs) setActiveLogTab("events");
+  }, [canViewAdminAudit, canViewOrderLogs]);
+
+  const workflowBaseKey = [
+    shippingBarcode || "",
+    orderData?.anipoBarcodeState || "",
+    orderData?.anipoLastCheckedAt || "",
+  ].join("|");
+  const workflowOverride =
+    localWorkflow?.baseKey === workflowBaseKey ? localWorkflow.result : null;
+
+  const barcode = workflowOverride?.barcode || shippingBarcode;
+  const barcodeUi = getAnipoBarcodeUi({
+    shippingBarcode: barcode,
+    state: workflowOverride?.state || orderData?.anipoBarcodeState,
+    orderStatus: orderData?.orderStatus,
+    shippingMethodCode: orderData?.shippingMethodCode,
+    providerMessage: workflowOverride?.message || orderData?.anipoLastMessage,
+    lastError: orderData?.anipoLastError,
+  });
+
+  const applyWorkflowResponse = async (result: AnipoBarcodeWorkflowResponse) => {
+    setLocalWorkflow({ baseKey: workflowBaseKey, result });
+    if (result.issued && result.barcode) {
+      toast.success(result.already ? "بارکد قبلاً صادر شده است" : "بارکد آنیپو صادر شد");
+    } else {
+      toast(result.message || "سفارش در انتظار تأیید آنیپو است");
+    }
+    await onReload?.();
+  };
+
+  const workflowErrorMessage = (error: unknown) => {
+    const value = error as {
+      message?: unknown;
+      response?: { data?: { message?: unknown } };
+    };
+    return typeof value?.response?.data?.message === "string"
+      ? value.response.data.message
+      : typeof value?.message === "string"
+        ? value.message
+        : "ارتباط با آنیپو ناموفق بود";
+  };
 
   const handleGenerateBarcode = async (weight?: number, boxSizeId?: number) => {
     if (!id) return;
     setIsGenerating(true);
     try {
       const mod = await import("@/services/order");
-      const res = await mod.default.generateAnipoBarcode(parseInt(String(id)), weight, boxSizeId);
-
-      if (res?.success || res?.already) {
-        setHasBarcode(true);
-        toast.success(res?.already ? "بارکد قبلاً ثبت شده است" : "بارکد با موفقیت ایجاد شد");
-      } else {
-        toast.success("درخواست ارسال شد");
-      }
-
+      const res = await mod.default.generateAnipoBarcode(Number(id), weight, boxSizeId);
+      await applyWorkflowResponse(res);
       setShowBarcodeDialog(false);
-      // Refresh page to reflect barcode changes
-      router.refresh();
-    } catch (e) {
-      toast.error("خطا در ایجاد بارکد Anipo");
+    } catch (error) {
+      toast.error(workflowErrorMessage(error));
     } finally {
       setIsGenerating(false);
     }
   };
+
+  const handleCheckBarcode = async () => {
+    if (!id) return;
+    setIsGenerating(true);
+    try {
+      const mod = await import("@/services/order");
+      const res = await mod.default.checkAnipoBarcode(Number(id));
+      await applyWorkflowResponse(res);
+    } catch (error) {
+      toast.error(workflowErrorMessage(error));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const barcodeToneClasses = {
+    green: "bg-green-50 text-green-600",
+    amber: "bg-orange-50 text-orange-600 hover:bg-orange-100",
+    red: "bg-red-50 text-red-700 hover:bg-red-100",
+    slate: "bg-slate-100 text-slate-500",
+  }[barcodeUi.tone];
 
   const handlePrintPreInvoice = () => {
     if (!orderData || selectedItems.length === 0) {
@@ -205,60 +264,35 @@ export default function SuperAdminOrderSidebar({
           </button>}
 
           {/* Anipo Barcode Button - Full Width */}
-          {canManageShipping && <div className="mt-2 flex w-full">
-            {hasBarcode ? (
-              <button
-                className="flex w-full cursor-default items-center justify-center gap-1 rounded-md bg-green-50 py-1.5 text-green-600"
-                type="button"
-                disabled
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M20 6L9 17l-5-5"></path>
-                </svg>
-                <span className="text-sm">بارکد صادر شده</span>
-              </button>
-            ) : (
+          {canManageShipping && <div className="mt-2 flex w-full flex-col gap-1.5">
               <button
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  if (id) {
-                    setShowBarcodeDialog(true);
-                  } else {
+                  if (!id) {
                     toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                  } else if (barcodeUi.action === "submit") {
+                    setShowBarcodeDialog(true);
+                  } else if (barcodeUi.action === "check") {
+                    void handleCheckBarcode();
                   }
                 }}
-                disabled={isGenerating}
-                className="flex w-full items-center justify-center gap-1 rounded-md bg-orange-50 py-1.5 text-orange-600 transition-colors hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isGenerating || barcodeUi.action === null}
+                className={`flex w-full items-center justify-center gap-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${barcodeToneClasses}`}
                 type="button"
               >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M3 5V19H21V5H3Z"></path>
-                  <path d="M12 8V16"></path>
-                  <path d="M8 12H16"></path>
-                </svg>
-                <span className="text-sm">صدور بارکد Anipo</span>
+                <span className="text-sm">
+                  {isGenerating ? "در حال بررسی آنیپو..." : barcodeUi.label}
+                </span>
               </button>
-            )}
+              {barcodeUi.message ? (
+                <span className="text-xs leading-5 text-slate-500">{barcodeUi.message}</span>
+              ) : null}
           </div>}
         </div>
       </div>
 
-      {canViewOrderLogs && (
+      {(canViewAdminAudit || canViewOrderLogs) && (
         <div className="flex flex-col gap-3 rounded-2xl bg-white p-5">
           <div className="flex items-center justify-between">
             <span className="text-foreground-primary text-lg">رویدادهای سفارش و پیامک</span>
@@ -266,7 +300,7 @@ export default function SuperAdminOrderSidebar({
 
           {/* Tabs for Events and Audit Logs */}
           <div className="flex gap-2 border-b border-neutral-200">
-            <button
+            {canViewAdminAudit && <button
               type="button"
               onClick={() => setActiveLogTab("events")}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -276,8 +310,8 @@ export default function SuperAdminOrderSidebar({
               }`}
             >
               رویدادها ({readableEventCount})
-            </button>
-            <button
+            </button>}
+            {canViewOrderLogs && <button
               type="button"
               onClick={() => setActiveLogTab("audit")}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -287,10 +321,10 @@ export default function SuperAdminOrderSidebar({
               }`}
             >
               لاگ‌های فنی ({orderLogs.length})
-            </button>
+            </button>}
           </div>
 
-          {activeLogTab === "events" ? (
+          {activeLogTab === "events" && canViewAdminAudit ? (
             <SuperAdminOrderLogs
               orderId={timelineOrderId}
               hideHeader
@@ -343,12 +377,14 @@ export default function SuperAdminOrderSidebar({
         </div>
       )}
 
-      {canManageShipping && (
+      {canManageShipping && showBarcodeDialog && (
         <AnipoBarcodeDialog
           isOpen={showBarcodeDialog}
           onClose={() => setShowBarcodeDialog(false)}
           onGenerate={handleGenerateBarcode}
           loading={isGenerating}
+          initialWeight={orderData?.shippingWeight}
+          initialBoxSizeId={orderData?.shippingBoxSizeId}
         />
       )}
     </div>

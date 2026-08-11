@@ -3,13 +3,32 @@ import { decrementStockAtomic } from "../../../cart/services/lib/stock";
 import { logManualActivity } from "../../../../utils/manualAdminActivity";
 import { requireCapability } from "../../../../utils/adminAuthorization";
 
-/**
- * Decrement stock for manual orders
- * This is called after a manual order is created and items are added
- */
+class ManualStockIntegrityError extends Error {
+  constructor(
+    readonly code:
+      | "ORDER_NOT_FOUND"
+      | "NOT_MANUAL_ORDER"
+      | "MANUAL_ORDER_HAS_NO_ITEMS"
+      | "MANUAL_STOCK_INVALID_ITEM"
+      | "MANUAL_STOCK_DECREMENT_FAILED",
+    message: string,
+    readonly status: 404 | 409 | 422,
+  ) {
+    super(message);
+    this.name = "ManualStockIntegrityError";
+  }
+}
+
+/** Apply every manual-order stock decrement once, in one database transaction. */
 export async function decrementManualOrderStockHandler(strapi: Strapi, ctx: any) {
-  const { id } = ctx.params;
-  let orderId: number | undefined;
+  const orderId = Number(ctx.params?.id);
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    ctx.status = 400;
+    ctx.body = {
+      data: { success: false, errorCode: "INVALID_ORDER_ID", error: "Invalid order ID" },
+    };
+    return;
+  }
 
   try {
     const actor = await requireCapability(ctx, strapi, "order.manual.create");
@@ -17,227 +36,169 @@ export async function decrementManualOrderStockHandler(strapi: Strapi, ctx: any)
     const fullUser = actor.user;
     const roleName = fullUser?.role?.name;
 
-    orderId = Number(id);
-    if (Number.isNaN(orderId)) {
-      ctx.status = 400;
-      ctx.body = {
-        data: {
-          success: false,
-          error: "Invalid order ID",
-        },
-      };
-      return;
-    }
+    const applied = await strapi.db.transaction(async ({ trx }) => {
+      const locked = await trx.raw(
+        "SELECT id FROM orders WHERE id = ? FOR UPDATE",
+        [orderId],
+      );
+      if ((locked?.rows || []).length === 0) {
+        throw new ManualStockIntegrityError(
+          "ORDER_NOT_FOUND",
+          "Order not found",
+          404,
+        );
+      }
 
-    // Load order with populated items and stock information
-    const order = await strapi.entityService.findOne("api::order.order", orderId, {
-      populate: {
-        order_items: {
-          populate: {
-            product_variation: {
-              populate: {
-                product_stock: true,
-              },
+      const order: any = await strapi.db.query("api::order.order").findOne({
+        where: { id: orderId },
+        populate: {
+          order_items: {
+            populate: {
+              product_variation: { populate: { product_stock: true } },
             },
           },
         },
-      },
-    });
+        transacting: trx,
+      } as any);
 
-    if (!order) {
-      ctx.status = 404;
-      ctx.body = {
-        data: {
-          success: false,
-          error: "Order not found",
-        },
-      };
-      return;
-    }
+      if (!order) {
+        throw new ManualStockIntegrityError(
+          "ORDER_NOT_FOUND",
+          "Order not found",
+          404,
+        );
+      }
+      if (order.Type !== "Manual") {
+        throw new ManualStockIntegrityError(
+          "NOT_MANUAL_ORDER",
+          "This endpoint is only for manual orders",
+          422,
+        );
+      }
+      if (order.ManualStockAppliedAt) {
+        return { alreadyApplied: true as const, results: [] as any[] };
+      }
 
-    // Verify this is a manual order
-    if (order.Type !== "Manual") {
-      ctx.status = 400;
-      ctx.body = {
-        data: {
-          success: false,
-          error: "This endpoint is only for manual orders",
-        },
-      };
-      return;
-    }
+      const items = Array.isArray(order.order_items) ? order.order_items : [];
+      if (items.length === 0) {
+        throw new ManualStockIntegrityError(
+          "MANUAL_ORDER_HAS_NO_ITEMS",
+          "Manual order has no items",
+          422,
+        );
+      }
 
-    // Check if order has items
-    if (!order.order_items || order.order_items.length === 0) {
-      strapi.log.warn("Manual order has no items to process stock for", { orderId });
-      ctx.status = 200;
-      ctx.body = {
-        data: {
-          success: true,
-          message: "Order has no items to process",
-          results: [],
-        },
-      };
-      return;
-    }
-
-
-    const stockErrors: any[] = [];
-    const stockResults: any[] = [];
-
-    // Decrement stock for each order item
-    for (const item of order.order_items) {
-      const variation = item.product_variation;
-
-      if (!variation?.product_stock?.id || typeof item.Count !== "number" || item.Count <= 0) {
-        if (!variation?.product_stock?.id) {
-          strapi.log.warn("Order item has no stock association", {
-            orderItemId: item.id,
-            variationId: variation?.id,
-          });
+      const validated = items.map((item: any) => {
+        const stockId = Number(item?.product_variation?.product_stock?.id);
+        const quantity = Number(item?.Count);
+        if (!Number.isInteger(stockId) || stockId <= 0 || !Number.isInteger(quantity) || quantity <= 0) {
+          throw new ManualStockIntegrityError(
+            "MANUAL_STOCK_INVALID_ITEM",
+            `Order item ${Number(item?.id) || "unknown"} has invalid stock data`,
+            422,
+          );
         }
-        continue;
-      }
-
-      const stockId = variation.product_stock.id as number;
-      const quantity = Number(item.Count || 0);
-
-      const result = await decrementStockAtomic(strapi, stockId, quantity);
-
-      if (result.success) {
-        stockResults.push({
+        return {
+          orderItemId: Number(item.id),
+          variationId: Number(item?.product_variation?.id),
           stockId,
           quantity,
-          newCount: result.newCount,
-          variationId: variation?.id,
-        });
-      } else {
-        stockErrors.push({
-          stockId,
-          quantity,
-          error: result.error,
-          variationId: variation?.id,
-        });
-        strapi.log.error("Failed to decrement stock atomically (manual order)", {
-          orderId,
-          stockId,
-          quantity,
-          error: result.error,
-        });
-      }
-    }
-
-    if (stockErrors.length > 0) {
-      strapi.log.error("Some stock decrements failed for manual order", {
-        orderId,
-        errors: stockErrors,
-        successfulCount: stockResults.length,
-        failedCount: stockErrors.length,
-      });
-
-      // Return partial success - some items were processed, some failed
-      // Use ctx.send instead of ctx.ok for better compatibility
-      ctx.status = 200;
-      ctx.body = {
-        data: {
-          success: true,
-          partial: true,
-          message: "Stock decremented with some errors",
-          results: stockResults,
-          errors: stockErrors,
-        },
-      };
-      return;
-    }
-
-    if (stockResults.length === 0) {
-      strapi.log.warn("No stock items were processed for manual order", {
-        orderId,
-        orderItemsCount: order.order_items?.length || 0,
-      });
-      ctx.status = 200;
-      ctx.body = {
-        data: {
-          success: true,
-          message: "No stock items to decrement",
-          results: [],
-        },
-      };
-      return;
-    }
-
-    strapi.log.info("Stock decremented successfully for manual order", {
-      orderId,
-      itemsProcessed: stockResults.length,
-    });
-
-    // Log manual activity for audit trail
-    try {
-      const ip = ctx.request?.ip || ctx.ip || null;
-      const userAgent = ctx.request?.headers?.["user-agent"] || ctx.headers?.["user-agent"] || null;
-
-      // Build changes object from stock results
-      const changes: Record<string, { from?: any; to?: any }> = {};
-      stockResults.forEach((result, index) => {
-        changes[`Stock_${result.stockId}_Count`] = {
-          from: result.newCount + result.quantity,
-          to: result.newCount,
         };
       });
 
-      await logManualActivity(strapi, {
-        resourceType: "Stock",
-        resourceId: orderId,
-        action: "Adjust",
-        title: "کاهش موجودی دستی",
-        message: `کاهش موجودی برای سفارش دستی #${orderId}`,
-        messageEn: `Stock decremented for manual order #${orderId}`,
-        severity: "info",
-        changes,
-        metadata: {
+      const results: any[] = [];
+      for (const item of validated) {
+        const decremented = await decrementStockAtomic(
+          strapi,
+          item.stockId,
+          item.quantity,
+          trx,
+        );
+        if (!decremented.success || decremented.newCount == null) {
+          throw new ManualStockIntegrityError(
+            "MANUAL_STOCK_DECREMENT_FAILED",
+            decremented.error || `Failed to decrement stock ${item.stockId}`,
+            409,
+          );
+        }
+        results.push({
+          ...item,
+          newCount: Number(decremented.newCount),
+        });
+      }
+
+      await strapi.db.query("api::order.order").update({
+        where: { id: orderId },
+        data: { ManualStockAppliedAt: new Date() },
+        transacting: trx,
+      } as any);
+
+      return { alreadyApplied: false as const, results };
+    });
+
+    if (!applied.alreadyApplied) {
+      try {
+        const changes: Record<string, { from?: number; to?: number }> = {};
+        for (const result of applied.results) {
+          changes[`Stock_${result.stockId}_Count`] = {
+            from: result.newCount + result.quantity,
+            to: result.newCount,
+          };
+        }
+        await logManualActivity(strapi, {
+          resourceType: "Stock",
+          resourceId: orderId,
+          action: "Adjust",
+          title: "کاهش موجودی دستی",
+          message: `کاهش موجودی برای سفارش دستی #${orderId}`,
+          messageEn: `Stock decremented for manual order #${orderId}`,
+          severity: "info",
+          changes,
+          metadata: {
+            orderId,
+            itemsProcessed: applied.results.length,
+            stockResults: applied.results,
+          },
+          performedBy: { id: fullUser.id, role: roleName },
+          ip: ctx.request?.ip || ctx.ip || null,
+          userAgent:
+            ctx.request?.headers?.["user-agent"] ||
+            ctx.headers?.["user-agent"] ||
+            null,
+        });
+      } catch (activityError) {
+        strapi.log.error("Failed to log manual stock activity", {
           orderId,
-          itemsProcessed: stockResults.length,
-          stockResults,
-        },
-        performedBy: {
-          id: fullUser.id,
-          role: roleName,
-        },
-        ip,
-        userAgent,
-      });
-    } catch (activityError) {
-      // Log error but don't prevent main operation from succeeding
-      strapi.log.error("Failed to log manual activity for stock decrement", {
-        orderId,
-        error: (activityError as Error).message,
-      });
+          error: (activityError as Error).message,
+        });
+      }
     }
 
     ctx.status = 200;
     ctx.body = {
-      data: {
-        success: true,
-        message: "Stock decremented successfully",
-        results: stockResults,
-      },
+      data: applied.alreadyApplied
+        ? { success: true, alreadyApplied: true }
+        : { success: true, applied: true, results: applied.results },
     };
-    return;
   } catch (error) {
+    if (error instanceof ManualStockIntegrityError) {
+      ctx.status = error.status;
+      ctx.body = {
+        data: { success: false, errorCode: error.code, error: error.message },
+      };
+      return;
+    }
     strapi.log.error("Failed to decrement stock for manual order", {
-      orderId: orderId || id,
-      rawId: id,
-      error: (error as Error).message,
-      stack: (error as Error).stack,
+      orderId,
+      error: error instanceof Error ? error.message : String(error),
     });
-
     ctx.status = 500;
     ctx.body = {
       data: {
         success: false,
-        error: (error as Error).message,
+        errorCode: "MANUAL_STOCK_INTERNAL_ERROR",
+        error: error instanceof Error ? error.message : String(error),
       },
     };
-    return;
   }
 }

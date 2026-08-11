@@ -105,7 +105,10 @@ describe("scheduled product publication jobs", () => {
     await expect(processScheduledProductPublicationJob(makeStrapi(), makeJob())).resolves.toEqual({
       outcome: "published",
     });
-    expect(mockedPublish).toHaveBeenCalledWith(expect.anything(), jobData);
+    expect(mockedPublish).toHaveBeenCalledWith(expect.anything(), {
+      ...jobData,
+      jobId: "product-publish-10-3",
+    });
     expect(mockedEffects).toHaveBeenCalledWith(expect.anything(), 10, 4);
   });
 

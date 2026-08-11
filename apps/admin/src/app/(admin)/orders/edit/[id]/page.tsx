@@ -13,7 +13,11 @@ import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { useParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { ProductCoverImage } from "@/types/Product";
-import type { SuperAdminOrderDetail, SuperAdminOrderItem } from "@/types/super-admin/order";
+import type {
+  AnipoBarcodeState,
+  SuperAdminOrderDetail,
+  SuperAdminOrderItem,
+} from "@/types/super-admin/order";
 import { unwrapCollection, unwrapEntity } from "@/utils/strapi";
 import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
 import {
@@ -46,6 +50,15 @@ type OrderResponse = {
     ShippingTax?: number;
     ShippingWeight?: number;
     ShippingBoxSizeId?: number;
+    AnipoBarcodeState?: AnipoBarcodeState;
+    AnipoSubmittedAt?: string;
+    AnipoLastCheckedAt?: string;
+    AnipoPollingDeadlineAt?: string;
+    AnipoIssuedAt?: string;
+    AnipoReadyToIssue?: boolean;
+    AnipoProviderStatus?: string;
+    AnipoLastMessage?: string;
+    AnipoLastError?: string;
     delivery_address?: {
       data: {
         id: string;
@@ -335,6 +348,8 @@ export default function EditOrderPage() {
           paymentToken: lastSnappayTx?.TrackId ?? null,
           shipping: shippingCost,
           shippingMethod,
+          shippingMethodCode:
+            normalizedOrder?.ShippingMethodCode || shippingEntity?.Code || undefined,
           userId: String(user?.id ?? (normalizedOrder as any)?.userId ?? ""),
           userName: userName.trim() || String(user?.id ?? ""),
           items: items,
@@ -348,6 +363,15 @@ export default function EditOrderPage() {
           shippingTax: normalizedOrder?.ShippingTax,
           shippingWeight: normalizedOrder?.ShippingWeight,
           shippingBoxSizeId: normalizedOrder?.ShippingBoxSizeId,
+          anipoBarcodeState: normalizedOrder?.AnipoBarcodeState,
+          anipoSubmittedAt: normalizedOrder?.AnipoSubmittedAt,
+          anipoLastCheckedAt: normalizedOrder?.AnipoLastCheckedAt,
+          anipoPollingDeadlineAt: normalizedOrder?.AnipoPollingDeadlineAt,
+          anipoIssuedAt: normalizedOrder?.AnipoIssuedAt,
+          anipoReadyToIssue: normalizedOrder?.AnipoReadyToIssue,
+          anipoProviderStatus: normalizedOrder?.AnipoProviderStatus,
+          anipoLastMessage: normalizedOrder?.AnipoLastMessage,
+          anipoLastError: normalizedOrder?.AnipoLastError,
         });
       })
       .catch((err) => {
@@ -365,9 +389,7 @@ export default function EditOrderPage() {
       });
   };
 
-  const refreshAfterOrderAction = () => {
-    void load({ silent: true });
-  };
+  const refreshAfterOrderAction = () => load({ silent: true });
 
   useEffect(() => {
     load();
@@ -565,7 +587,13 @@ export default function EditOrderPage() {
         config={pageConfig}
         data={data}
         onSubmit={handleOrderSubmit}
-        customSidebar={<Sidebar shippingBarcode={data?.shippingBarcode} orderData={data} />}
+        customSidebar={
+          <Sidebar
+            shippingBarcode={data?.shippingBarcode}
+            orderData={data}
+            onReload={refreshAfterOrderAction}
+          />
+        }
       />
 
       {/*

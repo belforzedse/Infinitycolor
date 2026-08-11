@@ -12,6 +12,8 @@ import UserService from "@/services/user";
 import type { MeResponse, UpdateMePayload } from "@/services/user/me";
 import { getSidebarItemsForCapabilities } from "@/constants/superAdminSidebar";
 import { adminOrigin } from "@/config/admin-env";
+import { useCan } from "@/hooks/useCan";
+import AuditTimeline from "@/components/SuperAdmin/Audit/AuditTimeline";
 
 const EMPTY_FORM: UpdateMePayload = {
   FirstName: "",
@@ -43,6 +45,7 @@ function formatDate(value: string): string {
 }
 
 export default function AdminAccountClient() {
+  const canReadAudit = useCan("system.audit.read");
   const [user, setUser] = useState<MeResponse | null>(null);
   const [form, setForm] = useState<UpdateMePayload>(EMPTY_FORM);
   const [sessions, setSessions] = useState<CentralAuthSession[]>([]);
@@ -302,6 +305,14 @@ export default function AdminAccountClient() {
           )}
         </div>
       </section>
+
+      {canReadAudit && user?.id && (
+        <AuditTimeline
+          title="سابقه امنیتی و مدیریتی این حساب"
+          query={{ initiatorId: String(user.id) }}
+          pageSize={12}
+        />
+      )}
     </div>
   );
 }

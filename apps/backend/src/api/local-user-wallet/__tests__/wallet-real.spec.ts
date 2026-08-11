@@ -41,6 +41,19 @@ describe('Wallet Operations - Real Implementation', () => {
 
     walletQuery.findOne.mockResolvedValue(wallet);
 
+    topupQuery.findOne.mockImplementation(async () => topup);
+
+    mockStrapi.db.connection.raw.mockImplementation(async (sql: string, bindings: any[]) => {
+      if (sql.includes("SET status = 'Processing'")) {
+        if (topup.Status !== 'Pending') return { rows: [] };
+        topup.Status = 'Processing';
+        topup.SaleReferenceId = bindings[0];
+        topup.NextReconcileAt = bindings[1];
+        return { rows: [{ id: topup.id }] };
+      }
+      return { rows: [] };
+    });
+
     transactionQuery.findOne.mockImplementation(async ({ where }: any) =>
       transactions.find((tx: any) => tx.ReferenceId === where.ReferenceId) || null
     );
@@ -64,8 +77,18 @@ describe('Wallet Operations - Real Implementation', () => {
 
     mockStrapi.db.transaction.mockImplementation((callback: any) => {
       const run = async () => {
-        const trx = {
-          raw: jest.fn(async (sql: string, bindings: any[]) => {
+        const trx: any = jest.fn((_table: string) => ({
+          insert: jest.fn((row: any) => ({
+            returning: jest.fn(() => ({
+              onConflict: jest.fn(() => ({
+                ignore: jest.fn().mockResolvedValue([
+                  { id: 900, event_id: row.event_id },
+                ]),
+              })),
+            })),
+          })),
+        }));
+        trx.raw = jest.fn(async (sql: string, bindings: any[]) => {
             if (sql.includes('FROM wallet_topups')) {
               return {
                 rows: [
@@ -85,8 +108,7 @@ describe('Wallet Operations - Real Implementation', () => {
             }
 
             return { rows: [] };
-          }),
-        };
+          });
 
         return callback({ trx });
       };
@@ -133,6 +155,7 @@ describe('Wallet Operations - Real Implementation', () => {
     mock.registerQuery('api::local-user-wallet.local-user-wallet', walletQuery);
 
     mock.registerQuery('api::wallet-topup.wallet-topup', {
+      findOne: jest.fn(),
       update: jest.fn(),
     });
 
@@ -447,8 +470,13 @@ describe('Wallet Operations - Real Implementation', () => {
         ([sql]: [string]) => /UPDATE wallet_topups/.test(sql) && /status = 'Failed'/.test(sql)
       );
       expect(failureUpdates).toHaveLength(1);
-      expect(failureUpdates[0][0]).toMatch(/AND\s+status = 'Pending'/);
-      expect(failureUpdates[0][1]).toEqual([100]);
+      expect(failureUpdates[0][0]).toMatch(/AND\s+status IN \(\?\)/);
+      expect(failureUpdates[0][1]).toEqual([
+        17,
+        'Mellat callback failure 17',
+        100,
+        'Pending',
+      ]);
 
       // ✅ Should redirect to frontend with failure status
       expect(ctx.redirect).toHaveBeenCalledWith(
@@ -642,8 +670,8 @@ describe('Wallet Operations - Real Implementation', () => {
           orderId: saleOrderId,
         })
       );
-      expect(mellatService.settleTransaction.mock.calls[0][0]).not.toHaveProperty(
-        'allowResCode45Success'
+      expect(mellatService.settleTransaction.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ allowResCode45Success: true })
       );
     });
 
@@ -726,7 +754,9 @@ describe('Wallet Operations - Real Implementation', () => {
       expect(mellatService.verifyTransaction).toHaveBeenCalledTimes(1);
       expect(mellatService.settleTransaction).toHaveBeenCalledTimes(1);
       expect(ctx1.redirect).toHaveBeenCalledWith(expect.stringContaining('status=success'));
-      expect(ctx2.redirect).toHaveBeenCalledWith(expect.stringContaining('status=success'));
+      expect(ctx2.redirect).toHaveBeenCalledWith(
+        expect.stringMatching(/status=(success|pending)/)
+      );
     });
 
     it('should short-circuit existing wallet transaction before gateway calls', async () => {

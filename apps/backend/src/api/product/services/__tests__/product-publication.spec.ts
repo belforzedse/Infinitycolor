@@ -6,8 +6,25 @@ jest.mock("../../../../utils/revalidate", () => ({
   triggerFrontendRevalidation: jest.fn(),
 }));
 
+jest.mock("../../../../audit/writer", () => ({
+  resolveCurrentAuditContext: jest.fn(() => ({
+    actor: { type: "human", id: 7, label: "Admin", role: "Superadmin" },
+    initiator: { type: "human", id: 7, label: "Admin", role: "Superadmin" },
+    origin: "admin_ui",
+    requestId: "publication-unit-request",
+    interactionId: null,
+    correlationId: "publication-unit-correlation",
+  })),
+  writeAuditEvent: jest.fn().mockResolvedValue({
+    id: 1,
+    eventId: "00000000-0000-4000-a000-000000000001",
+    deduplicated: false,
+  }),
+}));
+
 import { delByPatternStrict } from "../../../../utils/responseCache";
 import { triggerFrontendRevalidation } from "../../../../utils/revalidate";
+import { writeAuditEvent } from "../../../../audit/writer";
 import {
   executePublicationCommand,
   PublicationCommandError,
@@ -20,6 +37,7 @@ const mockedPurge = delByPatternStrict as jest.MockedFunction<typeof delByPatter
 const mockedRevalidate = triggerFrontendRevalidation as jest.MockedFunction<
   typeof triggerFrontendRevalidation
 >;
+const mockedWriteAudit = writeAuditEvent as jest.MockedFunction<typeof writeAuditEvent>;
 
 type Row = Record<string, any> & { id: number };
 
@@ -140,6 +158,17 @@ describe("canonical product publication service", () => {
       scheduleRevision: 1,
       changed: true,
     }));
+    expect(mockedWriteAudit).toHaveBeenCalledWith(
+      strapi,
+      expect.objectContaining({
+        eventKey: "products.publication_scheduled",
+        actor: expect.objectContaining({ type: "human", id: 7 }),
+        initiator: expect.objectContaining({ type: "human", id: 7 }),
+        origin: "admin_ui",
+        result: "success",
+      }),
+      expect.objectContaining({ trx: expect.any(Function) }),
+    );
 
     const identical = await executePublicationCommand(
       strapi,
@@ -340,6 +369,15 @@ describe("canonical product publication service", () => {
 
     expect(first.outcome).toBe("published");
     expect(repeated.outcome).toBe("already-published");
+    expect(mockedWriteAudit).toHaveBeenCalledWith(
+      strapi,
+      expect.objectContaining({
+        eventKey: "products.publication_executed",
+        actor: expect.objectContaining({ type: "scheduled_job" }),
+        result: "success",
+      }),
+      expect.objectContaining({ trx: expect.any(Function) }),
+    );
     expect(strapi.__row().publication_revision).toBe(1);
     expect(strapi.__entityCreate).toHaveBeenCalledTimes(1);
   });

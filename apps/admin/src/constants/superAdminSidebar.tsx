@@ -388,6 +388,11 @@ const superAdminSidebar: SidebarItem[] = [
         label: "تنظیمات عمومی",
         href: "/settings/general",
       },
+      {
+        id: "settings-audit-activity",
+        label: "حسابرسی و فعالیت مدیران",
+        href: "/settings/activity",
+      },
     ],
   },
   // {
