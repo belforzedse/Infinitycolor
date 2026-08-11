@@ -1459,7 +1459,8 @@ function DateAndComparison({
 }
 
 function StateNotice({ report }: { report: BehaviorResponse }) {
-  if (report.state === "ok") return null;
+  const state = report.state;
+  if (state === "ok") return null;
   const labels = {
     empty: "برای بازه و فیلتر انتخابی داده‌ای ثبت نشده است",
     partial: "بخشی از گزارش در دسترس نیست؛ بخش‌های موجود نمایش داده شده‌اند",
@@ -1470,19 +1471,27 @@ function StateNotice({ report }: { report: BehaviorResponse }) {
     partial: "border-amber-200 bg-amber-50 text-amber-800",
     unavailable: "border-rose-200 bg-rose-50 text-rose-800",
   } as const;
+  const genericDetail = "بخشی از اطلاعات این گزارش موقتاً در دسترس نیست.";
+  const details = Array.from(
+    new Set(
+      [report.error, ...(report.metadata.warnings ?? [])]
+        .filter((message): message is string => Boolean(message?.trim()))
+        .map(presentAnalyticsMessage),
+    ),
+  ).filter(
+    (message) =>
+      message !== labels[state] && message !== genericDetail,
+  );
   return (
     <div
-      className={`rounded-xl border px-4 py-3 text-sm ${tones[report.state]}`}
+      className={`rounded-xl border px-4 py-3 text-sm ${tones[state]}`}
       role="status"
-      data-state={report.state}
+      data-state={state}
     >
-      <p className="font-medium">{labels[report.state]}</p>
-      {report.error ? (
-        <p className="mt-1 text-xs opacity-80">{presentAnalyticsMessage(report.error)}</p>
-      ) : null}
-      {report.metadata.warnings?.map((warning) => (
-        <p key={warning} className="mt-1 text-xs opacity-80">
-          {presentAnalyticsMessage(warning)}
+      <p className="font-medium">{labels[state]}</p>
+      {details.map((message) => (
+        <p key={message} className="mt-1 text-xs opacity-80">
+          {message}
         </p>
       ))}
     </div>

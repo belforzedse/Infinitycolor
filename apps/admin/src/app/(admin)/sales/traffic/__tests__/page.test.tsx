@@ -273,6 +273,33 @@ describe("behavior report page", () => {
     expect(screen.queryByText(/^۰$/)).not.toBeInTheDocument();
   });
 
+  it("deduplicates partial-report details and hides redundant generic errors", async () => {
+    getBehaviorViewMock.mockResolvedValueOnce({
+      state: "partial",
+      data: overview.data,
+      error: "UMAMI_INVALID_RESPONSE",
+      metadata: {
+        ...overview.metadata,
+        warnings: [
+          "HTTP_500",
+          "بخش checkoutFunnel در دسترس نیست",
+          "بخش checkoutFunnel در دسترس نیست",
+        ],
+      },
+    });
+    render(<BehaviorReportPage />);
+
+    expect(
+      await screen.findByText(
+        "بخشی از گزارش در دسترس نیست؛ بخش‌های موجود نمایش داده شده‌اند",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("بخشی از اطلاعات این گزارش موقتاً در دسترس نیست."),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("مسیر خرید موقتاً در دسترس نیست.")).toHaveLength(1);
+  });
+
   it("polls realtime every 30 seconds and pauses while hidden", async () => {
     render(<BehaviorReportPage />);
     fireEvent.click(screen.getByRole("tab", { name: /اکنون در سایت/ }));
