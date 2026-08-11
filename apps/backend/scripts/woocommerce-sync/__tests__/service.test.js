@@ -604,7 +604,7 @@ test("friday finishes completed-with-exceptions when users fail but orders succe
   const service = new WooSyncService(config, { pool: { end: async () => undefined }, source: {}, destination: {} });
   const finished = [];
   const steps = [];
-  const scheduledAt = Date.parse("2026-08-10T20:29:00.000Z");
+  const scheduledAt = Date.now() - 60_000;
   service.withLease = async (_name, action) => action("friday-fence");
   service.state = {
     control: async () => ({ mode: "active", reconciliation_run_id: "r1", reconciliation_sha256: "a".repeat(64) }),
