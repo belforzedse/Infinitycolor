@@ -21,6 +21,18 @@ export type AnipoCreateOrderPayload = {
 export type AnipoBarcodeResult = {
   issued: boolean;
   barcode?: string;
+  readyToIssue?: boolean;
+  status?: string;
+  message?: string;
+  postalCost?: unknown;
+  issuedAt?: string;
+};
+
+export type AnipoOrderResult = AnipoBarcodeResult & {
+  orderCode?: string;
+  orderStatus?: string;
+  weightG?: number;
+  service?: string;
 };
 
 type AnipoApiErrorBody = {
@@ -73,6 +85,53 @@ function extractErrorMessage(data: unknown, fallback: string): string {
     if (typeof message === "string" && message.trim()) return message;
   }
   return fallback;
+}
+
+function optionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+export function parseAnipoOrderResult(data: unknown): AnipoOrderResult | null {
+  if (!data || typeof data !== "object") return null;
+  const envelope = data as Record<string, unknown>;
+  const raw =
+    envelope.order && typeof envelope.order === "object"
+      ? (envelope.order as Record<string, unknown>)
+      : envelope;
+
+  const barcode = optionalText(raw.barcode);
+  const weight = Number(raw.weight_g);
+  return {
+    orderCode: optionalText(raw.order_code),
+    status: optionalText(raw.status),
+    orderStatus: optionalText(raw.order_status),
+    readyToIssue:
+      typeof raw.ready_to_issue === "boolean" ? raw.ready_to_issue : undefined,
+    issued: raw.issued === true,
+    barcode,
+    postalCost: raw.postal_cost,
+    issuedAt: optionalText(raw.issued_at),
+    weightG: Number.isFinite(weight) && weight > 0 ? weight : undefined,
+    service: optionalText(raw.service),
+    message: optionalText(raw.message),
+  };
+}
+
+function safeOrderSummary(data: unknown): Record<string, unknown> {
+  const parsed = parseAnipoOrderResult(data);
+  return parsed
+    ? {
+        orderCode: parsed.orderCode,
+        status: parsed.status,
+        orderStatus: parsed.orderStatus,
+        readyToIssue: parsed.readyToIssue,
+        issued: parsed.issued,
+        hasBarcode: Boolean(parsed.barcode),
+        hasPostalCost: parsed.postalCost !== null && parsed.postalCost !== undefined,
+        issuedAt: parsed.issued ? parsed.issuedAt : undefined,
+        message: parsed.message,
+      }
+    : { responseShape: "unrecognized" };
 }
 
 /** Normalize Iranian mobile for Anipo (local 0… format, max 12 digits). */
@@ -155,15 +214,20 @@ export default ({ strapi }: { strapi: Strapi }) => ({
     };
 
     try {
-      strapi.log.info(
-        `[anipo] http request endpoint=/orders method=POST body=${toJson(body)}`
-      );
+      strapi.log.info(`[anipo] http request endpoint=/orders method=POST`, {
+        orderCode: body.order_code,
+        weightG: body.weight_g,
+        boxType: body.box_type,
+        orderTotalIrr: body.order_total,
+        orderStatus: body.order_status,
+        hasMobile: Boolean(body.receiver_mobile),
+        hasAddress: Boolean(body.receiver_address),
+        hasPostalCode: Boolean(body.receiver_postal_code),
+      });
       const res = await http().post("/orders", body);
-      strapi.log.info(
-        `[anipo] http response endpoint=/orders status=${res.status} body=${toJson(
-          res.data
-        )}`
-      );
+      strapi.log.info(`[anipo] http response endpoint=/orders status=${res.status}`, {
+        ...safeOrderSummary(res.data),
+      });
       return { ok: true, data: res.data };
     } catch (e: unknown) {
       const err = e as {
@@ -171,18 +235,12 @@ export default ({ strapi }: { strapi: Strapi }) => ({
         response?: { status?: number; data?: unknown };
         config?: { url?: string; data?: unknown; headers?: unknown };
       };
-      let reqBody: unknown = err?.config?.data;
-      try {
-        reqBody =
-          typeof reqBody === "string" ? JSON.parse(reqBody) : reqBody;
-      } catch {
-        /* keep raw */
-      }
       strapi.log.error(
         `[anipo] http error endpoint=/orders message=${err?.message} status=${
           err?.response?.status
-        } url=${err?.config?.url} request=${toJson(reqBody)} response=${toJson(
-          err?.response?.data
+        } url=${err?.config?.url} response=${extractErrorMessage(
+          err?.response?.data,
+          "provider_error",
         )}`
       );
       return {
@@ -203,24 +261,15 @@ export default ({ strapi }: { strapi: Strapi }) => ({
     try {
       strapi.log.info(`[anipo] http request endpoint=${endpoint} method=GET`);
       const res = await http().get(endpoint);
-      strapi.log.info(
-        `[anipo] http response endpoint=${endpoint} status=${res.status} body=${toJson(
-          res.data
-        )}`
-      );
+      strapi.log.info(`[anipo] http response endpoint=${endpoint} status=${res.status}`, {
+        ...safeOrderSummary(res.data),
+      });
 
-      const raw = res.data as Record<string, unknown> | null;
-      if (!raw || typeof raw !== "object") {
+      const parsed = parseAnipoOrderResult(res.data);
+      if (!parsed) {
         return { ok: false, error: "anipo_error" };
       }
-
-      const issued = Boolean(raw.issued);
-      const barcode =
-        typeof raw.barcode === "string" && raw.barcode.trim()
-          ? raw.barcode.trim()
-          : undefined;
-
-      return { ok: true, data: { issued, barcode } };
+      return { ok: true, data: parsed };
     } catch (e: unknown) {
       const err = e as {
         message?: string;
@@ -231,6 +280,44 @@ export default ({ strapi }: { strapi: Strapi }) => ({
         `[anipo] http error endpoint=${endpoint} message=${err?.message} status=${
           err?.response?.status
         } url=${err?.config?.url} response=${toJson(err?.response?.data)}`
+      );
+      return {
+        ok: false,
+        error: extractErrorMessage(err?.response?.data, "network_error"),
+      };
+    }
+  },
+
+  async getOrder(
+    orderCode: string
+  ): Promise<{ ok: boolean; data?: AnipoOrderResult; error?: string }> {
+    const { token } = getConfig();
+    if (!token) return { ok: false, error: "missing_token" };
+    const code = encodeURIComponent(String(orderCode));
+    const endpoint = `/orders/${code}`;
+
+    try {
+      strapi.log.info(`[anipo] http request endpoint=${endpoint} method=GET`);
+      const res = await http().get(endpoint);
+      const parsed = parseAnipoOrderResult(res.data);
+      strapi.log.info(`[anipo] http response endpoint=${endpoint} status=${res.status}`, {
+        ...safeOrderSummary(res.data),
+      });
+      if (!parsed) return { ok: false, error: "anipo_error" };
+      return { ok: true, data: parsed };
+    } catch (e: unknown) {
+      const err = e as {
+        message?: string;
+        response?: { status?: number; data?: unknown };
+        config?: { url?: string };
+      };
+      strapi.log.error(
+        `[anipo] http error endpoint=${endpoint} message=${err?.message} status=${
+          err?.response?.status
+        } url=${err?.config?.url} response=${extractErrorMessage(
+          err?.response?.data,
+          "provider_error",
+        )}`
       );
       return {
         ok: false,

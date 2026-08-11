@@ -2,6 +2,27 @@ import { apiClient } from "../index";
 import { getActiveReserve, releaseReserve } from "./reserve";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import type { OrderPaymentStatusResponse as SharedOrderPaymentStatusResponse } from "@repo/api/commerce";
+import type { AnipoBarcodeState } from "@/types/super-admin/order";
+
+export interface AnipoBarcodeWorkflowResponse {
+  success: true;
+  state: AnipoBarcodeState;
+  issued: boolean;
+  pending: boolean;
+  already?: boolean;
+  barcode?: string;
+  readyToIssue?: boolean;
+  providerStatus?: string;
+  message: string;
+  submittedAt?: string;
+  lastCheckedAt?: string;
+  pollingDeadlineAt?: string;
+  data?: {
+    barcode: string;
+    weight_g?: number;
+    box_type?: number;
+  };
+}
 
 /** Established callback response used by the SnappPay return journey. */
 export interface PaymentVerificationResponse {
@@ -360,14 +381,21 @@ const OrderService = {
   getOrderDetail,
   getActiveReserve,
   releaseReserve,
-  async generateAnipoBarcode(orderId: number, weight?: number, boxSizeId?: number): Promise<any> {
+  async generateAnipoBarcode(
+    orderId: number,
+    weight?: number,
+    boxSizeId?: number,
+  ): Promise<AnipoBarcodeWorkflowResponse> {
     try {
       const body: any = {};
       if (weight !== undefined) body.weight = weight;
       if (boxSizeId !== undefined) body.boxSizeId = boxSizeId;
 
-      const res = await apiClient.post(`/orders/${orderId}/anipo-barcode`, body);
-      return res as any;
+      const res = await apiClient.post<AnipoBarcodeWorkflowResponse>(
+        `/orders/${orderId}/anipo-barcode`,
+        body,
+      );
+      return res as unknown as AnipoBarcodeWorkflowResponse;
     } catch (error: any) {
       console.error("Error generating Anipo barcode:", {
         error,
@@ -380,6 +408,13 @@ const OrderService = {
       });
       throw error;
     }
+  },
+  async checkAnipoBarcode(orderId: number): Promise<AnipoBarcodeWorkflowResponse> {
+    const res = await apiClient.post<AnipoBarcodeWorkflowResponse>(
+      `/orders/${orderId}/anipo-barcode/check`,
+      {},
+    );
+    return res as unknown as AnipoBarcodeWorkflowResponse;
   },
 };
 

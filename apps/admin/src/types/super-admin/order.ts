@@ -1,5 +1,12 @@
 import type { ProductCoverImage } from "@/types/Product";
 
+export type AnipoBarcodeState =
+  | "Pending"
+  | "Issued"
+  | "NeedsAttention"
+  | "Stopped"
+  | "Voided";
+
 export interface SuperAdminOrderItem {
   id: number;
   productId: number;
@@ -39,6 +46,7 @@ export interface SuperAdminOrderDetail {
   items: SuperAdminOrderItem[];
   shipping: number;
   shippingMethod?: string;
+  shippingMethodCode?: string;
   subtotal: number;
   discount?: number;
   tax?: number;
@@ -48,4 +56,13 @@ export interface SuperAdminOrderDetail {
   shippingTax?: number;
   shippingWeight?: number;
   shippingBoxSizeId?: number;
+  anipoBarcodeState?: AnipoBarcodeState;
+  anipoSubmittedAt?: string;
+  anipoLastCheckedAt?: string;
+  anipoPollingDeadlineAt?: string;
+  anipoIssuedAt?: string;
+  anipoReadyToIssue?: boolean;
+  anipoProviderStatus?: string;
+  anipoLastMessage?: string;
+  anipoLastError?: string;
 }
