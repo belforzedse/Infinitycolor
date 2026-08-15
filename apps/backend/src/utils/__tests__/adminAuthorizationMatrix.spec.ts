@@ -36,6 +36,23 @@ describe("canonical admin capability matrix", () => {
     expect(hasCapability("store_manager", "category.update")).toBe(true);
     expect(hasCapability("store_manager", "order.status.update")).toBe(true);
     expect(hasCapability("store_manager", "report.product.read")).toBe(false);
+    const storeManager = new Set(capabilitiesForRole("store_manager"));
+    const storeManager2 = new Set(capabilitiesForRole("store_manager_2"));
+    expect(
+      [...storeManager].every((capability) => storeManager2.has(capability)),
+    ).toBe(true);
+    expect(
+      [...storeManager2]
+        .filter((capability) => !storeManager.has(capability))
+        .sort(),
+    ).toEqual([
+      "wallet.adjust",
+      "wallet.customer.search",
+      "wallet.history.read",
+      "wallet.read",
+    ]);
+    expect(hasCapability("store_manager_2", "report.product.read")).toBe(false);
+    expect(hasCapability("store_manager_2", "system.users.manage")).toBe(false);
     expect(hasCapability("finance", "category.update")).toBe(true);
     expect(hasCapability("finance", "report.finance.read")).toBe(true);
     expect(hasCapability("finance", "report.product.read")).toBe(true);
@@ -60,6 +77,7 @@ describe("canonical admin capability matrix", () => {
   it("reserves scheduling for Superadmin and immediate publication for Seller 1", () => {
     expect(hasCapability("seller1", "product.publish")).toBe(true);
     expect(hasCapability("store_manager", "product.schedule")).toBe(false);
+    expect(hasCapability("store_manager_2", "product.schedule")).toBe(false);
     expect(hasCapability("founder", "product.schedule")).toBe(false);
     expect(hasCapability("superadmin", "product.schedule")).toBe(true);
   });

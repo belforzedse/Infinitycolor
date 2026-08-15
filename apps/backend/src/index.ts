@@ -547,6 +547,10 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
     inherits: ["staff-self"],
     grants: grantsForAdminRole("store_manager"),
   },
+  "store-manager-2": {
+    inherits: ["staff-self"],
+    grants: grantsForAdminRole("store_manager_2"),
+  },
   finance: {
     inherits: ["staff-self"],
     grants: grantsForAdminRole("finance"),
@@ -1032,6 +1036,7 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
     "seller-1": "Non-destructive catalog administration",
     "seller-2": "Seller 1 plus categories, order read, status changes, and notes",
     "store-manager": "Same operational surface as Seller 2 (no analytics)",
+    "store-manager-2": "Store Manager capabilities plus customer wallet administration",
     finance: "Seller 2 plus product, sales, cart, and finance reporting",
     founder: "Store Manager and Finance capabilities plus wallets, traffic, and manual orders",
     customer: "End customer role",

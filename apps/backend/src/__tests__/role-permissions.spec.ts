@@ -669,6 +669,7 @@ describe("role permission templates", () => {
       seller1: "seller-1",
       seller2: "seller-2",
       store_manager: "store-manager",
+      store_manager_2: "store-manager-2",
       finance: "finance",
       founder: "founder",
       superadmin: "superadmin",
@@ -804,6 +805,7 @@ describe("role permission templates", () => {
       "seller1",
       "seller2",
       "store_manager",
+      "store_manager_2",
       "finance",
       "founder",
       "superadmin",
@@ -1167,7 +1169,7 @@ describe("role permission templates", () => {
     expect(enabled("api::commerce-maintenance", "commerce-maintenance")).toEqual([]);
   });
 
-  it("restricts admin wallet management to Founder and Superadmin", () => {
+  it("grants wallet administration only to Store Manager 2, Founder, and Superadmin", () => {
     const walletCtrl = (tree: any) =>
       tree["api::local-user-wallet"].controllers["local-user-wallet"];
 
@@ -1178,6 +1180,10 @@ describe("role permission templates", () => {
     const founder = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "founder",
+    );
+    const storeManager2 = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "store-manager-2",
     );
     const editor = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
@@ -1197,6 +1203,18 @@ describe("role permission templates", () => {
 
     expect(walletCtrl(founder).adminAdjustWallet.enabled).toBe(true);
     expect(walletCtrl(founder).adminGetUserWallet.enabled).toBe(true);
+    expect(walletCtrl(storeManager2).adminAdjustWallet.enabled).toBe(true);
+    expect(walletCtrl(storeManager2).adminGetUserWallet.enabled).toBe(true);
+    expect(walletCtrl(storeManager2).adminGetUserWalletHistory.enabled).toBe(true);
+    expect(
+      storeManager2["api::plugin-user"].controllers["plugin-user"].searchCustomers.enabled,
+    ).toBe(true);
+    expect(
+      storeManager2["api::report"].controllers.report.productSales.enabled,
+    ).toBe(false);
+    expect(
+      storeManager2["api::admin-user"].controllers["admin-user"].query.enabled,
+    ).toBe(false);
 
     // Superadmin (full access) keeps them.
     expect(walletCtrl(superadmin).adminAdjustWallet.enabled).toBe(true);
@@ -1298,6 +1316,7 @@ describe("role permission templates", () => {
         "seller-1",
         "seller-2",
         "store-manager",
+        "store-manager-2",
         "finance",
         "founder",
         "customer",

@@ -97,6 +97,7 @@ export function getAdminLandingPath(
     seller1: "/products",
     seller2: "/products",
     store_manager: "/orders",
+    store_manager_2: "/orders",
     finance: "/sales",
     founder: "/",
     superadmin: "/",
@@ -134,7 +135,9 @@ export const getRoleAdminLandingPath = (roleName?: string | null): string => {
 export const isFounderRole = (roleName?: string | null): boolean =>
   normalizeAdminRole(roleName) === "founder";
 export const isStoreManagerRole = (roleName?: string | null): boolean =>
-  normalizeAdminRole(roleName) === "store_manager";
+  ["store_manager", "store_manager_2"].includes(
+    normalizeAdminRole(roleName) ?? "",
+  );
 export const isEditorRole = (roleName?: string | null): boolean =>
   normalizeAdminRole(roleName) === "editor";
 

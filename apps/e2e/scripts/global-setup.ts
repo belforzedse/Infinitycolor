@@ -72,6 +72,7 @@ type SeedSummary = {
   seller1UserId?: number;
   seller2UserId?: number;
   storeManagerUserId?: number;
+  storeManager2UserId?: number;
   editorUserId?: number;
 };
 

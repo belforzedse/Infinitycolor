@@ -1,4 +1,7 @@
-import { resolveUserRoleLabel } from "../roleLabels";
+import {
+  isAssignablePluginRole,
+  resolveUserRoleLabel,
+} from "../roleLabels";
 
 describe("resolveUserRoleLabel", () => {
   it("shows the canonical plugin role after an assignment changes", () => {
@@ -18,5 +21,12 @@ describe("resolveUserRoleLabel", () => {
 
   it("renders a placeholder when neither role exists", () => {
     expect(resolveUserRoleLabel({})).toBe("-");
+  });
+
+  it("translates and permits assignment of Store Manager 2", () => {
+    expect(
+      resolveUserRoleLabel({ role: { name: "Store Manager 2" } }),
+    ).toBe("مدیر فروشگاه ۲");
+    expect(isAssignablePluginRole({ type: "store-manager-2" })).toBe(true);
   });
 });

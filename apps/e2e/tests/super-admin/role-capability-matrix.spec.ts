@@ -5,7 +5,11 @@ import {
   type APIResponse,
   type Page,
 } from "@playwright/test";
-import { authStorageStatePath, type E2EAuthRole } from "../../helpers/auth";
+import {
+  authCredentials,
+  authStorageStatePath,
+  type E2EAuthRole,
+} from "../../helpers/auth";
 import {
   apiGet,
   apiPost,
@@ -26,6 +30,7 @@ type StaffRoleCase = {
     | "seller-1"
     | "seller-2"
     | "store-manager"
+    | "store-manager-2"
     | "finance"
     | "founder"
     | "admin"
@@ -162,6 +167,51 @@ const STAFF_ROLES: StaffRoleCase[] = [
         sort: "last-edited",
         filters: [],
       }),
+    forbiddenApi: (request, role) =>
+      apiGet(request, role, "/reports/product-sales"),
+  },
+  {
+    authRole: "store-manager-2",
+    adminRole: "store_manager_2",
+    label: "Store Manager 2",
+    sidebarCount: 9,
+    visibleSidebarIds: [
+      "products",
+      "product-categories",
+      "orders",
+      "wallets",
+    ],
+    hiddenSidebarIds: ["manage-products", "sales", "users", "settings"],
+    requiredCapabilities: [
+      "order.status.update",
+      "order.notes.update",
+      "wallet.customer.search",
+      "wallet.read",
+      "wallet.history.read",
+      "wallet.adjust",
+    ],
+    absentCapabilities: [
+      "report.product.read",
+      "order.cancel",
+      "order.manual.create",
+      "report.finance.read",
+      "system.users.manage",
+      "system.roles.manage",
+      "system.audit.read",
+      "system.settings.manage",
+      "system.payments.manage",
+      "system.purge.execute",
+      "product.delete",
+    ],
+    forbiddenPath: "/sales",
+    allowedApi: (request, role) =>
+      apiGet(
+        request,
+        role,
+        `/sp/customers/search?q=${encodeURIComponent(
+          authCredentials("customer").phone.slice(-7),
+        )}&pageSize=3`,
+      ),
     forbiddenApi: (request, role) =>
       apiGet(request, role, "/reports/product-sales"),
   },
@@ -369,7 +419,71 @@ for (const role of STAFF_ROLES) {
   });
 }
 
-for (const authRole of ["founder", "admin"] as const) {
+test.describe("Store Manager 2 wallet workflow", () => {
+  test.use({ storageState: authStorageStatePath("store-manager-2") });
+
+  test("@permissions searches, reads, adjusts, and reloads another customer wallet", async ({
+    request,
+  }) => {
+    const customerPhone = authCredentials("customer").phone;
+    const search = await apiGet(
+      request,
+      "store-manager-2",
+      `/sp/customers/search?q=${encodeURIComponent(customerPhone.slice(-7))}&pageSize=3`,
+    );
+    await expectApiOk(search, "Store Manager 2 customer search");
+    const searchBody = (await search.json()) as {
+      data?: Array<{ id?: number; phone?: string | null }>;
+    };
+    const customer = searchBody.data?.find(
+      (entry) => entry.phone === customerPhone,
+    );
+    expect(customer?.id).toBeTruthy();
+    const customerId = Number(customer?.id);
+
+    await expectApiOk(
+      await apiGet(
+        request,
+        "store-manager-2",
+        `/local-user-wallet/admin/${customerId}`,
+      ),
+      "Store Manager 2 wallet balance",
+    );
+    await expectApiOk(
+      await apiGet(
+        request,
+        "store-manager-2",
+        `/local-user-wallet/admin/${customerId}/history?page=1&pageSize=25`,
+      ),
+      "Store Manager 2 wallet history",
+    );
+    const adjustment = await apiPost(
+      request,
+      "store-manager-2",
+      "/local-user-wallet/admin/adjust",
+      {
+        userId: customerId,
+        mode: "credit",
+        amountToman: 1,
+        reason: "E2E Store Manager 2 wallet workflow",
+      },
+    );
+    await expectApiOk(adjustment, "Store Manager 2 wallet adjustment");
+    expect(await adjustment.json()).toEqual(
+      expect.objectContaining({ success: true }),
+    );
+    await expectApiOk(
+      await apiGet(
+        request,
+        "store-manager-2",
+        `/local-user-wallet/admin/${customerId}/history?page=1&pageSize=25`,
+      ),
+      "Store Manager 2 refreshed wallet history",
+    );
+  });
+});
+
+for (const authRole of ["store-manager-2", "founder", "admin"] as const) {
   test.describe(`${authRole} own-wallet administration boundary`, () => {
     test.use({ storageState: authStorageStatePath(authRole) });
 

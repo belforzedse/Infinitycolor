@@ -1,4 +1,4 @@
-import { canRoleAccessPath } from "../roleAccess";
+import { canRoleAccessPath, isStoreManagerRole } from "../roleAccess";
 import { getSalesNavForRole, SALES_NAV_ITEMS } from "../salesNav";
 import { getSidebarItemsForRole } from "../superAdminSidebar";
 
@@ -82,6 +82,23 @@ describe("canRoleAccessPath", () => {
     });
   });
 
+  describe("Store Manager 2", () => {
+    it("keeps Store Manager routes and adds only the wallet workspace", () => {
+      for (const path of ["/orders", "/products", "/wallets"]) {
+        expect(canRoleAccessPath("Store Manager 2", path)).toBe(true);
+      }
+      for (const path of [
+        "/users",
+        "/sales",
+        "/settings",
+        "/payment-methods",
+      ]) {
+        expect(canRoleAccessPath("Store Manager 2", path)).toBe(false);
+      }
+      expect(isStoreManagerRole("store-manager-2")).toBe(true);
+    });
+  });
+
   describe("Seller roles", () => {
     it("keeps Seller 1 in the non-destructive catalog workspace", () => {
       expect(canRoleAccessPath("Seller 1", "/products")).toBe(true);
@@ -150,6 +167,7 @@ describe("getSalesNavForRole", () => {
       "Founder",
       "Finance",
       "Store manager",
+      "Store Manager 2",
       "Seller 2",
       "Seller 1",
       "Editor",
@@ -256,7 +274,12 @@ describe("sidebar", () => {
   });
 
   it("promotes focused catalog destinations for seller and Store Manager roles", () => {
-    for (const role of ["Seller 1", "Seller 2", "Store Manager"]) {
+    for (const role of [
+      "Seller 1",
+      "Seller 2",
+      "Store Manager",
+      "Store Manager 2",
+    ]) {
       const items = getSidebarItemsForRole(role);
       expect(items.some((item) => item.id === "manage-products")).toBe(false);
       expect(items.some((item) => item.id === "products" && item.icon)).toBe(
@@ -274,6 +297,7 @@ describe("sidebar", () => {
       "Seller 1": 6,
       "Seller 2": 8,
       "Store Manager": 8,
+      "Store Manager 2": 9,
       Finance: 4,
       Founder: 5,
       Superadmin: 11,
@@ -282,6 +306,15 @@ describe("sidebar", () => {
     for (const [role, count] of Object.entries(expectedCounts)) {
       expect(getSidebarItemsForRole(role)).toHaveLength(count);
     }
+  });
+
+  it("adds wallets to Store Manager 2 without exposing user administration", () => {
+    const items = getSidebarItemsForRole("Store Manager 2");
+    expect(
+      items.some((item) => item.id === "wallets" && item.href === "/wallets"),
+    ).toBe(true);
+    expect(items.some((item) => item.id === "users")).toBe(false);
+    expect(items.some((item) => item.id === "sales")).toBe(false);
   });
 
   it("groups dense Superadmin commerce and customer controls", () => {
