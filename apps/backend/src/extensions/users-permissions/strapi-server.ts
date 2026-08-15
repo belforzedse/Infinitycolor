@@ -7,6 +7,7 @@ import { getAuditContext } from "../../utils/audit-context";
 import { randomUUID } from "node:crypto";
 import { ADMIN_ROLE_DEFINITIONS } from "@repo/auth-core";
 import { requireCapability } from "../../utils/adminAuthorization";
+import { resolveUserFullName } from "../../utils/userDisplayName";
 
 const PROFILE_COMPLETION_PATHS = new Set([
   "/api/auth/self",
@@ -244,7 +245,10 @@ async function auditRoleDenial(
       initiator: {
         type: "human",
         id: actorId,
-        label: ctx.state?.user?.username || ctx.state?.user?.email,
+        label:
+          resolveUserFullName(ctx.state?.adminActor?.user || ctx.state?.user) ||
+          ctx.state?.user?.email ||
+          ctx.state?.user?.username,
         role: ctx.state?.adminActor?.role,
         roleId: ctx.state?.user?.role?.id,
       },
@@ -327,7 +331,10 @@ const wrapUserController =
         ? await userQuery.findOne({
             where: { id: targetId },
             select: ["id", "username", "email"],
-            populate: { role: { select: ["id", "name", "type"] } },
+            populate: {
+              role: { select: ["id", "name", "type"] },
+              user_info: { select: ["FirstName", "LastName"] },
+            },
             transacting: trx,
           } as any)
         : null;
@@ -336,25 +343,37 @@ const wrapUserController =
         const after = await userQuery.findOne({
           where: { id: targetId },
           select: ["id", "username", "email"],
-          populate: { role: { select: ["id", "name", "type"] } },
+          populate: {
+            role: { select: ["id", "name", "type"] },
+            user_info: { select: ["FirstName", "LastName"] },
+          },
           transacting: trx,
         } as any);
         const request = getAuditContext();
         const actor = ctx.state?.adminActor;
+        const actorName =
+          resolveUserFullName(actor?.user) ||
+          actor?.user?.email ||
+          actor?.user?.username;
+        const targetName =
+          resolveUserFullName(after) ||
+          after?.email ||
+          after?.username ||
+          `User ${targetId}`;
         await writeAuditEvent(strapi, {
           eventKey: "administrators.role_changed",
           result: "success",
           initiator: {
             type: "human",
             id: Number(ctx.state?.user?.id),
-            label: actor?.user?.username || actor?.user?.email,
+            label: actorName,
             role: actor?.role,
             roleId: actor?.user?.role?.id,
           },
           actor: {
             type: "human",
             id: Number(ctx.state?.user?.id),
-            label: actor?.user?.username || actor?.user?.email,
+            label: actorName,
             role: actor?.role,
             roleId: actor?.user?.role?.id,
           },
@@ -362,7 +381,7 @@ const wrapUserController =
           target: {
             type: "administrator",
             id: targetId,
-            label: after?.username || after?.email || `User ${targetId}`,
+            label: targetName,
           },
           changes: [{
             field: "role",

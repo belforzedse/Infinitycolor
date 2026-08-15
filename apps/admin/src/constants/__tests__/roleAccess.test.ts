@@ -26,7 +26,7 @@ describe("canRoleAccessPath", () => {
       for (const item of SALES_NAV_ITEMS) {
         expect(canRoleAccessPath("Superadmin", item.href)).toBe(true);
       }
-      expect(canRoleAccessPath("Superadmin", "/settings/activity")).toBe(true);
+      expect(canRoleAccessPath("Superadmin", "/sales/activity")).toBe(true);
     });
   });
 
@@ -43,11 +43,12 @@ describe("canRoleAccessPath", () => {
       }
     });
 
-    it("still cannot reach the staff activity log after it moved to settings", () => {
+    it("still cannot reach the staff activity log after it moved into sales", () => {
       expect(canRoleAccessPath("Founder", "/reports/admin-activity")).toBe(
         false,
       );
       expect(canRoleAccessPath("Founder", "/settings/activity")).toBe(false);
+      expect(canRoleAccessPath("Founder", "/sales/activity")).toBe(false);
     });
 
     it("applies the same capabilities to compatible legacy report paths", () => {
@@ -149,7 +150,7 @@ describe("canRoleAccessPath", () => {
       expect(canRoleAccessPath("Editor", "/stories")).toBe(false);
       expect(canRoleAccessPath("Editor", "/faq")).toBe(false);
       expect(canRoleAccessPath("Editor", "/sales")).toBe(false);
-      expect(canRoleAccessPath("Editor", "/settings/activity")).toBe(false);
+      expect(canRoleAccessPath("Editor", "/sales/activity")).toBe(false);
     });
   });
 
@@ -206,6 +207,25 @@ describe("getSalesNavForRole", () => {
       "/sales/liquidity",
     ]);
   });
+
+  it("shows the staff activity report only to Superadmin", () => {
+    expect(
+      getSalesNavForRole("Superadmin").map((item) => item.href),
+    ).toContain("/sales/activity");
+    for (const role of [
+      "Founder",
+      "Finance",
+      "Store Manager 2",
+      "Store Manager",
+      "Seller 2",
+      "Seller 1",
+      "Editor",
+    ]) {
+      expect(getSalesNavForRole(role).map((item) => item.href)).not.toContain(
+        "/sales/activity",
+      );
+    }
+  });
 });
 
 describe("sidebar", () => {
@@ -238,6 +258,19 @@ describe("sidebar", () => {
     );
     expect(sales?.children.map((child) => child.href)).toEqual(
       FOUNDER_ALLOWED_SALES,
+    );
+  });
+
+  it("groups activity with sales for Superadmin and removes it from settings", () => {
+    const items = getSidebarItemsForRole("Superadmin");
+    const sales = items.find((item) => item.id === "sales");
+    const settings = items.find((item) => item.id === "settings");
+
+    expect(sales?.children.map((child) => child.href)).toContain(
+      "/sales/activity",
+    );
+    expect(settings?.children.map((child) => child.href)).not.toContain(
+      "/settings/activity",
     );
   });
 

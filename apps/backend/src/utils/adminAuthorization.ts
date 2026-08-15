@@ -9,6 +9,7 @@ import {
 } from "@repo/auth-core";
 import { writeAuditEvent } from "../audit/writer";
 import { getAuditContext } from "./audit-context";
+import { resolveUserFullName } from "./userDisplayName";
 
 export type AdminActor = {
   user: any;
@@ -60,7 +61,11 @@ export async function requireCapability(
         initiator: {
           type: "human",
           id: Number(ctx.state.user.id),
-          label: actor?.user?.username || actor?.user?.email || ctx.state.user?.username,
+          label:
+            resolveUserFullName(actor?.user) ||
+            actor?.user?.email ||
+            actor?.user?.username ||
+            ctx.state.user?.username,
           role: actor?.role,
           roleId: actor?.user?.role?.id,
         },

@@ -76,6 +76,41 @@ describe("audit query contracts", () => {
     expect(__auditQueryInternals.decodeCursor("not-a-cursor")).toBeNull();
   });
 
+  it("uses current profile names for human principals and administrator targets", () => {
+    const record = mapAuditRow(
+      {
+        id: 44,
+        event_id: "a4a702a2-068a-4d45-b641-a3db08b7447a",
+        schema_version: 2,
+        occurred_at: "2026-08-11T08:00:00.000Z",
+        recorded_at: "2026-08-11T08:00:01.000Z",
+        event_key: "administrators.role_changed",
+        domain: "users",
+        operation: "role_change",
+        importance: "critical",
+        result_status: "success",
+        initiator_type: "human",
+        initiator_id: "7",
+        initiator_label: "+989121111111",
+        actor_type: "human",
+        actor_id: "7",
+        actor_label: "+989121111111",
+        origin: "admin_ui",
+        target_type: "administrator",
+        target_id: "9",
+        target_label: "+989122222222",
+      },
+      new Map([
+        ["7", "سارا محمدی"],
+        ["9", "علی رضایی"],
+      ]),
+    );
+
+    expect(record.initiator.label).toBe("سارا محمدی");
+    expect(record.actor.label).toBe("سارا محمدی");
+    expect(record.target?.label).toBe("علی رضایی");
+  });
+
   it("returns safe request origin for security events executed by the auth service", () => {
     const record = mapAuditRow({
       id: 45,

@@ -1,6 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
 
 import { normalizeAuditChanges, sanitizeAuditValue } from "./sanitizer";
+import { resolveUserFullName } from "../utils/userDisplayName";
 import {
   AUDIT_ACTOR_TYPES,
   AUDIT_IMPORTANCE,
@@ -19,6 +20,59 @@ const MAX_LIMIT = 100;
 const MAX_SEARCH = 160;
 
 type Cursor = { occurredAt: string; id: number };
+type UserNameMap = ReadonlyMap<string, string>;
+
+function userId(value: unknown): string | null {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? String(id) : null;
+}
+
+function collectReferencedUserIds(rows: any[]): number[] {
+  const ids = new Set<number>();
+  for (const row of rows) {
+    if (["human", "impersonated_human"].includes(String(row.initiator_type))) {
+      const id = userId(row.initiator_id);
+      if (id) ids.add(Number(id));
+    }
+    if (["human", "impersonated_human"].includes(String(row.actor_type))) {
+      const id = userId(row.actor_id);
+      if (id) ids.add(Number(id));
+    }
+    if (String(row.target_type).toLowerCase() === "administrator") {
+      const id = userId(row.target_id);
+      if (id) ids.add(Number(id));
+    }
+  }
+  return [...ids];
+}
+
+async function resolveCurrentUserNames(
+  strapi: Strapi,
+  rows: any[],
+): Promise<Map<string, string>> {
+  const ids = collectReferencedUserIds(rows);
+  if (ids.length === 0) return new Map();
+  try {
+    const users = await strapi.query("plugin::users-permissions.user").findMany({
+      where: { id: { $in: ids } },
+      select: ["id"],
+      populate: { user_info: { select: ["FirstName", "LastName"] } },
+    });
+    return new Map(
+      (users || []).flatMap((user: any) => {
+        const name = resolveUserFullName(user);
+        return name && userId(user.id)
+          ? [[String(user.id), name] as const]
+          : [];
+      }),
+    );
+  } catch (error) {
+    strapi.log?.warn?.("Audit user name enrichment failed", {
+      error: error instanceof Error ? error.name : "UNKNOWN",
+    });
+    return new Map();
+  }
+}
 
 function parseJson<T>(value: unknown, fallback: T): T {
   if (value == null) return fallback;
@@ -99,10 +153,19 @@ function applyFilters(query: any, filters: AuditQuery, includeMode = true): any 
   return query;
 }
 
-export function mapAuditRow(row: any): AuditEventRecord {
+export function mapAuditRow(
+  row: any,
+  currentUserNames: UserNameMap = new Map(),
+): AuditEventRecord {
   const eventId = row.event_id || `legacy-${row.id}`;
   const actorType = row.actor_type || (row.performed_by_name ? "human" : "unknown");
   const initiatorType = row.initiator_type || (row.performed_by_name ? "human" : "unknown");
+  const initiatorName = currentUserNames.get(String(row.initiator_id));
+  const actorName = currentUserNames.get(String(row.actor_id));
+  const targetName =
+    String(row.target_type).toLowerCase() === "administrator"
+      ? currentUserNames.get(String(row.target_id))
+      : undefined;
   const revealsHumanOrigin =
     isHumanActor(actorType) ||
     String(row.event_key || "").startsWith("authentication.") ||
@@ -123,14 +186,14 @@ export function mapAuditRow(row: any): AuditEventRecord {
     initiator: {
       type: initiatorType,
       id: row.initiator_id || undefined,
-      label: row.initiator_label || row.performed_by_name || undefined,
+      label: initiatorName || row.initiator_label || row.performed_by_name || undefined,
       role: row.initiator_role_name || row.performed_by_role || undefined,
       roleId: row.initiator_role_id || undefined,
     },
     actor: {
       type: actorType,
       id: row.actor_id || undefined,
-      label: row.actor_label || (actorType === "human" ? row.performed_by_name : undefined),
+      label: actorName || row.actor_label || (actorType === "human" ? row.performed_by_name : undefined),
       role: row.actor_role_name || row.performed_by_role || undefined,
       roleId: row.actor_role_id || undefined,
       authMethod: row.actor_auth_method || undefined,
@@ -139,7 +202,7 @@ export function mapAuditRow(row: any): AuditEventRecord {
     target: row.target_type || row.resource_type ? {
       type: row.target_type || String(row.resource_type).toLowerCase(),
       id: row.target_id || row.resource_id || undefined,
-      label: row.target_label || row.resource_id || undefined,
+      label: targetName || row.target_label || row.resource_id || undefined,
       snapshot: sanitizeAuditValue(parseJson(row.target_snapshot, null)),
     } : null,
     related: row.related_type ? {
@@ -193,9 +256,10 @@ export async function findAuditEvents(
   const rows = await query.orderBy("occurred_at", "desc").orderBy("id", "desc").limit(limit + 1);
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
+  const currentUserNames = await resolveCurrentUserNames(strapi, pageRows);
   const last = pageRows[pageRows.length - 1];
   return {
-    items: pageRows.map(mapAuditRow),
+    items: pageRows.map((row: any) => mapAuditRow(row, currentUserNames)),
     hasMore,
     nextCursor: hasMore && last
       ? encodeCursor({ occurredAt: new Date(last.occurred_at || last.created_at).toISOString(), id: Number(last.id) })
@@ -210,7 +274,9 @@ export async function findAuditEvent(strapi: Strapi, eventId: string): Promise<A
       ? { id: Number(eventId) }
       : { event_id: eventId })
     .first();
-  return row ? mapAuditRow(row) : null;
+  if (!row) return null;
+  const currentUserNames = await resolveCurrentUserNames(strapi, [row]);
+  return mapAuditRow(row, currentUserNames);
 }
 
 export async function findRelatedAuditEvents(
@@ -270,7 +336,23 @@ export async function getAuditFilterOptions(strapi: Strapi, filters: AuditQuery)
     base().whereNotNull("event_key").distinct("event_key as value").orderBy("event_key").limit(500),
     base().whereNotNull("target_type").distinct("target_type as value").orderBy("target_type"),
   ]);
-  return { admins, sources, domains, eventKeys, targetTypes };
+  const currentUserNames = await resolveCurrentUserNames(
+    strapi,
+    admins.map((admin: any) => ({
+      initiator_type: "human",
+      initiator_id: admin.id,
+    })),
+  );
+  return {
+    admins: admins.map((admin: any) => ({
+      ...admin,
+      label: currentUserNames.get(String(admin.id)) || admin.label,
+    })),
+    sources,
+    domains,
+    eventKeys,
+    targetTypes,
+  };
 }
 
 export const __auditQueryInternals = { encodeCursor, decodeCursor, applyFilters };

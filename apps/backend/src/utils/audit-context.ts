@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "async_hooks";
 import type { AuditContext as CanonicalAuditContext } from "../audit/types";
+import { resolveUserFullName } from "./userDisplayName";
 
 export interface AuditContext {
   userId: number | null;
@@ -48,13 +49,12 @@ export const setAuditContext = (context: AuditContext): AuditContext => {
 export const createAuditContext = (user: any, isAdmin = false): AuditContext => {
   const userId = normalizeUserId(user?.id ?? user);
   const userLabel =
-    user?.username ||
-    user?.email ||
-    user?.Phone ||
+    resolveUserFullName(user) ||
     user?.fullName ||
-    (user?.firstName && user?.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : null) ||
+    user?.email ||
+    user?.username ||
+    user?.Phone ||
+    ([user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() || null) ||
     null;
 
   return {

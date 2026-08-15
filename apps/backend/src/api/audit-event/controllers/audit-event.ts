@@ -9,6 +9,7 @@ import {
 } from "../../../audit/query";
 import { writeAuditEvent } from "../../../audit/writer";
 import type { AuditEventInput, AuditQuery } from "../../../audit/types";
+import { resolveUserFullName } from "../../../utils/userDisplayName";
 
 const MAX_EXPORT_ROWS = 10_000;
 
@@ -140,18 +141,23 @@ export default {
     });
 
     await strapi.db.transaction(async ({ trx }) => {
+      const actorName =
+        resolveUserFullName(actor.user) ||
+        actor.user.email ||
+        actor.user.username ||
+        `User ${actor.user.id}`;
       await writeAuditEvent(strapi, {
         eventKey: "audit.export_generated",
         initiator: {
           type: "human",
           id: actor.user.id,
-          label: actor.user.username || actor.user.email || `User ${actor.user.id}`,
+          label: actorName,
           role: actor.role,
         },
         actor: {
           type: "human",
           id: actor.user.id,
-          label: actor.user.username || actor.user.email,
+          label: actorName,
           role: actor.role,
         },
         origin: "admin_ui",

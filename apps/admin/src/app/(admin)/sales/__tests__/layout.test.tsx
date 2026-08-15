@@ -67,6 +67,9 @@ describe("Sales workspace layout", () => {
       ).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "نقدینگی" })).toBeInTheDocument();
       expect(
+        screen.getByRole("link", { name: "فعالیت مدیران" }),
+      ).toBeInTheDocument();
+      expect(
         screen.queryByRole("link", { name: "سبدهای خرید" }),
       ).not.toBeInTheDocument();
     });
@@ -97,10 +100,9 @@ describe("Sales workspace layout", () => {
         screen.getByRole("link", { name: "رفتار کاربران" }),
       ).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "نقدینگی" })).toBeInTheDocument();
-      // The admin activity log lives under /settings, already forbidden to
-      // Founder — a visible link here would 403 on click.
+      // Activity is grouped here, but remains Superadmin-only.
       expect(
-        screen.queryByRole("link", { name: "گزارش فعالیت ادمین‌ها" }),
+        screen.queryByRole("link", { name: "فعالیت مدیران" }),
       ).not.toBeInTheDocument();
     });
 
@@ -150,7 +152,7 @@ describe("Sales workspace layout", () => {
     it("is omitted where the period does not apply", () => {
       mockAdminRole = "superadmin";
       // Behavior owns its own range, comparison and realtime controls.
-      for (const pathname of ["/sales/traffic"]) {
+      for (const pathname of ["/sales/traffic", "/sales/activity"]) {
         mockPathname = pathname;
         const { unmount } = render(<SalesLayout>{null}</SalesLayout>);
         expect(screen.queryByText("این ماه")).not.toBeInTheDocument();

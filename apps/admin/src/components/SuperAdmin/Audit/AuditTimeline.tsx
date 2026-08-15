@@ -78,7 +78,7 @@ export default function AuditTimeline({
     if (initiatorId) params.set("admin", initiatorId);
     if (eventKey) params.set("eventKey", eventKey);
     if (domain) params.set("domain", domain);
-    return `/settings/activity?${params.toString()}`;
+    return `/sales/activity?${params.toString()}`;
   }, [domain, eventKey, initiatorId, targetId, targetType]);
 
   useEffect(() => {
