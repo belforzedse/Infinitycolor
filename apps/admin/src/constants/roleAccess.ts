@@ -46,6 +46,7 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: "/sales/liquidity", capability: "report.finance.read" },
   { prefix: "/sales/gateways", capability: "report.finance.read" },
   { prefix: "/sales/products", capability: "report.product.read" },
+  { prefix: "/sales/activity", capability: "system.audit.read" },
   { prefix: "/sales", capability: "report.sales.read" },
   { prefix: "/reports/traffic", capability: "report.traffic.read" },
   { prefix: "/reports/liquidity", capability: "report.finance.read" },
@@ -97,6 +98,7 @@ export function getAdminLandingPath(
     seller1: "/products",
     seller2: "/products",
     store_manager: "/orders",
+    store_manager_2: "/orders",
     finance: "/sales",
     founder: "/",
     superadmin: "/",
@@ -134,7 +136,9 @@ export const getRoleAdminLandingPath = (roleName?: string | null): string => {
 export const isFounderRole = (roleName?: string | null): boolean =>
   normalizeAdminRole(roleName) === "founder";
 export const isStoreManagerRole = (roleName?: string | null): boolean =>
-  normalizeAdminRole(roleName) === "store_manager";
+  ["store_manager", "store_manager_2"].includes(
+    normalizeAdminRole(roleName) ?? "",
+  );
 export const isEditorRole = (roleName?: string | null): boolean =>
   normalizeAdminRole(roleName) === "editor";
 

@@ -24,7 +24,9 @@ export const useCurrentUser = () => {
     roleName: user?.roleName ?? null,
     adminRole: user?.adminRole ?? null,
     capabilities: user?.capabilities ?? [],
-    isStoreManager: user?.adminRole === "store_manager",
+    isStoreManager: ["store_manager", "store_manager_2"].includes(
+      user?.adminRole ?? "",
+    ),
     isFounder: user?.adminRole === "founder",
   };
 };

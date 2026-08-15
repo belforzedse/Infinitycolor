@@ -19,6 +19,8 @@ import {
   E2E_DEFAULT_SELLER_2_PHONE,
   E2E_DEFAULT_STORE_MANAGER_PASSWORD,
   E2E_DEFAULT_STORE_MANAGER_PHONE,
+  E2E_DEFAULT_STORE_MANAGER_2_PASSWORD,
+  E2E_DEFAULT_STORE_MANAGER_2_PHONE,
 } from "../fixtures/storefront";
 
 export type E2EAuthRole =
@@ -30,6 +32,7 @@ export type E2EAuthRole =
   | "seller-1"
   | "seller-2"
   | "store-manager"
+  | "store-manager-2"
   | "editor";
 
 /** All seeded roles, in the order auth states are generated. */
@@ -42,6 +45,7 @@ export const E2E_AUTH_ROLES: E2EAuthRole[] = [
   "seller-1",
   "seller-2",
   "store-manager",
+  "store-manager-2",
   "editor",
 ];
 
@@ -66,6 +70,10 @@ const DEFAULT_CREDENTIALS: Record<E2EAuthRole, Credentials> = {
     phone: E2E_DEFAULT_STORE_MANAGER_PHONE,
     password: E2E_DEFAULT_STORE_MANAGER_PASSWORD,
   },
+  "store-manager-2": {
+    phone: E2E_DEFAULT_STORE_MANAGER_2_PHONE,
+    password: E2E_DEFAULT_STORE_MANAGER_2_PASSWORD,
+  },
   editor: { phone: E2E_DEFAULT_EDITOR_PHONE, password: E2E_DEFAULT_EDITOR_PASSWORD },
 };
 
@@ -79,6 +87,7 @@ const ENV_PREFIX: Record<E2EAuthRole, string> = {
   "seller-1": "E2E_SELLER_1",
   "seller-2": "E2E_SELLER_2",
   "store-manager": "E2E_STORE_MANAGER",
+  "store-manager-2": "E2E_STORE_MANAGER_2",
   editor: "E2E_EDITOR",
 };
 

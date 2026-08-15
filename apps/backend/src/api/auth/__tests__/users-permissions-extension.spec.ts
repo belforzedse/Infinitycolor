@@ -292,13 +292,21 @@ describe("Infinity Users & Permissions creation guards", () => {
     const plugin = extendUsersPermissions(rawPlugin);
     const actor = {
       id: 7,
+      username: "+989121111111",
       blocked: false,
       IsActive: true,
+      user_info: { FirstName: "سارا", LastName: "محمدی" },
       role: { id: 2, name: "Superadmin", type: "superadmin" },
+    };
+    const target = {
+      id: 9,
+      username: "+989122222222",
+      user_info: { FirstName: "علی", LastName: "رضایی" },
+      role: { id: 4, name: "Finance", type: "finance" },
     };
     const userQuery = {
       findOne: jest.fn(({ where }: any) =>
-        Promise.resolve(where.id === 7 ? actor : { id: 9, role: { id: 4, type: "finance" } }),
+        Promise.resolve(where.id === 7 ? actor : target),
       ),
       count: jest.fn(),
     };
@@ -329,7 +337,9 @@ describe("Infinity Users & Permissions creation guards", () => {
       (global as any).strapi,
       expect.objectContaining({
         eventKey: "administrators.role_changed",
-        target: expect.objectContaining({ id: 9 }),
+        initiator: expect.objectContaining({ label: "سارا محمدی" }),
+        actor: expect.objectContaining({ label: "سارا محمدی" }),
+        target: expect.objectContaining({ id: 9, label: "علی رضایی" }),
         changes: [expect.objectContaining({ field: "role" })],
       }),
       { trx: { id: "role-transaction" } },

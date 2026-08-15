@@ -205,6 +205,19 @@ const FIXTURE = {
       externalId: "e2e-storefront:user:store-manager",
       optional: true,
     },
+    storeManager2: {
+      phone: envOrDefault("E2E_STORE_MANAGER_2_PHONE", "+989000000208"),
+      password: envOrDefault(
+        "E2E_STORE_MANAGER_2_PASSWORD",
+        "E2eManager2!123",
+      ),
+      email: "e2e.manager2@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "Manager2",
+      roleName: "Store Manager 2",
+      externalId: "e2e-storefront:user:store-manager-2",
+      optional: true,
+    },
     editor: {
       phone: envOrDefault("E2E_EDITOR_PHONE", "+989000000204"),
       password: envOrDefault("E2E_EDITOR_PASSWORD", "E2eEditor!123"),
@@ -965,6 +978,7 @@ async function seedUsers(client, now) {
   for (const [key, userDef] of [
     ["founder", FIXTURE.auth.founder],
     ["storeManager", FIXTURE.auth.storeManager],
+    ["storeManager2", FIXTURE.auth.storeManager2],
     ["editor", FIXTURE.auth.editor],
     ["seller1", FIXTURE.auth.seller1],
     ["seller2", FIXTURE.auth.seller2],
@@ -1329,6 +1343,7 @@ async function seed(client) {
     adminUserId: users.admin.id,
     founderUserId: users.founder ? users.founder.id : null,
     storeManagerUserId: users.storeManager ? users.storeManager.id : null,
+    storeManager2UserId: users.storeManager2 ? users.storeManager2.id : null,
     editorUserId: users.editor ? users.editor.id : null,
     seller1UserId: users.seller1 ? users.seller1.id : null,
     seller2UserId: users.seller2 ? users.seller2.id : null,

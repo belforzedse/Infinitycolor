@@ -388,11 +388,6 @@ const superAdminSidebar: SidebarItem[] = [
         label: "تنظیمات عمومی",
         href: "/settings/general",
       },
-      {
-        id: "settings-audit-activity",
-        label: "حسابرسی و فعالیت مدیران",
-        href: "/settings/activity",
-      },
     ],
   },
   // {
@@ -450,7 +445,9 @@ function balanceSidebarForRole(
     return promoteChildren(items, "blog");
   }
 
-  if (["seller1", "seller2", "store_manager"].includes(role)) {
+  if (
+    ["seller1", "seller2", "store_manager", "store_manager_2"].includes(role)
+  ) {
     return promoteChildren(items, "manage-products");
   }
 

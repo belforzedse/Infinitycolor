@@ -1,4 +1,4 @@
-import { canRoleAccessPath } from "../roleAccess";
+import { canRoleAccessPath, isStoreManagerRole } from "../roleAccess";
 import { getSalesNavForRole, SALES_NAV_ITEMS } from "../salesNav";
 import { getSidebarItemsForRole } from "../superAdminSidebar";
 
@@ -26,7 +26,7 @@ describe("canRoleAccessPath", () => {
       for (const item of SALES_NAV_ITEMS) {
         expect(canRoleAccessPath("Superadmin", item.href)).toBe(true);
       }
-      expect(canRoleAccessPath("Superadmin", "/settings/activity")).toBe(true);
+      expect(canRoleAccessPath("Superadmin", "/sales/activity")).toBe(true);
     });
   });
 
@@ -43,11 +43,12 @@ describe("canRoleAccessPath", () => {
       }
     });
 
-    it("still cannot reach the staff activity log after it moved to settings", () => {
+    it("still cannot reach the staff activity log after it moved into sales", () => {
       expect(canRoleAccessPath("Founder", "/reports/admin-activity")).toBe(
         false,
       );
       expect(canRoleAccessPath("Founder", "/settings/activity")).toBe(false);
+      expect(canRoleAccessPath("Founder", "/sales/activity")).toBe(false);
     });
 
     it("applies the same capabilities to compatible legacy report paths", () => {
@@ -79,6 +80,23 @@ describe("canRoleAccessPath", () => {
       for (const path of ["/shipping", "/coupons", "/general-discounts"]) {
         expect(canRoleAccessPath("Store manager", path)).toBe(false);
       }
+    });
+  });
+
+  describe("Store Manager 2", () => {
+    it("keeps Store Manager routes and adds only the wallet workspace", () => {
+      for (const path of ["/orders", "/products", "/wallets"]) {
+        expect(canRoleAccessPath("Store Manager 2", path)).toBe(true);
+      }
+      for (const path of [
+        "/users",
+        "/sales",
+        "/settings",
+        "/payment-methods",
+      ]) {
+        expect(canRoleAccessPath("Store Manager 2", path)).toBe(false);
+      }
+      expect(isStoreManagerRole("store-manager-2")).toBe(true);
     });
   });
 
@@ -132,7 +150,7 @@ describe("canRoleAccessPath", () => {
       expect(canRoleAccessPath("Editor", "/stories")).toBe(false);
       expect(canRoleAccessPath("Editor", "/faq")).toBe(false);
       expect(canRoleAccessPath("Editor", "/sales")).toBe(false);
-      expect(canRoleAccessPath("Editor", "/settings/activity")).toBe(false);
+      expect(canRoleAccessPath("Editor", "/sales/activity")).toBe(false);
     });
   });
 
@@ -150,6 +168,7 @@ describe("getSalesNavForRole", () => {
       "Founder",
       "Finance",
       "Store manager",
+      "Store Manager 2",
       "Seller 2",
       "Seller 1",
       "Editor",
@@ -188,6 +207,25 @@ describe("getSalesNavForRole", () => {
       "/sales/liquidity",
     ]);
   });
+
+  it("shows the staff activity report only to Superadmin", () => {
+    expect(
+      getSalesNavForRole("Superadmin").map((item) => item.href),
+    ).toContain("/sales/activity");
+    for (const role of [
+      "Founder",
+      "Finance",
+      "Store Manager 2",
+      "Store Manager",
+      "Seller 2",
+      "Seller 1",
+      "Editor",
+    ]) {
+      expect(getSalesNavForRole(role).map((item) => item.href)).not.toContain(
+        "/sales/activity",
+      );
+    }
+  });
 });
 
 describe("sidebar", () => {
@@ -220,6 +258,19 @@ describe("sidebar", () => {
     );
     expect(sales?.children.map((child) => child.href)).toEqual(
       FOUNDER_ALLOWED_SALES,
+    );
+  });
+
+  it("groups activity with sales for Superadmin and removes it from settings", () => {
+    const items = getSidebarItemsForRole("Superadmin");
+    const sales = items.find((item) => item.id === "sales");
+    const settings = items.find((item) => item.id === "settings");
+
+    expect(sales?.children.map((child) => child.href)).toContain(
+      "/sales/activity",
+    );
+    expect(settings?.children.map((child) => child.href)).not.toContain(
+      "/settings/activity",
     );
   });
 
@@ -256,7 +307,12 @@ describe("sidebar", () => {
   });
 
   it("promotes focused catalog destinations for seller and Store Manager roles", () => {
-    for (const role of ["Seller 1", "Seller 2", "Store Manager"]) {
+    for (const role of [
+      "Seller 1",
+      "Seller 2",
+      "Store Manager",
+      "Store Manager 2",
+    ]) {
       const items = getSidebarItemsForRole(role);
       expect(items.some((item) => item.id === "manage-products")).toBe(false);
       expect(items.some((item) => item.id === "products" && item.icon)).toBe(
@@ -274,6 +330,7 @@ describe("sidebar", () => {
       "Seller 1": 6,
       "Seller 2": 8,
       "Store Manager": 8,
+      "Store Manager 2": 9,
       Finance: 4,
       Founder: 5,
       Superadmin: 11,
@@ -282,6 +339,15 @@ describe("sidebar", () => {
     for (const [role, count] of Object.entries(expectedCounts)) {
       expect(getSidebarItemsForRole(role)).toHaveLength(count);
     }
+  });
+
+  it("adds wallets to Store Manager 2 without exposing user administration", () => {
+    const items = getSidebarItemsForRole("Store Manager 2");
+    expect(
+      items.some((item) => item.id === "wallets" && item.href === "/wallets"),
+    ).toBe(true);
+    expect(items.some((item) => item.id === "users")).toBe(false);
+    expect(items.some((item) => item.id === "sales")).toBe(false);
   });
 
   it("groups dense Superadmin commerce and customer controls", () => {

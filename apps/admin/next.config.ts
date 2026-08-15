@@ -100,17 +100,26 @@ const nextConfig: NextConfig = {
         destination: "/orders/carts",
         permanent: false,
       },
-      // The staff audit log still lives under /settings (its access rules stay
-      // tied to the other administrative settings, denied to Founder and Store
-      // manager). Preserve the retired report URL for existing bookmarks.
+      // Keep both retired audit locations working while the canonical page is
+      // grouped with the rest of the sales/reporting workspace.
       {
         source: "/reports/admin-activity",
-        destination: "/settings/activity",
+        destination: "/sales/activity",
         permanent: false,
       },
       {
         source: "/reports/admin-activity/:id",
-        destination: "/settings/activity/:id",
+        destination: "/sales/activity/:id",
+        permanent: false,
+      },
+      {
+        source: "/settings/activity",
+        destination: "/sales/activity",
+        permanent: false,
+      },
+      {
+        source: "/settings/activity/:id",
+        destination: "/sales/activity/:id",
         permanent: false,
       },
     ];

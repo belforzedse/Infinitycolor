@@ -74,6 +74,7 @@ export const ADMIN_ROLE_IDS = [
   "seller1",
   "seller2",
   "store_manager",
+  "store_manager_2",
   "finance",
   "founder",
   "superadmin",
@@ -174,6 +175,20 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<Record<AdminRoleId, AdminRoleDefin
     // Analytics stay on Finance+; destructive order actions stay Superadmin-only.
     capabilities: [],
   },
+  store_manager_2: {
+    id: "store_manager_2",
+    englishLabel: "Store Manager 2",
+    persianLabel: "مدیر فروشگاه ۲",
+    strapiType: "store-manager-2",
+    strapiName: "Store Manager 2",
+    inherits: ["store_manager"],
+    capabilities: [
+      "wallet.customer.search",
+      "wallet.read",
+      "wallet.history.read",
+      "wallet.adjust",
+    ],
+  },
   finance: {
     id: "finance",
     englishLabel: "Finance",
@@ -225,6 +240,7 @@ const ROLE_ALIASES: Readonly<Record<string, AdminRoleId>> = {
   seller1: "seller1",
   seller2: "seller2",
   storemanager: "store_manager",
+  storemanager2: "store_manager_2",
   finance: "finance",
   founder: "founder",
   founders: "founder",

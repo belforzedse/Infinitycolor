@@ -3,6 +3,7 @@ import type { Strapi } from "@strapi/strapi";
 
 import { getAuditContext } from "../utils/audit-context";
 import { resolveRawExecutor } from "../utils/transactionExecutor";
+import { resolveUserFullName } from "../utils/userDisplayName";
 import { resolveAuditDefinition } from "./catalog";
 import {
   normalizeAuditChanges,
@@ -61,7 +62,13 @@ export function resolveCurrentAuditContext(): AuditContext | null {
   const liveUser = koa?.state?.adminActor?.user || koa?.state?.user;
   const liveRole = koa?.state?.adminActor?.role || liveUser?.role?.name || liveUser?.role?.type || null;
   const liveId = liveUser?.id ?? request?.userId ?? null;
-  const liveLabel = request?.resolvedName || request?.userLabel || liveUser?.username || liveUser?.email || null;
+  const liveLabel =
+    request?.resolvedName ||
+    resolveUserFullName(liveUser) ||
+    request?.userLabel ||
+    liveUser?.email ||
+    liveUser?.username ||
+    null;
   const isAdmin = Boolean(koa?.state?.adminActor || request?.isAdmin);
   const initiator: AuditPrincipal<AuditInitiatorType> = liveId
     ? {

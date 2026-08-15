@@ -12,6 +12,12 @@ describe("role hierarchy helpers", () => {
     expect(normalizeRoleName("founders")).toBe(ROLE_NAMES.FOUNDER);
     expect(normalizeRoleName("store-manager")).toBe(ROLE_NAMES.STORE_MANAGER);
     expect(normalizeRoleName("Store manager")).toBe(ROLE_NAMES.STORE_MANAGER);
+    expect(normalizeRoleName("store-manager-2")).toBe(
+      ROLE_NAMES.STORE_MANAGER_2,
+    );
+    expect(normalizeRoleName("Store Manager 2")).toBe(
+      ROLE_NAMES.STORE_MANAGER_2,
+    );
   });
 
   it("defines customer and manager-plus role groups", () => {
@@ -21,12 +27,14 @@ describe("role hierarchy helpers", () => {
       ROLE_NAMES.SELLER_1,
       ROLE_NAMES.SELLER_2,
       ROLE_NAMES.STORE_MANAGER,
+      ROLE_NAMES.STORE_MANAGER_2,
       ROLE_NAMES.FINANCE,
       ROLE_NAMES.FOUNDER,
       ROLE_NAMES.SUPERADMIN,
     ]);
     expect(STORE_MANAGER_PLUS_ROLES).toEqual([
       ROLE_NAMES.STORE_MANAGER,
+      ROLE_NAMES.STORE_MANAGER_2,
       ROLE_NAMES.FOUNDER,
       ROLE_NAMES.SUPERADMIN,
     ]);

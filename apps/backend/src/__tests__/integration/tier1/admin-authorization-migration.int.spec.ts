@@ -75,6 +75,7 @@ describe("admin authorization migration on isolated PostgreSQL", () => {
         "seller-1",
         "seller-2",
         "store-manager",
+        "store-manager-2",
         "finance",
         "founder",
         "superadmin",
@@ -128,5 +129,8 @@ describe("admin authorization migration on isolated PostgreSQL", () => {
     expect(rolesAfterSecondRun.filter((role: any) => role.type === "store-manager")).toHaveLength(
       1,
     );
+    expect(
+      rolesAfterSecondRun.filter((role: any) => role.type === "store-manager-2"),
+    ).toHaveLength(1);
   });
 });
