@@ -83,15 +83,7 @@ describe("AuthInput", () => {
   });
 
   it("should pass through HTML input attributes", () => {
-    render(
-      <AuthInput
-        placeholder="Enter text"
-        type="email"
-        name="email"
-        disabled
-        readOnly
-      />,
-    );
+    render(<AuthInput placeholder="Enter text" type="email" name="email" disabled readOnly />);
 
     const input = screen.getByRole("textbox");
     expect(input).toHaveAttribute("placeholder", "Enter text");
@@ -111,14 +103,18 @@ describe("AuthInput", () => {
     render(<AuthInput />);
 
     const input = screen.getByRole("textbox");
-    expect(input).toHaveClass("h-12", "w-full", "rounded-lg");
+    expect(input).toHaveClass("h-12", "w-full", "rounded-control");
   });
 
   it("should have focus styles", () => {
     render(<AuthInput />);
 
     const input = screen.getByRole("textbox");
-    expect(input).toHaveClass("focus:outline-none", "focus:ring-2", "focus:ring-infinity-primary-light");
+    expect(input).toHaveClass(
+      "focus:outline-none",
+      "focus:ring-2",
+      "focus:ring-infinity-primary-light",
+    );
   });
 
   it("should handle controlled input", () => {

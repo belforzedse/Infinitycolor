@@ -177,6 +177,7 @@ describe("VerificationInput", () => {
       expect(input).toHaveAttribute("pattern", "[0-9]*");
       expect(input).toHaveAttribute("maxLength", "1");
       expect(input).toHaveAttribute("autoComplete", "one-time-code");
+      expect(input).toHaveClass("rounded-control");
     });
   });
 

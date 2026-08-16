@@ -18,7 +18,7 @@ export const SECTION_GAP = "space-y-4 lg:space-y-6";
 
 /** Standard surface. Matches `.card` in styles/components.css. */
 export const CARD =
-  "rounded-2xl border border-slate-100 bg-white shadow-sm";
+  "rounded-prominent border border-slate-100 bg-white shadow-sm";
 
 /** Padding inside a card. Tighter on phones, roomier on desktop. */
 export const CARD_PADDING = "p-4 md:p-5 lg:p-6";
@@ -34,7 +34,7 @@ export const CONTROL_HEIGHT = "h-11 md:h-10";
 
 /** Icon-only control. */
 export const ICON_BUTTON =
-  "flex h-11 w-11 shrink-0 items-center justify-center rounded-lg md:h-9 md:w-9";
+  "flex h-11 w-11 shrink-0 items-center justify-center rounded-control md:h-9 md:w-9";
 
 /** Focus ring used on every interactive primitive here. */
 export const FOCUS_RING =

@@ -2,20 +2,20 @@
 
 @layer components {
   .card {
-    @apply rounded-2xl border border-slate-100 bg-white shadow-sm transition-all duration-300 hover:border-slate-200 hover:shadow-md;
+    @apply rounded-prominent border border-slate-100 bg-white shadow-sm transition-[border-color,box-shadow] duration-200 ease-out hover:border-slate-200 hover:shadow-md;
   }
 
   .btn {
-    @apply text-sm inline-flex items-center justify-center rounded-lg font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex items-center justify-center rounded-control text-sm font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transform-none motion-reduce:transition-none;
   }
   .btn-primary {
-    @apply bg-infinity-primary/90 text-white hover:bg-infinity-primary hover:shadow-lg hover:shadow-infinity-primary/25;
+    @apply bg-infinity-primary text-white shadow-sm hover:bg-infinity-primary-dark hover:shadow-md hover:shadow-infinity-primary/20 active:bg-infinity-primary-darker disabled:bg-infinity-primary/50 disabled:shadow-none;
   }
   .btn-outline {
     @apply border border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50;
   }
 
   .input {
-    @apply text-sm flex w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-right transition-all duration-200 placeholder:text-slate-400 hover:border-slate-300 focus:border-infinity-primary-lighter focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-100;
+    @apply flex w-full rounded-control border border-slate-200 bg-white px-3 py-2 text-right text-sm transition-[background-color,border-color,box-shadow] duration-200 ease-out placeholder:text-slate-400 hover:border-slate-300 focus:border-infinity-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-100;
   }
 }

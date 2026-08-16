@@ -17,7 +17,7 @@ export default function Tabs({ tabs, children, tabsClassName }: TabsProps) {
             <Tab
               key={key}
               className={({ selected }) =>
-                `text-sm rounded-md py-2 font-medium lg:text-base focus:outline-none lg:rounded-b-none lg:rounded-t-lg ${tabsClassName} ${
+                `rounded-compact py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 lg:rounded-b-none lg:rounded-t-control lg:text-base ${tabsClassName} ${
                   selected
                     ? "border border-blue-600 bg-blue-50 text-blue-600 lg:border-b-2 lg:border-l-0 lg:border-r-0 lg:border-t-0 lg:border-infinity-primary lg:bg-white lg:text-slate-700"
                     : "border border-slate-200 bg-slate-50 text-slate-400 lg:border-none lg:bg-white"
@@ -30,7 +30,7 @@ export default function Tabs({ tabs, children, tabsClassName }: TabsProps) {
         </TabList>
         <TabPanels className="mt-5 lg:mt-4">
           {children.map((child, index) => (
-            <TabPanel key={tabs[index].key} className="rounded-xl">
+            <TabPanel key={tabs[index].key} className="rounded-prominent">
               {child}
             </TabPanel>
           ))}

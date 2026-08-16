@@ -71,7 +71,37 @@ describe("AuthButton", () => {
     render(<AuthButton>Button</AuthButton>);
 
     const button = screen.getByRole("button");
-    expect(button).toHaveClass("btn", "btn-primary");
+    expect(button).toHaveClass(
+      "btn",
+      "min-h-[49px]",
+      "rounded-prominent",
+      "bg-infinity-primary",
+      "px-3",
+      "hover:bg-infinity-primary-dark",
+      "active:bg-infinity-primary-darker",
+      "disabled:bg-infinity-primary/50",
+      "focus-visible:ring-infinity-primary",
+      "motion-reduce:transition-none",
+    );
+  });
+
+  it("should render the restrained secondary action variant", () => {
+    render(<AuthButton variant="secondary">Secondary</AuthButton>);
+
+    expect(screen.getByRole("button")).toHaveClass(
+      "min-h-12",
+      "rounded-control",
+      "border-infinity-primary",
+      "bg-transparent",
+      "hover:bg-infinity-primary-lighter/20",
+      "active:bg-infinity-primary-lighter/30",
+    );
+  });
+
+  it("should expose loading state to assistive technology", () => {
+    render(<AuthButton aria-busy>Loading</AuthButton>);
+
+    expect(screen.getByRole("button")).toHaveAttribute("aria-busy", "true");
   });
 
   it("should render children that are not strings", () => {
@@ -89,6 +119,7 @@ describe("AuthButton", () => {
 
     const button = screen.getByRole("button");
     expect(button.querySelector("span")).toBeInTheDocument();
+    expect(button.firstElementChild).toHaveClass("gap-1");
   });
 
   it("should pass through HTML button attributes", () => {

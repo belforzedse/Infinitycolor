@@ -48,7 +48,7 @@ export default function AuthForm() {
           </div>
         </div>
 
-        <AuthButton type="submit" disabled={isLoading}>
+        <AuthButton type="submit" disabled={isLoading} aria-busy={isLoading}>
           {isLoading ? (
             <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white" />
           ) : (

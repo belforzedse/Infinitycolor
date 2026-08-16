@@ -73,7 +73,7 @@ export default function AuthCompleteClient({
   return (
     <main className="flex min-h-[60vh] items-center justify-center p-6" dir="rtl">
       <div
-        className="max-w-md rounded-2xl border bg-white p-8 text-center"
+        className="max-w-md rounded-prominent border bg-white p-8 text-center"
         role={fatal ? "alert" : "status"}
       >
         {fatal ? (

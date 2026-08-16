@@ -26,11 +26,11 @@ export default function AuthInput({
       <div className="relative">
         <input
           className={clsx(
-            "h-12 w-full rounded-lg border border-slate-200 bg-background-form",
+            "h-12 w-full rounded-control border border-slate-200 bg-background-form",
             "text-base text-foreground-muted",
             rightElement ? "pr-[4.5rem]" : "pr-4",
             leftElement ? "pl-12" : "pl-4",
-            "focus:outline-none focus:ring-2 focus:ring-infinity-primary-light",
+            "transition-[background-color,border-color,box-shadow] duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-infinity-primary-light",
             error && "border-red-500",
             className,
           )}

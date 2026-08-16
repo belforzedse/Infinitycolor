@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { useEffect, useRef, useState, useCallback, useId } from "react";
 import { createPortal } from "react-dom";
@@ -38,11 +38,14 @@ export default function Modal({
     setMounted(true);
   }, []);
 
-  const handleEscape = useCallback((e: KeyboardEvent) => {
-    if (e.key === "Escape" || e.key === "Esc" || e.keyCode === 27) {
-      onClose();
-    }
-  }, [onClose]);
+  const handleEscape = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Esc" || e.keyCode === 27) {
+        onClose();
+      }
+    },
+    [onClose],
+  );
 
   const getFocusableElements = useCallback(() => {
     if (!modalRef.current) return [];
@@ -60,9 +63,9 @@ export default function Modal({
       "[tabindex]:not([tabindex='-1'])",
     ].join(",");
 
-    return Array.from(
-      modalRef.current.querySelectorAll<HTMLElement>(selectors),
-    ).filter((el) => !el.hasAttribute("disabled") && el.tabIndex !== -1);
+    return Array.from(modalRef.current.querySelectorAll<HTMLElement>(selectors)).filter(
+      (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1,
+    );
   }, []);
 
   // Body scroll lock and initial focus
@@ -112,8 +115,7 @@ export default function Modal({
         const first = focusables[0];
         const last = focusables[focusables.length - 1];
         const activeElement = document.activeElement as HTMLElement | null;
-        const isWithinModal =
-          !!activeElement && !!modalRef.current?.contains(activeElement);
+        const isWithinModal = !!activeElement && !!modalRef.current?.contains(activeElement);
 
         if (!isWithinModal) {
           e.preventDefault();
@@ -162,7 +164,7 @@ export default function Modal({
     >
       <div
         ref={modalRef}
-        className={`relative w-full max-w-7xl rounded-3xl bg-white shadow-2xl duration-200 animate-in zoom-in-95 ${className}`}
+        className={`relative w-full max-w-7xl rounded-panel bg-white shadow-2xl duration-200 animate-in zoom-in-95 ${className}`}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
@@ -172,10 +174,7 @@ export default function Modal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
           {title && (
-            <h3
-              id={titleId}
-              className={`text-lg font-bold text-gray-900 ${titleClassName}`}
-            >
+            <h3 id={titleId} className={`text-lg font-bold text-gray-900 ${titleClassName}`}>
               {title}
             </h3>
           )}
@@ -183,7 +182,7 @@ export default function Modal({
           <button
             type="button"
             onClick={onClose}
-            className="group flex h-10 w-10 items-center justify-center rounded-full bg-gray-50 transition-all hover:bg-gray-100 active:scale-95"
+            className="group flex h-10 w-10 items-center justify-center rounded-pill bg-gray-50 transition-[background-color,box-shadow,transform] duration-150 ease-out hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 active:scale-95 motion-reduce:transform-none motion-reduce:transition-none"
             aria-label="بستن"
           >
             {closeIcon || (
@@ -205,9 +204,7 @@ export default function Modal({
           </button>
         </div>
 
-        <div className={contentClassName ?? "p-6"}>
-          {children}
-        </div>
+        <div className={contentClassName ?? "p-6"}>{children}</div>
       </div>
     </div>,
     document.body,

@@ -85,7 +85,7 @@ export default function VerifyForgotPasswordForm({
             <VerificationInput onChange={(value) => setFormData({ ...formData, otp: value })} />
 
             <div className="flex w-full flex-row-reverse items-center justify-between">
-              <span className="text-sm text-foreground-primary/80">{timeLeft}</span>
+              <span className="text-foreground-primary/80 text-sm">{timeLeft}</span>
               <div>
                 <Text variant="helper">
                   کد را دریافت نکردید؟{" "}
@@ -130,6 +130,7 @@ export default function VerifyForgotPasswordForm({
           <AuthButton
             type="submit"
             disabled={isLoading}
+            aria-busy={isLoading}
             icon={
               isLoading && (
                 <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white" />
@@ -140,8 +141,8 @@ export default function VerifyForgotPasswordForm({
           </AuthButton>
 
           <AuthButton
+            variant="secondary"
             onClick={handleEditPhone}
-            className="border border-infinity-primary !bg-transparent !text-infinity-primary hover:!bg-infinity-primary-lighter/20"
             icon={<EditIcon className="h-5 w-5 md:h-6 md:w-6" color="#33415e" />}
           >
             ویرایش شماره همراه

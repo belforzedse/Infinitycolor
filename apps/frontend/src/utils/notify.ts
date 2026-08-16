@@ -7,7 +7,7 @@ const baseOptions: ToastOptions = {
     background: "#333",
     color: "#fff",
     fontSize: "14px",
-    borderRadius: "8px",
+    borderRadius: "var(--radius-compact)",
   },
 };
 
