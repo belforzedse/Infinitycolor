@@ -102,6 +102,49 @@ describe("bounded admin dashboard summary", () => {
     expect(ctx.body.data.latestOrdersAmount).toBe(500);
   });
 
+  it("keeps the bounded customer name and amount for roles with only order access", async () => {
+    const { sanitize } = require("@strapi/utils");
+    (sanitize.contentAPI.output as jest.Mock).mockImplementationOnce(
+      async (rows: any[], _schema: unknown, options?: { auth?: unknown }) =>
+        options?.auth
+          ? rows.map((row) => ({ ...row, user: undefined, contract: undefined }))
+          : rows,
+    );
+    const raw = jest.fn().mockResolvedValue({
+      rows: [{ orders_total: "1", done_orders_total: "0" }],
+    });
+    const findMany = jest.fn().mockResolvedValue([
+      {
+        id: 10,
+        Status: "Started",
+        createdAt: "2026-08-16T10:30:00.000Z",
+        updatedAt: "2026-08-16T10:30:00.000Z",
+        user: {
+          id: 2,
+          user_info: { id: 3, FirstName: "Ali", LastName: "Rezaei" },
+        },
+        contract: { id: 4, Amount: 250_000 },
+      },
+    ]);
+    installStrapi({ raw, findMany, role: ROLE_NAMES.STORE_MANAGER });
+    const ctx = createContext();
+
+    await controller.query(ctx);
+
+    expect(sanitize.contentAPI.output).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.anything(),
+    );
+    expect(sanitize.contentAPI.output.mock.calls.at(-1)).toHaveLength(2);
+    expect(
+      ctx.body.data.latestOrders[0].attributes.user.data.attributes.user_info.data.attributes,
+    ).toEqual({ FirstName: "Ali", LastName: "Rezaei" });
+    expect(ctx.body.data.latestOrders[0].attributes.contract.data.attributes.Amount).toBe(
+      250_000,
+    );
+    expect(ctx.body.data.latestOrdersAmount).toBe(250_000);
+  });
+
   it("does not scan or return customer-account totals for non-Superadmin roles", async () => {
     const raw = jest.fn().mockResolvedValue({
       rows: [{ orders_total: 1, done_orders_total: 0, active_products_total: 1 }],
