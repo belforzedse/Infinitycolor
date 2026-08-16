@@ -3,13 +3,13 @@
 import Image from "next/image";
 import { useState, type CSSProperties } from "react";
 import FactorchiBarcode from "./FactorchiBarcode";
-import { SITE_URL } from "@/config/site";
 import { DEFAULT_SITE_IDENTITY } from "@/services/site-identity";
 import type { SiteIdentity } from "@/types/site-identity";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
 
 const INVOICE_PHONE = "01732525144";
 const INVOICE_STORE_POSTAL_CODE = "4916976618";
+const INVOICE_SITE_URL = "infinitycolor.co";
 const PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
 
 type Relation<T> = {
@@ -272,7 +272,11 @@ export default function Invoice({
                   <div className="fc-shop-meta-line is-long">
                     <CustomerField className="shop-address" label="آدرس:" value={storeAddress} />
                     <div className="fc-shop-contacts">
-                      <CustomerField className="shop-url" label="سایت:" value={SITE_URL} />
+                      <CustomerField
+                        className="shop-url"
+                        label="سایت:"
+                        value={INVOICE_SITE_URL}
+                      />
                       <CustomerField className="shop-phone" label="تلفن:" value={INVOICE_PHONE} />
                       <CustomerField
                         className="shop-postcode"

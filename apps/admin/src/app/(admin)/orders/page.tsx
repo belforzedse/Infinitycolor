@@ -26,10 +26,17 @@ import { useCan } from "@/hooks/useCan";
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
 // the Manual order Type, so manual orders still appear in their status bucket too.
-type OrderTab = "all" | "inprogress" | "completed" | "cancelled" | "manual";
+type OrderTab =
+  | "all"
+  | "paying"
+  | "inprogress"
+  | "completed"
+  | "cancelled"
+  | "manual";
 
 const ORDER_TABS: { key: OrderTab; label: string }[] = [
   { key: "all", label: "همه" },
+  { key: "paying", label: "در انتظار پرداخت" },
   { key: "inprogress", label: "در حال انجام" },
   { key: "completed", label: "تکمیل شده" },
   { key: "cancelled", label: "لغو شده یا ناموفق" },
@@ -45,8 +52,10 @@ const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
 
 export default function OrdersPage() {
   const canCreateManualOrder = useCan("order.manual.create");
-  const canBulkUpdateOrders = useCan("order.bulk.update");
-  const canPrintOrders = useCan("order.print");
+  // Bulk actions call the exact same per-order operations, so they must use
+  // the same capabilities instead of requiring a second, unrelated bulk flag.
+  const canChangeOrderStatus = useCan("order.status.update");
+  const canPrintOrders = useCan("order.read");
   const [, setRefresh] = useAtom(refreshTable);
   const [activeTab, setActiveTab] = useState<OrderTab>("all");
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
@@ -100,7 +109,7 @@ export default function OrdersPage() {
   }, [debouncedSearch]);
 
   const bulkOptions = useMemo(() => {
-    const statusOptions = canBulkUpdateOrders
+    const statusOptions = canChangeOrderStatus
       ? BULK_STATUS_OPTIONS.map(({ status, label }) => ({
           id: `status-${status}`,
           title: `تغییر وضعیت به «${label}»`,
@@ -110,7 +119,7 @@ export default function OrdersPage() {
       ...(canPrintOrders ? [{ id: "print", title: "پرینت دسته‌ای" }] : []),
       ...statusOptions,
     ];
-  }, [canBulkUpdateOrders, canPrintOrders]);
+  }, [canChangeOrderStatus, canPrintOrders]);
 
   const handleBulkAction = useCallback(
     async (actionId: string, selectedRows: Order[]) => {
@@ -121,7 +130,7 @@ export default function OrdersPage() {
       }
 
       if (actionId.startsWith("status-")) {
-        if (!canBulkUpdateOrders) return;
+        if (!canChangeOrderStatus) return;
         const statusKey = actionId.replace(
           "status-",
           "",
@@ -140,7 +149,7 @@ export default function OrdersPage() {
         }
       }
     },
-    [canBulkUpdateOrders, canPrintOrders, setRefresh],
+    [canChangeOrderStatus, canPrintOrders, setRefresh],
   );
 
   const loadOrders = useCallback(

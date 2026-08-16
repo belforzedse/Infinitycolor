@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 let mockTableProps: any;
 let mockWrapperProps: any;
+let mockCapabilities = new Set<string>();
 
 jest.mock("@/components/SuperAdmin/Table", () => ({
   refreshTable: {},
@@ -29,7 +30,7 @@ jest.mock("@/services/super-admin/orders/adjustItems", () => ({
   changeOrderStatus: jest.fn(),
 }));
 jest.mock("@/hooks/useCan", () => ({
-  useCan: () => true,
+  useCan: (capability: string) => mockCapabilities.has(capability),
 }));
 jest.mock("jotai", () => ({ useAtom: () => [false, jest.fn()] }));
 jest.mock("nuqs", () => ({ useQueryState: () => ["1", jest.fn()] }));
@@ -48,6 +49,11 @@ describe("orders page bounded data ownership", () => {
   beforeEach(() => {
     mockTableProps = undefined;
     mockWrapperProps = undefined;
+    mockCapabilities = new Set([
+      "order.read",
+      "order.status.update",
+      "order.manual.create",
+    ]);
     (listAdminOrders as jest.Mock).mockReset().mockResolvedValue({
       data: [],
       meta: { pagination: { page: 1, pageSize: 25, pageCount: 0, total: 0 } },
@@ -79,6 +85,48 @@ describe("orders page bounded data ownership", () => {
         sort: "last-edited",
         signal: controller.signal,
       }),
+    );
+  });
+
+  it("uses the matching single-order permissions for bulk actions", () => {
+    mockCapabilities = new Set(["order.read"]);
+    const { unmount } = render(<OrdersPage />);
+
+    expect(mockTableProps.enableSelection).toBe(true);
+    expect(mockTableProps.bulkOptions).toEqual([
+      { id: "print", title: "پرینت دسته‌ای" },
+    ]);
+
+    unmount();
+    mockCapabilities = new Set(["order.read", "order.status.update"]);
+    render(<OrdersPage />);
+
+    expect(mockTableProps.bulkOptions).toEqual(
+      expect.arrayContaining([
+        { id: "print", title: "پرینت دسته‌ای" },
+        { id: "status-Started", title: "تغییر وضعیت به «در حال انجام»" },
+        { id: "status-Done", title: "تغییر وضعیت به «تکمیل شده»" },
+        {
+          id: "status-Cancelled",
+          title: "تغییر وضعیت به «لغو شده یا ناموفق»",
+        },
+      ]),
+    );
+  });
+
+  it("loads pending-payment orders in their own tab", async () => {
+    render(<OrdersPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "در انتظار پرداخت" }));
+    await mockTableProps.dataLoader({
+      page: 1,
+      pageSize: 25,
+      filters: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(listAdminOrders).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tab: "paying" }),
     );
   });
 });

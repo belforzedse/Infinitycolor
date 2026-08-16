@@ -7,7 +7,7 @@ export const ADMIN_ORDERS_LIST_ENDPOINT = "/admin/orders-list/query";
 export type AdminOrdersListInput = {
   page: number;
   pageSize: number;
-  tab: "all" | "inprogress" | "completed" | "cancelled" | "manual";
+  tab: "all" | "paying" | "inprogress" | "completed" | "cancelled" | "manual";
   sort: "last-edited" | "newest" | "oldest";
   search?: string;
   filters?: AdvancedFilterItem[];

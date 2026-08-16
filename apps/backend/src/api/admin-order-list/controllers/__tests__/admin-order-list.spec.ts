@@ -35,6 +35,17 @@ describe("bounded admin orders list", () => {
     });
   });
 
+  it.each([
+    ["paying", { Status: { $eq: "Paying" } }],
+    ["inprogress", { Status: { $in: ["Started", "Shipment"] } }],
+  ])("keeps the %s status tab in its own server-side bucket", async (tab, expected) => {
+    const { findMany } = installStrapi();
+
+    await controller.query(createContext({ tab }));
+
+    expect(findMany.mock.calls[0][0].where.$and).toContainEqual(expected);
+  });
+
   it("returns an explicit bounded projection and stable tab/sort query", async () => {
     const { findMany } = installStrapi([
       {

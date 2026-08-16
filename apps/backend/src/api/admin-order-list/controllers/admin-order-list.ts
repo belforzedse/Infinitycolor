@@ -33,7 +33,8 @@ const FILTER_FIELDS: Record<string, AdminFilterDefinition> = {
 
 const TAB_FILTERS: Record<string, Record<string, unknown> | null> = {
   all: null,
-  inprogress: { Status: { $in: ["Paying", "Started", "Shipment"] } },
+  paying: { Status: { $eq: "Paying" } },
+  inprogress: { Status: { $in: ["Started", "Shipment"] } },
   completed: { Status: { $eq: "Done" } },
   cancelled: { Status: { $in: ["Returned", "Cancelled"] } },
   manual: { Type: { $eq: "Manual" } },
