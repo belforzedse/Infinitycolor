@@ -240,4 +240,3 @@ export async function POST(request: NextRequest) {
 }
 
 // Disable caching for this route
-export const dynamic = "force-dynamic";

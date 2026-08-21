@@ -45,6 +45,7 @@ export default function AddStoryPage() {
       <div className="mb-6 flex items-center gap-3">
         <Link
           href="/super-admin/stories"
+          prefetch={false}
           className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
         >
           <ArrowRight className="h-4 w-4" />

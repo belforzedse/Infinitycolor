@@ -61,9 +61,12 @@ export default function ResponsiveHeroImage({
 
   if (!slide.link?.href) return picture;
   return (
-    <Link href={slide.link.href} className="block h-full w-full">
+    <Link
+      href={slide.link.href}
+      prefetch={slide.link.href === "/plp" ? undefined : false}
+      className="block h-full w-full"
+    >
       {picture}
     </Link>
   );
 }
-

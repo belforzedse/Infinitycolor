@@ -116,6 +116,7 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
           </h2>
           <Link
             href="/plp?hasDiscount=true"
+            prefetch={false}
             className="inline-flex items-center gap-1 text-sm font-medium text-white underline-offset-4 transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
           >
             <span>مشاهده همه</span>
@@ -172,6 +173,7 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
 
             <Link
               href="/plp?hasDiscount=true"
+              prefetch={false}
               className="pressable inline-flex h-8 items-center gap-1 rounded-full bg-white px-5 text-sm font-medium text-infinity-primary transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#1E2850]"
             >
               <span>مشاهده همه</span>

@@ -1,8 +1,8 @@
-export const revalidate = 120;
-
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import PLPPageView from "../../PLPPageView";
+import PLPLoading from "../../loading";
 import {
   buildInvalidPLPMetadata,
   buildPLPMetadata,
@@ -10,14 +10,25 @@ import {
   parsePLPQuery,
 } from "@/services/product/plp";
 
+// Category data is URL-specific and must never be prefetched from the homepage.
+export const prefetch = "force-disabled";
+
 interface CategoryPLPPageProps {
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-export default async function CategoryPLPPage({ params, searchParams }: CategoryPLPPageProps) {
+async function CategoryPLPContent({ params, searchParams }: CategoryPLPPageProps) {
   const { slug } = await params;
   return <PLPPageView categorySlug={slug} searchParams={searchParams} />;
+}
+
+export default function CategoryPLPPage(props: CategoryPLPPageProps) {
+  return (
+    <Suspense fallback={<PLPLoading />}>
+      <CategoryPLPContent {...props} />
+    </Suspense>
+  );
 }
 
 export async function generateMetadata({

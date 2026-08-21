@@ -16,6 +16,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  reactCompiler: true,
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [

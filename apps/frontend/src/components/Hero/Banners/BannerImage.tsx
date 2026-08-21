@@ -53,7 +53,7 @@ export default function BannerImage({
   );
 
   if (href) {
-    return <Link href={href}>{img}</Link>;
+    return <Link href={href} prefetch={href === "/plp" ? undefined : false}>{img}</Link>;
   }
 
   return img;

@@ -155,6 +155,7 @@ export default function PLPHeaderDesktopNav() {
               <Link
                 key={item.key}
                 href={item.href}
+                prefetch={false}
                 aria-current={isActive ? "page" : undefined}
                 aria-haspopup={item.category ? "menu" : undefined}
                 aria-expanded={item.category ? isCategoryActive : undefined}

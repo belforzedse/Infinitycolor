@@ -129,7 +129,11 @@ export function LeftBanner({ spec, className = '' }: LeftBannerProps) {
 
   if (foregroundImage.href) {
     return (
-      <Link href={foregroundImage.href} className="block w-full h-full">
+      <Link
+        href={foregroundImage.href}
+        prefetch={foregroundImage.href === "/plp" ? undefined : false}
+        className="block w-full h-full"
+      >
         {ForegroundContent}
       </Link>
     );

@@ -162,7 +162,7 @@ export default function BlogPostsPage() {
               <Eye className="h-4 w-4" />
             </button>
           </Link>
-          <Link href={`/super-admin/blog/posts/${row.original.id}/edit`}>
+          <Link href={`/super-admin/blog/posts/${row.original.id}/edit`} prefetch={false}>
             <button
               type="button"
               className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200"

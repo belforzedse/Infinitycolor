@@ -11,8 +11,6 @@ import { getActiveStories } from "@/services/story.service";
 import { SITE_NAME, SITE_URL } from "@/config/site";
 import { SocialContainer } from "@/components/SocialContainer";
 
-export const revalidate = 10;
-
 type PostPageProps = {
   params: Promise<{
     slug: string;

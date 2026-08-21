@@ -14,6 +14,7 @@ interface QueuedAction {
 const QUEUE_STORAGE_KEY = "offline-queue";
 const MAX_RETRIES = 3;
 const MAX_QUEUE_SIZE = 50;
+let queueRun: Promise<void> | null = null;
 
 /**
  * Get all queued actions from storage
@@ -101,8 +102,20 @@ export function isOnline(): boolean {
 export async function processQueue(
   processor: (action: QueuedAction) => Promise<void>,
 ): Promise<void> {
+  if (queueRun) return queueRun;
   if (!isOnline()) return;
 
+  queueRun = processQueueOnce(processor);
+  try {
+    await queueRun;
+  } finally {
+    queueRun = null;
+  }
+}
+
+async function processQueueOnce(
+  processor: (action: QueuedAction) => Promise<void>,
+): Promise<void> {
   const actions = getQueuedActions();
   if (actions.length === 0) return;
 
@@ -165,6 +178,8 @@ export function setupOfflineQueueListener(
     processQueue(processor);
   };
 
+  window.addEventListener("app:back-online", handleOnline);
+  // Last-resort guard for non-React consumers that can run without the bridge.
   window.addEventListener("online", handleOnline);
 
   // Process queue immediately if already online
@@ -173,6 +188,7 @@ export function setupOfflineQueueListener(
   }
 
   return () => {
+    window.removeEventListener("app:back-online", handleOnline);
     window.removeEventListener("online", handleOnline);
   };
 }

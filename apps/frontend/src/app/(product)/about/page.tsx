@@ -13,6 +13,9 @@ import { getProductCategoriesForRender } from "@/services/product/categories";
 import { getSiteIdentity, resolveSiteName } from "@/services/site-identity";
 import { storeMapLinks } from "@/utils/identityIcons";
 
+// Homepage links may warm the shared product layout, but never this page body.
+export const prefetch = "force-disabled";
+
 const ABOUT_DESCRIPTION =
   "اینفینیتی یک فروشگاه آنلاین پیشرو در زمینه پوشاک است که با هدف ارائه تجربه خرید آنلاین منحصر به فرد و لذت‌بخش، بر تنوع، کیفیت و قیمت‌های رقابتی برای پوشاک مردانه، زنانه و کودکان تمرکز دارد.";
 

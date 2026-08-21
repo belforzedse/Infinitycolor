@@ -5,6 +5,10 @@ import CategoryCard from "@/components/Categories/CategoryCard";
 import { SITE_NAME, SITE_URL } from "@/config/site";
 import { getProductCategoriesForRender } from "@/services/product/categories";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 export const metadata: Metadata = {
   title: "دسته‌بندی‌ها",
   description: `مشاهده تمام دسته‌بندی‌های محصولات ${SITE_NAME}. سریع به دسته مورد نظر بروید و خرید خود را آغاز کنید.`,

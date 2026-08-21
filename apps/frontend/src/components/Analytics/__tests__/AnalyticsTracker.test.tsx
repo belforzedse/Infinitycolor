@@ -145,19 +145,25 @@ describe("AnalyticsTracker", () => {
     expect(normalizeUmamiBaseUrl("http://analytics.alpagency.net")).toBeNull();
   });
 
-  it("tracks one pageview for direct pushState, replaceState, and popstate navigations", () => {
-    const { unmount } = render(<AnalyticsTracker />);
+  it("tracks route changes from Next navigation hooks without patching browser history", () => {
+    const originalPushState = window.history.pushState;
+    const originalReplaceState = window.history.replaceState;
+    const { rerender } = render(<AnalyticsTracker />);
     flushFrames();
     expect(pageviewPayloads()).toHaveLength(1);
 
-    act(() => window.history.pushState({}, "", "/plp?utm_source=search"));
+    pathname = "/plp";
+    searchString = "utm_source=search";
+    rerender(<AnalyticsTracker />);
     flushFrames();
-    act(() => window.history.replaceState({}, "", "/pdp/red-shirt"));
+
+    pathname = "/pdp/red-shirt";
+    searchString = "";
+    rerender(<AnalyticsTracker />);
     flushFrames();
-    act(() => {
-      window.history.pushState({}, "", "/cart");
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    });
+
+    pathname = "/cart";
+    rerender(<AnalyticsTracker />);
     flushFrames();
 
     expect(pageviewPayloads()).toHaveLength(4);
@@ -167,21 +173,7 @@ describe("AnalyticsTracker", () => {
       "/pdp/red-shirt",
       "/cart",
     ]);
-    act(() => window.history.replaceState({}, "", "/"));
-    unmount();
-  });
-
-  it("does not remove a history wrapper installed after analytics", () => {
-    const originalPushState = window.history.pushState;
-    const { unmount } = render(<AnalyticsTracker />);
-    const laterWrapper: History["pushState"] = function laterWrapper(...args) {
-      return originalPushState.apply(this, args);
-    };
-    window.history.pushState = laterWrapper;
-
-    unmount();
-
-    expect(window.history.pushState).toBe(laterWrapper);
-    window.history.pushState = originalPushState;
+    expect(window.history.pushState).toBe(originalPushState);
+    expect(window.history.replaceState).toBe(originalReplaceState);
   });
 });

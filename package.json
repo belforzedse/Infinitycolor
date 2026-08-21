@@ -10,6 +10,7 @@
     "e2e:smoke": "turbo run e2e:smoke",
     "e2e:admin": "pnpm --filter @repo/e2e e2e:admin",
     "e2e:admin:smoke": "pnpm --filter @repo/e2e e2e:admin:smoke",
+    "e2e:instant": "pnpm --filter @repo/e2e e2e:instant",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:admin": "pnpm --filter @repo/admin test",

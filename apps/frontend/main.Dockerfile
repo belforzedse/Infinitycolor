@@ -77,7 +77,8 @@ ENV NEXT_PUBLIC_RELEASE_SHA=${GITHUB_SHA}
 
 WORKDIR /repo/apps/frontend
 ENV NODE_ENV=production
-RUN --mount=type=cache,target=/root/.cache/node/corepack \
+RUN --mount=type=cache,id=infinity-frontend-next-16.3.2-node22,target=/repo/apps/frontend/.next/cache,sharing=locked \
+    --mount=type=cache,target=/root/.cache/node/corepack \
     fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm run build
 RUN grep -q '"/api/_health/route"' .next/server/app-paths-manifest.json
@@ -97,7 +98,8 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
     STRAPI_INTERNAL_URL=${STRAPI_INTERNAL_URL} \
     FRONTEND_REDIS_URL=${FRONTEND_REDIS_URL} \
     NEXT_CACHE_ENVIRONMENT=${NEXT_PUBLIC_AUTH_ENVIRONMENT} \
-    NEXT_CACHE_RELEASE=${GITHUB_SHA}
+    NEXT_CACHE_RELEASE=${GITHUB_SHA} \
+    CACHE_RELEASE_ID=${GITHUB_SHA}
 
 COPY --from=builder /repo/apps/frontend/.next/standalone ./
 COPY --from=builder /repo/apps/frontend/public ./apps/frontend/public

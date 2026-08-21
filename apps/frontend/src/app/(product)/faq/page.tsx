@@ -10,8 +10,11 @@ import type { SiteFaqCategory } from "@/types/site-identity";
 import Breadcrumb from "@/components/Kits/Breadcrumb";
 import { BreadcrumbSchema } from "@/components/SEO/BreadcrumbSchema";
 
-// Public FAQ is cached and tagged ("faq"); on-demand revalidation refreshes it.
-export const revalidate = 3600;
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+// Homepage links may warm the shared product layout, but never this page body.
+export const prefetch = "force-disabled";
 
 const breadcrumbItems = [
   { label: "صفحه اصلی", href: "/" },

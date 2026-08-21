@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import Script from "next/script";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useAtomValue } from "jotai";
@@ -62,7 +62,6 @@ export function AnalyticsTracker() {
   const lastTrackedPathRef = useRef("");
   const pendingTrackedPathRef = useRef("");
   const previousUrlRef = useRef("");
-  const [historyPath, setHistoryPath] = useState<string | null>(null);
 
   const baseUrl = normalizeUmamiBaseUrl(process.env.NEXT_PUBLIC_UMAMI_URL || "");
   const websiteId = (process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID || "").trim();
@@ -74,51 +73,7 @@ export function AnalyticsTracker() {
     return query ? `${pathname}?${query}` : pathname || "/";
   }, [pathname, searchParams]);
 
-  // Next's navigation hooks cover normal App Router transitions, while this
-  // small observer also covers code that calls history.pushState/replaceState
-  // directly and browser back/forward. The event is local to this tracker and
-  // is restored on unmount so it cannot alter storefront routing behavior.
-  useEffect(() => {
-    if (!enabled || typeof window === "undefined") return;
-    const navigationEvent = "infinity-analytics-navigation";
-    const readPath = () => `${window.location.pathname}${window.location.search}`;
-    const notify = () => window.dispatchEvent(new Event(navigationEvent));
-    const onNavigation = () => setHistoryPath(readPath());
-    const originalPushState = window.history.pushState;
-    const originalReplaceState = window.history.replaceState;
-
-    const analyticsPushState: History["pushState"] = function pushState(
-      this: History,
-      ...args: Parameters<History["pushState"]>
-    ) {
-      const result = originalPushState.apply(this, args);
-      notify();
-      return result;
-    };
-    const analyticsReplaceState: History["replaceState"] = function replaceState(
-      this: History,
-      ...args: Parameters<History["replaceState"]>
-    ) {
-      const result = originalReplaceState.apply(this, args);
-      notify();
-      return result;
-    };
-    window.history.pushState = analyticsPushState;
-    window.history.replaceState = analyticsReplaceState;
-    window.addEventListener("popstate", onNavigation);
-    window.addEventListener(navigationEvent, onNavigation);
-
-    return () => {
-      if (window.history.pushState === analyticsPushState)
-        window.history.pushState = originalPushState;
-      if (window.history.replaceState === analyticsReplaceState)
-        window.history.replaceState = originalReplaceState;
-      window.removeEventListener("popstate", onNavigation);
-      window.removeEventListener(navigationEvent, onNavigation);
-    };
-  }, [enabled]);
-
-  const routePath = historyPath ?? currentPath;
+  const routePath = currentPath;
 
   useIsomorphicLayoutEffect(() => {
     if (!enabled || typeof window === "undefined") return;

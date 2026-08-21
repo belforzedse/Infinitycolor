@@ -67,6 +67,7 @@ export default function AdminActivityDetailPage() {
           <p className="text-neutral-600">فعالیت یافت نشد</p>
           <Link
             href="/super-admin/reports/admin-activity"
+            prefetch={false}
             className="mt-4 inline-block text-infinity-primary hover:text-infinity-primary-dark hover:underline"
           >
             بازگشت به لیست فعالیت‌ها
@@ -106,6 +107,7 @@ export default function AdminActivityDetailPage() {
         {/* Back Button */}
         <Link
           href="/super-admin/reports/admin-activity"
+          prefetch={false}
           className="inline-flex items-center gap-2 text-infinity-primary hover:text-infinity-primary-dark hover:underline"
         >
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

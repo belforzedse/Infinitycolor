@@ -85,14 +85,16 @@ export default function ProductDrawer({
           ) : data ? (
             <>
               <div className="flex flex-wrap gap-2">
-                <Link
-                  href={`/super-admin/products/${data.product.id}`}
+        <Link
+          href={`/super-admin/products/${data.product.id}`}
+          prefetch={false}
                   className="rounded-lg bg-infinity-primary px-4 py-2 text-sm text-white"
                 >
                   ویرایش محصول
                 </Link>
-                <Link
-                  href="/super-admin/orders"
+        <Link
+          href="/super-admin/orders"
+          prefetch={false}
                   className="rounded-lg border border-neutral-300 px-4 py-2 text-sm text-neutral-700"
                 >
                   مشاهده سفارش‌ها

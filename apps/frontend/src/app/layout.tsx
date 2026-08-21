@@ -9,19 +9,30 @@ import { MobileMenuProvider } from "@/contexts/MobileMenuContext";
 import Providers from "./Providers";
 import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts/storefront";
 import DevOnlyDebugPanel from "@/components/Debug/DevOnlyDebugPanel";
-import { NavigationProgress } from "@repo/ui/navigation-progress";
 import { OrganizationSchema } from "@/components/SEO/OrganizationSchema";
 import { IMAGE_BASE_URL, MEDIA_CDN_URL } from "@/constants/api";
 import { SITE_URL } from "@/config/site";
 import { getSiteIdentity, resolveSiteName } from "@/services/site-identity";
 import { SiteIdentityProvider } from "@/components/providers/SiteIdentityProvider";
 import { getAdaptiveQualityBootstrapScript } from "@/lib/adaptive-quality/bootstrap-script";
+import { cacheLife, cacheTag } from "next/cache";
+
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
 
 const DEFAULT_SITE_DESCRIPTION =
   "فروشگاه پوشاک آنلاین اینفینیتی - جدیدترین محصولات، تخفیف‌ها و پیشنهادهای ویژه";
 
+async function getCachedSiteIdentity() {
+  "use cache: remote";
+  cacheLife("storefrontPublic");
+  cacheTag("site-identity", "public-settings");
+  return getSiteIdentity();
+}
+
 export async function generateMetadata(): Promise<Metadata> {
-  const identity = await getSiteIdentity();
+  const identity = await getCachedSiteIdentity();
   const siteName = resolveSiteName(identity.siteName);
   const description = identity.brandDescription?.trim() || DEFAULT_SITE_DESCRIPTION;
 
@@ -102,7 +113,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const identity = await getSiteIdentity();
+  const identity = await getCachedSiteIdentity();
   const siteName = resolveSiteName(identity.siteName);
   const organizationSocialLinks = identity.socialLinks.map((link) => link.url).filter(Boolean);
   const primaryPhone =
@@ -206,8 +217,6 @@ export default async function RootLayout({
         <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
       </head>
       <body className={`${peydaFanum.className} bg-background antialiased`}>
-        <NavigationProgress />
-
         {/* Organization Schema for SEO (driven by site identity, with fallbacks) */}
         <OrganizationSchema
           name={siteName}

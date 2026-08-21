@@ -1,5 +1,3 @@
-export const revalidate = 30; // refresh PDP data every 30 seconds
-
 import Breadcrumb from "@/components/Kits/Breadcrumb";
 import Hero from "@/components/PDP/Hero";
 import OffersListHomePage from "@/components/PDP/OffersListHomePage";
@@ -28,16 +26,16 @@ import {
   getRelatedProductsByMainCategory,
   getRelatedProductsByOtherCategories,
 } from "@/services/product/product";
-import {
-  fetchAllPdpEligibleProducts,
-  getPdpStaticParamsProducts,
-} from "@/services/product/catalog";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
 import {
   buildCanonicalPdpPath,
   canonicalProductSlug,
   shouldRedirectToCanonicalSlug,
 } from "@/utils/productSlug";
+
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
 
 const PDP_REVALIDATE_SECONDS = 30;
 /**
@@ -434,39 +432,6 @@ function ReviewsFallback() {
       </div>
     </div>
   );
-}
-
-/**
- * Generate static params for EVERY currently published product so the whole
- * catalog is pre-rendered at build time. Products published after the build
- * still become routable on demand — `dynamicParams` defaults to `true` and the
- * page's `revalidate = 30` ISR window handles them; this only controls what's
- * pre-warmed at build time, not what's reachable at runtime.
- *
- * A Strapi outage during the build fails the build by default (rather than
- * silently shipping zero pre-rendered PDPs) — see fetchAllPdpEligibleProducts.
- * Set STATIC_PARAMS_FAIL_ON_INCOMPLETE=false to degrade to the old
- * empty-array-on-error behavior instead, as an operational escape hatch.
- */
-export async function generateStaticParams() {
-  try {
-    const products = getPdpStaticParamsProducts(await fetchAllPdpEligibleProducts());
-    const params = products.map((product) => ({ slug: product.slug }));
-
-    logger.info(`[generateStaticParams] Generated static params for product pages`, {
-      count: params.length,
-    });
-    return params;
-  } catch (error) {
-    if (process.env.STATIC_PARAMS_FAIL_ON_INCOMPLETE === "false") {
-      logger.error(
-        "[generateStaticParams] Incomplete product enumeration; degrading to zero pre-rendered PDPs",
-        { error: String(error) },
-      );
-      return [];
-    }
-    throw error;
-  }
 }
 
 export async function generateMetadata({

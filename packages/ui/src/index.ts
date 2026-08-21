@@ -4,7 +4,8 @@ export {
   glassDefaultCrossfadeSurface,
   type GlassSurfaceProps,
 } from "./glass";
-export { NavigationProgress } from "./navigation-progress";
+export { LinkStatusIndicator } from "./link-status";
+export { RetryablePanelBoundary } from "./retryable-panel-boundary";
 export {
   SkeletonBlock,
   SkeletonMedia,

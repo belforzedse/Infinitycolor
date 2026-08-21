@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import type { ProductCategorySummary } from "@/services/product/categories";
 import { CATEGORY_IMAGE_PLACEHOLDER } from "@/constants/placeholders";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import { LinkStatusIndicator } from "@repo/ui/link-status";
 
 export type CategoryCardCategory = Pick<
   ProductCategorySummary,
@@ -137,11 +138,12 @@ export default function CategoryCard({
       href={getCategoryPlpHref(category.slug)}
       onClick={onClick}
       className={cn(
-        "group flex w-full flex-col items-center text-center transition-transform duration-300 hover:-translate-y-0.5",
+        "group relative flex w-full flex-col items-center text-center transition-transform duration-300 hover:-translate-y-0.5",
         className,
       )}
       aria-label={label}
     >
+      <LinkStatusIndicator label={`در حال بارگذاری دسته ${label}`} />
       <MobileCategoryCircle
         imageSrc={imageSrc}
         imageAlt={imageAlt}

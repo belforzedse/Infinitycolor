@@ -1,14 +1,17 @@
 import ClientLayout from "./ClientLayout";
 import type { Metadata } from "next";
+import { connection } from "next/server";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
 
 export const metadata: Metadata = {
   robots: { index: false, follow: false },
   alternates: { canonical: "/super-admin" },
 };
 
-export default function SuperAdminLayout({ children }: { children: React.ReactNode }) {
+export default async function SuperAdminLayout({ children }: { children: React.ReactNode }) {
+  await connection();
   return <ClientLayout>{children}</ClientLayout>;
 }

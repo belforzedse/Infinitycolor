@@ -40,7 +40,7 @@ export default function SuperAdminError({
             تلاش دوباره
           </button>
 
-          <Link href="/super-admin" className="block">
+          <Link href="/super-admin" prefetch={false} className="block">
             <button className="w-full rounded-lg border border-infinity-primary-lighter/60 px-6 py-3 font-medium text-infinity-primary transition-colors hover:bg-infinity-primary-lighter/20 active:scale-95">
               بازگشت به داشبورد
             </button>

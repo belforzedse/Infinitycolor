@@ -2,16 +2,22 @@ import type { Metadata } from "next";
 import { Header } from "@/components/Header";
 import { ProfileSidebar } from "@/components/profile/ProfileSidebar";
 import { SocialContainer } from "@/components/SocialContainer";
+import { connection } from "next/server";
+
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
 
 export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function ProfileLayout({
+export default async function ProfileLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  await connection();
   return (
     <div className="flex min-h-dvh flex-col">
       <Header />

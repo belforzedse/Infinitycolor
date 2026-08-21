@@ -114,6 +114,7 @@ export default function AccountAccessMenu({
     return (
       <Link
         href={fallbackHref}
+        prefetch={false}
         aria-label={fallbackLabel}
         aria-current={ariaCurrent}
         onClick={onNavigate}
@@ -168,6 +169,7 @@ export default function AccountAccessMenu({
         >
           <Link
             href="/account"
+            prefetch={false}
             role="menuitem"
             aria-label="Account"
             title="Account"
@@ -178,6 +180,7 @@ export default function AccountAccessMenu({
           </Link>
           <Link
             href="/super-admin"
+            prefetch={false}
             role="menuitem"
             aria-label="Super admin"
             title="Super admin"

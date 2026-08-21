@@ -179,6 +179,7 @@ export default function Page() {
                   {activity.ResourceType === "order" && activity.ResourceId && (
                     <Link
                       href={`/super-admin/orders/${activity.ResourceId}`}
+                      prefetch={false}
                       className="text-sm text-infinity-primary hover:text-infinity-primary-dark hover:underline"
                     >
                       مشاهده سفارش

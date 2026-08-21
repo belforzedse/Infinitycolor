@@ -5,6 +5,7 @@ import { Plus, User } from "lucide-react";
 import { glassDefaultCrossfadeSurface } from "@repo/ui/glass";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { buildPersianProfileGreeting } from "@/utils/persian-profile-greeting";
+import { LinkStatusIndicator } from "@repo/ui/link-status";
 
 const profilePillClass =
   glassDefaultCrossfadeSurface("before:rounded-[20px]", "after:rounded-[20px]") +
@@ -46,9 +47,11 @@ export function HeaderProfileNav() {
     return (
       <Link
         href={CREATE_POST_HREF}
+        prefetch={false}
         className={newPostButtonClass}
         aria-label="ایجاد پست جدید"
       >
+        <LinkStatusIndicator />
         <span
           dir="ltr"
           className="relative z-10 inline-flex min-w-0 flex-row items-center justify-center gap-1.5"
@@ -75,7 +78,8 @@ export function HeaderProfileNav() {
     : "ورود به حساب";
 
   return (
-    <Link href={href} className={profilePillClass} aria-label={ariaLabel}>
+    <Link href={href} prefetch={false} className={`${profilePillClass} relative`} aria-label={ariaLabel}>
+      <LinkStatusIndicator />
       <span
         dir="ltr"
         className="relative z-10 inline-flex min-w-0 flex-row items-center justify-end gap-1"

@@ -12,17 +12,15 @@ import { User, FolderOpen, Tag } from "lucide-react";
 import { resolveBlogAuthorDisplayName } from "@/utils/blogAuthorName";
 import logger from "@/utils/logger";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // Use on-demand revalidation (triggered by Strapi lifecycle hooks)
 // Fallback to 1 hour if revalidation API is not called
 // This ensures pages stay fresh even if webhook fails
-export const revalidate = 3600; // 1 hour fallback (on-demand is primary)
-
 // Allow dynamic generation of blog posts not in generateStaticParams
 // This ensures ISR can generate pages on-demand even if build-time generation failed
-// CRITICAL: This allows routes to be generated at request time if they weren't pre-generated
-// during build. This is essential for staging environments where build-time API calls might fail.
-export const dynamicParams = true;
-
 interface BlogPostPageProps {
   params: Promise<{
     slug: string;
@@ -53,180 +51,6 @@ const EXCLUDED_PATTERNS = [
 
 function shouldExcludeSlug(slug: string): boolean {
   return EXCLUDED_PATTERNS.some(pattern => pattern.test(slug));
-}
-
-/**
- * Generate static params for published blog posts
- * Pre-generates all published posts at build time for better SEO
- * Falls back to ISR if build-time generation fails (staging-safe)
- */
-export async function generateStaticParams() {
-  const env = process.env.NODE_ENV || 'development';
-  const isStaging = process.env.NEXT_PUBLIC_SITE_URL?.includes('staging') || env === 'production';
-  const strapiBaseUrl = getStrapiServerUrl();
-
-  try {
-    const allPosts: Array<{ slug: string }> = [];
-    let currentPage = 1;
-    const pageSize = 100;
-
-    logger.info(`[generateStaticParams] Starting static params generation`, {
-      env,
-      isStaging,
-      strapiBaseUrl: strapiBaseUrl || 'NOT_SET',
-      hasStrapiBaseUrl: !!strapiBaseUrl,
-    });
-
-    // Validate server-side Strapi URL is set
-    if (!strapiBaseUrl || strapiBaseUrl === 'undefined') {
-      logger.error('[generateStaticParams] Strapi server URL is not configured', {
-        strapiBaseUrl,
-        internalEnvVar: process.env.STRAPI_INTERNAL_URL,
-        publicEnvVar: process.env.NEXT_PUBLIC_API_BASE_URL,
-        env,
-      });
-      logger.warn('[generateStaticParams] Returning empty array. ISR will handle blog post generation.');
-      return [];
-    }
-
-    while (true) {
-      const endpoint = `${strapiBaseUrl}/blog-posts?` +
-        `filters[Status][$eq]=Published&` +
-        `pagination[page]=${currentPage}&` +
-        `pagination[pageSize]=${pageSize}&` +
-        `fields[0]=Slug`;
-
-      logger.info(`[generateStaticParams] Fetching page ${currentPage}`, {
-        endpoint: endpoint.replace(strapiBaseUrl, '[STRAPI_BASE_URL]'),
-        isStaging,
-      });
-
-      let fetchResponse: Response;
-      try {
-        fetchResponse = await fetch(endpoint, {
-          next: { revalidate: 3600 }, // Cache for 1 hour
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-        });
-      } catch (fetchError) {
-        logger.error('[generateStaticParams] Network error during fetch', {
-          error: fetchError instanceof Error ? fetchError.message : String(fetchError),
-          endpoint: endpoint.replace(strapiBaseUrl, '[STRAPI_BASE_URL]'),
-          isStaging,
-          strapiBaseUrl: strapiBaseUrl || 'NOT_SET',
-        });
-        // If first page fails, return empty to let ISR handle it
-        if (currentPage === 1) {
-          logger.warn('[generateStaticParams] First page network error, returning empty array. ISR will handle posts.');
-          return [];
-        }
-        // If later page fails, break and return what we have
-        break;
-      }
-
-      if (!fetchResponse.ok) {
-        const errorText = await fetchResponse.text().catch(() => 'Unable to read error response');
-        logger.error(
-          `[generateStaticParams] API request failed: ${fetchResponse.status} ${fetchResponse.statusText}`,
-          {
-            endpoint: endpoint.replace(strapiBaseUrl, '[STRAPI_BASE_URL]'),
-            status: fetchResponse.status,
-            statusText: fetchResponse.statusText,
-            errorText: errorText.slice(0, 500),
-            isStaging,
-            currentPage,
-          }
-        );
-        // If first page fails, return empty to let ISR handle it
-        if (currentPage === 1) {
-          logger.warn('[generateStaticParams] First page failed, returning empty array. ISR will handle posts.');
-          return [];
-        }
-        // If later page fails, break and return what we have
-        break;
-      }
-
-      let response: any;
-      try {
-        response = await fetchResponse.json();
-      } catch (parseError) {
-        logger.error('[generateStaticParams] Failed to parse JSON response', {
-          error: parseError instanceof Error ? parseError.message : String(parseError),
-          status: fetchResponse.status,
-          isStaging,
-        });
-        if (currentPage === 1) return [];
-        break;
-      }
-
-      // Validate response structure
-      if (!response || typeof response !== 'object') {
-        logger.error('[generateStaticParams] Invalid response structure', {
-          responseType: typeof response,
-          hasData: !!response?.data,
-          isStaging,
-        });
-        if (currentPage === 1) return [];
-        break;
-      }
-
-      const posts = response?.data || [];
-      if (posts.length === 0) {
-        logger.info(`[generateStaticParams] No posts found on page ${currentPage}, stopping pagination`);
-        break;
-      }
-
-      const validPosts = posts
-        .map((post: any) => {
-          const slug = post.attributes?.Slug || post.Slug || post.id?.toString();
-          if (!slug) {
-            logger.warn('[generateStaticParams] Post missing slug', { postId: post.id, post });
-            return null;
-          }
-          return { slug };
-        })
-        .filter((post: { slug: string } | null): post is { slug: string } => post !== null);
-
-      allPosts.push(...validPosts);
-
-      const pageCount = response?.meta?.pagination?.pageCount || 1;
-      logger.info(`[generateStaticParams] Page ${currentPage}/${pageCount}, total posts so far: ${allPosts.length}`);
-
-      if (currentPage >= pageCount) break;
-
-      currentPage++;
-    }
-
-    logger.info(`[generateStaticParams] Successfully generated ${allPosts.length} static params for blog posts`, {
-      totalPosts: allPosts.length,
-      isStaging,
-      sampleSlugs: allPosts.slice(0, 5).map(p => p.slug),
-    });
-
-    if (allPosts.length === 0) {
-      logger.warn('[generateStaticParams] No static params generated. This may cause 404s until ISR generates pages.', {
-        isStaging,
-        strapiBaseUrl: strapiBaseUrl || 'NOT_SET',
-      });
-    }
-
-    return allPosts;
-  } catch (error) {
-    logger.error('[generateStaticParams] Error generating static params for blog:', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      strapiBaseUrl: strapiBaseUrl || 'NOT_SET',
-      env,
-      isStaging,
-    });
-    // Return empty array on error - ISR will handle remaining posts
-    logger.warn('[generateStaticParams] Returning empty array. ISR will handle blog post generation.', {
-      isStaging,
-    });
-    return [];
-  }
 }
 
 // Generate metadata for SEO

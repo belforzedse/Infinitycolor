@@ -4,10 +4,6 @@ import { legacyRedirects } from "./redirects";
 import { getNextImageRemotePatterns } from "./src/utils/imageSecurity";
 import { getSecurityHeaders } from "./src/utils/securityHeaders";
 
-const withBundleAnalyzer = require("@next/bundle-analyzer")({
-  enabled: process.env.ANALYZE === "true",
-});
-
 /**
  * Load build version from generated JSON file
  * This version is used for cache invalidation and is injected as NEXT_PUBLIC_BUILD_VERSION!
@@ -34,6 +30,19 @@ process.env.NEXT_PUBLIC_BUILD_VERSION = BUILD_VERSION;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  cacheComponents: true,
+  partialPrefetching: true,
+  reactCompiler: true,
+  cacheHandlers: {
+    remote: require.resolve("./cache-handlers/redis-remote.cjs"),
+  },
+  cacheLife: {
+    storefrontPublic: {
+      stale: 300,
+      revalidate: 300,
+      expire: 3600,
+    },
+  },
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: ["@repo/api", "@repo/brand", "@repo/fonts", "@repo/social-posts", "@repo/story-rail"],
@@ -86,6 +95,10 @@ const nextConfig = {
     remotePatterns: getNextImageRemotePatterns(),
   },
   experimental: {
+    useOffline: true,
+    turbopackRustReactCompiler: process.env.NODE_ENV !== "test",
+    exposeTestingApiInProductionBuild:
+      process.env.NEXT_INSTANT_TESTS === "true",
     optimizePackageImports: ["@heroicons/react", "lucide-react", "react-icons", "framer-motion"],
     scrollRestoration: true,
     optimizeCss: true,
@@ -102,6 +115,6 @@ const nextConfig = {
   // invalidation inconsistent and can leave the Redis handler unused.
   cacheMaxMemorySize: 0,
 };
-module.exports = withSentryConfig(withBundleAnalyzer(nextConfig), {
+module.exports = withSentryConfig(nextConfig, {
   silent: !process.env.CI,
 });

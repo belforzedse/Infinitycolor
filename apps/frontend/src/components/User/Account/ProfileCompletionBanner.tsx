@@ -42,6 +42,7 @@ export default function ProfileCompletionBanner() {
       <div className="flex flex-shrink-0 items-center gap-2">
         <Link
           href="/account"
+          prefetch={false}
           className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-700"
         >
           تکمیل اطلاعات

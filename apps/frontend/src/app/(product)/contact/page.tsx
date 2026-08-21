@@ -4,6 +4,9 @@ import ContactUs from "@/components/Contact/ContactUs";
 import ContactHeader from "@/components/Contact/ContactHeader";
 import { getSiteIdentity } from "@/services/site-identity";
 
+// Homepage links may warm the shared product layout, but never this page body.
+export const prefetch = "force-disabled";
+
 const page = async () => {
   const identity = await getSiteIdentity();
   const physicalStores = identity.hasPhysicalStores ? identity.stores : [];

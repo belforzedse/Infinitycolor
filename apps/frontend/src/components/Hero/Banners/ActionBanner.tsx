@@ -296,6 +296,7 @@ function ContentSection({
       >
         <Link
           href={href}
+          prefetch={href === "/plp" ? undefined : false}
           className={`group flex w-full flex-row items-center justify-end gap-2 text-right ${buttonClasses}`}
           style={
             Object.keys({ ...buttonLinkStyle, ...titleStyle }).length
@@ -362,6 +363,7 @@ function ContentSection({
         <div className="mt-2">
           <Link
             href={button.href}
+            prefetch={button.href === "/plp" ? undefined : false}
             className={`group ${buttonClasses}`}
             style={buttonLinkStyle}
           >

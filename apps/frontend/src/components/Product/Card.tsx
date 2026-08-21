@@ -7,6 +7,7 @@ import { getLazySecondaryMediaByProductId } from "@/services/product/product";
 import { computeSaleDiscountPercent } from "@/utils/discounts";
 import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
 import { trackAnalyticsEvent } from "@/lib/analytics";
+import { LinkStatusIndicator } from "@repo/ui/link-status";
 
 // Components
 import ImageSlider from "./ImageSlider";
@@ -223,10 +224,11 @@ const ProductCard: FC<ProductCardProps> = ({
         <Link
           href={productUrl}
           onClick={handleProductLinkClick}
-          className="block rounded-3xl focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          className="relative block rounded-3xl focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
           data-testid="product-card-link"
           aria-label={`مشاهده جزئیات ${title}`}
         >
+          <LinkStatusIndicator label={`در حال بارگذاری ${title}`} />
           <div className="interactive-card pressable flex h-full w-full min-w-0 flex-col gap-1 rounded-2xl border border-slate-100 bg-white p-1 transition-all duration-300 md:group-hover:border-infinity-primary-lighter/40">
             {/* Image Section */}
             <div className="relative aspect-[3/4] w-full min-w-0 overflow-hidden rounded-xl md:aspect-[250/270]">

@@ -1,7 +1,3 @@
-// This page is now SSR (Server Component) by removing "use client"
-// Revalidate every 60s to balance freshness with server load (fewer revalidations = less Strapi/Next CPU)
-export const revalidate = 60;
-
 import type { Metadata } from "next";
 import { ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS } from "@/constants/categories";
 import { getProductCategoriesForRender } from "@/services/product/categories";
@@ -28,6 +24,63 @@ import InfinitygramSection, {
   InfinitygramSectionSkeleton,
 } from "@/components/Home/InfinitygramSection";
 import { SkeletonBlock, SkeletonMedia, SkeletonText } from "@repo/ui/skeleton";
+import { RetryablePanelBoundary } from "@repo/ui/retryable-panel-boundary";
+import { cacheLife, cacheTag } from "next/cache";
+
+async function getCachedHomepageSettings() {
+  "use cache: remote";
+  cacheLife("storefrontPublic");
+  cacheTag("site-settings", "hero-slider");
+  const [settings, heroSlider] = await Promise.all([
+    getPublicSuperAdminSettings(),
+    getPublicHeroSlider(),
+  ]);
+  return [settings, mapCmsHeroSliderToBannerSlides(heroSlider.published)] as const;
+}
+
+async function getCachedHomepageCategories() {
+  "use cache: remote";
+  cacheLife("storefrontPublic");
+  cacheTag("product-categories", "navigation");
+  return getProductCategoriesForRender({
+    mainOnly: true,
+    sort: "Title:asc",
+    featuredOnly: true,
+    allowedNameSubstrings: ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS,
+  });
+}
+
+async function getCachedHomepageBlogPosts() {
+  "use cache: remote";
+  cacheLife("storefrontPublic");
+  cacheTag("blog-posts");
+  return getLatestBlogPosts();
+}
+
+async function getCachedHomepageStories() {
+  "use cache: remote";
+  cacheLife("storefrontPublic");
+  cacheTag("stories");
+  return getStoriesForHome();
+}
+
+function HeroSection({
+  heroFromCms,
+}: {
+  heroFromCms: ReturnType<typeof mapCmsHeroSliderToBannerSlides>;
+}) {
+  return (
+    <section className="space-y-0">
+      <Reveal variant="zoom-in" duration={650}>
+        <HeroBannerSlider
+          slides={heroFromCms.slides}
+          autoplayInterval={heroFromCms.autoplayIntervalMs}
+          autoplayEligibility={heroFromCms.autoplayEligibility}
+        />
+      </Reveal>
+    </section>
+  );
+}
 
 export const metadata: Metadata = {
   title: {
@@ -134,7 +187,7 @@ function BlogSectionFallback() {
 }
 
 async function StoriesSection() {
-  const activeStories = await getStoriesForHome();
+  const activeStories = await getCachedHomepageStories();
 
   if (activeStories.length === 0) return null;
 
@@ -152,13 +205,7 @@ async function ProductSectionsBlock({
 }
 
 async function CategorySection() {
-  const parentCategories = await getProductCategoriesForRender({
-    mainOnly: true,
-    sort: "Title:asc",
-    featuredOnly: true,
-    allowedNameSubstrings: ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS,
-    revalidate: 90,
-  });
+  const parentCategories = await getCachedHomepageCategories();
 
   if (parentCategories.length === 0) return null;
 
@@ -170,7 +217,7 @@ async function CategorySection() {
 }
 
 async function BlogSection() {
-  const latestBlogPosts = await getLatestBlogPosts();
+  const latestBlogPosts = await getCachedHomepageBlogPosts();
 
   if (latestBlogPosts.length === 0) return null;
 
@@ -184,10 +231,7 @@ async function BlogSection() {
 }
 
 export default async function Home() {
-  const [homepageSettings, heroSlider] = await Promise.all([
-    getPublicSuperAdminSettings(),
-    getPublicHeroSlider(),
-  ]);
+  const [homepageSettings, heroFromCms] = await getCachedHomepageSettings();
 
   const promoBanners = [
     {
@@ -231,8 +275,6 @@ export default async function Home() {
       mobileHeight: homepageSettings.homeBannerTwoMobileHeight,
     },
   ];
-  const heroFromCms = mapCmsHeroSliderToBannerSlides(heroSlider.published);
-
   return (
     <>
       <PageContainer variant="wide" className="space-y-4 pb-4 pt-8">
@@ -246,19 +288,15 @@ export default async function Home() {
           altText={homepageSettings.siteGifAltText}
         />
 
-        <Suspense fallback={<StoriesRailFallback />}>
-          <StoriesSection />
-        </Suspense>
+        <RetryablePanelBoundary label="استوری‌ها">
+          <Suspense fallback={<StoriesRailFallback />}>
+            <StoriesSection />
+          </Suspense>
+        </RetryablePanelBoundary>
 
-        <section className="space-y-0">
-          <Reveal variant="zoom-in" duration={650}>
-            <HeroBannerSlider
-              slides={heroFromCms.slides}
-              autoplayInterval={heroFromCms.autoplayIntervalMs}
-              autoplayEligibility={heroFromCms.autoplayEligibility}
-            />
-          </Reveal>
-        </section>
+        <Suspense fallback={<SkeletonMedia aspect="16 / 7" className="rounded-3xl" />}>
+          <HeroSection heroFromCms={heroFromCms} />
+        </Suspense>
 
         <Suspense fallback={<CategoryCarouselFallback />}>
           <CategorySection />
@@ -269,14 +307,18 @@ export default async function Home() {
         </Suspense>
       </PageContainer>
 
-      <Suspense fallback={<InfinitygramSectionSkeleton />}>
-        <InfinitygramSection />
-      </Suspense>
+      <RetryablePanelBoundary label="اینفینیتی‌گرام">
+        <Suspense fallback={<InfinitygramSectionSkeleton />}>
+          <InfinitygramSection />
+        </Suspense>
+      </RetryablePanelBoundary>
 
       <PageContainer variant="wide" className="pb-16 pt-4">
-        <Suspense fallback={<BlogSectionFallback />}>
-          <BlogSection />
-        </Suspense>
+        <RetryablePanelBoundary label="مجله اینفینیتی">
+          <Suspense fallback={<BlogSectionFallback />}>
+            <BlogSection />
+          </Suspense>
+        </RetryablePanelBoundary>
       </PageContainer>
     </>
   );

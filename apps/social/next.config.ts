@@ -2,6 +2,24 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
+  cacheComponents: true,
+  partialPrefetching: true,
+  reactCompiler: true,
+  cacheHandlers: {
+    remote: require.resolve("./cache-handlers/redis-remote.cjs"),
+  },
+  cacheLife: {
+    socialPublic: {
+      stale: 300,
+      revalidate: 300,
+      expire: 3600,
+    },
+  },
+  experimental: {
+    useOffline: true,
+    exposeTestingApiInProductionBuild:
+      process.env.NEXT_INSTANT_TESTS === "true",
+  },
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: ["@repo/api", "@repo/brand", "@repo/fonts", "@repo/social-posts", "@repo/story-rail"],
