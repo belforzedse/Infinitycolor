@@ -140,8 +140,9 @@ const ChildCategoryCard = ({
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               )}
-              <Link
-                href={`/super-admin/products/categories/edit/${child.id}`}
+                  <Link
+                    href={`/super-admin/products/categories/edit/${child.id}`}
+                    prefetch={false}
                 className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50"
                 aria-label="ویرایش دسته‌بندی فرزند"
               >
@@ -159,8 +160,9 @@ const ChildCategoryCard = ({
 
           <div className="flex items-center justify-between rounded-lg bg-stone-100 px-2 py-1">
             <span className="text-[10px] text-slate-500">ویرایش سریع</span>
-            <Link
-              href={`/super-admin/products/categories/edit/${child.id}`}
+                  <Link
+                    href={`/super-admin/products/categories/edit/${child.id}`}
+                    prefetch={false}
               className="text-[10px] font-semibold text-infinity-primary"
             >
               ویرایش
@@ -271,8 +273,9 @@ const ParentCategoryCard = ({
                   <Trash2 className="h-4 w-4" />
                 </button>
               )}
-              <Link
-                href={`/super-admin/products/categories/edit/${category.id}`}
+                <Link
+                  href={`/super-admin/products/categories/edit/${category.id}`}
+                  prefetch={false}
                 className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50"
                 aria-label="ویرایش دسته‌بندی"
                 data-testid="admin-category-edit"

@@ -59,6 +59,7 @@ export default function OrderSummaryCard() {
 
       <Link
         href="/checkout"
+        prefetch={false}
         data-testid="cart-checkout-link"
         className="mt-4 flex w-full items-center justify-center rounded-xl bg-infinity-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-infinity-primary"
       >

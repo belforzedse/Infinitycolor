@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { StorefrontLogo } from "@repo/brand";
 import { Bookmark, User } from "lucide-react";
 import { SearchBar } from "@/components/SearchBar";
@@ -10,6 +10,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { NotificationDropdown } from "@/components/notifications/NotificationDropdown";
 import { MobileHeaderBackButton } from "@/components/MobileHeaderBackButton";
 import { SOCIAL_CONTAINER_CLASS } from "@/components/SocialContainer";
+import { LinkStatusIndicator } from "@repo/ui/link-status";
 
 const LG_BREAKPOINT_PX = 1024;
 const NEAR_TOP_SCROLL_Y = 80;
@@ -80,7 +81,9 @@ export function Header() {
         </div>
         <div className="relative z-10 ml-auto flex items-center gap-3">
           <NotificationDropdown variant="mobile" />
-          <MobileHeaderBackButton />
+          <Suspense fallback={null}>
+            <MobileHeaderBackButton />
+          </Suspense>
         </div>
       </div>
 
@@ -97,9 +100,11 @@ export function Header() {
         <div className="flex min-w-0 items-center justify-end justify-self-end gap-3 sm:gap-4">
           <Link
             href={leadingAction.href}
-            className="rounded-lg p-1.5 text-[#94A3B8] transition-colors hover:bg-zinc-100 hover:text-zinc-800"
+            prefetch={false}
+            className="relative rounded-lg p-1.5 text-[#94A3B8] transition-colors hover:bg-zinc-100 hover:text-zinc-800"
             aria-label={leadingAction.label}
           >
+            <LinkStatusIndicator />
             <LeadingActionIcon size={20} strokeWidth={1.5} aria-hidden />
           </Link>
           <Divider />

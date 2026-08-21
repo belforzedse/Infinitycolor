@@ -94,6 +94,7 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
               labelAction: (data) => (
                 <Link
                   href={`/super-admin/users/edit/${data.userId}`}
+                  prefetch={false}
                   className="flex items-center gap-1 text-sm text-actions-link"
                 >
                   <span>پروفایل</span>

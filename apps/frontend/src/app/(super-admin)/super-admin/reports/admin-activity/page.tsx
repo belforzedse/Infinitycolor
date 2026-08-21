@@ -666,6 +666,7 @@ export default function AdminActivityReportPage() {
                                                       <td className="px-4 py-3 text-sm text-neutral-600">
                                                         <Link
                                                           href={`/super-admin/reports/admin-activity/${activity.id}`}
+                                                          prefetch={false}
                                                           className="text-infinity-primary hover:text-infinity-primary-dark hover:underline font-medium"
                                                         >
                                                           {title}
@@ -715,8 +716,9 @@ export default function AdminActivityReportPage() {
                                       </span>
                                     </td>
                                     <td className="px-6 py-3 text-sm text-neutral-600">
-                                      <Link
-                                        href={`/super-admin/reports/admin-activity/${activity.id}`}
+                                    <Link
+                                      href={`/super-admin/reports/admin-activity/${activity.id}`}
+                                      prefetch={false}
                                         className="text-infinity-primary hover:text-infinity-primary-dark hover:underline font-medium"
                                       >
                                         {title}

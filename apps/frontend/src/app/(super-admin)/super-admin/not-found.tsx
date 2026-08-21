@@ -64,7 +64,7 @@ export default function NotFound() {
 
           {/* Action buttons */}
           <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
-            <Link href="/super-admin">
+            <Link href="/super-admin" prefetch={false}>
               <button className="group relative flex items-center gap-2 rounded-xl bg-[linear-gradient(180deg,#566D97_0%,#98BDFF_100%)] px-8 py-4 font-semibold text-white shadow-lg transition-all duration-300 ease-out hover:scale-105 hover:shadow-xl">
                 <div className="absolute inset-0 rounded-xl bg-[linear-gradient(70.36deg,#3E5070_10.29%,#A0C2FF_74.27%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100"></div>
                 <Home className="relative z-10 h-5 w-5" />

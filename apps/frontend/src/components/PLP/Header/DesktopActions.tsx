@@ -37,6 +37,7 @@ const PLPDesktopHeaderActions = ({}: Props) => {
 
       <Link
         href="/wallet"
+        prefetch={false}
         aria-label="کیف پول"
         className="pressable text-slate-400 transition-all duration-200 hover:scale-105 hover:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-95"
       >
@@ -47,6 +48,7 @@ const PLPDesktopHeaderActions = ({}: Props) => {
 
       <Link
         href="/orders"
+        prefetch={false}
         aria-label="پیگیری سفارش"
         className="pressable text-slate-400 transition-all duration-200 hover:scale-105 hover:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-95"
       >

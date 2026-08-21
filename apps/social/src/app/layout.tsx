@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { peyda, peydaFanum, rokh, kaghaz } from "@repo/fonts";
 import { Providers } from "@/app/providers";
 import { AppChrome } from "@/components/AppChrome";
-import { NavigationProgress } from "@repo/ui/navigation-progress";
 import { SITE_NAME, SITE_URL } from "@/config/site";
 import "./globals.css";
 
@@ -285,7 +284,6 @@ export default function RootLayout({
     >
       <body className={`min-h-dvh flex flex-col bg-background text-zinc-900 ${peydaFanum.className}`}>
         <Providers>
-          <NavigationProgress />
           <AppChrome>{children}</AppChrome>
         </Providers>
       </body>

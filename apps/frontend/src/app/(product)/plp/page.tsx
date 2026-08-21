@@ -1,5 +1,3 @@
-export const revalidate = 120;
-
 import type { Metadata } from "next";
 import PLPPageView from "./PLPPageView";
 import {
@@ -8,6 +6,9 @@ import {
   getPLPCategoryContext,
   parsePLPQuery,
 } from "@/services/product/plp";
+
+// Listings and their data load after activation; only the parent shell may warm.
+export const prefetch = "force-disabled";
 
 interface PLPPageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;

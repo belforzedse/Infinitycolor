@@ -1,17 +1,14 @@
 import { act, render, screen } from "@testing-library/react";
 import NetworkStatusBanner from "../NetworkStatusBanner";
 
-function setOnline(value: boolean) {
-  Object.defineProperty(navigator, "onLine", {
-    configurable: true,
-    value,
-  });
-}
+let offline = false;
+
+jest.mock("next/offline", () => ({ useOffline: () => offline }));
 
 describe("NetworkStatusBanner", () => {
   beforeEach(() => {
     jest.useFakeTimers();
-    setOnline(true);
+    offline = false;
   });
 
   afterEach(() => {
@@ -20,22 +17,26 @@ describe("NetworkStatusBanner", () => {
   });
 
   it("persists while offline and briefly confirms reconnection", () => {
-    render(<NetworkStatusBanner />);
+    const onBackOnline = jest.fn();
+    window.addEventListener("app:back-online", onBackOnline);
+    const { rerender } = render(<NetworkStatusBanner />);
     expect(screen.queryByTestId("network-status")).not.toBeInTheDocument();
 
     act(() => {
-      setOnline(false);
-      window.dispatchEvent(new Event("offline"));
+      offline = true;
+      rerender(<NetworkStatusBanner />);
     });
     expect(screen.getByTestId("network-status")).toHaveTextContent("اتصال اینترنت قطع است");
 
     act(() => {
-      setOnline(true);
-      window.dispatchEvent(new Event("online"));
+      offline = false;
+      rerender(<NetworkStatusBanner />);
     });
     expect(screen.getByTestId("network-status")).toHaveTextContent("اتصال اینترنت برقرار شد");
+    expect(onBackOnline).toHaveBeenCalledTimes(1);
 
     act(() => jest.advanceTimersByTime(3000));
     expect(screen.queryByTestId("network-status")).not.toBeInTheDocument();
+    window.removeEventListener("app:back-online", onBackOnline);
   });
 });

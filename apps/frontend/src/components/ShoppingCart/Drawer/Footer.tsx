@@ -17,6 +17,7 @@ export default function CartDrawerFooter() {
       <div className="flex gap-2">
         <Link
           href="/cart"
+          prefetch={false}
           data-testid="cart-drawer-view-cart"
           className="pressable text-sm flex-1 rounded-lg bg-slate-100 px-4 py-2 text-center text-neutral-800"
           onClick={closeDrawer}
@@ -26,6 +27,7 @@ export default function CartDrawerFooter() {
 
         <Link
           href="/checkout"
+          prefetch={false}
           data-testid="cart-drawer-checkout"
           className="pressable text-sm flex-1 rounded-lg bg-infinity-primary px-4 py-2 text-center text-white"
           onClick={closeDrawer}

@@ -1,6 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "tools/*"
 overrides:
   # The browser applications are React 19. A transitive Strapi declaration
   # otherwise wins pnpm's shared type hoist and makes both deploy builds resolve

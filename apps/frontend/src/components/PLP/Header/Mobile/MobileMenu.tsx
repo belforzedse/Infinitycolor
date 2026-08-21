@@ -309,6 +309,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
       <Link
         key={item.key}
         href={item.href}
+        prefetch={item.href === "/plp" ? undefined : false}
         onClick={onClose}
         aria-current={isActiveHref(item.href) ? "page" : undefined}
         className={[
@@ -334,6 +335,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
         <Link
           key={item.key}
           href={item.href}
+          prefetch={false}
           onClick={onClose}
           aria-current={isActiveHref(item.href) ? "page" : undefined}
           className={[
@@ -387,6 +389,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
           <div className="storefront-mobile-category-panel-inner min-h-0 overflow-hidden">
             <Link
               href={item.href}
+              prefetch={false}
               onClick={onClose}
               aria-current={isActiveHref(item.href) ? "page" : undefined}
               className={[
@@ -400,6 +403,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
               <Link
                 key={child.id}
                 href={getCategoryPlpHref(child.slug)}
+                prefetch={false}
                 onClick={onClose}
                 className="block border-t border-stone-100 px-3 py-3 text-right text-sm font-medium text-neutral-700 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-infinity-primary"
               >
@@ -589,6 +593,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
 
                 <Link
                   href="/orders"
+                  prefetch={false}
                   onClick={onClose}
                   className="pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-neutral-700 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
                   dir="rtl"

@@ -1,8 +1,7 @@
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-export const runtime = "nodejs";
+import { connection } from "next/server";
 
 export async function GET() {
+  await connection();
   return Response.json(
     {
       ok: true,

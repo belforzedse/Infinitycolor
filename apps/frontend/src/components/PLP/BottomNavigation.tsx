@@ -37,6 +37,7 @@ function TabIndicator({ active }: { active: boolean }) {
 
 type NavTabLinkProps = {
   href: string;
+  prefetch?: boolean;
   active: boolean;
   ariaLabel: string;
   inactiveIconClassName: string;
@@ -46,6 +47,7 @@ type NavTabLinkProps = {
 
 function NavTabLink({
   href,
+  prefetch,
   active,
   ariaLabel,
   inactiveIconClassName,
@@ -55,6 +57,7 @@ function NavTabLink({
   return (
     <Link
       href={href}
+      prefetch={prefetch}
       onClick={onClick}
       className={cx(
         "flex h-8 w-6 flex-col items-center justify-end gap-2 justify-self-center",
@@ -156,6 +159,7 @@ const PLPBottomNavigation = () => {
 
               <NavTabLink
                 href="/cart"
+                prefetch={false}
                 active={isCartActive}
                 inactiveIconClassName="text-[#A3A3A3]"
                 ariaLabel="سبد خرید"
@@ -188,6 +192,7 @@ const PLPBottomNavigation = () => {
 
               <NavTabLink
                 href="#"
+                prefetch={false}
                 active={false}
                 inactiveIconClassName="text-[#A3A3A3]"
                 ariaLabel="دسته بندی ها"
@@ -198,6 +203,7 @@ const PLPBottomNavigation = () => {
 
               <NavTabLink
                 href="#"
+                prefetch={false}
                 active={false}
                 inactiveIconClassName="text-[#A3A3A3]"
                 ariaLabel="جستجو"

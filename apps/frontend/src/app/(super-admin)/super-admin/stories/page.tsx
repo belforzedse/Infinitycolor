@@ -204,8 +204,9 @@ export default function StoriesPage() {
                       </div>
 
                       <div className="flex items-center justify-end gap-2">
-                        <Link
-                          href={`/super-admin/stories/${story.id}/edit`}
+                    <Link
+                      href={`/super-admin/stories/${story.id}/edit`}
+                      prefetch={false}
                           className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                           title="ویرایش"
                         >
@@ -289,8 +290,9 @@ export default function StoriesPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-2">
-                        <Link
-                          href={`/super-admin/stories/${story.id}/edit`}
+                    <Link
+                      href={`/super-admin/stories/${story.id}/edit`}
+                      prefetch={false}
                           className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                           title="ویرایش"
                         >

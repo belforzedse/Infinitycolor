@@ -13,6 +13,7 @@
     "e2e:adaptive": "playwright test --config adaptive.playwright.config.ts",
     "e2e:adaptive:parity": "playwright test --config static-parity.playwright.config.ts",
     "e2e:adaptive:lowest": "playwright test --config forced-low.playwright.config.ts",
+    "e2e:instant": "playwright test --config instant.playwright.config.ts",
     "e2e:admin": "playwright test --config admin.playwright.config.ts",
     "e2e:admin:smoke": "playwright test --config admin.playwright.config.ts --grep \"@smoke\"",
     "e2e:permissions": "playwright test --grep \"@permissions\"",
@@ -27,9 +28,10 @@
     "check-types": "tsc --noEmit"
   },
   "devDependencies": {
+    "@next/playwright": "16.3.2",
     "@playwright/test": "1.60.0",
     "@types/node": "20.17.30",
     "jszip": "3.10.1",
-    "typescript": "5.8.3"
+    "typescript": "7.0.2"
   }
 }

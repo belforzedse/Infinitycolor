@@ -253,6 +253,7 @@ export default function EditBlogPostPage() {
         <div className="flex items-center gap-4">
           <Link
             href="/super-admin/blog/posts"
+            prefetch={false}
             className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
           >
             <ArrowRight className="h-5 w-5" />
@@ -261,6 +262,7 @@ export default function EditBlogPostPage() {
         </div>
         <Link
           href="/super-admin/blog/posts/add"
+          prefetch={false}
           className="flex items-center gap-2 rounded-lg border border-slate-400 px-3 py-1.5 text-sm text-slate-700 transition-colors hover:bg-slate-50"
         >
           <Plus className="h-4 w-4" />

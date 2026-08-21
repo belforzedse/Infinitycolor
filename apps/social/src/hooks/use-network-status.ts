@@ -1,30 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useOffline } from "next/offline";
 
 export function useNetworkStatus() {
-  const [isOnline, setIsOnline] = useState(() =>
-    typeof window === "undefined" ? true : window.navigator.onLine,
-  );
+  const isOffline = useOffline();
+  const wasOffline = useRef(false);
   const [hasRecovered, setHasRecovered] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (isOffline) {
+      wasOffline.current = true;
+      return;
+    }
+    if (!wasOffline.current) return;
+    wasOffline.current = false;
+    setHasRecovered(true);
+    window.dispatchEvent(new Event("app:back-online"));
+    const timeoutId = window.setTimeout(() => setHasRecovered(false), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [isOffline]);
 
-    const onOnline = () => {
-      setIsOnline(true);
-      setHasRecovered(true);
-      window.setTimeout(() => setHasRecovered(false), 3000);
-    };
-    const onOffline = () => setIsOnline(false);
-
-    window.addEventListener("online", onOnline);
-    window.addEventListener("offline", onOffline);
-    return () => {
-      window.removeEventListener("online", onOnline);
-      window.removeEventListener("offline", onOffline);
-    };
-  }, []);
-
-  return { isOnline, hasRecovered };
+  return { isOnline: !isOffline, hasRecovered: !isOffline && hasRecovered };
 }

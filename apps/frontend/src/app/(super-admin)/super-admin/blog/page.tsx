@@ -219,8 +219,9 @@ export default function BlogDashboard() {
           <div className="rounded-2xl bg-white p-5">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-medium text-neutral-800">آخرین پست‌ها</h3>
-              <Link
-                href="/super-admin/blog/posts"
+            <Link
+              href="/super-admin/blog/posts"
+              prefetch={false}
                 className="text-sm text-infinity-primary hover:text-infinity-primary"
               >
                 مشاهده همه
@@ -235,8 +236,9 @@ export default function BlogDashboard() {
               <div className="flex h-48 flex-col items-center justify-center text-center">
                 <FileText className="mb-3 h-12 w-12 text-slate-200" />
                 <p className="text-neutral-600">هنوز پستی ایجاد نشده است</p>
-                <Link
-                  href="/super-admin/blog/posts/add"
+            <Link
+              href="/super-admin/blog/posts/add"
+              prefetch={false}
                   className="mt-3 flex items-center gap-2 rounded-lg bg-infinity-primary px-4 py-2 text-sm text-white transition-colors hover:bg-infinity-primary"
                 >
                   <Plus className="h-4 w-4" />
@@ -246,9 +248,10 @@ export default function BlogDashboard() {
             ) : (
               <div className="space-y-3">
                 {recentPosts.map((post) => (
-                  <Link
-                    key={post.id}
-                    href={`/super-admin/blog/posts/${post.id}/edit`}
+                <Link
+                  key={post.id}
+                  href={`/super-admin/blog/posts/${post.id}/edit`}
+                  prefetch={false}
                     className="flex items-center gap-4 rounded-xl border border-slate-100 p-3 transition-colors hover:border-infinity-primary-lighter/60 hover:bg-infinity-primary-lighter/20"
                   >
                     <div className="flex-1">

@@ -13,10 +13,14 @@ import { getStrapiServerUrl } from "@/constants/api";
 import { SITE_NAME, SITE_URL } from "@/config/site";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+// Homepage links may warm the shared shell, but never the editorial page body.
+export const prefetch = "force-disabled";
+
 // Use on-demand revalidation (triggered by Strapi lifecycle hooks)
 // Fallback to 1 hour if revalidation API is not called
-export const revalidate = 3600; // 1 hour fallback (on-demand is primary)
-
 const LATEST_POSTS_LIMIT = 8;
 const CATEGORY_POSTS_LIMIT = 8;
 

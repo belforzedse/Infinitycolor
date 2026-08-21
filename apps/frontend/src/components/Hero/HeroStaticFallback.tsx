@@ -22,7 +22,7 @@ export default function HeroStaticFallback({
             {slides.slice(1).map((slide) =>
               slide.link?.href ? (
                 <li key={slide.id}>
-                  <Link href={slide.link.href}>
+                  <Link href={slide.link.href} prefetch={false}>
                     {slide.imageAlt || slide.mobileImageAlt || "مشاهده بنر"}
                   </Link>
                 </li>
@@ -34,4 +34,3 @@ export default function HeroStaticFallback({
     </div>
   );
 }
-

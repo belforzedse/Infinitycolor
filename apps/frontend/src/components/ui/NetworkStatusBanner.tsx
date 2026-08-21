@@ -1,35 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Wifi, WifiOff } from "lucide-react";
+import { useOffline } from "next/offline";
 
 export default function NetworkStatusBanner() {
-  const [status, setStatus] = useState<"online" | "offline" | null>(null);
+  const offline = useOffline();
+  const wasOffline = useRef(false);
+  const [recovered, setRecovered] = useState(false);
 
   useEffect(() => {
-    const markOffline = () => setStatus("offline");
-    const markOnline = () => {
-      setStatus((current) => (current === "offline" ? "online" : null));
-    };
-
-    if (!navigator.onLine) markOffline();
-    window.addEventListener("offline", markOffline);
-    window.addEventListener("online", markOnline);
-    return () => {
-      window.removeEventListener("offline", markOffline);
-      window.removeEventListener("online", markOnline);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (status !== "online") return;
-    const timeoutId = window.setTimeout(() => setStatus(null), 3000);
+    if (offline) {
+      wasOffline.current = true;
+      setRecovered(false);
+      return;
+    }
+    if (!wasOffline.current) return;
+    wasOffline.current = false;
+    setRecovered(true);
+    window.dispatchEvent(new Event("app:back-online"));
+    const timeoutId = window.setTimeout(() => setRecovered(false), 3000);
     return () => window.clearTimeout(timeoutId);
-  }, [status]);
+  }, [offline]);
 
-  if (!status) return null;
+  if (!offline && !recovered) return null;
 
-  const offline = status === "offline";
   return (
     <div
       className={`fixed left-1/2 top-3 z-[9999] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2 rounded-full px-4 py-2 text-sm font-medium shadow-lg ${

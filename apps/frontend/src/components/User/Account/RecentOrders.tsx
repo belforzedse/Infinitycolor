@@ -96,7 +96,11 @@ export default function RecentOrders({ data, loading }: RecentOrdersProps) {
     <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-foreground-primary lg:text-base">آخرین سفارش‌ها</span>
-        <Link href="/orders" className="text-xs font-medium text-infinity-primary hover:text-infinity-primary lg:text-sm">
+        <Link
+          href="/orders"
+          prefetch={false}
+          className="text-xs font-medium text-infinity-primary hover:text-infinity-primary lg:text-sm"
+        >
           مشاهده همه
         </Link>
       </div>

@@ -1,4 +1,5 @@
 declare module "rc-slider/assets/index.css";
+declare module "swiper/css";
 declare module "*.css";
 
 declare module "react-window" {

@@ -4,6 +4,10 @@ import AuthIllustration from "@/components/Auth/Illustration";
 import SuspenseLoader from "@/components/ui/SuspenseLoader";
 import { StorefrontContainer } from "@/components/storefront";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex min-h-screen items-start justify-center bg-infinity-primary-lighter/20 p-4 md:items-center">

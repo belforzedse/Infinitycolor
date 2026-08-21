@@ -197,6 +197,7 @@ export default function AddBlogPostPage() {
         <h1 className="text-3xl font-normal text-[#202224]">افزودن نوشته جدید</h1>
         <Link
           href="/super-admin/blog/posts"
+          prefetch={false}
           className="flex items-center gap-2 rounded-lg border border-slate-400 px-3 py-1.5 text-sm text-slate-700 transition-colors hover:bg-slate-50"
         >
           <Plus className="h-4 w-4" />

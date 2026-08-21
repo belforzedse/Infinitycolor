@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import AuthenticatedUserLayout from "./layout";
+import AuthenticatedUserLayout from "./AuthenticatedUserClientLayout";
 
 const mockReplace = jest.fn();
 const mockUseUser = jest.fn();

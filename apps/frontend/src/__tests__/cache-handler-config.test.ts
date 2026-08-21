@@ -38,11 +38,13 @@ describe("shared storefront cache configuration", () => {
     ).toBe("infinity:staging:storefront:release-abc-123:incremental:v1:");
   });
 
-  it("forces production replicas through the shared handler and keeps Cache Components disabled", () => {
+  it("keeps the incremental handler and isolates the Cache Components remote handler", () => {
     const nextConfig = read("apps/frontend/next.config.ts");
     expect(nextConfig).toContain("cacheMaxMemorySize: 0");
     expect(nextConfig).toContain('require.resolve("./cache-handler.mjs")');
-    expect(nextConfig).not.toContain("cacheComponents: true");
+    expect(nextConfig).toContain("cacheComponents: true");
+    expect(nextConfig).toContain("partialPrefetching: true");
+    expect(nextConfig).toContain('remote: require.resolve("./cache-handlers/redis-remote.cjs")');
   });
 
   it("embeds the exact build environment and revision in both runtime images", () => {
@@ -50,6 +52,7 @@ describe("shared storefront cache configuration", () => {
       const contents = read(dockerfile);
       expect(contents).toContain("NEXT_CACHE_ENVIRONMENT=${NEXT_PUBLIC_AUTH_ENVIRONMENT}");
       expect(contents).toContain("NEXT_CACHE_RELEASE=${GITHUB_SHA}");
+      expect(contents).toContain("CACHE_RELEASE_ID=${GITHUB_SHA}");
     }
   });
 
