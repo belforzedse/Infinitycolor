@@ -45,7 +45,20 @@ describe("Strapi database schema safety", () => {
     env.int = (_key: string, defaultValue: number) => defaultValue;
 
     const config = databaseConfig({ env }) as any;
-    expect(config.settings).toBeUndefined();
+    expect(config.settings.forceMigration).toBe(true);
+  });
+
+  // Switchable only so a one-shot repair boot can sync additively. Leaving it
+  // false permanently makes sync skip dropping a changed index but still try to
+  // recreate it, which aborts startup.
+  it("lets DATABASE_FORCE_MIGRATION turn off destructive schema sync", () => {
+    const env: any = (_key: string, defaultValue: unknown) => defaultValue;
+    env.bool = (key: string, defaultValue: boolean) =>
+      key === "DATABASE_FORCE_MIGRATION" ? false : defaultValue;
+    env.int = (_key: string, defaultValue: number) => defaultValue;
+
+    const config = databaseConfig({ env }) as any;
+    expect(config.settings.forceMigration).toBe(false);
   });
 
   it("preserves existing core-store entries while registering every custom table", () => {

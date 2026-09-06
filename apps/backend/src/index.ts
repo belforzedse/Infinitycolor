@@ -20,6 +20,7 @@ import { startReconcileCartCleanupJob } from "./jobs/reconcileCartCleanup";
 import { startExpireReserveOrdersJob } from "./jobs/expireReserveOrders";
 import { startFlushViewCountersJob } from "./jobs/flushViewCounters";
 import { registerAppLifecycles } from "./lifecycles/registerAppLifecycles";
+import { registerSchemaRegressionGuard } from "./bootstrap/schemaRegressionGuard";
 import {
   shouldRunWebBootstrapMaintenance,
   shouldStartInProcessBackgroundJobs,
@@ -1198,6 +1199,11 @@ export default {
    * This gives you an opportunity to extend code.
    */
   register({ strapi }) {
+    // Must be registered before `strapi::content-types.beforeSync` fires, which
+    // is the last point at which a stale build can be stopped from dropping
+    // columns the database already has.
+    registerSchemaRegressionGuard(strapi);
+
     // Plugins register before the application register hook, so this is appended
     // after the native Users & Permissions content-API strategy.
     strapi.container.get("auth").register("content-api", betterAuthJwtStrategy);
