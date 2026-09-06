@@ -2,6 +2,7 @@
  * cart service
  */
 
+import * as Sentry from "@sentry/node";
 import { factories } from "@strapi/strapi";
 import { getOrCreateUserCart } from "./lib/get-user-cart";
 import { createOrderAndItems } from "./lib/order";
@@ -629,6 +630,22 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       let errorCode = "UNKNOWN_ERROR";
       let userMessage = "خطا در ثبت سفارش";
       let details = {};
+
+      // An unmapped failure here is infrastructure, not a shopper mistake: it
+      // aborts order creation for every payment method and still renders as the
+      // generic Persian banner. A missing `orders.analytics_correlation_id`
+      // silently killed checkout for four weeks this way, so report it.
+      if (!errorMessage.includes(":")) {
+        try {
+          Sentry.captureException(error, {
+            tags: { area: "checkout", stage: "finalizeCartToOrder", errorCode: "UNKNOWN_ERROR" },
+            extra: redactSensitive({ userId, cartId: cart?.id, gateway, errorMessage }),
+          });
+        } catch (reportError) {
+          // Reporting must never turn the shopper's 400 into a 500.
+          strapi.log.error("Failed to report unmapped checkout failure", reportError);
+        }
+      }
 
       // Extract error code if present (format: "ERROR_CODE: message")
       if (errorMessage.includes(":")) {

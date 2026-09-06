@@ -352,6 +352,15 @@ module.exports = {
     await knex.raw("SELECT pg_advisory_xact_lock(?)", [LOCK_KEY]);
     if (!(await knex.schema.hasTable(TABLE))) return;
     await ensureColumns(knex);
+    // The backfill UPDATEs legacy rows, which the append-only trigger installed
+    // by a previous run of this migration rejects. `src/audit/storage.ts` re-runs
+    // this migration whenever the uniqueness invariant is missing — Strapi's
+    // schema sync drops those constraints, because it does not model them — so
+    // the re-run must not deadlock against the guarantee it installed itself.
+    // Dropping first is safe: `ensureAuditEventStorage` runs this inside a
+    // transaction and the advisory lock above serializes concurrent boots, so
+    // the table is never reachable without the trigger.
+    await knex.raw(`DROP TRIGGER IF EXISTS manual_admin_activities_append_only ON ${TABLE}`);
     await backfillCanonicalRows(knex);
     await importLegacyTable(knex);
     await ensureConstraintsAndIndexes(knex);

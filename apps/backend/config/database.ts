@@ -107,5 +107,14 @@ export default ({ env }) => {
       ...connections[client],
       acquireConnectionTimeout: env.int("DATABASE_CONNECTION_TIMEOUT", 60000),
     },
+    settings: {
+      // Strapi defaults this to true, which makes schema sync destructive: any
+      // column, index or table the running build does not declare is dropped.
+      // Keep the default, but make it switchable so a one-shot repair boot can
+      // run additively (`dropColumn`/`dropIndex`/`dropTable` all become no-ops).
+      // Do NOT leave it false permanently — sync then skips dropping a changed
+      // index but still tries to recreate it, which aborts startup.
+      forceMigration: env.bool("DATABASE_FORCE_MIGRATION", true),
+    },
   };
 };
