@@ -13,6 +13,7 @@ import type { categoryResponseType } from "@/services/super-admin/product/catego
 import { usePathname } from "next/navigation";
 import toast from "react-hot-toast";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import { categoryMatchesQuery } from "@/components/Product/add/SetCategory/categoryPath";
 
 interface UseProductCategoryProps {
   isEditMode?: boolean;
@@ -163,16 +164,10 @@ export function useProductCategory(props?: UseProductCategoryProps) {
   const filteredTags =
     categorySearchQuery === ""
       ? categoryOptions
-      : categoryOptions.filter((category) => {
-          const query = categorySearchQuery.trim().toLowerCase();
-          if (!query) return true;
-
-          const title = (category.attributes.Title || "").toLowerCase();
-          const slug = (category.attributes.Slug || "").toLowerCase();
-
-          // Search in both Title and Slug with fuzzy matching
-          return title.includes(query) || slug.includes(query);
-        });
+      : categoryOptions.filter((category) =>
+          // Also matches the parent's name, so searching a section finds what sits under it.
+          categoryMatchesQuery(category, categorySearchQuery),
+        );
 
   const handleSelectOtherCategory = (selectedCategory: categoryResponseType | null) => {
     if (!selectedCategory) {

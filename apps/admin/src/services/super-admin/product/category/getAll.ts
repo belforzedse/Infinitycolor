@@ -6,6 +6,13 @@ export interface CategoryAttributes {
   Title: string;
   Slug?: string;
   Parent?: string;
+  /**
+   * Populated so pickers can show where a category sits. The legacy `Parent`
+   * string above is unused in current data; this relation is the real one.
+   */
+  parent?: {
+    data?: { id: number; attributes?: { Title?: string } } | null;
+  } | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -22,6 +29,7 @@ export const getAllCategories = async (): Promise<PaginatedResponse<categoryResp
     const response = await apiClient.get<PaginatedResponse<categoryResponseType>>(endpoint, {
       params: {
         "pagination[limit]": -1, // Fetch ALL categories without pagination limit
+        "populate[parent]": "*", // Needed to show each category's place in the tree
         sort: "createdAt:desc", // Sort by newest first so new categories appear at the top
       },
       cache: "no-store",
