@@ -329,7 +329,15 @@ export default function OrdersTabs() {
             value={searchTerm}
             onChange={(event) => handleSearchChange(event.target.value)}
             placeholder="جستجوی سفارش با شماره یا نام محصول"
-            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pr-4 text-sm text-right text-slate-700 outline-none transition focus:border-infinity-primary-light focus:ring-2 focus:ring-infinity-primary-lighter/60"
+            /*
+              RTL text starts at the right edge, where the "پاک کردن" button sits,
+              and the search icon sits at the left — with only pr-4 and no left
+              padding the typed order number ran underneath both. Reserve room for
+              whichever controls are actually showing.
+            */
+            className={`w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 text-sm text-right text-slate-700 outline-none transition focus:border-infinity-primary-light focus:ring-2 focus:ring-infinity-primary-lighter/60 ${
+              searchTerm ? "pr-20" : "pr-4"
+            }`}
           />
           {searchTerm ? (
             <button

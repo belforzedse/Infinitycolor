@@ -40,6 +40,17 @@ interface TimelineEvent {
 export type OrderTimelineEvent = TimelineEvent;
 
 // Map event severity to color
+/**
+ * Status must not be carried by colour alone, so every marker also names its
+ * state for assistive technology and on hover.
+ */
+const SEVERITY_LABELS: Record<string, string> = {
+  success: "انجام شده",
+  warning: "نیازمند توجه",
+  error: "خطا",
+  info: "اطلاع",
+};
+
 const getSeverityColor = (severity?: "info" | "success" | "warning" | "error"): string => {
   switch (severity) {
     case "success":
@@ -184,8 +195,16 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
         <ol className="relative space-y-4 border-r border-slate-200 pr-4">
           {events.map((event) => (
             <li key={`${event.id}-${event.createdAt}`} className="relative">
+              {/*
+                The rail is the ol's right border, 16px away through pr-4. A 16px
+                marker centres on it at -right-[24px]; it sat at -31px, which left
+                every dot roughly seven pixels off the line.
+              */}
               <span
-                className={`absolute -right-[31px] mt-1 h-4 w-4 rounded-full border-2 border-white shadow ring-2 ring-infinity-primary-lighter/40 ${getSeverityColor(event.severity)}`}
+                role="img"
+                aria-label={SEVERITY_LABELS[event.severity ?? "info"] ?? SEVERITY_LABELS.info}
+                title={SEVERITY_LABELS[event.severity ?? "info"] ?? SEVERITY_LABELS.info}
+                className={`absolute -right-[24px] mt-1 h-4 w-4 rounded-full border-2 border-white shadow ring-2 ring-infinity-primary-lighter/40 ${getSeverityColor(event.severity)}`}
               />
               <div className="flex flex-col gap-1 text-right">
                 <span className="text-sm font-medium text-foreground-primary">
