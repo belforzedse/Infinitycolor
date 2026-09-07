@@ -149,6 +149,13 @@ export interface BlogListParams {
   search?: string;
   sort?: string;
   status?: "Draft" | "Published" | "Scheduled";
+  /**
+   * Keep each post's full body in the result. Off by default: listings render
+   * Excerpt/ShortContent only, and carrying every article through meant the
+   * /blog page serialised ~104 full bodies into its payload — about 12MB of
+   * script for a page of cards. Feeds that genuinely syndicate bodies opt in.
+   */
+  includeContent?: boolean;
 }
 
 export interface CreateBlogPostData {
@@ -566,7 +573,12 @@ class BlogService {
 
     const json = await response.json();
     const normalizedData = Array.isArray(json.data)
-      ? json.data.map((item: any) => this.normalizeBlogPost(item))
+      ? json.data.map((item: any) => {
+          // ShortContent is derived from Content inside normalizeBlogPost, so the
+          // excerpt survives even when the body is dropped straight afterwards.
+          const post = this.normalizeBlogPost(item);
+          return params.includeContent ? post : { ...post, Content: "" };
+        })
       : [];
 
     return {

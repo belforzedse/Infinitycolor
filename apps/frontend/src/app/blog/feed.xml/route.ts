@@ -10,6 +10,7 @@ export async function GET(request: Request) {
 
     // Fetch published blog posts
     const response = await blogService.getBlogPosts({
+      includeContent: true,
       pageSize: 20,
       status: 'Published',
       sort: 'PublishedAt:desc',
