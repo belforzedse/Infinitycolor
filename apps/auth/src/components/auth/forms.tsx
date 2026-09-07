@@ -189,6 +189,7 @@ export function PasswordLoginForm({
         {
           phone,
           password,
+          rememberMe,
         },
       );
       routeToRedirect(response.redirectTo);
@@ -307,6 +308,7 @@ function OtpForm({
 }) {
   const { phone, flowReady, go } = useAuthFlow();
   const [code, setCode] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const { timeLeft, active, restart } = useOtpCountdown();
@@ -338,6 +340,7 @@ function OtpForm({
         "/infinity/otp/verify",
         {
           otp: code.split("").reverse().join(""),
+          rememberMe,
         },
       );
       if (response.redirectTo.startsWith("/")) go(response.redirectTo);
@@ -383,6 +386,11 @@ function OtpForm({
             </div>
           </div>
         </div>
+        <Checkbox
+          checked={rememberMe}
+          onChange={setRememberMe}
+          label={<Text variant="helper">مرا به خاطر بسپار</Text>}
+        />
         <ErrorAlert message={error} />
         <AuthButton
           type="submit"

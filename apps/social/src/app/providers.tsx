@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Provider } from "jotai";
 import { Toaster } from "react-hot-toast";
 import { jotaiStore } from "@/lib/jotaiStore";
+import AuthInitializer from "@/components/ui/AuthInitializer";
 import { NetworkStatusIndicator } from "@/components/pwa/NetworkStatusIndicator";
 import { PWAInstallPrompt } from "@/components/pwa/PWAInstallPrompt";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
@@ -11,6 +12,7 @@ import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistr
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <Provider store={jotaiStore}>
+      <AuthInitializer />
       {children}
       <ServiceWorkerRegistration />
       <NetworkStatusIndicator />

@@ -1,26 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip as RTooltip,
+  XAxis,
+  YAxis,
+} from "@/components/SuperAdmin/reports/shared/charts";
 import {
   getProductTrends,
   type ProductTrends,
   type TrendGrouping,
 } from "@/services/super-admin/reports/products";
-
-const ResponsiveContainer = dynamic(() => import("recharts").then((m) => m.ResponsiveContainer), {
-  ssr: false,
-});
-const AreaChart = dynamic(() => import("recharts").then((m) => m.AreaChart), { ssr: false });
-const Area = dynamic(() => import("recharts").then((m) => m.Area), { ssr: false });
-const XAxis = dynamic(() => import("recharts").then((m) => m.XAxis), { ssr: false });
-const YAxis = dynamic(() => import("recharts").then((m) => m.YAxis), { ssr: false });
-const CartesianGrid = dynamic(() => import("recharts").then((m) => m.CartesianGrid), {
-  ssr: false,
-});
-const RTooltip = dynamic(() => import("recharts").then((m) => m.Tooltip), { ssr: false });
 
 type Metric = "net" | "gross" | "units" | "orders" | "discounts" | "refunds";
 
@@ -141,7 +137,20 @@ export default function TrendsTab({ start, end }: { start: string; end: string }
             <p className="mt-1 text-xs text-neutral-400">بازه زمانی دیگری انتخاب کنید.</p>
           </div>
         ) : (
-          <div className="h-[420px]" dir="ltr">
+          <>
+            {data?.ordersDefinition === "completed" && (
+              <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                در این بازه هیچ تراکنش موفق درگاهی ثبت نشده است، بنابراین نمودار بر پایه سفارش‌های
+                «تحویل شده» محاسبه شده و مبالغ تسویه‌نشده صفر در نظر گرفته شده‌اند.
+              </p>
+            )}
+            {chartData.length === 1 && (
+              <p className="mb-3 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+                فقط یک بازه زمانی داده دارد، به همین دلیل نمودار تنها یک نقطه نشان می‌دهد. بازه
+                بزرگ‌تری انتخاب کنید یا گروه‌بندی را تغییر دهید.
+              </p>
+            )}
+            <div className="h-[420px]" dir="ltr">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 16, right: 24, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -158,7 +167,8 @@ export default function TrendsTab({ start, end }: { start: string; end: string }
                 />
               </AreaChart>
             </ResponsiveContainer>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </div>

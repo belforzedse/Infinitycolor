@@ -352,11 +352,13 @@ export default function PDPHeroInfoAction({
             <Button
               className={`flex h-[46px] flex-1 items-center justify-center rounded-xl py-0 text-base ${
                 isInCart
-                  ? "border-2 border-infinity-primary bg-infinity-primary-lighter/20 !text-infinity-primary-dark"
+                  ? "border-2 border-infinity-primary bg-infinity-primary-lighter/20 !text-infinity-primary hover:border-infinity-primary hover:bg-infinity-primary-lighter/30"
                   : "bg-actions-primary !text-gray-100"
               } ${isAdding || isCartActionPending ? "cursor-wait opacity-50" : ""}`}
               text={isInCart ? "در سبد خرید (مشاهده)" : "افزودن به سبد خرید"}
-              variant="primary"
+              // `outline` keeps .btn-primary's hover fill from repainting the
+              // in-cart button navy, which would hide the now-navy icon.
+              variant={isInCart ? "outline" : "primary"}
               testId="pdp-add-to-cart"
               leftIcon={<BasketIcon />}
               disabled={isCartActionPending}

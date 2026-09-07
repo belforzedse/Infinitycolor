@@ -11,8 +11,10 @@ import {
   Send,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { blogService, BlogComment } from "@/services/blog/blog.service";
 import { resolveBlogCommentUserDisplayName } from "@/utils/blogCommentAuthorName";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 interface BlogCommentsProps {
   postId: number;
@@ -29,6 +31,7 @@ const BlogComments: React.FC<BlogCommentsProps> = ({ postId, comments: initialCo
   const [loading, setLoading] = useState(!initialComments);
   const [replyingTo, setReplyingTo] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { isAuthenticated, isLoading: isAuthLoading } = useCurrentUser();
 
   const {
     register,
@@ -70,7 +73,14 @@ const BlogComments: React.FC<BlogCommentsProps> = ({ postId, comments: initialCo
       toast.success("نظر شما با موفقیت ثبت شد و پس از تأیید نمایش داده خواهد شد.");
     } catch (error) {
       console.error("Error submitting comment:", error);
-      toast.error("خطا در ثبت نظر. لطفاً دوباره تلاش کنید.");
+      const status = (error as { status?: number } | null)?.status;
+      if (status === 401) {
+        toast.error("لطفاً ابتدا وارد حساب کاربری خود شوید.");
+      } else if (status === 403) {
+        toast.error("حساب کاربری شما اجازه ثبت نظر ندارد.");
+      } else {
+        toast.error("خطا در ثبت نظر. لطفاً دوباره تلاش کنید.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -221,6 +231,21 @@ const BlogComments: React.FC<BlogCommentsProps> = ({ postId, comments: initialCo
       {/* Comment Form */}
       <div className="mb-8 rounded-xl bg-slate-50 p-5">
         <h4 className="mb-4 font-medium text-neutral-800">نظر خود را بنویسید</h4>
+        {isAuthLoading ? (
+          <p className="text-sm text-neutral-500">در حال بررسی حساب کاربری...</p>
+        ) : !isAuthenticated ? (
+          <div className="flex flex-col items-start gap-3">
+            <p className="text-sm text-neutral-600">
+              برای ثبت نظر ابتدا وارد حساب کاربری خود شوید.
+            </p>
+            <Link
+              href="/auth"
+              className="inline-flex items-center gap-2 rounded-lg bg-infinity-primary px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-infinity-primary-dark"
+            >
+              ورود به حساب کاربری
+            </Link>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit(onSubmit)}>
           <div className="mb-4">
             <textarea
@@ -248,6 +273,7 @@ const BlogComments: React.FC<BlogCommentsProps> = ({ postId, comments: initialCo
             </button>
           </div>
         </form>
+        )}
       </div>
 
       {/* Comments List */}

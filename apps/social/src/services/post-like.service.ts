@@ -1,7 +1,7 @@
 import type { ApiError } from "@repo/api/types";
 import { apiClient } from "@/lib/api-client";
 import { ENDPOINTS } from "@/lib/api-endpoints";
-import { handleAuthErrors } from "@/utils/auth";
+import { handleAuthErrors, hasCachedAccessToken } from "@/utils/auth";
 
 const POST_LIKE_TIMEOUT_MS = 15000;
 const SKIP_GLOBAL_LOADER_HEADER = "x-skip-global-loader";
@@ -10,16 +10,10 @@ export type TogglePostLikeResult = {
   isLiked: boolean;
 };
 
-function authHeaders(): Record<string, string> | undefined {
-  const accessToken =
-    typeof window !== "undefined" ? window.localStorage.getItem("accessToken") : null;
-  return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-}
 
 function postLikeHeaders(): Record<string, string> {
   return {
     [SKIP_GLOBAL_LOADER_HEADER]: "1",
-    ...(authHeaders() ?? {}),
   };
 }
 
@@ -56,10 +50,7 @@ function readRows(response: unknown): unknown[] {
 }
 
 export function hasAccessToken(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    Boolean(window.localStorage.getItem("accessToken"))
-  );
+  return hasCachedAccessToken();
 }
 
 export async function getLikedPostIds(): Promise<Set<string>> {

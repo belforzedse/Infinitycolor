@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { X } from "lucide-react";
 import SearchIcon from "./Icons/SearchIcon";
 import { API_BASE_URL, ENDPOINTS } from "@/constants/api";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
@@ -25,6 +26,11 @@ interface PLPDesktopSearchProps {
   className?: string;
 }
 
+const readSearchParamFromLocation = () => {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("search") ?? "";
+};
+
 const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -32,6 +38,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLFormElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const router = useRouter();
   const pathname = usePathname();
   const [isFocused, setIsFocused] = useState(false);
@@ -46,6 +53,17 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
     const basePath = pathname.startsWith("/plp/category/") ? pathname : "/plp";
     return `${basePath}?search=${encodeURIComponent(term)}`;
   };
+
+  // This input lives in the (product) layout, which App Router keeps mounted
+  // across `/` and `/plp`, so local state would survive leaving the results
+  // page. Mirroring the URL is what makes the field empty on the way out and
+  // refill when a search URL is opened directly or reached via history.
+  useEffect(() => {
+    const syncFromUrl = () => setSearchQuery(readSearchParamFromLocation());
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, [pathname]);
 
   useEffect(() => {
     try {
@@ -80,6 +98,13 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
 
     // Redirect to search results page with the query (site search is tracked there).
     router.push(getSearchHref(trimmed));
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery("");
+    setSuggestions([]);
+    setActiveIndex(-1);
+    inputRef.current?.focus();
   };
 
   // Debounced live search suggestions (native fetch to avoid global overlays)
@@ -218,7 +243,19 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
           <SearchIcon className="h-5 w-5" />
         </button>
 
+        {searchQuery.length > 0 && (
+          <button
+            type="button"
+            onClick={handleClearSearch}
+            aria-label="پاک کردن جستجو"
+            className="pressable flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-400 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
+
         <input
+          ref={inputRef}
           type="text"
           name="search"
           value={searchQuery}

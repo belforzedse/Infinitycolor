@@ -11,6 +11,7 @@ import {
   clampPageSize,
   clampPage,
   irrToToman,
+  fillTrendSeries,
   serializeProductRow,
   gatewayLabelFa,
   withShares,
@@ -373,6 +374,30 @@ describe("product-analytics pure helpers", () => {
       } as unknown as ResolvedJoins);
       expect(sql).toContain("NULL::text");
       expect(sql).toContain("__UNKNOWN__");
+    });
+  });
+
+  describe("fillTrendSeries", () => {
+    it("keeps a 7-day Tehran window at 7 buckets when SQL returns one day", () => {
+      const start = new Date("2025-12-31T20:30:00.000Z");
+      const end = new Date("2026-01-07T20:29:59.999Z");
+      const filled = fillTrendSeries(
+        [{ bucket: "2026-01-01", gross: 500000, net: 500000, units: 2, orders: 1, discounts: 0, refunds: 0 }],
+        start,
+        end,
+        "day",
+      );
+      expect(filled.map((point) => point.bucket)).toEqual([
+        "2026-01-01",
+        "2026-01-02",
+        "2026-01-03",
+        "2026-01-04",
+        "2026-01-05",
+        "2026-01-06",
+        "2026-01-07",
+      ]);
+      expect(filled[0].net).toBe(500000);
+      expect(filled.slice(1).every((point) => point.net === 0)).toBe(true);
     });
   });
 });

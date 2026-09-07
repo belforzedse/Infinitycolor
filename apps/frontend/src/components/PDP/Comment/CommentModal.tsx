@@ -62,17 +62,20 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
     } catch (error: any) {
       console.error("Error submitting review:", error);
 
-      // Handle authentication errors
-      if (
-        error.status === 401 ||
-        error.status === 403 ||
-        error.message === "Authentication required"
-      ) {
+      // Only a missing or expired session should send the shopper to login.
+      if (error.status === 401 || error.message === "Authentication required") {
         toast.error("لطفاً ابتدا وارد حساب کاربری خود شوید");
         // Redirect to login page after a short delay
         setTimeout(() => {
           router.push("/auth");
         }, 1500);
+        return;
+      }
+
+      // 403 means the session is valid but the account may not submit reviews;
+      // redirecting to login would just loop the shopper back here.
+      if (error.status === 403) {
+        setFormError("حساب کاربری شما اجازه ثبت دیدگاه ندارد.");
         return;
       }
 

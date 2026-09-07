@@ -99,9 +99,13 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     const commentAuthor = populatedUser || user;
     const resolvedName = resolveUserDisplayName(commentAuthor);
 
-    // Set user and date automatically
+    // Whitelist rather than spread: `replies` is writable on this schema, so
+    // a spread would let a commenter reparent other people's comments under
+    // their own. Author, date, name, and moderation status stay server-owned.
     const commentData = {
-      ...data,
+      Content: data?.Content,
+      blog_post: data?.blog_post,
+      parent_comment: data?.parent_comment ?? null,
       user: targetUserId,
       Date: new Date(),
       Status: "Pending", // All comments start as pending

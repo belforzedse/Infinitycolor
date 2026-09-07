@@ -22,18 +22,12 @@ export function normalizeMeResponse(payload: unknown): MeResponse {
 export type { MeResponse };
 
 export const me = async (): Promise<MeResponse> => {
-  const endpoint = ENDPOINTS.USER.ME;
-  const accessToken =
-    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-
   try {
-    const response = await apiClient.get<MeResponse>(endpoint, {
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-      cache: "default",
+    const response = await apiClient.get<MeResponse>(ENDPOINTS.USER.ME, {
+      cache: "no-store",
       timeout: ME_TIMEOUT_MS,
       retries: ME_MAX_RETRIES,
     });
-
     return normalizeMeResponse(response);
   } catch (error: unknown) {
     handleAuthErrors(error as ApiError);
@@ -42,18 +36,12 @@ export const me = async (): Promise<MeResponse> => {
 };
 
 export const updateMe = async (payload: UpdateMePayload): Promise<MeResponse> => {
-  const endpoint = ENDPOINTS.USER.ME;
-  const accessToken =
-    typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-
   try {
-    const response = await apiClient.put(endpoint, payload, {
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    const response = await apiClient.put(ENDPOINTS.USER.ME, payload, {
       cache: "no-store",
       timeout: ME_TIMEOUT_MS,
       retries: ME_MAX_RETRIES,
     });
-
     return normalizeMeResponse(response);
   } catch (error: unknown) {
     handleAuthErrors(error as ApiError);

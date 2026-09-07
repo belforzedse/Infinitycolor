@@ -1,10 +1,12 @@
 import { jotaiStore } from "@/lib/jotaiStore";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import { clearAccessToken } from "@/utils/accessToken";
 import { clearAllCommentDrafts } from "@/lib/offline-snapshots";
+import { centralLogoutUrl, clearCentralAuthForLogout } from "@/lib/central-auth";
+import { clearAuthRouteHint } from "@/utils/authRouteHint";
 
 /**
- * Social app logout — mirrors storefront `performLogout` intent: clear token, clear auth atoms, hard-navigate to `/auth`.
+ * Ends the Infinitygram session and hands off to central auth, which then
+ * returns to `/auth/logout-callback`.
  */
 export function performLogout(): void {
   if (typeof window === "undefined") return;
@@ -13,19 +15,12 @@ export function performLogout(): void {
     jotaiStore.set(currentUserAtom, null);
     jotaiStore.set(userErrorAtom, null);
     jotaiStore.set(userLoadingAtom, false);
-
-    try {
-      sessionStorage.removeItem("otpToken");
-      localStorage.removeItem("pendingPhone");
-    } catch {
-      // ignore storage errors (private mode, etc.)
-    }
-
-    clearAccessToken();
+    clearCentralAuthForLogout();
+    clearAuthRouteHint();
     clearAllCommentDrafts();
-    window.location.href = "/auth";
+    window.location.replace(centralLogoutUrl());
   } catch (error) {
     console.error("[Logout] Error during logout:", error);
-    window.location.href = "/auth";
+    window.location.replace(centralLogoutUrl());
   }
 }

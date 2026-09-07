@@ -5,6 +5,31 @@
 
 import { validatePhone } from "../../auth/utils/validations";
 import { normalizeRequiredProfileName } from "../../auth/utils/profile-names";
+import {
+  canonicalCustomerPhone,
+  customerPhoneStorageVariants,
+  normalizeCustomerPhoneDigits,
+} from "../../../utils/customerPhoneIdentity";
+
+/**
+ * Phones are stored as either `+989…` or `09…`, and admins paste them with
+ * Persian or Arabic numerals, so a raw `$containsi` on the typed query misses
+ * most real numbers. A complete number is matched against both stored shapes;
+ * a partial one is matched on the national part, which both shapes contain.
+ */
+function customerPhoneSearchFilters(query: string): Array<Record<string, unknown>> {
+  const digits = normalizeCustomerPhoneDigits(query);
+  if (!digits) return [];
+
+  const canonical = canonicalCustomerPhone(digits);
+  if (canonical) {
+    return [{ phone: { $in: customerPhoneStorageVariants(canonical) } }];
+  }
+
+  const nationalPart = digits.replace(/^\+?98/, "").replace(/^0+/, "");
+  if (!nationalPart) return [];
+  return [{ phone: { $containsi: nationalPart } }];
+}
 
 export default {
   async searchCustomers(ctx) {
@@ -36,7 +61,7 @@ export default {
       where: {
         removedAt: { $null: true },
         role: { type: "customer" },
-        $or: [{ phone: { $containsi: query } }, ...nameFilters],
+        $or: [...customerPhoneSearchFilters(query), ...nameFilters],
       },
       select: ["id", "phone", "IsActive", "blocked"],
       populate: {

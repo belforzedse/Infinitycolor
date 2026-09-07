@@ -1,83 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { apiClient } from "@/lib/api-client";
-import { ENDPOINTS } from "@/lib/api-endpoints";
-import { normalizeMeResponse } from "@/services/user/me";
+import { useAtomValue } from "jotai";
+import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 
 const SUPER_ADMIN_ROLE = "superadmin";
 const STORE_MANAGER_ROLE = "store manager";
 
-type CurrentUserState = {
-  isLoading: boolean;
-  isAuthenticated: boolean;
-  firstName: string | null;
-  roleName: string | null;
-  isAdmin: boolean;
-};
-
-const INITIAL_STATE: CurrentUserState = {
-  isLoading: true,
-  isAuthenticated: false,
-  firstName: null,
-  roleName: null,
-  isAdmin: false,
-};
-
 /**
- * Session probe + first name + role flags for UI (same token + `/auth/self` as storefront).
- * Role normalization mirrors `apps/frontend/src/hooks/useCurrentUser.ts`.
+ * Session probe + first name + role flags for UI.
+ * Relies on `AuthInitializer` to restore the in-memory bearer and `/auth/self`.
  */
 export function useCurrentUser() {
-  const [state, setState] = useState<CurrentUserState>(INITIAL_STATE);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      if (typeof window === "undefined") return;
-      const token = localStorage.getItem("accessToken");
-      if (!token) {
-        setState({ ...INITIAL_STATE, isLoading: false });
-        return;
-      }
-      try {
-        const response = await apiClient.get(ENDPOINTS.USER.ME, { cache: "no-store" });
-        const user = normalizeMeResponse(response);
-        if (!cancelled) {
-          setState({
-            isLoading: false,
-            isAuthenticated: true,
-            firstName: typeof user.FirstName === "string" ? user.FirstName : "",
-            roleName: typeof user.roleName === "string" ? user.roleName : null,
-            isAdmin: user.isAdmin === true,
-          });
-        }
-      } catch {
-        if (!cancelled) {
-          setState({ ...INITIAL_STATE, isLoading: false });
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const normalizedRole = (state.roleName ?? "").toLowerCase().trim();
+  const user = useAtomValue(currentUserAtom);
+  const isLoading = useAtomValue(userLoadingAtom);
+  const firstName = typeof user?.FirstName === "string" ? user.FirstName : null;
+  const roleName = typeof user?.roleName === "string" ? user.roleName : null;
+  const normalizedRole = (roleName ?? "").toLowerCase().trim();
   const isSuperAdmin = normalizedRole === SUPER_ADMIN_ROLE;
   const isStoreManager = normalizedRole === STORE_MANAGER_ROLE;
 
   return {
-    isLoading: state.isLoading,
-    isAuthenticated: state.isAuthenticated,
-    firstName: state.firstName,
-    roleName: state.roleName,
-    isAdmin: state.isAdmin,
+    isLoading,
+    isAuthenticated: Boolean(user),
+    firstName,
+    roleName,
+    isAdmin: user?.isAdmin === true,
     isSuperAdmin,
     isStoreManager,
-    /** Convenience flag for surfaces that grant authoring controls to managers / super admins. */
     canCreatePost: isSuperAdmin || isStoreManager,
   };
 }

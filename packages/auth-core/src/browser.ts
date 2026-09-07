@@ -133,13 +133,19 @@ export function createCentralAuthBrowserClient(
       request<OtpRequestResponse>("/api/auth/infinity/otp/request", {
         body: { phone },
       }),
-    verifyOtp: (otp: string) =>
+    // `rememberMe` omitted means remember: the auth service only shortens the
+    // session when it is explicitly false, so existing callers are unchanged.
+    verifyOtp: (otp: string, rememberMe?: boolean) =>
       request<AuthSuccessResponse>("/api/auth/infinity/otp/verify", {
-        body: { otp },
+        body: { otp, ...(rememberMe === undefined ? {} : { rememberMe }) },
       }),
-    signInWithPassword: (phone: string, password: string) =>
+    signInWithPassword: (phone: string, password: string, rememberMe?: boolean) =>
       request<AuthSuccessResponse>("/api/auth/infinity/password/sign-in", {
-        body: { phone, password },
+        body: {
+          phone,
+          password,
+          ...(rememberMe === undefined ? {} : { rememberMe }),
+        },
       }),
     resetPassword: (otp: string, newPassword: string) =>
       request<AuthSuccessResponse>("/api/auth/infinity/password/reset", {

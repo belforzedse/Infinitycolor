@@ -320,12 +320,37 @@ async function getAnalyticsDeliveryHealth(knex: any) {
   }
 }
 
-function parseDate(value?: string, fallbackDays = 30): Date {
+/** Tehran offset, matching productAnalytics.tzBucketExpr's REPORT_TIMEZONE. */
+const REPORT_TZ_OFFSET = "+03:30";
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Resolve a `YYYY-MM-DD` boundary in Tehran, the same zone the SQL buckets in.
+ *
+ * Parsing a date-only string with `new Date(value)` reads it as UTC midnight,
+ * which turns the requested window into [start 03:30, end 03:30] Tehran: the
+ * first day loses 3.5 hours and the last day is dropped almost entirely. With
+ * an end of "today" that silently discarded today's orders.
+ */
+function tehranBoundary(value: string, boundary: "start" | "end"): Date | null {
+  if (!DATE_ONLY_PATTERN.test(value)) return null;
+  const time = boundary === "start" ? "00:00:00.000" : "23:59:59.999";
+  const parsed = new Date(`${value}T${time}${REPORT_TZ_OFFSET}`);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseDate(
+  value?: string,
+  fallbackDays = 30,
+  boundary: "start" | "end" = "start",
+): Date {
   if (!value) {
     const d = new Date();
     d.setDate(d.getDate() - fallbackDays);
     return d;
   }
+  const localBoundary = tehranBoundary(value, boundary);
+  if (localBoundary) return localBoundary;
   const d = new Date(value);
   return isNaN(d.getTime()) ? new Date() : d;
 }
@@ -517,8 +542,8 @@ async function getRevenueToman(start: Date, end: Date) {
 }
 
 async function getBehaviorCommerce(range: { startDate: string; endDate: string }) {
-  const start = new Date(`${range.startDate}T00:00:00+03:30`);
-  const end = new Date(`${range.endDate}T23:59:59.999+03:30`);
+  const start = parseDate(range.startDate, 30, "start");
+  const end = parseDate(range.endDate, 0, "end");
   const [orderStats, revenueToman] = await Promise.all([
     getOrderStats(start, end),
     getRevenueToman(start, end),
@@ -541,7 +566,7 @@ const PA = productAnalytics;
 /** Parse and validate a [start, end] window from the query string. */
 function parseProductRange(ctx: any): { start: Date; end: Date } {
   const start = parseDate(ctx.query.start as string);
-  const end = parseDate(ctx.query.end as string, 0);
+  const end = parseDate(ctx.query.end as string, 0, "end");
   if (start.getTime() > end.getTime()) {
     return { start: end, end: start };
   }
@@ -614,7 +639,7 @@ const reportController = {
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
-      const end = parseDate(ctx.query.end as string, 0);
+      const end = parseDate(ctx.query.end as string, 0, "end");
       const interval = (ctx.query.interval as Interval) || "day";
 
       const allowed: Interval[] = ["day", "week", "month"];
@@ -673,7 +698,7 @@ const reportController = {
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
-      const end = parseDate(ctx.query.end as string, 0);
+      const end = parseDate(ctx.query.end as string, 0, "end");
 
       const knex = strapi.db.connection;
 
@@ -1006,7 +1031,7 @@ const reportController = {
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
-      const end = parseDate(ctx.query.end as string, 0);
+      const end = parseDate(ctx.query.end as string, 0, "end");
 
       const knex = strapi.db.connection;
 
@@ -1269,7 +1294,7 @@ const reportController = {
       if (!user) return;
 
       const start = parseDate(ctx.query.start as string);
-      const end = parseDate(ctx.query.end as string, 0);
+      const end = parseDate(ctx.query.end as string, 0, "end");
       const actionType = (ctx.query.action_type as string) || "";
       const logType = (ctx.query.log_type as string) || "All";
       const page = Math.max(Number(ctx.query.page || 1), 1);
@@ -1601,9 +1626,10 @@ const reportController = {
 
       const bucketItems = PA.tzBucketExpr("order_date", grouping);
       const bucketOrders = PA.tzBucketExpr("order_date", grouping);
+      const ordersDefinition = await PA.resolvePaidOrdersDefinition(knex, joins, start, end);
 
       const sql = `
-        WITH ${PA.paidOrdersCte(joins)}, ${PA.itemizedCte(joins)},
+        WITH ${PA.paidOrdersCte(joins, ordersDefinition)}, ${PA.itemizedCte(joins)},
         items_b AS (
           SELECT ${bucketItems} AS bucket,
                  SUM(line_gross)::numeric AS gross,
@@ -1629,23 +1655,37 @@ const reportController = {
         ORDER BY 1
       `;
       const res = await knex.raw(sql, [start, end]);
-      const series = rowsOf(res).map((r: any) => {
-        const gross = Number(r.gross) || 0;
-        const discounts = Number(r.discounts) || 0;
-        const refunds = PA.irrToToman(Number(r.refund_irr) || 0);
-        return {
-          bucket: r.bucket,
-          gross: Math.round(gross),
-          net: Math.round(gross - discounts - refunds),
-          units: Number(r.units) || 0,
-          orders: Number(r.orders_count) || 0,
-          discounts: Math.round(discounts),
-          refunds: Math.round(refunds),
-        };
-      });
+      const series = PA.fillTrendSeries(
+        rowsOf(res).map((r: any) => {
+          const gross = Number(r.gross) || 0;
+          const discounts = Number(r.discounts) || 0;
+          const refunds = PA.irrToToman(Number(r.refund_irr) || 0);
+          return {
+            bucket: r.bucket,
+            gross: Math.round(gross),
+            net: Math.round(gross - discounts - refunds),
+            units: Number(r.units) || 0,
+            orders: Number(r.orders_count) || 0,
+            discounts: Math.round(discounts),
+            refunds: Math.round(refunds),
+          };
+        }),
+        start,
+        end,
+        grouping,
+      );
 
       ctx.body = {
-        data: { range: { start, end }, grouping, timezone: PA.REPORT_TIMEZONE, series },
+        data: {
+          range: { start, end },
+          grouping,
+          timezone: PA.REPORT_TIMEZONE,
+          // "settled" counts gateway-settled orders; "completed" counts Done
+          // orders because the window has no settlement rows. The UI must say
+          // which one produced these numbers.
+          ordersDefinition,
+          series,
+        },
       };
     } catch (error) {
       ctx.badRequest(error.message, { data: { success: false } });
@@ -2182,10 +2222,10 @@ const reportController = {
         (ctx.query.end as string) || (ctx.query.endDate as string),
       );
       const prevRange = previousRange(range);
-      const start = new Date(range.startDate);
-      const end = new Date(range.endDate);
-      const prevStart = new Date(prevRange.startDate);
-      const prevEnd = new Date(prevRange.endDate);
+      const start = parseDate(range.startDate, 30, "start");
+      const end = parseDate(range.endDate, 0, "end");
+      const prevStart = parseDate(prevRange.startDate, 30, "start");
+      const prevEnd = parseDate(prevRange.endDate, 0, "end");
 
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);

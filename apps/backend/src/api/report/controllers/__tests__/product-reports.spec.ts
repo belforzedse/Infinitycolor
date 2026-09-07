@@ -204,15 +204,41 @@ describe("product reporting endpoints", () => {
       expect(inventory.lowStock).toBe(4);
     });
 
-    it("trends returns a tz-bucketed series with net per bucket", async () => {
+    it("trends fills every Tehran calendar day even when SQL returns one bucket", async () => {
       const controller = loadController();
       const ctx = createCtx({ query: { start: "2026-01-01", end: "2026-01-07", grouping: "day" } });
       await controller.productTrends(ctx);
 
       expect(ctx.badRequest).not.toHaveBeenCalled();
       expect(ctx.body.data.grouping).toBe("day");
-      expect(ctx.body.data.series).toHaveLength(1);
+      expect(ctx.body.data.timezone).toBe("Asia/Tehran");
+      expect(ctx.body.data.ordersDefinition).toBe("completed");
+      expect(ctx.body.data.series.map((point: { bucket: string }) => point.bucket)).toEqual([
+        "2026-01-01",
+        "2026-01-02",
+        "2026-01-03",
+        "2026-01-04",
+        "2026-01-05",
+        "2026-01-06",
+        "2026-01-07",
+      ]);
       expect(ctx.body.data.series[0].net).toBe(500_000);
+      expect(ctx.body.data.series.slice(1).every((point: { net: number }) => point.net === 0)).toBe(
+        true,
+      );
+    });
+
+    it("resolves a date-only window across whole Tehran calendar days", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: { start: "2026-01-01", end: "2026-01-07" } });
+      await controller.productOverview(ctx);
+
+      expect(ctx.badRequest).not.toHaveBeenCalled();
+      // Buckets are computed in Asia/Tehran, so the window has to span local
+      // midnight through local end-of-day. Reading these as UTC midnight put
+      // the end at 03:30 Tehran and dropped almost all of 2026-01-07.
+      expect(ctx.body.data.range.start.toISOString()).toBe("2025-12-31T20:30:00.000Z");
+      expect(ctx.body.data.range.end.toISOString()).toBe("2026-01-07T20:29:59.999Z");
     });
 
     it("performance returns server pagination meta and serialized rows", async () => {

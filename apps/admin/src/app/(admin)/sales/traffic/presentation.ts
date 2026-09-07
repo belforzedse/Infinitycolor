@@ -370,6 +370,11 @@ export function presentAnalyticsMessage(value: unknown): string {
   if (/realtime.*unavailable/i.test(raw)) return "آمار لحظه‌ای موقتاً در دسترس نیست؛ آخرین اطلاعات موفق نمایش داده شده است.";
   if (/UMAMI_TIMEOUT|AbortError|timed?\s*out/i.test(raw)) return "دریافت آمار بیش از حد معمول طول کشید. دوباره تلاش کنید.";
   if (/UMAMI_AUTH|unauthorized|forbidden/i.test(raw)) return "دسترسی گزارش‌گیری نیاز به بررسی مدیر سیستم دارد.";
+  // Checked before the generic unavailable branch: a missing configuration
+  // never clears by waiting, so the banner must point at the operator instead
+  // of implying a transient outage.
+  if (/UMAMI_CONFIG_MISSING/i.test(raw))
+    return "سامانه آمار بازدید تنظیم نشده است. تنظیمات آن باید توسط مدیر سیستم انجام شود.";
   if (/UMAMI_UNAVAILABLE|collector offline|fetch failed|ECONN/i.test(raw)) return "سامانه آمار بازدید موقتاً در دسترس نیست.";
   if (/\bUmami\b|\bAPI\b|UMAMI_|HTTP_\d+|INVALID_|API_/i.test(raw))
     return "بخشی از اطلاعات این گزارش موقتاً در دسترس نیست.";

@@ -1,25 +1,33 @@
 "use client";
 
 import SuperAdminTableCellFullDate from "@/components/SuperAdmin/Table/Cells/FullDate";
-import RemoveActionButton from "@/components/SuperAdmin/Table/Cells/RemoveActionButton";
 import type { ColumnDef } from "@tanstack/react-table";
 
 export type SizeHelper = {
   id: string;
   attributes: {
-    Title?: string;
     createdAt?: string;
-    removedAt?: string | null;
+    product?: {
+      data?: {
+        id?: number;
+        attributes?: {
+          Title?: string;
+        };
+      } | null;
+    };
   };
 };
 
+const productTitleOf = (row: SizeHelper | undefined) =>
+  row?.attributes?.product?.data?.attributes?.Title || "-";
+
 export const columns: ColumnDef<SizeHelper>[] = [
   {
-    accessorKey: "attributes.Title",
-    header: "نام",
+    accessorKey: "attributes.product.data.attributes.Title",
+    header: "محصول",
     cell: ({ row }) => (
       <span className="text-xs text-foreground-primary md:text-base">
-        {row.original?.attributes?.Title || "-"}
+        {productTitleOf(row.original)}
       </span>
     ),
   },
@@ -29,25 +37,6 @@ export const columns: ColumnDef<SizeHelper>[] = [
     cell: ({ row }) => {
       const date = row.original?.attributes?.createdAt as unknown as Date;
       return <SuperAdminTableCellFullDate date={date} />;
-    },
-  },
-  {
-    accessorKey: "actions",
-    header: "عملیات",
-    meta: {
-      headerClassName: "text-left",
-      cellClassName: "text-left",
-    },
-    cell: ({ row }) => {
-      return (
-        <div className="flex flex-row-reverse items-center gap-3 p-1">
-          <RemoveActionButton
-            isRemoved={!!row.original?.attributes?.removedAt}
-            id={row.original?.id?.toString()}
-            apiUrl={"/product-size-helpers"}
-          />
-        </div>
-      );
     },
   },
 ];
@@ -66,7 +55,7 @@ export const MobileTable = ({ data }: Props) => {
         >
           <div className="flex flex-1 flex-col gap-2">
             <div className="flex w-full items-center justify-between">
-              <span className="text-sm text-neutral-800">{row.attributes?.Title || "-"}</span>
+              <span className="text-sm text-neutral-800">{productTitleOf(row)}</span>
             </div>
 
             <div className="flex w-full items-center justify-between rounded-[4px] bg-stone-50 px-2 py-1">

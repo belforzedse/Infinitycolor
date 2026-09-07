@@ -231,7 +231,7 @@ test("sealed flow cookie is host-only, HttpOnly, short-lived and tamper evident"
     AUTH_DATABASE_URL: "postgresql://unused/unused",
     AUTH_FLOW_SECRET: "f".repeat(32),
     AUTH_TRUSTED_STOREFRONT_ORIGINS:
-      "https://new.infinitycolor.co,https://infinitycolor.co",
+      "https://new.infinitycolor.co,https://infinitycolor.co,https://infinitygram.co",
     AUTH_TRUSTED_ADMIN_ORIGINS: "https://admin.infinitycolor.co",
     AUTH_DEFAULT_STOREFRONT_ORIGIN: "https://new.infinitycolor.co",
     STRAPI_INTERNAL_URL: "https://api.infinitycolor.co",
@@ -278,6 +278,69 @@ test("sealed flow cookie is host-only, HttpOnly, short-lived and tamper evident"
   const tampered = Buffer.from(sealed, "base64url");
   tampered[12] ^= 1;
   assert.equal(unsealFlowState(tampered.toString("base64url")), null);
+});
+
+test("production trusts exactly the three first-party storefront origins", () => {
+  const productionEnv = {
+    NODE_ENV: "production",
+    AUTH_DEPLOYMENT_ENV: "production",
+    BETTER_AUTH_URL: "https://auth.infinitycolor.co",
+    BETTER_AUTH_SECRET: "a".repeat(32),
+    AUTH_DATABASE_URL: "postgresql://unused/unused",
+    AUTH_FLOW_SECRET: "f".repeat(32),
+    AUTH_TRUSTED_ADMIN_ORIGINS: "https://admin.infinitycolor.co",
+    AUTH_DEFAULT_STOREFRONT_ORIGIN: "https://new.infinitycolor.co",
+    STRAPI_INTERNAL_URL: "https://api.infinitycolor.co",
+    AUTH_STRAPI_BRIDGE_SECRET: "b".repeat(32),
+    AUTH_JWT_ISSUER: "https://auth.infinitycolor.co",
+    AUTH_JWT_AUDIENCE: "https://api.infinitycolor.co",
+    AUTH_JWT_TTL_SECONDS: "60",
+    AUTH_JWKS_ROTATION_SECONDS: "2592000",
+    AUTH_JWKS_GRACE_SECONDS: "86400",
+    AUTH_SESSION_TTL_SECONDS: "604800",
+  };
+
+  Object.assign(process.env, productionEnv, {
+    AUTH_TRUSTED_STOREFRONT_ORIGINS:
+      "https://new.infinitycolor.co,https://infinitycolor.co,https://infinitygram.co",
+  });
+  resetAuthEnvForTests();
+  const env = getAuthEnv();
+  // Infinitygram shares this auth service, so its origin belongs to the frozen
+  // production set. Adding a fourth origin is a deliberate security decision.
+  assert.deepEqual(env.trustedStorefrontOrigins, [
+    "https://new.infinitycolor.co",
+    "https://infinitycolor.co",
+    "https://infinitygram.co",
+  ]);
+  assert.deepEqual(env.trustedApplicationOrigins, [
+    "https://new.infinitycolor.co",
+    "https://infinitycolor.co",
+    "https://infinitygram.co",
+    "https://admin.infinitycolor.co",
+  ]);
+
+  // The env var cannot widen the set on its own.
+  Object.assign(process.env, productionEnv, {
+    AUTH_TRUSTED_STOREFRONT_ORIGINS:
+      "https://new.infinitycolor.co,https://infinitycolor.co,https://infinitygram.co,https://evil.example",
+  });
+  resetAuthEnvForTests();
+  assert.throws(
+    () => getAuthEnv(),
+    /production storefront origins must match its frozen allowlist/,
+  );
+
+  // Nor can it silently drop one.
+  Object.assign(process.env, productionEnv, {
+    AUTH_TRUSTED_STOREFRONT_ORIGINS:
+      "https://new.infinitycolor.co,https://infinitycolor.co",
+  });
+  resetAuthEnvForTests();
+  assert.throws(
+    () => getAuthEnv(),
+    /production storefront origins must match its frozen allowlist/,
+  );
 });
 
 test("staging uses its own exact auth, API, and storefront authorities", () => {
@@ -401,12 +464,42 @@ test("Better Auth source freezes absolute sessions and the native secure cookie 
   assert.doesNotMatch(source, /useSecureCookies:\s*false/);
 });
 
+test("remember-me picks the session TTL at creation without reviving sliding renewal", () => {
+  const plugin = fs.readFileSync(
+    path.resolve(process.cwd(), "src/server/infinity-plugin.ts"),
+    "utf8",
+  );
+  const auth = fs.readFileSync(
+    path.resolve(process.cwd(), "src/server/auth.ts"),
+    "utf8",
+  );
+
+  // Only an explicit `false` shortens the session, so clients that predate the
+  // flag keep the seven-day session they already had.
+  assert.match(plugin, /const dontRememberMe = rememberMe === false;/);
+  // The choice must reach both the database row and the cookie, or the two
+  // would disagree about when the session ends.
+  assert.match(
+    plugin,
+    /createSession\(\s*user\.id,\s*dontRememberMe,\s*\)/,
+  );
+  assert.match(
+    plugin,
+    /setSessionCookie\(ctx, \{ session, user \}, dontRememberMe\)/,
+  );
+  // Both credential endpoints must accept the flag.
+  assert.match(plugin, /otp:\s*otpSchema,\s*rememberMe:\s*z\.boolean\(\)\.optional\(\)/);
+  assert.match(plugin, /password:\s*passwordSchema,\s*\n\s*rememberMe:\s*z\.boolean\(\)\.optional\(\),/);
+  // Remember-me must not become a licence to extend sessions after the fact.
+  assert.match(auth, /disableSessionRefresh:\s*true/);
+});
+
 test("credentialed CORS echoes only an explicitly trusted application origin", () => {
   Object.assign(process.env, {
     NODE_ENV: "production",
     BETTER_AUTH_URL: "https://auth.infinitycolor.co",
     AUTH_TRUSTED_STOREFRONT_ORIGINS:
-      "https://new.infinitycolor.co,https://infinitycolor.co",
+      "https://new.infinitycolor.co,https://infinitycolor.co,https://infinitygram.co",
     AUTH_TRUSTED_ADMIN_ORIGINS: "https://admin.infinitycolor.co",
     AUTH_DEPLOYMENT_ENV: "production",
   });

@@ -30,6 +30,16 @@ export const MAX_PAGE_SIZE = 100;
 export type Grouping = "day" | "week" | "month";
 export type StockStatus = "in" | "low" | "out";
 
+export type TrendPoint = {
+  bucket: string;
+  gross: number;
+  net: number;
+  units: number;
+  orders: number;
+  discounts: number;
+  refunds: number;
+};
+
 // ---------------------------------------------------------------------------
 // Pure helpers (no DB) — unit tested directly.
 // ---------------------------------------------------------------------------
@@ -678,7 +688,46 @@ export function __resetJoinCache() {
  *   - refund_irr:  sum of successful Return transactions in IRR (>= 0)
  * Bindings: [start, end] on order date.
  */
-export function paidOrdersCte(joins: ResolvedJoins): string {
+export type PaidOrdersDefinition = "settled" | "completed";
+
+export function paidOrdersCte(
+  joins: ResolvedJoins,
+  definition: PaidOrdersDefinition = "settled",
+): string {
+  if (definition === "completed") {
+    // Same column contract, but membership is "the shop completed the order"
+    // rather than "the gateway settled it". Settlement columns are still
+    // summed where transactions exist, so revenue stays real where it is
+    // known and reads 0 for orders that never had a gateway leg.
+    return `
+      paid_orders AS (
+        SELECT
+          o.id AS order_id,
+          o.date AS order_date,
+          COALESCE(o.applied_discount_amount, 0) AS order_discount,
+          COALESCE(
+            SUM(
+              CASE
+                WHEN ct.status = 'Success'
+                  THEN (CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END)
+                ELSE 0
+              END
+            ),
+            0
+          )::numeric AS settled_irr,
+          COALESCE(
+            SUM(CASE WHEN ct.status = 'Success' AND ct.type = 'Return' THEN ct.amount ELSE 0 END),
+            0
+          )::numeric AS refund_irr
+        FROM orders o
+        ${leftify(joins.orderToContract)}
+        ${leftify(joins.contractToTx)}
+        WHERE o.status = 'Done'
+          AND o.date BETWEEN ? AND ?
+        GROUP BY o.id, o.date, o.applied_discount_amount
+      )
+    `;
+  }
   return `
     paid_orders AS (
       SELECT
@@ -696,6 +745,37 @@ export function paidOrdersCte(joins: ResolvedJoins): string {
       HAVING SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END) > 0
     )
   `;
+}
+
+/**
+ * Choose the paid-orders definition this window can actually describe.
+ *
+ * `settled` is the correct definition and stays the default. But orders
+ * imported from WordPress never got gateway transactions, so on that data a
+ * settled-only window matches almost nothing and every series collapses to a
+ * single bucket — which is the "chart shows one dot" symptom. When a window
+ * holds no successful settlement at all, fall back to completed orders.
+ * Callers must surface the returned definition; the two are not interchangeable.
+ */
+export async function resolvePaidOrdersDefinition(
+  knex: Knex,
+  joins: ResolvedJoins,
+  start: Date,
+  end: Date,
+): Promise<PaidOrdersDefinition> {
+  const res = await knex.raw(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM orders o
+       ${joins.orderToContract}
+       ${joins.contractToTx}
+       WHERE ct.status = 'Success'
+         AND o.date BETWEEN ? AND ?
+     ) AS has_settlement`,
+    [start, end],
+  );
+  const row = (res?.rows || res?.[0] || [])[0] || {};
+  return row.has_settlement ? "settled" : "completed";
 }
 
 /**
@@ -891,4 +971,84 @@ export function tzBucketExpr(column: string, grouping: Grouping): string {
   // (col AT TIME ZONE 'UTC') reinterprets the stored timestamp as UTC, then
   // AT TIME ZONE tz shifts it to local wall-clock before truncating.
   return `date_trunc('${grouping}', (${column} AT TIME ZONE 'UTC') AT TIME ZONE '${REPORT_TIMEZONE}')`;
+}
+
+const EMPTY_TREND_POINT: Omit<TrendPoint, "bucket"> = {
+  gross: 0,
+  net: 0,
+  units: 0,
+  orders: 0,
+  discounts: 0,
+  refunds: 0,
+};
+
+/** Iran has no DST; this matches `REPORT_TZ_OFFSET` in the report controller. */
+const TEHRAN_NOON_OFFSET = "+03:30";
+
+function tehranYmd(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: REPORT_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function bucketDateKey(raw: string): string {
+  const match = String(raw).match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : String(raw);
+}
+
+function tehranNoon(ymd: string): Date {
+  return new Date(`${ymd}T12:00:00${TEHRAN_NOON_OFFSET}`);
+}
+
+function alignBucketKey(ymd: string, grouping: Grouping): string {
+  if (grouping === "day") return ymd;
+  if (grouping === "month") return `${ymd.slice(0, 7)}-01`;
+  const noon = tehranNoon(ymd);
+  const daysFromMonday = (noon.getUTCDay() + 6) % 7;
+  noon.setUTCDate(noon.getUTCDate() - daysFromMonday);
+  return tehranYmd(noon);
+}
+
+function nextBucketKey(ymd: string, grouping: Grouping): string {
+  if (grouping === "month") {
+    const year = Number(ymd.slice(0, 4));
+    const month = Number(ymd.slice(5, 7));
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    return `${String(nextYear).padStart(4, "0")}-${String(nextMonth).padStart(2, "0")}-01`;
+  }
+  const noon = tehranNoon(ymd);
+  noon.setUTCDate(noon.getUTCDate() + (grouping === "week" ? 7 : 1));
+  return tehranYmd(noon);
+}
+
+/**
+ * SQL only returns buckets that had activity, so a 7-day window with one sale
+ * used to chart as a single point. Fill the missing Tehran calendar buckets
+ * with zeros so the series length matches the requested grouping.
+ */
+export function fillTrendSeries(
+  points: TrendPoint[],
+  start: Date,
+  end: Date,
+  grouping: Grouping,
+): TrendPoint[] {
+  const byKey = new Map<string, TrendPoint>();
+  for (const point of points) {
+    byKey.set(alignBucketKey(bucketDateKey(point.bucket), grouping), point);
+  }
+
+  const startKey = alignBucketKey(tehranYmd(start), grouping);
+  const endKey = alignBucketKey(tehranYmd(end), grouping);
+  const filled: TrendPoint[] = [];
+  let cursor = startKey;
+  for (let i = 0; i < 4000 && cursor <= endKey; i += 1) {
+    const existing = byKey.get(cursor);
+    filled.push(existing ? { ...existing, bucket: cursor } : { bucket: cursor, ...EMPTY_TREND_POINT });
+    cursor = nextBucketKey(cursor, grouping);
+  }
+  return filled;
 }

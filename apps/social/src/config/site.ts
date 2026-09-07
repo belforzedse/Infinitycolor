@@ -1,4 +1,9 @@
-export const SITE_URL = "https://infinitygram.co";
+/**
+ * Central auth validates return targets against this exact origin, so it has
+ * to follow the deployment (`http://localhost:2890` in dev) rather than stay
+ * pinned to production. main.Dockerfile already passes NEXT_PUBLIC_SITE_URL.
+ */
+export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://infinitygram.co";
 export const SITE_NAME = "اینفینیتی گرام";
 
 function resolveStorefrontUrl(raw: string | undefined): string {

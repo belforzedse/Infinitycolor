@@ -18,6 +18,8 @@
     "@dnd-kit/utilities": "3.2.2",
     "@headlessui/react": "2.2.1",
     "@repo/api": "workspace:*",
+    "@repo/auth-core": "workspace:*",
+    "@repo/auth-ui": "workspace:*",
     "@repo/brand": "workspace:*",
     "@repo/fonts": "workspace:*",
     "@repo/social-posts": "workspace:*",

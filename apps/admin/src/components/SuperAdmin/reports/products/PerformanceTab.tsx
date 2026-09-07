@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Popover, PopoverButton, PopoverPanel } from "@headlessui/react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQueryState } from "nuqs";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
@@ -84,7 +85,6 @@ export default function PerformanceTab({
   const [hidden, setHidden] = useState<Set<ColKey>>(new Set());
   const [drawerProductId, setDrawerProductId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [showColMenu, setShowColMenu] = useState(false);
 
   const [sortKey, sortDir] = (sort || "gross:desc").split(":") as [string, "asc" | "desc"];
 
@@ -221,35 +221,32 @@ export default function PerformanceTab({
           </select>
         </div>
         <div className="flex items-center gap-2">
-          <div className="relative">
-            <button
-              onClick={() => setShowColMenu((s) => !s)}
-              className="h-10 rounded-lg border border-neutral-300 px-3 text-sm text-neutral-700"
-            >
+          {/* Popover, not Menu: Menu closes on item activation, which would
+              dismiss the panel after every column is toggled. */}
+          <Popover className="relative">
+            <PopoverButton className="h-10 rounded-lg border border-neutral-300 px-3 text-sm text-neutral-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary">
               ستون‌ها
-            </button>
-            {showColMenu && (
-              <div className="absolute left-0 z-10 mt-1 w-44 rounded-lg border border-neutral-200 bg-white p-2 shadow-lg">
-                {ALL_COLUMNS.map((c) => (
-                  <label key={c} className="flex items-center gap-2 px-2 py-1 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={!hidden.has(c)}
-                      onChange={(e) => {
-                        setHidden((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.delete(c);
-                          else next.add(c);
-                          return next;
-                        });
-                      }}
-                    />
-                    {COL_LABELS[c]}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
+            </PopoverButton>
+            <PopoverPanel className="absolute left-0 z-10 mt-1 w-44 rounded-lg border border-neutral-200 bg-white p-2 shadow-lg">
+              {ALL_COLUMNS.map((c) => (
+                <label key={c} className="flex items-center gap-2 px-2 py-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!hidden.has(c)}
+                    onChange={(e) => {
+                      setHidden((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.delete(c);
+                        else next.add(c);
+                        return next;
+                      });
+                    }}
+                  />
+                  {COL_LABELS[c]}
+                </label>
+              ))}
+            </PopoverPanel>
+          </Popover>
           <select
             className="h-10 rounded-lg border border-neutral-300 px-2 text-sm"
             value={pageSize}

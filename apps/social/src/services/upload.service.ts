@@ -4,7 +4,7 @@
  * Ported from the storefront `apps/frontend/src/services/super-admin/files/upload.ts`
  * pattern, but uses `fetch` against `API_BASE_URL` (the shared `apiClient` is JSON-only
  * and serialises bodies — it would corrupt `FormData`). Auth is the same Bearer
- * scheme used elsewhere in the social app (`localStorage.accessToken`).
+ * scheme used elsewhere in the social app (in-memory central-auth bearer).
  *
  * Image files are run through `browser-image-compression` first (matches storefront)
  * to convert to WebP and clamp dimensions; videos / non-images pass through untouched.
@@ -76,13 +76,9 @@ export function isImageFile(file: File): boolean {
   return file.type.startsWith("image/");
 }
 
-function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem("accessToken");
-  } catch {
-    return null;
-  }
+async function getAccessToken(): Promise<string | null> {
+  const { centralAuth } = await import("@/lib/central-auth");
+  return centralAuth.tokenManager.getToken();
 }
 
 async function compressImageToWebP(file: File): Promise<File> {
@@ -122,7 +118,7 @@ export async function uploadFile(file: File): Promise<StrapiUploadedFile[]> {
   const formData = new FormData();
   formData.append("files", processed);
 
-  const token = getAccessToken();
+  const token = await getAccessToken();
   const response = await fetch(`${API_BASE_URL}${ENDPOINTS.FILE.UPLOAD}`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,

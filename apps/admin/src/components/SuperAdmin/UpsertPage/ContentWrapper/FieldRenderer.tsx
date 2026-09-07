@@ -57,6 +57,8 @@ export default function FieldRenderer<T>({
           name={field.name as string}
           label={field.label}
           testId={`admin-field-${String(field.name)}`}
+          placeholder={field.placeholder}
+          helper={field.helper ? field.helper(data ?? ({} as T)) : undefined}
         />
       );
     },

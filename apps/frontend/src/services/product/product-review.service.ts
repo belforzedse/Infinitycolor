@@ -1,4 +1,5 @@
 import { apiClient } from "@/services";
+import { ENDPOINTS } from "@/constants/api";
 import { ApiResponse, PaginatedResponse } from "@/types/api";
 
 export interface UserInfo {
@@ -112,6 +113,13 @@ export interface StrapiEntry<T> {
   id: number;
   attributes: T;
 }
+
+/** `POST /product-reviews/submit` answers with the entity fields inlined. */
+type SubmittedReviewEntity = ProductReviewAttributes & {
+  id: number;
+  isNew?: boolean;
+  isUpdated?: boolean;
+};
 
 export interface StrapiRelation<T> {
   data: T | T[] | null;
@@ -337,23 +345,17 @@ class ProductReviewService {
 
   // Submit a new review
   async submitReview(productId: number | string, rate: number, content: string): Promise<ApiResponse<ProductReview>> {
-    const response = await apiClient.post<StrapiApiResponse<StrapiEntry<ProductReviewAttributes>>>(
-      "/product-reviews",
-      {
-        data: {
-          product: productId,
-          Rate: rate,
-          Content: content,
-          Date: new Date().toISOString(),
-          Status: "Need for Review",
-        },
-      }
+    // `/product-reviews/submit` is the route customers are actually granted,
+    // and it owns the moderation status, so no Status is sent from here. It
+    // answers with a flat entity rather than Strapi's { id, attributes }.
+    const response = await apiClient.post<SubmittedReviewEntity>(
+      ENDPOINTS.PRODUCT.REVIEWS.SUBMIT,
+      { productId, rate, content },
     );
 
-    const responseData = Array.isArray(response.data) ? response.data[0] : response.data;
+    const { id, isNew: _isNew, isUpdated: _isUpdated, ...attributes } = response.data;
     return {
-      data: this.normalizeReview(responseData),
-      meta: response.meta,
+      data: this.normalizeReview({ id, attributes } as StrapiEntry<ProductReviewAttributes>),
     };
   }
 

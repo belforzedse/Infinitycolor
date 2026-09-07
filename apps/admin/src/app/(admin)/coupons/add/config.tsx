@@ -38,6 +38,8 @@ export const config: UpsertPageConfigType<Coupon> = {
               name: "code",
               type: "text",
               label: "کد تخفیف",
+              placeholder: "مثلاً NOWRUZ1405",
+              helper: () => "فقط حروف انگلیسی و عدد، بدون فاصله.",
               colSpan: 4,
               mobileColSpan: 12,
             },
@@ -62,6 +64,9 @@ export const config: UpsertPageConfigType<Coupon> = {
               name: "amount",
               type: "text",
               label: "میزان تخفیف",
+              placeholder: "مثلاً 20",
+              helper: () =>
+                "برای تخفیف درصدی، عددی بین ۱ تا ۱۰۰ و برای تخفیف مبلغی، مبلغ به تومان.",
               colSpan: 4,
               mobileColSpan: 12,
             },
@@ -69,6 +74,9 @@ export const config: UpsertPageConfigType<Coupon> = {
               name: "limit",
               type: "text",
               label: "محدودیت استفاده",
+              placeholder: "مثلاً 2",
+              helper: () =>
+                "حداکثر تعداد استفاده از این کد. خالی بماند یعنی بدون محدودیت.",
               colSpan: 6,
               mobileColSpan: 12,
             },
@@ -76,6 +84,9 @@ export const config: UpsertPageConfigType<Coupon> = {
               name: "maxAmount",
               type: "text",
               label: "سقف مبلغی تخفیف",
+              placeholder: "مثلاً 150000",
+              helper: () =>
+                "سقف مبلغ تخفیف به تومان. برای تخفیف درصدی کاربرد دارد.",
               colSpan: 6,
               mobileColSpan: 12,
             },

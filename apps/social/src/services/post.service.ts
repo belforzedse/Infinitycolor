@@ -80,11 +80,6 @@ function unwrap<T>(value: unknown): T {
   return value as T;
 }
 
-function authHeaders(): Record<string, string> | undefined {
-  const accessToken =
-    typeof window !== "undefined" ? window.localStorage.getItem("accessToken") : null;
-  return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-}
 
 function strapiMediaUrl(relativeOrAbsolute: string | undefined): string | null {
   if (!relativeOrAbsolute?.trim()) return null;
@@ -255,7 +250,6 @@ export async function listAllForProfile(): Promise<ProfilePost[]> {
 
     do {
       const response = await apiClient.get<unknown>(ENDPOINTS.POSTS.LIST, {
-        headers: authHeaders(),
         params: buildProfileParams(page),
         cache: "no-store",
         timeout: POST_TIMEOUT_MS,
@@ -283,7 +277,6 @@ export async function listAllForProfile(): Promise<ProfilePost[]> {
 export async function getPostById(id: number | string): Promise<ProfilePost> {
   try {
     const response = await apiClient.get<unknown>(ENDPOINTS.POSTS.DETAIL(id), {
-      headers: authHeaders(),
       params: buildDetailParams(),
       cache: "no-store",
       timeout: POST_TIMEOUT_MS,
@@ -301,7 +294,6 @@ export async function getPostById(id: number | string): Promise<ProfilePost> {
 export async function createPost(input: CreatePostInput): Promise<CreatedPost> {
   try {
     const response = await apiClient.post(ENDPOINTS.POSTS.CREATE, postPayload(input), {
-      headers: authHeaders(),
       cache: "no-store",
       timeout: POST_TIMEOUT_MS,
       retries: POST_CREATE_RETRIES,
@@ -320,7 +312,6 @@ export async function createPost(input: CreatePostInput): Promise<CreatedPost> {
 export async function updatePost(id: number | string, input: UpdatePostInput): Promise<ProfilePost> {
   try {
     const response = await apiClient.put(ENDPOINTS.POSTS.DETAIL(id), postPayload(input), {
-      headers: authHeaders(),
       cache: "no-store",
       timeout: POST_TIMEOUT_MS,
       retries: 0,
@@ -337,7 +328,6 @@ export async function updatePost(id: number | string, input: UpdatePostInput): P
 export async function deletePost(id: number | string): Promise<void> {
   try {
     await apiClient.delete(ENDPOINTS.POSTS.DETAIL(id), {
-      headers: authHeaders(),
       cache: "no-store",
       timeout: POST_TIMEOUT_MS,
       retries: 0,

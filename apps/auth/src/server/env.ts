@@ -134,9 +134,18 @@ export function getAuthEnv(): AuthEnvironment {
   }
 
   if (environment !== "development") {
+    // Infinitygram (`https://infinitygram.co`) is a first-party storefront
+    // surface on the same auth service. It is listed here because the
+    // allowlist is frozen in source: adding it to the env var alone makes
+    // this throw at boot. It must stay HTTPS — packages/auth-core/src/redirects.ts
+    // rejects a non-https return target and falls back to the default origin.
     const frozen = new Set(
       environment === "production"
-        ? ["https://new.infinitycolor.co", "https://infinitycolor.co"]
+        ? [
+            "https://new.infinitycolor.co",
+            "https://infinitycolor.co",
+            "https://infinitygram.co",
+          ]
         : ["https://staging.infinitycolor.co"],
     );
     if (

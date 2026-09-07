@@ -6,11 +6,6 @@ import { IMAGE_BASE_URL } from "@repo/api";
 
 const COMMENT_TIMEOUT_MS = 15000;
 
-function authHeaders(): Record<string, string> | undefined {
-  const accessToken =
-    typeof window !== "undefined" ? window.localStorage.getItem("accessToken") : null;
-  return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-}
 
 export type PendingPostComment = {
   id: number;
@@ -158,7 +153,6 @@ export async function createPostComment(input: {
         },
       },
       {
-        headers: authHeaders(),
         cache: "no-store",
         timeout: COMMENT_TIMEOUT_MS,
         retries: 0,
@@ -178,7 +172,6 @@ export async function createPostComment(input: {
 export async function listPendingPostComments(): Promise<PendingPostComment[]> {
   try {
     const response = await apiClient.get<unknown>(ENDPOINTS.POST_COMMENTS.LIST, {
-      headers: authHeaders(),
       params: {
         "filters[Status][$eq]": "Pending",
         "populate[post][populate][CoverImage][fields][0]": "url",
@@ -206,7 +199,6 @@ export async function approvePostComment(id: number | string): Promise<void> {
       ENDPOINTS.POST_COMMENTS.APPROVE(id),
       {},
       {
-        headers: authHeaders(),
         cache: "no-store",
         timeout: COMMENT_TIMEOUT_MS,
         retries: 0,
@@ -224,7 +216,6 @@ export async function rejectPostComment(id: number | string): Promise<void> {
       ENDPOINTS.POST_COMMENTS.REJECT(id),
       {},
       {
-        headers: authHeaders(),
         cache: "no-store",
         timeout: COMMENT_TIMEOUT_MS,
         retries: 0,

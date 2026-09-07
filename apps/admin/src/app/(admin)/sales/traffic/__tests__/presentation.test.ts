@@ -49,4 +49,15 @@ describe("behavior analytics presentation", () => {
       "بخشی از اطلاعات این گزارش موقتاً در دسترس نیست.",
     );
   });
+
+  it("separates an unconfigured collector from a temporary outage", () => {
+    // The two used to collapse to the same "temporarily unavailable" line, so
+    // a deployment that had never been configured looked like a passing blip.
+    expect(presentAnalyticsMessage("UMAMI_CONFIG_MISSING")).toBe(
+      "سامانه آمار بازدید تنظیم نشده است. تنظیمات آن باید توسط مدیر سیستم انجام شود.",
+    );
+    expect(presentAnalyticsMessage("UMAMI_UNAVAILABLE")).toBe(
+      "سامانه آمار بازدید موقتاً در دسترس نیست.",
+    );
+  });
 });

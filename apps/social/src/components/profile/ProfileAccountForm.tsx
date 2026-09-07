@@ -12,7 +12,7 @@ import { Button } from "@repo/ui/button";
 import { SocialTextField } from "@/components/ui/SocialTextField";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import UserService from "@/services/user";
-import { getAccessTokenFromStorage, normalizePhoneNumber } from "@/utils/auth";
+import { normalizePhoneNumber } from "@/utils/auth";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 
 export function ProfileAccountForm() {
@@ -25,11 +25,6 @@ export function ProfileAccountForm() {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (!getAccessTokenFromStorage()) {
-      router.replace("/auth?redirect=/profile");
-      return;
-    }
-
     let cancelled = false;
     setLoadState("loading");
 

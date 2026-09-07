@@ -107,7 +107,18 @@ export function infinityCredentialsPlugin(
     ctx: any,
     verified: BridgeVerifiedIdentityResponse,
     returnTo: string,
+    /**
+     * «مرا به خاطر بسپار». Absent means remember, which keeps the behaviour
+     * every existing client already relies on. An explicit `false` shortens
+     * the session to Better Auth's 24h and downgrades the cookie to a
+     * browser-session cookie.
+     *
+     * The TTL is chosen once, here, at creation. `disableSessionRefresh`
+     * stays on, so neither choice reintroduces sliding or idle extension.
+     */
+    rememberMe: boolean | undefined,
   ) => {
+    const dontRememberMe = rememberMe === false;
     const strapiUserId = verified.strapiUserId;
     const identity =
       await options.identities.getOrCreateVerifiedIdentity(strapiUserId);
@@ -120,9 +131,9 @@ export function infinityCredentialsPlugin(
       });
     const session = await ctx.context.internalAdapter.createSession(
       user.id,
-      false,
+      dontRememberMe,
     );
-    await setSessionCookie(ctx, { session, user }, false);
+    await setSessionCookie(ctx, { session, user }, dontRememberMe);
     if (verified.admin && isAdminReturnTarget(returnTo)) {
       try {
         await recordAdminSessionCreated(options.pool, {
@@ -211,7 +222,10 @@ export function infinityCredentialsPlugin(
       ),
       infinityOtpVerify: createAuthEndpoint(
         "/infinity/otp/verify",
-        { method: "POST", body: z.object({ otp: otpSchema }) },
+        {
+          method: "POST",
+          body: z.object({ otp: otpSchema, rememberMe: z.boolean().optional() }),
+        },
         async (ctx) => {
           assertTrustedRequest(ctx);
           const flow = readFlowState(ctx);
@@ -226,7 +240,12 @@ export function infinityCredentialsPlugin(
               flow.challengeId,
               ctx.body.otp,
             );
-            const { session } = await completeSignIn(ctx, verified, flow.returnTo);
+            const { session } = await completeSignIn(
+              ctx,
+              verified,
+              flow.returnTo,
+              ctx.body.rememberMe,
+            );
             if (verified.needsProfileCompletion === true) {
               return ctx.json({
                 message: "login successful",
@@ -256,7 +275,11 @@ export function infinityCredentialsPlugin(
         "/infinity/password/sign-in",
         {
           method: "POST",
-          body: z.object({ phone: phoneSchema, password: passwordSchema }),
+          body: z.object({
+            phone: phoneSchema,
+            password: passwordSchema,
+            rememberMe: z.boolean().optional(),
+          }),
         },
         async (ctx) => {
           assertTrustedRequest(ctx);
@@ -272,7 +295,12 @@ export function infinityCredentialsPlugin(
               ctx.body.phone,
               ctx.body.password,
             );
-            const { session } = await completeSignIn(ctx, verified, returnTo);
+            const { session } = await completeSignIn(
+              ctx,
+              verified,
+              returnTo,
+              ctx.body.rememberMe,
+            );
             if (verified.needsProfileCompletion === true) {
               return ctx.json({
                 message: "login successful",

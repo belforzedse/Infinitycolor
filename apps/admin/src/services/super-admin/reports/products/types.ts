@@ -44,10 +44,18 @@ export interface TrendPoint {
   refunds: number;
 }
 
+/**
+ * Which order population the series describes. `settled` requires a successful
+ * gateway transaction; `completed` counts delivered orders and is used when the
+ * window has no settlement rows at all (e.g. WordPress-imported orders).
+ */
+export type PaidOrdersDefinition = "settled" | "completed";
+
 export interface ProductTrends {
   range: { start: string; end: string };
   grouping: TrendGrouping;
   timezone: string;
+  ordersDefinition: PaidOrdersDefinition;
   series: TrendPoint[];
 }
 

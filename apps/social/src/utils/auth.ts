@@ -3,9 +3,15 @@ import type { ApiError } from "@repo/api/types";
 import { currentUserAtom } from "@/lib/atoms/auth";
 import { jotaiStore } from "@/lib/jotaiStore";
 import { clearAccessToken } from "@/utils/accessToken";
+import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import { isAuthRequiredRoute } from "@/utils/routeAccessPolicy";
+
+let pendingAuthRedirect: string | null = null;
 
 /**
- * Clears session on 401; clears cached user on 403. Social app has no global error banner—callers use toasts.
+ * 401 expires the in-memory bearer and, on `/profile/**`, sends the visitor
+ * back to central auth. 403 is a permission failure and must not look like
+ * a missing session.
  */
 export function handleAuthErrors(error?: ApiError | null, isAdminCheck?: boolean): void {
   const isUnauthorized = error?.status === HTTP_STATUS.UNAUTHORIZED;
@@ -23,23 +29,28 @@ export function handleAuthErrors(error?: ApiError | null, isAdminCheck?: boolean
   if (isUnauthorized) {
     clearAccessToken();
     jotaiStore.set(currentUserAtom, null);
+    const requestedPath = `${window.location.pathname}${window.location.search}`;
+    if (isAuthRequiredRoute(window.location.pathname)) {
+      const target = centralLoginUrl(requestedPath);
+      if (pendingAuthRedirect !== target) {
+        pendingAuthRedirect = target;
+        window.location.replace(target);
+      }
+    }
     return;
   }
 
   if (isForbidden) {
-    jotaiStore.set(currentUserAtom, null);
+    return;
   }
 }
 
-export function getAccessTokenFromStorage(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  try {
-    return localStorage.getItem("accessToken");
-  } catch {
-    return null;
-  }
+export async function getAccessToken(): Promise<string | null> {
+  return centralAuth.tokenManager.getToken();
+}
+
+export function hasCachedAccessToken(): boolean {
+  return Boolean(centralAuth.tokenManager.peek());
 }
 
 export function normalizePhoneNumber(value: string): string {

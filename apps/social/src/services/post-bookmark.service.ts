@@ -2,7 +2,7 @@ import type { ApiError } from "@repo/api/types";
 import { apiClient } from "@/lib/api-client";
 import { ENDPOINTS } from "@/lib/api-endpoints";
 import { normalizeStrapiPostEntry, type HomeFeedPost } from "@/services/feed-post.service";
-import { handleAuthErrors } from "@/utils/auth";
+import { handleAuthErrors, hasCachedAccessToken } from "@/utils/auth";
 
 const POST_BOOKMARK_TIMEOUT_MS = 15000;
 
@@ -22,11 +22,6 @@ export type UserPostBookmarksResult = {
   };
 };
 
-function authHeaders(): Record<string, string> | undefined {
-  const accessToken =
-    typeof window !== "undefined" ? window.localStorage.getItem("accessToken") : null;
-  return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-}
 
 function relationId(raw: unknown): string | null {
   if (raw == null) return null;
@@ -74,16 +69,12 @@ function bookmarkedPost(entry: unknown): HomeFeedPost | null {
 }
 
 export function hasAccessToken(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    Boolean(window.localStorage.getItem("accessToken"))
-  );
+  return hasCachedAccessToken();
 }
 
 export async function getBookmarkedPostIds(): Promise<Set<string>> {
   try {
     const response = await apiClient.get<unknown>(ENDPOINTS.POST_BOOKMARKS.USER_BOOKMARKS, {
-      headers: authHeaders(),
       cache: "no-store",
       timeout: POST_BOOKMARK_TIMEOUT_MS,
       retries: 0,
@@ -99,7 +90,6 @@ export async function getBookmarkedPostIds(): Promise<Set<string>> {
 export async function getUserBookmarkedPosts(page = 1, pageSize = 48): Promise<UserPostBookmarksResult> {
   try {
     const response = await apiClient.get<unknown>(ENDPOINTS.POST_BOOKMARKS.USER_BOOKMARKS, {
-      headers: authHeaders(),
       params: { page, pageSize },
       cache: "no-store",
       timeout: POST_BOOKMARK_TIMEOUT_MS,
@@ -122,7 +112,6 @@ export async function togglePostBookmark(postId: string | number): Promise<Toggl
       ENDPOINTS.POST_BOOKMARKS.TOGGLE,
       { postId },
       {
-        headers: authHeaders(),
         cache: "no-store",
         timeout: POST_BOOKMARK_TIMEOUT_MS,
         retries: 0,

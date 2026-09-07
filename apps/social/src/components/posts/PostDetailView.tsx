@@ -21,6 +21,7 @@ import { Button } from "@repo/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InfinityMarkCircle } from "@/components/InfinityMarkCircle";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
+import { hasCachedAccessToken } from "@/utils/auth";
 import {
   clearCommentDraft,
   readCommentDraft,
@@ -628,7 +629,7 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
   async function submitComment() {
     const value = comment.trim();
     if (!value || isSubmitting) return;
-    if (typeof window !== "undefined" && !window.localStorage.getItem("accessToken")) {
+    if (typeof window !== "undefined" && !hasCachedAccessToken()) {
       setSubmitHint("برای ثبت دیدگاه ابتدا وارد حساب کاربری شوید.");
       return;
     }

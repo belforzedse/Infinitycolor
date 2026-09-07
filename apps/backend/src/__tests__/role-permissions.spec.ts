@@ -642,6 +642,39 @@ describe("role permission templates", () => {
     );
   });
 
+  it("lets customers file moderated comments without reaching review core writes", () => {
+    const publicRole = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "public",
+    );
+    const customer = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "customer",
+    );
+    const enabled = (tree: Record<string, any>, typeKey: string, controllerName: string) =>
+      enabledActionNames(tree[typeKey].controllers[controllerName]);
+
+    // The blog-comment `create` override forces Status "Pending", takes the
+    // author from the session, and whitelists the writable fields, so the
+    // grant cannot be used to self-approve or reparent someone else's thread.
+    expect(enabled(customer, "api::blog-comment", "blog-comment")).toEqual([
+      "create",
+      "find",
+      "findOne",
+    ]);
+    // Anonymous visitors must still not be able to post.
+    expect(enabled(publicRole, "api::blog-comment", "blog-comment")).toEqual(["find", "findOne"]);
+
+    // Reviews go through /product-reviews/submit, which owns the moderation
+    // status. Core `create` would let a customer post Status "Accepted".
+    expect(enabled(customer, "api::product-review", "product-review")).toEqual([
+      "find",
+      "findOne",
+      "getUserReviews",
+      "submitReview",
+    ]);
+  });
+
   it("lets Seller 1 query the bounded admin products list without order access", () => {
     const seller1 = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,

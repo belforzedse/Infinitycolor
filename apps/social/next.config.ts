@@ -22,7 +22,15 @@ const nextConfig: NextConfig = {
   },
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
-  transpilePackages: ["@repo/api", "@repo/brand", "@repo/fonts", "@repo/social-posts", "@repo/story-rail"],
+  transpilePackages: [
+    "@repo/api",
+    "@repo/auth-core",
+    "@repo/auth-ui",
+    "@repo/brand",
+    "@repo/fonts",
+    "@repo/social-posts",
+    "@repo/story-rail",
+  ],
   async headers() {
     return [
       {

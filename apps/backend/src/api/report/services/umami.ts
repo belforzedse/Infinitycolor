@@ -677,7 +677,10 @@ export async function getUmamiBehaviorReport(
   options: { advanced?: boolean; filters?: Record<string, unknown> } = {},
 ): Promise<UmamiBehaviorPayload> {
   if (!isUmamiConfigured()) {
-    return { kind, range, sections: {}, errors: { source: "UMAMI_UNAVAILABLE" } };
+    // Distinct from a reachable-but-failing provider: this deployment has no
+    // usable UMAMI_* configuration at all, which is an operator action rather
+    // than something that will clear on its own.
+    return { kind, range, sections: {}, errors: { source: "UMAMI_CONFIG_MISSING" } };
   }
   const client = getUmamiClient();
   const normalizedFilters = normalizeUmamiFilters(options.filters);

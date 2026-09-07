@@ -1095,8 +1095,14 @@ class BlogService {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error?.message || "Failed to create comment");
+      const payload = await response.json().catch(() => null);
+      // Carry the status so the composer can tell an expired session (401)
+      // apart from an account that may not comment (403).
+      const error = new Error(
+        payload?.error?.message || "Failed to create comment",
+      ) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
 
     const json = await response.json();

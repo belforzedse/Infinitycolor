@@ -490,6 +490,12 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       "api::product-review": {
         "product-review": ["submitReview", "getUserReviews"],
       },
+      // The blog-comment `create` override owns author, date, name, and
+      // moderation status, and whitelists the writable fields, so customers
+      // can only ever file a Pending comment authored by themselves.
+      "api::blog-comment": {
+        "blog-comment": ["create"],
+      },
       "api::order": {
         order: [
           "getMyOrders",

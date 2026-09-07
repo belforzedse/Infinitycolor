@@ -34,11 +34,6 @@ export type GetNotificationsResult = {
   };
 };
 
-function authHeaders(): Record<string, string> | undefined {
-  const accessToken =
-    typeof window !== "undefined" ? window.localStorage.getItem("accessToken") : null;
-  return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-}
 
 function readRecord(entry: unknown): Record<string, unknown> {
   if (!entry || typeof entry !== "object") return {};
@@ -128,7 +123,6 @@ export async function getMyNotifications(
 ): Promise<GetNotificationsResult> {
   try {
     const response = await apiClient.get<unknown>(ENDPOINTS.NOTIFICATIONS.LIST_MINE, {
-      headers: authHeaders(),
       params: { page, pageSize },
       cache: "no-store",
       timeout: NOTIFICATION_TIMEOUT_MS,
@@ -150,7 +144,6 @@ export async function getMyNotifications(
 export async function getUnreadNotificationCount(): Promise<number> {
   try {
     const response = await apiClient.get<unknown>(ENDPOINTS.NOTIFICATIONS.UNREAD_COUNT, {
-      headers: authHeaders(),
       cache: "no-store",
       timeout: NOTIFICATION_TIMEOUT_MS,
       retries: 0,
@@ -168,7 +161,6 @@ export async function markNotificationRead(id: number | string): Promise<void> {
       ENDPOINTS.NOTIFICATIONS.MARK_READ(id),
       {},
       {
-        headers: authHeaders(),
         cache: "no-store",
         timeout: NOTIFICATION_TIMEOUT_MS,
         retries: 0,
@@ -186,7 +178,6 @@ export async function markAllNotificationsRead(): Promise<void> {
       ENDPOINTS.NOTIFICATIONS.MARK_ALL_READ,
       {},
       {
-        headers: authHeaders(),
         cache: "no-store",
         timeout: NOTIFICATION_TIMEOUT_MS,
         retries: 0,
