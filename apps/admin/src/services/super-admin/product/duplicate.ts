@@ -38,6 +38,9 @@ interface ProductAttributes {
 
 // --- Main function ---
 export const duplicateProduct = async (productId: string) => {
+  // Variations are copied one at a time and a failure does not abort the run,
+  // so track how many did not make it across.
+  let failedVariationCount = 0;
   try {
     // Get the original product with all relations
     const originalProduct = await getProduct(productId, {
@@ -235,9 +238,13 @@ export const duplicateProduct = async (productId: string) => {
         }
       }
 
-      // Log any variation errors but don't fail the entire operation
+      // Individual variation failures do not abort the copy, but they must not
+      // be hidden either: a product whose variations did not come across is not
+      // sellable, and reporting plain success sent the operator away believing
+      // the duplicate was complete.
       if (variationErrors.length > 0) {
         console.warn(`Some variations failed to duplicate:`, variationErrors);
+        failedVariationCount = variationErrors.length;
       }
     }
 
@@ -270,8 +277,19 @@ export const duplicateProduct = async (productId: string) => {
       }
     }
 
-    toast.success("محصول با موفقیت کپی شد");
-    return { success: true, data: response.data, newProductId };
+    if (failedVariationCount > 0) {
+      toast.error(
+        `محصول کپی شد اما ${failedVariationCount} تنوع منتقل نشد. پیش از انتشار، تنوع‌های محصول جدید را بررسی کنید.`,
+      );
+    } else {
+      toast.success("محصول با موفقیت کپی شد");
+    }
+    return {
+      success: true,
+      data: response.data,
+      newProductId,
+      failedVariationCount,
+    };
   } catch (error: any) {
     console.error("Product duplication error:", error);
     const errorMessage = error.response?.data?.error?.message || "خطا در کپی کردن محصول";
