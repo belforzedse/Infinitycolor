@@ -21,7 +21,7 @@ import { Button } from "@repo/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InfinityMarkCircle } from "@/components/InfinityMarkCircle";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
-import { hasCachedAccessToken } from "@/utils/auth";
+import { hasActiveSession } from "@/utils/auth";
 import {
   clearCommentDraft,
   readCommentDraft,
@@ -512,7 +512,7 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
   async function toggleLike() {
     if (isLikePending) return;
 
-    if (!hasAccessToken()) {
+    if (!(await hasActiveSession())) {
       toast.error("برای پسندیدن پست ابتدا وارد حساب کاربری شوید.");
       return;
     }
@@ -548,7 +548,7 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
   async function toggleSaved() {
     if (isSavePending) return;
 
-    if (!hasAccessToken()) {
+    if (!(await hasActiveSession())) {
       toast.error("برای ذخیره پست ابتدا وارد حساب کاربری شوید.");
       return;
     }
@@ -572,7 +572,7 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
   async function toggleCommentLike(target: PostDetailComment) {
     if (pendingCommentLikes[target.id]) return;
 
-    if (!hasAccessToken()) {
+    if (!(await hasActiveSession())) {
       toast.error("برای پسندیدن دیدگاه ابتدا وارد حساب کاربری شوید.");
       return;
     }
@@ -629,7 +629,7 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
   async function submitComment() {
     const value = comment.trim();
     if (!value || isSubmitting) return;
-    if (typeof window !== "undefined" && !hasCachedAccessToken()) {
+    if (!(await hasActiveSession())) {
       setSubmitHint("برای ثبت دیدگاه ابتدا وارد حساب کاربری شوید.");
       return;
     }
