@@ -202,7 +202,6 @@ export default function QuickViewContent({
         title={Title}
         selectedIndex={selectedImageIndex}
         onSelectIndex={setSelectedImageIndex}
-        onClose={onClose}
         hasDiscount={hasDiscount}
         discountPercent={discountPercent}
       />
