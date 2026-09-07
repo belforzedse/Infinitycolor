@@ -183,7 +183,7 @@ const BlogCarousel: React.FC<BlogCarouselProps> = ({
           {currentPosts.map((post, index) => (
             <div
               key={post.id}
-              className="transform transition-all duration-200 ease-out hover:-translate-y-1 flex justify-center"
+              className="flex h-full transform justify-center transition-all duration-200 ease-out hover:-translate-y-1"
             >
               <BlogCard post={post} priority={index === 0} />
             </div>

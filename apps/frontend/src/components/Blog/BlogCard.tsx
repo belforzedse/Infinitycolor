@@ -29,13 +29,13 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, priority = false, className =
   const imageUrl = getImageUrl();
 
   return (
-    <article className={`group w-full max-w-none ${className}`}>
+    <article className={`group h-full w-full max-w-none ${className}`}>
       <Link
         href={`/${post.Slug}`}
-        className="block rounded-3xl border-2 border-infinity-primary-lighter/40 bg-white p-2 transition-all duration-200 hover:border-infinity-primary-lighter/60 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2"
+        className="flex h-full flex-col rounded-3xl border-2 border-infinity-primary-lighter/40 bg-white p-2 transition-all duration-200 hover:border-infinity-primary-lighter/60 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2"
       >
         {/* Featured Image */}
-        <div className="relative mb-2 aspect-[304/260] w-full overflow-hidden rounded-[20px]">
+        <div className="relative mb-2 aspect-[304/260] w-full shrink-0 overflow-hidden rounded-[20px]">
           {imageUrl ? (
             <BlurImage
               src={imageUrl}
@@ -70,9 +70,9 @@ const BlogCard: React.FC<BlogCardProps> = ({ post, priority = false, className =
 
 
         {/* Content */}
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex flex-1 flex-col items-end gap-1">
           {/* Title */}
-          <h3 className="line-clamp-2 w-full text-right text-lg font-medium leading-24 text-neutral-700">
+          <h3 className="line-clamp-2 min-h-[56px] w-full text-right text-lg font-medium text-neutral-700">
             {post.Title}
           </h3>
 
