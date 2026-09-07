@@ -67,7 +67,7 @@ const BlogComments: React.FC<BlogCommentsProps> = ({ postId, comments: initialCo
       // Refresh comments
       await fetchComments();
 
-      toast.success("نظر شما با موفقیت ثبت شد و پس از تایید نمایش داده خواهد شد.");
+      toast.success("نظر شما با موفقیت ثبت شد و پس از تأیید نمایش داده خواهد شد.");
     } catch (error) {
       console.error("Error submitting comment:", error);
       toast.error("خطا در ثبت نظر. لطفاً دوباره تلاش کنید.");
@@ -237,7 +237,7 @@ const BlogComments: React.FC<BlogCommentsProps> = ({ postId, comments: initialCo
             )}
           </div>
           <div className="flex items-center justify-between">
-            <p className="text-xs text-neutral-500">نظر شما پس از تایید نمایش داده خواهد شد</p>
+            <p className="text-xs text-neutral-500">نظر شما پس از تأیید نمایش داده خواهد شد</p>
             <button
               type="submit"
               disabled={isSubmitting}

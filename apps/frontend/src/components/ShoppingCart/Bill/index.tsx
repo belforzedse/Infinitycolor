@@ -535,17 +535,17 @@ function ShoppingCartBillForm({}: Props) {
 
     if (!isMergeMode) {
       if (!selectedAddressId && !inlineAddressFieldsFilled) {
-        setError("لطفا یک آدرس ذخیره شده را انتخاب یا آدرس جدید وارد کنید");
+        setError("لطفاً یک آدرس ذخیره شده را انتخاب یا آدرس جدید وارد کنید");
         return;
       }
       if (!data.shippingMethod) {
-        setError("لطفا روش ارسال را انتخاب کنید");
+        setError("لطفاً روش ارسال را انتخاب کنید");
         return;
       }
     }
 
     if (!data.phoneNumber || data.phoneNumber.trim() === "") {
-      setError("لطفا شماره تماس خود را وارد کنید");
+      setError("لطفاً شماره تماس خود را وارد کنید");
       return;
     }
 
@@ -558,7 +558,7 @@ function ShoppingCartBillForm({}: Props) {
 
     if (!isMergeMode && !selectedAddressId) {
       if (!watchProvince || !watchCity) {
-        setError("لطفا استان و شهر را انتخاب کنید");
+        setError("لطفاً استان و شهر را انتخاب کنید");
         return;
       }
       const postal = (watchPostalCode || "").replace(/\D/g, "");
@@ -567,7 +567,7 @@ function ShoppingCartBillForm({}: Props) {
         return;
       }
       if (!watchFullAddress || watchFullAddress.trim().length < 5) {
-        setError("لطفا آدرس دقیق را وارد کنید");
+        setError("لطفاً آدرس دقیق را وارد کنید");
         return;
       }
     }
@@ -698,7 +698,7 @@ function ShoppingCartBillForm({}: Props) {
         const errorDetails = (cartResponse as any).details;
 
         // Map error codes to user-friendly messages
-        let displayError = "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.";
+        let displayError = "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.";
 
         if (errorCode) {
           trackCheckoutError(String(errorCode));
@@ -762,7 +762,7 @@ function ShoppingCartBillForm({}: Props) {
               if (errorMessage && typeof errorMessage === "string") {
                 displayError = translateErrorMessage(
                   errorMessage,
-                  "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.",
+                  "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.",
                 );
               }
           }
@@ -770,7 +770,7 @@ function ShoppingCartBillForm({}: Props) {
           trackCheckoutError("BACKEND_MESSAGE");
           displayError = translateErrorMessage(
             errorMessage,
-            "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.",
+            "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.",
           );
         } else {
           trackCheckoutError("FINALIZE_FAILED");
@@ -856,7 +856,7 @@ function ShoppingCartBillForm({}: Props) {
       console.error("Error creating order:", errorMsg, err);
 
       // Extract error information from the error object
-      let displayError = "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.";
+      let displayError = "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.";
 
       // The shared fetch client exposes Strapi product details on `data`;
       // retain the Axios fallback for older callers during migration.
@@ -925,7 +925,7 @@ function ShoppingCartBillForm({}: Props) {
               if (errorMessage && typeof errorMessage === "string") {
                 displayError = translateErrorMessage(
                   errorMessage,
-                  "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.",
+                  "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.",
                 );
               }
           }
@@ -933,13 +933,13 @@ function ShoppingCartBillForm({}: Props) {
           trackCheckoutError("BACKEND_MESSAGE");
           displayError = translateErrorMessage(
             errorMessage,
-            "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.",
+            "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.",
           );
         }
       } else {
         const normalizedError = err?.message ? String(err.message).toLowerCase() : "";
         trackCheckoutError(normalizedError.includes("network") ? "NETWORK_ERROR" : "UNKNOWN_ERROR");
-        displayError = getUserFacingErrorMessage(err, "خطا در ثبت سفارش. لطفا مجددا تلاش کنید.");
+        displayError = getUserFacingErrorMessage(err, "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.");
       }
 
       setError(displayError);

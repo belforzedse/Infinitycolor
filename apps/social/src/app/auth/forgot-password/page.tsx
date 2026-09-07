@@ -12,7 +12,7 @@ export default function ForgotPasswordPage() {
   return (
     <div className="mx-auto w-full">
       <AuthReturnButton href="/auth" label="بازگشت به ورود" preserveRedirect />
-      <AuthTitle subtitle="لطفا شماره همراه خود را جهت بازیابی رمز وارد نمایید">
+      <AuthTitle subtitle="لطفاً شماره همراه خود را جهت بازیابی رمز وارد نمایید">
         بازیابی رمز عبور
       </AuthTitle>
 

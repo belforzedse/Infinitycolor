@@ -326,7 +326,6 @@ export default function FAQQuestionsPage() {
               onChange={(e) =>
                 setFormData({ ...formData, Question: e.target.value })
               }
-              placeholder="متن سوال را وارد کنید"
               className="w-full rounded-xl border border-slate-100 bg-white px-4 py-2.5 text-sm text-neutral-600 placeholder:text-slate-400 focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary"
             />
           </div>
@@ -339,7 +338,6 @@ export default function FAQQuestionsPage() {
               onChange={(e) =>
                 setFormData({ ...formData, Answer: e.target.value })
               }
-              placeholder="متن پاسخ را وارد کنید"
               rows={6}
               className="w-full rounded-xl border border-slate-100 bg-white px-4 py-2.5 text-sm text-neutral-600 placeholder:text-slate-400 focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary"
             />

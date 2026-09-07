@@ -53,7 +53,7 @@ test.describe("scheduled-publication storefront visibility", () => {
     });
     expect(hiddenPdp?.status()).toBe(404);
     await expect(
-      page.getByRole("heading", { name: "محصول یافت نشد" }),
+      page.getByRole("heading", { name: /محصول پیدا نشد/ }),
     ).toBeVisible();
 
     await page.goto(`/plp/category/${E2E_CATEGORY_SLUG}`, {
@@ -86,7 +86,7 @@ test.describe("scheduled-publication storefront visibility", () => {
     });
     await expect(page.getByTestId("pdp-hero")).toBeVisible({ timeout: 30_000 });
     await expect(
-      page.getByRole("heading", { name: "محصول یافت نشد" }),
+      page.getByRole("heading", { name: /محصول پیدا نشد/ }),
     ).toHaveCount(0);
 
     await page.goto(`/plp/category/${E2E_CATEGORY_SLUG}`, {

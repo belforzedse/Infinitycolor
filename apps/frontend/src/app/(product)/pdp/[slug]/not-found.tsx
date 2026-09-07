@@ -13,9 +13,11 @@ export default function ProductNotFound() {
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-4 py-16 text-center">
       <p className="text-sm font-medium text-infinity-primary">404</p>
-      <h1 className="text-2xl font-semibold text-slate-900">محصول یافت نشد</h1>
+      <h1 className="text-2xl font-semibold text-slate-900">
+        محصول پیدا نشد (<span dir="ltr">404</span>)
+      </h1>
       <p className="max-w-md text-slate-600">
-        محصول مورد نظر در فروشگاه موجود نیست یا دیگر در دسترس نیست.
+        این محصول دیگر در فروشگاه موجود نیست.
       </p>
       <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
         <Link

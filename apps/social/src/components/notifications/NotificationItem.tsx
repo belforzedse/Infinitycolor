@@ -11,7 +11,7 @@ function cx(...parts: (string | false | undefined)[]): string {
 const KIND_LABELS: Record<NotificationKind, string> = {
   site_message: "پیام سایت",
   comment_reply: "پاسخ داد به کامنت شما",
-  comment_approved: "دیدگاه شما تایید شد",
+  comment_approved: "دیدگاه شما تأیید شد",
   comment_liked: "پسندیدن دیدگاه شما",
 };
 

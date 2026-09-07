@@ -53,7 +53,7 @@ export default function RegisterInfoPage() {
     if (phoneToUse) {
       setFormData((prev) => ({ ...prev, phoneNumber: phoneToUse }));
     } else {
-      toast.error("لطفا ابتدا شماره خود را تایید کنید.");
+      toast.error("لطفاً ابتدا شماره خود را تأیید کنید.");
       router.replace("/auth");
     }
   }, [router, searchParams]);
@@ -109,7 +109,7 @@ export default function RegisterInfoPage() {
       }
     } catch (error: unknown) {
       console.error(error);
-      toast.error(getUserFacingErrorMessage(error, "خطا در ثبت اطلاعات. لطفا دوباره تلاش کنید"));
+      toast.error(getUserFacingErrorMessage(error, "خطا در ثبت اطلاعات. لطفاً دوباره تلاش کنید"));
     } finally {
       setIsLoading(false);
     }
@@ -124,7 +124,7 @@ export default function RegisterInfoPage() {
 
   return (
     <div className="space-y-8" dir="rtl">
-      <AuthTitle subtitle="لطفا اطلاعات خود را تکمیل نمایید">ایجاد حساب کاربری</AuthTitle>
+      <AuthTitle subtitle="لطفاً اطلاعات خود را تکمیل نمایید">ایجاد حساب کاربری</AuthTitle>
       <div>
         <AuthReturnButton href="/" label="بازگشت به فروشگاه" preserveRedirect />
       </div>

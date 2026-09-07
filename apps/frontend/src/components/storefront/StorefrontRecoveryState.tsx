@@ -61,6 +61,14 @@ export default function StorefrontRecoveryState({
         <p className="mx-auto mt-3 max-w-lg text-sm leading-7 text-slate-600 sm:text-base">
           {message}
         </p>
+        {error?.digest ? (
+          <p className="mt-3 text-xs text-slate-500">
+            کد پیگیری:{" "}
+            <span className="font-mono" dir="ltr">
+              {error.digest}
+            </span>
+          </p>
+        ) : null}
 
         <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
           {onRetry && (

@@ -13,7 +13,7 @@ export default function UserError({
     <StorefrontRecoveryState
       surface="account"
       title="دریافت اطلاعات حساب کامل نشد"
-      message="اطلاعات حساب نمایش داده نشد و هیچ تغییری ثبت نشده است. دوباره تلاش کنید."
+      message="هیچ تغییری در حساب شما ثبت نشده است. دوباره تلاش کنید."
       error={error}
       onRetry={reset}
       secondaryHref="/account"

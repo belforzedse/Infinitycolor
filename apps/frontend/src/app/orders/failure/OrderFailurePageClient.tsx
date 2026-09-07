@@ -54,7 +54,7 @@ export default function OrderFailure() {
 
           <div className="mb-6 text-gray-700">
             <p className="mb-2">
-              متاسفانه، پرداخت شما با مشکل مواجه شد و سفارش شما تکمیل نشده است.
+              متأسفانه، پرداخت شما با مشکل مواجه شد و سفارش شما تکمیل نشده است.
             </p>
             {resolvedOrderNumber && (
               <p className="text-sm">

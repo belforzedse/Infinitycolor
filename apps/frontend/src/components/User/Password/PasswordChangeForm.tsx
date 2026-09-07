@@ -41,9 +41,9 @@ export default function PasswordChangeForm() {
       try {
         await AuthService.sendOTP(userData.Phone);
         setOtpSent(true);
-        toast.success("کد تایید ارسال شد");
+        toast.success("کد تأیید ارسال شد");
       } catch (error) {
-        const friendly = getUserFacingErrorMessage(error, "ارسال کد تایید با خطا مواجه شد");
+        const friendly = getUserFacingErrorMessage(error, "ارسال کد تأیید با خطا مواجه شد");
         toast.error(friendly);
       } finally {
         setIsSubmitting(false);
@@ -52,7 +52,7 @@ export default function PasswordChangeForm() {
     }
 
     if (!formData.otp) {
-      toast.error("کد تایید را وارد کنید");
+      toast.error("کد تأیید را وارد کنید");
       setIsSubmitting(false);
       return;
     }
@@ -115,7 +115,7 @@ export default function PasswordChangeForm() {
           </div>
           {otpSent && (
             <div className="space-y-2">
-              <label className="text-sm font-medium text-right text-foreground-primary">کد تایید</label>
+              <label className="text-sm font-medium text-right text-foreground-primary">کد تأیید</label>
               <input
                 type="text"
                 value={formData.otp}
@@ -146,10 +146,10 @@ export default function PasswordChangeForm() {
             <span className="text-sm font-medium">
               {isSubmitting
                 ? otpSent
-                  ? "در حال تایید..."
+                  ? "در حال تأیید..."
                   : "در حال ارسال..."
                 : otpSent
-                ? "تایید و تغییر"
+                ? "تأیید و تغییر"
                 : "ارسال کد"}
             </span>
           </Button>

@@ -13,7 +13,7 @@ export default function PLPError({
     <StorefrontRecoveryState
       surface="catalog"
       title="دریافت محصولات انجام نشد"
-      message="این وضعیت به معنی خالی بودن فروشگاه نیست. اتصال برقرار نشد؛ دوباره تلاش کنید."
+      message="اتصال برقرار نشد. دوباره تلاش کنید."
       error={error}
       onRetry={reset}
     />

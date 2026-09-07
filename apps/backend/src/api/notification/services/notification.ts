@@ -85,7 +85,7 @@ export default factories.createCoreService("api::notification.notification", ({ 
       recipientId,
       kind: "comment_approved",
       postId,
-      title: "دیدگاه شما تایید شد",
+      title: "دیدگاه شما تأیید شد",
       body: "دیدگاه شما منتشر شد و اکنون برای همه نمایش داده می‌شود.",
       link: `/post/${postSlug}`,
     });

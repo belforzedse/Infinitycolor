@@ -54,6 +54,14 @@ export default function GlobalError({
             <p style={{ margin: "16px 0 24px", lineHeight: 1.9, color: "#475569" }}>
               هیچ تغییری از دست نرفته است. دوباره تلاش کنید یا به فروشگاه برگردید.
             </p>
+            {error.digest ? (
+              <p style={{ margin: "-12px 0 24px", fontSize: "13px", color: "#64748b" }}>
+                کد پیگیری:{" "}
+                <span dir="ltr" style={{ fontFamily: "monospace" }}>
+                  {error.digest}
+                </span>
+              </p>
+            ) : null}
             <div
               style={{
                 display: "flex",

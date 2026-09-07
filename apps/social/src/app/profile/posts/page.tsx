@@ -328,7 +328,7 @@ function PendingCommentsTable({
                         className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:pointer-events-none disabled:opacity-50"
                       >
                         <Check className="size-4" strokeWidth={1.8} aria-hidden />
-                        تایید
+                        تأیید
                       </button>
                       <button
                         type="button"
@@ -495,7 +495,7 @@ function ProfilePostsPageInner() {
     try {
       if (action === "approve") {
         await approvePostComment(comment.id);
-        toast.success("دیدگاه تایید شد.");
+        toast.success("دیدگاه تأیید شد.");
       } else {
         await rejectPostComment(comment.id);
         toast.success("دیدگاه رد شد.");
@@ -506,7 +506,7 @@ function ProfilePostsPageInner() {
       toast.error(
         getUserFacingErrorMessage(
           error,
-          action === "approve" ? "تایید دیدگاه ناموفق بود." : "رد دیدگاه ناموفق بود.",
+          action === "approve" ? "تأیید دیدگاه ناموفق بود." : "رد دیدگاه ناموفق بود.",
         ),
       );
     } finally {
@@ -626,7 +626,7 @@ function ProfilePostsPageInner() {
       ) : pendingComments.length === 0 ? (
         <EmptyState
           icon={MessageSquareText}
-          title="دیدگاه در انتظار تایید ندارید"
+          title="دیدگاه در انتظار تأیید ندارید"
           description="دیدگاه‌های جدیدی که نیاز به بررسی داشته باشند اینجا نمایش داده می‌شوند."
         />
       ) : (

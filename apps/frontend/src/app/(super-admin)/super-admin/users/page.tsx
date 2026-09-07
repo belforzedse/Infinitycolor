@@ -68,7 +68,7 @@ export default function UsersPage() {
         },
         {
           id: "[confirmed]",
-          title: "تایید شده",
+          title: "تأیید شده",
           type: "boolean",
         },
       ]}

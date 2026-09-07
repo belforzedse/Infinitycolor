@@ -139,7 +139,7 @@ export default function BlogDashboard() {
     },
     {
       title: "بررسی نظرات",
-      description: "تایید و مدیریت نظرات کاربران",
+      description: "تأیید و مدیریت نظرات کاربران",
       href: "/blog/comments",
       icon: MessageSquare,
       color: "bg-yellow-500",
@@ -148,7 +148,7 @@ export default function BlogDashboard() {
 
   return (
     <ContentWrapper
-      title="داشبورد وبلاگ"
+      title="پیشخوان وبلاگ"
       hasAddButton
       addButtonText="پست جدید"
       addButtonPath="/blog/posts/add"

@@ -9,11 +9,10 @@ interface ErrorNotificationProps {
 }
 
 /**
- * Friendly error notification component
- * Shows user-friendly messages for common HTTP errors
- * 401: Not authenticated - offer to login
- * 403: Forbidden - explain permission denied
- * Others: Generic error message
+ * Friendly error notification component.
+ * This is a transient notification, not a full page, so it never shows an HTTP
+ * status code or raw error text - only what happened and what to do next.
+ * 401 additionally offers a login link.
  */
 export function ErrorNotification({ status, message, onDismiss }: ErrorNotificationProps) {
   const [isVisible, setIsVisible] = useState(true);
@@ -22,37 +21,30 @@ export function ErrorNotification({ status, message, onDismiss }: ErrorNotificat
     switch (code) {
       case 401:
         return {
-          title: "ورود مورد نیاز",
-          message: message || "شما وارد نشده‌اید. لطفاً برای ادامه وارد حساب کاربری خود شوید.",
+          title: "برای ادامه وارد شوید",
+          message: message || "برای دیدن این بخش باید وارد حساب خود شوید.",
           icon: "🔐",
           action: { label: "ورود", href: "/auth" },
         };
       case 403:
         return {
-          title: "دسترسی محدود",
-          message: message || "شما اجازه دسترسی به این منطقه را ندارید.",
+          title: "دسترسی ندارید",
+          message: message || "این بخش برای حساب شما در دسترس نیست.",
           icon: "⛔",
           action: null,
         };
       case 404:
         return {
-          title: "یافت نشد",
-          message: message || "صفحه یا منبع مورد نظر وجود ندارد.",
+          title: "پیدا نشد",
+          message: message || "چیزی که دنبالش بودید دیگر در دسترس نیست.",
           icon: "🔍",
-          action: null,
-        };
-      case 500:
-        return {
-          title: "خطای سرور",
-          message: message || "خطایی در سرور رخ داد. لطفاً بعداً دوباره تلاش کنید.",
-          icon: "⚠️",
           action: null,
         };
       default:
         return {
-          title: "خطا",
-          message: message || "خطای نامشخصی رخ داد.",
-          icon: "❌",
+          title: "انجام نشد",
+          message: message || "درخواست شما انجام نشد. دوباره تلاش کنید.",
+          icon: "⚠️",
           action: null,
         };
     }

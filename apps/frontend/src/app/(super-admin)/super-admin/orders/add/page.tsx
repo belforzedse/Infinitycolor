@@ -295,7 +295,7 @@ export default function Page() {
           status: stockError?.response?.status,
         });
         // Show error to user since stock is critical
-        toast.error("هشدار: موجودی کاهش نیافت. لطفا به صورت دستی بررسی کنید.");
+        toast.error("هشدار: موجودی کاهش نیافت. لطفاً به صورت دستی بررسی کنید.");
         // Don't fail the order creation, but log the error prominently
       }
 
@@ -314,7 +314,7 @@ export default function Page() {
       // Check if this is a form validation error
       if (false && error?.message === "2 errors occurred") {
         logger.warn("Form validation error detected");
-        toast.error("خطای اعتبارسنجی فرم - لطفا فیلدهای الزامی را بررسی کنید");
+        toast.error("خطای اعتبارسنجی فرم - لطفاً فیلدهای الزامی را بررسی کنید");
         return;
       }
 
@@ -335,7 +335,7 @@ export default function Page() {
     }
 
     if (selectedItems.length === 0) {
-      toast.error("لطفا ابتدا محصولات را اضافه کنید");
+      toast.error("لطفاً ابتدا محصولات را اضافه کنید");
       return;
     }
 
@@ -512,7 +512,7 @@ export default function Page() {
       {/* Confirmation Dialog */}
       <ConfirmDialog
         isOpen={showConfirmDialog}
-        title="تایید ثبت سفارش"
+        title="تأیید ثبت سفارش"
         description={`فیلدهای زیر خالی هستند: ${missingFields.join(", ")}. آیا مطمئن هستید که می‌خواهید سفارش را ثبت کنید؟`}
         confirmText="ثبت سفارش"
         cancelText="انصراف"

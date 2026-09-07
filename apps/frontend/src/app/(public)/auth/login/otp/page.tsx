@@ -8,8 +8,8 @@ import { redirectLegacyAuthPage } from "@/lib/central-auth-redirect";
 export const instant = false;
 
 export const metadata: Metadata = {
-  title: "ورود با کد تایید",
-  description: "ورود به حساب کاربری با کد تایید پیامکی.",
+  title: "ورود با کد تأیید",
+  description: "ورود به حساب کاربری با کد تأیید پیامکی.",
   robots: { index: false, follow: false },
   alternates: { canonical: "/auth/login/otp" },
 };

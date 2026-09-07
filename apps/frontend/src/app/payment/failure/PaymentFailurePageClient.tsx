@@ -86,7 +86,7 @@ function PaymentFailureContent() {
           </h1>
 
           <p className="text-gray-700 mb-6 text-lg">
-            متاسفانه، پرداخت شما با مشکل مواجه شد و تکمیل نشده است.
+            متأسفانه، پرداخت شما با مشکل مواجه شد و تکمیل نشده است.
           </p>
 
           {/* Error Details */}

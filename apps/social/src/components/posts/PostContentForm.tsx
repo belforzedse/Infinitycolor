@@ -114,7 +114,7 @@ export function PostContentForm({
       .filter((id): id is number => id != null);
 
     if (coverId == null || mediaIds.length !== gallery.items.length) {
-      toast.error("لطفا صبر کنید تا آپلود همه رسانه ها کامل شود.");
+      toast.error("لطفاً صبر کنید تا آپلود همه رسانه ها کامل شود.");
       return;
     }
 

@@ -159,7 +159,7 @@ export default function WalletAdjustCard({ userId }: Props) {
           </label>
           <textarea
             rows={2}
-            placeholder="دلیل تغییر موجودی را وارد کنید"
+            placeholder="مثلاً عودت وجه سفارش ۱۲۳۴۵"
             className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -256,7 +256,7 @@ export default function WalletAdjustCard({ userId }: Props) {
               >
                 <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 align-middle shadow-xl transition-all">
                   <Dialog.Title as="h3" className="mb-4 text-lg font-bold text-neutral-900">
-                    تایید تغییر موجودی
+                    تأیید تغییر موجودی
                   </Dialog.Title>
                   <div className="mb-6 space-y-2 text-sm text-neutral-700">
                     <p>
@@ -294,7 +294,7 @@ export default function WalletAdjustCard({ userId }: Props) {
                       onClick={handleApply}
                       disabled={submitting || projectedNegative}
                     >
-                      {submitting ? "در حال اعمال..." : "تایید و اعمال"}
+                      {submitting ? "در حال اعمال..." : "تأیید و اعمال"}
                     </button>
                     <button
                       type="button"

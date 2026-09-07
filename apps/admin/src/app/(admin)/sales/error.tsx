@@ -22,7 +22,7 @@ export default function SalesError({
   return (
     <AdminCard padded={false}>
       <ErrorState
-        title="بارگذاری این گزارش ناموفق بود"
+        title="بارگذاری این گزارش انجام نشد"
         description={
           process.env.NODE_ENV === "development" ? error.message : undefined
         }

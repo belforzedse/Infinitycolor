@@ -307,7 +307,7 @@ export function useUpload({
         });
       }
     } catch (error: any) {
-      toast.error("خطا در آپلود فایل‌ها. لطفا دوباره تلاش کنید.");
+      toast.error("خطا در آپلود فایل‌ها. لطفاً دوباره تلاش کنید.");
       console.error("Error uploading files:", error);
     } finally {
       setUploadingState((prev) => ({ ...prev, [fileType]: false }));

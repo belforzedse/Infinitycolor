@@ -54,7 +54,7 @@ describe("ConfirmDialog", () => {
       />,
     );
 
-    expect(screen.getByText("تایید عملیات")).toBeInTheDocument();
+    expect(screen.getByText("تأیید عملیات")).toBeInTheDocument();
   });
 
   it("should render custom title", () => {
@@ -104,7 +104,7 @@ describe("ConfirmDialog", () => {
       />,
     );
 
-    expect(screen.getByText("تایید")).toBeInTheDocument();
+    expect(screen.getByText("تأیید")).toBeInTheDocument();
   });
 
   it("should render custom confirm button text", () => {

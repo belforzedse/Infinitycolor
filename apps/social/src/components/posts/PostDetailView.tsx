@@ -665,8 +665,8 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
         setSubmitHint(null);
         toast.success(replyTarget ? "پاسخ ثبت شد." : "دیدگاه ثبت شد.");
       } else {
-        setSubmitHint("دیدگاه شما بعد از تایید نمایش داده می‌شود.");
-        toast.success(replyTarget ? "پاسخ ثبت شد و در انتظار تایید است." : "دیدگاه ثبت شد و در انتظار تایید است.");
+        setSubmitHint("دیدگاه شما بعد از تأیید نمایش داده می‌شود.");
+        toast.success(replyTarget ? "پاسخ ثبت شد و در انتظار تأیید است." : "دیدگاه ثبت شد و در انتظار تأیید است.");
       }
     } catch (error: unknown) {
       const message = getUserFacingErrorMessage(error, "ثبت دیدگاه ناموفق بود.");

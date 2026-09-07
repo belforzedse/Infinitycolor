@@ -197,7 +197,7 @@ export default function ProductsCommentsPage() {
               type="button"
               onClick={() => handleStatusChange(row.original.id, "Accepted")}
               className="flex h-8 w-8 items-center justify-center rounded-md bg-green-50 text-green-600 transition-colors hover:bg-green-100"
-              title="تایید"
+              title="تأیید"
             >
               <CheckCircle className="h-4 w-4" />
             </button>
@@ -253,7 +253,7 @@ export default function ProductsCommentsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-neutral-900">{approvedCount}</p>
-                <p className="text-sm text-neutral-500">تایید شده</p>
+                <p className="text-sm text-neutral-500">تأیید شده</p>
               </div>
             </div>
           </div>
@@ -289,8 +289,8 @@ export default function ProductsCommentsPage() {
               className="w-full appearance-none rounded-xl border border-slate-100 bg-slate-50 px-4 py-2.5 text-sm text-neutral-700 focus:border-infinity-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-infinity-primary/10"
             >
               <option value="all">همه وضعیت‌ها</option>
-              <option value="Need for Review">در انتظار تایید</option>
-              <option value="Accepted">تایید شده</option>
+              <option value="Need for Review">در انتظار تأیید</option>
+              <option value="Accepted">تأیید شده</option>
               <option value="Rejected">رد شده</option>
             </select>
           </div>
@@ -379,7 +379,7 @@ export default function ProductsCommentsPage() {
                   }}
                   className="rounded-lg bg-green-500 px-4 py-2 text-xs font-bold text-white hover:bg-green-600 transition-colors"
                 >
-                  تایید
+                  تأیید
                 </button>
                 <button
                   type="button"

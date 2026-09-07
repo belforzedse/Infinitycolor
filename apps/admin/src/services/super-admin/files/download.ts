@@ -48,7 +48,7 @@ export const Download = async (id: string): Promise<FileResponse> => {
     return response.data;
   } catch (error: any) {
     console.error("Error downloading file:", error);
-    toast.error("خطا در دریافت فایل. لطفا دوباره تلاش کنید.");
+    toast.error("خطا در دریافت فایل. لطفاً دوباره تلاش کنید.");
     throw error;
   }
 };

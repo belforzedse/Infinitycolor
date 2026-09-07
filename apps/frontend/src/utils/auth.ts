@@ -58,7 +58,7 @@ export const handleAuthErrors = (error?: any, isAdminCheck?: boolean): void => {
     if (!isJest) {
       const notification = addErrorNotification(
         401,
-        getUserFacingErrorMessage(error, "برای ادامه وارد حساب کاربری خود شوید"),
+        getUserFacingErrorMessage(error, "برای دیدن این بخش باید وارد حساب خود شوید."),
       );
       jotaiStore.set(errorNotificationsAtom, (prev) => [...prev, notification]);
     }
@@ -73,7 +73,7 @@ export const handleAuthErrors = (error?: any, isAdminCheck?: boolean): void => {
     if (!isJest) {
       const notification = addErrorNotification(
         403,
-        getUserFacingErrorMessage(error, "شما اجازه دسترسی به این منطقه را ندارید"),
+        getUserFacingErrorMessage(error, "این بخش برای حساب شما در دسترس نیست."),
       );
       jotaiStore.set(errorNotificationsAtom, (prev) => [...prev, notification]);
     }
@@ -84,7 +84,7 @@ export const handleAuthErrors = (error?: any, isAdminCheck?: boolean): void => {
   if (isNotAdmin && !isJest) {
     const notification = addErrorNotification(
       403,
-      "این صفحه فقط برای مدیران دسترسی دارد",
+      "این صفحه فقط برای مدیران در دسترس است.",
     );
     jotaiStore.set(errorNotificationsAtom, (prev) => [...prev, notification]);
   }

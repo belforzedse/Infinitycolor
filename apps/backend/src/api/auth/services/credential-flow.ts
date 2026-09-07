@@ -14,7 +14,7 @@ export const PHONE_PASSWORD_REQUIRED_MESSAGE = "شماره همراه و رمز 
 export const OTP_MAX_ATTEMPTS = 5;
 const ACCOUNT_UNAVAILABLE_MESSAGE = "احراز هویت ناموفق بود. دوباره تلاش کنید.";
 const PHONE_IDENTITY_AMBIGUOUS_MESSAGE =
-  "این شماره همراه به بیش از یک حساب متصل است. لطفا با پشتیبانی تماس بگیرید.";
+  "این شماره همراه به بیش از یک حساب متصل است. لطفاً با پشتیبانی تماس بگیرید.";
 
 interface OtpChallenge {
   code: string;
@@ -95,7 +95,7 @@ export async function createOtpChallenge(ctx: any, phone: string): Promise<strin
   );
   if (stored !== "OK") {
     throw new CredentialFlowError(
-      "ارسال کد تایید ناموفق بود. دوباره تلاش کنید.",
+      "ارسال کد تأیید ناموفق بود. دوباره تلاش کنید.",
       503,
       "OTP_STORE_FAILED",
     );
@@ -109,7 +109,7 @@ export async function createOtpChallenge(ctx: any, phone: string): Promise<strin
   if (smsStatus !== 200) {
     await redis.del(challengeId);
     throw new CredentialFlowError(
-      "ارسال کد تایید ناموفق بود. دوباره تلاش کنید.",
+      "ارسال کد تأیید ناموفق بود. دوباره تلاش کنید.",
       502,
       "OTP_SEND_FAILED",
     );

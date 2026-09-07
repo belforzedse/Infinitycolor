@@ -32,12 +32,12 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
 
     // Form validation
     if (rating === 0) {
-      setFormError("لطفا یک امتیاز برای محصول انتخاب کنید");
+      setFormError("لطفاً یک امتیاز برای محصول انتخاب کنید");
       return;
     }
 
     if (comment.trim().length < 10) {
-      setFormError("لطفا حداقل 10 کاراکتر برای دیدگاه خود وارد کنید");
+      setFormError("لطفاً حداقل 10 کاراکتر برای دیدگاه خود وارد کنید");
       return;
     }
 
@@ -58,7 +58,7 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
       onClose();
 
       // Show success message
-      toast.success("دیدگاه شما با موفقیت ثبت شد و پس از تایید نمایش داده خواهد شد");
+      toast.success("دیدگاه شما با موفقیت ثبت شد و پس از تأیید نمایش داده خواهد شد");
     } catch (error: any) {
       console.error("Error submitting review:", error);
 
@@ -68,7 +68,7 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
         error.status === 403 ||
         error.message === "Authentication required"
       ) {
-        toast.error("لطفا ابتدا وارد حساب کاربری خود شوید");
+        toast.error("لطفاً ابتدا وارد حساب کاربری خود شوید");
         // Redirect to login page after a short delay
         setTimeout(() => {
           router.push("/auth");
@@ -76,7 +76,7 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
         return;
       }
 
-      setFormError("خطا در ثبت دیدگاه. لطفا مجددا تلاش کنید.");
+      setFormError("خطا در ثبت دیدگاه. لطفاً مجددا تلاش کنید.");
     } finally {
       setIsSubmitting(false);
     }

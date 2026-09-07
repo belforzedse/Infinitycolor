@@ -5,7 +5,7 @@
 
 const OTP_INVALID_MESSAGE = "کد وارد شده نامعتبر یا منقضی شده است. دوباره تلاش کنید.";
 const LOGIN_FAILED_MESSAGE = "ورود ناموفق بود. دوباره تلاش کنید.";
-const OTP_SEND_FAILED_MESSAGE = "ارسال کد تایید ناموفق بود. دوباره تلاش کنید.";
+const OTP_SEND_FAILED_MESSAGE = "ارسال کد تأیید ناموفق بود. دوباره تلاش کنید.";
 const UNAUTHORIZED_MESSAGE = "احراز هویت ناموفق بود. دوباره تلاش کنید.";
 const PHONE_PASSWORD_REQUIRED_MESSAGE = "شماره همراه و رمز عبور الزامی است.";
 const USER_NOT_FOUND_OR_PASSWORD_INCORRECT = "شماره همراه یا رمز عبور اشتباه است.";

@@ -166,7 +166,7 @@ export default function SuperAdminOrderSidebar({
 
   const handlePrintPreInvoice = () => {
     if (!orderData || selectedItems.length === 0) {
-      toast.error("لطفا ابتدا محصولات را اضافه کنید");
+      toast.error("لطفاً ابتدا محصولات را اضافه کنید");
       return;
     }
 
@@ -252,7 +252,7 @@ export default function SuperAdminOrderSidebar({
                   toast.error("خطا در باز کردن پنجره چاپ");
                 }
               } else {
-                toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                toast.error("لطفاً ابتدا سفارش را ذخیره کنید");
               }
             }}
             className="flex h-11 w-full items-center justify-center gap-1 rounded-md bg-slate-100 md:h-10"
@@ -270,7 +270,7 @@ export default function SuperAdminOrderSidebar({
                   e.preventDefault();
                   e.stopPropagation();
                   if (!id) {
-                    toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                    toast.error("لطفاً ابتدا سفارش را ذخیره کنید");
                   } else if (barcodeUi.action === "submit") {
                     setShowBarcodeDialog(true);
                   } else if (barcodeUi.action === "check") {

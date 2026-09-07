@@ -325,7 +325,7 @@ export const MobileTable = ({ data }: Props) => {
             valueCaption="موجودی کیف پول"
             meta={[
               getRoleLabel(row),
-              row.confirmed ? "تایید شده" : "تایید نشده",
+              row.confirmed ? "تأیید شده" : "تأیید نشده",
             ]}
             actions={<ActionsCell row={{ original: rowWithStringId } as Row<User>} />}
           />

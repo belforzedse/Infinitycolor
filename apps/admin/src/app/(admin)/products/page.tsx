@@ -264,7 +264,7 @@ export default function ProductsPage() {
 
             if (failedIds.length > 0) {
               toast.error(
-                `خطا در حذف ${failedIds.length} محصول. لطفا دوباره سعی کنید.`,
+                `خطا در حذف ${failedIds.length} محصول. لطفاً دوباره سعی کنید.`,
               );
             }
 
@@ -314,7 +314,7 @@ export default function ProductsPage() {
 
             if (failedIds.length > 0) {
               toast.error(
-                `خطا در بازیابی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`,
+                `خطا در بازیابی ${failedIds.length} محصول. لطفاً دوباره سعی کنید.`,
               );
             }
 
@@ -611,7 +611,7 @@ export default function ProductsPage() {
 
           if (failedIds.length > 0) {
             toast.error(
-              `خطا در حذف دائمی ${failedIds.length} محصول. لطفا دوباره سعی کنید.`,
+              `خطا در حذف دائمی ${failedIds.length} محصول. لطفاً دوباره سعی کنید.`,
             );
           }
 

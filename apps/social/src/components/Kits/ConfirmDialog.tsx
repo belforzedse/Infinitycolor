@@ -17,9 +17,9 @@ export type ConfirmDialogProps = {
  */
 export default function ConfirmDialog({
   isOpen,
-  title = "تایید عملیات",
+  title = "تأیید عملیات",
   description,
-  confirmText = "تایید",
+  confirmText = "تأیید",
   cancelText = "انصراف",
   onConfirm,
   onCancel,

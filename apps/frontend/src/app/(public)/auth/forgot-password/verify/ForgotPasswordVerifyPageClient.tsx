@@ -28,7 +28,7 @@ function VerifyContent() {
       } catch (error: unknown) {
         const friendlyMessage = getUserFacingErrorMessage(
           error,
-          "کد تایید ارسال نشده است",
+          "کد تأیید ارسال نشده است",
         );
         toast.error(friendlyMessage);
       }
@@ -40,7 +40,7 @@ function VerifyContent() {
   return (
     <div className="mx-auto w-full">
       <AuthReturnButton href="/auth/forgot-password" label="بازگشت" preserveRedirect />
-      <AuthTitle subtitle={`لطفا کد تایید ارسال شده  به شماره همراه ${phoneNumber} را وارد نمایید`}>
+      <AuthTitle subtitle={`لطفاً کد تأیید ارسال شده  به شماره همراه ${phoneNumber} را وارد نمایید`}>
         بازیابی رمز عبور
       </AuthTitle>
 
@@ -48,9 +48,9 @@ function VerifyContent() {
         resendCode={async () => {
           try {
             await AuthService.sendOTP(phoneNumber || "");
-            toast.success("کد تایید دوباره ارسال شد");
+            toast.success("کد تأیید دوباره ارسال شد");
           } catch (error: unknown) {
-            const friendlyMessage = getUserFacingErrorMessage(error, "خطا در ارسال کد تایید");
+            const friendlyMessage = getUserFacingErrorMessage(error, "خطا در ارسال کد تأیید");
             const errorStatus = extractErrorStatus(error);
 
             if (errorStatus === 429) {
@@ -80,12 +80,12 @@ function VerifyContent() {
               const redirectQuery = redirectParam ? `?redirect=${encodeURIComponent(redirectParam)}` : "";
               router.push(`/auth/login${redirectQuery}`);
             } else {
-              toast.error("کد تایید اشتباه است");
+              toast.error("کد تأیید اشتباه است");
             }
           } catch (error: unknown) {
             const friendlyMessage = getUserFacingErrorMessage(
               error,
-              "کد تایید یا توکن معتبر نیست",
+              "کد تأیید معتبر نیست یا لینک بازیابی منقضی شده است",
             );
             const errorStatus = extractErrorStatus(error);
 

@@ -51,7 +51,7 @@ const PAYMENT_STATUS_MAP: Record<string, StatusMeta> = {
 
 const CONTRACT_STATUS_MAP: Record<string, string> = {
   "not ready": "آماده نشده",
-  confirmed: "تایید شده",
+  confirmed: "تأیید شده",
   finished: "تکمیل شده",
   failed: "ناموفق",
   cancelled: "لغو شده",
@@ -66,10 +66,10 @@ const CART_STATUS_MAP: Record<string, string> = {
 };
 
 const COMMENT_STATUS_MAP: Record<string, string> = {
-  accepted: "تایید شده",
+  accepted: "تأیید شده",
   rejected: "رد شده",
   pending: "در حال بررسی",
-  "need for review": "در انتظار تایید",
+  "need for review": "در انتظار تأیید",
 };
 
 const ORDER_LOG_TRANSLATIONS: Array<{ key: string; label: string }> = [

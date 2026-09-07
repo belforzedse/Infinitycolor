@@ -50,7 +50,7 @@ export default function NotFound() {
           <p className="text-lg mb-8 leading-relaxed text-gray-600">
             صفحه‌ای که دنبالش می‌گردید وجود ندارد یا منتقل شده است.
             <br />
-            با استفاده از لینک‌های زیر می‌تونید به مسیر درست برگردید.
+            با لینک‌های زیر می‌توانید به مسیر درست برگردید.
           </p>
 
           {/* Action buttons */}
@@ -80,7 +80,7 @@ export default function NotFound() {
               <h3 className="text-lg font-semibold text-gray-800">راهنمایی</h3>
             </div>
             <p className="text-right leading-relaxed text-gray-700">
-              اگر فکر می‌کنید این یک خطاست، لطفاً آدرس URL را بررسی کنید یا از منوی اصلی سایت
+              اگر فکر می‌کنید اشتباهی رخ داده، نشانی صفحه را بررسی کنید یا از منوی اصلی سایت
               استفاده کنید.
             </p>
           </div>

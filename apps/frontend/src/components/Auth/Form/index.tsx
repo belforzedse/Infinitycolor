@@ -19,7 +19,7 @@ export default function AuthForm() {
 
   return (
     <>
-      <AuthTitle subtitle="لطفا شماره همراه خود را جهت بررسی وارد نمایید">
+      <AuthTitle subtitle="لطفاً شماره همراه خود را جهت بررسی وارد نمایید">
         ورود به حساب کاربری
       </AuthTitle>
       <div className="mb-6">

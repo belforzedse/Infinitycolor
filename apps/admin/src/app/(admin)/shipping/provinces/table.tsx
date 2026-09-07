@@ -34,7 +34,7 @@ export const columns: ColumnDef<Province>[] = [
   },
   {
     accessorKey: "attributes.updatedAt",
-    header: "تاریخ به روز رسانی",
+    header: "تاریخ به‌روزرسانی",
     cell: ({ row }) => {
       const date = new Date(row.original?.attributes?.updatedAt);
       return <SuperAdminTableCellFullDate date={date} />;

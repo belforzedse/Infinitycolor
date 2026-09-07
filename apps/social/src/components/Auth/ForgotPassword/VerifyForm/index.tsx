@@ -80,7 +80,7 @@ export default function VerifyForgotPasswordForm({
     <form onSubmit={handleSubmit} className="mt-8 space-y-7">
       <div className="space-y-7">
         <div className="space-y-3">
-          <Text variant="label">کدتایید شماره همراه</Text>
+          <Text variant="label">کدتأیید شماره همراه</Text>
           <div className="flex flex-col items-end">
             <VerificationInput onChange={(value) => setFormData({ ...formData, otp: value })} />
 
@@ -136,7 +136,7 @@ export default function VerifyForgotPasswordForm({
               )
             }
           >
-            تایید
+            تأیید
           </AuthButton>
 
           <AuthButton

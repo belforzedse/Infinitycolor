@@ -366,7 +366,7 @@ function ShoppingCartBillInformationForm({ register, errors, control, setValue }
               options={cityOptions}
               placeholder={
                 !selectedProvince
-                  ? "لطفا ابتدا استان را انتخاب کنید"
+                  ? "لطفاً ابتدا استان را انتخاب کنید"
                   : loadingCities
                     ? "در حال دریافت شهرها..."
                     : "شهر محل سکونت را انتخاب کنید"

@@ -18,10 +18,19 @@ export default function SuperAdminError({
     <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4">
       <div className="max-w-md rounded-3xl bg-white p-8 shadow-xl">
         <div className="mb-6 text-center">
-          <h1 className="text-4xl font-bold text-red-600">خطا!</h1>
+          <h1 className="text-4xl font-bold text-red-600">بارگذاری صفحه انجام نشد</h1>
           <p className="mt-2 text-gray-600">
-            متأسفانه خطایی در این بخش از پنل مدیریت رخ داده است.
+            دوباره تلاش کنید؛ اگر مشکل ادامه داشت، کد پیگیری زیر را به پشتیبانی
+            بدهید.
           </p>
+          {error.digest ? (
+            <p className="mt-3 text-xs text-gray-500">
+              کد پیگیری:{" "}
+              <span className="font-mono" dir="ltr">
+                {error.digest}
+              </span>
+            </p>
+          ) : null}
         </div>
 
         {process.env.NODE_ENV === 'development' && error.message && (
@@ -42,13 +51,13 @@ export default function SuperAdminError({
 
           <Link href="/super-admin" prefetch={false} className="block">
             <button className="w-full rounded-lg border border-infinity-primary-lighter/60 px-6 py-3 font-medium text-infinity-primary transition-colors hover:bg-infinity-primary-lighter/20 active:scale-95">
-              بازگشت به داشبورد
+              بازگشت به پیشخوان
             </button>
           </Link>
         </div>
 
         <p className="mt-6 text-center text-xs text-gray-500">
-          اگر این مشکل ادامه دارد، لطفاً با پشتیبانی تماس بگیرید.
+          اگر مشکل ادامه داشت با پشتیبانی تماس بگیرید.
         </p>
       </div>
     </div>

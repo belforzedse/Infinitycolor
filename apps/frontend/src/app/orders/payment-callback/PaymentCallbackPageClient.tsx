@@ -190,7 +190,7 @@ function PaymentCallbackContent() {
               <div className="h-12 w-12 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
             </div>
             <p className="text-lg">در حال بررسی وضعیت پرداخت...</p>
-            <p className="mt-2 text-sm text-gray-500">لطفا صفحه را نبندید</p>
+            <p className="mt-2 text-sm text-gray-500">لطفاً صفحه را نبندید</p>
           </div>
         ) : error ? (
           <div

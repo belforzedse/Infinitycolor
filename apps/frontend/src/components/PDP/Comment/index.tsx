@@ -38,7 +38,7 @@ export default function PDPComment(props: Props) {
   const handleStatusUpdate = async (id: number, status: "Accepted" | "Rejected") => {
     try {
       await productReviewService.updateStatus(id, status);
-      toast.success(status === "Accepted" ? "دیدگاه تایید شد" : "دیدگاه رد شد");
+      toast.success(status === "Accepted" ? "دیدگاه تأیید شد" : "دیدگاه رد شد");
       await fetchReviews();
     } catch (_error) {
       toast.error("خطا در تغییر وضعیت دیدگاه");

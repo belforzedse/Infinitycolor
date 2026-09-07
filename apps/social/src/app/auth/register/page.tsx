@@ -50,10 +50,10 @@ export default function RegisterPage() {
           const query = params.toString();
           router.push(`/auth/register/info${query ? `?${query}` : ""}`);
         } else {
-          toast.error("کد تایید اشتباه است");
+          toast.error("کد تأیید اشتباه است");
         }
       } catch (error: unknown) {
-        toast.error(getUserFacingErrorMessage(error, "خطا در ارسال کد تایید. لطفا دوباره تلاش کنید"));
+        toast.error(getUserFacingErrorMessage(error, "خطا در ارسال کد تأیید. لطفاً دوباره تلاش کنید"));
       }
     }
   };
@@ -70,7 +70,7 @@ export default function RegisterPage() {
 
   return (
     <div className="space-y-8" dir="rtl">
-      <AuthTitle subtitle={`لطفا کد ارسال شده به شماره همراه ${phoneNumber} را وارد نمایید`}>
+      <AuthTitle subtitle={`لطفاً کد ارسال شده به شماره همراه ${phoneNumber} را وارد نمایید`}>
         ایجاد حساب کاربری
       </AuthTitle>
       <div>
@@ -79,7 +79,7 @@ export default function RegisterPage() {
 
       <form onSubmit={handleSubmit} className="space-y-7">
         <div className="space-y-3">
-          <Text variant="label">کدتایید شماره همراه</Text>
+          <Text variant="label">کدتأیید شماره همراه</Text>
           <div className="flex flex-col items-end gap-4">
             <VerificationInput onChange={setVerificationCode} />
 

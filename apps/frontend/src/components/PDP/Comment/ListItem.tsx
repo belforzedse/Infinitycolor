@@ -136,7 +136,7 @@ export default function PDPCommentListItem({
                     type="button"
                     onClick={() => onStatusUpdate(review.id, "Accepted")}
                     className="rounded-lg bg-green-50 p-1 text-green-600 hover:bg-green-100"
-                    title="تایید"
+                    title="تأیید"
                   >
                     <CheckCircle className="h-3.5 w-3.5" />
                   </button>

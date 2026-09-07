@@ -24,14 +24,14 @@ const SetCategoryTablePagination: React.FC<SetCategoryTablePaginationProps> = ({
 }) => {
   const [selectedPerPage, setSelectedPerPage] = useState<Option>({
     id: itemsPerPage,
-    name: `نمایش ۱ تا ${itemsPerPage} رکورد محصول`,
+    name: `نمایش ۱ تا ${itemsPerPage} محصول`,
   });
 
   const perPageOptions: Option[] = [
-    { id: 25, name: "نمایش ۲۵ رکورد" },
-    { id: 50, name: "نمایش ۵۰ رکورد" },
-    { id: 100, name: "نمایش ۱۰۰ رکورد" },
-    { id: 200, name: "نمایش ۲۰۰ رکورد" },
+    { id: 25, name: "نمایش ۲۵ محصول" },
+    { id: 50, name: "نمایش ۵۰ محصول" },
+    { id: 100, name: "نمایش ۱۰۰ محصول" },
+    { id: 200, name: "نمایش ۲۰۰ محصول" },
   ];
 
   const totalPages = Math.ceil(totalItems / itemsPerPage);

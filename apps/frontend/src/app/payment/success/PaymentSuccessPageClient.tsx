@@ -170,7 +170,7 @@ function PaymentSuccessContent() {
             <h3 className="text-lg font-semibold text-blue-800 mb-3">مراحل بعدی</h3>
             <div className="text-right space-y-2 text-gray-700">
               <p>✅ سفارش شما در حال انجام است</p>
-              <p>✅ ایمیل تایید برای شما ارسال خواهد شد</p>
+              <p>✅ ایمیل تأیید برای شما ارسال خواهد شد</p>
               <p>✅ می‌توانید وضعیت سفارش خود را پیگیری کنید</p>
               <p>✅ کالاها در کمترین زمان ممکن ارسال می‌شوند</p>
             </div>
@@ -204,7 +204,7 @@ function PaymentSuccessContent() {
               onClick={handleViewDashboard}
               className="w-full bg-blue-100 text-blue-800 py-3 px-6 rounded-lg text-center hover:bg-blue-200 transition-colors"
             >
-              رفتن به داشبورد
+              رفتن به حساب کاربری
             </button>
           </div>
         </div>

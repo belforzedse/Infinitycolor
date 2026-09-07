@@ -91,7 +91,7 @@ export default function LoginPage() {
 
   return (
     <div className="mx-auto w-full">
-      <AuthTitle subtitle="لطفا شماره همراه و رمز عبور خود را وارد نمایید">
+      <AuthTitle subtitle="لطفاً شماره همراه و رمز عبور خود را وارد نمایید">
         ورود به حساب کاربری
       </AuthTitle>
       <div className="mb-6">

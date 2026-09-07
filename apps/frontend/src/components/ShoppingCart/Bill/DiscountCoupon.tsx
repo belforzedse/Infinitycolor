@@ -37,7 +37,7 @@ function ShoppingCartBillDiscountCoupon({
 
   const handleApply = async () => {
     if (!code.trim()) {
-      toast.error("لطفا کد تخفیف را وارد کنید");
+      toast.error("لطفاً کد تخفیف را وارد کنید");
       return;
     }
     try {

@@ -44,7 +44,7 @@ describe("ForgotPasswordForm", () => {
   it("should render submit button", () => {
     render(<ForgotPasswordForm onSubmit={mockOnSubmit} />);
 
-    expect(screen.getByText("تایید شماره همراه")).toBeInTheDocument();
+    expect(screen.getByText("تأیید شماره همراه")).toBeInTheDocument();
   });
 
   it("should update phone number on input change", () => {

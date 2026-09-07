@@ -112,7 +112,7 @@ export default function SuperAdminOrderSidebar({
 
   const handlePrintPreInvoice = () => {
     if (!orderData || selectedItems.length === 0) {
-      toast.error("لطفا ابتدا محصولات را اضافه کنید");
+      toast.error("لطفاً ابتدا محصولات را اضافه کنید");
       return;
     }
 
@@ -176,7 +176,7 @@ export default function SuperAdminOrderSidebar({
     try {
       const printWindow = window.open(printUrl, "_blank", "noopener,noreferrer");
       if (!printWindow) {
-        toast.error("لطفا اجازه باز کردن پنجره جدید را بدهید");
+        toast.error("لطفاً اجازه باز کردن پنجره جدید را بدهید");
       }
     } catch (error) {
       toast.error("خطا در باز کردن پیش‌فاکتور");
@@ -210,7 +210,7 @@ export default function SuperAdminOrderSidebar({
                     toast.error("خطا در باز کردن پنجره چاپ");
                   }
                 } else {
-                  toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                  toast.error("لطفاً ابتدا سفارش را ذخیره کنید");
                 }
               }}
               className="flex flex-1 items-center justify-center gap-1 rounded-md bg-slate-100 py-1.5"
@@ -232,7 +232,7 @@ export default function SuperAdminOrderSidebar({
                     toast.error("خطا در باز کردن پنجره چاپ");
                   }
                 } else {
-                  toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                  toast.error("لطفاً ابتدا سفارش را ذخیره کنید");
                 }
               }}
               className="flex flex-1 items-center justify-center gap-1 rounded-md bg-slate-100 py-1.5"
@@ -272,7 +272,7 @@ export default function SuperAdminOrderSidebar({
                   if (id) {
                     setShowBarcodeDialog(true);
                   } else {
-                    toast.error("لطفا ابتدا سفارش را ذخیره کنید");
+                    toast.error("لطفاً ابتدا سفارش را ذخیره کنید");
                   }
                 }}
                 disabled={isGenerating}

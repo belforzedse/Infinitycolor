@@ -186,7 +186,7 @@ export default function OrderStatusActions({
         isOpen={!!pending}
         title={pending?.kind === "cancel" ? "تأیید لغو سفارش" : "تأیید تغییر وضعیت"}
         description={confirmDescription}
-        confirmText={loading ? "در حال انجام..." : pending?.kind === "cancel" ? "لغو سفارش" : "تایید و ذخیره"}
+        confirmText={loading ? "در حال انجام..." : pending?.kind === "cancel" ? "لغو سفارش" : "تأیید و ذخیره"}
         cancelText="انصراف"
         confirmDisabled={
           loading ||

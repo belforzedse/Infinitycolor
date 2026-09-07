@@ -93,7 +93,7 @@ export default function LoginOtpPage() {
 
   return (
     <div className="mx-auto w-full">
-      <AuthTitle subtitle={`لطفا کد ارسال شده به شماره همراه  ${phoneNumber} را وارد نمایید`}>
+      <AuthTitle subtitle={`لطفاً کد ارسال شده به شماره همراه  ${phoneNumber} را وارد نمایید`}>
         ورود به حساب کاربری
       </AuthTitle>
       <div className="mb-6">

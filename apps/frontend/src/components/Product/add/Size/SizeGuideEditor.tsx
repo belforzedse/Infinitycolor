@@ -87,15 +87,15 @@ const SizeGuideEditor: React.FC<SizeGuideEditorProps> = ({
   const handleSave = () => {
     // Validate data
     if (data.some((row) => !row.size)) {
-      alert("لطفا تمام مقادیر سایز را پر کنید");
+      alert("لطفاً تمام مقادیر سایز را پر کنید");
       return;
     }
     if (localColumns.length === 0) {
-      alert("لطفا حداقل یک ستون اندازه‌گیری اضافه کنید");
+      alert("لطفاً حداقل یک ستون اندازه‌گیری اضافه کنید");
       return;
     }
     if (data.some((row) => localColumns.some((col) => !row[col.key]))) {
-      alert("لطفا تمام مقادیر اندازه‌گیری را پر کنید");
+      alert("لطفاً تمام مقادیر اندازه‌گیری را پر کنید");
       return;
     }
     onSave(data);

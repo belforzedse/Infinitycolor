@@ -232,7 +232,6 @@ export default function BlogCategoriesPage() {
               type="text"
               value={formData.Name}
               onChange={(e) => setFormData({ ...formData, Name: e.target.value })}
-              placeholder="نام دسته‌بندی را وارد کنید"
               className="w-full rounded-xl border border-slate-100 bg-white px-4 py-2.5 text-sm text-neutral-600 placeholder:text-slate-400 focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary"
             />
           </div>

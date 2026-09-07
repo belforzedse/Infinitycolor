@@ -143,17 +143,17 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
     e.preventDefault();
 
     if (!selectedCity) {
-      toast.error("لطفا شهر را انتخاب کنید");
+      toast.error("لطفاً شهر را انتخاب کنید");
       return;
     }
 
     if (!postalCode) {
-      toast.error("لطفا کد پستی را وارد کنید");
+      toast.error("لطفاً کد پستی را وارد کنید");
       return;
     }
 
     if (!fullAddress) {
-      toast.error("لطفا آدرس دقیق را وارد کنید");
+      toast.error("لطفاً آدرس دقیق را وارد کنید");
       return;
     }
 
@@ -271,7 +271,7 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
             isLoading={loadingCities}
             placeholder={
               !selectedProvince
-                ? "لطفا ابتدا استان را انتخاب کنید"
+                ? "لطفاً ابتدا استان را انتخاب کنید"
                 : loadingCities
                   ? "در حال دریافت شهرها..."
                   : "شهر محل سکونت خود را انتخاب نمایید"

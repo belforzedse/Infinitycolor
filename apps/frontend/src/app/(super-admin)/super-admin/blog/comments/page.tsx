@@ -25,7 +25,7 @@ import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 const statusConfig = {
   Pending: { label: "در انتظار", className: "bg-yellow-100 text-yellow-700", icon: Clock },
-  Approved: { label: "تایید شده", className: "bg-green-100 text-green-700", icon: CheckCircle },
+  Approved: { label: "تأیید شده", className: "bg-green-100 text-green-700", icon: CheckCircle },
   Rejected: { label: "رد شده", className: "bg-red-100 text-red-700", icon: XCircle },
 };
 
@@ -206,7 +206,7 @@ export default function BlogCommentsPage() {
               type="button"
               onClick={() => handleStatusChange(row.original.id, "Approved")}
               className="flex h-8 w-8 items-center justify-center rounded-md bg-green-50 text-green-600 transition-colors hover:bg-green-100"
-              title="تایید"
+              title="تأیید"
             >
               <CheckCircle className="h-4 w-4" />
             </button>
@@ -251,7 +251,7 @@ export default function BlogCommentsPage() {
               </div>
               <div>
                 <p className="text-2xl font-semibold text-neutral-900">{pendingCount}</p>
-                <p className="text-sm text-neutral-500">در انتظار تایید</p>
+                <p className="text-sm text-neutral-500">در انتظار تأیید</p>
               </div>
             </div>
           </div>
@@ -262,7 +262,7 @@ export default function BlogCommentsPage() {
               </div>
               <div>
                 <p className="text-2xl font-semibold text-neutral-900">{approvedCount}</p>
-                <p className="text-sm text-neutral-500">تایید شده</p>
+                <p className="text-sm text-neutral-500">تأیید شده</p>
               </div>
             </div>
           </div>
@@ -299,7 +299,7 @@ export default function BlogCommentsPage() {
             >
               <option value="all">همه وضعیت‌ها</option>
               <option value="Pending">در انتظار</option>
-              <option value="Approved">تایید شده</option>
+              <option value="Approved">تأیید شده</option>
               <option value="Rejected">رد شده</option>
             </select>
           </div>

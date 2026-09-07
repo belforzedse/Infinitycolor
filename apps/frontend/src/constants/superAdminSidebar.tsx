@@ -149,7 +149,7 @@ const superAdminSidebar: SidebarItem[] = [
     children: [
       {
         id: "blog-dashboard",
-        label: "داشبورد وبلاگ",
+        label: "پیشخوان وبلاگ",
         href: "/super-admin/blog",
       },
       {

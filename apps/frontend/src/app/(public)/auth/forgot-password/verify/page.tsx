@@ -8,8 +8,8 @@ import { redirectLegacyAuthPage } from "@/lib/central-auth-redirect";
 export const instant = false;
 
 export const metadata: Metadata = {
-  title: "تایید بازیابی رمز عبور",
-  description: "کد تایید بازیابی رمز عبور را وارد کنید.",
+  title: "تأیید بازیابی رمز عبور",
+  description: "کد تأیید بازیابی رمز عبور را وارد کنید.",
   robots: { index: false, follow: false },
   alternates: { canonical: "/auth/forgot-password/verify" },
 };

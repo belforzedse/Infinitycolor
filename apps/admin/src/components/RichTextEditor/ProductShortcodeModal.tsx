@@ -139,7 +139,7 @@ const ProductShortcodeModal: React.FC<ProductShortcodeModalProps> = ({
   // Handle URL extraction
   const handleUrlExtract = async () => {
     if (!urlInput.trim()) {
-      setUrlError("لطفا URL محصول را وارد کنید");
+      setUrlError("لطفاً URL محصول را وارد کنید");
       return;
     }
 
@@ -477,7 +477,7 @@ const ProductShortcodeModal: React.FC<ProductShortcodeModalProps> = ({
         <div className="space-y-4">
           {selectedCount === 0 ? (
             <div className="py-12 text-center text-sm text-neutral-500">
-              هیچ محصولی انتخاب نشده است. لطفا از تب‌های دیگر محصولات را انتخاب کنید.
+              هیچ محصولی انتخاب نشده است. لطفاً از تب‌های دیگر محصولات را انتخاب کنید.
             </div>
           ) : shortcodeIdentifiers.length === 0 ? (
             <div className="py-12 text-center text-sm text-neutral-500">

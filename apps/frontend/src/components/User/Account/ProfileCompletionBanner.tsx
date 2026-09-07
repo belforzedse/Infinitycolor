@@ -34,7 +34,7 @@ export default function ProfileCompletionBanner() {
 
       <div className="flex flex-1 flex-col items-start gap-0.5 text-right">
         <span className="text-sm font-medium text-foreground-primary">
-          اطلاعات پروفایل شما ناقص است. لطفا نام و نام خانوادگی خود را تکمیل کنید.
+          اطلاعات پروفایل شما ناقص است. لطفاً نام و نام خانوادگی خود را تکمیل کنید.
         </span>
         <span className="text-xs text-neutral-500">پیام سیستم</span>
       </div>

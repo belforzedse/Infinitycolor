@@ -476,7 +476,7 @@ export default function EditOrderPage() {
         isOpen={!!pendingStatusChange}
         title="تغییر وضعیت سفارش"
         description={statusChangeDescription}
-        confirmText="تایید و ذخیره"
+        confirmText="تأیید و ذخیره"
         cancelText="انصراف"
         onConfirm={confirmStatusChange}
         onCancel={cancelStatusChange}

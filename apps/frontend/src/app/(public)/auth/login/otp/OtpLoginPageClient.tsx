@@ -96,7 +96,7 @@ export default function LoginPage() {
 
   return (
     <div className="mx-auto w-full">
-      <AuthTitle subtitle={`لطفا کد ارسال شده به شماره همراه  ${phoneNumber} را وارد نمایید`}>
+      <AuthTitle subtitle={`لطفاً کد ارسال شده به شماره همراه  ${phoneNumber} را وارد نمایید`}>
         ورود با رمز یکبار مصرف
       </AuthTitle>
       <div className="mb-6">

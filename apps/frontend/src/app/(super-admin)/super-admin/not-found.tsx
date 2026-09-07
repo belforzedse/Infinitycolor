@@ -57,7 +57,7 @@ export default function NotFound() {
 
           {/* Description */}
           <p className="text-lg mb-8 leading-relaxed text-gray-600">
-            آدرس وارد شده در بخش مدیریت سیستم معتبر نیست.
+            این نشانی در بخش مدیریت وجود ندارد.
             <br />
             ممکن است صفحه منتقل شده یا دسترسی آن تغییر کرده باشد.
           </p>

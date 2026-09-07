@@ -54,7 +54,7 @@ export default function ForgotPasswordForm({ onSubmit }: ForgotPasswordFormProps
             )
           }
         >
-          تایید شماره همراه
+          تأیید شماره همراه
         </AuthButton>
       </div>
     </form>

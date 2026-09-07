@@ -56,7 +56,7 @@ export default function OTPLoginForm({ onSubmit, phoneNumber, resendCode }: OTPL
         </div>
 
         <div className="space-y-3">
-          <Text variant="label">کدتایید شماره همراه</Text>
+          <Text variant="label">کدتأیید شماره همراه</Text>
           <div className="flex flex-col items-end">
             <VerificationInput onChange={setVerificationCode} />
 

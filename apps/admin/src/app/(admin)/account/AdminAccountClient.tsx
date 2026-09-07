@@ -232,12 +232,12 @@ export default function AdminAccountClient() {
           <input className="input" value={usableEmail(user) || "ثبت نشده"} readOnly disabled />
         </label>
         <label className="space-y-2 text-sm text-slate-700">
-          وضعیت تایید هویت
-          <input className="input" value={user?.IsVerified ? "تایید شده" : "تایید نشده"} readOnly disabled />
+          وضعیت تأیید هویت
+          <input className="input" value={user?.IsVerified ? "تأیید شده" : "تأیید نشده"} readOnly disabled />
         </label>
         <label className="space-y-2 text-sm text-slate-700">
-          وضعیت تایید ایمیل
-          <input className="input" value={!usableEmail(user) ? "ایمیل قابل استفاده ثبت نشده" : user?.confirmed ? "تایید شده" : "تایید نشده"} readOnly disabled />
+          وضعیت تأیید ایمیل
+          <input className="input" value={!usableEmail(user) ? "ایمیل قابل استفاده ثبت نشده" : user?.confirmed ? "تأیید شده" : "تأیید نشده"} readOnly disabled />
         </label>
         <label className="space-y-2 text-sm text-slate-700 md:col-span-2">
           درباره
@@ -276,7 +276,6 @@ export default function AdminAccountClient() {
         <div className="flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-slate-900">نشست‌های فعال</h2>
-            <p className="mt-1 text-sm text-slate-500">توکن نشست نمایش داده یا ذخیره نمی‌شود.</p>
           </div>
           <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
             <button type="button" className="btn btn-outline w-full px-4 py-2 sm:w-auto" disabled={Boolean(sessionBusy)} onClick={revokeOthers}>لغو نشست‌های دیگر</button>

@@ -180,7 +180,7 @@ const superAdminSidebar: SidebarItem[] = [
     children: [
       {
         id: "blog-dashboard",
-        label: "داشبورد وبلاگ",
+        label: "پیشخوان وبلاگ",
         href: "/blog",
         icon: <FiBookOpen className="h-5 w-5 text-infinity-primary" />,
       },
