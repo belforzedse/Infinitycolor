@@ -40,6 +40,109 @@ describe("schema regression guard", () => {
     expect([...(collectDeclaredColumns(metadata).get("orders") ?? [])]).toEqual(["id"]);
   });
 
+  it("treats same-table relation join columns as declared, including createdBy", () => {
+    const metadata = new Map([
+      [
+        "admin_activities",
+        {
+          tableName: "admin_activities",
+          attributes: {
+            id: { type: "increments", columnName: "id" },
+            createdBy: {
+              type: "relation",
+              joinColumn: { name: "created_by_id" },
+            },
+            updatedBy: {
+              type: "relation",
+              joinColumn: { name: "updated_by_id" },
+            },
+          },
+        },
+      ],
+    ]);
+
+    expect([...(collectDeclaredColumns(metadata).get("admin_activities") ?? [])].sort()).toEqual([
+      "created_by_id",
+      "id",
+      "updated_by_id",
+    ]);
+  });
+
+  it("does not flag created_by_id when this build declares it via joinColumn", () => {
+    const persisted = {
+      tables: [
+        {
+          name: "admin_activities",
+          columns: [{ name: "id" }, { name: "created_by_id" }, { name: "updated_by_id" }],
+        },
+      ],
+    };
+    const declared = collectDeclaredColumns(
+      new Map([
+        [
+          "admin_activities",
+          {
+            tableName: "admin_activities",
+            attributes: {
+              id: { type: "increments", columnName: "id" },
+              createdBy: { type: "relation", joinColumn: { name: "created_by_id" } },
+              updatedBy: { type: "relation", joinColumn: { name: "updated_by_id" } },
+            },
+          },
+        ],
+      ]),
+    );
+
+    expect(findColumnRegressions(persisted, declared)).toEqual([]);
+  });
+
+  it("treats join-table model attributes without columnName as columns named by their key", () => {
+    const metadata = new Map([
+      [
+        "orders_local_user_links",
+        {
+          tableName: "orders_local_user_links",
+          attributes: {
+            id: { type: "increments" },
+            order_id: { type: "integer" },
+            local_user_id: { type: "integer" },
+          },
+        },
+      ],
+    ]);
+
+    expect(
+      [...(collectDeclaredColumns(metadata).get("orders_local_user_links") ?? [])].sort(),
+    ).toEqual(["id", "local_user_id", "order_id"]);
+  });
+
+  it("treats morphToOne id and type columns as declared", () => {
+    const metadata = new Map([
+      [
+        "up_users",
+        {
+          tableName: "up_users",
+          attributes: {
+            id: { type: "increments", columnName: "id" },
+            related: {
+              type: "relation",
+              morphColumn: {
+                idColumn: { name: "target_id" },
+                typeColumn: { name: "target_type" },
+              },
+            },
+          },
+        },
+      ],
+    ]);
+
+    expect([...(collectDeclaredColumns(metadata).get("up_users") ?? [])].sort()).toEqual([
+      "id",
+      "target_id",
+      "target_type",
+    ]);
+  });
+
   it("flags a persisted column the running build no longer declares", () => {
     const persisted = {
       tables: [{ name: "orders", columns: [{ name: "id" }, { name: "analytics_correlation_id" }] }],

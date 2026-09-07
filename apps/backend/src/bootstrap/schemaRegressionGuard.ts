@@ -24,14 +24,58 @@ const ESCAPE_HATCH = "ALLOW_SCHEMA_COLUMN_REMOVAL";
 
 type PersistedSchema = { tables?: Array<{ name?: string; columns?: Array<{ name?: string }> }> };
 
-export const collectDeclaredColumns = (metadata: any): Map<string, Set<string>> => {
+type NamedColumn = {
+  name?: string;
+};
+
+type MetadataAttribute = {
+  type?: string;
+  columnName?: string;
+  joinColumn?: NamedColumn;
+  morphColumn?: {
+    idColumn?: NamedColumn;
+    typeColumn?: NamedColumn;
+  };
+};
+
+type ContentTypeMeta = {
+  tableName?: string;
+  attributes?: Record<string, MetadataAttribute>;
+};
+
+export type ContentTypeMetadata = {
+  values: () => Iterable<ContentTypeMeta>;
+};
+
+const addColumn = (columns: Set<string>, name: string | undefined) => {
+  if (name) columns.add(name);
+};
+
+/**
+ * Columns this build would keep during schema sync, keyed by table.
+ *
+ * Scalar fields expose `columnName`. Same-table relations such as Strapi's
+ * `createdBy` / `updatedBy` do not — they persist as `joinColumn.name`
+ * (`created_by_id`, `updated_by_id`). Counting only `columnName` makes every
+ * reboot after the first look like a 178-column regression and refuse to boot.
+ * Join-table relations stay out: their columns live on a different table.
+ */
+export const collectDeclaredColumns = (metadata: ContentTypeMetadata): Map<string, Set<string>> => {
   const declared = new Map<string, Set<string>>();
   for (const meta of metadata.values()) {
     const tableName = meta?.tableName;
     if (!tableName) continue;
     const columns = declared.get(tableName) ?? new Set<string>();
-    for (const attribute of Object.values<any>(meta.attributes ?? {})) {
-      if (attribute?.columnName) columns.add(attribute.columnName);
+    for (const [attributeName, attribute] of Object.entries(meta.attributes ?? {})) {
+      addColumn(columns, attribute.columnName);
+      addColumn(columns, attribute.joinColumn?.name);
+      addColumn(columns, attribute.morphColumn?.idColumn?.name);
+      addColumn(columns, attribute.morphColumn?.typeColumn?.name);
+      // Join-table models store integer/string columns under the attribute key
+      // without a `columnName`. Relations themselves are not columns.
+      if (!attribute.columnName && attribute.type && attribute.type !== "relation") {
+        addColumn(columns, attributeName);
+      }
     }
     declared.set(tableName, columns);
   }
@@ -65,31 +109,42 @@ export const findColumnRegressions = (
   return regressions.sort();
 };
 
+type ContentTypeSyncHook = {
+  hook: (
+    name: "strapi::content-types.beforeSync",
+  ) => { register: (fn: () => Promise<void>) => void };
+};
+
 export const registerSchemaRegressionGuard = (strapi: Strapi) => {
-  (strapi as any).hook("strapi::content-types.beforeSync").register(async () => {
+  (strapi as Strapi & ContentTypeSyncHook).hook("strapi::content-types.beforeSync").register(async () => {
     if (String(process.env[ESCAPE_HATCH] || "").toLowerCase() === "true") {
       strapi.log.warn(`${ESCAPE_HATCH}=true — skipping the schema regression guard.`);
       return;
     }
 
-    const connection = (strapi as any).db.getSchemaConnection();
+    const db = strapi.db as unknown as {
+      metadata: ContentTypeMetadata;
+      getSchemaConnection: () => { hasTable: (table: string) => Promise<boolean> };
+      getConnection: () => {
+        select: (column: string) => {
+          from: (table: string) => {
+            orderBy: (column: string, direction: string) => {
+              first: () => Promise<{ schema?: PersistedSchema | string } | undefined>;
+            };
+          };
+        };
+      };
+    };
+    const connection = db.getSchemaConnection();
     if (!(await connection.hasTable(SCHEMA_TABLE))) return;
 
-    const row = await (strapi as any).db
-      .getConnection()
-      .select("schema")
-      .from(SCHEMA_TABLE)
-      .orderBy("time", "DESC")
-      .first();
+    const row = await db.getConnection().select("schema").from(SCHEMA_TABLE).orderBy("time", "DESC").first();
     if (!row?.schema) return;
 
     const persisted: PersistedSchema =
       typeof row.schema === "object" ? row.schema : JSON.parse(row.schema);
 
-    const regressions = findColumnRegressions(
-      persisted,
-      collectDeclaredColumns((strapi as any).db.metadata),
-    );
+    const regressions = findColumnRegressions(persisted, collectDeclaredColumns(db.metadata));
     if (regressions.length === 0) return;
 
     strapi.log.error(
