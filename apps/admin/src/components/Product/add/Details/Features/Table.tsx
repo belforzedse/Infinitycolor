@@ -674,8 +674,10 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                         />
                         <span className="text-sm text-slate-500">{color.value}</span>
                         <button
+                          type="button"
                           onClick={() => removeFeature("colors", color.id)}
                           className="text-slate-400"
+                          aria-label={`حذف رنگ ${color.value}`}
                         >
                           <DeleteIcon />
                         </button>
@@ -709,17 +711,32 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                   }`}
                                   aria-disabled={isSelected}
                                 >
-                                  <span
-                                    className="h-5 w-5 rounded-full border border-slate-200"
-                                    style={{
-                                      backgroundColor: option.attributes.ColorCode || "#f5f5f5",
-                                    }}
-                                  />
-                                  <span>{option.attributes.Title}</span>
-                                  {option.attributes.ColorCode && (
-                                    <span className="text-xs text-slate-400" dir="ltr">
+                                  {/*
+                                    Colour records imported without a ColorCode all
+                                    rendered as the same anonymous grey dot, so a list
+                                    of them read as one option repeated. Mark them as
+                                    deliberately colourless instead.
+                                  */}
+                                  {option.attributes.ColorCode ? (
+                                    <span
+                                      className="h-5 w-5 shrink-0 rounded-full border border-slate-200"
+                                      style={{ backgroundColor: option.attributes.ColorCode }}
+                                    />
+                                  ) : (
+                                    <span
+                                      aria-hidden="true"
+                                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-[10px] text-slate-400"
+                                    >
+                                      —
+                                    </span>
+                                  )}
+                                  <span className="min-w-0 truncate">{option.attributes.Title}</span>
+                                  {option.attributes.ColorCode ? (
+                                    <span className="text-xs shrink-0 text-slate-400" dir="ltr">
                                       {option.attributes.ColorCode.toUpperCase()}
                                     </span>
+                                  ) : (
+                                    <span className="text-xs shrink-0 text-slate-400">بدون رنگ</span>
                                   )}
                                   {isSelected && (
                                     <span className="text-[11px] text-green-600">افزوده شده</span>
@@ -774,8 +791,10 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                       >
                         <span className="text-sm text-slate-500">{size.value}</span>
                         <button
+                          type="button"
                           onClick={() => removeFeature("sizes", size.id)}
                           className="text-slate-400"
+                          aria-label={`حذف سایز ${size.value}`}
                         >
                           <DeleteIcon />
                         </button>
@@ -853,8 +872,10 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                       >
                         <span className="text-sm text-slate-500">{model.value}</span>
                         <button
+                          type="button"
                           onClick={() => removeFeature("models", model.id)}
                           className="text-slate-400"
+                          aria-label={`حذف مدل ${model.value}`}
                         >
                           <DeleteIcon />
                         </button>
@@ -1020,7 +1041,8 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
             )}
           </div>
           <button
-            onClick={generateVariations}
+                  type="button"
+                  onClick={generateVariations}
             disabled={isGeneratingVariations || variationsCount === 0}
             className={`rounded-lg px-4 py-2 text-sm text-white ${
               isGeneratingVariations || variationsCount === 0
