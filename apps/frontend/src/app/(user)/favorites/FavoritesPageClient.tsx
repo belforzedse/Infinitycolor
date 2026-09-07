@@ -90,7 +90,7 @@ export default function FavoritesPage() {
     let productImage =
       product.CoverImage?.url ||
       product.images?.[0]?.url ||
-      "/images/placeholders/product-placeholder.png";
+      "/images/placeholders/image-placeholder.svg";
 
     if (productImage && productImage.startsWith("/") && !productImage.startsWith("/images")) {
       productImage = resolveAssetUrl(productImage) || productImage;

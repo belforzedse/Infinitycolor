@@ -2,7 +2,7 @@ import type {
   IdentityContactNumber,
   IdentitySocialLink,
 } from "@/types/site-identity";
-import { platformLabel, SocialPlatformIcon } from "@/utils/identityIcons";
+import { contactHref, platformLabel, SocialPlatformIcon } from "@/utils/identityIcons";
 
 /** Bespoke brand circular icons kept for the common contact channels. */
 const PhoneIcon = () => (
@@ -45,14 +45,34 @@ const GenericContactIcon = ({ platform }: { platform: IdentitySocialLink["platfo
 );
 
 function ContactNumberRow({ contact }: { contact: IdentityContactNumber }) {
-  const Icon = contact.type === "whatsapp" ? WhatsappIcon : PhoneIcon;
-  return (
-    <div className="flex shrink-0 items-center">
+  const isWhatsapp = contact.type === "whatsapp";
+  const Icon = isWhatsapp ? WhatsappIcon : PhoneIcon;
+  const href = contactHref(contact);
+
+  const body = (
+    <>
       <Icon />
       <p className="mr-1 font-[Peyda(FaNum)] text-[12px] text-neutral-600 max-sm:text-[12px]" dir="ltr">
         {contact.number}
       </p>
-    </div>
+    </>
+  );
+
+  // A number that cannot be normalised stays plain text rather than becoming a
+  // broken tel:/wa.me link.
+  if (!href) {
+    return <div className="flex shrink-0 items-center">{body}</div>;
+  }
+
+  return (
+    <a
+      href={href}
+      className="flex shrink-0 items-center hover:opacity-80"
+      aria-label={`${contact.label || (isWhatsapp ? "واتس‌اپ" : "تماس")}: ${contact.number}`}
+      {...(isWhatsapp ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+    >
+      {body}
+    </a>
   );
 }
 

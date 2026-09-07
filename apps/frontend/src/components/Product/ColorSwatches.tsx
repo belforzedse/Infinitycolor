@@ -66,14 +66,20 @@ const ColorSwatches: React.FC<ColorSwatchesProps> = ({
             <div
               key={`${validCode}-${index}`}
               className={clsx(
-                "relative overflow-hidden rounded-full border border-white shadow-sm",
+                // The white border separates overlapping chips, but on its own it
+                // erased the edge of white and near-white colours: #FFFFFF and
+                // #E0E0E0 sat side by side as one indistinct blob. The inset
+                // hairline gives every swatch a visible boundary regardless of
+                // how light the colour is.
+                "relative overflow-hidden rounded-full border border-white",
+                "shadow-[inset_0_0_0_1px_rgba(0,0,0,0.22)]",
                 isSmall ? "h-3.5 w-3.5" : "h-4 w-4",
               )}
               style={{ backgroundColor: validCode, zIndex: maxVisible - index }}
               title={rawLabel}
             >
               <div
-                className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-white/40"
+                className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-white/20"
                 aria-hidden="true"
               />
             </div>

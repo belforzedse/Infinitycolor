@@ -10,7 +10,7 @@ const FileItem: React.FC<FileItemProps> = ({ file, onDelete, onRetry, iconSrc, i
     <div className="flex h-full items-center gap-2 text-[10px]">
       <span className="max-w-44 truncate">{file.file.name}</span>
       <Image
-        src={iconSrc || "/images/file-icon.png"}
+        src={iconSrc || "/images/placeholders/file-placeholder.svg"}
         alt={file.file.name}
         width={24}
         height={24}

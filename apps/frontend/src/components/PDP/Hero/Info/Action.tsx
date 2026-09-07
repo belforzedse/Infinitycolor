@@ -12,7 +12,7 @@ import useAddToCart from "@/hooks/useAddToCart";
 import { hasStockForVariation, getAvailableStockCount } from "@/services/product/product";
 import toast from "react-hot-toast";
 import logger from "@/utils/logger";
-import { scrollIntoViewWithOffset } from "@/utils/scroll";
+import { useScrollToComments } from "./useScrollToComments";
 import { trackAnalyticsEvent } from "@/lib/analytics";
 
 type ShareModalComponent = (typeof import("@/components/Product/ShareModal"))["default"];
@@ -212,32 +212,8 @@ export default function PDPHeroInfoAction({
   };
 
   // Handle scroll to comments
-  /**
-   * Scrolls to product comments section
-   * Uses data attribute if available, falls back to class selector
-   */
-  const handleScrollToComments = () => {
-    trackAnalyticsEvent({
-      category: "engagement",
-      action: "open_comments",
-      properties: { product_id: productId },
-      onceKey: `open-comments:${productId}`,
-    });
-    const commentsSection = document.querySelector<HTMLElement>("[data-comments-section]");
-
-    if (commentsSection) {
-      scrollIntoViewWithOffset(commentsSection);
-      return;
-    }
-
-    const pdpCommentElement = document.querySelector<HTMLElement>(
-      ".flex.gap-4.flex-col-reverse.md\\:flex-row",
-    );
-
-    if (pdpCommentElement) {
-      scrollIntoViewWithOffset(pdpCommentElement);
-    }
-  };
+  // Shared with the review-count link in CommentsInfo so both reach the same anchor.
+  const handleScrollToComments = useScrollToComments(productId);
 
   // Clean up timeout on component unmount
   useEffect(() => {

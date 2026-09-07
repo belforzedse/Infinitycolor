@@ -126,14 +126,21 @@ export default async function AboutPage() {
               </p>
             </AboutSection>
 
-            {/* Placeholder Image */}
-            <div className="relative h-[400px] w-full overflow-hidden rounded-2xl bg-slate-100 md:h-[500px] lg:h-[600px]">
+            {/*
+              Awaiting real brand artwork. This slot pointed at
+              /images/placeholder-about.jpg, which has never existed in
+              public/images, so every visitor took a hard 404 for a decorative
+              image. Until a real asset is supplied, show the shared placeholder
+              graphic: the panel keeps its shape and nothing 404s.
+            */}
+            <div className="relative flex h-[400px] w-full items-center justify-center overflow-hidden rounded-2xl bg-slate-100 md:h-[500px] lg:h-[600px]">
               <Image
-                src="/images/placeholder-about.jpg"
-                alt="اینفینیتی - استایل و کیفیت"
-                fill
-                className="object-cover"
-                sizes="(max-width: 768px) 100vw, (max-width: 1024px) 90vw, 1200px"
+                src="/images/placeholders/image-placeholder.svg"
+                alt=""
+                aria-hidden="true"
+                width={96}
+                height={96}
+                className="opacity-40"
                 priority={false}
               />
             </div>

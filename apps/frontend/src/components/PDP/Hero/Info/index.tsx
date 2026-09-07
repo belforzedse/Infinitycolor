@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Action from "./Action";
 import Color from "./Color";
 import CommentsInfo from "./CommentsInfo";
+import { useScrollToComments } from "./useScrollToComments";
 import FAQItem from "./FAQItem";
 import Main from "./Main";
 import Model from "./Model";
@@ -83,6 +84,7 @@ type Props = {
 
 export default function PDPHeroInfo(props: Props) {
   const { product, sizes, colors, models = [], productData, productId } = props;
+  const handleScrollToComments = useScrollToComments(productId);
 
   // Runtime toggle for debug panel (persisted in localStorage)
   const [isDebugEnabled, setIsDebugEnabled] = useState<boolean>(() => {
@@ -545,6 +547,7 @@ export default function PDPHeroInfo(props: Props) {
           commentCount={productData?.attributes?.RatingCount || 0}
           rateCount={productData?.attributes?.RatingCount || 0}
           last24hoursSeenCount={productData?.attributes?.SeenCount || 0}
+          onOpenComments={handleScrollToComments}
         />
 
         {productData?.attributes?.Description && (

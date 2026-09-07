@@ -19,7 +19,7 @@ export interface ImagePreviewProps {
 }
 
 const resolveSrc = (preview: string): string => {
-  if (!preview) return "/images/placeholder.png";
+  if (!preview) return "/images/placeholders/image-placeholder.svg";
   const trimmed = preview.trim();
   if (trimmed.startsWith("blob:") || trimmed.startsWith("data:")) {
     return trimmed;
