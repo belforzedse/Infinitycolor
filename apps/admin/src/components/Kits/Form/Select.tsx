@@ -35,12 +35,21 @@ export default function Select({
 }: SelectProps) {
   return (
     <div className={`flex flex-col gap-1 ${className}`}>
-      {label && <label className="text-base text-foreground-primary lg:text-lg">{label}</label>}
-      <Listbox value={value ?? null} onChange={onChange} disabled={isLoading} by="id">
+      {label && (
+        <label className="text-base text-foreground-primary lg:text-lg">
+          {label}
+        </label>
+      )}
+      <Listbox
+        value={value ?? null}
+        onChange={onChange}
+        disabled={isLoading}
+        by="id"
+      >
         <div className="relative">
           <Listbox.Button
             className={classNames(
-              "focus:ring-primary-500/20 focus:border-primary-500 text-sm relative w-full rounded-lg border p-3 text-right focus:outline-none focus:ring-2",
+              "focus:ring-primary-500/20 focus:border-primary-500 text-sm relative w-full rounded-control border p-3 text-right focus:outline-none focus:ring-2",
               {
                 "border-red-500": error,
                 "border-slate-100": !error,
@@ -84,11 +93,11 @@ export default function Select({
 
           <Transition
             as={Fragment}
-            leave="transition ease-in duration-100"
+            leave="transition-opacity duration-100 ease-out"
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
-            <Listbox.Options className="text-base absolute z-[60] mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 sm:text-sm focus:outline-none">
+            <Listbox.Options className="text-base absolute z-[60] mt-1 max-h-60 w-full overflow-auto rounded-prominent bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 sm:text-sm focus:outline-none">
               {options.length === 0 ? (
                 <div className="relative cursor-default select-none px-4 py-2 text-gray-500">
                   {emptyMessage}

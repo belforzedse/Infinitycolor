@@ -103,9 +103,13 @@ export default {
     ]);
 
     const schema = strapi.contentType("api::order.order");
-    const sanitizedRows = await sanitize.contentAPI.output(latestRows, schema, {
-      auth: ctx.state.auth,
-    });
+    // Roles with `order.read` intentionally do not need direct find grants on
+    // contracts or customer profiles. Passing request auth to Strapi's generic
+    // sanitizer therefore removes the two bounded relations selected above,
+    // making the overview render unknown customers and zero amounts. The
+    // explicit select/populate plus projectLatestOrder() remain the response
+    // allowlist, matching the dedicated admin orders list.
+    const sanitizedRows = await sanitize.contentAPI.output(latestRows, schema);
     const latestOrders = (sanitizedRows as any[]).map(projectLatestOrder);
     const counts = firstRow(countsResult);
 

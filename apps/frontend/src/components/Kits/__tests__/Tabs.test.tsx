@@ -93,12 +93,20 @@ describe("Tabs", () => {
     expect(tabList).toHaveClass("grid-cols-3");
   });
 
-  it("should apply rounded-xl class to tab panels", () => {
+  it("should apply the prominent surface radius to tab panels", () => {
     render(<Tabs tabs={mockTabs}>{mockChildren}</Tabs>);
 
     const panels = screen.getAllByTestId("tab-panel");
     panels.forEach((panel) => {
-      expect(panel).toHaveClass("rounded-xl");
+      expect(panel).toHaveClass("rounded-prominent");
+    });
+  });
+
+  it("should apply the compact control radius to tab triggers", () => {
+    render(<Tabs tabs={mockTabs}>{mockChildren}</Tabs>);
+
+    screen.getAllByTestId("tab").forEach((tab) => {
+      expect(tab).toHaveClass("rounded-compact");
     });
   });
 

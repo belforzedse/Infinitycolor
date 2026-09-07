@@ -32,7 +32,7 @@ export default function StatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex max-w-full shrink-0 items-center justify-center rounded-lg font-medium ring-1 ring-inset",
+        "inline-flex max-w-full shrink-0 items-center justify-center rounded-pill font-medium ring-1 ring-inset",
         size === "sm" ? "text-[11px] px-1.5 py-0.5" : "text-xs px-2 py-1",
         TONE_CLASS[tone],
         className,

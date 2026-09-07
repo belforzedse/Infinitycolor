@@ -15,7 +15,7 @@ describe("Modal", () => {
       </Modal>,
     );
 
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog")).toHaveClass("rounded-panel");
     expect(screen.getByText("Modal Content")).toBeInTheDocument();
   });
 
@@ -39,9 +39,7 @@ describe("Modal", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Test Title" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    expect(screen.getByRole("heading", { name: "Test Title" })).toHaveClass(
-      "text-lg",
-    );
+    expect(screen.getByRole("heading", { name: "Test Title" })).toHaveClass("text-lg");
   });
 
   it("uses the provided aria-labelledby when no title is rendered", async () => {
@@ -65,7 +63,9 @@ describe("Modal", () => {
       </Modal>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "بستن" }));
+    const closeButton = await screen.findByRole("button", { name: "بستن" });
+    expect(closeButton).toHaveClass("rounded-pill", "focus-visible:ring-infinity-primary");
+    fireEvent.click(closeButton);
     fireEvent.keyDown(window, { key: "Escape" });
     const dialog = screen.getByRole("dialog");
     fireEvent.click(dialog.parentElement as HTMLElement);

@@ -30,9 +30,9 @@ export default function AuthPasswordInput({
         <input
           type={showPassword ? "text" : "password"}
           className={clsx(
-            "h-12 w-full rounded-lg border border-slate-200 bg-background-form",
+            "h-12 w-full rounded-control border border-slate-200 bg-background-form",
             "text-base px-12 text-left text-foreground-muted",
-            "focus:outline-none focus:ring-2 focus:ring-infinity-primary-light",
+            "transition-[background-color,border-color,box-shadow] duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-infinity-primary-light",
             error && "border-red-500",
             className,
           )}

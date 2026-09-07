@@ -59,7 +59,7 @@ export default function PasswordStrength({ password }: PasswordStrengthProps) {
           <div
             key={index}
             className={clsx(
-              "h-1 w-[23%] rounded-full transition-colors md:w-[46px]",
+              "h-1 w-[23%] rounded-pill transition-colors md:w-[46px]",
               getStrengthColor(index, strengthLevel),
             )}
           />

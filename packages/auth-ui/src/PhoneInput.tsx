@@ -20,7 +20,7 @@ export default function PhoneInput({
     <button
       type="button"
       onClick={onEdit}
-      className="flex flex-row-reverse items-center gap-1 rounded bg-sky-600 px-2 py-1 text-white transition-colors hover:bg-sky-700"
+      className="flex flex-row-reverse items-center gap-1 rounded-compact bg-infinity-primary px-2 py-1 text-white transition-colors duration-150 ease-out hover:bg-infinity-primary-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 active:bg-infinity-primary-darker motion-reduce:transition-none"
     >
       <span className="text-sm">ویرایش</span>
       <EditIcon className="h-4 w-4" />

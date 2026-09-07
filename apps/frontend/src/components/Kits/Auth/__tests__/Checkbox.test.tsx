@@ -70,19 +70,21 @@ describe("Checkbox", () => {
   });
 
   it("should have checked styles when checked", () => {
-    const { container } = render(<Checkbox checked={true} onChange={mockOnChange} />);
+    render(<Checkbox checked={true} onChange={mockOnChange} />);
 
-    const checkboxDiv = container.querySelector(".h-5.w-5.rounded");
-    expect(checkboxDiv).toHaveClass("border-sky-600");
-    expect(checkboxDiv).toHaveClass("bg-sky-600");
+    const focusRing = screen.getByRole("checkbox").nextElementSibling;
+    const checkboxDiv = focusRing?.firstElementChild;
+    expect(focusRing).toHaveClass("peer-focus-visible:ring-infinity-primary");
+    expect(checkboxDiv).toHaveClass("border-infinity-primary");
+    expect(checkboxDiv).toHaveClass("bg-infinity-primary");
   });
 
   it("should have unchecked styles when unchecked", () => {
-    const { container } = render(<Checkbox checked={false} onChange={mockOnChange} />);
+    render(<Checkbox checked={false} onChange={mockOnChange} />);
 
-    const checkboxDiv = container.querySelector(".h-5.w-5.rounded");
+    const checkboxDiv = screen.getByRole("checkbox").nextElementSibling?.firstElementChild;
     expect(checkboxDiv).toHaveClass("border-slate-400");
-    expect(checkboxDiv).not.toHaveClass("bg-sky-600");
+    expect(checkboxDiv).not.toHaveClass("bg-infinity-primary");
   });
 
   it("should render React node as label", () => {

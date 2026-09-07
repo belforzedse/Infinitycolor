@@ -4,7 +4,7 @@ import { cx } from "./classnames";
 const shellLayout = cx(
   "pressable relative isolate inline-flex h-11 min-h-11 max-w-full min-w-0",
   "cursor-pointer flex-row items-center justify-center overflow-hidden",
-  "rounded-full border-0 box-border",
+  "rounded-control border-0 box-border",
   "px-5 font-medium text-sm leading-[21px]",
   "transition-colors",
   "disabled:cursor-not-allowed disabled:pointer-events-none disabled:opacity-50",
@@ -14,9 +14,9 @@ const shellLayout = cx(
 
 const surfacePseudoBase = cx(
   "bg-transparent",
-  "before:pointer-events-none before:absolute before:inset-0 before:z-0 before:rounded-full before:content-['']",
+  "before:pointer-events-none before:absolute before:inset-0 before:z-0 before:rounded-control before:content-['']",
   "before:opacity-100 before:transition-opacity before:duration-300 before:ease-out",
-  "after:pointer-events-none after:absolute after:inset-0 after:z-0 after:rounded-full after:content-['']",
+  "after:pointer-events-none after:absolute after:inset-0 after:z-0 after:rounded-control after:content-['']",
   "after:opacity-0 after:transition-opacity after:duration-300 after:ease-out",
   "hover:before:opacity-0 hover:after:opacity-100 motion-reduce:hover:before:opacity-100 motion-reduce:hover:after:opacity-0",
 );

@@ -17,17 +17,19 @@ export default function Checkbox({
         type="checkbox"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
-        className="sr-only"
+        className="peer sr-only"
         aria-checked={checked}
       />
 
       <div
-        className="relative flex h-5 w-5 items-center justify-center"
+        className="relative flex h-5 w-5 items-center justify-center rounded-micro peer-focus-visible:ring-2 peer-focus-visible:ring-infinity-primary peer-focus-visible:ring-offset-2"
         aria-hidden="true"
       >
         <div
-          className={`h-5 w-5 rounded border transition-colors ${
-            checked ? "border-sky-600 bg-sky-600" : "border-slate-400"
+          className={`h-5 w-5 rounded-micro border transition-colors duration-150 ease-out ${
+            checked
+              ? "border-infinity-primary bg-infinity-primary"
+              : "border-slate-400"
           }`}
         />
         {checked && (

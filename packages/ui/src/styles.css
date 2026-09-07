@@ -1,6 +1,14 @@
 :root {
   --infinity-primary: #3d4c6e;
   --infinity-commerce: #3d4c6e;
+  --radius-micro: 4px;
+  --radius-compact: 8px;
+  --radius-control: 12px;
+  --radius-prominent: 16px;
+  --radius-panel: 24px;
+  --radius-pill: 9999px;
+  /* Compatibility for existing shadcn-style `rounded-lg/md/sm` mappings. */
+  --radius: var(--radius-compact);
   --ease-butter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-velvet: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-crystal: cubic-bezier(0.4, 0, 0.2, 1);
@@ -20,7 +28,10 @@ button:enabled {
 }
 
 .pressable {
-  transition: transform 160ms var(--ease-velvet), box-shadow 200ms var(--ease-butter), filter 160ms var(--ease-butter);
+  transition:
+    transform 160ms var(--ease-velvet),
+    box-shadow 200ms var(--ease-butter),
+    filter 160ms var(--ease-butter);
 }
 
 .pressable:active {
@@ -28,7 +39,11 @@ button:enabled {
 }
 
 .interactive-card {
-  transition: transform 200ms var(--ease-butter), box-shadow 220ms var(--ease-butter), border-color 200ms var(--ease-butter), filter 180ms var(--ease-butter);
+  transition:
+    transform 200ms var(--ease-butter),
+    box-shadow 220ms var(--ease-butter),
+    border-color 200ms var(--ease-butter),
+    filter 180ms var(--ease-butter);
 }
 
 @media (hover: hover) {
@@ -61,9 +76,15 @@ button:enabled {
   overflow: hidden;
   border: 1px solid var(--luxury-glass-border);
   background:
-    linear-gradient(180deg, var(--luxury-glass-bg-strong), var(--luxury-glass-bg-soft)),
+    linear-gradient(
+      180deg,
+      var(--luxury-glass-bg-strong),
+      var(--luxury-glass-bg-soft)
+    ),
     linear-gradient(135deg, rgba(255, 255, 255, 0.34), rgba(217, 226, 255, 0.2));
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset, var(--luxury-glass-shadow);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.45) inset,
+    var(--luxury-glass-shadow);
   -webkit-backdrop-filter: blur(14px) saturate(145%);
   backdrop-filter: blur(14px) saturate(145%);
 }
@@ -78,36 +99,60 @@ button:enabled {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(65% 120% at 18% 0%, rgba(255, 255, 255, 0.56), transparent 62%),
+    radial-gradient(
+      65% 120% at 18% 0%,
+      rgba(255, 255, 255, 0.56),
+      transparent 62%
+    ),
     linear-gradient(120deg, rgba(255, 255, 255, 0.28), transparent 48%);
   opacity: 0.55;
 }
 
 .luxury-glass-panel {
+  border-radius: var(--radius-panel);
   border-color: rgba(226, 232, 240, 0.72);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 18px 48px rgba(15, 23, 42, 0.1);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 18px 48px rgba(15, 23, 42, 0.1);
 }
 
 .luxury-glass-chip {
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   border-color: rgba(255, 255, 255, 0.72);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(248, 250, 252, 0.42)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.36), rgba(217, 226, 255, 0.22));
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 10px 26px rgba(15, 23, 42, 0.09);
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.76),
+      rgba(248, 250, 252, 0.42)
+    ),
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.36),
+      rgba(217, 226, 255, 0.22)
+    );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.55) inset,
+    0 10px 26px rgba(15, 23, 42, 0.09);
   -webkit-backdrop-filter: blur(12px) saturate(145%);
   backdrop-filter: blur(12px) saturate(145%);
 }
 
 .luxury-glass-header {
   overflow: visible;
+  border-radius: 0;
   border-color: rgba(255, 255, 255, 0.3);
   border-inline: 0;
   border-top: 0;
   background: rgba(255, 255, 255, 0.42);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.42) inset, 0 10px 30px rgba(15, 23, 42, 0.045);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.42) inset,
+    0 10px 30px rgba(15, 23, 42, 0.045);
   -webkit-backdrop-filter: blur(12px) saturate(145%);
   backdrop-filter: blur(12px) saturate(145%);
+}
+
+.luxury-glass-surface {
+  border-radius: var(--radius-prominent);
 }
 
 @supports not (backdrop-filter: blur(1px)) {
@@ -140,14 +185,22 @@ button:enabled {
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.65) 50%, transparent 100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.65) 50%,
+    transparent 100%
+  );
   animation: shimmer 1.6s linear infinite;
 }
 
 .img-fx {
   filter: blur(6px) scale(1.02);
   opacity: 0;
-  transition: filter 400ms var(--ease-butter), opacity 400ms var(--ease-butter), transform 400ms var(--ease-butter);
+  transition:
+    filter 400ms var(--ease-butter),
+    opacity 400ms var(--ease-butter),
+    transform 400ms var(--ease-butter);
 }
 
 .img-loaded {

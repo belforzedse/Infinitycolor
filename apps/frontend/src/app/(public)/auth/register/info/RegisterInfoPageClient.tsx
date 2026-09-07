@@ -236,6 +236,7 @@ export default function RegisterInfoPage() {
 
         <AuthButton
           type="submit"
+          aria-busy={isLoading}
           disabled={
             isLoading ||
             !formData.firstName ||

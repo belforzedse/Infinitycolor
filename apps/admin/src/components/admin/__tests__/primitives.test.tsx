@@ -30,7 +30,7 @@ describe("StatusBadge", () => {
 
   it("defaults to the neutral tone", () => {
     const { container } = render(<StatusBadge label="نامشخص" />);
-    expect(container.firstChild).toHaveClass("text-slate-600");
+    expect(container.firstChild).toHaveClass("text-slate-600", "rounded-pill");
   });
 });
 

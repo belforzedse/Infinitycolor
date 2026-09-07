@@ -26,7 +26,11 @@ describe("Input component", () => {
     const smallRender = render(<Input size="sm" />);
     const largeRender = render(<Input size="lg" />);
 
-    expect(within(defaultRender.container).getByRole("textbox")).toHaveClass("h-10", "px-3", "py-2");
+    expect(within(defaultRender.container).getByRole("textbox")).toHaveClass(
+      "h-10",
+      "px-3",
+      "py-2",
+    );
     expect(within(smallRender.container).getByRole("textbox")).toHaveClass("h-8", "px-2");
     expect(within(largeRender.container).getByRole("textbox")).toHaveClass("h-12", "px-4");
   });
@@ -37,7 +41,7 @@ describe("Input component", () => {
     expect(input).toHaveClass(
       "text-base",
       "text-foreground-primary",
-      "rounded-xl",
+      "rounded-control",
       "border",
       "border-slate-200",
     );

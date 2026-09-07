@@ -61,7 +61,7 @@ export default function OTPLoginForm({ onSubmit, phoneNumber, resendCode }: OTPL
             <VerificationInput onChange={setVerificationCode} />
 
             <div className="flex w-full flex-row-reverse items-center justify-between">
-              <span className="text-sm text-foreground-primary/80">{timeLeft}</span>
+              <span className="text-foreground-primary/80 text-sm">{timeLeft}</span>
               <div>
                 <Text variant="helper">
                   کد را دریافت نکردید؟{" "}
@@ -78,6 +78,7 @@ export default function OTPLoginForm({ onSubmit, phoneNumber, resendCode }: OTPL
       <AuthButton
         type="submit"
         disabled={isLoading}
+        aria-busy={isLoading}
         icon={
           isLoading && (
             <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white" />

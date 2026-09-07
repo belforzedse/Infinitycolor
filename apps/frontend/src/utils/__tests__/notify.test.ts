@@ -17,7 +17,7 @@ describe("notify", () => {
         background: "#333",
         color: "#fff",
         fontSize: "14px",
-        borderRadius: "8px",
+        borderRadius: "var(--radius-compact)",
       },
     });
   });
@@ -31,7 +31,7 @@ describe("notify", () => {
         background: "#333",
         color: "#fff",
         fontSize: "14px",
-        borderRadius: "8px",
+        borderRadius: "var(--radius-compact)",
       },
     });
   });
@@ -45,7 +45,7 @@ describe("notify", () => {
         background: "#333",
         color: "#fff",
         fontSize: "14px",
-        borderRadius: "8px",
+        borderRadius: "var(--radius-compact)",
       },
     });
   });
@@ -53,26 +53,35 @@ describe("notify", () => {
   it("should merge custom options for success", () => {
     notify.success("Success", { duration: 2000 });
 
-    expect(toast.success).toHaveBeenCalledWith("Success", expect.objectContaining({
-      duration: 2000,
-      style: expect.any(Object),
-    }));
+    expect(toast.success).toHaveBeenCalledWith(
+      "Success",
+      expect.objectContaining({
+        duration: 2000,
+        style: expect.any(Object),
+      }),
+    );
   });
 
   it("should merge custom options for error", () => {
     notify.error("Error", { position: "top-right" });
 
-    expect(toast.error).toHaveBeenCalledWith("Error", expect.objectContaining({
-      position: "top-right",
-      duration: 4000,
-    }));
+    expect(toast.error).toHaveBeenCalledWith(
+      "Error",
+      expect.objectContaining({
+        position: "top-right",
+        duration: 4000,
+      }),
+    );
   });
 
   it("should merge custom options for info", () => {
     notify.info("Info", { duration: 5000 });
 
-    expect(toast).toHaveBeenCalledWith("Info", expect.objectContaining({
-      duration: 5000,
-    }));
+    expect(toast).toHaveBeenCalledWith(
+      "Info",
+      expect.objectContaining({
+        duration: 5000,
+      }),
+    );
   });
 });
