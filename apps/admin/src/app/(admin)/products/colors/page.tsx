@@ -9,6 +9,7 @@ import { HexColorPicker, HexColorInput } from "react-colorful";
 import { Dialog, Transition } from "@headlessui/react";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
 import { COLOR_CATEGORIES, QUICK_COLORS } from "@/lib/colorPalettes";
+import { applyNoColorToggle, DEFAULT_COLOR_CODE, resolveColorSave } from "./colorForm";
 import { useCan } from "@/hooks/useCan";
 import { apiCache } from "@/lib/api-cache";
 
@@ -33,7 +34,7 @@ const INITIAL_MODAL_STATE: ModalState = {
   open: false,
   id: null,
   title: "",
-  colorCode: "#000000",
+  colorCode: DEFAULT_COLOR_CODE,
   noColor: false,
 };
 
@@ -117,23 +118,12 @@ export default function ProductColorsPage() {
   };
 
   const handleSaveColor = async () => {
-    const title = modalState.title.trim();
-    if (!title) {
-      toast.error("نام رنگ را وارد کنید");
+    const resolved = resolveColorSave(modalState);
+    if (!resolved.ok) {
+      toast.error(resolved.message);
       return;
     }
-
-    // Colorless entries persist null; otherwise validate and normalize the hex.
-    let normalizedColorCode: string | null = null;
-    if (!modalState.noColor) {
-      const raw = modalState.colorCode || "";
-      const withHash = raw.startsWith("#") ? raw : `#${raw}`;
-      if (!/^#[0-9a-fA-F]{6}$/.test(withHash)) {
-        toast.error("کد رنگ معتبر نیست");
-        return;
-      }
-      normalizedColorCode = withHash.toLowerCase();
-    }
+    const { title, colorCode: normalizedColorCode } = resolved;
 
     setSaving(true);
     try {
@@ -328,28 +318,13 @@ export default function ProductColorsPage() {
                         <input
                           type="text"
                           value={modalState.title}
-                          onChange={(e) => {
-                            const newTitle = e.target.value;
-                            // Auto-check "No Color" if title contains " کد" or starts with "کد"
-                            const shouldAutoCheck =
-                              newTitle.includes(" کد") || newTitle.startsWith("کد");
-
-                            if (process.env.NODE_ENV === "development") {
-                              console.log(
-                                "Title changed:",
-                                newTitle,
-                                "| Should auto-check:",
-                                shouldAutoCheck,
-                              );
-                            }
-
-                            setModalState((prev) => ({
-                              ...prev,
-                              title: newTitle,
-                              noColor: shouldAutoCheck ? true : prev.noColor,
-                              colorCode: shouldAutoCheck ? "" : prev.colorCode,
-                            }));
-                          }}
+                          onChange={(e) =>
+                            // The name must not steer the colour. This used to flip
+                            // "بدون رنگ" on whenever the title contained "کد" and blank
+                            // the chosen colour with it — one-way, so clearing the title
+                            // never restored anything and the picked colour was gone.
+                            setModalState((prev) => ({ ...prev, title: e.target.value }))
+                          }
                           className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary/30"
                           placeholder="مثلاً سرمه‌ای ملایم"
                         />
@@ -362,11 +337,7 @@ export default function ProductColorsPage() {
                           id="noColorCheckbox"
                           checked={modalState.noColor}
                           onChange={(e) =>
-                            setModalState((prev) => ({
-                              ...prev,
-                              noColor: e.target.checked,
-                              colorCode: e.target.checked ? "" : prev.colorCode,
-                            }))
+                            setModalState((prev) => applyNoColorToggle(prev, e.target.checked))
                           }
                           className="h-4 w-4 rounded border-slate-300 text-infinity-primary focus:ring-infinity-primary"
                         />
