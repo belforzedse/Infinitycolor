@@ -165,7 +165,13 @@ export default function Modal({
     >
       <div
         ref={modalRef}
-        className={`relative w-full max-w-7xl rounded-panel bg-white shadow-2xl duration-200 animate-in zoom-in-95 ${className}`}
+        /*
+         * Only the width was ever constrained, so a long list — a category with
+         * many subcategories, or a deep category picker — grew the panel past the
+         * viewport and pushed its own title and close button off screen. Bound the
+         * height and let the body scroll inside the panel instead of the page.
+         */
+        className={`relative flex max-h-[calc(100dvh-2rem)] w-full max-w-7xl flex-col overflow-hidden rounded-panel bg-white shadow-2xl duration-200 animate-in zoom-in-95 ${className}`}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
@@ -173,7 +179,7 @@ export default function Modal({
         aria-labelledby={labelledById}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-6 py-4">
           {title && (
             <h3
               id={titleId}
@@ -208,7 +214,9 @@ export default function Modal({
           </button>
         </div>
 
-        <div className={contentClassName ?? "p-6"}>{children}</div>
+        <div className={`min-h-0 flex-1 overflow-y-auto ${contentClassName ?? "p-6"}`}>
+          {children}
+        </div>
       </div>
     </div>,
     document.body,

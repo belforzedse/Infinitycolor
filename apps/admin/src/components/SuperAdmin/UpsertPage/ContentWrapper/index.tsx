@@ -283,8 +283,13 @@ export default function UpsertPageContentWrapper<T extends { createdAt: Date; up
           </div>
         </div>
 
-        {/* Desktop / Panel Action Buttons */}
-        <div className={`mt-4 w-full ${formActionsVisibleClass} ${isPanel ? "flex flex-col" : "grid-cols-12 md:grid"}`}>
+        {/*
+          Desktop / Panel Action Buttons.
+          The row carried no separation from the fields above it, so on a long
+          editor the save/cancel pair read as one more form element floating at
+          the bottom edge rather than the point where the task is completed.
+        */}
+        <div className={`mt-6 w-full border-t border-slate-200 pt-4 ${formActionsVisibleClass} ${isPanel ? "flex flex-col" : "grid-cols-12 md:grid"}`}>
           <div className={isPanel ? "w-full" : "col-span-9"}>
             <div className="flex w-full flex-wrap items-center justify-end gap-2">
               {config.actionButtons({

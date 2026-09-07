@@ -95,9 +95,12 @@ type OnDeleteCategory = (category: { id: string | number; title: string }) => vo
 
 const ChildCategoryCard = ({
   child,
+  parentTitle,
   onDelete,
 }: {
   child: CategoryChild;
+  /** Named so the operator can see where this sits, not just that it is nested. */
+  parentTitle: string;
   onDelete?: OnDeleteCategory;
 }) => {
   const imageSrc = resolveCategoryImageSrc(child.attributes?.Image);
@@ -118,12 +121,17 @@ const ChildCategoryCard = ({
           />
         </div>
 
-        <div className="flex flex-1 flex-col justify-between py-0.5 text-right">
+        <div className="flex min-w-0 flex-1 flex-col justify-between py-0.5 text-right">
           <div className="flex items-center justify-between gap-2">
-            <p className="truncate font-mono text-[10px] text-slate-400">
-              {child.attributes?.Slug || "بدون نامک"}
-            </p>
-            <div className="flex items-center gap-1">
+            {/*
+              The slug is a routing detail, not how staff think about a category.
+              It used to lead the card; the name does now, and the slug moves to
+              the quiet line below.
+            */}
+            <h4 className="truncate text-xs font-semibold text-slate-900">
+              {child.attributes?.Title || "بدون نام"}
+            </h4>
+            <div className="flex shrink-0 items-center gap-1">
               {onDelete && (
                 <button
                   type="button"
@@ -135,7 +143,7 @@ const ChildCategoryCard = ({
                     });
                   }}
                   className="flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-600 transition hover:bg-red-100"
-                  aria-label="حذف دسته‌بندی فرزند"
+                  aria-label={`حذف زیردستهٔ ${child.attributes?.Title || "بدون نام"}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -143,7 +151,7 @@ const ChildCategoryCard = ({
               <Link
                 href={`/products/categories/edit/${child.id}`}
                 className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50"
-                aria-label="ویرایش دسته‌بندی فرزند"
+                aria-label={`ویرایش زیردستهٔ ${child.attributes?.Title || "بدون نام"}`}
               >
                 <EditIcon />
               </Link>
@@ -151,10 +159,12 @@ const ChildCategoryCard = ({
           </div>
 
           <div className="min-w-0">
-            <h4 className="truncate text-xs font-semibold text-slate-900">
-              {child.attributes?.Title || "Unnamed"}
-            </h4>
-            <span className="text-[10px] text-slate-400">فرزند دسته‌بندی</span>
+            <p className="truncate text-[10px] text-slate-400">
+              زیردستهٔ {parentTitle}
+            </p>
+            <p className="truncate font-mono text-[10px] text-slate-400">
+              {child.attributes?.Slug || "بدون نامک"}
+            </p>
           </div>
 
           <div className="flex items-center justify-between rounded-lg bg-stone-100 px-2 py-1">
@@ -210,7 +220,7 @@ const ParentCategoryCard = ({
 
             {hasChildren && (
               <span className="absolute left-2 top-2 rounded-full bg-infinity-primary-lighter/20 px-2 py-1 text-[11px] font-semibold text-infinity-primary-dark shadow-sm">
-                {childCategories.length} فرزند
+                {childCategories.length} زیردسته
               </span>
             )}
 
@@ -237,21 +247,31 @@ const ParentCategoryCard = ({
           </div>
 
           <div className="mt-4 flex items-center justify-between rounded-full bg-slate-50 px-3 py-2">
+            {/*
+              W3C APG steers site navigation with expandable groups to the
+              disclosure pattern rather than a tree widget, whose roving focus
+              and type-ahead this list does not need. Both controls therefore
+              expose expanded state.
+            */}
             <button
               type="button"
               onClick={() => setIsChildrenModalOpen(true)}
               disabled={!hasChildren}
+              aria-expanded={hasChildren ? isChildrenModalOpen : undefined}
               className={`text-xs font-semibold ${hasChildren ? "text-infinity-primary-dark" : "text-slate-400"}`}
             >
-              {hasChildren ? "مشاهده فرزندان" : "بدون فرزند"}
+              {hasChildren ? "مشاهده زیردسته‌ها" : "بدون زیردسته"}
             </button>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => setIsChildrenModalOpen(true)}
                 disabled={!hasChildren}
+                aria-expanded={hasChildren ? isChildrenModalOpen : undefined}
                 className={`flex h-8 w-8 items-center justify-center rounded-xl border transition ${hasChildren ? "border-slate-200 bg-white text-slate-600 hover:bg-slate-50" : "cursor-not-allowed border-slate-100 bg-white text-slate-300"}`}
-                aria-label={hasChildren ? "نمایش فرزندان" : "بدون فرزند"}
+                aria-label={
+                hasChildren ? `نمایش زیردسته‌های ${title}` : `${title} زیردسته‌ای ندارد`
+              }
               >
                 <ChevronRightIcon />
               </button>
@@ -287,7 +307,7 @@ const ParentCategoryCard = ({
       <Modal
         isOpen={isChildrenModalOpen}
         onClose={() => setIsChildrenModalOpen(false)}
-        title={`فرزندان ${category.attributes?.Title || "دسته‌بندی"}`}
+        title={`زیردسته‌های ${title}`}
         className="max-w-4xl"
       >
         {hasChildren ? (
@@ -296,12 +316,13 @@ const ParentCategoryCard = ({
               <ChildCategoryCard
                 key={child.id}
                 child={child}
+                parentTitle={title}
                 onDelete={onDelete}
               />
             ))}
           </div>
         ) : (
-          <div className="text-sm text-slate-500">فرزندی برای نمایش وجود ندارد.</div>
+          <div className="text-sm text-slate-500">این دسته‌بندی زیردسته‌ای ندارد.</div>
         )}
       </Modal>
     </>
