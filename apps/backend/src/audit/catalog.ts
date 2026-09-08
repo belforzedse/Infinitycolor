@@ -81,6 +81,8 @@ export const AUDIT_EVENT_CATALOG = {
   "imports.failed": definition("imports", "fail", "درون‌ریزی ناموفق بود", "Import failed", "important"),
   "integrations.sync_completed": definition("integrations", "sync", "همگام‌سازی پایان یافت", "Synchronization completed", "important"),
   "reports.export_generated": definition("reports", "export", "خروجی گزارش ساخته شد", "Report export generated", "sensitive"),
+  "issue_reports.status_changed": definition("support", "status_change", "وضعیت گزارش مشکل تغییر کرد", "Issue report status changed", "important"),
+  "issue_reports.export_generated": definition("support", "export", "خروجی گزارش مشکلات ساخته شد", "Issue report export generated", "sensitive"),
   "audit.export_generated": definition("security", "export", "خروجی رویدادهای حسابرسی ساخته شد", "Audit export generated", "critical"),
   "system.purge_completed": definition("system", "purge", "پاک‌سازی سیستمی پایان یافت", "System purge completed", "critical"),
   "system.job_completed": definition("system", "job", "کار پس‌زمینه پایان یافت", "Background job completed"),

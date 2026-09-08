@@ -88,6 +88,18 @@ const superAdminSidebar: SidebarItem[] = [
     children: [],
   },
   {
+    id: "issue-reports",
+    label: "گزارش مشکلات",
+    href: "/issue-reports",
+    icon: (
+      <FiMessageCircle
+        className="h-5 w-5 text-infinity-primary"
+        stroke="#3d4c6e"
+      />
+    ),
+    children: [],
+  },
+  {
     id: "customization",
     label: "شخصی‌سازی",
     href: "/customization",

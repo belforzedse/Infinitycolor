@@ -62,6 +62,12 @@
       "import": "./dist/admin-authorization.js",
       "require": "./dist-cjs/admin-authorization.js",
       "default": "./dist/admin-authorization.js"
+    },
+    "./iran-phone": {
+      "types": "./dist/iran-phone.d.ts",
+      "import": "./dist/iran-phone.js",
+      "require": "./dist-cjs/iran-phone.js",
+      "default": "./dist/iran-phone.js"
     }
   },
   "scripts": {

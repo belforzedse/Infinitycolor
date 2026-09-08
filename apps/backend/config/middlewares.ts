@@ -88,6 +88,7 @@ export default [
     },
   },
   "strapi::query",
+  "global::issue-report-envelope",
   {
     name: "strapi::body",
     config: {

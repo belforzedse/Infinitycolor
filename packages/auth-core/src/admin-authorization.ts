@@ -66,6 +66,7 @@ export const ADMIN_CAPABILITIES = [
   "system.shipping.manage",
   "system.payments.manage",
   "system.reviews.manage",
+  "system.issueReports.manage",
 ] as const;
 
 export type AdminCapability = (typeof ADMIN_CAPABILITIES)[number];

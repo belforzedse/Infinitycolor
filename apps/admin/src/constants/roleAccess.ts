@@ -60,6 +60,7 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: "/carts", capability: "report.carts.read" },
   { prefix: "/wallets", capability: "wallet.read" },
   { prefix: "/users", capability: "system.users.manage" },
+  { prefix: "/issue-reports", capability: "system.issueReports.manage" },
   { prefix: "/settings/activity", capability: "system.audit.read" },
   { prefix: "/settings", capability: "system.settings.manage" },
   { prefix: "/customization", capability: "system.customization.manage" },

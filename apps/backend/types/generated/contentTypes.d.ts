@@ -1126,6 +1126,79 @@ export interface ApiGuestCartMergeGuestCartMerge extends Schema.CollectionType {
   };
 }
 
+export interface ApiIssueReportIssueReport extends Schema.CollectionType {
+  collectionName: "issue_reports";
+  info: {
+    description: "User-submitted storefront issue reports";
+    displayName: "Issue report";
+    pluralName: "issue-reports";
+    singularName: "issue-report";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    clientContext: Attribute.JSON & Attribute.Private;
+    contactNumber: Attribute.String &
+      Attribute.Required &
+      Attribute.SetMinMaxLength<{
+        maxLength: 13;
+      }>;
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<"api::issue-report.issue-report", "oneToOne", "admin::user"> &
+      Attribute.Private;
+    description: Attribute.Text & Attribute.Required;
+    issueName: Attribute.String &
+      Attribute.Required &
+      Attribute.SetMinMaxLength<{
+        maxLength: 120;
+      }>;
+    locale: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 16;
+      }> &
+      Attribute.DefaultTo<"fa-IR">;
+    payloadHash: Attribute.String &
+      Attribute.Required &
+      Attribute.Private &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    publicId: Attribute.String & Attribute.Required;
+    reporterUserId: Attribute.Integer & Attribute.Private;
+    requestId: Attribute.String &
+      Attribute.Private &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    sourcePath: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 512;
+      }>;
+    status: Attribute.Enumeration<["new", "in_review", "resolved"]> &
+      Attribute.Required &
+      Attribute.DefaultTo<"new">;
+    submissionId: Attribute.String & Attribute.Required & Attribute.Private;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<"api::issue-report.issue-report", "oneToOne", "admin::user"> &
+      Attribute.Private;
+    userAgent: Attribute.String &
+      Attribute.Private &
+      Attribute.SetMinMaxLength<{
+        maxLength: 512;
+      }>;
+    version: Attribute.Integer &
+      Attribute.Required &
+      Attribute.SetMinMax<
+        {
+          min: 1;
+        },
+        number
+      > &
+      Attribute.DefaultTo<1>;
+  };
+}
+
 export interface ApiLocalUserAddressLocalUserAddress extends Schema.CollectionType {
   collectionName: "local_user_addresses";
   info: {
@@ -4268,6 +4341,7 @@ declare module "@strapi/types" {
       "api::footer.footer": ApiFooterFooter;
       "api::general-discount.general-discount": ApiGeneralDiscountGeneralDiscount;
       "api::guest-cart-merge.guest-cart-merge": ApiGuestCartMergeGuestCartMerge;
+      "api::issue-report.issue-report": ApiIssueReportIssueReport;
       "api::local-user-address.local-user-address": ApiLocalUserAddressLocalUserAddress;
       "api::local-user-info.local-user-info": ApiLocalUserInfoLocalUserInfo;
       "api::local-user-log.local-user-log": ApiLocalUserLogLocalUserLog;

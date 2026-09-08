@@ -19,6 +19,7 @@ import PWAInstallPrompt from "@/components/ui/PWAInstallPrompt";
 import { SharedElementTransitionProvider } from "@/contexts/SharedElementTransitionContext";
 import NetworkStatusBanner from "@/components/ui/NetworkStatusBanner";
 import VersionCheck from "@/components/ui/VersionCheck";
+import IssueReportWidget from "@/components/IssueReport/IssueReportWidget";
 
 export default function Providers({ children }: { children: ReactNode }) {
   // Enable automatic data refresh on all pages when tab becomes visible (10 min debounce)
@@ -51,6 +52,7 @@ export default function Providers({ children }: { children: ReactNode }) {
         <NetworkStatusBanner />
         <VersionCheck />
         <PWAInstallPrompt />
+        <IssueReportWidget />
       </SharedElementTransitionProvider>
     </Provider>
   );

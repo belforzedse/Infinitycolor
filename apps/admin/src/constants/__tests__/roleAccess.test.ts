@@ -1,6 +1,7 @@
 import { canRoleAccessPath, isStoreManagerRole } from "../roleAccess";
 import { getSalesNavForRole, SALES_NAV_ITEMS } from "../salesNav";
 import { getSidebarItemsForRole } from "../superAdminSidebar";
+import { ADMIN_ROLE_DEFINITIONS, ADMIN_ROLE_IDS } from "@repo/auth-core";
 
 /**
  * Moving the sales analytics from /reports/* into /sales/* is the one part of
@@ -27,6 +28,14 @@ describe("canRoleAccessPath", () => {
         expect(canRoleAccessPath("Superadmin", item.href)).toBe(true);
       }
       expect(canRoleAccessPath("Superadmin", "/sales/activity")).toBe(true);
+    });
+
+    it("owns the issue report workspace exclusively", () => {
+      for (const role of ADMIN_ROLE_IDS) {
+        expect(canRoleAccessPath(role, "/issue-reports")).toBe(
+          role === "superadmin",
+        );
+      }
     });
   });
 
@@ -243,6 +252,14 @@ describe("sidebar", () => {
     expect(parentIds("Superadmin")).not.toContain("carts");
   });
 
+  it("shows issue reports in the Superadmin sidebar only", () => {
+    for (const role of ADMIN_ROLE_IDS) {
+      const items = parentIds(ADMIN_ROLE_DEFINITIONS[role].strapiName);
+      if (role === "superadmin") expect(items).toContain("issue-reports");
+      else expect(items).not.toContain("issue-reports");
+    }
+  });
+
   it("replaces the unreachable reports group with a Sales hub that has a landing page", () => {
     const sales = getSidebarItemsForRole("Superadmin").find(
       (item) => item.id === "sales",
@@ -340,7 +357,7 @@ describe("sidebar", () => {
       "Store Manager 2": 9,
       Finance: 4,
       Founder: 5,
-      Superadmin: 11,
+      Superadmin: 12,
     };
 
     for (const [role, count] of Object.entries(expectedCounts)) {

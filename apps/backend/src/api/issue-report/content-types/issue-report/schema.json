@@ -1,0 +1,104 @@
+{
+  "kind": "collectionType",
+  "collectionName": "issue_reports",
+  "info": {
+    "singularName": "issue-report",
+    "pluralName": "issue-reports",
+    "displayName": "Issue report",
+    "description": "User-submitted storefront issue reports"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "indexes": [
+    {
+      "name": "uq_issue_reports_public_id",
+      "columns": ["public_id"],
+      "type": "unique"
+    },
+    {
+      "name": "uq_issue_reports_submission_id",
+      "columns": ["submission_id"],
+      "type": "unique"
+    },
+    {
+      "name": "idx_issue_reports_created_id",
+      "columns": ["created_at", "id"]
+    },
+    {
+      "name": "idx_issue_reports_status_created_id",
+      "columns": ["status", "created_at", "id"]
+    }
+  ],
+  "attributes": {
+    "publicId": {
+      "type": "string",
+      "required": true
+    },
+    "contactNumber": {
+      "type": "string",
+      "required": true,
+      "maxLength": 13
+    },
+    "issueName": {
+      "type": "string",
+      "required": true,
+      "maxLength": 120
+    },
+    "description": {
+      "type": "text",
+      "required": true
+    },
+    "reporterUserId": {
+      "type": "integer",
+      "private": true
+    },
+    "sourcePath": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "locale": {
+      "type": "string",
+      "maxLength": 16,
+      "default": "fa-IR"
+    },
+    "clientContext": {
+      "type": "json",
+      "private": true
+    },
+    "userAgent": {
+      "type": "string",
+      "maxLength": 512,
+      "private": true
+    },
+    "requestId": {
+      "type": "string",
+      "maxLength": 64,
+      "private": true
+    },
+    "submissionId": {
+      "type": "string",
+      "required": true,
+      "private": true
+    },
+    "payloadHash": {
+      "type": "string",
+      "required": true,
+      "maxLength": 64,
+      "private": true
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["new", "in_review", "resolved"],
+      "default": "new",
+      "required": true
+    },
+    "version": {
+      "type": "integer",
+      "default": 1,
+      "required": true,
+      "min": 1
+    }
+  }
+}

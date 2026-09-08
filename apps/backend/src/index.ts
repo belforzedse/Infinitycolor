@@ -42,6 +42,7 @@ import {
 } from "@repo/auth-core";
 import { ensureAuditEventStorage } from "./audit/storage";
 import { ensureCategoryEditorialDatabaseInvariant } from "./api/product-category-content/services/category-editorial-database";
+import { ensureIssueReportStorage } from "./api/issue-report/services/issue-report-storage";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -289,6 +290,11 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "api::product-review": { "product-review": CHILD_CRUD_ACTIONS },
     "api::product-review-reply": { "product-review-reply": CHILD_CRUD_ACTIONS },
   },
+  "system.issueReports.manage": {
+    "api::issue-report": {
+      "issue-report": ["query", "findOne", "updateStatus", "exportReport"],
+    },
+  },
 };
 
 function mergeGrants(
@@ -322,6 +328,9 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
     grants: {
       "api::auth": {
         auth: ["welcome", "otp", "login", "loginWithPassword", "resetPassword"],
+      },
+      "api::issue-report": {
+        "issue-report": ["create"],
       },
       "api::product": {
         product: [...READ_ACTIONS, "search"],
@@ -1271,6 +1280,10 @@ export default {
       // provider-reference invariant runs unconditionally alongside SnappPay's.
       await ensurePaymentAttemptDatabaseInvariants(strapi as any);
       await ensureCategoryEditorialDatabaseInvariant(strapi);
+      const issueReportStorage = await ensureIssueReportStorage(strapi);
+      if (issueReportStorage.repaired) {
+        strapi.log.info("Issue report storage indexes installed after schema sync");
+      }
     }
 
     if (snappayHardenedInitiationEnabled) {
