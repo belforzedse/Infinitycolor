@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { peydaFanum } from "@repo/fonts";
+import "@repo/ui/styles.css";
 import "./globals.css";
 
 export const metadata: Metadata = {

@@ -496,6 +496,31 @@ export function infinityCredentialsPlugin(
           });
         },
       ),
+      infinitySessionContinue: createAuthEndpoint(
+        "/infinity/session/continue",
+        {
+          method: "POST",
+          use: [sessionMiddleware],
+          body: z.object({}),
+        },
+        async (ctx) => {
+          assertTrustedRequest(ctx);
+          const flow = readFlowState(ctx);
+          const sessionState = ctx.context.session;
+          if (!flow || flow.purpose === "reset" || !sessionState) {
+            throw new APIError("UNAUTHORIZED");
+          }
+          const redirectTo = await createReturn(
+            sessionState.session.id,
+            flow.returnTo,
+          );
+          clearFlowState(ctx);
+          authEvent("session_continued", {
+            subjectTag: keyedSubjectTag(sessionState.session.id),
+          });
+          return ctx.json({ authenticated: true as const, redirectTo });
+        },
+      ),
       infinityFlowStart: createAuthEndpoint(
         "/infinity/flow/start",
         {

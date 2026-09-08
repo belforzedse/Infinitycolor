@@ -8,7 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { authPost } from "./auth-api";
 
 interface AuthFlowContextValue {
@@ -25,14 +25,26 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
   const [phone, setPhone] = useState("");
   const [flowReady, setFlowReady] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
 
   useEffect(() => {
     let active = true;
     authPost<{ phone: string | null }>("/infinity/flow/start", { returnTo })
-      .then((flow) => {
-        if (active && flow.phone) setPhone(flow.phone);
+      .then(async (flow) => {
+        if (!active) return;
+        if (flow.phone) setPhone(flow.phone);
+        if (pathname !== "/auth") return;
+        try {
+          const continuation = await authPost<{
+            authenticated: true;
+            redirectTo: string;
+          }>("/infinity/session/continue");
+          if (active) window.location.replace(continuation.redirectTo);
+        } catch {
+          // No reusable central session: reveal the normal credential flow.
+        }
       })
       .catch(() => undefined)
       .finally(() => {
@@ -41,7 +53,7 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [returnTo]);
+  }, [pathname, returnTo]);
 
   const href = useCallback(
     (path: string) => {

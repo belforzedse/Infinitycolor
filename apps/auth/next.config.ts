@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   reactCompiler: true,
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
-  transpilePackages: ["@repo/auth-core", "@repo/auth-ui", "@repo/fonts"],
+  transpilePackages: ["@repo/auth-core", "@repo/auth-ui", "@repo/fonts", "@repo/ui"],
   reactStrictMode: true,
   poweredByHeader: false,
   serverExternalPackages: ["pg"],

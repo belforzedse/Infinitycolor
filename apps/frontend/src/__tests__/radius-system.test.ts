@@ -21,11 +21,18 @@ describe("semantic radius system", () => {
     const sharedStyles = source("packages/ui/src/styles.css");
     const frontendConfig = source("apps/frontend/tailwind.config.ts");
     const adminConfig = source("apps/admin/tailwind.config.ts");
+    const authConfig = source("apps/auth/tailwind.config.ts");
 
     expect(sharedStyles).toContain(`--radius-${name}: ${value};`);
     const tailwindMapping = new RegExp(`${name}: ["']var\\(--radius-${name}\\)["']`);
     expect(frontendConfig).toMatch(tailwindMapping);
     expect(adminConfig).toMatch(tailwindMapping);
+    expect(authConfig).toMatch(tailwindMapping);
+  });
+
+  it("loads the shared radius values in the central auth application", () => {
+    const authLayout = source("apps/auth/src/app/layout.tsx");
+    expect(authLayout).toContain('import "@repo/ui/styles.css";');
   });
 
   it("keeps the legacy radius alias and Infinitycolor palette", () => {
@@ -94,7 +101,11 @@ describe("semantic radius system", () => {
     });
   });
 
-  it.each(["apps/frontend/src/app/globals.css", "apps/admin/src/app/globals.css"])(
+  it.each([
+    "apps/frontend/src/app/globals.css",
+    "apps/admin/src/app/globals.css",
+    "apps/auth/src/app/globals.css",
+  ])(
     "removes app-local radius and focus-shape duplication from %s",
     (relativePath) => {
       const contents = source(relativePath);

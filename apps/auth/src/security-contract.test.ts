@@ -451,6 +451,32 @@ test("no-referrer auth initializes the validated return target explicitly", () =
   assert.match(plugin, /returnTo:\s*resolveFlowReturnTarget\(/);
 });
 
+test("an existing central session resumes through a one-time allowlisted return grant", () => {
+  const flowContext = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/auth/auth-flow-context.tsx"),
+    "utf8",
+  );
+  const plugin = fs.readFileSync(
+    path.resolve(process.cwd(), "src/server/infinity-plugin.ts"),
+    "utf8",
+  );
+
+  assert.match(plugin, /"\/infinity\/session\/continue"/);
+  assert.match(plugin, /use:\s*\[sessionMiddleware\]/);
+  assert.match(
+    plugin,
+    /createReturn\(\s*sessionState\.session\.id,\s*flow\.returnTo,\s*\)/,
+  );
+  assert.match(plugin, /flow\.purpose === "reset"/);
+  assert.match(plugin, /clearFlowState\(ctx\)/);
+  assert.match(flowContext, /pathname !== "\/auth"/);
+  assert.match(
+    flowContext,
+    /authPost<[\s\S]*?>\("\/infinity\/session\/continue"\)/,
+  );
+  assert.match(flowContext, /window\.location\.replace\(continuation\.redirectTo\)/);
+});
+
 test("Better Auth source freezes absolute sessions and the native secure cookie name", () => {
   const source = fs.readFileSync(
     path.resolve(process.cwd(), "src/server/auth.ts"),
