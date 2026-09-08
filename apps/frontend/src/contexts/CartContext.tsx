@@ -124,6 +124,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   // Read login state on client after hydration to avoid SSR mismatch
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (window.location.pathname === "/auth/complete") return;
 
     let active = true;
     const updateLoginState = async (forceRefresh = false) => {

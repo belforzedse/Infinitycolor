@@ -4,14 +4,18 @@ import Header from "@/components/SuperAdmin/Layout/Header";
 import Sidebar from "@/components/SuperAdmin/Layout/Sidebar";
 import ScrollToTop from "@/components/ScrollToTop";
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { UserService } from "@/services";
 import { HTTP_STATUS } from "@/constants/api";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { useAtomValue, useSetAtom } from "jotai";
-import { canCapabilitiesAccessPath, getAdminLandingPath } from "@/constants/roleAccess";
+import {
+  canCapabilitiesAccessPath,
+  getAdminLandingPath,
+} from "@/constants/roleAccess";
 import clsx from "clsx";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
+import { storefrontOrigin } from "@/config/admin-env";
 
 /**
  * Layout is expressed in CSS (see ResponsiveAdminShell); this hook exists only
@@ -51,11 +55,15 @@ function useAdminViewportBehavior() {
   return state;
 }
 
-export default function ClientLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
+export default function ClientLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
+  const [authError, setAuthError] = useState(false);
   const setCurrentUser = useSetAtom(currentUserAtom);
   const setUserLoading = useSetAtom(userLoadingAtom);
   const currentUser = useAtomValue(currentUserAtom);
@@ -63,13 +71,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const lastCheckRef = useRef<number>(0);
   const isCheckingRef = useRef(false);
 
-  const redirectToPrevious = useCallback(() => {
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-    } else {
-      router.replace("/");
-    }
-  }, [router]);
+  const redirectToStorefront = useCallback(() => {
+    window.location.replace(new URL("/account", storefrontOrigin()).toString());
+  }, []);
 
   // Silent background auth check - doesn't show loading state
   const checkAuthSilently = useCallback(async () => {
@@ -97,33 +101,29 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       // Check if user is still admin - update isAuthorized state and redirect immediately
       if (!me?.isAdmin) {
         setIsAuthorized(false);
-        // Redirect immediately - don't wait
-        redirectToPrevious();
+        redirectToStorefront();
         return;
       }
 
-      // Ensure isAuthorized is true if user is admin
+      setAuthError(false);
       setIsAuthorized(true);
     } catch (error: any) {
-      setCurrentUser(null);
-
       if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
+        setCurrentUser(null);
         setIsAuthorized(false);
         window.location.replace(centralLoginUrl(pathname));
         return;
       }
       if (error?.status === HTTP_STATUS.FORBIDDEN) {
         setIsAuthorized(false);
-        redirectToPrevious();
+        redirectToStorefront();
         return;
       }
-      // For other errors, don't redirect - might be temporary network issues
-      // But still update isAuthorized if we can't verify
-      setIsAuthorized(false);
+      setAuthError(true);
     } finally {
       isCheckingRef.current = false;
     }
-  }, [router, setCurrentUser, redirectToPrevious]);
+  }, [pathname, redirectToStorefront, setCurrentUser]);
 
   // Initial mount check - with loading state
   useEffect(() => {
@@ -152,9 +152,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         setUserLoading(false);
 
         if (!me?.isAdmin) {
-          redirectToPrevious();
+          redirectToStorefront();
           return;
         }
+        setAuthError(false);
         setIsAuthorized(true);
         setIsLoading(false);
         // Update last check time for initial mount
@@ -162,19 +163,19 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       })
       .catch((error: any) => {
         if (!isMounted) return;
-        // Clear user data on auth errors
-        setCurrentUser(null);
         setUserLoading(false);
 
         if (error?.status === HTTP_STATUS.UNAUTHORIZED) {
+          setCurrentUser(null);
           window.location.replace(centralLoginUrl(pathname));
           return;
         }
         if (error?.status === HTTP_STATUS.FORBIDDEN) {
-          redirectToPrevious();
+          redirectToStorefront();
           return;
         }
-        redirectToPrevious();
+        setAuthError(true);
+        setIsLoading(false);
       });
 
     return () => {
@@ -224,14 +225,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     }
   }, [pathname, isAuthorized, checkAuthSilently]);
 
-  // Immediately redirect if user loses authorization
-  useEffect(() => {
-    if (!isLoading && !isAuthorized) {
-      // User is no longer authorized - redirect immediately
-      redirectToPrevious();
-    }
-  }, [isLoading, isAuthorized, redirectToPrevious]);
-
   const roleBlocked = !canCapabilitiesAccessPath(
     currentUser?.capabilities,
     pathname,
@@ -250,7 +243,23 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   }
 
   if (!isAuthorized) {
-    return null;
+    return authError ? (
+      <main
+        className="flex min-h-screen items-center justify-center bg-neutral-50 p-6"
+        dir="rtl"
+      >
+        <section className="w-full max-w-md rounded-prominent border bg-white p-8 text-center">
+          <p className="text-neutral-700">بررسی حساب موقتاً ممکن نیست.</p>
+          <button
+            type="button"
+            className="mt-4 rounded-full bg-infinity-primary px-5 py-2 text-white"
+            onClick={() => window.location.reload()}
+          >
+            تلاش دوباره
+          </button>
+        </section>
+      </main>
+    ) : null;
   }
 
   return (
@@ -278,15 +287,23 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
 function ForbiddenAdminView({ landingPath }: { landingPath: string }) {
   return (
-    <main className="flex min-h-[55vh] items-center justify-center p-4" dir="rtl">
+    <main
+      className="flex min-h-[55vh] items-center justify-center p-4"
+      dir="rtl"
+    >
       <section
         className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm"
         role="alert"
       >
-        <p className="text-sm font-semibold text-amber-700">دسترسی محدود شده است</p>
-        <h1 className="mt-2 text-2xl font-bold text-neutral-900">اجازه مشاهده این بخش را ندارید</h1>
+        <p className="text-sm font-semibold text-amber-700">
+          دسترسی محدود شده است
+        </p>
+        <h1 className="mt-2 text-2xl font-bold text-neutral-900">
+          اجازه مشاهده این بخش را ندارید
+        </h1>
         <p className="mt-3 text-sm leading-7 text-neutral-600">
-          سطح دسترسی حساب شما شامل این صفحه نیست. هیچ داده‌ای از این بخش بارگذاری نشده است.
+          سطح دسترسی حساب شما شامل این صفحه نیست. هیچ داده‌ای از این بخش
+          بارگذاری نشده است.
         </p>
         <a
           href={landingPath}
@@ -326,7 +343,10 @@ export function ResponsiveAdminShell({
 
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       // Only collapse if click is outside sidebar
-      if (sidebarRef.current && !sidebarRef.current.contains(event.target as Node)) {
+      if (
+        sidebarRef.current &&
+        !sidebarRef.current.contains(event.target as Node)
+      ) {
         setIsSidebarCollapsed(true);
       }
     };

@@ -591,16 +591,15 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
                   )}
                 </button>
 
-                <Link
+                <a
                   href="/orders"
-                  prefetch={false}
                   onClick={onClose}
                   className="pressable inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-neutral-700 transition-colors hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
                   dir="rtl"
                 >
                   <OrderTrackingIcon className="h-4 w-4 shrink-0" />
                   <span>پیگیری سفارش</span>
-                </Link>
+                </a>
 
                 <div className="ml-auto flex items-center gap-2">
                   <AccountAccessMenu

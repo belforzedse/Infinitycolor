@@ -116,7 +116,7 @@ describe("Better Auth JWT pinned claims", () => {
     expect(__betterAuthJwtTestUtils.isManagementRole("Customer")).toBe(false);
   });
 
-  test("pins staging to its own exact JWKS issuer and audience", () => {
+  test("pins staging to its HTTPS JWKS issuer and audience", () => {
     Object.assign(process.env, {
       NODE_ENV: "production",
       BETTER_AUTH_BRIDGE_ENABLED: "true",
@@ -131,6 +131,44 @@ describe("Better Auth JWT pinned claims", () => {
     expect(config?.issuer).toBe("https://auth.staging.infinitycolor.co");
     expect(config?.audience).toBe("https://api.staging.infinitycolor.co");
     expect(config?.jwksUrl.href).toBe("https://auth.staging.infinitycolor.co/api/auth/jwks");
+  });
+
+  test("pins production to its exact HTTPS JWKS transport and public authority", () => {
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      BETTER_AUTH_BRIDGE_ENABLED: "true",
+      BETTER_AUTH_ENVIRONMENT: "production",
+      BETTER_AUTH_JWKS_URL: "https://auth.infinitycolor.co/api/auth/jwks",
+      BETTER_AUTH_JWT_ISSUER: "https://auth.infinitycolor.co",
+      BETTER_AUTH_JWT_AUDIENCE: "https://api.infinitycolor.co",
+    });
+
+    const config = __betterAuthJwtTestUtils.getConfig();
+    expect(config?.jwksUrl.href).toBe("https://auth.infinitycolor.co/api/auth/jwks");
+    expect(config?.issuer).toBe("https://auth.infinitycolor.co");
+    expect(config?.audience).toBe("https://api.infinitycolor.co");
+
+    process.env.BETTER_AUTH_JWKS_URL = "http://auth:2889/api/auth/jwks";
+    expect(() => __betterAuthJwtTestUtils.getConfig()).toThrow(
+      "production Better Auth JWKS, issuer, and audience must match the frozen authorities",
+    );
+  });
+
+  test.each([
+    ["JWKS timeout", { code: "ERR_JWKS_TIMEOUT" }],
+    ["invalid JWKS", { code: "ERR_JWKS_INVALID" }],
+    ["JWKS fetch failure", new TypeError("fetch failed")],
+    ["nested network failure", { cause: new TypeError("fetch failed") }],
+  ])("classifies %s as an infrastructure failure", (_label, error) => {
+    expect(__betterAuthJwtTestUtils.isJwksInfrastructureError(error)).toBe(true);
+  });
+
+  test.each([
+    ["expired token", { code: "ERR_JWT_EXPIRED" }],
+    ["invalid signature", { code: "ERR_JWS_SIGNATURE_VERIFICATION_FAILED" }],
+    ["unknown key", { code: "ERR_JWKS_NO_MATCHING_KEY" }],
+  ])("keeps %s in the invalid-credential path", (_label, error) => {
+    expect(__betterAuthJwtTestUtils.isJwksInfrastructureError(error)).toBe(false);
   });
 
   test("permits only the frozen isolated E2E authority in the Infinity GitLab project", () => {

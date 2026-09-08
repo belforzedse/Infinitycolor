@@ -2,26 +2,37 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Wifi, WifiOff } from "lucide-react";
-import { useOffline } from "next/offline";
 
 export default function NetworkStatusBanner() {
-  const offline = useOffline();
+  const [offline, setOffline] = useState(false);
   const wasOffline = useRef(false);
   const [recovered, setRecovered] = useState(false);
 
   useEffect(() => {
-    if (offline) {
+    let recoveryTimer: number | undefined;
+    const markOffline = () => {
       wasOffline.current = true;
       setRecovered(false);
-      return;
-    }
-    if (!wasOffline.current) return;
-    wasOffline.current = false;
-    setRecovered(true);
-    window.dispatchEvent(new Event("app:back-online"));
-    const timeoutId = window.setTimeout(() => setRecovered(false), 3000);
-    return () => window.clearTimeout(timeoutId);
-  }, [offline]);
+      setOffline(true);
+    };
+    const markOnline = () => {
+      setOffline(false);
+      if (!wasOffline.current) return;
+      wasOffline.current = false;
+      setRecovered(true);
+      window.dispatchEvent(new Event("app:back-online"));
+      recoveryTimer = window.setTimeout(() => setRecovered(false), 3000);
+    };
+
+    if (navigator.onLine === false) markOffline();
+    window.addEventListener("offline", markOffline);
+    window.addEventListener("online", markOnline);
+    return () => {
+      window.removeEventListener("offline", markOffline);
+      window.removeEventListener("online", markOnline);
+      if (recoveryTimer) window.clearTimeout(recoveryTimer);
+    };
+  }, []);
 
   if (!offline && !recovered) return null;
 

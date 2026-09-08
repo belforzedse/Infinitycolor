@@ -1,14 +1,10 @@
 import { act, render, screen } from "@testing-library/react";
 import NetworkStatusBanner from "../NetworkStatusBanner";
 
-let offline = false;
-
-jest.mock("next/offline", () => ({ useOffline: () => offline }));
-
 describe("NetworkStatusBanner", () => {
   beforeEach(() => {
     jest.useFakeTimers();
-    offline = false;
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   });
 
   afterEach(() => {
@@ -19,18 +15,16 @@ describe("NetworkStatusBanner", () => {
   it("persists while offline and briefly confirms reconnection", () => {
     const onBackOnline = jest.fn();
     window.addEventListener("app:back-online", onBackOnline);
-    const { rerender } = render(<NetworkStatusBanner />);
+    render(<NetworkStatusBanner />);
     expect(screen.queryByTestId("network-status")).not.toBeInTheDocument();
 
     act(() => {
-      offline = true;
-      rerender(<NetworkStatusBanner />);
+      window.dispatchEvent(new Event("offline"));
     });
     expect(screen.getByTestId("network-status")).toHaveTextContent("اتصال اینترنت قطع است");
 
     act(() => {
-      offline = false;
-      rerender(<NetworkStatusBanner />);
+      window.dispatchEvent(new Event("online"));
     });
     expect(screen.getByTestId("network-status")).toHaveTextContent("اتصال اینترنت برقرار شد");
     expect(onBackOnline).toHaveBeenCalledTimes(1);
@@ -38,5 +32,14 @@ describe("NetworkStatusBanner", () => {
     act(() => jest.advanceTimersByTime(3000));
     expect(screen.queryByTestId("network-status")).not.toBeInTheDocument();
     window.removeEventListener("app:back-online", onBackOnline);
+  });
+
+  it("does not infer connectivity from route or authorization failures", () => {
+    render(<NetworkStatusBanner />);
+    act(() => {
+      window.dispatchEvent(new Event("popstate"));
+      window.dispatchEvent(new CustomEvent("app:auth-error", { detail: { status: 401 } }));
+    });
+    expect(screen.queryByTestId("network-status")).not.toBeInTheDocument();
   });
 });

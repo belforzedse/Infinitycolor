@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { UserCog } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import UserProfileIcon from "@/components/PLP/Icons/UserProfileIcon";
@@ -112,16 +111,15 @@ export default function AccountAccessMenu({
 
   if (!canOpenAdminMenu) {
     return (
-      <Link
+      <a
         href={fallbackHref}
-        prefetch={false}
         aria-label={fallbackLabel}
         aria-current={ariaCurrent}
         onClick={onNavigate}
         className={triggerClassName}
       >
         {content}
-      </Link>
+      </a>
     );
   }
 
@@ -167,9 +165,8 @@ export default function AccountAccessMenu({
             alignClassNames[menuAlign],
           ].join(" ")}
         >
-          <Link
+          <a
             href="/account"
-            prefetch={false}
             role="menuitem"
             aria-label="Account"
             title="Account"
@@ -177,10 +174,9 @@ export default function AccountAccessMenu({
             className="pressable storefront-account-menu-item flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
           >
             <UserProfileIcon className="h-5 w-5" />
-          </Link>
-          <Link
+          </a>
+          <a
             href="/super-admin"
-            prefetch={false}
             role="menuitem"
             aria-label="Super admin"
             title="Super admin"
@@ -188,7 +184,7 @@ export default function AccountAccessMenu({
             className="pressable storefront-account-menu-item flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-stone-50 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
           >
             <UserCog className="h-5 w-5" aria-hidden="true" />
-          </Link>
+          </a>
         </div>
       )}
     </div>

@@ -1,15 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useCart } from "@/contexts/CartContext";
+import {
+  AuthHandoffError,
+  authErrorStatus,
+  updateRouteHint,
+  withTransientAuthRetry,
+} from "@repo/auth-core/browser";
 import { jotaiStore } from "@/lib/jotaiStore";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import {
-  centralAuth,
-  centralAuthOrigin,
-  initializeCentralAuthBrowser,
-  publishAuthState,
-} from "@/lib/central-auth";
+import { centralAuth, centralAuthOrigin, initializeCentralAuthBrowser } from "@/lib/central-auth";
 import UserService from "@/services/user";
 import { isProfileIncomplete } from "@/utils/profile";
 
@@ -22,23 +22,26 @@ export default function AuthCompleteClient({
   attempt: number;
   callbackError?: string;
 }) {
-  const { migrateLocalCartToApi } = useCart();
-  const started = useRef(false);
+  const started = useRef<string | null>(null);
   const [fatal, setFatal] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
+    const runKey = `${attempt}:${retryKey}`;
+    if (started.current === runKey) return;
+    started.current = runKey;
+    setFatal("");
     const restore = async () => {
       try {
-        if (callbackError) throw new Error("مجوز بازگشت معتبر نیست. دوباره وارد شوید.");
+        if (callbackError) {
+          throw new AuthHandoffError("مجوز بازگشت معتبر نیست. دوباره وارد شوید.", 401);
+        }
         initializeCentralAuthBrowser();
-        const token = await centralAuth.tokenManager.getToken({ forceRefresh: true });
-        if (!token) throw new Error("نشست فعال یافت نشد");
-        const me = await UserService.me();
-        jotaiStore.set(currentUserAtom, me);
-        jotaiStore.set(userLoadingAtom, false);
-        jotaiStore.set(userErrorAtom, null);
+        const token = await withTransientAuthRetry(() =>
+          centralAuth.tokenManager.getToken({ forceRefresh: true }),
+        );
+        if (!token) throw new AuthHandoffError("نشست فعال یافت نشد", 401);
+        const me = await withTransientAuthRetry(() => UserService.me());
 
         if (!me.isAdmin && isProfileIncomplete(me)) {
           const url = new URL("/auth/register/info", centralAuthOrigin);
@@ -47,19 +50,26 @@ export default function AuthCompleteClient({
           return;
         }
 
-        await migrateLocalCartToApi();
-        publishAuthState("session-changed");
-        await fetch("/api/auth/route-hint", { method: "PUT", credentials: "same-origin" });
-        const destination =
-          returnPath !== "/" ? returnPath : me.isAdmin ? "/super-admin" : "/account";
+        await withTransientAuthRetry(() => updateRouteHint("PUT"));
+        jotaiStore.set(currentUserAtom, me);
+        jotaiStore.set(userLoadingAtom, false);
+        jotaiStore.set(userErrorAtom, null);
+        const destination = returnPath !== "/" ? returnPath : "/account";
         window.location.replace(destination);
       } catch (cause) {
+        if (authErrorStatus(cause) !== 401) {
+          setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
+          return;
+        }
         centralAuth.tokenManager.expire();
-        await fetch("/api/auth/route-hint", { method: "POST", credentials: "same-origin" }).catch(
-          () => undefined,
-        );
         if (attempt >= 2) {
           setFatal(cause instanceof Error ? cause.message : "بازیابی نشست ناموفق بود");
+          return;
+        }
+        try {
+          await updateRouteHint("POST");
+        } catch {
+          setFatal("بازیابی حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
           return;
         }
         const login = new URL("/auth", centralAuthOrigin);
@@ -68,7 +78,7 @@ export default function AuthCompleteClient({
       }
     };
     void restore();
-  }, [attempt, callbackError, migrateLocalCartToApi, returnPath]);
+  }, [attempt, callbackError, retryKey, returnPath]);
 
   return (
     <main className="flex min-h-[60vh] items-center justify-center p-6" dir="rtl">
@@ -79,6 +89,13 @@ export default function AuthCompleteClient({
         {fatal ? (
           <>
             <p className="text-red-700">{fatal}</p>
+            <button
+              type="button"
+              className="mt-4 rounded-full bg-infinity-primary px-5 py-2 text-white"
+              onClick={() => setRetryKey((value) => value + 1)}
+            >
+              تلاش دوباره
+            </button>
             <a className="mt-4 inline-block text-infinity-primary underline" href="/">
               بازگشت به فروشگاه
             </a>

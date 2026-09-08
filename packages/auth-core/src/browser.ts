@@ -10,6 +10,65 @@ import {
 } from "./contracts.js";
 import { createTokenManager } from "./token-manager.js";
 
+export class AuthHandoffError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AuthHandoffError";
+    this.status = status;
+  }
+}
+
+export function authErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("status" in error))
+    return undefined;
+  const status = Number((error as { status?: unknown }).status);
+  return Number.isInteger(status) ? status : undefined;
+}
+
+export function isTransientAuthError(error: unknown): boolean {
+  const status = authErrorStatus(error);
+  return (
+    status === undefined || status === 408 || status === 429 || status >= 500
+  );
+}
+
+export async function withTransientAuthRetry<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  const delays = [400, 1_200];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isTransientAuthError(error) || attempt >= delays.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+}
+
+export async function updateRouteHint(
+  method: "PUT" | "POST" | "DELETE",
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetchImpl("/api/auth/route-hint", {
+      method,
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new AuthHandoffError("Route hint update failed", response.status);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function clearStaleBrowserCredentials(): void {
   if (typeof window === "undefined") return;
   for (const key of STALE_AUTH_STORAGE_KEYS) {
@@ -139,7 +198,11 @@ export function createCentralAuthBrowserClient(
       request<AuthSuccessResponse>("/api/auth/infinity/otp/verify", {
         body: { otp, ...(rememberMe === undefined ? {} : { rememberMe }) },
       }),
-    signInWithPassword: (phone: string, password: string, rememberMe?: boolean) =>
+    signInWithPassword: (
+      phone: string,
+      password: string,
+      rememberMe?: boolean,
+    ) =>
       request<AuthSuccessResponse>("/api/auth/infinity/password/sign-in", {
         body: {
           phone,

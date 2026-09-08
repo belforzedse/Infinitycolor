@@ -142,4 +142,23 @@ describe("AuthInitializer", () => {
       expect(jotaiStore.get(currentUserAtom)?.roleName).toBe("SuperAdmin");
     });
   });
+
+  it("preserves identity and route hints during a temporary API failure", async () => {
+    const existing = buildUser({ id: 17, roleName: "SuperAdmin", isAdmin: true });
+    jotaiStore.set(currentUserAtom, existing);
+    mockedMe.mockRejectedValueOnce({ status: 503, message: "temporarily unavailable" });
+
+    await act(async () => {
+      render(
+        <Provider store={jotaiStore}>
+          <AuthInitializer />
+        </Provider>,
+      );
+    });
+
+    await waitFor(() => expect(mockedMe).toHaveBeenCalledTimes(1));
+    expect(jotaiStore.get(currentUserAtom)).toEqual(existing);
+    expect(mockedCentralAuth.centralAuth.tokenManager.expire).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });

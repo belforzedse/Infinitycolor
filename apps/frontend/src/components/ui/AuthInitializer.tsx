@@ -29,6 +29,7 @@ import {
 import { clearUserStorage } from "@/utils/userStorage";
 import { isProfileIncomplete } from "@/utils/profile";
 import { isAuthRequiredRoute } from "@/utils/routeAccessPolicy";
+import { HTTP_STATUS } from "@/constants/api";
 
 function clearIdentityState() {
   jotaiStore.set(currentUserAtom, null);
@@ -73,6 +74,7 @@ export default function AuthInitializer() {
   const setError = useSetAtom(userErrorAtom);
 
   useEffect(() => {
+    if (window.location.pathname === "/auth/complete") return;
     let active = true;
     initializeCentralAuthBrowser();
 
@@ -105,11 +107,17 @@ export default function AuthInitializer() {
         setError(null);
       } catch (cause) {
         if (!active) return;
-        centralAuth.tokenManager.expire();
-        clearIdentityState();
         const error = cause instanceof Error ? cause : new Error("Failed to restore session");
         setError(error);
-        await clearStaleRouteHint();
+        const status =
+          typeof cause === "object" && cause !== null && "status" in cause
+            ? Number((cause as { status?: unknown }).status)
+            : undefined;
+        if (status === HTTP_STATUS.UNAUTHORIZED) {
+          centralAuth.tokenManager.expire();
+          clearIdentityState();
+          await clearStaleRouteHint();
+        }
       } finally {
         if (active) setIsLoading(false);
       }

@@ -4,12 +4,14 @@ import { MANAGEMENT_ROLES, normalizeRoleName } from "../utils/roles";
 
 const { ForbiddenError, UnauthorizedError } = strapiErrors;
 const MAX_TOKEN_TTL_SECONDS = 60;
-const JWKS_TIMEOUT_MS = 2_000;
+const JWKS_TIMEOUT_MS = 5_000;
 const FORCED_REFRESH_MIN_INTERVAL_MS = 1_000;
 const PRODUCTION_AUTH_ORIGIN = "https://auth.infinitycolor.co";
 const PRODUCTION_API_AUDIENCE = "https://api.infinitycolor.co";
+const PRODUCTION_JWKS_URL = "https://auth.infinitycolor.co/api/auth/jwks";
 const STAGING_AUTH_ORIGIN = "https://auth.staging.infinitycolor.co";
 const STAGING_API_AUDIENCE = "https://api.staging.infinitycolor.co";
+const STAGING_JWKS_URL = "https://auth.staging.infinitycolor.co/api/auth/jwks";
 const PROFILE_COMPLETION_PATHS = new Set([
   "/api/auth/self",
   "/auth/self",
@@ -53,15 +55,8 @@ function configuredEnvironment(): "development" | "e2e" | "staging" | "productio
     }
     return "development";
   }
-  if (
-    value !== "development" &&
-    value !== "e2e" &&
-    value !== "staging" &&
-    value !== "production"
-  ) {
-    throw new Error(
-      "BETTER_AUTH_ENVIRONMENT must be development, e2e, staging, or production",
-    );
+  if (value !== "development" && value !== "e2e" && value !== "staging" && value !== "production") {
+    throw new Error("BETTER_AUTH_ENVIRONMENT must be development, e2e, staging, or production");
   }
   if (
     value === "e2e" &&
@@ -100,13 +95,6 @@ function getConfig(): BetterAuthJwtConfig | null {
   ) {
     throw new Error("BETTER_AUTH_JWKS_URL must be an HTTP(S) URL without credentials");
   }
-  if (
-    process.env.NODE_ENV === "production" &&
-    environment !== "e2e" &&
-    jwksUrl.protocol !== "https:"
-  ) {
-    throw new Error("BETTER_AUTH_JWKS_URL must use HTTPS in production");
-  }
   const tolerance = Number(process.env.BETTER_AUTH_JWT_CLOCK_TOLERANCE_SECONDS ?? "5");
   if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 10) {
     throw new Error("BETTER_AUTH_JWT_CLOCK_TOLERANCE_SECONDS must be an integer from 0 to 10");
@@ -118,24 +106,26 @@ function getConfig(): BetterAuthJwtConfig | null {
       ? {
           auth: PRODUCTION_AUTH_ORIGIN,
           api: PRODUCTION_API_AUDIENCE,
+          jwks: PRODUCTION_JWKS_URL,
         }
       : environment === "staging"
-        ? { auth: STAGING_AUTH_ORIGIN, api: STAGING_API_AUDIENCE }
-        : environment === "e2e"
-          ? {
-              auth: "http://localhost:2889",
-              api: "http://backend:1337",
-              jwks: "http://build:2889/api/auth/jwks",
-            }
-        : null;
+      ? {
+          auth: STAGING_AUTH_ORIGIN,
+          api: STAGING_API_AUDIENCE,
+          jwks: STAGING_JWKS_URL,
+        }
+      : environment === "e2e"
+      ? {
+          auth: "http://localhost:2889",
+          api: "http://backend:1337",
+          jwks: "http://build:2889/api/auth/jwks",
+        }
+      : null;
   if (
     frozenAuthority &&
     (issuer !== frozenAuthority.auth ||
       audience !== frozenAuthority.api ||
-      jwksUrl.href !==
-        ("jwks" in frozenAuthority
-          ? frozenAuthority.jwks
-          : `${frozenAuthority.auth}/api/auth/jwks`))
+      jwksUrl.href !== frozenAuthority.jwks)
   ) {
     throw new Error(
       `${environment} Better Auth JWKS, issuer, and audience must match the frozen authorities`,
@@ -170,6 +160,21 @@ function errorCode(error: unknown): string {
   return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code ?? "JWT_REJECTED")
     : "JWT_REJECTED";
+}
+
+function isJwksInfrastructureError(error: unknown): boolean {
+  const code = errorCode(error);
+  if (
+    code === "ERR_JWKS_TIMEOUT" ||
+    code === "ERR_JWKS_INVALID" ||
+    code === "ERR_JWKS_MULTIPLE_MATCHING_KEYS" ||
+    code === "ERR_JOSE_GENERIC"
+  ) {
+    return true;
+  }
+  if (error instanceof TypeError) return true;
+  if (typeof error !== "object" || error === null || !("cause" in error)) return false;
+  return isJwksInfrastructureError((error as { cause?: unknown }).cause);
 }
 
 async function verifyJwtWithRefresh(token: string, config: BetterAuthJwtConfig) {
@@ -272,47 +277,70 @@ async function advancedSettings() {
 async function authenticate(ctx: any) {
   const token = bearerToken(ctx);
   if (!token || token.split(".").length !== 3) return { authenticated: false };
+
+  let config: BetterAuthJwtConfig | null;
   try {
-    const config = getConfig();
-    if (!config) return { authenticated: false };
-    const { payload, protectedHeader } = await verifyJwtWithRefresh(token, config);
-    if (!hasExactAuthorityClaims(payload, config.issuer, config.audience)) {
-      return { authenticated: false };
-    }
-    const userId = validatePinnedClaims(payload, protectedHeader);
-    if (!userId) return { authenticated: false };
-
-    const usersPermissions = strapi.plugin("users-permissions");
-    const user = await usersPermissions.service("user").fetchAuthenticatedUser(userId);
-    if (!user?.role?.id) return { error: "Invalid credentials" };
-    const settings = await advancedSettings();
-    if (settings.email_confirmation && !user.confirmed) return { error: "Invalid credentials" };
-    if (user.blocked) return { error: "Invalid credentials" };
-
-    // A provisional OTP identity may exist before the user submits their name.
-    // It may call only the profile read/completion endpoints until both required
-    // fields are present. Management accounts retain the existing role behavior.
-    if (!isManagementRole(user.role.name)) {
-      const profile = await strapi.db.query("api::local-user-info.local-user-info").findOne({
-        where: { user: user.id },
-        select: ["FirstName", "LastName"],
-      });
-      if (!hasRequiredProfileNames(profile) && !PROFILE_COMPLETION_PATHS.has(ctx.request.path)) {
-        return { error: "Profile completion required" };
-      }
-    }
-
-    const permissionService = usersPermissions.service("permission");
-    const permissions = (await permissionService.findRolePermissions(user.role.id)).map(
-      (permission) => permissionService.toContentAPIPermission(permission),
-    );
-    const ability = await strapi.contentAPI.permissions.engine.generateAbility(permissions);
-    ctx.state.user = user;
-    return { authenticated: true, credentials: user, ability };
+    config = getConfig();
   } catch (error) {
-    strapi.log.debug("Better Auth JWT rejected", { reasonCode: errorCode(error) });
+    strapi.log.error("Better Auth JWT configuration unavailable", {
+      reasonCode: errorCode(error),
+    });
+    ctx.set("Retry-After", "1");
+    ctx.throw(503, "Authentication service temporarily unavailable");
+  }
+  if (!config) return { authenticated: false };
+
+  let verified: Awaited<ReturnType<typeof verifyJwtWithRefresh>>;
+  try {
+    verified = await verifyJwtWithRefresh(token, config);
+  } catch (error) {
+    const reasonCode = errorCode(error);
+    if (isJwksInfrastructureError(error)) {
+      strapi.log.warn("Better Auth JWKS unavailable", {
+        reasonCode,
+        processRole: process.env.PROCESS_ROLE ?? "web",
+      });
+      ctx.set("Retry-After", "1");
+      ctx.throw(503, "Authentication service temporarily unavailable");
+    }
+    strapi.log.debug("Better Auth JWT rejected", { reasonCode });
     return { authenticated: false };
   }
+
+  const { payload, protectedHeader } = verified;
+  if (!hasExactAuthorityClaims(payload, config.issuer, config.audience)) {
+    return { authenticated: false };
+  }
+  const userId = validatePinnedClaims(payload, protectedHeader);
+  if (!userId) return { authenticated: false };
+
+  const usersPermissions = strapi.plugin("users-permissions");
+  const user = await usersPermissions.service("user").fetchAuthenticatedUser(userId);
+  if (!user?.role?.id) return { error: "Invalid credentials" };
+  const settings = await advancedSettings();
+  if (settings.email_confirmation && !user.confirmed) return { error: "Invalid credentials" };
+  if (user.blocked) return { error: "Invalid credentials" };
+
+  // A provisional OTP identity may exist before the user submits their name.
+  // It may call only the profile read/completion endpoints until both required
+  // fields are present. Management accounts retain the existing role behavior.
+  if (!isManagementRole(user.role.name)) {
+    const profile = await strapi.db.query("api::local-user-info.local-user-info").findOne({
+      where: { user: user.id },
+      select: ["FirstName", "LastName"],
+    });
+    if (!hasRequiredProfileNames(profile) && !PROFILE_COMPLETION_PATHS.has(ctx.request.path)) {
+      return { error: "Profile completion required" };
+    }
+  }
+
+  const permissionService = usersPermissions.service("permission");
+  const permissions = (await permissionService.findRolePermissions(user.role.id)).map(
+    (permission) => permissionService.toContentAPIPermission(permission),
+  );
+  const ability = await strapi.contentAPI.permissions.engine.generateAbility(permissions);
+  ctx.state.user = user;
+  return { authenticated: true, credentials: user, ability };
 }
 
 async function verify(auth: any, config: any) {
@@ -339,6 +367,7 @@ export const __betterAuthJwtTestUtils = {
   hasExactAuthorityClaims,
   hasRequiredProfileNames,
   isManagementRole,
+  isJwksInfrastructureError,
   resetJwks() {
     remoteJwks = undefined;
     remoteJwksUrl = undefined;
