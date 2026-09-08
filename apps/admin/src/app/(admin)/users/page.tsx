@@ -3,11 +3,7 @@
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import { columns, MobileTable } from "./table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
-import {
-  parseAdvancedFiltersParam,
-  serializeAdvancedFiltersParam,
-  type AdvancedFilterItem,
-} from "@/components/SuperAdmin/Table/advancedFilters";
+import type { AdvancedFilterItem } from "@/components/SuperAdmin/Table/advancedFilters";
 import { useCallback, useEffect, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import {
@@ -15,6 +11,7 @@ import {
   type AdminUsersListMeta,
 } from "@/services/super-admin/users/list";
 import { useQueryState } from "nuqs";
+import { useLegacyFilterQueryCleanup } from "@/hooks/useLegacyFilterQueryCleanup";
 
 export default function UsersPage() {
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
@@ -27,20 +24,7 @@ export default function UsersPage() {
   const [recycleCount, setRecycleCount] = useState(0);
   const [recycleCountError, setRecycleCountError] = useState(false);
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
-  const [, setLegacyUrlFilters] = useQueryState<AdvancedFilterItem[]>(
-    "filter",
-    {
-      defaultValue: [],
-      parse: parseAdvancedFiltersParam,
-      serialize: serializeAdvancedFiltersParam,
-    },
-  );
-
-  useEffect(() => {
-    // Older builds stored names/phones in the URL. The bounded contract keeps
-    // filters in component state and the POST body, so remove any legacy query.
-    void setLegacyUrlFilters(null);
-  }, [setLegacyUrlFilters]);
+  useLegacyFilterQueryCleanup();
 
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {

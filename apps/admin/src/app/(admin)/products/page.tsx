@@ -14,8 +14,6 @@ import { refreshTable } from "@/components/SuperAdmin/Table";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { useCan } from "@/hooks/useCan";
 import {
-  parseAdvancedFiltersParam,
-  serializeAdvancedFiltersParam,
   type AdvancedFilterField,
   type AdvancedFilterItem,
 } from "@/components/SuperAdmin/Table/advancedFilters";
@@ -23,6 +21,7 @@ import {
   listAdminProducts,
   type AdminProductSort,
 } from "@/services/super-admin/product/list";
+import { useLegacyFilterQueryCleanup } from "@/hooks/useLegacyFilterQueryCleanup";
 
 type ProductSort = AdminProductSort;
 
@@ -87,14 +86,7 @@ export default function ProductsPage() {
   } | null>(null);
   const [sort, setSort] = useState<ProductSort>("last-edited");
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
-  const [, setLegacyUrlFilters] = useQueryState<AdvancedFilterItem[]>(
-    "filter",
-    {
-      defaultValue: [],
-      parse: parseAdvancedFiltersParam,
-      serialize: serializeAdvancedFiltersParam,
-    },
-  );
+  useLegacyFilterQueryCleanup();
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
     [],
   );
@@ -106,10 +98,6 @@ export default function ProductsPage() {
   // Skip the mount-time empty search sync — calling setPage("1") then races
   // Next.js Link soft-navigation to /products/:id and cancels the edit route.
   const hasAppliedSearchRef = useRef(false);
-
-  useEffect(() => {
-    void setLegacyUrlFilters(null);
-  }, [setLegacyUrlFilters]);
 
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {

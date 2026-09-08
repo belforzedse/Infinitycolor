@@ -16,12 +16,9 @@ import {
 } from "@/services/super-admin/orders/adjustItems";
 import { translateOrderStatus } from "@/utils/statusTranslations";
 import { listAdminOrders } from "@/services/super-admin/orders/list";
-import {
-  parseAdvancedFiltersParam,
-  serializeAdvancedFiltersParam,
-  type AdvancedFilterItem,
-} from "@/components/SuperAdmin/Table/advancedFilters";
+import type { AdvancedFilterItem } from "@/components/SuperAdmin/Table/advancedFilters";
 import { useCan } from "@/hooks/useCan";
+import { useLegacyFilterQueryCleanup } from "@/hooks/useLegacyFilterQueryCleanup";
 
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
@@ -62,18 +59,7 @@ export default function OrdersPage() {
     [],
   );
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
-  const [, setLegacyUrlFilters] = useQueryState<AdvancedFilterItem[]>(
-    "filter",
-    {
-      defaultValue: [],
-      parse: parseAdvancedFiltersParam,
-      serialize: serializeAdvancedFiltersParam,
-    },
-  );
-
-  useEffect(() => {
-    void setLegacyUrlFilters(null);
-  }, [setLegacyUrlFilters]);
+  useLegacyFilterQueryCleanup();
 
   const handleTabChange = useCallback(
     (tabKey: OrderTab) => {
