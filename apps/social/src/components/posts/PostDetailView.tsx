@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   Bookmark,
   ChevronLeft,
@@ -11,17 +18,31 @@ import {
   SendHorizonal,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import type { PostDetail, PostDetailComment, PostDetailMedia } from "@/services/post-detail.service";
+import type {
+  PostDetail,
+  PostDetailComment,
+  PostDetailMedia,
+} from "@/services/post-detail.service";
 import { createPostComment } from "@/services/post-comment.service";
-import { getLikedPostCommentIds, togglePostCommentLike } from "@/services/post-comment-like.service";
-import { getLikedPostIds, hasAccessToken, togglePostLike } from "@/services/post-like.service";
-import { getBookmarkedPostIds, togglePostBookmark } from "@/services/post-bookmark.service";
+import {
+  getLikedPostCommentIds,
+  togglePostCommentLike,
+} from "@/services/post-comment-like.service";
+import {
+  getLikedPostIds,
+  hasAccessToken,
+  togglePostLike,
+} from "@/services/post-like.service";
+import {
+  getBookmarkedPostIds,
+  togglePostBookmark,
+} from "@/services/post-bookmark.service";
 import { BlurImage } from "@/components/ui/BlurImage";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { InfinityMarkCircle } from "@/components/InfinityMarkCircle";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
-import { hasCachedAccessToken } from "@/utils/auth";
+import { hasActiveSession } from "@/utils/auth";
 import {
   clearCommentDraft,
   readCommentDraft,
@@ -65,7 +86,9 @@ function initials(name: string): string {
 
 function Avatar({ comment }: { comment: PostDetailComment }) {
   if (comment.isOfficialAuthor) {
-    return <InfinityMarkCircle circleSize={42} markSize={30} className="shrink-0" />;
+    return (
+      <InfinityMarkCircle circleSize={42} markSize={30} className="shrink-0" />
+    );
   }
 
   if (comment.authorAvatarUrl) {
@@ -216,7 +239,13 @@ function CommentItem({
   );
 }
 
-function MediaSlide({ media, active }: { media: PostDetailMedia; active: boolean }) {
+function MediaSlide({
+  media,
+  active,
+}: {
+  media: PostDetailMedia;
+  active: boolean;
+}) {
   const isVideo = media.mime?.toLowerCase().startsWith("video");
 
   return (
@@ -273,11 +302,15 @@ function PostMediaCarousel({ media }: { media: PostDetailMedia[] }) {
     [hasMultiple, media.length],
   );
 
-  const goPrevious = useCallback(() => goTo(activeIndex - 1), [activeIndex, goTo]);
+  const goPrevious = useCallback(
+    () => goTo(activeIndex - 1),
+    [activeIndex, goTo],
+  );
   const goNext = useCallback(() => goTo(activeIndex + 1), [activeIndex, goTo]);
 
   function startDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!hasMultiple || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (!hasMultiple || (event.pointerType === "mouse" && event.button !== 0))
+      return;
     if (event.pointerType === "mouse") {
       event.preventDefault();
     }
@@ -340,11 +373,20 @@ function PostMediaCarousel({ media }: { media: PostDetailMedia[] }) {
         onDragStart={(event) => event.preventDefault()}
       >
         <div
-          className={cx("flex h-full w-full", !isDragging && "transition-transform duration-200 ease-out")}
-          style={{ transform: `translateX(calc(${-visualIndex * 100}% + ${dragOffset}px))` }}
+          className={cx(
+            "flex h-full w-full",
+            !isDragging && "transition-transform duration-200 ease-out",
+          )}
+          style={{
+            transform: `translateX(calc(${-visualIndex * 100}% + ${dragOffset}px))`,
+          }}
         >
           {visualMedia.map((item, index) => (
-            <MediaSlide key={item.id} media={item} active={index === visualIndex} />
+            <MediaSlide
+              key={item.id}
+              media={item}
+              active={index === visualIndex}
+            />
           ))}
         </div>
       </div>
@@ -386,7 +428,13 @@ function PostMediaCarousel({ media }: { media: PostDetailMedia[] }) {
   );
 }
 
-export function PostDetailView({ post, className }: { post: PostDetail; className?: string }) {
+export function PostDetailView({
+  post,
+  className,
+}: {
+  post: PostDetail;
+  className?: string;
+}) {
   const [isLiked, setIsLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(post.likesCount);
   const [commentCount, setCommentCount] = useState(post.commentsCount);
@@ -394,18 +442,28 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
   const [isLikePending, setIsLikePending] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [isSavePending, setIsSavePending] = useState(false);
-  const [likedCommentIds, setLikedCommentIds] = useState<Readonly<Record<string, boolean>>>({});
-  const [pendingCommentLikes, setPendingCommentLikes] = useState<Readonly<Record<string, boolean>>>({});
+  const [likedCommentIds, setLikedCommentIds] = useState<
+    Readonly<Record<string, boolean>>
+  >({});
+  const [pendingCommentLikes, setPendingCommentLikes] = useState<
+    Readonly<Record<string, boolean>>
+  >({});
   const [heartBurstKey, setHeartBurstKey] = useState(0);
   const [saveAnimKey, setSaveAnimKey] = useState(0);
   const [comment, setComment] = useState("");
-  const [replyTarget, setReplyTarget] = useState<PostDetailComment | null>(null);
+  const [replyTarget, setReplyTarget] = useState<PostDetailComment | null>(
+    null,
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitHint, setSubmitHint] = useState<string | null>(null);
   const commentInputId = useId();
   const likeButtonRef = useRef<HTMLButtonElement | null>(null);
   const commentComposerRef = useRef<HTMLDivElement | null>(null);
   const commentInputRef = useRef<HTMLInputElement | null>(null);
+  const likeRequestInFlight = useRef(false);
+  const saveRequestInFlight = useRef(false);
+  const commentLikeRequestsInFlight = useRef(new Set<string>());
+  const commentSubmitInFlight = useRef(false);
   const previousIsLiked = useRef(isLiked);
   const previousIsSaved = useRef(isSaved);
 
@@ -510,105 +568,120 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
   }, [post.id]);
 
   async function toggleLike() {
-    if (isLikePending) return;
-
-    if (!hasAccessToken()) {
-      toast.error("برای پسندیدن پست ابتدا وارد حساب کاربری شوید.");
-      return;
-    }
-
-    const wasLiked = isLiked;
-    const nextLiked = !wasLiked;
+    if (likeRequestInFlight.current) return;
+    likeRequestInFlight.current = true;
     setIsLikePending(true);
-    setIsLiked(nextLiked);
-    setLikeCount((prev) => Math.max(0, prev + (nextLiked ? 1 : -1)));
 
     try {
-      const result = await togglePostLike(post.id);
-      setIsLiked(result.isLiked);
-      if (result.isLiked !== nextLiked) {
-        setLikeCount((prev) => Math.max(0, prev + (result.isLiked ? 1 : -1)));
+      if (!(await hasActiveSession())) {
+        toast.error("برای پسندیدن پست ابتدا وارد حساب کاربری شوید.");
+        return;
       }
-    } catch (error: unknown) {
-      setIsLiked(wasLiked);
-      setLikeCount((prev) => Math.max(0, prev + (nextLiked ? -1 : 1)));
-      const button = likeButtonRef.current;
-      if (button) {
-        button.classList.remove("animate-shake");
-        void button.offsetHeight;
-        button.classList.add("animate-shake");
-        window.setTimeout(() => button.classList.remove("animate-shake"), 400);
+
+      const wasLiked = isLiked;
+      const nextLiked = !wasLiked;
+      setIsLiked(nextLiked);
+      setLikeCount((prev) => Math.max(0, prev + (nextLiked ? 1 : -1)));
+
+      try {
+        const result = await togglePostLike(post.id);
+        setIsLiked(result.isLiked);
+        if (result.isLiked !== nextLiked) {
+          setLikeCount((prev) => Math.max(0, prev + (result.isLiked ? 1 : -1)));
+        }
+      } catch (error: unknown) {
+        setIsLiked(wasLiked);
+        setLikeCount((prev) => Math.max(0, prev + (nextLiked ? -1 : 1)));
+        const button = likeButtonRef.current;
+        if (button) {
+          button.classList.remove("animate-shake");
+          void button.offsetHeight;
+          button.classList.add("animate-shake");
+          window.setTimeout(() => button.classList.remove("animate-shake"), 400);
+        }
+        toast.error(getUserFacingErrorMessage(error, "پسندیدن پست ناموفق بود."));
       }
-      toast.error(getUserFacingErrorMessage(error, "پسندیدن پست ناموفق بود."));
     } finally {
+      likeRequestInFlight.current = false;
       setIsLikePending(false);
     }
   }
 
   async function toggleSaved() {
-    if (isSavePending) return;
-
-    if (!hasAccessToken()) {
-      toast.error("برای ذخیره پست ابتدا وارد حساب کاربری شوید.");
-      return;
-    }
-
-    const wasSaved = isSaved;
-    const nextSaved = !wasSaved;
+    if (saveRequestInFlight.current) return;
+    saveRequestInFlight.current = true;
     setIsSavePending(true);
-    setIsSaved(nextSaved);
 
     try {
-      const result = await togglePostBookmark(post.id);
-      setIsSaved(result.isBookmarked);
-    } catch (error: unknown) {
-      setIsSaved(wasSaved);
-      toast.error(getUserFacingErrorMessage(error, "ذخیره پست ناموفق بود."));
+      if (!(await hasActiveSession())) {
+        toast.error("برای ذخیره پست ابتدا وارد حساب کاربری شوید.");
+        return;
+      }
+
+      const wasSaved = isSaved;
+      const nextSaved = !wasSaved;
+      setIsSaved(nextSaved);
+
+      try {
+        const result = await togglePostBookmark(post.id);
+        setIsSaved(result.isBookmarked);
+      } catch (error: unknown) {
+        setIsSaved(wasSaved);
+        toast.error(getUserFacingErrorMessage(error, "ذخیره پست ناموفق بود."));
+      }
     } finally {
+      saveRequestInFlight.current = false;
       setIsSavePending(false);
     }
   }
 
   async function toggleCommentLike(target: PostDetailComment) {
-    if (pendingCommentLikes[target.id]) return;
-
-    if (!hasAccessToken()) {
-      toast.error("برای پسندیدن دیدگاه ابتدا وارد حساب کاربری شوید.");
-      return;
-    }
-
-    const wasLiked = Boolean(likedCommentIds[target.id]);
-    const nextLiked = !wasLiked;
+    if (commentLikeRequestsInFlight.current.has(target.id)) return;
+    commentLikeRequestsInFlight.current.add(target.id);
     setPendingCommentLikes((prev) => ({ ...prev, [target.id]: true }));
-    setLikedCommentIds((prev) => ({ ...prev, [target.id]: nextLiked }));
-    setComments((prev) =>
-      updateCommentById(prev, target.id, (item) => ({
-        ...item,
-        likesCount: Math.max(0, item.likesCount + (nextLiked ? 1 : -1)),
-      })),
-    );
 
     try {
-      const result = await togglePostCommentLike(target.id);
-      setLikedCommentIds((prev) => ({ ...prev, [target.id]: result.isLiked }));
-      if (result.isLiked !== nextLiked) {
-        setComments((prev) =>
-          updateCommentById(prev, target.id, (item) => ({
-            ...item,
-            likesCount: Math.max(0, item.likesCount + (result.isLiked ? 1 : -1)),
-          })),
-        );
+      if (!(await hasActiveSession())) {
+        toast.error("برای پسندیدن دیدگاه ابتدا وارد حساب کاربری شوید.");
+        return;
       }
-    } catch (error: unknown) {
-      setLikedCommentIds((prev) => ({ ...prev, [target.id]: wasLiked }));
+
+      const wasLiked = Boolean(likedCommentIds[target.id]);
+      const nextLiked = !wasLiked;
+      setLikedCommentIds((prev) => ({ ...prev, [target.id]: nextLiked }));
       setComments((prev) =>
         updateCommentById(prev, target.id, (item) => ({
           ...item,
-          likesCount: Math.max(0, item.likesCount + (nextLiked ? -1 : 1)),
+          likesCount: Math.max(0, item.likesCount + (nextLiked ? 1 : -1)),
         })),
       );
-      toast.error(getUserFacingErrorMessage(error, "پسندیدن دیدگاه ناموفق بود."));
+
+      try {
+        const result = await togglePostCommentLike(target.id);
+        setLikedCommentIds((prev) => ({ ...prev, [target.id]: result.isLiked }));
+        if (result.isLiked !== nextLiked) {
+          setComments((prev) =>
+            updateCommentById(prev, target.id, (item) => ({
+              ...item,
+              likesCount: Math.max(
+                0,
+                item.likesCount + (result.isLiked ? 1 : -1),
+              ),
+            })),
+          );
+        }
+      } catch (error: unknown) {
+        setLikedCommentIds((prev) => ({ ...prev, [target.id]: wasLiked }));
+        setComments((prev) =>
+          updateCommentById(prev, target.id, (item) => ({
+            ...item,
+            likesCount: Math.max(0, item.likesCount + (nextLiked ? -1 : 1)),
+          })),
+        );
+        toast.error(getUserFacingErrorMessage(error, "پسندیدن دیدگاه ناموفق بود."));
+      }
     } finally {
+      commentLikeRequestsInFlight.current.delete(target.id);
       setPendingCommentLikes((prev) => ({ ...prev, [target.id]: false }));
     }
   }
@@ -622,21 +695,26 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
   function focusCommentComposer() {
     setSubmitHint(null);
     commentInputRef.current?.focus();
-    commentComposerRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    commentComposerRef.current?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
     window.setTimeout(() => commentInputRef.current?.focus(), 160);
   }
 
   async function submitComment() {
     const value = comment.trim();
-    if (!value || isSubmitting) return;
-    if (typeof window !== "undefined" && !hasCachedAccessToken()) {
-      setSubmitHint("برای ثبت دیدگاه ابتدا وارد حساب کاربری شوید.");
-      return;
-    }
+    if (!value || commentSubmitInFlight.current) return;
+    commentSubmitInFlight.current = true;
 
     setIsSubmitting(true);
     setSubmitHint(null);
     try {
+      if (!(await hasActiveSession())) {
+        setSubmitHint("برای ثبت دیدگاه ابتدا وارد حساب کاربری شوید.");
+        return;
+      }
+
       const createdComment = await createPostComment({
         postId: post.id,
         content: value,
@@ -659,7 +737,11 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
 
         setComments((prev) =>
           createdComment.parentCommentId
-            ? insertReplyById(prev, createdComment.parentCommentId, visibleComment)
+            ? insertReplyById(
+                prev,
+                createdComment.parentCommentId,
+                visibleComment,
+              )
             : [visibleComment, ...prev],
         );
         setCommentCount((prev) => prev + 1);
@@ -667,13 +749,21 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
         toast.success(replyTarget ? "پاسخ ثبت شد." : "دیدگاه ثبت شد.");
       } else {
         setSubmitHint("دیدگاه شما بعد از تأیید نمایش داده می‌شود.");
-        toast.success(replyTarget ? "پاسخ ثبت شد و در انتظار تأیید است." : "دیدگاه ثبت شد و در انتظار تأیید است.");
+        toast.success(
+          replyTarget
+            ? "پاسخ ثبت شد و در انتظار تأیید است."
+            : "دیدگاه ثبت شد و در انتظار تأیید است.",
+        );
       }
     } catch (error: unknown) {
-      const message = getUserFacingErrorMessage(error, "ثبت دیدگاه ناموفق بود.");
+      const message = getUserFacingErrorMessage(
+        error,
+        "ثبت دیدگاه ناموفق بود.",
+      );
       setSubmitHint(message);
       toast.error(message);
     } finally {
+      commentSubmitInFlight.current = false;
       setIsSubmitting(false);
     }
   }
@@ -697,15 +787,26 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
           aria-label={isSaved ? "حذف از ذخیره‌ها" : "ذخیره پست"}
           aria-pressed={isSaved}
         >
-          <span key={saveAnimKey} className={cx("inline-flex", saveAnimKey > 0 && "animate-pop")}>
-            <Bookmark className={cx("size-6", isSaved && "fill-current")} strokeWidth={1.5} aria-hidden />
+          <span
+            key={saveAnimKey}
+            className={cx("inline-flex", saveAnimKey > 0 && "animate-pop")}
+          >
+            <Bookmark
+              className={cx("size-6", isSaved && "fill-current")}
+              strokeWidth={1.5}
+              aria-hidden
+            />
           </span>
         </button>
 
         <div className="flex flex-row items-center gap-4 font-peyda text-[18px] font-semibold text-[#424242]">
           <span className="inline-flex flex-row items-center gap-1.5">
             {formatCount(commentCount)}
-            <MessageCircle className="size-7 text-[#94A3B8]" strokeWidth={1.5} aria-hidden />
+            <MessageCircle
+              className="size-7 text-[#94A3B8]"
+              strokeWidth={1.5}
+              aria-hidden
+            />
           </span>
           <button
             ref={likeButtonRef}
@@ -716,12 +817,18 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
             aria-label={isLiked ? "لغو پسند" : "پسندیدن"}
             aria-pressed={isLiked}
           >
-            <span key={`likes-${likeCount}`} className="animate-fade-up tabular-nums">
+            <span
+              key={`likes-${likeCount}`}
+              className="animate-fade-up tabular-nums"
+            >
               {formatCount(likeCount)}
             </span>
             <span
               key={`heart-${heartBurstKey}`}
-              className={cx("heart-burst-target inline-flex", heartBurstKey > 0 && "animate-heart-burst")}
+              className={cx(
+                "heart-burst-target inline-flex",
+                heartBurstKey > 0 && "animate-heart-burst",
+              )}
             >
               <Heart
                 className={cx("size-7", heartBurstKey > 0 && "animate-pop")}
@@ -736,7 +843,9 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
       </div>
 
       <div className="mt-2 text-right">
-        <p className="font-peyda text-[19px] font-bold leading-8 text-[#424242]">{post.title}</p>
+        <p className="font-peyda text-[19px] font-bold leading-8 text-[#424242]">
+          {post.title}
+        </p>
         {post.caption ? (
           <p className="mt-1 line-clamp-2 font-peyda text-[13px] font-medium leading-6 text-[#3D4C6E]">
             {post.caption}
@@ -756,7 +865,10 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
         ) : null}
       </div>
 
-      <div dir="ltr" className="mt-8 flex flex-row items-center justify-between gap-3">
+      <div
+        dir="ltr"
+        className="mt-8 flex flex-row items-center justify-between gap-3"
+      >
         <label
           htmlFor={commentInputId}
           role="button"
@@ -819,7 +931,9 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
             >
               لغو
             </button>
-            <span className="min-w-0 truncate">پاسخ به {replyTarget.authorName}</span>
+            <span className="min-w-0 truncate">
+              پاسخ به {replyTarget.authorName}
+            </span>
           </div>
         ) : null}
         <div className="flex h-12 flex-row items-center gap-2 rounded-full bg-[#F9FAFF] px-2">
@@ -849,7 +963,10 @@ export function PostDetailView({ post, className }: { post: PostDetail; classNam
           />
         </div>
         {submitHint ? (
-          <p className="px-4 pt-2 text-right font-peyda text-xs text-[#7B8498]" role="status">
+          <p
+            className="px-4 pt-2 text-right font-peyda text-xs text-[#7B8498]"
+            role="status"
+          >
             {submitHint}
           </p>
         ) : null}

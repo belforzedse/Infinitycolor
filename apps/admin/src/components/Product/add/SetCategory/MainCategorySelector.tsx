@@ -9,21 +9,30 @@ import {
 } from "@/atoms/super-admin/products";
 import { useAtomValue, useAtom } from "jotai";
 import type { categoryResponseType } from "@/services/super-admin/product/category/getAll";
-import type { EditProductData, ProductData } from "@/types/super-admin/products";
+import type {
+  EditProductData,
+  ProductData,
+} from "@/types/super-admin/products";
 import { useProductCategory } from "@/hooks/product/useCategory";
+import { categoryMatchesQuery, categoryPathLabel } from "./categoryPath";
 
 interface MainCategorySelectorProps {
   isEditMode?: boolean;
 }
 
-function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps) {
-  const [selectedMainCategoryId, setSelectedMainCategoryId] = useState<string | null>(null);
+function MainCategorySelector({
+  isEditMode = false,
+}: MainCategorySelectorProps) {
+  const [selectedMainCategoryId, setSelectedMainCategoryId] = useState<
+    string | null
+  >(null);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   const CategoriesData = useAtomValue(productCategoryDataAtom);
   const [draftProductData, setDraftProductData] = useAtom(productDataAtom);
-  const [existingProductData, setExistingProductData] = useAtom(editProductDataAtom);
+  const [existingProductData, setExistingProductData] =
+    useAtom(editProductDataAtom);
   const { fetchAllCategories } = useProductCategory({ isEditMode });
 
   const productData = isEditMode ? existingProductData : draftProductData;
@@ -35,19 +44,9 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
     }
   }, [CategoriesData, fetchAllCategories]);
 
-  // Debug logging - use useEffect to log when CategoriesData changes
-  useEffect(() => {
-    if (process.env.NODE_ENV === "development") {
-      console.log("MainCategorySelector: CategoriesData changed:", CategoriesData);
-      console.log("MainCategorySelector: CategoriesData length:", CategoriesData?.length || 0);
-      console.log("MainCategorySelector: Is array?", Array.isArray(CategoriesData));
-      if (Array.isArray(CategoriesData) && CategoriesData.length > 0) {
-        console.log("MainCategorySelector: First category:", CategoriesData[0]);
-      }
-    }
-  }, [CategoriesData]);
-
-  const onChangeMainCategory = (category: categoryResponseType | null | undefined) => {
+  const onChangeMainCategory = (
+    category: categoryResponseType | null | undefined,
+  ) => {
     if (!category) {
       // Clear selection
       setSelectedMainCategoryId(null);
@@ -106,11 +105,9 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
       return CategoriesData;
     }
 
-    return CategoriesData.filter((category: categoryResponseType) => {
-      const title = (category.attributes?.Title || "").toLowerCase();
-      const slug = (category.attributes?.Slug || "").toLowerCase();
-      return title.includes(query) || slug.includes(query);
-    });
+    return CategoriesData.filter((category: categoryResponseType) =>
+      categoryMatchesQuery(category, query),
+    );
   }, [CategoriesData, searchQuery]);
 
   const selectedCategory = useMemo(() => {
@@ -119,7 +116,8 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
     }
     return (
       CategoriesData.find(
-        (cat: categoryResponseType) => cat.id.toString() === selectedMainCategoryId,
+        (cat: categoryResponseType) =>
+          cat.id.toString() === selectedMainCategoryId,
       ) ?? null
     );
   }, [selectedMainCategoryId, CategoriesData]);
@@ -154,7 +152,9 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
             <Combobox.Options className="absolute z-[60] mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
               {filteredCategories.length === 0 ? (
                 <div className="px-4 py-2 text-sm text-neutral-500">
-                  {searchQuery ? "نتیجه‌ای یافت نشد" : "دسته‌بندی‌ای موجود نیست"}
+                  {searchQuery
+                    ? "نتیجه‌ای یافت نشد"
+                    : "دسته‌بندی‌ای موجود نیست"}
                 </div>
               ) : (
                 filteredCategories.map((category: categoryResponseType) => (
@@ -167,18 +167,24 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
                       }`
                     }
                   >
-                    {({ selected }) => (
-                      <div className="flex items-center justify-between">
-                        <span className={selected ? "font-medium" : "font-normal"}>
-                          {category.attributes?.Title || "-"}
-                        </span>
-                        {category.attributes?.Slug && (
-                          <span className="text-xs text-neutral-400" dir="ltr">
-                            ({category.attributes.Slug})
+                    {({ selected }) => {
+                      // Staff pick a category by where it sits, not by its slug.
+                      const path = categoryPathLabel(category);
+                      return (
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span
+                            className={selected ? "font-medium" : "font-normal"}
+                          >
+                            {category.attributes?.Title || "-"}
                           </span>
-                        )}
-                      </div>
-                    )}
+                          {path && (
+                            <span className="text-xs truncate text-neutral-400">
+                              {path}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    }}
                   </Combobox.Option>
                 ))
               )}
@@ -188,6 +194,7 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
       </div>
 
       <button
+        type="button"
         onClick={() => setIsCategoryModalOpen(true)}
         className="mb-3 flex w-full items-center justify-center gap-1 rounded-xl bg-infinity-primary py-2 text-white transition-colors"
       >

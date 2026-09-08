@@ -4,7 +4,10 @@ import { Dialog, Transition } from "@headlessui/react";
 import { apiClient } from "@/services";
 import toast from "react-hot-toast";
 import { HexColorPicker, HexColorInput } from "react-colorful";
-import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import {
+  extractErrorMessage,
+  translateErrorMessage,
+} from "@/lib/errorTranslations";
 
 interface Feature {
   id: string;
@@ -150,7 +153,10 @@ const ATTRIBUTE_ENDPOINTS = {
 
 // DEFAULT_TITLES removed - sizes and models are now optional, no default values should be used
 
-export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTableProps) => {
+export const FeaturesTable = ({
+  productId,
+  onVariationsGenerated,
+}: FeaturesTableProps) => {
   const [features, setFeatures] = useState<FeatureGroup>({
     colors: [],
     sizes: [],
@@ -189,7 +195,8 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
   const [availableGenericAttributes, setAvailableGenericAttributes] = useState<
     GenericAttributeOption[]
   >([]);
-  const [selectedGenericAttributeId, setSelectedGenericAttributeId] = useState("");
+  const [selectedGenericAttributeId, setSelectedGenericAttributeId] =
+    useState("");
   const [isSavingAssignment, setIsSavingAssignment] = useState(false);
   const [colorModal, setColorModal] = useState({
     isOpen: false,
@@ -215,9 +222,12 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
 
     setCreationLoading((prev) => ({ ...prev, [type]: true }));
     try {
-      const response = await apiClient.post<ApiFeature>(ATTRIBUTE_ENDPOINTS[type], {
-        data: payload,
-      });
+      const response = await apiClient.post<ApiFeature>(
+        ATTRIBUTE_ENDPOINTS[type],
+        {
+          data: payload,
+        },
+      );
       const created = response.data;
 
       setAvailableOptions((prev) => ({
@@ -288,7 +298,10 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
     }
   };
 
-  const handleCreateTextOption = async (type: "sizes" | "models", label: string) => {
+  const handleCreateTextOption = async (
+    type: "sizes" | "models",
+    label: string,
+  ) => {
     const created = await createAttributeOption(type, {
       Title: label.trim(),
     });
@@ -299,36 +312,37 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
 
   const fetchVariationData = useCallback(async () => {
     try {
-      const [colorsRes, sizesRes, modelsRes, assignmentsRes, attributesRes] = await Promise.all([
-        apiClient.get<ApiResponse<ApiFeature[]>>(
-          "/product-variation-colors?pagination[pageSize]=1000&sort=Title:asc",
-          {
-            cache: "no-store",
-          },
-        ),
-        apiClient.get<ApiResponse<ApiFeature[]>>(
-          "/product-variation-sizes?pagination[pageSize]=1000&sort=Title:asc",
-          {
-            cache: "no-store",
-          },
-        ),
-        apiClient.get<ApiResponse<ApiFeature[]>>(
-          "/product-variation-models?pagination[pageSize]=1000&sort=Title:asc",
-          {
-            cache: "no-store",
-          },
-        ),
-        productId
-          ? apiClient.get<ApiResponse<any[]>>(
-              `/product-attribute-assignments?filters[product][id][$eq]=${productId}&filters[IsVariation][$eq]=true&populate[product_attribute]=true&populate[terms][populate][product_attribute]=true&pagination[pageSize]=100&sort=Position:asc`,
-              { cache: "no-store" },
-            )
-          : Promise.resolve({ data: [] } as any),
-        apiClient.get<ApiResponse<any[]>>(
-          "/product-attributes?filters[LegacyProjection][$eq]=None&populate[product_attribute_terms]=true&pagination[pageSize]=200&sort=Position:asc",
-          { cache: "no-store" },
-        ),
-      ]);
+      const [colorsRes, sizesRes, modelsRes, assignmentsRes, attributesRes] =
+        await Promise.all([
+          apiClient.get<ApiResponse<ApiFeature[]>>(
+            "/product-variation-colors?pagination[pageSize]=1000&sort=Title:asc",
+            {
+              cache: "no-store",
+            },
+          ),
+          apiClient.get<ApiResponse<ApiFeature[]>>(
+            "/product-variation-sizes?pagination[pageSize]=1000&sort=Title:asc",
+            {
+              cache: "no-store",
+            },
+          ),
+          apiClient.get<ApiResponse<ApiFeature[]>>(
+            "/product-variation-models?pagination[pageSize]=1000&sort=Title:asc",
+            {
+              cache: "no-store",
+            },
+          ),
+          productId
+            ? apiClient.get<ApiResponse<any[]>>(
+                `/product-attribute-assignments?filters[product][id][$eq]=${productId}&filters[IsVariation][$eq]=true&populate[product_attribute]=true&populate[terms][populate][product_attribute]=true&pagination[pageSize]=100&sort=Position:asc`,
+                { cache: "no-store" },
+              )
+            : Promise.resolve({ data: [] } as any),
+          apiClient.get<ApiResponse<any[]>>(
+            "/product-attributes?filters[LegacyProjection][$eq]=None&populate[product_attribute_terms]=true&pagination[pageSize]=200&sort=Position:asc",
+            { cache: "no-store" },
+          ),
+        ]);
 
       setAvailableOptions({
         colors: (colorsRes as any).data || [],
@@ -356,7 +370,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
               terms,
             };
           })
-          .filter((attribute): attribute is GenericAttributeOption => Boolean(attribute)),
+          .filter((attribute): attribute is GenericAttributeOption =>
+            Boolean(attribute),
+          ),
       );
 
       if (!productId) {
@@ -370,7 +386,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
         return;
       }
 
-      const existingVariationsRes = await apiClient.get<ApiResponse<ProductVariation[]>>(
+      const existingVariationsRes = await apiClient.get<
+        ApiResponse<ProductVariation[]>
+      >(
         `/product-variations?filters[product][id][$eq]=${productId}&populate=product_variation_color,product_variation_size,product_variation_model`,
         {
           cache: "no-store",
@@ -503,16 +521,24 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
     });
   }, [inputValues, availableOptions]);
 
-  const handleInputChange = (type: "colors" | "sizes" | "models", value: string) => {
+  const handleInputChange = (
+    type: "colors" | "sizes" | "models",
+    value: string,
+  ) => {
     setInputValues((prev) => ({
       ...prev,
       [type]: value,
     }));
   };
 
-  const addFeature = (type: "colors" | "sizes" | "models", item: ApiFeature) => {
+  const addFeature = (
+    type: "colors" | "sizes" | "models",
+    item: ApiFeature,
+  ) => {
     // Check if this item is already selected
-    const isDuplicate = features[type].some((feature) => feature.id === String(item.id));
+    const isDuplicate = features[type].some(
+      (feature) => feature.id === String(item.id),
+    );
 
     if (isDuplicate) return;
 
@@ -546,7 +572,10 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
       ...prev,
       generic: prev.generic.map((group) =>
         group.attributeId === attributeId
-          ? { ...group, terms: group.terms.filter((term) => term.id !== termId) }
+          ? {
+              ...group,
+              terms: group.terms.filter((term) => term.id !== termId),
+            }
           : group,
       ),
     }));
@@ -554,7 +583,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
 
   const addGenericAssignment = async () => {
     const attributeId = Number(selectedGenericAttributeId);
-    const attribute = availableGenericAttributes.find((item) => item.id === attributeId);
+    const attribute = availableGenericAttributes.find(
+      (item) => item.id === attributeId,
+    );
     if (!attribute || !productId) return;
 
     setIsSavingAssignment(true);
@@ -599,13 +630,28 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
       setIsGeneratingVariations(true);
       const axes = [
         ...(features.colors.length > 0
-          ? [{ type: "color", termIds: features.colors.map((term) => Number(term.id)) }]
+          ? [
+              {
+                type: "color",
+                termIds: features.colors.map((term) => Number(term.id)),
+              },
+            ]
           : []),
         ...(features.sizes.length > 0
-          ? [{ type: "size", termIds: features.sizes.map((term) => Number(term.id)) }]
+          ? [
+              {
+                type: "size",
+                termIds: features.sizes.map((term) => Number(term.id)),
+              },
+            ]
           : []),
         ...(features.models.length > 0
-          ? [{ type: "model", termIds: features.models.map((term) => Number(term.id)) }]
+          ? [
+              {
+                type: "model",
+                termIds: features.models.map((term) => Number(term.id)),
+              },
+            ]
           : []),
         ...features.generic
           .filter((group) => group.terms.length > 0)
@@ -620,9 +666,12 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
         return;
       }
 
-      const response = await apiClient.post<any>(`/products/${productId}/variation-combinations`, {
-        axes,
-      });
+      const response = await apiClient.post<any>(
+        `/products/${productId}/variation-combinations`,
+        {
+          axes,
+        },
+      );
       const result = response.data || response;
 
       // Refresh variation data after creation
@@ -652,7 +701,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                 <th className="w-[20%] border-l border-slate-100 px-4 py-2 text-right font-normal text-gray-900">
                   ویژگی
                 </th>
-                <th className="w-[80%] px-4 py-2 text-right font-normal text-gray-900">مقدارها</th>
+                <th className="w-[80%] px-4 py-2 text-right font-normal text-gray-900">
+                  مقدارها
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -669,13 +720,19 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                       >
                         <span
                           className="h-4 w-4 rounded-full border border-slate-200"
-                          style={{ backgroundColor: color.colorCode || "#f5f5f5" }}
+                          style={{
+                            backgroundColor: color.colorCode || "#f5f5f5",
+                          }}
                           aria-label={`کد رنگ ${color.colorCode || "نامشخص"}`}
                         />
-                        <span className="text-sm text-slate-500">{color.value}</span>
+                        <span className="text-sm text-slate-500">
+                          {color.value}
+                        </span>
                         <button
+                          type="button"
                           onClick={() => removeFeature("colors", color.id)}
                           className="text-slate-400"
+                          aria-label={`حذف رنگ ${color.value}`}
                         >
                           <DeleteIcon />
                         </button>
@@ -687,7 +744,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                         className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
                         placeholder="جستجوی رنگ..."
                         value={inputValues.colors}
-                        onChange={(e) => handleInputChange("colors", e.target.value)}
+                        onChange={(e) =>
+                          handleInputChange("colors", e.target.value)
+                        }
                       />
                       {inputValues.colors && (
                         <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
@@ -701,7 +760,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                 <button
                                   type="button"
                                   key={option.id}
-                                  onClick={() => !isSelected && addFeature("colors", option)}
+                                  onClick={() =>
+                                    !isSelected && addFeature("colors", option)
+                                  }
                                   className={`flex w-full items-center gap-3 px-3 py-2 text-right text-sm ${
                                     isSelected
                                       ? "cursor-not-allowed text-slate-400"
@@ -709,26 +770,55 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                   }`}
                                   aria-disabled={isSelected}
                                 >
-                                  <span
-                                    className="h-5 w-5 rounded-full border border-slate-200"
-                                    style={{
-                                      backgroundColor: option.attributes.ColorCode || "#f5f5f5",
-                                    }}
-                                  />
-                                  <span>{option.attributes.Title}</span>
-                                  {option.attributes.ColorCode && (
-                                    <span className="text-xs text-slate-400" dir="ltr">
+                                  {/*
+                                    Colour records imported without a ColorCode all
+                                    rendered as the same anonymous grey dot, so a list
+                                    of them read as one option repeated. Mark them as
+                                    deliberately colourless instead.
+                                  */}
+                                  {option.attributes.ColorCode ? (
+                                    <span
+                                      className="h-5 w-5 shrink-0 rounded-full border border-slate-200"
+                                      style={{
+                                        backgroundColor:
+                                          option.attributes.ColorCode,
+                                      }}
+                                    />
+                                  ) : (
+                                    <span
+                                      aria-hidden="true"
+                                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-[10px] text-slate-400"
+                                    >
+                                      —
+                                    </span>
+                                  )}
+                                  <span className="min-w-0 truncate">
+                                    {option.attributes.Title}
+                                  </span>
+                                  {option.attributes.ColorCode ? (
+                                    <span
+                                      className="text-xs shrink-0 text-slate-400"
+                                      dir="ltr"
+                                    >
                                       {option.attributes.ColorCode.toUpperCase()}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs shrink-0 text-slate-400">
+                                      بدون رنگ
                                     </span>
                                   )}
                                   {isSelected && (
-                                    <span className="text-[11px] text-green-600">افزوده شده</span>
+                                    <span className="text-[11px] text-green-600">
+                                      افزوده شده
+                                    </span>
                                   )}
                                 </button>
                               );
                             })
                           ) : (
-                            <div className="px-3 py-2 text-xs text-neutral-500">موردی یافت نشد</div>
+                            <div className="px-3 py-2 text-xs text-neutral-500">
+                              موردی یافت نشد
+                            </div>
                           )}
                           <button
                             type="button"
@@ -772,10 +862,14 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                         key={size.id}
                         className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-100 px-2 py-1"
                       >
-                        <span className="text-sm text-slate-500">{size.value}</span>
+                        <span className="text-sm text-slate-500">
+                          {size.value}
+                        </span>
                         <button
+                          type="button"
                           onClick={() => removeFeature("sizes", size.id)}
                           className="text-slate-400"
+                          aria-label={`حذف سایز ${size.value}`}
                         >
                           <DeleteIcon />
                         </button>
@@ -787,7 +881,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                         className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
                         placeholder="جستجوی سایز..."
                         value={inputValues.sizes}
-                        onChange={(e) => handleInputChange("sizes", e.target.value)}
+                        onChange={(e) =>
+                          handleInputChange("sizes", e.target.value)
+                        }
                       />
                       {inputValues.sizes && (
                         <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
@@ -801,7 +897,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                 <button
                                   type="button"
                                   key={option.id}
-                                  onClick={() => !isSelected && addFeature("sizes", option)}
+                                  onClick={() =>
+                                    !isSelected && addFeature("sizes", option)
+                                  }
                                   className={`w-full px-3 py-2 text-right text-sm ${
                                     isSelected
                                       ? "cursor-not-allowed text-slate-400"
@@ -819,12 +917,16 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                               );
                             })
                           ) : (
-                            <div className="px-3 py-2 text-xs text-neutral-500">موردی یافت نشد</div>
+                            <div className="px-3 py-2 text-xs text-neutral-500">
+                              موردی یافت نشد
+                            </div>
                           )}
                           <button
                             type="button"
                             disabled={creationLoading.sizes}
-                            onClick={() => handleCreateTextOption("sizes", inputValues.sizes)}
+                            onClick={() =>
+                              handleCreateTextOption("sizes", inputValues.sizes)
+                            }
                             className={`flex w-full items-center justify-between border-t border-slate-100 px-3 py-2 text-xs ${
                               creationLoading.sizes
                                 ? "cursor-not-allowed text-slate-400"
@@ -851,10 +953,14 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                         key={model.id}
                         className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-100 px-2 py-1"
                       >
-                        <span className="text-sm text-slate-500">{model.value}</span>
+                        <span className="text-sm text-slate-500">
+                          {model.value}
+                        </span>
                         <button
+                          type="button"
                           onClick={() => removeFeature("models", model.id)}
                           className="text-slate-400"
+                          aria-label={`حذف مدل ${model.value}`}
                         >
                           <DeleteIcon />
                         </button>
@@ -866,7 +972,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                         className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
                         placeholder="جستجوی مدل..."
                         value={inputValues.models}
-                        onChange={(e) => handleInputChange("models", e.target.value)}
+                        onChange={(e) =>
+                          handleInputChange("models", e.target.value)
+                        }
                       />
                       {inputValues.models && (
                         <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
@@ -880,7 +988,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                 <button
                                   type="button"
                                   key={option.id}
-                                  onClick={() => !isSelected && addFeature("models", option)}
+                                  onClick={() =>
+                                    !isSelected && addFeature("models", option)
+                                  }
                                   className={`w-full px-3 py-2 text-right text-sm ${
                                     isSelected
                                       ? "cursor-not-allowed text-slate-400"
@@ -898,12 +1008,19 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                               );
                             })
                           ) : (
-                            <div className="px-3 py-2 text-xs text-neutral-500">موردی یافت نشد</div>
+                            <div className="px-3 py-2 text-xs text-neutral-500">
+                              موردی یافت نشد
+                            </div>
                           )}
                           <button
                             type="button"
                             disabled={creationLoading.models}
-                            onClick={() => handleCreateTextOption("models", inputValues.models)}
+                            onClick={() =>
+                              handleCreateTextOption(
+                                "models",
+                                inputValues.models,
+                              )
+                            }
                             className={`flex w-full items-center justify-between border-t border-slate-100 px-3 py-2 text-xs ${
                               creationLoading.models
                                 ? "cursor-not-allowed text-slate-400"
@@ -921,7 +1038,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
               </tr>
               {availableGenericAttributes.some(
                 (attribute) =>
-                  !features.generic.some((group) => group.attributeId === attribute.id),
+                  !features.generic.some(
+                    (group) => group.attributeId === attribute.id,
+                  ),
               ) && (
                 <tr className="border-t border-slate-100">
                   <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
@@ -931,14 +1050,18 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <select
                         value={selectedGenericAttributeId}
-                        onChange={(event) => setSelectedGenericAttributeId(event.target.value)}
+                        onChange={(event) =>
+                          setSelectedGenericAttributeId(event.target.value)
+                        }
                         className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm"
                       >
                         <option value="">انتخاب ویژگی تعریف‌شده</option>
                         {availableGenericAttributes
                           .filter(
                             (attribute) =>
-                              !features.generic.some((group) => group.attributeId === attribute.id),
+                              !features.generic.some(
+                                (group) => group.attributeId === attribute.id,
+                              ),
                           )
                           .map((attribute) => (
                             <option key={attribute.id} value={attribute.id}>
@@ -948,7 +1071,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                       </select>
                       <button
                         type="button"
-                        disabled={!selectedGenericAttributeId || isSavingAssignment}
+                        disabled={
+                          !selectedGenericAttributeId || isSavingAssignment
+                        }
                         onClick={addGenericAssignment}
                         className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white disabled:opacity-50"
                       >
@@ -959,20 +1084,27 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                 </tr>
               )}
               {features.generic.map((group) => (
-                <tr key={group.attributeId} className="border-t border-slate-100">
+                <tr
+                  key={group.attributeId}
+                  className="border-t border-slate-100"
+                >
                   <td className="border-l border-slate-100 px-4 py-3 text-right text-sm text-gray-900">
                     <div className="flex items-center justify-between gap-2">
                       <span>{group.title}</span>
                       <button
                         type="button"
                         disabled={isSavingAssignment}
-                        onClick={() => removeGenericAssignment(group.assignmentId)}
+                        onClick={() =>
+                          removeGenericAssignment(group.assignmentId)
+                        }
                         className="text-xs text-red-500 disabled:opacity-50"
                       >
                         حذف از محصول
                       </button>
                     </div>
-                    <div className="mt-1 text-[11px] text-slate-400">ویژگی عمومی</div>
+                    <div className="mt-1 text-[11px] text-slate-400">
+                      ویژگی عمومی
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
@@ -989,10 +1121,14 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                 aria-hidden="true"
                               />
                             )}
-                          <span className="text-sm text-slate-500">{term.value}</span>
+                          <span className="text-sm text-slate-500">
+                            {term.value}
+                          </span>
                           <button
                             type="button"
-                            onClick={() => removeGenericTerm(group.attributeId, term.id)}
+                            onClick={() =>
+                              removeGenericTerm(group.attributeId, term.id)
+                            }
                             className="text-slate-400"
                             aria-label={`حذف ${term.value}`}
                           >
@@ -1011,15 +1147,18 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
         <div className="flex items-center justify-between rounded-xl border border-slate-100 p-4">
           <div className="text-sm text-slate-600">
             <p>
-              تعداد تنوع‌های محصول: <span className="font-semibold">{variationsCount}</span>
+              تعداد تنوع‌های محصول:{" "}
+              <span className="font-semibold">{variationsCount}</span>
             </p>
             {variationsCount > 0 && (
               <p className="mt-1 text-xs">
-                با ترکیب ویژگی‌های انتخاب شده {variationsCount} تنوع محصول ایجاد خواهد شد
+                با ترکیب ویژگی‌های انتخاب شده {variationsCount} تنوع محصول ایجاد
+                خواهد شد
               </p>
             )}
           </div>
           <button
+            type="button"
             onClick={generateVariations}
             disabled={isGeneratingVariations || variationsCount === 0}
             className={`rounded-lg px-4 py-2 text-sm text-white ${
@@ -1028,13 +1167,19 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                 : "bg-blue-600 hover:bg-blue-700"
             }`}
           >
-            {isGeneratingVariations ? "در حال ایجاد تنوع‌ها..." : "ایجاد تنوع‌های محصول"}
+            {isGeneratingVariations
+              ? "در حال ایجاد تنوع‌ها..."
+              : "ایجاد تنوع‌های محصول"}
           </button>
         </div>
       </div>
 
       <Transition appear show={colorModal.isOpen} as={Fragment}>
-        <Dialog as="div" className="relative z-[1300]" onClose={closeColorModal}>
+        <Dialog
+          as="div"
+          className="relative z-[1300]"
+          onClose={closeColorModal}
+        >
           <Transition.Child
             as={Fragment}
             enter="ease-out duration-200"
@@ -1064,7 +1209,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                   </Dialog.Title>
                   <div className="mt-4 space-y-4">
                     <div>
-                      <label className="text-sm text-neutral-600">نام رنگ</label>
+                      <label className="text-sm text-neutral-600">
+                        نام رنگ
+                      </label>
                       <input
                         type="text"
                         value={colorModal.name}
@@ -1119,7 +1266,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                     </div>
 
                     <div>
-                      <label className="text-sm text-neutral-600">انتخاب رنگ</label>
+                      <label className="text-sm text-neutral-600">
+                        انتخاب رنگ
+                      </label>
                       {!colorModal.noColor ? (
                         <>
                           <div className="mt-3 flex flex-col gap-4 md:flex-row">
@@ -1131,7 +1280,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                             </div>
                             <div className="flex-1 space-y-3">
                               <div>
-                                <span className="text-xs text-neutral-500">کد HEX</span>
+                                <span className="text-xs text-neutral-500">
+                                  کد HEX
+                                </span>
                                 <HexColorInput
                                   prefixed
                                   color={colorModal.colorCode}
@@ -1143,17 +1294,21 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                               <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                                 <span
                                   className="h-10 w-10 rounded-lg border border-slate-200"
-                                  style={{ backgroundColor: colorModal.colorCode }}
+                                  style={{
+                                    backgroundColor: colorModal.colorCode,
+                                  }}
                                   aria-hidden="true"
                                 />
                                 <div className="text-xs text-neutral-500">
-                                  <p className="font-medium text-neutral-700">نمونه رنگ انتخابی</p>
+                                  <p className="font-medium text-neutral-700">
+                                    نمونه رنگ انتخابی
+                                  </p>
                                   <p>{colorModal.colorCode.toUpperCase()}</p>
                                 </div>
                               </div>
                               <p className="text-xs text-neutral-500">
-                                می‌توانید کد رنگ را بچسبانید یا از انتخاب‌گر برای پیدا کردن
-                                دقیق‌ترین طیف استفاده کنید.
+                                می‌توانید کد رنگ را بچسبانید یا از انتخاب‌گر
+                                برای پیدا کردن دقیق‌ترین طیف استفاده کنید.
                               </p>
                             </div>
                           </div>
@@ -1168,7 +1323,8 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                                   key={color}
                                   onClick={() => handleColorChange(color)}
                                   className={`h-10 w-full rounded-lg border ${
-                                    colorModal.colorCode.toLowerCase() === color.toLowerCase()
+                                    colorModal.colorCode.toLowerCase() ===
+                                    color.toLowerCase()
                                       ? "border-blue-500 ring-2 ring-blue-200"
                                       : "border-slate-200"
                                   }`}
@@ -1218,7 +1374,9 @@ export const FeaturesTable = ({ productId, onVariationsGenerated }: FeaturesTabl
                       disabled={creationLoading.colors}
                       onClick={handleSaveColor}
                       className={`rounded-lg px-4 py-2 text-sm text-white ${
-                        creationLoading.colors ? "bg-blue-300" : "bg-blue-600 hover:bg-blue-700"
+                        creationLoading.colors
+                          ? "bg-blue-300"
+                          : "bg-blue-600 hover:bg-blue-700"
                       }`}
                     >
                       ذخیره رنگ

@@ -40,6 +40,17 @@ interface TimelineEvent {
 export type OrderTimelineEvent = TimelineEvent;
 
 // Map event severity to color
+/**
+ * Status must not be carried by colour alone, so every marker also names its
+ * state for assistive technology and on hover.
+ */
+const SEVERITY_LABELS: Record<string, string> = {
+  success: "انجام شده",
+  warning: "نیازمند توجه",
+  error: "خطا",
+  info: "اطلاع",
+};
+
 const getSeverityColor = (severity?: "info" | "success" | "warning" | "error"): string => {
   switch (severity) {
     case "success":
@@ -82,10 +93,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
 
         // Get user activities for the order owner
         const orderUserId =
-          order.user?.id ||
-          (order.user as any)?.data?.id ||
-          (order as any).user ||
-          null;
+          order.user?.id || (order.user as any)?.data?.id || (order as any).user || null;
         if (!orderUserId) {
           handleEventsChange([]);
           setLoading(false);
@@ -102,7 +110,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
           (activity: UserActivity) =>
             activity.ResourceType === "order" &&
             activity.ResourceId === String(order.id) &&
-            milestoneTypes.includes(activity.ActivityType)
+            milestoneTypes.includes(activity.ActivityType),
         );
 
         if (orderActivities.length > 0) {
@@ -167,7 +175,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
   if (loading) {
     return (
       <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <h2 className="mb-4 text-base font-semibold text-foreground-primary">وضعیت سفارش</h2>
+        <h2 className="text-foreground-primary mb-4 text-base font-semibold">وضعیت سفارش</h2>
         <div className="text-sm text-slate-500">در حال بارگذاری...</div>
       </section>
     );
@@ -176,7 +184,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
   return (
     <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
       {!hideHeader && (
-        <h2 className="mb-4 text-base font-semibold text-foreground-primary">وضعیت سفارش</h2>
+        <h2 className="text-foreground-primary mb-4 text-base font-semibold">وضعیت سفارش</h2>
       )}
       {events.length === 0 ? (
         <div className="text-sm text-slate-500">رویدادی ثبت نشده است</div>
@@ -184,13 +192,19 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
         <ol className="relative space-y-4 border-r border-slate-200 pr-4">
           {events.map((event) => (
             <li key={`${event.id}-${event.createdAt}`} className="relative">
+              {/*
+                The rail is the ol's right border, 16px away through pr-4. A 16px
+                marker centres on it at -right-[24px]; it sat at -31px, which left
+                every dot roughly seven pixels off the line.
+              */}
               <span
-                className={`absolute -right-[31px] mt-1 h-4 w-4 rounded-full border-2 border-white shadow ring-2 ring-infinity-primary-lighter/40 ${getSeverityColor(event.severity)}`}
+                role="img"
+                aria-label={SEVERITY_LABELS[event.severity ?? "info"] ?? SEVERITY_LABELS.info}
+                title={SEVERITY_LABELS[event.severity ?? "info"] ?? SEVERITY_LABELS.info}
+                className={`absolute -right-[24px] mt-1 h-4 w-4 rounded-full border-2 border-white shadow ring-2 ring-infinity-primary-lighter/40 ${getSeverityColor(event.severity)}`}
               />
               <div className="flex flex-col gap-1 text-right">
-                <span className="text-sm font-medium text-foreground-primary">
-                  {event.message}
-                </span>
+                <span className="text-foreground-primary text-sm font-medium">{event.message}</span>
                 <span className="text-xs text-slate-500">{formatDateTime(event.createdAt)}</span>
               </div>
             </li>
@@ -200,4 +214,3 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
     </section>
   );
 }
-

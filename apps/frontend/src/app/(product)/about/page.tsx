@@ -65,7 +65,7 @@ export default async function AboutPage() {
         {/* Page Header */}
         <Reveal variant="fade-up" duration={700}>
           <header className="space-y-4">
-            <h1 className="text-3xl font-bold text-foreground-primary lg:text-4xl">
+            <h1 className="text-foreground-primary text-3xl font-bold lg:text-4xl">
               درباره فروشگاه بزرگ اینفینیتی
             </h1>
             <Breadcrumb breadcrumbs={breadcrumbItems} />
@@ -76,9 +76,9 @@ export default async function AboutPage() {
         <Reveal variant="fade-up" duration={700} delay={100}>
           <AboutSection title="اینفینیتی">
             <p>
-              اینفینیتی یک فروشگاه آنلاین پیشرو در زمینه پوشاک است که با هدف ارائه تجربه خرید
-              آنلاین منحصر به فرد و لذت‌بخش، بر تنوع، کیفیت و قیمت‌های رقابتی برای پوشاک مردانه،
-              زنانه و کودکان تمرکز دارد.
+              اینفینیتی یک فروشگاه آنلاین پیشرو در زمینه پوشاک است که با هدف ارائه تجربه خرید آنلاین
+              منحصر به فرد و لذت‌بخش، بر تنوع، کیفیت و قیمت‌های رقابتی برای پوشاک مردانه، زنانه و
+              کودکان تمرکز دارد.
             </p>
           </AboutSection>
         </Reveal>
@@ -87,10 +87,9 @@ export default async function AboutPage() {
         <Reveal variant="fade-up" duration={700} delay={200}>
           <AboutSection title="تنوع محصولات">
             <p>
-              ما معتقدیم که خرید لباس باید سریع، راحت و لذت‌بخش باشد. ماموریت ما این است که
-              مشتریان بتوانند با چند کلیک ساده به آخرین استایل‌های جهانی دسترسی پیدا کنند و از
-              تنوع بی‌نظیر محصولات، محصولاتی را انتخاب کنند که با سلیقه و نیازهایشان هماهنگ
-              باشد.
+              ما معتقدیم که خرید لباس باید سریع، راحت و لذت‌بخش باشد. ماموریت ما این است که مشتریان
+              بتوانند با چند کلیک ساده به آخرین استایل‌های جهانی دسترسی پیدا کنند و از تنوع بی‌نظیر
+              محصولات، محصولاتی را انتخاب کنند که با سلیقه و نیازهایشان هماهنگ باشد.
             </p>
           </AboutSection>
         </Reveal>
@@ -118,22 +117,29 @@ export default async function AboutPage() {
           <div className="space-y-6">
             <AboutSection title="قیمت هامون؟ به صرفه ترین">
               <p>
-                ما متعهد به ارائه محصولات با کیفیت با قیمت‌های منصفانه هستیم و اطمینان می‌دهیم
-                که همه بتوانند بدون نگرانی از هزینه‌ها، استایل مورد نظر خود را خلق کنند. ما
-                تخفیف‌ها و پیشنهادهای جذابی داریم و تیم ما پرانرژی و پرشور است و همه چیز را از
-                انتخاب محصول تا بسته‌بندی و ارسال با دقت و عشق انجام می‌دهد. مشتریان ما فقط
-                خریدار نیستند، بلکه بخشی از خانواده اینفینیتی هستند.
+                ما متعهد به ارائه محصولات با کیفیت با قیمت‌های منصفانه هستیم و اطمینان می‌دهیم که
+                همه بتوانند بدون نگرانی از هزینه‌ها، استایل مورد نظر خود را خلق کنند. ما تخفیف‌ها و
+                پیشنهادهای جذابی داریم و تیم ما پرانرژی و پرشور است و همه چیز را از انتخاب محصول تا
+                بسته‌بندی و ارسال با دقت و عشق انجام می‌دهد. مشتریان ما فقط خریدار نیستند، بلکه بخشی
+                از خانواده اینفینیتی هستند.
               </p>
             </AboutSection>
 
-            {/* Placeholder Image */}
-            <div className="relative h-[400px] w-full overflow-hidden rounded-2xl bg-slate-100 md:h-[500px] lg:h-[600px]">
+            {/*
+              Awaiting real brand artwork. This slot pointed at
+              /images/placeholder-about.jpg, which has never existed in
+              public/images, so every visitor took a hard 404 for a decorative
+              image. Until a real asset is supplied, show the shared placeholder
+              graphic: the panel keeps its shape and nothing 404s.
+            */}
+            <div className="relative flex h-[400px] w-full items-center justify-center overflow-hidden rounded-2xl bg-slate-100 md:h-[500px] lg:h-[600px]">
               <Image
-                src="/images/placeholder-about.jpg"
-                alt="اینفینیتی - استایل و کیفیت"
-                fill
-                className="object-cover"
-                sizes="(max-width: 768px) 100vw, (max-width: 1024px) 90vw, 1200px"
+                src="/images/placeholders/image-placeholder.svg"
+                alt=""
+                aria-hidden="true"
+                width={96}
+                height={96}
+                className="opacity-40"
                 priority={false}
               />
             </div>
@@ -144,16 +150,14 @@ export default async function AboutPage() {
         <Reveal variant="fade-up" duration={700} delay={600}>
           <TrustSection title="به ما اعتماد کنین">
             <p>
-              ما به شما اعتماد داریم که خرید آنلاین با اینفینیتی را تجربه کنید. ما بر کیفیت،
-              قیمت و خدمات تمرکز داریم و فقط محصولاتی را توصیه می‌کنیم که خودمان استفاده می‌کنیم.
-              ما اطمینان می‌دهیم که آنچه در عکس‌ها می‌بینید دقیقاً همان چیزی است که دریافت
-              می‌کنید.
+              ما به شما اعتماد داریم که خرید آنلاین با اینفینیتی را تجربه کنید. ما بر کیفیت، قیمت و
+              خدمات تمرکز داریم و فقط محصولاتی را توصیه می‌کنیم که خودمان استفاده می‌کنیم. ما
+              اطمینان می‌دهیم که آنچه در عکس‌ها می‌بینید دقیقاً همان چیزی است که دریافت می‌کنید.
             </p>
             <p>
-              ما متعهد به پاسخ سریع به سوالات، حل مشکلات و ارائه پشتیبانی هستیم. ما همچنین
-              متعهد به ارسال سریع، ایمن و مرتب هستیم. ما به کار خود علاقه‌مند هستیم و هدف ما
-              این است که هر بار که خرید می‌کنید، احساس خوب و امنیت داشته باشید و بدانید که همیشه
-              به فکر شما هستیم.
+              ما متعهد به پاسخ سریع به سوالات، حل مشکلات و ارائه پشتیبانی هستیم. ما همچنین متعهد به
+              ارسال سریع، ایمن و مرتب هستیم. ما به کار خود علاقه‌مند هستیم و هدف ما این است که هر
+              بار که خرید می‌کنید، احساس خوب و امنیت داشته باشید و بدانید که همیشه به فکر شما هستیم.
             </p>
           </TrustSection>
         </Reveal>
@@ -171,7 +175,7 @@ export default async function AboutPage() {
                       className="space-y-3 rounded-2xl border border-slate-100 bg-white p-5"
                     >
                       {store.name && (
-                        <p className="text-lg font-bold text-foreground-primary">{store.name}</p>
+                        <p className="text-foreground-primary text-lg font-bold">{store.name}</p>
                       )}
                       {store.address && (
                         <p className="text-sm leading-7 text-neutral-600">{store.address}</p>
@@ -179,11 +183,7 @@ export default async function AboutPage() {
                       {store.phones.length > 0 && (
                         <div className="flex flex-col gap-1">
                           {store.phones.map((phone, phoneIndex) => (
-                            <span
-                              key={phoneIndex}
-                              className="text-sm text-neutral-600"
-                              dir="ltr"
-                            >
+                            <span key={phoneIndex} className="text-sm text-neutral-600" dir="ltr">
                               {phone.label ? `${phone.label}: ${phone.number}` : phone.number}
                             </span>
                           ))}

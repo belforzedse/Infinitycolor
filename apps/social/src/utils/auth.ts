@@ -13,7 +13,10 @@ let pendingAuthRedirect: string | null = null;
  * back to central auth. 403 is a permission failure and must not look like
  * a missing session.
  */
-export function handleAuthErrors(error?: ApiError | null, isAdminCheck?: boolean): void {
+export function handleAuthErrors(
+  error?: ApiError | null,
+  isAdminCheck?: boolean,
+): void {
   const isUnauthorized = error?.status === HTTP_STATUS.UNAUTHORIZED;
   const isForbidden = error?.status === HTTP_STATUS.FORBIDDEN;
   const isNotAdmin = isAdminCheck === false;
@@ -51,6 +54,25 @@ export async function getAccessToken(): Promise<string | null> {
 
 export function hasCachedAccessToken(): boolean {
   return Boolean(centralAuth.tokenManager.peek());
+}
+
+/**
+ * Whether the visitor actually has a usable session right now.
+ *
+ * `hasCachedAccessToken` only reads the in-memory cache, so on a fresh page load
+ * — or straight after returning from central auth — it reports false for someone
+ * who is genuinely signed in. Gating actions on it told those users to sign in
+ * again, which is the inconsistent account state reported against Infinitygram.
+ * This asks the token manager for a token, letting it refresh when it can.
+ */
+export async function hasActiveSession(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  if (hasCachedAccessToken()) return true;
+  try {
+    return Boolean(await centralAuth.tokenManager.getToken());
+  } catch {
+    return false;
+  }
 }
 
 export function normalizePhoneNumber(value: string): string {

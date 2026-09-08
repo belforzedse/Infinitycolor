@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Action from "./Action";
 import Color from "./Color";
 import CommentsInfo from "./CommentsInfo";
+import { useScrollToComments } from "./useScrollToComments";
 import FAQItem from "./FAQItem";
 import Main from "./Main";
 import Model from "./Model";
@@ -83,6 +84,7 @@ type Props = {
 
 export default function PDPHeroInfo(props: Props) {
   const { product, sizes, colors, models = [], productData, productId } = props;
+  const handleScrollToComments = useScrollToComments(productId);
 
   // Runtime toggle for debug panel (persisted in localStorage)
   const [isDebugEnabled, setIsDebugEnabled] = useState<boolean>(() => {
@@ -119,13 +121,16 @@ export default function PDPHeroInfo(props: Props) {
   const [selectedGeneric, setSelectedGeneric] = useState<Record<string, string>>(
     initialSelection.generic,
   );
-  const genericSelectors = useMemo(
-    () => getGenericAttributeSelectors(productData),
-    [productData],
-  );
+  const genericSelectors = useMemo(() => getGenericAttributeSelectors(productData), [productData]);
 
   // Compute disabled ids for colors, sizes and models based on productData stock
-  const { disabledColors, disabledSizes, disabledModels, disabledGenericTerms, availableVariations } = useMemo(() => {
+  const {
+    disabledColors,
+    disabledSizes,
+    disabledModels,
+    disabledGenericTerms,
+    availableVariations,
+  } = useMemo(() => {
     const disabledColors: string[] = [];
     const disabledSizes: string[] = [];
     const disabledModels: string[] = [];
@@ -357,12 +362,7 @@ export default function PDPHeroInfo(props: Props) {
     setSelectedSize(best.ids.sizeId);
     setSelectedModel(best.ids.modelId);
     setSelectedGeneric(best.generic);
-    updateVariationDetails(
-      best.ids.colorId,
-      best.ids.sizeId,
-      best.ids.modelId,
-      best.generic,
-    );
+    updateVariationDetails(best.ids.colorId, best.ids.sizeId, best.ids.modelId, best.generic);
   };
 
   // Sync price/stock with the first in-stock variation (matches product card availability)
@@ -545,6 +545,7 @@ export default function PDPHeroInfo(props: Props) {
           commentCount={productData?.attributes?.RatingCount || 0}
           rateCount={productData?.attributes?.RatingCount || 0}
           last24hoursSeenCount={productData?.attributes?.SeenCount || 0}
+          onOpenComments={handleScrollToComments}
         />
 
         {productData?.attributes?.Description && (

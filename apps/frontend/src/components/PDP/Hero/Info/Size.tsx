@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ChevronLeftIcon from "../../Icons/ChevronLeftIcon";
 import ChevronRightIcon from "../../Icons/ChevronRightIcon";
 import RulerIcon from "../../Icons/RulerIcon";
@@ -70,6 +70,30 @@ export default function PDPHeroInfoSize(props: Props) {
 
   const [openSizeModal, setOpenSizeModal] = useState<boolean>(false);
 
+  /**
+   * The arrows used to render whenever sizes were shown, but they only scroll
+   * the size row — so on a product with a handful of sizes the row already fits,
+   * `scrollBy` moved nothing, and the controls looked broken. Track real overflow
+   * and only offer them when there is somewhere to go.
+   */
+  const [canScroll, setCanScroll] = useState(false);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const measure = () => setCanScroll(container.scrollWidth > container.clientWidth + 1);
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    // Sizes can change with the selected colour, so watch the row itself too.
+    if (container.firstElementChild) observer.observe(container.firstElementChild);
+
+    return () => observer.disconnect();
+  }, [sizes, showSizeOptions]);
+
   const onNextClick = () => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollBy({
@@ -110,9 +134,7 @@ export default function PDPHeroInfoSize(props: Props) {
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          {showSizeOptions && (
-            <span className="text-xl text-foreground-primary">انتخاب سایز</span>
-          )}
+          {showSizeOptions && <span className="text-foreground-primary text-xl">انتخاب سایز</span>}
 
           <button
             type="button"
@@ -126,7 +148,7 @@ export default function PDPHeroInfoSize(props: Props) {
           </button>
         </div>
 
-        {showSizeOptions && (
+        {showSizeOptions && canScroll && (
           <div className="flex gap-1">
             <button
               type="button"
@@ -171,13 +193,15 @@ export default function PDPHeroInfoSize(props: Props) {
                     isDisabled
                       ? "pointer-events-none cursor-not-allowed bg-gray-100 text-gray-400 line-through opacity-60"
                       : isSelected
-                        ? "border border-gray-300 bg-background-primary text-foreground-primary shadow-sm"
+                        ? "bg-background-primary text-foreground-primary border border-gray-300 shadow-sm"
                         : "bg-background-secondary text-foreground-muted hover:bg-gray-50"
                   }`}
                   onClick={() => handleSizeClick(size.id)}
                   disabled={isDisabled}
                   aria-disabled={isDisabled}
-                  aria-label={isDisabled ? `سایز ${size.title} ناموجود` : `انتخاب سایز ${size.title}`}
+                  aria-label={
+                    isDisabled ? `سایز ${size.title} ناموجود` : `انتخاب سایز ${size.title}`
+                  }
                   aria-pressed={isSelected ? "true" : "false"}
                   title={isDisabled ? "ناموجود" : size.title}
                 >
@@ -188,7 +212,6 @@ export default function PDPHeroInfoSize(props: Props) {
           </div>
         </div>
       )}
-
     </div>
   );
 }

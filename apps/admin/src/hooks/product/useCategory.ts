@@ -7,12 +7,16 @@ import {
   productDataAtom,
 } from "@/atoms/super-admin/products";
 import { getAllCategories } from "@/services/super-admin/product/category/getAll";
-import type { CategoryData} from "@/services/super-admin/product/category/create";
+import type { CategoryData } from "@/services/super-admin/product/category/create";
 import { createCategory } from "@/services/super-admin/product/category/create";
 import type { categoryResponseType } from "@/services/super-admin/product/category/getAll";
 import { usePathname } from "next/navigation";
 import toast from "react-hot-toast";
-import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import {
+  extractErrorMessage,
+  translateErrorMessage,
+} from "@/lib/errorTranslations";
+import { categoryMatchesQuery } from "@/components/Product/add/SetCategory/categoryPath";
 
 interface UseProductCategoryProps {
   isEditMode?: boolean;
@@ -22,7 +26,10 @@ const areCategoriesEqual = (
   currentCategories: categoryResponseType[] | undefined,
   nextCategories: categoryResponseType[],
 ) => {
-  if (!Array.isArray(currentCategories) || currentCategories.length !== nextCategories.length) {
+  if (
+    !Array.isArray(currentCategories) ||
+    currentCategories.length !== nextCategories.length
+  ) {
     return false;
   }
 
@@ -61,12 +68,18 @@ export function useProductCategory(props?: UseProductCategoryProps) {
   const { isEditMode = false } = props || {};
 
   const [CategoriesData, setCategoriesData] = useAtom(productCategoryDataAtom);
-  const setCategoriesDataPagination = useSetAtom(productCategoryDataAtomPagination);
-  const [productData, setProductData] = useAtom(isEditMode ? editProductDataAtom : productDataAtom);
+  const setCategoriesDataPagination = useSetAtom(
+    productCategoryDataAtomPagination,
+  );
+  const [productData, setProductData] = useAtom(
+    isEditMode ? editProductDataAtom : productDataAtom,
+  );
   const pathname = usePathname();
 
   const [categorySearchQuery, setCategorySearchQuery] = useState("");
-  const [categoryOptions, setCategoryOptions] = useState<categoryResponseType[]>(CategoriesData || []);
+  const [categoryOptions, setCategoryOptions] = useState<
+    categoryResponseType[]
+  >(CategoriesData || []);
 
   const [isGetCategoriesLoading, setIsGetCategoriesLoading] = useState(false);
   const [isCreateCategoryLoading, setIsCreateCategoryLoading] = useState(false);
@@ -76,7 +89,10 @@ export function useProductCategory(props?: UseProductCategoryProps) {
   }, [CategoriesData]);
 
   useEffect(() => {
-    if (!pathname.endsWith("/add") && productData.product_other_categories?.length > 0) {
+    if (
+      !pathname.endsWith("/add") &&
+      productData.product_other_categories?.length > 0
+    ) {
       const safeCategoriesData = CategoriesData || [];
       setCategoryOptions(
         safeCategoriesData.filter(
@@ -98,12 +114,20 @@ export function useProductCategory(props?: UseProductCategoryProps) {
         console.log("fetchAllCategories: Raw response:", response);
         console.log("fetchAllCategories: Response type:", typeof response);
         console.log("fetchAllCategories: Is array?", Array.isArray(response));
-        console.log("fetchAllCategories: Has data property?", response && typeof response === "object" && "data" in response);
+        console.log(
+          "fetchAllCategories: Has data property?",
+          response && typeof response === "object" && "data" in response,
+        );
       }
 
       // Handle both cases: direct array or PaginatedResponse object
       let categories: categoryResponseType[] = [];
-      let meta = { currentPage: 1, totalPages: 1, totalItems: 0, itemsPerPage: 25 };
+      let meta = {
+        currentPage: 1,
+        totalPages: 1,
+        totalItems: 0,
+        itemsPerPage: 25,
+      };
 
       if (Array.isArray(response)) {
         // Response is already an array (direct categories) - this is what we're getting!
@@ -111,24 +135,40 @@ export function useProductCategory(props?: UseProductCategoryProps) {
         if (process.env.NODE_ENV === "development") {
           console.log("fetchAllCategories: Response is array, using directly");
         }
-      } else if (response && typeof response === "object" && "data" in response) {
+      } else if (
+        response &&
+        typeof response === "object" &&
+        "data" in response
+      ) {
         // Response is PaginatedResponse with data and meta
         categories = Array.isArray(response.data) ? response.data : [];
         meta = response.meta || meta;
         if (process.env.NODE_ENV === "development") {
-          console.log("fetchAllCategories: Response is PaginatedResponse, extracted data");
+          console.log(
+            "fetchAllCategories: Response is PaginatedResponse, extracted data",
+          );
         }
       } else {
         if (process.env.NODE_ENV === "development") {
-          console.warn("fetchAllCategories: Unexpected response format:", response);
+          console.warn(
+            "fetchAllCategories: Unexpected response format:",
+            response,
+          );
         }
         categories = [];
       }
 
       if (process.env.NODE_ENV === "development") {
         console.log("fetchAllCategories: Final categories array:", categories);
-        console.log("fetchAllCategories: Categories length:", categories.length);
-        console.log("fetchAllCategories: About to setCategoriesData with:", categories.length, "items");
+        console.log(
+          "fetchAllCategories: Categories length:",
+          categories.length,
+        );
+        console.log(
+          "fetchAllCategories: About to setCategoriesData with:",
+          categories.length,
+          "items",
+        );
       }
 
       // Avoid writing equivalent values back into Jotai atoms. The product
@@ -136,14 +176,20 @@ export function useProductCategory(props?: UseProductCategoryProps) {
       // unchanged response must not create a fresh atom value that retriggers
       // fetch effects.
       setCategoriesData((currentCategories) =>
-        areCategoriesEqual(currentCategories, categories) ? currentCategories : categories,
+        areCategoriesEqual(currentCategories, categories)
+          ? currentCategories
+          : categories,
       );
       setCategoriesDataPagination((currentMeta) =>
         areCategoryMetaEqual(currentMeta, meta) ? currentMeta : meta,
       );
 
       if (process.env.NODE_ENV === "development") {
-        console.log("fetchAllCategories: setCategoriesData called with", categories.length, "categories");
+        console.log(
+          "fetchAllCategories: setCategoriesData called with",
+          categories.length,
+          "categories",
+        );
       }
     } catch (error) {
       if (process.env.NODE_ENV === "development") {
@@ -163,31 +209,33 @@ export function useProductCategory(props?: UseProductCategoryProps) {
   const filteredTags =
     categorySearchQuery === ""
       ? categoryOptions
-      : categoryOptions.filter((category) => {
-          const query = categorySearchQuery.trim().toLowerCase();
-          if (!query) return true;
+      : categoryOptions.filter((category) =>
+          // Also matches the parent's name, so searching a section finds what sits under it.
+          categoryMatchesQuery(category, categorySearchQuery),
+        );
 
-          const title = (category.attributes.Title || "").toLowerCase();
-          const slug = (category.attributes.Slug || "").toLowerCase();
-
-          // Search in both Title and Slug with fuzzy matching
-          return title.includes(query) || slug.includes(query);
-        });
-
-  const handleSelectOtherCategory = (selectedCategory: categoryResponseType | null) => {
+  const handleSelectOtherCategory = (
+    selectedCategory: categoryResponseType | null,
+  ) => {
     if (!selectedCategory) {
       return;
     }
 
     if (
-      !productData.product_other_categories.find((cat) => cat.id === selectedCategory.id) &&
+      !productData.product_other_categories.find(
+        (cat) => cat.id === selectedCategory.id,
+      ) &&
       categoryOptions.find((cat) => cat.id === selectedCategory.id)
     ) {
       const updatedCategories = [
         ...(productData as any).product_other_categories,
         selectedCategory,
       ];
-      setCategoryOptions(categoryOptions.filter((category) => category.id !== selectedCategory.id));
+      setCategoryOptions(
+        categoryOptions.filter(
+          (category) => category.id !== selectedCategory.id,
+        ),
+      );
       setCategorySearchQuery("");
       setProductData({
         ...(productData as any),
@@ -204,7 +252,9 @@ export function useProductCategory(props?: UseProductCategoryProps) {
       return result;
     } catch (error) {
       const errorMessage = extractErrorMessage(error);
-      toast.error(translateErrorMessage(errorMessage, "خطا در ایجاد دسته‌بندی"));
+      toast.error(
+        translateErrorMessage(errorMessage, "خطا در ایجاد دسته‌بندی"),
+      );
       throw error;
     } finally {
       setIsCreateCategoryLoading(false);
@@ -216,12 +266,15 @@ export function useProductCategory(props?: UseProductCategoryProps) {
       setIsGetCategoriesLoading(true);
 
       // Small delay to ensure DB consistency
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
       const response = await getAllCategories();
 
       if (process.env.NODE_ENV === "development") {
-        console.log("refreshCategoriesAfterCreate: Response received:", response);
+        console.log(
+          "refreshCategoriesAfterCreate: Response received:",
+          response,
+        );
       }
 
       // Handle both response formats
@@ -234,7 +287,9 @@ export function useProductCategory(props?: UseProductCategoryProps) {
         };
 
         setCategoriesData((currentCategories) =>
-          areCategoriesEqual(currentCategories, response) ? currentCategories : response,
+          areCategoriesEqual(currentCategories, response)
+            ? currentCategories
+            : response,
         );
         setCategoriesDataPagination((currentMeta) =>
           areCategoryMetaEqual(currentMeta, meta) ? currentMeta : meta,
@@ -248,7 +303,9 @@ export function useProductCategory(props?: UseProductCategoryProps) {
         };
 
         setCategoriesData((currentCategories) =>
-          areCategoriesEqual(currentCategories, response.data) ? currentCategories : response.data,
+          areCategoriesEqual(currentCategories, response.data)
+            ? currentCategories
+            : response.data,
         );
         setCategoriesDataPagination((currentMeta) =>
           areCategoryMetaEqual(currentMeta, meta) ? currentMeta : meta,
@@ -263,7 +320,9 @@ export function useProductCategory(props?: UseProductCategoryProps) {
   }, [setCategoriesData, setCategoriesDataPagination]);
 
   const removeOtherCategory = (categoryToRemove: categoryResponseType) => {
-    const updatedCategories = (productData as any).product_other_categories.filter(
+    const updatedCategories = (
+      productData as any
+    ).product_other_categories.filter(
       (category: categoryResponseType) => category.id !== categoryToRemove.id,
     );
     setCategoryOptions([...categoryOptions, categoryToRemove]);

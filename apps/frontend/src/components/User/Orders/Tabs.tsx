@@ -59,19 +59,22 @@ export default function OrdersTabs() {
   const [releasingOrderId, setReleasingOrderId] = useState<number | null>(null);
   const pageSize = 20; // Fetch more orders for tabs
 
-  const loadOrders = useCallback(async (targetPage: number) => {
-    try {
-      setLoading(true);
+  const loadOrders = useCallback(
+    async (targetPage: number) => {
+      try {
+        setLoading(true);
 
-      const response = await OrderService.getMyOrders(targetPage, pageSize);
-      setOrders(response.data);
-      setPageCount(response.meta.pagination.pageCount);
-    } catch (err: any) {
-      console.error("Error fetching orders:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [pageSize]);
+        const response = await OrderService.getMyOrders(targetPage, pageSize);
+        setOrders(response.data);
+        setPageCount(response.meta.pagination.pageCount);
+      } catch (err: any) {
+        console.error("Error fetching orders:", err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [pageSize],
+  );
 
   useEffect(() => {
     loadOrders(page);
@@ -217,9 +220,8 @@ export default function OrdersTabs() {
         ordersLength: 0,
         getReserveGroupCount: (o) =>
           o.reserveGroupId && o.isReserveOrder
-            ? allOrders.filter(
-                (a) => a.reserveGroupId === o.reserveGroupId && a.isReserveOrder,
-              ).length
+            ? allOrders.filter((a) => a.reserveGroupId === o.reserveGroupId && a.isReserveOrder)
+                .length
             : undefined,
         handleReleaseReserve,
         persistOrderSnapshot: persistOrderSnapshotHelper,
@@ -295,7 +297,7 @@ export default function OrdersTabs() {
               {page > 1 && (
                 <button
                   onClick={() => setPage(page - 1)}
-                  className="text-sm rounded-md border border-gray-300 px-3 py-1 hover:bg-gray-50"
+                  className="rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50"
                 >
                   قبلی
                 </button>
@@ -306,7 +308,7 @@ export default function OrdersTabs() {
               {page < pageCount && (
                 <button
                   onClick={() => setPage(page + 1)}
-                  className="text-sm rounded-md border border-gray-300 px-3 py-1 hover:bg-gray-50"
+                  className="rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50"
                 >
                   بعدی
                 </button>
@@ -329,7 +331,15 @@ export default function OrdersTabs() {
             value={searchTerm}
             onChange={(event) => handleSearchChange(event.target.value)}
             placeholder="جستجوی سفارش با شماره یا نام محصول"
-            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pr-4 text-sm text-right text-slate-700 outline-none transition focus:border-infinity-primary-light focus:ring-2 focus:ring-infinity-primary-lighter/60"
+            /*
+              RTL text starts at the right edge, where the "پاک کردن" button sits,
+              and the search icon sits at the left — with only pr-4 and no left
+              padding the typed order number ran underneath both. Reserve room for
+              whichever controls are actually showing.
+            */
+            className={`w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 text-right text-sm text-slate-700 outline-none transition focus:border-infinity-primary-light focus:ring-2 focus:ring-infinity-primary-lighter/60 ${
+              searchTerm ? "pr-20" : "pr-4"
+            }`}
           />
           {searchTerm ? (
             <button

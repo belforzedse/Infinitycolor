@@ -4,7 +4,13 @@ import type {
   IdentitySocialLink,
   IdentityStore,
 } from "@/types/site-identity";
-import { contactIcon, platformLabel, SocialPlatformIcon, storeMapLinks } from "@/utils/identityIcons";
+import {
+  contactHref,
+  contactIcon,
+  platformLabel,
+  SocialPlatformIcon,
+  storeMapLinks,
+} from "@/utils/identityIcons";
 
 interface StoresSectionProps {
   stores: IdentityStore[];
@@ -13,12 +19,7 @@ interface StoresSectionProps {
   contactNumbers: IdentityContactNumber[];
 }
 
-const StoresSection = ({
-  stores,
-  showStores,
-  socialLinks,
-  contactNumbers,
-}: StoresSectionProps) => {
+const StoresSection = ({ stores, showStores, socialLinks, contactNumbers }: StoresSectionProps) => {
   const renderStores = showStores && stores.length > 0;
 
   return (
@@ -32,7 +33,7 @@ const StoresSection = ({
             return (
               <div key={index} className="flex flex-col gap-2">
                 {store.address && (
-                  <p className="text-sm text-right text-neutral-500 md:max-w-[280px]">
+                  <p className="text-right text-sm text-neutral-500 md:max-w-[280px]">
                     {store.name ? `${store.name}: ${store.address}` : store.address}
                   </p>
                 )}
@@ -71,21 +72,49 @@ const StoresSection = ({
       <div className="flex flex-col gap-2">
         <h3 className="text-base text-neutral-900">ارتباط با ما</h3>
         <div className="flex flex-col items-start gap-2">
-          {contactNumbers.map((contact, index) => (
-            <div key={`contact-${index}`} className="flex items-center justify-end gap-1">
+          {contactNumbers.map((contact, index) => {
+            const href = contactHref(contact);
+            const isWhatsapp = contact.type === "whatsapp";
+            const icon = (
               <Image
                 src={contactIcon(contact.type)}
-                alt={contact.label || "تماس"}
+                alt=""
                 width={16}
                 height={16}
                 loading="lazy"
                 sizes="16px"
               />
+            );
+            const number = (
               <span className="text-sm text-neutral-600" dir="ltr">
                 {contact.number}
               </span>
-            </div>
-          ))}
+            );
+
+            // A number that cannot be normalised stays plain text rather than
+            // becoming a broken tel:/wa.me link.
+            if (!href) {
+              return (
+                <div key={`contact-${index}`} className="flex items-center justify-end gap-1">
+                  {icon}
+                  {number}
+                </div>
+              );
+            }
+
+            return (
+              <a
+                key={`contact-${index}`}
+                href={href}
+                className="flex items-center justify-end gap-1 hover:opacity-80"
+                aria-label={`${contact.label || (isWhatsapp ? "واتس‌اپ" : "تماس")}: ${contact.number}`}
+                {...(isWhatsapp ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+              >
+                {icon}
+                {number}
+              </a>
+            );
+          })}
           {socialLinks.map((social, index) => {
             const label = social.label || platformLabel(social.platform);
             return (

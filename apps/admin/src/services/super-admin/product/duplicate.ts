@@ -38,6 +38,9 @@ interface ProductAttributes {
 
 // --- Main function ---
 export const duplicateProduct = async (productId: string) => {
+  // Variations are copied one at a time and a failure does not abort the run,
+  // so track how many did not make it across.
+  let failedVariationCount = 0;
   try {
     // Get the original product with all relations
     const originalProduct = await getProduct(productId, {
@@ -52,11 +55,14 @@ export const duplicateProduct = async (productId: string) => {
     });
 
     // Normalize to our safer ProductAttributes shape
-    const originalData = originalProduct.data.attributes as unknown as ProductAttributes;
+    const originalData = originalProduct.data
+      .attributes as unknown as ProductAttributes;
 
     // Prepare data for duplicate
     const duplicatedProductType =
-      originalData.ProductType === "Simple" || originalData.IsSimpleProduct ? "Simple" : "Variable";
+      originalData.ProductType === "Simple" || originalData.IsSimpleProduct
+        ? "Simple"
+        : "Variable";
     const duplicateData = {
       Title: `${originalData.Title} - کپی`,
       Description: originalData.Description,
@@ -68,7 +74,8 @@ export const duplicateProduct = async (productId: string) => {
       Files: originalData.Files?.data?.map((file) => file.id) || [],
       Media: originalData.Media?.data?.map((media) => media.id) || [],
       CoverImage: originalData.CoverImage?.data?.id || null,
-      product_main_category: originalData.product_main_category?.data?.id || null,
+      product_main_category:
+        originalData.product_main_category?.data?.id || null,
       product_tags: originalData.product_tags?.data?.map((tag) => tag.id) || [],
       product_other_categories:
         originalData.product_other_categories?.data?.map((cat) => cat.id) || [],
@@ -100,33 +107,43 @@ export const duplicateProduct = async (productId: string) => {
         const assignedTermIds: number[] = [];
 
         if (definitionData?.Scope === "Product") {
-          const createdDefinitionResponse = await apiClient.post<any>("/product-attributes", {
-            data: {
-              Title: definitionData.Title,
-              Slug: definitionData.Slug,
-              Scope: "Product",
-              Type: definitionData.Type,
-              LegacyProjection: definitionData.LegacyProjection || "None",
-              Position: definitionData.Position || 0,
-              owner_product: newProductId,
+          const createdDefinitionResponse = await apiClient.post<any>(
+            "/product-attributes",
+            {
+              data: {
+                Title: definitionData.Title,
+                Slug: definitionData.Slug,
+                Scope: "Product",
+                Type: definitionData.Type,
+                LegacyProjection: definitionData.LegacyProjection || "None",
+                Position: definitionData.Position || 0,
+                owner_product: newProductId,
+              },
             },
-          });
-          const createdDefinition = createdDefinitionResponse.data || createdDefinitionResponse;
+          );
+          const createdDefinition =
+            createdDefinitionResponse.data || createdDefinitionResponse;
           definitionId = createdDefinition.id;
 
           for (const originalTerm of originalTerms) {
             const termData = originalTerm.attributes || originalTerm;
-            const createdTermResponse = await apiClient.post<any>("/product-attribute-terms", {
-              data: {
-                Title: termData.Title,
-                Slug: termData.Slug,
-                ColorCode: termData.ColorCode || null,
-                Position: termData.Position || 0,
-                product_attribute: definitionId,
+            const createdTermResponse = await apiClient.post<any>(
+              "/product-attribute-terms",
+              {
+                data: {
+                  Title: termData.Title,
+                  Slug: termData.Slug,
+                  ColorCode: termData.ColorCode || null,
+                  Position: termData.Position || 0,
+                  product_attribute: definitionId,
+                },
               },
-            });
+            );
             const createdTerm = createdTermResponse.data || createdTermResponse;
-            genericTermIdMap.set(Number(originalTerm.id), Number(createdTerm.id));
+            genericTermIdMap.set(
+              Number(originalTerm.id),
+              Number(createdTerm.id),
+            );
             assignedTermIds.push(Number(createdTerm.id));
           }
         } else {
@@ -150,7 +167,10 @@ export const duplicateProduct = async (productId: string) => {
         }
       }
     } catch (attributeError) {
-      console.warn("Failed to duplicate generic product attributes:", attributeError);
+      console.warn(
+        "Failed to duplicate generic product attributes:",
+        attributeError,
+      );
     }
 
     // Duplicate product variations
@@ -169,17 +189,29 @@ export const duplicateProduct = async (productId: string) => {
           const variationData = variationItem.attributes || variationItem;
 
           if (!variationData || !variationData.SKU) {
-            console.warn(`Variation ${variation.id} missing SKU or data, skipping`);
-            variationErrors.push(`Variation ${variation.id}: Missing SKU or data`);
+            console.warn(
+              `Variation ${variation.id} missing SKU or data, skipping`,
+            );
+            variationErrors.push(
+              `Variation ${variation.id}: Missing SKU or data`,
+            );
             continue;
           }
 
           // Extract relation IDs properly
-          const productVariationColor = variationData.product_variation_color?.data?.id || null;
-          const productVariationSize = variationData.product_variation_size?.data?.id || null;
-          const productVariationModel = variationData.product_variation_model?.data?.id || null;
-          const selectedAttributeTermIds = (variationData.selected_attribute_terms?.data || [])
-            .map((term: any) => genericTermIdMap.get(Number(term.id)) || Number(term.id))
+          const productVariationColor =
+            variationData.product_variation_color?.data?.id || null;
+          const productVariationSize =
+            variationData.product_variation_size?.data?.id || null;
+          const productVariationModel =
+            variationData.product_variation_model?.data?.id || null;
+          const selectedAttributeTermIds = (
+            variationData.selected_attribute_terms?.data || []
+          )
+            .map(
+              (term: any) =>
+                genericTermIdMap.get(Number(term.id)) || Number(term.id),
+            )
             .filter((id: number) => Number.isFinite(id) && id > 0);
 
           const newVariationData: any = {
@@ -208,8 +240,10 @@ export const duplicateProduct = async (productId: string) => {
           );
 
           // apiClient.post returns response.data, which is { data: { id, attributes } } from Strapi
-          const newVariationItem = newVariationResponse.data || newVariationResponse;
-          const newVariationId = newVariationItem.id || newVariationItem.data?.id;
+          const newVariationItem =
+            newVariationResponse.data || newVariationResponse;
+          const newVariationId =
+            newVariationItem.id || newVariationItem.data?.id;
 
           if (!newVariationId) {
             throw new Error(`Failed to get new variation ID from response`);
@@ -217,27 +251,34 @@ export const duplicateProduct = async (productId: string) => {
 
           // Duplicate stock with 0 count
           if (variationData.product_stock?.data) {
-            await apiClient.post<any>(
-              `/product-stocks`,
-              {
-                data: {
-                  Count: 0,
-                  product_variation: newVariationId,
-                },
+            await apiClient.post<any>(`/product-stocks`, {
+              data: {
+                Count: 0,
+                product_variation: newVariationId,
               },
-            );
+            });
           }
         } catch (variationError: any) {
-          const errorMsg = variationError?.response?.data?.error?.message || variationError?.message || "Unknown error";
-          console.error(`Failed to duplicate variation ${variation.id}:`, variationError);
+          const errorMsg =
+            variationError?.response?.data?.error?.message ||
+            variationError?.message ||
+            "Unknown error";
+          console.error(
+            `Failed to duplicate variation ${variation.id}:`,
+            variationError,
+          );
           variationErrors.push(`Variation ${variation.id}: ${errorMsg}`);
           // Continue with next variation instead of failing entire operation
         }
       }
 
-      // Log any variation errors but don't fail the entire operation
+      // Individual variation failures do not abort the copy, but they must not
+      // be hidden either: a product whose variations did not come across is not
+      // sellable, and reporting plain success sent the operator away believing
+      // the duplicate was complete.
       if (variationErrors.length > 0) {
         console.warn(`Some variations failed to duplicate:`, variationErrors);
+        failedVariationCount = variationErrors.length;
       }
     }
 
@@ -254,15 +295,12 @@ export const duplicateProduct = async (productId: string) => {
         const sizeHelperData = sizeHelperItem.attributes || sizeHelperItem;
 
         if (sizeHelperData?.Helper) {
-          await apiClient.post<any>(
-            `/product-size-helpers`,
-            {
-              data: {
-                product: newProductId,
-                Helper: sizeHelperData.Helper,
-              },
+          await apiClient.post<any>(`/product-size-helpers`, {
+            data: {
+              product: newProductId,
+              Helper: sizeHelperData.Helper,
             },
-          );
+          });
         }
       } catch (sizeHelperError: any) {
         // Log error but don't fail the entire operation
@@ -270,11 +308,23 @@ export const duplicateProduct = async (productId: string) => {
       }
     }
 
-    toast.success("محصول با موفقیت کپی شد");
-    return { success: true, data: response.data, newProductId };
+    if (failedVariationCount > 0) {
+      toast.error(
+        `محصول کپی شد اما ${failedVariationCount} تنوع منتقل نشد. پیش از انتشار، تنوع‌های محصول جدید را بررسی کنید.`,
+      );
+    } else {
+      toast.success("محصول با موفقیت کپی شد");
+    }
+    return {
+      success: true,
+      data: response.data,
+      newProductId,
+      failedVariationCount,
+    };
   } catch (error: any) {
     console.error("Product duplication error:", error);
-    const errorMessage = error.response?.data?.error?.message || "خطا در کپی کردن محصول";
+    const errorMessage =
+      error.response?.data?.error?.message || "خطا در کپی کردن محصول";
     toast.error(errorMessage);
     return { success: false, error };
   }

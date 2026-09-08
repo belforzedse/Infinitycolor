@@ -8,7 +8,11 @@ import FieldRenderer from "./FieldRenderer";
 import { useRouter } from "next/navigation";
 import logger from "@/utils/logger";
 import type { Field } from "./types";
-import { isStandardField, isRadioTextWithChips, isCategoriesListField } from "./types";
+import {
+  isStandardField,
+  isRadioTextWithChips,
+  isCategoriesListField,
+} from "./types";
 import { PanelLeftClose, PanelRight } from "lucide-react";
 import CustomizationEditorPanel from "../../CustomizationEditorPanel";
 
@@ -84,10 +88,16 @@ const desktopColSpan = {
   12: "md:col-span-12",
 } as const;
 
-export default function UpsertPageContentWrapper<T extends { createdAt: Date; updatedAt: Date }>(
-  props: Props<T>,
-) {
-  const { config, data, footer, onSubmit: onSubmitProp, usePanelLayout } = props;
+export default function UpsertPageContentWrapper<
+  T extends { createdAt: Date; updatedAt: Date },
+>(props: Props<T>) {
+  const {
+    config,
+    data,
+    footer,
+    onSubmit: onSubmitProp,
+    usePanelLayout,
+  } = props;
 
   const router = useRouter();
 
@@ -129,7 +139,9 @@ export default function UpsertPageContentWrapper<T extends { createdAt: Date; up
   const isPanel = Boolean(usePanelLayout && footer);
   const formGridClass = isPanel ? "grid-cols-1" : "grid-cols-12";
   const formMainClass = isPanel ? "col-span-1" : "col-span-12 md:col-span-9";
-  const formSidebarClass = isPanel ? "col-span-1 mt-3" : "col-span-12 mt-3 flex flex-col gap-3 md:col-span-3 md:mt-0";
+  const formSidebarClass = isPanel
+    ? "col-span-1 mt-3"
+    : "col-span-12 mt-3 flex flex-col gap-3 md:col-span-3 md:mt-0";
   const formTimestampStickyClass = isPanel ? "" : "md:sticky md:top-5";
   const formActionsVisibleClass = isPanel ? "flex" : "hidden md:grid";
   const sectionGridClass = isPanel ? "grid-cols-1" : "grid-cols-12";
@@ -139,163 +151,192 @@ export default function UpsertPageContentWrapper<T extends { createdAt: Date; up
       : `${mobileColSpan[field.mobileColSpan as keyof typeof mobileColSpan]} ${desktopColSpan[field.colSpan as keyof typeof desktopColSpan]}`;
 
   const formElement = (
-    <form className={`mt-3 w-full md:mt-0 ${isPanel ? "min-w-0 max-w-full overflow-hidden" : "min-w-0"}`} onSubmit={onSubmit}>
-        <div className={`grid w-full min-w-0 gap-3 ${formGridClass}`}>
-          {/* Form Section */}
-          <div className={`min-w-0 ${formMainClass}`}>
-            {config.config.map((item, index) => (
-              <div key={index} className={`mb-3 rounded-2xl bg-white p-3 md:p-5 ${isPanel ? "min-w-0" : ""}`}>
-                <div className={`flex flex-col gap-4 ${isPanel ? "min-w-0" : ""}`}>
-                  {/* Header Section */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xl text-neutral-600">
-                      {typeof item.title === "function"
-                        ? item.title(data ?? ({} as T))
-                        : item.title}
-                    </span>
+    <form
+      className={`mt-3 w-full md:mt-0 ${isPanel ? "min-w-0 max-w-full overflow-hidden" : "min-w-0"}`}
+      onSubmit={onSubmit}
+    >
+      <div className={`grid w-full min-w-0 gap-3 ${formGridClass}`}>
+        {/* Form Section */}
+        <div className={`min-w-0 ${formMainClass}`}>
+          {config.config.map((item, index) => (
+            <div
+              key={index}
+              className={`mb-3 rounded-2xl bg-white p-3 md:p-5 ${isPanel ? "min-w-0" : ""}`}
+            >
+              <div
+                className={`flex flex-col gap-4 ${isPanel ? "min-w-0" : ""}`}
+              >
+                {/* Header Section */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xl text-neutral-600">
+                    {typeof item.title === "function"
+                      ? item.title(data ?? ({} as T))
+                      : item.title}
+                  </span>
 
-                    {item.iconButton}
-                  </div>
+                  {item.iconButton}
+                </div>
 
-                  {/* Fields Section */}
-                  {item.sections.map((section, sectionIndex) => (
-                    <div
-                      key={sectionIndex}
-                      className={`grid min-w-0 auto-rows-auto gap-5 rounded-2xl border border-slate-100 p-3 md:p-5 ${sectionGridClass}`}
-                    >
-                      {section.header && (
-                        <div className={`flex items-center justify-between ${isPanel ? "col-span-1" : "col-span-12"}`}>
-                          <span className="text-xl text-foreground-primary">
-                            {section.header.title}
-                          </span>
+                {/* Fields Section */}
+                {item.sections.map((section, sectionIndex) => (
+                  <div
+                    key={sectionIndex}
+                    className={`grid min-w-0 auto-rows-auto gap-5 rounded-2xl border border-slate-100 p-3 md:p-5 ${sectionGridClass}`}
+                  >
+                    {section.header && (
+                      <div
+                        className={`flex items-center justify-between ${isPanel ? "col-span-1" : "col-span-12"}`}
+                      >
+                        <span className="text-xl text-foreground-primary">
+                          {section.header.title}
+                        </span>
 
-                          {section.header.iconButton}
-                        </div>
-                      )}
-                      {section.fields.map((field) => (
-                        <div
-                          key={
-                            isStandardField(field)
+                        {section.header.iconButton}
+                      </div>
+                    )}
+                    {section.fields.map((field) => (
+                      <div
+                        key={
+                          isStandardField(field)
+                            ? String(field.name)
+                            : isRadioTextWithChips(field)
                               ? String(field.name)
-                              : isRadioTextWithChips(field)
+                              : isCategoriesListField(field)
                                 ? String(field.name)
-                                : isCategoriesListField(field)
-                                  ? String(field.name)
-                                  : `${String(field.provinceField)}-${String(field.cityField)}`
-                          }
-                          className={`${getFieldColClass(field)} flex min-w-0 flex-col gap-1`}
-                        >
-                          {field.label && (
-                            <div className="flex items-center justify-between">
-                              <span className="text-base text-neutral-600">{field.label}</span>
+                                : `${String(field.provinceField)}-${String(field.cityField)}`
+                        }
+                        className={`${getFieldColClass(field)} flex min-w-0 flex-col gap-1`}
+                      >
+                        {field.label && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-base text-neutral-600">
+                              {field.label}
+                            </span>
 
-                              {isStandardField(field) &&
-                                field.labelAction &&
-                                field.labelAction(data ?? ({} as T))}
-                            </div>
-                          )}
+                            {isStandardField(field) &&
+                              field.labelAction &&
+                              field.labelAction(data ?? ({} as T))}
+                          </div>
+                        )}
 
-                          <FieldRenderer
-                            field={field}
-                            formData={formData}
-                            data={data}
-                            updateFormData={updateFormData}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
+                        <FieldRenderer
+                          field={field}
+                          formData={formData}
+                          data={data}
+                          updateFormData={updateFormData}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-
-          {/* Mobile Action Buttons (hidden in panel; panel uses the single action row below) */}
-          <div className={`flex w-full ${isPanel ? "hidden" : "col-span-12 md:hidden"}`}>
-            <div className="flex w-full items-center gap-2">
-              {config.actionButtons({
-                onSubmit: onSubmit,
-                onCancel: onCancel,
-                isLoading,
-              })}
             </div>
-          </div>
+          ))}
+        </div>
 
-          {/* Timestamp Section */}
-          <div className={`flex min-w-0 flex-col gap-3 ${formSidebarClass}`}>
-            {config.showTimestamp && (
-              <div className={`flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white p-5 ${formTimestampStickyClass}`}>
-                {/* Create At Section */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1">
-                    <CalendarIcon />
-
-                    <span className="text-base text-neutral-600">تاریخ ایجاد</span>
-                  </div>
-
-                  <span className="text-sm text-slate-500">
-                    {data?.createdAt?.toLocaleString("fa-IR", {
-                      year: "numeric",
-                      month: "2-digit",
-                      day: "2-digit",
-                    }) ?? "—"}
-                  </span>
-                </div>
-
-                {/* Divider */}
-                <div className="h-[1px] w-full bg-slate-100" />
-
-                {/* Update At Section */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1">
-                    <CalendarIcon />
-
-                    <span className="text-base text-neutral-600">تاریخ آخرین ویرایش</span>
-                  </div>
-
-                  <span className="text-sm text-slate-500">
-                    {data?.updatedAt?.toLocaleString("fa-IR", {
-                      year: "numeric",
-                      month: "2-digit",
-                      day: "2-digit",
-                    }) ?? "—"}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {config.isActiveBox && (
-              <ActiveBox
-                title={config.isActiveBox.header}
-                label={config.isActiveBox.label(formData[config.isActiveBox.key] as boolean)}
-                status={formData[config.isActiveBox.key] as boolean}
-                onChange={(checked) => {
-                  setFormData({
-                    ...formData,
-                    [config.isActiveBox!.key]: checked,
-                  });
-                }}
-              />
-            )}
-
-            {/* Custom Sidebar */}
-            {props.customSidebar && props.customSidebar}
+        {/* Mobile Action Buttons (hidden in panel; panel uses the single action row below) */}
+        <div
+          className={`flex w-full ${isPanel ? "hidden" : "col-span-12 md:hidden"}`}
+        >
+          <div className="flex w-full items-center gap-2">
+            {config.actionButtons({
+              onSubmit: onSubmit,
+              onCancel: onCancel,
+              isLoading,
+            })}
           </div>
         </div>
 
-        {/* Desktop / Panel Action Buttons */}
-        <div className={`mt-4 w-full ${formActionsVisibleClass} ${isPanel ? "flex flex-col" : "grid-cols-12 md:grid"}`}>
-          <div className={isPanel ? "w-full" : "col-span-9"}>
-            <div className="flex w-full flex-wrap items-center justify-end gap-2">
-              {config.actionButtons({
-                onSubmit: onSubmit,
-                onCancel: onCancel,
-                isLoading,
-              })}
+        {/* Timestamp Section */}
+        <div className={`flex min-w-0 flex-col gap-3 ${formSidebarClass}`}>
+          {config.showTimestamp && (
+            <div
+              className={`flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white p-5 ${formTimestampStickyClass}`}
+            >
+              {/* Create At Section */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <CalendarIcon />
+
+                  <span className="text-base text-neutral-600">
+                    تاریخ ایجاد
+                  </span>
+                </div>
+
+                <span className="text-sm text-slate-500">
+                  {data?.createdAt?.toLocaleString("fa-IR", {
+                    year: "numeric",
+                    month: "2-digit",
+                    day: "2-digit",
+                  }) ?? "—"}
+                </span>
+              </div>
+
+              {/* Divider */}
+              <div className="h-[1px] w-full bg-slate-100" />
+
+              {/* Update At Section */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <CalendarIcon />
+
+                  <span className="text-base text-neutral-600">
+                    تاریخ آخرین ویرایش
+                  </span>
+                </div>
+
+                <span className="text-sm text-slate-500">
+                  {data?.updatedAt?.toLocaleString("fa-IR", {
+                    year: "numeric",
+                    month: "2-digit",
+                    day: "2-digit",
+                  }) ?? "—"}
+                </span>
+              </div>
             </div>
+          )}
+
+          {config.isActiveBox && (
+            <ActiveBox
+              title={config.isActiveBox.header}
+              label={config.isActiveBox.label(
+                formData[config.isActiveBox.key] as boolean,
+              )}
+              status={formData[config.isActiveBox.key] as boolean}
+              onChange={(checked) => {
+                setFormData({
+                  ...formData,
+                  [config.isActiveBox!.key]: checked,
+                });
+              }}
+            />
+          )}
+
+          {/* Custom Sidebar */}
+          {props.customSidebar && props.customSidebar}
+        </div>
+      </div>
+
+      {/*
+          Desktop / Panel Action Buttons.
+          The row carried no separation from the fields above it, so on a long
+          editor the save/cancel pair read as one more form element floating at
+          the bottom edge rather than the point where the task is completed.
+        */}
+      <div
+        className={`mt-6 w-full border-t border-slate-200 pt-4 ${formActionsVisibleClass} ${isPanel ? "flex flex-col" : "grid-cols-12 md:grid"}`}
+      >
+        <div className={isPanel ? "w-full" : "col-span-9"}>
+          <div className="flex w-full flex-wrap items-center justify-end gap-2">
+            {config.actionButtons({
+              onSubmit: onSubmit,
+              onCancel: onCancel,
+              isLoading,
+            })}
           </div>
         </div>
-      </form>
+      </div>
+    </form>
   );
 
   if (usePanelLayout && footer) {
@@ -306,7 +347,10 @@ export default function UpsertPageContentWrapper<T extends { createdAt: Date; up
             {config.headTitle}
           </span>
           {config.addButton && (
-            <AddButton text={config.addButton.text} path={config.addButton.path ?? "#"} />
+            <AddButton
+              text={config.addButton.text}
+              path={config.addButton.path ?? "#"}
+            />
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -351,7 +395,10 @@ export default function UpsertPageContentWrapper<T extends { createdAt: Date; up
             {config.headTitle}
           </span>
           {config.addButton && (
-            <AddButton text={config.addButton.text} path={config.addButton.path ?? "#"} />
+            <AddButton
+              text={config.addButton.text}
+              path={config.addButton.path ?? "#"}
+            />
           )}
         </div>
       )}

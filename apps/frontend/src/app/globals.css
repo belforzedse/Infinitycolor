@@ -409,8 +409,22 @@ textarea:focus-visible {
 }
 
 .product-card-variation-overlay {
+  /*
+   * The panel sits over arbitrary product photography, so the colour-count text
+   * needs a real surface behind it. A backdrop blur alone guarantees nothing:
+   * it leaves the text unreadable over a light garment, and it is simply
+   * ignored where `backdrop-filter` is unsupported. An opaque-enough background
+   * keeps the label legible in both cases; the blur stays as an enhancement.
+   */
+  background: rgba(255, 255, 255, 0.92);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
+}
+
+@supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
+  .product-card-variation-overlay {
+    background: rgba(255, 255, 255, 0.82);
+  }
 }
 
 .glass-chip {

@@ -15,27 +15,16 @@ import { handleAuthErrors } from "@/utils/auth";
 import { apiCache } from "./api-cache";
 import { centralAuth } from "./central-auth";
 
-function onHttpError(
+export function onHttpError(
   error: ApiError,
-  context: { status: number; options?: ApiRequestOptions },
+  _context: { status: number; options?: ApiRequestOptions },
 ): void {
+  // Denying one request must never erase the signed-in identity. `handleAuthErrors`
+  // owns the response: 401 clears the session and routes to central login, while 403
+  // only surfaces a permission notice and deliberately keeps the cached user so the
+  // page stays usable. Clearing `currentUserAtom` here as well made any single
+  // forbidden resource look like a logout and bounced the operator off the page.
   handleAuthErrors(error);
-  if (context.status === 403 && typeof window !== "undefined") {
-    if (window.location.pathname.startsWith("/")) {
-      void import("@/lib/atoms/auth").then(({ currentUserAtom }) => {
-        void import("@/lib/jotaiStore").then(({ jotaiStore }) => {
-          jotaiStore.set(currentUserAtom, null);
-          setTimeout(() => {
-            if (window.history.length > 1) {
-              window.history.back();
-            } else {
-              window.location.href = "/";
-            }
-          }, 100);
-        });
-      });
-    }
-  }
 }
 
 export const apiClient = new ApiClient({

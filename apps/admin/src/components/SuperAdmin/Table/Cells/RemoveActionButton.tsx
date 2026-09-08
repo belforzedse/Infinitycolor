@@ -9,6 +9,7 @@ import { refreshTable } from "..";
 import { useState } from "react";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { useCan } from "@/hooks/useCan";
+import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 
 type Props = {
   isRemoved: boolean;
@@ -26,7 +27,8 @@ export default function RemoveActionButton(props: Props) {
   const canHardDelete = useCan("system.purge.execute");
   const [isDeleting, setIsDeleting] = useState(false);
   const [showActionDialog, setShowActionDialog] = useState(false);
-  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
+  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] =
+    useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showPermissionDenied, setShowPermissionDenied] = useState(false);
 
@@ -46,7 +48,7 @@ export default function RemoveActionButton(props: Props) {
       setRefresh(true);
       toast.success("با موفقیت بازیابی شد");
     } catch (error) {
-      toast.error("خطا در بازیابی");
+      toast.error(getUserFacingErrorMessage(error, "بازیابی انجام نشد."));
       console.error("Failed to restore item:", error);
     } finally {
       setIsDeleting(false);
@@ -62,7 +64,9 @@ export default function RemoveActionButton(props: Props) {
       setRefresh(true);
       toast.success(`${itemName} به طور دائمی حذف شد`);
     } catch (error) {
-      toast.error(`خطا در حذف دائمی ${itemName}`);
+      toast.error(
+        getUserFacingErrorMessage(error, `حذف دائمی ${itemName} انجام نشد.`),
+      );
       console.error("Failed to permanently delete item:", error);
     } finally {
       setIsDeleting(false);
@@ -80,7 +84,9 @@ export default function RemoveActionButton(props: Props) {
       setRefresh(true);
       toast.success(`${itemName} با موفقیت حذف شد`);
     } catch (error) {
-      toast.error(`خطا در حذف ${itemName}`);
+      toast.error(
+        getUserFacingErrorMessage(error, `حذف ${itemName} انجام نشد.`),
+      );
       console.error("Failed to delete item:", error);
     } finally {
       setIsDeleting(false);

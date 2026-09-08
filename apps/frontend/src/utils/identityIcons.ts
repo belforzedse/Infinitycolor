@@ -10,11 +10,7 @@ import {
   SiX,
   SiYoutube,
 } from "react-icons/si";
-import type {
-  ContactNumberType,
-  IdentityStore,
-  SocialPlatform,
-} from "@/types/site-identity";
+import type { ContactNumberType, IdentityStore, SocialPlatform } from "@/types/site-identity";
 
 type SocialIconComponent = ComponentType<{
   "aria-hidden"?: boolean;
@@ -58,7 +54,12 @@ export const SOCIAL_PLATFORM_META: Record<SocialPlatform, SocialPlatformMeta> = 
   bale: {
     value: "bale",
     label: "بله",
-    iconSrc: "/images/social/bale.svg",
+    // No brand asset ships for this platform: /images/social/bale.svg was
+    // referenced but has never existed in public/, so the raw <img> below
+    // rendered as a broken icon. Fall back to the generic mark until a real
+    // logo is supplied, then restore `iconSrc`.
+    Icon: GenericSocialIcon,
+    hasPlaceholderIcon: true,
     color: "#0CBC8D",
   },
   x: {
@@ -89,13 +90,23 @@ export const SOCIAL_PLATFORM_META: Record<SocialPlatform, SocialPlatformMeta> = 
   eitaa: {
     value: "eitaa",
     label: "ایتا",
-    iconSrc: "/images/social/eitaa.svg",
+    // No brand asset ships for this platform: /images/social/eitaa.svg was
+    // referenced but has never existed in public/, so the raw <img> below
+    // rendered as a broken icon. Fall back to the generic mark until a real
+    // logo is supplied, then restore `iconSrc`.
+    Icon: GenericSocialIcon,
+    hasPlaceholderIcon: true,
     color: "#E37600",
   },
   rubika: {
     value: "rubika",
     label: "روبیکا",
-    iconSrc: "/images/social/rubika.png",
+    // No brand asset ships for this platform: /images/social/rubika.png was
+    // referenced but has never existed in public/, so the raw <img> below
+    // rendered as a broken icon. Fall back to the generic mark until a real
+    // logo is supplied, then restore `iconSrc`.
+    Icon: GenericSocialIcon,
+    hasPlaceholderIcon: true,
     color: "#7D4593",
   },
   other: {
@@ -116,12 +127,14 @@ export const SOCIAL_PLATFORM_OPTIONS = Object.values(SOCIAL_PLATFORM_META).map((
 /** Map link icons available under /public/images/social. */
 export function storeMapLinks(store: IdentityStore): { src: string; alt: string; href: string }[] {
   const links: { src: string; alt: string; href: string }[] = [];
-  if (store.baladLink) links.push({ src: "/images/social/balad.png", alt: "بلد", href: store.baladLink });
+  if (store.baladLink)
+    links.push({ src: "/images/social/balad.png", alt: "بلد", href: store.baladLink });
   if (store.googleMapsLink)
     links.push({ src: "/images/social/g-map.png", alt: "گوگل مپ", href: store.googleMapsLink });
   if (store.neshanLink)
     links.push({ src: "/images/social/neshan.png", alt: "نشان", href: store.neshanLink });
-  if (store.wazeLink) links.push({ src: "/images/social/waze.png", alt: "ویز", href: store.wazeLink });
+  if (store.wazeLink)
+    links.push({ src: "/images/social/waze.png", alt: "ویز", href: store.wazeLink });
   return links;
 }
 
@@ -166,6 +179,50 @@ export function SocialPlatformIcon({
 
 export function contactIcon(type?: ContactNumberType): string {
   return type === "whatsapp" ? "/images/social/whatsapp.png" : "/images/social/phone.png";
+}
+
+const PERSIAN_ZERO = 0x06f0;
+const ARABIC_ZERO = 0x0660;
+
+/** CMS numbers arrive with Persian digits, spaces and dashes; hrefs need plain digits. */
+function toLatinDigits(value: string): string {
+  return value.replace(/[\u06f0-\u06f9\u0660-\u0669]/g, (char) => {
+    const code = char.charCodeAt(0);
+    const base = code >= PERSIAN_ZERO ? PERSIAN_ZERO : ARABIC_ZERO;
+    return String(code - base);
+  });
+}
+
+/**
+ * Normalises a displayed contact number to E.164 digits (Iran, country code 98).
+ * Returns null when nothing dialable remains, so callers can fall back to plain
+ * text rather than emitting a broken link.
+ */
+export function normalizeContactDigits(raw: string): string | null {
+  if (!raw) return null;
+  const latin = toLatinDigits(raw).trim();
+  const hadPlus = latin.startsWith("+");
+  let digits = latin.replace(/\D/g, "");
+  if (!digits) return null;
+
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (hadPlus && !digits.startsWith("98")) return null;
+  if (digits.startsWith("0")) digits = `98${digits.slice(1)}`;
+  else if (!digits.startsWith("98")) digits = `98${digits}`;
+
+  // Iranian E.164 numbers are exactly country code 98 plus ten digits. Reject
+  // arbitrary long strings instead of turning them into misleading dial links.
+  return /^98\d{10}$/.test(digits) ? digits : null;
+}
+
+/**
+ * Phone and WhatsApp details were rendered as plain text, so a shopper on a
+ * phone could not tap to call or open a chat. Build the real target instead.
+ */
+export function contactHref(contact: { number: string; type?: ContactNumberType }): string | null {
+  const digits = normalizeContactDigits(contact.number);
+  if (!digits) return null;
+  return contact.type === "whatsapp" ? `https://wa.me/${digits}` : `tel:+${digits}`;
 }
 
 export function platformLabel(platform: SocialPlatform): string {

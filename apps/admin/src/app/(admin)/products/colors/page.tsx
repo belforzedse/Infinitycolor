@@ -7,8 +7,16 @@ import { ENDPOINTS } from "@/constants/api";
 import toast from "react-hot-toast";
 import { HexColorPicker, HexColorInput } from "react-colorful";
 import { Dialog, Transition } from "@headlessui/react";
-import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import {
+  extractErrorMessage,
+  translateErrorMessage,
+} from "@/lib/errorTranslations";
 import { COLOR_CATEGORIES, QUICK_COLORS } from "@/lib/colorPalettes";
+import {
+  applyNoColorToggle,
+  DEFAULT_COLOR_CODE,
+  resolveColorSave,
+} from "./colorForm";
 import { useCan } from "@/hooks/useCan";
 import { apiCache } from "@/lib/api-cache";
 
@@ -33,7 +41,7 @@ const INITIAL_MODAL_STATE: ModalState = {
   open: false,
   id: null,
   title: "",
-  colorCode: "#000000",
+  colorCode: DEFAULT_COLOR_CODE,
   noColor: false,
 };
 
@@ -42,7 +50,9 @@ export default function ProductColorsPage() {
   const [colors, setColors] = useState<ApiColor[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [modalState, setModalState] = useState<ModalState>({ ...INITIAL_MODAL_STATE });
+  const [modalState, setModalState] = useState<ModalState>({
+    ...INITIAL_MODAL_STATE,
+  });
   const [saving, setSaving] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -117,23 +127,12 @@ export default function ProductColorsPage() {
   };
 
   const handleSaveColor = async () => {
-    const title = modalState.title.trim();
-    if (!title) {
-      toast.error("نام رنگ را وارد کنید");
+    const resolved = resolveColorSave(modalState);
+    if (!resolved.ok) {
+      toast.error(resolved.message);
       return;
     }
-
-    // Colorless entries persist null; otherwise validate and normalize the hex.
-    let normalizedColorCode: string | null = null;
-    if (!modalState.noColor) {
-      const raw = modalState.colorCode || "";
-      const withHash = raw.startsWith("#") ? raw : `#${raw}`;
-      if (!/^#[0-9a-fA-F]{6}$/.test(withHash)) {
-        toast.error("کد رنگ معتبر نیست");
-        return;
-      }
-      normalizedColorCode = withHash.toLowerCase();
-    }
+    const { title, colorCode: normalizedColorCode } = resolved;
 
     setSaving(true);
     try {
@@ -154,7 +153,10 @@ export default function ProductColorsPage() {
       fetchColors();
     } catch (error: any) {
       const rawErrorMessage = extractErrorMessage(error);
-      const message = translateErrorMessage(rawErrorMessage, "خطا در ذخیره رنگ");
+      const message = translateErrorMessage(
+        rawErrorMessage,
+        "خطا در ذخیره رنگ",
+      );
       toast.error(message);
     } finally {
       setSaving(false);
@@ -230,13 +232,17 @@ export default function ProductColorsPage() {
             >
               بروزرسانی
             </button>
-            <span className="text-xs text-neutral-500">{filteredColors.length} رنگ ثبت شده</span>
+            <span className="text-xs text-neutral-500">
+              {filteredColors.length} رنگ ثبت شده
+            </span>
           </div>
         </div>
 
         <div className="rounded-2xl border border-slate-200 p-4">
           {loading ? (
-            <div className="py-12 text-center text-sm text-neutral-500">در حال بارگذاری...</div>
+            <div className="py-12 text-center text-sm text-neutral-500">
+              در حال بارگذاری...
+            </div>
           ) : filteredColors.length === 0 ? (
             <div className="py-12 text-center text-sm text-neutral-500">
               رنگی مطابق با جستجو یافت نشد
@@ -251,19 +257,26 @@ export default function ProductColorsPage() {
                   <div className="flex items-center gap-3">
                     <span
                       className="h-14 w-14 rounded-xl border border-slate-200"
-                      style={{ backgroundColor: color.attributes?.ColorCode || "#f5f5f5" }}
+                      style={{
+                        backgroundColor:
+                          color.attributes?.ColorCode || "#f5f5f5",
+                      }}
                     />
                     <div>
                       <p className="text-base font-semibold text-neutral-800">
                         {color.attributes?.Title}
                       </p>
                       <p className="text-xs text-neutral-500">
-                        {color.attributes?.ColorCode?.toUpperCase() ?? "بدون رنگ"}
+                        {color.attributes?.ColorCode?.toUpperCase() ??
+                          "بدون رنگ"}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-xs text-neutral-500">
-                    <span>کد خارجی: {color.attributes?.external_id?.trim() || "ثبت نشده"}</span>
+                    <span>
+                      کد خارجی:{" "}
+                      {color.attributes?.external_id?.trim() || "ثبت نشده"}
+                    </span>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -291,7 +304,11 @@ export default function ProductColorsPage() {
       </div>
 
       <Transition appear show={modalState.open} as={Fragment}>
-        <Dialog as="div" className="relative z-50" onClose={() => (!saving ? closeModal() : null)}>
+        <Dialog
+          as="div"
+          className="relative z-50"
+          onClose={() => (!saving ? closeModal() : null)}
+        >
           <Transition.Child
             as={Fragment}
             enter="ease-out duration-200"
@@ -324,32 +341,22 @@ export default function ProductColorsPage() {
                     {/* Left Column: Color Picker and Input */}
                     <div className="space-y-4">
                       <div>
-                        <label className="text-sm font-medium text-neutral-700">نام رنگ</label>
+                        <label className="text-sm font-medium text-neutral-700">
+                          نام رنگ
+                        </label>
                         <input
                           type="text"
                           value={modalState.title}
-                          onChange={(e) => {
-                            const newTitle = e.target.value;
-                            // Auto-check "No Color" if title contains " کد" or starts with "کد"
-                            const shouldAutoCheck =
-                              newTitle.includes(" کد") || newTitle.startsWith("کد");
-
-                            if (process.env.NODE_ENV === "development") {
-                              console.log(
-                                "Title changed:",
-                                newTitle,
-                                "| Should auto-check:",
-                                shouldAutoCheck,
-                              );
-                            }
-
+                          onChange={(e) =>
+                            // The name must not steer the colour. This used to flip
+                            // "بدون رنگ" on whenever the title contained "کد" and blank
+                            // the chosen colour with it — one-way, so clearing the title
+                            // never restored anything and the picked colour was gone.
                             setModalState((prev) => ({
                               ...prev,
-                              title: newTitle,
-                              noColor: shouldAutoCheck ? true : prev.noColor,
-                              colorCode: shouldAutoCheck ? "" : prev.colorCode,
-                            }));
-                          }}
+                              title: e.target.value,
+                            }))
+                          }
                           className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary/30"
                           placeholder="مثلاً سرمه‌ای ملایم"
                         />
@@ -362,11 +369,9 @@ export default function ProductColorsPage() {
                           id="noColorCheckbox"
                           checked={modalState.noColor}
                           onChange={(e) =>
-                            setModalState((prev) => ({
-                              ...prev,
-                              noColor: e.target.checked,
-                              colorCode: e.target.checked ? "" : prev.colorCode,
-                            }))
+                            setModalState((prev) =>
+                              applyNoColorToggle(prev, e.target.checked),
+                            )
                           }
                           className="h-4 w-4 rounded border-slate-300 text-infinity-primary focus:ring-infinity-primary"
                         />
@@ -393,7 +398,9 @@ export default function ProductColorsPage() {
                           </div>
 
                           <div>
-                            <label className="text-sm font-medium text-neutral-700">کد HEX</label>
+                            <label className="text-sm font-medium text-neutral-700">
+                              کد HEX
+                            </label>
                             <HexColorInput
                               prefixed
                               color={modalState.colorCode}
@@ -429,7 +436,9 @@ export default function ProductColorsPage() {
                       )}
 
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="mb-3 text-xs font-medium text-neutral-600">پیش‌نمایش رنگ</p>
+                        <p className="mb-3 text-xs font-medium text-neutral-600">
+                          پیش‌نمایش رنگ
+                        </p>
                         <div className="flex items-center gap-3">
                           <span
                             className="h-16 w-16 rounded-lg border-2 border-slate-300"
@@ -442,10 +451,14 @@ export default function ProductColorsPage() {
                           />
                           <div className="text-sm">
                             <p className="font-semibold text-neutral-800">
-                              {modalState.noColor ? "بدون رنگ" : modalState.colorCode.toUpperCase()}
+                              {modalState.noColor
+                                ? "بدون رنگ"
+                                : modalState.colorCode.toUpperCase()}
                             </p>
                             <p className="mt-1 text-xs text-neutral-500">
-                              {modalState.noColor ? "بدون رنگ" : "رنگ انتخاب‌شده"}
+                              {modalState.noColor
+                                ? "بدون رنگ"
+                                : "رنگ انتخاب‌شده"}
                             </p>
                           </div>
                         </div>
@@ -454,33 +467,38 @@ export default function ProductColorsPage() {
 
                     {/* Right Column: Color Categories */}
                     <div className="space-y-4">
-                      <p className="text-sm font-medium text-neutral-700">انتخاب از دسته‌بندی</p>
+                      <p className="text-sm font-medium text-neutral-700">
+                        انتخاب از دسته‌بندی
+                      </p>
                       {!modalState.noColor ? (
                         <div className="max-h-[500px] space-y-3 overflow-y-auto pr-2">
-                          {Object.entries(COLOR_CATEGORIES).map(([key, category]) => (
-                            <div key={key}>
-                              <p className="mb-2 text-xs font-semibold text-neutral-600">
-                                {category.label}
-                              </p>
-                              <div className="grid grid-cols-10 gap-1.5">
-                                {category.colors.map((color) => (
-                                  <button
-                                    type="button"
-                                    key={color}
-                                    onClick={() => handleColorChange(color)}
-                                    className={`h-8 w-8 rounded-lg border-2 transition-all ${
-                                      modalState.colorCode.toLowerCase() === color.toLowerCase()
-                                        ? "border-infinity-primary ring-2 ring-infinity-primary-lighter ring-offset-1"
-                                        : "border-slate-200 hover:border-slate-300"
-                                    }`}
-                                    style={{ backgroundColor: color }}
-                                    aria-label={`انتخاب رنگ ${color}`}
-                                    title={color}
-                                  />
-                                ))}
+                          {Object.entries(COLOR_CATEGORIES).map(
+                            ([key, category]) => (
+                              <div key={key}>
+                                <p className="mb-2 text-xs font-semibold text-neutral-600">
+                                  {category.label}
+                                </p>
+                                <div className="grid grid-cols-10 gap-1.5">
+                                  {category.colors.map((color) => (
+                                    <button
+                                      type="button"
+                                      key={color}
+                                      onClick={() => handleColorChange(color)}
+                                      className={`h-8 w-8 rounded-lg border-2 transition-all ${
+                                        modalState.colorCode.toLowerCase() ===
+                                        color.toLowerCase()
+                                          ? "border-infinity-primary ring-2 ring-infinity-primary-lighter ring-offset-1"
+                                          : "border-slate-200 hover:border-slate-300"
+                                      }`}
+                                      style={{ backgroundColor: color }}
+                                      aria-label={`انتخاب رنگ ${color}`}
+                                      title={color}
+                                    />
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            ),
+                          )}
                         </div>
                       ) : (
                         <div className="flex h-[500px] items-center justify-center rounded-xl border border-slate-300 bg-slate-100 p-8">
@@ -575,7 +593,8 @@ export default function ProductColorsPage() {
 
                   <div className="mt-4">
                     <p className="text-sm text-neutral-600">
-                      آیا از حذف این رنگ اطمینان دارید؟ این عمل قابل بازگشت نیست.
+                      آیا از حذف این رنگ اطمینان دارید؟ این عمل قابل بازگشت
+                      نیست.
                     </p>
                     {deleteId && (
                       <div className="mt-4 flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -583,18 +602,22 @@ export default function ProductColorsPage() {
                           className="h-10 w-10 rounded-lg border border-slate-200"
                           style={{
                             backgroundColor:
-                              colors.find((c) => c.id === deleteId)?.attributes?.ColorCode ||
-                              "#f5f5f5",
+                              colors.find((c) => c.id === deleteId)?.attributes
+                                ?.ColorCode || "#f5f5f5",
                           }}
                         />
                         <div>
                           <p className="text-sm font-medium text-neutral-800">
-                            {colors.find((c) => c.id === deleteId)?.attributes?.Title}
+                            {
+                              colors.find((c) => c.id === deleteId)?.attributes
+                                ?.Title
+                            }
                           </p>
                           <p className="text-xs text-neutral-500">
                             {colors
                               .find((c) => c.id === deleteId)
-                              ?.attributes?.ColorCode?.toUpperCase() ?? "بدون رنگ"}
+                              ?.attributes?.ColorCode?.toUpperCase() ??
+                              "بدون رنگ"}
                           </p>
                         </div>
                       </div>
@@ -618,7 +641,9 @@ export default function ProductColorsPage() {
                       onClick={confirmDelete}
                       disabled={deleting}
                       className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
-                        deleting ? "cursor-not-allowed bg-red-300" : "bg-red-600 hover:bg-red-700"
+                        deleting
+                          ? "cursor-not-allowed bg-red-300"
+                          : "bg-red-600 hover:bg-red-700"
                       }`}
                     >
                       {deleting ? "در حال حذف..." : "حذف"}
