@@ -82,26 +82,6 @@ const InstagramIcon = () => (
   </svg>
 );
 
-const TelegramIcon = () => (
-  <svg
-    className="shrink-0"
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <path
-      d="M24 12C24 18.6275 18.6275 24 12 24C5.37246 24 0 18.6275 0 12C0 5.37246 5.37246 0 12 0C18.6275 0 24 5.37246 24 12Z"
-      fill="#3d4c6e"
-    />
-    <path
-      d="M9.1214 19.3837C9.35515 19.1657 10.33 18.157 10.8434 16.066L11.2305 14.4763C11.5935 14.8544 12.0978 15.1069 12.6294 15.2361C14.7789 15.7652 16.8603 13.4683 17.4014 11.2601C18.1613 8.1695 16.5837 5.4425 13.9696 4.80288C10.9593 4.06481 7.40789 5.53491 6.54057 9.06762C6.23616 10.31 6.33763 12.1884 8.02275 13.0835C8.19489 13.1759 8.40689 13.0805 8.4534 12.8896L8.69016 11.9335C8.71492 11.823 8.67143 11.7089 8.58567 11.6322C7.98591 11.088 7.84759 10.1995 8.05053 9.366C8.63761 6.97663 11.0946 5.99575 13.1856 6.50914C15 6.95488 16.1035 8.8061 15.5901 10.8971C15.2241 12.3914 14.1876 14.0366 12.6934 13.6706C11.7983 13.4526 11.6968 12.5762 11.9402 11.5856L12.4874 9.34727C12.6288 8.76925 12.2754 8.1852 11.7004 8.04326C11.1224 7.90193 10.2092 8.31083 9.91685 9.50672C9.74472 10.2049 9.88605 10.7642 10.1506 11.1333L9.04953 15.6257C8.54218 17.695 8.92631 19.0328 9.04047 19.3523"
-      fill="white"
-    />
-  </svg>
-);
-
 const GenericContactIcon = ({ platform }: { platform: IdentitySocialLink["platform"] }) => (
   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#3d4c6e]">
     <SocialPlatformIcon platform={platform} size={14} className="!text-white" />
@@ -147,13 +127,14 @@ function SocialRow({ social }: { social: IdentitySocialLink }) {
   const text = social.label || platformLabel(social.platform);
   let Icon: React.ReactNode;
   if (social.platform === "instagram") Icon = <InstagramIcon />;
-  else if (social.platform === "telegram") Icon = <TelegramIcon />;
+  else if (social.platform === "telegram") Icon = <GenericContactIcon platform="telegram" />;
   else if (social.platform === "whatsapp") Icon = <WhatsappIcon />;
   else Icon = <GenericContactIcon platform={social.platform} />;
 
   return (
     <a
       href={social.url}
+      aria-label={platformLabel(social.platform)}
       target="_blank"
       rel="noopener noreferrer"
       className="flex items-center hover:opacity-80"

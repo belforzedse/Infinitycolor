@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import SearchIcon from "./Icons/SearchIcon";
 import { API_BASE_URL, ENDPOINTS } from "@/constants/api";
@@ -31,6 +31,12 @@ const readSearchParamFromLocation = () => {
   return new URLSearchParams(window.location.search).get("search") ?? "";
 };
 
+function SearchRouteObserver({ onChange }: { onChange: () => void }) {
+  const query = useSearchParams().toString();
+  useEffect(() => { onChange(); }, [query, onChange]);
+  return null;
+}
+
 const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -41,6 +47,17 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   const inputRef = useRef<HTMLInputElement | null>(null);
   const router = useRouter();
   const pathname = usePathname();
+  const dismissed = useRef(true);
+  const suggestionRequest = useRef<AbortController | null>(null);
+  const dismiss = useCallback(() => {
+    dismissed.current = true;
+    suggestionRequest.current?.abort();
+    setOpen(false);
+    setIsFocused(false);
+    setLoading(false);
+    setActiveIndex(-1);
+    inputRef.current?.blur();
+  }, []);
   const [isFocused, setIsFocused] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
@@ -54,16 +71,21 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
     return `${basePath}?search=${encodeURIComponent(term)}`;
   };
 
+  const syncRouteQuery = useCallback(() => {
+    dismiss();
+    setSearchQuery(readSearchParamFromLocation());
+  }, [dismiss]);
+
   // This input lives in the (product) layout, which App Router keeps mounted
   // across `/` and `/plp`, so local state would survive leaving the results
   // page. Mirroring the URL is what makes the field empty on the way out and
   // refill when a search URL is opened directly or reached via history.
   useEffect(() => {
-    const syncFromUrl = () => setSearchQuery(readSearchParamFromLocation());
+    const syncFromUrl = () => { dismiss(); setSearchQuery(readSearchParamFromLocation()); };
     syncFromUrl();
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, [pathname]);
+  }, [pathname, dismiss]);
 
   useEffect(() => {
     try {
@@ -97,6 +119,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
     persistRecent(searchQuery);
 
     // Redirect to search results page with the query (site search is tracked there).
+    dismiss();
     router.push(getSearchHref(trimmed));
   };
 
@@ -111,9 +134,11 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   useEffect(() => {
     let mounted = true;
     const controller = new AbortController();
+    suggestionRequest.current = controller;
     setActiveIndex(-1);
 
     const q = searchQuery.trim();
+    if (dismissed.current || !isFocused) return;
     if (q.length < 2) {
       setSuggestions([]);
       if (isFocused) setOpen(true);
@@ -130,7 +155,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
           headers: { Accept: "application/json" },
           signal: controller.signal,
         });
-        if (!mounted) return;
+        if (!mounted || controller.signal.aborted || dismissed.current) return;
         const json = await res.json();
 
         const items = (json?.data || []).map((raw: any) => {
@@ -175,9 +200,9 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
         setSuggestions(unique);
         setOpen(unique.length > 0);
       } catch {
-        if (!mounted) return;
+        if (!mounted || controller.signal.aborted || dismissed.current) return;
         setSuggestions([]);
-        setOpen(false);
+        dismiss();
         // Silently ignore; console already logs in service
       } finally {
         if (mounted) setLoading(false);
@@ -196,7 +221,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
     const onClick = (e: MouseEvent) => {
       if (!containerRef.current) return;
       if (!containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
+        dismiss();
       }
     };
     document.addEventListener("mousedown", onClick);
@@ -204,6 +229,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   }, []);
 
   const onKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
+    if (e.key === "Escape") { dismiss(); return; }
     if (!open || suggestions.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -214,9 +240,9 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
       const item = suggestions[activeIndex];
-      if (item) router.push(`/pdp/${item.slug || item.id}`);
+      if (item) { dismiss(); router.push(`/pdp/${item.slug || item.id}`); }
     } else if (e.key === "Escape") {
-      setOpen(false);
+      dismiss();
     }
   };
 
@@ -234,6 +260,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
         className,
       ].join(" ")}
     >
+      <Suspense fallback={null}><SearchRouteObserver onChange={syncRouteQuery} /></Suspense>
       <div className="flex items-center gap-2 py-2 pl-2 pr-5" dir="ltr">
         <button
           type="submit"
@@ -261,10 +288,12 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
           value={searchQuery}
           onChange={(e) => {
             setSearchQuery(e.target.value);
+            dismissed.current = false;
             setOpen(true);
           }}
           onFocus={() => {
             setIsFocused(true);
+            dismissed.current = false;
             setOpen(true);
           }}
           onBlur={() => {
@@ -308,7 +337,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
                           type="button"
                           onClick={() => {
                             setSearchQuery(term);
-                            setOpen(false);
+                            dismiss();
                             router.push(getSearchHref(term));
                           }}
                           className="pressable text-xs rounded-full border border-slate-200 px-3 py-1 text-infinity-primary hover:border-infinity-primary-lighter hover:bg-infinity-primary-lighter/20"
@@ -328,7 +357,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
                         type="button"
                         onClick={() => {
                           setSearchQuery(term);
-                          setOpen(false);
+                          dismiss();
                           router.push(getSearchHref(term));
                         }}
                         className="pressable text-xs rounded-full border border-slate-200 px-3 py-1 text-neutral-600 hover:border-infinity-primary-lighter hover:bg-infinity-primary-lighter/20"
@@ -380,6 +409,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
                         isAvailable={s.isAvailable}
                         onClick={() => {
                           persistRecent(s.Title);
+                          dismiss();
                           router.push(`/pdp/${s.slug || s.id}`);
                         }}
                         index={idx}
@@ -393,6 +423,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
                     type="button"
                     onClick={() => {
                       persistRecent(searchQuery);
+                      dismiss();
                       router.push(getSearchHref(searchQuery.trim()));
                     }}
                     className="text-xs block w-full border-t border-slate-200 bg-white/0 px-3 py-2 text-right text-infinity-primary hover:bg-slate-50"

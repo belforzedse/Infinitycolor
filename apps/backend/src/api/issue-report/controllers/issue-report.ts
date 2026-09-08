@@ -191,7 +191,9 @@ export default {
     if (!(await requireCapability(ctx, strapi, "system.issueReports.manage"))) return;
     try {
       ctx.set("Cache-Control", "no-store");
-      ctx.body = { data: await queryIssueReports(strapi, parseFilters(ctx.query || {})) };
+      // The shared API client adds _cb to no-store reads; it is not a report filter.
+      const { _cb, ...filters } = ctx.query || {};
+      ctx.body = { data: await queryIssueReports(strapi, parseFilters(filters)) };
     } catch (error) {
       issueError(ctx, error, "query");
     }

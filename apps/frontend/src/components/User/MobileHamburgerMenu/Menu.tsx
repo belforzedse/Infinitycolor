@@ -1,8 +1,9 @@
 "use client";
 import { Dialog, Transition } from "@headlessui/react";
-import { Fragment, useState } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import { USER_SIDEBAR_ITEMS, LOGOUT_ITEM } from "@/components/User/Constnats";
 import SidebarItem from "@/components/User/Sidebar/SidebarItem";
+import { usePathname } from "next/navigation";
 import XIcon from "../Icons/XIcon";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
 import { performLogout } from "@/utils/logout";
@@ -13,6 +14,12 @@ interface Props {
 }
 
 const Menu = ({ isOpen, onClose }: Props) => {
+  const pathname = usePathname();
+  const previousPath = useRef(pathname);
+  useEffect(() => {
+    if (previousPath.current !== pathname) onClose();
+    previousPath.current = pathname;
+  }, [pathname, onClose]);
   const [showConfirm, setShowConfirm] = useState(false);
 
   const handleLogout = () => {
@@ -64,6 +71,7 @@ const Menu = ({ isOpen, onClose }: Props) => {
                         href={item.href}
                         icon={item.icon}
                         text={item.text}
+                        onNavigate={onClose}
                       />
                     ))}
                     <SidebarItem

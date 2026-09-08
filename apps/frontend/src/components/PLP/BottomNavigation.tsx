@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useSetAtom } from "jotai";
+import { categoryOverlayOpenAtom } from "@/atoms/storefrontOverlay";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import CategoryCard from "@/components/Categories/CategoryCard";
@@ -99,6 +101,12 @@ const PLPBottomNavigation = () => {
     hapticButton();
     openMenu({ focusSearch: true });
   };
+
+  const setCategoryOverlayOpen = useSetAtom(categoryOverlayOpenAtom);
+  useEffect(() => {
+    setCategoryOverlayOpen(isCategoriesMounted);
+    return () => setCategoryOverlayOpen(false);
+  }, [isCategoriesMounted, setCategoryOverlayOpen]);
 
   const closeCategories = () => {
     setIsCategoriesVisible(false);
@@ -218,7 +226,7 @@ const PLPBottomNavigation = () => {
 
       {isCategoriesMounted && (
         <div
-          className={`fixed inset-0 z-40 flex items-end justify-center transition-opacity duration-200 lg:hidden ${
+          className={`fixed inset-0 z-[110] flex items-end justify-center transition-opacity duration-200 lg:hidden ${
             isCategoriesVisible ? "bg-black/40 opacity-100" : "bg-black/0 opacity-0"
           }`}
           onClick={closeCategories}

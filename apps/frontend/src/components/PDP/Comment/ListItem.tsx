@@ -83,39 +83,42 @@ export default function PDPCommentListItem({
 
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-3">
-            {!isReply && (
+            {!isReply && onReply && (
               <button
                 type="button"
                 onClick={() => onReply?.(review.id)}
+                aria-label="پاسخ"
                 className="text-[#94A3B8] hover:text-[#33415e] transition-colors"
               >
                 <ReplyIcon />
               </button>
             )}
-            <div className="flex items-center gap-1 text-[#525252]">
+            {onDislike && <div className="flex items-center gap-1 text-[#525252]">
               <span className="text-[12px] font-medium leading-[1]">
                 {review.DislikeCounts || 0}
               </span>
               <button
                 type="button"
                 onClick={() => onDislike?.(review.id)}
+                aria-label="مفید نبود"
                 className="hover:text-red-500 transition-colors flex items-center justify-center"
               >
                 <ThumbsDownIcon />
               </button>
-            </div>
-            <div className="flex items-center gap-1 text-[#525252]">
+            </div>}
+            {onLike && <div className="flex items-center gap-1 text-[#525252]">
               <span className="text-[12px] font-medium leading-[1]">
                 {review.LikeCounts || 0}
               </span>
               <button
                 type="button"
                 onClick={() => onLike?.(review.id)}
+                aria-label="مفید بود"
                 className="hover:text-green-500 transition-colors flex items-center justify-center"
               >
                 <ThumbsUpIcon />
               </button>
-            </div>
+            </div>}
           </div>
 
           <div className="flex flex-row-reverse gap-0.5">

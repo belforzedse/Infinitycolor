@@ -1,3 +1,6 @@
+"use client";
+
+import { requestCartScrollTop } from "@/utils/cartScrollIntent";
 import Link from "next/link";
 
 interface FooterLinkProps {
@@ -9,6 +12,7 @@ const FooterLink = ({ href, children }: FooterLinkProps) => {
   return (
     <Link
       href={href}
+      onNavigate={href === "/cart" ? requestCartScrollTop : undefined}
       prefetch={false}
       className="group flex min-w-0 items-center justify-start gap-1 text-sm text-neutral-600 transition-colors hover:text-infinity-primary md:justify-end"
     >

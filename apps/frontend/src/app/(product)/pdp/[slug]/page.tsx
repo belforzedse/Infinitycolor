@@ -368,6 +368,7 @@ async function PDPReviewsSection({
   reviewCount: number;
 }) {
   let productReviews: ProductReview[] = [];
+  let reviewTotalPages = 1;
 
   if (productId) {
     try {
@@ -377,6 +378,7 @@ async function PDPReviewsSection({
         sort: "createdAt:desc",
       });
       productReviews = response.data || [];
+      reviewTotalPages = response.meta?.totalPages || 1;
     } catch (error) {
       logger.error("Error fetching product reviews", { productId, error: String(error) });
     }
@@ -395,6 +397,7 @@ async function PDPReviewsSection({
       )}
 
       <PDPComment
+        initialTotalPages={reviewTotalPages}
         productId={productId}
         productReviews={productReviews}
         rating={averageRating}

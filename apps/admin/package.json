@@ -69,6 +69,7 @@
     "react-share": "5.2.2",
     "recharts": "3.1.2",
     "tailwind-merge": "3.3.1",
+    "ua-parser-js": "^1.0.41",
     "use-debounce": "10.0.4",
     "zaman": "2.1.1"
   },
@@ -85,6 +86,7 @@
     "@types/qs": "^6.15.1",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@types/ua-parser-js": "~0.7.39",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "9.24.0",
     "eslint-config-next": "16.3.2",
@@ -98,8 +100,8 @@
     "postcss": "8.5.6",
     "prettier": "3.6.2",
     "prettier-plugin-tailwindcss": "0.6.14",
-    "tailwindcss": "3.4.17",
     "tailwind-scrollbar": "3.1.0",
+    "tailwindcss": "3.4.17",
     "tailwindcss-animate": "1.0.7",
     "typescript": "7.0.2"
   }

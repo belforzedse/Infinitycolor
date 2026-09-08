@@ -3,10 +3,14 @@
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
 import { canonicalIranPhone } from "@repo/auth-core";
 import { useAtomValue } from "jotai";
-import { CheckCircle2, MessageSquareWarning, Send, X } from "lucide-react";
+import { CheckCircle2, LoaderCircle, MessageSquareWarning, Send, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
+
+import { collectAndroidHints } from "./deviceHints";
+import styles from "./IssueReportWidget.module.css";
+import { categoryOverlayOpenAtom } from "@/atoms/storefrontOverlay";
 
 import { currentUserAtom } from "@/lib/atoms/auth";
 import { submitIssueReport, type IssueReportClientContext } from "@/services/issue-reports";
@@ -53,6 +57,7 @@ function errorText(error: unknown): string {
 
 export default function IssueReportWidget() {
   const pathname = usePathname();
+  const covered = useAtomValue(categoryOverlayOpenAtom);
   const user = useAtomValue(currentUserAtom);
   const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(false);
@@ -87,7 +92,7 @@ export default function IssueReportWidget() {
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmitError(null);
-    const context = pendingContext || collectContext();
+    const context = pendingContext || { ...collectContext(), ...await collectAndroidHints() };
     const activeSubmissionId = submissionId || crypto.randomUUID();
     if (!pendingContext) setPendingContext(context);
     if (!submissionId) setSubmissionId(activeSubmissionId);
@@ -121,7 +126,8 @@ export default function IssueReportWidget() {
           setSubmissionId((current) => current || crypto.randomUUID());
           setOpen(true);
         }}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] left-3 z-[80] inline-flex min-h-11 items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-xl transition hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 motion-reduce:transition-none md:bottom-6 md:left-6"
+        className={`${styles.trigger} fixed bottom-[calc(env(safe-area-inset-bottom)+7.5rem)] left-3 z-[80] inline-flex min-h-11 items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-xl hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 lg:bottom-6 lg:left-6`}
+        hidden={covered || open}
         aria-label="گزارش مشکل"
       >
         <MessageSquareWarning className="h-5 w-5" aria-hidden="true" />
@@ -129,9 +135,9 @@ export default function IssueReportWidget() {
       </button>
 
       <Dialog open={open} onClose={setOpen} className="relative z-[10000]" dir="rtl">
-        <DialogBackdrop className="fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] transition-opacity data-[closed]:opacity-0 motion-reduce:transition-none" />
+        <DialogBackdrop transition className={`${styles.backdrop} fixed inset-0 bg-slate-950/45 backdrop-blur-[2px]`} />
         <div className="fixed inset-0 flex items-end justify-center overflow-y-auto p-0 sm:items-center sm:p-4">
-          <DialogPanel className="w-full max-w-lg rounded-t-3xl bg-white p-5 shadow-2xl transition duration-200 data-[closed]:translate-y-5 data-[closed]:opacity-0 motion-reduce:transition-none sm:rounded-3xl sm:p-6">
+          <DialogPanel transition className={`${styles.panel} w-full max-w-lg rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl sm:p-6`}>
             <div className="mb-5 flex items-center justify-between gap-4">
               <DialogTitle className="text-lg font-bold text-slate-900">گزارش مشکل</DialogTitle>
               <button
@@ -145,7 +151,7 @@ export default function IssueReportWidget() {
             </div>
 
             {sent ? (
-              <div className="py-7 text-center" role="status" aria-live="polite">
+              <div className={`${styles.success} py-7 text-center`} role="status" aria-live="polite">
                 <CheckCircle2
                   className="mx-auto mb-3 h-11 w-11 text-emerald-600"
                   aria-hidden="true"
@@ -239,7 +245,7 @@ export default function IssueReportWidget() {
                   aria-live="polite"
                   className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-infinity-primary px-4 py-3 font-semibold text-white transition hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none"
                 >
-                  <Send className="h-4 w-4" aria-hidden="true" />
+                  {isSubmitting ? <LoaderCircle className={`${styles.busy} h-4 w-4`} aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
                   {isSubmitting ? "در حال ارسال..." : "ارسال گزارش"}
                 </button>
               </form>

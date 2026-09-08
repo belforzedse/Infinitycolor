@@ -83,7 +83,7 @@ export function PhoneStatusForm({
 }: {
   storefrontOrigin: string;
 }) {
-  const { flowReady, setPhone, go } = useAuthFlow();
+  const { flowReady, setPhone, go, passwordReset } = useAuthFlow();
   const [phoneValue, setPhoneValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -116,6 +116,7 @@ export function PhoneStatusForm({
 
   return (
     <>
+      {passwordReset && <p role="status" className="mb-4 text-sm text-emerald-700">رمز عبور تغییر کرد. با رمز جدید وارد شوید.</p>}
       <AuthTitle subtitle="لطفا شماره همراه خود را جهت بررسی وارد نمایید">
         ورود به حساب کاربری
       </AuthTitle>
@@ -437,7 +438,7 @@ export function ForgotPasswordForm() {
     setError("");
     try {
       setPhone(phone);
-      await authPost("/infinity/otp/request", { phone });
+      await authPost("/infinity/otp/request", { phone, purpose: "reset" });
       go("/auth/forgot-password/verify");
     } catch (cause) {
       setError(
@@ -496,7 +497,8 @@ export function ForgotPasswordForm() {
 }
 
 export function ResetPasswordForm() {
-  const { phone, flowReady, setPhone, go } = useAuthFlow();
+  const { phone, flowReady, setPhone, go, setPasswordReset } = useAuthFlow();
+  const resetCompleted = useRef(false);
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -505,13 +507,13 @@ export function ResetPasswordForm() {
   const { timeLeft, active, restart } = useOtpCountdown();
 
   useEffect(() => {
-    if (flowReady && !phone) go("/auth/forgot-password");
+    if (flowReady && !phone && !resetCompleted.current) go("/auth/forgot-password");
   }, [phone, flowReady, go]);
 
   const resend = async () => {
     if (active || !phone) return;
     try {
-      await authPost("/infinity/otp/request", { phone });
+      await authPost("/infinity/otp/request", { phone, purpose: "reset" });
       restart();
     } catch (cause) {
       setError(
@@ -533,6 +535,12 @@ export function ResetPasswordForm() {
         otp: otp.split("").reverse().join(""),
         newPassword: password,
       });
+      resetCompleted.current = true;
+      setPassword("");
+      setConfirmation("");
+      setOtp("");
+      setError("");
+      setPasswordReset(true);
       setPhone("");
       go("/auth");
     } catch (cause) {

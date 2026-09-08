@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
 import { atom, useAtom } from "jotai";
@@ -37,6 +37,9 @@ export const likedProductsOwnerAtom = atom<number | null>(null);
  * should have followed login never happened. A keyed, self-evicting map cannot develop
  * that failure mode — a new identity is a new key, and a failed fetch leaves no entry.
  */
+const pendingLikes = new Set<string>();
+const likeRevisions = new Map<number, number>();
+
 const likedProductsRequests = new Map<number, Promise<LikedProduct[]>>();
 
 interface UseProductLikeParams {
@@ -79,6 +82,10 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
   const [likesOwner, setLikesOwner] = useAtom(likedProductsOwnerAtom);
   const { user } = useCurrentUser();
   const userId = typeof user?.id === "number" ? user.id : null;
+  const identity = useRef({ userId, generation: 0 });
+  if (identity.current.userId !== userId) {
+    identity.current = { userId, generation: identity.current.generation + 1 };
+  }
 
   // Ensure likedProducts is always an array
   const safeProducts = Array.isArray(likedProducts) ? likedProducts : [];
@@ -109,8 +116,9 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
 
       try {
         setIsGlobalLoading(true);
+        const revision = likeRevisions.get(userId) || 0;
         const products = await fetchLikesForUser(userId);
-        if (!active) return;
+        if (!active || revision !== (likeRevisions.get(userId) || 0)) return;
         setLikedProducts(products);
         setLikesOwner(userId);
         setHasLoaded(true);
@@ -145,36 +153,38 @@ const useProductLike = ({ productId }: UseProductLikeParams) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const token = await centralAuth.tokenManager.getToken();
-    if (!token) {
-      // Redirect to login page if no token
-      redirectToAuth();
-      return;
-    }
-
+    const key = `${userId}:${productId}`;
+    if (pendingLikes.has(key)) return;
+    pendingLikes.add(key);
+    setIsLoading(true);
+    const generation = identity.current.generation;
+    const desired = !safeProducts.some(({ product }) => String(product?.id) === String(productId));
     try {
-      setIsLoading(true);
-      await apiClient.post(ENDPOINTS.PRODUCT_LIKES.TOGGLE, { productId });
-
-      // Update the global state
-      if (safeProducts.some(({ product }) => product?.id?.toString() === String(productId))) {
-        setLikedProducts(
-          safeProducts.filter(({ product }) => product?.id?.toString() !== String(productId)),
-        );
-      } else {
-        setLikedProducts([
-          ...safeProducts,
-          {
-            id: Number(productId),
-            createdAt: new Date().toISOString(),
-            product: { id: Number(productId) },
-            updatedAt: new Date().toISOString(),
-          },
-        ]);
+      const token = await centralAuth.tokenManager.getToken();
+      if (!token) {
+        redirectToAuth();
+        return;
       }
+      if (identity.current.generation !== generation) return;
+      if (userId !== null) likeRevisions.set(userId, (likeRevisions.get(userId) || 0) + 1);
+      const response = await apiClient.post<{ isFavorite: boolean }>(
+        ENDPOINTS.PRODUCT_LIKES.TOGGLE,
+        { productId, isFavorite: desired },
+      );
+      if (identity.current.generation !== generation) return;
+      const result = response as unknown as { isFavorite?: boolean };
+      if (typeof result.isFavorite !== "boolean") throw new Error("Invalid favorite response");
+      setLikedProducts((current) => {
+        const others = current.filter(({ product }) => String(product?.id) !== String(productId));
+        return result.isFavorite
+          ? [...others, { id: Number(productId), product: { id: Number(productId) },
+              createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
+          : others;
+      });
     } catch (error) {
       console.error("Error toggling product like:", error);
     } finally {
+      pendingLikes.delete(key);
       setIsLoading(false);
     }
   };

@@ -211,7 +211,7 @@ const ProductCard: FC<ProductCardProps> = ({
   return (
     <>
       <article
-        className={`${isAvailable ? "group" : ""} relative w-full min-w-0`}
+        className={`${isAvailable ? "group" : ""} relative h-full w-full min-w-0`}
         data-testid="product-card"
         data-product-id={id}
         data-product-slug={slug || id.toString()}
@@ -224,7 +224,7 @@ const ProductCard: FC<ProductCardProps> = ({
         <Link
           href={productUrl}
           onClick={handleProductLinkClick}
-          className="relative block rounded-3xl focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          className="relative block h-full rounded-3xl focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
           data-testid="product-card-link"
           aria-label={`مشاهده جزئیات ${title}`}
         >
@@ -252,7 +252,7 @@ const ProductCard: FC<ProductCardProps> = ({
 
               {/* Badges — physical right; avoid justify-end in RTL (aligns to visual left) */}
               <div className="absolute right-1 top-1 z-10">
-                <DiscountBadge discount={saleDiscountPercent} />
+                {isAvailable && <DiscountBadge discount={saleDiscountPercent} />}
               </div>
 
               {/* Color palette hidden on mobile (shown from md up) */}

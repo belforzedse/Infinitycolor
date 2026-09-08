@@ -1,11 +1,14 @@
 "use client";
 
+import { useAtomValue } from "jotai";
+import { categoryOverlayOpenAtom } from "@/atoms/storefrontOverlay";
 import React from "react";
 
 const SHOW_THRESHOLD = 400;
 const HIDE_THRESHOLD = 360;
 
 export default function ScrollToTop() {
+  const covered = useAtomValue(categoryOverlayOpenAtom);
   const [visible, setVisible] = React.useState(false);
   const [progress, setProgress] = React.useState(0); // 0..1
   const [btnBottom, setBtnBottom] = React.useState<number>(80);
@@ -96,6 +99,9 @@ export default function ScrollToTop() {
 
   return (
     <button
+      hidden={covered}
+      tabIndex={visible && !covered ? 0 : -1}
+      aria-hidden={!visible || covered}
       aria-label="بازگشت به بالا"
       title="بازگشت به بالا"
       type="button"

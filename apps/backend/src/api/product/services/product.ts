@@ -147,12 +147,12 @@ const uniqueOrderedIds = (groups: Array<number[] | undefined>): number[] => {
   return ids;
 };
 
-const baseHomepageProductFilters = () => ({
+const baseHomepageProductFilters = (requireAvailable = true) => ({
   Status: { $eq: "Active" },
   removedAt: { $null: true },
   product_variations: {
     Price: { $gte: 1 },
-    product_stock: { Count: { $gt: 0 } },
+    ...(requireAvailable ? { product_stock: { Count: { $gt: 0 } } } : {}),
   },
 });
 
@@ -491,7 +491,11 @@ export default factories.createCoreService(
               ids: discountedManualIds.slice(0, HOMEPAGE_CARD_LIMIT),
               source: "manual" as const,
             })
-          : Promise.resolve({ ids: [] as number[], source: "algorithm" as const });
+          : findOrderedProductIds(strapi, {
+              filters: baseHomepageProductFilters(false),
+              hasDiscount: true,
+              pagination: { limit: HOMEPAGE_CARD_LIMIT, withCount: false },
+            }).then(({ ids }) => ({ ids, source: "algorithm" as const }));
       const gifPromoSlot1Promise =
         settings.homeGifPromoEnabled && String(settings.homeGifPromoSlot1Image || "").trim()
           ? this.findHomepageSectionIdsForAssignment(gifPromoSlot1Assignment, HOMEPAGE_GIF_PROMO_LIMIT)
@@ -543,7 +547,7 @@ export default factories.createCoreService(
         weeklyPicks.ids,
         everyoneFollows.ids,
       ]);
-      const entities = await this.findProductCardEntitiesByIds(allIds, baseHomepageProductFilters());
+      const entities = await this.findProductCardEntitiesByIds(allIds, baseHomepageProductFilters(false));
       const cards = this.serializeProductCards(entities);
       const cardsById = new Map(cards.map((card: any) => [Number(card.id), card]));
       const byIds = (ids: number[], limit: number, requireAvailable = false) =>
@@ -553,19 +557,7 @@ export default factories.createCoreService(
           .slice(0, limit);
 
       const batchCards = byIds(batch.ids, HOMEPAGE_BATCH_LIMIT, true);
-      const discounted =
-        discountedManual.source === "manual"
-          ? byIds(discountedManual.ids, HOMEPAGE_CARD_LIMIT, true)
-          : [...batchCards]
-              .filter(productHasDiscount)
-              .sort((a: any, b: any) => {
-                const aMatch = productTitleMatchesKeywords(a);
-                const bMatch = productTitleMatchesKeywords(b);
-                if (aMatch && !bMatch) return -1;
-                if (!aMatch && bMatch) return 1;
-                return 0;
-              })
-              .slice(0, HOMEPAGE_CARD_LIMIT);
+      const discounted = byIds(discountedManual.ids, HOMEPAGE_CARD_LIMIT);
 
       const favorites = [...batchCards]
         .sort((a: any, b: any) => {

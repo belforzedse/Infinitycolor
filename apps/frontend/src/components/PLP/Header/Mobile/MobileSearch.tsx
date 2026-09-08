@@ -89,7 +89,7 @@ export default function MobileSearch({ isOpen, onClose }: Props) {
     if (!isOpen) return;
     const handleKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && canClose) {
-        closeModal();
+        closeModal({ force: true });
       }
     };
     window.addEventListener("keydown", handleKeydown);
@@ -193,7 +193,7 @@ export default function MobileSearch({ isOpen, onClose }: Props) {
           const shouldClose = canClose && backdropPointerDownRef.current;
           backdropPointerDownRef.current = false;
           if (!shouldClose) return;
-          closeModal();
+          closeModal({ force: true });
         }}
         aria-hidden="true"
       />

@@ -31,3 +31,6 @@ allowBuilds:
   ssh2: false
   unrs-resolver: false
   yarn: false
+
+patchedDependencies:
+  react-instagram-stories@1.1.1: patches/react-instagram-stories@1.1.1.patch

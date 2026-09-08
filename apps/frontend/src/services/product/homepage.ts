@@ -150,7 +150,7 @@ export const pickBatchedHomepageSection = (
  * Fetch products by IDs with the same populate/fields as homepage sections.
  * Returns products in the same order as the requested ids (Strapi order is undefined).
  */
-export const getProductsByIds = async (ids: number[]): Promise<ProductCardProps[]> => {
+export const getProductsByIds = async (ids: number[], requireAvailable = true): Promise<ProductCardProps[]> => {
   if (ids.length === 0) return [];
   const idParams = ids.map((id, i) => `filters[id][$in][${i}]=${id}`).join("&");
   const endpoint =
@@ -158,7 +158,7 @@ export const getProductsByIds = async (ids: number[]): Promise<ProductCardProps[
     `filters[Status][$eq]=Active&` +
     `filters[removedAt][$null]=true&` +
     `filters[product_variations][Price][$gte]=1&` +
-    `filters[product_variations][product_stock][Count][$gt]=0&` +
+    (requireAvailable ? `filters[product_variations][product_stock][Count][$gt]=0&` : "") +
     `pagination[limit]=${Math.max(ids.length, 20)}&` +
     `pagination[withCount]=false`;
   try {
@@ -167,7 +167,7 @@ export const getProductsByIds = async (ids: number[]): Promise<ProductCardProps[
       homepageFetchOptions(),
     ).then((res) => res.json());
     const rawList = (response as { data?: unknown[] })?.data ?? [];
-    const withStock = (rawList as unknown[]).filter(productHasStock);
+    const withStock = requireAvailable ? (rawList as unknown[]).filter(productHasStock) : rawList;
     const idToIndex = new Map(ids.map((id, i) => [id, i]));
     const sorted = [...withStock].sort((a: any, b: any) => {
       const aIdx = idToIndex.get(Number(a?.id ?? 0)) ?? 999;
@@ -351,8 +351,8 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
             );
           });
     const discountedCuratedPromise = curatedDiscounted
-      ? getProductsByIds(settings.homeDiscountedProductIds)
-      : Promise.resolve<ProductCardProps[] | null>(null);
+      ? getProductsByIds(settings.homeDiscountedProductIds, false)
+      : getDiscountedProducts();
 
     // Wait for all fetches to complete
     const [batchResponse, newProducts, discountedCurated] = await Promise.all([
@@ -366,7 +366,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     logger.info(`[BatchHomepage] Fetched ${allProducts.length} total products for discounted/favorites`);
 
     let discounted: ProductCardProps[];
-    if (discountedCurated && discountedCurated.length > 0) {
+    if (discountedCurated) {
       discounted = discountedCurated;
     } else {
       const discountedProducts = availableProducts
@@ -457,7 +457,7 @@ export const getDiscountedProducts = async (): Promise<ProductCardProps[]> => {
     `${ENDPOINTS.PRODUCT.PRODUCT}?${PRODUCT_CARD_VIEW}&filters[Status][$eq]=Active&` +
     `filters[removedAt][$null]=true&` +
     `filters[product_variations][Price][$gte]=1&` +
-    `filters[product_variations][product_stock][Count][$gt]=0&` +
+    `hasDiscount=true&` +
     `pagination[limit]=20&` +
     `pagination[withCount]=false`;
 
@@ -472,10 +472,9 @@ export const getDiscountedProducts = async (): Promise<ProductCardProps[]> => {
     }).then(res => res.json());
 
     const allProducts = (response as any)?.data || [];
-    const availableProducts = allProducts.filter(productHasStock);
     logger.info(`Fetched ${allProducts.length} total products for discount check`);
 
-    const discounted = availableProducts.filter(productHasDiscount);
+    const discounted = allProducts;
 
     logger.info(`Found ${discounted.length} discounted products`);
     return formatProductsToCardProps(discounted);

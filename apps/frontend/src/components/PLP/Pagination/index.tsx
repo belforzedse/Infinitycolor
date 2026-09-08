@@ -3,7 +3,6 @@
 import ChevronLeftIcon from "@/components/PDP/Icons/ChevronLeftIcon";
 import ChevronRightIcon from "@/components/PDP/Icons/ChevronRightIcon";
 import { cn } from "@/lib/utils";
-import { scrollIntoViewWithOffset } from "@/utils/scroll";
 
 interface PaginationProps {
   currentPage: number;
@@ -66,27 +65,14 @@ export default function PLPPagination({
 
   const pageNumbers = generatePageNumbers();
 
-  const scrollToTop = () => {
-    if (typeof window === "undefined") return;
-    const anchor = document.querySelector<HTMLElement>("[data-plp-top]");
-    if (anchor) {
-      scrollIntoViewWithOffset(anchor);
-      return;
-    }
-
-    scrollIntoViewWithOffset(null, { fallbackTop: 0 });
-  };
-
   const handlePrevious = () => {
     if (!disabled && currentPage > 1) {
-      scrollToTop();
       onPageChange(currentPage - 1);
     }
   };
 
   const handleNext = () => {
     if (!disabled && currentPage < totalPages) {
-      scrollToTop();
       onPageChange(currentPage + 1);
     }
   };
@@ -134,7 +120,6 @@ export default function PLPPagination({
                 key={pageNum}
                 onClick={() => {
                   if (disabled || isActive) return;
-                  scrollToTop();
                   onPageChange(pageNum);
                 }}
                 disabled={disabled}

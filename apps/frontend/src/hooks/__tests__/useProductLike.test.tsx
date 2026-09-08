@@ -42,7 +42,7 @@ describe("useProductLike", () => {
     jest.clearAllMocks();
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
     (apiClient.get as jest.Mock).mockResolvedValue({ data: [] });
-    (apiClient.post as jest.Mock).mockResolvedValue({});
+    (apiClient.post as jest.Mock).mockResolvedValue({ isFavorite: true });
   });
 
   /**
@@ -234,7 +234,7 @@ describe("useProductLike", () => {
 
   it("should toggle like status when clicking", async () => {
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
-    (apiClient.post as jest.Mock).mockResolvedValue({});
+    (apiClient.post as jest.Mock).mockResolvedValue({ isFavorite: true });
 
     const store = createStore();
     store.set(currentUserAtom, asUser(1));
@@ -278,4 +278,38 @@ describe("useProductLike", () => {
 
     consoleError.mockRestore();
   });
+  it("coalesces duplicate clicks and uses the authoritative response", async () => {
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
+    let resolve!: (value: unknown) => void;
+    (apiClient.post as jest.Mock).mockImplementation(() => new Promise(r => { resolve = r; }));
+    const store = createStore();
+    store.set(currentUserAtom, asUser(1));
+    const { hook } = await renderUseProductLike(store);
+    const event = { preventDefault: jest.fn(), stopPropagation: jest.fn() } as any;
+    let first!: Promise<void>;
+    await act(async () => {
+      first = hook.result.current.toggleLike(event);
+      await hook.result.current.toggleLike(event);
+    });
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    expect(apiClient.post).toHaveBeenCalledWith(expect.any(String), { productId: "123", isFavorite: true });
+    await act(async () => { resolve({ isFavorite: false }); await first; });
+    expect(hook.result.current.isLiked).toBe(false);
+  });
+
+  it("discards an in-flight mutation after switching identity", async () => {
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(mockToken);
+    let resolve!: (value: unknown) => void;
+    (apiClient.post as jest.Mock).mockImplementation(() => new Promise(r => { resolve = r; }));
+    const store = createStore();
+    store.set(currentUserAtom, asUser(1));
+    const { hook } = await renderUseProductLike(store);
+    let request!: Promise<void>;
+    await act(async () => { request = hook.result.current.toggleLike({ preventDefault() {}, stopPropagation() {} } as any); });
+    await act(async () => { store.set(currentUserAtom, asUser(2)); });
+    await act(async () => { resolve({ isFavorite: true }); await request; });
+    expect(store.get(likedProductsAtom)).toEqual([]);
+    expect(store.get(likedProductsOwnerAtom)).toBe(2);
+  });
+
 });

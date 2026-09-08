@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Action from "./Action";
 import Color from "./Color";
 import CommentsInfo from "./CommentsInfo";
@@ -114,13 +114,25 @@ export default function PDPHeroInfo(props: Props) {
     [productData, colors, sizes, models],
   );
 
-  // State for selected variation properties (default to first in-stock variation)
-  const [selectedColor, setSelectedColor] = useState<string>(initialSelection.colorId);
-  const [selectedSize, setSelectedSize] = useState<string>(initialSelection.sizeId);
-  const [selectedModel, setSelectedModel] = useState<string>(initialSelection.modelId);
-  const [selectedGeneric, setSelectedGeneric] = useState<Record<string, string>>(
-    initialSelection.generic,
-  );
+  const selectionIdentity = `${productData?.id ?? productId}:${productData ? "ready" : "pending"}`;
+  const [selectionState, setSelectionState] = useState({ identity: selectionIdentity, ...initialSelection });
+  const selection = selectionState.identity === selectionIdentity
+    ? selectionState
+    : { identity: selectionIdentity, ...initialSelection };
+  const selectedColor = selection.colorId;
+  const selectedSize = selection.sizeId;
+  const selectedModel = selection.modelId;
+  const selectedGeneric = selection.generic;
+  useEffect(() => {
+    setSelectionState((current) => current.identity === selectionIdentity
+      ? current : { identity: selectionIdentity, ...initialSelection });
+  }, [selectionIdentity, initialSelection]);
+  const changeSelection = (change: Partial<typeof initialSelection>) => {
+    setSelectionState((current) => ({
+      ...(current.identity === selectionIdentity ? current : { identity: selectionIdentity, ...initialSelection }),
+      ...change,
+    }));
+  };
   const genericSelectors = useMemo(() => getGenericAttributeSelectors(productData), [productData]);
 
   // Compute disabled ids for colors, sizes and models based on productData stock
@@ -200,218 +212,29 @@ export default function PDPHeroInfo(props: Props) {
     };
   }, [productData, colors, sizes, models, genericSelectors]);
 
-  // Calculate the current price based on selected variation
-  const [currentPrice, setCurrentPrice] = useState(product.price);
-  const [currentDiscount, setCurrentDiscount] = useState(product.discount || 0);
-  const [currentDiscountPrice, setCurrentDiscountPrice] = useState(product.discountPrice || 0);
-  const [currentVariationId, setCurrentVariationId] = useState<string | undefined>(
-    initialSelection.variationId,
-  );
-  const [hasStock, setHasStock] = useState(initialSelection.hasStock);
-
-  // moved useEffect that initializes variation details to below
-
-  // Update variation details based on selected properties
-  const updateVariationDetails = useCallback(
-    (
-      colorId: string,
-      sizeId: string,
-      modelId: string,
-      genericSelection: Record<string, string> = {},
-    ) => {
-      debugLog("=== UPDATE VARIATION DETAILS DEBUG ===");
-      debugLog("Selected color ID:", colorId);
-      debugLog("Selected size ID:", sizeId);
-      debugLog("Selected model ID:", modelId);
-
-      if (
-        !productData ||
-        !productData.attributes ||
-        !productData.attributes.product_variations ||
-        !productData.attributes.product_variations.data
-      ) {
-        debugLog("❌ No product data available");
-        return;
-      }
-
-      // Find the matching variation based on selected color, size, model
-      // Convert string IDs to numbers for the findProductVariation function
-      const colorIdNum = colorId ? parseInt(colorId) : undefined;
-      const sizeIdNum = sizeId ? parseInt(sizeId) : undefined;
-      const modelIdNum = modelId ? parseInt(modelId) : undefined;
-
-      debugLog("Converted IDs - Color:", colorIdNum, "Size:", sizeIdNum, "Model:", modelIdNum);
-
-      const variation = findProductVariation(
-        productData,
-        colorIdNum,
-        sizeIdNum,
-        modelIdNum,
-        genericSelection,
-      );
-
-      debugLog("Found variation:", variation);
-
-      if (variation) {
-        const variationAttributes = variation.attributes;
-        debugLog("✅ Variation found with ID:", variation.id);
-        debugLog("Variation attributes:", variationAttributes);
-
-        // Update price based on found variation
-        if (variationAttributes.DiscountPrice) {
-          setCurrentPrice(Number(variationAttributes.Price));
-          setCurrentDiscountPrice(Number(variationAttributes.DiscountPrice));
-          // Calculate discount percentage
-          const discountPercentage = Math.round(
-            ((Number(variationAttributes.Price) - Number(variationAttributes.DiscountPrice)) /
-              Number(variationAttributes.Price)) *
-              100,
-          );
-          setCurrentDiscount(discountPercentage);
-        } else {
-          setCurrentPrice(Number(variationAttributes.Price));
-          setCurrentDiscountPrice(0);
-          setCurrentDiscount(0);
-        }
-
-        // Check stock for this variation - validate with default quantity of 1
-        // This ensures the "Add to Cart" button shows correct availability
-        const stockStatus = hasStockForVariation(variation, 1);
-        debugLog("Stock status for variation:", stockStatus);
-        setHasStock(stockStatus);
-
-        // Store the current variation ID
-        const variationIdString = variation.id.toString();
-        debugLog("✅ Setting currentVariationId to:", variationIdString);
-        setCurrentVariationId(variationIdString);
-      } else {
-        debugLog("❌ No variation found for selected combination");
-        // Fallback to product default price if no variation found
-        setCurrentPrice(product.price);
-        setCurrentDiscountPrice(product.discountPrice || 0);
-        setCurrentDiscount(product.discount || 0);
-        setHasStock(false); // No variation found means no stock
-        setCurrentVariationId(undefined);
-      }
-
-      debugLog("=== END UPDATE VARIATION DETAILS DEBUG ===");
-    },
-    [productData, product.price, product.discountPrice, product.discount],
-  );
-
-  const selectPurchasableOption = useCallback(
-    (dimension: "color" | "size" | "model", optionId: string) => {
-      const variations = productData?.attributes?.product_variations?.data || [];
-      const candidates = variations.filter((variation) => {
-        if (variation.attributes.IsPublished !== true || !hasStockForVariation(variation, 1)) {
-          return false;
-        }
-        const ids = getVariationRelationIds(variation);
-        return ids[`${dimension}Id` as "colorId" | "sizeId" | "modelId"] === optionId;
-      });
-
-      const best = candidates
-        .map((variation) => {
-          const ids = getVariationRelationIds(variation);
-          const score =
-            (dimension !== "color" && ids.colorId === selectedColor ? 1 : 0) +
-            (dimension !== "size" && ids.sizeId === selectedSize ? 1 : 0) +
-            (dimension !== "model" && ids.modelId === selectedModel ? 1 : 0);
-          return { variation, ids, score };
-        })
-        .sort((a, b) => b.score - a.score)[0];
-
-      if (!best) return;
-      setSelectedColor(best.ids.colorId);
-      setSelectedSize(best.ids.sizeId);
-      setSelectedModel(best.ids.modelId);
-      const generic = getVariationGenericSelection(best.variation);
-      setSelectedGeneric(generic);
-      updateVariationDetails(best.ids.colorId, best.ids.sizeId, best.ids.modelId, generic);
-    },
-    [productData, selectedColor, selectedSize, selectedModel, updateVariationDetails],
-  );
-
-  const handleSizeChange = (sizeId: string) => selectPurchasableOption("size", sizeId);
-  const handleColorChange = (colorId: string) => selectPurchasableOption("color", colorId);
-  const handleModelChange = (modelId: string) => selectPurchasableOption("model", modelId);
-  const handleGenericChange = (attributeId: string, termId: string) => {
-    const variations = productData?.attributes?.product_variations?.data || [];
-    const candidates = variations.filter(
-      (variation) =>
-        variation.attributes.IsPublished === true &&
-        hasStockForVariation(variation, 1) &&
-        getVariationGenericSelection(variation)[attributeId] === termId,
-    );
-    const best = candidates
-      .map((variation) => {
-        const generic = getVariationGenericSelection(variation);
-        const ids = getVariationRelationIds(variation);
-        const score =
-          Object.entries(selectedGeneric).filter(
-            ([key, value]) => key !== attributeId && generic[key] === value,
-          ).length +
-          (ids.colorId === selectedColor ? 1 : 0) +
-          (ids.sizeId === selectedSize ? 1 : 0) +
-          (ids.modelId === selectedModel ? 1 : 0);
-        return { variation, generic, ids, score };
-      })
-      .sort((left, right) => right.score - left.score)[0];
-    if (!best) return;
-    setSelectedColor(best.ids.colorId);
-    setSelectedSize(best.ids.sizeId);
-    setSelectedModel(best.ids.modelId);
-    setSelectedGeneric(best.generic);
-    updateVariationDetails(best.ids.colorId, best.ids.sizeId, best.ids.modelId, best.generic);
-  };
-
-  // Sync price/stock with the first in-stock variation (matches product card availability)
-  useEffect(() => {
-    if (!productData?.attributes?.product_variations?.data?.length) return;
-
-    const selection = getInitialPdpSelection(productData, colors, sizes, models);
-    if (
-      !selection.colorId &&
-      !selection.sizeId &&
-      !selection.modelId &&
-      Object.keys(selection.generic).length === 0
-    ) {
-      return;
-    }
-
-    setSelectedColor(selection.colorId);
-    setSelectedSize(selection.sizeId);
-    setSelectedModel(selection.modelId);
-    setSelectedGeneric(selection.generic);
-    updateVariationDetails(
-      selection.colorId,
-      selection.sizeId,
-      selection.modelId,
-      selection.generic,
-    );
-  }, [productData, colors, sizes, models, updateVariationDetails]);
+  // Selection, price and cart identity are derived together in the same render.
+  const currentVariation = productData
+    ? findProductVariation(productData, selectedColor ? Number(selectedColor) : undefined,
+        selectedSize ? Number(selectedSize) : undefined,
+        selectedModel ? Number(selectedModel) : undefined, selectedGeneric) ?? null
+    : null;
+  const hasStock = Boolean(currentVariation && hasStockForVariation(currentVariation, 1));
+  const currentPrice = Number(currentVariation?.attributes.Price ?? 0);
+  const salePrice = Number(currentVariation?.attributes.DiscountPrice ?? 0);
+  const currentDiscountPrice = salePrice > 0 && salePrice < currentPrice ? salePrice : 0;
+  const currentDiscount = currentDiscountPrice ? Math.round((1 - currentDiscountPrice / currentPrice) * 100) : 0;
+  const currentVariationId = currentVariation ? String(currentVariation.id) : undefined;
+  const handleSizeChange = (id: string) => changeSelection({ sizeId: id });
+  const handleColorChange = (id: string) => changeSelection({ colorId: id });
+  const handleModelChange = (id: string) => changeSelection({ modelId: id });
+  const handleGenericChange = (attributeId: string, termId: string) =>
+    changeSelection({ generic: { ...selectedGeneric, [attributeId]: termId } });
 
   // Get selected color and size objects
   const selectedColorObj = colors.find((color) => color.id === selectedColor);
   const selectedSizeObj = sizes.find((size) => size.id === selectedSize);
   const selectedModelObj = models.find((model) => model.id === selectedModel);
 
-  // Get current variation object for passing to Action component
-  const getCurrentVariation = () => {
-    if (!productData?.attributes?.product_variations?.data?.length) {
-      return null;
-    }
-
-    if (currentVariationId) {
-      return productData.attributes.product_variations.data.find(
-        (variation: any) => variation.id.toString() === currentVariationId,
-      );
-    }
-
-    return null;
-  };
-
-  const currentVariation = getCurrentVariation();
   const showSizeGuide = true;
   const showSizeSelector = sizes.length > 0;
   const showColorSelector = colors.length > 1;
@@ -468,7 +291,7 @@ export default function PDPHeroInfo(props: Props) {
         </div>
       )}
       <div className="hidden md:block">
-        <Main category={product.category} title={product.title} discount={currentDiscount} />
+        <Main category={product.category} title={product.title} discount={hasStock ? currentDiscount : 0} />
       </div>
 
       <div className="h-[1px] bg-slate-100" />

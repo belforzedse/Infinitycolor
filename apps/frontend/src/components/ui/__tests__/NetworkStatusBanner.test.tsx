@@ -42,4 +42,19 @@ describe("NetworkStatusBanner", () => {
     });
     expect(screen.queryByTestId("network-status")).not.toBeInTheDocument();
   });
+  it("deduplicates online events and cancels the previous recovery timer", () => {
+    render(<NetworkStatusBanner />);
+    const recovered = jest.fn();
+    window.addEventListener("app:back-online", recovered);
+    act(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); });
+    act(() => jest.advanceTimersByTime(2000));
+    act(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); window.dispatchEvent(new Event("online")); });
+    act(() => jest.advanceTimersByTime(1500));
+    expect(recovered).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("network-status")).toHaveTextContent("برقرار شد");
+    act(() => jest.advanceTimersByTime(1500));
+    expect(screen.queryByTestId("network-status")).not.toBeInTheDocument();
+    window.removeEventListener("app:back-online", recovered);
+  });
+
 });

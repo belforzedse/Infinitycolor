@@ -225,7 +225,7 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
       )}
 
       <Modal isOpen={isOpen} onClose={() => setIsOpen(false)}>
-        <form onSubmit={handleSubmit} className="flex max-h-[80vh] flex-col gap-4 overflow-y-auto">
+        <form onSubmit={handleSubmit} className="flex max-h-[calc(100dvh-12rem)] min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain px-2 [scrollbar-gutter:stable]">
           <div className="grid flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
           <span className="text-foreground-primary text-lg mb-1 lg:text-2xl lg:col-span-2">
             {editingAddress ? "ویرایش آدرس" : "افزودن آدرس"}
@@ -233,14 +233,14 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
 
           {/* User Info Display */}
           {userInfo && (
-            <div className="col-span-2 mb-2 flex flex-col gap-3 rounded-lg bg-slate-50 p-3 lg:flex-row">
+            <div className="col-span-1 lg:col-span-2 mb-2 flex flex-col gap-3 rounded-lg bg-slate-50 p-3 lg:flex-row">
               <div className="flex-1">
                 <span className="text-sm text-gray-500">نام و نام خانوادگی:</span>
                 <p className="text-sm font-medium">{`${userInfo.FirstName} ${userInfo.LastName}`}</p>
               </div>
               <div className="flex-1">
                 <span className="text-sm text-gray-500">شماره تماس:</span>
-                <p className="text-sm text-black font-medium">{userInfo.UserName}</p>
+                <p className="text-sm text-black font-medium text-right"><bdi dir="ltr">{userInfo.UserName}</bdi></p>
               </div>
             </div>
           )}
@@ -260,7 +260,7 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
             }
             isLoading={loadingProvinces}
             error={errorProvinces || undefined}
-            className="col-span-2 lg:col-span-1"
+            className="col-span-1"
           />
 
           <Select
@@ -277,10 +277,10 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
                   : "شهر محل سکونت خود را انتخاب نمایید"
             }
             error={errorCities || undefined}
-            className="col-span-2 lg:col-span-1"
+            className="col-span-1"
           />
 
-          <div className="col-span-2 flex flex-col gap-1 lg:col-span-1">
+          <div className="col-span-1 flex flex-col gap-1">
             <label className="text-foreground-primary text-base lg:text-lg">
               جزئیات آدرس (اختیاری)
             </label>
@@ -293,10 +293,12 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
             />
           </div>
 
-          <div className="col-span-2 flex flex-col gap-1 lg:col-span-1">
+          <div className="col-span-1 flex flex-col gap-1">
             <label className="text-foreground-primary text-base lg:text-lg">کد پستی</label>
             <input
               type="text"
+              dir="ltr"
+              inputMode="numeric"
               value={postalCode}
               onChange={(e) => setPostalCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
               placeholder="کد پستی ۱۰ رقمی"
@@ -308,7 +310,7 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
             <span className="text-xs text-gray-500">کد پستی باید ۱۰ رقم باشد</span>
           </div>
 
-          <div className="col-span-2 flex flex-col gap-1">
+          <div className="col-span-1 lg:col-span-2 flex flex-col gap-1">
             <label className="text-foreground-primary text-base lg:text-lg">
               آدرس دقیق محل سکونت
             </label>

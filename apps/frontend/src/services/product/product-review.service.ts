@@ -292,7 +292,7 @@ class ProductReviewService {
 
     const response = await apiClient.get<StrapiApiResponse<StrapiEntry<ProductReviewAttributes>>>(
       "/product-reviews",
-      { params: query }
+      { params: query, cache: "no-store" }
     );
 
     const dataArray = Array.isArray(response.data) ? response.data : response.data ? [response.data] : [];
@@ -328,7 +328,7 @@ class ProductReviewService {
 
     const response = await apiClient.get<StrapiApiResponse<StrapiEntry<ProductReviewAttributes>>>(
       "/product-reviews",
-      { params: query }
+      { params: query, cache: "no-store" }
     );
 
     const dataArray = Array.isArray(response.data) ? response.data : response.data ? [response.data] : [];
@@ -353,9 +353,18 @@ class ProductReviewService {
       { productId, rate, content },
     );
 
-    const { id, isNew: _isNew, isUpdated: _isUpdated, ...attributes } = response.data;
+    // The custom submit route returns a flat entity. Accept the enveloped
+    // form too so older/mixed deployments cannot turn a saved review into an error.
+    const payload: unknown = response;
+    const entity = isRecord(payload) && isRecord(payload.data) ? payload.data : payload;
+    if (!isRecord(entity) || !Number.isSafeInteger(entity.id) ||
+        typeof entity.Content !== "string" || typeof entity.Rate !== "number" ||
+        !["Need for Review", "Accepted", "Rejected"].includes(String(entity.Status))) {
+      throw new Error("Invalid review response");
+    }
+    const { id, isNew: _isNew, isUpdated: _isUpdated, ...attributes } = entity;
     return {
-      data: this.normalizeReview({ id, attributes } as StrapiEntry<ProductReviewAttributes>),
+      data: this.normalizeReview({ id: Number(id), attributes: attributes as unknown as ProductReviewAttributes }),
     };
   }
 

@@ -5,10 +5,13 @@ import SortDescIcon from "@/components/PLP/Icons/SortDescIcon";
 import PDPCommentListItem from "./ListItem";
 import type { ProductReview } from "@/services/product/product-review.service";
 
-type SortOption = "newest" | "oldest" | "highestRating" | "lowestRating";
+export type SortOption = "newest" | "oldest" | "highestRating" | "lowestRating";
 
 type Props = {
   reviews: ProductReview[];
+  sortOption?: SortOption;
+  onSortChange?: (sort: SortOption) => void;
+  loading?: boolean;
   onStatusUpdate?: (id: number, status: "Accepted" | "Rejected") => void;
   onDelete?: (id: number) => void;
   onLike?: (id: number) => void;
@@ -18,13 +21,17 @@ type Props = {
 
 export default function PDPCommentList({
   reviews,
+  sortOption: controlledSort,
+  onSortChange,
+  loading = false,
   onStatusUpdate,
   onDelete,
   onLike,
   onDislike,
   onReply,
 }: Props) {
-  const [sortOption, setSortOption] = useState<SortOption>("newest");
+  const [localSort, setSortOption] = useState<SortOption>("newest");
+  const sortOption = controlledSort ?? localSort;
   const [showSortOptions, setShowSortOptions] = useState(false);
 
   const sortLabels = {
@@ -64,6 +71,8 @@ export default function PDPCommentList({
           <button
             type="button"
             onClick={() => setShowSortOptions(!showSortOptions)}
+            disabled={loading}
+            aria-expanded={showSortOptions}
             className="flex items-center gap-1 rounded-[8px] bg-[#FAFAF9] px-4 py-1 text-[12px] text-[#333333] transition-all hover:bg-slate-100"
           >
             <span>{sortLabels[sortOption]}</span>
@@ -77,7 +86,8 @@ export default function PDPCommentList({
                   key={option}
                   type="button"
                   onClick={() => {
-                    setSortOption(option as SortOption);
+                    if (onSortChange) onSortChange(option);
+                    else setSortOption(option);
                     setShowSortOptions(false);
                   }}
                   className={`w-full rounded-[8px] px-4 py-2 text-right text-[12px] transition-colors hover:bg-[#FAFAF9] ${

@@ -11,6 +11,8 @@ export default function NetworkStatusBanner() {
   useEffect(() => {
     let recoveryTimer: number | undefined;
     const markOffline = () => {
+      if (wasOffline.current) return;
+      if (recoveryTimer) window.clearTimeout(recoveryTimer);
       wasOffline.current = true;
       setRecovered(false);
       setOffline(true);
@@ -21,6 +23,7 @@ export default function NetworkStatusBanner() {
       wasOffline.current = false;
       setRecovered(true);
       window.dispatchEvent(new Event("app:back-online"));
+      if (recoveryTimer) window.clearTimeout(recoveryTimer);
       recoveryTimer = window.setTimeout(() => setRecovered(false), 3000);
     };
 

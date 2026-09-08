@@ -1,5 +1,5 @@
 import Modal from "@/components/Kits/Modal";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import EmptyStarIcon from "../Icons/EmptyStarIcon";
 import StarIcon from "../Icons/StarIcon";
 import SendCommentIcon from "../Icons/SendCommentIcon";
@@ -10,12 +10,14 @@ import toast from "react-hot-toast";
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  onSubmitted?: () => void;
   commentCount: number;
   productId?: string;
 }
 
-export default function PDPCommentModal({ isOpen, onClose, commentCount, productId }: Props) {
+export default function PDPCommentModal({ isOpen, onClose, onSubmitted, commentCount, productId }: Props) {
   const router = useRouter();
+  const submitting = useRef(false);
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -29,6 +31,7 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting.current) return;
 
     // Form validation
     if (rating === 0) {
@@ -41,6 +44,11 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
       return;
     }
 
+    if (comment.trim().length > 4000) {
+      setFormError("دیدگاه باید کوتاه‌تر از ۴۰۰۰ نویسه باشد.");
+      return;
+    }
+
     if (!productId) {
       setFormError("خطا در شناسایی محصول");
       return;
@@ -48,6 +56,7 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
 
     // Clear any previous errors
     setFormError(null);
+    submitting.current = true;
     setIsSubmitting(true);
 
     try {
@@ -56,6 +65,7 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
       // Reset form and close modal on success
       resetForm();
       onClose();
+      onSubmitted?.();
 
       // Show success message
       toast.success("دیدگاه شما با موفقیت ثبت شد و پس از تأیید نمایش داده خواهد شد");
@@ -81,6 +91,7 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
 
       setFormError("خطا در ثبت دیدگاه. لطفاً مجددا تلاش کنید.");
     } finally {
+      submitting.current = false;
       setIsSubmitting(false);
     }
   };
@@ -89,6 +100,7 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
     <Modal
       isOpen={isOpen}
       onClose={() => {
+        if (submitting.current) return;
         resetForm();
         onClose();
       }}
@@ -105,12 +117,15 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
         </div>
 
         {formError && (
-          <div className="text-sm rounded-lg bg-red-50 p-3 text-red-700">{formError}</div>
+          <div role="alert" className="text-sm rounded-lg bg-red-50 p-3 text-red-700">{formError}</div>
         )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <textarea
             placeholder="نظر شما"
+            aria-label="نظر شما"
+            maxLength={4000}
+            disabled={isSubmitting}
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             className="h-32 resize-none rounded-lg border border-gray-200 p-3 text-right"
@@ -126,7 +141,10 @@ export default function PDPCommentModal({ isOpen, onClose, commentCount, product
                   key={star}
                   type="button"
                   onClick={() => setRating(star)}
-                  className="p-1 focus:outline-none"
+                  aria-label={`${star} ستاره`}
+                  aria-pressed={rating === star}
+                  disabled={isSubmitting}
+                  className="rounded p-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-infinity-primary"
                 >
                   {star <= rating ? <StarIcon /> : <EmptyStarIcon />}
                 </button>

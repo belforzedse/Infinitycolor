@@ -1,0 +1,45 @@
+.trigger {
+  transition: transform 140ms ease-out, background-color 140ms ease-out;
+}
+.trigger[hidden] { display: none; }
+.trigger > svg { transition: transform 140ms ease-out; }
+.trigger:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) {
+  .trigger:hover { transform: translateY(-2px); }
+  .trigger:hover > svg { transform: rotate(-6deg); }
+  .trigger:active { transform: scale(.97); }
+}
+.backdrop { transition: opacity 220ms ease-out; }
+.panel {
+  transition: opacity 220ms ease-out, transform 220ms cubic-bezier(.22, 1, .36, 1);
+}
+.backdrop[data-leave], .panel[data-leave] { transition-duration: 160ms; }
+.backdrop[data-closed] { opacity: 0; }
+.panel[data-closed] { opacity: 0; transform: translateY(24px); }
+@media (min-width: 640px) {
+  .panel[data-closed] { transform: scale(.97); }
+}
+.success { animation: settle 180ms ease-out both; }
+.success > svg { animation: check 180ms ease-out both; }
+.busy { animation: spin 800ms linear infinite; }
+@keyframes settle { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes check { from { transform: scale(.85); } to { transform: scale(1); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+:global(html[data-aq-motion="minimal"]) .trigger,
+:global(html[data-aq-motion="minimal"]) .trigger > svg,
+:global(html[data-aq-motion="minimal"]) .backdrop,
+:global(html[data-aq-motion="minimal"]) .panel,
+:global(html[data-aq-motion="minimal"]) .success,
+:global(html[data-aq-motion="minimal"]) .success > svg,
+:global(html[data-aq-motion="minimal"]) .busy {
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .trigger, .trigger > svg, .backdrop, .panel, .success, .success > svg, .busy {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}

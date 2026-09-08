@@ -15,6 +15,7 @@ global.fetch = mockFetch;
 describe("homepage service", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ data: [] }) });
     delete process.env.E2E_DISABLE_HOMEPAGE_FETCH_CACHE;
     delete process.env.E2E_SEED_MODE;
     delete process.env.HOME_BATCHED_SECTIONS_ENABLED;
@@ -22,7 +23,7 @@ describe("homepage service", () => {
   });
 
   describe("getHomepageSections", () => {
-    it("should make two requests: batch for discounted/favorites and separate for new (title matches boost keywords)", async () => {
+    it("keeps availability filtering separate from the promotion membership query", async () => {
       mockFetch
         .mockResolvedValueOnce({
           json: async () => ({ data: [] }),
@@ -33,11 +34,13 @@ describe("homepage service", () => {
 
       await getHomepageSections(defaultSettings());
 
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      const [batchUrl, newUrl] = mockFetch.mock.calls.map(([url]) => new URL(url as string));
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      const [batchUrl, newUrl, promoUrl] = mockFetch.mock.calls.map(([url]) => new URL(url as string));
 
       expect(`${batchUrl.origin}${batchUrl.pathname}`).toBe(`${API_BASE_URL}/products`);
       expect(batchUrl.searchParams.get("pagination[limit]")).toBe("36");
+      expect(promoUrl.searchParams.get("hasDiscount")).toBe("true");
+      expect(promoUrl.searchParams.has("filters[product_variations][product_stock][Count][$gt]")).toBe(false);
 
       expect(`${newUrl.origin}${newUrl.pathname}`).toBe(`${API_BASE_URL}/products`);
       // Single keyword uses filters[Title][$containsi]; multiple use filters[$or][n][Title][$containsi]

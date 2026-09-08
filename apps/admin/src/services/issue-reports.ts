@@ -12,6 +12,7 @@ export type IssueReportClientContext = {
   screen: { width: number; height: number; pixelRatio: number } | null;
   online: boolean | null;
   connectionType: string | null;
+  androidHints?: { model: string | null; platformVersion: string | null };
 };
 
 export type IssueReportSummary = {
@@ -60,7 +61,9 @@ export async function listIssueReports(
     hasMore: boolean;
     nextCursor: string | null;
   }>(`/issue-reports/admin${queryString(filters)}`, {
-    cache: "no-store",
+    // Revalidate without the shared client's _cb query parameter: older report
+    // endpoints reject transport parameters as unknown filters.
+    cache: "no-cache",
     signal,
   });
   return response.data;

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import StarIcon from "../../Icons/StarIcon";
 import EmptyStarIcon from "../../Icons/EmptyStarIcon";
 import MessagesIcon from "../../Icons/MessagesIcon";
@@ -9,7 +9,9 @@ import type { ProductReview } from "@/services/product/product-review.service";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import PDPCommentAddSpecialOffer from "./SpecialOffer";
 import { useRouter } from "next/navigation";
-import type { ProductDetail } from "@/services/product/product";
+import UserService from "@/services/user";
+import toast from "react-hot-toast";
+import { hasStockForVariation, type ProductDetail } from "@/services/product/product";
 
 type CommentProductAttributes = Omit<
   Partial<ProductDetail["attributes"]>,
@@ -33,15 +35,33 @@ type Props = {
 export default function PDPCommentAdd(props: Props) {
   const { productId, rating, rateCount, onReviewSubmitted, productData } = props;
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { user } = useCurrentUser();
+  const { user, isLoading } = useCurrentUser();
   const router = useRouter();
+  const opening = useRef(false);
+  const [checkingSession, setCheckingSession] = useState(false);
+  const openComment = async () => {
+    if (opening.current) return;
+    const login = () => router.push(`/auth?returnTo=${encodeURIComponent(window.location.href)}`);
+    if (user) { setIsModalOpen(true); return; }
+    if (!isLoading) { login(); return; }
+    opening.current = true;
+    setCheckingSession(true);
+    try {
+      await UserService.me();
+      setIsModalOpen(true);
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "status" in error && error.status === 401) login();
+      else toast.error("اتصال برقرار نشد. دوباره تلاش کنید.");
+    } finally {
+      opening.current = false;
+      setCheckingSession(false);
+    }
+  };
 
   const handleCommentClose = useCallback(() => {
     setIsModalOpen(false);
-    if (onReviewSubmitted) {
-      onReviewSubmitted();
-    }
-  }, [onReviewSubmitted]);
+
+  }, []);
 
   // Extract data for special offer card from productData
   const attrs = (productData?.attributes ?? {}) as CommentProductAttributes;
@@ -51,13 +71,15 @@ export default function PDPCommentAdd(props: Props) {
   const title = attrs.Title;
   const category = attrs.product_main_category?.data?.attributes?.Title || attrs.product_main_category?.data?.attributes?.Name || "";
   const imageSrc = attrs.CoverImage?.data?.attributes?.url || "/images/pdp/image-1.png";
-  const hasDiscount = Boolean((discount && discount > 0) || (discountPrice && price && Number(discountPrice) < Number(price)));
+  const isAvailable = productData?.attributes.product_variations?.data?.some((variation) =>
+    variation.attributes.IsPublished === true && hasStockForVariation(variation, 1)) === true;
+  const hasDiscount = isAvailable && Boolean((discount && discount > 0) || (discountPrice && price && Number(discountPrice) < Number(price)));
 
   return (
     <>
       <div className="flex flex-col gap-3">
         {/* Rating Summary Card */}
-        <div className="rounded-[16px] bg-[#FAFAF9] p-5 flex flex-col gap-[7px] items-end">
+        <div className="rounded-[16px] bg-[#FAFAF9] p-5 flex flex-col gap-[7px] items-start text-right">
           <h4 className="text-[30px] font-normal text-[#404040] leading-[1.238]">دیدگاه و امتیاز خریداران</h4>
 
           <div className="flex items-center gap-1">
@@ -82,7 +104,9 @@ export default function PDPCommentAdd(props: Props) {
 
           <button
             type="button"
-            onClick={() => (user ? setIsModalOpen(true) : router.push("/auth"))}
+            disabled={checkingSession}
+            aria-busy={checkingSession}
+            onClick={() => { void openComment(); }}
             className="flex w-full items-center justify-center gap-2 rounded-[12px] bg-[#33415e] py-1 px-3 h-[49px] text-[16px] font-normal text-white transition-all hover:bg-[#33415e]/90 active:scale-[0.98]"
           >
             <MessagesIcon />
@@ -109,6 +133,7 @@ export default function PDPCommentAdd(props: Props) {
         commentCount={rateCount}
         isOpen={isModalOpen}
         onClose={handleCommentClose}
+        onSubmitted={onReviewSubmitted}
       />
     </>
   );

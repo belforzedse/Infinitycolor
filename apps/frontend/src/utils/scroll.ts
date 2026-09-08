@@ -20,11 +20,11 @@ export const scrollIntoViewWithOffset = (
 
   if (!target) {
     const top = Math.max(0, fallbackTop - offset);
-    window.scrollTo({ top, behavior: "smooth" });
+    window.scrollTo({ top, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
     return;
   }
 
   const top = target.getBoundingClientRect().top + window.scrollY - offset;
-  window.scrollTo({ top, behavior: "smooth" });
+  window.scrollTo({ top, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
 };
 

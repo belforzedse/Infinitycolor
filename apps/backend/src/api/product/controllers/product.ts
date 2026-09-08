@@ -189,6 +189,7 @@ const PRODUCT_POPULATE = {
   product_other_categories: true,
   product_tags: true,
   product_reviews: {
+    filters: { Status: "Accepted", removedAt: { $null: true } },
     populate: {
       user: {
         fields: ["id"],

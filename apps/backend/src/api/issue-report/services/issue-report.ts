@@ -59,6 +59,7 @@ export type IssueReportClientContext = {
   screen: { width: number; height: number; pixelRatio: number } | null;
   online: boolean | null;
   connectionType: string | null;
+  androidHints?: { model: string | null; platformVersion: string | null };
 };
 
 export type IssueReportQuery = {
@@ -138,7 +139,12 @@ function clientContext(value: unknown): IssueReportClientContext | null {
   const screenWidth = dimension(raw.screen?.width);
   const screenHeight = dimension(raw.screen?.height);
   const pixelRatio = Number(raw.screen?.pixelRatio);
+  const hints = raw.androidHints;
+  const model = optionalShortText(hints?.model, 120)?.replace(/[\u0000-\u001f\u007f]/g, "") || null;
+  const version = optionalShortText(hints?.platformVersion, 32);
+  const platformVersion = version && /^\d{1,3}(?:\.\d{1,4}){0,3}$/.test(version) ? version : null;
   return {
+    ...(model || platformVersion ? { androidHints: { model, platformVersion } } : {}),
     clientTime: parsedTime && !Number.isNaN(parsedTime.getTime()) ? parsedTime.toISOString() : null,
     timeZone: optionalShortText(raw.timeZone, 80),
     language: optionalShortText(raw.language, 32),

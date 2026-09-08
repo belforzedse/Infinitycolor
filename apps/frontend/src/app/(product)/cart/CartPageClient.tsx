@@ -1,5 +1,6 @@
 "use client";
 
+import { consumeCartScrollTop } from "@/utils/cartScrollIntent";
 import { useCart } from "@/contexts/CartContext";
 import ShoppingCartDesktopTable from "@/components/ShoppingCart/Table/Desktop";
 import ShoppingCartMobileTable from "@/components/ShoppingCart/Table/Mobile";
@@ -24,6 +25,11 @@ const OffersListHomePage = dynamic(() => import("@/components/PDP/OffersListHome
 export default function CartPageClient() {
   const { cartItems, isLoading } = useCart();
   const isCartShellReady = useCartShellReady();
+  useEffect(() => {
+    if (isCartShellReady && !isLoading && consumeCartScrollTop()) {
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+  }, [isCartShellReady, isLoading]);
   const [randomProducts, setRandomProducts] = useState<ProductCardProps[]>([]);
   const [, setLoadingRandom] = useState(false);
   const hasOffers = randomProducts.length > 0;

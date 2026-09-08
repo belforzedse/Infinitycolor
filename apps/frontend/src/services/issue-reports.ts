@@ -8,6 +8,7 @@ export type IssueReportClientContext = {
   screen: { width: number; height: number; pixelRatio: number };
   online: boolean;
   connectionType: string | null;
+  androidHints?: { model: string | null; platformVersion: string | null };
 };
 
 export type SubmitIssueReportInput = {

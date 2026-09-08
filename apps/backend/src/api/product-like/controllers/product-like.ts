@@ -11,10 +11,12 @@ export default factories.createCoreController(
   ({ strapi }) => ({
     async toggleFavorite(ctx) {
       try {
-        const { productId } = ctx.request.body;
+        const { productId: rawProductId, isFavorite } = ctx.request.body;
+        const productId = Number(rawProductId);
 
         // Validation
-        if (!productId) {
+        if (!Number.isSafeInteger(productId) || productId <= 0 ||
+            (isFavorite !== undefined && typeof isFavorite !== "boolean")) {
           return ctx.badRequest("Product ID is required");
         }
 
@@ -28,37 +30,27 @@ export default factories.createCoreController(
           return ctx.notFound("Product not found");
         }
 
-        // Check if favorite already exists
-        const existingLike = await strapi.db.query("api::product-like.product-like").findOne({
-          where: {
-            user: pluginUserId,
-            product: productId,
-          },
-        });
-
-        // If favorite exists, remove it (toggle off)
-        if (existingLike) {
-          await strapi.entityService.delete("api::product-like.product-like", existingLike.id);
-          return ctx.send({
-            success: true,
-            message: "Product removed from favorites",
-            isFavorite: false,
+        const result = await strapi.db.transaction(async ({ trx }) => {
+          await trx.raw("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", [
+            `product-like:${pluginUserId}:${productId}`,
+          ]);
+          const query = strapi.db.query("api::product-like.product-like");
+          const existing = await query.findMany({
+            where: { user: pluginUserId, product: productId }, transacting: trx,
           });
-        }
-
-        // Otherwise, add it as a favorite (toggle on)
-        await strapi.entityService.create("api::product-like.product-like", {
-          data: {
-            user: pluginUserId,
-            product: productId,
-          },
+          const desired = isFavorite ?? existing.length === 0;
+          if (!desired) {
+            for (const like of existing) {
+              await strapi.entityService.delete("api::product-like.product-like", like.id, { transacting: trx });
+            }
+          } else if (existing.length === 0) {
+            await strapi.entityService.create("api::product-like.product-like", {
+              data: { user: pluginUserId, product: productId }, transacting: trx,
+            });
+          }
+          return { success: true, isFavorite: desired };
         });
-
-        return ctx.send({
-          success: true,
-          message: "Product added to favorites",
-          isFavorite: true,
-        });
+        return ctx.send(result);
       } catch (error) {
         strapi.log.error(error);
         return ctx.internalServerError("An error occurred");

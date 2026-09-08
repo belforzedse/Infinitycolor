@@ -3,6 +3,7 @@ import type {
 import {
   formatGalleryAssets,
   getDefaultProductVariation,
+  hasStockForVariation,
   getProductColors,
   getProductSizes,
   getProductModels,
@@ -89,7 +90,7 @@ export default function PDPHero({ productData, productId }: PDPHeroProps) {
           typeof discountPriceStr === "string" ? parseInt(discountPriceStr, 10) : discountPriceStr;
 
         // Calculate discount percentage
-        discount = Math.round(((price - discountPrice) / price) * 100);
+        discount = hasStockForVariation(defaultVariation, 1) ? Math.round(((price - discountPrice) / price) * 100) : 0;
       }
     }
   }

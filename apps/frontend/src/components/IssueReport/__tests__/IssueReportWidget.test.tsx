@@ -10,10 +10,10 @@ jest.mock("@/services/issue-reports", () => ({ submitIssueReport: jest.fn() }));
 jest.mock("@headlessui/react", () => ({
   Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div>{children}</div> : null,
-  DialogBackdrop: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  DialogBackdrop: ({ children, transition: _transition, ...props }: React.HTMLAttributes<HTMLDivElement> & { transition?: boolean }) => (
     <div {...props}>{children}</div>
   ),
-  DialogPanel: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  DialogPanel: ({ children, transition: _transition, ...props }: React.HTMLAttributes<HTMLDivElement> & { transition?: boolean }) => (
     <div {...props}>{children}</div>
   ),
   DialogTitle: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
@@ -49,7 +49,7 @@ describe("IssueReportWidget", () => {
 
     const trigger = screen.getByRole("button", { name: "گزارش مشکل" });
     expect(trigger).toHaveTextContent("گزارش مشکل");
-    expect(trigger).toHaveClass("left-3", "min-h-11", "md:bottom-6", "md:left-6");
+    expect(trigger).toHaveClass("left-3", "min-h-11", "lg:bottom-6", "lg:left-6");
     await user.click(trigger);
     expect(screen.getAllByRole("textbox")).toHaveLength(3);
     expect(screen.queryByText(/رمز|کد تأیید|کپچا/i)).not.toBeInTheDocument();

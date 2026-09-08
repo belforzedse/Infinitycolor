@@ -11,10 +11,11 @@ interface SidebarItemProps {
   icon: React.ReactElement<{ className?: string }>;
   text: string;
   onClick?: () => void;
+  onNavigate?: () => void;
   tone?: "default" | "logout";
 }
 
-const SidebarItem = ({ href, icon, text, onClick, tone = "default" }: SidebarItemProps) => {
+const SidebarItem = ({ href, icon, text, onClick, onNavigate, tone = "default" }: SidebarItemProps) => {
   const pathname = usePathname();
   const isActive = pathname === href;
   const isLogout = tone === "logout";
@@ -47,6 +48,7 @@ const SidebarItem = ({ href, icon, text, onClick, tone = "default" }: SidebarIte
   return (
     <Link
       href={href}
+      onNavigate={onNavigate}
       className={`relative flex items-center justify-between rounded-lg px-4 py-3 transition-colors ${
         isActive
           ? "bg-[#3d4c6e] text-white"

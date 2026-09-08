@@ -194,7 +194,7 @@ export function infinityCredentialsPlugin(
       ),
       infinityOtpRequest: createAuthEndpoint(
         "/infinity/otp/request",
-        { method: "POST", body: z.object({ phone: phoneSchema }) },
+        { method: "POST", body: z.object({ phone: phoneSchema, purpose: z.enum(["login", "reset"]).optional() }) },
         async (ctx) => {
           assertTrustedRequest(ctx);
           const current = readFlowState(ctx);
@@ -208,7 +208,7 @@ export function infinityCredentialsPlugin(
             writeFlowState(ctx, {
               phone: ctx.body.phone,
               challengeId: response.challengeId,
-              purpose: purposeFromHeaders(ctx.headers),
+              purpose: ctx.body.purpose ?? purposeFromHeaders(ctx.headers),
               returnTo: returnTargetFromHeaders(
                 ctx.headers,
                 current?.returnTo,

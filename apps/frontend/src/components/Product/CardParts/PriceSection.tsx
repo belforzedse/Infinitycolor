@@ -17,7 +17,7 @@ export const PriceSection: FC<PriceSectionProps> = ({
   isAvailable,
 }) => {
   return (
-    <div className="mt-auto flex min-h-[43px] items-center justify-center rounded-[14px] bg-stone-100 px-3 py-2 transition-all duration-300 md:mt-1 md:group-hover:rounded-[14px] md:group-hover:bg-infinity-primary md:group-focus-within:rounded-[14px] md:group-focus-within:bg-infinity-primary">
+    <div className="mt-auto flex h-[68px] shrink-0 items-center justify-center rounded-[14px] bg-stone-100 px-3 py-2 transition-all duration-300 md:mt-auto md:group-hover:rounded-[14px] md:group-hover:bg-infinity-primary md:group-focus-within:rounded-[14px] md:group-focus-within:bg-infinity-primary">
       <div className="flex w-full min-w-0 items-center justify-between md:group-hover:justify-center md:group-focus-within:justify-center">
         {!hasDiscount && isAvailable && (
           <span className="shrink-0 text-sm text-neutral-500 md:group-hover:hidden md:group-focus-within:hidden">

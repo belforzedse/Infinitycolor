@@ -105,3 +105,12 @@ describe("issue report payload validation", () => {
     );
   });
 });
+
+it("bounds optional device hints and preserves the legacy context shape", () => {
+  const context = validateCreateIssueReportPayload({ ...valid, context: { ...valid.context, androidHints: { model: "Pixel 9 Pro", platformVersion: "16.0.0", serial: "discard" } } }).context;
+  expect(context?.androidHints).toEqual({ model: "Pixel 9 Pro", platformVersion: "16.0.0" });
+  expect(validateCreateIssueReportPayload(valid).context).toEqual(valid.context);
+  expect(validateCreateIssueReportPayload({ ...valid, context: { ...valid.context, androidHints: { model: 9, platformVersion: "bad" } } }).context).toEqual(valid.context);
+  const bounded = validateCreateIssueReportPayload({ ...valid, context: { ...valid.context, androidHints: { model: "x".repeat(200), platformVersion: "16" } } }).context;
+  expect(bounded?.androidHints?.model).toHaveLength(120);
+});

@@ -13,6 +13,8 @@ import { authPost } from "./auth-api";
 
 interface AuthFlowContextValue {
   phone: string;
+  passwordReset: boolean;
+  setPasswordReset(value: boolean): void;
   flowReady: boolean;
   setPhone(phone: string): void;
   href(path: string): string;
@@ -23,6 +25,7 @@ const AuthFlowContext = createContext<AuthFlowContextValue | null>(null);
 
 export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
   const [phone, setPhone] = useState("");
+  const [passwordReset, setPasswordReset] = useState(false);
   const [flowReady, setFlowReady] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -68,8 +71,8 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
     [href, router],
   );
   const value = useMemo(
-    () => ({ phone, flowReady, setPhone, href, go }),
-    [phone, flowReady, href, go],
+    () => ({ phone, flowReady, setPhone, href, go, passwordReset, setPasswordReset }),
+    [phone, flowReady, href, go, passwordReset],
   );
 
   return (
