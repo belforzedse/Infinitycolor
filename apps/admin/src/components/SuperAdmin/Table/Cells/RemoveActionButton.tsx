@@ -27,7 +27,8 @@ export default function RemoveActionButton(props: Props) {
   const canHardDelete = useCan("system.purge.execute");
   const [isDeleting, setIsDeleting] = useState(false);
   const [showActionDialog, setShowActionDialog] = useState(false);
-  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
+  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] =
+    useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [showPermissionDenied, setShowPermissionDenied] = useState(false);
 
@@ -83,7 +84,9 @@ export default function RemoveActionButton(props: Props) {
       setRefresh(true);
       toast.success(`${itemName} با موفقیت حذف شد`);
     } catch (error) {
-      toast.error(getUserFacingErrorMessage(error, `حذف ${itemName} انجام نشد.`));
+      toast.error(
+        getUserFacingErrorMessage(error, `حذف ${itemName} انجام نشد.`),
+      );
       console.error("Failed to delete item:", error);
     } finally {
       setIsDeleting(false);

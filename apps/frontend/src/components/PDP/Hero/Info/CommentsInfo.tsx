@@ -17,7 +17,7 @@ export default function PDPHeroInfoCommentsInfo(props: Props) {
   return (
     <div className="flex flex-col md:flex-row md:items-center md:justify-between">
       <div className="flex items-center gap-3">
-        <span className="text-base text-foreground-primary">
+        <span className="text-foreground-primary text-base">
           {/*
             This count reads as a link, so it has to behave like one. It was a
             bare <span> with no handler, leaving the advertised shortcut inert
@@ -38,7 +38,7 @@ export default function PDPHeroInfoCommentsInfo(props: Props) {
             <div className="h-[24px] w-[1px] bg-slate-300" />
 
             <div className="flex items-center gap-1">
-              <span className="text-sm text-foreground-primary md:text-xs">({rateCount}) نفر</span>
+              <span className="text-foreground-primary text-sm md:text-xs">({rateCount}) نفر</span>
 
               <StarIcon />
             </div>

@@ -21,7 +21,10 @@ export type ColorFormState = {
  * Turning "بدون رنگ" off must hand back a usable colour rather than the blanked
  * value, otherwise the picker opens empty and saving always fails.
  */
-export function applyNoColorToggle<T extends ColorFormState>(prev: T, checked: boolean): T {
+export function applyNoColorToggle<T extends ColorFormState>(
+  prev: T,
+  checked: boolean,
+): T {
   return {
     ...prev,
     noColor: checked,

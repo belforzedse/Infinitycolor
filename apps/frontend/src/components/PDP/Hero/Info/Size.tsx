@@ -134,9 +134,7 @@ export default function PDPHeroInfoSize(props: Props) {
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          {showSizeOptions && (
-            <span className="text-xl text-foreground-primary">انتخاب سایز</span>
-          )}
+          {showSizeOptions && <span className="text-foreground-primary text-xl">انتخاب سایز</span>}
 
           <button
             type="button"
@@ -195,13 +193,15 @@ export default function PDPHeroInfoSize(props: Props) {
                     isDisabled
                       ? "pointer-events-none cursor-not-allowed bg-gray-100 text-gray-400 line-through opacity-60"
                       : isSelected
-                        ? "border border-gray-300 bg-background-primary text-foreground-primary shadow-sm"
+                        ? "bg-background-primary text-foreground-primary border border-gray-300 shadow-sm"
                         : "bg-background-secondary text-foreground-muted hover:bg-gray-50"
                   }`}
                   onClick={() => handleSizeClick(size.id)}
                   disabled={isDisabled}
                   aria-disabled={isDisabled}
-                  aria-label={isDisabled ? `سایز ${size.title} ناموجود` : `انتخاب سایز ${size.title}`}
+                  aria-label={
+                    isDisabled ? `سایز ${size.title} ناموجود` : `انتخاب سایز ${size.title}`
+                  }
                   aria-pressed={isSelected ? "true" : "false"}
                   title={isDisabled ? "ناموجود" : size.title}
                 >
@@ -212,7 +212,6 @@ export default function PDPHeroInfoSize(props: Props) {
           </div>
         </div>
       )}
-
     </div>
   );
 }

@@ -1,4 +1,7 @@
-import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import {
+  extractErrorMessage,
+  translateErrorMessage,
+} from "@/lib/errorTranslations";
 
 const DEFAULT_MESSAGE = "متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.";
 
@@ -26,15 +29,21 @@ const STATUS_MESSAGES: Record<number, string> = {
   429: "تعداد درخواست‌ها بیش از حد است. چند لحظه صبر کنید و دوباره تلاش کنید.",
 };
 
-const SERVER_ERROR = "سرویس در حال حاضر پاسخ نمی‌دهد. کمی بعد دوباره تلاش کنید.";
+const SERVER_ERROR =
+  "سرویس در حال حاضر پاسخ نمی‌دهد. کمی بعد دوباره تلاش کنید.";
 const NETWORK_ERROR =
   "ارتباط با سرور برقرار نشد. اتصال خود را بررسی کنید و پیش از تکرار، از ثبت‌نشدن تغییر مطمئن شوید.";
 
 /** Reads the HTTP status off an ApiError or an axios-shaped error. */
 export function extractErrorStatus(error: unknown): number | undefined {
-  const candidate = error as { status?: unknown; response?: { status?: unknown } } | null;
+  const candidate = error as {
+    status?: unknown;
+    response?: { status?: unknown };
+  } | null;
   const status = candidate?.status ?? candidate?.response?.status;
-  return typeof status === "number" && Number.isFinite(status) ? status : undefined;
+  return typeof status === "number" && Number.isFinite(status)
+    ? status
+    : undefined;
 }
 
 /** True when the request never produced a response, so its outcome is unknown. */
@@ -42,7 +51,9 @@ function isNetworkFailure(error: unknown): boolean {
   if (extractErrorStatus(error) !== undefined) return false;
   const message = (error as { message?: unknown })?.message;
   if (typeof message !== "string") return false;
-  return /network|failed to fetch|timeout|timed out|aborted|econnrefused/i.test(message);
+  return /network|failed to fetch|timeout|timed out|aborted|econnrefused/i.test(
+    message,
+  );
 }
 
 /**
@@ -50,7 +61,10 @@ function isNetworkFailure(error: unknown): boolean {
  * Converts a caught error into a user-facing Persian message.
  * The raw message is preserved for logging, but only the translated string is returned to the UI.
  */
-export function getUserFacingErrorMessage(error: unknown, fallback?: string): string {
+export function getUserFacingErrorMessage(
+  error: unknown,
+  fallback?: string,
+): string {
   const rawMessage = extractErrorMessage(error);
 
   // A message the backend actually sent is the most specific thing we have.

@@ -12,7 +12,9 @@ const withParent = (
     attributes: {
       Title: title,
       Slug: slug,
-      parent: parent ? { data: { id: 1, attributes: { Title: parent } } } : null,
+      parent: parent
+        ? { data: { id: 1, attributes: { Title: parent } } }
+        : null,
     },
   }) as categoryResponseType;
 
@@ -23,13 +25,17 @@ const withParent = (
  */
 describe("categoryPathLabel", () => {
   it("shows where a nested category sits", () => {
-    expect(categoryPathLabel(withParent(2, "سوتین اسفنجی", "padded-bra", "لباس زیر"))).toBe(
-      "لباس زیر › سوتین اسفنجی",
-    );
+    expect(
+      categoryPathLabel(
+        withParent(2, "سوتین اسفنجی", "padded-bra", "لباس زیر"),
+      ),
+    ).toBe("لباس زیر › سوتین اسفنجی");
   });
 
   it("returns nothing for a top-level category", () => {
-    expect(categoryPathLabel(withParent(1, "لباس زیر", "underwear"))).toBeNull();
+    expect(
+      categoryPathLabel(withParent(1, "لباس زیر", "underwear")),
+    ).toBeNull();
   });
 });
 

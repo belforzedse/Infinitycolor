@@ -29,7 +29,9 @@ describe("SuperAdminTableSelect dismissal", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "جای دیگر" }));
 
-    expect(screen.queryByRole("button", { name: "حذف" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "حذف" }),
+    ).not.toBeInTheDocument();
   });
 
   it("closes on Escape", async () => {
@@ -40,17 +42,26 @@ describe("SuperAdminTableSelect dismissal", () => {
 
     await userEvent.keyboard("{Escape}");
 
-    expect(screen.queryByRole("button", { name: "انتشار" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "انتشار" }),
+    ).not.toBeInTheDocument();
   });
 
   it("still selects an option and reports it", async () => {
     const onOptionSelect = jest.fn();
-    render(<SuperAdminTableSelect options={OPTIONS} onOptionSelect={onOptionSelect} />);
+    render(
+      <SuperAdminTableSelect
+        options={OPTIONS}
+        onOptionSelect={onOptionSelect}
+      />,
+    );
 
     await userEvent.click(screen.getByRole("button", { expanded: false }));
     await userEvent.click(screen.getByRole("button", { name: "حذف" }));
 
     expect(onOptionSelect).toHaveBeenCalledWith("delete");
-    expect(screen.queryByRole("button", { name: "انتشار" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "انتشار" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -111,15 +111,10 @@ export default function QuickViewContent({
   // Defaults (derived) so UI highlights something even before user clicks
   const effectiveColorCode = selectedColorCode ?? variations[0]?.color?.colorCode ?? null;
   const effectiveSizeTitle = selectedSizeTitle ?? variations[0]?.size?.title ?? null;
-  const genericSelectors = useMemo(
-    () => getGenericAttributeSelectors(productData),
-    [productData],
-  );
+  const genericSelectors = useMemo(() => getGenericAttributeSelectors(productData), [productData]);
   const effectiveGeneric = useMemo(
     () =>
-      Object.keys(selectedGeneric).length > 0
-        ? selectedGeneric
-        : variations[0]?.generic || {},
+      Object.keys(selectedGeneric).length > 0 ? selectedGeneric : variations[0]?.generic || {},
     [selectedGeneric, variations],
   );
 
@@ -283,7 +278,7 @@ export default function QuickViewContent({
             const sizesForNewColor = new Set(
               variations
                 .filter((v) => v.color?.colorCode === colorCode && v.size?.title)
-                .map((v) => v.size!.title)
+                .map((v) => v.size!.title),
             );
             if (selectedSizeTitle && !sizesForNewColor.has(selectedSizeTitle)) {
               setSelectedSizeTitle(null);

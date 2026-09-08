@@ -93,10 +93,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
 
         // Get user activities for the order owner
         const orderUserId =
-          order.user?.id ||
-          (order.user as any)?.data?.id ||
-          (order as any).user ||
-          null;
+          order.user?.id || (order.user as any)?.data?.id || (order as any).user || null;
         if (!orderUserId) {
           handleEventsChange([]);
           setLoading(false);
@@ -113,7 +110,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
           (activity: UserActivity) =>
             activity.ResourceType === "order" &&
             activity.ResourceId === String(order.id) &&
-            milestoneTypes.includes(activity.ActivityType)
+            milestoneTypes.includes(activity.ActivityType),
         );
 
         if (orderActivities.length > 0) {
@@ -178,7 +175,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
   if (loading) {
     return (
       <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <h2 className="mb-4 text-base font-semibold text-foreground-primary">وضعیت سفارش</h2>
+        <h2 className="text-foreground-primary mb-4 text-base font-semibold">وضعیت سفارش</h2>
         <div className="text-sm text-slate-500">در حال بارگذاری...</div>
       </section>
     );
@@ -187,7 +184,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
   return (
     <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
       {!hideHeader && (
-        <h2 className="mb-4 text-base font-semibold text-foreground-primary">وضعیت سفارش</h2>
+        <h2 className="text-foreground-primary mb-4 text-base font-semibold">وضعیت سفارش</h2>
       )}
       {events.length === 0 ? (
         <div className="text-sm text-slate-500">رویدادی ثبت نشده است</div>
@@ -207,9 +204,7 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
                 className={`absolute -right-[24px] mt-1 h-4 w-4 rounded-full border-2 border-white shadow ring-2 ring-infinity-primary-lighter/40 ${getSeverityColor(event.severity)}`}
               />
               <div className="flex flex-col gap-1 text-right">
-                <span className="text-sm font-medium text-foreground-primary">
-                  {event.message}
-                </span>
+                <span className="text-foreground-primary text-sm font-medium">{event.message}</span>
                 <span className="text-xs text-slate-500">{formatDateTime(event.createdAt)}</span>
               </div>
             </li>
@@ -219,4 +214,3 @@ export default function OrderTimeline({ order, hideHeader, onEventsChange }: Ord
     </section>
   );
 }
-

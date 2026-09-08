@@ -42,7 +42,9 @@ const SimilarCategorySelector: React.FC<SimilarCategorySelectorProps> = ({
             <Combobox.Options className="absolute z-[99999] mt-1 w-full rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
               {filteredTags.length === 0 ? (
                 <div className="flex items-center gap-2 px-3 py-2 text-neutral-800">
-                  <span className="text-xs text-neutral-500">نتیجه‌ای یافت نشد</span>
+                  <span className="text-xs text-neutral-500">
+                    نتیجه‌ای یافت نشد
+                  </span>
                 </div>
               ) : (
                 filteredTags.map((category) => (
@@ -57,7 +59,9 @@ const SimilarCategorySelector: React.FC<SimilarCategorySelectorProps> = ({
                   >
                     {/* Show where each option sits, same as the main-category picker. */}
                     <div className="flex min-w-0 flex-col gap-0.5">
-                      <span className="text-sm">{category.attributes.Title}</span>
+                      <span className="text-sm">
+                        {category.attributes.Title}
+                      </span>
                       {categoryPathLabel(category) && (
                         <span className="text-xs truncate text-neutral-400">
                           {categoryPathLabel(category)}

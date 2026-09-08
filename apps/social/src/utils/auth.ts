@@ -13,7 +13,10 @@ let pendingAuthRedirect: string | null = null;
  * back to central auth. 403 is a permission failure and must not look like
  * a missing session.
  */
-export function handleAuthErrors(error?: ApiError | null, isAdminCheck?: boolean): void {
+export function handleAuthErrors(
+  error?: ApiError | null,
+  isAdminCheck?: boolean,
+): void {
   const isUnauthorized = error?.status === HTTP_STATUS.UNAUTHORIZED;
   const isForbidden = error?.status === HTTP_STATUS.FORBIDDEN;
   const isNotAdmin = isAdminCheck === false;

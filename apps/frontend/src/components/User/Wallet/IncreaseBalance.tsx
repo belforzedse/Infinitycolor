@@ -20,7 +20,7 @@ const IncreaseBalance = ({ chargeDisabled = false }: IncreaseBalanceProps) => {
   return (
     <div data-wallet-topup className="flex w-full flex-col items-end gap-4 lg:w-3/5">
       <div className="h-fit w-full rounded-xl bg-slate-100 p-5">
-        <span className="text-2xl text-foreground-primary lg:text-4xl">شارژ سریع کیف پول</span>
+        <span className="text-foreground-primary text-2xl lg:text-4xl">شارژ سریع کیف پول</span>
 
         <div className="mb-2 mt-4 flex h-14 w-full items-center justify-center rounded-lg border border-slate-100 bg-white">
           <span className="text-lg text-slate-800 lg:text-3xl">
@@ -37,9 +37,9 @@ const IncreaseBalance = ({ chargeDisabled = false }: IncreaseBalanceProps) => {
               onClick={() => handleAmountSelect(amount)}
               className={`rounded-lg border bg-white px-3 py-2 ${
                 increaseAmount === amount
-                  ? "text-lg border-blue-500 text-blue-500 lg:text-xl"
+                  ? "border-blue-500 text-lg text-blue-500 lg:text-xl"
                   : "border border-slate-100 text-slate-400 hover:border-blue-500 hover:text-blue-500"
-              } disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-100 disabled:hover:text-slate-400 text-center transition-all duration-200`}
+              } text-center transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-slate-100 disabled:hover:text-slate-400`}
             >
               {priceFormatter(amount)} تومان
             </button>

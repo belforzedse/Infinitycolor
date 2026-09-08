@@ -5,9 +5,13 @@ import { MobileTable, type Category } from "../table";
 
 jest.mock("next/link", () => ({
   __esModule: true,
-  default: ({ children, href }: { children: React.ReactNode; href: string }) => (
-    <a href={href}>{children}</a>
-  ),
+  default: ({
+    children,
+    href,
+  }: {
+    children: React.ReactNode;
+    href: string;
+  }) => <a href={href}>{children}</a>,
 }));
 
 /**
@@ -39,7 +43,9 @@ describe("category hierarchy wording", () => {
   it("describes the action as subcategories, not children", () => {
     render(<MobileTable data={[CATEGORY]} />);
 
-    expect(screen.getByRole("button", { name: "مشاهده زیردسته‌ها" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "مشاهده زیردسته‌ها" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("۲ زیردسته".replace("۲", "2"))).toBeInTheDocument();
     expect(screen.queryByText(/فرزند/)).not.toBeInTheDocument();
   });
@@ -47,14 +53,18 @@ describe("category hierarchy wording", () => {
   it("says a category has no subcategories rather than 'no children'", () => {
     render(<MobileTable data={[WITHOUT_CHILDREN]} />);
 
-    expect(screen.getByRole("button", { name: "بدون زیردسته" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "بدون زیردسته" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/فرزند/)).not.toBeInTheDocument();
   });
 
   it("names the parent on each subcategory once opened", async () => {
     render(<MobileTable data={[CATEGORY]} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "مشاهده زیردسته‌ها" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "مشاهده زیردسته‌ها" }),
+    );
 
     expect(screen.getByText("زیردسته‌های کیف و کفش")).toBeInTheDocument();
     expect(screen.getAllByText("زیردستهٔ کیف و کفش")).toHaveLength(2);

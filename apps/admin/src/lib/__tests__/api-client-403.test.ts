@@ -35,7 +35,9 @@ describe("admin auth error handling", () => {
 
   beforeEach(() => {
     // jsdom ships no fetch; the 401 path calls it to drop the route hint.
-    global.fetch = jest.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: true }) as unknown as typeof fetch;
     jotaiStore.set(currentUserAtom, SIGNED_IN);
   });
 
@@ -45,14 +47,18 @@ describe("admin auth error handling", () => {
   });
 
   it("keeps the signed-in identity when a single resource returns 403", async () => {
-    onHttpError({ status: 403, message: "Forbidden" } as never, { status: 403 });
+    onHttpError({ status: 403, message: "Forbidden" } as never, {
+      status: 403,
+    });
     await flushAsyncWork();
 
     expect(jotaiStore.get(currentUserAtom)).toEqual(SIGNED_IN);
   });
 
   it("clears the identity on 401 so a real session loss still signs out", async () => {
-    onHttpError({ status: 401, message: "Unauthorized" } as never, { status: 401 });
+    onHttpError({ status: 401, message: "Unauthorized" } as never, {
+      status: 401,
+    });
     await flushAsyncWork();
 
     expect(jotaiStore.get(currentUserAtom)).toBeNull();
@@ -61,10 +67,15 @@ describe("admin auth error handling", () => {
   it("does not navigate away from the page on 403", async () => {
     const back = jest.fn();
     const originalBack = window.history.back;
-    Object.defineProperty(window.history, "back", { configurable: true, value: back });
+    Object.defineProperty(window.history, "back", {
+      configurable: true,
+      value: back,
+    });
 
     try {
-      onHttpError({ status: 403, message: "Forbidden" } as never, { status: 403 });
+      onHttpError({ status: 403, message: "Forbidden" } as never, {
+        status: 403,
+      });
       // The removed handler resolved two dynamic imports and then bounced the
       // operator on a 100ms timer, so settle both before asserting.
       await flushAsyncWork();

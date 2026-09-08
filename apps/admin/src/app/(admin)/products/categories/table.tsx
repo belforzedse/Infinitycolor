@@ -77,7 +77,8 @@ export type Category = {
   };
 };
 
-const getChildCategories = (category?: Category) => category?.attributes?.children?.data ?? [];
+const getChildCategories = (category?: Category) =>
+  category?.attributes?.children?.data ?? [];
 
 const resolveCategoryImageSrc = (image?: CategoryImageField | null) => {
   const imageAttributes = image?.data?.attributes;
@@ -91,7 +92,10 @@ const resolveCategoryImageSrc = (image?: CategoryImageField | null) => {
   return imageUrl ? resolveAssetUrl(imageUrl) : CATEGORY_IMAGE_PLACEHOLDER;
 };
 
-type OnDeleteCategory = (category: { id: string | number; title: string }) => void;
+type OnDeleteCategory = (category: {
+  id: string | number;
+  title: string;
+}) => void;
 
 const ChildCategoryCard = ({
   child,
@@ -270,8 +274,10 @@ const ParentCategoryCard = ({
                 aria-expanded={hasChildren ? isChildrenModalOpen : undefined}
                 className={`flex h-8 w-8 items-center justify-center rounded-xl border transition ${hasChildren ? "border-slate-200 bg-white text-slate-600 hover:bg-slate-50" : "cursor-not-allowed border-slate-100 bg-white text-slate-300"}`}
                 aria-label={
-                hasChildren ? `نمایش زیردسته‌های ${title}` : `${title} زیردسته‌ای ندارد`
-              }
+                  hasChildren
+                    ? `نمایش زیردسته‌های ${title}`
+                    : `${title} زیردسته‌ای ندارد`
+                }
               >
                 <ChevronRightIcon />
               </button>
@@ -322,7 +328,9 @@ const ParentCategoryCard = ({
             ))}
           </div>
         ) : (
-          <div className="text-sm text-slate-500">این دسته‌بندی زیردسته‌ای ندارد.</div>
+          <div className="text-sm text-slate-500">
+            این دسته‌بندی زیردسته‌ای ندارد.
+          </div>
         )}
       </Modal>
     </>
@@ -354,11 +362,7 @@ export const MobileTable = ({ data, onDelete }: Props) => {
     <div className="space-y-4">
       {data?.map((row) => {
         return (
-          <ParentCategoryCard
-            key={row.id}
-            category={row}
-            onDelete={onDelete}
-          />
+          <ParentCategoryCard key={row.id} category={row} onDelete={onDelete} />
         );
       })}
     </div>

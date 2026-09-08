@@ -19,9 +19,12 @@ describe("normalizeContactDigits", () => {
     expect(normalizeContactDigits(input)).toBe(expected);
   });
 
-  it.each(["", "   ", "تماس بگیرید", "12345"])("rejects unusable value %p", (input) => {
-    expect(normalizeContactDigits(input)).toBeNull();
-  });
+  it.each(["", "   ", "تماس بگیرید", "12345", "+01732530439", "0912123456789"])(
+    "rejects unusable value %p",
+    (input) => {
+      expect(normalizeContactDigits(input)).toBeNull();
+    },
+  );
 });
 
 describe("contactHref", () => {

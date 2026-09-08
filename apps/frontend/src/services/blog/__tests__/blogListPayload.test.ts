@@ -49,6 +49,11 @@ describe("blog listing payload", () => {
     const result = await blogService.getBlogPosts({ pageSize: 8 });
 
     expect(result.data[0].Content).toBe("");
+
+    const [requestedUrl] = (global.fetch as jest.Mock).mock.calls[0];
+    const query = new URL(requestedUrl).searchParams;
+    expect(Array.from(query.values())).toContain("Excerpt");
+    expect(Array.from(query.values())).not.toContain("Content");
   });
 
   it("still derives the card excerpt from the body", async () => {
@@ -66,5 +71,9 @@ describe("blog listing payload", () => {
     const result = await blogService.getBlogPosts({ pageSize: 20, includeContent: true });
 
     expect(result.data[0].Content).toBe(LONG_BODY);
+
+    const [requestedUrl] = (global.fetch as jest.Mock).mock.calls[0];
+    const query = new URL(requestedUrl).searchParams;
+    expect(Array.from(query.keys()).some((key) => key.startsWith("fields["))).toBe(false);
   });
 });

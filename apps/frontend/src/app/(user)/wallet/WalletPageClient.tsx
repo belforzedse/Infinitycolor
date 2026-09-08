@@ -14,7 +14,15 @@ import { StorefrontAccountShell } from "@/components/storefront";
 
 const WALLET_CHARGE_DISABLED = true;
 
-function StatusBanner({ variant, title, description }: { variant: "success" | "error"; title: string; description: string }) {
+function StatusBanner({
+  variant,
+  title,
+  description,
+}: {
+  variant: "success" | "error";
+  title: string;
+  description: string;
+}) {
   const styles =
     variant === "success"
       ? "border-green-200 bg-green-50 text-green-800"
@@ -23,7 +31,9 @@ function StatusBanner({ variant, title, description }: { variant: "success" | "e
   const Icon = variant === "success" ? CheckIcon : AlertCircleIcon;
 
   return (
-    <div className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm md:text-base ${styles}`}>
+    <div
+      className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm md:text-base ${styles}`}
+    >
       <Icon className="mt-0.5 h-5 w-5 flex-shrink-0" />
       <div className="flex flex-col gap-1">
         <span className="font-semibold">{title}</span>
@@ -37,13 +47,10 @@ function ChargingDisabledNotice() {
   return (
     <div
       id="wallet-charge-disabled-notice"
-      className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 text-sm md:text-base"
+      className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 md:text-base"
     >
       <InfoIcon className="mt-0.5 h-5 w-5 flex-shrink-0" />
-      <div className="flex flex-col gap-1">
-        <span className="font-semibold">شارژ کیف پول به‌صورت موقت غیرفعال است</span>
-        <span className="text-xs md:text-sm">به زودی امکان شارژ مجدد فراهم خواهد شد.</span>
-      </div>
+      <span className="font-semibold">در حال حاضر امکان شارژ کیف پول وجود ندارد.</span>
     </div>
   );
 }
@@ -100,7 +107,8 @@ export default function WalletPage() {
       return {
         variant: "error" as const,
         title: "پرداخت در انتظار تأیید",
-        description: "نتیجه پرداخت مشخص نشد. اگر مبلغ از حساب شما کسر شده است، با پشتیبانی تماس بگیرید.",
+        description:
+          "نتیجه پرداخت مشخص نشد. اگر مبلغ از حساب شما کسر شده است، با پشتیبانی تماس بگیرید.",
       };
     }
 
@@ -172,62 +180,66 @@ export default function WalletPage() {
   return (
     <UserContainer className="flex flex-col gap-6 py-6 lg:py-10" dir="rtl">
       {statusConfig ? (
-        <StatusBanner variant={statusConfig.variant} title={statusConfig.title} description={statusConfig.description} />
+        <StatusBanner
+          variant={statusConfig.variant}
+          title={statusConfig.title}
+          description={statusConfig.description}
+        />
       ) : null}
       {WALLET_CHARGE_DISABLED ? <ChargingDisabledNotice /> : null}
       <StorefrontAccountShell contentClassName="flex flex-col gap-6">
-          <AccountQuickLinks />
+        <AccountQuickLinks />
 
-          <div className="flex flex-col gap-2">
-            <h1 className="text-2xl font-semibold text-foreground-primary lg:text-3xl">کیف پول</h1>
-            <p className="text-sm text-slate-500 lg:text-base">
-              موجودی خود را مدیریت کنید و حساب را به‌راحتی شارژ یا پیگیری کنید.
-            </p>
-          </div>
+        <div className="flex flex-col gap-2">
+          <h1 className="text-foreground-primary text-2xl font-semibold lg:text-3xl">کیف پول</h1>
+          <p className="text-sm text-slate-500 lg:text-base">
+            موجودی خود را مدیریت کنید و حساب را به‌راحتی شارژ یا پیگیری کنید.
+          </p>
+        </div>
 
-          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between lg:px-6">
-            <span className="text-sm text-slate-600 lg:text-base">
-              {isTransactionsHistoryOpen
-                ? "نمایش سوابق و جزئیات تراکنش‌های کیف پول."
-                : "برای مشاهده تاریخچه تراکنش‌ها یا ثبت شارژ جدید اقدام کنید."}
-            </span>
-            <button
-              type="button"
-              onClick={() => setIsTransactionsHistoryOpen((prev) => !prev)}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600 transition hover:border-infinity-primary-lighter/60 hover:text-infinity-primary"
-            >
-              <TransactionsIcon className="h-5 w-5" />
-              <span>{isTransactionsHistoryOpen ? "نمایش موجودی و شارژ" : "مشاهده سوابق تراکنش"}</span>
-            </button>
-          </div>
+        <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between lg:px-6">
+          <span className="text-sm text-slate-600 lg:text-base">
+            {isTransactionsHistoryOpen
+              ? "نمایش سوابق و جزئیات تراکنش‌های کیف پول."
+              : "برای مشاهده تاریخچه تراکنش‌ها یا ثبت شارژ جدید اقدام کنید."}
+          </span>
+          <button
+            type="button"
+            onClick={() => setIsTransactionsHistoryOpen((prev) => !prev)}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600 transition hover:border-infinity-primary-lighter/60 hover:text-infinity-primary"
+          >
+            <TransactionsIcon className="h-5 w-5" />
+            <span>{isTransactionsHistoryOpen ? "نمایش موجودی و شارژ" : "مشاهده سوابق تراکنش"}</span>
+          </button>
+        </div>
 
-          <div className="flex w-full flex-col gap-6 lg:flex-row lg:gap-5">
-            {isTransactionsHistoryOpen ? (
-              transactionsLoading ? (
-                <div className="flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white p-8">
-                  <div className="h-10 w-10 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
-                </div>
-              ) : transactionsError ? (
-                <div className="flex w-full items-center justify-center rounded-xl border border-red-200 bg-red-50 p-8 text-red-800">
-                  <span>{transactionsError}</span>
-                </div>
-              ) : (
-                <TransactionsList depositList={depositList} />
-              )
+        <div className="flex w-full flex-col gap-6 lg:flex-row lg:gap-5">
+          {isTransactionsHistoryOpen ? (
+            transactionsLoading ? (
+              <div className="flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white p-8">
+                <div className="h-10 w-10 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
+              </div>
+            ) : transactionsError ? (
+              <div className="flex w-full items-center justify-center rounded-xl border border-red-200 bg-red-50 p-8 text-red-800">
+                <span>{transactionsError}</span>
+              </div>
             ) : (
-              <>
-                <WalletBalance
-                  chargeDisabled={WALLET_CHARGE_DISABLED}
-                  onIncrease={() =>
-                    document
-                      .querySelector<HTMLElement>("[data-wallet-topup]")
-                      ?.scrollIntoView({ behavior: "smooth", block: "center" })
-                  }
-                />
-                <IncreaseBalance chargeDisabled={WALLET_CHARGE_DISABLED} />
-              </>
-            )}
-          </div>
+              <TransactionsList depositList={depositList} />
+            )
+          ) : (
+            <>
+              <WalletBalance
+                chargeDisabled={WALLET_CHARGE_DISABLED}
+                onIncrease={() =>
+                  document
+                    .querySelector<HTMLElement>("[data-wallet-topup]")
+                    ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                }
+              />
+              <IncreaseBalance chargeDisabled={WALLET_CHARGE_DISABLED} />
+            </>
+          )}
+        </div>
       </StorefrontAccountShell>
     </UserContainer>
   );

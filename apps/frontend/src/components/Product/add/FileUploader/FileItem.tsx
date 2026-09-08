@@ -5,7 +5,14 @@ import type { FileItemProps } from "./types";
 import UploadStatusBadge from "@/components/Product/add/UploadStatusBadge";
 import { RefreshCcw } from "lucide-react";
 
-const FileItem: React.FC<FileItemProps> = ({ file, onDelete, onRetry, iconSrc, index, fileType }) => (
+const FileItem: React.FC<FileItemProps> = ({
+  file,
+  onDelete,
+  onRetry,
+  iconSrc,
+  index,
+  fileType,
+}) => (
   <div className="flex items-center gap-3 rounded-lg bg-blue-700 px-3 py-2.5 text-white">
     <div className="flex h-full items-center gap-2 text-[10px]">
       <span className="max-w-44 truncate">{file.file.name}</span>

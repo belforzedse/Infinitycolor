@@ -126,7 +126,7 @@ export interface BlogComment {
     email?: string;
     user_info?: BlogUserInfo | null;
   };
-  blog_post?: { id: number; Title: string ; Slug?: string };
+  blog_post?: { id: number; Title: string; Slug?: string };
   parent_comment?: BlogComment;
   replies?: BlogComment[];
   createdAt: string;
@@ -157,6 +157,20 @@ export interface BlogListParams {
    */
   includeContent?: boolean;
 }
+
+const BLOG_LIST_FIELDS = [
+  "Title",
+  "Slug",
+  "Excerpt",
+  "Status",
+  "PublishedAt",
+  "ViewCount",
+  "MetaTitle",
+  "MetaDescription",
+  "Keywords",
+  "createdAt",
+  "updatedAt",
+] as const;
 
 export interface CreateBlogPostData {
   Title: string;
@@ -280,10 +294,9 @@ class BlogService {
         ? { id: attrs.blog_post.id, ...(attrs.blog_post.attributes || {}) }
         : attrs.blog_post);
 
-    const replies =
-      Array.isArray(attrs.replies?.data)
-        ? attrs.replies.data.map((item: any) => this.normalizeBlogComment(item)).filter(Boolean)
-        : attrs.replies || [];
+    const replies = Array.isArray(attrs.replies?.data)
+      ? attrs.replies.data.map((item: any) => this.normalizeBlogComment(item)).filter(Boolean)
+      : attrs.replies || [];
 
     return {
       id: entry.id ?? attrs.id,
@@ -330,18 +343,21 @@ class BlogService {
       ? {
           id: avatarRelation.data.id,
           url: avatarRelation.data.attributes?.url || avatarRelation.data.url,
-          alternativeText: avatarRelation.data.attributes?.alternativeText || avatarRelation.data.alternativeText,
+          alternativeText:
+            avatarRelation.data.attributes?.alternativeText || avatarRelation.data.alternativeText,
         }
       : avatarRelation
         ? {
             id: avatarRelation.id,
             url: avatarRelation.url || avatarRelation.attributes?.url,
-            alternativeText: avatarRelation.alternativeText || avatarRelation.attributes?.alternativeText,
+            alternativeText:
+              avatarRelation.alternativeText || avatarRelation.attributes?.alternativeText,
           }
         : undefined;
 
     // Extract name - prefer ResolvedName or ResolvedAuthorName, fallback to Name
-    const normalizedName = source.ResolvedName || source.ResolvedAuthorName || source.Name || source.name || "";
+    const normalizedName =
+      source.ResolvedName || source.ResolvedAuthorName || source.Name || source.name || "";
 
     return {
       id: source.id ?? entry.id ?? relation?.id,
@@ -363,29 +379,28 @@ class BlogService {
     };
   }
 
-
   private createShortContent(html: string, maxLength: number = 140): string {
-  if (!html) return "";
+    if (!html) return "";
 
-  // Try to find the first <p>...</p>
-  const pMatch = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+    // Try to find the first <p>...</p>
+    const pMatch = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
 
-  // If we found a <p>, use only its inner HTML
-  const raw = pMatch ? pMatch[1] : "";
+    // If we found a <p>, use only its inner HTML
+    const raw = pMatch ? pMatch[1] : "";
 
-  // If you REALLY want a generic fallback when no <p> exists,
-  // change "" to html instead. For now we respect "only p".
-  const source = raw || "";
+    // If you REALLY want a generic fallback when no <p> exists,
+    // change "" to html instead. For now we respect "only p".
+    const source = raw || "";
 
-  // Strip inner tags (strong, span, a, etc.) from the paragraph
-  const text = source
-    .replace(/<[^>]+>/g, "") // remove any remaining HTML tags
-    .replace(/\s+/g, " ") // normalize whitespace
-    .trim();
+    // Strip inner tags (strong, span, a, etc.) from the paragraph
+    const text = source
+      .replace(/<[^>]+>/g, "") // remove any remaining HTML tags
+      .replace(/\s+/g, " ") // normalize whitespace
+      .trim();
 
-  if (!text) return "";
+    if (!text) return "";
 
-  return text.length > maxLength ? text.slice(0, maxLength).trimEnd() + "..." : text;
+    return text.length > maxLength ? text.slice(0, maxLength).trimEnd() + "..." : text;
   }
 
   private normalizeCategoryReference(entry: any): BlogCategory | undefined {
@@ -452,9 +467,13 @@ class BlogService {
           }
         : this.unwrapRelation(attrs.blog_author),
       blog_tags: Array.isArray(attrs.blog_tags?.data)
-        ? attrs.blog_tags.data.map((tag: any) => this.normalizeTagReference(tag)).filter(Boolean) as BlogTag[]
+        ? (attrs.blog_tags.data
+            .map((tag: any) => this.normalizeTagReference(tag))
+            .filter(Boolean) as BlogTag[])
         : Array.isArray(attrs.blog_tags)
-          ? (attrs.blog_tags.map((tag: any) => this.normalizeTagReference(tag)).filter(Boolean) as BlogTag[])
+          ? (attrs.blog_tags
+              .map((tag: any) => this.normalizeTagReference(tag))
+              .filter(Boolean) as BlogTag[])
           : [],
       FeaturedImage: featuredImageData
         ? {
@@ -556,11 +575,30 @@ class BlogService {
     const sortField = params.sort || "createdAt:desc";
     searchParams.append("sort", sortField);
 
+    // Strapi applies `fields` before serialising the response. Dropping Content
+    // only after response.json() kept the RSC/client payload small but still made
+    // Strapi read and transfer every rich-text body to the Next server. Select the
+    // complete set of list-view scalar fields at the API boundary instead. RSS and
+    // any future full-body caller opt out explicitly with includeContent.
+    if (!params.includeContent) {
+      BLOG_LIST_FIELDS.forEach((field, index) => {
+        searchParams.append(`fields[${index}]`, field);
+      });
+    }
+
     // Add population
-    searchParams.append("populate[blog_category]", "*");
-    searchParams.append("populate[blog_tags]", "*");
-    searchParams.append("populate[blog_author]", "*");
-    searchParams.append("populate[FeaturedImage]", "*");
+    ["Title", "Slug"].forEach((field, index) => {
+      searchParams.append(`populate[blog_category][fields][${index}]`, field);
+    });
+    ["Name", "Slug"].forEach((field, index) => {
+      searchParams.append(`populate[blog_tags][fields][${index}]`, field);
+    });
+    searchParams.append("populate[blog_author][fields][0]", "Name");
+    ["url", "alternativeText", "width", "height", "formats"].forEach(
+      (field, index) => {
+        searchParams.append(`populate[FeaturedImage][fields][${index}]`, field);
+      },
+    );
 
     const baseUrl = this.getBaseUrl();
     const response = await fetch(`${baseUrl}/blog-posts?${searchParams}`, {
@@ -631,15 +669,16 @@ class BlogService {
     const url = `${baseUrl}/blog-posts/slug/${encodedSlug}?${searchParams}`;
 
     // Log the request for debugging (server-side only)
-    if (typeof window === 'undefined') {
-      const env = process.env.NODE_ENV || 'development';
-      const isStaging = process.env.NEXT_PUBLIC_SITE_URL?.includes('staging') || env === 'production';
-      
+    if (typeof window === "undefined") {
+      const env = process.env.NODE_ENV || "development";
+      const isStaging =
+        process.env.NEXT_PUBLIC_SITE_URL?.includes("staging") || env === "production";
+
       logger.info(`[BlogService] Fetching blog post by slug`, {
         originalSlug: slug,
         cleanSlug,
         encodedSlug,
-        url: url.replace(encodedSlug, '[SLUG]'), // Don't log full URL with slug
+        url: url.replace(encodedSlug, "[SLUG]"), // Don't log full URL with slug
         baseUrl,
         env,
         isStaging,
@@ -657,17 +696,18 @@ class BlogService {
     const response = await fetch(url, fetchOptions);
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unable to read error response');
+      const errorText = await response.text().catch(() => "Unable to read error response");
       const errorMessage = `Failed to fetch blog post: ${response.status} ${response.statusText}`;
 
-      if (typeof window === 'undefined') {
-        const env = process.env.NODE_ENV || 'development';
-        const isStaging = process.env.NEXT_PUBLIC_SITE_URL?.includes('staging') || env === 'production';
-        
+      if (typeof window === "undefined") {
+        const env = process.env.NODE_ENV || "development";
+        const isStaging =
+          process.env.NEXT_PUBLIC_SITE_URL?.includes("staging") || env === "production";
+
         logger.error(`[BlogService] API error for slug "${slug}"`, {
           status: response.status,
           statusText: response.statusText,
-          url: url.replace(encodedSlug, '[SLUG]'),
+          url: url.replace(encodedSlug, "[SLUG]"),
           baseUrl,
           errorText: errorText.slice(0, 500), // Limit error text length
           slug,
@@ -687,12 +727,13 @@ class BlogService {
     // Validate response structure
     if (!json || !json.data) {
       const errorMessage = `Invalid API response structure for slug: ${slug}`;
-      if (typeof window === 'undefined') {
-        const env = process.env.NODE_ENV || 'development';
-        const isStaging = process.env.NEXT_PUBLIC_SITE_URL?.includes('staging') || env === 'production';
-        
+      if (typeof window === "undefined") {
+        const env = process.env.NODE_ENV || "development";
+        const isStaging =
+          process.env.NEXT_PUBLIC_SITE_URL?.includes("staging") || env === "production";
+
         logger.error(`[BlogService] ${errorMessage}`, {
-          json: json ? Object.keys(json) : 'null',
+          json: json ? Object.keys(json) : "null",
           hasData: !!json?.data,
           slug,
           env,
@@ -701,12 +742,13 @@ class BlogService {
       }
       throw new Error(errorMessage);
     }
-    
+
     // Log successful fetch (server-side only)
-    if (typeof window === 'undefined') {
-      const env = process.env.NODE_ENV || 'development';
-      const isStaging = process.env.NEXT_PUBLIC_SITE_URL?.includes('staging') || env === 'production';
-      
+    if (typeof window === "undefined") {
+      const env = process.env.NODE_ENV || "development";
+      const isStaging =
+        process.env.NEXT_PUBLIC_SITE_URL?.includes("staging") || env === "production";
+
       logger.info(`[BlogService] Successfully fetched blog post by slug`, {
         slug,
         postId: json.data?.id,
@@ -737,7 +779,10 @@ class BlogService {
   }
 
   // Update blog post (authenticated)
-  async updateBlogPost(id: number, data: Partial<CreateBlogPostData>): Promise<ApiResponse<BlogPost>> {
+  async updateBlogPost(
+    id: number,
+    data: Partial<CreateBlogPostData>,
+  ): Promise<ApiResponse<BlogPost>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-posts/${id}`, {
       method: "PUT",
       headers: await this.getHeaders(),
@@ -829,7 +874,10 @@ class BlogService {
   }
 
   // Update blog category (authenticated)
-  async updateBlogCategory(id: number, data: Partial<CreateBlogCategoryData>): Promise<ApiResponse<BlogCategory>> {
+  async updateBlogCategory(
+    id: number,
+    data: Partial<CreateBlogCategoryData>,
+  ): Promise<ApiResponse<BlogCategory>> {
     const payload: Record<string, unknown> = { ...data };
     if (!payload.Title && payload.Name) {
       payload.Title = payload.Name;
@@ -1000,7 +1048,10 @@ class BlogService {
   }
 
   // Update blog author (authenticated)
-  async updateBlogAuthor(id: number, data: Partial<CreateBlogAuthorData>): Promise<ApiResponse<BlogAuthor>> {
+  async updateBlogAuthor(
+    id: number,
+    data: Partial<CreateBlogAuthorData>,
+  ): Promise<ApiResponse<BlogAuthor>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-authors/${id}`, {
       method: "PUT",
       headers: await this.getHeaders(),
@@ -1042,9 +1093,12 @@ class BlogService {
     searchParams.append("populate[replies][populate][user]", "*");
     searchParams.append("populate[replies][populate][user][populate][user_info]", "*");
 
-    const response = await fetch(`${this.getBaseUrl()}/blog-comments/post/${postId}?${searchParams}`, {
-      headers: await this.getHeaders(),
-    });
+    const response = await fetch(
+      `${this.getBaseUrl()}/blog-comments/post/${postId}?${searchParams}`,
+      {
+        headers: await this.getHeaders(),
+      },
+    );
 
     if (!response.ok) {
       throw new Error("Failed to fetch blog comments");
@@ -1059,7 +1113,9 @@ class BlogService {
   }
 
   // Get all comments (admin)
-  async getAllBlogComments(params: { status?: string; page?: number; pageSize?: number } = {}): Promise<PaginatedResponse<BlogComment>> {
+  async getAllBlogComments(
+    params: { status?: string; page?: number; pageSize?: number } = {},
+  ): Promise<PaginatedResponse<BlogComment>> {
     const searchParams = new URLSearchParams();
     searchParams.append("pagination[page]", (params.page || 1).toString());
     searchParams.append("pagination[pageSize]", (params.pageSize || 20).toString());
@@ -1092,7 +1148,7 @@ class BlogService {
   async createBlogComment(
     postId: number,
     content: string,
-    parentCommentId?: number
+    parentCommentId?: number,
   ): Promise<ApiResponse<BlogComment>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-comments`, {
       method: "POST",
@@ -1110,9 +1166,9 @@ class BlogService {
       const payload = await response.json().catch(() => null);
       // Carry the status so the composer can tell an expired session (401)
       // apart from an account that may not comment (403).
-      const error = new Error(
-        payload?.error?.message || "Failed to create comment",
-      ) as Error & { status?: number };
+      const error = new Error(payload?.error?.message || "Failed to create comment") as Error & {
+        status?: number;
+      };
       error.status = response.status;
       throw error;
     }
@@ -1122,7 +1178,10 @@ class BlogService {
   }
 
   // Update comment status (admin)
-  async updateBlogCommentStatus(id: number, status: "Pending" | "Approved" | "Rejected"): Promise<ApiResponse<BlogComment>> {
+  async updateBlogCommentStatus(
+    id: number,
+    status: "Pending" | "Approved" | "Rejected",
+  ): Promise<ApiResponse<BlogComment>> {
     const response = await fetch(`${this.getBaseUrl()}/blog-comments/${id}`, {
       method: "PUT",
       headers: await this.getHeaders(),

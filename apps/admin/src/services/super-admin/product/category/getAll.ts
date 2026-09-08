@@ -22,11 +22,15 @@ export interface categoryResponseType {
   attributes: CategoryAttributes;
 }
 
-export const getAllCategories = async (): Promise<PaginatedResponse<categoryResponseType>> => {
+export const getAllCategories = async (): Promise<
+  PaginatedResponse<categoryResponseType>
+> => {
   const endpoint = `${ENDPOINTS.PRODUCT.CATEGORY}`;
   try {
     // Use no-store cache for super-admin pages to ensure fresh data
-    const response = await apiClient.get<PaginatedResponse<categoryResponseType>>(endpoint, {
+    const response = await apiClient.get<
+      PaginatedResponse<categoryResponseType>
+    >(endpoint, {
       params: {
         "pagination[limit]": -1, // Fetch ALL categories without pagination limit
         "populate[parent]": "*", // Needed to show each category's place in the tree

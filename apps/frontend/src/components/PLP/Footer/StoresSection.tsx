@@ -19,12 +19,7 @@ interface StoresSectionProps {
   contactNumbers: IdentityContactNumber[];
 }
 
-const StoresSection = ({
-  stores,
-  showStores,
-  socialLinks,
-  contactNumbers,
-}: StoresSectionProps) => {
+const StoresSection = ({ stores, showStores, socialLinks, contactNumbers }: StoresSectionProps) => {
   const renderStores = showStores && stores.length > 0;
 
   return (
@@ -38,7 +33,7 @@ const StoresSection = ({
             return (
               <div key={index} className="flex flex-col gap-2">
                 {store.address && (
-                  <p className="text-sm text-right text-neutral-500 md:max-w-[280px]">
+                  <p className="text-right text-sm text-neutral-500 md:max-w-[280px]">
                     {store.name ? `${store.name}: ${store.address}` : store.address}
                   </p>
                 )}
@@ -113,9 +108,7 @@ const StoresSection = ({
                 href={href}
                 className="flex items-center justify-end gap-1 hover:opacity-80"
                 aria-label={`${contact.label || (isWhatsapp ? "واتس‌اپ" : "تماس")}: ${contact.number}`}
-                {...(isWhatsapp
-                  ? { target: "_blank", rel: "noopener noreferrer" }
-                  : {})}
+                {...(isWhatsapp ? { target: "_blank", rel: "noopener noreferrer" } : {})}
               >
                 {icon}
                 {number}

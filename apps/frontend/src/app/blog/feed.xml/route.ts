@@ -1,19 +1,19 @@
-import { NextResponse } from 'next/server';
-import { blogService } from '@/services/blog/blog.service';
-import resolveAssetUrl from '@/utils/resolveAssetUrl';
-import { SITE_NAME, SITE_URL } from '@/config/site';
+import { NextResponse } from "next/server";
+import { blogService } from "@/services/blog/blog.service";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
+import { SITE_NAME, SITE_URL } from "@/config/site";
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const search = searchParams.get('search') || undefined;
+    const search = searchParams.get("search") || undefined;
 
     // Fetch published blog posts
     const response = await blogService.getBlogPosts({
       includeContent: true,
       pageSize: 20,
-      status: 'Published',
-      sort: 'PublishedAt:desc',
+      status: "Published",
+      sort: "PublishedAt:desc",
       search,
     });
 
@@ -37,9 +37,9 @@ export async function GET(request: Request) {
         const pubDate = post.PublishedAt
           ? new Date(post.PublishedAt).toUTCString()
           : new Date(post.createdAt).toUTCString();
-        const excerpt = post.Excerpt || post.ShortContent || '';
+        const excerpt = post.Excerpt || post.ShortContent || "";
         const content = post.Content || excerpt;
-        const category = post.blog_category?.Name || 'عمومی';
+        const category = post.blog_category?.Name || "عمومی";
 
         return `
     <item>
@@ -50,24 +50,21 @@ export async function GET(request: Request) {
       <content:encoded><![CDATA[${content}]]></content:encoded>
       <pubDate>${pubDate}</pubDate>
       <category><![CDATA[${category}]]></category>
-      ${imageUrl ? `<enclosure url="${imageUrl}" type="image/jpeg" />` : ''}
+      ${imageUrl ? `<enclosure url="${imageUrl}" type="image/jpeg" />` : ""}
     </item>`;
       })
-      .join('')}
+      .join("")}
   </channel>
 </rss>`;
 
     return new NextResponse(rss, {
       headers: {
-        'Content-Type': 'application/rss+xml; charset=utf-8',
-        'Cache-Control': 'public, s-maxage=600, stale-while-revalidate=300',
+        "Content-Type": "application/rss+xml; charset=utf-8",
+        "Cache-Control": "public, s-maxage=600, stale-while-revalidate=300",
       },
     });
   } catch (error) {
-    console.error('Error generating RSS feed:', error);
-    return new NextResponse('Error generating RSS feed', { status: 500 });
+    console.error("Error generating RSS feed:", error);
+    return new NextResponse("Error generating RSS feed", { status: 500 });
   }
 }
-
-
-

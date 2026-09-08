@@ -1,4 +1,7 @@
-import { extractErrorStatus, getUserFacingErrorMessage } from "../userErrorMessage";
+import {
+  extractErrorStatus,
+  getUserFacingErrorMessage,
+} from "../userErrorMessage";
 
 /**
  * Every failure used to collapse into one sentence — "متأسفانه مشکلی پیش آمد" —
@@ -18,7 +21,9 @@ describe("getUserFacingErrorMessage", () => {
   it("passes through a Persian message from the backend unchanged", () => {
     const message = getUserFacingErrorMessage({
       status: 400,
-      response: { data: { error: { message: "این کد تخفیف برای شما فعال نیست." } } },
+      response: {
+        data: { error: { message: "این کد تخفیف برای شما فعال نیست." } },
+      },
     });
 
     expect(message).toBe("این کد تخفیف برای شما فعال نیست.");
@@ -26,10 +31,19 @@ describe("getUserFacingErrorMessage", () => {
 
   it.each([
     [401, "نشست شما منقضی شده است. دوباره وارد شوید."],
-    [403, "شما به این بخش دسترسی ندارید. اگر لازم است، از مدیر سیستم دسترسی بگیرید."],
+    [
+      403,
+      "شما به این بخش دسترسی ندارید. اگر لازم است، از مدیر سیستم دسترسی بگیرید.",
+    ],
     [404, "این مورد پیدا نشد. ممکن است حذف شده باشد؛ صفحه را تازه کنید."],
-    [409, "این مورد در این فاصله تغییر کرده است. صفحه را تازه کنید و دوباره اقدام کنید."],
-    [429, "تعداد درخواست‌ها بیش از حد است. چند لحظه صبر کنید و دوباره تلاش کنید."],
+    [
+      409,
+      "این مورد در این فاصله تغییر کرده است. صفحه را تازه کنید و دوباره اقدام کنید.",
+    ],
+    [
+      429,
+      "تعداد درخواست‌ها بیش از حد است. چند لحظه صبر کنید و دوباره تلاش کنید.",
+    ],
   ])("explains a bare %i with its own next step", (status, expected) => {
     expect(getUserFacingErrorMessage({ status })).toBe(expected);
   });
@@ -55,7 +69,9 @@ describe("getUserFacingErrorMessage", () => {
   });
 
   it("falls back to the caller's message when nothing else is known", () => {
-    expect(getUserFacingErrorMessage({}, "خطا در حذف دسته‌بندی")).toBe("خطا در حذف دسته‌بندی");
+    expect(getUserFacingErrorMessage({}, "خطا در حذف دسته‌بندی")).toBe(
+      "خطا در حذف دسته‌بندی",
+    );
   });
 });
 

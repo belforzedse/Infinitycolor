@@ -48,7 +48,7 @@ export default function FavoritesPage() {
   // Filter favorites based on global liked products atom for optimistic updates
   const visibleFavorites = useMemo(() => {
     const likedProductIds = new Set(
-      likedProducts.map((lp) => lp.product?.id?.toString()).filter(Boolean)
+      likedProducts.map((lp) => lp.product?.id?.toString()).filter(Boolean),
     );
 
     // Only show favorites that are still in the liked products atom
@@ -62,12 +62,8 @@ export default function FavoritesPage() {
   const mapFavoriteToProps = (favorite: ProductLike) => {
     const product = favorite.product;
 
-    const status =
-      (product as any)?.Status ||
-      (product as any)?.attributes?.Status;
-    const removedAt =
-      (product as any)?.removedAt ||
-      (product as any)?.attributes?.removedAt;
+    const status = (product as any)?.Status || (product as any)?.attributes?.Status;
+    const removedAt = (product as any)?.removedAt || (product as any)?.attributes?.removedAt;
 
     if (status && status !== "Active") {
       return null;
@@ -120,74 +116,69 @@ export default function FavoritesPage() {
   return (
     <UserContainer className="flex flex-col gap-6 py-6 lg:py-10" dir="rtl">
       <StorefrontAccountShell contentClassName="flex flex-col gap-6">
-          <AccountQuickLinks />
+        <AccountQuickLinks />
 
-          <div className="flex flex-col gap-2">
-            <h1 className="text-2xl font-semibold text-foreground-primary lg:text-3xl">
-              علاقه‌مندی‌ها
-            </h1>
-            <p className="text-sm text-slate-500 lg:text-base">
-              لیست محصولات مورد علاقه خود را مرور کنید و خریدتان را تکمیل کنید.
-            </p>
-          </div>
+        <div className="flex flex-col gap-2">
+          <h1 className="text-foreground-primary text-2xl font-semibold lg:text-3xl">
+            علاقه‌مندی‌ها
+          </h1>
+          <p className="text-sm text-slate-500 lg:text-base">
+            لیست محصولات مورد علاقه خود را مرور کنید و خریدتان را تکمیل کنید.
+          </p>
+        </div>
 
-          <section className="flex flex-col gap-5 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm lg:px-6 lg:py-6">
-            {loading ? (
-              <div className="flex justify-center p-8">
-                <div className="h-10 w-10 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
-              </div>
-            ) : error ? (
-              <div className="rounded-lg bg-gray-50 p-8 text-center">
-                <p className="text-gray-600">{error}</p>
-              </div>
-            ) : visibleFavorites.length === 0 ? (
-              <div className="rounded-lg bg-gray-50 p-8 text-center">
-                <p className="text-gray-600">محصولی در لیست علاقه‌مندی‌ها وجود ندارد.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {visibleFavorites.map((favorite) => {
-                  const mapped = mapFavoriteToProps(favorite);
-                  if (!mapped) return null;
-                  return (
-                    <ProductSmallCard
-                      key={favorite.id}
-                      {...mapped}
-                      className="h-full md:!w-full"
-                    />
-                  );
-                })}
-              </div>
-            )}
+        <section className="flex flex-col gap-5 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm lg:px-6 lg:py-6">
+          {loading ? (
+            <div className="flex justify-center p-8">
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
+            </div>
+          ) : error ? (
+            <div className="rounded-lg bg-gray-50 p-8 text-center">
+              <p className="text-gray-600">{error}</p>
+            </div>
+          ) : visibleFavorites.length === 0 ? (
+            <div className="rounded-lg bg-gray-50 p-8 text-center">
+              <p className="text-gray-600">محصولی در لیست علاقه‌مندی‌ها وجود ندارد.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {visibleFavorites.map((favorite) => {
+                const mapped = mapFavoriteToProps(favorite);
+                if (!mapped) return null;
+                return (
+                  <ProductSmallCard key={favorite.id} {...mapped} className="h-full md:!w-full" />
+                );
+              })}
+            </div>
+          )}
 
-            {pageCount > 1 && (
-              <div className="mt-4 flex justify-center">
-                <div className="flex items-center gap-2">
-                  {page > 1 && (
-                    <button
-                      onClick={() => setPage(page - 1)}
-                      className="text-sm rounded-md border border-gray-300 px-3 py-1 hover:bg-gray-50"
-                    >
-                      قبلی
-                    </button>
-                  )}
-                  <span className="text-sm text-gray-600">
-                    صفحه {page} از {pageCount}
-                  </span>
-                  {page < pageCount && (
-                    <button
-                      onClick={() => setPage(page + 1)}
-                      className="text-sm rounded-md border border-gray-300 px-3 py-1 hover:bg-gray-50"
-                    >
-                      بعدی
-                    </button>
-                  )}
-                </div>
+          {pageCount > 1 && (
+            <div className="mt-4 flex justify-center">
+              <div className="flex items-center gap-2">
+                {page > 1 && (
+                  <button
+                    onClick={() => setPage(page - 1)}
+                    className="rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50"
+                  >
+                    قبلی
+                  </button>
+                )}
+                <span className="text-sm text-gray-600">
+                  صفحه {page} از {pageCount}
+                </span>
+                {page < pageCount && (
+                  <button
+                    onClick={() => setPage(page + 1)}
+                    className="rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50"
+                  >
+                    بعدی
+                  </button>
+                )}
               </div>
-            )}
-          </section>
+            </div>
+          )}
+        </section>
       </StorefrontAccountShell>
     </UserContainer>
   );
 }
-

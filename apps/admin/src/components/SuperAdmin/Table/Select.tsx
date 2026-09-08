@@ -40,7 +40,9 @@ const SuperAdminTableSelect = ({
   useEffect(() => {
     setTimeout(() => {
       setSelectedOption(
-        filterOptions.find((option) => +option.id === +(selectedOptionId || -1)) ||
+        filterOptions.find(
+          (option) => +option.id === +(selectedOptionId || -1),
+        ) ||
           filterOptions.find((option) => option.id === selectedOptionId) ||
           filterOptions[0] || {
             id: "",
@@ -57,7 +59,10 @@ const SuperAdminTableSelect = ({
   };
 
   return (
-    <div ref={containerRef} className={cn("relative rounded-lg border border-slate-100", className)}>
+    <div
+      ref={containerRef}
+      className={cn("relative rounded-lg border border-slate-100", className)}
+    >
       <button
         type="button"
         onClick={() => setIsOpen((open) => !open)}
@@ -68,9 +73,15 @@ const SuperAdminTableSelect = ({
           buttonClassName,
         )}
       >
-        <span className="min-w-0 truncate text-xs text-gray-800">{selectedOption.title}</span>
+        <span className="min-w-0 truncate text-xs text-gray-800">
+          {selectedOption.title}
+        </span>
         <ChevronDownIcon
-          className={cn("h-6 w-6 shrink-0 transition-transform", iconClassName, isOpen ? "rotate-180" : "")}
+          className={cn(
+            "h-6 w-6 shrink-0 transition-transform",
+            iconClassName,
+            isOpen ? "rotate-180" : "",
+          )}
         />
       </button>
 
@@ -83,7 +94,9 @@ const SuperAdminTableSelect = ({
                   type="button"
                   onClick={() => handleOptionClick(option)}
                   className={`text-xs w-full min-w-0 rounded-lg px-2 py-1.5 text-right transition-colors hover:bg-stone-50 ${
-                    selectedOption.id === option.id ? "text-primary bg-stone-50" : "text-gray-800"
+                    selectedOption.id === option.id
+                      ? "text-primary bg-stone-50"
+                      : "text-gray-800"
                   }`}
                 >
                   <span className="block truncate">{option.title}</span>

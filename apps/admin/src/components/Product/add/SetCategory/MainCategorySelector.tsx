@@ -9,7 +9,10 @@ import {
 } from "@/atoms/super-admin/products";
 import { useAtomValue, useAtom } from "jotai";
 import type { categoryResponseType } from "@/services/super-admin/product/category/getAll";
-import type { EditProductData, ProductData } from "@/types/super-admin/products";
+import type {
+  EditProductData,
+  ProductData,
+} from "@/types/super-admin/products";
 import { useProductCategory } from "@/hooks/product/useCategory";
 import { categoryMatchesQuery, categoryPathLabel } from "./categoryPath";
 
@@ -17,14 +20,19 @@ interface MainCategorySelectorProps {
   isEditMode?: boolean;
 }
 
-function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps) {
-  const [selectedMainCategoryId, setSelectedMainCategoryId] = useState<string | null>(null);
+function MainCategorySelector({
+  isEditMode = false,
+}: MainCategorySelectorProps) {
+  const [selectedMainCategoryId, setSelectedMainCategoryId] = useState<
+    string | null
+  >(null);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   const CategoriesData = useAtomValue(productCategoryDataAtom);
   const [draftProductData, setDraftProductData] = useAtom(productDataAtom);
-  const [existingProductData, setExistingProductData] = useAtom(editProductDataAtom);
+  const [existingProductData, setExistingProductData] =
+    useAtom(editProductDataAtom);
   const { fetchAllCategories } = useProductCategory({ isEditMode });
 
   const productData = isEditMode ? existingProductData : draftProductData;
@@ -36,7 +44,9 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
     }
   }, [CategoriesData, fetchAllCategories]);
 
-  const onChangeMainCategory = (category: categoryResponseType | null | undefined) => {
+  const onChangeMainCategory = (
+    category: categoryResponseType | null | undefined,
+  ) => {
     if (!category) {
       // Clear selection
       setSelectedMainCategoryId(null);
@@ -106,7 +116,8 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
     }
     return (
       CategoriesData.find(
-        (cat: categoryResponseType) => cat.id.toString() === selectedMainCategoryId,
+        (cat: categoryResponseType) =>
+          cat.id.toString() === selectedMainCategoryId,
       ) ?? null
     );
   }, [selectedMainCategoryId, CategoriesData]);
@@ -141,7 +152,9 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
             <Combobox.Options className="absolute z-[60] mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
               {filteredCategories.length === 0 ? (
                 <div className="px-4 py-2 text-sm text-neutral-500">
-                  {searchQuery ? "نتیجه‌ای یافت نشد" : "دسته‌بندی‌ای موجود نیست"}
+                  {searchQuery
+                    ? "نتیجه‌ای یافت نشد"
+                    : "دسته‌بندی‌ای موجود نیست"}
                 </div>
               ) : (
                 filteredCategories.map((category: categoryResponseType) => (
@@ -159,11 +172,15 @@ function MainCategorySelector({ isEditMode = false }: MainCategorySelectorProps)
                       const path = categoryPathLabel(category);
                       return (
                         <div className="flex min-w-0 flex-col gap-0.5">
-                          <span className={selected ? "font-medium" : "font-normal"}>
+                          <span
+                            className={selected ? "font-medium" : "font-normal"}
+                          >
                             {category.attributes?.Title || "-"}
                           </span>
                           {path && (
-                            <span className="text-xs truncate text-neutral-400">{path}</span>
+                            <span className="text-xs truncate text-neutral-400">
+                              {path}
+                            </span>
                           )}
                         </div>
                       );

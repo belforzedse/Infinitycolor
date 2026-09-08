@@ -10,6 +10,7 @@ import { validateBlogSlug, generateUniqueBlogSlug } from "../../../utils/slugVal
 import { enrichBlogPostsWithAuthorNames } from "../../../utils/blog-helpers";
 import { normalizePopulateQuery } from "../../../utils/normalizePopulate";
 import { buildHomepageBlogCardQuery, projectHomepageBlogCard } from "./homepage-blog-cards";
+import { normalizeBlogListPagination } from "./blog-list-pagination";
 import {
   buildCacheKey,
   getCacheTtlFromEnv,
@@ -42,13 +43,18 @@ const blogPostController = factories.createCoreController(
       // Always ensure blog_author fields (including avatar) are available
       // Deep merge blog_author.populate instead of overwriting
       const userPopulate = ctx.query.populate || {};
+      const userAuthorPopulate =
+        userPopulate.blog_author && typeof userPopulate.blog_author === "object"
+          ? userPopulate.blog_author
+          : {};
       const mergedPopulate = {
         ...defaultPopulate,
         ...userPopulate,
         blog_author: {
+          ...userAuthorPopulate,
           populate: {
             Avatar: true,
-            ...(userPopulate.blog_author?.populate || {}),
+            ...(userAuthorPopulate.populate || {}),
           },
         },
       };
@@ -180,10 +186,16 @@ const blogPostController = factories.createCoreController(
 
       const sanitizedQuery = await (this as any).sanitizeQuery(ctx);
 
-      // Use entityService directly to bypass sanitization issues
+      const pagination = normalizeBlogListPagination(sanitizedQuery.pagination);
+      const { pagination: _restPagination, ...entityQuery } = sanitizedQuery;
+
+      // Entity Service uses start/limit, not the REST page/pageSize object. The
+      // old call passed `pagination` through unchanged, so every nominal 8-card
+      // query returned all published articles and their rich-text bodies.
       const results = await strapi.entityService.findMany("api::blog-post.blog-post", {
-        ...sanitizedQuery,
-        populate: ctx.query.populate,
+        ...entityQuery,
+        start: pagination.start,
+        limit: pagination.limit,
       });
 
       // Calculate pagination manually since we're using entityService
@@ -191,13 +203,11 @@ const blogPostController = factories.createCoreController(
         filters: sanitizedQuery.filters,
       });
 
-      const page = sanitizedQuery.pagination?.page || 1;
-      const pageSize = sanitizedQuery.pagination?.pageSize || 25;
-      const pageCount = Math.ceil(total / pageSize);
+      const pageCount = Math.ceil(total / pagination.pageSize);
 
-      const pagination = {
-        page,
-        pageSize,
+      const responsePagination = {
+        page: pagination.page,
+        pageSize: pagination.pageSize,
         pageCount,
         total,
       };
@@ -205,7 +215,7 @@ const blogPostController = factories.createCoreController(
       const enrichedResults = enrichBlogPostsWithAuthorNames(results);
 
       const response = (await (this as any).transformResponse(enrichedResults, {
-        pagination,
+        pagination: responsePagination,
       })) as any;
 
       return response;

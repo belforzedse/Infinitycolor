@@ -67,7 +67,9 @@ export default function QuickViewGallery({
                 onClick={() => onSelectIndex(index)}
                 className={[
                   "relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl ring-1 transition",
-                  active ? "ring-infinity-primary" : "ring-black/10 hover:ring-infinity-primary-lighter",
+                  active
+                    ? "ring-infinity-primary"
+                    : "ring-black/10 hover:ring-infinity-primary-lighter",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary",
                 ].join(" ")}
                 aria-label={`تصویر ${faNum(index + 1)}`}
@@ -89,4 +91,3 @@ export default function QuickViewGallery({
     </div>
   );
 }
-

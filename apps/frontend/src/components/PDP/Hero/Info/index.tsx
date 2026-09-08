@@ -121,13 +121,16 @@ export default function PDPHeroInfo(props: Props) {
   const [selectedGeneric, setSelectedGeneric] = useState<Record<string, string>>(
     initialSelection.generic,
   );
-  const genericSelectors = useMemo(
-    () => getGenericAttributeSelectors(productData),
-    [productData],
-  );
+  const genericSelectors = useMemo(() => getGenericAttributeSelectors(productData), [productData]);
 
   // Compute disabled ids for colors, sizes and models based on productData stock
-  const { disabledColors, disabledSizes, disabledModels, disabledGenericTerms, availableVariations } = useMemo(() => {
+  const {
+    disabledColors,
+    disabledSizes,
+    disabledModels,
+    disabledGenericTerms,
+    availableVariations,
+  } = useMemo(() => {
     const disabledColors: string[] = [];
     const disabledSizes: string[] = [];
     const disabledModels: string[] = [];
@@ -359,12 +362,7 @@ export default function PDPHeroInfo(props: Props) {
     setSelectedSize(best.ids.sizeId);
     setSelectedModel(best.ids.modelId);
     setSelectedGeneric(best.generic);
-    updateVariationDetails(
-      best.ids.colorId,
-      best.ids.sizeId,
-      best.ids.modelId,
-      best.generic,
-    );
+    updateVariationDetails(best.ids.colorId, best.ids.sizeId, best.ids.modelId, best.generic);
   };
 
   // Sync price/stock with the first in-stock variation (matches product card availability)
