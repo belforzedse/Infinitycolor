@@ -41,6 +41,7 @@ import {
   type AdminRoleId,
 } from "@repo/auth-core";
 import { ensureAuditEventStorage } from "./audit/storage";
+import { ensureCategoryEditorialDatabaseInvariant } from "./api/product-category-content/services/category-editorial-database";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -72,7 +73,6 @@ const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
   // product.read capability policy but Strapi U&P still 403s the route.
   "api::admin-product-list": { "admin-product-list": ["query"] },
   "api::product": { product: [...READ_ACTIONS, "search"] },
-  "api::product-category-content": { "product-category-content": READ_ACTIONS },
   "api::product-faq": { "product-faq": READ_ACTIONS },
   "api::product-size-helper": { "product-size-helper": READ_ACTIONS },
   "api::product-tag": { "product-tag": READ_ACTIONS },
@@ -127,6 +127,12 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "api::faq-question": { "faq-question": CHILD_CRUD_ACTIONS },
     "api::site-faq": { "site-faq": ["find", "update"] },
   },
+  "content.categoryEditorial.manage": {
+    "api::product-category-content": {
+      "product-category-content": ["targets", "editable", "upsert"],
+    },
+    "plugin::upload": { "content-api": ["find", "findOne", "upload"] },
+  },
   "product.read": PRODUCT_READ_GRANTS,
   "product.create": { "api::product": { product: ["create"] } },
   "product.update": { "api::product": { product: ["update"] } },
@@ -151,7 +157,6 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "product.size-guide.manage": {
     "api::product-size-helper": { "product-size-helper": CREATE_UPDATE_ACTIONS },
-    "api::product-category-content": { "product-category-content": CREATE_UPDATE_ACTIONS },
     "api::product-faq": { "product-faq": CREATE_UPDATE_ACTIONS },
     "api::product-tag": { "product-tag": CREATE_UPDATE_ACTIONS },
   },
@@ -323,9 +328,6 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       },
       "api::product-category": {
         "product-category": READ_ACTIONS,
-      },
-      "api::product-category-content": {
-        "product-category-content": READ_ACTIONS,
       },
       "api::product-faq": {
         "product-faq": READ_ACTIONS,
@@ -735,6 +737,18 @@ type RoleDuplicateConsolidation = {
   duplicateRoleIds: number[];
 };
 
+// These generic category-content actions were intentionally removed with the
+// bounded category-editorial API. Strapi drops their action definitions before
+// our bootstrap snapshot runs, so they cannot be represented in (or restored
+// from) the current controller tree. Every other unknown action still aborts.
+const RETIRED_PERMISSION_ACTIONS = new Set([
+  "api::product-category-content.product-category-content.find",
+  "api::product-category-content.product-category-content.findOne",
+  "api::product-category-content.product-category-content.create",
+  "api::product-category-content.product-category-content.update",
+  "api::product-category-content.product-category-content.delete",
+]);
+
 function permissionTreeForActions(strapi: Strapi, actionNames: readonly string[]) {
   const tree = strapi
     .plugin("users-permissions")
@@ -799,6 +813,7 @@ async function captureRoleSyncSnapshot(
         permissionActions: ((role.permissions || []) as any[])
           .map((permission) => String(permission.action || ""))
           .filter(Boolean)
+          .filter((action) => !RETIRED_PERMISSION_ACTIONS.has(action))
           .sort(),
       })),
     assignments: (assignmentRows as any[])
@@ -894,9 +909,7 @@ function planRoleDuplicateConsolidation(
   const isExpectedRollbackPair =
     canonical &&
     duplicates.length === 1 &&
-    matches.every(
-      (role) => role.type === definition.type && allowedNames.has(String(role.name)),
-    ) &&
+    matches.every((role) => role.type === definition.type && allowedNames.has(String(role.name))) &&
     new Set(matches.map((role) => String(role.name))).size === matches.length;
 
   if (!isExpectedRollbackPair) return null;
@@ -930,12 +943,8 @@ async function consolidateRoleDuplicates(
           where: { id: Number(user.id) },
           populate: { role: { select: ["id"] } },
         });
-        if (
-          Number(reassigned?.role?.id ?? reassigned?.role) !== consolidation.canonicalRoleId
-        ) {
-          throw new Error(
-            `Role consolidation assignment verification failed for user ${user.id}`,
-          );
+        if (Number(reassigned?.role?.id ?? reassigned?.role) !== consolidation.canonicalRoleId) {
+          throw new Error(`Role consolidation assignment verification failed for user ${user.id}`);
         }
       }
     }
@@ -1148,7 +1157,9 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
       if (!existing) createdRoleIds.push(Number(role.id));
 
       strapi.log.info(
-        `${existing ? "✓ Role already exists" : "✓ Created users-permissions role"}: ${roleDefinition.name}`,
+        `${existing ? "✓ Role already exists" : "✓ Created users-permissions role"}: ${
+          roleDefinition.name
+        }`,
         { roleId: role.id },
       );
       await assignRolePermissions(strapi, role as any, roleDefinition.type);
@@ -1168,7 +1179,9 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
       strapi.log.error("Role synchronization failed; pre-sync snapshot restored and verified");
     } catch (rollbackError) {
       throw new Error(
-        `Role synchronization failed and rollback verification failed: ${(rollbackError as Error).message}; original error: ${(error as Error).message}`,
+        `Role synchronization failed and rollback verification failed: ${
+          (rollbackError as Error).message
+        }; original error: ${(error as Error).message}`,
       );
     }
     throw error;
@@ -1178,8 +1191,7 @@ async function ensurePluginRolesAndPermissions(strapi: Strapi) {
 const authenticationRedisClient = createClient({
   url: process.env.REDIS_URL,
   ...(process.env.REDIS_PASSWORD && { password: process.env.REDIS_PASSWORD }),
-})
-  .on("error", (err) => console.log("Redis Client Error", err));
+}).on("error", (err) => console.log("Redis Client Error", err));
 
 // Type generation imports the application entrypoint but never uses runtime
 // authentication/cache services. Do not open a socket that would keep the CLI
@@ -1258,6 +1270,7 @@ export default {
       // Mellat is always active (no feature flag), so its own payment-attempt
       // provider-reference invariant runs unconditionally alongside SnappPay's.
       await ensurePaymentAttemptDatabaseInvariants(strapi as any);
+      await ensureCategoryEditorialDatabaseInvariant(strapi);
     }
 
     if (snappayHardenedInitiationEnabled) {

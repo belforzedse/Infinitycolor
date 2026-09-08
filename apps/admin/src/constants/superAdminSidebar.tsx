@@ -191,6 +191,12 @@ const superAdminSidebar: SidebarItem[] = [
         icon: <FiFileText className="h-5 w-5 text-infinity-primary" />,
       },
       {
+        id: "blog-category-editorial",
+        label: "محتوای دسته‌های فروشگاه",
+        href: "/blog/category-editorial",
+        icon: <FiFileText className="h-5 w-5 text-infinity-primary" />,
+      },
+      {
         id: "blog-categories",
         label: "دسته‌بندی‌ها",
         href: "/blog/categories",

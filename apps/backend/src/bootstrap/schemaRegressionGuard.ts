@@ -21,6 +21,13 @@ import type { Strapi } from "@strapi/strapi";
 
 const SCHEMA_TABLE = "strapi_database_schema";
 const ESCAPE_HATCH = "ALLOW_SCHEMA_COLUMN_REMOVAL";
+// Strapi's one-to-many relation table carries an ordering column. The guarded
+// category-editorial migration first proves there is at most one link per
+// category; converting that relation to one-to-one intentionally retires only
+// this non-content ordering column during the following schema sync.
+const INTENTIONAL_COLUMN_REMOVALS = new Set([
+  "product_category_contents_product_category_links.product_category_content_order",
+]);
 
 type PersistedSchema = { tables?: Array<{ name?: string; columns?: Array<{ name?: string }> }> };
 
@@ -102,7 +109,8 @@ export const findColumnRegressions = (
     }
     for (const column of table.columns ?? []) {
       if (column?.name && !declaredColumns.has(column.name)) {
-        regressions.push(`${table.name}.${column.name}`);
+        const qualifiedName = `${table.name}.${column.name}`;
+        if (!INTENTIONAL_COLUMN_REMOVALS.has(qualifiedName)) regressions.push(qualifiedName);
       }
     }
   }
@@ -110,52 +118,62 @@ export const findColumnRegressions = (
 };
 
 type ContentTypeSyncHook = {
-  hook: (
-    name: "strapi::content-types.beforeSync",
-  ) => { register: (fn: () => Promise<void>) => void };
+  hook: (name: "strapi::content-types.beforeSync") => {
+    register: (fn: () => Promise<void>) => void;
+  };
 };
 
 export const registerSchemaRegressionGuard = (strapi: Strapi) => {
-  (strapi as Strapi & ContentTypeSyncHook).hook("strapi::content-types.beforeSync").register(async () => {
-    if (String(process.env[ESCAPE_HATCH] || "").toLowerCase() === "true") {
-      strapi.log.warn(`${ESCAPE_HATCH}=true — skipping the schema regression guard.`);
-      return;
-    }
+  (strapi as Strapi & ContentTypeSyncHook)
+    .hook("strapi::content-types.beforeSync")
+    .register(async () => {
+      if (String(process.env[ESCAPE_HATCH] || "").toLowerCase() === "true") {
+        strapi.log.warn(`${ESCAPE_HATCH}=true — skipping the schema regression guard.`);
+        return;
+      }
 
-    const db = strapi.db as unknown as {
-      metadata: ContentTypeMetadata;
-      getSchemaConnection: () => { hasTable: (table: string) => Promise<boolean> };
-      getConnection: () => {
-        select: (column: string) => {
-          from: (table: string) => {
-            orderBy: (column: string, direction: string) => {
-              first: () => Promise<{ schema?: PersistedSchema | string } | undefined>;
+      const db = strapi.db as unknown as {
+        metadata: ContentTypeMetadata;
+        getSchemaConnection: () => { hasTable: (table: string) => Promise<boolean> };
+        getConnection: () => {
+          select: (column: string) => {
+            from: (table: string) => {
+              orderBy: (
+                column: string,
+                direction: string,
+              ) => {
+                first: () => Promise<{ schema?: PersistedSchema | string } | undefined>;
+              };
             };
           };
         };
       };
-    };
-    const connection = db.getSchemaConnection();
-    if (!(await connection.hasTable(SCHEMA_TABLE))) return;
+      const connection = db.getSchemaConnection();
+      if (!(await connection.hasTable(SCHEMA_TABLE))) return;
 
-    const row = await db.getConnection().select("schema").from(SCHEMA_TABLE).orderBy("time", "DESC").first();
-    if (!row?.schema) return;
+      const row = await db
+        .getConnection()
+        .select("schema")
+        .from(SCHEMA_TABLE)
+        .orderBy("time", "DESC")
+        .first();
+      if (!row?.schema) return;
 
-    const persisted: PersistedSchema =
-      typeof row.schema === "object" ? row.schema : JSON.parse(row.schema);
+      const persisted: PersistedSchema =
+        typeof row.schema === "object" ? row.schema : JSON.parse(row.schema);
 
-    const regressions = findColumnRegressions(persisted, collectDeclaredColumns(db.metadata));
-    if (regressions.length === 0) return;
+      const regressions = findColumnRegressions(persisted, collectDeclaredColumns(db.metadata));
+      if (regressions.length === 0) return;
 
-    strapi.log.error(
-      "Refusing to sync: this build declares fewer columns than the database has persisted. " +
-        "This is what a stale image does to a newer database, and syncing would drop them.",
-      { missing: regressions, escapeHatch: `${ESCAPE_HATCH}=true` },
-    );
-    throw new Error(
-      `Schema regression: ${regressions.length} persisted column(s) are not declared by this build ` +
-        `(${regressions.slice(0, 5).join(", ")}${regressions.length > 5 ? ", …" : ""}). ` +
-        `Deploy the correct image, or set ${ESCAPE_HATCH}=true if the removal is intended.`,
-    );
-  });
+      strapi.log.error(
+        "Refusing to sync: this build declares fewer columns than the database has persisted. " +
+          "This is what a stale image does to a newer database, and syncing would drop them.",
+        { missing: regressions, escapeHatch: `${ESCAPE_HATCH}=true` },
+      );
+      throw new Error(
+        `Schema regression: ${regressions.length} persisted column(s) are not declared by this build ` +
+          `(${regressions.slice(0, 5).join(", ")}${regressions.length > 5 ? ", …" : ""}). ` +
+          `Deploy the correct image, or set ${ESCAPE_HATCH}=true if the removal is intended.`,
+      );
+    });
 };

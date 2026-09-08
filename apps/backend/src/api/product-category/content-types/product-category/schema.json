@@ -56,9 +56,9 @@
       "target": "api::product-category.product-category",
       "mappedBy": "parent"
     },
-    "product_category_contents": {
+    "product_category_content": {
       "type": "relation",
-      "relation": "oneToMany",
+      "relation": "oneToOne",
       "target": "api::product-category-content.product-category-content",
       "mappedBy": "product_category"
     },

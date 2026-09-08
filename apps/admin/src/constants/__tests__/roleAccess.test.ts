@@ -144,8 +144,14 @@ describe("canRoleAccessPath", () => {
   describe("Editor", () => {
     it("has a blog-only admin workspace plus self-service account access", () => {
       expect(canRoleAccessPath("Editor", "/blog")).toBe(true);
+      expect(canRoleAccessPath("Editor", "/blog/category-editorial")).toBe(
+        true,
+      );
       expect(canRoleAccessPath("Editor", "/account")).toBe(true);
       expect(canRoleAccessPath("Editor", "/products")).toBe(false);
+      expect(canRoleAccessPath("Seller 1", "/blog/category-editorial")).toBe(
+        false,
+      );
       expect(canRoleAccessPath("Editor", "/orders")).toBe(false);
       expect(canRoleAccessPath("Editor", "/stories")).toBe(false);
       expect(canRoleAccessPath("Editor", "/faq")).toBe(false);
@@ -194,9 +200,9 @@ describe("getSalesNavForRole", () => {
   });
 
   it("gives a Store manager no sales analytics", () => {
-    expect(getSalesNavForRole("Store manager").map((item) => item.href)).toEqual(
-      [],
-    );
+    expect(
+      getSalesNavForRole("Store manager").map((item) => item.href),
+    ).toEqual([]);
   });
 
   it("gives Finance its reporting branch without Founder traffic", () => {
@@ -209,9 +215,9 @@ describe("getSalesNavForRole", () => {
   });
 
   it("shows the staff activity report only to Superadmin", () => {
-    expect(
-      getSalesNavForRole("Superadmin").map((item) => item.href),
-    ).toContain("/sales/activity");
+    expect(getSalesNavForRole("Superadmin").map((item) => item.href)).toContain(
+      "/sales/activity",
+    );
     for (const role of [
       "Founder",
       "Finance",
@@ -295,6 +301,7 @@ describe("sidebar", () => {
       "dashboard",
       "blog-dashboard",
       "blog-posts",
+      "blog-category-editorial",
       "blog-categories",
       "blog-category-banners",
       "blog-tags",
@@ -326,7 +333,7 @@ describe("sidebar", () => {
 
   it("keeps every role's top-level information architecture within a useful range", () => {
     const expectedCounts: Record<string, number> = {
-      Editor: 8,
+      Editor: 9,
       "Seller 1": 6,
       "Seller 2": 8,
       "Store Manager": 8,

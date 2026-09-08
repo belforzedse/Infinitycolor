@@ -23,21 +23,20 @@
     "Paragraph": {
       "type": "text"
     },
+    "Content": {
+      "type": "richtext"
+    },
     "Image": {
       "type": "media",
       "multiple": false,
       "required": false,
-      "allowedTypes": [
-        "images"
-      ]
+      "allowedTypes": ["images"]
     },
     "Audio": {
       "type": "media",
       "multiple": false,
       "required": false,
-      "allowedTypes": [
-        "audios"
-      ]
+      "allowedTypes": ["audios"]
     },
     "IsRTL": {
       "type": "boolean",
@@ -45,9 +44,9 @@
     },
     "product_category": {
       "type": "relation",
-      "relation": "manyToOne",
+      "relation": "oneToOne",
       "target": "api::product-category.product-category",
-      "inversedBy": "product_category_contents"
+      "inversedBy": "product_category_content"
     }
   }
 }

@@ -37,6 +37,10 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: "/products/categories", capability: "category.read" },
   { prefix: "/products/add", capability: "product.create" },
   { prefix: "/products", capability: "product.read" },
+  {
+    prefix: "/blog/category-editorial",
+    capability: "content.categoryEditorial.manage",
+  },
   { prefix: "/blog", capability: "content.blog.read" },
   { prefix: "/stories", capability: "content.stories.manage" },
   { prefix: "/faq", capability: "content.faq.manage" },

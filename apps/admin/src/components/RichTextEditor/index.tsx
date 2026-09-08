@@ -7,7 +7,12 @@ import Underline from "@tiptap/extension-underline";
 import Subscript from "@tiptap/extension-subscript";
 import Superscript from "@tiptap/extension-superscript";
 import TextAlign from "@tiptap/extension-text-align";
-import { Table, TableRow, TableCell, TableHeader } from "@tiptap/extension-table";
+import {
+  Table,
+  TableRow,
+  TableCell,
+  TableHeader,
+} from "@tiptap/extension-table";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
@@ -95,6 +100,7 @@ interface RichTextEditorProps {
   readOnly?: boolean;
   className?: string;
   simplified?: boolean;
+  preset?: "default" | "category-editorial";
 }
 
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
@@ -104,19 +110,18 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   readOnly = false,
   className = "",
   simplified = false,
+  preset = "default",
 }) => {
+  const isCategoryEditorial = preset === "category-editorial";
   const [viewMode, setViewMode] = React.useState<"visual" | "code">("visual");
   const [codeValue, setCodeValue] = React.useState(content || "");
   const [stats, setStats] = React.useState({ words: 0, characters: 0 });
   const previousViewModeRef = React.useRef(viewMode);
-  const debouncedOnChange = useDebouncedCallback(
-    (value: string) => {
-      if (onChange) {
-        onChange(value);
-      }
-    },
-    300,
-  );
+  const debouncedOnChange = useDebouncedCallback((value: string) => {
+    if (onChange) {
+      onChange(value);
+    }
+  }, 300);
   const editor = useEditor({
     immediatelyRender: false, // Prevent SSR hydration mismatches
     extensions: [
@@ -125,26 +130,29 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         link: false,
         underline: false,
         horizontalRule: false,
+        heading: isCategoryEditorial ? { levels: [3, 4] } : undefined,
       }),
       Underline,
-      Subscript,
-      Superscript,
-      TextAlign.configure({
-        types: ["heading", "paragraph"],
-      }),
+      ...(!isCategoryEditorial
+        ? [
+            Subscript,
+            Superscript,
+            TextAlign.configure({ types: ["heading", "paragraph"] }),
+          ]
+        : []),
       Table.configure({
         resizable: true,
       }),
       TableRow,
       TableHeader,
       TableCell,
-      TaskList,
-      TaskItem.configure({
-        nested: true,
-      }),
-      CodeBlockLowlight.configure({
-        lowlight,
-      }),
+      ...(!isCategoryEditorial
+        ? [
+            TaskList,
+            TaskItem.configure({ nested: true }),
+            CodeBlockLowlight.configure({ lowlight }),
+          ]
+        : []),
       Link.configure({
         openOnClick: false,
         autolink: true,
@@ -160,12 +168,14 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           class: "max-w-full h-auto rounded-lg",
         },
       }),
-      TextStyle,
-      Color,
-      Highlight.configure({
-        multicolor: true,
-      }),
-      HorizontalRule,
+      ...(!isCategoryEditorial
+        ? [
+            TextStyle,
+            Color,
+            Highlight.configure({ multicolor: true }),
+            HorizontalRule,
+          ]
+        : []),
       Placeholder.configure({
         placeholder,
         emptyEditorClass: "is-editor-empty",
@@ -212,7 +222,12 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     const previousViewMode = previousViewModeRef.current;
     previousViewModeRef.current = viewMode;
 
-    if (previousViewMode === "code" && viewMode === "visual" && editor && codeValue !== editor.getHTML()) {
+    if (
+      previousViewMode === "code" &&
+      viewMode === "visual" &&
+      editor &&
+      codeValue !== editor.getHTML()
+    ) {
       editor.commands.setContent(codeValue);
     }
   }, [viewMode, codeValue, editor]);
@@ -258,14 +273,16 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
   return (
     <div className="w-full border border-neutral-200 rounded-lg bg-white">
-      {!readOnly && (
+      {!readOnly && !isCategoryEditorial && (
         <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2">
           <div className="flex gap-2 text-xs">
             <button
               type="button"
               onClick={() => setViewMode("visual")}
               className={`rounded-md px-3 py-1 ${
-                viewMode === "visual" ? "bg-infinity-primary-lighter/30 text-infinity-primary" : "text-neutral-500"
+                viewMode === "visual"
+                  ? "bg-infinity-primary-lighter/30 text-infinity-primary"
+                  : "text-neutral-500"
               }`}
             >
               دیداری
@@ -274,7 +291,9 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
               type="button"
               onClick={() => setViewMode("code")}
               className={`rounded-md px-3 py-1 ${
-                viewMode === "code" ? "bg-infinity-primary-lighter/30 text-infinity-primary" : "text-neutral-500"
+                viewMode === "code"
+                  ? "bg-infinity-primary-lighter/30 text-infinity-primary"
+                  : "text-neutral-500"
               }`}
             >
               کد
@@ -284,24 +303,30 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       )}
 
       <div className="relative">
-        {!readOnly && viewMode === "visual" && <RichTextToolbar editor={editor} simplified={simplified} />}
-
-        <div className="min-h-[200px] p-5">
-        {viewMode === "visual" ? (
-          <EditorContent
+        {!readOnly && viewMode === "visual" && (
+          <RichTextToolbar
             editor={editor}
-            className="tiptap min-h-[150px] focus-within:outline-none text-sm"
-          />
-        ) : (
-          <textarea
-            value={codeValue}
-            onChange={(e) => handleCodeChange(e.target.value)}
-            dir="ltr"
-            className="min-h-[150px] w-full rounded-md border border-neutral-200 bg-neutral-50 p-3 font-mono text-xs text-neutral-700 focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary"
-            disabled={readOnly}
-            placeholder="<p>...</p>"
+            simplified={simplified}
+            preset={preset}
           />
         )}
+
+        <div className="min-h-[200px] p-5">
+          {viewMode === "visual" ? (
+            <EditorContent
+              editor={editor}
+              className="tiptap min-h-[150px] focus-within:outline-none text-sm"
+            />
+          ) : (
+            <textarea
+              value={codeValue}
+              onChange={(e) => handleCodeChange(e.target.value)}
+              dir="ltr"
+              className="min-h-[150px] w-full rounded-md border border-neutral-200 bg-neutral-50 p-3 font-mono text-xs text-neutral-700 focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary"
+              disabled={readOnly}
+              placeholder="<p>...</p>"
+            />
+          )}
         </div>
       </div>
 

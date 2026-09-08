@@ -9,6 +9,7 @@ import SiteSearchTracker from "@/components/Analytics/SiteSearchTracker";
 import CustomDimensionTracker from "@/components/Analytics/CustomDimensionTracker";
 import { SkeletonBlock } from "@repo/ui/skeleton";
 import { CollectionPageSchema } from "@/components/SEO/CollectionPageSchema";
+import CategoryEditorialSection from "@/components/PLP/CategoryEditorialSection";
 import type { PLPProduct as PLPListProduct } from "@/components/PLP/types";
 import {
   buildCollectionItems,
@@ -19,6 +20,10 @@ import {
 } from "@/services/product/plp";
 import { getCategoryPlpHrefWithQuery } from "@/utils/plpRoutes";
 import logger from "@/utils/logger";
+import {
+  getPublishedCategoryEditorial,
+  isCanonicalCategoryEditorialView,
+} from "@/services/product/categoryEditorial";
 
 interface PLPPageViewProps {
   categorySlug?: string;
@@ -62,11 +67,16 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
   }
 
   const resolvedCategoryContext = categoryContext ?? undefined;
-  const { products, pagination } = await getPLPProducts(
-    query,
-    resolvedCategoryContext?.categorySlugs,
-    30,
+  const shouldLoadEditorial = Boolean(
+    resolvedCategoryContext?.slug && isCanonicalCategoryEditorialView(query),
   );
+  const [productResult, editorial] = await Promise.all([
+    getPLPProducts(query, resolvedCategoryContext?.categorySlugs, 30),
+    shouldLoadEditorial && resolvedCategoryContext?.slug
+      ? getPublishedCategoryEditorial(resolvedCategoryContext.slug)
+      : Promise.resolve(null),
+  ]);
+  const { products, pagination } = productResult;
   const sidebarSlot = (
     <Suspense
       key="plp-sidebar-slot"
@@ -105,6 +115,12 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
 
       {!query.search && <PLPHeroBanner initialTitle={resolvedCategoryContext?.title} />}
 
+      {resolvedCategoryContext?.title ? (
+        <h1 className="text-xl font-bold leading-8 text-neutral-900 sm:text-2xl">
+          {resolvedCategoryContext.title}
+        </h1>
+      ) : null}
+
       <Suspense fallback={<ProductListSkeleton />}>
         <PLPList
           products={products as PLPListProduct[]}
@@ -115,6 +131,8 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
           sidebarSlot={sidebarSlot}
         />
       </Suspense>
+
+      {editorial ? <CategoryEditorialSection editorial={editorial} /> : null}
     </PageContainer>
   );
 }

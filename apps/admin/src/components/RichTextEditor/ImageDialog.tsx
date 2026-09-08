@@ -24,6 +24,7 @@ interface ImageDialogProps {
   onClose: () => void;
   initialValues: ImageFormValues;
   onSubmit: (values: ImageFormValues, media?: UploadedImage | null) => void;
+  requireAlt?: boolean;
 }
 
 type TabKey = "library" | "url";
@@ -55,15 +56,23 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
   onClose,
   initialValues,
   onSubmit,
+  requireAlt = false,
 }) => {
-  const [values, setValues] = React.useState<ImageFormValues>(initialValues ?? defaultValues);
-  const [errors, setErrors] = React.useState<{ src?: string }>({});
+  const [values, setValues] = React.useState<ImageFormValues>(
+    initialValues ?? defaultValues,
+  );
+  const [errors, setErrors] = React.useState<{ src?: string; alt?: string }>(
+    {},
+  );
   const [activeTab, setActiveTab] = React.useState<TabKey>("library");
   const [mediaItems, setMediaItems] = React.useState<UploadedImage[]>([]);
   const [isLoadingMedia, setIsLoadingMedia] = React.useState(false);
   const [isUploading, setIsUploading] = React.useState(false);
-  const [selectedMediaId, setSelectedMediaId] = React.useState<number | null>(null);
-  const [selectedMedia, setSelectedMedia] = React.useState<UploadedImage | null>(null);
+  const [selectedMediaId, setSelectedMediaId] = React.useState<number | null>(
+    null,
+  );
+  const [selectedMedia, setSelectedMedia] =
+    React.useState<UploadedImage | null>(null);
 
   const loadMediaLibrary = React.useCallback(async () => {
     setIsLoadingMedia(true);
@@ -152,6 +161,10 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
       setErrors({ src: "تصویر را انتخاب یا آدرس را وارد کنید" });
       return;
     }
+    if (requireAlt && !values.alt?.trim()) {
+      setErrors({ alt: "متن جایگزین تصویر الزامی است" });
+      return;
+    }
 
     onSubmit(
       {
@@ -170,7 +183,9 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
   const renderMediaGrid = () => {
     if (isLoadingMedia) {
       return (
-        <div className="py-6 text-center text-sm text-neutral-500">در حال دریافت تصاویر...</div>
+        <div className="py-6 text-center text-sm text-neutral-500">
+          در حال دریافت تصاویر...
+        </div>
       );
     }
 
@@ -199,7 +214,9 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
               type="button"
               onClick={() => handleSelectMedia(file)}
               className={`flex flex-col items-center rounded-lg border bg-white p-2 text-xs transition ${
-                isSelected ? "border-infinity-primary shadow-sm" : "border-neutral-200 hover:border-infinity-primary-lighter/60"
+                isSelected
+                  ? "border-infinity-primary shadow-sm"
+                  : "border-neutral-200 hover:border-infinity-primary-lighter/60"
               }`}
             >
               <div className="flex h-32 w-full items-center justify-center overflow-hidden rounded-md bg-neutral-50">
@@ -220,7 +237,12 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="افزودن تصویر" className="max-w-4xl">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="افزودن تصویر"
+      className="max-w-4xl"
+    >
       <form className="space-y-5" onSubmit={handleSubmit}>
         <div className="flex items-center gap-2 rounded-xl bg-neutral-50 p-2 text-sm font-medium text-neutral-700">
           {(["library", "url"] as TabKey[]).map((tab) => (
@@ -229,7 +251,9 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
               type="button"
               onClick={() => setActiveTab(tab)}
               className={`flex-1 rounded-lg px-3 py-2 transition ${
-                activeTab === tab ? "bg-white text-infinity-primary shadow-sm" : "text-neutral-500"
+                activeTab === tab
+                  ? "bg-white text-infinity-primary shadow-sm"
+                  : "text-neutral-500"
               }`}
             >
               {tab === "library" ? "کتابخانه رسانه" : "آدرس مستقیم"}
@@ -249,7 +273,12 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
                 />
                 {isUploading ? "در حال آپلود..." : "آپلود تصویر جدید"}
               </label>
-              <Button type="button" variant="outline" size="sm" onClick={loadMediaLibrary}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={loadMediaLibrary}
+              >
                 بروزرسانی لیست
               </Button>
             </div>
@@ -275,15 +304,20 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-sm font-medium text-neutral-700">متن جایگزین</label>
+            <label className="mb-1 block text-sm font-medium text-neutral-700">
+              متن جایگزین
+            </label>
             <Input
               value={values.alt}
               onChange={(e) => handleFieldChange("alt", e.target.value)}
               placeholder="برای توضیح تصویر وارد کنید"
+              error={errors.alt}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-neutral-700">عنوان (title)</label>
+            <label className="mb-1 block text-sm font-medium text-neutral-700">
+              عنوان (title)
+            </label>
             <Input
               value={values.title}
               onChange={(e) => handleFieldChange("title", e.target.value)}
@@ -294,7 +328,9 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-sm font-medium text-neutral-700">عرض (px)</label>
+            <label className="mb-1 block text-sm font-medium text-neutral-700">
+              عرض (px)
+            </label>
             <Input
               type="number"
               inputMode="numeric"
@@ -306,7 +342,9 @@ const ImageDialog: React.FC<ImageDialogProps> = ({
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-neutral-700">ارتفاع (px)</label>
+            <label className="mb-1 block text-sm font-medium text-neutral-700">
+              ارتفاع (px)
+            </label>
             <Input
               type="number"
               inputMode="numeric"

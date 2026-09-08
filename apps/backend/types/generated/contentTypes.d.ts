@@ -2462,6 +2462,7 @@ export interface ApiProductCategoryContentProductCategoryContent extends Schema.
   };
   attributes: {
     Audio: Attribute.Media<"audios">;
+    Content: Attribute.RichText;
     createdAt: Attribute.DateTime;
     createdBy: Attribute.Relation<
       "api::product-category-content.product-category-content",
@@ -2475,7 +2476,7 @@ export interface ApiProductCategoryContentProductCategoryContent extends Schema.
     Paragraph: Attribute.Text;
     product_category: Attribute.Relation<
       "api::product-category-content.product-category-content",
-      "manyToOne",
+      "oneToOne",
       "api::product-category.product-category"
     >;
     Title: Attribute.String & Attribute.Required;
@@ -2525,9 +2526,9 @@ export interface ApiProductCategoryProductCategory extends Schema.CollectionType
       "manyToOne",
       "api::product-category.product-category"
     >;
-    product_category_contents: Attribute.Relation<
+    product_category_content: Attribute.Relation<
       "api::product-category.product-category",
-      "oneToMany",
+      "oneToOne",
       "api::product-category-content.product-category-content"
     >;
     product_others: Attribute.Relation<

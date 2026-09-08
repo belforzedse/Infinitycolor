@@ -7,6 +7,7 @@ import {
   PRODUCT_TAG,
   SITEMAP_TAG,
   decodeSlugOnce,
+  categorySlugTag,
   productSlugTag,
 } from "@/constants/cacheTags";
 
@@ -30,6 +31,10 @@ export function buildPdpPath(rawPath: string): string {
   const withoutLeadingSlash = rawPath.replace(/^\/+/, "");
   const withoutPrefix = withoutLeadingSlash.replace(/^pdp\//, "");
   return `/pdp/${encodeURIComponent(decodeSlugOnce(withoutPrefix))}`;
+}
+
+export function buildCategoryPath(rawSlug: string): string {
+  return `/plp/category/${encodeURIComponent(decodeSlugOnce(rawSlug.replace(/^\/+/, "")))}`;
 }
 
 /**
@@ -70,13 +75,26 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { path, type, tag } = body;
+    const { path, type, tag, slug } = body;
 
-    if (!path && !tag) {
+    if (!path && !tag && !(type === "category-editorial" && slug)) {
       return NextResponse.json(
         { error: "Missing 'path' or 'tag' in request body" },
         { status: 400 },
       );
+    }
+
+    if (type === "category-editorial" && typeof slug === "string" && slug.trim()) {
+      const categoryPath = buildCategoryPath(slug);
+      const categoryTag = categorySlugTag(slug);
+      revalidatePath(categoryPath);
+      revalidateTag(categoryTag, "max");
+      return NextResponse.json({
+        revalidated: true,
+        now: Date.now(),
+        paths: [categoryPath],
+        tags: [categoryTag],
+      });
     }
 
     // Revalidate based on type
@@ -108,13 +126,7 @@ export async function POST(request: NextRequest) {
       const pdpPath = buildPdpPath(path);
       const slugTag = productSlugTag(path.replace(/^\/+/, "").replace(/^pdp\//, ""));
 
-      const tags = [
-        slugTag,
-        PRODUCT_TAG,
-        PRODUCT_COLLECTION_TAG,
-        HOME_PRODUCTS_TAG,
-        SITEMAP_TAG,
-      ];
+      const tags = [slugTag, PRODUCT_TAG, PRODUCT_COLLECTION_TAG, HOME_PRODUCTS_TAG, SITEMAP_TAG];
       tags.forEach((t) => revalidateTag(t, "max"));
 
       revalidatePath(pdpPath);

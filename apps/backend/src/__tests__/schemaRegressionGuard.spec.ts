@@ -1,7 +1,4 @@
-import {
-  collectDeclaredColumns,
-  findColumnRegressions,
-} from "../bootstrap/schemaRegressionGuard";
+import { collectDeclaredColumns, findColumnRegressions } from "../bootstrap/schemaRegressionGuard";
 
 const metadataOf = (entries: Record<string, string[]>) =>
   new Map(
@@ -149,8 +146,39 @@ describe("schema regression guard", () => {
     };
 
     // The exact 2026-08-29 regression: an older image that never knew the column.
-    expect(findColumnRegressions(persisted, collectDeclaredColumns(metadataOf({ orders: ["id"] }))))
-      .toEqual(["orders.analytics_correlation_id"]);
+    expect(
+      findColumnRegressions(persisted, collectDeclaredColumns(metadataOf({ orders: ["id"] }))),
+    ).toEqual(["orders.analytics_correlation_id"]);
+  });
+
+  it("allows only the retired category-editorial ordering column", () => {
+    const table = "product_category_contents_product_category_links";
+    const persisted = {
+      tables: [
+        {
+          name: table,
+          columns: [
+            { name: "product_category_content_id" },
+            { name: "product_category_id" },
+            { name: "product_category_content_order" },
+          ],
+        },
+      ],
+    };
+    expect(
+      findColumnRegressions(
+        persisted,
+        collectDeclaredColumns(
+          metadataOf({ table: [] }).set(table, {
+            tableName: table,
+            attributes: {
+              product_category_content_id: { type: "integer" },
+              product_category_id: { type: "integer" },
+            },
+          }),
+        ),
+      ),
+    ).toEqual([]);
   });
 
   it("passes when the build declares everything persisted, plus new columns", () => {

@@ -16,6 +16,7 @@ export const ADMIN_CAPABILITIES = [
   "content.blog.banners.manage",
   "content.stories.manage",
   "content.faq.manage",
+  "content.categoryEditorial.manage",
   "product.read",
   "product.create",
   "product.update",
@@ -106,7 +107,9 @@ const CUSTOMER_STOREFRONT_CAPABILITIES = [
   "storefront.wallet.read-own",
 ] as const satisfies readonly AdminCapability[];
 
-export const ADMIN_ROLE_DEFINITIONS: Readonly<Record<AdminRoleId, AdminRoleDefinition>> = {
+export const ADMIN_ROLE_DEFINITIONS: Readonly<
+  Record<AdminRoleId, AdminRoleDefinition>
+> = {
   editor: {
     id: "editor",
     englishLabel: "Editor",
@@ -125,6 +128,7 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<Record<AdminRoleId, AdminRoleDefin
       "content.blog.taxonomy.manage",
       "content.blog.comments.manage",
       "content.blog.banners.manage",
+      "content.categoryEditorial.manage",
     ],
   },
   seller1: {
@@ -233,7 +237,10 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<Record<AdminRoleId, AdminRoleDefin
 };
 
 const compactRoleKey = (value: string): string =>
-  value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
 
 const ROLE_ALIASES: Readonly<Record<string, AdminRoleId>> = {
   editor: "editor",
@@ -248,11 +255,17 @@ const ROLE_ALIASES: Readonly<Record<string, AdminRoleId>> = {
 };
 
 export function isAdminRoleId(value: unknown): value is AdminRoleId {
-  return typeof value === "string" && (ADMIN_ROLE_IDS as readonly string[]).includes(value);
+  return (
+    typeof value === "string" &&
+    (ADMIN_ROLE_IDS as readonly string[]).includes(value)
+  );
 }
 
 export function isAdminCapability(value: unknown): value is AdminCapability {
-  return typeof value === "string" && (ADMIN_CAPABILITIES as readonly string[]).includes(value);
+  return (
+    typeof value === "string" &&
+    (ADMIN_CAPABILITIES as readonly string[]).includes(value)
+  );
 }
 
 export function normalizeAdminRole(value?: unknown): AdminRoleId | null {
@@ -275,7 +288,9 @@ function collectRoleCapabilities(
     return;
   }
   visiting.add(role);
-  definition.inherits.forEach((parent) => collectRoleCapabilities(parent, target, visiting));
+  definition.inherits.forEach((parent) =>
+    collectRoleCapabilities(parent, target, visiting),
+  );
   definition.capabilities.forEach((capability) => target.add(capability));
   visiting.delete(role);
 }
@@ -288,7 +303,9 @@ const ROLE_CAPABILITY_CACHE = Object.fromEntries(
   }),
 ) as Record<AdminRoleId, readonly AdminCapability[]>;
 
-export function capabilitiesForRole(role: AdminRoleId | string | null | undefined): readonly AdminCapability[] {
+export function capabilitiesForRole(
+  role: AdminRoleId | string | null | undefined,
+): readonly AdminCapability[] {
   const normalized = normalizeAdminRole(role);
   return normalized ? ROLE_CAPABILITY_CACHE[normalized] : [];
 }

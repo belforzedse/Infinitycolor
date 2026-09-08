@@ -95,11 +95,10 @@ function createActionTree() {
     "api::product-category-content": {
       controllers: {
         "product-category-content": {
-          find: action(),
-          findOne: action(),
-          create: action(),
-          update: action(),
-          delete: action(),
+          targets: action(),
+          editable: action(),
+          upsert: action(),
+          publicBySlug: action(),
         },
       },
     },
@@ -716,6 +715,14 @@ describe("role permission templates", () => {
         actions: ["api::admin-product-list.admin-product-list.query"],
       },
       {
+        capability: "content.categoryEditorial.manage",
+        actions: [
+          "api::product-category-content.product-category-content.targets",
+          "api::product-category-content.product-category-content.editable",
+          "api::product-category-content.product-category-content.upsert",
+        ],
+      },
+      {
         capability: "product.variation.manage",
         actions: ["api::product.product.generateVariationCombinations"],
       },
@@ -991,10 +998,7 @@ describe("role permission templates", () => {
       "api::report.report.funnel",
     ];
 
-    const snapshotTree = __rolePermissionTestUtils.permissionTreeForActions(
-      strapi,
-      legacyActions,
-    );
+    const snapshotTree = __rolePermissionTestUtils.permissionTreeForActions(strapi, legacyActions);
     const report = snapshotTree["api::report"].controllers.report;
     expect(report.trafficDashboard.enabled).toBe(true);
     expect(report.trafficRealtime.enabled).toBe(true);
@@ -1032,14 +1036,18 @@ describe("role permission templates", () => {
     expect(controller("api::product-stock", "product-stock").update.enabled).toBe(true);
     expect(controller("api::product-stock", "product-stock").delete.enabled).toBe(false);
 
-    for (const [typeKey, name] of [
-      ["api::product-category-content", "product-category-content"],
-      ["api::product-faq", "product-faq"],
-    ]) {
+    for (const [typeKey, name] of [["api::product-faq", "product-faq"]]) {
       expect(controller(typeKey, name).create.enabled).toBe(true);
       expect(controller(typeKey, name).update.enabled).toBe(true);
       expect(controller(typeKey, name).delete.enabled).toBe(false);
     }
+    const categoryEditorial = controller(
+      "api::product-category-content",
+      "product-category-content",
+    );
+    expect(categoryEditorial.targets.enabled).toBe(false);
+    expect(categoryEditorial.editable.enabled).toBe(false);
+    expect(categoryEditorial.upsert.enabled).toBe(false);
     expect(controller("api::product-size-helper", "product-size-helper").create.enabled).toBe(true);
     expect(controller("api::product-size-helper", "product-size-helper").update.enabled).toBe(true);
     expect(controller("api::product-size-helper", "product-size-helper").delete.enabled).toBe(
@@ -1242,12 +1250,8 @@ describe("role permission templates", () => {
     expect(
       storeManager2["api::plugin-user"].controllers["plugin-user"].searchCustomers.enabled,
     ).toBe(true);
-    expect(
-      storeManager2["api::report"].controllers.report.productSales.enabled,
-    ).toBe(false);
-    expect(
-      storeManager2["api::admin-user"].controllers["admin-user"].query.enabled,
-    ).toBe(false);
+    expect(storeManager2["api::report"].controllers.report.productSales.enabled).toBe(false);
+    expect(storeManager2["api::admin-user"].controllers["admin-user"].query.enabled).toBe(false);
 
     // Superadmin (full access) keeps them.
     expect(walletCtrl(superadmin).adminAdjustWallet.enabled).toBe(true);
