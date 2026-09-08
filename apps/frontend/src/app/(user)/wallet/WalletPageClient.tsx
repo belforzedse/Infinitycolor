@@ -35,7 +35,10 @@ function StatusBanner({ variant, title, description }: { variant: "success" | "e
 
 function ChargingDisabledNotice() {
   return (
-    <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 text-sm md:text-base">
+    <div
+      id="wallet-charge-disabled-notice"
+      className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 text-sm md:text-base"
+    >
       <InfoIcon className="mt-0.5 h-5 w-5 flex-shrink-0" />
       <div className="flex flex-col gap-1">
         <span className="font-semibold">شارژ کیف پول به‌صورت موقت غیرفعال است</span>
@@ -213,7 +216,14 @@ export default function WalletPage() {
               )
             ) : (
               <>
-                <WalletBalance />
+                <WalletBalance
+                  chargeDisabled={WALLET_CHARGE_DISABLED}
+                  onIncrease={() =>
+                    document
+                      .querySelector<HTMLElement>("[data-wallet-topup]")
+                      ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                  }
+                />
                 <IncreaseBalance chargeDisabled={WALLET_CHARGE_DISABLED} />
               </>
             )}

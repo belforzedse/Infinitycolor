@@ -18,7 +18,7 @@ const IncreaseBalance = ({ chargeDisabled = false }: IncreaseBalanceProps) => {
   };
 
   return (
-    <div className="flex w-full flex-col items-end gap-4 lg:w-3/5">
+    <div data-wallet-topup className="flex w-full flex-col items-end gap-4 lg:w-3/5">
       <div className="h-fit w-full rounded-xl bg-slate-100 p-5">
         <span className="text-2xl text-foreground-primary lg:text-4xl">شارژ سریع کیف پول</span>
 

@@ -2,7 +2,9 @@
 
 import ChevronDownIcon from "@/components/Search/Icons/ChevronDownIcon";
 import { cn } from "@/utils/tailwind";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { useDismissOnOutside } from "@/hooks/useDismissOnOutside";
 
 interface Option {
   id: string | number;
@@ -27,6 +29,9 @@ const SuperAdminTableSelect = ({
   selectedOption: selectedOptionId,
 }: Props) => {
   const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setIsOpen(false), []);
+  useDismissOnOutside(containerRef, isOpen, close);
   const [selectedOption, setSelectedOption] = useState<Option>({
     id: "",
     title: "",
@@ -52,10 +57,12 @@ const SuperAdminTableSelect = ({
   };
 
   return (
-    <div className={cn("relative rounded-lg border border-slate-100", className)}>
+    <div ref={containerRef} className={cn("relative rounded-lg border border-slate-100", className)}>
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => setIsOpen((open) => !open)}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
         className={cn(
           "flex w-full min-w-0 items-center justify-between gap-2 rounded-xl bg-white px-3 py-2",
           buttonClassName,
