@@ -5,6 +5,7 @@ WORKDIR /app
 # Install backend workspace dependencies for local development.
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY patches ./patches
 COPY apps/backend/package.json ./apps/backend/package.json
 COPY packages ./packages
 RUN corepack enable && pnpm install --filter @repo/backend... --frozen-lockfile

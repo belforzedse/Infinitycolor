@@ -27,7 +27,7 @@ describe("PLPPagination", () => {
     expect(scrollIntoViewWithOffset).not.toHaveBeenCalled();
   });
 
-  it("calls onPageChange when enabled", () => {
+  it("changes page without preempting the committed-page scroll controller", () => {
     const onPageChange = jest.fn();
 
     render(<PLPPagination currentPage={2} totalPages={4} onPageChange={onPageChange} />);
@@ -35,10 +35,7 @@ describe("PLPPagination", () => {
     fireEvent.click(screen.getByText("3"));
 
     expect(onPageChange).toHaveBeenCalledWith(3);
-    expect(scrollIntoViewWithOffset).toHaveBeenCalled();
-    expect((scrollIntoViewWithOffset as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
-      onPageChange.mock.invocationCallOrder[0],
-    );
+    expect(scrollIntoViewWithOffset).not.toHaveBeenCalled();
   });
 
   it("does not scroll or change page when clicking the current page", () => {

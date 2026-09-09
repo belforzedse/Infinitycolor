@@ -12,6 +12,7 @@ COPY .cursor/docker/fallback-registry.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/fallback-registry.sh
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY patches ./patches
 COPY apps/frontend/package.json ./apps/frontend/package.json
 COPY packages ./packages
 RUN --mount=type=cache,target=/root/.npm \

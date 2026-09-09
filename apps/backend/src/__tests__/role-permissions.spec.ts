@@ -519,6 +519,11 @@ function createActionTree() {
     ["api::admin-dashboard", "admin-dashboard", ["query"]],
     ["api::admin-user", "admin-user", ["query"]],
     ["api::event-log", "event-log", ["getMyEvents", "getOrderEvents", "getAdminEvents"]],
+    [
+      "api::issue-report",
+      "issue-report",
+      ["create", "query", "findOne", "updateStatus", "exportReport"],
+    ],
     ["api::commerce-maintenance", "commerce-maintenance", ["purge"]],
     ["api::cart-item", "cart-item", crud],
     ["api::order-item", "order-item", crud],
@@ -815,6 +820,15 @@ describe("role permission templates", () => {
         actions: [
           "api::admin-activity.admin-activity.findReport",
           "api::admin-activity.admin-activity.findProductActivities",
+        ],
+      },
+      {
+        capability: "system.issueReports.manage",
+        actions: [
+          "api::issue-report.issue-report.query",
+          "api::issue-report.issue-report.findOne",
+          "api::issue-report.issue-report.updateStatus",
+          "api::issue-report.issue-report.exportReport",
         ],
       },
       {

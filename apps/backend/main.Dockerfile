@@ -31,6 +31,7 @@ ENV npm_config_nodedir=/usr/local
 
 # Layer caching: workspace manifests first so code-only changes don't re-run install
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY patches ./patches
 COPY apps/backend/package.json ./apps/backend/package.json
 COPY packages ./packages
 RUN --mount=type=cache,target=/root/.npm \

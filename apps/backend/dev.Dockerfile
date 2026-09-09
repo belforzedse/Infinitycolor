@@ -25,6 +25,7 @@ RUN /usr/local/bin/fallback-apk.sh build-base python3 vips-dev fftw-dev
 ENV npm_config_nodedir=/usr/local
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY patches ./patches
 COPY apps/backend/package.json ./apps/backend/package.json
 COPY packages ./packages
 RUN --mount=type=cache,target=/root/.npm \

@@ -32,7 +32,7 @@ describe("ScrollToTop mobile clearance", () => {
     render(<ScrollToTop />);
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "بازگشت به بالا" })).toHaveStyle(
+      expect(screen.getByTitle("بازگشت به بالا")).toHaveStyle(
         "bottom: calc(99px + env(safe-area-inset-bottom))",
       ),
     );

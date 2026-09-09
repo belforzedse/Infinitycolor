@@ -99,7 +99,7 @@ describe("PDPHeroInfo selection logic", () => {
     expect(screen.getByText(/تومان/)).toBeInTheDocument();
   });
 
-  test("clicking enabled options updates variation", () => {
+  test("preserves size and model until an exact variation is selected", () => {
     const v1 = makeVariation(1, true, 2, 10, 1, 100);
     const v2 = makeVariation(2, true, 2, 11, 2, 101);
     const productData = makeProductData([v1, v2]);
@@ -110,10 +110,19 @@ describe("PDPHeroInfo selection logic", () => {
     const blueBtn = screen.getByTitle("Blue") as HTMLElement;
     fireEvent.click(blueBtn);
 
+    const size = (id: string) => screen.getAllByTestId("pdp-size-option")
+      .find((option) => option.dataset.sizeId === id)!;
+    const model = (id: string) => screen.getAllByTestId("pdp-model-option")
+      .find((option) => option.dataset.modelId === id)!;
+    expect(size("1")).toHaveAttribute("aria-pressed", "true");
+    expect(model("100")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("mock-action")).toHaveAttribute("data-variation-id", "");
+    fireEvent.click(size("2"));
+    expect(model("100")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("mock-action")).toHaveAttribute("data-variation-id", "");
+    fireEvent.click(model("101"));
+    expect(size("2")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("mock-action")).toHaveAttribute("data-variation-id", "2");
-    expect(
-      screen.getAllByTestId("pdp-size-option").find((option) => option.dataset.sizeId === "2"),
-    ).toHaveAttribute("aria-pressed", "true");
   });
 
   test("shows size guide button even when product has no sizes", () => {

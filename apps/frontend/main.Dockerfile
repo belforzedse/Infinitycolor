@@ -14,6 +14,7 @@ RUN chmod +x /usr/local/bin/fallback-registry.sh
 
 # Layer caching: workspace manifests first so code-only changes don't re-run install
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY patches ./patches
 COPY apps/frontend/package.json ./apps/frontend/package.json
 COPY packages ./packages
 RUN --mount=type=cache,target=/root/.npm \
