@@ -41,6 +41,13 @@ function requireEnv(name) {
   return value.trim();
 }
 
+function applyTrackingDir(config, value) {
+  if (!value) return;
+  const trackingDir = path.resolve(process.cwd(), value);
+  config.duplicateTracking.storageDir = trackingDir;
+  config.catalog.trackingDirAbs = trackingDir;
+}
+
 async function run(command, options) {
   requireEnv("WOOCOMMERCE_CONSUMER_KEY");
   requireEnv("WOOCOMMERCE_CONSUMER_SECRET");
@@ -50,6 +57,7 @@ async function run(command, options) {
 
   const { config } = buildConfig(environment);
   config.logging.level = process.env.IMPORT_LOG_LEVEL;
+  applyTrackingDir(config, options.trackingDir);
 
   const logger = new Logger(config.logging);
   logger.info(`Catalog ${command} → env=${environment}, Strapi=${config.strapi.baseUrl}`);
@@ -155,11 +163,7 @@ async function resumeRun(runId, options) {
 
   const { config } = buildConfig(environment);
   config.logging.level = process.env.IMPORT_LOG_LEVEL;
-  if (options.trackingDir) {
-    const trackingDir = path.resolve(process.cwd(), options.trackingDir);
-    config.duplicateTracking.storageDir = trackingDir;
-    config.catalog.trackingDirAbs = trackingDir;
-  }
+  applyTrackingDir(config, options.trackingDir);
   const logger = new Logger(config.logging);
   const engine = new CatalogEngine(config, logger, { environment });
   const runStore = new CatalogRunStore(config.catalog.trackingDirAbs);
@@ -290,4 +294,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, parseCliArgs, usage };
+module.exports = { main, parseCliArgs, usage, applyTrackingDir };

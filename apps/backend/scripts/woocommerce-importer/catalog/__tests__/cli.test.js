@@ -2,7 +2,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { parseCliArgs, usage } = require("../cli");
+const { applyTrackingDir, parseCliArgs, usage } = require("../cli");
 
 test("dependency-free catalog CLI parses resume safety controls on Node 20", () => {
   const parsed = parseCliArgs([
@@ -23,4 +23,15 @@ test("dependency-free catalog CLI parses exception acceptance and rejects missin
   assert.equal(parsed.options.confirm, "CatalogExceptionsAccepted");
   assert.throws(() => parseCliArgs(["exceptions"]), /requires <runId>/);
   assert.match(usage(), /accept-exceptions/);
+});
+
+test("tracking directory applies to first-run and resumable importer state", () => {
+  const config = {
+    duplicateTracking: { storageDir: "old-duplicates" },
+    catalog: { trackingDirAbs: "old-runs" },
+  };
+  applyTrackingDir(config, "tmp/category-seo-state");
+  const expected = require("node:path").resolve(process.cwd(), "tmp/category-seo-state");
+  assert.equal(config.duplicateTracking.storageDir, expected);
+  assert.equal(config.catalog.trackingDirAbs, expected);
 });
