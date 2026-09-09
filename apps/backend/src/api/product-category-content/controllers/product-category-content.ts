@@ -14,6 +14,9 @@ function validationError(ctx: any, error: unknown) {
     EDITORIAL_TITLE_REQUIRED: "Editorial heading is required",
     EDITORIAL_PUBLISHED_CONTENT_REQUIRED:
       "Published editorial content requires an introduction or body",
+    EDITORIAL_TITLE_TOO_LONG: "Editorial heading is too long",
+    EDITORIAL_PARAGRAPH_TOO_LONG: "Editorial introduction is too long",
+    EDITORIAL_CONTENT_TOO_LONG: "Editorial body is too long",
   };
   return ctx.badRequest(messages[code] ?? "Invalid category editorial content", { code });
 }

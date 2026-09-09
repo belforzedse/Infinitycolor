@@ -32,6 +32,18 @@ function emptyMediaCounters() {
   };
 }
 
+function emptyCategoryAudioCounters() {
+  return {
+    expected: 0,
+    inspected: 0,
+    uploaded: 0,
+    reused: 0,
+    skipped: 0,
+    failed: 0,
+    bytes: 0,
+  };
+}
+
 /**
  * Import report: per-entity counts (created / updated / unchanged / skipped /
  * failed / duplicate), media upload vs reuse, and total duration. Every failure
@@ -56,6 +68,7 @@ class ImportReport {
 
     this.entities = {
       categories: emptyCounters(),
+      categoryEditorial: emptyCounters(),
       productTags: emptyCounters(),
       products: emptyCounters(),
       variations: emptyCounters(),
@@ -64,6 +77,8 @@ class ImportReport {
       sizeHelpers: emptyCounters(),
     };
     this.media = emptyMediaCounters();
+    this.categoryAudio = emptyCategoryAudioCounters();
+    this.categoryEditorial = null;
     this.discovered = 0;
     this.processed = 0;
     /** @type {Array<{ entity:string, wcId:any, stage:string, error:string, sku?:string, strapiId?:any, sourceImageId?:any }>} */
@@ -134,6 +149,22 @@ class ImportReport {
     this.media.sourceHadNone += n;
   }
 
+  categoryAudioCount(stat, n = 1) {
+    if (this.categoryAudio[stat] !== undefined) this.categoryAudio[stat] += n;
+  }
+
+  setCategoryEditorialManifest(manifest, manifestPath) {
+    this.categoryEditorial = {
+      batchId: manifest.batchId,
+      manifestHash: manifest.manifestHash,
+      sourceCategoryCount: manifest.sourceCategoryCount,
+      nonEmptyCategoryCount: manifest.nonEmptyCategoryCount,
+      audioCount: manifest.audioCount,
+      rewrittenLinkCount: manifest.rewrittenLinkCount,
+      manifestPath,
+    };
+  }
+
   durationMs() {
     return Date.now() - this.startedAt;
   }
@@ -148,6 +179,8 @@ class ImportReport {
       processed: this.processed,
       entities: this.entities,
       media: this.media,
+      categoryAudio: this.categoryAudio,
+      categoryEditorial: this.categoryEditorial,
       failures: this.failures,
     };
   }
@@ -172,6 +205,18 @@ class ImportReport {
         `skipped=${this.media.skippedExisting} intentionalSkip=${this.media.skippedIntentionally} ` +
         `sourceNone=${this.media.sourceHadNone} failed=${this.media.failed}`,
     );
+    this.logger.info(
+      `cat-audio    expected=${this.categoryAudio.expected} inspected=${this.categoryAudio.inspected} ` +
+        `uploaded=${this.categoryAudio.uploaded} reused=${this.categoryAudio.reused} ` +
+        `skipped=${this.categoryAudio.skipped} bytes=${this.categoryAudio.bytes} failed=${this.categoryAudio.failed}`,
+    );
+    if (this.categoryEditorial) {
+      this.logger.info(
+        `cat-editorial batch=${this.categoryEditorial.batchId} manifest=${this.categoryEditorial.manifestHash} ` +
+          `source=${this.categoryEditorial.sourceCategoryCount} nonEmpty=${this.categoryEditorial.nonEmptyCategoryCount} ` +
+          `audio=${this.categoryEditorial.audioCount} links=${this.categoryEditorial.rewrittenLinkCount}`,
+      );
+    }
     this.logger.info(`duration     ${seconds}s`);
 
     if (this.failures.length > 0) {
@@ -198,8 +243,8 @@ class ImportReport {
   }
 
   hasFailures() {
-    return this.failures.length > 0 || this.media.failed > 0 || (this.entities.products?.incomplete || 0) > 0;
+    return this.failures.length > 0 || this.media.failed > 0 || this.categoryAudio.failed > 0 || (this.entities.products?.incomplete || 0) > 0;
   }
 }
 
-module.exports = { ImportReport, emptyCounters, emptyMediaCounters };
+module.exports = { ImportReport, emptyCounters, emptyMediaCounters, emptyCategoryAudioCounters };

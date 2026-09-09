@@ -79,6 +79,8 @@ describe("category editorial service", () => {
       8,
       expect.objectContaining({ transacting: trx }),
     );
+    const updateData = mockStrapi.entityService.update.mock.calls[0][2].data;
+    expect(updateData).not.toHaveProperty("Audio");
     expect(trx.raw).toHaveBeenCalledWith("SELECT pg_advisory_xact_lock(?, ?)", [17347073, 3]);
     expect(mockWriteAuditEvent).toHaveBeenCalledWith(
       mockStrapi,
@@ -125,12 +127,28 @@ describe("category editorial service", () => {
           Content: "<p>متن امن</p>",
           IsPublished: true,
           IsRTL: true,
+          Audio: {
+            id: 71,
+            name: "guide.mp3",
+            mime: "audio/mpeg",
+            url: "/uploads/guide.mp3",
+          },
           updatedAt: existing.updatedAt,
         },
       },
     ]);
     await expect((service as any).getPublicBySlug("روسری")).resolves.toEqual(
-      expect.objectContaining({ id: 8, title: "راهنمای روسری", content: "<p>متن امن</p>" }),
+      expect.objectContaining({
+        id: 8,
+        title: "راهنمای روسری",
+        content: "<p>متن امن</p>",
+        audio: {
+          name: "guide.mp3",
+          mime: "audio/mpeg",
+          url: "/uploads/guide.mp3",
+        },
+        seoDescription: "مقدمه متن امن",
+      }),
     );
     expect(mockStrapi.entityService.findMany).toHaveBeenCalledWith(
       "api::product-category.product-category",

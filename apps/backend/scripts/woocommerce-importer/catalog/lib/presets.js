@@ -10,7 +10,17 @@
  * WooCommerce is always the read-only source of truth; no scope ever writes to WC.
  */
 
-const SCOPES = ["full", "full-sync", "no-media", "product-no-media", "categories", "stock", "price", "media"];
+const SCOPES = [
+  "full",
+  "full-sync",
+  "no-media",
+  "product-no-media",
+  "categories",
+  "category-editorial",
+  "stock",
+  "price",
+  "media",
+];
 
 /**
  * Resolve a scope to concrete phase flags.
@@ -22,7 +32,7 @@ const SCOPES = ["full", "full-sync", "no-media", "product-no-media", "categories
  *
  * @param {string} scope
  * @param {{ skipMedia?: boolean }} [opts]
- * @returns {{ categories:boolean, products:boolean, variations:boolean, stock:boolean,
+ * @returns {{ categories:boolean, categoryEditorial:boolean, products:boolean, variations:boolean, stock:boolean,
  *   media:boolean, onlyExisting:boolean, variationFields:"all"|"price-only"|"none",
  *   mediaPolicy?:"always"|"preserve" }}
  */
@@ -30,10 +40,10 @@ function resolveScope(scope, opts = {}) {
   const skipMedia = Boolean(opts.skipMedia);
   switch (scope) {
     case "full":
-      return f({ categories: true, products: true, variations: true, stock: true, media: !skipMedia, variationFields: "all" });
+      return f({ categories: true, categoryEditorial: true, products: true, variations: true, stock: true, media: !skipMedia, variationFields: "all" });
     case "full-sync":
       return f({
-        categories: true, products: true, variations: true, stock: true,
+        categories: true, categoryEditorial: true, products: true, variations: true, stock: true,
         media: !skipMedia, variationFields: "all", mediaPolicy: "preserve",
       });
     case "no-media":
@@ -41,7 +51,9 @@ function resolveScope(scope, opts = {}) {
     case "product-no-media":
       return f({ categories: false, products: true, variations: true, stock: true, media: false, variationFields: "all" });
     case "categories":
-      return f({ categories: true });
+      return f({ categories: true, categoryEditorial: true });
+    case "category-editorial":
+      return f({ categoryEditorial: true });
     case "stock":
       return f({ stock: true, onlyExisting: true });
     case "price":
@@ -57,6 +69,7 @@ function resolveScope(scope, opts = {}) {
 function f(partial) {
   return {
     categories: false,
+    categoryEditorial: false,
     products: false,
     variations: false,
     stock: false,
@@ -86,6 +99,7 @@ const PRESETS = [
   { id: "price", label: "Price Sync", description: "Update Price/DiscountPrice on existing variations only", run: { scope: "price" }, confirm: true },
   { id: "media", label: "Media Sync", description: "Upload & attach missing media for existing products only", run: { scope: "media" }, confirm: true },
   { id: "categories", label: "Categories Only", description: "Sync categories only", run: { scope: "categories" }, confirm: true },
+  { id: "category-editorial", label: "Category Editorial", description: "Create missing category SEO content and localize audio", run: { scope: "category-editorial" }, confirm: true },
   { id: "verify", label: "Verify", description: "Compare WooCommerce ↔ Strapi by external_id (read-only)", verify: true, confirm: false },
 ];
 

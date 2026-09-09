@@ -180,6 +180,66 @@ class MediaSync {
     };
   }
 
+  async inspectAudioUrl(url) {
+    const check = validateMediaUrl(url, { allowHttp: this.allowHttp });
+    if (!check.ok) throw new Error(`CATEGORY_EDITORIAL_AUDIO_URL_UNSAFE:${check.reason}`);
+    return this.uploader.inspectAudio(check.url.toString());
+  }
+
+  async syncInspectedAudio(url, inspection, label) {
+    let canonical;
+    try {
+      canonical = canonicalSourceUrl(url);
+    } catch {
+      throw new Error("CATEGORY_EDITORIAL_AUDIO_URL_INVALID");
+    }
+    const check = validateMediaUrl(canonical, { allowHttp: this.allowHttp });
+    if (!check.ok) throw new Error(`CATEGORY_EDITORIAL_AUDIO_URL_UNSAFE:${check.reason}`);
+    const cached = this.store.get("media", canonical);
+    if (cached?.strapiId && cached?.contentSha256 === inspection.sha256) {
+      const remote = await this.uploader.findDestinationFileById(cached.strapiId);
+      if (
+        remote?.id &&
+        remote.name === inspection.name &&
+        ["audio/mpeg", "audio/mp3"].includes(String(remote.mime || "").toLowerCase())
+      ) {
+        return {
+          id: Number(remote.id),
+          name: remote.name,
+          mime: remote.mime,
+          url: remote.url,
+          status: "reused",
+          sha256: inspection.sha256,
+          bytes: inspection.bytes,
+        };
+      }
+    }
+    const uploaded = await this.uploader.uploadInspectedAudio(inspection, label);
+    if (!uploaded?.id) throw new Error("CATEGORY_EDITORIAL_AUDIO_UPLOAD_FAILED");
+    if (
+      uploaded.name !== inspection.name ||
+      !["audio/mpeg", "audio/mp3"].includes(String(uploaded.mime || "").toLowerCase())
+    ) {
+      throw new Error("CATEGORY_EDITORIAL_AUDIO_UPLOAD_VALIDATION_FAILED");
+    }
+    this.store.set("media", canonical, uploaded.id, {
+      name: uploaded.name,
+      mime: uploaded.mime,
+      kind: "audio",
+      contentSha256: inspection.sha256,
+      bytes: inspection.bytes,
+    });
+    return {
+      id: Number(uploaded.id),
+      name: uploaded.name,
+      mime: uploaded.mime,
+      url: uploaded.url,
+      status: uploaded._reusedDeterministic ? "reused" : "uploaded",
+      sha256: inspection.sha256,
+      bytes: inspection.bytes,
+    };
+  }
+
   /**
    * Resolve all media for a product into an ordered set of ids.
    *

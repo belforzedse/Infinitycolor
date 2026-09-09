@@ -13,6 +13,8 @@ describe("CategoryEditorialSection", () => {
           title: "راهنمای انتخاب روسری",
           paragraph: "پیش از خرید این نکات را بخوانید.",
           content: '<h3>جنس مناسب</h3><p><a href="/plp/category/شال">دیدن شال‌ها</a></p>',
+          audio: null,
+          seoDescription: "پیش از خرید این نکات را بخوانید.",
           isRtl: true,
           updatedAt: null,
         }}
@@ -25,6 +27,7 @@ describe("CategoryEditorialSection", () => {
       "/plp/category/شال",
     );
     expect(container.querySelector("section")).toHaveAttribute("dir", "rtl");
+    expect(container.querySelector(".prose")).toHaveClass("whitespace-pre-line");
     expect(container.querySelector("h1")).toBeNull();
   });
 
@@ -44,6 +47,8 @@ describe("CategoryEditorialSection", () => {
           title: "راهنمای بلند",
           paragraph: null,
           content: `<p>${"متن ".repeat(400)}</p>`,
+          audio: null,
+          seoDescription: "متن بلند",
           isRtl: true,
           updatedAt: null,
         }}
@@ -58,5 +63,35 @@ describe("CategoryEditorialSection", () => {
       "aria-expanded",
       "true",
     );
+  });
+
+  it("renders local audio between the introduction and body without autoplay", () => {
+    const { container } = render(
+      <CategoryEditorialSection
+        editorial={{
+          id: 7,
+          title: "راهنمای صوتی",
+          paragraph: "مقدمه",
+          content: "<p>متن اصلی</p>",
+          audio: {
+            url: "/uploads/guide.mp3",
+            name: "guide.mp3",
+            mime: "audio/mpeg",
+          },
+          seoDescription: "مقدمه متن اصلی",
+          isRtl: true,
+          updatedAt: null,
+        }}
+      />,
+    );
+    const audio = screen.getByLabelText("فایل صوتی راهنمای صوتی");
+    expect(audio).toHaveAttribute("controls");
+    expect(audio).toHaveAttribute("preload", "metadata");
+    expect(audio).not.toHaveAttribute("autoplay");
+    const paragraph = screen.getByText("مقدمه");
+    const body = screen.getByText("متن اصلی");
+    expect(paragraph.compareDocumentPosition(audio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(audio.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector("audio")?.getAttribute("src")).toContain("/uploads/guide.mp3");
   });
 });

@@ -4,7 +4,13 @@ jest.mock("@/utils/fetchWithTimeout", () => ({
 }));
 
 import fetchWithTimeout from "@/utils/fetchWithTimeout";
-import { buildPLPProductsQuery, getPLPProducts, parsePLPQuery, type PLPQuery } from "../plp";
+import {
+  buildPLPMetadata,
+  buildPLPProductsQuery,
+  getPLPProducts,
+  parsePLPQuery,
+  type PLPQuery,
+} from "../plp";
 
 const paramsObject = (params: URLSearchParams) =>
   Array.from(params.entries()).reduce<Record<string, string[]>>((acc, [key, value]) => {
@@ -97,5 +103,53 @@ describe("PLP product failures", () => {
     });
 
     await expect(getPLPProducts(query)).rejects.toMatchObject({ code: "API_ERROR", status: 503 });
+  });
+});
+
+describe("category PLP metadata", () => {
+  const query: PLPQuery = { page: 1, available: false };
+  const category = {
+    data: {} as any,
+    slug: "manto",
+    title: "مانتو",
+    allCategories: [],
+    categorySlugs: ["manto"],
+  };
+
+  it("uses imported editorial title and summary for document, social, and canonical metadata", () => {
+    const metadata = buildPLPMetadata(query, category, {
+      id: 7,
+      title: "راهنمای خرید مانتو زنانه",
+      paragraph: "مقدمه",
+      content: "<p>متن</p>",
+      audio: null,
+      seoDescription: "خلاصه محتوای واردشده",
+      isRtl: true,
+      updatedAt: null,
+    });
+
+    expect(metadata.title).toBe("راهنمای خرید مانتو زنانه");
+    expect(metadata.description).toBe("خلاصه محتوای واردشده");
+    expect(metadata.openGraph).toEqual(
+      expect.objectContaining({
+        title: "راهنمای خرید مانتو زنانه",
+        description: "خلاصه محتوای واردشده",
+      }),
+    );
+    expect(metadata.twitter).toEqual(
+      expect.objectContaining({
+        title: "راهنمای خرید مانتو زنانه",
+        description: "خلاصه محتوای واردشده",
+      }),
+    );
+    expect(metadata.alternates).toEqual(
+      expect.objectContaining({ canonical: expect.stringContaining("/plp/category/manto") }),
+    );
+  });
+
+  it("keeps generic metadata when editorial is unavailable", () => {
+    const metadata = buildPLPMetadata(query, category, null);
+    expect(metadata.title).toBe("خرید مانتو");
+    expect(metadata.description).toContain("بهترین قیمت");
   });
 });

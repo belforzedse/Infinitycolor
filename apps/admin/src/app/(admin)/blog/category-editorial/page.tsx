@@ -16,6 +16,7 @@ import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import RichTextEditor from "@/components/RichTextEditor";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import {
   categoryEditorialErrorMessage,
   getCategoryEditorial,
@@ -345,6 +346,21 @@ export default function CategoryEditorialPage() {
                   placeholder="عنوانی که در فروشگاه نمایش داده می‌شود"
                 />
               </div>
+              {record.editorial?.audio ? (
+                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4">
+                  <p className="mb-3 text-sm font-medium text-neutral-700">
+                    فایل صوتی
+                  </p>
+                  <audio
+                    controls
+                    preload="metadata"
+                    className="w-full"
+                    src={resolveAssetUrl(record.editorial.audio.url)}
+                  >
+                    مرورگر شما پخش فایل صوتی را پشتیبانی نمی‌کند.
+                  </audio>
+                </div>
+              ) : null}
               <div>
                 <label
                   htmlFor="editorial-intro"

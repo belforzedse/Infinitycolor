@@ -13,6 +13,7 @@ import { getProductCategoriesForRender, type ProductCategorySummary } from "./ca
 import { formatProductsToCardProps } from "./product";
 import type { ProductSmallCardProps } from "@/components/Product/SmallCard";
 import { PRODUCT_COLLECTION_TAG, PRODUCT_TAG } from "@/constants/cacheTags";
+import type { CategoryEditorialContent } from "./categoryEditorial";
 
 export interface PLPProduct {
   id: number;
@@ -504,7 +505,11 @@ export function buildCollectionItems(products: PLPProduct[]) {
   });
 }
 
-export function buildPLPMetadata(query: PLPQuery, category?: PLPCategoryContext): Metadata {
+export function buildPLPMetadata(
+  query: PLPQuery,
+  category?: PLPCategoryContext,
+  editorial?: CategoryEditorialContent | null,
+): Metadata {
   const baseTitle = "فروشگاه";
 
   if (query.search) {
@@ -534,8 +539,10 @@ export function buildPLPMetadata(query: PLPQuery, category?: PLPCategoryContext)
   }
 
   if (category) {
-    const title = `خرید ${category.title}`;
-    const description = `خرید ${category.title} با بهترین قیمت و ارسال سریع از ${SITE_NAME}. جدیدترین محصولات ${category.title}.`;
+    const title = editorial?.title || `خرید ${category.title}`;
+    const description =
+      editorial?.seoDescription ||
+      `خرید ${category.title} با بهترین قیمت و ارسال سریع از ${SITE_NAME}. جدیدترین محصولات ${category.title}.`;
     const canonicalUrl = `${SITE_URL}${getCategoryPlpHref(category.slug)}`;
     return {
       title,
@@ -545,6 +552,11 @@ export function buildPLPMetadata(query: PLPQuery, category?: PLPCategoryContext)
         description,
         type: "website",
         url: canonicalUrl,
+      },
+      twitter: {
+        card: "summary_large_image",
+        title,
+        description,
       },
       alternates: {
         canonical: canonicalUrl,

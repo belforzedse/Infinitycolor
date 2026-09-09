@@ -62,6 +62,10 @@ class ImageUploader {
     return this.config.import?.videos || this.config.videos || {};
   }
 
+  getAudioConfig() {
+    return this.config.import?.audio || this.config.audio || {};
+  }
+
   getStrapiConfig() {
     return this.config.strapi || {};
   }
@@ -220,6 +224,47 @@ class ImageUploader {
     return null;
   }
 
+  async inspectAudio(audioUrl) {
+    const audioConfig = this.getAudioConfig();
+    const result = await this.downloadMediaWithRetry(
+      audioUrl,
+      audioConfig.downloadRetries || 3,
+      "audio",
+    );
+    if (!result?.buffer) throw new Error("Audio download or validation failed");
+    const contentType = String(result.contentType || "").toLowerCase();
+    if (contentType !== "audio/mpeg" && contentType !== "audio/mp3") {
+      throw new Error(`Invalid MP3 MIME type: ${contentType || "unknown"}`);
+    }
+    const buffer = result.buffer;
+    const hasId3 = buffer.length >= 3 && buffer.subarray(0, 3).toString("ascii") === "ID3";
+    const hasMpegFrame = buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0;
+    if (!hasId3 && !hasMpegFrame) throw new Error("Audio payload is not a valid MP3 stream");
+    const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+    return {
+      buffer,
+      sha256,
+      bytes: buffer.length,
+      mime: "audio/mpeg",
+      name: `wc-category-audio-${sha256}.mp3`,
+    };
+  }
+
+  async uploadInspectedAudio(inspection, label) {
+    if (!inspection?.buffer || !inspection?.sha256 || !inspection?.name) {
+      throw new Error("Audio inspection is incomplete");
+    }
+    const audioConfig = this.getAudioConfig();
+    return this.uploadToStrapiWithRetry(
+      inspection.buffer,
+      inspection.name,
+      label,
+      audioConfig.uploadRetries || 3,
+      "audio",
+      null,
+    );
+  }
+
   async downloadAndUploadImage(imageUrl, altText, prefix, isCoverImage = false, sourceTimestamps = null) {
     try {
       const retryConfig = this.getImageConfig().retry || {};
@@ -374,17 +419,26 @@ class ImageUploader {
   async downloadMedia(mediaUrl, mediaKind = "image") {
     const imageConfig = this.getImageConfig();
     const videoConfig = this.getVideoConfig();
-    const timeout =
-      mediaKind === "video"
-        ? videoConfig.downloadTimeout || 120000
+    const audioConfig = this.getAudioConfig();
+    const timeout = mediaKind === "video"
+      ? videoConfig.downloadTimeout || 120000
+      : mediaKind === "audio"
+        ? audioConfig.downloadTimeout || 120000
         : imageConfig.downloadTimeout || 30000;
-    const maxSize =
-      mediaKind === "video" ? videoConfig.maxSize || 256 * 1024 * 1024 : imageConfig.maxSize || 10 * 1024 * 1024;
+    const maxSize = mediaKind === "video"
+      ? videoConfig.maxSize || 256 * 1024 * 1024
+      : mediaKind === "audio"
+        ? audioConfig.maxSize || 64 * 1024 * 1024
+        : imageConfig.maxSize || 10 * 1024 * 1024;
 
     const sourceHash = this.sourceHash(mediaUrl);
     this.logger.debug(`📥 Downloading ${mediaKind}: source=${sourceHash}`);
     const started = process.hrtime.bigint();
-    const response = await this.downloadFollowingSafeRedirects(mediaUrl, { timeout, maxRedirects: 5 });
+    const response = await this.downloadFollowingSafeRedirects(mediaUrl, {
+      timeout,
+      maxRedirects: 5,
+      maxBytes: maxSize,
+    });
 
     if (response.status !== 200) {
       throw new Error(`HTTP ${response.status}`);
@@ -401,6 +455,10 @@ class ImageUploader {
       if (contentType && !contentType.startsWith("video/")) {
         throw new Error(`نوع MIME ویدیو نامعتبر است: ${contentType || "unknown"}`);
       }
+    } else if (mediaKind === "audio") {
+      if (contentType !== "audio/mpeg" && contentType !== "audio/mp3") {
+        throw new Error(`Invalid MP3 MIME type: ${contentType || "unknown"}`);
+      }
     } else if (mediaKind === "image") {
       if (contentType && !contentType.startsWith("image/")) {
         throw new Error(`نوع MIME تصویر نامعتبر است: ${contentType || "unknown"}`);
@@ -414,14 +472,14 @@ class ImageUploader {
 
     if (buffer.length > maxSize) {
       throw new Error(
-        `${mediaKind === "video" ? "Video" : "Image"} too large: ${(buffer.length / 1024 / 1024).toFixed(2)}MB > ${(maxSize / 1024 / 1024).toFixed(2)}MB`,
+        `${mediaKind === "video" ? "Video" : mediaKind === "audio" ? "Audio" : "Image"} too large: ${(buffer.length / 1024 / 1024).toFixed(2)}MB > ${(maxSize / 1024 / 1024).toFixed(2)}MB`,
       );
     }
 
     this.metrics.downloadBytes += buffer.length;
     this.metrics.downloadMs += Number(process.hrtime.bigint() - started) / 1e6;
     this.logger.debug(`✅ Downloaded ${(buffer.length / 1024).toFixed(2)}KB source=${sourceHash}`);
-    return mediaKind === "video" ? { buffer, contentType } : buffer;
+    return mediaKind === "video" || mediaKind === "audio" ? { buffer, contentType } : buffer;
   }
 
   /** @deprecated Use downloadMediaWithRetry */
@@ -594,10 +652,15 @@ class ImageUploader {
 
     const imageConfig = this.getImageConfig();
     const videoConfig = this.getVideoConfig();
-    const isVideo = this.getContentType(fileName).startsWith("video/");
+    const contentType = this.getContentType(fileName);
+    const isVideo = contentType.startsWith("video/");
+    const isAudio = contentType.startsWith("audio/");
+    const audioConfig = this.getAudioConfig();
     const uploadTimeout = isVideo
       ? videoConfig.uploadTimeout || 120000
-      : imageConfig.uploadTimeout || 60000;
+      : isAudio
+        ? audioConfig.uploadTimeout || 120000
+        : imageConfig.uploadTimeout || 60000;
 
     const response = await axios.post(`${strapiConfig.baseUrl}/upload`, form, {
       headers: uploadHeaders,
@@ -692,7 +755,7 @@ class ImageUploader {
     return { url: check.url.toString(), address: addresses[0].address, family: addresses[0].family };
   }
 
-  async downloadFollowingSafeRedirects(rawUrl, { timeout, maxRedirects }) {
+  async downloadFollowingSafeRedirects(rawUrl, { timeout, maxRedirects, maxBytes = Infinity }) {
     let current = rawUrl;
     for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
       const safe = await this.assertSafeRemoteUrl(current);
@@ -702,6 +765,8 @@ class ImageUploader {
         responseType: "arraybuffer",
         timeout,
         maxRedirects: 0,
+        maxContentLength: maxBytes,
+        maxBodyLength: maxBytes,
         validateStatus: (status) => status >= 200 && status < 400,
         lookup: (_hostname, _options, callback) => callback(null, safe.address, safe.family),
         headers: { "User-Agent": "WooCommerce-Strapi-Importer/2.0.0" },
@@ -731,6 +796,7 @@ class ImageUploader {
       ".mov": "video/quicktime",
       ".m4v": "video/mp4",
       ".ogv": "video/ogg",
+      ".mp3": "audio/mpeg",
     };
     return contentTypes[ext] || "application/octet-stream";
   }

@@ -6,7 +6,7 @@ const { resolveScope, resolvePreset, needsProductLoop, PRESETS, SCOPES } = requi
 
 test("resolveScope: full enables everything (media unless skipped)", () => {
   assert.deepEqual(resolveScope("full"), {
-    categories: true, products: true, variations: true, stock: true, media: true,
+    categories: true, categoryEditorial: true, products: true, variations: true, stock: true, media: true,
     onlyExisting: false, variationFields: "all",
   });
   assert.equal(resolveScope("full", { skipMedia: true }).media, false);
@@ -17,6 +17,7 @@ test("resolveScope: full enables everything (media unless skipped)", () => {
 test("resolveScope: full-sync is a full sync that preserves existing media", () => {
   const f = resolveScope("full-sync");
   assert.equal(f.categories, true);
+  assert.equal(f.categoryEditorial, true);
   assert.equal(f.products, true);
   assert.equal(f.variations, true);
   assert.equal(f.stock, true);
@@ -50,7 +51,7 @@ test("resolveScope: product-no-media updates product children without category o
 
 test("resolveScope: stock only writes stock, only existing", () => {
   assert.deepEqual(resolveScope("stock"), {
-    categories: false, products: false, variations: false, stock: true, media: false,
+    categories: false, categoryEditorial: false, products: false, variations: false, stock: true, media: false,
     onlyExisting: true, variationFields: "none",
   });
 });
@@ -76,7 +77,16 @@ test("resolveScope: media only attaches media, only existing", () => {
 test("resolveScope: categories only", () => {
   const f = resolveScope("categories");
   assert.equal(f.categories, true);
+  assert.equal(f.categoryEditorial, true);
   assert.equal(needsProductLoop(f), false);
+});
+
+test("resolveScope: category-editorial touches no catalog entities", () => {
+  const f = resolveScope("category-editorial");
+  assert.equal(f.categoryEditorial, true);
+  assert.equal(f.categories, false);
+  assert.equal(needsProductLoop(f), false);
+  assert.ok(SCOPES.includes("category-editorial"));
 });
 
 test("resolveScope: unknown scope throws", () => {

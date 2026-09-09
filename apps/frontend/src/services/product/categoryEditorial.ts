@@ -9,6 +9,12 @@ export type CategoryEditorialContent = {
   title: string;
   paragraph: string | null;
   content: string | null;
+  audio: null | {
+    url: string;
+    name: string;
+    mime: string;
+  };
+  seoDescription: string | null;
   isRtl: boolean;
   updatedAt: string | null;
 };

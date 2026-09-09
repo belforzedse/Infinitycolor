@@ -27,6 +27,7 @@ function makeConfig() {
       defaults: { variationAttributes: { color: { title: "خاکستری روشن", colorCode: "#CCCCCC" } } },
     },
     catalog: { maxRetries: 1, baseRetryDelay: 1, perPage: 100, defaultInStockCount: 9999, allowHttpMedia: true, trackingDirAbs: dir },
+    migration: { controlToken: "m".repeat(48) },
   };
 }
 
@@ -44,6 +45,8 @@ function makeEngine(opts = {}) {
     puts: [],
     sizeHelpers: [],
     publicationCommands: [],
+    editorialPrepares: [],
+    editorialFinalizes: [],
   };
   let generatedId = 30000;
 
@@ -66,6 +69,32 @@ function makeEngine(opts = {}) {
     }
     if (endpoint === "/product-variations") existingVariationIds.forEach((id) => map.set(id, { id: Number(id) + 10000 }));
     return map;
+  };
+  engine.repo.fetchCategoryEditorialSnapshot = async () => [
+    {
+      id: 10005,
+      title: "کیف",
+      slug: "kif",
+      externalId: "5",
+      externalSource: "woocommerce",
+      editorial: opts.existingEditorial?.[5] || null,
+    },
+    {
+      id: 10009,
+      title: "اکسسوری",
+      slug: "acc",
+      externalId: "9",
+      externalSource: "woocommerce",
+      editorial: opts.existingEditorial?.[9] || null,
+    },
+  ];
+  engine.repo.prepareCategoryEditorial = async (payload) => {
+    calls.editorialPrepares.push(payload);
+    return { mode: "prepared", id: 40000 + calls.editorialPrepares.length };
+  };
+  engine.repo.finalizeCategoryEditorial = async (payload) => {
+    calls.editorialFinalizes.push(payload);
+    return { mode: "published", published: payload.entries.length };
   };
   engine.repo.upsert = async ({ endpoint, externalId, payload }) => {
     calls.upserts.push({ endpoint, externalId, payload });
@@ -161,6 +190,86 @@ test("pilot category selection includes only selected categories and their paren
     onlyCategoryExternalIds: new Set([5]),
   });
   assert.equal(parentOnly.entities.categories.created, 1);
+});
+
+test("category-editorial validates, localizes audio, prepares drafts, and finalizes one exact batch", async () => {
+  const engine = makeEngine();
+  const audioHash = "a".repeat(64);
+  engine.woo.fetchAllCategories = async () => [
+    {
+      id: 5,
+      name: "کیف",
+      slug: "kif",
+      parent: 0,
+      description:
+        '<h1>راهنمای کیف</h1><p>مقدمه</p>[audio mp3="https://cdn.example.com/guide.mp3"][/audio]<p><a href="/shop/acc/">اکسسوری</a></p>',
+    },
+    { id: 9, name: "اکسسوری", slug: "acc", parent: 5, description: "<h2>اکسسوری زنانه</h2>" },
+  ];
+  engine.media.inspectAudioUrl = async () => ({
+    buffer: Buffer.from("ID3fixture"),
+    sha256: audioHash,
+    bytes: 10,
+    name: `wc-category-audio-${audioHash}.mp3`,
+    mime: "audio/mpeg",
+  });
+  let audioWrites = 0;
+  engine.media.syncInspectedAudio = async () => {
+    audioWrites += 1;
+    return { id: 61, sha256: audioHash, status: "uploaded" };
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "category-editorial" });
+
+  assert.equal(report.entities.categoryEditorial.created, 2);
+  assert.equal(report.entities.categoryEditorial.successful, 2);
+  assert.equal(report.categoryAudio.uploaded, 1);
+  assert.equal(audioWrites, 1);
+  assert.equal(engine._calls.editorialPrepares.length, 2);
+  assert.equal(engine._calls.editorialFinalizes.length, 1);
+  assert.match(engine._calls.editorialPrepares[0].data.Content, /href="\/plp\/category\/acc"/);
+  assert.equal(engine._calls.editorialPrepares[0].data.Paragraph, "مقدمه");
+  assert.equal(engine._calls.editorialFinalizes[0].batchId, report.categoryEditorial.batchId);
+
+  const preparedBySource = new Map(
+    engine._calls.editorialPrepares.map((entry, index) => [String(entry.sourceId), {
+      id: 40001 + index,
+      importBatchId: report.categoryEditorial.batchId,
+      importedSourceHash: entry.sourceHash,
+      isPublished: true,
+      audio: entry.audio ? { id: entry.audio.id } : null,
+    }]),
+  );
+  engine.repo.fetchCategoryEditorialSnapshot = async () => [
+    { id: 10005, title: "کیف", slug: "kif", externalId: "5", externalSource: "woocommerce", editorial: preparedBySource.get("5") },
+    { id: 10009, title: "اکسسوری", slug: "acc", externalId: "9", externalSource: "woocommerce", editorial: preparedBySource.get("9") },
+  ];
+  engine.media.syncInspectedAudio = async () => {
+    throw new Error("idempotent import must not upload audio");
+  };
+  const second = await engine.runSync({ dryRun: false, scope: "category-editorial" });
+  assert.equal(second.entities.categoryEditorial.skipped, 2);
+  assert.equal(second.categoryAudio.uploaded, 0);
+  assert.equal(second.categoryAudio.reused, 0);
+  assert.equal(audioWrites, 1);
+});
+
+test("category-editorial performs no destination writes when audio validation fails", async () => {
+  const engine = makeEngine();
+  engine.woo.fetchAllCategories = async () => [{
+    id: 5,
+    name: "کیف",
+    slug: "kif",
+    parent: 0,
+    description: '<p>مقدمه</p>[audio mp3="http://127.0.0.1/private.mp3"]',
+  }];
+  engine.media.inspectAudioUrl = async () => {
+    throw new Error("CATEGORY_EDITORIAL_AUDIO_URL_UNSAFE:private-host");
+  };
+  const report = await engine.runSync({ dryRun: false, scope: "category-editorial" });
+  assert.equal(report.categoryAudio.failed, 1);
+  assert.equal(engine._calls.editorialPrepares.length, 0);
+  assert.equal(engine._calls.editorialFinalizes.length, 0);
 });
 
 test("hourly product rows bypass a full Woo product scan and never process categories or media", async () => {

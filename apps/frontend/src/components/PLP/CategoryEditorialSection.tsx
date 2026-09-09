@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { CategoryEditorialContent } from "@/services/product/categoryEditorial";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 type Props = { editorial: CategoryEditorialContent };
 
@@ -20,7 +21,7 @@ export function needsMobileDisclosure(html: string): boolean {
 function EditorialHtml({ html }: { html: string }) {
   return (
     <div
-      className="prose prose-neutral mt-5 max-w-none text-sm leading-8 prose-headings:font-bold prose-headings:text-neutral-900 prose-h3:text-lg prose-h4:text-base prose-a:text-infinity-primary prose-a:underline prose-table:block prose-table:max-w-full prose-table:overflow-x-auto prose-img:h-auto prose-img:max-w-full prose-img:rounded-xl sm:text-base sm:prose-h3:text-xl"
+      className="prose prose-neutral mt-5 max-w-none whitespace-pre-line text-sm leading-8 prose-headings:font-bold prose-headings:text-neutral-900 prose-h3:text-lg prose-h4:text-base prose-a:text-infinity-primary prose-a:underline prose-table:block prose-table:max-w-full prose-table:overflow-x-auto prose-img:h-auto prose-img:max-w-full prose-img:rounded-xl sm:text-base sm:prose-h3:text-xl"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -47,6 +48,17 @@ export default function CategoryEditorialSection({ editorial }: Props) {
         <p className="mt-4 text-sm leading-8 text-neutral-700 sm:text-base">
           {editorial.paragraph}
         </p>
+      ) : null}
+      {editorial.audio ? (
+        <audio
+          controls
+          preload="metadata"
+          aria-label={`فایل صوتی ${editorial.title}`}
+          className="mt-5 w-full"
+          src={resolveAssetUrl(editorial.audio.url)}
+        >
+          مرورگر شما پخش فایل صوتی را پشتیبانی نمی‌کند.
+        </audio>
       ) : null}
       {editorial.content ? (
         usesDisclosure ? (

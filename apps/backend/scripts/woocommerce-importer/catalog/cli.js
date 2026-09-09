@@ -73,6 +73,7 @@ async function run(command, options) {
     runStore,
     runId: options.runId,
     publication,
+    categoryEditorialManifest: options.manifest || null,
   });
 
   process.exit(report.hasFailures() ? 1 : 0);
@@ -216,6 +217,7 @@ Options:
   --publication <now|draft|scheduled>
   --publication-date <YYYY-MM-DD> --publication-time <HH:mm> [--publication-timezone <IANA>]
   --publication-at <ISO-8601 with offset/Z>  --require-media <true|false>
+  --manifest <path>  Frozen category-editorial manifest required for production apply
   --pause-signal-path <path>  --confirm <phrase>  -h, --help`;
 }
 

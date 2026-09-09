@@ -9,6 +9,10 @@ import {
   getPLPCategoryContext,
   parsePLPQuery,
 } from "@/services/product/plp";
+import {
+  getPublishedCategoryEditorial,
+  isCanonicalCategoryEditorialView,
+} from "@/services/product/categoryEditorial";
 
 // Category data is URL-specific and must never be prefetched from the homepage.
 export const prefetch = "force-disabled";
@@ -44,5 +48,9 @@ export async function generateMetadata({
     return buildInvalidPLPMetadata();
   }
 
-  return buildPLPMetadata(query, category);
+  const editorial = isCanonicalCategoryEditorialView(query)
+    ? await getPublishedCategoryEditorial(category.slug)
+    : null;
+
+  return buildPLPMetadata(query, category, editorial);
 }

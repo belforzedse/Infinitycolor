@@ -92,6 +92,58 @@ test("MediaSync.syncUrl: SSRF / unsafe URLs are blocked before download", async 
   assert.equal(httpBlocked.status, "failed"); // plain http blocked when allowHttp=false
 });
 
+test("category audio is validated before inspection and persistently reused by content hash", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-audio-"));
+  const store = new MappingStore(dir, { fileName: "media.json" });
+  const media = new MediaSync(
+    { catalog: { allowHttpMedia: false }, import: { images: {}, videos: {}, audio: {} } },
+    noopLogger,
+    store,
+  );
+  const sha256 = "b".repeat(64);
+  const inspection = {
+    buffer: Buffer.from("ID3fixture"),
+    sha256,
+    bytes: 10,
+    name: `wc-category-audio-${sha256}.mp3`,
+    mime: "audio/mpeg",
+  };
+  let uploads = 0;
+  media.uploader = {
+    inspectAudio: async () => inspection,
+    findDestinationFileById: async () => ({
+      id: 71,
+      name: inspection.name,
+      mime: inspection.mime,
+      url: `/uploads/${inspection.name}`,
+    }),
+    uploadInspectedAudio: async () => {
+      uploads += 1;
+      return { id: 71, name: inspection.name, mime: inspection.mime, url: `/uploads/${inspection.name}` };
+    },
+  };
+
+  await assert.rejects(
+    () => media.inspectAudioUrl("http://127.0.0.1/private.mp3"),
+    /AUDIO_URL_UNSAFE/,
+  );
+  const inspected = await media.inspectAudioUrl("https://cdn.example.com/guide.mp3");
+  assert.equal(inspected.sha256, sha256);
+  const first = await media.syncInspectedAudio(
+    "https://cdn.example.com/guide.mp3",
+    inspection,
+    "راهنما",
+  );
+  const second = await media.syncInspectedAudio(
+    "https://cdn.example.com/guide.mp3",
+    inspection,
+    "راهنما",
+  );
+  assert.equal(first.status, "uploaded");
+  assert.equal(second.status, "reused");
+  assert.equal(uploads, 1);
+});
+
 test("concurrent duplicate source URLs coalesce to one in-flight pipeline", async () => {
   const { media, uploads } = makeMedia();
   media.uploader.downloadAndUploadMedia = async () => {
@@ -146,6 +198,27 @@ test("deterministic media filenames are stable and an exact destination match is
   const result = await uploader.uploadToStrapiWithRetry(Buffer.from("x"), first, "alt", 1);
   assert.equal(result.id, 77);
   assert.equal(result._reusedDeterministic, true);
+});
+
+test("audio inspection accepts only MP3 payloads and derives a content-addressed filename", async () => {
+  const uploader = new ImageUploader({
+    catalog: { allowHttpMedia: false },
+    import: { images: { retry: {} }, videos: {}, audio: {} },
+    strapi: { baseUrl: "https://destination.example/api", usePublicAccess: true },
+  }, noopLogger);
+  uploader.downloadMediaWithRetry = async () => ({
+    buffer: Buffer.from("ID3fixture"),
+    contentType: "audio/mpeg",
+  });
+  const inspected = await uploader.inspectAudio("https://cdn.example.com/guide.mp3");
+  assert.match(inspected.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(inspected.name, `wc-category-audio-${inspected.sha256}.mp3`);
+
+  uploader.downloadMediaWithRetry = async () => ({
+    buffer: Buffer.from("<html>not audio</html>"),
+    contentType: "audio/mpeg",
+  });
+  await assert.rejects(() => uploader.inspectAudio("https://cdn.example.com/bad.mp3"), /valid MP3/);
 });
 
 test("multiple exact destination filename matches are an explicit ambiguity", async () => {

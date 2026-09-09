@@ -42,6 +42,23 @@
       "type": "boolean",
       "default": false
     },
+    "ImportSource": {
+      "type": "enumeration",
+      "enum": ["woocommerce-category-description"],
+      "private": true
+    },
+    "ImportBatchId": {
+      "type": "string",
+      "private": true
+    },
+    "ImportedSourceHash": {
+      "type": "string",
+      "private": true
+    },
+    "ImportedAt": {
+      "type": "datetime",
+      "private": true
+    },
     "product_category": {
       "type": "relation",
       "relation": "oneToOne",

@@ -2544,6 +2544,11 @@ export interface ApiProductCategoryContentProductCategoryContent extends Schema.
     > &
       Attribute.Private;
     Image: Attribute.Media<"images">;
+    ImportBatchId: Attribute.String & Attribute.Private;
+    ImportedAt: Attribute.DateTime & Attribute.Private;
+    ImportedSourceHash: Attribute.String & Attribute.Private;
+    ImportSource: Attribute.Enumeration<["woocommerce-category-description"]> &
+      Attribute.Private;
     IsPublished: Attribute.Boolean & Attribute.DefaultTo<false>;
     IsRTL: Attribute.Boolean & Attribute.DefaultTo<false>;
     Paragraph: Attribute.Text;

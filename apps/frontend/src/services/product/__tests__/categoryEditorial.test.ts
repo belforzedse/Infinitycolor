@@ -28,6 +28,8 @@ describe("category editorial storefront service", () => {
       title: "راهنما",
       paragraph: "مقدمه",
       content: "<p>متن</p>",
+      audio: null,
+      seoDescription: "مقدمه متن",
       isRtl: true,
       updatedAt: null,
     };

@@ -1,4 +1,5 @@
 const migration = require("../../database/migrations/2026.09.08T10.00.00.add-category-editorial-content.js");
+const provenanceMigration = require("../../database/migrations/2026.09.09T12.00.00.add-category-editorial-import-provenance.js");
 
 function knexDouble(options: { hasContent?: boolean; duplicates?: any[] } = {}) {
   const query: any = {};
@@ -49,5 +50,55 @@ describe("category editorial migration", () => {
     const knex = knexDouble();
     await migration.down(knex);
     expect(knex.raw).toHaveBeenCalledWith(expect.stringContaining("DROP CONSTRAINT IF EXISTS"));
+  });
+});
+
+describe("category editorial provenance migration", () => {
+  it("adds every missing additive provenance column and is idempotent", async () => {
+    const definitions: string[] = [];
+    const table = {
+      string: jest.fn((name: string) => {
+        definitions.push(name);
+        return { nullable: jest.fn() };
+      }),
+      timestamp: jest.fn((name: string) => {
+        definitions.push(name);
+        return { nullable: jest.fn() };
+      }),
+    };
+    const knex: any = {
+      schema: {
+        hasTable: jest.fn().mockResolvedValue(true),
+        hasColumn: jest.fn().mockResolvedValue(false),
+        alterTable: jest.fn(async (_name: string, callback: any) => callback(table)),
+      },
+    };
+
+    await provenanceMigration.up(knex);
+
+    expect(definitions).toEqual([
+      "import_source",
+      "import_batch_id",
+      "imported_source_hash",
+      "imported_at",
+    ]);
+    expect(knex.schema.alterTable).toHaveBeenCalledTimes(4);
+
+    knex.schema.hasColumn.mockResolvedValue(true);
+    knex.schema.alterTable.mockClear();
+    await provenanceMigration.up(knex);
+    expect(knex.schema.alterTable).not.toHaveBeenCalled();
+  });
+
+  it("retains provenance on rollback", async () => {
+    await expect(provenanceMigration.down()).resolves.toBeUndefined();
+    expect(
+      require("fs").readFileSync(
+        require.resolve(
+          "../../database/migrations/2026.09.09T12.00.00.add-category-editorial-import-provenance.js",
+        ),
+        "utf8",
+      ),
+    ).not.toMatch(/dropColumn|DROP\s+COLUMN/i);
   });
 });

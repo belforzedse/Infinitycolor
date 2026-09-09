@@ -26,6 +26,19 @@ function changedFields(before: any, after: any) {
     }));
 }
 
+function editableAudio(content: any) {
+  const audio = content?.Audio?.data?.attributes
+    ? { id: content.Audio.data.id, ...content.Audio.data.attributes }
+    : content?.Audio?.data ?? content?.Audio;
+  if (!audio?.id || typeof audio.url !== "string" || typeof audio.mime !== "string") return null;
+  return {
+    id: Number(audio.id),
+    url: audio.url,
+    name: String(audio.name || ""),
+    mime: audio.mime,
+  };
+}
+
 export default factories.createCoreService(UID, ({ strapi }) => ({
   async listTargets(params: { page: number; pageSize: number; q: string }) {
     const filters = params.q
@@ -67,6 +80,7 @@ export default factories.createCoreService(UID, ({ strapi }) => ({
       populate: {
         product_category_content: {
           fields: ["Title", "Paragraph", "Content", "IsPublished", "IsRTL", "updatedAt"],
+          populate: { Audio: { fields: ["url", "name", "mime"] } },
         },
       },
     });
@@ -86,6 +100,7 @@ export default factories.createCoreService(UID, ({ strapi }) => ({
             content: content.Content ?? "",
             isPublished: content.IsPublished === true,
             isRtl: content.IsRTL !== false,
+            audio: editableAudio(content),
             updatedAt: content.updatedAt ?? null,
           }
         : null,
@@ -177,7 +192,16 @@ export default factories.createCoreService(UID, ({ strapi }) => ({
       fields: ["Slug"],
       populate: {
         product_category_content: {
-          fields: ["Title", "Paragraph", "Content", "IsPublished", "IsRTL", "updatedAt"],
+          fields: [
+            "Title",
+            "Paragraph",
+            "Content",
+            "IsPublished",
+            "IsRTL",
+            "ImportSource",
+            "updatedAt",
+          ],
+          populate: { Audio: { fields: ["url", "name", "mime"] } },
         },
       },
       limit: 1,

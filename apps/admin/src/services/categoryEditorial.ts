@@ -20,6 +20,12 @@ export type EditableCategoryEditorial = {
     content: string;
     isPublished: boolean;
     isRtl: boolean;
+    audio: null | {
+      id: number;
+      url: string;
+      name: string;
+      mime: string;
+    };
     updatedAt: string | null;
   };
 };

@@ -7,6 +7,9 @@ import {
   resolveRegisteredCustomerForOrder,
   USER_UID,
 } from "./customer-identity";
+import {
+  getCategoryEditorialSnapshot,
+} from "./category-editorial-migration";
 
 export { canonicalIranPhone, MigrationInputError } from "./customer-identity";
 
@@ -61,6 +64,9 @@ async function findMany(query: any, where: Record<string, unknown>, trx: any, li
 
 export async function getSnapshot(strapiInstance: any, input: any) {
   const entity = String(input?.entity || "");
+  if (entity === "categoryEditorial") {
+    return getCategoryEditorialSnapshot(strapiInstance, input);
+  }
   const spec = SNAPSHOT_ENTITIES[entity];
   if (!spec) throw new MigrationInputError("SNAPSHOT_ENTITY_INVALID");
   const page = Number(input?.page || 1);

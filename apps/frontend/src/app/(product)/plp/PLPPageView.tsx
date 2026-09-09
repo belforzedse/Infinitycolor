@@ -92,6 +92,8 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
   );
 
   const { pageName, pageDescription, url } = buildPLPPageCopy(query, resolvedCategoryContext);
+  const collectionName = editorial?.title || pageName;
+  const collectionDescription = editorial?.seoDescription || pageDescription;
   const collectionItems = buildCollectionItems(products);
 
   return (
@@ -105,8 +107,8 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
 
       {products.length > 0 && (
         <CollectionPageSchema
-          name={pageName}
-          description={pageDescription}
+          name={collectionName}
+          description={collectionDescription}
           url={url}
           items={collectionItems}
           itemCount={pagination.total}

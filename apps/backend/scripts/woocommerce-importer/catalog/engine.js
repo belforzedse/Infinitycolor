@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const crypto = require("crypto");
+const path = require("path");
 const { HttpClient, createWooAxios, createStrapiAxios } = require("./lib/httpClient");
 const WooSource = require("./lib/wooSource");
 const StrapiRepo = require("./lib/strapiRepo");
@@ -13,6 +14,7 @@ const { ImportReport } = require("./lib/report");
 const { resolveScope, needsProductLoop } = require("./lib/presets");
 const T = require("./lib/transforms");
 const G = require("./lib/genericAttributes");
+const CE = require("./lib/categoryEditorial");
 const { sourceTimestampHeaders, wooSourceTimestamps } = require("../utils/sourceTimestamps");
 
 function normalizeRunLimit(limit) {
@@ -44,6 +46,33 @@ function stableStringify(value) {
 
 function fingerprint(value) {
   return crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+function readExpectedCategoryEditorialManifest(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value.manifest || value;
+  const filePath = path.resolve(process.cwd(), String(value));
+  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return parsed.manifest || parsed;
+}
+
+function assertMatchingCategoryEditorialManifest(expected, actual) {
+  if (!expected) return;
+  const comparable = (manifest) => ({
+    version: manifest?.version,
+    importSource: manifest?.importSource,
+    sourceEndpoint: manifest?.sourceEndpoint,
+    sourceCategoryCount: manifest?.sourceCategoryCount,
+    nonEmptyCategoryCount: manifest?.nonEmptyCategoryCount,
+    audioCount: manifest?.audioCount,
+    rewrittenLinkCount: manifest?.rewrittenLinkCount,
+    manifestHash: manifest?.manifestHash,
+    batchId: manifest?.batchId,
+    entries: manifest?.entries,
+  });
+  if (stableStringify(comparable(expected)) !== stableStringify(comparable(actual))) {
+    throw new Error("CATEGORY_EDITORIAL_SOURCE_MANIFEST_CHANGED");
+  }
 }
 
 function productHasCover(existing) {
@@ -174,6 +203,7 @@ class CatalogEngine {
     const categoryLimit = opts.categoryLimit ?? Infinity;
     let scope = opts.scope || "full";
     let skipMedia = Boolean(opts.skipMedia);
+    let categoryEditorialManifest = opts.categoryEditorialManifest || null;
     let startAfterExternalId = parseOptionalPositiveInt(opts.startAfterExternalId);
     const publication = opts.publication || null;
     const runStore = opts.runStore || null;
@@ -189,6 +219,7 @@ class CatalogEngine {
       dryRun = Boolean(run.options?.dryRun);
       scope = run.options?.scope || scope;
       skipMedia = Boolean(run.options?.skipMedia);
+      categoryEditorialManifest = run.options?.categoryEditorialManifest || null;
       limit = parseRunLimit(run.options?.limit);
       startAfterExternalId = parseOptionalPositiveInt(run.options?.startAfterExternalId);
     } else if (runStore) {
@@ -203,6 +234,7 @@ class CatalogEngine {
           skipMedia,
           limit: normalizeRunLimit(limit),
           startAfterExternalId,
+          categoryEditorialManifest,
         },
       });
     }
@@ -259,14 +291,26 @@ class CatalogEngine {
       await this.repo.preloadProductTags();
     }
 
+    let categorySource = null;
     if (flags.categories) {
-      await this.syncCategories(
+      categorySource = await this.syncCategories(
         report,
         dryRun,
         runContext,
         categoryLimit,
         opts.onlyCategoryExternalIds || null,
       );
+    }
+    if (flags.categoryEditorial) {
+      const allCategories = categorySource?.all || await this.woo.fetchAllCategories();
+      const selectedCategories = categorySource?.selected || allCategories;
+      await this.syncCategoryEditorial(report, dryRun, allCategories, selectedCategories, {
+        expectedManifest: categoryEditorialManifest,
+        requireExpectedManifest:
+          !dryRun &&
+          scope === "category-editorial" &&
+          (this.options.environment || "production") === "production",
+      });
     }
     if (needsProductLoop(flags)) {
       await this.syncProducts(report, dryRun, flags, limit, runContext, {
@@ -472,6 +516,226 @@ class CatalogEngine {
       }
     }
     if (!dryRun) this.mapping.flush();
+    return { all: wcCategories, selected: sorted };
+  }
+
+  async syncCategoryEditorial(
+    report,
+    dryRun,
+    sourceCategories,
+    selectedCategories = sourceCategories,
+    options = {},
+  ) {
+    this.logger.info("Phase: category editorial");
+    if (!this.config.migration?.controlToken) {
+      report.fail("categoryEditorial", {
+        wcId: "batch",
+        stage: "preflight",
+        error: "MIGRATION_CONTROL_TOKEN_REQUIRED",
+      });
+      return;
+    }
+
+    let snapshotRows;
+    try {
+      snapshotRows = await this.repo.fetchCategoryEditorialSnapshot();
+    } catch (error) {
+      report.fail("categoryEditorial", { wcId: "batch", stage: "snapshot", error });
+      return;
+    }
+    const destinationIndex = CE.destinationCategoryIndex(snapshotRows);
+    const routes = CE.categoryRouteMap(sourceCategories, destinationIndex);
+    const plans = [];
+
+    for (const category of selectedCategories) {
+      if (!CE.sourceHasDescription(category)) continue;
+      try {
+        const destination = destinationIndex.get(String(category.id));
+        const plan = CE.transformCategoryEditorial(category, destination, routes);
+        if (plan) {
+          plan.existingEditorial = destination?.editorial || null;
+          plans.push(plan);
+        }
+      } catch (error) {
+        report.fail("categoryEditorial", {
+          wcId: category.id,
+          stage: "transform",
+          error,
+        });
+      }
+    }
+
+    for (const plan of plans) {
+      if (!plan.audioUrl) {
+        plan.sourceHash = CE.categoryEditorialSourceHash(plan, null);
+        continue;
+      }
+      report.categoryAudioCount("expected");
+      try {
+        const inspection = await this.media.inspectAudioUrl(plan.audioUrl);
+        plan.audioInspection = inspection;
+        plan.sourceHash = CE.categoryEditorialSourceHash(plan, inspection.sha256);
+        report.categoryAudioCount("inspected");
+        report.categoryAudioCount("bytes", inspection.bytes);
+      } catch (error) {
+        report.categoryAudioCount("failed");
+        report.fail("categoryEditorial", {
+          wcId: plan.sourceId,
+          stage: "audio-inspect",
+          error,
+        });
+      }
+    }
+
+    if (report.entities.categoryEditorial.failed > 0) return;
+
+    const manifest = CE.buildCategoryEditorialManifest(sourceCategories, plans);
+    const manifestDir = path.join(
+      this.config.catalog.trackingDirAbs,
+      "category-editorial-manifests",
+    );
+    fs.mkdirSync(manifestDir, { recursive: true });
+    const manifestPath = path.join(manifestDir, `${manifest.batchId}.json`);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    report.setCategoryEditorialManifest(manifest, manifestPath);
+
+    try {
+      if (options.requireExpectedManifest && !options.expectedManifest) {
+        throw new Error("CATEGORY_EDITORIAL_EXPECTED_MANIFEST_REQUIRED");
+      }
+      assertMatchingCategoryEditorialManifest(
+        readExpectedCategoryEditorialManifest(options.expectedManifest),
+        manifest,
+      );
+    } catch (error) {
+      report.fail("categoryEditorial", {
+        wcId: "batch",
+        stage: "manifest",
+        error,
+      });
+      return;
+    }
+
+    if (dryRun) {
+      for (const plan of plans) {
+        report.count(
+          "categoryEditorial",
+          plan.existingEditorial ? "skipped" : "created",
+        );
+        if (plan.audioUrl) report.categoryAudioCount("skipped");
+      }
+      return;
+    }
+
+    const missingPlans = plans.filter((plan) => !plan.existingEditorial);
+    for (const plan of missingPlans) {
+      if (!plan.audioInspection) continue;
+      try {
+        plan.audio = await this.media.syncInspectedAudio(
+          plan.audioUrl,
+          plan.audioInspection,
+          plan.title,
+        );
+        report.categoryAudioCount(plan.audio.status === "uploaded" ? "uploaded" : "reused");
+      } catch (error) {
+        report.categoryAudioCount("failed");
+        report.fail("categoryEditorial", {
+          wcId: plan.sourceId,
+          stage: "audio-upload",
+          error,
+        });
+      }
+    }
+    if (report.categoryAudio.failed > 0) return;
+
+    const finalizeEntries = [];
+    for (const plan of plans) {
+      const existing = plan.existingEditorial;
+      if (existing) {
+        report.count("categoryEditorial", "skipped");
+        if (plan.audioUrl) report.categoryAudioCount("skipped");
+        if (
+          existing.importBatchId === manifest.batchId &&
+          existing.importedSourceHash === plan.sourceHash
+        ) {
+          finalizeEntries.push({
+            sourceId: plan.sourceId,
+            categoryId: plan.destinationCategoryId,
+            editorialId: Number(existing.id),
+            sourceHash: plan.sourceHash,
+            audio: plan.audioInspection
+              ? {
+                  id: Number(existing.audio?.id),
+                  sha256: plan.audioInspection.sha256,
+                }
+              : null,
+          });
+        }
+        continue;
+      }
+
+      try {
+        const response = await this.repo.prepareCategoryEditorial({
+          batchId: manifest.batchId,
+          sourceId: plan.sourceId,
+          categoryId: plan.destinationCategoryId,
+          sourceHash: plan.sourceHash,
+          data: {
+            Title: plan.title,
+            Paragraph: plan.paragraph,
+            Content: plan.content,
+            IsRTL: true,
+          },
+          audio: plan.audio
+            ? { id: plan.audio.id, sha256: plan.audio.sha256 }
+            : null,
+        });
+        if (response?.mode === "prepared") {
+          report.count("categoryEditorial", "created");
+        } else if (
+          response?.mode === "skipped" &&
+          response?.importBatchId === manifest.batchId &&
+          response?.importedSourceHash === plan.sourceHash
+        ) {
+          report.count("categoryEditorial", "skipped");
+        } else if (response?.mode === "skipped") {
+          report.count("categoryEditorial", "skipped");
+          continue;
+        } else {
+          throw new Error("CATEGORY_EDITORIAL_PREPARE_RESPONSE_INVALID");
+        }
+        finalizeEntries.push({
+          sourceId: plan.sourceId,
+          categoryId: plan.destinationCategoryId,
+          editorialId: Number(response.id),
+          sourceHash: plan.sourceHash,
+          audio: plan.audio
+            ? { id: plan.audio.id, sha256: plan.audio.sha256 }
+            : null,
+        });
+      } catch (error) {
+        report.fail("categoryEditorial", {
+          wcId: plan.sourceId,
+          stage: "prepare",
+          error,
+        });
+      }
+    }
+
+    if (report.entities.categoryEditorial.failed > 0 || finalizeEntries.length === 0) return;
+    try {
+      const finalized = await this.repo.finalizeCategoryEditorial({
+        batchId: manifest.batchId,
+        entries: finalizeEntries,
+      });
+      report.count("categoryEditorial", "successful", Number(finalized?.published || 0));
+    } catch (error) {
+      report.fail("categoryEditorial", {
+        wcId: "batch",
+        stage: "finalize",
+        error,
+      });
+    }
   }
 
   async syncProducts(report, dryRun, flags, limit = Infinity, runContext = null, options = {}) {

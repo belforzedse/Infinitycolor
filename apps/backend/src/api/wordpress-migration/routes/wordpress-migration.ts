@@ -32,5 +32,17 @@ export default {
       handler: "wordpress-migration.restoreMediaTimestamps",
       config: { auth: { scope: [] }, policies: [], middlewares: migrationMiddleware },
     },
+    {
+      method: "POST",
+      path: "/internal/migrations/wordpress-v2/category-editorial/prepare",
+      handler: "wordpress-migration.prepareCategoryEditorial",
+      config: { auth: { scope: [] }, policies: [], middlewares: migrationMiddleware },
+    },
+    {
+      method: "POST",
+      path: "/internal/migrations/wordpress-v2/category-editorial/finalize",
+      handler: "wordpress-migration.finalizeCategoryEditorial",
+      config: { auth: { scope: [] }, policies: [], middlewares: migrationMiddleware },
+    },
   ],
 };

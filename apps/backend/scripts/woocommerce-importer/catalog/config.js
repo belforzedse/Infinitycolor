@@ -88,6 +88,25 @@ function buildConfig(envName) {
   config.migration = {
     controlToken: String(process.env.MIGRATION_CONTROL_TOKEN || ""),
   };
+  config.import.audio = {
+    maxSize: boundedInteger(process.env.IMPORT_CATEGORY_AUDIO_MAX_BYTES, {
+      name: "IMPORT_CATEGORY_AUDIO_MAX_BYTES",
+      defaultValue: 64 * 1024 * 1024,
+      max: 128 * 1024 * 1024,
+    }),
+    downloadTimeout: boundedInteger(process.env.IMPORT_CATEGORY_AUDIO_DOWNLOAD_TIMEOUT_MS, {
+      name: "IMPORT_CATEGORY_AUDIO_DOWNLOAD_TIMEOUT_MS",
+      defaultValue: 120_000,
+      max: 10 * 60_000,
+    }),
+    uploadTimeout: boundedInteger(process.env.IMPORT_CATEGORY_AUDIO_UPLOAD_TIMEOUT_MS, {
+      name: "IMPORT_CATEGORY_AUDIO_UPLOAD_TIMEOUT_MS",
+      defaultValue: 120_000,
+      max: 10 * 60_000,
+    }),
+    downloadRetries: 3,
+    uploadRetries: 3,
+  };
 
   return { config, envConfig };
 }

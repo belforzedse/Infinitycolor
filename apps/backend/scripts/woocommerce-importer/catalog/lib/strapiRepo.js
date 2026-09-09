@@ -77,6 +77,43 @@ class StrapiRepo {
     return index;
   }
 
+  /** Read the protected category/editorial migration projection in bounded pages. */
+  async fetchCategoryEditorialSnapshot() {
+    const rows = [];
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const response = await this.http.get("/internal/migrations/wordpress-v2/snapshot", {
+        params: { entity: "categoryEditorial", page, pageSize: 500 },
+      });
+      const snapshot = response.data?.data ?? response.data;
+      if (!Array.isArray(snapshot?.rows)) {
+        throw new Error("CATEGORY_EDITORIAL_SNAPSHOT_INVALID");
+      }
+      rows.push(...snapshot.rows);
+      hasMore = snapshot.hasMore === true;
+      page += 1;
+      if (page > 10) throw new Error("CATEGORY_EDITORIAL_SNAPSHOT_PAGINATION_INVALID");
+    }
+    return rows;
+  }
+
+  async prepareCategoryEditorial(payload) {
+    const response = await this.http.post(
+      "/internal/migrations/wordpress-v2/category-editorial/prepare",
+      payload,
+    );
+    return response.data?.data ?? response.data;
+  }
+
+  async finalizeCategoryEditorial(payload) {
+    const response = await this.http.post(
+      "/internal/migrations/wordpress-v2/category-editorial/finalize",
+      payload,
+    );
+    return response.data?.data ?? response.data;
+  }
+
   /**
    * Idempotent upsert keyed on external_id. Uses the preloaded index first; on a
    * create that hits a unique-constraint race, falls back to a live lookup + update.

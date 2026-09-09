@@ -1,4 +1,6 @@
 import {
+  CATEGORY_EDITORIAL_IMPORT_SOURCE,
+  categoryEditorialSeoDescription,
   sanitizeCategoryEditorial,
   sanitizePublicCategoryEditorial,
 } from "../services/category-editorial-sanitizer";
@@ -62,5 +64,65 @@ describe("category editorial sanitizer", () => {
         IsPublished: true,
       }),
     ).toBeNull();
+  });
+
+  it("rejects oversized values instead of silently truncating them", () => {
+    expect(() =>
+      sanitizeCategoryEditorial({ Title: "ت".repeat(181), IsPublished: false }),
+    ).toThrow("EDITORIAL_TITLE_TOO_LONG");
+    expect(() =>
+      sanitizeCategoryEditorial({
+        Title: "عنوان",
+        Paragraph: "م".repeat(4_001),
+        IsPublished: false,
+      }),
+    ).toThrow("EDITORIAL_PARAGRAPH_TOO_LONG");
+    expect(() =>
+      sanitizeCategoryEditorial({
+        Title: "عنوان",
+        Content: "م".repeat(120_001),
+        IsPublished: false,
+      }),
+    ).toThrow("EDITORIAL_CONTENT_TOO_LONG");
+  });
+
+  it("projects imported title-only rows with local audio and a computed SEO summary", () => {
+    const projected = sanitizePublicCategoryEditorial({
+      id: 14,
+      Title: "خرید پوشاک زنانه",
+      Paragraph: "",
+      Content: "",
+      IsPublished: true,
+      IsRTL: true,
+      ImportSource: CATEGORY_EDITORIAL_IMPORT_SOURCE,
+      Audio: {
+        id: 71,
+        name: "guide.mp3",
+        mime: "audio/mpeg",
+        url: "/uploads/guide.mp3",
+      },
+    });
+    expect(projected).toEqual(
+      expect.objectContaining({
+        title: "خرید پوشاک زنانه",
+        seoDescription: "خرید پوشاک زنانه",
+        audio: {
+          name: "guide.mp3",
+          mime: "audio/mpeg",
+          url: "/uploads/guide.mp3",
+        },
+      }),
+    );
+  });
+
+  it("computes a bounded word-safe SEO description from introduction and body", () => {
+    const summary = categoryEditorialSeoDescription({
+      Title: "عنوان",
+      Paragraph: "مقدمه",
+      Content: `<p>${"واژه ".repeat(80)}</p>`,
+    });
+    expect(summary.length).toBeLessThanOrEqual(181);
+    expect(summary).toMatch(/^مقدمه/);
+    expect(summary).toMatch(/…$/);
   });
 });

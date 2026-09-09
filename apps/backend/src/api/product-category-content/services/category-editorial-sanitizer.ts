@@ -3,6 +3,9 @@ import sanitizeHtml from "sanitize-html";
 const TITLE_LIMIT = 180;
 const PARAGRAPH_LIMIT = 4_000;
 const CONTENT_LIMIT = 120_000;
+const SEO_DESCRIPTION_LIMIT = 180;
+
+export const CATEGORY_EDITORIAL_IMPORT_SOURCE = "woocommerce-category-description";
 
 const BODY_OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: [
@@ -66,14 +69,19 @@ const BODY_OPTIONS: sanitizeHtml.IOptions = {
     frame.tag === "img" && !(typeof frame.attribs.alt === "string" && frame.attribs.alt.trim()),
 };
 
-function plainText(value: unknown, limit: number): string {
+function plainText(value: unknown): string {
   return sanitizeHtml(typeof value === "string" ? value : "", {
     allowedTags: [],
     allowedAttributes: {},
   })
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, limit);
+    .trim();
+}
+
+function boundedPlainText(value: unknown, limit: number, code: string): string {
+  const normalized = plainText(value);
+  if (normalized.length > limit) throw new Error(code);
+  return normalized;
 }
 
 function containsImageWithoutAlt(html: string): boolean {
@@ -100,28 +108,69 @@ export type SanitizedCategoryEditorial = {
 };
 
 export function meaningfulEditorialText(html: string): string {
-  return plainText(html.replace(/&nbsp;/gi, " "), CONTENT_LIMIT);
+  return plainText(html.replace(/&nbsp;/gi, " "));
+}
+
+function normalizeAudio(record: any) {
+  const raw = record?.Audio?.data?.attributes
+    ? { id: record.Audio.data.id, ...record.Audio.data.attributes }
+    : record?.Audio?.data ?? record?.Audio;
+  const url = typeof raw?.url === "string" ? raw.url.trim() : "";
+  const name = typeof raw?.name === "string" ? raw.name.trim() : "";
+  const mime = typeof raw?.mime === "string" ? raw.mime.trim().toLowerCase() : "";
+  if (!raw?.id || !url.startsWith("/uploads/") || !name || !mime.startsWith("audio/")) {
+    return null;
+  }
+  return { url, name, mime };
+}
+
+export function categoryEditorialSeoDescription(record: any): string {
+  const body = [plainText(record?.Paragraph), meaningfulEditorialText(String(record?.Content || ""))]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const combined = body || plainText(record?.Title);
+  if (combined.length <= SEO_DESCRIPTION_LIMIT) return combined;
+  const candidate = combined.slice(0, SEO_DESCRIPTION_LIMIT + 1);
+  const wordBoundary = candidate.lastIndexOf(" ");
+  const clipped = wordBoundary >= Math.floor(SEO_DESCRIPTION_LIMIT * 0.65)
+    ? candidate.slice(0, wordBoundary)
+    : combined.slice(0, SEO_DESCRIPTION_LIMIT);
+  return `${clipped.trim()}…`;
 }
 
 export function sanitizeCategoryEditorial(
   input: CategoryEditorialInput,
-  options: { rejectMissingImageAlt?: boolean } = { rejectMissingImageAlt: true },
+  options: { rejectMissingImageAlt?: boolean; allowTitleOnly?: boolean } = {
+    rejectMissingImageAlt: true,
+  },
 ): SanitizedCategoryEditorial {
-  const rawContent = typeof input.Content === "string" ? input.Content.slice(0, CONTENT_LIMIT) : "";
+  const rawContent = typeof input.Content === "string" ? input.Content : "";
+  if (rawContent.length > CONTENT_LIMIT) throw new Error("EDITORIAL_CONTENT_TOO_LONG");
   if (options.rejectMissingImageAlt !== false && containsImageWithoutAlt(rawContent)) {
     throw new Error("EDITORIAL_IMAGE_ALT_REQUIRED");
   }
 
   const value = {
-    Title: plainText(input.Title, TITLE_LIMIT),
-    Paragraph: plainText(input.Paragraph, PARAGRAPH_LIMIT),
+    Title: boundedPlainText(input.Title, TITLE_LIMIT, "EDITORIAL_TITLE_TOO_LONG"),
+    Paragraph: boundedPlainText(
+      input.Paragraph,
+      PARAGRAPH_LIMIT,
+      "EDITORIAL_PARAGRAPH_TOO_LONG",
+    ),
     Content: sanitizeHtml(rawContent, BODY_OPTIONS).trim(),
     IsPublished: input.IsPublished === true,
     IsRTL: input.IsRTL !== false,
   };
 
   if (!value.Title) throw new Error("EDITORIAL_TITLE_REQUIRED");
-  if (value.IsPublished && !value.Paragraph && !meaningfulEditorialText(value.Content)) {
+  if (
+    value.IsPublished &&
+    !options.allowTitleOnly &&
+    !value.Paragraph &&
+    !meaningfulEditorialText(value.Content)
+  ) {
     throw new Error("EDITORIAL_PUBLISHED_CONTENT_REQUIRED");
   }
   return value;
@@ -130,13 +179,24 @@ export function sanitizeCategoryEditorial(
 export function sanitizePublicCategoryEditorial(record: any) {
   if (!record?.IsPublished) return null;
   try {
-    const value = sanitizeCategoryEditorial(record, { rejectMissingImageAlt: false });
-    if (!value.Title || (!value.Paragraph && !meaningfulEditorialText(value.Content))) return null;
+    const allowTitleOnly = record?.ImportSource === CATEGORY_EDITORIAL_IMPORT_SOURCE;
+    const value = sanitizeCategoryEditorial(record, {
+      rejectMissingImageAlt: false,
+      allowTitleOnly,
+    });
+    if (
+      !value.Title ||
+      (!allowTitleOnly && !value.Paragraph && !meaningfulEditorialText(value.Content))
+    ) {
+      return null;
+    }
     return {
       id: Number(record.id),
       title: value.Title,
       paragraph: value.Paragraph || null,
       content: value.Content || null,
+      audio: normalizeAudio(record),
+      seoDescription: categoryEditorialSeoDescription(value) || null,
       isRtl: value.IsRTL,
       updatedAt: record.updatedAt ?? null,
     };
