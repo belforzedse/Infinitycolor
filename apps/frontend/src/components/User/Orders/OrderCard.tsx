@@ -6,7 +6,7 @@ import CancelIcon from "../Icons/CancelIcon";
 import TickIcon from "../Icons/TickIcon";
 import { PersianOrderStatus } from "@/constants/enums";
 import clsx from "clsx";
-import { formatCountdown } from "@/utils/formatCountdown";
+import ReserveChip from "./ReserveChip";
 import PaymentStatusButton from "./PaymentStatusButton";
 import ShowFactorButton from "./ShowFactorButton";
 import { Eye, Clock } from "lucide-react";
@@ -26,6 +26,9 @@ interface Props {
   onOpenFullDetails?: () => void;
   isReserveOrder?: boolean;
   reserveExpiresAt?: string | null;
+  reserveState?: string | null;
+  reserveClosureReason?: string | null;
+  reserveIsActive?: boolean;
   reserveGroupOrderCount?: number;
   onReleaseReserve?: (orderId: number) => void;
   isReleasingReserve?: boolean;
@@ -46,21 +49,13 @@ export default function OrderCard({
   onOpenFullDetails,
   isReserveOrder,
   reserveExpiresAt,
+  reserveState,
+  reserveClosureReason,
+  reserveIsActive,
   reserveGroupOrderCount,
   onReleaseReserve,
   isReleasingReserve,
 }: Props) {
-  const [countdownText, setCountdownText] = useState<string>(() =>
-    reserveExpiresAt && isReserveOrder ? formatCountdown(reserveExpiresAt) : "",
-  );
-
-  useEffect(() => {
-    if (!reserveExpiresAt || !isReserveOrder) return;
-    setCountdownText(formatCountdown(reserveExpiresAt));
-    const id = setInterval(() => setCountdownText(formatCountdown(reserveExpiresAt)), 60_000);
-    return () => clearInterval(id);
-  }, [reserveExpiresAt, isReserveOrder]);
-
   return (
     <div className="mb-3 flex flex-col divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 lg:hidden">
       <div className="grid grid-cols-4">
@@ -142,16 +137,15 @@ export default function OrderCard({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {isReserveOrder && reserveExpiresAt && (
-              <span className="flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-xs text-amber-800">
-                <Clock className="h-3.5 w-3.5" />
-                ارسال رزروی ({countdownText || formatCountdown(reserveExpiresAt)})
-                {reserveGroupOrderCount && reserveGroupOrderCount > 1 && (
-                  <span> • {reserveGroupOrderCount} سفارش</span>
-                )}
-              </span>
-            )}
-            {isReserveOrder && orderId && onReleaseReserve && (
+            <ReserveChip
+              isReserveOrder={isReserveOrder}
+              reserveExpiresAt={reserveExpiresAt}
+              reserveState={reserveState}
+              reserveClosureReason={reserveClosureReason}
+              reserveIsActive={reserveIsActive}
+              groupOrderCount={reserveGroupOrderCount}
+            />
+            {reserveIsActive && orderId && onReleaseReserve && (
               <button
                 type="button"
                 onClick={() => onReleaseReserve(orderId)}

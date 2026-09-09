@@ -14,7 +14,7 @@ import {
 } from "../../categoryFormConfig";
 import { getCategoryById } from "@/services/super-admin/product/category/get";
 import { updateCategory } from "@/services/super-admin/product/category/update";
-import type { CategoryData } from "@/services/super-admin/product/category/create";
+import { buildCategoryWritePayload } from "@/services/super-admin/product/category/create";
 import CategoryAppearancePanel, {
   type CategoryImageValue,
 } from "../../CategoryAppearancePanel";
@@ -142,7 +142,7 @@ export default function EditCategoryPage() {
         setMegaMenuImage(
           getCategoryImageValue(payload.attributes?.MegaMenuImage?.data),
         );
-      } catch (error: any) {
+      } catch (error: unknown) {
         if (!isMounted) return;
 
         console.error("Failed to load category:", error);
@@ -186,22 +186,20 @@ export default function EditCategoryPage() {
       return;
     }
 
-    const payload: CategoryData = {
+    const payload = buildCategoryWritePayload({
       Title: title,
       Slug: slug,
+      parentId: formData.Parent,
       Image: categoryImage?.id ?? null,
       MegaMenuImage: megaMenuImage?.id ?? null,
-    };
-
-    if (formData.Parent) {
-      payload.Parent = formData.Parent;
-    }
+      unlinkEmptyParent: true,
+    });
 
     try {
       await updateCategory(categoryId, payload);
       toast.success("تغییرات با موفقیت ذخیره شد");
       window.location.assign("/products/categories");
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to update category:", error);
       const rawErrorMessage = extractErrorMessage(error);
       const message = translateErrorMessage(

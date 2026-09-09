@@ -5,10 +5,12 @@ import { BreadcrumbSchema } from "@/components/SEO/BreadcrumbSchema";
 import PageContainer from "@/components/layout/PageContainer";
 import Reveal from "@/components/Reveal";
 import AboutSection from "@/components/About/AboutSection";
+import AboutBanners from "@/components/About/AboutBanners";
 import WhyChooseSection from "@/components/About/WhyChooseSection";
 import TrustSection from "@/components/About/TrustSection";
-import CategoryShowcase from "@/components/About/CategoryShowcase";
+import CategoryCarousel from "@/components/Categories/CategoryCarousel";
 import { SITE_URL } from "@/config/site";
+import { STOREFRONT_MAIN_CATEGORY_OPTIONS } from "@/constants/categories";
 import { getProductCategoriesForRender } from "@/services/product/categories";
 import { getSiteIdentity, resolveSiteName } from "@/services/site-identity";
 import { storeMapLinks } from "@/utils/identityIcons";
@@ -47,9 +49,8 @@ const breadcrumbItems = [
 export default async function AboutPage() {
   const [categories, identity] = await Promise.all([
     getProductCategoriesForRender({
-      parentOnly: true,
-      sort: "Title:asc",
-      revalidate: 60,
+      ...STOREFRONT_MAIN_CATEGORY_OPTIONS,
+      revalidate: 90,
     }),
     getSiteIdentity(),
   ]);
@@ -62,19 +63,12 @@ export default async function AboutPage() {
     <>
       <BreadcrumbSchema breadcrumbs={breadcrumbItems} />
       <PageContainer variant="wide" className="space-y-12 pb-16 pt-8">
-        {/* Page Header */}
         <Reveal variant="fade-up" duration={700}>
-          <header className="space-y-4">
-            <h1 className="text-foreground-primary text-3xl font-bold lg:text-4xl">
-              درباره فروشگاه بزرگ اینفینیتی
-            </h1>
-            <Breadcrumb breadcrumbs={breadcrumbItems} />
-          </header>
+          <Breadcrumb breadcrumbs={breadcrumbItems} />
         </Reveal>
 
-        {/* Infinity Section */}
         <Reveal variant="fade-up" duration={700} delay={100}>
-          <AboutSection title="اینفینیتی">
+          <AboutSection title="اینفینیتی" titleAs="h1">
             <p>
               اینفینیتی یک فروشگاه آنلاین پیشرو در زمینه پوشاک است که با هدف ارائه تجربه خرید آنلاین
               منحصر به فرد و لذت‌بخش، بر تنوع، کیفیت و قیمت‌های رقابتی برای پوشاک مردانه، زنانه و
@@ -83,24 +77,20 @@ export default async function AboutPage() {
           </AboutSection>
         </Reveal>
 
-        {/* Product Variety Section */}
         <Reveal variant="fade-up" duration={700} delay={200}>
-          <AboutSection title="تنوع محصولات">
-            <p>
-              ما معتقدیم که خرید لباس باید سریع، راحت و لذت‌بخش باشد. ماموریت ما این است که مشتریان
-              بتوانند با چند کلیک ساده به آخرین استایل‌های جهانی دسترسی پیدا کنند و از تنوع بی‌نظیر
-              محصولات، محصولاتی را انتخاب کنند که با سلیقه و نیازهایشان هماهنگ باشد.
-            </p>
-          </AboutSection>
+          <div className="space-y-6">
+            <AboutSection title="تنوع محصولات">
+              <p>
+                ما معتقدیم که خرید لباس باید سریع، راحت و لذت‌بخش باشد. ماموریت ما این است که مشتریان
+                بتوانند با چند کلیک ساده به آخرین استایل‌های جهانی دسترسی پیدا کنند و از تنوع بی‌نظیر
+                محصولات، محصولاتی را انتخاب کنند که با سلیقه و نیازهایشان هماهنگ باشد.
+              </p>
+            </AboutSection>
+            {categories.length > 0 && <CategoryCarousel categories={categories} />}
+          </div>
         </Reveal>
 
-        {/* Category Showcase */}
         <Reveal variant="fade-up" duration={700} delay={300}>
-          <CategoryShowcase categories={categories} />
-        </Reveal>
-
-        {/* Why Choose Infinity Section */}
-        <Reveal variant="fade-up" duration={700} delay={400}>
           <WhyChooseSection
             title="چرا اینفینیتی رو انتخاب کنیم؟"
             items={[
@@ -112,8 +102,7 @@ export default async function AboutPage() {
           />
         </Reveal>
 
-        {/* Our Prices Section */}
-        <Reveal variant="fade-up" duration={700} delay={500}>
+        <Reveal variant="fade-up" duration={700} delay={400}>
           <div className="space-y-6">
             <AboutSection title="قیمت هامون؟ به صرفه ترین">
               <p>
@@ -124,30 +113,11 @@ export default async function AboutPage() {
                 از خانواده اینفینیتی هستند.
               </p>
             </AboutSection>
-
-            {/*
-              Awaiting real brand artwork. This slot pointed at
-              /images/placeholder-about.jpg, which has never existed in
-              public/images, so every visitor took a hard 404 for a decorative
-              image. Until a real asset is supplied, show the shared placeholder
-              graphic: the panel keeps its shape and nothing 404s.
-            */}
-            <div className="relative flex h-[400px] w-full items-center justify-center overflow-hidden rounded-2xl bg-slate-100 md:h-[500px] lg:h-[600px]">
-              <Image
-                src="/images/placeholders/image-placeholder.svg"
-                alt=""
-                aria-hidden="true"
-                width={96}
-                height={96}
-                className="opacity-40"
-                priority={false}
-              />
-            </div>
+            <AboutBanners />
           </div>
         </Reveal>
 
-        {/* Trust Us Section */}
-        <Reveal variant="fade-up" duration={700} delay={600}>
+        <Reveal variant="fade-up" duration={700} delay={500}>
           <TrustSection title="به ما اعتماد کنین">
             <p>
               ما به شما اعتماد داریم که خرید آنلاین با اینفینیتی را تجربه کنید. ما بر کیفیت، قیمت و
@@ -162,9 +132,8 @@ export default async function AboutPage() {
           </TrustSection>
         </Reveal>
 
-        {/* Physical Stores (driven by site identity, stores flagged showInAbout) */}
         {aboutStores.length > 0 && (
-          <Reveal variant="fade-up" duration={700} delay={700}>
+          <Reveal variant="fade-up" duration={700} delay={600}>
             <AboutSection title="فروشگاه‌های حضوری">
               <div className="grid gap-4 md:grid-cols-2">
                 {aboutStores.map((store, index) => {

@@ -5,6 +5,7 @@ import { OrderService } from "@/services";
 import { translateOrderStatus } from "@/utils/statusTranslations";
 import PaymentGatewayBadge from "@/components/PaymentGateway/PaymentGatewayBadge";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
+import ReserveOutcomeNotice, { type ReserveOutcome } from "./ReserveOutcomeNotice";
 
 interface PaymentStatusProps {
   orderId: number;
@@ -17,6 +18,7 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
   const [orderStatus, setOrderStatus] = useState<string | null>(null);
   const [transactionId, setTransactionId] = useState<string | null>(null);
   const [paymentGateway, setPaymentGateway] = useState<string | null>(null);
+  const [reserve, setReserve] = useState<ReserveOutcome | null>(null);
 
   useEffect(() => {
     const checkPaymentStatus = async () => {
@@ -28,6 +30,17 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
 
         setIsPaid(response.isPaid);
         setOrderStatus(response.status);
+        setReserve(
+          response.reserveGroupId
+            ? {
+                reserveGroupId: response.reserveGroupId,
+                reserveExpiresAt: response.reserveExpiresAt,
+                reserveState: response.reserveState,
+                reserveOrderCount: response.reserveOrderCount,
+                reserveAttached: response.reserveAttached,
+              }
+            : null,
+        );
         const gateway = response.paymentGateway ?? null;
         setPaymentGateway(gateway);
         if (
@@ -42,6 +55,7 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
         console.error("Error checking payment status:", err);
         setError(err.message || "خطا در بررسی وضعیت پرداخت");
         setTransactionId(null);
+        setReserve(null);
       } finally {
         setLoading(false);
       }
@@ -132,6 +146,7 @@ export default function PaymentStatus({ orderId }: PaymentStatusProps) {
           <span className="text-gray-800">{transactionId}</span>
         </div>
       )}
+      {reserve && <ReserveOutcomeNotice outcome={reserve} isPaid={isPaid === true} />}
     </div>
   );
 }

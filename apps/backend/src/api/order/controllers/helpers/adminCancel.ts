@@ -13,6 +13,10 @@ import {
   OrderChangedConcurrentlyError,
   restoreStockWithMandatoryAudit,
 } from "./adminOrderIntegrity";
+import {
+  closeGroupIfAbandoned,
+  resolveRetainedReserveShipping,
+} from "../../../reserve-group/lib/reserve-group";
 
 export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
   const { id } = ctx.params;
@@ -50,6 +54,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
             contract_transactions: true,
           },
         },
+        reserve_shipment: true,
       },
     });
 
@@ -141,7 +146,20 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
         );
       if (becameSnappay) throw new OrderChangedConcurrentlyError();
 
-      const paidAmount = computePaidAmountToman(currentOrder);
+      // Combined-shipping groups: the parcel still ships for the remaining paid
+      // members, so the shipping fee that bought it is retained rather than
+      // refunded. Refunding it would hand the whole group free shipping. This
+      // matches adminAdjustItems, which likewise keeps ShippingCost on a partial
+      // refund. Merchandise is refunded in full either way.
+      const retainedShippingToman = await resolveRetainedReserveShipping(
+        strapi,
+        currentOrder,
+        trx,
+      );
+      const paidAmount = Math.max(
+        0,
+        computePaidAmountToman(currentOrder) - retainedShippingToman,
+      );
       committedRefundToman = paidAmount;
       let reservationReleased = false;
       // Restock all items
@@ -272,6 +290,23 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
         contractTransactionId: refundTransactionId,
         amountToman: committedRefundToman,
       }).catch(() => {});
+    }
+
+    // If cancelling this order left the combined-shipping group with nothing paid
+    // in it, close the group so it stops occupying the customer's single
+    // consolidation slot. A group that still has paid members survives its root's
+    // cancellation -- group identity is not the root order.
+    const cancelledGroupId = (order as any)?.reserve_shipment?.id;
+    if (cancelledGroupId) {
+      try {
+        await closeGroupIfAbandoned(strapi, Number(cancelledGroupId));
+      } catch (groupError) {
+        strapi.log.error("Failed to close abandoned reserve group after cancel", {
+          orderId: orderIdNum,
+          groupId: cancelledGroupId,
+          error: groupError instanceof Error ? groupError.message : String(groupError),
+        });
+      }
     }
 
     return result;

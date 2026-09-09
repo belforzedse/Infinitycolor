@@ -37,6 +37,7 @@ import {
   FiMessageCircle,
   FiDroplet,
   FiList,
+  FiClock,
 } from "react-icons/fi";
 
 // Create a styled layout/menu icons (unused definitions removed)
@@ -96,6 +97,15 @@ const superAdminSidebar: SidebarItem[] = [
         className="h-5 w-5 text-infinity-primary"
         stroke="#3d4c6e"
       />
+    ),
+    children: [],
+  },
+  {
+    id: "model-applications",
+    label: "درخواست‌های مدل",
+    href: "/model-applications",
+    icon: (
+      <FiImage className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
     ),
     children: [],
   },
@@ -266,20 +276,9 @@ const superAdminSidebar: SidebarItem[] = [
   {
     id: "faq",
     label: "سوالات متداول",
-    href: "",
+    href: "/faq",
     icon: <FAQIcon />,
-    children: [
-      {
-        id: "faq-categories",
-        label: "دسته‌بندی‌ها",
-        href: "/faq/categories",
-      },
-      {
-        id: "faq-questions",
-        label: "سوالات",
-        href: "/faq/questions",
-      },
-    ],
+    children: [],
   },
   // {
   //   id: "customer-club",
@@ -305,6 +304,20 @@ const superAdminSidebar: SidebarItem[] = [
     href: "/orders",
     icon: <OrdersIcon />,
     children: [
+      {
+        id: "orders-main",
+        label: "سفارشات",
+        href: "/orders",
+        icon: <OrdersIcon />,
+      },
+      {
+        id: "orders-reserve",
+        label: "سفارش‌های رزروی",
+        href: "/orders/reserve",
+        icon: (
+          <FiClock className="h-5 w-5 text-infinity-primary" stroke="#3d4c6e" />
+        ),
+      },
       {
         id: "orders-carts",
         label: "سبدهای خرید",
@@ -460,7 +473,7 @@ function balanceSidebarForRole(
   role: AdminRoleId,
 ): SidebarItem[] {
   if (role === "editor") {
-    return promoteChildren(items, "blog");
+    return promoteChildren(promoteChildren(items, "blog"), "stories");
   }
 
   if (

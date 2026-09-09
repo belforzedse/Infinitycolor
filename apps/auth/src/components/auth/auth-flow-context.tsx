@@ -31,6 +31,7 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
+  const stepUp = searchParams.get("stepUp") === "1";
 
   useEffect(() => {
     let active = true;
@@ -39,6 +40,10 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
         if (!active) return;
         if (flow.phone) setPhone(flow.phone);
         if (pathname !== "/auth") return;
+        // Step-up (fresh session for list-sessions) must not reuse the current
+        // cookie via /infinity/session/continue — that path never updates
+        // createdAt and would bounce the caller forever.
+        if (stepUp) return;
         try {
           const continuation = await authPost<{
             authenticated: true;
@@ -56,15 +61,16 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [pathname, returnTo]);
+  }, [pathname, returnTo, stepUp]);
 
   const href = useCallback(
     (path: string) => {
-      if (!returnTo) return path;
-      const separator = path.includes("?") ? "&" : "?";
-      return `${path}${separator}returnTo=${encodeURIComponent(returnTo)}`;
+      const url = new URL(path, "https://auth.invalid");
+      if (returnTo) url.searchParams.set("returnTo", returnTo);
+      if (stepUp) url.searchParams.set("stepUp", "1");
+      return `${url.pathname}${url.search}`;
     },
-    [returnTo],
+    [returnTo, stepUp],
   );
   const go = useCallback(
     (path: string) => router.push(href(path)),

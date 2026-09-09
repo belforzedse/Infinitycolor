@@ -34,8 +34,10 @@ button:enabled {
     filter 160ms var(--ease-butter);
 }
 
-.pressable:active {
-  transform: scale(0.97) translateY(1px);
+@media (hover: hover) and (pointer: fine) {
+  .pressable:active {
+    transform: scale(0.97) translateY(1px);
+  }
 }
 
 .interactive-card {

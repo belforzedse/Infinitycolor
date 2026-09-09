@@ -12,6 +12,7 @@ describe("isReplayAllowedUrl", () => {
     "/pdp/example-product",
     "/plp",
     "/plp/category/rings?sort=newest",
+    "/returns",
   ])("allows public storefront route %s", (url) => {
     expect(isReplayAllowedUrl(url)).toBe(true);
   });

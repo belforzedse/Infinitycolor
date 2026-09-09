@@ -41,11 +41,16 @@ const FIXTURE = {
     slug: "e2e-storefront",
     externalId: "e2e-storefront:category",
   },
-  product: {
-    title: "E2E G001 Storefront Smoke Product",
-    slug: "e2e-storefront-smoke-product",
-    externalId: "e2e-storefront:product",
-  },
+    product: {
+      title: "E2E G001 Storefront Smoke Product",
+      slug: "e2e-storefront-smoke-product",
+      externalId: "e2e-storefront:product",
+    },
+    aliasProduct: {
+      title: "E2E XXXL Alias Product",
+      slug: "e2e-storefront-xxxl-product",
+      externalId: "e2e-storefront:product:xxxl",
+    },
   media: [
     {
       name: "e2e-storefront-cover.webp",
@@ -84,6 +89,11 @@ const FIXTURE = {
       colorCode: "#111111",
       externalId: "e2e-storefront:color:black",
     },
+    {
+      title: "آبی تیره",
+      colorCode: "#4C5E74",
+      externalId: "e2e-storefront:color:blue-dark",
+    },
   ],
   sizes: [
     {
@@ -93,6 +103,14 @@ const FIXTURE = {
     {
       title: "E2E Large",
       externalId: "e2e-storefront:size:large",
+    },
+    {
+      title: "3xl",
+      externalId: "e2e-storefront:size:3xl",
+    },
+    {
+      title: "XXXL",
+      externalId: "e2e-storefront:size:xxxl",
     },
   ],
   model: {
@@ -136,6 +154,26 @@ const FIXTURE = {
       colorIndex: 0,
       sizeIndex: 1,
       externalId: "e2e-storefront:variation:pay",
+    },
+    {
+      sku: "E2E-STOREFRONT-BLUE-3XL",
+      price: "1250000",
+      discountPrice: null,
+      stock: 4,
+      colorIndex: 3,
+      sizeIndex: 2,
+      externalId: "e2e-storefront:variation:blue-3xl",
+    },
+  ],
+  aliasVariations: [
+    {
+      sku: "E2E-STOREFRONT-XXXL-ONLY",
+      price: "1100000",
+      discountPrice: null,
+      stock: 6,
+      colorIndex: 0,
+      sizeIndex: 3,
+      externalId: "e2e-storefront:variation:xxxl-only",
     },
   ],
   shipping: {
@@ -1285,6 +1323,74 @@ async function seed(client) {
     await insertLink(client, "product_variations_product_links", {
       product_variation_id: variation.id,
       product_id: product.id,
+    });
+    await insertLink(client, "product_variations_product_stock_links", {
+      product_variation_id: variation.id,
+      product_stock_id: stock.id,
+    });
+    await insertLink(client, "product_variations_product_variation_color_links", {
+      product_variation_id: variation.id,
+      product_variation_color_id: colors[variationDef.colorIndex].id,
+    });
+    await insertLink(client, "product_variations_product_variation_size_links", {
+      product_variation_id: variation.id,
+      product_variation_size_id: sizes[variationDef.sizeIndex].id,
+    });
+    await insertLink(client, "product_variations_product_variation_model_links", {
+      product_variation_id: variation.id,
+      product_variation_model_id: model.id,
+    });
+  }
+
+  const aliasProduct = await insertRow(client, "products", {
+    title: FIXTURE.aliasProduct.title,
+    slug: FIXTURE.aliasProduct.slug,
+    weight: 100,
+    description: "<p>Deterministic E2E XXXL alias product.</p>",
+    status: "Active",
+    product_type: "Variable",
+    is_simple_product: false,
+    average_rating: 4,
+    rating_count: 1,
+    seen_count: 12,
+    external_id: FIXTURE.aliasProduct.externalId,
+    external_source: TAG,
+    created_at: now,
+    updated_at: now,
+  });
+  await insertLink(client, "products_product_main_category_links", {
+    product_id: aliasProduct.id,
+    product_category_id: category.id,
+  });
+  await insertLink(client, "files_related_morphs", {
+    file_id: media[0].id,
+    related_id: aliasProduct.id,
+    related_type: "api::product.product",
+    field: "CoverImage",
+    order: 1,
+  });
+  for (const variationDef of FIXTURE.aliasVariations) {
+    const stock = await insertRow(client, "product_stocks", {
+      count: variationDef.stock,
+      reserved_count: 0,
+      external_id: `${variationDef.externalId}:stock`,
+      external_source: TAG,
+      created_at: now,
+      updated_at: now,
+    });
+    const variation = await insertRow(client, "product_variations", {
+      is_published: true,
+      sku: variationDef.sku,
+      price: variationDef.price,
+      discount_price: variationDef.discountPrice,
+      external_id: variationDef.externalId,
+      external_source: TAG,
+      created_at: now,
+      updated_at: now,
+    });
+    await insertLink(client, "product_variations_product_links", {
+      product_variation_id: variation.id,
+      product_id: aliasProduct.id,
     });
     await insertLink(client, "product_variations_product_stock_links", {
       product_variation_id: variation.id,

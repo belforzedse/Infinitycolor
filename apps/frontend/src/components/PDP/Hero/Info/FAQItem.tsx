@@ -4,10 +4,12 @@ import DOMPurify from "isomorphic-dompurify";
 type Props = {
   title: string;
   content: string;
+  /** When true, the panel starts expanded so shoppers see the notes without a click. */
+  defaultOpen?: boolean;
 };
 
 export default function PDPHeroInfoFAQItem(props: Props) {
-  const { title, content } = props;
+  const { title, content, defaultOpen = false } = props;
 
   // Check if content contains HTML tags
   const hasHTML = /<[^>]+>/.test(content);
@@ -16,7 +18,7 @@ export default function PDPHeroInfoFAQItem(props: Props) {
   const sanitizedContent = hasHTML ? DOMPurify.sanitize(content) : content;
 
   return (
-    <Disclosure as="div" className="w-full">
+    <Disclosure as="div" className="w-full" defaultOpen={defaultOpen}>
       {({ open }) => (
         <>
           <DisclosureButton className="group flex w-full items-center justify-between border-b pb-2 text-right text-neutral-800">

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OrderService } from "@/services";
 import type { OrderPaymentStatusResponse } from "@/services/order";
+import ReserveOutcomeNotice from "@/components/User/Orders/ReserveOutcomeNotice";
 import { StorefrontContainer } from "@/components/storefront";
 import { useCart } from "@/contexts/CartContext";
 
@@ -154,6 +155,10 @@ export default function PaymentResultPageClient() {
                   <div><dt className="text-slate-500">شناسه پیگیری</dt><dd className="break-all font-semibold">{result.transactionId}</dd></div>
                 )}
               </dl>
+            )}
+
+            {result?.reserveGroupId && (
+              <ReserveOutcomeNotice outcome={result} isPaid={Boolean(result.isPaid)} />
             )}
 
             {error && <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">{error}</p>}

@@ -372,6 +372,13 @@ export default function EditOrderPage() {
           anipoProviderStatus: normalizedOrder?.AnipoProviderStatus,
           anipoLastMessage: normalizedOrder?.AnipoLastMessage,
           anipoLastError: normalizedOrder?.AnipoLastError,
+          isReserveOrder: (normalizedOrder as any)?.isReserveOrder,
+          reserveGroupId: (normalizedOrder as any)?.reserveGroupId,
+          reserveState: (normalizedOrder as any)?.reserveState,
+          reserveClosureReason: (normalizedOrder as any)?.reserveClosureReason,
+          reserveExpiresAt: (normalizedOrder as any)?.reserveExpiresAt,
+          reserveIsActive: (normalizedOrder as any)?.reserveIsActive,
+          reserveIsHeld: (normalizedOrder as any)?.reserveIsHeld,
         });
       })
       .catch((err) => {

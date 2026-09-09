@@ -19,10 +19,7 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "@/components/SuperAdmin/reports/shared/charts";
-import {
-  useReportQueryState,
-  parseDateOnly,
-} from "@/components/SuperAdmin/reports/shared/useReportQueryState";
+import { useReportQueryState } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
 import { faNum } from "@/utils/faNum";
 
 export default function GatewayLiquidityReportPage() {
@@ -37,10 +34,7 @@ export default function GatewayLiquidityReportPage() {
     let active = true;
     setLoading(true);
     setError(null);
-    getGatewayLiquidity({
-      start: parseDateOnly(start).toISOString(),
-      end: parseDateOnly(end).toISOString(),
-    })
+    getGatewayLiquidity({ start, end })
       .then((result) => {
         if (active) setRows(result.rows);
       })

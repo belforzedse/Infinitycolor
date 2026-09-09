@@ -58,6 +58,9 @@ export const ERROR_MESSAGE_MAP: Record<string, string> = {
   // Wallet / balance
   "insufficient balance": "موجودی کیف پول کافی نیست.",
   "insufficient funds": "موجودی کیف پول کافی نیست.",
+  "administrators cannot adjust their own wallet":
+    "تغییر موجودی کیف پول خودتان مجاز نیست.",
+  "cannot adjust their own wallet": "تغییر موجودی کیف پول خودتان مجاز نیست.",
 
   // Discount / coupon
   "invalid discount": "کد تخفیف نامعتبر یا منقضی شده است.",
@@ -76,6 +79,14 @@ export const ERROR_MESSAGE_MAP: Record<string, string> = {
   "error fetching active stories": "خطا در دریافت استوری‌ها. دوباره تلاش کنید.",
   "error marking story seen": "خطا در ثبت مشاهده استوری. دوباره تلاش کنید.",
   "authentication required to mark story": "برای ثبت مشاهده باید وارد حساب کاربری خود شوید.",
+  "story mediatype is video":
+    "نوع رسانه ویدیو است اما فایل انتخاب‌شده ویدیو نیست. یک فایل ویدیو برای رسانه انتخاب کنید و از تصویر جلد برای پیش‌نمایش استفاده کنید. دوباره تلاش کنید.",
+  "select a video file for media":
+    "نوع رسانه ویدیو است اما فایل انتخاب‌شده ویدیو نیست. یک فایل ویدیو برای رسانه انتخاب کنید و از تصویر جلد برای پیش‌نمایش استفاده کنید. دوباره تلاش کنید.",
+  "story mediatype is image":
+    "نوع رسانه تصویر است اما فایل انتخاب‌شده تصویر نیست. یک فایل تصویر برای رسانه انتخاب کنید. دوباره تلاش کنید.",
+  "select an image file for media":
+    "نوع رسانه تصویر است اما فایل انتخاب‌شده تصویر نیست. یک فایل تصویر برای رسانه انتخاب کنید. دوباره تلاش کنید.",
 };
 
 /**

@@ -8,6 +8,7 @@ import WalletService, {
   type WalletTransaction,
 } from "@/services/wallet";
 import { priceFormatter } from "@/utils/price";
+import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 
 const MODE_LABELS: Record<WalletAdjustMode, string> = {
   credit: "افزایش موجودی",
@@ -17,6 +18,10 @@ const MODE_LABELS: Record<WalletAdjustMode, string> = {
 
 type Props = {
   userId: number;
+  customerName?: string;
+  customerPhone?: string | null;
+  /** Backend still refuses self-adjust; hide the form when the target is the actor. */
+  allowAdjust?: boolean;
 };
 
 /**
@@ -25,7 +30,12 @@ type Props = {
  * (`/local-user-wallet/admin/*`) validates the amount, prevents negative balances,
  * records a ledger transaction, and writes an admin audit entry.
  */
-export default function WalletAdjustCard({ userId }: Props) {
+export default function WalletAdjustCard({
+  userId,
+  customerName,
+  customerPhone,
+  allowAdjust = true,
+}: Props) {
   const [balanceToman, setBalanceToman] = useState<number | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(true);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
@@ -75,7 +85,7 @@ export default function WalletAdjustCard({ userId }: Props) {
   const projectedNegative = projectedToman != null && projectedToman < 0;
 
   const handleApply = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !allowAdjust) return;
     setSubmitting(true);
     try {
       const res = await WalletService.adminAdjustWallet(userId, {
@@ -92,15 +102,14 @@ export default function WalletAdjustCard({ userId }: Props) {
         setTransactions(history?.data ?? []);
         toast.success("موجودی کیف پول با موفقیت بروزرسانی شد");
       } else {
-        toast.error(res?.message || "خطا در بروزرسانی موجودی کیف پول");
+        toast.error(
+          getUserFacingErrorMessage(res, "خطا در بروزرسانی موجودی کیف پول. دوباره تلاش کنید."),
+        );
       }
-    } catch (err: any) {
-      const message =
-        err?.response?.data?.message ||
-        err?.data?.message ||
-        err?.message ||
-        "خطا در بروزرسانی موجودی کیف پول";
-      toast.error(message);
+    } catch (err: unknown) {
+      toast.error(
+        getUserFacingErrorMessage(err, "خطا در بروزرسانی موجودی کیف پول. دوباره تلاش کنید."),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -108,7 +117,20 @@ export default function WalletAdjustCard({ userId }: Props) {
 
   return (
     <div className="rounded-2xl bg-white p-6">
-      <h2 className="mb-4 text-xl font-bold text-neutral-900">کیف پول کاربر</h2>
+      <div className="mb-4">
+        <h2 className="text-xl font-bold text-neutral-900">کیف پول کاربر</h2>
+        {(customerName || customerPhone) && (
+          <p className="mt-1 text-sm text-neutral-600" data-testid="wallet-adjust-customer">
+            {customerName ? <span className="font-medium text-neutral-800">{customerName}</span> : null}
+            {customerName && customerPhone ? " · " : null}
+            {customerPhone ? (
+              <span dir="ltr" className="inline-block">
+                {customerPhone}
+              </span>
+            ) : null}
+          </p>
+        )}
+      </div>
 
       <div className="mb-6 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
         <span className="text-sm text-neutral-600">موجودی فعلی</span>
@@ -119,6 +141,8 @@ export default function WalletAdjustCard({ userId }: Props) {
         </span>
       </div>
 
+      {allowAdjust ? (
+        <>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="md:col-span-1">
           <label className="mb-1 block text-sm text-neutral-600">نوع تغییر</label>
@@ -177,6 +201,15 @@ export default function WalletAdjustCard({ userId }: Props) {
           اعمال تغییر
         </button>
       </div>
+        </>
+      ) : (
+        <p
+          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+          data-testid="wallet-self-adjust-notice"
+        >
+          تغییر موجودی کیف پول خودتان مجاز نیست.
+        </p>
+      )}
 
       <section className="mt-6 border-t border-slate-200 pt-5">
         <h3 className="mb-3 text-base font-bold text-neutral-900">تاریخچه تراکنش‌ها</h3>
@@ -223,7 +256,7 @@ export default function WalletAdjustCard({ userId }: Props) {
         )}
       </section>
 
-      <Transition appear show={showConfirm} as={Fragment}>
+      <Transition appear show={showConfirm && allowAdjust} as={Fragment}>
         <Dialog
           as="div"
           className="relative z-[1300]"

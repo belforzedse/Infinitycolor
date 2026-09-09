@@ -15,6 +15,7 @@ describe("getMobileBackFallbackHref", () => {
   it("returns checkout and cart fallbacks", () => {
     expect(getMobileBackFallbackHref("/checkout")).toBe("/cart");
     expect(getMobileBackFallbackHref("/cart")).toBe("/");
+    expect(getMobileBackFallbackHref("/returns")).toBe("/");
   });
 
   it("returns account and order fallbacks", () => {

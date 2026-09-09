@@ -11,6 +11,7 @@ import {
   SocialPlatformIcon,
   storeMapLinks,
 } from "@/utils/identityIcons";
+import StoreAddressLine from "@/components/identity/StoreAddressLine";
 
 interface StoresSectionProps {
   stores: IdentityStore[];
@@ -34,7 +35,7 @@ const StoresSection = ({ stores, showStores, socialLinks, contactNumbers }: Stor
               <div key={index} className="flex flex-col gap-2">
                 {store.address && (
                   <p className="text-right text-sm text-neutral-500 md:max-w-[280px]">
-                    {store.name ? `${store.name}: ${store.address}` : store.address}
+                    <StoreAddressLine store={store} />
                   </p>
                 )}
                 {mapLinks.length > 0 && (

@@ -5,6 +5,7 @@ import {
   findOrderPaymentAttempt,
   updatePaymentAttempt,
 } from "../../../payment-attempt/services/payment-attempt-store";
+import { confirmReservePaymentForOrder } from "../../../reserve-group/lib/reserve-group";
 
 type ZarinPalVerification = {
   refId?: string;
@@ -171,6 +172,12 @@ export async function settleZarinPalPayment(
       },
       transacting: trx,
     } as any);
+
+    // Opens the 48h combined-shipping window on the first paid order, or confirms
+    // an already-bound child. No-op for non-reserve orders. Must run on every
+    // paid transition: a group left PendingActivation would never get a deadline,
+    // never be attachable, and hold its parcel indefinitely.
+    await confirmReservePaymentForOrder(strapi as any, Number(orderId), trx);
     await strapi.db
       .query("api::contract-transaction.contract-transaction")
       .update({

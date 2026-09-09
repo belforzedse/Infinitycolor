@@ -1674,6 +1674,100 @@ export interface ApiManualAdminActivityManualAdminActivity extends Schema.Collec
   };
 }
 
+export interface ApiModelApplicationModelApplication extends Schema.CollectionType {
+  collectionName: "model_applications";
+  info: {
+    description: "Storefront model hiring applications";
+    displayName: "Model application";
+    pluralName: "model-applications";
+    singularName: "model-application";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    age: Attribute.Integer &
+      Attribute.Required &
+      Attribute.SetMinMax<
+        {
+          max: 80;
+          min: 15;
+        },
+        number
+      >;
+    city: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 80;
+      }>;
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::model-application.model-application",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    email: Attribute.Email;
+    experience: Attribute.Text;
+    fullName: Attribute.String &
+      Attribute.Required &
+      Attribute.SetMinMaxLength<{
+        maxLength: 80;
+      }>;
+    heightCm: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          max: 250;
+          min: 100;
+        },
+        number
+      >;
+    payloadHash: Attribute.String &
+      Attribute.Required &
+      Attribute.Private &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    phone: Attribute.String &
+      Attribute.Required &
+      Attribute.SetMinMaxLength<{
+        maxLength: 13;
+      }>;
+    photoOne: Attribute.Media<"images">;
+    photoTwo: Attribute.Media<"images">;
+    publicId: Attribute.String & Attribute.Required & Attribute.Unique;
+    reporterUserId: Attribute.Integer & Attribute.Private;
+    sourcePath: Attribute.String &
+      Attribute.SetMinMaxLength<{
+        maxLength: 512;
+      }>;
+    status: Attribute.Enumeration<["new", "in_review", "contacted"]> &
+      Attribute.Required &
+      Attribute.DefaultTo<"new">;
+    submissionId: Attribute.String & Attribute.Required & Attribute.Private & Attribute.Unique;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::model-application.model-application",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    userAgent: Attribute.String &
+      Attribute.Private &
+      Attribute.SetMinMaxLength<{
+        maxLength: 512;
+      }>;
+    version: Attribute.Integer &
+      Attribute.Required &
+      Attribute.SetMinMax<
+        {
+          min: 1;
+        },
+        number
+      > &
+      Attribute.DefaultTo<1>;
+  };
+}
+
 export interface ApiNavigationNavigation extends Schema.SingleType {
   collectionName: "navigations";
   info: {
@@ -1906,6 +2000,11 @@ export interface ApiOrderOrder extends Schema.CollectionType {
       Attribute.DefaultTo<"Unknown">;
     ReservationStatus: Attribute.Enumeration<["Reserved", "Released", "Consumed", "Expired"]> &
       Attribute.DefaultTo<"Released">;
+    reserve_shipment: Attribute.Relation<
+      "api::order.order",
+      "manyToOne",
+      "api::reserve-group.reserve-group"
+    >;
     ReservedUntil: Attribute.DateTime;
     reserveExpiresAt: Attribute.DateTime;
     reserveGroupId: Attribute.String;
@@ -3449,6 +3548,77 @@ export interface ApiProductProduct extends Schema.CollectionType {
   };
 }
 
+export interface ApiReserveGroupReserveGroup extends Schema.CollectionType {
+  collectionName: "reserve_groups";
+  info: {
+    description: "A 48h combined-shipping hold spanning several independently paid orders";
+    displayName: "Reserve group";
+    pluralName: "reserve-groups";
+    singularName: "reserve-group";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    activatedAt: Attribute.DateTime;
+    closedAt: Attribute.DateTime;
+    ClosureReason: Attribute.Enumeration<
+      ["Expired", "ReleasedEarly", "ReleasedByAdmin", "RootAbandoned"]
+    >;
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<"api::reserve-group.reserve-group", "oneToOne", "admin::user"> &
+      Attribute.Private;
+    delivery_address: Attribute.Relation<
+      "api::reserve-group.reserve-group",
+      "manyToOne",
+      "api::local-user-address.local-user-address"
+    >;
+    expiresAt: Attribute.DateTime;
+    groupKey: Attribute.String &
+      Attribute.Required &
+      Attribute.SetMinMaxLength<{
+        maxLength: 64;
+      }>;
+    lastActivityAt: Attribute.DateTime;
+    lastOrderAttachedAt: Attribute.DateTime;
+    orders: Attribute.Relation<"api::reserve-group.reserve-group", "oneToMany", "api::order.order">;
+    owner: Attribute.Relation<
+      "api::reserve-group.reserve-group",
+      "manyToOne",
+      "plugin::users-permissions.user"
+    >;
+    rootOrder: Attribute.Relation<
+      "api::reserve-group.reserve-group",
+      "oneToOne",
+      "api::order.order"
+    >;
+    shipping: Attribute.Relation<
+      "api::reserve-group.reserve-group",
+      "manyToOne",
+      "api::shipping.shipping"
+    >;
+    ShippingBarcode: Attribute.String;
+    ShippingCostPaid: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    ShippingMethodCode: Attribute.String;
+    ShippingMethodTitle: Attribute.String;
+    State: Attribute.Enumeration<
+      ["PendingActivation", "Active", "ReadyToFulfill", "Fulfilling", "Completed", "Cancelled"]
+    > &
+      Attribute.Required &
+      Attribute.DefaultTo<"PendingActivation">;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<"api::reserve-group.reserve-group", "oneToOne", "admin::user"> &
+      Attribute.Private;
+  };
+}
+
 export interface ApiSettingsSettings extends Schema.SingleType {
   collectionName: "site_settings";
   info: {
@@ -4356,6 +4526,7 @@ declare module "@strapi/types" {
       "api::local-user-wallet.local-user-wallet": ApiLocalUserWalletLocalUserWallet;
       "api::local-user.local-user": ApiLocalUserLocalUser;
       "api::manual-admin-activity.manual-admin-activity": ApiManualAdminActivityManualAdminActivity;
+      "api::model-application.model-application": ApiModelApplicationModelApplication;
       "api::navigation.navigation": ApiNavigationNavigation;
       "api::notification.notification": ApiNotificationNotification;
       "api::order-item.order-item": ApiOrderItemOrderItem;
@@ -4392,6 +4563,7 @@ declare module "@strapi/types" {
       "api::product-variation.product-variation": ApiProductVariationProductVariation;
       "api::product-view.product-view": ApiProductViewProductView;
       "api::product.product": ApiProductProduct;
+      "api::reserve-group.reserve-group": ApiReserveGroupReserveGroup;
       "api::settings.settings": ApiSettingsSettings;
       "api::shipping-city.shipping-city": ApiShippingCityShippingCity;
       "api::shipping-province.shipping-province": ApiShippingProvinceShippingProvince;

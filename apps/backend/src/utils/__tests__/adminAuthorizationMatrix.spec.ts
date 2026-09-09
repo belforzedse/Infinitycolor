@@ -19,14 +19,25 @@ describe("canonical admin capability matrix", () => {
     }
   });
 
-  it("keeps Editor admin access blog-only", () => {
+  it("gives Editor blog and stories without commerce access", () => {
     const capabilities = capabilitiesForRole("editor");
     expect(capabilities).toContain("content.blog.read");
     expect(capabilities).toContain("content.blog.banners.manage");
+    expect(capabilities).toContain("content.stories.manage");
     expect(capabilities).not.toContain("product.read");
     expect(capabilities).not.toContain("order.read");
-    expect(capabilities).not.toContain("content.stories.manage");
     expect(capabilities).not.toContain("content.faq.manage");
+  });
+
+  it("starts stories management at Seller 2 and Editor, not Seller 1", () => {
+    expect(hasCapability("seller1", "content.stories.manage")).toBe(false);
+    expect(hasCapability("editor", "content.stories.manage")).toBe(true);
+    expect(hasCapability("seller2", "content.stories.manage")).toBe(true);
+    expect(hasCapability("store_manager", "content.stories.manage")).toBe(true);
+    expect(hasCapability("store_manager_2", "content.stories.manage")).toBe(true);
+    expect(hasCapability("finance", "content.stories.manage")).toBe(true);
+    expect(hasCapability("founder", "content.stories.manage")).toBe(true);
+    expect(hasCapability("superadmin", "content.stories.manage")).toBe(true);
   });
 
   it("models Store Manager and Finance as separate Seller 2 branches", () => {
@@ -70,16 +81,22 @@ describe("canonical admin capability matrix", () => {
     }
     expect(founder.has("order.manual.create")).toBe(true);
     expect(founder.has("wallet.adjust")).toBe(true);
+    expect(founder.has("system.modelApplications.manage")).toBe(true);
+    expect(founder.has("category.delete")).toBe(true);
+    expect(hasCapability("seller2", "category.delete")).toBe(false);
+    expect(hasCapability("finance", "category.delete")).toBe(false);
     expect(founder.has("system.roles.manage")).toBe(false);
     expect(founder.has("order.cancel")).toBe(false);
+    expect(hasCapability("finance", "system.modelApplications.manage")).toBe(false);
   });
 
-  it("reserves scheduling for Superadmin and immediate publication for Seller 1", () => {
+  it("starts scheduling at Seller 2 while immediate publication begins at Seller 1", () => {
     expect(hasCapability("seller1", "product.publish")).toBe(true);
-    expect(hasCapability("store_manager", "product.schedule")).toBe(false);
-    expect(hasCapability("store_manager_2", "product.schedule")).toBe(false);
-    expect(hasCapability("founder", "product.schedule")).toBe(false);
-    expect(hasCapability("superadmin", "product.schedule")).toBe(true);
+    expect(hasCapability("editor", "product.schedule")).toBe(false);
+    expect(hasCapability("seller1", "product.schedule")).toBe(false);
+    for (const role of ADMIN_ROLE_IDS.slice(2)) {
+      expect(hasCapability(role, "product.schedule")).toBe(true);
+    }
   });
 
   it("denies unknown roles and gives Superadmin every registered capability", () => {

@@ -3,6 +3,12 @@ import {
   type BackgroundJobStats,
   runBackgroundJob,
 } from "./backgroundJobRunner";
+import {
+  auditSystemReserveEvent,
+  closeGroup,
+  RESERVE_CLOSURE_REASONS,
+  RESERVE_GROUP_STATES,
+} from "../api/reserve-group/lib/reserve-group";
 
 const MAX_CONSECUTIVE_FAILURES = 5;
 let consecutiveFailures = 0;
@@ -13,65 +19,82 @@ type ExpireReserveOrdersOptions = {
   now?: Date;
 };
 
-async function expireReserveOrdersBatch(
+/**
+ * Ends reserve windows whose 48h deadline has passed and hands the group to the
+ * normal fulfillment workflow.
+ *
+ * Two deliberate properties:
+ *
+ * 1. It updates the `reserve_groups` row ONLY. Member orders are never touched,
+ *    so their `updated_at` keeps meaning "a human changed this order" -- the admin
+ *    list sorts by that column by default, and a nightly expiry batch must not
+ *    surface as a wave of phantom staff edits.
+ * 2. The transition is CAS-guarded on `state = 'Active'`, which is the
+ *    cross-process idempotency anchor (backgroundJobRunner's guard is in-process
+ *    only). Re-running a tick, or running several workers, converges.
+ */
+async function expireReserveGroupsBatch(
   strapi: Strapi,
   options: Required<Pick<ExpireReserveOrdersOptions, "batchSize" | "now">>
 ): Promise<BackgroundJobStats> {
-  const groupRows = await strapi.db.connection.raw(
-    `SELECT reserve_group_id AS "reserveGroupId",
-            COUNT(*)::int AS "expiredOrderCount"
-     FROM orders
-     WHERE is_reserve_order = true
-       AND reserve_expires_at <= ?
-       AND reserve_group_id IS NOT NULL
-     GROUP BY reserve_group_id
-     ORDER BY MIN(reserve_expires_at) ASC
-     LIMIT ?`,
-    [options.now, options.batchSize]
+  const dueRows = await strapi.db.connection.raw(
+    `SELECT id, group_key AS "groupKey"
+       FROM reserve_groups
+      WHERE state = ?
+        AND expires_at IS NOT NULL
+        AND expires_at <= ?
+      ORDER BY expires_at ASC
+      LIMIT ?`,
+    [RESERVE_GROUP_STATES.active, options.now, options.batchSize]
   );
 
+  const groups = dueRows?.rows || [];
   let groupsProcessed = 0;
-  let ordersUpdated = 0;
   let skipped = 0;
-  const groups = groupRows?.rows || [];
 
   for (const group of groups) {
-    const groupId = String(group?.reserveGroupId || "").trim();
-    if (!groupId) {
+    const groupId = Number(group?.id);
+    if (!Number.isFinite(groupId)) {
       skipped += 1;
       continue;
     }
 
-    const updated = await strapi.db.connection.raw(
-      `UPDATE orders
-       SET is_reserve_order = false,
-           reserve_expires_at = NULL,
-           updated_at = NOW()
-       WHERE reserve_group_id = ?
-         AND is_reserve_order = true
-         AND reserve_expires_at <= ?
-       RETURNING id`,
-      [groupId, options.now]
-    );
+    const closed = await closeGroup(strapi, {
+      groupId,
+      reason: RESERVE_CLOSURE_REASONS.expired,
+      now: options.now,
+      requireExpired: true,
+    });
 
-    const updatedCount = updated?.rows?.length || 0;
-    if (updatedCount === 0) {
+    if (!closed) {
+      // Someone released it early, or another worker got there first.
       skipped += 1;
       continue;
     }
 
     groupsProcessed += 1;
-    ordersUpdated += updatedCount;
-    strapi.log.info("Reserve order group expired", {
+
+    await auditSystemReserveEvent(strapi, {
+      eventKey: "orders.reserve_expired",
+      group: { id: groupId, groupKey: String(group?.groupKey || "") },
+      changes: [
+        { field: "state", label: "وضعیت", from: "Active", to: "ReadyToFulfill" },
+        { field: "closureReason", label: "دلیل پایان", from: null, to: "Expired" },
+      ],
+      metadata: { closedAt: options.now.toISOString() },
+      dedupeKey: `reserve-expired:${groupId}`,
+    });
+
+    strapi.log.info("Reserve group window expired", {
       groupId,
-      orderCount: updatedCount,
+      groupKey: group?.groupKey,
     });
   }
 
   return {
     groupsFound: groups.length,
     groupsProcessed,
-    ordersUpdated,
+    ordersUpdated: 0,
     skipped,
     cutoff: options.now.toISOString(),
   };
@@ -90,7 +113,7 @@ export async function runExpireReserveOrdersTick(
       strapi,
       jobName: JOB_NAME,
       run: () =>
-        expireReserveOrdersBatch(strapi, {
+        expireReserveGroupsBatch(strapi, {
           batchSize,
           now: options.now ?? new Date(),
         }),
@@ -110,8 +133,8 @@ export async function runExpireReserveOrdersTick(
 }
 
 /**
- * Clears isReserveOrder and reserveExpiresAt on orders whose reserve window has expired.
- * Runs every 5-10 minutes. Orders become normal "Started" orders ready for admin to ship.
+ * Moves expired reserve groups to ReadyToFulfill so admins can ship them.
+ * Runs every 5-10 minutes.
  */
 export function startExpireReserveOrdersJob(strapi: Strapi) {
   const enabled =

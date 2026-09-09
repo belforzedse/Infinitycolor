@@ -19,6 +19,11 @@ import {
 } from "../../../payment-attempt/services/payment-attempt";
 import { settleOrderWithWallet } from "./wallet-settlement";
 import { consumeCheckoutCartLinesSafely } from "../../services/lib/order-cart-cleanup";
+import {
+  findAttachableGroup,
+  findOpenGroupForUser,
+  hasPaidMember,
+} from "../../../reserve-group/lib/reserve-group";
 
 export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
   const {
@@ -80,24 +85,22 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     let shippingSnapshot: { code?: string; title?: string } = {};
     let reserveOrderData: {
       reserveGroupId: string;
-      reserveExpiresAt: Date;
+      reserveExpiresAt: Date | null;
+      reserveGroupRowId: number;
       isMerge: true;
     } | null = null;
 
-    // When merging into existing reserve: get address/shipping from parent order
+    // Attaching to an existing reserve shipment. The group row -- not the parent
+    // order -- owns the destination and the shipping method, so the child simply
+    // inherits it. Eligibility is re-checked here, server-side, against the group's
+    // own state: a stale browser showing a live countdown cannot attach past the
+    // deadline, and a group whose root was never paid for (or was cancelled) is
+    // not attachable at all, which is what stops free-shipping children from
+    // piling onto a parcel that will never ship.
     if (reserveGroupId && typeof reserveGroupId === "string" && reserveGroupId.trim()) {
-      const now = new Date();
-      const parentOrders = await strapi.db.query("api::order.order").findMany({
-        where: {
-          user: { id: user.id },
-          reserveGroupId: reserveGroupId.trim(),
-          isReserveOrder: true,
-          reserveExpiresAt: { $gt: now.toISOString() },
-        },
-        populate: { delivery_address: true, shipping: true },
-        orderBy: { Date: "asc" },
-      });
-      if (parentOrders.length === 0) {
+      const group = await findAttachableGroup(strapi, user.id, reserveGroupId.trim());
+      const rootPaid = group ? await hasPaidMember(strapi, group.id) : false;
+      if (!group || !rootPaid) {
         return ctx.badRequest("سفارش رزروی معتبر یافت نشد یا منقضی شده است", {
           data: {
             success: false,
@@ -106,19 +109,41 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           },
         });
       }
-      const parent = parentOrders[0];
-      resolvedAddressId = parent.delivery_address?.id ?? parent.delivery_address;
-      resolvedShippingId = parent.shipping?.id ?? parent.shipping;
+      const groupShipping = (group as any).shipping;
+      const groupAddress = (group as any).delivery_address;
+      resolvedAddressId = groupAddress?.id ?? groupAddress;
+      resolvedShippingId = groupShipping?.id ?? groupShipping;
       resolvedShippingCost = 0;
       shippingSnapshot = {
-        code: parent.ShippingMethodCode || parent.shipping?.Code,
-        title: parent.ShippingMethodTitle || parent.shipping?.Title,
+        code: group.ShippingMethodCode || groupShipping?.Code,
+        title: group.ShippingMethodTitle || groupShipping?.Title,
       };
       reserveOrderData = {
-        reserveGroupId: parent.reserveGroupId,
-        reserveExpiresAt: new Date(parent.reserveExpiresAt),
+        reserveGroupId: group.groupKey,
+        reserveExpiresAt: group.expiresAt ? new Date(group.expiresAt) : null,
+        reserveGroupRowId: group.id,
         isMerge: true,
       };
+    }
+
+    // One consolidation window per customer. Checked here, before the gateway, and
+    // not at settlement: activation runs inside the payment-settlement transaction,
+    // which also consumes the stock hold and marks the order paid -- it must never
+    // fail for a reason we could have caught while the customer was still on the
+    // checkout page. The partial unique index only ever backstops a genuine race.
+    if (!reserveOrderData && reserveShipping) {
+      const existingOpen = await findOpenGroupForUser(strapi, user.id);
+      if (existingOpen) {
+        return ctx.badRequest("شما یک سفارش رزروی فعال دارید", {
+          data: {
+            success: false,
+            errorCode: "RESERVE_ALREADY_ACTIVE",
+            message:
+              "شما یک سفارش رزروی فعال دارید. این سفارش را به آن اضافه کنید یا ارسال جداگانه را انتخاب کنید.",
+            reserveGroupId: existingOpen.groupKey,
+          },
+        });
+      }
     }
 
     // Validate required shipping information (skip when merging - we have it from parent)

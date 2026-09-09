@@ -1,18 +1,30 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useId } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useId,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
+
+import { cn } from "@/lib/utils";
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
   /** Overrides the default `p-6` on the inner content wrapper. Pass `"p-0"` to let children control their own padding. */
   contentClassName?: string;
   title?: string;
   titleClassName?: string;
-  closeIcon?: React.ReactNode;
+  closeIcon?: ReactNode;
   "aria-labelledby"?: string;
 }
 
@@ -29,7 +41,11 @@ export default function Modal({
 }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
+  const openedAtRef = useRef(0);
+  const backdropPointerIdRef = useRef<number | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [surfaceReady, setSurfaceReady] = useState(false);
+  const BACKDROP_GUARD_MS = 600;
   const generatedTitleId = useId();
   const titleId = title ? generatedTitleId : undefined;
   const labelledById = title ? generatedTitleId : ariaLabelledby;
@@ -37,6 +53,20 @@ export default function Modal({
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      backdropPointerIdRef.current = null;
+      setSurfaceReady(false);
+      return;
+    }
+
+    openedAtRef.current = Date.now();
+    backdropPointerIdRef.current = null;
+    setSurfaceReady(false);
+    const timer = window.setTimeout(() => setSurfaceReady(true), BACKDROP_GUARD_MS);
+    return () => window.clearTimeout(timer);
+  }, [isOpen]);
 
   const handleEscape = useCallback(
     (e: KeyboardEvent) => {
@@ -74,12 +104,18 @@ export default function Modal({
       // Store previously focused element
       previousActiveElement.current = document.activeElement as HTMLElement;
 
-      // Initial focus
-      const focusableElements = getFocusableElements();
-      if (focusableElements.length > 0) {
-        focusableElements[0].focus();
-      } else {
+      // Initial focus. On coarse pointers, skip the close button so a leftover
+      // tap cannot activate it after the menu that opened this dialog unmounts.
+      const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches === true;
+      if (coarsePointer) {
         modalRef.current?.focus();
+      } else {
+        const focusableElements = getFocusableElements();
+        if (focusableElements.length > 0) {
+          focusableElements[0].focus();
+        } else {
+          modalRef.current?.focus();
+        }
       }
 
       // Lock body scroll
@@ -147,24 +183,40 @@ export default function Modal({
     }
   }, [isOpen, handleEscape, getFocusableElements]);
 
-  // Handle click outside
-  const handleBackdropClick = (e: React.MouseEvent | React.KeyboardEvent) => {
-    if (e.target === e.currentTarget) {
-      onClose();
-    }
+  // Handle click outside. Ignore leftover mobile taps: they arrive as a click
+  // without a pointerdown on this overlay, often within ~300ms of open.
+  const isBackdropGuardActive = () => Date.now() - openedAtRef.current < BACKDROP_GUARD_MS;
+
+  const handleBackdropPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (isBackdropGuardActive() || e.target !== e.currentTarget) return;
+    backdropPointerIdRef.current = e.pointerId;
+  };
+
+  const handleBackdropClick = (e: ReactMouseEvent | ReactKeyboardEvent) => {
+    if (isBackdropGuardActive()) return;
+    if (e.target !== e.currentTarget) return;
+    if (backdropPointerIdRef.current === null) return;
+    onClose();
   };
 
   if (!isOpen || !mounted) return null;
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm duration-200 animate-in fade-in"
+      className={cn(
+        "fixed inset-0 z-[1600] flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm duration-200 animate-in fade-in",
+        !surfaceReady && "pointer-events-none",
+      )}
+      onPointerDown={handleBackdropPointerDown}
       onClick={handleBackdropClick}
       tabIndex={-1}
     >
       <div
         ref={modalRef}
-        className={`relative w-full max-w-7xl rounded-panel bg-white shadow-2xl duration-200 animate-in zoom-in-95 ${className}`}
+        className={cn(
+          "relative w-full max-w-7xl rounded-panel bg-white shadow-2xl duration-200 animate-in zoom-in-95",
+          className,
+        )}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         role="dialog"

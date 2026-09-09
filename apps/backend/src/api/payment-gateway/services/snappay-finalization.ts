@@ -6,6 +6,7 @@ import {
 } from "../../cart/services/lib/discount-claim";
 import { consumeCheckoutCartLines } from "../../cart/services/lib/order-cart-cleanup";
 import { enqueuePurchaseForOrder, enqueueRefundForReturn } from "../../report/analytics/outbox";
+import { confirmReservePaymentForOrder } from "../../reserve-group/lib/reserve-group";
 
 type FinalizationIds = {
   attemptId: number;
@@ -129,6 +130,12 @@ export async function finalizeSnappaySettlement(
       },
       ...(trx ? { transacting: trx } : {}),
     } as any);
+
+    // Opens the 48h combined-shipping window on the first paid order, or confirms
+    // an already-bound child. No-op for non-reserve orders. Must run on every
+    // paid transition: a group left PendingActivation would never get a deadline,
+    // never be attachable, and hold its parcel indefinitely.
+    await confirmReservePaymentForOrder(strapi as any, Number(ids.orderId), trx);
     await strapi.db.query("api::contract-transaction.contract-transaction").update({
       where: { id: ids.transactionRowId },
       data: {

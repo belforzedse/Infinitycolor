@@ -3,11 +3,21 @@ import { fireEvent, render, screen } from "@testing-library/react";
 // zaman ships ESM-only and cannot be transformed by jest; the shared
 // ReportDateRangeField spec stubs it the same way.
 jest.mock("zaman", () => ({
-  DatePicker: ({ defaultValue, onChange }: any) => (
+  DatePicker: ({
+    defaultValue,
+    onChange,
+    inputAttributes,
+  }: {
+    defaultValue?: Date;
+    onChange?: (value: unknown) => void;
+    inputAttributes?: { "aria-label"?: string; id?: string };
+  }) => (
     <input
       role="textbox"
+      id={inputAttributes?.id}
+      aria-label={inputAttributes?.["aria-label"]}
       defaultValue={defaultValue?.toISOString?.().slice(0, 10) ?? ""}
-      onChange={(e) => onChange(new Date(e.target.value))}
+      onChange={(e) => onChange?.(new Date(e.target.value))}
     />
   ),
 }));
@@ -43,6 +53,7 @@ jest.mock("@/components/SuperAdmin/reports/shared/useReportQueryState", () => ({
 }));
 
 import SalesLayout from "../layout";
+import { thisJalaliMonthRange, toDateOnly } from "@/components/SuperAdmin/reports/shared/reportDates";
 
 describe("Sales workspace layout", () => {
   beforeEach(() => {
@@ -119,19 +130,16 @@ describe("Sales workspace layout", () => {
   });
 
   describe("shared reporting period", () => {
-    it("picking a preset reports the LOCAL calendar date, not a UTC-shifted one", () => {
+    it("picking این ماه reports the Jalali month start as a local YYYY-MM-DD", () => {
       mockAdminRole = "superadmin";
       render(<SalesLayout>{null}</SalesLayout>);
 
       fireEvent.click(screen.getByText("این ماه"));
 
       expect(setRangeMock).toHaveBeenCalledTimes(1);
-      const { start } = setRangeMock.mock.calls[0][0];
-      const now = new Date();
-      const expectedFirstOfMonth = `${now.getFullYear()}-${String(
-        now.getMonth() + 1,
-      ).padStart(2, "0")}-01`;
-      expect(start).toBe(expectedFirstOfMonth);
+      const { start } = setRangeMock.mock.calls[0][0] as { start: string };
+      expect(start).toBe(toDateOnly(thisJalaliMonthRange().start));
+      expect(start).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 
     it("is rendered once for every period-scoped subpage", () => {

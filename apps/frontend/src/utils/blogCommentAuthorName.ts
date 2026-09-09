@@ -21,12 +21,6 @@ export function resolveBlogCommentUserDisplayName(
   user?: BlogComment["user"],
   fallbackName?: string
 ): string {
-  if (fallbackName?.trim()) {
-    return fallbackName.trim();
-  }
-
-  if (!user) return "کاربر ناشناس";
-
   const normalizedInfo = extractUserInfo(user);
   const firstName = normalizedInfo?.FirstName?.trim() || "";
   const lastName = normalizedInfo?.LastName?.trim() || "";
@@ -35,6 +29,13 @@ export function resolveBlogCommentUserDisplayName(
   if (fullName) {
     return fullName;
   }
+
+  const storedName = fallbackName?.trim();
+  if (storedName && storedName !== "کاربر ناشناس") {
+    return storedName;
+  }
+
+  if (!user) return "کاربر ناشناس";
 
   const username = user.username?.trim();
   if (username) {

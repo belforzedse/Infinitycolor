@@ -1,8 +1,8 @@
 "use client";
 
+import CheckoutLink from "@/components/ShoppingCart/CheckoutLink";
 import { useCart } from "@/contexts/CartContext";
 import { faNum } from "@/utils/faNum";
-import Link from "next/link";
 import { useMemo } from "react";
 
 export default function OrderSummaryCard() {
@@ -16,10 +16,7 @@ export default function OrderSummaryCard() {
       },
       {
         label: "تخفیف‌ها",
-        value:
-          cartDiscountTotal > 0
-            ? `-${faNum(cartDiscountTotal)} تومان`
-            : "بدون تخفیف",
+        value: cartDiscountTotal > 0 ? `-${faNum(cartDiscountTotal)} تومان` : "بدون تخفیف",
         emphasize: cartDiscountTotal > 0,
       },
       {
@@ -57,14 +54,11 @@ export default function OrderSummaryCard() {
         </span>
       </div>
 
-      <Link
-        href="/checkout"
-        prefetch={false}
-        data-testid="cart-checkout-link"
-        className="mt-4 flex w-full items-center justify-center rounded-xl bg-infinity-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-infinity-primary"
+      <CheckoutLink
+        className="sticky bottom-[calc(7.5rem+env(safe-area-inset-bottom))] z-[90] mt-4 flex min-h-12 w-full items-center justify-center rounded-xl bg-infinity-primary px-4 py-3 text-sm font-semibold text-white shadow-lg lg:static lg:bottom-auto lg:z-auto lg:shadow-none"
       >
         ادامه فرآیند خرید و تسویه حساب
-      </Link>
+      </CheckoutLink>
 
       <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
         پرداخت شما در مرحله بعدی با درگاه‌های امن بانکی انجام می‌شود.
@@ -72,4 +66,3 @@ export default function OrderSummaryCard() {
     </aside>
   );
 }
-

@@ -33,8 +33,12 @@ describe("sanitized customer search", () => {
         populate: {
           user_info: { select: ["FirstName", "LastName"] },
         },
+        where: expect.objectContaining({
+          removedAt: { $null: true },
+        }),
       }),
     );
+    expect(findMany.mock.calls[0][0].where.role).toBeUndefined();
     expect(ctx.body).toEqual({
       data: [
         {
@@ -52,10 +56,14 @@ describe("sanitized customer search", () => {
     expect(JSON.stringify(ctx.body)).not.toContain("role");
   });
 
-  const phoneFilterOf = (findMany: jest.Mock) => {
-    const where = findMany.mock.calls[0][0].where;
-    return where.$or.find((clause: Record<string, any>) => "phone" in clause)?.phone;
+  const orClausesOf = (findMany: jest.Mock): Array<Record<string, unknown>> => {
+    return findMany.mock.calls[0][0].where.$or as Array<Record<string, unknown>>;
   };
+
+  const phoneClausesOf = (findMany: jest.Mock) =>
+    orClausesOf(findMany)
+      .map((clause) => clause.phone)
+      .filter((phone): phone is Record<string, unknown> => Boolean(phone));
 
   const runSearch = async (q: string) => {
     const findMany = jest.fn().mockResolvedValue([]);
@@ -66,33 +74,55 @@ describe("sanitized customer search", () => {
     return findMany;
   };
 
-  it("matches a complete phone against both stored shapes", async () => {
-    // Phones persist as either +989… or 09…, so one exact form would miss half.
+  it("matches a complete phone against both stored shapes and typed layouts", async () => {
     const findMany = await runSearch("09121234567");
-    expect(phoneFilterOf(findMany)).toEqual({
-      $in: ["+989121234567", "09121234567"],
-    });
+    expect(phoneClausesOf(findMany)).toEqual(
+      expect.arrayContaining([
+        { $in: ["+989121234567", "09121234567"] },
+        { $containsi: "9121234567" },
+        { $containsi: "09121234567" },
+      ]),
+    );
   });
 
   it("folds Persian digits before matching a complete phone", async () => {
     const findMany = await runSearch("۰۹۱۲۱۲۳۴۵۶۷");
-    expect(phoneFilterOf(findMany)).toEqual({
-      $in: ["+989121234567", "09121234567"],
-    });
+    expect(phoneClausesOf(findMany)).toEqual(
+      expect.arrayContaining([{ $in: ["+989121234567", "09121234567"] }]),
+    );
   });
 
   it("matches a partial phone on the national part so either shape hits", async () => {
-    // "912123" is a substring of 09121234567 and of +989121234567.
     const findMany = await runSearch("۰۹۱۲۱۲۳");
-    expect(phoneFilterOf(findMany)).toEqual({ $containsi: "912123" });
+    expect(phoneClausesOf(findMany)).toEqual(
+      expect.arrayContaining([{ $containsi: "912123" }]),
+    );
   });
 
-  it("keeps name filters and skips the phone clause for a non-numeric query", async () => {
-    const findMany = await runSearch("علی");
-    expect(phoneFilterOf(findMany)).toBeUndefined();
-    expect(findMany.mock.calls[0][0].where.$or).toEqual([
-      { user_info: { FirstName: { $containsi: "علی" } } },
-      { user_info: { LastName: { $containsi: "علی" } } },
-    ]);
+  it("does not restrict matches to the customer role so staff wallets are searchable", async () => {
+    const findMany = await runSearch("0912");
+    expect(findMany.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({
+        removedAt: { $null: true },
+        $or: expect.any(Array),
+      }),
+    );
+    expect(findMany.mock.calls[0][0].where).not.toHaveProperty("role");
+  });
+
+  it("keeps users-list name splits including first+last for three-word queries", async () => {
+    const findMany = await runSearch("سید محمد حسینی");
+    expect(orClausesOf(findMany)).toEqual(
+      expect.arrayContaining([
+        { user_info: { FirstName: { $containsi: "سید محمد حسینی" } } },
+        { user_info: { LastName: { $containsi: "سید محمد حسینی" } } },
+        {
+          $and: [
+            { user_info: { FirstName: { $containsi: "سید محمد" } } },
+            { user_info: { LastName: { $containsi: "حسینی" } } },
+          ],
+        },
+      ]),
+    );
   });
 });

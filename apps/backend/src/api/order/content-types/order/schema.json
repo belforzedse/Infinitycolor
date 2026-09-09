@@ -186,6 +186,12 @@
     "reserveGroupId": {
       "type": "string"
     },
+    "reserve_shipment": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::reserve-group.reserve-group",
+      "inversedBy": "orders"
+    },
     "analytics_correlation_id": {
       "type": "string",
       "maxLength": 160

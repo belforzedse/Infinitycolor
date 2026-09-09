@@ -19,8 +19,11 @@ import PLPDesktopList from "./List/PLPDesktopList";
 import type { PLPProduct, PLPPagination } from "./types";
 import { plpQueryOptions, plpQueryParsers } from "./queryState";
 import { getPlpHref } from "@/utils/plpRoutes";
+import { sizeFilterChipLabel } from "@/utils/plpSizeFilter";
+import { colorFamilyLabel } from "@/utils/plpColorFilter";
 import { ProductResultsSkeleton } from "@/components/Skeletons/ProductListSkeleton";
 import { scrollIntoViewWithOffset } from "@/utils/scroll";
+import { PLP_PRODUCTS_ANCHOR_ID } from "./plpHeroSlides";
 
 const humanize = (value: string) =>
   value.toString().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
@@ -56,6 +59,7 @@ export default function PLPList({
     minPrice,
     maxPrice,
     size,
+    color,
     material,
     season,
     gender,
@@ -186,17 +190,27 @@ export default function PLPList({
       });
     }
 
-    if (size) {
-      const numericSize = Number(size);
-      const sizeLabel = Number.isNaN(numericSize) ? size : faNum(numericSize);
+    (size ?? []).forEach((key) => {
       filters.push({
-        key: "size",
-        label: `سایز ${sizeLabel}`,
+        key: `size-${key}`,
+        label: `سایز ${sizeFilterChipLabel(key)}`,
         onRemove: () => {
-          void setQuery({ size: null, page: 1 });
+          const remaining = (size ?? []).filter((item) => item !== key);
+          void setQuery({ size: remaining.length > 0 ? remaining : null, page: 1 });
         },
       });
-    }
+    });
+
+    (color ?? []).forEach((key) => {
+      filters.push({
+        key: `color-${key}`,
+        label: `رنگ: ${colorFamilyLabel(key)}`,
+        onRemove: () => {
+          const remaining = (color ?? []).filter((item) => item !== key);
+          void setQuery({ color: remaining.length > 0 ? remaining : null, page: 1 });
+        },
+      });
+    });
 
     if (material) {
       filters.push({
@@ -263,6 +277,7 @@ export default function PLPList({
     searchParams,
     setQuery,
     size,
+    color,
     sort,
     usage,
   ]);
@@ -278,6 +293,7 @@ export default function PLPList({
       minPrice: null,
       maxPrice: null,
       size: null,
+      color: null,
       material: null,
       season: null,
       gender: null,
@@ -323,7 +339,12 @@ export default function PLPList({
   }, [isPagePending, page, scheduleScrollToPLPTop]);
 
   return (
-    <div className="w-full" data-plp-top style={{ scrollMarginTop: "var(--header-offset, 88px)" }}>
+    <div
+      id={PLP_PRODUCTS_ANCHOR_ID}
+      className="w-full"
+      data-plp-top
+      style={{ scrollMarginTop: "var(--header-offset, 88px)" }}
+    >
       <div className="flex flex-col gap-4 md:flex-row">
         {/* Sidebar with filters - Desktop only */}
         <div className="hidden md:flex md:w-[280px]">
@@ -343,7 +364,7 @@ export default function PLPList({
         </div>
 
         {/* Main content */}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1" data-testid="plp-product-results">
           {/* Mobile filter buttons */}
           <div className="mb-4 md:hidden">
             <PLPListMobileFilter

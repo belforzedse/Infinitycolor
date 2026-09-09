@@ -104,6 +104,8 @@ export default function SuperAdminOrderSidebar({
     shippingMethodCode: orderData?.shippingMethodCode,
     providerMessage: workflowOverride?.message || orderData?.anipoLastMessage,
     lastError: orderData?.anipoLastError,
+    reserveIsHeld: orderData?.reserveIsHeld,
+    reserveExpiresAt: orderData?.reserveExpiresAt,
   });
 
   const applyWorkflowResponse = async (result: AnipoBarcodeWorkflowResponse) => {

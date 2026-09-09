@@ -35,9 +35,10 @@ COPY patches ./patches
 COPY apps/backend/package.json ./apps/backend/package.json
 COPY packages ./packages
 RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,id=infinity-pnpm-store,target=/pnpm-store \
     --mount=type=cache,target=/root/.cache/node/corepack \
     /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
-    pnpm install --filter @repo/backend... --frozen-lockfile
+    pnpm install --filter @repo/backend... --frozen-lockfile --store-dir /pnpm-store
 RUN pnpm --filter @repo/auth-core build
 
 # Materialize production dependencies before application source is copied. This

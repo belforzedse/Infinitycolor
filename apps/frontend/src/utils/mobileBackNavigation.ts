@@ -11,6 +11,7 @@ const ROOT_FALLBACKS = new Map<string, string | null>([
   ["/password", "/account"],
   ["/plp", "/"],
   ["/privileges", "/account"],
+  ["/returns", "/"],
   ["/wallet", "/account"],
 ]);
 
@@ -40,6 +41,7 @@ const KNOWN_ROOT_PATHS = new Set([
   "/payment",
   "/plp",
   "/privileges",
+  "/returns",
   "/super-admin",
   "/wallet",
 ]);

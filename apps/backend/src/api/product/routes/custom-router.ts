@@ -29,6 +29,16 @@ export default {
       },
     },
     {
+      method: "PUT",
+      path: "/products/:id/display-date",
+      handler: "product.updateDisplayDate",
+      config: {
+        auth: { scope: [] },
+        policies: [capabilityPolicy("product.schedule")],
+        middlewares: [],
+      },
+    },
+    {
       method: "GET",
       path: "/products/searchwise-feed",
       handler: "product.searchwiseFeed",

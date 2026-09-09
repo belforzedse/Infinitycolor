@@ -57,6 +57,9 @@ describe("Modal", () => {
   });
 
   it("calls onClose from the close button, Escape key, and backdrop click", async () => {
+    let now = 1_000_000;
+    jest.spyOn(Date, "now").mockImplementation(() => now);
+
     render(
       <Modal isOpen={true} onClose={mockOnClose}>
         <button type="button">Focusable child</button>
@@ -67,10 +70,39 @@ describe("Modal", () => {
     expect(closeButton).toHaveClass("rounded-pill", "focus-visible:ring-infinity-primary");
     fireEvent.click(closeButton);
     fireEvent.keyDown(window, { key: "Escape" });
+    now += 600;
     const dialog = screen.getByRole("dialog");
-    fireEvent.click(dialog.parentElement as HTMLElement);
+    const backdrop = dialog.parentElement as HTMLElement;
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
 
     expect(mockOnClose).toHaveBeenCalledTimes(3);
+    jest.restoreAllMocks();
+  });
+
+  it("ignores leftover backdrop taps after open", async () => {
+    let now = 1_000_000;
+    jest.spyOn(Date, "now").mockImplementation(() => now);
+
+    render(
+      <Modal isOpen={true} onClose={mockOnClose}>
+        <div>Content</div>
+      </Modal>,
+    );
+
+    const backdrop = (await screen.findByRole("dialog")).parentElement as HTMLElement;
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
+    expect(mockOnClose).not.toHaveBeenCalled();
+
+    now += 600;
+    fireEvent.click(backdrop);
+    expect(mockOnClose).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(backdrop);
+    fireEvent.click(backdrop);
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
   });
 
   it("does not close when clicking inside the dialog panel", async () => {

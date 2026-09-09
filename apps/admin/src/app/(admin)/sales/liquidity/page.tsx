@@ -26,10 +26,7 @@ import {
   XAxis,
   YAxis,
 } from "@/components/SuperAdmin/reports/shared/charts";
-import {
-  useReportQueryState,
-  parseDateOnly,
-} from "@/components/SuperAdmin/reports/shared/useReportQueryState";
+import { useReportQueryState } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
 
 const INTERVAL_OPTIONS: { id: LiquidityInterval; label: string }[] = [
   { id: "day", label: "روزانه" },
@@ -58,10 +55,7 @@ export default function LiquidityReportPage() {
     setLoading(true);
     setError(null);
     setGatewayError(null);
-    const range = {
-      start: parseDateOnly(start).toISOString(),
-      end: parseDateOnly(end).toISOString(),
-    };
+    const range = { start, end };
     Promise.allSettled([
       getLiquidity({ ...range, interval }),
       getGatewayLiquidity(range),

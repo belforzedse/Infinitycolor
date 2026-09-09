@@ -58,17 +58,17 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "editor",
     adminRole: "editor",
     label: "Editor",
-    sidebarCount: 9,
+    sidebarCount: 11,
     visibleSidebarIds: [
       "blog-dashboard",
       "blog-posts",
       "blog-category-editorial",
       "blog-comments",
+      "stories-list",
     ],
-    hiddenSidebarIds: ["blog", "manage-products", "orders", "sales"],
-    requiredCapabilities: ["content.blog.read", "content.blog.publish"],
+    hiddenSidebarIds: ["blog", "stories", "manage-products", "orders", "sales"],
+    requiredCapabilities: ["content.blog.read", "content.blog.publish", "content.stories.manage"],
     absentCapabilities: [
-      "content.stories.manage",
       "content.faq.manage",
       "product.read",
     ],
@@ -93,13 +93,14 @@ const STAFF_ROLES: StaffRoleCase[] = [
       "product-categories",
       "orders",
       "sales",
+      "stories",
     ],
     requiredCapabilities: [
       "product.read",
       "product.publish",
       "product.variation.manage",
     ],
-    absentCapabilities: ["product.schedule", "product.delete", "order.read"],
+    absentCapabilities: ["product.schedule", "product.delete", "order.read", "content.stories.manage"],
     forbiddenPath: "/orders",
     allowedApi: (request, role) =>
       apiPost(request, role, "/admin/products-list/query", {
@@ -122,20 +123,23 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "seller-2",
     adminRole: "seller2",
     label: "Seller 2",
-    sidebarCount: 8,
-    visibleSidebarIds: ["products", "product-categories", "orders"],
+    sidebarCount: 9,
+    visibleSidebarIds: ["products", "product-categories", "orders", "stories"],
     hiddenSidebarIds: ["manage-products", "sales", "sales-products", "wallets"],
     requiredCapabilities: [
       "product.read",
+      "product.schedule",
       "category.update",
       "order.read",
       "order.status.update",
       "order.notes.update",
+      "content.stories.manage",
     ],
     absentCapabilities: [
       "report.product.read",
       "order.cancel",
       "wallet.adjust",
+      "category.delete",
     ],
     forbiddenPath: "/sales",
     allowedApi: (request, role) =>
@@ -153,10 +157,10 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "store-manager",
     adminRole: "store_manager",
     label: "Store Manager",
-    sidebarCount: 8,
-    visibleSidebarIds: ["products", "product-categories", "orders"],
+    sidebarCount: 9,
+    visibleSidebarIds: ["products", "product-categories", "orders", "stories"],
     hiddenSidebarIds: ["manage-products", "sales", "sales-products", "wallets"],
-    requiredCapabilities: ["order.status.update", "order.notes.update"],
+    requiredCapabilities: ["product.schedule", "order.status.update", "order.notes.update", "content.stories.manage"],
     absentCapabilities: [
       "report.product.read",
       "order.cancel",
@@ -179,21 +183,24 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "store-manager-2",
     adminRole: "store_manager_2",
     label: "Store Manager 2",
-    sidebarCount: 9,
+    sidebarCount: 10,
     visibleSidebarIds: [
       "products",
       "product-categories",
       "orders",
       "wallets",
+      "stories",
     ],
     hiddenSidebarIds: ["manage-products", "sales", "users", "settings"],
     requiredCapabilities: [
       "order.status.update",
       "order.notes.update",
+      "product.schedule",
       "wallet.customer.search",
       "wallet.read",
       "wallet.history.read",
       "wallet.adjust",
+      "content.stories.manage",
     ],
     absentCapabilities: [
       "report.product.read",
@@ -224,13 +231,15 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "finance",
     adminRole: "finance",
     label: "Finance",
-    sidebarCount: 4,
-    visibleSidebarIds: ["manage-products", "orders", "sales"],
+    sidebarCount: 5,
+    visibleSidebarIds: ["manage-products", "orders", "sales", "stories"],
     hiddenSidebarIds: ["sales-products", "wallets", "settings"],
     requiredCapabilities: [
       "order.financial.read",
+      "product.schedule",
       "report.finance.read",
       "report.carts.read",
+      "content.stories.manage",
     ],
     absentCapabilities: [
       "report.traffic.read",
@@ -246,15 +255,26 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "founder",
     adminRole: "founder",
     label: "Founder",
-    sidebarCount: 5,
-    visibleSidebarIds: ["manage-products", "orders", "wallets", "sales"],
+    sidebarCount: 7,
+    visibleSidebarIds: [
+      "manage-products",
+      "orders",
+      "wallets",
+      "sales",
+      "stories",
+      "model-applications",
+    ],
     hiddenSidebarIds: ["users", "settings", "store-operations"],
     requiredCapabilities: [
       "order.status.update",
       "order.financial.read",
+      "product.schedule",
       "order.manual.create",
       "report.traffic.read",
       "wallet.adjust",
+      "content.stories.manage",
+      "system.modelApplications.manage",
+      "category.delete",
     ],
     absentCapabilities: [
       "system.users.manage",
@@ -270,23 +290,29 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "admin",
     adminRole: "superadmin",
     label: "Superadmin",
-    sidebarCount: 12,
+    sidebarCount: 13,
     visibleSidebarIds: [
       "issue-reports",
       "manage-products",
       "blog",
+      "stories",
       "store-operations",
       "customer-operations",
       "sales",
       "settings",
+      "issue-reports",
+      "model-applications",
     ],
     hiddenSidebarIds: ["payment-methods", "wallets", "users"],
     requiredCapabilities: [
       "order.manual.create",
+      "product.schedule",
       "wallet.adjust",
       "system.users.manage",
       "system.roles.manage",
       "system.audit.read",
+      "system.issueReports.manage",
+      "system.modelApplications.manage",
     ],
     absentCapabilities: [],
   },
@@ -485,6 +511,38 @@ test.describe("Store Manager 2 wallet workflow", () => {
         `/local-user-wallet/admin/${customerId}/history?page=1&pageSize=25`,
       ),
       "Store Manager 2 refreshed wallet history",
+    );
+  });
+
+  test("@permissions searches and credits a staff wallet", async ({ request }) => {
+    const founderPhone = authCredentials("founder").phone;
+    const search = await apiGet(
+      request,
+      "store-manager-2",
+      `/sp/customers/search?q=${encodeURIComponent(founderPhone)}&pageSize=20`,
+    );
+    await expectApiOk(search, "Store Manager 2 staff wallet search");
+    const searchBody = (await search.json()) as {
+      data?: Array<{ id?: number; phone?: string | null }>;
+    };
+    const founder = searchBody.data?.find((entry) => entry.phone === founderPhone);
+    expect(founder?.id).toBeTruthy();
+    const founderId = Number(founder?.id);
+
+    const adjustment = await apiPost(
+      request,
+      "store-manager-2",
+      "/local-user-wallet/admin/adjust",
+      {
+        userId: founderId,
+        mode: "credit",
+        amountToman: 1,
+        reason: "E2E Store Manager 2 staff wallet credit",
+      },
+    );
+    await expectApiOk(adjustment, "Store Manager 2 staff wallet adjustment");
+    expect(await adjustment.json()).toEqual(
+      expect.objectContaining({ success: true }),
     );
   });
 });

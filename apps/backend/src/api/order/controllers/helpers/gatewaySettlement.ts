@@ -1,5 +1,9 @@
 import type { Strapi } from "@strapi/strapi";
 import { consumeOrderReservation } from "../../../../utils/stockReservations";
+import {
+  auditSystemReserveEvent,
+  confirmReservePaymentForOrder,
+} from "../../../reserve-group/lib/reserve-group";
 import { claimPaymentAttemptForSettlement } from "../../../payment-attempt/services/payment-attempt";
 
 export class GatewayLocalSettlementError extends Error {
@@ -34,7 +38,9 @@ export async function finalizeGatewaySettlement(
   strapi: Strapi,
   input: FinalizeGatewaySettlementInput,
 ): Promise<{ outcome: "settled" | "already_settled" }> {
-  return strapi.db.transaction(async ({ trx }) => {
+  let reserveOutcome: Awaited<ReturnType<typeof confirmReservePaymentForOrder>> | null = null;
+
+  const settlement = await strapi.db.transaction(async ({ trx }) => {
     await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [input.orderId]);
 
     const order: any = await strapi.db.query("api::order.order").findOne({
@@ -95,6 +101,10 @@ export async function finalizeGatewaySettlement(
       data: { ...input.orderData, Status: "Started" },
       transacting: trx,
     } as any);
+
+    // Opens the 48h combined-shipping window on the first paid order, or confirms
+    // an already-bound child. No-op for non-reserve orders.
+    reserveOutcome = await confirmReservePaymentForOrder(strapi, input.orderId, trx);
     await strapi.db.query("api::contract.contract").update({
       where: { id: input.contractId },
       data: { ...input.contractData, Status: "Confirmed" },
@@ -135,4 +145,35 @@ export async function finalizeGatewaySettlement(
 
     return { outcome: "settled" as const };
   });
+
+  // Audited after commit: a reserve bookkeeping event must never be the reason a
+  // settled payment rolls back.
+  if (reserveOutcome?.outcome === "activated") {
+    await auditSystemReserveEvent(
+      strapi,
+      {
+        eventKey: "orders.reserve_group_activated",
+        group: { id: reserveOutcome.groupId, groupKey: reserveOutcome.groupKey },
+        changes: [
+          { field: "state", label: "وضعیت", from: "PendingActivation", to: "Active" },
+        ],
+        metadata: { orderId: input.orderId, expiresAt: reserveOutcome.expiresAt.toISOString() },
+        dedupeKey: `reserve-activated:${reserveOutcome.groupId}`,
+      },
+      { jobId: "payment-settlement", label: "Payment Settlement" },
+    );
+  } else if (reserveOutcome?.outcome === "attached") {
+    await auditSystemReserveEvent(
+      strapi,
+      {
+        eventKey: "orders.reserve_attachment_confirmed",
+        group: { id: reserveOutcome.groupId, groupKey: reserveOutcome.groupKey },
+        metadata: { orderId: input.orderId },
+        dedupeKey: `reserve-attach-confirmed:${input.orderId}`,
+      },
+      { jobId: "payment-settlement", label: "Payment Settlement" },
+    );
+  }
+
+  return settlement;
 }

@@ -1,0 +1,108 @@
+{
+  "kind": "collectionType",
+  "collectionName": "reserve_groups",
+  "info": {
+    "singularName": "reserve-group",
+    "pluralName": "reserve-groups",
+    "displayName": "Reserve group",
+    "description": "A 48h combined-shipping hold spanning several independently paid orders"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "indexes": [
+    {
+      "name": "uq_reserve_groups_group_key",
+      "columns": ["group_key"],
+      "type": "unique"
+    },
+    {
+      "name": "idx_reserve_groups_state_expires",
+      "columns": ["state", "expires_at"]
+    },
+    {
+      "name": "idx_reserve_groups_last_activity",
+      "columns": ["last_activity_at", "id"]
+    }
+  ],
+  "attributes": {
+    "groupKey": {
+      "type": "string",
+      "required": true,
+      "maxLength": 64
+    },
+    "owner": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "State": {
+      "type": "enumeration",
+      "enum": [
+        "PendingActivation",
+        "Active",
+        "ReadyToFulfill",
+        "Fulfilling",
+        "Completed",
+        "Cancelled"
+      ],
+      "default": "PendingActivation",
+      "required": true
+    },
+    "ClosureReason": {
+      "type": "enumeration",
+      "enum": ["Expired", "ReleasedEarly", "ReleasedByAdmin", "RootAbandoned"]
+    },
+    "activatedAt": {
+      "type": "datetime"
+    },
+    "expiresAt": {
+      "type": "datetime"
+    },
+    "closedAt": {
+      "type": "datetime"
+    },
+    "lastOrderAttachedAt": {
+      "type": "datetime"
+    },
+    "lastActivityAt": {
+      "type": "datetime"
+    },
+    "rootOrder": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::order.order"
+    },
+    "orders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "reserve_shipment"
+    },
+    "ShippingCostPaid": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "ShippingMethodCode": {
+      "type": "string"
+    },
+    "ShippingMethodTitle": {
+      "type": "string"
+    },
+    "shipping": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::shipping.shipping"
+    },
+    "delivery_address": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::local-user-address.local-user-address"
+    },
+    "ShippingBarcode": {
+      "type": "string"
+    }
+  }
+}

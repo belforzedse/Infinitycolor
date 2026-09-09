@@ -3,14 +3,22 @@
 import PLPListFilterCategory from "./Category";
 import AvailabilityFilter from "./Availability";
 import PriceFilter from "./Price";
+import SizeFilter from "./Size";
+import ColorFilter from "./Color";
 import PLPFilterBox from "@/components/Kits/PLP/FilterBox";
 import { useQueryStates } from "nuqs";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getProductCategories, type ProductCategorySummary } from "@/services/product/categories";
+import {
+  getProductVariationColors,
+  getProductVariationSizes,
+} from "@/services/product/variationAttributes";
 import { SORT_OPTIONS } from "@/components/PLP/sortOptions";
-import { plpQueryOptions, plpQueryParsers } from "@/components/PLP/queryState";
+import { plpQueryOptions, plpQueryParsers, toggleFilterValue } from "@/components/PLP/queryState";
 import { getCategoryPlpHrefWithQuery } from "@/utils/plpRoutes";
+import { buildSizeBuckets } from "@/utils/plpSizeFilter";
+import { buildColorFamilyBuckets } from "@/utils/plpColorFilter";
 
 interface FilterProps {
   showAvailableOnly?: boolean;
@@ -29,14 +37,20 @@ export default function Filter({
   hideAvailability = false,
 }: FilterProps) {
   const [query, setQuery] = useQueryStates(plpQueryParsers, plpQueryOptions);
-  const { available, minPrice, maxPrice, sort } = query;
+  const { available, minPrice, maxPrice, sort, size, color } = query;
+  const selectedSizes = size ?? [];
+  const selectedColors = color ?? [];
   const router = useRouter();
   const searchParams = useSearchParams();
-  // State for categories
   const [localCategories, setLocalCategories] = useState<ProductCategorySummary[]>([]);
   const [isFetchingCategories, setIsFetchingCategories] = useState(!categoriesProp);
+  const [sizeTitles, setSizeTitles] = useState<string[]>([]);
+  const [isLoadingSizes, setIsLoadingSizes] = useState(true);
+  const [catalogColors, setCatalogColors] = useState<
+    Awaited<ReturnType<typeof getProductVariationColors>>
+  >([]);
+  const [isLoadingColors, setIsLoadingColors] = useState(true);
 
-  // Fetch categories on component mount
   useEffect(() => {
     if (categoriesProp) {
       return;
@@ -66,14 +80,40 @@ export default function Filter({
     };
   }, [categoriesProp]);
 
-  // Initialize available state from prop - run only once on mount
+  useEffect(() => {
+    let isMounted = true;
+    const loadAttributes = async () => {
+      try {
+        const [sizes, colors] = await Promise.all([
+          getProductVariationSizes(),
+          getProductVariationColors(),
+        ]);
+        if (!isMounted) return;
+        setSizeTitles(sizes.map((item) => item.title));
+        setCatalogColors(colors);
+      } catch (error) {
+        console.error("Error fetching PLP variation filters:", error);
+        if (!isMounted) return;
+        setSizeTitles([]);
+        setCatalogColors([]);
+      } finally {
+        if (!isMounted) return;
+        setIsLoadingSizes(false);
+        setIsLoadingColors(false);
+      }
+    };
+    void loadAttributes();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (showAvailableOnly && available !== "true") {
       void setQuery({ available: "true" });
     }
   }, [showAvailableOnly, available, setQuery]);
 
-  // Category filter handler
   const handleCategorySelect = useCallback(
     (id: string) => {
       router.push(getCategoryPlpHrefWithQuery(id, searchParams));
@@ -81,7 +121,6 @@ export default function Filter({
     [router, searchParams],
   );
 
-  // Availability filter handler
   const handleAvailabilityChange = useCallback(
     (checked: boolean) => {
       void setQuery({ available: checked ? "true" : null, page: 1 });
@@ -89,7 +128,6 @@ export default function Filter({
     [setQuery],
   );
 
-  // Price filter handler
   const handlePriceChange = useCallback(
     (min: number, max: number) => {
       void setQuery({
@@ -115,9 +153,27 @@ export default function Filter({
     void setQuery({ page: 1, sort: null });
   }, [setQuery]);
 
-  // Whether any resettable filter is active (category is route-based and kept).
+  const handleSizeToggle = useCallback(
+    (key: string) => {
+      void setQuery({ page: 1, size: toggleFilterValue(size, key) });
+    },
+    [setQuery, size],
+  );
+
+  const handleColorToggle = useCallback(
+    (key: string) => {
+      void setQuery({ page: 1, color: toggleFilterValue(color, key) });
+    },
+    [setQuery, color],
+  );
+
   const hasActiveFilters =
-    available === "true" || !!minPrice || !!maxPrice || !!sort;
+    available === "true" ||
+    !!minPrice ||
+    !!maxPrice ||
+    !!sort ||
+    selectedSizes.length > 0 ||
+    selectedColors.length > 0;
 
   const handleClearAllFilters = useCallback(() => {
     void setQuery({
@@ -126,6 +182,8 @@ export default function Filter({
       minPrice: null,
       maxPrice: null,
       sort: null,
+      size: null,
+      color: null,
     });
   }, [setQuery]);
 
@@ -133,6 +191,8 @@ export default function Filter({
   const resolvedIsLoading = categoriesProp
     ? (isLoadingCategoriesProp ?? false)
     : isFetchingCategories;
+  const sizeBuckets = useMemo(() => buildSizeBuckets(sizeTitles), [sizeTitles]);
+  const colorBuckets = useMemo(() => buildColorFamilyBuckets(catalogColors), [catalogColors]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -160,6 +220,28 @@ export default function Filter({
           defaultChecked={available === "true"}
         />
       )}
+
+      <div data-testid="plp-size-filter">
+        <PLPFilterBox title="سایز" defaultOpen>
+          <SizeFilter
+            buckets={sizeBuckets}
+            selectedKeys={selectedSizes}
+            isLoading={isLoadingSizes}
+            onToggle={handleSizeToggle}
+          />
+        </PLPFilterBox>
+      </div>
+
+      <div data-testid="plp-color-filter">
+        <PLPFilterBox title="رنگ" defaultOpen>
+          <ColorFilter
+            buckets={colorBuckets}
+            selectedKeys={selectedColors}
+            isLoading={isLoadingColors}
+            onToggle={handleColorToggle}
+          />
+        </PLPFilterBox>
+      </div>
 
       <PLPFilterBox title="قیمت">
         <PriceFilter
@@ -201,56 +283,6 @@ export default function Filter({
           )}
         </div>
       </PLPFilterBox>
-
-      {/* <PLPFilterBoxWithItems
-        title="جنس"
-        inputPlaceholder="جنس مد نظرتونو سرچ کنین"
-        hasSearch
-        options={[
-          { id: "1", label: "جنس 1" },
-          { id: "2", label: "جنس 2" },
-          { id: "3", label: "جنس 3" },
-          { id: "4", label: "جنس 4" },
-          { id: "5", label: "جنس 5" },
-          { id: "6", label: "جنس 6" },
-          { id: "7", label: "جنس 7" },
-          { id: "8", label: "جنس 8" },
-          { id: "9", label: "جنس 9" },
-        ]}
-        onOptionSelect={handleMaterialSelect}
-      />
-
-      <PLPFilterBoxWithItems
-        title="مناسب فصل"
-        options={[
-          { id: "1", label: "بهار" },
-          { id: "2", label: "تابستان" },
-          { id: "3", label: "پاییز" },
-          { id: "4", label: "زمستان" },
-        ]}
-        onOptionSelect={handleSeasonSelect}
-      />
-
-      <PLPFilterBoxWithItems
-        title="جنسیت"
-        options={[
-          { id: "1", label: "مردانه" },
-          { id: "2", label: "زنانه" },
-          { id: "3", label: "کودک" },
-        ]}
-        onOptionSelect={handleGenderSelect}
-      />
-
-      <PLPFilterBoxWithItems
-        title="موارد استفاده"
-        hasSearch
-        options={[
-          { id: "1", label: "موارد استفاده 1" },
-          { id: "2", label: "موارد استفاده 2" },
-          { id: "3", label: "موارد استفاده 3" },
-        ]}
-        onOptionSelect={handleUsageSelect}
-      /> */}
     </div>
   );
 }

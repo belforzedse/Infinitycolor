@@ -47,4 +47,13 @@ describe("uploadFile", () => {
     expect(imageCompression).not.toHaveBeenCalled();
     expect((global as any).__appendedFormData).toEqual([{ name: "files", value: gif }]);
   });
+
+  it("skips compression for high-quality banner uploads under 20MB", async () => {
+    const jpeg = new File(["jpeg-bytes"], "category-banner.jpg", { type: "image/jpeg" });
+
+    await uploadFile(jpeg, { highQuality: true });
+
+    expect(imageCompression).not.toHaveBeenCalled();
+    expect((global as any).__appendedFormData).toEqual([{ name: "files", value: jpeg }]);
+  });
 });

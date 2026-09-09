@@ -6,6 +6,7 @@ import { ApiResponse, PaginatedResponse } from "@/types/api";
 import { API_BASE_URL, getStrapiServerUrl } from "@/constants/api";
 import logger from "@/utils/logger";
 import { centralAuth } from "@/lib/central-auth";
+import { readOptionalText, unwrapStrapiEntity, unwrapStrapiFields } from "@/utils/strapiEntity";
 
 export interface BlogPost {
   id: number;
@@ -111,6 +112,7 @@ export interface BlogComment {
     id: number;
     username?: string;
     email?: string;
+    phone?: string;
     user_info?: BlogUserInfo | null;
   };
   blog_post?: { id: number; Title: string ; Slug?: string };
@@ -197,9 +199,8 @@ class BlogService {
     return headers;
   }
 
-  private unwrapRelation(rel: any): { id: number; [key: string]: any } | undefined {
-    if (!rel?.data) return undefined;
-    return { id: rel.data.id, ...(rel.data.attributes || {}) };
+  private unwrapRelation(rel: unknown): { id: number; [key: string]: unknown } | undefined {
+    return unwrapStrapiEntity(rel);
   }
 
   private normalizeMediaImage(entry: any): BlogCategory["FeaturedImage"] | undefined {
@@ -210,11 +211,11 @@ class BlogService {
     if (!media) return undefined;
 
     const mediaUrl =
+      media.url ||
+      media.formats?.large?.url ||
       media.formats?.medium?.url ||
       media.formats?.small?.url ||
-      media.formats?.large?.url ||
-      media.formats?.thumbnail?.url ||
-      media.url;
+      media.formats?.thumbnail?.url;
 
     if (!mediaUrl) return undefined;
 
@@ -228,26 +229,24 @@ class BlogService {
     };
   }
 
-  private normalizeBlogCommentUser(userEntry: any): BlogComment["user"] | undefined {
-    const unwrapped = this.unwrapRelation(userEntry);
+  private normalizeBlogCommentUser(userEntry: unknown): BlogComment["user"] | undefined {
+    const unwrapped = unwrapStrapiEntity(userEntry);
     if (!unwrapped) return undefined;
 
-    const userInfoCandidate =
-      userEntry?.data?.attributes?.user_info ??
-      userEntry?.attributes?.user_info ??
-      unwrapped.user_info;
-
-    const normalizedUserInfo =
-      this.unwrapRelation(userInfoCandidate) ??
-      userInfoCandidate?.attributes ??
-      userInfoCandidate ??
-      null;
+    const userInfoFields = unwrapStrapiFields(unwrapped.user_info);
+    const phone = readOptionalText(unwrapped.phone) ?? readOptionalText(unwrapped.Phone);
 
     return {
       id: unwrapped.id,
-      username: unwrapped.username,
-      email: unwrapped.email,
-      user_info: normalizedUserInfo ? { ...normalizedUserInfo } : null,
+      username: readOptionalText(unwrapped.username),
+      email: readOptionalText(unwrapped.email),
+      phone,
+      user_info: userInfoFields
+        ? {
+            FirstName: readOptionalText(userInfoFields.FirstName),
+            LastName: readOptionalText(userInfoFields.LastName),
+          }
+        : null,
     };
   }
 
@@ -273,8 +272,8 @@ class BlogService {
       blog_post: blogPostRelation
         ? {
             id: blogPostRelation.id,
-            Title: blogPostRelation.Title || blogPostRelation.title,
-            Slug: blogPostRelation.Slug || blogPostRelation.slug,
+            Title: String(blogPostRelation.Title || blogPostRelation.title || ""),
+            Slug: readOptionalText(blogPostRelation.Slug) || readOptionalText(blogPostRelation.slug),
           }
         : undefined,
       parent_comment: this.unwrapRelation(attrs.parent_comment),
@@ -1003,6 +1002,7 @@ class BlogService {
 
     const response = await fetch(`${this.getBaseUrl()}/blog-comments?${searchParams}`, {
       headers: await this.getHeaders(),
+      cache: "no-store",
     });
 
     if (!response.ok) {
@@ -1049,6 +1049,7 @@ class BlogService {
     const response = await fetch(`${this.getBaseUrl()}/blog-comments/${id}`, {
       method: "PUT",
       headers: await this.getHeaders(),
+      cache: "no-store",
       body: JSON.stringify({ data: { Status: status } }),
     });
 

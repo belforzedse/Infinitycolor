@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import Link from "next/link";
 import toast from "react-hot-toast";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
@@ -9,7 +8,6 @@ import Modal from "@/components/Kits/Modal";
 import {
   Search,
   Trash2,
-  MessageSquare,
   Calendar,
   User,
   ShoppingBag,
@@ -36,9 +34,11 @@ export default function ProductsCommentsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [viewReview, setViewReview] = useState<ProductReview | null>(null);
 
-  const fetchReviews = useCallback(async () => {
+  const fetchReviews = useCallback(async (options?: { silent?: boolean }) => {
     try {
-      setLoading(true);
+      if (!options?.silent) {
+        setLoading(true);
+      }
       const response = await productReviewService.getAllReviews({
         pageSize: 100,
         status: statusFilter !== "all" ? statusFilter : undefined,
@@ -47,21 +47,38 @@ export default function ProductsCommentsPage() {
     } catch (err) {
       console.error("Error fetching reviews:", err);
       toast.error("خطا در دریافت دیدگاه‌ها");
-      setReviews([]);
+      if (!options?.silent) {
+        setReviews([]);
+      }
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   }, [statusFilter]);
 
   useEffect(() => {
-    fetchReviews();
+    void fetchReviews();
   }, [fetchReviews]);
+
+  const applyStatus = (
+    id: number,
+    newStatus: "Need for Review" | "Accepted" | "Rejected",
+  ) => {
+    setReviews((current) =>
+      current.map((review) => (review.id === id ? { ...review, Status: newStatus } : review)),
+    );
+    setViewReview((current) =>
+      current?.id === id ? { ...current, Status: newStatus } : current,
+    );
+  };
 
   const handleStatusChange = async (id: number, newStatus: "Need for Review" | "Accepted" | "Rejected") => {
     try {
       await productReviewService.updateStatus(id, newStatus);
+      applyStatus(id, newStatus);
       toast.success("وضعیت دیدگاه با موفقیت تغییر کرد");
-      fetchReviews();
+      void fetchReviews({ silent: true });
     } catch (err) {
       console.error("Error updating review status:", err);
       toast.error("خطا در تغییر وضعیت دیدگاه");
@@ -72,8 +89,9 @@ export default function ProductsCommentsPage() {
     if (confirm("آیا از حذف این دیدگاه اطمینان دارید؟")) {
       try {
         await productReviewService.deleteReview(id);
+        setReviews((current) => current.filter((review) => review.id !== id));
+        setViewReview((current) => (current?.id === id ? null : current));
         toast.success("دیدگاه با موفقیت حذف شد");
-        fetchReviews();
       } catch (err) {
         console.error("Error deleting review:", err);
         toast.error("خطا در حذف دیدگاه");
@@ -298,7 +316,13 @@ export default function ProductsCommentsPage() {
 
         {/* Table */}
         <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
-          <SuperAdminTable data={filteredReviews} columns={columns} loading={loading} />
+          <SuperAdminTable
+            data={filteredReviews}
+            columns={columns}
+            loading={loading}
+            getRowId={(row) => String(row.id)}
+            refreshOnVisibility={false}
+          />
         </div>
       </ContentWrapper>
 

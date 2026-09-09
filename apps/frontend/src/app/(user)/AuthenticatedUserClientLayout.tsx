@@ -4,7 +4,6 @@ import Footer from "@/components/PLP/Footer";
 import Header from "@/components/User/Header";
 import ProfileCompletionBanner from "@/components/User/Account/ProfileCompletionBanner";
 import dynamic from "next/dynamic";
-import { useCart } from "@/contexts/CartContext";
 import { useAccountFreshData } from "@/hooks/useAccountFreshData";
 import useUser from "@/hooks/useUser";
 import { useEffect } from "react";
@@ -16,7 +15,6 @@ const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), { s
 
 export default function AuthenticatedUserClientLayout({ children }: { children: React.ReactNode }) {
   useAccountFreshData();
-  const { isDrawerOpen } = useCart();
   const { userData, isLoading } = useUser();
   const router = useRouter();
   const pathname = usePathname();
@@ -40,7 +38,7 @@ export default function AuthenticatedUserClientLayout({ children }: { children: 
         </StorefrontContainer>
         {children}
         <Footer />
-        {isDrawerOpen && <CartDrawer />}
+        <CartDrawer />
       </div>
     </AdaptiveQualityBoundary>
   );

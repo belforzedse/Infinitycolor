@@ -7,6 +7,7 @@ const PUBLIC_REPLAY_PATHS = new Set([
   "/faq",
   "/pdp",
   "/plp",
+  "/returns",
 ]);
 
 const PUBLIC_REPLAY_PREFIXES = ["/blog/", "/pdp/", "/plp/"];

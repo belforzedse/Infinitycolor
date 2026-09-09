@@ -82,6 +82,21 @@ describe("getSidebarItemsForRole - Superadmin regression", () => {
     );
   });
 
+  it("nests سفارشات under مدیریت سفارشات at the same href", () => {
+    const orders = getSidebarItemsForRole("Superadmin").find(
+      (item) => item.id === "orders",
+    );
+    expect(orders?.label).toBe("مدیریت سفارشات");
+    expect(orders?.href).toBe("/super-admin/orders");
+    expect(orders?.children[0]).toEqual(
+      expect.objectContaining({
+        id: "orders-main",
+        label: "سفارشات",
+        href: "/super-admin/orders",
+      }),
+    );
+  });
+
   it("keeps the full reports submenu (traffic, product-sales, admin-activity) for superadmins", () => {
     const items = getSidebarItemsForRole("Superadmin");
     const reports = items.find((i) => i.id === "reports");

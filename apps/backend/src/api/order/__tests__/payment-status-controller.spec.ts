@@ -60,6 +60,9 @@ describe("order.checkPaymentStatus", () => {
     expect(orderFindOne).toHaveBeenCalledWith({
       where: { id: "60", user: { id: 10 } },
       populate: {
+        // The reserve group is joined so the confirmation screen can state the
+        // live window rather than the order's frozen reserve columns.
+        reserve_shipment: { populate: { rootOrder: true } },
         contract: {
           populate: {
             contract_transactions: { populate: { payment_gateway: true } },
@@ -165,6 +168,13 @@ describe("order.checkPaymentStatus", () => {
         paymentStatus: "Unknown",
         isPaid: false,
         paymentGateway: "SnappPay",
+        // No reserve group on this order, so the reserve view is empty rather
+        // than absent -- the client renders structurally off these fields.
+        reserveGroupId: null,
+        reserveExpiresAt: null,
+        reserveState: null,
+        reserveOrderCount: 0,
+        reserveAttached: undefined,
         transactionId: "snapp-transaction-62",
         attemptId: undefined,
         amountIrr: undefined,

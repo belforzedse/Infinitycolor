@@ -14,8 +14,9 @@ type Props = {
 // Products are ordered in the admin panel by LastEditedByAdminAt (the «آخرین ویرایش»
 // timestamp). Letting an admin set that timestamp — Persian (Jalali) date + a 24h
 // hour/minute clock — lets them rearrange products by date & time, WooCommerce-style.
-// We send ONLY LastEditedByAdminAt: the product lifecycle diff ignores this field, so
-// afterUpdate never re-stamps it to "now", and the chosen instant is preserved.
+// The dedicated endpoint accepts only this timestamp: the product lifecycle diff ignores
+// LastEditedByAdminAt, so afterUpdate never re-stamps it to "now" and the chosen instant is
+// preserved without granting the caller broad product-update permission.
 export default function ProductDisplayDateCard({ productId, initialDate }: Props) {
   const [date, setDate] = useState<Date>(() => (initialDate ? new Date(initialDate) : new Date()));
   const [saving, setSaving] = useState(false);
@@ -48,8 +49,8 @@ export default function ProductDisplayDateCard({ productId, initialDate }: Props
     try {
       // Local Date → ISO (UTC) so the stored instant round-trips back to the same
       // wall-clock time when re-displayed in the admin's timezone.
-      await apiClient.put(`/products/${productId}`, {
-        data: { LastEditedByAdminAt: date.toISOString() },
+      await apiClient.put(`/products/${productId}/display-date`, {
+        data: { displayAt: date.toISOString() },
       });
       toast.success("تاریخ و ساعت نمایش محصول ثبت شد");
     } catch {

@@ -1,5 +1,16 @@
 let mockStrapi: any;
-jest.mock('@strapi/strapi', () => ({ factories: { createCoreController: (_uid, factory) => factory({ strapi: mockStrapi }) } }));
+let mockCoreFind: jest.Mock;
+jest.mock('@strapi/strapi', () => ({
+  factories: {
+    createCoreController: (_uid, factory) => {
+      const controller = factory({ strapi: mockStrapi });
+      Object.setPrototypeOf(controller, {
+        find: (...args) => mockCoreFind(...args),
+      });
+      return controller;
+    },
+  },
+}));
 jest.mock('../../../utils/roles', () => ({ resolveCustomerTargetUserId: jest.fn(async () => 7) }));
 jest.mock('../../../utils/operationalCommerce', () => ({ enforceOperationalDataFields: jest.fn(async () => true) }));
 
@@ -9,6 +20,7 @@ let query: any;
 const ctx = (body = {}) => ({ request: { body }, badRequest: jest.fn(), notFound: jest.fn(), internalServerError: jest.fn() });
 beforeEach(() => {
   jest.resetModules();
+  mockCoreFind = jest.fn(async () => ({ data: [] }));
   query = { findOne: jest.fn(async () => existing) };
   mockStrapi = {
     db: { query: () => query, transaction: async callback => callback({ trx: { raw: jest.fn() } }) },
@@ -16,6 +28,23 @@ beforeEach(() => {
     log: { error: jest.fn() },
   };
   controller = require('../controllers/product-review').default;
+});
+it('uses the null operator when restricting public review listings', async () => {
+  const requestedFilters = { product: { id: { $eq: '1569' } } };
+  const context = {
+    state: {},
+    query: { filters: requestedFilters },
+  };
+
+  await controller.find(context);
+
+  expect(context.query.filters).toEqual({
+    $and: [
+      requestedFilters,
+      { Status: 'Accepted', removedAt: { $null: true } },
+    ],
+  });
+  expect(mockCoreFind).toHaveBeenCalledWith(context);
 });
 it('returns edited reviews to moderation and ignores caller supplied status/identity', async () => {
   const result = await controller.submitReview(ctx({ productId: 1, rate: 5, content: 'Updated customer review', Status: 'Accepted', user: 9 }));

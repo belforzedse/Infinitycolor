@@ -1,14 +1,29 @@
 import { render, screen, fireEvent } from "@testing-library/react";
+import type { InputHTMLAttributes } from "react";
+
+type MockDatePickerProps = {
+  defaultValue?: Date;
+  onChange?: (value: unknown) => void;
+  inputAttributes?: InputHTMLAttributes<HTMLInputElement>;
+  inputClass?: string;
+};
 
 // A faithful-enough stand-in for zaman's real DatePicker: `defaultValue` only
 // initializes the DOM input's value and is ignored on re-render (genuine
 // uncontrolled-input behavior) unless React remounts the element via `key`.
 jest.mock("zaman", () => ({
-  DatePicker: ({ defaultValue, onChange }: any) => (
+  DatePicker: ({ defaultValue, onChange, inputAttributes, inputClass }: MockDatePickerProps) => (
     <input
       role="textbox"
+      className={inputClass}
+      aria-label={
+        typeof inputAttributes?.["aria-label"] === "string"
+          ? inputAttributes["aria-label"]
+          : undefined
+      }
+      id={typeof inputAttributes?.id === "string" ? inputAttributes.id : undefined}
       defaultValue={defaultValue?.toISOString?.().slice(0, 10) ?? ""}
-      onChange={(e) => onChange(new Date(e.target.value))}
+      onChange={(e) => onChange?.(new Date(e.target.value))}
     />
   ),
 }));
@@ -17,6 +32,7 @@ import ReportDateRangeField, {
   normalizeDateInput,
   DEFAULT_REPORT_DATE_PRESETS,
 } from "../ReportDateRangeField";
+import { thisJalaliMonthRange, toDateOnly } from "../reportDates";
 
 describe("normalizeDateInput", () => {
   const previous = new Date("2026-01-01T00:00:00Z");
@@ -41,6 +57,7 @@ describe("normalizeDateInput", () => {
     expect(normalizeDateInput("not-a-date", previous)).toBe(previous);
     expect(normalizeDateInput(null, previous)).toBe(previous);
     expect(normalizeDateInput(undefined, previous)).toBe(previous);
+    expect(normalizeDateInput({ nope: true }, previous)).toBe(previous);
   });
 });
 
@@ -50,21 +67,30 @@ describe("ReportDateRangeField", () => {
 
   it("renders start/end labels and every default preset", () => {
     render(<ReportDateRangeField start={start} end={end} onChange={jest.fn()} />);
-    expect(screen.getByText("تاریخ شروع")).toBeInTheDocument();
-    expect(screen.getByText("تاریخ پایان")).toBeInTheDocument();
+    expect(screen.getByLabelText("تاریخ شروع")).toBeInTheDocument();
+    expect(screen.getByLabelText("تاریخ پایان")).toBeInTheDocument();
     for (const preset of DEFAULT_REPORT_DATE_PRESETS) {
       expect(screen.getByText(preset.label)).toBeInTheDocument();
     }
   });
 
+  it("gives both pickers a full-width input class so the pair stays equal", () => {
+    render(<ReportDateRangeField start={start} end={end} onChange={jest.fn()} />);
+    const startInput = screen.getByLabelText("تاریخ شروع");
+    const endInput = screen.getByLabelText("تاریخ پایان");
+    expect(startInput).toHaveClass("w-full");
+    expect(endInput).toHaveClass("w-full");
+  });
+
   it("changing the start picker calls onChange with the new start and the SAME end", () => {
     const onChange = jest.fn();
     render(<ReportDateRangeField start={start} end={end} onChange={onChange} />);
-    const inputs = screen.getAllByRole("textbox");
-    fireEvent.change(inputs[0], { target: { value: "2026-01-05" } });
+    fireEvent.change(screen.getByLabelText("تاریخ شروع"), {
+      target: { value: "2026-01-05" },
+    });
 
     expect(onChange).toHaveBeenCalledTimes(1);
-    const call = onChange.mock.calls[0][0];
+    const call = onChange.mock.calls[0][0] as { start: Date; end: Date };
     expect(call.end).toBe(end);
     expect(call.start.getUTCDate()).toBe(5);
   });
@@ -72,10 +98,11 @@ describe("ReportDateRangeField", () => {
   it("changing the end picker calls onChange with the SAME start and the new end", () => {
     const onChange = jest.fn();
     render(<ReportDateRangeField start={start} end={end} onChange={onChange} />);
-    const inputs = screen.getAllByRole("textbox");
-    fireEvent.change(inputs[1], { target: { value: "2026-01-20" } });
+    fireEvent.change(screen.getByLabelText("تاریخ پایان"), {
+      target: { value: "2026-01-20" },
+    });
 
-    const call = onChange.mock.calls[0][0];
+    const call = onChange.mock.calls[0][0] as { start: Date; end: Date };
     expect(call.start).toBe(start);
     expect(call.end.getUTCDate()).toBe(20);
   });
@@ -86,9 +113,18 @@ describe("ReportDateRangeField", () => {
     fireEvent.click(screen.getByText("۷ روز گذشته"));
 
     expect(onChange).toHaveBeenCalledTimes(1);
-    const call = onChange.mock.calls[0][0];
+    const call = onChange.mock.calls[0][0] as { start: Date; end: Date };
     expect(call.start).toBeInstanceOf(Date);
     expect(call.end).toBeInstanceOf(Date);
+  });
+
+  it("این ماه starts on the Jalali first of the current Tehran month", () => {
+    const onChange = jest.fn();
+    render(<ReportDateRangeField start={start} end={end} onChange={onChange} />);
+    fireEvent.click(screen.getByText("این ماه"));
+
+    const call = onChange.mock.calls[0][0] as { start: Date; end: Date };
+    expect(toDateOnly(call.start)).toBe(toDateOnly(thisJalaliMonthRange().start));
   });
 
   it("hides presets when presets={false}", () => {
@@ -97,17 +133,19 @@ describe("ReportDateRangeField", () => {
   });
 
   it("updates the displayed dates when start/end change externally (e.g. after a preset click) — not stale", () => {
-    const { rerender } = render(<ReportDateRangeField start={start} end={end} onChange={jest.fn()} />);
+    const { rerender } = render(
+      <ReportDateRangeField start={start} end={end} onChange={jest.fn()} />,
+    );
     const newStart = new Date(2026, 5, 1);
     const newEnd = new Date(2026, 5, 30);
 
     rerender(<ReportDateRangeField start={newStart} end={newEnd} onChange={jest.fn()} />);
 
-    const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    // A DatePicker whose `key` doesn't track the incoming value would keep the OLD
-    // uncontrolled input's value here — this is exactly the "date pickers go stale
-    // after a preset click" regression.
-    expect(inputs[0].value).toBe(newStart.toISOString().slice(0, 10));
-    expect(inputs[1].value).toBe(newEnd.toISOString().slice(0, 10));
+    expect((screen.getByLabelText("تاریخ شروع") as HTMLInputElement).value).toBe(
+      newStart.toISOString().slice(0, 10),
+    );
+    expect((screen.getByLabelText("تاریخ پایان") as HTMLInputElement).value).toBe(
+      newEnd.toISOString().slice(0, 10),
+    );
   });
 });

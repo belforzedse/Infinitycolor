@@ -1,5 +1,10 @@
 import { apiClient } from "../index";
-import { getActiveReserve, releaseReserve } from "./reserve";
+import {
+  getActiveReserve,
+  getMyReserveGroup,
+  getMyReserveGroups,
+  releaseReserve,
+} from "./reserve";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import type { OrderPaymentStatusResponse as SharedOrderPaymentStatusResponse } from "@repo/api/commerce";
 
@@ -85,9 +90,20 @@ export interface Order {
   ShippingMethodCode?: string | null;
   ShippingMethodTitle?: string | null;
   ShippingBarcode?: string;
+  /**
+   * Reserve fields are a server-side PROJECTION of the order's group row, not the
+   * frozen `is_reserve_order`/`reserve_expires_at` columns (which are never
+   * rewritten after creation so member `updated_at` stays honest). Gate live
+   * affordances -- countdown, "send now" -- on `reserveIsActive`, not on
+   * `isReserveOrder`, which stays true for the life of the order.
+   */
   isReserveOrder?: boolean;
   reserveExpiresAt?: string | null;
   reserveGroupId?: string | null;
+  reserveState?: string | null;
+  reserveClosureReason?: string | null;
+  reserveIsActive?: boolean;
+  reserveIsHeld?: boolean;
   Description?: string;
   Note?: string;
   createdAt: string;
@@ -374,6 +390,8 @@ const OrderService = {
   getMyOrders,
   getOrderDetail,
   getActiveReserve,
+  getMyReserveGroups,
+  getMyReserveGroup,
   releaseReserve,
   async generateAnipoBarcode(
     orderId: number,

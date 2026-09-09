@@ -14,6 +14,7 @@ const VariationImporter = require('./importers/VariationImporter');
 const OrderImporter = require('./importers/OrderImporter');
 const UserImporter = require('./importers/UserImporter');
 const BlogPostImporter = require('./importers/BlogPostImporter');
+const StoryImporter = require('./importers/StoryImporter');
 const Logger = require('./utils/Logger');
 const config = require('./config');
 
@@ -451,6 +452,29 @@ program
       logger.success('✅ Blog post import completed!');
     } catch (error) {
       logger.error('❌ Blog post import failed:', error);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('stories')
+  .description('Import homepage WP Story Premium stories into Strapi')
+  .option('--dry-run', 'Run without writing to Strapi', false)
+  .option('--deactivate-existing', 'Deactivate Strapi stories not in the WordPress homepage rail', false)
+  .action(async (options) => {
+    try {
+      logger.info('🎬 Starting homepage story import...');
+      const importer = new StoryImporter(config, logger);
+      const stats = await importer.import({
+        dryRun: options.dryRun,
+        deactivateExisting: options.deactivateExisting,
+      });
+      logger.success('✅ Story import completed!');
+      if (stats.failed > 0) {
+        process.exit(1);
+      }
+    } catch (error) {
+      logger.error('❌ Story import failed:', error);
       process.exit(1);
     }
   });

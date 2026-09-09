@@ -422,6 +422,7 @@ describe("ShoppingCartBillForm auth gate", () => {
       );
     });
     fireEvent.click(screen.getByTestId("select-snappay"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
     fireEvent.click(screen.getByTestId("checkout-submit"));
 
     await waitFor(() => {
@@ -450,5 +451,48 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(submitted.attemptId).toBeTruthy();
     expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(submitted.attemptId);
     expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe("sha256:snappay-quote");
+  });
+
+  it("blocks payment until the shopper accepts the site terms", async () => {
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:terms-quote",
+      financialSummary: { total: 120_000 },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: false,
+      message: "stop-after-request",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("برای ثبت سفارش باید قوانین و مقررات سایت را بپذیرید"),
+      ).toBeInTheDocument();
+    });
+    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+    });
   });
 });

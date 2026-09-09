@@ -6,37 +6,10 @@ import type { Comment} from "./config";
 import { config } from "./config";
 import { useParams, useRouter } from "next/navigation";
 import { apiClient } from "@/services";
+import { apiCache } from "@/lib/api-cache";
 import toast from "react-hot-toast";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-
-type CommentResponse = {
-  id: string;
-  attributes: {
-    Rate: number;
-    Content: string;
-    Status: "Need for Review" | "Rejected" | "Accepted";
-    Date: string;
-    createdAt: string;
-    updatedAt: string;
-    user: {
-      data: {
-        id: number;
-        attributes: {
-          Phone: string;
-          user_info: {
-            data: {
-              id: number;
-              attributes: {
-                FirstName: string;
-                LastName: string;
-              };
-            };
-          };
-        };
-      };
-    };
-  };
-};
+import { mapProductReviewToCommentForm } from "./mapReview";
 
 type Reaction = {
   id: string;
@@ -63,7 +36,6 @@ export default function Page() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reactionPages, setReactionPages] = useState<number>(1);
-  const [revalidate, setRevalidate] = useState<number>(0);
 
   const { id } = useParams();
 
@@ -91,22 +63,15 @@ export default function Page() {
   useEffect(() => {
     setIsLoading(true);
     apiClient
-      .get(`/product-reviews/${id}?populate[0]=user&populate[1]=user.user_info`)
+      .get(`/product-reviews/${id}?populate[0]=user&populate[1]=user.user_info`, {
+        cache: "no-store",
+      })
       .then((res) => {
-        const data = (res as any)?.data as CommentResponse;
-
-        setComment({
-          id: data?.id,
-          message: data?.attributes?.Content,
-          name:
-            data?.attributes?.user?.data?.attributes?.user_info?.data?.attributes?.FirstName +
-            " " +
-            data?.attributes?.user?.data?.attributes?.user_info?.data?.attributes?.LastName,
-          createdAt: new Date(data?.attributes?.createdAt),
-          status: data?.attributes?.Status,
-          username: data?.attributes?.user?.data?.attributes?.Phone,
-          updatedAt: new Date(data?.attributes?.updatedAt),
-        });
+        const mapped = mapProductReviewToCommentForm((res as { data?: unknown })?.data ?? res);
+        if (!mapped) {
+          throw new Error("empty review");
+        }
+        setComment(mapped);
         setIsLoading(false);
       })
       .catch((_err) => {
@@ -114,7 +79,7 @@ export default function Page() {
         toast.error("دریافت اطلاعات با خطا مواجه شد");
         setIsLoading(false);
       });
-  }, [id, revalidate]);
+  }, [id]);
 
   const ReactionsTable = () => {
     return (
@@ -211,7 +176,17 @@ export default function Page() {
               Content: data?.message,
             },
           });
-          setRevalidate(revalidate + 1);
+          apiCache.clearByPattern(/product-reviews/i);
+          setComment((current) =>
+            current
+              ? {
+                  ...current,
+                  status: data.status,
+                  message: data.message,
+                  updatedAt: new Date(),
+                }
+              : current,
+          );
           toast.success("ویرایش با موفقیت انجام شد");
         } catch (error) {
           console.error("Error updating comment:", error);

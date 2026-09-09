@@ -192,10 +192,10 @@ describe("legacy WooCommerce redirects", () => {
     expect(target?.searchParams.get("search")).toBe("Oppsi");
   });
 
-  it("redirects return policy Persian URL to FAQ", () => {
+  it("redirects return policy Persian URL to the returns page", () => {
     const target = legacyTarget("/شرایط-و-مقررات-تعویض-و-مرجوع/");
 
-    expect(target?.pathname).toBe("/faq");
+    expect(target?.pathname).toBe("/returns");
     expect(target?.search).toBe("");
   });
 

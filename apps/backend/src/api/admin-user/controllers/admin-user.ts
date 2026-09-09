@@ -1,4 +1,5 @@
 import { sanitize } from "@strapi/utils";
+import { personNameSearchAlternatives } from "../../../utils/personIdentitySearch";
 import { MANAGEMENT_ROLES } from "../../../utils/roles";
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -133,50 +134,9 @@ function parseSort(ctx: any, rawSort: unknown): { field: SortField; direction: D
 }
 
 function searchFilter(search: string): Record<string, unknown> {
-  const words = search.split(/\s+/).filter(Boolean);
-  const alternatives: Array<Record<string, unknown>> = [
-    { phone: { $containsi: search } },
-    { user_info: { FirstName: { $containsi: search } } },
-    { user_info: { LastName: { $containsi: search } } },
-  ];
-
-  if (words.length > 1) {
-    alternatives.push({
-      $and: [
-        { user_info: { FirstName: { $containsi: words[0] } } },
-        { user_info: { LastName: { $containsi: words.slice(1).join(" ") } } },
-      ],
-    });
-  }
-
-  if (words.length > 2) {
-    alternatives.push({
-      $and: [
-        { user_info: { FirstName: { $containsi: words.slice(0, -1).join(" ") } } },
-        { user_info: { LastName: { $containsi: words[words.length - 1] } } },
-      ],
-    });
-  }
-
-  if (words.length > 3) {
-    const midpoint = Math.ceil(words.length / 2);
-    alternatives.push({
-      $and: [
-        {
-          user_info: {
-            FirstName: { $containsi: words.slice(0, midpoint).join(" ") },
-          },
-        },
-        {
-          user_info: {
-            LastName: { $containsi: words.slice(midpoint).join(" ") },
-          },
-        },
-      ],
-    });
-  }
-
-  return { $or: alternatives };
+  return {
+    $or: [{ phone: { $containsi: search } }, ...personNameSearchAlternatives(search)],
+  };
 }
 
 function projectSafeUser(user: any) {

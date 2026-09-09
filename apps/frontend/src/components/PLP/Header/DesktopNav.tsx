@@ -6,11 +6,15 @@ import { useProductCategories } from "@/hooks/useProductCategories";
 import { usePathname } from "next/navigation";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
 import { StorefrontContainer } from "@/components/storefront";
+import { OPPSI_HEADER_ITEM } from "@/constants/categories";
 import DesktopMegaMenu from "./DesktopMegaMenu";
 import SaleBadgeIcon from "./SaleBadgeIcon";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FocusEvent, KeyboardEvent } from "react";
+import { useSetAtom } from "jotai";
 import type { ProductCategorySummary } from "@/services/product/categories";
+import { modelHiringModalOpenAtom } from "@/atoms/modelHiring";
+import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
 
 interface NavItem {
   key: string;
@@ -21,11 +25,16 @@ interface NavItem {
 }
 
 export default function PLPHeaderDesktopNav() {
-  const { categories, isLoading: loading } = useProductCategories({
+  const { categories: navbarCategories, isLoading: loading } = useProductCategories({
     navbarAssignedOnly: true,
     includeChildren: true,
   });
+  const categories = useMemo(
+    () => withHeaderExtraCategories(navbarCategories),
+    [navbarCategories],
+  );
   const pathname = usePathname();
+  const openHiringModal = useSetAtom(modelHiringModalOpenAtom);
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
@@ -40,6 +49,11 @@ export default function PLPHeaderDesktopNav() {
         href: getCategoryPlpHref(item.slug),
         category: item,
       })),
+      {
+        key: OPPSI_HEADER_ITEM.key,
+        label: OPPSI_HEADER_ITEM.label,
+        href: OPPSI_HEADER_ITEM.href,
+      },
       {
         key: "discounts",
         label: "تخفیف‌ها و جشنواره‌ها",
@@ -124,7 +138,7 @@ export default function PLPHeaderDesktopNav() {
   if (loading) {
     return (
       <nav className="bg-stone-50/80 py-3">
-        <StorefrontContainer className="flex items-center justify-center gap-6">
+        <StorefrontContainer className="flex items-center justify-center gap-4">
           <div className="skeleton-shimmer-light h-5 w-24 rounded"></div>
           <div className="skeleton-shimmer-light h-5 w-24 rounded"></div>
           <div className="skeleton-shimmer-light h-5 w-24 rounded"></div>
@@ -146,7 +160,7 @@ export default function PLPHeaderDesktopNav() {
       }}
     >
       <nav className="relative z-[120] bg-stone-50/80 py-3" aria-label="منوی اصلی فروشگاه">
-        <StorefrontContainer className="flex items-center justify-center gap-6">
+        <StorefrontContainer className="flex items-center justify-center gap-4">
           {navItems.map((item) => {
             const isActive = isActiveHref(item.href);
             const isCategoryActive =
@@ -189,6 +203,16 @@ export default function PLPHeaderDesktopNav() {
               </Link>
             );
           })}
+          <button
+            type="button"
+            onClick={() => {
+              closeMegaMenu();
+              openHiringModal(true);
+            }}
+            className="pressable flex items-center gap-1 rounded-full text-sm text-neutral-800 underline-offset-4 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          >
+            استخدام مدل
+          </button>
         </StorefrontContainer>
       </nav>
 

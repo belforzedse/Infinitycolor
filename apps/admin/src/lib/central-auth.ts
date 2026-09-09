@@ -22,11 +22,15 @@ export function clearCentralAuthForLogout(): void {
 
 export { publishAuthState, subscribeToAuthState };
 
-export function centralLoginUrl(returnPath?: string): string {
+export function centralLoginUrl(
+  returnPath?: string,
+  options?: { stepUp?: boolean },
+): string {
   const url = new URL("/auth", centralAuthOrigin);
   if (typeof window !== "undefined") {
     const safePath = safeInternalPath(returnPath) ?? "/";
     url.searchParams.set("returnTo", new URL(safePath, adminOrigin()).toString());
+    if (options?.stepUp) url.searchParams.set("stepUp", "1");
   }
   return url.toString();
 }

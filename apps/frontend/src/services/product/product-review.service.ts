@@ -59,6 +59,7 @@ export interface ProductReview {
     email?: string;
     user_info?: UserInfo;
     Phone?: string;
+    phone?: string;
   };
   product?: {
     id: number;
@@ -130,6 +131,7 @@ interface UserAttributes {
   username?: string | null;
   email?: string | null;
   Phone?: string | null;
+  phone?: string | null;
   user_info?: StrapiRelation<StrapiEntry<UserInfo>> | null;
 }
 
@@ -214,7 +216,7 @@ class ProductReviewService {
         id: unwrappedUser.id,
         username: unwrappedUser.username ?? undefined,
         email: unwrappedUser.email ?? undefined,
-        Phone: unwrappedUser.Phone ?? undefined,
+        Phone: unwrappedUser.Phone ?? unwrappedUser.phone ?? undefined,
         user_info: userInfo,
       };
     }
@@ -246,7 +248,7 @@ class ProductReviewService {
         replyUser = {
           id: unwrappedReplyUser.id,
           username: unwrappedReplyUser.username ?? undefined,
-          Phone: unwrappedReplyUser.Phone ?? undefined,
+          Phone: unwrappedReplyUser.Phone ?? unwrappedReplyUser.phone ?? undefined,
           user_info: replyUserInfo,
         };
       }

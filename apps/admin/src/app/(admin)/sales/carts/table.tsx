@@ -6,8 +6,6 @@ import type { ProductCoverImage } from "@/types/Product";
 import { priceFormatter } from "@/utils/price";
 import type { ColumnDef } from "@tanstack/react-table";
 import { twMerge } from "tailwind-merge";
-import Image from "next/image";
-import imageLoader from "@/utils/imageLoader";
 import { translateCartStatus } from "@/utils/statusTranslations";
 const cartStatusTextClass = (status?: string) => {
   const normalized = status?.toLowerCase().replace(/\s+/g, " ") || "";
@@ -25,6 +23,45 @@ const cartStatusTextClass = (status?: string) => {
   }
 };
 
+export type CartItem = {
+  id: string;
+  attributes: {
+    Sum: string;
+    Count: number;
+    createdAt: string;
+    updatedAt: string;
+    product_variation: {
+      data: {
+        id: string;
+        attributes: {
+          IsPublished: boolean;
+          SKU: string;
+          Price: string;
+          createdAt: string;
+          updatedAt: string;
+          product: {
+            data: {
+              id: string;
+              attributes: {
+                Title: string;
+                Description: string;
+                Status: string;
+                AverageRating: number | null;
+                RatingCount: number | null;
+                createdAt: string;
+                updatedAt: string;
+                CleaningTips: string;
+                ReturnConditions: string;
+                removedAt: string | null;
+                CoverImage: ProductCoverImage;
+              };
+            } | null;
+          };
+        };
+      } | null;
+    };
+  };
+};
 
 export type Cart = {
   id: string;
@@ -58,66 +95,37 @@ export type Cart = {
             };
           };
         };
-      };
-    };
+      } | null;
+    } | null;
     cart_items: {
-      data: Array<{
-        id: string;
-        attributes: {
-          Sum: string;
-          Count: number;
-          createdAt: string;
-          updatedAt: string;
-          product_variation: {
-            data: {
-              id: string;
-              attributes: {
-                IsPublished: boolean;
-                SKU: string;
-                Price: string;
-                createdAt: string;
-                updatedAt: string;
-                product: {
-                  data: {
-                    id: string;
-                    attributes: {
-                      Title: string;
-                      Description: string;
-                      Status: string;
-                      AverageRating: number | null;
-                      RatingCount: number | null;
-                      createdAt: string;
-                      updatedAt: string;
-                      CleaningTips: string;
-                      ReturnConditions: string;
-                      removedAt: string | null;
-                      CoverImage: ProductCoverImage;
-                    };
-                  };
-                };
-              };
-            };
-          };
-        };
-      }>;
-    };
+      data: CartItem[] | null;
+    } | null;
   };
+};
+
+export const getCartItems = (cart?: Cart): CartItem[] => {
+  const items = cart?.attributes?.cart_items?.data;
+  return Array.isArray(items) ? items : [];
+};
+
+export const getCartCustomerName = (cart?: Cart): string => {
+  const userInfo =
+    cart?.attributes?.user?.data?.attributes?.user_info?.data?.attributes;
+  const fullName = `${userInfo?.FirstName || ""} ${userInfo?.LastName || ""}`;
+  return fullName.trim() || " - ";
 };
 
 export const columns: ColumnDef<Cart>[] = [
   {
-    accessorKey: "attributes.user.data.attributes.user_info.data.attributes.FirstName",
+    accessorKey:
+      "attributes.user.data.attributes.user_info.data.attributes.FirstName",
     header: "نام",
     cell: ({ row }) => {
-      const firstName =
-        row.original?.attributes?.user?.data?.attributes?.user_info?.data?.attributes?.FirstName;
-
-      const lastName =
-        row.original?.attributes?.user?.data?.attributes?.user_info?.data?.attributes?.LastName;
-
-      const fullName = `${firstName || ""} ${lastName || ""}`;
-
-      return <span className="text-xs text-foreground-primary">{fullName.trim() || " - "}</span>;
+      return (
+        <span className="text-xs text-foreground-primary">
+          {getCartCustomerName(row.original)}
+        </span>
+      );
     },
   },
   {
@@ -132,46 +140,68 @@ export const columns: ColumnDef<Cart>[] = [
     accessorKey: "id",
     header: "اقلام سبد خرید",
     cell: ({ row }) => {
-      const items = row.original?.attributes?.cart_items?.data;
+      const items = getCartItems(row.original);
 
       return (
         <div className="flex items-center gap-2">
           {items.slice(0, 5).map((item) => {
-            const productData = item?.attributes?.product_variation?.data?.attributes?.product?.data?.attributes;
+            const productData =
+              item?.attributes?.product_variation?.data?.attributes?.product
+                ?.data?.attributes;
             const coverImage = productData?.CoverImage;
             const imageData = coverImage?.data?.attributes;
-            const thumbnailUrl = imageData?.formats?.thumbnail?.url || imageData?.formats?.small?.url || imageData?.url;
+            const thumbnailUrl =
+              imageData?.formats?.thumbnail?.url ||
+              imageData?.formats?.small?.url ||
+              imageData?.url;
 
             // Fix URL construction for cart items
-            const baseImageUrl = API_BASE_URL ? API_BASE_URL.split("/api")[0] : "";
+            const baseImageUrl = API_BASE_URL
+              ? API_BASE_URL.split("/api")[0]
+              : "";
             const imageUrl = thumbnailUrl
-              ? (thumbnailUrl.startsWith('http') ? thumbnailUrl : `${baseImageUrl}${thumbnailUrl}`)
+              ? thumbnailUrl.startsWith("http")
+                ? thumbnailUrl
+                : `${baseImageUrl}${thumbnailUrl}`
               : null;
 
             return imageUrl ? (
               <img
                 key={item?.attributes?.product_variation?.data?.id}
                 src={imageUrl}
-                alt={imageData?.name || productData?.Title || 'Cart item image'}
+                alt={imageData?.name || productData?.Title || "Cart item image"}
                 className="h-12 w-12 overflow-hidden rounded-lg object-cover"
                 onError={(e) => {
-                  console.log('Cart item image failed:', imageUrl);
-                  console.log('Cart trying to load:', imageUrl);
-                  e.currentTarget.style.display = 'none';
+                  console.log("Cart item image failed:", imageUrl);
+                  console.log("Cart trying to load:", imageUrl);
+                  e.currentTarget.style.display = "none";
                   const placeholder = e.currentTarget.nextElementSibling;
-                  if (placeholder) placeholder.classList.remove('hidden');
+                  if (placeholder) placeholder.classList.remove("hidden");
                 }}
               />
             ) : (
-              <div key={item?.attributes?.product_variation?.data?.id} className="h-12 w-12 bg-gray-200 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
+              <div
+                key={item?.attributes?.product_variation?.data?.id}
+                className="h-12 w-12 bg-gray-200 rounded-lg flex items-center justify-center"
+              >
+                <svg
+                  className="w-6 h-6 text-gray-400"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
+                    clipRule="evenodd"
+                  />
                 </svg>
               </div>
             );
           })}
           {items.length > 5 && (
-            <span className="text-sm text-actions-primary">+{items.length - 5}</span>
+            <span className="text-sm text-actions-primary">
+              +{items.length - 5}
+            </span>
           )}
         </div>
       );
@@ -190,7 +220,7 @@ export const columns: ColumnDef<Cart>[] = [
     accessorKey: "attributes.cart_items.data",
     header: "ارزش سبد خرید",
     cell: ({ row }) => {
-      const price = row.original?.attributes?.cart_items?.data?.reduce(
+      const price = getCartItems(row.original).reduce(
         (acc, item) => acc + Number(item.attributes.Sum),
         0,
       );
@@ -240,29 +270,37 @@ export const MobileTable = ({ data }: Props) => {
 
   return (
     <div className="mt-2 flex flex-col gap-2">
-      {data.map((row) => (
-        <MobileTableRowBox
-          key={row.id}
-          columns={columns}
-          row={row}
-          header={
-            <>
+      {data.map((row) => {
+        const items = getCartItems(row);
+        return (
+          <MobileTableRowBox
+            key={row.id}
+            columns={columns}
+            row={row}
+            header={
               <div className="flex w-full items-center justify-between rounded-[4px] bg-stone-50 px-2 py-1">
                 <div className="flex gap-1">
                   <span className="text-xs text-neutral-400">
-                    {row?.attributes?.cart_items?.data?.length}
+                    {items.length}
                   </span>
                   <span className="text-xs text-neutral-400">|</span>
-                  <SuperAdminTableCellFullDate date={new Date(row?.attributes?.createdAt)} />
+                  <SuperAdminTableCellFullDate
+                    date={new Date(row?.attributes?.createdAt)}
+                  />
                   <span className="text-xs text-neutral-400">|</span>
-                  <span className={twMerge("text-xs", cartStatusTextClass(row?.attributes?.Status))}>
+                  <span
+                    className={twMerge(
+                      "text-xs",
+                      cartStatusTextClass(row?.attributes?.Status),
+                    )}
+                  >
                     {translateCartStatus(row?.attributes?.Status)}
                   </span>
                 </div>
 
                 <span className="text-sm text-yellow-600">
                   {priceFormatter(
-                    row?.attributes?.cart_items?.data?.reduce(
+                    items.reduce(
                       (acc, item) => acc + Number(item.attributes.Sum),
                       0,
                     ),
@@ -270,18 +308,11 @@ export const MobileTable = ({ data }: Props) => {
                   )}
                 </span>
               </div>
-            </>
-          }
-          headTitle={
-            (
-              (row?.attributes?.user?.data?.attributes?.user_info?.data?.attributes?.FirstName ||
-                "") +
-              " " +
-              (row?.attributes?.user?.data?.attributes?.user_info?.data?.attributes?.LastName || "")
-            ).trim() || " - "
-          }
-        />
-      ))}
+            }
+            headTitle={getCartCustomerName(row)}
+          />
+        );
+      })}
     </div>
   );
 };

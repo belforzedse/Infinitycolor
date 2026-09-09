@@ -413,18 +413,18 @@ describe("expiry jobs", () => {
     expect(recovered.status).toBe("completed");
   });
 
-  it("expires reserve-order groups with bounded bulk updates", async () => {
+  it("closes due reserve groups at group level with bounded batches", async () => {
     const { strapi } = createMockStrapi();
     const now = new Date("2026-05-30T12:00:00.000Z");
     strapi.db.connection.raw
       .mockResolvedValueOnce({
         rows: [
-          { reserveGroupId: "group-a", expiredOrderCount: 2 },
-          { reserveGroupId: "group-b", expiredOrderCount: 1 },
+          { id: 1, groupKey: "group-a" },
+          { id: 2, groupKey: "group-b" },
         ],
       })
-      .mockResolvedValueOnce({ rows: [{ id: 1 }, { id: 2 }] })
-      .mockResolvedValueOnce({ rows: [{ id: 3 }] });
+      .mockResolvedValueOnce({ rows: [{ id: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ id: 2 }] });
 
     const result = await runExpireReserveOrdersTick(strapi, {
       now,
@@ -433,12 +433,64 @@ describe("expiry jobs", () => {
 
     expect(result.status).toBe("completed");
     expect(result.stats.groupsProcessed).toBe(2);
-    expect(result.stats.ordersUpdated).toBe(3);
     expect(strapi.db.connection.raw).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining("GROUP BY reserve_group_id"),
-      [now, 2]
+      expect.stringContaining("FROM reserve_groups"),
+      ["Active", now, 2]
     );
+  });
+
+  it("never rewrites member orders when a window expires", async () => {
+    // The admin list sorts by `updated_at` ("آخرین ویرایش") by default, so a
+    // nightly expiry batch that touched member rows would read as a wave of
+    // phantom staff edits. Expiry is a group-level transition only.
+    const { strapi, orderQuery } = createMockStrapi();
+    strapi.db.connection.raw
+      .mockResolvedValueOnce({ rows: [{ id: 7, groupKey: "group-a" }] })
+      .mockResolvedValueOnce({ rows: [{ id: 7 }] });
+
+    const result = await runExpireReserveOrdersTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.stats.ordersUpdated).toBe(0);
+    expect(orderQuery.update).not.toHaveBeenCalled();
+    for (const call of strapi.db.connection.raw.mock.calls) {
+      expect(String(call[0])).not.toMatch(/UPDATE\s+orders/i);
+    }
+  });
+
+  it("is idempotent when another worker already closed the group", async () => {
+    // The CAS guard on state = 'Active' is the cross-process anchor; the
+    // in-process runner guard does not coordinate between containers.
+    const { strapi } = createMockStrapi();
+    strapi.db.connection.raw
+      .mockResolvedValueOnce({ rows: [{ id: 3, groupKey: "group-c" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await runExpireReserveOrdersTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.stats.groupsProcessed).toBe(0);
+    expect(result.stats.skipped).toBe(1);
+  });
+
+  it("only closes groups whose deadline has actually passed", async () => {
+    const { strapi } = createMockStrapi();
+    const now = new Date("2026-05-30T12:00:00.000Z");
+    strapi.db.connection.raw
+      .mockResolvedValueOnce({ rows: [{ id: 9, groupKey: "group-d" }] })
+      .mockResolvedValueOnce({ rows: [{ id: 9 }] });
+
+    await runExpireReserveOrdersTick(strapi, { now });
+
+    const updateSql = String(strapi.db.connection.raw.mock.calls[1][0]);
+    expect(updateSql).toMatch(/UPDATE reserve_groups/);
+    expect(updateSql).toMatch(/expires_at <= \?/);
+    expect(strapi.db.connection.raw.mock.calls[1][1]).toContain("Expired");
   });
 
   it("skips reserve-order work when no expired groups exist", async () => {

@@ -1,20 +1,18 @@
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
 import type { ApiResponse } from "@/types/api";
+import type { CategoryData } from "./categoryWritePayload";
 
-export interface CategoryData {
-  Title: string;
-  Slug: string;
-  Parent?: string;
-  Image?: number | null;
-  MegaMenuImage?: number | null;
-}
+export type { CategoryData } from "./categoryWritePayload";
+export { buildCategoryWritePayload } from "./categoryWritePayload";
 
-export const createCategory = async (category: CategoryData): Promise<ApiResponse<any>> => {
+export const createCategory = async (
+  category: CategoryData,
+): Promise<ApiResponse<unknown>> => {
   const endpoint = ENDPOINTS.PRODUCT.CATEGORY;
 
   try {
-    const response = await apiClient.post<ApiResponse<any>>(endpoint, {
+    const response = await apiClient.post<ApiResponse<unknown>>(endpoint, {
       data: category,
     });
     return response.data;

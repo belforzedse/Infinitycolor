@@ -222,6 +222,33 @@ describe("adminAdjustWallet", () => {
     expect(applyAdminWalletAdjustment).not.toHaveBeenCalled();
   });
 
+  it("credits another user by id without requiring a customer role", async () => {
+    setupQueries(100_000);
+    applyAdminWalletAdjustment.mockResolvedValue({
+      walletId: 10,
+      beforeBalance: 100_000,
+      afterBalance: 110_000,
+      delta: 10_000,
+      changed: true,
+      ledgerId: 4,
+      transactionType: "Add",
+    });
+    const c = build();
+    const ctx = makeCtx({ userId: 1, mode: "credit", amountToman: 1_000, reason: "staff top-up" });
+
+    await c.adminAdjustWallet(ctx);
+
+    expect(mockStrapi.db.query(USER_UID).findOne).toHaveBeenCalledWith({
+      where: { id: 1 },
+      select: ["id"],
+    });
+    expect(applyAdminWalletAdjustment).toHaveBeenCalledWith(
+      mockStrapi,
+      expect.objectContaining({ userId: 1, mode: "credit", amountIrr: 10_000 }),
+    );
+    expect(ctx.send).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+  });
+
   it("rejects self-wallet adjustment for every administrative actor", async () => {
     const c = build();
     const ctx = makeCtx({ userId: 99, mode: "credit", amountToman: 5_000, reason: "self" });
@@ -229,7 +256,7 @@ describe("adminAdjustWallet", () => {
     await c.adminAdjustWallet(ctx);
 
     expect(ctx.forbidden).toHaveBeenCalledWith(
-      "Administrators cannot adjust their own wallet",
+      "تغییر موجودی کیف پول خودتان مجاز نیست.",
       expect.objectContaining({
         data: expect.objectContaining({ errorCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN" }),
       }),

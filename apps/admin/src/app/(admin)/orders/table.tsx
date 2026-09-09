@@ -67,6 +67,18 @@ export type Order = {
     AnipoProviderStatus?: string;
     AnipoLastMessage?: string;
     AnipoLastError?: string;
+    /**
+     * Projected from the reserve group by the list endpoint, not read from the
+     * order's frozen reserve columns. `reserveIsHeld` means the API refuses
+     * shipment actions on this order until the window closes.
+     */
+    isReserveOrder?: boolean;
+    reserveGroupId?: string | null;
+    reserveState?: string | null;
+    reserveClosureReason?: string | null;
+    reserveExpiresAt?: string | null;
+    reserveIsActive?: boolean;
+    reserveIsHeld?: boolean;
     createdAt: string;
     updatedAt: string;
     user: {
@@ -175,6 +187,20 @@ export const columns: ColumnDef<Order>[] = [
     accessorKey: "status",
     header: "وضعیت",
     cell: ({ row }) => {
+      if (row.original.attributes.reserveIsHeld) {
+        const statusMeta = getOrderStatusMeta(row.original.attributes.Status);
+        return (
+          <div className="flex flex-col items-start gap-1">
+            <StatusBadge label={statusMeta.label} tone={statusMeta.tone} />
+            <span
+              data-testid="admin-order-reserve-hold"
+              className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700 ring-1 ring-amber-600/20"
+            >
+              در مهلت رزرو — ارسال متوقف
+            </span>
+          </div>
+        );
+      }
       const status = row.original?.attributes?.Status;
       const meta = getOrderStatusMeta(status);
 
@@ -222,6 +248,7 @@ export const columns: ColumnDef<Order>[] = [
           anipoBarcodeState={row.original.attributes.AnipoBarcodeState}
           anipoLastMessage={row.original.attributes.AnipoLastMessage}
           anipoLastError={row.original.attributes.AnipoLastError}
+          reserveIsHeld={row.original.attributes.reserveIsHeld}
         />
       );
     },
@@ -319,6 +346,7 @@ export const MobileTable = ({ data, selectionProps }: Props) => {
               phone && !isPlaceholder ? phone : null,
               <DateAgo key="date" date={new Date(row?.attributes?.Date)} />,
               barcode ? `رهگیری: ${barcode}` : null,
+              row?.attributes?.reserveIsHeld ? "در مهلت رزرو — ارسال متوقف" : null,
             ]}
             footer={
               <span>
@@ -346,6 +374,7 @@ export const MobileTable = ({ data, selectionProps }: Props) => {
                 anipoBarcodeState={row.attributes.AnipoBarcodeState}
                 anipoLastMessage={row.attributes.AnipoLastMessage}
                 anipoLastError={row.attributes.AnipoLastError}
+                reserveIsHeld={row.attributes.reserveIsHeld}
               />
             }
           />

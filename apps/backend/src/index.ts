@@ -34,6 +34,11 @@ import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/
 import { ensurePaymentAttemptDatabaseInvariants } from "./api/payment-attempt/services/payment-attempt-database";
 import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 import {
+  mapLegacyFaqCategories,
+  siteFaqHasQuestions,
+  type LegacyFaqCategory,
+} from "./api/site-faq/lib/legacy-migration";
+import {
   ADMIN_ROLE_DEFINITIONS,
   capabilitiesForRole,
   normalizeAdminRole,
@@ -43,6 +48,7 @@ import {
 import { ensureAuditEventStorage } from "./audit/storage";
 import { ensureCategoryEditorialDatabaseInvariant } from "./api/product-category-content/services/category-editorial-database";
 import { ensureIssueReportStorage } from "./api/issue-report/services/issue-report-storage";
+import { ensureModelApplicationStorage } from "./api/model-application/services/model-application-storage";
 
 type ControllerActions = Record<string, ReadonlyArray<string> | "*">;
 type FullAccessSpec = { mode: "all" };
@@ -70,8 +76,9 @@ const PRODUCT_REPORT_ACTIONS = [
 
 const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
   // Bounded admin catalog list (POST /admin/products-list/query). Same pattern as
-  // order.read → admin-order-list.query; without this, Seller 1+ pass the
-  // product.read capability policy but Strapi U&P still 403s the route.
+  // order.read → admin-order-list.query / queryReserveGroups / getReserveGroup;
+  // without this, Seller 1+ pass the product.read capability policy but
+  // Strapi U&P still 403s the route.
   "api::admin-product-list": { "admin-product-list": ["query"] },
   "api::product": { product: [...READ_ACTIONS, "search"] },
   "api::product-faq": { "product-faq": READ_ACTIONS },
@@ -138,6 +145,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   "product.create": { "api::product": { product: ["create"] } },
   "product.update": { "api::product": { product: ["update"] } },
   "product.publish": { "api::product": { product: ["publication"] } },
+  "product.schedule": {
+    "api::product": { product: ["publication", "updateDisplayDate"] },
+  },
   "product.stock.update": {
     "api::product-stock": { "product-stock": CREATE_UPDATE_ACTIONS },
   },
@@ -177,7 +187,13 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     },
   },
   "order.read": {
-    "api::admin-order-list": { "admin-order-list": ["query"] },
+    // Same pattern as product.read → admin-product-list.query: the capability
+    // policy is not enough on its own. Strapi U&P still 403s any handler that
+    // is missing from the grant, which is why Seller 2+ could open /orders
+    // but not the reserve-groups board until these actions were listed here.
+    "api::admin-order-list": {
+      "admin-order-list": ["query", "queryReserveGroups", "getReserveGroup"],
+    },
     "api::order": { order: ["findOne"] },
   },
   "order.financial.read": {
@@ -295,6 +311,11 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
       "issue-report": ["query", "findOne", "updateStatus", "exportReport"],
     },
   },
+  "system.modelApplications.manage": {
+    "api::model-application": {
+      "model-application": ["query", "findOne", "updateStatus"],
+    },
+  },
 };
 
 function mergeGrants(
@@ -331,6 +352,9 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       },
       "api::issue-report": {
         "issue-report": ["create"],
+      },
+      "api::model-application": {
+        "model-application": ["create"],
       },
       "api::product": {
         product: [...READ_ACTIONS, "search"],
@@ -515,6 +539,8 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
           "reconcilePayment",
           "getActiveReserve",
           "releaseReserve",
+          "listMyReserveGroups",
+          "getMyReserveGroup",
         ],
       },
       "api::local-user-address": {
@@ -1284,6 +1310,10 @@ export default {
       if (issueReportStorage.repaired) {
         strapi.log.info("Issue report storage indexes installed after schema sync");
       }
+      const modelApplicationStorage = await ensureModelApplicationStorage(strapi);
+      if (modelApplicationStorage.repaired) {
+        strapi.log.info("Model application storage indexes installed after schema sync");
+      }
     }
 
     if (snappayHardenedInitiationEnabled) {
@@ -1724,6 +1754,83 @@ export default {
       } catch (error) {
         strapi.log.error("Failed to ensure site-faq entry", {
           error: (error as any)?.message,
+        });
+      }
+    })();
+
+    // v1 created an empty site-faq before collection-type FAQs were entered.
+    // Copy leftover faq-category / faq-question rows into an empty site-faq once.
+    (async function fillEmptySiteFaqFromLegacy() {
+      try {
+        const migrationStore = strapi.store({ type: "core", name: "migrations" });
+        const migrationKey = "migrate-legacy-faq-into-empty-site-faq-v2";
+        const alreadyRan = await migrationStore.get({ key: migrationKey });
+        if (alreadyRan) {
+          return;
+        }
+
+        const existing = await strapi.entityService.findMany("api::site-faq.site-faq", {
+          populate: { categories: { populate: ["items"] } },
+          limit: 1,
+        });
+        const record = (
+          Array.isArray(existing) ? existing[0] : existing
+        ) as { id?: number; categories?: unknown } | undefined;
+
+        if (siteFaqHasQuestions(record?.categories)) {
+          await migrationStore.set({
+            key: migrationKey,
+            value: { executedAt: new Date().toISOString(), skipped: "already-populated" },
+          });
+          return;
+        }
+
+        const legacyCategories = (await strapi.entityService.findMany(
+          "api::faq-category.faq-category",
+          {
+            fields: ["Title", "Description", "Order"],
+            populate: {
+              faq_questions: {
+                fields: ["Question", "Answer", "Order", "IsActive"],
+              },
+            },
+            limit: -1,
+          },
+        )) as LegacyFaqCategory[];
+
+        const mapped = mapLegacyFaqCategories(legacyCategories);
+        if (!siteFaqHasQuestions(mapped)) {
+          await migrationStore.set({
+            key: migrationKey,
+            value: { executedAt: new Date().toISOString(), skipped: "legacy-empty" },
+          });
+          return;
+        }
+
+        if (record?.id) {
+          await strapi.entityService.update("api::site-faq.site-faq", record.id, {
+            data: { categories: mapped },
+          });
+        } else {
+          await strapi.entityService.create("api::site-faq.site-faq", {
+            data: { categories: mapped },
+          });
+        }
+
+        await migrationStore.set({
+          key: migrationKey,
+          value: {
+            executedAt: new Date().toISOString(),
+            migratedCategories: mapped.length,
+            migratedItems: mapped.reduce((sum, category) => sum + category.items.length, 0),
+          },
+        });
+        strapi.log.info(
+          `✓ Copied ${mapped.length} legacy FAQ categories into site-faq`,
+        );
+      } catch (error) {
+        strapi.log.error("Failed to copy legacy FAQ into site-faq", {
+          error: (error as Error)?.message,
         });
       }
     })();

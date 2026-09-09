@@ -25,6 +25,7 @@
     "users": "node index.js users",
     "users-all": "node index.js users --all --batch-size 50",
     "blog-posts": "node index.js blog-posts",
+    "stories": "node import-stories.js",
     "all": "node index.js all",
     "dry-run": "node index.js categories --dry-run",
     "status": "node index.js status",
@@ -40,7 +41,7 @@
     "catalog:sync": "node catalog/cli.js sync",
     "catalog:verify": "node catalog/cli.js verify",
     "catalog:tui": "node catalog/tui.js",
-    "test": "node --test catalog/__tests__/*.test.js"
+    "test": "node --test __tests__/*.test.js catalog/__tests__/*.test.js"
   },
   "keywords": [
     "woocommerce",

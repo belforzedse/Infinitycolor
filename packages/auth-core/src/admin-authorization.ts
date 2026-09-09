@@ -67,6 +67,7 @@ export const ADMIN_CAPABILITIES = [
   "system.payments.manage",
   "system.reviews.manage",
   "system.issueReports.manage",
+  "system.modelApplications.manage",
 ] as const;
 
 export type AdminCapability = (typeof ADMIN_CAPABILITIES)[number];
@@ -130,6 +131,7 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
       "content.blog.comments.manage",
       "content.blog.banners.manage",
       "content.categoryEditorial.manage",
+      "content.stories.manage",
     ],
   },
   seller1: {
@@ -161,12 +163,14 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
     strapiName: "Seller 2",
     inherits: ["seller1"],
     capabilities: [
+      "product.schedule",
       "category.read",
       "category.create",
       "category.update",
       "order.read",
       "order.status.update",
       "order.notes.update",
+      "content.stories.manage",
     ],
   },
   store_manager: {
@@ -223,6 +227,8 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
       "wallet.history.read",
       "wallet.adjust",
       "order.manual.create",
+      "system.modelApplications.manage",
+      "category.delete",
     ],
   },
   superadmin: {

@@ -25,7 +25,11 @@ export const createOrderAndItems = async (
   deliveryAddressId?: number,
   reservation?: { status: "Reserved"; until: Date },
   trx?: any,
-  reserveData?: { reserveGroupId: string; reserveExpiresAt: Date },
+  reserveData?: {
+    reserveGroupId: string;
+    reserveExpiresAt?: Date | null;
+    reserveGroupRowId?: number;
+  },
   shippingSnapshot?: { code?: unknown; title?: unknown },
   analyticsData?: { analyticsCorrelationId?: string },
 ) => {
@@ -158,9 +162,16 @@ export const createOrderAndItems = async (
       : {}),
   };
   if (reserveData) {
+    // `isReserveOrder`/`reserveExpiresAt` are seeded once at creation for
+    // backward compatibility. From here on the reserve_groups row is the source
+    // of truth and these are projected from it at read time, so no lifecycle
+    // transition ever has to rewrite member orders.
     orderData.isReserveOrder = true;
     orderData.reserveGroupId = reserveData.reserveGroupId;
-    orderData.reserveExpiresAt = reserveData.reserveExpiresAt;
+    orderData.reserveExpiresAt = reserveData.reserveExpiresAt ?? undefined;
+    if (reserveData.reserveGroupRowId) {
+      orderData.reserve_shipment = reserveData.reserveGroupRowId;
+    }
   }
 
   // Use transaction context if provided

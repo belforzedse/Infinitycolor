@@ -54,13 +54,13 @@ function assertMediaMatchesType(mediaType?: StoryMediaType, media?: UploadFile |
   const mime = media.mime ?? "";
   if (mediaType === "video" && !mime.startsWith("video/")) {
     throw new StoryMediaValidationError(
-      `Story MediaType is video, but Media "${media.name ?? media.url ?? media.id}" is ${mime || "missing a MIME type"}. Select a video file for Media, and use Thumbnail for the image preview.`,
+      "نوع رسانه ویدیو است اما فایل انتخاب‌شده ویدیو نیست. یک فایل ویدیو برای رسانه انتخاب کنید و از تصویر جلد برای پیش‌نمایش استفاده کنید. دوباره تلاش کنید.",
     );
   }
 
   if (mediaType === "image" && !mime.startsWith("image/")) {
     throw new StoryMediaValidationError(
-      `Story MediaType is image, but Media "${media.name ?? media.url ?? media.id}" is ${mime || "missing a MIME type"}. Select an image file for Media.`,
+      "نوع رسانه تصویر است اما فایل انتخاب‌شده تصویر نیست. یک فایل تصویر برای رسانه انتخاب کنید. دوباره تلاش کنید.",
     );
   }
 }

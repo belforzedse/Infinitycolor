@@ -6,33 +6,25 @@
 import { validatePhone } from "../../auth/utils/validations";
 import { normalizeRequiredProfileName } from "../../auth/utils/profile-names";
 import {
-  canonicalCustomerPhone,
-  customerPhoneStorageVariants,
-  normalizeCustomerPhoneDigits,
-} from "../../../utils/customerPhoneIdentity";
+  customerPhoneSearchAlternatives,
+  personNameSearchAlternatives,
+} from "../../../utils/personIdentitySearch";
 
-/**
- * Phones are stored as either `+989…` or `09…`, and admins paste them with
- * Persian or Arabic numerals, so a raw `$containsi` on the typed query misses
- * most real numbers. A complete number is matched against both stored shapes;
- * a partial one is matched on the national part, which both shapes contain.
- */
-function customerPhoneSearchFilters(query: string): Array<Record<string, unknown>> {
-  const digits = normalizeCustomerPhoneDigits(query);
-  if (!digits) return [];
-
-  const canonical = canonicalCustomerPhone(digits);
-  if (canonical) {
-    return [{ phone: { $in: customerPhoneStorageVariants(canonical) } }];
-  }
-
-  const nationalPart = digits.replace(/^\+?98/, "").replace(/^0+/, "");
-  if (!nationalPart) return [];
-  return [{ phone: { $containsi: nationalPart } }];
-}
+type CustomerSearchRow = {
+  id: number;
+  phone?: string | null;
+  IsActive?: boolean | null;
+  blocked?: boolean | null;
+  user_info?: {
+    FirstName?: string | null;
+    LastName?: string | null;
+  } | null;
+};
 
 export default {
   async searchCustomers(ctx) {
+    // Wallet search is identity-only and includes staff. Adjustment still
+    // refuses the actor's own wallet.
     const query = String(ctx.query?.q || "").trim();
     if (query.length < 2) {
       ctx.badRequest("Search query must contain at least two characters");
@@ -43,25 +35,13 @@ export default {
     const pageSize = Number.isFinite(requestedPageSize)
       ? Math.min(Math.max(Math.trunc(requestedPageSize), 1), 20)
       : 6;
-    const words = query.split(/\s+/).filter(Boolean);
-    const nameFilters: Array<Record<string, unknown>> = [
-      { user_info: { FirstName: { $containsi: query } } },
-      { user_info: { LastName: { $containsi: query } } },
-    ];
-    if (words.length > 1) {
-      nameFilters.push({
-        $and: [
-          { user_info: { FirstName: { $containsi: words[0] } } },
-          { user_info: { LastName: { $containsi: words.slice(1).join(" ") } } },
-        ],
-      });
-    }
-
-    const customers = await strapi.query("plugin::users-permissions.user").findMany({
+    const users = await strapi.query("plugin::users-permissions.user").findMany({
       where: {
         removedAt: { $null: true },
-        role: { type: "customer" },
-        $or: [...customerPhoneSearchFilters(query), ...nameFilters],
+        $or: [
+          ...customerPhoneSearchAlternatives(query),
+          ...personNameSearchAlternatives(query),
+        ],
       },
       select: ["id", "phone", "IsActive", "blocked"],
       populate: {
@@ -71,9 +51,9 @@ export default {
       limit: pageSize,
     });
 
-    const data = customers.map((customer: any) => ({
+    const data = (users as CustomerSearchRow[]).map((customer) => ({
       id: customer.id,
-      phone: customer.phone,
+      phone: customer.phone ?? null,
       firstName: customer.user_info?.FirstName || null,
       lastName: customer.user_info?.LastName || null,
       isActive: customer.IsActive !== false && customer.blocked !== true,

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import PLPHeaderDesktopNav from "../DesktopNav";
 import { useProductCategories } from "@/hooks/useProductCategories";
 
@@ -95,7 +95,12 @@ describe("PLPHeaderDesktopNav", () => {
       "href",
       "/plp/category/dress",
     );
+    expect(within(screen.getByTestId("desktop-mega-menu-links")).queryByRole("link", { name: "کمربند" })).not.toBeInTheDocument();
     expect(screen.getByAltText("Megamenu image")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Oppsi" })).toHaveAttribute(
+      "href",
+      "/plp?search=Oppsi",
+    );
     expect(screen.getByTestId("sale-badge-icon")).toBeInTheDocument();
 
     fireEvent.keyDown(screen.getByLabelText("منوی اصلی فروشگاه"), { key: "Escape" });
@@ -108,7 +113,7 @@ describe("PLPHeaderDesktopNav", () => {
   it("closes the megamenu when the pointer leaves the navigation region", async () => {
     render(<PLPHeaderDesktopNav />);
 
-    fireEvent.pointerEnter(screen.getByTestId("desktop-nav-category"));
+    fireEvent.pointerEnter(screen.getByRole("link", { name: "لباس" }));
     expect(screen.getByTestId("desktop-mega-menu")).toBeInTheDocument();
 
     fireEvent.pointerLeave(screen.getByTestId("desktop-nav-root"));
@@ -116,5 +121,30 @@ describe("PLPHeaderDesktopNav", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("desktop-mega-menu")).not.toBeInTheDocument();
     });
+  });
+
+  it("adds کمربند as a top-level header category", () => {
+    render(<PLPHeaderDesktopNav />);
+
+    const nav = screen.getByLabelText("منوی اصلی فروشگاه");
+    const beltLink = within(nav).getByRole("link", { name: "کمربند" });
+    expect(beltLink).toHaveAttribute("href", "/plp/category/womens-belt");
+
+    fireEvent.pointerEnter(beltLink);
+    expect(
+      within(screen.getByTestId("desktop-mega-menu-links")).getByRole("link", { name: "کمربند" }),
+    ).toHaveAttribute("href", "/plp/category/womens-belt");
+    expect(screen.getByRole("img", { name: "کمربند" })).toHaveAttribute(
+      "src",
+      expect.stringContaining("womens-belt.jpg"),
+    );
+  });
+
+  it("places model hiring as the last header control", () => {
+    render(<PLPHeaderDesktopNav />);
+    const nav = screen.getByLabelText("منوی اصلی فروشگاه");
+    const items = Array.from(nav.querySelectorAll("a, button"));
+    expect(items.at(-1)).toHaveTextContent("استخدام مدل");
+    expect(screen.getByRole("button", { name: "استخدام مدل" })).toBeInTheDocument();
   });
 });

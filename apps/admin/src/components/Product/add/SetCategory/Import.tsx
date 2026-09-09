@@ -57,7 +57,7 @@ const ImportCategorty = () => {
     };
 
     if (formData.parent !== "") {
-      categoryData.Parent = formData.parent;
+      categoryData.parent = formData.parent;
     }
 
     try {

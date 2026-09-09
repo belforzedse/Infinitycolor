@@ -29,8 +29,23 @@ jest.mock("@/services/super-admin/orders/list", () => ({
 jest.mock("@/services/super-admin/orders/adjustItems", () => ({
   changeOrderStatus: jest.fn(),
 }));
+jest.mock("react-hot-toast", () => ({
+  __esModule: true,
+  default: Object.assign(jest.fn(), { success: jest.fn(), error: jest.fn() }),
+}));
+const mockToast = jest.requireMock("react-hot-toast").default as jest.Mock & {
+  success: jest.Mock;
+  error: jest.Mock;
+};
 jest.mock("@/hooks/useCan", () => ({
   useCan: (capability: string) => mockCapabilities.has(capability),
+}));
+const mockRouterPush = jest.fn();
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useRouter: () => ({ push: mockRouterPush, replace: jest.fn(), refresh: jest.fn() }),
+  usePathname: () => "/orders",
+  useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("jotai", () => ({ useAtom: () => [false, jest.fn()] }));
 jest.mock("nuqs", () => ({ useQueryState: () => ["1", jest.fn()] }));
@@ -44,6 +59,7 @@ jest.mock("use-debounce", () => ({
 
 import OrdersPage from "../page";
 import { listAdminOrders } from "@/services/super-admin/orders/list";
+import { changeOrderStatus } from "@/services/super-admin/orders/adjustItems";
 
 describe("orders page bounded data ownership", () => {
   beforeEach(() => {
@@ -128,5 +144,57 @@ describe("orders page bounded data ownership", () => {
     expect(listAdminOrders).toHaveBeenLastCalledWith(
       expect.objectContaining({ tab: "paying" }),
     );
+  });
+
+  it("keeps reserve shipments off the order-status tabs", () => {
+    render(<OrdersPage />);
+
+    expect(
+      screen.queryByRole("button", { name: "سفارش‌های رزروی" }),
+    ).not.toBeInTheDocument();
+  });
+
+  describe("bulk status changes with held reserve orders", () => {
+    const row = (id: string, reserveIsHeld: boolean) => ({
+      id,
+      attributes: { Status: "Started", reserveIsHeld },
+    });
+
+    beforeEach(() => {
+      (changeOrderStatus as jest.Mock).mockClear();
+      mockToast.mockClear();
+      mockToast.error.mockClear();
+      mockToast.success.mockClear();
+    });
+
+    it("skips held orders and applies the change to the rest", async () => {
+      render(<OrdersPage />);
+
+      await mockTableProps.onBulkAction("status-Done", [
+        row("1", false),
+        row("2", true),
+        row("3", false),
+      ]);
+
+      expect(changeOrderStatus).toHaveBeenCalledTimes(2);
+      expect(changeOrderStatus).toHaveBeenCalledWith("1", "Done");
+      expect(changeOrderStatus).toHaveBeenCalledWith("3", "Done");
+      expect(changeOrderStatus).not.toHaveBeenCalledWith("2", "Done");
+      expect(mockToast).toHaveBeenCalledWith(
+        "1 سفارش به دلیل بودن در مهلت رزرو تغییر نکرد.",
+        expect.anything(),
+      );
+    });
+
+    it("changes nothing when every selected order is held", async () => {
+      render(<OrdersPage />);
+
+      await mockTableProps.onBulkAction("status-Done", [row("1", true), row("2", true)]);
+
+      expect(changeOrderStatus).not.toHaveBeenCalled();
+      expect(mockToast.error).toHaveBeenCalledWith(
+        "همه سفارش‌های انتخاب‌شده در مهلت رزرو هستند و تا پایان مهلت ارسال نمی‌شوند.",
+      );
+    });
   });
 });

@@ -313,3 +313,22 @@ test("mapCategory: parent resolved when known, else flagged missing", () => {
   assert.ok(!("parent" in miss.data));
   assert.equal(miss.parentMissing, true);
 });
+
+test("mapCategoryEditorial: uses Rank Math / Yoast SEO and fills missing image alt", () => {
+  const editorial = T.mapCategoryEditorial({
+    id: 12,
+    name: "مانتو",
+    description: '<p>متن دسته</p><img src="https://cdn.example/a.jpg">',
+    meta_data: [
+      { key: "rank_math_title", value: "خرید مانتو | اینفینیتی" },
+      { key: "rank_math_description", value: "توضیح سئو مانتو" },
+    ],
+  });
+  assert.equal(editorial.Title, "خرید مانتو | اینفینیتی");
+  assert.equal(editorial.Paragraph, "توضیح سئو مانتو");
+  assert.equal(editorial.IsPublished, true);
+  assert.equal(editorial.IsRTL, true);
+  assert.match(editorial.Content, /alt="مانتو"/);
+
+  assert.equal(T.mapCategoryEditorial({ id: 1, name: "خالی" }), null);
+});

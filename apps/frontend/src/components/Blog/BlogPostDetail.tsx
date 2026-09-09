@@ -20,9 +20,11 @@ import BlogContentRenderer from "./BlogContentRenderer";
 
 interface BlogPostDetailProps {
   post: BlogPost;
+  /** Sanitized HTML with heading ids injected for the post TOC. */
+  contentHtml?: string;
 }
 
-const BlogPostDetail: React.FC<BlogPostDetailProps> = ({ post }) => {
+const BlogPostDetail: React.FC<BlogPostDetailProps> = ({ post, contentHtml }) => {
   const getImageUrl = () => {
     if (!post.FeaturedImage) return null;
     const url =
@@ -158,7 +160,7 @@ const BlogPostDetail: React.FC<BlogPostDetailProps> = ({ post }) => {
 
         {/* Content */}
         <div className="mx-auto max-w-3xl">
-          <BlogContentRenderer content={post.Content} />
+          <BlogContentRenderer content={contentHtml ?? post.Content} />
         </div>
 
         {/* Tags */}

@@ -561,8 +561,8 @@ export function SuperAdminTable<TData, TValue>({
       <div className={cardLayoutClassName}>
         <div className="flex flex-col gap-2">
           {enableSelection && (
-            <div className="flex w-full items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <input
                   type="checkbox"
                   checked={
@@ -584,8 +584,9 @@ export function SuperAdminTable<TData, TValue>({
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
                 <SuperAdminTableSelect
+                  className="min-w-0 max-w-full flex-1 sm:flex-none"
                   selectedOption={bulkAction}
                   onOptionSelect={(id) => setBulkAction(String(id))}
                   options={[
@@ -602,7 +603,7 @@ export function SuperAdminTable<TData, TValue>({
                     );
                     onBulkAction(bulkAction, rows);
                   }}
-                  className="flex items-center justify-between rounded-lg bg-actions-primary px-3 py-2 text-white"
+                  className="flex shrink-0 items-center justify-between rounded-lg bg-actions-primary px-3 py-2 text-white"
                 >
                   اجرا
                 </button>

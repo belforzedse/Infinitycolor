@@ -11,6 +11,12 @@ import { claimLimitedDiscountUsage } from "./lib/discount-claim";
 import { computeTotals } from "./lib/financials";
 import { createContract } from "./lib/contract";
 import { reserveStockAtomic } from "./lib/stock";
+import {
+  lockReserveGroup,
+  RESERVE_GROUP_STATES,
+  ReserveWindowClosedError,
+  UID as RESERVE_GROUP_UID,
+} from "../../reserve-group/lib/reserve-group";
 import { addCartItemOp } from "./ops/addCartItem";
 import { updateCartItemOp } from "./ops/updateCartItem";
 import { removeCartItemOp } from "./ops/removeCartItem";
@@ -250,23 +256,66 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             ? 0
             : Math.max(0, Math.round(Number(shippingData.shippingCost || 0)));
 
-        // Reserve order fields: new reserve or merge into existing
+        // Reserve shipping: attach to the caller's existing group, or open a new
+        // one. A brand-new group is created PendingActivation with NO deadline --
+        // the 48h clock starts at successful payment (see activateGroupOnPayment),
+        // so gateway time is never billed to the customer's window and an
+        // abandoned checkout can never leave an attachable group behind.
         let reserveGroupId: string | undefined;
         let reserveExpiresAt: Date | undefined;
+        let reserveGroupRowId: number | undefined;
         const isReserveOrder = !!shippingData.reserveShipping || !!shippingData.reserveOrderData;
         if (shippingData.reserveOrderData?.isMerge) {
           reserveGroupId = shippingData.reserveOrderData.reserveGroupId;
-          const raw = shippingData.reserveOrderData.reserveExpiresAt;
-          if (raw != null) {
-            const d = new Date(raw as string | number | Date);
-            reserveExpiresAt = Number.isNaN(d.getTime()) ? undefined : d;
+          reserveGroupRowId = shippingData.reserveOrderData.reserveGroupRowId;
+
+          // The attach-vs-expire race is settled here. Locking the group row for
+          // the rest of this transaction serialises us against the expiry job's
+          // CAS update, so exactly one of the two wins; re-reading under the lock
+          // means we never bind a child to a window that has just closed.
+          if (reserveGroupRowId) {
+            await lockReserveGroup(strapi as any, reserveGroupRowId, trx);
+            const locked = await strapi.db.query(RESERVE_GROUP_UID).findOne({
+              where: { id: reserveGroupRowId },
+            });
+            const stillOpen =
+              locked?.State === RESERVE_GROUP_STATES.active &&
+              locked?.expiresAt != null &&
+              new Date(locked.expiresAt) > new Date();
+            if (!stillOpen) {
+              throw new ReserveWindowClosedError();
+            }
+            reserveExpiresAt = new Date(locked.expiresAt);
+          }
+          if (!reserveExpiresAt) {
+            const raw = shippingData.reserveOrderData.reserveExpiresAt;
+            if (raw != null) {
+              const d = new Date(raw as string | number | Date);
+              reserveExpiresAt = Number.isNaN(d.getTime()) ? undefined : d;
+            }
           }
         } else if (shippingData.reserveShipping) {
           const { randomUUID } = await import("node:crypto");
           reserveGroupId = randomUUID();
-          const windowHoursRaw = Number(process.env.RESERVE_ORDER_WINDOW_HOURS || 48);
-          const windowHours = Number.isFinite(windowHoursRaw) ? windowHoursRaw : 48;
-          reserveExpiresAt = new Date(Date.now() + windowHours * 60 * 60 * 1000);
+          const createdGroup = await strapi.db.query(RESERVE_GROUP_UID).create({
+            data: {
+              groupKey: reserveGroupId,
+              owner: userId,
+              State: RESERVE_GROUP_STATES.pendingActivation,
+              lastActivityAt: new Date(),
+              ShippingCostPaid: finalShippingCost,
+              ShippingMethodCode: shippingData.shippingMethodCode
+                ? String(shippingData.shippingMethodCode)
+                : undefined,
+              ShippingMethodTitle: shippingData.shippingMethodTitle
+                ? String(shippingData.shippingMethodTitle)
+                : undefined,
+              shipping: shippingData.shippingId || undefined,
+              delivery_address: shippingData.addressId || undefined,
+            },
+            ...(trx ? { transacting: trx } : {}),
+          });
+          reserveGroupRowId = createdGroup?.id;
         }
 
         // Create new order with enum values
@@ -294,7 +343,9 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           shippingData.addressId,
           reservation,
           trx,
-          isReserveOrder ? { reserveGroupId, reserveExpiresAt } : undefined,
+          isReserveOrder && reserveGroupId
+            ? { reserveGroupId, reserveExpiresAt, reserveGroupRowId }
+            : undefined,
           {
             code: shippingData.shippingMethodCode,
             title: shippingData.shippingMethodTitle,
@@ -692,6 +743,13 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             break;
           case "INVALID_RESERVATION":
             userMessage = "خطا در رزرو موجودی. لطفاً مجدداً تلاش کنید";
+            break;
+          case "RESERVE_WINDOW_CLOSED":
+            userMessage =
+              "مهلت افزودن به سفارش رزروی به پایان رسیده است. این سفارش را به صورت جداگانه ثبت کنید.";
+            break;
+          case "RESERVE_ALREADY_ACTIVE":
+            userMessage = "شما یک سفارش رزروی فعال دارید";
             break;
           case "DISCOUNT_USAGE_EXHAUSTED":
             userMessage = "ظرفیت استفاده از این کد تخفیف تکمیل شده است";

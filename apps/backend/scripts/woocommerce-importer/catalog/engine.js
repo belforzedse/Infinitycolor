@@ -492,6 +492,17 @@ class CatalogEngine {
         // Store parentWcId so syncOneProduct can resolve parent-child hierarchy for main-category selection.
         this.mapping.set("categories", wc.id, id, { name: wc.name, slug: data.Slug, parentWcId: wc.parent || null });
         report.count("categories", mode);
+        const editorial = T.mapCategoryEditorial(wc);
+        if (editorial && id && process.env.IMPORT_SKIP_CATEGORY_SEO !== "true") {
+          try {
+            const editorialMode = await this.repo.upsertCategoryEditorial(id, editorial);
+            this.logger.info(`📝 category SEO ${editorialMode} — ${wc.name} (${wc.id})`);
+          } catch (editorialError) {
+            this.logger.warn(
+              `⚠️ category SEO failed for ${wc.name} (${wc.id}): ${editorialError.message}`,
+            );
+          }
+        }
         if (runContext) {
           runContext.store.completeItem(runContext.runId, itemKey, {
             mode,
@@ -1120,14 +1131,28 @@ class CatalogEngine {
             flags.media &&
             mediaOutcome?.sourceHadNoImages !== true,
         };
-        const publicationResult = await this.repo.changeProductPublication(
-          productStrapiId,
-          wcProduct.id,
-          intended,
-        );
-        this.logger.info(
-          `📅 publication ${wcProduct.id}: ${publicationResult?.Status || intended.action}`,
-        );
+        try {
+          const publicationResult = await this.repo.changeProductPublication(
+            productStrapiId,
+            wcProduct.id,
+            intended,
+          );
+          this.logger.info(
+            `📅 publication ${wcProduct.id}: ${publicationResult?.Status || intended.action}`,
+          );
+        } catch (error) {
+          const status = error.response?.status;
+          // The migration API overlay has no publication command route (405).
+          // Catalog/product/variation/stock writes already succeeded.
+          if (status === 404 || status === 405) {
+            this.logger.warn(
+              `⚠️ publication endpoint unavailable for product ${wcProduct.id} (HTTP ${status}); catalog row kept`,
+            );
+            ctx.publicationIssue = `endpoint-${status}`;
+          } else {
+            throw error;
+          }
+        }
       }
     }
 

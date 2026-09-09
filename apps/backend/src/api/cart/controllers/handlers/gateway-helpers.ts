@@ -1,5 +1,6 @@
 import { Strapi } from "@strapi/strapi";
 import { releaseOrderReservation } from "../../../../utils/stockReservations";
+import { closeGroupIfAbandoned } from "../../../reserve-group/lib/reserve-group";
 
 type FinancialSummary = {
   subtotal: number;
@@ -100,6 +101,23 @@ export const cancelOrderAndRelease = async (
       contractStatus: String(currentContract.Status || ""),
     };
   });
+
+  // A failed or abandoned first payment must not leave a reserve window behind:
+  // an unpaid group would otherwise keep occupying the customer's single
+  // consolidation slot until its deadline lapsed.
+  try {
+    const cancelled: any = await strapi.db.query("api::order.order").findOne({
+      where: { id: orderId },
+      populate: { reserve_shipment: true },
+    } as any);
+    const groupId = cancelled?.reserve_shipment?.id;
+    if (groupId) await closeGroupIfAbandoned(strapi, Number(groupId));
+  } catch (groupError) {
+    strapi.log.error("Failed to close abandoned reserve group after gateway cancel", {
+      ...logContext,
+      error: groupError instanceof Error ? groupError.message : String(groupError),
+    });
+  }
 
   if (!createAuditLogs) return;
 

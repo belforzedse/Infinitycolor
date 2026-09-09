@@ -1,10 +1,12 @@
 import { API_BASE_URL, getStrapiServerUrl, STRAPI_TOKEN } from "@/constants/api";
 import type {
+  ContactNumberType,
   IdentityContactNumber,
   IdentityPhone,
   IdentitySocialLink,
   IdentityStore,
   SiteIdentity,
+  SocialPlatform,
 } from "@/types/site-identity";
 
 /**
@@ -74,60 +76,180 @@ export function blogMagTitle(siteName?: string | null): string {
   return `${resolveSiteName(siteName)} مگ`;
 }
 
-const POPULATE_QUERY =
-  "populate[stores][populate]=phones,socialLinks&populate[socialLinks]=true&populate[contactNumbers]=true";
+export const SITE_IDENTITY_POPULATE =
+  "populate[stores][populate][phones]=true&populate[stores][populate][socialLinks]=true&populate[socialLinks]=true&populate[contactNumbers]=true";
 
-function toSocialLinks(raw: any): IdentitySocialLink[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((s) => s && s.platform && s.url)
-    .map((s) => ({ platform: s.platform, url: s.url, label: s.label ?? undefined }));
+const POPULATE_QUERY = SITE_IDENTITY_POPULATE;
+
+const SOCIAL_PLATFORMS: readonly SocialPlatform[] = [
+  "instagram",
+  "telegram",
+  "whatsapp",
+  "bale",
+  "x",
+  "linkedin",
+  "youtube",
+  "aparat",
+  "eitaa",
+  "rubika",
+  "other",
+];
+
+const CONTACT_NUMBER_TYPES: readonly ContactNumberType[] = ["phone", "mobile", "whatsapp"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function toPhones(raw: any): IdentityPhone[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((p) => p && p.number)
-    .map((p) => ({ label: p.label ?? undefined, number: p.number }));
+function numericId(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
-function toContactNumbers(raw: any): IdentityContactNumber[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((c) => c && c.number)
-    .map((c) => ({ label: c.label ?? undefined, number: c.number, type: c.type ?? undefined }));
+function unwrapFields(entry: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(entry)) return undefined;
+  const nested = isRecord(entry.data) ? entry.data : entry;
+  const rawFields = isRecord(nested.attributes) ? nested.attributes : nested;
+  const fields: Record<string, unknown> = { ...rawFields };
+  const id = numericId(nested.id) ?? numericId(fields.id);
+  delete fields.id;
+  delete fields.attributes;
+  delete fields.data;
+  return id !== undefined ? { ...fields, id } : fields;
 }
 
-function toStores(raw: any): IdentityStore[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((s) => ({
-    name: s.name ?? undefined,
-    address: s.address ?? undefined,
-    postalCode: s.postalCode ?? undefined,
-    phones: toPhones(s.phones),
-    wazeLink: s.wazeLink ?? undefined,
-    neshanLink: s.neshanLink ?? undefined,
-    baladLink: s.baladLink ?? undefined,
-    googleMapsLink: s.googleMapsLink ?? undefined,
-    showInFooter: s.showInFooter !== false,
-    showInAbout: Boolean(s.showInAbout),
-    socialLinks: toSocialLinks(s.socialLinks),
+function isSocialPlatform(value: unknown): value is SocialPlatform {
+  return typeof value === "string" && (SOCIAL_PLATFORMS as readonly string[]).includes(value);
+}
+
+function isContactNumberType(value: unknown): value is ContactNumberType {
+  return typeof value === "string" && (CONTACT_NUMBER_TYPES as readonly string[]).includes(value);
+}
+
+function readText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+export const GONBAD_KAVUS_STORE_NAME = "گنبد کاووس";
+
+/** Repair mojibake / replacement-character spellings of the Gonbad store title. */
+export function repairStoreDisplayName(name: string | undefined): string | undefined {
+  if (!name) return name;
+  if (name === GONBAD_KAVUS_STORE_NAME) return name;
+  if (name.includes("\uFFFD") && name.includes("گنبد")) {
+    return GONBAD_KAVUS_STORE_NAME;
+  }
+  const compact = name.replace(/[\s.\u200c\uFFFD]+/g, "");
+  if (/^گنبد[کك][اآأٱ]?ووس$/.test(compact) || /^گنبد[کك]ووس$/.test(compact)) {
+    return GONBAD_KAVUS_STORE_NAME;
+  }
+  return name;
+}
+
+function componentEntries(raw: unknown): Record<string, unknown>[] {
+  if (Array.isArray(raw)) {
+    return raw.flatMap((item) => {
+      const fields = unwrapFields(item);
+      return fields ? [fields] : [];
+    });
+  }
+  if (isRecord(raw) && Array.isArray(raw.data)) {
+    return componentEntries(raw.data);
+  }
+  return [];
+}
+
+function toSocialLinks(raw: unknown): IdentitySocialLink[] {
+  return componentEntries(raw).flatMap((item) => {
+    const url = readText(item.url);
+    const platform = isSocialPlatform(item.platform)
+      ? item.platform
+      : item.platform
+        ? "other"
+        : undefined;
+    if (!url || !platform) return [];
+    return [
+      {
+        ...(typeof item.id === "number" ? { id: item.id } : {}),
+        platform,
+        url,
+        label: readText(item.label),
+      },
+    ];
+  });
+}
+
+function toPhones(raw: unknown): IdentityPhone[] {
+  return componentEntries(raw).flatMap((item) => {
+    const number = readText(item.number);
+    if (!number) return [];
+    return [
+      {
+        ...(typeof item.id === "number" ? { id: item.id } : {}),
+        label: readText(item.label),
+        number,
+      },
+    ];
+  });
+}
+
+function toContactNumbers(raw: unknown): IdentityContactNumber[] {
+  return componentEntries(raw).flatMap((item) => {
+    const number = readText(item.number);
+    if (!number) return [];
+    return [
+      {
+        ...(typeof item.id === "number" ? { id: item.id } : {}),
+        label: readText(item.label),
+        number,
+        type: isContactNumberType(item.type) ? item.type : undefined,
+      },
+    ];
+  });
+}
+
+function toStores(raw: unknown): IdentityStore[] {
+  return componentEntries(raw).map((item) => ({
+    ...(typeof item.id === "number" ? { id: item.id } : {}),
+    name: repairStoreDisplayName(readText(item.name)),
+    address: readText(item.address),
+    postalCode: readText(item.postalCode),
+    phones: toPhones(item.phones),
+    wazeLink: readText(item.wazeLink),
+    neshanLink: readText(item.neshanLink),
+    baladLink: readText(item.baladLink),
+    googleMapsLink: readText(item.googleMapsLink),
+    showInFooter: item.showInFooter !== false,
+    showInAbout: Boolean(item.showInAbout),
+    socialLinks: toSocialLinks(item.socialLinks),
   }));
 }
 
-export function normalizeSiteIdentity(attributes: any): SiteIdentity {
-  if (!attributes) return DEFAULT_SITE_IDENTITY;
+export function normalizeSiteIdentity(attributes: unknown): SiteIdentity {
+  if (!attributes || typeof attributes !== "object") return DEFAULT_SITE_IDENTITY;
+  const source = attributes as Record<string, unknown>;
   return {
-    siteName: resolveSiteName(attributes.siteName),
-    brandDescription: attributes.brandDescription ?? undefined,
-    contactEmail: attributes.contactEmail ?? undefined,
-    supportHours: attributes.supportHours ?? undefined,
-    hasPhysicalStores: attributes.hasPhysicalStores !== false,
-    hasMultipleStores: Boolean(attributes.hasMultipleStores),
-    stores: toStores(attributes.stores),
-    socialLinks: toSocialLinks(attributes.socialLinks),
-    contactNumbers: toContactNumbers(attributes.contactNumbers),
+    siteName: resolveSiteName(readText(source.siteName)),
+    brandDescription: readText(source.brandDescription),
+    contactEmail: readText(source.contactEmail),
+    supportHours: readText(source.supportHours),
+    hasPhysicalStores: source.hasPhysicalStores !== false,
+    hasMultipleStores: Boolean(source.hasMultipleStores),
+    stores: toStores(source.stores),
+    socialLinks: toSocialLinks(source.socialLinks),
+    contactNumbers: toContactNumbers(source.contactNumbers),
   };
+}
+
+export function readSiteIdentityFromApi(res: unknown): SiteIdentity {
+  const fields = unwrapFields(res);
+  return fields ? normalizeSiteIdentity(fields) : DEFAULT_SITE_IDENTITY;
 }
 
 export async function getSiteIdentity(): Promise<SiteIdentity> {
@@ -145,8 +267,8 @@ export async function getSiteIdentity(): Promise<SiteIdentity> {
     if (response.status === 404) return DEFAULT_SITE_IDENTITY;
     if (!response.ok) throw new Error(`API error: ${response.status}`);
 
-    const result = await response.json();
-    return normalizeSiteIdentity(result?.data?.attributes);
+    const result: unknown = await response.json();
+    return readSiteIdentityFromApi(result);
   } catch (error) {
     console.warn("Site identity unavailable, using defaults:", error);
     return DEFAULT_SITE_IDENTITY;

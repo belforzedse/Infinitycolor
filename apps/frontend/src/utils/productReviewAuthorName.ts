@@ -24,9 +24,9 @@ export function resolveProductReviewUserDisplayName(
     return fullName;
   }
 
-  if (user.Phone) {
+  const phone = (user.Phone || user.phone)?.trim();
+  if (phone) {
     // Format phone number to mask middle digits for privacy
-    const phone = user.Phone.trim();
     if (phone.length > 7) {
       return `${phone.slice(0, 4)}***${phone.slice(-4)}`;
     }

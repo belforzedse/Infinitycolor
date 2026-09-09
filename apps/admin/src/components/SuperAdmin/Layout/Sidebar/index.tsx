@@ -44,6 +44,29 @@ function activeEdgeClass(
   return `pointer-events-none absolute right-0 top-1/2 ${heightClass} w-1.5 -translate-y-1/2 rounded-l-full`;
 }
 
+const normalizeSidebarPath = (value: string): string => value.replace(/\/$/, "");
+
+const pathMatchesHref = (pathname: string, href: string): boolean =>
+  Boolean(href) && (pathname === href || pathname.startsWith(`${href}/`));
+
+/**
+ * `/orders/reserve` would also match `/orders` by prefix. Prefer the longest
+ * sibling href so only one child in a group is active.
+ */
+const isChildHrefActive = (
+  pathname: string,
+  href: string,
+  siblingHrefs: readonly string[],
+): boolean => {
+  if (!pathMatchesHref(pathname, href)) return false;
+  return !siblingHrefs.some(
+    (sibling) =>
+      sibling !== href &&
+      sibling.startsWith(`${href}/`) &&
+      pathMatchesHref(pathname, sibling),
+  );
+};
+
 function SidebarNav({
   sidebarItems,
   openMenus,
@@ -100,15 +123,18 @@ function SidebarNav({
       {sidebarItems.map((item) => {
         const hasChildren = item.children.length > 0;
         const isOpenMenu = !!openMenus[item.id];
-        const curr = pathname.replace(/\/$/, "");
-        const itemBase = (item.href ?? "").replace(/\/$/, "");
-        const hasActiveChild = item.children.some((child) => {
-          const childHref = (child.href ?? "").replace(/\/$/, "");
-          return (
-            childHref &&
-            (curr === childHref || curr.startsWith(childHref + "/"))
-          );
-        });
+        const curr = normalizeSidebarPath(pathname);
+        const itemBase = normalizeSidebarPath(item.href ?? "");
+        const childHrefs = item.children.map((child) =>
+          normalizeSidebarPath(child.href ?? ""),
+        );
+        const hasActiveChild = item.children.some((child) =>
+          isChildHrefActive(
+            curr,
+            normalizeSidebarPath(child.href ?? ""),
+            childHrefs,
+          ),
+        );
         const isDashboardItem = item.id === "dashboard";
         const isActiveBase =
           itemBase &&
@@ -267,11 +293,9 @@ function SidebarNav({
                 id={`submenu-${item.id}`}
               >
                 {item.children.map((child, index) => {
-                  const childPath = pathname.replace(/\/$/, "");
-                  const href = (child.href ?? "").replace(/\/$/, "");
-                  const active =
-                    !!href &&
-                    (childPath === href || childPath.startsWith(href + "/"));
+                  const childPath = normalizeSidebarPath(pathname);
+                  const href = normalizeSidebarPath(child.href ?? "");
+                  const active = isChildHrefActive(childPath, href, childHrefs);
                   return (
                     <Fragment key={child.id}>
                       <Link
@@ -495,19 +519,18 @@ export default function SuperAdminLayoutSidebar({
 
   useEffect(() => {
     const next: Record<string, boolean> = {};
-    const curr = pathname.replace(/\/$/, "");
+    const curr = normalizeSidebarPath(pathname);
     sidebarItems.forEach((it) => {
-      const base = (it.href ?? "").replace(/\/$/, "");
-      const hasActiveChild = it.children.some((child) => {
-        const childHref = child.href.replace(/\/$/, "");
-        return (
-          childHref && (curr === childHref || curr.startsWith(childHref + "/"))
-        );
-      });
+      const base = normalizeSidebarPath(it.href ?? "");
+      const childHrefs = it.children.map((child) =>
+        normalizeSidebarPath(child.href),
+      );
+      const hasActiveChild = it.children.some((child) =>
+        isChildHrefActive(curr, normalizeSidebarPath(child.href), childHrefs),
+      );
       if (
         it.children.length > 0 &&
-        ((base && (curr === base || curr.startsWith(base + "/"))) ||
-          hasActiveChild)
+        ((base && pathMatchesHref(curr, base)) || hasActiveChild)
       ) {
         next[it.id] = true;
       }

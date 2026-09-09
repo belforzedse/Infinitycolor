@@ -9,14 +9,14 @@ import StoryForm from "@/components/Stories/StoryForm";
 import { storyService } from "@/services/story/story.service";
 import type { CreateStoryData } from "@/types/story";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import { translateErrorMessage, extractErrorMessage } from "@/lib/errorTranslations";
 import { useState } from "react";
 
 export default function AddStoryPage() {
   const router = useRouter();
-  const { user, isStoreManager } = useCurrentUser();
-  const isSuperAdmin = (user?.roleName ?? "").toLowerCase() === "superadmin";
-  const hasAccess = isSuperAdmin || isStoreManager;
+  const { user } = useCurrentUser();
+  const hasAccess = useCan("content.stories.manage");
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {

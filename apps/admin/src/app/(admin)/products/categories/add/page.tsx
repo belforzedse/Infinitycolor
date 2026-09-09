@@ -4,8 +4,8 @@ import UpsertPageContentWrapper from "@/components/SuperAdmin/UpsertPage/Content
 import { useState } from "react";
 import toast from "react-hot-toast";
 import {
+  buildCategoryWritePayload,
   createCategory,
-  type CategoryData,
 } from "@/services/super-admin/product/category/create";
 import {
   extractErrorMessage,
@@ -41,22 +41,19 @@ export default function AddCategoryPage() {
       return;
     }
 
-    const payload: CategoryData = {
+    const payload = buildCategoryWritePayload({
       Title: title,
       Slug: slug,
+      parentId: formData.Parent,
       Image: categoryImage?.id ?? null,
       MegaMenuImage: megaMenuImage?.id ?? null,
-    };
-
-    if (formData.Parent) {
-      payload.Parent = formData.Parent;
-    }
+    });
 
     try {
       await createCategory(payload);
       toast.success("دسته‌بندی با موفقیت ایجاد شد");
       window.location.assign("/products/categories");
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to create category:", error);
       const rawErrorMessage = extractErrorMessage(error);
       const message = translateErrorMessage(

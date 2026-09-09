@@ -121,13 +121,34 @@ export default function OrdersPage() {
           "status-",
           "",
         ) as OrderLifecycleStatus;
+
+        // Held reserve orders are refused server-side (`RESERVE_HOLD_ACTIVE`).
+        // Filtering them out here means a mixed selection still succeeds for the
+        // rest instead of failing as a partially-applied batch, and the operator
+        // is told exactly which orders were left behind and why.
+        const held = selectedRows.filter((row) => row.attributes.reserveIsHeld);
+        const eligible = selectedRows.filter((row) => !row.attributes.reserveIsHeld);
+
+        if (eligible.length === 0) {
+          toast.error(
+            "همه سفارش‌های انتخاب‌شده در مهلت رزرو هستند و تا پایان مهلت ارسال نمی‌شوند.",
+          );
+          return;
+        }
+
         try {
           await Promise.all(
-            selectedRows.map((row) => changeOrderStatus(row.id, statusKey)),
+            eligible.map((row) => changeOrderStatus(row.id, statusKey)),
           );
           toast.success(
-            `${selectedRows.length} سفارش به وضعیت «${translateOrderStatus(statusKey)}» منتقل شد.`,
+            `${eligible.length} سفارش به وضعیت «${translateOrderStatus(statusKey)}» منتقل شد.`,
           );
+          if (held.length > 0) {
+            toast(
+              `${held.length} سفارش به دلیل بودن در مهلت رزرو تغییر نکرد.`,
+              { icon: "⏳" },
+            );
+          }
           setRefresh(true);
         } catch (error) {
           console.error("Bulk order status update error:", error);

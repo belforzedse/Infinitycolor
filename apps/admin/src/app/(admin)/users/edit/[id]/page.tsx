@@ -212,7 +212,15 @@ export default function Page() {
         }}
       />
 
-      {canAdjustWallet && id && <WalletAdjustCard userId={Number(id)} />}
+      {canAdjustWallet && id && (
+        <WalletAdjustCard
+          userId={Number(id)}
+          allowAdjust={
+            Number.isInteger(Number(currentUser?.id)) &&
+            Number(currentUser?.id) !== Number(id)
+          }
+        />
+      )}
 
       {id && (
         <AuditTimeline

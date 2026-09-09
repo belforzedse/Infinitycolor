@@ -372,7 +372,11 @@ export default function PDPHeroInfo(props: Props) {
         />
 
         {productData?.attributes?.Description && (
-          <FAQItem title="جزئیات محصول" content={productData.attributes.Description} />
+          <FAQItem
+            title="جزئیات محصول"
+            content={productData.attributes.Description}
+            defaultOpen
+          />
         )}
 
         {productData?.attributes?.CleaningTips && (

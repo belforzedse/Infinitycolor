@@ -225,6 +225,8 @@ export default function BlogCategoryBannersPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <ImageUploadField
+                preferOriginal
+                highQuality
                 value={settings.blogDefaultBannerImage}
                 onChange={(value) =>
                   setSettings((prev) => ({ ...prev, blogDefaultBannerImage: value }))
@@ -303,6 +305,8 @@ export default function BlogCategoryBannersPage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="md:col-span-2">
                 <FeaturedImagePanel
+                  preferOriginal
+                  highQuality
                   featuredImage={
                     category.FeaturedImage
                       ? { id: category.FeaturedImage.id, url: category.FeaturedImage.url }

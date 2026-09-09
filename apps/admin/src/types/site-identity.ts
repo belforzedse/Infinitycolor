@@ -19,23 +19,27 @@ export type SocialPlatform =
 export type ContactNumberType = "phone" | "mobile" | "whatsapp";
 
 export interface IdentityPhone {
+  id?: number;
   label?: string;
   number: string;
 }
 
 export interface IdentitySocialLink {
+  id?: number;
   platform: SocialPlatform;
   url: string;
   label?: string;
 }
 
 export interface IdentityContactNumber {
+  id?: number;
   label?: string;
   number: string;
   type?: ContactNumberType;
 }
 
 export interface IdentityStore {
+  id?: number;
   name?: string;
   address?: string;
   postalCode?: string;

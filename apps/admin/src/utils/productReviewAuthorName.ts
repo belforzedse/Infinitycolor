@@ -1,42 +1,48 @@
-import { isUserInfo } from "@/services/product/product-review.service";
 import type { ProductReview } from "@/services/product/product-review.service";
+import { isRecord, readOptionalText, unwrapStrapiFields } from "./strapiEntity";
 
 function extractUserInfo(user?: ProductReview["user"]) {
   const candidate = user?.user_info;
   if (!candidate) {
     return null;
   }
-  return isUserInfo(candidate) ? candidate : null;
+
+  const fields = unwrapStrapiFields(candidate) ?? (isRecord(candidate) ? candidate : null);
+  if (!fields) {
+    return null;
+  }
+
+  return {
+    FirstName: readOptionalText(fields.FirstName),
+    LastName: readOptionalText(fields.LastName),
+  };
 }
 
 export function resolveProductReviewUserDisplayName(
   user?: ProductReview["user"],
-  fallbackPhone?: string
+  fallbackPhone?: string,
 ): string {
-  if (!user) return fallbackPhone || "کاربر ناشناس";
-
   const normalizedInfo = extractUserInfo(user);
-  const firstName = normalizedInfo?.FirstName?.trim() || "";
-  const lastName = normalizedInfo?.LastName?.trim() || "";
+  const firstName = normalizedInfo?.FirstName || "";
+  const lastName = normalizedInfo?.LastName || "";
   const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
 
   if (fullName) {
     return fullName;
   }
 
-  if (user.Phone) {
-    // Format phone number to mask middle digits for privacy
-    const phone = user.Phone.trim();
-    if (phone.length > 7) {
-      return `${phone.slice(0, 4)}***${phone.slice(-4)}`;
-    }
+  const phone =
+    readOptionalText(user?.Phone) ||
+    readOptionalText(user?.phone) ||
+    readOptionalText(fallbackPhone);
+  if (phone) {
     return phone;
   }
 
-  const username = user.username?.trim();
+  const username = readOptionalText(user?.username);
   if (username) {
     return username;
   }
 
-  return fallbackPhone || "کاربر ناشناس";
+  return "کاربر ناشناس";
 }

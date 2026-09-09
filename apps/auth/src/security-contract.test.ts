@@ -572,6 +572,16 @@ test("an existing central session resumes through a one-time allowlisted return 
   assert.match(flowContext, /window\.location\.replace\(continuation\.redirectTo\)/);
 });
 
+test("step-up login skips silent session continue so stale list-sessions cannot loop", () => {
+  const flowContext = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/auth/auth-flow-context.tsx"),
+    "utf8",
+  );
+  assert.match(flowContext, /searchParams\.get\("stepUp"\) === "1"/);
+  assert.match(flowContext, /if \(stepUp\) return;/);
+  assert.match(flowContext, /url\.searchParams\.set\("stepUp", "1"\)/);
+});
+
 test("Better Auth source freezes absolute sessions and the native secure cookie name", () => {
   const source = fs.readFileSync(
     path.resolve(process.cwd(), "src/server/auth.ts"),

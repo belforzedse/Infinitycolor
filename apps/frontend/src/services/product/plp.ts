@@ -14,6 +14,9 @@ import { formatProductsToCardProps } from "./product";
 import type { ProductSmallCardProps } from "@/components/Product/SmallCard";
 import { PRODUCT_COLLECTION_TAG, PRODUCT_TAG } from "@/constants/cacheTags";
 import type { CategoryEditorialContent } from "./categoryEditorial";
+import { expandSizeKeysToTitles } from "@/utils/plpSizeFilter";
+import { expandColorKeysToTitles, type CatalogColor } from "@/utils/plpColorFilter";
+import { getProductVariationColors, getProductVariationSizes } from "./variationAttributes";
 
 export interface PLPProduct {
   id: number;
@@ -60,7 +63,8 @@ export interface PLPQuery {
   available: boolean;
   minPrice?: string;
   maxPrice?: string;
-  size?: string;
+  size?: string[];
+  color?: string[];
   material?: string;
   season?: string;
   gender?: string;
@@ -120,6 +124,16 @@ const cardToSmallCard = (product: ReturnType<typeof formatProductsToCardProps>[n
   colorCodes: product.colorCodes,
 });
 
+function parseCsvParam(value: string | string[] | undefined): string[] | undefined {
+  const parts = Array.isArray(value)
+    ? value.flatMap((item) => item.split(","))
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  const items = parts.map((item) => item.trim()).filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
 export function parsePLPQuery(params: { [key: string]: string | string[] | undefined }): PLPQuery {
   const parsedPage = typeof params.page === "string" ? parseInt(params.page, 10) : 1;
 
@@ -129,7 +143,8 @@ export function parsePLPQuery(params: { [key: string]: string | string[] | undef
     available: typeof params.available === "string" ? params.available === "true" : false,
     minPrice: typeof params.minPrice === "string" ? params.minPrice : undefined,
     maxPrice: typeof params.maxPrice === "string" ? params.maxPrice : undefined,
-    size: typeof params.size === "string" ? params.size : undefined,
+    size: parseCsvParam(params.size),
+    color: parseCsvParam(params.color),
     material: typeof params.material === "string" ? params.material : undefined,
     season: typeof params.season === "string" ? params.season : undefined,
     gender: typeof params.gender === "string" ? params.gender : undefined,
@@ -151,10 +166,16 @@ const appendIndexedInFilter = (
   });
 };
 
+export interface PLPFilterCatalogs {
+  sizeTitles?: string[];
+  colors?: CatalogColor[];
+}
+
 export function buildPLPProductsQuery(
   query: PLPQuery,
   categorySlugs: string[] = [],
   pageSize = 30,
+  catalogs: PLPFilterCatalogs = {},
 ): URLSearchParams {
   const queryParams = new URLSearchParams();
   let andIndex = 0;
@@ -205,11 +226,25 @@ export function buildPLPProductsQuery(
   if (query.hasDiscount) {
     queryParams.append("hasDiscount", "true");
   }
-  if (query.size) {
-    queryParams.append(
-      `filters[$and][${nextAnd()}][product_variations][product_variation_size][Title][$eq]`,
-      query.size,
-    );
+  if (query.size && query.size.length > 0) {
+    const sizeTitles = expandSizeKeysToTitles(query.size, catalogs.sizeTitles);
+    if (sizeTitles.length > 0) {
+      appendIndexedInFilter(
+        queryParams,
+        `filters[$and][${nextAnd()}][product_variations][product_variation_size][Title]`,
+        sizeTitles,
+      );
+    }
+  }
+  if (query.color && query.color.length > 0) {
+    const colorTitles = expandColorKeysToTitles(query.color, catalogs.colors ?? []);
+    if (colorTitles.length > 0) {
+      appendIndexedInFilter(
+        queryParams,
+        `filters[$and][${nextAnd()}][product_variations][product_variation_color][Title]`,
+        colorTitles,
+      );
+    }
   }
   if (query.sort) {
     queryParams.append("sort[0]", query.sort);
@@ -351,7 +386,16 @@ export async function getPLPProducts(
 ): Promise<PLPProductsResult> {
   const strapiBase = getStrapiServerUrl();
   const baseUrl = `${strapiBase}/products`;
-  const queryParams = buildPLPProductsQuery(query, categorySlugs, pageSize);
+  const catalogs: PLPFilterCatalogs = {};
+  if (query.size?.length || query.color?.length) {
+    const [sizes, colors] = await Promise.all([
+      query.size?.length ? getProductVariationSizes({ revalidate: 3600 }) : Promise.resolve([]),
+      query.color?.length ? getProductVariationColors({ revalidate: 3600 }) : Promise.resolve([]),
+    ]);
+    catalogs.sizeTitles = sizes.map((size) => size.title);
+    catalogs.colors = colors;
+  }
+  const queryParams = buildPLPProductsQuery(query, categorySlugs, pageSize, catalogs);
 
   const url = `${baseUrl}?${queryParams.toString()}`;
   let response: Response;

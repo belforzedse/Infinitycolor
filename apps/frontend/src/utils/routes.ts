@@ -266,6 +266,11 @@ export const routes: RouteInfo[] = [
     path: "/faq",
     description: "Frequently Asked Questions",
   },
+  {
+    name: "Returns",
+    path: "/returns",
+    description: "Exchange and return policy",
+  },
 ];
 
 export const getRoutes = () => {

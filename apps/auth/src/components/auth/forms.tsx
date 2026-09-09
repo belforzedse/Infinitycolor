@@ -98,10 +98,9 @@ export function PhoneStatusForm({
     }
     setLoading(true);
     try {
-      await authPost<{ message: string }>(
-        "/infinity/phone-status",
-        { phone: phoneValue },
-      );
+      await authPost<{ message: string }>("/infinity/phone-status", {
+        phone: phoneValue,
+      });
       setPhone(phoneValue);
       await authPost("/infinity/otp/request", { phone: phoneValue });
       go("/auth/login/otp");
@@ -116,7 +115,11 @@ export function PhoneStatusForm({
 
   return (
     <>
-      {passwordReset && <p role="status" className="mb-4 text-sm text-emerald-700">رمز عبور تغییر کرد. با رمز جدید وارد شوید.</p>}
+      {passwordReset && (
+        <p role="status" className="mb-4 text-sm text-emerald-700">
+          رمز عبور تغییر کرد. با رمز جدید وارد شوید.
+        </p>
+      )}
       <AuthTitle subtitle="لطفا شماره همراه خود را جهت بررسی وارد نمایید">
         ورود به حساب کاربری
       </AuthTitle>
@@ -358,7 +361,12 @@ function OtpForm({
   return (
     <div className="space-y-8" dir="rtl">
       <AuthTitle
-        subtitle={`لطفا کد ارسال شده به شماره همراه ${phone} را وارد نمایید`}
+        subtitle={
+          <>
+            لطفا کد ارسال شده به شماره همراه <bdi dir="ltr">{phone}</bdi> را
+            وارد نمایید
+          </>
+        }
       >
         {title}
       </AuthTitle>
@@ -507,7 +515,8 @@ export function ResetPasswordForm() {
   const { timeLeft, active, restart } = useOtpCountdown();
 
   useEffect(() => {
-    if (flowReady && !phone && !resetCompleted.current) go("/auth/forgot-password");
+    if (flowReady && !phone && !resetCompleted.current)
+      go("/auth/forgot-password");
   }, [phone, flowReady, go]);
 
   const resend = async () => {
@@ -562,7 +571,12 @@ export function ResetPasswordForm() {
         بازگشت
       </button>
       <AuthTitle
-        subtitle={`لطفا کد تایید ارسال شده به شماره همراه ${phone} را وارد نمایید`}
+        subtitle={
+          <>
+            لطفا کد تایید ارسال شده به شماره همراه <bdi dir="ltr">{phone}</bdi>{" "}
+            را وارد نمایید
+          </>
+        }
       >
         بازیابی رمز عبور
       </AuthTitle>
@@ -662,9 +676,16 @@ export function RegistrationInfoForm() {
         }));
       })
       .catch((cause) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : "بازیابی اطلاعات حساب ناموفق بود");
+        if (!cancelled)
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "بازیابی اطلاعات حساب ناموفق بود",
+          );
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [phone, flowReady]);
   const change =
     (field: keyof typeof form) =>
@@ -675,11 +696,18 @@ export function RegistrationInfoForm() {
     form.birthMonth,
     form.birthDay,
   );
-  const hasBirthParts = Boolean(form.birthYear || form.birthMonth || form.birthDay);
+  const hasBirthParts = Boolean(
+    form.birthYear || form.birthMonth || form.birthDay,
+  );
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!form.firstName.trim() || !form.lastName.trim() || (hasBirthParts && !birthDate)) return;
+    if (
+      !form.firstName.trim() ||
+      !form.lastName.trim() ||
+      (hasBirthParts && !birthDate)
+    )
+      return;
     setLoading(true);
     setError("");
     try {
@@ -704,9 +732,7 @@ export function RegistrationInfoForm() {
   };
 
   const ready = Boolean(
-    form.firstName &&
-      form.lastName &&
-      (!hasBirthParts || birthDate),
+    form.firstName && form.lastName && (!hasBirthParts || birthDate),
   );
   return (
     <div className="space-y-8" dir="rtl">

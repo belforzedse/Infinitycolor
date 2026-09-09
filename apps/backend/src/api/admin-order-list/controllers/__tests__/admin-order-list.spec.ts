@@ -28,11 +28,20 @@ function installStrapi(rows: any[] = []) {
 }
 
 describe("bounded admin orders list", () => {
-  it("uses the order-read capability policy", () => {
-    expect(routeConfig.routes[0].config.policies[0]).toEqual({
+  it("uses the order-read capability policy on every orders-list route", () => {
+    const orderRead = {
       name: "global::require-capability",
       config: { capability: "order.read" },
-    });
+    };
+    expect(routeConfig.routes.map((route) => route.handler)).toEqual([
+      "admin-order-list.query",
+      "admin-order-list.queryReserveGroups",
+      "admin-order-list.getReserveGroup",
+    ]);
+    for (const route of routeConfig.routes) {
+      const policies = (route.config as { policies: unknown[] }).policies;
+      expect(policies[0]).toEqual(orderRead);
+    }
   });
 
   it.each([

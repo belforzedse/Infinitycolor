@@ -29,6 +29,13 @@ export async function selectFirstShipping(page: Page) {
   await option.click();
 }
 
+/** Accept the required store terms checkbox before payment. */
+export async function acceptCheckoutTerms(page: Page) {
+  const checkbox = page.getByTestId("checkout-accept-terms");
+  await expect(checkbox).toBeVisible({ timeout: 15_000 });
+  await checkbox.check();
+}
+
 /** Select the Zarinpal payment gateway and confirm it became the active choice. */
 export async function selectZarinpalGateway(page: Page) {
   const zarinpal = page.getByTestId("payment-gateway-zarinpal");
@@ -56,6 +63,7 @@ export async function fillCheckoutWithZarinpal(page: Page) {
   await selectSeededAddress(page);
   await selectFirstShipping(page);
   await selectZarinpalGateway(page);
+  await acceptCheckoutTerms(page);
 }
 
 
@@ -66,4 +74,5 @@ export async function fillCheckoutWithWallet(page: Page) {
   await selectSeededAddress(page);
   await selectFirstShipping(page);
   await selectWalletGateway(page);
+  await acceptCheckoutTerms(page);
 }

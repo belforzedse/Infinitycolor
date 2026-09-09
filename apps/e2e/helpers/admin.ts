@@ -384,6 +384,43 @@ export async function cleanupRuntimeCoupons(request: APIRequestContext) {
   }
 }
 
+export type RuntimeStoryFixture = {
+  storyId: number;
+  title: string;
+};
+
+export async function createRuntimeStory(
+  request: APIRequestContext,
+  role: E2EAuthRole = "seller-2",
+): Promise<RuntimeStoryFixture> {
+  const title = `${E2E_RUNTIME_PREFIX}Story ${uniqueSuffix()}`;
+  const response = await apiPost(request, role, "/stories", {
+    data: {
+      Title: title,
+      MediaType: "image",
+      IsActive: false,
+      SortOrder: 0,
+    },
+  });
+  await expectApiOk(response, `create runtime story as ${role}`);
+  const payload = (await response.json()) as { data?: { id?: number } };
+  const storyId = Number(payload.data?.id);
+  expect(storyId, "created story id").toBeGreaterThan(0);
+  return { storyId, title };
+}
+
+export async function cleanupRuntimeStories(request: APIRequestContext) {
+  const response = await apiGet(request, "admin", "/stories", {
+    "filters[Title][$startsWith]": E2E_RUNTIME_PREFIX,
+    "pagination[pageSize]": 100,
+  });
+  if (!response.ok()) return;
+  const payload = (await response.json()) as { data?: Array<{ id: number }> };
+  for (const item of payload.data ?? []) {
+    await apiDelete(request, "admin", `/stories/${item.id}`);
+  }
+}
+
 export async function expectForbiddenForRole(
   request: APIRequestContext,
   role: E2EAuthRole,

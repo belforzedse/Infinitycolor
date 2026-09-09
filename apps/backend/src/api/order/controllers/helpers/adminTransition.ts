@@ -3,6 +3,7 @@ import { logAdminOrderFieldUpdate } from "../../../../utils/adminActivity";
 import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
 import { requireCapability } from "../../../../utils/adminAuthorization";
 import { notifyOrderStatusSms } from "../../../../services/sms/notifications";
+import { isOrderHeldByReserve } from "../../../reserve-group/lib/reserve-group";
 
 const NEXT_STATUS: Record<string, string[]> = {
   Started: ["Shipment"],
@@ -29,6 +30,24 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
   if (order.Status === nextStatus) {
     return { data: { success: true, orderId, status: nextStatus, unchanged: true } };
   }
+  // An order inside a live 48h combined-shipping window must not enter the
+  // shipping workflow, whatever the admin clicked. Enforced here rather than only
+  // by disabling a button, because bulk actions hit this same endpoint.
+  if (nextStatus === "Shipment") {
+    const { held, group } = await isOrderHeldByReserve(strapi, orderId);
+    if (held) {
+      return ctx.conflict("سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل ارسال نیست", {
+        data: {
+          success: false,
+          errorCode: "RESERVE_HOLD_ACTIVE",
+          reserveGroupId: group?.groupKey ?? null,
+          reserveExpiresAt: group?.expiresAt ?? null,
+          message: "سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل ارسال نیست",
+        },
+      });
+    }
+  }
+
   if (!(NEXT_STATUS[order.Status] || []).includes(nextStatus)) {
     return ctx.conflict("Order status transition is not allowed", {
       data: {

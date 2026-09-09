@@ -1,4 +1,7 @@
 import type { BlogComment } from "@/services/blog/blog.service";
+import { isRecord, readOptionalText, unwrapStrapiFields } from "./strapiEntity";
+
+const PLACEHOLDER_NAMES = new Set(["کاربر ناشناس", "undefined undefined"]);
 
 function extractUserInfo(user?: BlogComment["user"]) {
   const candidate = user?.user_info;
@@ -6,42 +9,51 @@ function extractUserInfo(user?: BlogComment["user"]) {
     return null;
   }
 
-  if (candidate.data?.attributes) {
-    return candidate.data.attributes;
+  const fields = unwrapStrapiFields(candidate);
+  if (fields) {
+    return fields;
   }
 
-  if (candidate.attributes) {
-    return candidate.attributes;
-  }
+  return isRecord(candidate) ? candidate : null;
+}
 
-  return candidate;
+function isUsableDisplayName(value?: string): boolean {
+  const trimmed = value?.trim();
+  if (!trimmed) return false;
+  return !PLACEHOLDER_NAMES.has(trimmed);
 }
 
 export function resolveBlogCommentUserDisplayName(
   user?: BlogComment["user"],
-  fallbackName?: string
+  fallbackName?: string,
 ): string {
-  if (fallbackName?.trim()) {
-    return fallbackName.trim();
-  }
-
-  if (!user) return "کاربر ناشناس";
-
   const normalizedInfo = extractUserInfo(user);
-  const firstName = normalizedInfo?.FirstName?.trim() || "";
-  const lastName = normalizedInfo?.LastName?.trim() || "";
+  const firstName =
+    readOptionalText(normalizedInfo?.FirstName) ||
+    readOptionalText(normalizedInfo?.first_name) ||
+    "";
+  const lastName =
+    readOptionalText(normalizedInfo?.LastName) ||
+    readOptionalText(normalizedInfo?.last_name) ||
+    "";
   const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
 
   if (fullName) {
     return fullName;
   }
 
-  const username = user.username?.trim();
-  if (username) {
-    return username;
+  if (isUsableDisplayName(fallbackName)) {
+    return fallbackName!.trim();
   }
 
-  const email = user.email?.trim();
+  if (!user) return "کاربر ناشناس";
+
+  const phone = readOptionalText(user.phone) || readOptionalText(user.username);
+  if (phone) {
+    return phone;
+  }
+
+  const email = readOptionalText(user.email);
   if (email) {
     return email;
   }

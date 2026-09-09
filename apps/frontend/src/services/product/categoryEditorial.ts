@@ -26,7 +26,8 @@ export function isCanonicalCategoryEditorialView(query: PLPQuery) {
     !query.available &&
     !query.minPrice &&
     !query.maxPrice &&
-    !query.size &&
+    !query.size?.length &&
+    !query.color?.length &&
     !query.material &&
     !query.season &&
     !query.gender &&

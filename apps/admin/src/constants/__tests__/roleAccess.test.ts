@@ -37,6 +37,10 @@ describe("canRoleAccessPath", () => {
         );
       }
     });
+
+    it("reaches the model application inbox", () => {
+      expect(canRoleAccessPath("Superadmin", "/model-applications")).toBe(true);
+    });
   });
 
   describe("Founder", () => {
@@ -60,6 +64,11 @@ describe("canRoleAccessPath", () => {
       expect(canRoleAccessPath("Founder", "/sales/activity")).toBe(false);
     });
 
+    it("can manage stories", () => {
+      expect(canRoleAccessPath("Founder", "/stories")).toBe(true);
+      expect(canRoleAccessPath("Founder", "/stories/add")).toBe(true);
+    });
+
     it("applies the same capabilities to compatible legacy report paths", () => {
       expect(canRoleAccessPath("Founder", "/reports/traffic")).toBe(true);
       expect(canRoleAccessPath("Founder", "/carts")).toBe(true);
@@ -68,6 +77,10 @@ describe("canRoleAccessPath", () => {
       expect(canRoleAccessPath("Founder", "/reports/gateway-liquidity")).toBe(
         true,
       );
+    });
+
+    it("can open the model application inbox", () => {
+      expect(canRoleAccessPath("Founder", "/model-applications")).toBe(true);
     });
   });
 
@@ -82,19 +95,26 @@ describe("canRoleAccessPath", () => {
       }
     });
 
-    it("retains its operational resources", () => {
-      for (const path of ["/orders", "/products"]) {
+    it("retains its operational resources including stories", () => {
+      for (const path of ["/orders", "/orders/reserve", "/products", "/stories"]) {
         expect(canRoleAccessPath("Store manager", path)).toBe(true);
       }
       for (const path of ["/shipping", "/coupons", "/general-discounts"]) {
         expect(canRoleAccessPath("Store manager", path)).toBe(false);
       }
+      const orders = getSidebarItemsForRole("Store manager").find(
+        (item) => item.id === "orders",
+      );
+      expect(orders?.children.map((child) => child.href)).toEqual([
+        "/orders",
+        "/orders/reserve",
+      ]);
     });
   });
 
   describe("Store Manager 2", () => {
     it("keeps Store Manager routes and adds only the wallet workspace", () => {
-      for (const path of ["/orders", "/products", "/wallets"]) {
+      for (const path of ["/orders", "/products", "/wallets", "/stories"]) {
         expect(canRoleAccessPath("Store Manager 2", path)).toBe(true);
       }
       for (const path of [
@@ -110,19 +130,39 @@ describe("canRoleAccessPath", () => {
   });
 
   describe("Seller roles", () => {
-    it("keeps Seller 1 in the non-destructive catalog workspace", () => {
+    it("lets Seller 1 stay in the catalog workspace without stories", () => {
       expect(canRoleAccessPath("Seller 1", "/products")).toBe(true);
       expect(canRoleAccessPath("Seller 1", "/products/add")).toBe(true);
       expect(canRoleAccessPath("Seller 1", "/products/categories")).toBe(false);
       expect(canRoleAccessPath("Seller 1", "/orders")).toBe(false);
+      expect(canRoleAccessPath("Seller 1", "/stories")).toBe(false);
+      expect(canRoleAccessPath("Seller 1", "/stories/add")).toBe(false);
     });
 
-    it("adds categories and operational order pages for Seller 2", () => {
+    it("adds categories, operational order pages, and stories for Seller 2", () => {
       expect(canRoleAccessPath("Seller 2", "/products/categories")).toBe(true);
       expect(canRoleAccessPath("Seller 2", "/orders")).toBe(true);
       expect(canRoleAccessPath("Seller 2", "/orders/add")).toBe(false);
       expect(canRoleAccessPath("Seller 2", "/sales")).toBe(false);
       expect(canRoleAccessPath("Seller 2", "/sales/products")).toBe(false);
+      expect(canRoleAccessPath("Seller 2", "/stories")).toBe(true);
+      expect(canRoleAccessPath("Seller 2", "/stories/add")).toBe(true);
+    });
+
+    it("opens the reserve groups board for every role that can read orders", () => {
+      for (const role of [
+        "Seller 2",
+        "Store Manager",
+        "Store Manager 2",
+        "Finance",
+        "Founder",
+        "Superadmin",
+      ]) {
+        expect(canRoleAccessPath(role, "/orders/reserve")).toBe(true);
+        expect(canRoleAccessPath(role, "/orders/reserve/grp-1")).toBe(true);
+      }
+      expect(canRoleAccessPath("Seller 1", "/orders/reserve")).toBe(false);
+      expect(canRoleAccessPath("Editor", "/orders/reserve")).toBe(false);
     });
   });
 
@@ -139,6 +179,7 @@ describe("canRoleAccessPath", () => {
       ]) {
         expect(canRoleAccessPath("Finance", path)).toBe(true);
       }
+      expect(canRoleAccessPath("Finance", "/stories")).toBe(true);
       for (const path of [
         "/sales/traffic",
         "/sales/funnel",
@@ -151,7 +192,7 @@ describe("canRoleAccessPath", () => {
   });
 
   describe("Editor", () => {
-    it("has a blog-only admin workspace plus self-service account access", () => {
+    it("has a blog-and-stories admin workspace plus self-service account access", () => {
       expect(canRoleAccessPath("Editor", "/blog")).toBe(true);
       expect(canRoleAccessPath("Editor", "/blog/category-editorial")).toBe(
         true,
@@ -162,10 +203,24 @@ describe("canRoleAccessPath", () => {
         false,
       );
       expect(canRoleAccessPath("Editor", "/orders")).toBe(false);
-      expect(canRoleAccessPath("Editor", "/stories")).toBe(false);
+      expect(canRoleAccessPath("Editor", "/stories")).toBe(true);
+      expect(canRoleAccessPath("Editor", "/stories/add")).toBe(true);
       expect(canRoleAccessPath("Editor", "/faq")).toBe(false);
       expect(canRoleAccessPath("Editor", "/sales")).toBe(false);
       expect(canRoleAccessPath("Editor", "/sales/activity")).toBe(false);
+    });
+  });
+
+  describe("FAQ route", () => {
+    it("points Superadmin at the site-faq editor instead of the legacy collection CRUD", () => {
+      const faq = getSidebarItemsForRole("Superadmin").find(
+        (item) => item.id === "faq",
+      );
+      expect(faq?.href).toBe("/faq");
+      expect(faq?.children).toEqual([]);
+      expect(canRoleAccessPath("Superadmin", "/faq")).toBe(true);
+      expect(canRoleAccessPath("Superadmin", "/faq/categories")).toBe(true);
+      expect(canRoleAccessPath("Founder", "/faq")).toBe(false);
     });
   });
 
@@ -247,6 +302,36 @@ describe("sidebar", () => {
   const parentIds = (role: string | null) =>
     getSidebarItemsForRole(role).map((item) => item.id);
 
+  it("shows stories to every staff role except Seller 1", () => {
+    for (const role of [
+      "Editor",
+      "Seller 2",
+      "Store Manager",
+      "Store Manager 2",
+      "Finance",
+      "Founder",
+      "Superadmin",
+    ]) {
+      expect(
+        getSidebarItemsForRole(role).some(
+          (item) =>
+            item.id === "stories" ||
+            item.id === "stories-list" ||
+            item.href === "/stories" ||
+            item.children.some((child) => child.href === "/stories"),
+        ),
+      ).toBe(true);
+    }
+    expect(
+      getSidebarItemsForRole("Seller 1").some(
+        (item) =>
+          item.id === "stories" ||
+          item.id === "stories-list" ||
+          item.href === "/stories",
+      ),
+    ).toBe(false);
+  });
+
   it("no longer exposes carts as a top-level destination", () => {
     // It lives inside the Orders/commerce surface now.
     expect(parentIds("Superadmin")).not.toContain("carts");
@@ -258,6 +343,19 @@ describe("sidebar", () => {
       if (role === "superadmin") expect(items).toContain("issue-reports");
       else expect(items).not.toContain("issue-reports");
     }
+  });
+
+  it("shows model applications to Founder and Superadmin only", () => {
+    for (const role of ADMIN_ROLE_IDS) {
+      const items = parentIds(ADMIN_ROLE_DEFINITIONS[role].strapiName);
+      if (role === "superadmin" || role === "founder") {
+        expect(items).toContain("model-applications");
+      } else {
+        expect(items).not.toContain("model-applications");
+      }
+    }
+    expect(canRoleAccessPath("Seller 2", "/model-applications")).toBe(false);
+    expect(canRoleAccessPath("Finance", "/model-applications")).toBe(false);
   });
 
   it("replaces the unreachable reports group with a Sales hub that has a landing page", () => {
@@ -307,12 +405,60 @@ describe("sidebar", () => {
     const orders = getSidebarItemsForRole("Superadmin").find(
       (item) => item.id === "orders",
     );
-    expect(orders?.children.map((child) => child.href)).toContain(
+    expect(orders?.href).toBe("/orders");
+    expect(orders?.children.map((child) => child.href)).toEqual([
+      "/orders",
+      "/orders/reserve",
       "/orders/carts",
+    ]);
+    expect(orders?.children.map((child) => child.id)).toEqual([
+      "orders-main",
+      "orders-reserve",
+      "orders-carts",
+    ]);
+    expect(orders?.children[0]).toEqual(
+      expect.objectContaining({
+        id: "orders-main",
+        label: "سفارشات",
+        href: "/orders",
+      }),
+    );
+    expect(orders?.children[1]).toEqual(
+      expect.objectContaining({
+        id: "orders-reserve",
+        label: "سفارش‌های رزروی",
+        href: "/orders/reserve",
+      }),
     );
   });
 
-  it("promotes Editor blog children to icon-backed top-level destinations", () => {
+  it("lets order-capable roles open سفارشات and سفارش‌های رزروی from the مدیریت سفارشات group", () => {
+    for (const role of [
+      "Seller 2",
+      "Store Manager",
+      "Store Manager 2",
+      "Finance",
+    ]) {
+      const orders = getSidebarItemsForRole(role).find(
+        (item) => item.id === "orders",
+      );
+      expect(orders?.label).toBe("مدیریت سفارشات");
+      expect(orders?.href).toBe("/orders");
+      expect(
+        orders?.children.some(
+          (child) => child.id === "orders-main" && child.href === "/orders",
+        ),
+      ).toBe(true);
+      expect(
+        orders?.children.some(
+          (child) =>
+            child.id === "orders-reserve" && child.href === "/orders/reserve",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("promotes Editor blog and stories children to icon-backed top-level destinations", () => {
     const items = getSidebarItemsForRole("Editor");
     expect(items.map((item) => item.id)).toEqual([
       "dashboard",
@@ -324,6 +470,8 @@ describe("sidebar", () => {
       "blog-tags",
       "blog-authors",
       "blog-comments",
+      "stories-list",
+      "stories-add",
     ]);
     expect(items.every((item) => item.icon && item.children.length === 0)).toBe(
       true,
@@ -350,14 +498,14 @@ describe("sidebar", () => {
 
   it("keeps every role's top-level information architecture within a useful range", () => {
     const expectedCounts: Record<string, number> = {
-      Editor: 9,
+      Editor: 11,
       "Seller 1": 6,
-      "Seller 2": 8,
-      "Store Manager": 8,
-      "Store Manager 2": 9,
-      Finance: 4,
-      Founder: 5,
-      Superadmin: 12,
+      "Seller 2": 9,
+      "Store Manager": 9,
+      "Store Manager 2": 10,
+      Finance: 5,
+      Founder: 7,
+      Superadmin: 13,
     };
 
     for (const [role, count] of Object.entries(expectedCounts)) {

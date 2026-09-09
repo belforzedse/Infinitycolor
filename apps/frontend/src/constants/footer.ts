@@ -1,3 +1,5 @@
+import { RETURNS_PATH, RETURNS_TITLE } from "./legal";
+
 export interface FooterLink {
   title: string;
   url: string;
@@ -39,19 +41,19 @@ export const FOOTER_DATA: FooterData = {
   second: {
     header: "دسترسی سریع",
     links: [
-      { title: "خرید بافت", url: "/plp" },
-      { title: "خرید پیراهن زنانه", url: "/plp/category/shirt-1384" },
+      { title: "خرید بافت", url: "/plp/category/پلیور-و-بافت" },
+      { title: "خرید پیراهن زنانه", url: "/plp/category/shirt" },
       {
         title: "خرید شال و روسری",
-        url: "/plp/category/shawls-and-scarves-1392",
+        url: "/plp/category/shawls-and-scarves",
       },
       {
         title: "خرید شومیز",
-        url: "/plp",
+        url: "/plp/category/paperback-and-tonic",
       },
       {
         title: "خرید مانتو",
-        url: "/plp",
+        url: "/plp/category/coat-and-mantle",
       },
     ],
   },
@@ -61,10 +63,7 @@ export const FOOTER_DATA: FooterData = {
       { title: "درباره ما", url: "/about" },
       { title: "تماس با ما", url: "/contact" },
       { title: "سوالات متداول", url: "/faq" },
-      // {
-      //   title: "شرایط و مقررات تعویض و مرجوع",
-      //   url: "https://new.infinitycolor.co/شرایط-و-مقررات-تعویض-و-مرجوع/",
-      // },
+      { title: RETURNS_TITLE, url: RETURNS_PATH },
     ],
   },
   contactUs: {

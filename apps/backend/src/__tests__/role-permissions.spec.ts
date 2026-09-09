@@ -87,6 +87,7 @@ function createActionTree() {
           update: action(),
           search: action(),
           publication: action(),
+          updateDisplayDate: action(),
           generateVariationCombinations: action(),
           delete: action(),
         },
@@ -270,6 +271,8 @@ function createActionTree() {
           reconcilePayment: action(),
           getActiveReserve: action(),
           releaseReserve: action(),
+          listMyReserveGroups: action(),
+          getMyReserveGroup: action(),
           verifyPayment: action(),
           adminAdjustItems: action(),
           adminUpdateNotes: action(),
@@ -285,7 +288,11 @@ function createActionTree() {
     },
     "api::admin-order-list": {
       controllers: {
-        "admin-order-list": { query: action() },
+        "admin-order-list": {
+          query: action(),
+          queryReserveGroups: action(),
+          getReserveGroup: action(),
+        },
       },
     },
     "api::admin-product-list": {
@@ -524,6 +531,11 @@ function createActionTree() {
       "issue-report",
       ["create", "query", "findOne", "updateStatus", "exportReport"],
     ],
+    [
+      "api::model-application",
+      "model-application",
+      ["create", "query", "findOne", "updateStatus"],
+    ],
     ["api::commerce-maintenance", "commerce-maintenance", ["purge"]],
     ["api::cart-item", "cart-item", crud],
     ["api::order-item", "order-item", crud],
@@ -640,6 +652,9 @@ describe("role permission templates", () => {
       "find",
       "findOne",
     ]);
+    expect(enabled(publicRole, "api::issue-report", "issue-report")).toEqual(["create"]);
+    expect(enabled(publicRole, "api::model-application", "model-application")).toEqual(["create"]);
+    expect(enabled(publicRole, "plugin::upload", "content-api")).toEqual([]);
     // Customers still drive their own cart through the scoped cart controller.
     expect(enabled(customer, "api::cart", "cart")).toEqual(
       expect.arrayContaining(["getMyCart", "addItem", "updateItem", "removeItem"]),
@@ -695,6 +710,14 @@ describe("role permission templates", () => {
     expect(seller1["api::admin-order-list"].controllers["admin-order-list"].query.enabled).toBe(
       false,
     );
+    expect(
+      seller1["api::admin-order-list"].controllers["admin-order-list"].queryReserveGroups
+        .enabled,
+    ).toBe(false);
+    expect(
+      seller1["api::admin-order-list"].controllers["admin-order-list"].getReserveGroup
+        .enabled,
+    ).toBe(false);
     expect(editor["api::admin-product-list"].controllers["admin-product-list"].query.enabled).toBe(
       false,
     );
@@ -714,13 +737,13 @@ describe("role permission templates", () => {
 
     // Capability → U&P actions that must be enabled together. Keep in sync with
     // custom routers that use global::require-capability.
-    const gated: Array<{ capability: string; actions: string[] }> = [
+    const gated: Array<{ capabilities: string[]; actions: string[] }> = [
       {
-        capability: "product.read",
+        capabilities: ["product.read"],
         actions: ["api::admin-product-list.admin-product-list.query"],
       },
       {
-        capability: "content.categoryEditorial.manage",
+        capabilities: ["content.categoryEditorial.manage"],
         actions: [
           "api::product-category-content.product-category-content.targets",
           "api::product-category-content.product-category-content.editable",
@@ -728,78 +751,86 @@ describe("role permission templates", () => {
         ],
       },
       {
-        capability: "product.variation.manage",
+        capabilities: ["product.variation.manage"],
         actions: ["api::product.product.generateVariationCombinations"],
       },
       {
-        capability: "product.publish",
+        capabilities: ["product.publish", "product.schedule"],
         actions: ["api::product.product.publication"],
       },
       {
-        capability: "order.read",
-        actions: ["api::admin-order-list.admin-order-list.query"],
+        capabilities: ["product.schedule"],
+        actions: ["api::product.product.updateDisplayDate"],
       },
       {
-        capability: "order.status.update",
+        capabilities: ["order.read"],
+        actions: [
+          "api::admin-order-list.admin-order-list.query",
+          "api::admin-order-list.admin-order-list.queryReserveGroups",
+          "api::admin-order-list.admin-order-list.getReserveGroup",
+        ],
+      },
+      {
+        capabilities: ["order.status.update"],
         actions: ["api::order.order.adminTransition"],
       },
       {
-        capability: "order.notes.update",
+        capabilities: ["order.notes.update"],
         actions: ["api::order.order.adminUpdateNotes"],
       },
       {
-        capability: "order.financial.read",
+        capabilities: ["order.financial.read"],
         actions: ["api::order.order.adminPaymentOperation"],
       },
       {
-        capability: "order.manual.create",
+        capabilities: ["order.manual.create"],
         actions: ["api::order.order.create", "api::order.order.decrementStockManual"],
       },
       {
-        capability: "report.product.read",
+        capabilities: ["report.product.read"],
         actions: ["api::report.report.productSales", "api::report.report.productOverview"],
       },
       {
-        capability: "report.sales.read",
+        capabilities: ["report.sales.read"],
         actions: ["api::report.report.overview", "api::report.report.salesBreakdown"],
       },
       {
-        capability: "report.finance.read",
+        capabilities: ["report.finance.read"],
         actions: ["api::report.report.liquidity", "api::report.report.gatewayLiquidity"],
       },
       {
-        capability: "report.traffic.read",
+        capabilities: ["report.traffic.read"],
         actions: ["api::report.report.behaviorOverview"],
       },
       {
-        capability: "report.carts.read",
+        capabilities: ["report.carts.read"],
         actions: ["api::cart.cart.find"],
       },
       {
-        capability: "wallet.customer.search",
+        capabilities: ["wallet.customer.search"],
         actions: ["api::plugin-user.plugin-user.searchCustomers"],
       },
       {
-        capability: "wallet.read",
+        capabilities: ["wallet.read"],
         actions: ["api::local-user-wallet.local-user-wallet.adminGetUserWallet"],
       },
       {
-        capability: "wallet.history.read",
+        capabilities: ["wallet.history.read"],
         actions: ["api::local-user-wallet.local-user-wallet.adminGetUserWalletHistory"],
       },
       {
-        capability: "wallet.adjust",
+        capabilities: ["wallet.adjust"],
         actions: ["api::local-user-wallet.local-user-wallet.adminAdjustWallet"],
       },
       {
-        capability: "content.blog.banners.manage",
+        capabilities: ["content.blog.banners.manage"],
         actions: [
           "api::settings.settings.getBlogBanners",
           "api::settings.settings.updateBlogBanners",
         ],
       },
       {
-        capability: "content.blog.comments.manage",
+        capabilities: ["content.blog.comments.manage"],
         actions: [
           "api::blog-comment.blog-comment.approve",
           "api::blog-comment.blog-comment.reject",
@@ -808,7 +839,15 @@ describe("role permission templates", () => {
         ],
       },
       {
-        capability: "system.users.manage",
+        capabilities: ["content.stories.manage"],
+        actions: [
+          "api::story.story.create",
+          "api::story.story.update",
+          "api::story.story.delete",
+        ],
+      },
+      {
+        capabilities: ["system.users.manage"],
         actions: [
           "api::admin-user.admin-user.query",
           "api::plugin-user.plugin-user.createPluginUser",
@@ -816,14 +855,14 @@ describe("role permission templates", () => {
         ],
       },
       {
-        capability: "system.audit.read",
+        capabilities: ["system.audit.read"],
         actions: [
           "api::admin-activity.admin-activity.findReport",
           "api::admin-activity.admin-activity.findProductActivities",
         ],
       },
       {
-        capability: "system.issueReports.manage",
+        capabilities: ["system.issueReports.manage"],
         actions: [
           "api::issue-report.issue-report.query",
           "api::issue-report.issue-report.findOne",
@@ -832,7 +871,15 @@ describe("role permission templates", () => {
         ],
       },
       {
-        capability: "system.customization.manage",
+        capabilities: ["system.modelApplications.manage"],
+        actions: [
+          "api::model-application.model-application.query",
+          "api::model-application.model-application.findOne",
+          "api::model-application.model-application.updateStatus",
+        ],
+      },
+      {
+        capabilities: ["system.customization.manage"],
         actions: [
           "api::settings.settings.getHeroSlider",
           "api::settings.settings.updateHeroSliderDraft",
@@ -840,7 +887,7 @@ describe("role permission templates", () => {
         ],
       },
       {
-        capability: "system.purge.execute",
+        capabilities: ["system.purge.execute"],
         actions: ["api::commerce-maintenance.commerce-maintenance.purge"],
       },
     ];
@@ -870,15 +917,17 @@ describe("role permission templates", () => {
       );
 
       for (const entry of gated) {
-        const allowed = role === "superadmin" || hasCapability(role, entry.capability as any);
+        const allowed =
+          role === "superadmin" ||
+          entry.capabilities.some((capability) => hasCapability(role, capability as any));
         for (const full of entry.actions) {
           const { typeKey, controller, action } = parseAction(full);
           const enabled = Boolean(tree[typeKey]?.controllers?.[controller]?.[action]?.enabled);
           if (allowed && !enabled) {
-            gaps.push(`${role} has ${entry.capability} but missing ${full}`);
+            gaps.push(`${role} has ${entry.capabilities.join(" or ")} but missing ${full}`);
           }
           if (!allowed && enabled) {
-            leaks.push(`${role} lacks ${entry.capability} but has ${full}`);
+            leaks.push(`${role} lacks ${entry.capabilities.join(" and ")} but has ${full}`);
           }
         }
       }
@@ -942,6 +991,19 @@ describe("role permission templates", () => {
     expect(category.update.enabled).toBe(true);
     expect(category.delete.enabled).toBe(false);
     expect(category.deleteWithReassign.enabled).toBe(false);
+  });
+
+  it("lets founders delete categories with reassignment", () => {
+    const founder = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "founder",
+    );
+    const category = founder["api::product-category"].controllers["product-category"];
+
+    expect(category.create.enabled).toBe(true);
+    expect(category.update.enabled).toBe(true);
+    expect(category.delete.enabled).toBe(true);
+    expect(category.deleteWithReassign.enabled).toBe(true);
   });
 
   it("keeps product category creation unavailable to editors", () => {
@@ -1031,8 +1093,11 @@ describe("role permission templates", () => {
       founder["api::commerce-maintenance"].controllers["commerce-maintenance"].purge.enabled,
     ).toBe(false);
     expect(
+      founder["api::product-category"].controllers["product-category"].delete.enabled,
+    ).toBe(true);
+    expect(
       founder["api::product-category"].controllers["product-category"].deleteWithReassign.enabled,
-    ).toBe(false);
+    ).toBe(true);
     expect(founder["plugin::users-permissions"].controllers.user.find.enabled).toBe(false);
     expect(founder["plugin::users-permissions"].controllers.user.update.enabled).toBe(false);
   });
@@ -1158,6 +1223,7 @@ describe("role permission templates", () => {
       "publication",
       "search",
       "update",
+      "updateDisplayDate",
     ]);
     expect(enabled("api::product-category", "product-category")).toEqual([
       "create",
@@ -1190,9 +1256,16 @@ describe("role permission templates", () => {
       "getActiveReserve",
       "getMyOrderDetail",
       "getMyOrders",
+      "getMyReserveGroup",
+      "listMyReserveGroups",
       "reconcilePayment",
       "releaseReserve",
       "verifyPayment",
+    ]);
+    expect(enabled("api::admin-order-list", "admin-order-list")).toEqual([
+      "getReserveGroup",
+      "query",
+      "queryReserveGroups",
     ]);
     expect(enabled("api::product-review", "product-review")).toEqual([
       "find",

@@ -1,5 +1,7 @@
 import { apiClient } from "@/services";
+import { apiCache } from "@/lib/api-cache";
 import { ApiResponse, PaginatedResponse } from "@/types/api";
+import { readOptionalText, unwrapStrapiEntity } from "@/utils/strapiEntity";
 
 export interface UserInfo {
   FirstName?: string | null;
@@ -58,6 +60,7 @@ export interface ProductReview {
     email?: string;
     user_info?: UserInfo;
     Phone?: string;
+    phone?: string;
   };
   product?: {
     id: number;
@@ -77,6 +80,7 @@ export interface ProductReviewReply {
     id: number;
     username?: string;
     Phone?: string;
+    phone?: string;
     user_info?: UserInfo;
   };
   createdAt: string;
@@ -122,6 +126,7 @@ interface UserAttributes {
   username?: string | null;
   email?: string | null;
   Phone?: string | null;
+  phone?: string | null;
   user_info?: StrapiRelation<StrapiEntry<UserInfo>> | null;
 }
 
@@ -158,6 +163,7 @@ interface NormalizedUser {
   username?: string | null;
   email?: string | null;
   Phone?: string | null;
+  phone?: string | null;
   user_info?: UserInfo;
 }
 
@@ -177,42 +183,58 @@ interface NormalizedReply {
   updatedAt: string;
 }
 
+function readUserPhone(user: { Phone?: string | null; phone?: string | null }): string | undefined {
+  return readOptionalText(user.Phone) ?? readOptionalText(user.phone);
+}
+
+function invalidateProductReviewCache() {
+  apiCache.clearByPattern(/product-reviews/i);
+}
+
 class ProductReviewService {
   private unwrapRelation<T>(
-    rel: StrapiRelation<StrapiEntry<T>> | null | undefined
+    rel: unknown,
   ): (T & { id: number }) | (T & { id: number })[] | undefined {
-    if (!rel?.data) return undefined;
-    if (Array.isArray(rel.data)) {
-      return rel.data.map((item) => ({
-        id: item.id,
-        ...item.attributes,
-      }));
+    if (!rel) return undefined;
+    if (isRecord(rel) && Array.isArray(rel.data)) {
+      return rel.data
+        .map((item: unknown) => unwrapStrapiEntity(item))
+        .filter((item): item is Record<string, unknown> & { id: number } => Boolean(item)) as (T & { id: number })[];
     }
-    return { id: rel.data.id, ...rel.data.attributes };
+    const entity = unwrapStrapiEntity(rel);
+    return entity as (T & { id: number }) | undefined;
   }
 
-  private normalizeReview(entry: StrapiEntry<ProductReviewAttributes>): ProductReview {
+  private normalizeReview(
+    entry: StrapiEntry<ProductReviewAttributes> | (ProductReviewAttributes & { id: number }),
+  ): ProductReview {
     if (!entry) {
       throw new Error("Cannot normalize empty review entry");
     }
-    const attrs = entry.attributes;
+    const attrs =
+      "attributes" in entry && entry.attributes
+        ? entry.attributes
+        : (entry as ProductReviewAttributes);
+    const id = entry.id;
 
     // Normalize user
-    const unwrappedUser = this.unwrapRelation(attrs.user);
+    const unwrappedUser = this.unwrapRelation<UserAttributes>(attrs.user);
     let normalizedUser: ProductReview["user"];
     if (unwrappedUser && !Array.isArray(unwrappedUser)) {
       const userInfo = normalizeUserInfo(unwrappedUser.user_info);
+      const phone = readUserPhone(unwrappedUser);
       normalizedUser = {
         id: unwrappedUser.id,
         username: unwrappedUser.username ?? undefined,
         email: unwrappedUser.email ?? undefined,
-        Phone: unwrappedUser.Phone ?? undefined,
+        Phone: phone,
+        phone,
         user_info: userInfo,
       };
     }
 
     // Normalize product
-    const unwrappedProduct = this.unwrapRelation(attrs.product);
+    const unwrappedProduct = this.unwrapRelation<ProductAttributes>(attrs.product);
     const normalizedProduct: ProductReview["product"] =
       unwrappedProduct && !Array.isArray(unwrappedProduct)
         ? {
@@ -223,22 +245,24 @@ class ProductReviewService {
         : undefined;
 
     // Normalize replies
-    const rawReplies = this.unwrapRelation(attrs.product_review_replies);
+    const rawReplies = this.unwrapRelation<ProductReviewReplyAttributes>(attrs.product_review_replies);
     const replyArray = Array.isArray(rawReplies) ? rawReplies : rawReplies ? [rawReplies] : [];
     const normalizedReplies: ProductReviewReply[] = replyArray.map((reply) => {
       // reply.user is a relation that needs unwrapping
       const replyUserRelation = (reply as ProductReviewReplyAttributes & { id: number }).user;
       const unwrappedReplyUser = replyUserRelation
-        ? this.unwrapRelation(replyUserRelation)
+        ? this.unwrapRelation<UserAttributes>(replyUserRelation)
         : undefined;
 
       let replyUser: ProductReviewReply["user"];
       if (unwrappedReplyUser && !Array.isArray(unwrappedReplyUser)) {
         const replyUserInfo = normalizeUserInfo(unwrappedReplyUser.user_info);
+        const phone = readUserPhone(unwrappedReplyUser);
         replyUser = {
           id: unwrappedReplyUser.id,
           username: unwrappedReplyUser.username ?? undefined,
-          Phone: unwrappedReplyUser.Phone ?? undefined,
+          Phone: phone,
+          phone,
           user_info: replyUserInfo,
         };
       }
@@ -253,7 +277,7 @@ class ProductReviewService {
     });
 
     return {
-      id: entry.id,
+      id,
       Content: attrs.Content,
       Status: attrs.Status,
       Date: attrs.Date,
@@ -284,7 +308,7 @@ class ProductReviewService {
 
     const response = await apiClient.get<StrapiApiResponse<StrapiEntry<ProductReviewAttributes>>>(
       "/product-reviews",
-      { params: query }
+      { params: query, cache: "no-store" }
     );
 
     const dataArray = Array.isArray(response.data) ? response.data : response.data ? [response.data] : [];
@@ -320,7 +344,7 @@ class ProductReviewService {
 
     const response = await apiClient.get<StrapiApiResponse<StrapiEntry<ProductReviewAttributes>>>(
       "/product-reviews",
-      { params: query }
+      { params: query, cache: "no-store" }
     );
 
     const dataArray = Array.isArray(response.data) ? response.data : response.data ? [response.data] : [];
@@ -366,6 +390,7 @@ class ProductReviewService {
       }
     );
 
+    invalidateProductReviewCache();
     const responseData = Array.isArray(response.data) ? response.data[0] : response.data;
     return {
       data: this.normalizeReview(responseData),
@@ -378,6 +403,7 @@ class ProductReviewService {
     await apiClient.put(`/product-reviews/${id}`, {
       data: { removedAt: new Date().toISOString() },
     });
+    invalidateProductReviewCache();
   }
 }
 

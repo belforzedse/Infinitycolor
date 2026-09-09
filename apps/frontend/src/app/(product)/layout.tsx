@@ -17,7 +17,6 @@ const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), {
 
 export default function ProductLayout({ children }: { children: React.ReactNode }) {
   const cart = useOptionalCart();
-  const isDrawerOpen = cart?.isDrawerOpen ?? false;
   const pathname = usePathname();
   const [scrolled, setScrolled] = React.useState(false);
   const [showHeader, setShowHeader] = React.useState(true);
@@ -194,8 +193,8 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
 
         <BottomNavigation />
 
-        {/* Cart Drawer */}
-        {isDrawerOpen && <CartDrawer />}
+        {/* Keep mounted while closed so Headless UI can release scroll/pointer locks. */}
+        {cart ? <CartDrawer /> : null}
 
         <ScrollToTop />
       </div>

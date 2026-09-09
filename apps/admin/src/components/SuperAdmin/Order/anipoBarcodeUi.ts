@@ -17,6 +17,13 @@ type AnipoBarcodeUiInput = {
   shippingMethodCode?: string | null;
   providerMessage?: string | null;
   lastError?: string | null;
+  /**
+   * The order belongs to a reserve group whose window is still open. The server
+   * refuses barcode submission for these (`ANIPO_RESERVE_HOLD`); this only makes
+   * the refusal legible before the operator clicks.
+   */
+  reserveIsHeld?: boolean | null;
+  reserveExpiresAt?: string | null;
 };
 
 const ELIGIBLE_STATUSES = new Set(["Started", "Shipment"]);
@@ -24,6 +31,18 @@ const ELIGIBLE_STATUSES = new Set(["Started", "Shipment"]);
 export function getAnipoBarcodeUi(input: AnipoBarcodeUiInput): AnipoBarcodeUi {
   if (input.shippingBarcode?.trim()) {
     return { action: null, tone: "green", label: "بارکد صادر شده" };
+  }
+
+  // Checked before the state branches, but after an issued barcode: once a label
+  // exists the hold is historical and hiding it would confuse reconciliation.
+  if (input.reserveIsHeld) {
+    return {
+      action: null,
+      tone: "amber",
+      label: "در مهلت رزرو — ارسال متوقف است",
+      message:
+        "این سفارش تا پایان مهلت رزرو یا آزادسازی زودهنگام توسط مشتری ارسال نمی‌شود. صدور بارکد پس از آن ممکن است.",
+    };
   }
 
   if (input.state === "Pending") {

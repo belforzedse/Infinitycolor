@@ -65,6 +65,11 @@ export function resolveUserDisplayName(user: any): string {
     return user.username.trim();
   }
 
+  const phone = String(user.phone || user.Phone || "").trim();
+  if (phone) {
+    return phone;
+  }
+
   if (user.email?.trim()) {
     return user.email.trim();
   }

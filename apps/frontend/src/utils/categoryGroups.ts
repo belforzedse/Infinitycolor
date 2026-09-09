@@ -39,7 +39,16 @@ export const MOBILE_CATEGORY_GROUPS: readonly CategoryGroupDefinition[] = [
   {
     key: "shoes-accessories",
     label: "کفش و اکسسوری",
-    terms: ["انواع کفش", "کفش", "shoes", "شال", "shawls-and-scarves", "جوراب", "socks"],
+    terms: [
+      "انواع کفش",
+      "کفش",
+      "shoes",
+      "شال",
+      "shawls-and-scarves",
+      "جوراب",
+      "socks",
+      "womens-belt",
+    ],
   },
   {
     key: "mens-clothing",

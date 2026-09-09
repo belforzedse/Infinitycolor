@@ -18,6 +18,19 @@ describe("getUserFacingErrorMessage", () => {
     expect(message).toBe("موجودی کیف پول کافی نیست.");
   });
 
+  it("translates a self-wallet adjustment refusal instead of a generic 403", () => {
+    const message = getUserFacingErrorMessage({
+      status: 403,
+      response: {
+        data: {
+          error: { message: "Administrators cannot adjust their own wallet" },
+        },
+      },
+    });
+
+    expect(message).toBe("تغییر موجودی کیف پول خودتان مجاز نیست.");
+  });
+
   it("passes through a Persian message from the backend unchanged", () => {
     const message = getUserFacingErrorMessage({
       status: 400,

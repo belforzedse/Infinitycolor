@@ -66,7 +66,7 @@ export default factories.createCoreController(
     },
 
     /**
-     * Founder/Superadmin: read any customer's wallet balance for the admin UI.
+     * Founder/Superadmin: read any user's wallet balance for the admin UI.
      */
     async adminGetUserWallet(ctx: any) {
       try {
@@ -159,7 +159,7 @@ export default factories.createCoreController(
     },
 
     /**
-     * Founder/Superadmin: adjust another customer's wallet balance.
+     * Founder/Superadmin: adjust another user's wallet balance.
      * Supports credit/debit by an amount, or set-to-exact (implemented as the
      * credit/debit delta needed). Always records a ledger transaction and an
      * admin audit entry. Amounts are entered in Toman and stored in Rial (×10).
@@ -202,7 +202,7 @@ export default factories.createCoreController(
               error: auditError instanceof Error ? auditError.message : String(auditError),
             });
           }
-          return ctx.forbidden("Administrators cannot adjust their own wallet", {
+          return ctx.forbidden("تغییر موجودی کیف پول خودتان مجاز نیست.", {
             data: { success: false, errorCode: "SELF_WALLET_ADJUSTMENT_FORBIDDEN" },
           });
         }

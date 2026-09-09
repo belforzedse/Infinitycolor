@@ -23,9 +23,22 @@ interface Props {
   errors: FieldErrors<FormData>;
   control: Control<FormData>;
   setValue: UseFormSetValue<FormData>;
+  /**
+   * Hide destination fields when the order inherits its address from an existing
+   * reserve shipment. Contact details and order notes still apply, so only the
+   * address block is withheld -- previously the whole form stayed visible and the
+   * address the shopper typed was silently discarded at submit.
+   */
+  hideAddressFields?: boolean;
 }
 
-function ShoppingCartBillInformationForm({ register, errors, control, setValue }: Props) {
+function ShoppingCartBillInformationForm({
+  register,
+  errors,
+  control,
+  setValue,
+  hideAddressFields = false,
+}: Props) {
   // Use global addresses atom for real-time updates
   const [addresses, setAddresses] = useAtom(addressesAtom);
   const [loading, setLoading] = useAtom(addressesLoadingAtom);
@@ -303,6 +316,8 @@ function ShoppingCartBillInformationForm({ register, errors, control, setValue }
           />
         </div>
       </div>
+      {!hideAddressFields && (
+        <>
       <div className="relative" data-testid="checkout-address-select">
         <Controller
           name="address"
@@ -428,6 +443,9 @@ function ShoppingCartBillInformationForm({ register, errors, control, setValue }
           />
         </div>
       </div>
+
+        </>
+      )}
 
       {/* Add Address Modal */}
       <AddAddress

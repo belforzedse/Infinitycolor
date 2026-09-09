@@ -48,10 +48,19 @@ export const LOGOUT_ITEM = {
 
 export const PREDEFINED_INCREASE_BALANCE_AMOUNTS = [50000, 100000, 150000, 200000, 500000, 1000000];
 
+/**
+ * The reserve tab is keyed separately from `PersianOrderStatus`: a reserve group
+ * is not an order status, it is a shipment that spans several orders, each of
+ * which keeps its own status.
+ */
+export const RESERVE_ORDERS_TAB_KEY = "RESERVE";
+export const RESERVE_ORDERS_TAB_LABEL = "سفارش‌های رزروی";
+
 export const ORDER_STATUS = [
   { key: "ALL", value: "همه سفارش‌ها" },
   { key: OrderStatus.Processing, value: PersianOrderStatus.INPROGRESS },
   { key: OrderStatus.Delivered, value: PersianOrderStatus.DELIVERED },
   { key: OrderStatus.Cancelled, value: PersianOrderStatus.CANCELLED },
   { key: "MANUAL", value: PersianOrderStatus.MANUAL },
+  { key: RESERVE_ORDERS_TAB_KEY, value: RESERVE_ORDERS_TAB_LABEL },
 ];

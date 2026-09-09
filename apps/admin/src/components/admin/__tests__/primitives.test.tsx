@@ -117,6 +117,31 @@ describe("ResourceListItem", () => {
 
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("stacks row actions under the identity so long labels cannot collapse the title", () => {
+    render(
+      <ResourceList>
+        <ResourceListItem
+          href="/orders/edit/1"
+          title="امیرمهدی شاهرخی"
+          badge={<span>لغو شده</span>}
+          actions={
+            <button type="button">ابتدا سفارش را آماده‌سازی کنید</button>
+          }
+        />
+      </ResourceList>,
+    );
+
+    const card = screen.getByRole("button", { name: /امیرمهدی شاهرخی/ });
+    expect(card).toHaveClass("flex-col");
+    expect(
+      card.querySelector(".w-full.min-w-0.flex-wrap.items-center.justify-end"),
+    ).not.toBeNull();
+    expect(screen.getByText("امیرمهدی شاهرخی")).toHaveClass(
+      "min-w-0",
+      "break-words",
+    );
+  });
 });
 
 describe("SubNav", () => {

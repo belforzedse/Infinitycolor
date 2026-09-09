@@ -74,7 +74,16 @@ export function parseQuerySortKey(sort: unknown): string | undefined {
   return undefined;
 }
 
-export function parseFindProductCardsPagination(pagination: FindProductCardsParams["pagination"] = {}) {
+export function buildRatingOrderClause(sortKey: string | undefined): string | null {
+  const [field, rawDirection] = (sortKey?.trim() || "").split(":");
+  if (field !== "AverageRating") return null;
+  const direction = rawDirection === "asc" ? "ASC" : "DESC";
+  return `p.average_rating ${direction} NULLS LAST`;
+}
+
+export function parseFindProductCardsPagination(
+  pagination: FindProductCardsParams["pagination"] = {},
+) {
   const limit = Math.min(
     100,
     Math.max(1, parseInt(String(pagination.limit ?? pagination.pageSize ?? 25), 10)),
@@ -237,7 +246,10 @@ const PRODUCT_BOOST_KEYWORDS: readonly string[] = [
 const toArray = (value: unknown): unknown[] => {
   if (Array.isArray(value)) return value;
   if (typeof value === "string" && value.includes(",")) {
-    return value.split(",").map((item) => item.trim()).filter(Boolean);
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
   return [value];
 };
@@ -284,13 +296,8 @@ const readJoinTable = (
   };
 };
 
-const getVariationRelationJoinInfo = (
-  strapi: any,
-  relation: string,
-): JoinTableInfo => {
-  const variationMetadata = strapi?.db?.metadata?.get?.(
-    "api::product-variation.product-variation",
-  );
+const getVariationRelationJoinInfo = (strapi: any, relation: string): JoinTableInfo => {
+  const variationMetadata = strapi?.db?.metadata?.get?.("api::product-variation.product-variation");
   const suffix = relation.replace(/^product_variation_/, "");
   return readJoinTable(variationMetadata, relation, {
     table: `product_variations_product_variation_${suffix}_links`,
@@ -308,11 +315,7 @@ const getGeneralDiscountVariationJoinInfo = (strapi: any): JoinTableInfo => {
   });
 };
 
-const buildProductCardDisplayPriceSql = (
-  knex: any,
-  strapi: any,
-  productAlias = "p",
-): any => {
+const buildProductCardDisplayPriceSql = (knex: any, strapi: any, productAlias = "p"): any => {
   const ctx = getProductAvailabilityJoinContext(strapi);
   const discountJoin = getGeneralDiscountVariationJoinInfo(strapi);
 
@@ -363,11 +366,7 @@ const buildProductCardDisplayPriceSql = (
   );
 };
 
-const addScalarCondition = (
-  query: any,
-  qualifiedColumn: string,
-  condition: unknown,
-) => {
+const addScalarCondition = (query: any, qualifiedColumn: string, condition: unknown) => {
   if (condition && typeof condition === "object" && !Array.isArray(condition)) {
     for (const [operator, value] of Object.entries(condition as Record<string, unknown>)) {
       switch (operator) {
@@ -433,7 +432,11 @@ const applyVariationRelationFilter = (
 
   query
     .innerJoin(`${join.table} as ${linkAlias}`, `${linkAlias}.${join.joinColumn}`, "pv.id")
-    .innerJoin(`${relatedTable} as ${relatedAlias}`, `${relatedAlias}.id`, `${linkAlias}.${join.inverseColumn}`);
+    .innerJoin(
+      `${relatedTable} as ${relatedAlias}`,
+      `${relatedAlias}.id`,
+      `${linkAlias}.${join.inverseColumn}`,
+    );
 
   for (const [field, condition] of Object.entries(filter)) {
     const column = columnMap[field];
@@ -568,12 +571,7 @@ const applyProductFilters = (
         condition &&
         typeof condition === "object"
       ) {
-        applyCategoryFilter(
-          knex,
-          builder,
-          field,
-          condition as Record<string, unknown>,
-        );
+        applyCategoryFilter(knex, builder, field, condition as Record<string, unknown>);
         continue;
       }
 
@@ -623,12 +621,7 @@ const applyRequireCoverImageFilter = (query: any, requireCoverImage: unknown) =>
   });
 };
 
-const applyDiscountOnlyFilter = (
-  knex: any,
-  query: any,
-  strapi: any,
-  hasDiscount: unknown,
-) => {
+const applyDiscountOnlyFilter = (knex: any, query: any, strapi: any, hasDiscount: unknown) => {
   if (!isEnabledCardParam(hasDiscount)) return;
 
   const ctx = getProductAvailabilityJoinContext(strapi);
@@ -685,7 +678,8 @@ const applyAvailabilityAwareOrder = (
   const normalized = sortKey?.trim() || "createdAt:desc";
   const [rawField, rawDirection] = normalized.split(":");
   const direction = rawDirection === "asc" ? "asc" : "desc";
-  const shouldBoostKeywords = sortKey?.trim() === "createdAt:desc" || isEnabledCardParam(hasDiscount);
+  const shouldBoostKeywords =
+    sortKey?.trim() === "createdAt:desc" || isEnabledCardParam(hasDiscount);
 
   if (shouldBoostKeywords && PRODUCT_BOOST_KEYWORDS.length > 0) {
     const clauses = PRODUCT_BOOST_KEYWORDS.map(() => "LOWER(p.title) LIKE LOWER(?)").join(" OR ");
@@ -696,6 +690,8 @@ const applyAvailabilityAwareOrder = (
   if (rawField === "Price" || rawField === "price") {
     const priceSql = buildProductCardDisplayPriceSql(knex, strapi, "p");
     query.orderByRaw(`${priceSql.toQuery()} ${direction.toUpperCase()} NULLS LAST`);
+  } else if (rawField === "AverageRating") {
+    query.orderByRaw(buildRatingOrderClause(normalized)!);
   } else if (rawField === "LastEditedByAdminAt") {
     // Dedicated "last edited by admin" sort: products never edited by an admin have a NULL
     // timestamp and must sort last, falling back to creation order.

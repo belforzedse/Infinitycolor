@@ -265,6 +265,72 @@ function mapCategory(wcCategory, resolveParentId = () => null) {
   return { data, parentMissing };
 }
 
+function categoryMetaValue(wcCategory, keys) {
+  const meta = Array.isArray(wcCategory?.meta_data) ? wcCategory.meta_data : [];
+  for (const key of keys) {
+    const hit = meta.find((entry) => entry && entry.key === key);
+    if (hit && hit.value != null && String(hit.value).trim()) {
+      return String(hit.value).trim();
+    }
+  }
+  return "";
+}
+
+function categoryYoastValue(wcCategory, keys) {
+  const yoast = wcCategory?.yoast_head_json;
+  if (!yoast || typeof yoast !== "object") return "";
+  for (const key of keys) {
+    const value = yoast[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function stripHtmlToText(html) {
+  return prepareRichtext(String(html || "").replace(/<[^>]+>/g, " "));
+}
+
+function ensureImageAlt(html, fallbackAlt) {
+  if (!html) return "";
+  const alt = String(fallbackAlt || "category").replace(/"/g, "&quot;");
+  return html.replace(/<img\b([^>]*)>/gi, (full, attrs) => {
+    const match = String(attrs).match(/\balt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const value = (match && (match[1] || match[2] || match[3])) || "";
+    if (String(value).trim()) return full;
+    return `<img${attrs} alt="${alt}">`;
+  });
+}
+
+/**
+ * Map WooCommerce / Rank Math / Yoast category SEO + description onto the
+ * Strapi category-editorial payload (product-category-content).
+ * Returns null when the source has nothing worth writing.
+ *
+ * @param {object} wcCategory
+ * @returns {null | { Title:string, Paragraph:string, Content:string, IsPublished:boolean, IsRTL:boolean }}
+ */
+function mapCategoryEditorial(wcCategory) {
+  const name = String(wcCategory?.name || "").trim();
+  const description = typeof wcCategory?.description === "string" ? wcCategory.description.trim() : "";
+  const seoTitle =
+    categoryMetaValue(wcCategory, ["rank_math_title", "_yoast_wpseo_title"]) ||
+    categoryYoastValue(wcCategory, ["title", "og_title"]) ||
+    name;
+  const seoDescription =
+    categoryMetaValue(wcCategory, ["rank_math_description", "_yoast_wpseo_metadesc"]) ||
+    categoryYoastValue(wcCategory, ["description", "og_description"]);
+  const paragraph = (seoDescription || stripHtmlToText(description)).slice(0, 4000);
+  const content = ensureImageAlt(description, name);
+  if (!seoTitle || (!paragraph && !stripHtmlToText(content))) return null;
+  return {
+    Title: seoTitle.slice(0, 180),
+    Paragraph: paragraph,
+    Content: content,
+    IsPublished: true,
+    IsRTL: true,
+  };
+}
+
 /** Stable SKU for a variation. Never mutated on re-sync. */
 function generateVariationSku(wcVariation, parentWooId) {
   if (wcVariation.sku && wcVariation.sku.toString().trim() !== "") {
@@ -523,6 +589,7 @@ module.exports = {
   mapProduct,
   extractSizeGuideMatrix,
   mapCategory,
+  mapCategoryEditorial,
   generateVariationSku,
   computeVariationPricing,
   mapVariation,

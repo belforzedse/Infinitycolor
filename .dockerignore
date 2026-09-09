@@ -13,7 +13,16 @@ node_modules
 *.env
 .env
 .env.*
+# Root-only patterns above do not match nested paths, so local dev env files
+# (apps/*/.env.local, apps/backend/db.env, ...) were being copied into images by
+# `COPY . .`. CI never hit this because a fresh clone has no gitignored env
+# files; a working-tree build does. Keep these nested rules.
+**/*.env
+**/.env
+**/.env.*
 !*.env.example
+!**/*.env.example
+!**/.env.example
 *.log
 coverage
 **/coverage

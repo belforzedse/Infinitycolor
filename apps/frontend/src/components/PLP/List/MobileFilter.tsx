@@ -51,6 +51,7 @@ export default function PLPListMobileFilter({
         text="نمایش فیلتر ها"
         rightIcon={<FilterIcon />}
         onClick={handleOpen}
+        testId="plp-open-filters"
       />
 
       <AvailabilityFilter

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useRef } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { Fragment } from "react";
 import { useCart } from "@/contexts/CartContext";
@@ -30,47 +30,34 @@ function CartDrawerSkeleton() {
 
 export default function CartDrawer() {
   const { isDrawerOpen, closeDrawer, cartItems, isCartReady, isLoading } = useCart();
-  const [isAnimating, setIsAnimating] = useState(false);
-  const panelRef = React.useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (isDrawerOpen) {
-      setIsAnimating(true);
-    }
-  }, [isDrawerOpen]);
-
-  const handleClose = () => {
-    setIsAnimating(false);
-    // Delay the actual close to allow animation to complete
-    setTimeout(() => {
-      closeDrawer();
-    }, 300);
-  };
-
-  // Swipe-to-close gesture for mobile
+  // Bind swipe-to-close on the header only. Attaching this to the whole panel
+  // with preventDefault captures taps on older WebViews and blocks checkout.
   const bind = useDrag(
-    ({ active, movement: [mx], direction: [xDir], velocity: [vx] }) => {
-      if (!panelRef.current || typeof window === "undefined" || window.innerWidth >= 1024) return;
+    ({ last, movement: [mx], direction: [xDir], velocity: [vx], tap }) => {
+      if (tap || !last) return;
+      if (typeof window === "undefined" || window.innerWidth >= 1024) return;
 
-      // Only handle left swipe (RTL: swipe left to close)
       const swipeThreshold = 100;
       const velocityThreshold = 0.5;
 
-      if (!active && (mx < -swipeThreshold || (xDir < 0 && Math.abs(vx) > velocityThreshold))) {
+      if (mx < -swipeThreshold || (xDir < 0 && Math.abs(vx) > velocityThreshold)) {
         hapticButton();
-        handleClose();
+        closeDrawer();
       }
     },
     {
       axis: "x",
-      threshold: 10,
-      preventDefault: true,
+      filterTaps: true,
+      pointer: { capture: false },
+      preventScroll: false,
     },
   );
 
   return (
-    <Transition appear show={isAnimating} as={Fragment}>
-      <Dialog as="div" className="relative z-[1200]" onClose={handleClose} dir="rtl">
+    <Transition appear show={isDrawerOpen} as={Fragment}>
+      <Dialog as="div" className="relative z-[1200]" onClose={closeDrawer} dir="rtl">
         <Transition.Child
           as={Fragment}
           enter="ease-out duration-300"
@@ -83,8 +70,8 @@ export default function CartDrawer() {
           <div className="fixed inset-0 bg-black/25 backdrop-blur-[2px]" />
         </Transition.Child>
 
-        <div className="fixed inset-0 overflow-y-auto overflow-x-hidden">
-          <div className="flex min-h-full items-center justify-end text-center text-neutral-800">
+        <div className="fixed inset-0 overflow-hidden">
+          <div className="flex h-full items-stretch justify-end text-center text-neutral-800">
             <Transition.Child
               as={Fragment}
               enter="transform transition ease-out duration-300"
@@ -96,12 +83,13 @@ export default function CartDrawer() {
             >
               <Dialog.Panel
                 ref={panelRef}
-                className="min-h-screen w-full max-w-md transform overflow-hidden bg-white shadow-xl transition-all"
+                className="h-dvh h-full min-h-0 w-full max-w-md transform overflow-hidden bg-white shadow-xl transition-all"
                 data-testid="cart-drawer"
-                {...bind()}
               >
-                <div className="flex h-full flex-col">
-                  <CartDrawerHeader onClose={handleClose} />
+                <div className="flex h-full min-h-0 flex-col">
+                  <div {...bind()} className="shrink-0 touch-pan-y">
+                    <CartDrawerHeader onClose={closeDrawer} />
+                  </div>
 
                   {!isCartReady || isLoading ? (
                     <CartDrawerSkeleton />

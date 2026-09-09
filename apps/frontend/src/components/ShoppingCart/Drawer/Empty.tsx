@@ -21,7 +21,7 @@ export default function EmptyCartDrawer() {
 
       <Link
         href="/"
-        className="text-sm rounded-lg bg-infinity-primary px-6 py-2 text-white"
+        className="rounded-lg bg-infinity-primary px-6 py-2 text-sm text-white touch-manipulation"
         onClick={closeDrawer}
       >
         رفتن به فروشگاه

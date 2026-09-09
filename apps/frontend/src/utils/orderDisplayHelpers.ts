@@ -47,6 +47,9 @@ export interface OrderDisplayRowProps {
   onOpenFullDetails?: () => void;
   isReserveOrder?: boolean;
   reserveExpiresAt?: string | null;
+  reserveState?: string | null;
+  reserveClosureReason?: string | null;
+  reserveIsActive?: boolean;
   reserveGroupOrderCount?: number;
   onReleaseReserve?: (orderId: number) => void;
   isReleasingReserve?: boolean;
@@ -116,6 +119,9 @@ export function mapOrderToDisplayProps(
     detailHref: `/orders/${order.id}`,
     isReserveOrder: order.isReserveOrder,
     reserveExpiresAt: order.reserveExpiresAt,
+    reserveState: order.reserveState,
+    reserveClosureReason: order.reserveClosureReason,
+    reserveIsActive: order.reserveIsActive,
     reserveGroupOrderCount,
     onReleaseReserve: context.handleReleaseReserve,
     isReleasingReserve: context.releasingOrderId === order.id,

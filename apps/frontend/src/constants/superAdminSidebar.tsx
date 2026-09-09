@@ -243,7 +243,14 @@ const superAdminSidebar: SidebarItem[] = [
     label: "مدیریت سفارشات",
     href: "/super-admin/orders",
     icon: <OrdersIcon />,
-    children: [],
+    children: [
+      {
+        id: "orders-main",
+        label: "سفارشات",
+        href: "/super-admin/orders",
+        icon: <OrdersIcon />,
+      },
+    ],
   },
   {
     id: "carts",

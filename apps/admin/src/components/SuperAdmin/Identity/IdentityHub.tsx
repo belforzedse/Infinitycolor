@@ -10,8 +10,6 @@ import type {
   IdentitySocialLink,
   IdentityStore,
   SiteFaq,
-  SiteFaqCategory,
-  SiteFaqItem,
   SiteIdentity,
 } from "@/types/site-identity";
 import { SOCIAL_PLATFORM_OPTIONS } from "@/utils/identityIcons";
@@ -19,6 +17,8 @@ import { getSuperAdminSiteIdentity } from "@/services/super-admin/site-identity/
 import { updateSuperAdminSiteIdentity } from "@/services/super-admin/site-identity/update";
 import { getSuperAdminSiteFaq } from "@/services/super-admin/site-faq/get";
 import { updateSuperAdminSiteFaq } from "@/services/super-admin/site-faq/update";
+import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
+import FaqEditor from "./FaqEditor";
 import {
   AddButton,
   Card,
@@ -64,13 +64,6 @@ const newStore = (): IdentityStore => ({
   showInAbout: false,
   socialLinks: [],
 });
-const newFaqItem = (): SiteFaqItem => ({ question: "", answer: "", order: 0, isActive: true });
-const newFaqCategory = (): SiteFaqCategory => ({
-  title: "",
-  description: "",
-  order: 0,
-  items: [],
-});
 
 export default function IdentityHub() {
   const [identity, setIdentity] = useState<SiteIdentity | null>(null);
@@ -81,18 +74,27 @@ export default function IdentityHub() {
   const [tab, setTab] = useState<TabId>("general");
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const [id, fq] = await Promise.all([getSuperAdminSiteIdentity(), getSuperAdminSiteFaq()]);
+        if (cancelled) return;
         setIdentity(id);
         setFaq(fq);
       } catch (e) {
         console.error(e);
-        toast.error("خطا در دریافت اطلاعات هویت سایت");
+        if (!cancelled) {
+          toast.error(
+            getUserFacingErrorMessage(e, "خطا در دریافت اطلاعات هویت سایت. دوباره تلاش کنید."),
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const saveIdentity = async () => {
@@ -104,7 +106,9 @@ export default function IdentityHub() {
       toast.success("اطلاعات هویت سایت ذخیره شد");
     } catch (e) {
       console.error(e);
-      toast.error("خطا در ذخیره اطلاعات هویت سایت");
+      toast.error(
+        getUserFacingErrorMessage(e, "خطا در ذخیره اطلاعات هویت سایت. دوباره تلاش کنید."),
+      );
     } finally {
       setSavingIdentity(false);
     }
@@ -134,6 +138,42 @@ export default function IdentityHub() {
         ? { ...prev, stores: prev.stores.map((s, idx) => (idx === i ? { ...s, ...p } : s)) }
         : prev,
     );
+  const updateSocialLink = (li: number, p: Partial<IdentitySocialLink>) =>
+    setIdentity((prev) =>
+      prev
+        ? {
+            ...prev,
+            socialLinks: prev.socialLinks.map((link, idx) =>
+              idx === li ? { ...link, ...p } : link,
+            ),
+          }
+        : prev,
+    );
+  const addSocialLink = () =>
+    setIdentity((prev) =>
+      prev ? { ...prev, socialLinks: [...prev.socialLinks, newSocial()] } : prev,
+    );
+  const updateStoreSocialLink = (
+    storeIndex: number,
+    linkIndex: number,
+    p: Partial<IdentitySocialLink>,
+  ) =>
+    setIdentity((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        stores: prev.stores.map((store, idx) =>
+          idx === storeIndex
+            ? {
+                ...store,
+                socialLinks: store.socialLinks.map((link, li) =>
+                  li === linkIndex ? { ...link, ...p } : link,
+                ),
+              }
+            : store,
+        ),
+      };
+    });
 
   if (loading || !identity || !faq) {
     return (
@@ -337,16 +377,12 @@ export default function IdentityHub() {
                     شبکه‌های اجتماعی این فروشگاه
                   </span>
                   {store.socialLinks.map((link, li) => (
-                    <div key={li} className="flex items-center gap-2">
+                    <div key={link.id ?? `store-${i}-social-${li}`} className="flex items-center gap-2">
                       <div className="w-40 shrink-0">
                         <Select
                           value={link.platform}
                           onChange={(v) =>
-                            updateStore(i, {
-                              socialLinks: store.socialLinks.map((l, idx) =>
-                                idx === li ? { ...l, platform: v } : l,
-                              ),
-                            })
+                            updateStoreSocialLink(i, li, { platform: v })
                           }
                           options={PLATFORM_OPTIONS}
                         />
@@ -354,13 +390,7 @@ export default function IdentityHub() {
                       <TextInput
                         value={link.url}
                         dir="ltr"
-                        onChange={(v) =>
-                          updateStore(i, {
-                            socialLinks: store.socialLinks.map((l, idx) =>
-                              idx === li ? { ...l, url: v } : l,
-                            ),
-                          })
-                        }
+                        onChange={(v) => updateStoreSocialLink(i, li, { url: v })}
                         placeholder="https://"
                       />
                       <RemoveButton
@@ -376,7 +406,15 @@ export default function IdentityHub() {
                   <AddButton
                     label="افزودن شبکه اجتماعی"
                     onClick={() =>
-                      updateStore(i, { socialLinks: [...store.socialLinks, newSocial()] })
+                      setIdentity((prev) => {
+                        if (!prev) return prev;
+                        return {
+                          ...prev,
+                          stores: prev.stores.map((s, idx) =>
+                            idx === i ? { ...s, socialLinks: [...s.socialLinks, newSocial()] } : s,
+                          ),
+                        };
+                      })
                     }
                   />
                 </div>
@@ -395,54 +433,43 @@ export default function IdentityHub() {
               شبکه‌های اجتماعی سراسری سایت (در فوتر و صفحه تماس نمایش داده می‌شوند).
             </p>
             {identity.socialLinks.map((link, li) => (
-              <div key={li} className="flex items-center gap-2">
+              <div key={link.id ?? `social-${li}`} className="flex items-center gap-2">
                 <div className="w-40 shrink-0">
                   <Select
                     value={link.platform}
-                    onChange={(v) =>
-                      patch({
-                        socialLinks: identity.socialLinks.map((l, idx) =>
-                          idx === li ? { ...l, platform: v } : l,
-                        ),
-                      })
-                    }
+                    onChange={(v) => updateSocialLink(li, { platform: v })}
                     options={PLATFORM_OPTIONS}
                   />
                 </div>
                 <TextInput
                   value={link.label ?? ""}
-                  onChange={(v) =>
-                    patch({
-                      socialLinks: identity.socialLinks.map((l, idx) =>
-                        idx === li ? { ...l, label: v } : l,
-                      ),
-                    })
-                  }
+                  onChange={(v) => updateSocialLink(li, { label: v })}
                   placeholder="عنوان (اختیاری)"
                 />
                 <TextInput
                   value={link.url}
                   dir="ltr"
-                  onChange={(v) =>
-                    patch({
-                      socialLinks: identity.socialLinks.map((l, idx) =>
-                        idx === li ? { ...l, url: v } : l,
-                      ),
-                    })
-                  }
+                  onChange={(v) => updateSocialLink(li, { url: v })}
                   placeholder="https://"
                 />
                 <RemoveButton
                   label=""
                   onClick={() =>
-                    patch({ socialLinks: identity.socialLinks.filter((_, idx) => idx !== li) })
+                    setIdentity((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            socialLinks: prev.socialLinks.filter((_, idx) => idx !== li),
+                          }
+                        : prev,
+                    )
                   }
                 />
               </div>
             ))}
             <AddButton
               label="افزودن شبکه اجتماعی"
-              onClick={() => patch({ socialLinks: [...identity.socialLinks, newSocial()] })}
+              onClick={addSocialLink}
             />
           </Card>
         )}
@@ -530,120 +557,5 @@ export default function IdentityHub() {
         )}
       </div>
     </ContentWrapper>
-  );
-}
-
-function FaqEditor({
-  faq,
-  setFaq,
-}: {
-  faq: SiteFaq;
-  setFaq: React.Dispatch<React.SetStateAction<SiteFaq | null>>;
-}) {
-  const updateCategory = (ci: number, p: Partial<SiteFaqCategory>) =>
-    setFaq((prev) =>
-      prev
-        ? {
-            categories: prev.categories.map((c, idx) => (idx === ci ? { ...c, ...p } : c)),
-          }
-        : prev,
-    );
-
-  return (
-    <div className="space-y-4">
-      {faq.categories.map((category, ci) => (
-        <Card key={ci} className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex-1">
-              <TextInput
-                value={category.title}
-                onChange={(v) => updateCategory(ci, { title: v })}
-                placeholder="عنوان دسته‌بندی"
-              />
-            </div>
-            <RemoveButton
-              onClick={() =>
-                setFaq((prev) =>
-                  prev ? { categories: prev.categories.filter((_, idx) => idx !== ci) } : prev,
-                )
-              }
-            />
-          </div>
-
-          <Field label="توضیحات (اختیاری)">
-            <TextInput
-              value={category.description ?? ""}
-              onChange={(v) => updateCategory(ci, { description: v })}
-            />
-          </Field>
-
-          <div className="flex flex-col gap-3 border-t border-slate-100 pt-3">
-            {category.items.map((item, ii) => (
-              <div key={ii} className="rounded-xl border border-slate-200 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-medium text-slate-500">سوال {ii + 1}</span>
-                  <div className="flex items-center gap-3">
-                    <Toggle
-                      label="فعال"
-                      checked={item.isActive !== false}
-                      onChange={(v) =>
-                        updateCategory(ci, {
-                          items: category.items.map((it, idx) =>
-                            idx === ii ? { ...it, isActive: v } : it,
-                          ),
-                        })
-                      }
-                    />
-                    <RemoveButton
-                      label=""
-                      onClick={() =>
-                        updateCategory(ci, {
-                          items: category.items.filter((_, idx) => idx !== ii),
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="mt-2 flex flex-col gap-2">
-                  <TextInput
-                    value={item.question}
-                    onChange={(v) =>
-                      updateCategory(ci, {
-                        items: category.items.map((it, idx) =>
-                          idx === ii ? { ...it, question: v } : it,
-                        ),
-                      })
-                    }
-                    placeholder="سوال"
-                  />
-                  <TextArea
-                    value={item.answer}
-                    rows={3}
-                    onChange={(v) =>
-                      updateCategory(ci, {
-                        items: category.items.map((it, idx) =>
-                          idx === ii ? { ...it, answer: v } : it,
-                        ),
-                      })
-                    }
-                    placeholder="پاسخ (می‌تواند شامل HTML باشد)"
-                  />
-                </div>
-              </div>
-            ))}
-            <AddButton
-              label="افزودن سوال"
-              onClick={() => updateCategory(ci, { items: [...category.items, newFaqItem()] })}
-            />
-          </div>
-        </Card>
-      ))}
-      <AddButton
-        label="افزودن دسته‌بندی"
-        onClick={() =>
-          setFaq((prev) => (prev ? { categories: [...prev.categories, newFaqCategory()] } : prev))
-        }
-      />
-    </div>
   );
 }

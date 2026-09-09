@@ -76,7 +76,7 @@ export interface CreateStoryData {
   IsActive?: boolean;
   SortOrder?: number;
   Media?: number;
-  Thumbnail?: number;
+  Thumbnail?: number | null;
   StartAt?: string;
   EndAt?: string;
   DurationMs?: number;

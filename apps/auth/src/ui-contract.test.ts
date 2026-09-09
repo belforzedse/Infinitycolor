@@ -42,6 +42,17 @@ test("phone collection exposes browser autofill and an associated label", () => 
   );
 });
 
+test("OTP destinations isolate phone numbers from surrounding RTL copy", () => {
+  const forms = fs.readFileSync(
+    path.join(appRoot, "src/components/auth/forms.tsx"),
+    "utf8",
+  );
+
+  const isolatedPhone = /<bdi dir="ltr">\{phone\}<\/bdi>/g;
+  assert.equal(forms.match(isolatedPhone)?.length, 2);
+  assert.doesNotMatch(forms, /subtitle=\{`[^`]*\$\{phone\}[^`]*`\}/);
+});
+
 test("central auth uses the canonical Infinity favicon", () => {
   const authFavicon = fs.readFileSync(
     path.join(appRoot, "src/app/favicon.ico"),

@@ -5,6 +5,10 @@ import {
   isCheckoutGatewayEnabled,
   normalizeCheckoutGatewayCode,
 } from "../../../payment-gateway/services/checkout-gateway-availability";
+import {
+  findAttachableGroup,
+  hasPaidMember,
+} from "../../../reserve-group/lib/reserve-group";
 
 export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
   const {
@@ -30,21 +34,18 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
     let shippingId = shipping;
     let shippingCost = 0;
     if (reserveGroupId) {
-      const parent = await strapi.db.query("api::order.order").findOne({
-        where: {
-          user: { id: userId },
-          reserveGroupId: String(reserveGroupId),
-          isReserveOrder: true,
-          reserveExpiresAt: { $gt: new Date().toISOString() },
-        },
-        populate: { shipping: true },
-      });
-      if (!parent) {
+      // Quoting an attach: shipping stays 0 and the method comes from the group,
+      // never from the client. Same eligibility rules as finalize, so the quote a
+      // shopper sees cannot disagree with what the server will accept.
+      const group = await findAttachableGroup(strapi, userId, String(reserveGroupId));
+      const rootPaid = group ? await hasPaidMember(strapi, group.id) : false;
+      if (!group || !rootPaid) {
         return ctx.badRequest("سفارش رزروی معتبر یافت نشد یا منقضی شده است", {
           data: { success: false, errorCode: "RESERVE_NOT_FOUND" },
         });
       }
-      shippingId = parent.shipping?.id ?? parent.shipping;
+      const groupShipping = (group as any).shipping;
+      shippingId = groupShipping?.id ?? groupShipping;
     } else {
       if (!shippingId) {
         return ctx.badRequest("روش ارسال الزامی است", {

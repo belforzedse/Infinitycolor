@@ -1,5 +1,7 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import MobileMenu from "../MobileMenu";
+import { modelHiringModalOpenAtom } from "@/atoms/modelHiring";
+import jotaiStore from "@/lib/jotaiStore";
 import { useProductCategories } from "@/hooks/useProductCategories";
 
 const pushMock = jest.fn();
@@ -118,6 +120,26 @@ describe("MobileMenu", () => {
     );
   });
 
+  it("adds کمربند as a top-level accessories category", async () => {
+    render(<MobileMenu isOpen onClose={jest.fn()} />);
+
+    const accessoriesButton = await screen.findByRole("button", { name: "کفش و اکسسوری" });
+    fireEvent.click(accessoriesButton);
+
+    const accessoriesGroup = screen.getByTestId("category-group-shoes-accessories");
+    expect(within(accessoriesGroup).getByRole("link", { name: "کمربند" })).toHaveAttribute(
+      "href",
+      "/plp/category/womens-belt",
+    );
+  });
+
+  it("adds a hardcoded Oppsi search link outside the grouped categories", async () => {
+    render(<MobileMenu isOpen onClose={jest.fn()} />);
+
+    const oppsiLink = await screen.findByRole("link", { name: "Oppsi" });
+    expect(oppsiLink).toHaveAttribute("href", "/plp?search=Oppsi");
+  });
+
   it("places unmatched navbar categories in the fallback mobile group", async () => {
     render(<MobileMenu isOpen onClose={jest.fn()} />);
 
@@ -133,6 +155,34 @@ describe("MobileMenu", () => {
       "href",
       "/plp/category/bags",
     );
+  });
+
+  it("places model hiring as the last item in the mobile header menu", async () => {
+    render(<MobileMenu isOpen onClose={jest.fn()} />);
+    const nav = await screen.findByLabelText("منوی موبایل فروشگاه");
+    expect(nav.lastElementChild).toHaveTextContent("استخدام مدل");
+    expect(screen.getByRole("button", { name: "استخدام مدل" })).toBeInTheDocument();
+  });
+
+  it("opens model hiring only after the menu finishes closing", async () => {
+    const onClose = jest.fn();
+    jotaiStore.set(modelHiringModalOpenAtom, false);
+
+    render(<MobileMenu isOpen onClose={onClose} />);
+
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "استخدام مدل" }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(jotaiStore.get(modelHiringModalOpenAtom)).toBe(false);
+    expect(screen.getByLabelText("منوی موبایل فروشگاه")).toBeInTheDocument();
+
+    fireEvent.animationEnd(document.querySelector(".storefront-mobile-menu-panel") as HTMLElement);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText("منوی موبایل فروشگاه")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(jotaiStore.get(modelHiringModalOpenAtom)).toBe(true);
+    });
   });
 
   describe("inline search", () => {

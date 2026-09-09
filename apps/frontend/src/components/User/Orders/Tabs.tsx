@@ -16,7 +16,8 @@ import OrderRow from "./OrderRow";
 import OrderCard from "./OrderCard";
 import OrderCardSkeleton from "./OrderCardSkeleton";
 import OrderRowSkeleton from "./OrderRowSkeleton";
-import { ORDER_STATUS } from "../Constnats";
+import { ORDER_STATUS, RESERVE_ORDERS_TAB_KEY } from "../Constnats";
+import ReserveGroupsPanel from "./ReserveGroupsPanel";
 import type { Order } from "@/services/order";
 import OrderService from "@/services/order";
 import { faNum } from "@/utils/faNum";
@@ -40,6 +41,9 @@ type OrderRowProps = {
   onOpenFullDetails?: () => void;
   isReserveOrder?: boolean;
   reserveExpiresAt?: string | null;
+  reserveState?: string | null;
+  reserveClosureReason?: string | null;
+  reserveIsActive?: boolean;
   reserveGroupOrderCount?: number;
   onReleaseReserve?: (orderId: number) => void;
   isReleasingReserve?: boolean;
@@ -200,6 +204,9 @@ export default function OrdersTabs() {
         onOpenFullDetails: () => router.push(groupDetailHref),
         isReserveOrder: true,
         reserveExpiresAt: first?.reserveExpiresAt ?? null,
+        reserveState: first?.reserveState ?? null,
+        reserveClosureReason: first?.reserveClosureReason ?? null,
+        reserveIsActive: Boolean(first?.reserveIsActive),
         reserveGroupOrderCount: groupOrders.length,
         rawOrder: null,
         isGroupRow: true,
@@ -231,7 +238,11 @@ export default function OrdersTabs() {
     [handleReleaseReserve, releasingOrderId],
   );
 
-  const tabContent = ORDER_STATUS.map(({ value }) => {
+  const tabContent = ORDER_STATUS.map(({ key, value }) => {
+    // Reserve groups are loaded as groups, not derived from the visible order
+    // page, so a closed group never drops out of the history.
+    if (key === RESERVE_ORDERS_TAB_KEY) return <ReserveGroupsPanel key={key} />;
+
     const statusOrders = ordersByStatus[value as keyof typeof ordersByStatus] || [];
     const reserveGroupIdsInTab = new Set(
       statusOrders.filter((o) => o.reserveGroupId).map((o) => o.reserveGroupId as string),

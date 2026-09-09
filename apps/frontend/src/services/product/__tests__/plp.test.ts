@@ -34,10 +34,23 @@ describe("PLP query helpers", () => {
       search: "scarf",
       sort: "price:asc",
       hasDiscount: true,
-      size: "XL",
+      size: ["XL"],
+      color: ["blue"],
     };
 
-    const params = buildPLPProductsQuery(query, ["parent", "child"], 24);
+    const params = buildPLPProductsQuery(
+      query,
+      ["parent", "child"],
+      24,
+      {
+        sizeTitles: ["XL", "L/XL", "M"],
+        colors: [
+          { title: "E2E Blue", colorCode: "#0057ff" },
+          { title: "آبی تیره", colorCode: "#4C5E74" },
+          { title: "سرمه ای", colorCode: "#1E3A8A" },
+        ],
+      },
+    );
     const entries = paramsObject(params);
 
     expect(params.get("view")).toBe("card");
@@ -59,12 +72,19 @@ describe("PLP query helpers", () => {
     expect(entries["filters[$and][3][$or][1][product_other_categories][Slug][$in][0]"]).toEqual([
       "parent",
     ]);
+    expect(parsePLPQuery({ size: "3xl,xl" }).size).toEqual(["3xl", "xl"]);
+    expect(parsePLPQuery({ color: "blue" }).color).toEqual(["blue"]);
     expect(entries["filters[$and][4][$or][0][Title][$containsi]"]).toEqual(["scarf"]);
-    expect(
-      entries[
-        "filters[$and][5][product_variations][product_variation_size][Title][$eq]"
-      ],
-    ).toEqual(["XL"]);
+    const sizeTitles = Object.entries(entries)
+      .filter(([key]) => key.includes("product_variation_size][Title][$in]"))
+      .flatMap(([, values]) => values);
+    const colorTitles = Object.entries(entries)
+      .filter(([key]) => key.includes("product_variation_color][Title][$in]"))
+      .flatMap(([, values]) => values);
+    expect(sizeTitles).toEqual(expect.arrayContaining(["XL", "L/XL"]));
+    expect(sizeTitles).not.toEqual(expect.arrayContaining(["M"]));
+    expect(colorTitles).toEqual(expect.arrayContaining(["E2E Blue", "آبی تیره"]));
+    expect(colorTitles).not.toEqual(expect.arrayContaining(["سرمه ای"]));
   });
 
   it("does not emit unsupported product filters", () => {

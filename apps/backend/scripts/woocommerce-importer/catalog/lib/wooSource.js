@@ -101,7 +101,13 @@ class WooSource {
 
     do {
       const response = await this.http.get("/products/categories", {
-        params: { page, per_page: perPage, orderby: "id", order: "asc" },
+        params: {
+          page,
+          per_page: perPage,
+          orderby: "id",
+          order: "asc",
+          context: "edit",
+        },
       });
       totalPages = WooSource.totalPages(response);
       const data = Array.isArray(response.data) ? response.data : [];

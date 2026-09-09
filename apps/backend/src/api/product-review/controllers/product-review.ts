@@ -19,7 +19,12 @@ export default factories.createCoreController(
       if (!ctx.state.auth?.ability?.can("api::product-review.product-review.update")) {
         ctx.query = {
           ...ctx.query,
-          filters: { $and: [ctx.query.filters || {}, { Status: "Accepted", removedAt: null }] },
+          filters: {
+            $and: [
+              ctx.query.filters || {},
+              { Status: "Accepted", removedAt: { $null: true } },
+            ],
+          },
         };
       }
       return super.find(ctx);

@@ -3,7 +3,7 @@
 import React, { useRef, useState } from "react";
 import { ImageIcon, Plus, X } from "lucide-react";
 import { IMAGE_BASE_URL } from "@/constants/api";
-import { uploadFile } from "@/services/super-admin/files/upload";
+import { uploadFile, type UploadedImage } from "@/services/super-admin/files/upload";
 import toast from "react-hot-toast";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
@@ -16,12 +16,30 @@ interface FeaturedImagePanelProps {
   featuredImage?: FeaturedImageValue;
   onFeaturedImageChange: (value: FeaturedImageValue | undefined) => void;
   onUploadImage?: () => void;
+  preferOriginal?: boolean;
+  highQuality?: boolean;
+}
+
+function pickUploadedImageUrl(image: UploadedImage, preferOriginal: boolean): string {
+  if (preferOriginal && image.url) {
+    return image.url;
+  }
+
+  return (
+    image.formats?.medium?.url ||
+    image.formats?.small?.url ||
+    image.formats?.large?.url ||
+    image.formats?.thumbnail?.url ||
+    image.url
+  );
 }
 
 export default function FeaturedImagePanel({
   featuredImage,
   onFeaturedImageChange,
   onUploadImage,
+  preferOriginal = false,
+  highQuality = false,
 }: FeaturedImagePanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -32,15 +50,10 @@ export default function FeaturedImagePanel({
 
     setIsUploading(true);
     try {
-      const uploaded = await uploadFile(file);
+      const uploaded = await uploadFile(file, { highQuality });
       if (uploaded && uploaded.length > 0) {
         const img = uploaded[0];
-        const bestUrl =
-          img.formats?.medium?.url ||
-          img.formats?.small?.url ||
-          img.formats?.large?.url ||
-          img.formats?.thumbnail?.url ||
-          img.url;
+        const bestUrl = pickUploadedImageUrl(img, preferOriginal);
         onFeaturedImageChange({ id: img.id, url: bestUrl });
         toast.success("تصویر با موفقیت بارگذاری شد");
       } else {

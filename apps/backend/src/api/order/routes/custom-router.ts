@@ -43,6 +43,22 @@ export default {
     },
     {
       method: "GET",
+      path: "/orders/reserve-groups",
+      handler: "order.listMyReserveGroups",
+      config: {
+        auth: { scope: [] },
+      },
+    },
+    {
+      method: "GET",
+      path: "/orders/reserve-groups/:groupKey",
+      handler: "order.getMyReserveGroup",
+      config: {
+        auth: { scope: [] },
+      },
+    },
+    {
+      method: "GET",
       path: "/orders/:id/payment-status",
       handler: "order.checkPaymentStatus",
       config: {

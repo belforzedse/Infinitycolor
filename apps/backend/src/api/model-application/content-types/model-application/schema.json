@@ -1,0 +1,121 @@
+{
+  "kind": "collectionType",
+  "collectionName": "model_applications",
+  "info": {
+    "singularName": "model-application",
+    "pluralName": "model-applications",
+    "displayName": "Model application",
+    "description": "Storefront model hiring applications"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "indexes": [
+    {
+      "name": "uq_model_applications_public_id",
+      "columns": ["public_id"],
+      "type": "unique"
+    },
+    {
+      "name": "uq_model_applications_submission_id",
+      "columns": ["submission_id"],
+      "type": "unique"
+    },
+    {
+      "name": "idx_model_applications_created_id",
+      "columns": ["created_at", "id"]
+    },
+    {
+      "name": "idx_model_applications_status_created_id",
+      "columns": ["status", "created_at", "id"]
+    }
+  ],
+  "attributes": {
+    "publicId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "fullName": {
+      "type": "string",
+      "required": true,
+      "maxLength": 80
+    },
+    "phone": {
+      "type": "string",
+      "required": true,
+      "maxLength": 13
+    },
+    "email": {
+      "type": "email"
+    },
+    "age": {
+      "type": "integer",
+      "required": true,
+      "min": 15,
+      "max": 80
+    },
+    "heightCm": {
+      "type": "integer",
+      "min": 100,
+      "max": 250
+    },
+    "city": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "experience": {
+      "type": "text"
+    },
+    "photoOne": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": ["images"]
+    },
+    "photoTwo": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": ["images"]
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["new", "in_review", "contacted"],
+      "default": "new",
+      "required": true
+    },
+    "submissionId": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "private": true
+    },
+    "payloadHash": {
+      "type": "string",
+      "required": true,
+      "maxLength": 64,
+      "private": true
+    },
+    "reporterUserId": {
+      "type": "integer",
+      "private": true
+    },
+    "userAgent": {
+      "type": "string",
+      "maxLength": 512,
+      "private": true
+    },
+    "sourcePath": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "version": {
+      "type": "integer",
+      "default": 1,
+      "required": true,
+      "min": 1
+    }
+  }
+}

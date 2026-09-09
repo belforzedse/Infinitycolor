@@ -508,6 +508,58 @@ class StrapiRepo {
       return "updated";
     }
   }
+
+  /**
+   * Upsert PLP/category SEO editorial. Prefers the bounded category-editorial
+   * API; falls back to generic product-category-contents when that route is absent.
+   *
+   * @param {number} categoryId
+   * @param {{ Title:string, Paragraph:string, Content:string, IsPublished:boolean, IsRTL:boolean }} editorial
+   * @returns {Promise<"created"|"updated">}
+   */
+  async upsertCategoryEditorial(categoryId, editorial) {
+    const payload = { data: editorial };
+    try {
+      const editable = await this.http.get(`/category-editorial/${categoryId}`);
+      const current = editable.data?.data?.editorial || null;
+      const body = {
+        data: editorial,
+        ...(current?.updatedAt ? { expectedUpdatedAt: current.updatedAt } : {}),
+      };
+      await this.http.put(`/category-editorial/${categoryId}`, body);
+      return current ? "updated" : "created";
+    } catch (error) {
+      const status = error.response?.status;
+      if (status === 409) {
+        const retry = await this.http.get(`/category-editorial/${categoryId}`);
+        const current = retry.data?.data?.editorial || null;
+        await this.http.put(`/category-editorial/${categoryId}`, {
+          data: editorial,
+          expectedUpdatedAt: current?.updatedAt,
+        });
+        return "updated";
+      }
+      if (status !== 404 && status !== 403 && status !== 401 && status !== 405) {
+        throw error;
+      }
+    }
+
+    const list = await this.http.get("/product-category-contents", {
+      params: {
+        "filters[product_category][id][$eq]": categoryId,
+        "pagination[pageSize]": 1,
+      },
+    });
+    const existing = list.data?.data?.[0];
+    if (existing?.id) {
+      await this.http.put(`/product-category-contents/${existing.id}`, payload);
+      return "updated";
+    }
+    await this.http.post("/product-category-contents", {
+      data: { ...editorial, product_category: categoryId },
+    });
+    return "created";
+  }
 }
 
 module.exports = StrapiRepo;

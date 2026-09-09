@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CentralAuthBrowserError, CentralAuthSession } from "@repo/auth-core/browser";
+import type { CentralAuthSession } from "@repo/auth-core/browser";
 import {
   centralAuth,
   centralAuthOrigin,
@@ -14,6 +14,11 @@ import { getSidebarItemsForCapabilities } from "@/constants/superAdminSidebar";
 import { adminOrigin } from "@/config/admin-env";
 import { useCan } from "@/hooks/useCan";
 import AuditTimeline from "@/components/SuperAdmin/Audit/AuditTimeline";
+import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
+import {
+  sessionsNeedStepUp,
+  shouldRedirectAccountToLogin,
+} from "./sessionAccess";
 
 const EMPTY_FORM: UpdateMePayload = {
   FirstName: "",
@@ -31,8 +36,7 @@ function usableEmail(user: MeResponse | null): string | null {
 }
 
 function needsReauth(error: unknown): boolean {
-  const authError = error as Partial<CentralAuthBrowserError>;
-  return authError.status === 401 || authError.code === "SESSION_NOT_FRESH";
+  return shouldRedirectAccountToLogin(error, "profile");
 }
 
 function formatDate(value: string): string {
@@ -54,32 +58,50 @@ export default function AdminAccountClient() {
   const [sessionBusy, setSessionBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [sessionStepUpRequired, setSessionStepUpRequired] = useState(false);
 
   const redirectForReauth = useCallback(() => {
     window.location.replace(centralLoginUrl("/account"));
   }, []);
 
+  const redirectForSessionStepUp = useCallback(() => {
+    window.location.assign(centralLoginUrl("/account", { stepUp: true }));
+  }, []);
+
+  const applyProfile = (me: MeResponse) => {
+    setUser(me);
+    setForm({
+      FirstName: me.FirstName || "",
+      LastName: me.LastName || "",
+      NationalCode: me.NationalCode || null,
+      BirthDate: me.BirthDate || null,
+      Sex: me.Sex ?? null,
+      Bio: me.Bio || null,
+    });
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSessionStepUpRequired(false);
     try {
-      const [me, activeSessions] = await Promise.all([
-        UserService.me(true),
-        centralAuth.listSessions(),
-      ]);
-      setUser(me);
-      setForm({
-        FirstName: me.FirstName || "",
-        LastName: me.LastName || "",
-        NationalCode: me.NationalCode || null,
-        BirthDate: me.BirthDate || null,
-        Sex: me.Sex ?? null,
-        Bio: me.Bio || null,
-      });
-      setSessions(activeSessions);
+      const me = await UserService.me(true);
+      applyProfile(me);
     } catch (cause) {
       if (needsReauth(cause)) return redirectForReauth();
-      setError(cause instanceof Error ? cause.message : "دریافت اطلاعات حساب ناموفق بود");
+      setError(getUserFacingErrorMessage(cause, "دریافت اطلاعات حساب ناموفق بود"));
+      setLoading(false);
+      return;
+    }
+    try {
+      setSessions(await centralAuth.listSessions());
+    } catch (cause) {
+      if (sessionsNeedStepUp(cause)) {
+        setSessions([]);
+        setSessionStepUpRequired(true);
+      } else {
+        setError(getUserFacingErrorMessage(cause, "دریافت نشست‌ها ناموفق بود"));
+      }
     } finally {
       setLoading(false);
     }
@@ -112,13 +134,24 @@ export default function AdminAccountClient() {
       setSuccess("اطلاعات حساب با موفقیت ذخیره شد.");
     } catch (cause) {
       if (needsReauth(cause)) return redirectForReauth();
-      setError(cause instanceof Error ? cause.message : "ذخیره اطلاعات ناموفق بود");
+      setError(getUserFacingErrorMessage(cause, "ذخیره اطلاعات ناموفق بود"));
     } finally {
       setSaving(false);
     }
   };
 
-  const refreshSessions = async () => setSessions(await centralAuth.listSessions());
+  const refreshSessions = async () => {
+    setSessions(await centralAuth.listSessions());
+    setSessionStepUpRequired(false);
+  };
+
+  const handleSessionActionError = (cause: unknown, fallback: string) => {
+    if (sessionsNeedStepUp(cause)) {
+      setSessionStepUpRequired(true);
+      return;
+    }
+    setError(getUserFacingErrorMessage(cause, fallback));
+  };
 
   const revokeOne = async (session: CentralAuthSession) => {
     if (!window.confirm("این نشست از حساب خارج شود؟")) return;
@@ -131,8 +164,7 @@ export default function AdminAccountClient() {
       await refreshSessions();
       setSuccess("نشست انتخاب‌شده لغو شد.");
     } catch (cause) {
-      if (needsReauth(cause)) return redirectForReauth();
-      setError(cause instanceof Error ? cause.message : "لغو نشست ناموفق بود");
+      handleSessionActionError(cause, "لغو نشست ناموفق بود");
     } finally {
       setSessionBusy(null);
     }
@@ -146,8 +178,7 @@ export default function AdminAccountClient() {
       await refreshSessions();
       setSuccess("همه نشست‌های دیگر لغو شدند.");
     } catch (cause) {
-      if (needsReauth(cause)) return redirectForReauth();
-      setError(cause instanceof Error ? cause.message : "لغو نشست‌ها ناموفق بود");
+      handleSessionActionError(cause, "لغو نشست‌ها ناموفق بود");
     } finally {
       setSessionBusy(null);
     }
@@ -278,31 +309,42 @@ export default function AdminAccountClient() {
             <h2 className="text-lg font-semibold text-slate-900">نشست‌های فعال</h2>
           </div>
           <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
-            <button type="button" className="btn btn-outline w-full px-4 py-2 sm:w-auto" disabled={Boolean(sessionBusy)} onClick={revokeOthers}>لغو نشست‌های دیگر</button>
+            <button type="button" className="btn btn-outline w-full px-4 py-2 sm:w-auto" disabled={Boolean(sessionBusy) || sessionStepUpRequired} onClick={revokeOthers}>لغو نشست‌های دیگر</button>
             <button type="button" className="btn w-full border border-red-200 px-4 py-2 text-red-700 sm:w-auto" disabled={Boolean(sessionBusy)} onClick={signOutEverywhere}>خروج از همه دستگاه‌ها</button>
           </div>
         </div>
-        <div className="mt-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
-          {sessions.length === 0 ? (
-            <p className="text-sm text-slate-500">نشست فعالی یافت نشد.</p>
-          ) : (
-            sessions.map((session) => (
-              <article key={session.id} className="flex w-full min-w-0 max-w-full flex-col gap-3 overflow-hidden rounded-xl border border-slate-200 p-3 sm:p-4 md:flex-row md:items-center md:justify-between">
-                <div className="w-full min-w-0">
-                  <p className="break-words text-sm font-medium leading-6 text-slate-800 sm:truncate">{session.userAgent || "دستگاه ناشناس"}</p>
-                  <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs leading-5 text-slate-500">
-                    <span>IP: {session.ipAddress || "نامشخص"}</span>
-                    <span>ایجاد: {formatDate(session.createdAt)}</span>
-                    <span>انقضا: {formatDate(session.expiresAt)}</span>
-                  </p>
-                </div>
-                <button type="button" className="btn btn-outline w-full shrink-0 px-4 py-2 sm:w-auto" disabled={Boolean(sessionBusy)} onClick={() => revokeOne(session)}>
-                  {sessionBusy === session.id ? "در حال لغو..." : "لغو نشست"}
-                </button>
-              </article>
-            ))
-          )}
-        </div>
+        {sessionStepUpRequired ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="status">
+            <p>
+              برای مشاهده و مدیریت نشست‌ها باید رمز عبور یا کد یک‌بارمصرف را دوباره وارد کنید.
+            </p>
+            <button type="button" className="btn btn-primary mt-3 inline-flex px-5 py-2" onClick={redirectForSessionStepUp}>
+              ورود مجدد برای مدیریت نشست‌ها
+            </button>
+          </div>
+        ) : (
+          <div className="mt-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
+            {sessions.length === 0 ? (
+              <p className="text-sm text-slate-500">نشست فعالی یافت نشد.</p>
+            ) : (
+              sessions.map((session) => (
+                <article key={session.id} className="flex w-full min-w-0 max-w-full flex-col gap-3 overflow-hidden rounded-xl border border-slate-200 p-3 sm:p-4 md:flex-row md:items-center md:justify-between">
+                  <div className="w-full min-w-0">
+                    <p className="break-words text-sm font-medium leading-6 text-slate-800 sm:truncate">{session.userAgent || "دستگاه ناشناس"}</p>
+                    <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs leading-5 text-slate-500">
+                      <span>IP: {session.ipAddress || "نامشخص"}</span>
+                      <span>ایجاد: {formatDate(session.createdAt)}</span>
+                      <span>انقضا: {formatDate(session.expiresAt)}</span>
+                    </p>
+                  </div>
+                  <button type="button" className="btn btn-outline w-full shrink-0 px-4 py-2 sm:w-auto" disabled={Boolean(sessionBusy)} onClick={() => revokeOne(session)}>
+                    {sessionBusy === session.id ? "در حال لغو..." : "لغو نشست"}
+                  </button>
+                </article>
+              ))
+            )}
+          </div>
+        )}
       </section>
 
       {canReadAudit && user?.id && (

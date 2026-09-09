@@ -7,12 +7,14 @@ const mockEffects = jest.fn();
 const mockEnqueue = jest.fn();
 const mockRemove = jest.fn();
 const mockCoreCreate = jest.fn();
+const mockUpdateProduct = jest.fn();
 let mockAdminUser: any;
 
 mockStrapi.query = jest.fn((uid: string) => {
   if (uid !== "plugin::users-permissions.user") throw new Error(`Unexpected query: ${uid}`);
   return { findOne: jest.fn().mockImplementation(async () => mockAdminUser) };
 });
+mockStrapi.entityService = { update: (...args: unknown[]) => mockUpdateProduct(...args) };
 
 jest.mock("@strapi/strapi", () => ({
   factories: {
@@ -98,6 +100,7 @@ describe("product publication controller contract", () => {
     mockEnqueue.mockResolvedValue("job-id");
     mockRemove.mockResolvedValue(true);
     mockCoreCreate.mockResolvedValue({ data: { id: 12 } });
+    mockUpdateProduct.mockResolvedValue({ id: 12 });
   });
 
   it("accepts the legacy default draft status during product creation", async () => {
@@ -194,7 +197,7 @@ describe("product publication controller contract", () => {
     }));
   });
 
-  it("does not let a Store Manager schedule publication", async () => {
+  it("lets a Store Manager schedule publication", async () => {
     const ctx = makeCtx({
       request: {
         body: {
@@ -211,11 +214,47 @@ describe("product publication controller contract", () => {
 
     await (productController as any).publication(ctx);
 
-    expect(ctx.forbidden).toHaveBeenCalledWith(
-      "Publication action is not allowed",
-      { code: "PUBLICATION_FORBIDDEN" },
+    expect(mockExecute).toHaveBeenCalledWith(
+      mockStrapi,
+      12,
+      expect.objectContaining({
+        action: "schedule",
+        publishAt: "2026-08-09T12:00:00.000Z",
+        timezone: "Asia/Tehran",
+      }),
+      expect.objectContaining({ origin: "admin" }),
     );
-    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it("updates only the product display date through the scoped action", async () => {
+    const ctx = makeCtx({
+      request: {
+        body: { data: { displayAt: "2026-08-09T07:07:00.000Z" } },
+        headers: {},
+      },
+      state: { user: { id: 5, role: { name: "Editor" } } },
+    });
+
+    await (productController as any).updateDisplayDate(ctx);
+
+    expect(mockUpdateProduct).toHaveBeenCalledWith("api::product.product", 12, {
+      data: { LastEditedByAdminAt: "2026-08-09T07:07:00.000Z" },
+    });
+    expect(ctx.body).toEqual({
+      data: { id: 12, LastEditedByAdminAt: "2026-08-09T07:07:00.000Z" },
+    });
+  });
+
+  it("rejects an invalid product display date", async () => {
+    const ctx = makeCtx({
+      request: { body: { data: { displayAt: "not-a-date" } }, headers: {} },
+    });
+
+    await (productController as any).updateDisplayDate(ctx);
+
+    expect(ctx.status).toBe(400);
+    expect(ctx.body.error.code).toBe("INVALID_PRODUCT_DISPLAY_DATE");
+    expect(mockUpdateProduct).not.toHaveBeenCalled();
   });
 
   it("fails closed when a trusted importer omits the matching Woo identity", async () => {

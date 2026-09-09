@@ -7,27 +7,22 @@ import { factories } from "@strapi/strapi";
 import { writeAuditEvent } from "../../../audit/writer";
 import { getAuditContext } from "../../../utils/audit-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
-
-const OPERATIONAL_CATEGORY_FIELDS = [
-  "Title",
-  "Slug",
-  "Image",
-  "MegaMenuImage",
-  "Color",
-  "isMainCategory",
-  "featured",
-  "parent",
-] as const;
+import {
+  OPERATIONAL_CATEGORY_FIELDS,
+  remapLegacyCategoryParentField,
+} from "../lib/write-payload";
 
 export default factories.createCoreController(
   "api::product-category.product-category",
   ({ strapi }) => ({
     async create(ctx) {
+      remapLegacyCategoryParentField(ctx?.request?.body?.data);
       if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_CATEGORY_FIELDS))) return;
       return super.create(ctx);
     },
 
     async update(ctx) {
+      remapLegacyCategoryParentField(ctx?.request?.body?.data);
       if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_CATEGORY_FIELDS))) return;
       return super.update(ctx);
     },

@@ -263,7 +263,7 @@ export function getLegacyRedirectUrl(sourceUrl: LegacyRedirectSourceUrl) {
 
   const exactRedirects = new Map<string, string>([
     ["/سوالات-متداول", "/faq"],
-    ["/شرایط-و-مقررات-تعویض-و-مرجوع", "/faq"],
+    ["/شرایط-و-مقررات-تعویض-و-مرجوع", "/returns"],
     ["/my-account/orders", "/orders"],
     ["/my-account", "/account"],
     ["/user-login", "/auth"],

@@ -9,6 +9,7 @@ import { Edit, Trash2, Eye, EyeOff, Image, Video } from "lucide-react";
 import { storyService } from "@/services/story/story.service";
 import type { Story } from "@/types/story";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import { translateErrorMessage, extractErrorMessage } from "@/lib/errorTranslations";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
@@ -28,11 +29,8 @@ function formatDate(iso?: string): string {
 
 export default function StoriesPage() {
   const router = useRouter();
-  const { user, isStoreManager } = useCurrentUser();
-
-  const isSuperAdmin =
-    (user?.roleName ?? "").toLowerCase() === "superadmin";
-  const hasAccess = isSuperAdmin || isStoreManager;
+  const { user } = useCurrentUser();
+  const hasAccess = useCan("content.stories.manage");
 
   useEffect(() => {
     if (user && !hasAccess) {
@@ -154,6 +152,8 @@ export default function StoriesPage() {
               return (
                 <article
                   key={story.id}
+                  data-testid="admin-story-row"
+                  data-id={story.id}
                   className="overflow-hidden rounded-2xl border border-slate-100 bg-white p-3 shadow-sm"
                 >
                   <div className="flex min-w-0 items-start gap-3">
@@ -186,6 +186,8 @@ export default function StoriesPage() {
 
                         <button
                           type="button"
+                          data-testid="admin-story-toggle"
+                          data-id={story.id}
                           onClick={() => handleToggleActive(story)}
                           title={story.IsActive ? "غیرفعال کردن" : "فعال کردن"}
                           className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
@@ -206,6 +208,8 @@ export default function StoriesPage() {
                       <div className="flex items-center justify-end gap-2">
                         <Link
                           href={`/stories/${story.id}/edit`}
+                          data-testid="admin-story-edit"
+                          data-id={story.id}
                           className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                           title="ویرایش"
                         >
@@ -213,6 +217,8 @@ export default function StoriesPage() {
                         </Link>
                         <button
                           type="button"
+                          data-testid="admin-story-delete"
+                          data-id={story.id}
                           onClick={() => handleDelete(story)}
                           className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
                           title="حذف"
@@ -242,7 +248,12 @@ export default function StoriesPage() {
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {filtered.map((story) => (
-                  <tr key={story.id} className="bg-white transition-colors hover:bg-slate-50">
+                  <tr
+                    key={story.id}
+                    data-testid="admin-story-row"
+                    data-id={story.id}
+                    className="bg-white transition-colors hover:bg-slate-50"
+                  >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         {story.Thumbnail?.url || story.Media?.url ? (
@@ -272,6 +283,8 @@ export default function StoriesPage() {
                     <td className="px-4 py-3 text-center">
                       <button
                         type="button"
+                        data-testid="admin-story-toggle"
+                        data-id={story.id}
                         onClick={() => handleToggleActive(story)}
                         title={story.IsActive ? "غیرفعال کردن" : "فعال کردن"}
                         className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
@@ -291,6 +304,8 @@ export default function StoriesPage() {
                       <div className="flex items-center justify-center gap-2">
                         <Link
                           href={`/stories/${story.id}/edit`}
+                          data-testid="admin-story-edit"
+                          data-id={story.id}
                           className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                           title="ویرایش"
                         >
@@ -298,6 +313,8 @@ export default function StoriesPage() {
                         </Link>
                         <button
                           type="button"
+                          data-testid="admin-story-delete"
+                          data-id={story.id}
                           onClick={() => handleDelete(story)}
                           className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
                           title="حذف"

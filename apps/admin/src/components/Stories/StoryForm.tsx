@@ -86,7 +86,7 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
       IsActive: isActive,
       SortOrder: sortOrder,
       Media: mediaId,
-      Thumbnail: thumbnailId,
+      Thumbnail: thumbnailId ?? null,
     });
   };
 

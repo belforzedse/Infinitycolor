@@ -6,11 +6,15 @@
  */
 import { apiClient } from "@/services";
 import { getStrapiServerUrl, ENDPOINTS } from "@/constants/api";
+import { unwrapStrapiEntity } from "@/utils/strapiEntity";
 import type {
   Story,
   StoryListParams,
   CreateStoryData,
   UpdateStoryData,
+  StoryMediaAsset,
+  StoryMediaType,
+  StoryOverlay,
 } from "@/types/story";
 
 interface StrapiListResponse<T> {
@@ -25,46 +29,96 @@ interface StrapiListResponse<T> {
   };
 }
 
-interface StrapiSingleResponse<T> {
-  data: T;
+function applyStoryMediaPopulate(query: URLSearchParams): URLSearchParams {
+  query.set("populate[Media]", "true");
+  query.set("populate[Thumbnail]", "true");
+  return query;
 }
 
-function normalizeMediaAsset(raw: unknown) {
+function storyEndpoint(path: string, extra?: URLSearchParams): string {
+  const query = applyStoryMediaPopulate(extra ?? new URLSearchParams());
+  return `${path}?${query.toString()}`;
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function numericMediaId(raw: unknown): number | undefined {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function isStoryMediaType(value: unknown): value is StoryMediaType {
+  return value === "image" || value === "video";
+}
+
+function normalizeMediaFormats(raw: unknown): StoryMediaAsset["formats"] | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const r = raw as Record<string, unknown>;
-  const attrs = (r.attributes as Record<string, unknown>) ?? r;
+  const formats = raw as Record<string, unknown>;
+  const pickUrl = (key: string): { url: string } | undefined => {
+    const entry = formats[key];
+    if (!entry || typeof entry !== "object") return undefined;
+    const url = (entry as { url?: unknown }).url;
+    return typeof url === "string" ? { url } : undefined;
+  };
+  const large = pickUrl("large");
+  const medium = pickUrl("medium");
+  const small = pickUrl("small");
+  const thumbnail = pickUrl("thumbnail");
+  if (!large && !medium && !small && !thumbnail) return undefined;
+  return { large, medium, small, thumbnail };
+}
+
+export function normalizeMediaAsset(raw: unknown): StoryMediaAsset | undefined {
+  const bareId = numericMediaId(raw);
+  if (bareId !== undefined) {
+    return { id: bareId, url: "" };
+  }
+
+  const entity = unwrapStrapiEntity(raw);
+  if (!entity) return undefined;
+
   return {
-    id: (r.id as number) ?? (attrs.id as number),
-    url: attrs.url as string,
-    alternativeText: attrs.alternativeText as string | undefined,
-    width: attrs.width as number | undefined,
-    height: attrs.height as number | undefined,
-    mime: attrs.mime as string | undefined,
-    formats: attrs.formats as Story["Media"] extends undefined ? never : Story["Media"] extends { formats?: infer F } ? F : never,
+    id: entity.id,
+    url: typeof entity.url === "string" ? entity.url : "",
+    alternativeText: asOptionalString(entity.alternativeText),
+    width: asOptionalNumber(entity.width),
+    height: asOptionalNumber(entity.height),
+    mime: asOptionalString(entity.mime),
+    formats: normalizeMediaFormats(entity.formats),
   };
 }
 
-function normalizeStory(raw: unknown): Story {
-  if (!raw || typeof raw !== "object") throw new Error("Invalid story data");
-  const r = raw as Record<string, unknown>;
-  const attrs = (r.attributes as Record<string, unknown>) ?? r;
+export function normalizeStory(raw: unknown): Story {
+  const entity = unwrapStrapiEntity(raw);
+  if (!entity) throw new Error("Invalid story data");
+
   return {
-    id: r.id as number,
-    Title: attrs.Title as string,
-    Slug: attrs.Slug as string,
-    IsActive: attrs.IsActive as boolean,
-    SortOrder: (attrs.SortOrder as number) ?? 0,
-    MediaType: attrs.MediaType as Story["MediaType"],
-    Media: normalizeMediaAsset(attrs.Media) as Story["Media"],
-    Thumbnail: normalizeMediaAsset(attrs.Thumbnail) as Story["Thumbnail"],
-    StartAt: attrs.StartAt as string | undefined,
-    EndAt: attrs.EndAt as string | undefined,
-    DurationMs: (attrs.DurationMs as number) ?? 5000,
-    CtaLabel: attrs.CtaLabel as string | undefined,
-    CtaUrl: attrs.CtaUrl as string | undefined,
-    Overlays: attrs.Overlays as Story["Overlays"],
-    createdAt: attrs.createdAt as string,
-    updatedAt: attrs.updatedAt as string,
+    id: entity.id,
+    Title: typeof entity.Title === "string" ? entity.Title : "",
+    Slug: typeof entity.Slug === "string" ? entity.Slug : "",
+    IsActive: Boolean(entity.IsActive),
+    SortOrder: asOptionalNumber(entity.SortOrder) ?? 0,
+    MediaType: isStoryMediaType(entity.MediaType) ? entity.MediaType : "image",
+    Media: normalizeMediaAsset(entity.Media),
+    Thumbnail: normalizeMediaAsset(entity.Thumbnail),
+    StartAt: asOptionalString(entity.StartAt),
+    EndAt: asOptionalString(entity.EndAt),
+    DurationMs: asOptionalNumber(entity.DurationMs) ?? 5000,
+    CtaLabel: asOptionalString(entity.CtaLabel),
+    CtaUrl: asOptionalString(entity.CtaUrl),
+    Overlays: Array.isArray(entity.Overlays) ? (entity.Overlays as StoryOverlay[]) : undefined,
+    createdAt: typeof entity.createdAt === "string" ? entity.createdAt : "",
+    updatedAt: typeof entity.updatedAt === "string" ? entity.updatedAt : "",
   };
 }
 
@@ -112,7 +166,7 @@ export async function markStorySeen(storyId: number): Promise<{ created: boolean
   return { created: res.data?.created ?? false };
 }
 
-// ─── Admin (store-manager / superadmin only) ──────────────────────────────────
+// ─── Admin (content.stories.manage) ──────────────────────────────────────────
 
 export async function listStories(params: StoryListParams = {}): Promise<StrapiListResponse<Story>> {
   const query = new URLSearchParams();
@@ -124,7 +178,7 @@ export async function listStories(params: StoryListParams = {}): Promise<StrapiL
   }
   if (params.search) query.set("filters[Title][$containsi]", params.search);
 
-  const endpoint = `${ENDPOINTS.STORIES.LIST}?${query.toString()}`;
+  const endpoint = storyEndpoint(ENDPOINTS.STORIES.LIST, query);
   const res = await apiClient.get<unknown[]>(endpoint, { cache: "no-store" });
   return {
     data: (res.data ?? []).map(normalizeStory),
@@ -133,21 +187,23 @@ export async function listStories(params: StoryListParams = {}): Promise<StrapiL
 }
 
 export async function getStory(id: number): Promise<Story> {
-  const res = await apiClient.get<unknown>(ENDPOINTS.STORIES.DETAIL(id), { cache: "no-store" });
+  const res = await apiClient.get<unknown>(storyEndpoint(ENDPOINTS.STORIES.DETAIL(id)), {
+    cache: "no-store",
+  });
   const raw = res.data;
   if (raw === undefined) throw new Error("Invalid story response");
   return normalizeStory(raw);
 }
 
 export async function createStory(data: CreateStoryData): Promise<Story> {
-  const res = await apiClient.post<unknown>(ENDPOINTS.STORIES.LIST, { data });
+  const res = await apiClient.post<unknown>(storyEndpoint(ENDPOINTS.STORIES.LIST), { data });
   const raw = res.data;
   if (raw === undefined) throw new Error("Invalid story response");
   return normalizeStory(raw);
 }
 
 export async function updateStory(id: number, data: UpdateStoryData): Promise<Story> {
-  const res = await apiClient.put<unknown>(ENDPOINTS.STORIES.DETAIL(id), { data });
+  const res = await apiClient.put<unknown>(storyEndpoint(ENDPOINTS.STORIES.DETAIL(id)), { data });
   const raw = res.data;
   if (raw === undefined) throw new Error("Invalid story response");
   return normalizeStory(raw);

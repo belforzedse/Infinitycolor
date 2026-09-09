@@ -8,6 +8,14 @@ jest.mock("nuqs", () => ({
 }));
 
 import { toDateOnly, parseDateOnly, defaultReportStart, defaultReportEnd } from "../useReportQueryState";
+import {
+  jalaliBirthDateToGregorianDate,
+} from "@/utils/birthDate";
+import {
+  jalaliPartsInTehran,
+  previousJalaliMonthRange,
+  thisJalaliMonthRange,
+} from "../reportDates";
 
 describe("toDateOnly / parseDateOnly", () => {
   it("round-trips a local date without shifting days", () => {
@@ -35,5 +43,41 @@ describe("toDateOnly / parseDateOnly", () => {
   it("defaultReportStart/End are well-formed yyyy-mm-dd strings", () => {
     expect(defaultReportStart()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(defaultReportEnd()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe("Jalali month presets", () => {
+  const noonTehran = new Date("2026-09-09T08:30:00.000Z");
+
+  it("این ماه starts on Jalali day 1 of the current Tehran month", () => {
+    const parts = jalaliPartsInTehran(noonTehran);
+    expect(parts).not.toBeNull();
+    if (!parts) return;
+    const range = thisJalaliMonthRange(noonTehran);
+    expect(toDateOnly(range.start)).toBe(
+      jalaliBirthDateToGregorianDate(parts.year, parts.month, 1),
+    );
+    expect(toDateOnly(range.end)).toBe(toDateOnly(noonTehran));
+  });
+
+  it("ماه گذشته is the full previous Jalali month", () => {
+    const parts = jalaliPartsInTehran(noonTehran);
+    expect(parts).not.toBeNull();
+    if (!parts) return;
+    const prevMonth = parts.month === 1 ? 12 : parts.month - 1;
+    const prevYear = parts.month === 1 ? parts.year - 1 : parts.year;
+    const range = previousJalaliMonthRange(noonTehran);
+    expect(toDateOnly(range.start)).toBe(
+      jalaliBirthDateToGregorianDate(prevYear, prevMonth, 1),
+    );
+    expect(toDateOnly(range.end)).toBe(
+      toDateOnly(
+        new Date(
+          thisJalaliMonthRange(noonTehran).start.getFullYear(),
+          thisJalaliMonthRange(noonTehran).start.getMonth(),
+          thisJalaliMonthRange(noonTehran).start.getDate() - 1,
+        ),
+      ),
+    );
   });
 });

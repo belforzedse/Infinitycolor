@@ -34,9 +34,11 @@ export default function BlogCommentsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [viewComment, setViewComment] = useState<BlogComment | null>(null);
 
-  const fetchComments = useCallback(async () => {
+  const fetchComments = useCallback(async (options?: { silent?: boolean }) => {
     try {
-      setLoading(true);
+      if (!options?.silent) {
+        setLoading(true);
+      }
       const response = await blogService.getAllBlogComments({
         pageSize: 100,
         status: statusFilter !== "all" ? statusFilter : undefined,
@@ -45,21 +47,35 @@ export default function BlogCommentsPage() {
     } catch (err) {
       console.error("Error fetching comments:", err);
       toast.error("خطا در دریافت نظرات");
-      setComments([]);
+      if (!options?.silent) {
+        setComments([]);
+      }
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   }, [statusFilter]);
 
   useEffect(() => {
-    fetchComments();
+    void fetchComments();
   }, [fetchComments]);
+
+  const applyStatus = (id: number, newStatus: "Pending" | "Approved" | "Rejected") => {
+    setComments((current) =>
+      current.map((comment) => (comment.id === id ? { ...comment, Status: newStatus } : comment)),
+    );
+    setViewComment((current) =>
+      current?.id === id ? { ...current, Status: newStatus } : current,
+    );
+  };
 
   const handleStatusChange = async (id: number, newStatus: "Pending" | "Approved" | "Rejected") => {
     try {
       await blogService.updateBlogCommentStatus(id, newStatus);
+      applyStatus(id, newStatus);
       toast.success("وضعیت نظر با موفقیت تغییر کرد");
-      fetchComments();
+      void fetchComments({ silent: true });
     } catch (err) {
       console.error("Error updating comment status:", err);
       toast.error("خطا در تغییر وضعیت نظر");
@@ -70,8 +86,9 @@ export default function BlogCommentsPage() {
     if (confirm("آیا از حذف این نظر اطمینان دارید؟")) {
       try {
         await blogService.deleteBlogComment(id);
+        setComments((current) => current.filter((comment) => comment.id !== id));
+        setViewComment((current) => (current?.id === id ? null : current));
         toast.success("نظر با موفقیت حذف شد");
-        fetchComments();
       } catch (err) {
         console.error("Error deleting comment:", err);
         toast.error("خطا در حذف نظر");
@@ -84,7 +101,7 @@ export default function BlogCommentsPage() {
     // Normalize each field to safe string before calling string methods
     const normalizedContent = (comment.Content || "").toLowerCase();
     const normalizedName = (comment.Name || "").toLowerCase();
-    const normalizedUsername = (comment.user?.username || "").toLowerCase();
+    const normalizedUsername = (comment.user?.username || comment.user?.phone || "").toLowerCase();
 
     return (
       normalizedContent.includes(normalizedSearch) ||
@@ -296,7 +313,13 @@ export default function BlogCommentsPage() {
 
         {/* Table */}
         <div className="rounded-2xl bg-white">
-          <SuperAdminTable data={filteredComments} columns={columns} loading={loading} />
+          <SuperAdminTable
+            data={filteredComments}
+            columns={columns}
+            loading={loading}
+            getRowId={(row) => String(row.id)}
+            refreshOnVisibility={false}
+          />
         </div>
       </ContentWrapper>
 

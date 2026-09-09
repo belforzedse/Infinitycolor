@@ -40,7 +40,12 @@ function createStrapi(attemptStatus = "Created") {
       create: jest.fn().mockResolvedValue({ id: 82 }),
     },
     "api::contract.contract": { update: jest.fn().mockResolvedValue({}) },
-    "api::order.order": { update: jest.fn().mockResolvedValue({}) },
+    "api::order.order": {
+      update: jest.fn().mockResolvedValue({}),
+      // Wallet settlement also confirms reserve-group membership; a non-reserve
+      // order simply has no reserve_shipment and the call is a no-op.
+      findOne: jest.fn().mockResolvedValue({ id: 40, reserve_shipment: null }),
+    },
     "api::order-log.order-log": { create: jest.fn().mockResolvedValue({}) },
   };
   const strapi = {

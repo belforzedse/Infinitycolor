@@ -244,11 +244,11 @@ class BlogService {
     if (!media) return undefined;
 
     const mediaUrl =
+      media.url ||
+      media.formats?.large?.url ||
       media.formats?.medium?.url ||
       media.formats?.small?.url ||
-      media.formats?.large?.url ||
-      media.formats?.thumbnail?.url ||
-      media.url;
+      media.formats?.thumbnail?.url;
 
     if (!mediaUrl) return undefined;
 

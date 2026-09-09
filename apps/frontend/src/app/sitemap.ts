@@ -200,6 +200,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     1 + // PLP
     1 + // Categories
     1 + // Blog listing
+    1 + // Returns
     productCategories.length +
     products.length +
     blogPosts.length +
@@ -254,6 +255,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: new Date(),
       changeFrequency: "daily",
       priority: 0.8,
+    },
+
+    {
+      url: `${BASE_URL}/returns`,
+      lastModified: new Date(),
+      changeFrequency: "yearly",
+      priority: 0.4,
     },
 
     // Product Detail Pages (PDPs). fetchAllPdpEligibleProducts already excludes

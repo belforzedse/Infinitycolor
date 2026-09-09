@@ -1,4 +1,5 @@
 import {
+  buildRatingOrderClause,
   isEnabledCardParam,
   parseCardPriceFilter,
   parseFindProductCardsPagination,
@@ -20,7 +21,9 @@ describe("product card query helpers", () => {
       start: 0,
     });
 
-    expect(parseFindProductCardsPagination({ limit: "10", start: "20", withCount: "false" })).toMatchObject({
+    expect(
+      parseFindProductCardsPagination({ limit: "10", start: "20", withCount: "false" }),
+    ).toMatchObject({
       page: 1,
       limit: 10,
       start: 20,
@@ -48,5 +51,11 @@ describe("product card query helpers", () => {
     expect(parseQuerySortKey("price:asc")).toBe("price:asc");
     expect(parseQuerySortKey(["AverageRating:desc", "Title:asc"])).toBe("AverageRating:desc");
     expect(parseQuerySortKey(undefined)).toBeUndefined();
+  });
+
+  it("orders rated products in either direction before unrated products", () => {
+    expect(buildRatingOrderClause("AverageRating:desc")).toBe("p.average_rating DESC NULLS LAST");
+    expect(buildRatingOrderClause("AverageRating:asc")).toBe("p.average_rating ASC NULLS LAST");
+    expect(buildRatingOrderClause("createdAt:desc")).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import type { SuperAdminOrderDetail } from "@/types/super-admin/order";
@@ -52,6 +53,14 @@ export default function OrderStatusActions({
   const isSnappPayOrder =
     resolvePaymentGateway(order.paymentGateway)?.key === "snappay";
   const isCancelled = currentBucket === PersianOrderStatus.CANCELLED;
+  /*
+   * The server refuses `Started -> Shipment` while the reserve window is open
+   * (`RESERVE_HOLD_ACTIVE`). Disabling the button is presentation only -- the
+   * guard that matters lives in `adminTransition` -- but an operator should see
+   * why the action is unavailable instead of discovering it from an error toast.
+   * Cancellation stays available: a held order can still be cancelled.
+   */
+  const isReserveHeld = Boolean(order.reserveIsHeld);
 
   const runAction = async () => {
     if (!pending || loading) return;
@@ -149,20 +158,49 @@ export default function OrderStatusActions({
         </span>
       </div>
 
+      {isReserveHeld && (
+        <div
+          data-testid="order-reserve-hold-notice"
+          className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900"
+        >
+          این سفارش عضو یک بسته رزروی فعال است. تا پایان مهلت رزرو یا آزادسازی زودهنگام توسط
+          مشتری، تحویل به ارسال و صدور بارکد برای آن انجام نمی‌شود.
+          {order.reserveGroupId && (
+            <>
+              {" "}
+              <Link
+                href={`/orders/reserve/${encodeURIComponent(order.reserveGroupId)}`}
+                className="underline"
+              >
+                مشاهده بسته رزروی
+              </Link>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3">
         {canChangeStatus && STATUS_ACTIONS.map((action) => {
           const isCurrent = order.orderStatus === action.status;
           const isAllowed =
             (order.orderStatus === "Started" && action.status === "Shipment") ||
             (order.orderStatus === "Shipment" && action.status === "Done");
+          const blockedByReserve = isReserveHeld && action.status === "Shipment";
           return (
             <button
               key={action.status}
               type="button"
-              disabled={loading || isCurrent || !isAllowed}
+              data-testid={`order-status-action-${action.status}`}
+              disabled={loading || isCurrent || !isAllowed || blockedByReserve}
               onClick={() => setPending({ kind: "status", status: action.status, label: action.label })}
               className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-              title={isCurrent ? "سفارش هم‌اکنون در این وضعیت است" : undefined}
+              title={
+                blockedByReserve
+                  ? "این سفارش در مهلت رزرو است و تا پایان مهلت ارسال نمی‌شود"
+                  : isCurrent
+                    ? "سفارش هم‌اکنون در این وضعیت است"
+                    : undefined
+              }
             >
               تغییر وضعیت به «{action.label}»
             </button>

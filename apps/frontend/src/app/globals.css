@@ -553,6 +553,7 @@ textarea:focus-visible {
   button,
   [role="button"] {
     cursor: pointer;
+    touch-action: manipulation;
     transition:
       color 180ms ease,
       background-color 180ms ease,
@@ -570,10 +571,14 @@ textarea:focus-visible {
     }
   }
 
-  a:active,
-  button:active,
-  [role="button"]:active {
-    transform: translateY(0.5px) scale(0.985);
+  /* Scaling on :active moves the hit target under a finger and drops the
+     following click on older touch WebViews. Keep press motion on fine pointers. */
+  @media (hover: hover) and (pointer: fine) {
+    a:active,
+    button:active,
+    [role="button"]:active {
+      transform: translateY(0.5px) scale(0.985);
+    }
   }
 
   button:disabled,
@@ -798,8 +803,10 @@ textarea:focus-visible {
       box-shadow 200ms var(--ease-butter, cubic-bezier(0.16, 1, 0.3, 1)),
       filter 160ms var(--ease-butter, cubic-bezier(0.16, 1, 0.3, 1));
   }
-  .pressable:active {
-    transform: scale(0.97) translateY(1px);
+  @media (hover: hover) and (pointer: fine) {
+    .pressable:active {
+      transform: scale(0.97) translateY(1px);
+    }
   }
   .interactive-card {
     transition:

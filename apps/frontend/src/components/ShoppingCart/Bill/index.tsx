@@ -1,13 +1,17 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import type { Option } from "@/components/Kits/Form/Select";
 import ShoppingCartBillInformationForm from "./InformationForm";
 import ShoppingCartBillDeliveryForm from "./DeliveryForm";
 import ShoppingCartBillDiscountCoupon from "./DiscountCoupon";
 import ShoppingCartBillPaymentGateway from "./PaymentGateway";
+import CheckoutTermsAcceptance from "./CheckoutTermsAcceptance";
 import ReserveShipping from "./ReserveShipping";
+import ReserveFulfillmentChoice, {
+  type ActiveReserveSummary,
+} from "./ReserveFulfillmentChoice";
 import StockAdjustmentDialog, {
   type StockAdjustedRow,
   type StockRemovedRow,
@@ -19,21 +23,24 @@ import { SubmitOrderStep } from "@/types/Order";
 import { useRouter } from "next/navigation";
 import type { ShippingAddressContext, ShippingOption } from "@/services/shipping";
 import { CartService, OrderService } from "@/services";
-import { type CheckoutGatewayCode } from "@/services/cart/types/cart";
+import type { CheckoutGatewayCode, ReserveDeliveryAddress } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
 import WalletService from "@/services/wallet";
 import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 import { getAnalyticsCorrelationId, trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
+import { faNum } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateErrorMessage } from "@/lib/errorTranslations";
 
-// Reserve ("ارسال رزروی" / 48h) is hidden from the storefront for now. Flip this
-// flag to re-enable the reserve checkout flow. While disabled we never fetch an
-// active reserve, never render the reserve UI, and never attach reserve data on
-// submit, so checkout always proceeds as a normal (non-reserve) order.
-const RESERVE_FEATURE_ENABLED = false;
+// Reserve ("ارسال رزروی" / 48h) ships enabled and can be killed from the
+// environment without a deploy, mirroring the backend's
+// `ENABLE_RESERVE_ORDER_EXPIRY_JOB`. While disabled we never fetch an active
+// reserve, never render the reserve UI, and never attach reserve data on submit,
+// so checkout always proceeds as a normal (non-reserve) order.
+const RESERVE_FEATURE_ENABLED =
+  process.env.NEXT_PUBLIC_INFINITY_RESERVE_CHECKOUT_ENABLED !== "false";
 
 export type FormData = {
   fullName: string;
@@ -45,11 +52,26 @@ export type FormData = {
   fullAddress: string;
   addressDescription?: string;
   saveAddress: boolean;
+  acceptTerms: boolean;
   shippingMethod: ShippingOption | null;
   notes?: string;
 };
 
 type Props = Record<string, never>;
+
+/**
+ * One-line destination for the inherited reserve address. Matches the label the
+ * address picker already uses (`InformationForm`) so the shopper recognises it.
+ */
+const formatReserveDestination = (address?: ReserveDeliveryAddress | null): string | null => {
+  if (!address) return null;
+  const city = address.shipping_city?.Title?.trim();
+  const province = address.shipping_city?.shipping_province?.Title?.trim();
+  const full = address.FullAddress?.trim();
+  const place = [city, province].filter(Boolean).join("، ");
+  if (full && place) return `${full} - ${place}`;
+  return full || place || null;
+};
 
 const buildAddressContextKey = (context?: ShippingAddressContext) => {
   if (context?.addressId) return `address:${context.addressId}`;
@@ -176,6 +198,7 @@ function ShoppingCartBillForm({}: Props) {
   } = useForm<FormData>({
     defaultValues: {
       saveAddress: true,
+      acceptTerms: false,
     },
   });
 
@@ -224,11 +247,10 @@ function ShoppingCartBillForm({}: Props) {
     quoteHash: string;
     total: number;
   } | null>(null);
-  const [activeReserve, setActiveReserve] = useState<{
-    reserveGroupId: string;
-    reserveExpiresAt: string;
-    orderCount: number;
-  } | null>(null);
+  const [activeReserve, setActiveReserve] = useState<ActiveReserveSummary | null>(null);
+  // Set when the window closes while the shopper is still on this page, so the
+  // fallback to normal shipping is explained rather than silently applied.
+  const [reserveWindowClosed, setReserveWindowClosed] = useState(false);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
   const { totalPrice, totalItems, clearCart, cartItems, openDrawer, refreshCart } = useCart();
   const selectableGateways = useMemo(
@@ -284,18 +306,20 @@ function ShoppingCartBillForm({}: Props) {
       if (!currentUser) return;
       try {
         const res = await OrderService.getActiveReserve();
-        const d = (
-          res as {
-            data?: { reserveGroupId: string; reserveExpiresAt: string; orderCount: number } | null;
-          }
-        ).data;
+        const d = res?.data;
         if (d?.reserveGroupId) {
           setActiveReserve({
             reserveGroupId: d.reserveGroupId,
-            reserveExpiresAt: d.reserveExpiresAt,
+            reserveExpiresAt: d.reserveExpiresAt ?? null,
             orderCount: d.orderCount,
+            shippingMethodTitle: d.shippingMethodTitle ?? null,
+            destination: formatReserveDestination(d.deliveryAddress),
+            rootOrderId: d.rootOrderId ?? null,
           });
           setMergeChoice(null);
+          setReserveWindowClosed(false);
+          // A second window cannot be opened while this one is open.
+          setReserveShipping(false);
         } else {
           setActiveReserve(null);
           setMergeChoice(null);
@@ -478,6 +502,7 @@ function ShoppingCartBillForm({}: Props) {
   // Validate cart has items and total price on mount
   const EMPTY_GATEWAYS_ERROR = "در حال حاضر هیچ درگاه پرداختی فعال نیست";
   const EMPTY_CART_ERROR = "سبد خرید شما خالی است یا مبلغ نامعتبر است";
+  const TERMS_ACCEPTANCE_ERROR = "برای ثبت سفارش باید قوانین و مقررات سایت را بپذیرید";
   useEffect(() => {
     if (!currentUser) {
       return;
@@ -525,6 +550,18 @@ function ShoppingCartBillForm({}: Props) {
     return "این کالا";
   };
 
+  /**
+   * The reserve window ended while the shopper was on this page (countdown hit
+   * zero, or the server refused the attach). Drop the group, restore the normal
+   * shipping flow and keep every other checkout input intact.
+   */
+  const handleReserveWindowClosed = React.useCallback(() => {
+    setActiveReserve(null);
+    setMergeChoice(null);
+    setReserveWindowClosed(true);
+    setReviewedServerQuote(null);
+  }, []);
+
   const submitOrder = async (data: FormData, skipStockCheck: boolean) => {
     setError(null);
 
@@ -532,6 +569,13 @@ function ShoppingCartBillForm({}: Props) {
     const inlineAddressFieldsFilled =
       !!watchProvince && !!watchCity && !!watchPostalCode && !!watchFullAddress;
     const isMergeMode = mergeChoice === "merge";
+
+    // An open window must never attach by default: the shopper picks combined or
+    // separate fulfillment explicitly.
+    if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null) {
+      setError("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
+      return;
+    }
 
     if (!isMergeMode) {
       if (!selectedAddressId && !inlineAddressFieldsFilled) {
@@ -580,6 +624,11 @@ function ShoppingCartBillForm({}: Props) {
 
     if (selectableGateways.length === 0 || !selectableGateways.includes(gateway)) {
       setError("درگاه پرداخت انتخاب شده در دسترس نیست");
+      return;
+    }
+
+    if (!data.acceptTerms) {
+      setError(TERMS_ACCEPTANCE_ERROR);
       return;
     }
 
@@ -754,8 +803,17 @@ function ShoppingCartBillForm({}: Props) {
               displayError = "آدرس انتخاب شده یافت نشد. لطفاً آدرس دیگری انتخاب کنید";
               break;
             case "RESERVE_NOT_FOUND":
+            case "RESERVE_WINDOW_CLOSED":
+              // The window closed between page load and submit. Keep the cart and
+              // fall back to normal shipping instead of retrying against a dead
+              // group; the server timestamp is authoritative, not our countdown.
+              handleReserveWindowClosed();
               displayError =
-                "سفارش رزروی معتبر یافت نشد یا منقضی شده است. لطفاً سفارش جدید ثبت کنید.";
+                "مهلت افزودن سفارش به بسته رزروی به پایان رسید. این سفارش جداگانه ارسال می‌شود؛ لطفاً آدرس و روش ارسال را انتخاب کنید.";
+              break;
+            case "RESERVE_ALREADY_ACTIVE":
+              displayError =
+                "شما یک سفارش رزروی فعال دارید. این سفارش را به همان بسته اضافه کنید یا آن را جداگانه ثبت کنید.";
               break;
             default:
               // Use backend message translated to Persian (never show raw)
@@ -1039,36 +1097,27 @@ function ShoppingCartBillForm({}: Props) {
         isSubmitting={isSubmitting}
       />
 
-      {RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && (
-        <div className="rounded-lg border border-infinity-primary-lighter/60 bg-infinity-primary-lighter/50 p-4">
-          <p className="mb-3 text-sm font-medium text-neutral-800">
-            شما یک سفارش رزروی فعال دارید ({activeReserve.orderCount} سفارش). آیا می‌خواهید به آن
-            اضافه کنید؟
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={() => {
-                if (isSubmitting) return;
-                setMergeChoice("merge");
-              }}
-              className="rounded-lg bg-infinity-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-infinity-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              اضافه به سفارش رزروی (بدون هزینه ارسال)
-            </button>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={() => {
-                if (isSubmitting) return;
-                setMergeChoice("new");
-              }}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              ثبت سفارش جدید
-            </button>
-          </div>
+      {RESERVE_FEATURE_ENABLED && activeReserve && (
+        <ReserveFulfillmentChoice
+          reserve={activeReserve}
+          value={mergeChoice}
+          onChange={(choice) => {
+            setMergeChoice(choice);
+            if (choice === "merge") setReserveShipping(false);
+          }}
+          onExpired={handleReserveWindowClosed}
+          disabled={isSubmitting}
+        />
+      )}
+
+      {RESERVE_FEATURE_ENABLED && reserveWindowClosed && (
+        <div
+          role="status"
+          data-testid="reserve-window-closed-notice"
+          className="rounded-panel border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900"
+        >
+          مهلت افزودن سفارش به بسته رزروی شما به پایان رسید. این سفارش جداگانه ارسال می‌شود؛ لطفاً
+          آدرس و روش ارسال را انتخاب کنید. سبد خرید شما دست‌نخورده باقی مانده است.
         </div>
       )}
 
@@ -1078,17 +1127,41 @@ function ShoppingCartBillForm({}: Props) {
           errors={errors}
           control={control}
           setValue={setValue}
+          hideAddressFields={isMergeMode}
         />
 
         <div className="mb-20 flex flex-col gap-6">
           {isMergeMode ? (
-            <div className="rounded-2xl bg-stone-50 p-5">
-              <p className="text-neutral-800">
-                اقلام فعلی به سفارش رزروی شما اضافه می‌شوند. هزینه ارسال از قبل پرداخت شده است.
+            <div className="flex flex-col gap-3 rounded-2xl bg-stone-50 p-5">
+              <p className="text-sm leading-6 text-neutral-800">
+                این اقلام به بسته رزروی شما اضافه می‌شوند و همراه سفارش‌های قبلی ارسال خواهند شد.
               </p>
-              <p className="mt-2 text-lg font-medium text-infinity-primary">
-                قابل پرداخت:{" "}
-                {Math.max(0, totalPrice - (discountPreview?.discount ?? 0)).toLocaleString()} تومان
+              <dl className="flex flex-col gap-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-neutral-600">جمع اقلام</dt>
+                  <dd className="text-neutral-900">{faNum(totalPrice)} تومان</dd>
+                </div>
+                {discountToman > 0 && (
+                  <div className="flex items-center justify-between gap-2">
+                    <dt className="text-neutral-600">تخفیف</dt>
+                    <dd className="text-emerald-700">{faNum(discountToman)} تومان</dd>
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-neutral-600">هزینه ارسال</dt>
+                  <dd
+                    data-testid="reserve-merge-shipping"
+                    className="font-medium text-emerald-700"
+                  >
+                    ۰ تومان
+                  </dd>
+                </div>
+              </dl>
+              <p className="border-t border-stone-200 pt-3 text-lg font-medium text-infinity-primary">
+                قابل پرداخت: {faNum(Math.max(0, totalPrice - discountToman))} تومان
+              </p>
+              <p className="text-xs leading-5 text-neutral-500">
+                هزینه ارسال این بسته قبلاً با سفارش رزروی پرداخت شده است.
               </p>
             </div>
           ) : (
@@ -1102,8 +1175,25 @@ function ShoppingCartBillForm({}: Props) {
                 previewLoading={discountPreviewLoading}
                 addressContext={shippingAddressContext}
               />
-              {RESERVE_FEATURE_ENABLED && (mergeChoice === "new" || !activeReserve) && (
-                <ReserveShipping checked={reserveShipping} onChange={setReserveShipping} />
+              {/*
+                Opening a window is offered only when none is open. One active
+                window per customer is a backend invariant, so showing the option
+                to someone who already has a group would invite a checkout that
+                `RESERVE_ALREADY_ACTIVE` is guaranteed to refuse.
+              */}
+              {RESERVE_FEATURE_ENABLED && !activeReserve && (
+                <ReserveShipping
+                  checked={reserveShipping}
+                  onChange={setReserveShipping}
+                  disabled={isSubmitting}
+                  shippingCost={shippingToman}
+                />
+              )}
+              {RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === "new" && (
+                <p className="rounded-control border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-neutral-600">
+                  چون یک بسته رزروی فعال دارید، نمی‌توانید همزمان بسته رزروی دیگری باز کنید. این
+                  سفارش جداگانه و با هزینه ارسال عادی فرستاده می‌شود.
+                </p>
               )}
             </>
           )}
@@ -1139,6 +1229,23 @@ function ShoppingCartBillForm({}: Props) {
             snappDescription={snappDescription}
             walletBalanceIrr={walletBalanceIrr}
             requiredAmountIrr={requiredAmountIrr}
+          />
+          <Controller
+            name="acceptTerms"
+            control={control}
+            render={({ field }) => (
+              <CheckoutTermsAcceptance
+                checked={!!field.value}
+                onChange={(checked) => {
+                  field.onChange(checked);
+                  if (checked) {
+                    setError((prev) => (prev === TERMS_ACCEPTANCE_ERROR ? null : prev));
+                  }
+                }}
+                hasError={error === TERMS_ACCEPTANCE_ERROR}
+                disabled={isSubmitting}
+              />
+            )}
           />
           <button
             type="submit"

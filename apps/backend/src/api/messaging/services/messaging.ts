@@ -14,6 +14,10 @@ export default () => ({
           logger: strapi.log,
         });
         if (!result.ok) {
+          if (result.disabled && process.env.NODE_ENV === "development") {
+            strapi.log.info(`[dev-otp] SMS disabled; local OTP is ${message}`);
+            return 200;
+          }
           return false;
         }
       }

@@ -3,16 +3,16 @@ import Illustration from "@/components/Contact/Illustration";
 import ContactUs from "@/components/Contact/ContactUs";
 import ContactHeader from "@/components/Contact/ContactHeader";
 import { getSiteIdentity } from "@/services/site-identity";
+import StoreAddressLine from "@/components/identity/StoreAddressLine";
 
 // Homepage links may warm the shared product layout, but never this page body.
 export const prefetch = "force-disabled";
 
 const page = async () => {
   const identity = await getSiteIdentity();
-  const physicalStores = identity.hasPhysicalStores ? identity.stores : [];
-  const storeAddresses = physicalStores
-    .map((store) => (store.name ? `${store.name}: ${store.address}` : store.address))
-    .filter(Boolean) as string[];
+  const physicalStores = identity.hasPhysicalStores
+    ? identity.stores.filter((store) => store.name || store.address)
+    : [];
 
   return (
     <div className="mb-[122px] mt-20 flex flex-row-reverse items-center justify-center px-5 py-6 max-md:flex max-md:flex-col-reverse max-md:items-center max-md:justify-center ">
@@ -21,18 +21,18 @@ const page = async () => {
         <ContactHeader />
         <div className="flex flex-col">
           <div className="flex gap-3 max-md:flex max-md:flex-col">
-            {storeAddresses.length > 0 && (
+            {physicalStores.length > 0 && (
               <div className="rounded-xl bg-white p-4">
                 <p className="mb-3 font-[Peyda(FaNum)] text-xl/[27.8px] text-neutral-900">
                   مراجعه حضوری
                 </p>
                 <div className="flex flex-col gap-2">
-                  {storeAddresses.map((address, index) => (
+                  {physicalStores.map((store, index) => (
                     <p
-                      key={index}
+                      key={store.id ?? index}
                       className="font-[Peyda(FaNum)] text-sm/[26.6px] text-neutral-500"
                     >
-                      {address}
+                      <StoreAddressLine store={store} />
                     </p>
                   ))}
                 </div>

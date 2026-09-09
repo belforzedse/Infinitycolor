@@ -129,11 +129,28 @@ export type CheckoutQuoteRequest = SharedCheckoutQuoteRequest;
 export type CheckoutQuoteResponse = SharedCheckoutQuoteResponse;
 export type FinalizeCartResponse = SharedFinalizeCartResponse;
 
+/** Delivery address as returned alongside an active reserve group. */
+export interface ReserveDeliveryAddress {
+  id?: number;
+  FullAddress?: string | null;
+  PostalCode?: string | null;
+  shipping_city?: {
+    Title?: string | null;
+    shipping_province?: { Title?: string | null } | null;
+  } | null;
+}
+
 export interface ActiveReserveResponse {
   data: {
     reserveGroupId: string;
-    reserveExpiresAt: string;
+    reserveExpiresAt: string | null;
     orders: unknown[];
     orderCount: number;
+    /** Shipping already paid by the group, in Toman. Later orders add nothing. */
+    shippingCostPaid?: number;
+    shippingMethodTitle?: string | null;
+    deliveryAddress?: ReserveDeliveryAddress | null;
+    lastOrderAttachedAt?: string | null;
+    rootOrderId?: number | null;
   } | null;
 }

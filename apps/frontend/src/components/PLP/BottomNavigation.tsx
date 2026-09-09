@@ -14,7 +14,7 @@ import AccountAccessMenu from "@/components/PLP/Header/AccountAccessMenu";
 import { useCart } from "@/contexts/CartContext";
 import { useMobileMenu } from "@/contexts/MobileMenuContext";
 import { hapticButton } from "@/utils/haptics";
-import { ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS } from "@/constants/categories";
+import { STOREFRONT_MAIN_CATEGORY_OPTIONS } from "@/constants/categories";
 import { useProductCategories } from "@/hooks/useProductCategories";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
@@ -82,9 +82,7 @@ const PLPBottomNavigation = () => {
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
   const { isAuthenticated } = useCurrentUser();
   const { categories, isLoading: isLoadingCategories } = useProductCategories({
-    mainOnly: true,
-    featuredOnly: true,
-    allowedNameSubstrings: ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS,
+    ...STOREFRONT_MAIN_CATEGORY_OPTIONS,
   });
   const [isCategoriesMounted, setIsCategoriesMounted] = useState(false);
   const [isCategoriesVisible, setIsCategoriesVisible] = useState(false);
@@ -134,13 +132,17 @@ const PLPBottomNavigation = () => {
 
   return (
     <>
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 lg:hidden">
-        <div className="pointer-events-auto mx-auto mb-3 max-w-[560px] px-3 pb-[env(safe-area-inset-bottom)] sm:px-5">
+      {/*
+        Stay above the issue-report trigger (z-80) so the admin account widget
+        can stack over it on mobile, and below the category overlay (z-110).
+      */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[90] lg:hidden">
+        <div className="mx-auto mb-3 max-w-[560px] px-3 pb-[env(safe-area-inset-bottom)] sm:px-5">
           <nav
             data-bottom-nav
             data-adaptive-surface
             aria-label="ناوبری اصلی"
-            className="flex w-full flex-col items-start gap-[10px] rounded-[20px] bg-white px-2 pb-[5px] pt-[10px] shadow-[0_4px_19px_rgba(57,57,57,0.05)] sm:px-6"
+            className="pointer-events-auto flex w-full flex-col items-start gap-[10px] rounded-[20px] bg-white px-2 pb-[5px] pt-[10px] shadow-[0_4px_19px_rgba(57,57,57,0.05)] sm:px-6"
             dir="ltr"
           >
             <div className="grid h-16 w-full grid-cols-[repeat(2,minmax(0,1fr))_4rem_repeat(2,minmax(0,1fr))] items-center">
@@ -153,7 +155,7 @@ const PLPBottomNavigation = () => {
                   )}
                   triggerContent={
                     <>
-                      <ProfileIcon className="shrink-0 stroke-current" />
+                      <ProfileIcon className="size-6 shrink-0 stroke-current" />
                       <TabIndicator active={isProfileActive} />
                     </>
                   }
@@ -173,7 +175,7 @@ const PLPBottomNavigation = () => {
                 ariaLabel="سبد خرید"
               >
                 <div className="relative">
-                  <BasketIcon className="shrink-0 stroke-current" />
+                  <BasketIcon className="size-6 shrink-0 stroke-current" />
                   {visibleTotalItems > 0 && (
                     <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-infinity-primary text-[10px] font-medium text-white">
                       {visibleTotalItems > 9 ? "9+" : visibleTotalItems}
@@ -206,7 +208,7 @@ const PLPBottomNavigation = () => {
                 ariaLabel="دسته بندی ها"
                 onClick={handleCategoriesClick}
               >
-                <CategoryIcon className="shrink-0 stroke-current" />
+                <CategoryIcon className="size-6 shrink-0 stroke-current" />
               </NavTabLink>
 
               <NavTabLink
@@ -217,7 +219,7 @@ const PLPBottomNavigation = () => {
                 ariaLabel="جستجو"
                 onClick={handleSearchClick}
               >
-                <SearchIcon className="shrink-0 stroke-current" />
+                <SearchIcon className="size-6 shrink-0 stroke-current" />
               </NavTabLink>
             </div>
           </nav>

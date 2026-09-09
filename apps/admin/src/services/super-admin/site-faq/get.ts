@@ -18,31 +18,43 @@ function statusOf(error: unknown): number | undefined {
   return undefined;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
 /** Admin normalizer: keeps inactive items and original ordering for editing. */
-function normalizeForAdmin(attributes: any): SiteFaq {
-  if (!attributes || !Array.isArray(attributes.categories)) return { categories: [] };
-  const categories: SiteFaqCategory[] = attributes.categories.map((c: any) => ({
-    title: c?.title ?? "",
-    description: c?.description ?? undefined,
-    order: typeof c?.order === "number" ? c.order : 0,
-    items: Array.isArray(c?.items)
-      ? c.items.map(
-          (i: any): SiteFaqItem => ({
-            question: i?.question ?? "",
-            answer: i?.answer ?? "",
-            order: typeof i?.order === "number" ? i.order : 0,
-            isActive: i?.isActive !== false,
-          }),
-        )
-      : [],
-  }));
+function normalizeForAdmin(attributes: unknown): SiteFaq {
+  const source = asRecord(attributes);
+  if (!source || !Array.isArray(source.categories)) return { categories: [] };
+  const categories: SiteFaqCategory[] = source.categories.map((raw) => {
+    const category = asRecord(raw) ?? {};
+    const items = Array.isArray(category.items)
+      ? category.items.map((rawItem): SiteFaqItem => {
+          const item = asRecord(rawItem) ?? {};
+          return {
+            question: typeof item.question === "string" ? item.question : "",
+            answer: typeof item.answer === "string" ? item.answer : "",
+            order: typeof item.order === "number" ? item.order : 0,
+            isActive: item.isActive !== false,
+          };
+        })
+      : [];
+    return {
+      title: typeof category.title === "string" ? category.title : "",
+      description: typeof category.description === "string" ? category.description : undefined,
+      order: typeof category.order === "number" ? category.order : 0,
+      items,
+    };
+  });
   return { categories };
 }
 
 export async function getSuperAdminSiteFaq(): Promise<SiteFaq> {
   try {
     const res = await apiClient.get(`/site-faq?${POPULATE}`, { cache: "no-store" });
-    const attributes = (res as { data?: { attributes?: unknown } })?.data?.attributes;
+    const payload = asRecord((res as { data?: unknown })?.data);
+    const attributes =
+      payload && "attributes" in payload && payload.attributes ? payload.attributes : payload;
     return attributes ? normalizeForAdmin(attributes) : { categories: [] };
   } catch (error: unknown) {
     if (statusOf(error) === 404) return { categories: [] };

@@ -9,6 +9,7 @@ import StoryForm, { type StoryFormValues } from "@/components/Stories/StoryForm"
 import { storyService } from "@/services/story/story.service";
 import type { CreateStoryData } from "@/types/story";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useCan } from "@/hooks/useCan";
 import { translateErrorMessage, extractErrorMessage } from "@/lib/errorTranslations";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
@@ -22,9 +23,8 @@ export default function EditStoryPage() {
   const params = useParams<{ id: string }>();
   const storyId = Number(params.id);
 
-  const { user, isStoreManager } = useCurrentUser();
-  const isSuperAdmin = (user?.roleName ?? "").toLowerCase() === "superadmin";
-  const hasAccess = isSuperAdmin || isStoreManager;
+  const { user } = useCurrentUser();
+  const hasAccess = useCan("content.stories.manage");
 
   const [isLoading, setIsLoading] = useState(false);
   const [isFetching, setIsFetching] = useState(true);

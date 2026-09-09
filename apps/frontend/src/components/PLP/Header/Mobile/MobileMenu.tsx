@@ -2,7 +2,15 @@
 
 import { Dialog } from "@headlessui/react";
 import { ChevronDown, Search, X } from "lucide-react";
-import { type AnimationEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type AnimationEvent,
+  type SyntheticEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useProductCategories } from "@/hooks/useProductCategories";
@@ -11,7 +19,11 @@ import type { ProductCategorySummary } from "@/services/product/categories";
 import { buildMobileCategoryGroups } from "@/utils/categoryGroups";
 import { useCart } from "@/contexts/CartContext";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
+import { jotaiStore } from "@/lib/jotaiStore";
 import { API_BASE_URL } from "@/constants/api";
+import { OPPSI_HEADER_ITEM } from "@/constants/categories";
+import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
+import { modelHiringModalOpenAtom } from "@/atoms/modelHiring";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
@@ -44,6 +56,11 @@ type MobileNavItem =
       label: string;
       type: "category-group";
       categories: ProductCategorySummary[];
+    }
+  | {
+      key: string;
+      label: string;
+      type: "action";
     };
 
 type SearchSuggestion = {
@@ -105,6 +122,8 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
   const [searchError, setSearchError] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingHiringOpenRef = useRef(false);
+  const finishingCloseRef = useRef(false);
 
   const trimmedQuery = searchQuery.trim();
   const hasQuery = trimmedQuery.length > 0;
@@ -112,11 +131,15 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
   const { totalItems, openDrawer } = useCart();
   const isCartShellReady = useCartShellReady();
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
-  const { categories, isLoading: loading } = useProductCategories({
+  const { categories: navbarCategories, isLoading: loading } = useProductCategories({
     navbarAssignedOnly: true,
     includeChildren: true,
     enabled: isOpen,
   });
+  const categories = useMemo(
+    () => withHeaderExtraCategories(navbarCategories),
+    [navbarCategories],
+  );
 
   const mobileCategoryGroups = useMemo(() => buildMobileCategoryGroups(categories), [categories]);
 
@@ -131,22 +154,33 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
         categories: group.categories,
       })),
       {
+        key: OPPSI_HEADER_ITEM.key,
+        label: OPPSI_HEADER_ITEM.label,
+        href: OPPSI_HEADER_ITEM.href,
+      },
+      {
         key: "discounts",
         label: "تخفیف‌ها و جشنواره‌ها",
         href: "/plp?hasDiscount=true",
         type: "sale" as const,
       },
       { key: "blog", label: "مقالات", href: "/blog" },
+      { key: "model-hiring", label: "استخدام مدل", type: "action" as const },
     ],
     [mobileCategoryGroups],
   );
 
   useEffect(() => {
     if (isOpen) {
+      // finishMenuClose() sets local state to "closed" before the parent
+      // flips `isOpen`. Do not reopen on that in-between render or the menu
+      // comes back under the hiring modal and eats the tap.
+      if (finishingCloseRef.current) return;
       setMenuState("open");
       return;
     }
 
+    finishingCloseRef.current = false;
     setMenuState((current) => (current === "closed" ? "closed" : "closing"));
   }, [isOpen]);
 
@@ -252,10 +286,36 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
     setMenuState("closing");
   };
 
-  const handlePanelAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
-    if (event.currentTarget !== event.target || menuState !== "closing") return;
+  const finishMenuClose = useCallback(() => {
+    if (finishingCloseRef.current) return;
+    finishingCloseRef.current = true;
+    const shouldOpenHiring = pendingHiringOpenRef.current;
+    pendingHiringOpenRef.current = false;
     setMenuState("closed");
     onClose();
+    if (shouldOpenHiring) {
+      // Wait a paint after the Headless UI dialog unmounts so `inert` is gone
+      // and a leftover mobile click cannot land on a half-open overlay.
+      window.setTimeout(() => jotaiStore.set(modelHiringModalOpenAtom, true), 50);
+    }
+  }, [onClose]);
+
+  const queueHiringModal = (event: SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    pendingHiringOpenRef.current = true;
+    requestClose();
+  };
+
+  useEffect(() => {
+    if (menuState !== "closing" || !pendingHiringOpenRef.current) return undefined;
+    const timer = window.setTimeout(finishMenuClose, 220);
+    return () => window.clearTimeout(timer);
+  }, [finishMenuClose, menuState]);
+
+  const handlePanelAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (event.currentTarget !== event.target || menuState !== "closing") return;
+    finishMenuClose();
   };
 
   const isActiveHref = (href: string) => {
@@ -301,6 +361,21 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
       }
       return nextGroupKey;
     });
+  };
+
+  const renderAction = (item: Extract<MobileNavItem, { type: "action" }>) => {
+    return (
+      <button
+        key={item.key}
+        type="button"
+        onPointerDown={queueHiringModal}
+        onClick={queueHiringModal}
+        onTouchEnd={(event) => event.preventDefault()}
+        className="pressable flex h-10 w-full items-center justify-between rounded-[10px] bg-[#FAFAF9] px-3 text-right text-sm font-medium text-neutral-800 transition-colors hover:bg-stone-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+      >
+        <span className="truncate">{item.label}</span>
+      </button>
+    );
   };
 
   const renderLink = (item: Extract<MobileNavItem, { type?: "link" | "sale" }>) => {
@@ -561,15 +636,14 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
         className="fixed inset-x-0 top-0 flex justify-center px-0"
         style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
-        <Dialog.Panel className="contents">
-          <div
-            className="storefront-mobile-menu-panel mt-1 max-h-[calc(100dvh-1.25rem)] w-full overflow-y-auto rounded-b-[18px] bg-white px-0 shadow-[0_20px_60px_rgba(15,23,42,0.22)] outline-none"
-            data-state={menuState === "closing" ? "closed" : "open"}
-            style={{
-              paddingBottom: "calc(env(safe-area-inset-bottom) + 1.25rem)",
-            }}
-            onAnimationEnd={handlePanelAnimationEnd}
-          >
+        <Dialog.Panel
+          className="storefront-mobile-menu-panel mt-1 max-h-[calc(100dvh-1.25rem)] w-full overflow-y-auto rounded-b-[18px] bg-white px-0 shadow-[0_20px_60px_rgba(15,23,42,0.22)] outline-none"
+          data-state={menuState === "closing" ? "closed" : "open"}
+          style={{
+            paddingBottom: "calc(env(safe-area-inset-bottom) + 1.25rem)",
+          }}
+          onAnimationEnd={handlePanelAnimationEnd}
+        >
             <Dialog.Title className="sr-only">منوی فروشگاه</Dialog.Title>
 
             <div
@@ -666,13 +740,14 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
                         ? renderCategory(item)
                         : item.type === "category-group"
                           ? renderCategoryGroup(item)
-                          : renderLink(item),
+                          : item.type === "action"
+                            ? renderAction(item)
+                            : renderLink(item),
                     )
                   )}
                 </nav>
               )}
             </div>
-          </div>
         </Dialog.Panel>
       </div>
     </Dialog>

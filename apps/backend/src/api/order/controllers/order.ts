@@ -16,6 +16,10 @@ import { adminVoidBarcodeHandler } from "./helpers/adminVoidBarcode";
 import { decrementManualOrderStockHandler } from "./helpers/manualOrderStock";
 import { getActiveReserveHandler } from "./handlers/getActiveReserve";
 import { releaseReserveHandler } from "./handlers/releaseReserve";
+import {
+  getMyReserveGroupHandler,
+  listMyReserveGroupsHandler,
+} from "./handlers/myReserveGroups";
 import { logAdminOrderCreate, logAdminOrderFieldUpdate } from "../../../utils/adminActivity";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import { adminTransitionOrderHandler } from "./helpers/adminTransition";
@@ -28,6 +32,10 @@ import {
 } from "../../payment-attempt/services/payment-attempt";
 import { isSnappayGatewayValue } from "../../payment-gateway/services/checkout-gateway-availability";
 import { isOperationalManagerRequest } from "../../../utils/operationalCommerce";
+import {
+  projectOrderReserve,
+  withReserveProjection,
+} from "../../reserve-group/lib/reserve-group";
 
 // Business fields captured as admin activity on a generic `PUT /orders/:id` edit. Whitelisted on
 // purpose: anything not listed here (tokens, payment internals, relations) is never diffed/logged.
@@ -189,6 +197,7 @@ export default factories.createCoreController(
               },
             },
             shipping: true,
+            reserve_shipment: true,
             delivery_address: {
               populate: {
                 shipping_city: {
@@ -240,6 +249,10 @@ export default factories.createCoreController(
             : userInfo;
         const transformedOrder = {
           ...order,
+          // The reserve columns on the row are frozen at creation; the live view
+          // comes from the group. Without this the admin detail screen would
+          // offer fulfillment actions the server refuses (and vice versa).
+          ...projectOrderReserve(order),
           ...(operationalManager
             ? { external_id: undefined, external_source: undefined, reserveGroupId: undefined }
             : {}),
@@ -480,6 +493,7 @@ export default factories.createCoreController(
         const order = await strapi.db.query("api::order.order").findOne({
           where: { id, user: { id: userId } },
           populate: {
+            reserve_shipment: { populate: { rootOrder: true } },
             contract: {
               populate: {
                 contract_transactions: { populate: { payment_gateway: true } },
@@ -525,9 +539,27 @@ export default factories.createCoreController(
         const isPaid = paymentStatus === "Succeeded";
         const canRetry = ["Failed", "Cancelled", "Expired"].includes(paymentStatus);
 
+        // Reserve facts are read from the group row, never from the order's frozen
+        // columns, so the confirmation screen states the live deadline rather than
+        // the one captured at checkout. `reserveAttached` distinguishes "you opened
+        // a window" from "you joined one", which the shopper needs told explicitly.
+        const reserveGroup = (order as any).reserve_shipment;
+        const reserveOrderCount = reserveGroup?.id
+          ? await strapi.db.query("api::order.order").count({
+              where: { reserve_shipment: { id: reserveGroup.id } },
+            })
+          : 0;
+
         return {
           data: {
             success: true,
+            reserveGroupId: reserveGroup?.groupKey ?? null,
+            reserveExpiresAt: reserveGroup?.expiresAt ?? null,
+            reserveState: reserveGroup?.State ?? null,
+            reserveOrderCount,
+            reserveAttached: reserveGroup?.rootOrder?.id
+              ? Number(reserveGroup.rootOrder.id) !== Number(order.id)
+              : undefined,
             orderId: order.id,
             status: order.Status,
             paymentStatus,
@@ -585,6 +617,14 @@ export default factories.createCoreController(
       return releaseReserveHandler(strapi as Strapi, ctx);
     },
 
+    async listMyReserveGroups(ctx) {
+      return listMyReserveGroupsHandler(strapi as Strapi, ctx);
+    },
+
+    async getMyReserveGroup(ctx) {
+      return getMyReserveGroupHandler(strapi as Strapi, ctx);
+    },
+
     async getMyOrders(ctx) {
       const { page = 1, pageSize = 10, reserveGroupId } = ctx.query;
 
@@ -592,11 +632,14 @@ export default factories.createCoreController(
         const userId = await resolveCustomerTargetUserId(ctx, strapi as any);
         if (!userId) return;
 
-        const filters: { user: { id: number }; reserveGroupId?: string } = {
+        const filters: {
+          user: { id: number };
+          reserve_shipment?: { groupKey: string };
+        } = {
           user: { id: userId },
         };
         if (reserveGroupId && typeof reserveGroupId === "string") {
-          filters.reserveGroupId = reserveGroupId;
+          filters.reserve_shipment = { groupKey: reserveGroupId };
         }
         const totalOrders = await strapi.db.query("api::order.order").count({ where: filters });
 
@@ -627,6 +670,7 @@ export default factories.createCoreController(
               },
             },
             shipping: true,
+            reserve_shipment: true,
           },
           orderBy: { Date: "desc" },
           limit,
@@ -634,7 +678,9 @@ export default factories.createCoreController(
         });
 
         return {
-          data: orders,
+          // Reserve fields are projected from the group row, never read off the
+          // frozen order columns -- see projectOrderReserve.
+          data: orders.map((order: any) => withReserveProjection(order)),
           meta: {
             pagination: {
               page: pageNumber,
@@ -689,6 +735,7 @@ export default factories.createCoreController(
               },
             },
             shipping: true,
+            reserve_shipment: true,
             delivery_address: {
               populate: {
                 shipping_city: {
@@ -770,7 +817,7 @@ export default factories.createCoreController(
 
         return {
           data: {
-            ...order,
+            ...withReserveProjection(order),
             contract_transactions: contractTransactions,
             orderLogs,
             ...(orderLogsMeta ? { orderLogsMeta } : {}),

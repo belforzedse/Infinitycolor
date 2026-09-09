@@ -30,13 +30,13 @@ const getCategoryDisplayTitle = (category?: BlogCategory) =>
   trimmed(category?.Title) || trimmed(category?.Name) || "مقالات";
 
 const resolveCategoryBannerData = (category: BlogCategory) => ({
-  title: trimmed(category.BannerTitle) || getCategoryDisplayTitle(category),
+  title: trimmed(category.BannerTitle) || undefined,
   subtitle: trimmed(category.BannerSubtitle) || undefined,
   backgroundImage: category.FeaturedImage?.url ? resolveAssetUrl(category.FeaturedImage.url) : undefined,
   textColor: trimmed(category.BannerTitleColor) || undefined,
   subtitleColor: trimmed(category.BannerSubtitleColor) || undefined,
   linkColor: trimmed(category.BannerLinkColor) || undefined,
-  linkText: trimmed(category.BannerLinkText) || "مشاهده دسته بندی",
+  linkText: trimmed(category.BannerLinkText) || undefined,
   href: `/blog?category=${encodeURIComponent(category.Slug)}`,
 });
 
@@ -125,6 +125,20 @@ async function fetchPostsForCategories(categories: BlogCategory[]): Promise<Reco
   return groupedByActualCategory;
 }
 
+async function fetchSearchPosts(search: string): Promise<BlogPost[]> {
+  try {
+    const response = await blogService.getBlogPosts({
+      pageSize: 20,
+      status: "Published",
+      search,
+    });
+    return response.data || [];
+  } catch (error) {
+    console.error("Error searching blog posts:", error);
+    return [];
+  }
+}
+
 export default async function BlogPage({
   searchParams,
 }: {
@@ -132,6 +146,32 @@ export default async function BlogPage({
 }) {
   const params = await searchParams;
   const categoryFilter = typeof params.category === "string" ? params.category : undefined;
+  const searchFilter = typeof params.search === "string" ? params.search.trim() : "";
+
+  if (searchFilter) {
+    const searchPosts = await fetchSearchPosts(searchFilter);
+
+    return (
+      <div className="min-h-screen bg-slate-50" dir="rtl">
+        <div className="container mx-auto px-4 py-8 pb-20">
+          <h1 className="mb-6 text-right text-2xl font-medium text-neutral-800">
+            نتایج جستجو برای «{searchFilter}»
+          </h1>
+          {searchPosts.length > 0 ? (
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {searchPosts.map((post) => (
+                <BlogCard key={post.id} post={post} />
+              ))}
+            </div>
+          ) : (
+            <div className="py-16 text-center">
+              <p className="text-neutral-600">هیچ مقاله‌ای با این موضوع یافت نشد.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const [latestPosts, categories, settings] = await Promise.all([
     fetchLatestPublishedPosts(),
@@ -149,34 +189,29 @@ export default async function BlogPage({
     );
 
     const filteredPosts = getPostsBySlug(postsByCategory, categoryFilter);
-    const bannerData = filteredCategory
-      ? resolveCategoryBannerData(filteredCategory)
-      : {
-          title: "مقالات",
-          subtitle: "آخرین مطالب این دسته‌بندی",
-          href: `/blog?category=${encodeURIComponent(categoryFilter)}`,
-          linkText: "مشاهده دسته بندی",
-          textColor: undefined,
-          subtitleColor: undefined,
-          linkColor: undefined,
-          backgroundImage: undefined,
-        };
+    const showFilteredBanner = Boolean(
+      filteredCategory && isCategoryBannerConfigured(filteredCategory),
+    );
+    const bannerData = filteredCategory ? resolveCategoryBannerData(filteredCategory) : undefined;
 
     return (
       <div className="min-h-screen bg-slate-50" dir="rtl">
-        <div className="container mx-auto px-4 py-8 md:py-12">
-          <BlogCategoryBanner
-            title={bannerData.title}
-            subtitle={bannerData.subtitle}
-            href={bannerData.href}
-            backgroundImage={bannerData.backgroundImage}
-            textColor={bannerData.textColor}
-            subtitleColor={bannerData.subtitleColor}
-            linkColor={bannerData.linkColor}
-            linkText={bannerData.linkText}
-            height="lg"
-          />
-        </div>
+        {showFilteredBanner && bannerData && (
+          <div className="container mx-auto px-4 py-8 md:py-12">
+            <BlogCategoryBanner
+              title={bannerData.title}
+              subtitle={bannerData.subtitle}
+              href={bannerData.href}
+              backgroundImage={bannerData.backgroundImage}
+              textColor={bannerData.textColor}
+              subtitleColor={bannerData.subtitleColor}
+              linkColor={bannerData.linkColor}
+              linkText={bannerData.linkText}
+              ariaLabel={getCategoryDisplayTitle(filteredCategory)}
+              height="lg"
+            />
+          </div>
+        )}
 
         <div className="container mx-auto px-4 py-6 pb-20">
           {filteredPosts.length > 0 ? (
@@ -231,6 +266,7 @@ export default async function BlogPage({
                   subtitleColor={bannerData.subtitleColor}
                   linkColor={bannerData.linkColor}
                   linkText={bannerData.linkText}
+                  ariaLabel={getCategoryDisplayTitle(category)}
                   height="lg"
                 />
               )}
@@ -247,7 +283,7 @@ export default async function BlogPage({
 
         {isDefaultBlogBannerConfigured(settings) && (
           <BlogCategoryBanner
-            title={trimmed(settings.blogDefaultBannerTitle) || "همه مقالات اینفینیتی مگ"}
+            title={trimmed(settings.blogDefaultBannerTitle) || undefined}
             subtitle={trimmed(settings.blogDefaultBannerSubtitle) || undefined}
             href="/blog"
             backgroundImage={
@@ -258,7 +294,7 @@ export default async function BlogPage({
             textColor={trimmed(settings.blogDefaultBannerTitleColor) || undefined}
             subtitleColor={trimmed(settings.blogDefaultBannerSubtitleColor) || undefined}
             linkColor={trimmed(settings.blogDefaultBannerLinkColor) || undefined}
-            linkText={trimmed(settings.blogDefaultBannerLinkText) || "مشاهده همه مقالات"}
+            linkText={trimmed(settings.blogDefaultBannerLinkText) || undefined}
             height="lg"
           />
         )}

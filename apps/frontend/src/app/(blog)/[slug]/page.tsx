@@ -1,15 +1,18 @@
 import React from "react";
 import { Metadata } from "next";
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import BlogPostDetail from "@/components/Blog/BlogPostDetail";
 import BlogComments from "@/components/Blog/BlogComments";
-import { blogService, BlogTag } from "@/services/blog/blog.service";
+import {
+  BlogSidebarCategories,
+  BlogSidebarPopular,
+  BlogSidebarSearch,
+  BlogSidebarToc,
+} from "@/components/Blog/PostSidebar";
+import { blogService, type BlogCardPost, type BlogCategory } from "@/services/blog/blog.service";
 import { generateBlogPostMetadata, generateJSONLD } from "@/utils/seo";
 import { getStrapiServerUrl } from "@/constants/api";
-import resolveAssetUrl from "@/utils/resolveAssetUrl";
-import { User, FolderOpen, Tag } from "lucide-react";
-import { resolveBlogAuthorDisplayName } from "@/utils/blogAuthorName";
+import { extractBlogHeadings } from "@/utils/blogHeadings";
 import logger from "@/utils/logger";
 
 // TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
@@ -51,6 +54,43 @@ const EXCLUDED_PATTERNS = [
 
 function shouldExcludeSlug(slug: string): boolean {
   return EXCLUDED_PATTERNS.some(pattern => pattern.test(slug));
+}
+
+async function loadPostSidebarData(currentSlug: string): Promise<{
+  categories: BlogCategory[];
+  popular: BlogCardPost[];
+}> {
+  const [categoriesResult, popularResult] = await Promise.allSettled([
+    blogService.getBlogCategories(),
+    blogService.getBlogPosts({
+      pageSize: 6,
+      status: "Published",
+      sort: "ViewCount:desc",
+    }),
+  ]);
+
+  const categories =
+    categoriesResult.status === "fulfilled"
+      ? (categoriesResult.value.data || [])
+          .filter((category) => Boolean(category.Slug?.trim()))
+          .filter((category, index, list) => {
+            const label = (category.Title || category.Name || category.Slug).trim();
+            return (
+              list.findIndex(
+                (item) => (item.Title || item.Name || item.Slug).trim() === label,
+              ) === index
+            );
+          })
+      : [];
+
+  const popular =
+    popularResult.status === "fulfilled"
+      ? (popularResult.value.data || [])
+          .filter((post) => post.Slug !== currentSlug)
+          .slice(0, 3)
+      : [];
+
+  return { categories, popular };
 }
 
 // Generate metadata for SEO
@@ -116,6 +156,8 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
     hasStrapiBaseUrl: !!strapiBaseUrl,
     timestamp: new Date().toISOString(),
   });
+
+  const sidebarPromise = loadPostSidebarData(slug);
 
   let post;
 
@@ -203,6 +245,9 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
     return;
   }
 
+  const { categories, popular } = await sidebarPromise;
+  const { html: contentHtml, headings } = extractBlogHeadings(post.Content || "");
+
   // Generate JSON-LD structured data
   const jsonLd = generateJSONLD({
     title: post.Title,
@@ -218,17 +263,8 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
     updatedAt: post.updatedAt,
   });
 
-  const getAvatarUrl = (url?: string) => {
-    if (!url) return null;
-    return resolveAssetUrl(url) || null;
-  };
-
-  const authorDisplayName = resolveBlogAuthorDisplayName(post.blog_author);
-  const authorInitial = authorDisplayName.trim().charAt(0) || "ن";
-
   return (
     <>
-      {/* JSON-LD Structured Data */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
@@ -236,110 +272,29 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
 
       <div className="min-h-screen bg-slate-50 py-8" dir="rtl">
         <div className="container mx-auto px-4">
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-4">
-            <div className="lg:col-span-1">
-              <div className="sticky top-8 space-y-6">
-                {/* Author Info */}
-                {post.blog_author && (
-                  <div className="rounded-2xl  bg-white p-5 shadow-sm">
-                    <div className="mb-4 flex items-center gap-2">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100">
-                        <User className="h-4 w-4 text-slate-500" />
-                      </div>
-                      <h3 className="text-sm font-medium text-neutral-800">درباره نویسنده</h3>
-                    </div>
-                    <div className="flex items-start gap-4">
-                      {post.blog_author.Avatar?.url ? (
-                        <img
-                          src={getAvatarUrl(post.blog_author.Avatar.url) || ""}
-                          alt={post.blog_author.Name}
-                          className="h-14 w-14 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-infinity-primary-lighter/30">
-                          <span className="text-lg font-medium text-infinity-primary">
-                            {authorInitial}
-                          </span>
-                        </div>
-                      )}
-                      <div>
-                        <h4 className="font-medium text-neutral-900">
-                          {authorDisplayName}
-                        </h4>
-                        {post.blog_author.Bio && (
-                          <p className="mt-1 text-sm text-neutral-600 line-clamp-3">
-                            {post.blog_author.Bio}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Category */}
-                {post.blog_category && (
-                  <div className="rounded-2xl bg-white p-5 shadow-sm">
-                    <div className="mb-4 flex items-center gap-2">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100">
-                        <FolderOpen className="h-4 w-4 text-slate-500" />
-                      </div>
-                      <h3 className="text-sm font-medium text-neutral-800">دسته‌بندی</h3>
-                    </div>
-                    <Link
-                      href={`/blog?category=${post.blog_category.Slug}`}
-                      className="inline-flex items-center gap-2 rounded-xl bg-infinity-primary-lighter/20 px-4 py-2 text-sm font-medium text-infinity-primary-dark transition-colors hover:bg-infinity-primary-lighter/30"
-                    >
-                      <FolderOpen className="h-4 w-4" />
-                      {post.blog_category.Name}
-                    </Link>
-                  </div>
-                )}
-
-                {/* Tags */}
-                {post.blog_tags && post.blog_tags.length > 0 && (
-                  <div className="rounded-2xl bg-white p-5 shadow-sm">
-                    <div className="mb-4 flex items-center gap-2">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100">
-                        <Tag className="h-4 w-4 text-slate-500" />
-                      </div>
-                      <h3 className="text-sm font-medium text-neutral-800">برچسب‌ها</h3>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {post.blog_tags.map((tag: BlogTag) => (
-                        <Link
-                          key={tag.id}
-                          href={`/blog?tag=${tag.Slug}`}
-                          className="rounded-full bg-slate-100 px-3 py-1 text-xs text-neutral-600 transition-colors hover:bg-slate-200"
-                          style={tag.Color ? { backgroundColor: `${tag.Color}15`, color: tag.Color } : {}}
-                        >
-                          #{tag.Name}
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Back to Blog */}
-                <Link
-                  href="/blog"
-                  className="flex items-center justify-center gap-2 rounded-2xl bg-white p-4 text-sm font-medium text-neutral-700 shadow-sm transition-colors hover:bg-slate-50"
-                >
-                  بازگشت به وبلاگ
-                </Link>
+          <div className="flex flex-col gap-5 lg:grid lg:grid-cols-[20rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+            <div className="contents min-w-0 lg:col-start-1 lg:flex lg:flex-col lg:gap-4 lg:self-start">
+              <BlogSidebarSearch className="order-1 lg:order-none" />
+              <div className="hidden lg:block" data-testid="blog-sidebar-categories-slot">
+                <BlogSidebarCategories
+                  categories={categories}
+                  activeSlug={post.blog_category?.Slug}
+                />
               </div>
+              {headings.length > 0 ? (
+                <BlogSidebarToc className="order-3 lg:order-none" headings={headings} />
+              ) : null}
+              {popular.length > 0 ? (
+                <BlogSidebarPopular className="order-5 lg:order-none" posts={popular} />
+              ) : null}
             </div>
-            {/* Main Content */}
-            <div className="lg:col-span-3">
-              <BlogPostDetail post={post} />
 
-              {/* Comments Section */}
+            <div className="order-4 min-w-0 lg:col-start-2">
+              <BlogPostDetail post={post} contentHtml={contentHtml} />
               <div className="mt-12">
                 <BlogComments postId={post.id} />
               </div>
             </div>
-
-            {/* Sidebar */}
-
           </div>
         </div>
       </div>

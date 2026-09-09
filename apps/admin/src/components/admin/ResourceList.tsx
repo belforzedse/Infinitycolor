@@ -15,6 +15,9 @@ import { FLEX_TEXT, FOCUS_RING } from "./tokens";
  *  - nested controls stop propagation so they stay independently clickable
  *  - `min-w-0` / `shrink-0` / `break-words` everywhere, so long Persian names
  *    and large totals wrap instead of overflowing
+ *  - row actions sit in a wrapping strip *below* the identity, never in a
+ *    `shrink-0` side column that can collapse the buyer name to one glyph
+ *    per line on a phone
  *  - values are compressed into one meta strip rather than transposing every
  *    desktop column into a label/value row
  */
@@ -43,7 +46,7 @@ export function ResourceListItemControl({
 }) {
   return (
     <div
-      className={cn("shrink-0", className)}
+      className={cn("min-w-0", className)}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
@@ -120,85 +123,91 @@ export function ResourceListItem({
             : undefined
         }
         className={cn(
-          "flex min-h-[76px] w-full items-start gap-3 overflow-hidden rounded-2xl border border-slate-100 bg-white p-3 shadow-sm",
+          "flex min-h-[76px] w-full flex-col items-stretch gap-3 overflow-hidden rounded-2xl border border-slate-100 bg-white p-3 shadow-sm",
           isInteractive &&
             cn("cursor-pointer hover:border-slate-200 hover:shadow-md", FOCUS_RING),
           className,
         )}
       >
-        {selection && (
-          <ResourceListItemControl className="pt-1">
-            <label className="flex h-11 w-6 cursor-pointer items-center justify-center">
-              <input
-                type="checkbox"
-                className="h-5 w-5 rounded border-slate-300 accent-infinity-primary"
-                checked={selection.checked}
-                onChange={(event) => selection.onChange(event.target.checked)}
-                aria-label={selection.label ?? "انتخاب ردیف"}
-              />
-            </label>
-          </ResourceListItemControl>
-        )}
+        <div className="flex min-w-0 items-start gap-3">
+          {selection && (
+            <ResourceListItemControl className="shrink-0 pt-1">
+              <label className="flex h-11 w-6 cursor-pointer items-center justify-center">
+                <input
+                  type="checkbox"
+                  className="h-5 w-5 rounded border-slate-300 accent-infinity-primary"
+                  checked={selection.checked}
+                  onChange={(event) => selection.onChange(event.target.checked)}
+                  aria-label={selection.label ?? "انتخاب ردیف"}
+                />
+              </label>
+            </ResourceListItemControl>
+          )}
 
-        {media && <div className="shrink-0">{media}</div>}
+          {media && <div className="shrink-0">{media}</div>}
 
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <div className="flex w-full min-w-0 items-start justify-between gap-2">
-            <div className={cn("flex flex-col gap-0.5", FLEX_TEXT)}>
-              <span className="text-sm font-medium leading-6 text-neutral-800">
-                {title}
-              </span>
-              {titleSuffix && (
-                <span className="text-xs text-neutral-500">{titleSuffix}</span>
-              )}
-            </div>
-            {badge && <div className="shrink-0">{badge}</div>}
-          </div>
-
-          {(visibleMeta.length > 0 || value) && (
-            <div className="flex w-full min-w-0 flex-col gap-2 rounded-lg bg-slate-50 px-2 py-2 sm:flex-row sm:items-center sm:justify-between">
-              {visibleMeta.length > 0 && (
-                <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-                  {visibleMeta.map((entry, index) => (
-                    <span
-                      key={index}
-                      className="text-xs flex items-center gap-1.5 text-neutral-500"
-                    >
-                      {index > 0 && (
-                        <span className="text-neutral-300" aria-hidden>
-                          |
-                        </span>
-                      )}
-                      {entry}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {value && (
-                <div className="flex shrink-0 flex-col text-left">
-                  <span className="text-sm font-medium text-neutral-800">
-                    {value}
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className="flex w-full min-w-0 items-start justify-between gap-2">
+              <div className={cn("flex flex-1 flex-col gap-0.5", FLEX_TEXT)}>
+                <span className={cn("text-sm font-medium leading-6 text-neutral-800", FLEX_TEXT)}>
+                  {title}
+                </span>
+                {titleSuffix && (
+                  <span className={cn("text-xs text-neutral-500", FLEX_TEXT)}>
+                    {titleSuffix}
                   </span>
-                  {valueCaption && (
-                    <span className="text-[11px] text-neutral-400">
-                      {valueCaption}
-                    </span>
-                  )}
-                </div>
+                )}
+              </div>
+              {badge && (
+                <div className="max-w-[42%] shrink-0">{badge}</div>
               )}
             </div>
-          )}
 
-          {footer && (
-            <div className="text-[11px] flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-neutral-400">
-              {footer}
-            </div>
-          )}
+            {(visibleMeta.length > 0 || value) && (
+              <div className="flex w-full min-w-0 flex-col gap-2 rounded-lg bg-slate-50 px-2 py-2 sm:flex-row sm:items-center sm:justify-between">
+                {visibleMeta.length > 0 && (
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                    {visibleMeta.map((entry, index) => (
+                      <span
+                        key={index}
+                        className="text-xs flex min-w-0 items-center gap-1.5 break-words text-neutral-500"
+                      >
+                        {index > 0 && (
+                          <span className="text-neutral-300" aria-hidden>
+                            |
+                          </span>
+                        )}
+                        {entry}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {value && (
+                  <div className={cn("flex flex-col text-left", FLEX_TEXT, "sm:shrink-0")}>
+                    <span className="text-sm font-medium text-neutral-800">
+                      {value}
+                    </span>
+                    {valueCaption && (
+                      <span className="text-[11px] text-neutral-400">
+                        {valueCaption}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {footer && (
+              <div className="text-[11px] flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-neutral-400">
+                {footer}
+              </div>
+            )}
+          </div>
         </div>
 
         {actions && (
-          <ResourceListItemControl className="flex items-center gap-1">
+          <ResourceListItemControl className="flex w-full min-w-0 flex-wrap items-center justify-end gap-1 border-t border-slate-100 pt-2">
             {actions}
           </ResourceListItemControl>
         )}

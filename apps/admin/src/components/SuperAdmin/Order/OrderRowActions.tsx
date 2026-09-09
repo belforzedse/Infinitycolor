@@ -21,6 +21,8 @@ interface OrderRowActionsProps {
   anipoBarcodeState?: AnipoBarcodeState;
   anipoLastMessage?: string;
   anipoLastError?: string;
+  /** Projected from the order's reserve group; the server enforces the hold. */
+  reserveIsHeld?: boolean;
 }
 
 export default function OrderRowActions(props: OrderRowActionsProps) {
@@ -34,6 +36,7 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
     anipoBarcodeState,
     anipoLastMessage,
     anipoLastError,
+    reserveIsHeld,
   } = props;
   const [, setRefresh] = useAtom(refreshTable);
   const [showBarcodeDialog, setShowBarcodeDialog] = useState(false);
@@ -57,6 +60,7 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
     shippingMethodCode,
     providerMessage: workflow?.message || anipoLastMessage,
     lastError: anipoLastError,
+    reserveIsHeld,
   });
 
   const handlePrintReceipt = () => {
@@ -124,7 +128,10 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
 
   return (
     <>
-      <div className="flex flex-row-reverse items-center gap-2 p-1">
+      <div
+        data-testid="admin-order-row-actions"
+        className="flex w-full min-w-0 flex-row-reverse flex-wrap items-center justify-end gap-2 p-1 lg:w-auto lg:flex-nowrap"
+      >
         <SuperAdminTableCellActionButton
           variant="secondary"
           path={`/orders/edit/${orderId}`}
@@ -135,7 +142,7 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
 
         <button
           onClick={handlePrintReceipt}
-          className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-50 text-blue-600 transition-colors hover:bg-blue-100"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 transition-colors hover:bg-blue-100"
           title="پرینت فاکتور"
           type="button"
         >
@@ -152,11 +159,13 @@ export default function OrderRowActions(props: OrderRowActionsProps) {
             if (ui.action === "check") void handleCheckBarcode();
           }}
           disabled={isWorking || ui.action === null}
-          className={`text-xs flex items-center gap-1 rounded-md px-3 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${toneClasses}`}
+          className={`text-xs flex min-h-[32px] min-w-0 max-w-full items-center rounded-md px-3 py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-70 lg:max-w-[12rem] ${toneClasses}`}
           title={ui.message || ui.label}
           type="button"
         >
-          <span>{isWorking ? "در حال بررسی..." : ui.label}</span>
+          <span className="min-w-0 break-words text-right leading-5 lg:truncate">
+            {isWorking ? "در حال بررسی..." : ui.label}
+          </span>
         </button>
       </div>
 

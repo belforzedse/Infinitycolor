@@ -1,5 +1,7 @@
 export const E2E_PRODUCT_TITLE = "E2E G001 Storefront Smoke Product";
 export const E2E_PRODUCT_SLUG = "e2e-storefront-smoke-product";
+export const E2E_XXXL_PRODUCT_TITLE = "E2E XXXL Alias Product";
+export const E2E_XXXL_PRODUCT_SLUG = "e2e-storefront-xxxl-product";
 export const E2E_CATEGORY_TITLE = "E2E Storefront Category";
 export const E2E_CATEGORY_SLUG = "e2e-storefront";
 export const E2E_HEX_COLOR_TITLE = "E2E Blue";

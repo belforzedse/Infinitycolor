@@ -57,7 +57,6 @@ const SetCategoryTable: React.FC<SetCategoryTableProps> = ({ categories }) => {
       await updateCategory(category.id, {
         Title: draftTitle.trim(),
         Slug: draftSlug.trim(),
-        Parent: category.attributes.Parent || undefined,
       });
       toast.success("دسته‌بندی به‌روزرسانی شد");
       setEditingId(null);

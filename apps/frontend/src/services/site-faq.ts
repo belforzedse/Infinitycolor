@@ -56,7 +56,8 @@ export async function getSiteFaq(): Promise<SiteFaq> {
     if (!response.ok) throw new Error(`API error: ${response.status}`);
 
     const result = await response.json();
-    return normalizeSiteFaq(result?.data?.attributes);
+    const payload = result?.data as { attributes?: unknown } | undefined;
+    return normalizeSiteFaq(payload?.attributes ?? payload);
   } catch (error) {
     console.warn("Site FAQ unavailable, using defaults:", error);
     return DEFAULT_SITE_FAQ;

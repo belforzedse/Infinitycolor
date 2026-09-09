@@ -8,6 +8,11 @@ import {
   type AnipoOrderResult,
 } from "../../shipping/services/anipo";
 import { buildAnipoOrderRecipient } from "../controllers/helpers/anipoOrder";
+import {
+  claimGroupShippingBarcode,
+  findGroupShippingBarcode,
+  HELD_RESERVE_STATES,
+} from "../../reserve-group/lib/reserve-group";
 
 export const ANIPO_BARCODE_STATES = {
   pending: "Pending",
@@ -209,6 +214,7 @@ async function loadOrder(strapi: Strapi, orderId: number): Promise<any> {
       user: { populate: { user_info: true } },
       shipping: true,
       contract: true,
+      reserve_shipment: true,
       delivery_address: {
         populate: { shipping_city: { populate: { shipping_province: true } } },
       },
@@ -219,7 +225,27 @@ async function loadOrder(strapi: Strapi, orderId: number): Promise<any> {
   return order;
 }
 
+/**
+ * True while the order's combined-shipping window is still open.
+ *
+ * Barcode issuance is the sharpest edge in this feature: the reconcile job runs
+ * unattended, so a held parcel could otherwise get a courier label with no admin
+ * involved at all.
+ */
+function isHeldByReserveWindow(order: any): boolean {
+  const state = String(order?.reserve_shipment?.State || "");
+  return HELD_RESERVE_STATES.includes(state as never);
+}
+
 function assertSubmissionEligibility(order: any): void {
+  if (isHeldByReserveWindow(order)) {
+    throw new AnipoWorkflowError(
+      409,
+      "ANIPO_RESERVE_HOLD",
+      "این سفارش در مهلت رزرو ۴۸ ساعته است و تا پایان مهلت بارکد صادر نمی‌شود",
+    );
+  }
+
   const shippingCode = text(order?.ShippingMethodCode || order?.shipping?.Code)?.toLowerCase();
   if (shippingCode !== "post") {
     throw new AnipoWorkflowError(
@@ -304,6 +330,49 @@ async function recordIssuedAudit(
   });
 }
 
+/**
+ * Records a newly issued barcode against the order's combined shipment and stamps
+ * it onto every sibling order that has none, so the tracking number resolves back
+ * to each member without a second physical label being printed. A no-op for an
+ * order that is not part of a reserve group.
+ */
+async function propagateBarcodeToReserveGroup(
+  strapi: Strapi,
+  order: any,
+  orderId: number,
+  barcode: string,
+  trx?: unknown,
+): Promise<void> {
+  const group = await findGroupShippingBarcode(strapi, order);
+  if (!group) return;
+  try {
+    const result = await claimGroupShippingBarcode(
+      strapi,
+      { groupId: group.groupId, barcode },
+      trx,
+    );
+    strapi.log.info("Reserve group shipping barcode propagated", {
+      orderId,
+      groupId: group.groupId,
+      barcode: result.barcode,
+      claimed: result.claimed,
+      ordersStamped: result.ordersStamped,
+    });
+  } catch (error) {
+    // Never fail an issued barcode over propagation: this order's own barcode is
+    // already persisted and correct. Note the reconcile job will NOT retry this --
+    // `refreshAnipoBarcodeStatus` returns early once the order has a barcode. The
+    // siblings stay unstamped until someone submits one of them, which then takes
+    // the adopt path above and stamps the whole group. The logged error is the
+    // signal to look, so it is deliberately error-level.
+    strapi.log.error("Failed to propagate reserve group shipping barcode", {
+      orderId,
+      groupId: group.groupId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function submitAnipoBarcode(
   strapi: Strapi,
   orderId: number,
@@ -334,6 +403,35 @@ export async function submitAnipoBarcode(
   }
 
   assertSubmissionEligibility(order);
+
+  // One parcel, one label. If this order's combined shipment already has a
+  // barcode, adopt it rather than registering a second consignment for a package
+  // that will physically leave once.
+  const groupBarcode = await findGroupShippingBarcode(strapi, order);
+  if (groupBarcode?.barcode) {
+    const propagated = await strapi.db.transaction(async ({ trx }) =>
+      claimGroupShippingBarcode(
+        strapi,
+        { groupId: groupBarcode.groupId, barcode: groupBarcode.barcode! },
+        trx,
+      ),
+    );
+    strapi.log.info("Adopted existing reserve group barcode", {
+      orderId,
+      groupId: groupBarcode.groupId,
+      barcode: propagated.barcode,
+      ordersStamped: propagated.ordersStamped,
+    });
+    return responseFromOrder(
+      {
+        ...order,
+        ShippingBarcode: propagated.barcode,
+        AnipoBarcodeState: ANIPO_BARCODE_STATES.issued,
+      },
+      { already: true },
+    );
+  }
+
   const recipient = validateRecipient(order);
   const packageData = resolveAnipoPackage(order, options);
   const now = options.now ?? new Date();
@@ -386,7 +484,10 @@ export async function submitAnipoBarcode(
       data: updateData,
       transacting: trx,
     } as any);
-    if (barcode) await recordIssuedAudit(strapi, orderId, barcode, options.actor);
+    if (barcode) {
+      await propagateBarcodeToReserveGroup(strapi, order, orderId, barcode, trx);
+      await recordIssuedAudit(strapi, orderId, barcode, options.actor);
+    }
     return persisted;
   });
   return responseFromOrder(updated || { ...order, ...updateData });
@@ -416,7 +517,7 @@ export async function refreshAnipoBarcodeStatus(
   }
 
   const now = options.now ?? new Date();
-  if (!ELIGIBLE_STATUSES.has(String(order.Status || ""))) {
+  if (!ELIGIBLE_STATUSES.has(String(order.Status || "")) || isHeldByReserveWindow(order)) {
     const updated = await strapi.db.query("api::order.order").update({
       where: { id: orderId, AnipoBarcodeState: order.AnipoBarcodeState },
       data: {
@@ -489,6 +590,7 @@ export async function refreshAnipoBarcodeStatus(
       transacting: trx,
     } as any);
     if (barcode && persisted) {
+      await propagateBarcodeToReserveGroup(strapi, order, orderId, barcode, trx);
       await recordIssuedAudit(strapi, orderId, barcode, options.actor);
     }
     return persisted;

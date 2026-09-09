@@ -22,6 +22,7 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: "/orders/print", capability: "order.print" },
   { prefix: "/orders/anipo-barcode", capability: "order.print" },
   { prefix: "/orders/carts", capability: "report.carts.read" },
+  { prefix: "/orders/reserve", capability: "order.read" },
   { prefix: "/orders", capability: "order.read" },
   {
     prefix: "/products/homepage-custom-section",
@@ -61,6 +62,7 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: "/wallets", capability: "wallet.read" },
   { prefix: "/users", capability: "system.users.manage" },
   { prefix: "/issue-reports", capability: "system.issueReports.manage" },
+  { prefix: "/model-applications", capability: "system.modelApplications.manage" },
   { prefix: "/settings/activity", capability: "system.audit.read" },
   { prefix: "/settings", capability: "system.settings.manage" },
   { prefix: "/customization", capability: "system.customization.manage" },

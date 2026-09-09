@@ -26,4 +26,20 @@ describe("product operational routes", () => {
       },
     ]);
   });
+
+  it("requires the scheduling capability for product display-date changes", () => {
+    const route = routeConfig.routes.find(
+      (entry) => entry.path === "/products/:id/display-date",
+    );
+
+    expect(route).toBeDefined();
+    expect(route?.method).toBe("PUT");
+    expect(route?.config.auth).toEqual({ scope: [] });
+    expect(route?.config.policies).toEqual([
+      {
+        name: "global::require-capability",
+        config: { capability: "product.schedule" },
+      },
+    ]);
+  });
 });

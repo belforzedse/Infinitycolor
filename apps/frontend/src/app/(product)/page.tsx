@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS } from "@/constants/categories";
+import { STOREFRONT_MAIN_CATEGORY_OPTIONS } from "@/constants/categories";
 import { getProductCategoriesForRender } from "@/services/product/categories";
 import { blogService } from "@/services/blog/blog.service";
 import { getActiveStories } from "@/services/story/story.service";
@@ -43,10 +43,7 @@ async function getCachedHomepageCategories() {
   cacheLife("storefrontPublic");
   cacheTag("product-categories", "navigation");
   return getProductCategoriesForRender({
-    mainOnly: true,
-    sort: "Title:asc",
-    featuredOnly: true,
-    allowedNameSubstrings: ALLOWED_HOME_NAV_CATEGORY_NAME_SUBSTRINGS,
+    ...STOREFRONT_MAIN_CATEGORY_OPTIONS,
   });
 }
 

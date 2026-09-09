@@ -1,6 +1,7 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import CartDrawerItem from "../Drawer/Item";
+import CartDrawer from "../Drawer";
 import ShoppingCartQuantityControl from "../QuantityControl";
 import type { CartItem } from "@/contexts/CartContext";
 import { useCart } from "@/contexts/CartContext";
@@ -17,6 +18,10 @@ jest.mock("next/image", () => ({
 jest.mock("@/utils/imageLoader", () => ({
   __esModule: true,
   default: jest.fn(),
+}));
+
+jest.mock("@use-gesture/react", () => ({
+  useDrag: () => () => ({}),
 }));
 
 const useCartMock = useCart as jest.Mock;
@@ -56,5 +61,44 @@ describe("cart mutation controls", () => {
     expect(screen.getByTestId("cart-quantity-increase")).toBeDisabled();
     expect(screen.getByTestId("cart-quantity-decrease")).toBeDisabled();
     expect(screen.getByTestId("cart-item-remove")).toBeDisabled();
+  });
+
+  it("keeps the drawer chrome fixed around one bounded scroll region", () => {
+    const closeDrawer = jest.fn();
+    useCartMock.mockReturnValue({
+      cartItems: [cartItem],
+      isDrawerOpen: true,
+      isCartReady: true,
+      isLoading: false,
+      closeDrawer,
+      totalItems: cartItem.quantity,
+      totalPrice: cartItem.price * cartItem.quantity,
+      updateQuantity: jest.fn(),
+      removeFromCart: jest.fn(),
+    });
+
+    render(<CartDrawer />);
+
+    expect(screen.getByTestId("cart-drawer")).toHaveClass("h-dvh", "min-h-0", "overflow-hidden");
+    expect(screen.getByRole("heading", { name: "سبد خرید" }).closest("header")).toHaveClass(
+      "sticky",
+      "top-0",
+      "shrink-0",
+    );
+    expect(screen.getByTestId("cart-drawer-scroll-region")).toHaveClass(
+      "min-h-0",
+      "overflow-y-auto",
+      "overscroll-contain",
+    );
+    expect(screen.getByTestId("cart-drawer-checkout").closest("footer")).toHaveClass(
+      "sticky",
+      "bottom-0",
+      "shrink-0",
+    );
+    expect(screen.getByTestId("cart-drawer-checkout")).toHaveAttribute("href", "/checkout");
+    expect(screen.getByTestId("cart-drawer-view-cart")).toHaveAttribute("href", "/cart");
+
+    fireEvent.click(screen.getByTestId("cart-drawer-checkout"));
+    expect(closeDrawer).toHaveBeenCalled();
   });
 });

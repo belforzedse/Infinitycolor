@@ -65,4 +65,16 @@ export interface SuperAdminOrderDetail {
   anipoProviderStatus?: string;
   anipoLastMessage?: string;
   anipoLastError?: string;
+  /**
+   * Projected server-side from the order's reserve group, never from the order's
+   * frozen reserve columns. `reserveIsHeld` means fulfillment is blocked at the
+   * API, so the UI must reflect the refusal rather than invite it.
+   */
+  isReserveOrder?: boolean;
+  reserveGroupId?: string | null;
+  reserveState?: string | null;
+  reserveClosureReason?: string | null;
+  reserveExpiresAt?: string | null;
+  reserveIsActive?: boolean;
+  reserveIsHeld?: boolean;
 }

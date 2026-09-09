@@ -1,6 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
 import { consumeOrderReservation } from "../../../../utils/stockReservations";
 import { deductWalletBalanceAtomic } from "../../../local-user-wallet/services/local-user-wallet";
+import { confirmReservePaymentForOrder } from "../../../reserve-group/lib/reserve-group";
 
 export async function settleOrderWithWallet(
   strapi: Strapi,
@@ -143,6 +144,12 @@ export async function settleOrderWithWallet(
       },
       transacting: trx,
     } as any);
+
+    // Opens the 48h combined-shipping window on the first paid order, or confirms
+    // an already-bound child. No-op for non-reserve orders. Must run on every
+    // paid transition: a group left PendingActivation would never get a deadline,
+    // never be attachable, and hold its parcel indefinitely.
+    await confirmReservePaymentForOrder(strapi as any, Number(orderId), trx);
     await strapi.db.query("api::payment-attempt.payment-attempt").update({
       where: { id: paymentAttemptId },
       data: {

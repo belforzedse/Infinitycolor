@@ -9,7 +9,6 @@ import Footer from "@/components/PLP/Footer";
 import MobileHeader from "@/components/PLP/Header/Mobile";
 import BottomNavigation from "@/components/PLP/BottomNavigation";
 import ScrollToTop from "@/components/ScrollToTop";
-import { useCart } from "@/contexts/CartContext";
 import AdaptiveQualityBoundary from "@/components/AdaptiveQuality/AdaptiveQualityBoundary";
 import {
   noteEnhancementLoaded,
@@ -26,7 +25,6 @@ const GlassSurface = dynamic(() => import("@/components/GlassSurface"), {
 });
 
 export default function BlogLayout({ children }: { children: React.ReactNode }) {
-  const { isDrawerOpen } = useCart();
   const [scrolled, setScrolled] = React.useState(false);
   const [showHeader, setShowHeader] = React.useState(true);
   const pathname = usePathname();
@@ -167,7 +165,7 @@ export default function BlogLayout({ children }: { children: React.ReactNode }) 
 
         <BottomNavigation />
 
-        {isDrawerOpen && <CartDrawer />}
+        <CartDrawer />
 
         <ScrollToTop />
       </div>

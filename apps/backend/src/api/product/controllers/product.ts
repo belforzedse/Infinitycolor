@@ -420,6 +420,40 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     return super.update(ctx);
   },
 
+  async updateDisplayDate(ctx) {
+    const productId = Number(ctx.params?.id);
+    const displayAt = ctx.request?.body?.data?.displayAt;
+    const parsedDisplayAt = typeof displayAt === "string" ? new Date(displayAt) : null;
+
+    if (
+      !Number.isSafeInteger(productId) ||
+      productId <= 0 ||
+      !parsedDisplayAt ||
+      Number.isNaN(parsedDisplayAt.getTime())
+    ) {
+      ctx.status = 400;
+      ctx.body = {
+        error: {
+          code: "INVALID_PRODUCT_DISPLAY_DATE",
+          message: "A valid product ID and display date are required",
+        },
+      };
+      return;
+    }
+
+    const normalizedDisplayAt = parsedDisplayAt.toISOString();
+    const product = await strapi.entityService.update("api::product.product", productId, {
+      data: { LastEditedByAdminAt: normalizedDisplayAt },
+    });
+
+    ctx.body = {
+      data: {
+        id: product.id,
+        LastEditedByAdminAt: normalizedDisplayAt,
+      },
+    };
+  },
+
   async publication(ctx) {
     const trustedImporter = isTrustedWordPressMigrationRequest();
     let user = ctx.state?.user;

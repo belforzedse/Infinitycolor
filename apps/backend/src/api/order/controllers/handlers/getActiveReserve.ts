@@ -1,5 +1,10 @@
 import type { Strapi } from "@strapi/strapi";
 import { resolveCustomerTargetUserId } from "../../../../utils/roles";
+import {
+  hasPaidMember,
+  RESERVE_GROUP_STATES,
+  UID as RESERVE_GROUP_UID,
+} from "../../../reserve-group/lib/reserve-group";
 
 /** Context shape for getActiveReserve: state and methods used by the handler. */
 export type GetActiveReserveContext = {
@@ -8,17 +13,36 @@ export type GetActiveReserveContext = {
   body?: object;
 };
 
+export type ActiveReservePayload = {
+  reserveGroupId: string;
+  reserveExpiresAt: string | null;
+  orders: unknown[];
+  orderCount: number;
+  shippingCostPaid: number;
+  shippingMethodTitle: string | null;
+  deliveryAddress: unknown;
+  lastOrderAttachedAt: string | null;
+  rootOrderId: number | null;
+};
+
 /**
- * Returns the user's active reserve order (if any), with all linked orders in the group.
- * An active reserve: isReserveOrder=true AND reserveExpiresAt > now.
- * Returns the most recent active group (by reserveExpiresAt) if user has multiple.
+ * The customer's single attachable reserve group, or null.
+ *
+ * "Attachable" means: Active, deadline still ahead, and anchored on an order that
+ * was really paid for. An unpaid or cancelled root deliberately yields null -- the
+ * old behaviour accepted `Status: "Paying"` here, so an abandoned checkout kept
+ * offering a window that could never ship.
+ *
+ * Only one open group can exist per customer (enforced at finalize and by a
+ * partial unique index), so this is a single-row lookup rather than a
+ * most-recent-wins pick that would quietly mask a broken invariant.
  */
 export async function getActiveReserveHandler(
   strapi: Strapi,
   ctx: GetActiveReserveContext,
 ): Promise<
   | { data: null; error?: never }
-  | { data: { reserveGroupId: string; reserveExpiresAt: unknown; orders: unknown[]; orderCount: number }; error?: never }
+  | { data: ActiveReservePayload; error?: never }
   | { data: null; error: { message: string; details?: unknown } }
 > {
   const userId = await resolveCustomerTargetUserId(ctx, strapi);
@@ -26,34 +50,30 @@ export async function getActiveReserveHandler(
 
   try {
     const now = new Date();
-    const oneActive = await strapi.db.query("api::order.order").findOne({
+    const group: any = await strapi.db.query(RESERVE_GROUP_UID).findOne({
       where: {
-        user: { id: userId },
-        isReserveOrder: true,
-        reserveExpiresAt: { $gt: now.toISOString() },
-        Status: { $in: ["Started", "Paying"] },
+        owner: { id: userId },
+        State: RESERVE_GROUP_STATES.active,
+        expiresAt: { $gt: now.toISOString() },
       },
-      orderBy: { reserveExpiresAt: "desc" },
+      populate: {
+        shipping: true,
+        rootOrder: true,
+        delivery_address: {
+          populate: {
+            shipping_city: { populate: { shipping_province: true } },
+          },
+        },
+      },
     });
 
-    if (oneActive?.reserveGroupId) {
-      strapi.log.debug("getActiveReserve: found active reserve", {
-        userId,
-        reserveGroupId: oneActive.reserveGroupId,
-      });
-    }
+    if (!group?.groupKey) return { data: null };
 
-    if (!oneActive?.reserveGroupId) {
-      return { data: null };
-    }
-
-    const groupId = oneActive.reserveGroupId;
+    // A window whose orders were never paid for is not offerable.
+    if (!(await hasPaidMember(strapi, group.id))) return { data: null };
 
     const orders = await strapi.db.query("api::order.order").findMany({
-      where: {
-        user: { id: userId },
-        reserveGroupId: groupId,
-      },
+      where: { user: { id: userId }, reserve_shipment: { id: group.id } },
       populate: {
         order_items: {
           populate: {
@@ -77,20 +97,18 @@ export async function getActiveReserveHandler(
       orderBy: { Date: "asc" },
     });
 
-    strapi.log.debug("getActiveReserve: fetched orders for group", {
-      userId,
-      reserveGroupId: groupId,
-      orderCount: orders.length,
-    });
-
-    const expiresAt = orders[0]?.reserveExpiresAt ?? oneActive.reserveExpiresAt;
-
     return {
       data: {
-        reserveGroupId: groupId,
-        reserveExpiresAt: expiresAt,
+        reserveGroupId: group.groupKey,
+        reserveExpiresAt: group.expiresAt ?? null,
         orders,
         orderCount: orders.length,
+        shippingCostPaid: Number(group.ShippingCostPaid || 0),
+        shippingMethodTitle:
+          group.ShippingMethodTitle || group.shipping?.Title || null,
+        deliveryAddress: group.delivery_address ?? null,
+        lastOrderAttachedAt: group.lastOrderAttachedAt ?? null,
+        rootOrderId: group.rootOrder?.id ?? null,
       },
     };
   } catch (err) {

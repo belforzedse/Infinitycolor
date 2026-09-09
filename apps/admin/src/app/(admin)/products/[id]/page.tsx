@@ -262,7 +262,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         {/* <SetPrice />
         <SetStatus /> */}
         <SetDetails isEditMode />
-        {canUpdate && <ProductDisplayDateCard productId={id} initialDate={displayDate} />}
+        {canSchedule && <ProductDisplayDateCard productId={id} initialDate={displayDate} />}
         {canReadAudit && (
           <ProductActivityLogs productId={id} pageSize={20} title="رویدادهای محصول" />
         )}

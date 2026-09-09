@@ -89,6 +89,7 @@ export default [
   },
   "strapi::query",
   "global::issue-report-envelope",
+  "global::model-application-envelope",
   {
     name: "strapi::body",
     config: {
