@@ -11,6 +11,7 @@ import { useAtom } from "jotai";
 import { refreshTable } from "@/components/SuperAdmin/Table";
 import toast from "react-hot-toast";
 import {
+  cancelOrder,
   changeOrderStatus,
   OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
@@ -40,11 +41,11 @@ const ORDER_TABS: { key: OrderTab; label: string }[] = [
   { key: "manual", label: "سفارش‌های دستی" },
 ];
 
-// Bulk status changes offered on the orders list, using the 4-bucket labels.
+// Fulfilment transitions only. Cancel is a separate bulk action that hits
+// `/admin/cancel` (refund/restock) instead of the status-transition endpoint.
 const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
   { status: "Started", label: "در حال انجام" },
   { status: "Done", label: "تکمیل شده" },
-  { status: "Cancelled", label: "لغو شده یا ناموفق" },
 ];
 
 export default function OrdersPage() {
@@ -52,6 +53,7 @@ export default function OrdersPage() {
   // Bulk actions call the exact same per-order operations, so they must use
   // the same capabilities instead of requiring a second, unrelated bulk flag.
   const canChangeOrderStatus = useCan("order.status.update");
+  const canCancelOrders = useCan("order.cancel");
   const canPrintOrders = useCan("order.read");
   const [, setRefresh] = useAtom(refreshTable);
   const [activeTab, setActiveTab] = useState<OrderTab>("all");
@@ -104,14 +106,45 @@ export default function OrdersPage() {
     return [
       ...(canPrintOrders ? [{ id: "print", title: "پرینت دسته‌ای" }] : []),
       ...statusOptions,
+      ...(canCancelOrders ? [{ id: "cancel", title: "لغو سفارش" }] : []),
     ];
-  }, [canChangeOrderStatus, canPrintOrders]);
+  }, [canCancelOrders, canChangeOrderStatus, canPrintOrders]);
 
   const handleBulkAction = useCallback(
     async (actionId: string, selectedRows: Order[]) => {
       if (actionId === "print") {
         if (!canPrintOrders) return;
         bulkPrintOrders(selectedRows.map((row) => row.id));
+        return;
+      }
+
+      if (actionId === "cancel") {
+        if (!canCancelOrders) return;
+        const alreadyCancelled = selectedRows.filter(
+          (row) => row.attributes.Status === "Cancelled",
+        );
+        const eligible = selectedRows.filter(
+          (row) => row.attributes.Status !== "Cancelled",
+        );
+
+        if (eligible.length === 0) {
+          toast.error("همه سفارش‌های انتخاب‌شده قبلاً لغو شده‌اند.");
+          return;
+        }
+
+        try {
+          await Promise.all(
+            eligible.map((row) => cancelOrder(Number(row.id))),
+          );
+          toast.success(`${eligible.length} سفارش لغو شد.`);
+          if (alreadyCancelled.length > 0) {
+            toast(`${alreadyCancelled.length} سفارش از قبل لغو شده بود.`);
+          }
+          setRefresh(true);
+        } catch (error) {
+          console.error("Bulk order cancel error:", error);
+          toast.error("لغو سفارش‌ها انجام نشد. دوباره تلاش کنید");
+        }
         return;
       }
 
@@ -122,10 +155,11 @@ export default function OrdersPage() {
           "",
         ) as OrderLifecycleStatus;
 
-        // Held reserve orders are refused server-side (`RESERVE_HOLD_ACTIVE`).
-        // Filtering them out here means a mixed selection still succeeds for the
-        // rest instead of failing as a partially-applied batch, and the operator
-        // is told exactly which orders were left behind and why.
+        // Held reserve orders are refused server-side (`RESERVE_HOLD_ACTIVE`)
+        // for fulfilment transitions. Filtering them out here means a mixed
+        // selection still succeeds for the rest instead of failing as a
+        // partially-applied batch. Cancel is handled above and does not skip
+        // held reserve orders.
         const held = selectedRows.filter((row) => row.attributes.reserveIsHeld);
         const eligible = selectedRows.filter((row) => !row.attributes.reserveIsHeld);
 
@@ -152,11 +186,11 @@ export default function OrdersPage() {
           setRefresh(true);
         } catch (error) {
           console.error("Bulk order status update error:", error);
-          toast.error("خطا در بروزرسانی وضعیت سفارش‌ها");
+          toast.error("خطا در بروزرسانی وضعیت سفارش‌ها. دوباره تلاش کنید");
         }
       }
     },
-    [canChangeOrderStatus, canPrintOrders, setRefresh],
+    [canCancelOrders, canChangeOrderStatus, canPrintOrders, setRefresh],
   );
 
   const loadOrders = useCallback(

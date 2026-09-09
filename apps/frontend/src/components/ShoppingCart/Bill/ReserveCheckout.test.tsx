@@ -295,4 +295,96 @@ describe("reserve checkout", () => {
       expect(screen.getByTestId("checkout-delivery-form")).toBeInTheDocument();
     });
   });
+
+  // An open window whose deadline we cannot read must stay offered. Treating it
+  // as expired used to clear activeReserve, which brought the "open a window"
+  // switch back AND disabled the submit guard -- so the shopper silently paid
+  // shipping twice instead of being asked.
+  describe("Case B -- open window with an unreadable deadline", () => {
+    beforeEach(() => {
+      (OrderService.getActiveReserve as jest.Mock).mockResolvedValue(
+        activeReserve({ reserveExpiresAt: null }),
+      );
+    });
+
+    it("keeps the attach offer and just drops the countdown", async () => {
+      renderCheckout();
+      await readyForm();
+
+      expect(
+        await screen.findByRole("button", { name: /افزودن به سفارش رزروی فعال/ }),
+      ).toBeInTheDocument();
+      // Not mistaken for a closed window.
+      expect(screen.queryByTestId("reserve-window-closed-notice")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("switch", { name: /ارسال رزروی ۴۸ ساعته/ }),
+      ).not.toBeInTheDocument();
+      // The countdown is omitted rather than rendered as a bogus value.
+      expect(screen.queryByText(/باقی مانده/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/مهلت افزودن سفارش تا/)).not.toBeInTheDocument();
+    });
+
+    it("still refuses to submit until the shopper chooses", async () => {
+      renderCheckout();
+      await readyForm();
+      await screen.findByRole("button", { name: /افزودن به سفارش رزروی فعال/ });
+
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.submit(screen.getByTestId("checkout-submit").closest("form")!);
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود"),
+        ).toBeInTheDocument(),
+      );
+      expect(CartService.finalizeCart).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("RESERVE_ALREADY_ACTIVE recovery", () => {
+    it("surfaces the attach card instead of naming controls that are not on screen", async () => {
+      // The client starts out unaware of the window, so it offers Case A.
+      (OrderService.getActiveReserve as jest.Mock)
+        .mockResolvedValueOnce({ data: null })
+        .mockResolvedValue(activeReserve());
+      // Must equal the shopper-visible total (subtotal 100k + shipping 20k),
+      // otherwise the quote-review gate consumes the first submit.
+      (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+        quoteHash: "hash-1",
+        financialSummary: { total: 120_000 },
+      });
+      (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+        success: false,
+        errorCode: "RESERVE_ALREADY_ACTIVE",
+        message: "already active",
+        reserveGroupId: "grp-1",
+      });
+
+      renderCheckout();
+      await readyForm();
+
+      expect(
+        await screen.findByRole("switch", { name: /ارسال رزروی ۴۸ ساعته/ }),
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("select-checkout-customer"));
+      fireEvent.click(screen.getByTestId("select-shipping"));
+      fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+      fireEvent.submit(screen.getByTestId("checkout-submit").closest("form")!);
+
+      await waitFor(() => expect(CartService.finalizeCart).toHaveBeenCalled());
+      // Without the refetch the message tells the shopper to use a card that
+      // does not exist, and only a page reload recovers.
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /افزودن به سفارش رزروی فعال/ }),
+        ).toBeInTheDocument(),
+      );
+      // Match the error's own clause: the card heading reuses the first sentence.
+      expect(
+        screen.getByText(/این سفارش را به همان بسته اضافه کنید/),
+      ).toBeInTheDocument();
+    });
+  });
 });

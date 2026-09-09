@@ -152,7 +152,9 @@ export default function BlogLayout({ children }: { children: React.ReactNode }) 
         </header>
 
         <div className="hidden lg:block">
-          <HeaderDesktopNav />
+          <React.Suspense fallback={<div className="h-12 bg-stone-50" />}>
+            <HeaderDesktopNav />
+          </React.Suspense>
         </div>
 
         <section key={pathname} id="content">

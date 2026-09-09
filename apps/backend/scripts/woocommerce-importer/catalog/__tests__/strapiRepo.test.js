@@ -185,6 +185,27 @@ test("syncProductSizeHelper: updates existing helper", async () => {
   assert.deepEqual(http.puts[0].body.data, { Helper: matrix });
 });
 
+test("upsertCategoryEditorial writes the bounded editorial API and never the retired CRUD", async () => {
+  const http = mockHttp();
+  http.get = async (url, config) => {
+    http.gets.push({ url, config });
+    return { data: { data: { editorial: { updatedAt: "2026-09-09T12:00:00.000Z" } } } };
+  };
+  const repo = new StrapiRepo(http, noopLogger);
+  const mode = await repo.upsertCategoryEditorial(41, {
+    Title: "خرید مانتو",
+    Paragraph: "مقدمه",
+    Content: "<p>متن</p>",
+    IsPublished: true,
+    IsRTL: true,
+  });
+  assert.equal(mode, "updated");
+  assert.equal(http.gets[0].url, "/category-editorial/41");
+  assert.equal(http.puts[0].url, "/category-editorial/41");
+  assert.equal(http.posts.length, 0);
+  assert.doesNotMatch(JSON.stringify(http.gets), /product-category-contents/);
+});
+
 test("syncProductSizeHelper: deletes existing helper when WooCommerce has none", async () => {
   const http = mockHttp();
   http.get = async (url, config) => {

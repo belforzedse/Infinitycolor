@@ -92,6 +92,20 @@ describe("HeroBannerSlider adaptive gate", () => {
     await waitFor(() => expect(screen.getByText("Enhanced hero")).toBeInTheDocument());
   });
 
+  it("places pagination below the mobile banner instead of overlaying slide content", () => {
+    mockHydrated = true;
+    const { container } = render(<HeroBannerSlider slides={[slide("one"), slide("two")]} />);
+
+    const banner = container.querySelector("[data-hero-banner]");
+    const pagination = container.querySelector("[data-hero-pagination]");
+    const slideButton = screen.getByRole("button", { name: "Go to slide 2" });
+
+    expect(banner).toBeInTheDocument();
+    expect(pagination).toBeInTheDocument();
+    expect(banner?.contains(slideButton)).toBe(false);
+    expect(pagination?.contains(slideButton)).toBe(true);
+  });
+
   it("keeps every slide and manual control available in Safe or Minimal", async () => {
     mockHydrated = true;
     mockQuality = {

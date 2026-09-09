@@ -2,7 +2,7 @@
 
 import { AnimatePresence, LazyMotion, MotionConfig, m, type PanInfo } from "framer-motion";
 import { useCallback, useEffect, useState } from "react";
-import PaginationDesktop from "./PaginationDesktop";
+import HeroBannerPagination from "./HeroBannerPagination";
 import ResponsiveHeroImage from "./ResponsiveHeroImage";
 import { useAutoplaySlider } from "./useAutoplaySlider";
 import { noteEnhancementLoaded } from "@/lib/adaptive-quality";
@@ -82,12 +82,13 @@ export default function HeroEnhancedSlider({
     <MotionConfig reducedMotion="user">
       <LazyMotion features={loadMotionFeatures} strict>
         <div
-          className="relative mx-auto w-full overflow-hidden rounded-[18px] lg:rounded-[34px]"
+          className="relative mx-auto w-full lg:overflow-hidden lg:rounded-[34px]"
           data-aq-hero="enhanced"
           data-adaptive-decorative="rich"
         >
           <m.div
-            className="relative aspect-[361/387] w-full touch-pan-y overflow-hidden rounded-[inherit] bg-[#f9f1ee] lg:aspect-[1360/581]"
+            className="relative aspect-[361/387] w-full touch-pan-y overflow-hidden rounded-[18px] bg-[#f9f1ee] lg:aspect-[1360/581] lg:rounded-[inherit]"
+            data-hero-banner=""
             drag={hasMultipleSlides ? "x" : false}
             dragConstraints={{ left: 0, right: 0 }}
             dragElastic={0.12}
@@ -110,19 +111,14 @@ export default function HeroEnhancedSlider({
           </m.div>
 
           {hasMultipleSlides ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center sm:bottom-3 lg:bottom-4">
-              <PaginationDesktop
-                total={slides.length}
-                index={index}
-                onDotClick={goToSlide}
-                onNext={goNext}
-                onPrev={goPrevious}
-                className="pointer-events-auto bg-white/45 shadow-sm backdrop-blur-md"
-                arrowClassName="text-[#623E29]"
-                dotClassName="bg-[#623E29]/25"
-                dotActiveClassName="bg-[#623E29]/70"
-              />
-            </div>
+            <HeroBannerPagination
+              total={slides.length}
+              index={index}
+              onDotClick={goToSlide}
+              onNext={goNext}
+              onPrev={goPrevious}
+              className="pointer-events-auto bg-white/45 shadow-sm backdrop-blur-md"
+            />
           ) : null}
         </div>
       </LazyMotion>

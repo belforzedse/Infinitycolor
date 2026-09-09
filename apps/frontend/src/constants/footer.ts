@@ -1,9 +1,14 @@
 import { RETURNS_PATH, RETURNS_TITLE } from "./legal";
 
-export interface FooterLink {
-  title: string;
-  url: string;
-}
+export type FooterLink =
+  | {
+      title: string;
+      url: string;
+    }
+  | {
+      title: string;
+      action: "open-model-hiring";
+    };
 
 export interface FooterColumn {
   header: string;
@@ -64,6 +69,7 @@ export const FOOTER_DATA: FooterData = {
       { title: "تماس با ما", url: "/contact" },
       { title: "سوالات متداول", url: "/faq" },
       { title: RETURNS_TITLE, url: RETURNS_PATH },
+      { title: "درخواست همکاری", action: "open-model-hiring" },
     ],
   },
   contactUs: {

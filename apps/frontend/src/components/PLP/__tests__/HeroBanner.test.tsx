@@ -1,8 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import PLPHeroBanner from "../HeroBanner";
 import {
+  clampPlpHeroIndex,
   getPlpHeroSwipeDelta,
   PLP_HERO_SLIDES,
+  PLP_HERO_SWIPE_FLICK_VELOCITY,
   PLP_HERO_SWIPE_THRESHOLD_PX,
 } from "../plpHeroSlides";
 import { scrollIntoViewWithOffset } from "@/utils/scroll";
@@ -13,11 +15,51 @@ jest.mock("@/utils/scroll", () => ({
 
 const mockedScroll = scrollIntoViewWithOffset as jest.MockedFunction<typeof scrollIntoViewWithOffset>;
 
+function swipePointer(
+  target: Element,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  const fire = (type: string, x: number, y: number) => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.assign(event, {
+      pointerId: 1,
+      pointerType: "touch",
+      button: 0,
+      clientX: x,
+      clientY: y,
+    });
+    target.dispatchEvent(event);
+  };
+
+  act(() => {
+    fire("pointerdown", from.x, from.y);
+    fire("pointermove", to.x, to.y);
+    fire("pointerup", to.x, to.y);
+  });
+}
+
 describe("getPlpHeroSwipeDelta", () => {
   it("advances on a left swipe and ignores small movement", () => {
     expect(getPlpHeroSwipeDelta(-(PLP_HERO_SWIPE_THRESHOLD_PX + 1))).toBe(1);
     expect(getPlpHeroSwipeDelta(PLP_HERO_SWIPE_THRESHOLD_PX + 1)).toBe(-1);
     expect(getPlpHeroSwipeDelta(PLP_HERO_SWIPE_THRESHOLD_PX - 1)).toBe(0);
+  });
+
+  it("accepts a short flick when velocity is high", () => {
+    expect(getPlpHeroSwipeDelta(-16, PLP_HERO_SWIPE_THRESHOLD_PX, PLP_HERO_SWIPE_FLICK_VELOCITY)).toBe(
+      1,
+    );
+    expect(getPlpHeroSwipeDelta(16, PLP_HERO_SWIPE_THRESHOLD_PX, PLP_HERO_SWIPE_FLICK_VELOCITY)).toBe(
+      -1,
+    );
+  });
+});
+
+describe("clampPlpHeroIndex", () => {
+  it("stops at the first and last slide instead of wrapping", () => {
+    expect(clampPlpHeroIndex(-1)).toBe(0);
+    expect(clampPlpHeroIndex(PLP_HERO_SLIDES.length + 2)).toBe(PLP_HERO_SLIDES.length - 1);
   });
 });
 
@@ -76,5 +118,25 @@ describe("PLPHeroBanner", () => {
 
     expect(screen.getByRole("tab", { name: "اسلاید ۲" })).toHaveAttribute("aria-selected", "true");
     expect(mockedScroll).not.toHaveBeenCalled();
+  });
+
+  it("follows a horizontal swipe onto the next slide without scrolling to products", () => {
+    render(<PLPHeroBanner />);
+    const frame = screen.getByRole("button", { name: "مشاهده محصولات" });
+    Object.defineProperty(frame, "offsetWidth", { configurable: true, value: 400 });
+
+    swipePointer(frame, { x: 280, y: 40 }, { x: 80, y: 42 });
+
+    expect(screen.getByRole("tab", { name: "اسلاید ۲" })).toHaveAttribute("aria-selected", "true");
+    expect(mockedScroll).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current slide when the gesture is vertical scrolling", () => {
+    render(<PLPHeroBanner />);
+    const frame = screen.getByRole("button", { name: "مشاهده محصولات" });
+
+    swipePointer(frame, { x: 200, y: 16 }, { x: 204, y: 90 });
+
+    expect(screen.getByRole("tab", { name: "اسلاید ۱" })).toHaveAttribute("aria-selected", "true");
   });
 });

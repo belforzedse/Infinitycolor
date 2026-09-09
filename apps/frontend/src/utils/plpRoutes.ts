@@ -52,3 +52,45 @@ export function getCategoryPlpHrefWithQuery(
   }
   return appendQuery(getCategoryPlpHref(slug), params);
 }
+
+type SearchLookup = Pick<URLSearchParams, "get"> | string | null | undefined;
+
+function decodePathname(path: string) {
+  try {
+    return decodeURI(path);
+  } catch {
+    return path;
+  }
+}
+
+function lookupSearchParam(search: SearchLookup, key: string) {
+  if (!search) return null;
+  if (typeof search === "string") {
+    return new URLSearchParams(search.startsWith("?") ? search.slice(1) : search).get(key);
+  }
+  return search.get(key);
+}
+
+/**
+ * Nav items that share `/plp` but carry different queries (Oppsi, discounts)
+ * must not all light up on a bare product list.
+ */
+export function isActiveNavHref(
+  href: string,
+  pathname: string,
+  search: SearchLookup = "",
+): boolean {
+  if (href === "/") return pathname === "/";
+
+  const queryIndex = href.indexOf("?");
+  const hrefPath = queryIndex >= 0 ? href.slice(0, queryIndex) : href;
+  const hrefQuery = queryIndex >= 0 ? href.slice(queryIndex + 1) : "";
+
+  if (decodePathname(pathname) !== decodePathname(hrefPath)) return false;
+
+  const required = new URLSearchParams(hrefQuery);
+  const requiredEntries = [...required.entries()];
+  if (requiredEntries.length === 0) return true;
+
+  return requiredEntries.every(([key, value]) => lookupSearchParam(search, key) === value);
+}

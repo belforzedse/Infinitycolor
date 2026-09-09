@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useState } from "react";
+import React, { createContext, Suspense, useCallback, useContext, useState } from "react";
 import MobileMenu from "@/components/PLP/Header/Mobile/MobileMenu";
 
 type OpenMobileMenuOptions = {
@@ -32,11 +32,15 @@ export function MobileMenuProvider({ children }: { children: React.ReactNode }) 
   return (
     <MobileMenuContext.Provider value={{ isOpen, openMenu, closeMenu }}>
       {children}
-      <MobileMenu
-        isOpen={isOpen}
-        onClose={closeMenu}
-        focusSearchOnOpen={focusSearchOnOpen}
-      />
+      {/* MobileMenu reads useSearchParams(); without this boundary Next cannot
+          statically prerender routes that only use the root layout (/categories). */}
+      <Suspense fallback={null}>
+        <MobileMenu
+          isOpen={isOpen}
+          onClose={closeMenu}
+          focusSearchOnOpen={focusSearchOnOpen}
+        />
+      </Suspense>
     </MobileMenuContext.Provider>
   );
 }

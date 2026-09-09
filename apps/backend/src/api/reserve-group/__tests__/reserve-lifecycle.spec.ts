@@ -354,7 +354,12 @@ describe("reserve group lifecycle", () => {
 
       const [stampSql, stampBindings] = raw.mock.calls[1];
       expect(stampSql).toContain("UPDATE orders");
-      expect(stampSql).toContain("reserve_shipment_id = ?");
+      // Membership lives in the link table. This assertion used to demand
+      // `reserve_shipment_id = ?` -- a column Strapi's schema sync drops on every
+      // boot -- so the suite stayed green while production threw 42703.
+      expect(stampSql).toContain("orders_reserve_shipment_links");
+      expect(stampSql).toContain("l.reserve_group_id = ?");
+      expect(stampSql).not.toContain("reserve_shipment_id = ?");
       expect(stampBindings).toEqual(["ANP-1", 5]);
     });
 
@@ -389,7 +394,7 @@ describe("reserve group lifecycle", () => {
       await claimGroupShippingBarcode(strapi, { groupId: 5, barcode: "ANP-1" });
 
       const [stampSql] = raw.mock.calls[1];
-      expect(stampSql).toContain("shipping_barcode IS NULL OR shipping_barcode = \'\'");
+      expect(stampSql).toContain("o.shipping_barcode IS NULL OR o.shipping_barcode = \'\'");
     });
 
     it("is a no-op for an order that belongs to no group", async () => {

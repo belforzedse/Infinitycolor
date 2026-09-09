@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Official Bale mark from https://bale.ai/logo/bale_logo.svg (icon portion). -->
+  <path
+    fill="#00B894"
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M16 0C7.163 0 0 7.163 0 16s7.163 16 16 16 16-7.163 16-16S24.837 0 16 0zm9.34 13.953L16.05 23.243a3.12 3.12 0 0 1-4.416 0l-4.974-4.974a3.12 3.12 0 0 1 4.415 0l2.767 2.766 7.083-7.083a3.12 3.12 0 0 1 4.415 4.415z"
+  />
+</svg>

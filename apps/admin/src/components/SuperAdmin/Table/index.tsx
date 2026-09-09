@@ -553,7 +553,7 @@ export function SuperAdminTable<TData, TValue>({
   // so two lists on the same screen width could disagree about their layout.
   const cardLayoutClassName = "block lg:hidden";
   const tableLayoutClassName =
-    "hidden w-full overflow-x-auto overflow-y-clip lg:block";
+    "hidden min-w-0 w-full overflow-x-auto overflow-y-clip lg:block";
 
   return (
     <div className="w-full">

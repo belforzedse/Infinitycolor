@@ -625,13 +625,20 @@ export async function claimGroupShippingBarcode(
     if (current) effective = String(current);
   }
 
+  // Membership goes through the link table, NOT an `orders.reserve_shipment_id`
+  // column. Strapi v4 stores every manyToOne in `<owner>_<attr>_links`, and its
+  // boot-time schema sync drops any column it does not find in schema.json --
+  // so a migration-added FK column silently disappears and this statement fails
+  // with 42703 the first time an operator prints a combined-parcel label.
   const stamped = await runRawSql(
     strapi,
-    `UPDATE orders
+    `UPDATE orders o
         SET shipping_barcode = ?, updated_at = NOW()
-      WHERE reserve_shipment_id = ?
-        AND (shipping_barcode IS NULL OR shipping_barcode = '')
-      RETURNING id`,
+       FROM orders_reserve_shipment_links l
+      WHERE l.order_id = o.id
+        AND l.reserve_group_id = ?
+        AND (o.shipping_barcode IS NULL OR o.shipping_barcode = '')
+      RETURNING o.id`,
     [effective, params.groupId],
     trx,
   );

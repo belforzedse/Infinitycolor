@@ -779,6 +779,10 @@ describe("role permission templates", () => {
         actions: ["api::order.order.adminUpdateNotes"],
       },
       {
+        capabilities: ["order.cancel"],
+        actions: ["api::order.order.adminCancel"],
+      },
+      {
         capabilities: ["order.financial.read"],
         actions: ["api::order.order.adminPaymentOperation"],
       },
@@ -1167,6 +1171,7 @@ describe("role permission templates", () => {
     expect(order.adminAdjustItems.enabled).toBe(false);
     expect(order.adminUpdateNotes.enabled).toBe(true);
     expect(order.adminTransition.enabled).toBe(true);
+    expect(order.adminCancel.enabled).toBe(true);
     expect(order.create.enabled).toBe(false);
     expect(order.update.enabled).toBe(false);
     expect(order.delete.enabled).toBe(false);
@@ -1249,6 +1254,7 @@ describe("role permission templates", () => {
     expect(enabled("api::shipping-province", "shipping-province")).toEqual(["find", "findOne"]);
     expect(enabled("api::shipping-city", "shipping-city")).toEqual(["find", "findOne"]);
     expect(enabled("api::order", "order")).toEqual([
+      "adminCancel",
       "adminTransition",
       "adminUpdateNotes",
       "checkPaymentStatus",

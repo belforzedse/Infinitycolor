@@ -176,6 +176,24 @@ describe("SubNav", () => {
     const { container } = render(<SubNav items={[]} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("keeps tabs in one horizontally scrollable row instead of wrapping", () => {
+    const { container } = render(
+      <SubNav
+        items={[
+          ...items,
+          { id: "/sales/traffic", label: "ترافیک", href: "/sales/traffic" },
+          { id: "/sales/carts", label: "سبدهای رهاشده", href: "/sales/carts" },
+        ]}
+      />,
+    );
+
+    const nav = screen.getByRole("navigation", { name: "بخش‌ها" });
+    const list = container.querySelector("ul");
+    expect(nav.className).toMatch(/overflow-x-auto/);
+    expect(list).toHaveClass("min-w-max", "flex-nowrap");
+    expect(list?.className).not.toMatch(/flex-wrap/);
+  });
 });
 
 describe("collection states", () => {

@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
+import SuperAdminTableCellActionButton from "@/components/SuperAdmin/Table/Cells/ActionButton";
+import EyeIcon from "@/components/SuperAdmin/Layout/Icons/EyeIcon";
 import { priceFormatter } from "@/utils/price";
 import {
   formatFaDateTime,
@@ -196,13 +198,19 @@ export const reserveGroupColumns: ColumnDef<AdminReserveGroup>[] = [
     accessorKey: "id",
     header: "عملیات",
     enableSorting: false,
+    meta: {
+      headerClassName: "text-left",
+      cellClassName: "text-left",
+    },
     cell: ({ row }) => (
-      <Link
-        href={`/orders/reserve/${encodeURIComponent(row.original.groupKey)}`}
-        className="rounded-lg border border-neutral-300 px-3 py-1 text-sm text-neutral-700 hover:bg-neutral-50"
-      >
-        مدیریت بسته
-      </Link>
+      <SuperAdminTableCellActionButton
+        variant="secondary"
+        path={`/orders/reserve/${encodeURIComponent(row.original.groupKey)}`}
+        icon={<EyeIcon />}
+        ariaLabel="مشاهده بسته"
+        testId="admin-reserve-group-view"
+        dataAttributes={{ "group-key": row.original.groupKey }}
+      />
     ),
   },
 ];

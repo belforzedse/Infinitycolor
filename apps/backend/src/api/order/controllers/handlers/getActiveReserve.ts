@@ -33,9 +33,10 @@ export type ActiveReservePayload = {
  * old behaviour accepted `Status: "Paying"` here, so an abandoned checkout kept
  * offering a window that could never ship.
  *
- * Only one open group can exist per customer (enforced at finalize and by a
- * partial unique index), so this is a single-row lookup rather than a
- * most-recent-wins pick that would quietly mask a broken invariant.
+ * Only one open group can exist per customer -- enforced at finalize, in
+ * application code only; see the note there on why no database constraint can
+ * express it. This stays a single-row lookup rather than a most-recent-wins pick
+ * precisely because that would quietly mask the invariant being broken.
  */
 export async function getActiveReserveHandler(
   strapi: Strapi,

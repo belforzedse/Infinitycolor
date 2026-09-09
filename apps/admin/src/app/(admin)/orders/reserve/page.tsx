@@ -141,6 +141,7 @@ export default function ReserveGroupsPage() {
 
       <SuperAdminTable
         columns={reserveGroupColumns}
+        className="min-w-max [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap"
         filters={advancedFilters}
         dataLoader={loadGroups}
         dataLoaderKey={JSON.stringify({

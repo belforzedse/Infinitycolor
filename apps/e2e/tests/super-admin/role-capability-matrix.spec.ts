@@ -100,7 +100,13 @@ const STAFF_ROLES: StaffRoleCase[] = [
       "product.publish",
       "product.variation.manage",
     ],
-    absentCapabilities: ["product.schedule", "product.delete", "order.read", "content.stories.manage"],
+    absentCapabilities: [
+      "product.schedule",
+      "product.delete",
+      "order.read",
+      "order.cancel",
+      "content.stories.manage",
+    ],
     forbiddenPath: "/orders",
     allowedApi: (request, role) =>
       apiPost(request, role, "/admin/products-list/query", {
@@ -133,11 +139,11 @@ const STAFF_ROLES: StaffRoleCase[] = [
       "order.read",
       "order.status.update",
       "order.notes.update",
+      "order.cancel",
       "content.stories.manage",
     ],
     absentCapabilities: [
       "report.product.read",
-      "order.cancel",
       "wallet.adjust",
       "category.delete",
     ],
@@ -160,10 +166,15 @@ const STAFF_ROLES: StaffRoleCase[] = [
     sidebarCount: 9,
     visibleSidebarIds: ["products", "product-categories", "orders", "stories"],
     hiddenSidebarIds: ["manage-products", "sales", "sales-products", "wallets"],
-    requiredCapabilities: ["product.schedule", "order.status.update", "order.notes.update", "content.stories.manage"],
+    requiredCapabilities: [
+      "product.schedule",
+      "order.status.update",
+      "order.notes.update",
+      "order.cancel",
+      "content.stories.manage",
+    ],
     absentCapabilities: [
       "report.product.read",
-      "order.cancel",
       "order.manual.create",
       "report.finance.read",
     ],
@@ -195,6 +206,7 @@ const STAFF_ROLES: StaffRoleCase[] = [
     requiredCapabilities: [
       "order.status.update",
       "order.notes.update",
+      "order.cancel",
       "product.schedule",
       "wallet.customer.search",
       "wallet.read",
@@ -204,7 +216,6 @@ const STAFF_ROLES: StaffRoleCase[] = [
     ],
     absentCapabilities: [
       "report.product.read",
-      "order.cancel",
       "order.manual.create",
       "report.finance.read",
       "system.users.manage",
@@ -236,6 +247,7 @@ const STAFF_ROLES: StaffRoleCase[] = [
     hiddenSidebarIds: ["sales-products", "wallets", "settings"],
     requiredCapabilities: [
       "order.financial.read",
+      "order.cancel",
       "product.schedule",
       "report.finance.read",
       "report.carts.read",
@@ -268,6 +280,7 @@ const STAFF_ROLES: StaffRoleCase[] = [
     requiredCapabilities: [
       "order.status.update",
       "order.financial.read",
+      "order.cancel",
       "product.schedule",
       "order.manual.create",
       "report.traffic.read",

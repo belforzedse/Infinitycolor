@@ -170,6 +170,7 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
       "order.read",
       "order.status.update",
       "order.notes.update",
+      "order.cancel",
       "content.stories.manage",
     ],
   },
@@ -181,7 +182,7 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
     strapiName: "Store Manager",
     inherits: ["seller2"],
     // No unique capabilities today: same operational surface as Seller 2.
-    // Analytics stay on Finance+; destructive order actions stay Superadmin-only.
+    // Analytics stay on Finance+. Order cancel starts at Seller 2.
     capabilities: [],
   },
   store_manager_2: {

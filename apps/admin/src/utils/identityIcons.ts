@@ -36,6 +36,38 @@ export type SocialPlatformMeta = {
 
 const GenericSocialIcon = MessageCircle as SocialIconComponent;
 
+/** Official Bale check-in-circle from https://bale.ai/logo/bale_logo.svg */
+const BALE_ICON_PATH =
+  "M16 0C7.163 0 0 7.163 0 16s7.163 16 16 16 16-7.163 16-16S24.837 0 16 0zm9.34 13.953L16.05 23.243a3.12 3.12 0 0 1-4.416 0l-4.974-4.974a3.12 3.12 0 0 1 4.415 0l2.767 2.766 7.083-7.083a3.12 3.12 0 0 1 4.415 4.415z";
+
+const BaleIcon: SocialIconComponent = ({
+  "aria-hidden": ariaHidden,
+  className,
+  color,
+  focusable,
+  size = 16,
+}) =>
+  createElement(
+    "svg",
+    {
+      "aria-hidden": ariaHidden,
+      className,
+      color,
+      fill: "none",
+      focusable,
+      height: size,
+      viewBox: "0 0 32 32",
+      width: size,
+      xmlns: "http://www.w3.org/2000/svg",
+    },
+    createElement("path", {
+      clipRule: "evenodd",
+      d: BALE_ICON_PATH,
+      fill: "currentColor",
+      fillRule: "evenodd",
+    }),
+  );
+
 export const SOCIAL_PLATFORM_META: Record<SocialPlatform, SocialPlatformMeta> = {
   instagram: {
     value: "instagram",
@@ -58,8 +90,9 @@ export const SOCIAL_PLATFORM_META: Record<SocialPlatform, SocialPlatformMeta> = 
   bale: {
     value: "bale",
     label: "بله",
+    Icon: BaleIcon,
     iconSrc: "/images/social/bale.svg",
-    color: "#0CBC8D",
+    color: "#00B894",
   },
   x: {
     value: "x",
@@ -141,6 +174,16 @@ export function SocialPlatformIcon({
   const { Icon, color, iconSrc, label } = getSocialPlatformMeta(platform);
   const iconClassName = `shrink-0 ${className ?? ""}`.trim();
 
+  if (Icon) {
+    return createElement(Icon, {
+      "aria-hidden": true,
+      className: iconClassName,
+      color,
+      focusable: false,
+      size,
+    });
+  }
+
   if (iconSrc) {
     return createElement("img", {
       "aria-hidden": true,
@@ -153,15 +196,7 @@ export function SocialPlatformIcon({
     });
   }
 
-  if (!Icon) return null;
-
-  return createElement(Icon, {
-    "aria-hidden": true,
-    className: iconClassName,
-    color,
-    focusable: false,
-    size,
-  });
+  return null;
 }
 
 export function contactIcon(type?: ContactNumberType): string {

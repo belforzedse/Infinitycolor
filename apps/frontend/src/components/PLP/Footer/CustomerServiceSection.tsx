@@ -1,4 +1,4 @@
-import FooterLink from "./FooterLink";
+import { FooterNavItem } from "./FooterLink";
 import type { FooterLink as FooterLinkType } from "@/constants/footer";
 
 interface CustomerServiceSectionProps {
@@ -18,9 +18,7 @@ const CustomerServiceSection = ({
         <h3 className="text-base text-neutral-900">{header}</h3>
         <div className="flex flex-col items-start gap-2">
           {links.map((link, index) => (
-            <FooterLink key={index} href={link.url}>
-              {link.title}
-            </FooterLink>
+            <FooterNavItem key={index} link={link} />
           ))}
         </div>
       </div>

@@ -10,7 +10,9 @@ describe("footer quick-access categories", () => {
       { title: "خرید مانتو", url: "/plp/category/coat-and-mantle" },
     ]);
 
-    expect(new Set(FOOTER_DATA.second.links.map(({ url }) => url)).size).toBe(5);
+    expect(
+      new Set(FOOTER_DATA.second.links.map((link) => ("url" in link ? link.url : ""))).size,
+    ).toBe(5);
   });
 
   it("exposes the exchange and return policy in customer-service links", () => {
@@ -18,6 +20,13 @@ describe("footer quick-access categories", () => {
     expect(FOOTER_DATA.third.links).toContainEqual({
       title: "شرایط و مقررات تعویض و مرجوع",
       url: "/returns",
+    });
+  });
+
+  it("opens model hiring from درخواست همکاری in customer-service links", () => {
+    expect(FOOTER_DATA.third.links).toContainEqual({
+      title: "درخواست همکاری",
+      action: "open-model-hiring",
     });
   });
 });

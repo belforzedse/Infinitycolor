@@ -300,36 +300,50 @@ function ShoppingCartBillForm({}: Props) {
     } catch {}
   }, [discountCode]);
 
-  useEffect(() => {
-    const loadActiveReserve = async () => {
-      if (!RESERVE_FEATURE_ENABLED) return;
-      if (!currentUser) return;
-      try {
-        const res = await OrderService.getActiveReserve();
-        const d = res?.data;
-        if (d?.reserveGroupId) {
-          setActiveReserve({
-            reserveGroupId: d.reserveGroupId,
-            reserveExpiresAt: d.reserveExpiresAt ?? null,
-            orderCount: d.orderCount,
-            shippingMethodTitle: d.shippingMethodTitle ?? null,
-            destination: formatReserveDestination(d.deliveryAddress),
-            rootOrderId: d.rootOrderId ?? null,
-          });
-          setMergeChoice(null);
-          setReserveWindowClosed(false);
-          // A second window cannot be opened while this one is open.
-          setReserveShipping(false);
-        } else {
-          setActiveReserve(null);
-          setMergeChoice(null);
-        }
-      } catch {
+  // Keyed on the user ID, not the `currentUser` object: AuthInitializer's
+  // restore() hands out a fresh object on every auth event, so an object dep
+  // refetches constantly -- and each refetch used to clear the shopper's
+  // merge/separate selection mid-checkout.
+  const currentUserId = currentUser?.id;
+  const activeReserveGroupIdRef = React.useRef<string | null>(null);
+
+  const loadActiveReserve = React.useCallback(async () => {
+    if (!RESERVE_FEATURE_ENABLED) return;
+    if (!currentUserId) return;
+    try {
+      const res = await OrderService.getActiveReserve();
+      const d = res?.data;
+      if (d?.reserveGroupId) {
+        // Only a *different* window resets the choice. Re-reading the same one
+        // must leave a selection the shopper already made alone.
+        const sameGroup = activeReserveGroupIdRef.current === d.reserveGroupId;
+        activeReserveGroupIdRef.current = d.reserveGroupId;
+        setActiveReserve({
+          reserveGroupId: d.reserveGroupId,
+          reserveExpiresAt: d.reserveExpiresAt ?? null,
+          orderCount: d.orderCount,
+          shippingMethodTitle: d.shippingMethodTitle ?? null,
+          destination: formatReserveDestination(d.deliveryAddress),
+          rootOrderId: d.rootOrderId ?? null,
+        });
+        if (!sameGroup) setMergeChoice(null);
+        setReserveWindowClosed(false);
+        // A second window cannot be opened while this one is open.
+        setReserveShipping(false);
+      } else {
+        activeReserveGroupIdRef.current = null;
         setActiveReserve(null);
+        setMergeChoice(null);
       }
-    };
+    } catch {
+      activeReserveGroupIdRef.current = null;
+      setActiveReserve(null);
+    }
+  }, [currentUserId]);
+
+  useEffect(() => {
     loadActiveReserve();
-  }, [currentUser]);
+  }, [loadActiveReserve]);
 
   useEffect(() => {
     if (!canLoadProtectedCheckoutData) {
@@ -812,6 +826,11 @@ function ShoppingCartBillForm({}: Props) {
                 "مهلت افزودن سفارش به بسته رزروی به پایان رسید. این سفارش جداگانه ارسال می‌شود؛ لطفاً آدرس و روش ارسال را انتخاب کنید.";
               break;
             case "RESERVE_ALREADY_ACTIVE":
+              // The window exists but this client did not know about it, so the
+              // attach card is not on screen and the message below names two
+              // controls the shopper cannot see. Refetch to surface them --
+              // otherwise a reload is the only way out.
+              void loadActiveReserve();
               displayError =
                 "شما یک سفارش رزروی فعال دارید. این سفارش را به همان بسته اضافه کنید یا آن را جداگانه ثبت کنید.";
               break;

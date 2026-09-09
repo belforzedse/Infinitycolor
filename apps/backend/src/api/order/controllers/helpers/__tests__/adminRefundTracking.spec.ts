@@ -26,6 +26,11 @@ jest.mock("../../../../cart/services/lib/discount-claim", () => ({
   releaseOrderDiscountClaim: jest.fn().mockResolvedValue({ released: false }),
 }));
 
+jest.mock("../../../../reserve-group/lib/reserve-group", () => ({
+  closeGroupIfAbandoned: jest.fn().mockResolvedValue(false),
+  resolveRetainedReserveShipping: jest.fn().mockResolvedValue(0),
+}));
+
 const enqueueRefundMock = enqueueRefundForReturn as jest.MockedFunction<
   typeof enqueueRefundForReturn
 >;
@@ -171,6 +176,21 @@ describe("Admin refund analytics outbox", () => {
     await adminCancelOrderHandler(strapi, ctx);
 
     expect(enqueueRefundMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels a started reserve-group order instead of blocking on the hold", async () => {
+    const order = baseOrder({
+      reserve_shipment: { id: 88, State: "Open" },
+    });
+    const { strapi, ctx } = createHarness(order);
+
+    const result = await adminCancelOrderHandler(strapi, ctx);
+
+    expect(ctx.conflict).not.toHaveBeenCalled();
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      data: { success: true, refundToman: 220_000, status: "cancelled" },
+    });
   });
 
   it("adminAdjustItemsHandler tracks a refund sized to the adjustment, after commit", async () => {

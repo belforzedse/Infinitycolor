@@ -493,7 +493,15 @@ class CatalogEngine {
         this.mapping.set("categories", wc.id, id, { name: wc.name, slug: data.Slug, parentWcId: wc.parent || null });
         report.count("categories", mode);
         const editorial = T.mapCategoryEditorial(wc);
-        if (editorial && id && process.env.IMPORT_SKIP_CATEGORY_SEO !== "true") {
+        // Trusted migration runs write editorial through the batch prepare/finalize
+        // API. The admin category-editorial routes reject API tokens unless the
+        // capability policy understands them, and the retired CRUD fallback 403/405s.
+        if (
+          editorial &&
+          id &&
+          process.env.IMPORT_SKIP_CATEGORY_SEO !== "true" &&
+          !this.config.migration?.controlToken
+        ) {
           try {
             const editorialMode = await this.repo.upsertCategoryEditorial(id, editorial);
             this.logger.info(`📝 category SEO ${editorialMode} — ${wc.name} (${wc.id})`);

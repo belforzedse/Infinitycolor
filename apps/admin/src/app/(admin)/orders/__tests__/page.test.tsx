@@ -28,6 +28,7 @@ jest.mock("@/services/super-admin/orders/list", () => ({
 }));
 jest.mock("@/services/super-admin/orders/adjustItems", () => ({
   changeOrderStatus: jest.fn(),
+  cancelOrder: jest.fn(),
 }));
 jest.mock("react-hot-toast", () => ({
   __esModule: true,
@@ -59,7 +60,7 @@ jest.mock("use-debounce", () => ({
 
 import OrdersPage from "../page";
 import { listAdminOrders } from "@/services/super-admin/orders/list";
-import { changeOrderStatus } from "@/services/super-admin/orders/adjustItems";
+import { cancelOrder, changeOrderStatus } from "@/services/super-admin/orders/adjustItems";
 
 describe("orders page bounded data ownership", () => {
   beforeEach(() => {
@@ -117,17 +118,25 @@ describe("orders page bounded data ownership", () => {
     mockCapabilities = new Set(["order.read", "order.status.update"]);
     render(<OrdersPage />);
 
-    expect(mockTableProps.bulkOptions).toEqual(
-      expect.arrayContaining([
-        { id: "print", title: "پرینت دسته‌ای" },
-        { id: "status-Started", title: "تغییر وضعیت به «در حال انجام»" },
-        { id: "status-Done", title: "تغییر وضعیت به «تکمیل شده»" },
-        {
-          id: "status-Cancelled",
-          title: "تغییر وضعیت به «لغو شده یا ناموفق»",
-        },
-      ]),
+    expect(mockTableProps.bulkOptions).toEqual([
+      { id: "print", title: "پرینت دسته‌ای" },
+      { id: "status-Started", title: "تغییر وضعیت به «در حال انجام»" },
+      { id: "status-Done", title: "تغییر وضعیت به «تکمیل شده»" },
+    ]);
+    expect(mockTableProps.bulkOptions).not.toEqual(
+      expect.arrayContaining([{ id: "cancel", title: "لغو سفارش" }]),
     );
+
+    unmount();
+    mockCapabilities = new Set(["order.read", "order.status.update", "order.cancel"]);
+    render(<OrdersPage />);
+
+    expect(mockTableProps.bulkOptions).toEqual([
+      { id: "print", title: "پرینت دسته‌ای" },
+      { id: "status-Started", title: "تغییر وضعیت به «در حال انجام»" },
+      { id: "status-Done", title: "تغییر وضعیت به «تکمیل شده»" },
+      { id: "cancel", title: "لغو سفارش" },
+    ]);
   });
 
   it("loads pending-payment orders in their own tab", async () => {
@@ -195,6 +204,25 @@ describe("orders page bounded data ownership", () => {
       expect(mockToast.error).toHaveBeenCalledWith(
         "همه سفارش‌های انتخاب‌شده در مهلت رزرو هستند و تا پایان مهلت ارسال نمی‌شوند.",
       );
+    });
+
+    it("cancels held reserve orders through the cancel endpoint", async () => {
+      mockCapabilities = new Set(["order.read", "order.status.update", "order.cancel"]);
+      (cancelOrder as jest.Mock).mockClear().mockResolvedValue({ success: true });
+      render(<OrdersPage />);
+
+      await mockTableProps.onBulkAction("cancel", [
+        row("1", false),
+        row("2", true),
+        { id: "3", attributes: { Status: "Cancelled", reserveIsHeld: false } },
+      ]);
+
+      expect(cancelOrder).toHaveBeenCalledTimes(2);
+      expect(cancelOrder).toHaveBeenCalledWith(1);
+      expect(cancelOrder).toHaveBeenCalledWith(2);
+      expect(changeOrderStatus).not.toHaveBeenCalled();
+      expect(mockToast.success).toHaveBeenCalledWith("2 سفارش لغو شد.");
+      expect(mockToast).toHaveBeenCalledWith("1 سفارش از قبل لغو شده بود.");
     });
   });
 });

@@ -43,6 +43,11 @@ describe("canonical admin capability matrix", () => {
   it("models Store Manager and Finance as separate Seller 2 branches", () => {
     expect(hasCapability("seller2", "order.status.update")).toBe(true);
     expect(hasCapability("seller2", "order.notes.update")).toBe(true);
+    expect(hasCapability("seller2", "order.cancel")).toBe(true);
+    expect(hasCapability("seller1", "order.cancel")).toBe(false);
+    expect(hasCapability("store_manager", "order.cancel")).toBe(true);
+    expect(hasCapability("store_manager_2", "order.cancel")).toBe(true);
+    expect(hasCapability("finance", "order.cancel")).toBe(true);
     expect(hasCapability("seller2", "report.product.read")).toBe(false);
     expect(hasCapability("store_manager", "category.update")).toBe(true);
     expect(hasCapability("store_manager", "order.status.update")).toBe(true);
@@ -86,7 +91,7 @@ describe("canonical admin capability matrix", () => {
     expect(hasCapability("seller2", "category.delete")).toBe(false);
     expect(hasCapability("finance", "category.delete")).toBe(false);
     expect(founder.has("system.roles.manage")).toBe(false);
-    expect(founder.has("order.cancel")).toBe(false);
+    expect(founder.has("order.cancel")).toBe(true);
     expect(hasCapability("finance", "system.modelApplications.manage")).toBe(false);
   });
 

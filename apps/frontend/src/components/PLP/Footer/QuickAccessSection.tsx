@@ -1,4 +1,4 @@
-import FooterLink from "./FooterLink";
+import { FooterNavItem } from "./FooterLink";
 import type { FooterLink as FooterLinkType } from "@/constants/footer";
 
 interface QuickAccessSectionProps {
@@ -12,9 +12,7 @@ const QuickAccessSection = ({ header, links }: QuickAccessSectionProps) => {
       <h3 className="text-base text-neutral-900">{header}</h3>
       <div className="grid grid-cols-2 items-start gap-x-4 gap-y-2 md:flex md:flex-col">
         {links.map((link, index) => (
-          <FooterLink key={index} href={link.url}>
-            {link.title}
-          </FooterLink>
+          <FooterNavItem key={index} link={link} />
         ))}
       </div>
     </div>

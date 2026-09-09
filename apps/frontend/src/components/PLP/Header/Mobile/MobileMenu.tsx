@@ -2,28 +2,18 @@
 
 import { Dialog } from "@headlessui/react";
 import { ChevronDown, Search, X } from "lucide-react";
-import {
-  type AnimationEvent,
-  type SyntheticEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type AnimationEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useProductCategories } from "@/hooks/useProductCategories";
-import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import { getCategoryPlpHref, isActiveNavHref } from "@/utils/plpRoutes";
 import type { ProductCategorySummary } from "@/services/product/categories";
 import { buildMobileCategoryGroups } from "@/utils/categoryGroups";
 import { useCart } from "@/contexts/CartContext";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
-import { jotaiStore } from "@/lib/jotaiStore";
 import { API_BASE_URL } from "@/constants/api";
 import { OPPSI_HEADER_ITEM } from "@/constants/categories";
 import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
-import { modelHiringModalOpenAtom } from "@/atoms/modelHiring";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
@@ -56,11 +46,6 @@ type MobileNavItem =
       label: string;
       type: "category-group";
       categories: ProductCategorySummary[];
-    }
-  | {
-      key: string;
-      label: string;
-      type: "action";
     };
 
 type SearchSuggestion = {
@@ -112,6 +97,7 @@ function MobileSearchSkeleton() {
 
 export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false }: Props) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
   const [expandedCategoryId, setExpandedCategoryId] = useState<number | null>(null);
@@ -122,7 +108,6 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
   const [searchError, setSearchError] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const pendingHiringOpenRef = useRef(false);
   const finishingCloseRef = useRef(false);
 
   const trimmedQuery = searchQuery.trim();
@@ -160,12 +145,11 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
       },
       {
         key: "discounts",
-        label: "تخفیف‌ها و جشنواره‌ها",
+        label: "تخفیف‌ها",
         href: "/plp?hasDiscount=true",
         type: "sale" as const,
       },
       { key: "blog", label: "مقالات", href: "/blog" },
-      { key: "model-hiring", label: "استخدام مدل", type: "action" as const },
     ],
     [mobileCategoryGroups],
   );
@@ -173,8 +157,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
   useEffect(() => {
     if (isOpen) {
       // finishMenuClose() sets local state to "closed" before the parent
-      // flips `isOpen`. Do not reopen on that in-between render or the menu
-      // comes back under the hiring modal and eats the tap.
+      // flips `isOpen`. Do not reopen on that in-between render.
       if (finishingCloseRef.current) return;
       setMenuState("open");
       return;
@@ -289,40 +272,16 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
   const finishMenuClose = useCallback(() => {
     if (finishingCloseRef.current) return;
     finishingCloseRef.current = true;
-    const shouldOpenHiring = pendingHiringOpenRef.current;
-    pendingHiringOpenRef.current = false;
     setMenuState("closed");
     onClose();
-    if (shouldOpenHiring) {
-      // Wait a paint after the Headless UI dialog unmounts so `inert` is gone
-      // and a leftover mobile click cannot land on a half-open overlay.
-      window.setTimeout(() => jotaiStore.set(modelHiringModalOpenAtom, true), 50);
-    }
   }, [onClose]);
-
-  const queueHiringModal = (event: SyntheticEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    pendingHiringOpenRef.current = true;
-    requestClose();
-  };
-
-  useEffect(() => {
-    if (menuState !== "closing" || !pendingHiringOpenRef.current) return undefined;
-    const timer = window.setTimeout(finishMenuClose, 220);
-    return () => window.clearTimeout(timer);
-  }, [finishMenuClose, menuState]);
 
   const handlePanelAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
     if (event.currentTarget !== event.target || menuState !== "closing") return;
     finishMenuClose();
   };
 
-  const isActiveHref = (href: string) => {
-    if (href === "/") return pathname === "/";
-    const pathOnly = href.split("?")[0];
-    return decodeURI(pathname) === decodeURI(pathOnly);
-  };
+  const isActiveHref = (href: string) => isActiveNavHref(href, pathname, searchParams);
 
   const getSearchHref = (term: string) => {
     const basePath = pathname.startsWith("/plp/category/") ? pathname : "/plp";
@@ -361,21 +320,6 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
       }
       return nextGroupKey;
     });
-  };
-
-  const renderAction = (item: Extract<MobileNavItem, { type: "action" }>) => {
-    return (
-      <button
-        key={item.key}
-        type="button"
-        onPointerDown={queueHiringModal}
-        onClick={queueHiringModal}
-        onTouchEnd={(event) => event.preventDefault()}
-        className="pressable flex h-10 w-full items-center justify-between rounded-[10px] bg-[#FAFAF9] px-3 text-right text-sm font-medium text-neutral-800 transition-colors hover:bg-stone-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-      >
-        <span className="truncate">{item.label}</span>
-      </button>
-    );
   };
 
   const renderLink = (item: Extract<MobileNavItem, { type?: "link" | "sale" }>) => {
@@ -740,9 +684,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
                         ? renderCategory(item)
                         : item.type === "category-group"
                           ? renderCategoryGroup(item)
-                          : item.type === "action"
-                            ? renderAction(item)
-                            : renderLink(item),
+                          : renderLink(item),
                     )
                   )}
                 </nav>

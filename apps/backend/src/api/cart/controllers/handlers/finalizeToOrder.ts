@@ -130,7 +130,12 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     // not at settlement: activation runs inside the payment-settlement transaction,
     // which also consumes the stock hold and marks the order paid -- it must never
     // fail for a reason we could have caught while the customer was still on the
-    // checkout page. The partial unique index only ever backstops a genuine race.
+    // checkout page. NOTE: this check is the ONLY enforcement. The rule cannot be
+    // expressed as a database constraint -- the owner lives in
+    // reserve_groups_owner_links while the state lives on reserve_groups, and a
+    // unique index cannot span two tables -- so two simultaneous checkouts can
+    // still open two windows. Restoring a DB backstop needs the owner
+    // denormalised onto reserve_groups as a declared attribute.
     if (!reserveOrderData && reserveShipping) {
       const existingOpen = await findOpenGroupForUser(strapi, user.id);
       if (existingOpen) {

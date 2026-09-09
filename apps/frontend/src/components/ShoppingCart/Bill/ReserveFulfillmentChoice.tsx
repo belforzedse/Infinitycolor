@@ -37,7 +37,9 @@ interface Props {
  *
  * The countdown is display-only; the backend re-checks eligibility on submit.
  * When it reaches zero we tell the parent so checkout can fall back to normal
- * shipping instead of submitting against a closed window.
+ * shipping instead of submitting against a closed window. An *unreadable*
+ * deadline is not zero -- see reserveRemaining's isUnknown -- so it hides the
+ * countdown and leaves the choice standing.
  */
 export default function ReserveFulfillmentChoice({
   reserve,
@@ -109,13 +111,22 @@ export default function ReserveFulfillmentChoice({
               همراه {faNum(reserve.orderCount)} سفارش موجود در این بسته ارسال می‌شود
               {reserve.rootOrderId ? ` (سفارش #${faNum(reserve.rootOrderId)})` : ""}
             </span>
-            <span className="flex items-center gap-1.5 text-amber-800">
-              <Clock className="h-3.5 w-3.5 shrink-0" />
-              {formatReserveRemaining(reserve.reserveExpiresAt, now)}
-            </span>
-            <span className="text-neutral-500">
-              مهلت افزودن سفارش تا {formatReserveDeadline(reserve.reserveExpiresAt)}
-            </span>
+            {/*
+              A deadline we could not read is not a closed window. Drop the
+              countdown rather than the whole card -- the shopper keeps the
+              choice, and the backend re-checks eligibility on submit anyway.
+            */}
+            {!remaining.isUnknown && (
+              <>
+                <span className="flex items-center gap-1.5 text-amber-800">
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  {formatReserveRemaining(reserve.reserveExpiresAt, now)}
+                </span>
+                <span className="text-neutral-500">
+                  مهلت افزودن سفارش تا {formatReserveDeadline(reserve.reserveExpiresAt)}
+                </span>
+              </>
+            )}
           </span>
         </button>
 

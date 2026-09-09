@@ -1,5 +1,10 @@
 import type { IdentityContactNumber, IdentitySocialLink } from "@/types/site-identity";
-import { contactHref, platformLabel, SocialPlatformIcon } from "@/utils/identityIcons";
+import {
+  BALE_ICON_PATH,
+  contactHref,
+  platformLabel,
+  SocialPlatformIcon,
+} from "@/utils/identityIcons";
 
 /** Bespoke brand circular icons kept for the common contact channels. */
 const PhoneIcon = () => (
@@ -88,6 +93,25 @@ const GenericContactIcon = ({ platform }: { platform: IdentitySocialLink["platfo
   </span>
 );
 
+const BaleIcon = () => (
+  <svg
+    className="shrink-0"
+    width="24"
+    height="24"
+    viewBox="0 0 32 32"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <circle cx="16" cy="16" r="16" fill="#3d4c6e" />
+    <path
+      fill="white"
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d={BALE_ICON_PATH}
+    />
+  </svg>
+);
+
 function ContactNumberRow({ contact }: { contact: IdentityContactNumber }) {
   const isWhatsapp = contact.type === "whatsapp";
   const Icon = isWhatsapp ? WhatsappIcon : PhoneIcon;
@@ -129,6 +153,7 @@ function SocialRow({ social }: { social: IdentitySocialLink }) {
   if (social.platform === "instagram") Icon = <InstagramIcon />;
   else if (social.platform === "telegram") Icon = <GenericContactIcon platform="telegram" />;
   else if (social.platform === "whatsapp") Icon = <WhatsappIcon />;
+  else if (social.platform === "bale") Icon = <BaleIcon />;
   else Icon = <GenericContactIcon platform={social.platform} />;
 
   return (

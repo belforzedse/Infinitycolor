@@ -9,12 +9,38 @@ import {
 } from "@repo/auth-core";
 import { writeAuditEvent } from "../audit/writer";
 import { getAuditContext } from "./audit-context";
+import { isTrustedWordPressMigrationRequest } from "./migration-context";
 import { resolveUserFullName } from "./userDisplayName";
 
 export type AdminActor = {
   user: any;
   role: AdminRoleId;
   capabilities: readonly AdminCapability[];
+};
+
+/**
+ * Custom API tokens must list every action a capability maps to. Full-access
+ * tokens and trusted WordPress migration requests skip this table.
+ */
+export const CAPABILITY_API_TOKEN_ACTIONS: Partial<Record<AdminCapability, readonly string[]>> = {
+  "content.categoryEditorial.manage": [
+    "api::product-category-content.product-category-content.targets",
+    "api::product-category-content.product-category-content.editable",
+    "api::product-category-content.product-category-content.upsert",
+  ],
+  "product.publish": ["api::product.product.publication"],
+  "product.schedule": [
+    "api::product.product.publication",
+    "api::product.product.updateDisplayDate",
+  ],
+  "product.variation.manage": ["api::product.product.generateVariationCombinations"],
+};
+
+type ApiTokenCredentials = {
+  id?: number;
+  name?: string;
+  type?: string;
+  permissions?: unknown;
 };
 
 export async function resolveAdminActor(strapi: Strapi, tokenUser: any): Promise<AdminActor | null> {
@@ -41,11 +67,94 @@ function deny(ctx: any, method: "unauthorized" | "forbidden", status: number, me
   return false;
 }
 
+function strategyName(ctx: any): string {
+  const strategy = ctx?.state?.auth?.strategy;
+  if (typeof strategy === "string") return strategy;
+  return String(strategy?.name || "");
+}
+
+export function apiTokenCredentials(ctx: any): ApiTokenCredentials | null {
+  const credentials = ctx?.state?.auth?.credentials;
+  if (!credentials || typeof credentials !== "object") return null;
+  const type = String((credentials as ApiTokenCredentials).type || "").toLowerCase();
+  const isApiTokenStrategy = strategyName(ctx) === "api-token" || strategyName(ctx).includes("api-token");
+  if (!isApiTokenStrategy && type !== "full-access" && type !== "custom" && type !== "read-only") {
+    return null;
+  }
+  return credentials as ApiTokenCredentials;
+}
+
+function tokenPermissionActions(token: ApiTokenCredentials): Set<string> {
+  const raw = token.permissions;
+  if (!Array.isArray(raw)) return new Set();
+  return new Set(
+    raw.flatMap((entry) => {
+      if (typeof entry === "string" && entry) return [entry];
+      if (entry && typeof entry === "object" && typeof (entry as { action?: string }).action === "string") {
+        return [(entry as { action: string }).action];
+      }
+      return [];
+    }),
+  );
+}
+
+export function apiTokenAllowsCapability(
+  token: ApiTokenCredentials,
+  capability: AdminCapability,
+): boolean {
+  const type = String(token.type || "").toLowerCase();
+  if (type === "full-access") return true;
+  if (type !== "custom") return false;
+  const required = CAPABILITY_API_TOKEN_ACTIONS[capability];
+  if (!required?.length) return false;
+  const granted = tokenPermissionActions(token);
+  return required.every((action) => granted.has(action));
+}
+
+function acceptServiceActor(
+  ctx: any,
+  capability: AdminCapability,
+  label: string,
+  tokenId = 0,
+): AdminActor {
+  const actor: AdminActor = {
+    user: {
+      id: tokenId,
+      username: label,
+      IsActive: true,
+      blocked: false,
+      role: { name: "Service", type: "service" },
+    },
+    role: "superadmin",
+    capabilities: [capability],
+  };
+  ctx.state.adminActor = actor;
+  return actor;
+}
+
 export async function requireCapability(
   ctx: any,
   strapi: Strapi,
   capability: AdminCapability,
 ): Promise<AdminActor | null> {
+  if (isTrustedWordPressMigrationRequest()) {
+    return acceptServiceActor(ctx, capability, "wordpress-migration");
+  }
+
+  const token = apiTokenCredentials(ctx);
+  if (token) {
+    if (apiTokenAllowsCapability(token, capability)) {
+      return acceptServiceActor(
+        ctx,
+        capability,
+        String(token.name || "api-token"),
+        Number(token.id) || 0,
+      );
+    }
+    deny(ctx, "forbidden", 403, "You do not have permission to perform this action");
+    return null;
+  }
+
   if (!ctx?.state?.user?.id) {
     deny(ctx, "unauthorized", 401, "Authentication required");
     return null;

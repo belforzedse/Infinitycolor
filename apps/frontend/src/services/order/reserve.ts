@@ -36,30 +36,43 @@ export const getMyReserveGroups = async (
   page = 1,
   pageSize = 20,
 ): Promise<ReserveGroupListResponse> => {
-  const response = await apiClient.get<ReserveGroupListResponse>(
+  // The generic is the PAYLOAD type, not the envelope: apiClient resolves to the
+  // raw parsed body and types it as ApiResponse<T> = { data: T }. Passing the
+  // envelope type here would describe { data: { data: ... } }, which the runtime
+  // body never has -- and the extra `.data` unwrap that pairs with it silently
+  // hands callers `undefined`.
+  const response = await apiClient.get<CustomerReserveGroup[]>(
     `/orders/reserve-groups?page=${page}&pageSize=${pageSize}`,
   );
-  return response.data;
+  return response;
 };
 
 /** One group, scoped server-side to its owner. */
 export const getMyReserveGroup = async (
   groupKey: string,
 ): Promise<{ data: CustomerReserveGroup | null }> => {
-  const response = await apiClient.get<{ data: CustomerReserveGroup | null }>(
+  const response = await apiClient.get<CustomerReserveGroup | null>(
     `/orders/reserve-groups/${encodeURIComponent(groupKey)}`,
   );
-  return response.data;
+  return response;
 };
 
 /**
  * Get the user's active reserve order (if any), with all linked orders in the group.
  * API returns body { data: null } or { data: { reserveGroupId, reserveExpiresAt, orders, orderCount } }.
- * We return that shape so callers (e.g. Bill) can use result.data.
+ * We return that shape unchanged so callers (e.g. Bill) can use result.data.
  */
 export const getActiveReserve = async (): Promise<ActiveReserveResponse> => {
-  const response = await apiClient.get<ActiveReserveResponse>("/orders/active-reserve");
-  return response.data;
+  // suppressAuthRedirect: this fires unprompted on every checkout mount. Without
+  // it a 401 here reaches handleAuthErrors, which clears currentUserAtom and
+  // does window.location.replace(centralLoginUrl(...)) -- throwing away a
+  // half-filled checkout form over an optional side-fetch. The caller's
+  // try/catch cannot help; the redirect is dispatched inside the client first.
+  const response = await apiClient.get<ActiveReserveResponse["data"]>(
+    "/orders/active-reserve",
+    { suppressAuthRedirect: true },
+  );
+  return response;
 };
 
 /**
@@ -67,8 +80,8 @@ export const getActiveReserve = async (): Promise<ActiveReserveResponse> => {
  * Clears reserve flags on all orders in the group.
  */
 export const releaseReserve = async (orderId: number): Promise<{ data: { success: boolean; message: string; orderCount: number } }> => {
-  const response = await apiClient.post<{ data: { success: boolean; message: string; orderCount: number } }>(
+  const response = await apiClient.post<{ success: boolean; message: string; orderCount: number }>(
     `/orders/${orderId}/release-reserve`
   );
-  return response.data;
+  return response;
 };

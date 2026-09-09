@@ -751,7 +751,11 @@ function collectEnabledPermissionActions(tree: Record<string, any>): string[] {
     );
   });
 
-  return actions.sort();
+  return uniqueSortedActions(actions);
+}
+
+function uniqueSortedActions(actions: readonly string[]): string[] {
+  return [...new Set(actions)].sort();
 }
 
 type RoleSyncSnapshot = {
@@ -1006,9 +1010,9 @@ async function verifyPersistedRolePermissions(
     .query("plugin::users-permissions.role")
     .findOne({ where: { id: role.id }, populate: ["permissions"] });
   const expected = collectEnabledPermissionActions(expectedTree);
-  const actual = ((persisted as any)?.permissions || [])
-    .map((permission: any) => permission.action)
-    .sort();
+  const actual = uniqueSortedActions(
+    ((persisted as any)?.permissions || []).map((permission: any) => permission.action),
+  );
 
   if (
     expected.length !== actual.length ||

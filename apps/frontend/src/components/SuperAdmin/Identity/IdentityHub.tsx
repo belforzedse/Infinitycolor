@@ -14,7 +14,7 @@ import type {
   SiteFaqItem,
   SiteIdentity,
 } from "@/types/site-identity";
-import { SOCIAL_PLATFORM_OPTIONS } from "@/utils/identityIcons";
+import { SOCIAL_PLATFORM_OPTIONS, SocialPlatformIcon } from "@/utils/identityIcons";
 import { getSuperAdminSiteIdentity } from "@/services/super-admin/site-identity/get";
 import { updateSuperAdminSiteIdentity } from "@/services/super-admin/site-identity/update";
 import { getSuperAdminSiteFaq } from "@/services/super-admin/site-faq/get";
@@ -338,6 +338,7 @@ export default function IdentityHub() {
                   </span>
                   {store.socialLinks.map((link, li) => (
                     <div key={li} className="flex items-center gap-2">
+                      <SocialPlatformIcon platform={link.platform} size={18} />
                       <div className="w-40 shrink-0">
                         <Select
                           value={link.platform}
@@ -396,6 +397,7 @@ export default function IdentityHub() {
             </p>
             {identity.socialLinks.map((link, li) => (
               <div key={li} className="flex items-center gap-2">
+                <SocialPlatformIcon platform={link.platform} size={18} />
                 <div className="w-40 shrink-0">
                   <Select
                     value={link.platform}

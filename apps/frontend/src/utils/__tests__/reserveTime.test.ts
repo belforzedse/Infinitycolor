@@ -26,9 +26,33 @@ describe("reserveTime", () => {
     });
   });
 
-  it("treats a missing or invalid deadline as expired", () => {
-    expect(reserveRemaining(null, NOW).isExpired).toBe(true);
-    expect(reserveRemaining("not-a-date", NOW).isExpired).toBe(true);
+  // This used to assert isExpired === true, which is what made an unreadable
+  // deadline indistinguishable from a closed window. ReserveFulfillmentChoice
+  // reacts to expiry by clearing the parent's whole reserve state, so the old
+  // behaviour could silently retract an attach offer that was still valid.
+  it("treats a missing or invalid deadline as unknown, never as expired", () => {
+    expect(reserveRemaining(null, NOW)).toMatchObject({
+      isExpired: false,
+      isUnknown: true,
+    });
+    expect(reserveRemaining("not-a-date", NOW)).toMatchObject({
+      isExpired: false,
+      isUnknown: true,
+    });
+  });
+
+  it("marks a readable deadline as known", () => {
+    const expiresAt = new Date(NOW + 3_600_000).toISOString();
+    expect(reserveRemaining(expiresAt, NOW).isUnknown).toBe(false);
+    expect(reserveRemaining(new Date(NOW - 1).toISOString(), NOW)).toMatchObject({
+      isExpired: true,
+      isUnknown: false,
+    });
+  });
+
+  it("distinguishes unknown from closed in the rendered strings", () => {
+    expect(formatReserveRemaining(null, NOW)).toBe("زمان باقی‌مانده نامشخص است");
+    expect(formatReserveCountdown(null, NOW)).toBe("نامشخص");
   });
 
   it("renders remaining time with Persian digits", () => {

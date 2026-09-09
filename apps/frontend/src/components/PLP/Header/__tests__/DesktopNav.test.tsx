@@ -2,8 +2,12 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import PLPHeaderDesktopNav from "../DesktopNav";
 import { useProductCategories } from "@/hooks/useProductCategories";
 
+let mockPathname = "/";
+let mockSearch = "";
+
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/",
+  usePathname: () => mockPathname,
+  useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
 jest.mock("@/hooks/useProductCategories", () => ({
@@ -60,6 +64,8 @@ const category = {
 
 describe("PLPHeaderDesktopNav", () => {
   beforeEach(() => {
+    mockPathname = "/";
+    mockSearch = "";
     mockedUseProductCategories.mockReturnValue({
       categories: [category],
       isLoading: false,
@@ -140,11 +146,41 @@ describe("PLPHeaderDesktopNav", () => {
     );
   });
 
-  it("places model hiring as the last header control", () => {
+  it("labels discounts as تخفیف‌ها and does not show model hiring", () => {
     render(<PLPHeaderDesktopNav />);
     const nav = screen.getByLabelText("منوی اصلی فروشگاه");
     const items = Array.from(nav.querySelectorAll("a, button"));
-    expect(items.at(-1)).toHaveTextContent("استخدام مدل");
-    expect(screen.getByRole("button", { name: "استخدام مدل" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /تخفیف‌ها/ })).toHaveAttribute(
+      "href",
+      "/plp?hasDiscount=true",
+    );
+    expect(screen.queryByRole("link", { name: /جشنواره‌ها/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "استخدام مدل" })).not.toBeInTheDocument();
+    expect(screen.queryByText("استخدام مدل")).not.toBeInTheDocument();
+    expect(items.at(-1)).toHaveTextContent("مقالات");
+  });
+
+  it("does not mark Oppsi or discounts as the current page on a bare /plp visit", () => {
+    mockPathname = "/plp";
+    mockSearch = "";
+    render(<PLPHeaderDesktopNav />);
+
+    expect(screen.getByRole("link", { name: "Oppsi" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: /تخفیف‌ها/ })).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks only the matching PLP query destination as current", () => {
+    mockPathname = "/plp";
+    mockSearch = "search=Oppsi";
+    const { unmount } = render(<PLPHeaderDesktopNav />);
+
+    expect(screen.getByRole("link", { name: "Oppsi" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /تخفیف‌ها/ })).not.toHaveAttribute("aria-current");
+    unmount();
+
+    mockSearch = "hasDiscount=true";
+    render(<PLPHeaderDesktopNav />);
+    expect(screen.getByRole("link", { name: "Oppsi" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: /تخفیف‌ها/ })).toHaveAttribute("aria-current", "page");
   });
 });

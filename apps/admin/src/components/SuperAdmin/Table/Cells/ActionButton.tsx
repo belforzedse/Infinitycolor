@@ -9,11 +9,15 @@ type Props = {
   path?: string;
   disabled?: boolean;
   testId?: string;
+  /** Accessible name for icon-only actions. */
+  ariaLabel?: string;
+  title?: string;
   dataAttributes?: Record<string, string | number | boolean | undefined>;
 };
 
 export default function SuperAdminTableCellActionButton(props: Props) {
-  const { variant, icon, onClick, text, path, disabled, testId, dataAttributes } = props;
+  const { variant, icon, onClick, text, path, disabled, testId, ariaLabel, title, dataAttributes } =
+    props;
   const testAttributes = {
     ...(testId ? { "data-testid": testId } : {}),
     ...(dataAttributes
@@ -37,7 +41,14 @@ export default function SuperAdminTableCellActionButton(props: Props) {
 
   if (path && !disabled) {
     return (
-      <Link className={className} href={path} onClick={onClick} {...testAttributes}>
+      <Link
+        className={className}
+        href={path}
+        onClick={onClick}
+        aria-label={ariaLabel}
+        title={title ?? ariaLabel}
+        {...testAttributes}
+      >
         {icon}
         {text && <span className="text-xs text-slate-500">{text}</span>}
       </Link>
@@ -50,6 +61,8 @@ export default function SuperAdminTableCellActionButton(props: Props) {
       className={className}
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
+      title={title ?? ariaLabel}
       {...testAttributes}
     >
       {icon}

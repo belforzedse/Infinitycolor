@@ -3,17 +3,15 @@
 import ChevronDownIcon from "@/components/Search/Icons/ChevronDownIcon";
 import Link from "next/link";
 import { useProductCategories } from "@/hooks/useProductCategories";
-import { usePathname } from "next/navigation";
-import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import { usePathname, useSearchParams } from "next/navigation";
+import { getCategoryPlpHref, isActiveNavHref } from "@/utils/plpRoutes";
 import { StorefrontContainer } from "@/components/storefront";
 import { OPPSI_HEADER_ITEM } from "@/constants/categories";
 import DesktopMegaMenu from "./DesktopMegaMenu";
 import SaleBadgeIcon from "./SaleBadgeIcon";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FocusEvent, KeyboardEvent } from "react";
-import { useSetAtom } from "jotai";
 import type { ProductCategorySummary } from "@/services/product/categories";
-import { modelHiringModalOpenAtom } from "@/atoms/modelHiring";
 import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
 
 interface NavItem {
@@ -34,7 +32,7 @@ export default function PLPHeaderDesktopNav() {
     [navbarCategories],
   );
   const pathname = usePathname();
-  const openHiringModal = useSetAtom(modelHiringModalOpenAtom);
+  const searchParams = useSearchParams();
   const rootRef = useRef<HTMLDivElement>(null);
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
@@ -56,7 +54,7 @@ export default function PLPHeaderDesktopNav() {
       },
       {
         key: "discounts",
-        label: "تخفیف‌ها و جشنواره‌ها",
+        label: "تخفیف‌ها",
         href: "/plp?hasDiscount=true",
         icon: "sale",
       },
@@ -129,11 +127,7 @@ export default function PLPHeaderDesktopNav() {
     }
   };
 
-  const isActiveHref = (href: string) => {
-    if (href === "/") return pathname === "/";
-    const pathOnly = href.split("?")[0];
-    return decodeURI(pathname) === decodeURI(pathOnly);
-  };
+  const isActiveHref = (href: string) => isActiveNavHref(href, pathname, searchParams);
 
   if (loading) {
     return (
@@ -203,16 +197,6 @@ export default function PLPHeaderDesktopNav() {
               </Link>
             );
           })}
-          <button
-            type="button"
-            onClick={() => {
-              closeMegaMenu();
-              openHiringModal(true);
-            }}
-            className="pressable flex items-center gap-1 rounded-full text-sm text-neutral-800 underline-offset-4 transition-colors hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-          >
-            استخدام مدل
-          </button>
         </StorefrontContainer>
       </nav>
 

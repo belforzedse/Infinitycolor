@@ -1,7 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import MobileMenu from "../MobileMenu";
-import { modelHiringModalOpenAtom } from "@/atoms/modelHiring";
-import jotaiStore from "@/lib/jotaiStore";
 import { useProductCategories } from "@/hooks/useProductCategories";
 
 const pushMock = jest.fn();
@@ -9,6 +7,7 @@ const pushMock = jest.fn();
 jest.mock("next/navigation", () => ({
   usePathname: () => "/",
   useRouter: () => ({ push: pushMock }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 jest.mock("@/hooks/useProductCategories", () => ({
@@ -157,32 +156,17 @@ describe("MobileMenu", () => {
     );
   });
 
-  it("places model hiring as the last item in the mobile header menu", async () => {
+  it("labels discounts as تخفیف‌ها and does not show model hiring", async () => {
     render(<MobileMenu isOpen onClose={jest.fn()} />);
     const nav = await screen.findByLabelText("منوی موبایل فروشگاه");
-    expect(nav.lastElementChild).toHaveTextContent("استخدام مدل");
-    expect(screen.getByRole("button", { name: "استخدام مدل" })).toBeInTheDocument();
-  });
-
-  it("opens model hiring only after the menu finishes closing", async () => {
-    const onClose = jest.fn();
-    jotaiStore.set(modelHiringModalOpenAtom, false);
-
-    render(<MobileMenu isOpen onClose={onClose} />);
-
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "استخدام مدل" }));
-
-    expect(onClose).not.toHaveBeenCalled();
-    expect(jotaiStore.get(modelHiringModalOpenAtom)).toBe(false);
-    expect(screen.getByLabelText("منوی موبایل فروشگاه")).toBeInTheDocument();
-
-    fireEvent.animationEnd(document.querySelector(".storefront-mobile-menu-panel") as HTMLElement);
-
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(screen.queryByLabelText("منوی موبایل فروشگاه")).not.toBeInTheDocument();
-    await waitFor(() => {
-      expect(jotaiStore.get(modelHiringModalOpenAtom)).toBe(true);
-    });
+    expect(screen.getByRole("link", { name: /تخفیف‌ها/ })).toHaveAttribute(
+      "href",
+      "/plp?hasDiscount=true",
+    );
+    expect(screen.queryByRole("link", { name: /جشنواره‌ها/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "استخدام مدل" })).not.toBeInTheDocument();
+    expect(screen.queryByText("استخدام مدل")).not.toBeInTheDocument();
+    expect(nav.lastElementChild).toHaveTextContent("مقالات");
   });
 
   describe("inline search", () => {

@@ -24,8 +24,8 @@ export type SubNavItem = {
  * State-backed usage is supported via `activeId` + `onSelect` for tabs that
  * genuinely are not routes.
  *
- * On phones the strip scrolls horizontally rather than wrapping to three rows,
- * and every tab clears a 44px touch target.
+ * On every viewport the strip stays one horizontally scrollable row rather
+ * than wrapping into a cramped grid, and every tab clears a 44px touch target.
  */
 export default function SubNav({
   items,
@@ -70,14 +70,16 @@ export default function SubNav({
       aria-label={ariaLabel}
       className={cn(
         // Negative margin lets the strip bleed to the screen edge on phones so
-        // the last tab does not look clipped mid-scroll.
-        "-mx-4 overflow-x-auto scrollbar-hide md:mx-0",
+        // the last tab does not look clipped mid-scroll. Stay on one row at
+        // every breakpoint — wrapping six reserve tabs into a cramped grid is
+        // how this strip used to feel broken.
+        "-mx-4 overflow-x-auto overscroll-x-contain scrollbar-hide md:mx-0",
         "border-b border-slate-200",
         className,
       )}
       dir="rtl"
     >
-      <ul className="flex min-w-max items-stretch gap-1 px-4 md:min-w-0 md:flex-wrap md:px-0">
+      <ul className="flex min-w-max flex-nowrap items-stretch gap-1 px-4 md:px-0">
         {items.map((item) => {
           const active = isActive(item);
           const content = (
