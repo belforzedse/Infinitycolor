@@ -58,8 +58,13 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "editor",
     adminRole: "editor",
     label: "Editor",
-    sidebarCount: 8,
-    visibleSidebarIds: ["blog-dashboard", "blog-posts", "blog-comments"],
+    sidebarCount: 9,
+    visibleSidebarIds: [
+      "blog-dashboard",
+      "blog-posts",
+      "blog-category-editorial",
+      "blog-comments",
+    ],
     hiddenSidebarIds: ["blog", "manage-products", "orders", "sales"],
     requiredCapabilities: ["content.blog.read", "content.blog.publish"],
     absentCapabilities: [
@@ -265,8 +270,9 @@ const STAFF_ROLES: StaffRoleCase[] = [
     authRole: "admin",
     adminRole: "superadmin",
     label: "Superadmin",
-    sidebarCount: 11,
+    sidebarCount: 12,
     visibleSidebarIds: [
+      "issue-reports",
       "manage-products",
       "blog",
       "store-operations",
