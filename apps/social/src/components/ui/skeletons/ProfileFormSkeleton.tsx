@@ -1,6 +1,9 @@
 export function ProfileFormSkeleton() {
   return (
-    <div className="space-y-6" aria-busy="true">
+    <div
+      className="mx-auto w-full max-w-[880px] space-y-6 rounded-[24px] bg-white p-5 shadow-[0_0_14.7px_rgba(0,0,0,0.04)] sm:p-6 lg:mx-0 lg:p-8"
+      aria-busy="true"
+    >
       {/* Page heading — back button (lg only) + title */}
       <div className="flex items-center gap-3">
         <div className="hidden size-9 shrink-0 rounded-sm skeleton-shimmer-light lg:block" aria-hidden />
@@ -18,8 +21,8 @@ export function ProfileFormSkeleton() {
       </div>
 
       {/* Save button */}
-      <div className="flex justify-end">
-        <div className="skeleton-shimmer h-11 w-32 rounded-full" aria-hidden />
+      <div className="flex justify-end pt-1">
+        <div className="skeleton-shimmer h-11 w-full rounded-full sm:w-32" aria-hidden />
       </div>
     </div>
   );

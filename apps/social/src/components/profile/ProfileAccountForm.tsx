@@ -89,7 +89,11 @@ export function ProfileAccountForm() {
   const disableForm = loadState !== "ready" || isSaving;
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form
+      onSubmit={handleSubmit}
+      dir="rtl"
+      className="mx-auto w-full max-w-[880px] space-y-6 rounded-[24px] bg-white p-5 shadow-[0_0_14.7px_rgba(0,0,0,0.04)] sm:p-6 lg:mx-0 lg:p-8"
+    >
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -99,7 +103,7 @@ export function ProfileAccountForm() {
         >
           <ChevronRight className="size-5 stroke-[1.5]" aria-hidden />
         </button>
-        <h1 className="font-peyda text-lg font-semibold text-zinc-800">
+        <h1 className="font-peyda text-lg font-semibold text-zinc-800 lg:text-xl">
           اطلاعات حساب کاربری
         </h1>
       </div>
@@ -161,13 +165,13 @@ export function ProfileAccountForm() {
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end pt-1">
         <Button
           type="submit"
           variant="blue"
           disabled={disableForm}
           icon={<Save className="size-[22px]" aria-hidden />}
-          className="font-peyda"
+          className="w-full font-peyda sm:w-auto"
         >
           ذخیره تغییرات
         </Button>
