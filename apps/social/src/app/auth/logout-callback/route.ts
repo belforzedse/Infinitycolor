@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { socialUrl } from "@/lib/central-auth-server";
 import { AUTH_ROUTE_HINT_COOKIE } from "@/utils/authRouteHint";
+import {
+  APPLICATION_SESSION_COOKIE,
+} from "@/lib/application-session";
 
 export function GET() {
   const target = socialUrl("/auth/logout-complete");
   const response = NextResponse.redirect(target, 307);
-  for (const name of [AUTH_ROUTE_HINT_COOKIE, "infinity_auth_restore_loop"]) {
+  for (const name of [
+    AUTH_ROUTE_HINT_COOKIE,
+    "infinity_auth_restore_loop",
+    APPLICATION_SESSION_COOKIE,
+  ]) {
     response.cookies.set(name, "", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

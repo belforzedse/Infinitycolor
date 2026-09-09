@@ -20,6 +20,10 @@ import {
   unsealFlowState,
   writeFlowState,
 } from "./server/flow-state";
+import {
+  sealApplicationSession,
+  unsealApplicationSession,
+} from "./server/application-session";
 import { proxy } from "./proxy";
 
 function jwt(expSeconds: number, marker: string): string {
@@ -137,6 +141,39 @@ test("browser auth client never acquires a token during server rendering", async
   assert.equal(await client.tokenManager.getToken(), null);
   assert.equal(client.tokenManager.peek(), null);
   assert.equal(calls, 0);
+});
+
+test("browser auth client can use an application-local token broker", async () => {
+  const requests: string[] = [];
+  const client = createCentralAuthBrowserClient({
+    authOrigin: "https://auth.infinitycolor.co",
+    tokenOrigin: "https://infinitygram.co",
+    fetchImpl: (async (input) => {
+      requests.push(String(input));
+      return new Response(
+        JSON.stringify({
+          token: jwt(Math.floor(Date.now() / 1_000) + 60, "social"),
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch,
+  });
+
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    value: {},
+    configurable: true,
+  });
+  try {
+    await client.tokenManager.getToken();
+  } finally {
+    if (originalWindow) {
+      Object.defineProperty(globalThis, "window", originalWindow);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+  assert.equal(requests[0], "https://infinitygram.co/api/auth/token");
 });
 
 test("typed session management wrappers use central auth with no-store credentials", async () => {
@@ -278,6 +315,64 @@ test("sealed flow cookie is host-only, HttpOnly, short-lived and tamper evident"
   const tampered = Buffer.from(sealed, "base64url");
   tampered[12] ^= 1;
   assert.equal(unsealFlowState(tampered.toString("base64url")), null);
+});
+
+test("application sessions are encrypted, expiring, and bound to one trusted origin", () => {
+  Object.assign(process.env, {
+    NODE_ENV: "production",
+    AUTH_DEPLOYMENT_ENV: "production",
+    BETTER_AUTH_URL: "https://auth.infinitycolor.co",
+    BETTER_AUTH_SECRET: "a".repeat(32),
+    AUTH_DATABASE_URL: "postgresql://unused/unused",
+    AUTH_FLOW_SECRET: "f".repeat(32),
+    AUTH_TRUSTED_STOREFRONT_ORIGINS:
+      "https://new.infinitycolor.co,https://infinitycolor.co,https://infinitygram.co",
+    AUTH_TRUSTED_ADMIN_ORIGINS: "https://admin.infinitycolor.co",
+    AUTH_DEFAULT_STOREFRONT_ORIGIN: "https://new.infinitycolor.co",
+    STRAPI_INTERNAL_URL: "https://api.infinitycolor.co",
+    AUTH_STRAPI_BRIDGE_SECRET: "b".repeat(32),
+    AUTH_JWT_ISSUER: "https://auth.infinitycolor.co",
+    AUTH_JWT_AUDIENCE: "https://api.infinitycolor.co",
+    AUTH_JWT_TTL_SECONDS: "60",
+    AUTH_JWKS_ROTATION_SECONDS: "2592000",
+    AUTH_JWKS_GRACE_SECONDS: "86400",
+    AUTH_SESSION_TTL_SECONDS: "604800",
+  });
+  resetAuthEnvForTests();
+
+  const sessionToken = "central-session-token";
+  const sealed = sealApplicationSession({
+    sessionToken,
+    audience: "https://infinitygram.co",
+    expiresAt: Math.floor(Date.now() / 1_000) + 60,
+  });
+  assert.equal(sealed.includes(sessionToken), false);
+  assert.equal(
+    unsealApplicationSession(sealed, "https://infinitygram.co")
+      ?.sessionToken,
+    sessionToken,
+  );
+  assert.equal(
+    unsealApplicationSession(sealed, "https://new.infinitycolor.co"),
+    null,
+  );
+
+  const tampered = Buffer.from(sealed, "base64url");
+  tampered[tampered.length - 1] ^= 1;
+  assert.equal(
+    unsealApplicationSession(
+      tampered.toString("base64url"),
+      "https://infinitygram.co",
+    ),
+    null,
+  );
+  assert.throws(() =>
+    sealApplicationSession({
+      sessionToken,
+      audience: "https://evil.example",
+      expiresAt: Math.floor(Date.now() / 1_000) + 60,
+    }),
+  );
 });
 
 test("production trusts exactly the three first-party storefront origins", () => {

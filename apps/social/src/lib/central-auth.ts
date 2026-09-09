@@ -4,10 +4,17 @@ import {
   publishAuthState,
   subscribeToAuthState,
 } from "@repo/auth-core/browser";
+import { SITE_URL } from "@/config/site";
 import { exactCentralAuthOrigin } from "./central-auth-origin";
 
 export const centralAuthOrigin = exactCentralAuthOrigin();
-export const centralAuth = createCentralAuthBrowserClient({ authOrigin: centralAuthOrigin });
+export const centralAuth = createCentralAuthBrowserClient({
+  authOrigin: centralAuthOrigin,
+  // Infinitygram is a different site from auth.infinitycolor.co. Its host-only
+  // application session is exchanged here so browser privacy protections never
+  // need to expose the central cookie in a third-party request.
+  tokenOrigin: new URL(SITE_URL).origin,
+});
 
 export function initializeCentralAuthBrowser(): void {
   clearStaleBrowserCredentials();

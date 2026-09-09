@@ -123,6 +123,8 @@ export function subscribeToAuthState(
 
 export interface CentralAuthBrowserClientOptions {
   authOrigin: string;
+  /** Optional same-origin token broker for applications on another site. */
+  tokenOrigin?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -180,7 +182,7 @@ export function createCentralAuthBrowserClient(
 
   return {
     tokenManager: createTokenManager({
-      authOrigin,
+      authOrigin: options.tokenOrigin ?? authOrigin,
       fetchImpl,
       isAvailable: () => typeof window !== "undefined",
     }),

@@ -6,6 +6,10 @@ import {
   socialUrl,
   validatedSocialReturnPath,
 } from "@/lib/central-auth-server";
+import {
+  applicationSessionMaxAge,
+  setApplicationSessionCookie,
+} from "@/lib/application-session";
 
 const LOOP_COOKIE = "infinity_auth_restore_loop";
 
@@ -32,9 +36,21 @@ export async function GET(request: NextRequest) {
     const payload = (await response
       .json()
       .catch(() => ({}))) as Partial<ReturnGrantExchangeResponse>;
-    if (!response.ok || payload.authenticated !== true) return failure("grant_exchange_failed");
+    if (
+      !response.ok ||
+      payload.authenticated !== true ||
+      typeof payload.applicationSession !== "string" ||
+      !/^[A-Za-z0-9_-]{40,4096}$/.test(payload.applicationSession) ||
+      typeof payload.applicationSessionExpiresAt !== "string"
+    ) {
+      return failure("grant_exchange_failed");
+    }
     const returnPath = validatedSocialReturnPath(payload.returnTo);
     if (!returnPath) return failure("invalid_return");
+    const sessionMaxAge = applicationSessionMaxAge(
+      payload.applicationSessionExpiresAt,
+    );
+    if (!sessionMaxAge) return failure("expired_session");
 
     const complete = socialUrl("/auth/complete");
     complete.searchParams.set("returnTo", returnPath);
@@ -44,6 +60,11 @@ export async function GET(request: NextRequest) {
       String(Number.isSafeInteger(loop) ? Math.min(Math.max(loop, 0), 3) : 0),
     );
     const result = NextResponse.redirect(complete, 307);
+    setApplicationSessionCookie(
+      result,
+      payload.applicationSession,
+      sessionMaxAge,
+    );
     // The callback only proves a one-time grant was valid. /auth/complete
     // issues the route hint after /auth/self confirms a usable session.
     result.headers.set("Cache-Control", "no-store, max-age=0");

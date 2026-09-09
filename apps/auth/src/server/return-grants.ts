@@ -8,6 +8,8 @@ function grantHash(value: string): string {
 export interface ExchangedReturnGrant {
   returnTo: string;
   sessionId: string;
+  sessionToken: string;
+  sessionExpiresAt: Date;
 }
 
 export class ReturnGrantRepository {
@@ -29,14 +31,33 @@ export class ReturnGrantRepository {
     const result = await this.pool.query<{
       return_to: string;
       session_id: string;
+      session_token: string;
+      session_expires_at: Date;
     }>(
-      `delete from auth.return_grants
-        where grant_hash = $1
-          and expires_at > now()
-      returning return_to, session_id`,
+      `with exchanged as (
+         delete from auth.return_grants
+          where grant_hash = $1
+            and expires_at > now()
+        returning return_to, session_id
+       )
+       select exchanged.return_to,
+              exchanged.session_id,
+              sessions.token as session_token,
+              sessions.expires_at as session_expires_at
+         from exchanged
+         join auth.sessions
+           on sessions.id = exchanged.session_id
+          and sessions.expires_at > now()`,
       [grantHash(grant)],
     );
     const row = result.rows[0];
-    return row ? { returnTo: row.return_to, sessionId: row.session_id } : null;
+    return row
+      ? {
+          returnTo: row.return_to,
+          sessionId: row.session_id,
+          sessionToken: row.session_token,
+          sessionExpiresAt: row.session_expires_at,
+        }
+      : null;
   }
 }

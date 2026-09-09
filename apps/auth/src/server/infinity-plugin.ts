@@ -30,6 +30,10 @@ import {
   recordAdminSecurityChange,
   recordAdminSessionCreated,
 } from "./audit-outbox";
+import {
+  sealApplicationSession,
+  unsealApplicationSession,
+} from "./application-session";
 
 const phoneSchema = z
   .string()
@@ -490,10 +494,65 @@ export function infinityCredentialsPlugin(
           authEvent("return_grant_used", {
             subjectTag: keyedSubjectTag(exchanged.sessionId),
           });
+          const applicationSessionExpiresAt =
+            exchanged.sessionExpiresAt.toISOString();
           return ctx.json({
             returnTo: exchanged.returnTo,
             authenticated: true as const,
+            applicationSession: sealApplicationSession({
+              sessionToken: exchanged.sessionToken,
+              audience: new URL(exchanged.returnTo).origin,
+              expiresAt: Math.floor(
+                exchanged.sessionExpiresAt.getTime() / 1_000,
+              ),
+            }),
+            applicationSessionExpiresAt,
           });
+        },
+      ),
+      infinityApplicationToken: createAuthEndpoint(
+        "/infinity/application-token",
+        {
+          method: "POST",
+          body: z.object({
+            credential: z.string().min(40).max(4_096),
+            audience: z.string().url().max(2_048),
+          }),
+        },
+        async (ctx) => {
+          assertTrustedRequest(ctx);
+          const applicationSession = unsealApplicationSession(
+            ctx.body.credential,
+            ctx.body.audience,
+          );
+          if (!applicationSession) {
+            authEvent("application_session_rejected", {
+              reasonCode: "INVALID_OR_EXPIRED",
+            });
+            throw new APIError("UNAUTHORIZED");
+          }
+
+          const sessionState = await ctx.context.internalAdapter.findSession(
+            applicationSession.sessionToken,
+          );
+          if (
+            !sessionState ||
+            sessionState.session.expiresAt <= new Date()
+          ) {
+            authEvent("application_session_rejected", {
+              reasonCode: "SESSION_NOT_FOUND",
+            });
+            throw new APIError("UNAUTHORIZED");
+          }
+
+          const token = await getJwtToken(
+            {
+              ...ctx,
+              context: { ...ctx.context, session: sessionState },
+            },
+            options.jwtOptions,
+          );
+          return ctx.json({ token });
         },
       ),
       infinitySessionContinue: createAuthEndpoint(

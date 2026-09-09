@@ -54,16 +54,21 @@ test(
       assert.deepEqual(rows.rows[0], { links: "1", users: "1" });
 
       const sessionId = randomUUID();
+      const sessionToken = randomUUID();
       await pool.query(
         `insert into auth.sessions
           (id, expires_at, token, created_at, updated_at, user_id)
          values ($1, now() + interval '7 days', $2, now(), now(), $3)`,
-        [sessionId, randomUUID(), linkedUserId],
+        [sessionId, sessionToken, linkedUserId],
       );
       const returnTo = "https://new.infinitycolor.co/account";
       const grant = await grants.create(sessionId, returnTo);
       assert.ok(!grant.includes(sessionId));
-      assert.deepEqual(await grants.exchange(grant), { returnTo, sessionId });
+      const exchanged = await grants.exchange(grant);
+      assert.equal(exchanged?.returnTo, returnTo);
+      assert.equal(exchanged?.sessionId, sessionId);
+      assert.equal(exchanged?.sessionToken, sessionToken);
+      assert.ok(exchanged?.sessionExpiresAt instanceof Date);
       assert.equal(await grants.exchange(grant), null);
 
       const expiringGrant = await grants.create(sessionId, returnTo);

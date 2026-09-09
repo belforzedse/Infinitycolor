@@ -25,6 +25,8 @@ export type ReturnGrantExchangeRequest = { grant: string };
 export type ReturnGrantExchangeResponse = {
   returnTo: string;
   authenticated: true;
+  applicationSession: string;
+  applicationSessionExpiresAt: string;
 };
 
 export type BetterAuthTokenResponse = {
