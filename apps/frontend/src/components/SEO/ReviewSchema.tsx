@@ -1,6 +1,6 @@
 import type { ProductReview } from "@/services/product/product-review.service";
 import { safeJsonLd } from "@/utils/seo";
-import { resolveProductReviewUserDisplayName } from "@/utils/productReviewAuthorName";
+import { resolveProductReviewDisplayName } from "@/utils/productReviewAuthorName";
 
 interface ReviewSchemaProps {
   productName: string;
@@ -34,7 +34,7 @@ export function ReviewSchema({
   const individualReviews = reviews
     .slice(0, 10)
     .map((review) => {
-      const authorName = resolveProductReviewUserDisplayName(review.user, review.user?.Phone);
+      const authorName = resolveProductReviewDisplayName(review);
       const reviewDate = review.createdAt
         ? new Date(review.createdAt).toISOString()
         : undefined;

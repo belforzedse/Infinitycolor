@@ -26,6 +26,16 @@ function setCacheHeaderIfEnabled(ctx: any, status: CacheStatus) {
   ctx.set("X-Backend-Cache", status);
 }
 
+// `findByPost` renders the public comment thread. Populate depth is fixed
+// here rather than trusting client-supplied `ctx.query.populate` (unlike
+// `find`, which is admin-gated) — nesting `user_info` is required so a
+// commenter's live display name resolves instead of falling back to the
+// name that was snapshotted onto the comment at creation time.
+const COMMENT_POPULATE = {
+  user: { populate: ["user_info"] },
+  blog_post: true,
+} as const;
+
 export default factories.createCoreController("api::blog-comment.blog-comment", ({ strapi }) => ({
   // Resolve user even when auth middleware is disabled (auth: false)
   async resolveUserFromAuthHeader(ctx) {
@@ -229,7 +239,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
               Status: "Approved",
             },
             sort: { createdAt: "desc" },
-            populate: ["user", "blog_post"],
+            populate: COMMENT_POPULATE,
           });
 
           return { data: comments };
@@ -250,7 +260,7 @@ export default factories.createCoreController("api::blog-comment.blog-comment", 
     const comments = await strapi.entityService.findMany("api::blog-comment.blog-comment", {
       filters,
       sort: { createdAt: "desc" },
-      populate: ["user", "blog_post"],
+      populate: COMMENT_POPULATE,
     });
 
     setCacheHeaderIfEnabled(ctx, "BYPASS");

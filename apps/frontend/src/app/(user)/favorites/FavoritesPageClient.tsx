@@ -9,7 +9,8 @@ import ProductLikeService from "@/services/product/product-like";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import UserContainer from "@/components/layout/UserContainer";
 import AccountQuickLinks from "@/components/User/Account/QuickLinks";
-import { likedProductsAtom } from "@/hooks/useProductLike";
+import { likedProductsAtom, likedProductsLoadedAtom, likedProductsOwnerAtom } from "@/hooks/useProductLike";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { StorefrontAccountShell } from "@/components/storefront";
 
 export default function FavoritesPage() {
@@ -22,6 +23,10 @@ export default function FavoritesPage() {
 
   // Subscribe to global liked products atom for optimistic updates
   const [likedProducts] = useAtom(likedProductsAtom);
+  const [likesLoaded] = useAtom(likedProductsLoadedAtom);
+  const [likesOwner] = useAtom(likedProductsOwnerAtom);
+  const { user } = useCurrentUser();
+  const currentUserId = typeof user?.id === "number" ? user.id : null;
 
   const fetchFavorites = useCallback(async () => {
     try {
@@ -45,19 +50,26 @@ export default function FavoritesPage() {
     fetchFavorites();
   }, [fetchFavorites]);
 
-  // Filter favorites based on global liked products atom for optimistic updates
+  // Filter favorites based on the global liked-products atom, so unliking a
+  // product elsewhere on the same page removes it instantly. That atom is
+  // only populated by `useProductLike`, which nothing on this page mounts
+  // until a favorite card actually renders — so on a fresh visit (e.g.
+  // navigating here directly from the account menu) it's still empty. Trust
+  // the server-fetched `favorites` list until the atom has actually loaded
+  // for this user; otherwise every real favorite gets filtered out and the
+  // page looks empty even though the API returned data (the reported bug).
   const visibleFavorites = useMemo(() => {
+    if (!likesLoaded || likesOwner !== currentUserId) return favorites;
+
     const likedProductIds = new Set(
       likedProducts.map((lp) => lp.product?.id?.toString()).filter(Boolean),
     );
 
-    // Only show favorites that are still in the liked products atom
-    // This provides instant updates when items are added/removed
     return favorites.filter((favorite) => {
       const productId = favorite.product?.id?.toString();
       return productId && likedProductIds.has(productId);
     });
-  }, [favorites, likedProducts]);
+  }, [favorites, likedProducts, likesLoaded, likesOwner, currentUserId]);
 
   const mapFavoriteToProps = (favorite: ProductLike) => {
     const product = favorite.product;

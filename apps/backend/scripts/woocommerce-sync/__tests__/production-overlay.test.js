@@ -36,3 +36,8 @@ test("slug hotfix overlay replaces no sync-service files", () => {
     /COPY apps\/backend\/scripts\/woocommerce-sync(?:\s|\/)/,
   );
 });
+
+test("production overlay installs sanitize-html for category editorial", () => {
+  assert.match(dockerfile, /sanitize-html@2\.17\.0/);
+  assert.match(dockerfile, /COPY apps\/backend\/scripts\/woocommerce-importer\/catalog\s/);
+});

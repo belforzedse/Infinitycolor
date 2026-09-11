@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const os = require("node:os");
 const { loadSecretFile } = require("../woocommerce-importer/migration-v2/lib/env");
+const { resolveImportProfile, profileDefault } = require("../woocommerce-importer/catalog/lib/concurrency");
 
 function boundedInt(value, { name, fallback, min = 1, max }) {
   const parsed = value === undefined || value === "" ? fallback : Number(value);
@@ -18,6 +19,31 @@ function required(env, name) {
   return value;
 }
 
+/**
+ * Which shape the nightly campaign runs in.
+ *
+ *  - "full"    today's stage sequence, unchanged:
+ *              new-products -> catalog-full -> stock -> price -> users/wallets -> orders
+ *  - "cutover" the 5-hour window shape: catalog-full runs *concurrently* with
+ *              users/wallets, then orders, then a single combined
+ *              stock+price inventory pass restricted to sellable products.
+ *
+ * Deliberately NOT folded into WOOCOMMERCE_IMPORT_PROFILE: that knob's contract
+ * is "defaults only, never behaviour", and having two different things named
+ * "fast" at 01:00 on cutover night is an operator hazard.
+ */
+const CAMPAIGN_VARIANTS = Object.freeze(["full", "cutover"]);
+
+function resolveCampaignVariant(value) {
+  const raw = String(value || "full").trim().toLowerCase() || "full";
+  if (!CAMPAIGN_VARIANTS.includes(raw)) {
+    throw new Error(
+      `WOOCOMMERCE_SYNC_CAMPAIGN_VARIANT must be one of ${CAMPAIGN_VARIANTS.join(", ")}; received "${raw}"`,
+    );
+  }
+  return raw;
+}
+
 function booleanSetting(value, { name, fallback }) {
   if (value === undefined || value === "") return fallback;
   if (value === true || value === "true" || value === "1") return true;
@@ -28,6 +54,11 @@ function booleanSetting(value, { name, fallback }) {
 function getSyncConfig(env = process.env) {
   if (env === process.env) loadSecretFile(env.WOOCOMMERCE_SYNC_SECRETS_FILE || env.MIGRATION_SECRETS_FILE);
   const redisUrl = env.QUEUE_REDIS_URL || "redis://localhost:6379";
+  // WOOCOMMERCE_IMPORT_PROFILE=fast only changes which *default* a
+  // concurrency knob below falls back to when its own env var is unset — an
+  // explicit IMPORT_CONCURRENCY_* / WOOCOMMERCE_SYNC_FRIDAY_* value always
+  // wins, and "default" (unset) reproduces today's exact values.
+  const importProfile = resolveImportProfile(env);
   const pollSeconds = boundedInt(env.WOOCOMMERCE_SYNC_POLL_SECONDS, {
     name: "WOOCOMMERCE_SYNC_POLL_SECONDS", fallback: 30, min: 15, max: 300,
   });
@@ -74,6 +105,13 @@ function getSyncConfig(env = process.env) {
     // Unlike hourly/friday's cadence (hardcoded), this is configurable per the
     // requirement that reconciliation cadence live in normal app config.
     reconcileCron: env.WOOCOMMERCE_SYNC_RECONCILE_CRON || "30 2 * * *",
+    campaignVariant: resolveCampaignVariant(env.WOOCOMMERCE_SYNC_CAMPAIGN_VARIANT),
+    // Rehearsal-only cross-check: re-read every non-zero wallet balance (plus a
+    // sample of zeroes) through the per-id endpoint and count divergences from
+    // the bulk list. Must report 0 before the real cutover runs without it.
+    walletVerify: booleanSetting(env.WOOCOMMERCE_SYNC_WALLET_VERIFY, {
+      name: "WOOCOMMERCE_SYNC_WALLET_VERIFY", fallback: false,
+    }),
     variationSweepProducts: boundedInt(env.WOOCOMMERCE_SYNC_VARIATION_SWEEP_PRODUCTS, {
       name: "WOOCOMMERCE_SYNC_VARIATION_SWEEP_PRODUCTS", fallback: 100, min: 10, max: 500,
     }),
@@ -85,19 +123,40 @@ function getSyncConfig(env = process.env) {
     }),
     concurrency: {
       products: 1,
-      images: boundedInt(env.IMPORT_CONCURRENCY_IMAGES, { name: "IMPORT_CONCURRENCY_IMAGES", fallback: 4, max: 16 }),
-      variations: boundedInt(env.IMPORT_CONCURRENCY_VARIATIONS, { name: "IMPORT_CONCURRENCY_VARIATIONS", fallback: 8, max: 32 }),
+      images: boundedInt(env.IMPORT_CONCURRENCY_IMAGES, {
+        name: "IMPORT_CONCURRENCY_IMAGES", fallback: profileDefault(importProfile, { default: 4, fast: 8 }), max: 16,
+      }),
+      variations: boundedInt(env.IMPORT_CONCURRENCY_VARIATIONS, {
+        name: "IMPORT_CONCURRENCY_VARIATIONS", fallback: profileDefault(importProfile, { default: 8, fast: 16 }), max: 32,
+      }),
       videos: boundedInt(env.IMPORT_CONCURRENCY_VIDEOS, { name: "IMPORT_CONCURRENCY_VIDEOS", fallback: 1, max: 2 }),
-      entities: boundedInt(env.IMPORT_CONCURRENCY_ENTITIES, { name: "IMPORT_CONCURRENCY_ENTITIES", fallback: 8, max: 32 }),
+      entities: boundedInt(env.IMPORT_CONCURRENCY_ENTITIES, {
+        name: "IMPORT_CONCURRENCY_ENTITIES", fallback: profileDefault(importProfile, { default: 8, fast: 24 }), max: 32,
+      }),
       // Nightly cutover runs off-peak with a large catalog — allow high parallelism.
+      // fridayInventory is already at its ceiling (max 32); with ~8.6 variations/product
+      // on average, per-product variation concurrency was never the bottleneck — see
+      // fridayProducts below, which is.
       fridayInventory: boundedInt(env.WOOCOMMERCE_SYNC_FRIDAY_INVENTORY_CONCURRENCY, {
         name: "WOOCOMMERCE_SYNC_FRIDAY_INVENTORY_CONCURRENCY", fallback: 32, max: 32,
       }),
       fridayImages: boundedInt(env.WOOCOMMERCE_SYNC_FRIDAY_IMAGE_CONCURRENCY, {
-        name: "WOOCOMMERCE_SYNC_FRIDAY_IMAGE_CONCURRENCY", fallback: 12, max: 16,
+        name: "WOOCOMMERCE_SYNC_FRIDAY_IMAGE_CONCURRENCY",
+        fallback: profileDefault(importProfile, { default: 12, fast: 16 }), max: 16,
       }),
       fridayEntities: boundedInt(env.WOOCOMMERCE_SYNC_FRIDAY_ENTITY_CONCURRENCY, {
-        name: "WOOCOMMERCE_SYNC_FRIDAY_ENTITY_CONCURRENCY", fallback: 24, max: 32,
+        name: "WOOCOMMERCE_SYNC_FRIDAY_ENTITY_CONCURRENCY",
+        fallback: profileDefault(importProfile, { default: 24, fast: 32 }), max: 32,
+      }),
+      // Product *parents* during the friday campaign's catalog-full stage stay
+      // serial regardless of this value (CatalogEngine#resolveProductConcurrency
+      // forces it for any scope that writes products/tags/attributes/media).
+      // It only actually parallelizes the "stock" and "price" stages, which is
+      // where most of the 90-minute-each cost lived (a fully sequential
+      // per-product loop, not variation concurrency — see AGENTS.md task notes).
+      fridayProducts: boundedInt(env.WOOCOMMERCE_SYNC_FRIDAY_PRODUCT_CONCURRENCY, {
+        name: "WOOCOMMERCE_SYNC_FRIDAY_PRODUCT_CONCURRENCY",
+        fallback: profileDefault(importProfile, { default: 1, fast: 4 }), max: 6,
       }),
     },
     postgres: env.DATABASE_URL ? { connectionString: env.DATABASE_URL } : {
@@ -126,4 +185,4 @@ function getSyncConfig(env = process.env) {
   return config;
 }
 
-module.exports = { getSyncConfig, boundedInt, booleanSetting };
+module.exports = { getSyncConfig, boundedInt, booleanSetting, resolveCampaignVariant, CAMPAIGN_VARIANTS };

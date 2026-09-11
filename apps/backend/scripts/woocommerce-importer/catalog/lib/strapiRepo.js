@@ -2,6 +2,13 @@
 
 const G = require("./genericAttributes");
 const { sourceTimestampHeaders } = require("../../utils/sourceTimestamps");
+const { mapPoolOrdered } = require("./concurrency");
+
+// Read-only index pages (buildExternalIndex) have no ordering requirement and
+// no write side effects, so fetching them concurrently after page 1 is safe
+// regardless of scope/profile — unlike product-loop concurrency, this needs
+// no opt-in.
+const INDEX_PAGE_CONCURRENCY = 6;
 
 /**
  * Strapi target repository. All writes are idempotent: entities are matched by the
@@ -33,24 +40,23 @@ class StrapiRepo {
 
   /** Fetch every entity on an endpoint (Strapi pagination), filtered to WC source. */
   async fetchAllWooEntities(endpoint, params = {}) {
-    const out = [];
-    let page = 1;
-    let pageCount = 1;
-    do {
-      const response = await this.http.get(endpoint, {
-        params: {
-          "filters[external_source][$eq]": "woocommerce",
-          "pagination[page]": page,
-          "pagination[pageSize]": 100,
-          ...params,
-        },
+    const pageParams = (page) => ({
+      "filters[external_source][$eq]": "woocommerce",
+      "pagination[page]": page,
+      "pagination[pageSize]": 100,
+      ...params,
+    });
+    const first = await this.http.get(endpoint, { params: pageParams(1) });
+    const out = Array.isArray(first.data?.data) ? [...first.data.data] : [];
+    const pageCount = first.data?.meta?.pagination?.pageCount || 1;
+    if (pageCount > 1) {
+      const remainingPages = Array.from({ length: pageCount - 1 }, (_, i) => i + 2);
+      const pages = await mapPoolOrdered(remainingPages, INDEX_PAGE_CONCURRENCY, async (page) => {
+        const response = await this.http.get(endpoint, { params: pageParams(page) });
+        return Array.isArray(response.data?.data) ? response.data.data : [];
       });
-      const body = response.data;
-      const data = Array.isArray(body?.data) ? body.data : [];
-      out.push(...data);
-      pageCount = body?.meta?.pagination?.pageCount || 1;
-      page += 1;
-    } while (page <= pageCount);
+      for (const rows of pages) out.push(...rows);
+    }
     return out;
   }
 

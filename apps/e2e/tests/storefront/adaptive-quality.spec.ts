@@ -637,7 +637,7 @@ test.describe("automatic adaptive quality", () => {
     await page.goto(freshHomePath(), { waitUntil: "domcontentloaded" });
 
     const newest = page.locator('[data-home-full-bleed="newest"]');
-    const backdrop = newest.locator("[data-newest-static-backdrop]");
+    const backdrop = newest.locator("[data-newest-backdrop]");
     await expect(newest).toBeVisible({ timeout: 30_000 });
     await expect(backdrop).toBeAttached();
 

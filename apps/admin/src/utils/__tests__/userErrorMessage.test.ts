@@ -81,6 +81,17 @@ describe("getUserFacingErrorMessage", () => {
     expect(message).not.toMatch(/یافت نشد|وجود ندارد|حذف شده/);
   });
 
+  it("names a bad report date range instead of the generic 400 text", () => {
+    // The report API returns INVALID_DATE_RANGE as a 400. Translation has to win
+    // over STATUS_MESSAGES[400], or the operator is told "check your input" with
+    // no hint that it is the reporting period that is wrong.
+    const message = getUserFacingErrorMessage(
+      { status: 400, response: { data: { error: { message: "INVALID_DATE_RANGE" } } } },
+      "خطا در بارگذاری گزارش فروش",
+    );
+    expect(message).toBe("بازه تاریخ انتخاب‌شده معتبر نیست؛ تاریخ شروع و پایان را بررسی کنید.");
+  });
+
   it("falls back to the caller's message when nothing else is known", () => {
     expect(getUserFacingErrorMessage({}, "خطا در حذف دسته‌بندی")).toBe(
       "خطا در حذف دسته‌بندی",

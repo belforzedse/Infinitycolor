@@ -6,8 +6,10 @@ import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import HomepageProductPicker, {
   type ProductSummary,
 } from "@/components/SuperAdmin/Products/HomepageProductPicker";
-import { getSuperAdminSettings } from "@/services/super-admin/settings/get";
-import { updateSuperAdminSettings } from "@/services/super-admin/settings/update";
+import {
+  getHomepageProductSettings,
+  updateHomepageProductSettings,
+} from "@/services/super-admin/settings/homepageProducts";
 import { getProductSummariesByIds } from "@/services/super-admin/product/get";
 import { useEditorRedirect } from "@/hooks/useEditorRedirect";
 
@@ -53,7 +55,7 @@ export default function HomepageProductsPage() {
 
   const loadSettingsAndSummaries = useCallback(async () => {
     try {
-      const settings = await getSuperAdminSettings();
+      const settings = await getHomepageProductSettings();
       setNewestIds(settings.homeNewestProductIds);
       setDiscountedIds(settings.homeDiscountedProductIds);
       setWeeklyPicksEnabled(settings.homeWeeklyPicksEnabled);
@@ -103,7 +105,7 @@ export default function HomepageProductsPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const saved = await updateSuperAdminSettings({
+      const saved = await updateHomepageProductSettings({
         homeNewestProductIds: newestIds,
         homeDiscountedProductIds: discountedIds,
         homeWeeklyPicksEnabled: weeklyPicksEnabled,
@@ -112,7 +114,7 @@ export default function HomepageProductsPage() {
         homeEveryoneFollowsProductIds: everyoneFollowsIds,
       });
       toast.success("تنظیمات با موفقیت ذخیره شد");
-      const settings = saved ?? (await getSuperAdminSettings());
+      const settings = saved ?? (await getHomepageProductSettings());
       setNewestIds(settings.homeNewestProductIds);
       setDiscountedIds(settings.homeDiscountedProductIds);
       setWeeklyPicksEnabled(settings.homeWeeklyPicksEnabled);

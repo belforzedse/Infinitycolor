@@ -9,7 +9,7 @@ const StrapiRepo = require("./lib/strapiRepo");
 const MappingStore = require("./lib/mapping");
 const { MediaMappingStore } = require("./lib/mediaMappingStore");
 const MediaSync = require("./lib/media");
-const { mapPoolOrdered } = require("./lib/concurrency");
+const { mapPoolOrdered, mapPoolAsync } = require("./lib/concurrency");
 const { ImportReport } = require("./lib/report");
 const { resolveScope, needsProductLoop } = require("./lib/presets");
 const T = require("./lib/transforms");
@@ -787,15 +787,29 @@ class CatalogEngine {
       ? new Set(Array.from(options.onlyExternalIds, (value) => String(value)))
       : null;
     const sourceProducts = options.sourceProducts || this.woo.iterateProducts();
-    for await (const wcProduct of sourceProducts) {
+
+    // The out-of-stock gate is only sound over a *complete* Woo enumeration
+    // whose stockIndex was built for this run. The hourly drain injects a
+    // handful of rows (options.sourceProducts) and callers can narrow with
+    // onlyExternalIds/--limit; in those cases the caller explicitly asked for
+    // those products, so never second-guess them. Dry runs write nothing, so
+    // there is nothing to gate.
+    ctx.stockGateActive = flags.stockGate === "instock-or-verify"
+      && !dryRun
+      && !options.sourceProducts
+      && !onlyExternalIds
+      && !Number.isFinite(limit);
+    ctx.stockGateStats = { examined: 0, verifiedSkipped: 0, staleNonZero: 0 };
+
+    const handleProduct = async (wcProduct) => {
       try {
         await this.ensureRunCanContinue(runContext);
-        if (onlyExternalIds && !onlyExternalIds.has(String(wcProduct.id))) continue;
+        if (onlyExternalIds && !onlyExternalIds.has(String(wcProduct.id))) return;
         if (options.startAfterExternalId && Number(wcProduct.id) <= options.startAfterExternalId) {
           report.count("products", "skipped");
-          continue;
+          return;
         }
-        if (processed >= limit) break;
+        if (processed >= limit) return;
         processed += 1;
         report.productDiscovered(1);
         report.productProcessed(1);
@@ -817,7 +831,54 @@ class CatalogEngine {
         }
         this.logger.error(`❌ product ${wcProduct.id} (${wcProduct.name}): ${error.message}`);
       }
+    };
+
+    const productConcurrency = this.resolveProductConcurrency(flags);
+    if (productConcurrency <= 1) {
+      // Default path — byte-for-byte the original sequential loop. `break`
+      // (rather than handleProduct's approximate `return`) stops pulling
+      // further Woo pages the instant `limit` is reached.
+      for await (const wcProduct of sourceProducts) {
+        if (processed >= limit) break;
+        await handleProduct(wcProduct);
+      }
+    } else {
+      // Opt-in path (IMPORT_CONCURRENCY_PRODUCTS > 1, only honored by scopes
+      // that don't create shared products/tags/attributes/media — see
+      // resolveProductConcurrency). `limit` becomes approximate: up to
+      // `productConcurrency - 1` extra products may already be in flight
+      // when the cap is reached. Unused by the campaign path (no --limit).
+      await mapPoolAsync(sourceProducts, productConcurrency, handleProduct, {
+        canStart: () => this.ensureRunCanContinue(runContext),
+      });
     }
+
+    if (ctx.stockGateActive) report.setStockGate(ctx.stockGateStats);
+  }
+
+  /**
+   * Product *parents* are serial by default (see catalog/config.js). Raising
+   * IMPORT_CONCURRENCY_PRODUCTS only actually parallelizes scopes that touch
+   * neither the shared find-or-create tag/attribute caches
+   * (StrapiRepo#productTagCache, #resolveAttributeId) nor the media dedupe
+   * store nor `MappingStore#set` — concurrent first-writers there can create
+   * duplicate tags/attributes. Every other scope is silently forced back to
+   * serial, regardless of the configured value, so a misconfigured env var
+   * can't reintroduce that race.
+   */
+  resolveProductConcurrency(flags) {
+    const configured = Math.max(1, Number(this.config.catalog.concurrency?.products) || 1);
+    if (configured <= 1) return 1;
+    const touchesSharedCaches =
+      flags.products || flags.media || flags.variationFields === "all" || flags.categoryEditorial;
+    if (touchesSharedCaches) {
+      this.logger.info(
+        `Product concurrency ${configured} requested but this scope writes products/tags/attributes/media ` +
+          "(shared find-or-create caches); forcing serial product processing for correctness.",
+      );
+      return 1;
+    }
+    return configured;
   }
 
   async syncOneProduct(wcProduct, ctx) {
@@ -857,6 +918,52 @@ class CatalogEngine {
       wcProduct.type === "simple" ||
       !Array.isArray(wcProduct.variations) ||
       wcProduct.variations.length === 0;
+
+    // --- Out-of-stock gate (scope "inventory-instock") ---
+    //
+    // Fetching a product's variations is the entire cost of an inventory pass
+    // (the "stock" and "price" stages ran at an identical 2.1 products/s
+    // precisely because both paid this fetch). Two thirds of the catalog is
+    // out of stock, so skipping the fetch for those is the whole speed-up.
+    //
+    // It must never become a blind zero-out. WooCommerce derives a variable
+    // parent's stock_status from wc_product_meta_lookup, which is documented
+    // as unreliable in the dangerous direction (real stock reported
+    // "outofstock" — woocommerce#26086, #20593, #23645, #28741, #34665).
+    // So "outofstock" is only ever treated as *permission to skip*, and only
+    // when Strapi independently already holds 0 for every sellable unit:
+    // agreeing sources, nothing to write. Any disagreement falls through to
+    // the normal path and takes its value from Woo's real stock_quantity.
+    if (ctx.stockGateActive && String(wcProduct.stock_status || "") === "outofstock") {
+      ctx.stockGateStats.examined += 1;
+      const unitIds = isSimple
+        ? [String(wcProduct.id)]
+        : wcProduct.variations.map((id) => String(id));
+      const strapiCounts = unitIds.map((unitId) => {
+        const entry = ctx.stockIndex.get(`stock_${unitId}`);
+        // Skipping requires Strapi to *independently confirm* zero. A missing
+        // row, or a row created earlier in this same run (bare { id }, no
+        // attributes), confirms nothing — return null so it reads as unknown
+        // and the product takes the normal verified path.
+        if (!entry) return null;
+        const raw = entry.attributes?.Count ?? entry.Count;
+        return raw === undefined || raw === null ? null : Number(raw);
+      });
+      const allZero = strapiCounts.every((count) => count === 0);
+      if (allZero) {
+        ctx.stockGateStats.verifiedSkipped += 1;
+        report.count("products", "skipped");
+        if (runContext && !childrenOnly) {
+          runContext.store.completeItem(runContext.runId, itemKey, {
+            status: "skipped",
+            reason: "outofstock-verified-zero",
+          }, runContext.lockToken);
+        }
+        return;
+      }
+      ctx.stockGateStats.staleNonZero += 1;
+    }
+
     const wcVariations = isSimple ? [] : await this.woo.fetchAllVariations(wcProduct.id);
     const stockEligibility = T.evaluateProductStockEligibility(wcProduct, wcVariations);
     if (!stockEligibility.eligible) {

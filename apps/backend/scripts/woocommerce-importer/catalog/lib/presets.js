@@ -20,6 +20,7 @@ const SCOPES = [
   "stock",
   "price",
   "media",
+  "inventory-instock",
 ];
 
 /**
@@ -29,6 +30,12 @@ const SCOPES = [
  * absent (every legacy scope) the engine treats it as "always" — i.e. the media
  * phase re-attaches CoverImage/Media as before. "preserve" means: import & attach
  * media only for products that don't already have both a cover and a gallery.
+ *
+ * `stockGate` is likewise only present where it applies. "instock-or-verify"
+ * lets the engine skip the (expensive) variation fetch for a product Woo
+ * reports out of stock *when Strapi already holds zero for every one of its
+ * sellable units* — it never writes a value it did not read from Woo. See
+ * CatalogEngine#syncOneProduct.
  *
  * @param {string} scope
  * @param {{ skipMedia?: boolean }} [opts]
@@ -60,6 +67,19 @@ function resolveScope(scope, opts = {}) {
       return f({ variations: true, onlyExisting: true, variationFields: "price-only" });
     case "media":
       return f({ media: true, onlyExisting: true });
+    // One pass doing what "stock" and "price" each did with a separate full
+    // variation fetch: `variations` + `stock` both write off a single fetch,
+    // and `stockGate` skips the fetch entirely for out-of-stock products that
+    // Strapi already records as empty. Keep variationFields "price-only" —
+    // "all" would make resolveProductConcurrency force serial processing.
+    case "inventory-instock":
+      return f({
+        variations: true,
+        stock: true,
+        onlyExisting: true,
+        variationFields: "price-only",
+        stockGate: "instock-or-verify",
+      });
     default:
       throw new Error(`Unknown scope: ${scope}. Use one of: ${SCOPES.join(", ")}`);
   }
@@ -97,6 +117,13 @@ const PRESETS = [
   { id: "dry-run", label: "Catalog Dry-Run", description: "Preview a full sync — no writes", run: { scope: "full", dryRun: true }, confirm: false },
   { id: "stock", label: "Stock Sync", description: "Refresh stock Count for existing variations only", run: { scope: "stock" }, confirm: true },
   { id: "price", label: "Price Sync", description: "Update Price/DiscountPrice on existing variations only", run: { scope: "price" }, confirm: true },
+  {
+    id: "inventory-instock",
+    label: "Inventory Sync — In-Stock",
+    description: "Stock + price in one pass; skips out-of-stock products already empty in Strapi",
+    run: { scope: "inventory-instock" },
+    confirm: true,
+  },
   { id: "media", label: "Media Sync", description: "Upload & attach missing media for existing products only", run: { scope: "media" }, confirm: true },
   { id: "categories", label: "Categories Only", description: "Sync categories only", run: { scope: "categories" }, confirm: true },
   { id: "category-editorial", label: "Category Editorial", description: "Create missing category SEO content and localize audio", run: { scope: "category-editorial" }, confirm: true },

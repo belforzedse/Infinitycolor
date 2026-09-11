@@ -10,9 +10,11 @@ const { WordPressSource } = require("../woocommerce-importer/migration-v2/lib/so
 const { Destination } = require("../woocommerce-importer/migration-v2/lib/destination");
 const T = require("../woocommerce-importer/migration-v2/lib/transforms");
 const { CatalogEngine } = require("../woocommerce-importer/catalog/engine");
+const { mapPoolAsync } = require("../woocommerce-importer/catalog/lib/concurrency");
 const { buildConfig } = require("../woocommerce-importer/catalog/config");
 const { reconcileMissingProductMedia } = require("../woocommerce-importer/catalog/lib/mediaRecovery");
 const Logger = require("../woocommerce-importer/utils/Logger");
+const { ensureOrderReferencedVariations } = require("./ensureOrderVariations");
 
 const QUEUE_NAME = "woocommerce-sync";
 const JOBS = {
@@ -132,6 +134,9 @@ function customerRevision(row) {
     lastName: row.last_name || "",
     billingPhone: T.canonicalPhone(row?.billing?.phone),
     shippingPhone: T.canonicalPhone(row?.shipping?.phone),
+    // customerPayload also accepts the login username as a phone source; leaving
+    // it out here made the delta path disagree about which customers changed.
+    usernamePhone: T.canonicalPhone(row?.username),
   });
 }
 
@@ -172,7 +177,18 @@ function catalogReportSummary(scope, report) {
     scope,
     failed: failures.length,
     totals: serialized.totals || {},
+    processed: Number(serialized.processed || 0),
+    durationMs: Number(serialized.durationMs || 0),
+    // Present only for the inventory scope; `staleNonZero` is the signal that
+    // WooCommerce's out-of-stock flag disagreed with Strapi's counts.
+    ...(serialized.stockGate ? { stockGate: serialized.stockGate } : {}),
   };
+}
+
+/** entities/sec, or null when there's nothing to divide (avoids Infinity/NaN in reported metrics). */
+function throughputPerSec(count, durationMs) {
+  if (!Number.isFinite(count) || !Number.isFinite(durationMs) || durationMs <= 0) return null;
+  return Number((count / (durationMs / 1000)).toFixed(2));
 }
 
 function assertCatalogReportSucceeded(summary) {
@@ -184,6 +200,13 @@ function assertCatalogReportSucceeded(summary) {
 
 function logId(type, id) {
   return sha256(`${type}:${id}`).slice(0, 16);
+}
+
+/** Flatten a page generator into a row stream so a worker pool never idles between pages. */
+async function* pageRows(pages) {
+  for await (const page of pages) {
+    yield* page.rows;
+  }
 }
 
 async function mapPool(items, concurrency, action) {
@@ -226,6 +249,14 @@ class WooSyncService {
     this.source = source || new WordPressSource(config.source);
     this.destination = destination || new Destination({ ...config.source, ...config.destination });
     this.stopping = false;
+    this._catalogEngine = null;
+  }
+
+  catalogRepo() {
+    if (!this._catalogEngine) {
+      this._catalogEngine = (this.createCatalogEngine || createCatalogEngine)(this.config);
+    }
+    return this._catalogEngine.repo;
   }
 
   async withLease(name, action) {
@@ -392,27 +423,99 @@ class WooSyncService {
     });
   }
 
-  async syncOrderRow(row) {
+  /**
+   * @param {{ source_id: any }} row
+   * @param {object} [options]
+   * @param {object} [options.order] Order already fetched by the caller — the
+   *   campaign path reads it off the list page it is already paginating, which
+   *   removes one Woo GET per order.
+   * @param {Set<string>} [options.mappedCustomers] Woo customer ids already
+   *   provisioned in Strapi; skips re-provisioning a user this campaign wrote
+   *   minutes earlier.
+   * @param {Map<string, any>} [options.walletBalances] Bulk balance snapshot.
+   * @param {Map<string, { id:number }>} [options.variationIndex] Variation
+   *   external_id snapshot for the line-item repair path.
+   */
+  async syncOrderRow(row, options = {}) {
     await ensureActive(this.state);
-    const order = await this.source.getOrder(row.source_id);
+    const order = options.order || await this.source.getOrder(row.source_id);
+    let variationRepair = { ensured: [], present: [], failed: [] };
+    try {
+      const ensureFn = this.ensureOrderVariations || ensureOrderReferencedVariations;
+      variationRepair = await ensureFn({
+        source: this.source,
+        repo: this.catalogRepo(),
+        order,
+        logger: console,
+        variationIndex: options.variationIndex || null,
+      });
+    } catch (error) {
+      variationRepair = {
+        ensured: [],
+        present: [],
+        failed: [{ variationSourceId: "*", error: safeErrorCode(error) }],
+      };
+      console.warn("[WooSync] order variation ensure isolated", {
+        sourceIdHash: logId("order", row.source_id),
+        errorCode: safeErrorCode(error),
+      });
+    }
     const payload = T.orderPayload(order);
-    if (payload.customerSourceId) {
-      const customer = await this.source.getCustomer(payload.customerSourceId);
-      await ensureActive(this.state);
-      await this.destination.upsertUser(T.customerPayload(customer));
+    const sideIssues = [];
+    for (const failure of variationRepair.failed || []) {
+      sideIssues.push(String(failure.error || "ORDER_VARIATION_ENSURE_FAILED").slice(0, 128));
+    }
+    // Provisioning the buyer here exists so an order whose customer the
+    // identity stage never reached still gets an owner. When this campaign has
+    // already provisioned them, both writes are re-writes of data fetched
+    // minutes ago from the same snapshot — pure cost, so skip them. An unmapped
+    // id keeps the full path: upsertOrder's resolveOrderUser soft-fails an
+    // unknown customer into the billing-phone guest reconcile, so behaviour for
+    // genuinely new customers is unchanged.
+    const customerSourceKey = payload.customerSourceId ? String(payload.customerSourceId) : null;
+    const alreadyProvisioned = Boolean(customerSourceKey && options.mappedCustomers?.has(customerSourceKey));
+    if (customerSourceKey && !alreadyProvisioned) {
       try {
-        const balance = await this.source.getWalletBalance(payload.customerSourceId);
+        const customer = await this.source.getCustomer(payload.customerSourceId);
+        await ensureActive(this.state);
+        await this.destination.upsertUser(T.customerPayload(customer));
+      } catch (error) {
+        sideIssues.push(safeErrorCode(error));
+        console.warn("[WooSync] order customer upsert isolated", {
+          sourceIdHash: logId("order", row.source_id),
+          errorCode: safeErrorCode(error),
+        });
+      }
+      try {
+        const balance = options.walletBalances?.has(customerSourceKey)
+          ? options.walletBalances.get(customerSourceKey)
+          : T.walletBalanceValue(await this.source.getWalletBalance(payload.customerSourceId));
         await ensureActive(this.state);
         await this.destination.upsertWallet(T.walletPayload({
           id: payload.customerSourceId,
-          balance: T.walletBalanceValue(balance),
+          balance,
         }));
       } catch (error) {
-        if (!/NOT_FOUND|404/.test(String(error?.payload?.error || error?.message || ""))) throw error;
+        if (!/NOT_FOUND|404/.test(String(error?.payload?.error || error?.message || ""))) {
+          sideIssues.push(safeErrorCode(error));
+          console.warn("[WooSync] order wallet upsert isolated", {
+            sourceIdHash: logId("order", row.source_id),
+            errorCode: safeErrorCode(error),
+          });
+        }
       }
     }
     await ensureActive(this.state);
-    return this.destination.upsertOrder(payload);
+    const result = await this.destination.upsertOrder(payload);
+    return {
+      ...result,
+      sideIssues,
+      variationsEnsured: variationRepair.ensured,
+      hasSoftIssues: sideIssues.length > 0
+        || Number(result?.itemsUnresolved || 0) > 0
+        || (Array.isArray(result?.identityIssues) && result.identityIssues.length > 0)
+        || (Array.isArray(result?.itemIssues) && result.itemIssues.length > 0),
+    };
   }
 
   async processProductRows(rows, scope) {
@@ -643,27 +746,164 @@ class WooSyncService {
     });
   }
 
-  async fullUsersAndWallets({ concurrency } = {}) {
+  /**
+   * Read every wallet balance in one bulk pass.
+   *
+   * TeraWallet's /admin/users list carries `balance` inline, so ~161,700
+   * per-customer balance GETs (2.6 h against a source that saturates at ~17
+   * req/s) collapse into ~1,884 page fetches. The list was verified against
+   * the per-id endpoint on production before this was adopted: 100% id
+   * coverage, stable pagination, and 48/48 exact matches on non-zero balances.
+   *
+   * A row this cannot parse is simply left out of the map — the caller falls
+   * back to the per-id endpoint for a miss, so completeness of the bulk list
+   * is never load-bearing for correctness.
+   */
+  async loadWalletBalances({ pageConcurrency } = {}) {
+    const balances = new Map();
+    const concurrency = pageConcurrency ?? this.config.sourcePageConcurrency;
+    let listed = 0;
+    let duplicates = 0;
+    let invalid = 0;
+    for await (const page of this.source.walletUsers({ concurrency })) {
+      for (const row of page.rows) {
+        const sourceId = String(row?.id ?? "");
+        if (!/^\d+$/.test(sourceId) || sourceId === "0") {
+          invalid += 1;
+          continue;
+        }
+        listed += 1;
+        if (balances.has(sourceId)) {
+          duplicates += 1;
+          continue;
+        }
+        try {
+          balances.set(sourceId, T.walletBalanceValue(row));
+        } catch {
+          invalid += 1;
+        }
+      }
+    }
+    console.info("[WooSync] wallet balances preloaded", { listed, unique: balances.size, duplicates, invalid });
+    return { balances, listed, duplicates, invalid };
+  }
+
+  /**
+   * Rehearsal-only cross-check of the bulk list against the per-id endpoint.
+   *
+   * Compares the *written* value (`wooWalletBalanceToRial`) rather than the raw
+   * field, so "1000" vs 1000 is not a false positive while a genuinely
+   * different Balance is caught. Every non-zero balance is checked (they are
+   * ~0.6% of rows, and they are the only ones that can lose money) plus a
+   * sample of zeroes to catch a systematically empty list.
+   */
+  async verifyWalletBalances(balances, { concurrency, zeroSampleEvery = 100 } = {}) {
+    const normalize = (value) => {
+      try {
+        return T.wooWalletBalanceToRial(value ?? 0);
+      } catch (error) {
+        return `INVALID:${safeErrorCode(error)}`;
+      }
+    };
+    const targets = [];
+    let seen = 0;
+    for (const [sourceId, bulk] of balances) {
+      const isZero = normalize(bulk) === "0";
+      if (!isZero || seen % zeroSampleEvery === 0) targets.push([sourceId, bulk]);
+      seen += 1;
+    }
+    let checked = 0;
+    let divergent = 0;
+    let errors = 0;
+    const examples = [];
+    await mapPoolAsync(targets, concurrency ?? this.config.concurrency.entities, async ([sourceId, bulk]) => {
+      let perId;
+      try {
+        perId = T.walletBalanceValue(await this.source.getWalletBalance(sourceId));
+      } catch (error) {
+        if (/NOT_FOUND|404/.test(String(error?.payload?.error || error?.message || ""))) return;
+        errors += 1;
+        return;
+      }
+      checked += 1;
+      if (normalize(perId) !== normalize(bulk)) {
+        divergent += 1;
+        if (examples.length < 20) examples.push({ sourceIdHash: logId("customer", sourceId) });
+      }
+    });
+    const result = { sampled: targets.length, checked, divergent, errors, examples };
+    console.info("[WooSync] wallet bulk/per-id equivalence", { ...result, examples: examples.length });
+    return result;
+  }
+
+  /**
+   * Woo customer ids this destination has already provisioned a user for.
+   *
+   * `resolveRegisteredCustomerForOrder` writes exactly this row on every
+   * successful order-customer resolution, so after the identity stage the set
+   * is the authoritative "already has a Strapi user" answer — letting the order
+   * stage skip a getCustomer + upsertUser + upsertWallet round-trip per order.
+   */
+  async loadMappedCustomerIds() {
+    const result = await this.pool.query(
+      `SELECT source_key FROM customer_identity_mappings
+        WHERE source_system = 'woocommerce' AND source_kind = 'customer'`,
+    );
+    const mapped = new Set(result.rows.map((row) => String(row.source_key)));
+    console.info("[WooSync] provisioned customer mappings loaded", { count: mapped.size });
+    return mapped;
+  }
+
+  /**
+   * @param {object} [opts]
+   * @param {{ balances?: Map<string, any> }} [opts.handoff] Filled with the bulk
+   *   balance snapshot so the order stage can reuse it. Out-of-band because the
+   *   returned summary is JSON-serialized into campaign metrics.
+   */
+  async fullUsersAndWallets({ concurrency, balances = null, verify = false, handoff = null } = {}) {
     let users = 0;
     let wallets = 0;
     let failed = 0;
+    let fallbacks = 0;
+    let missing = 0;
     const poolSize = concurrency ?? this.config.concurrency.entities;
-    for await (const page of this.source.customers()) {
-      await mapPool(page.rows, poolSize, async (customer) => {
+    const pageConcurrency = this.config.sourcePageConcurrency;
+    const preload = balances || await this.loadWalletBalances({ pageConcurrency });
+    const walletBalances = preload.balances;
+    if (handoff) handoff.balances = walletBalances;
+
+    const verification = verify
+      ? await this.verifyWalletBalances(walletBalances, { concurrency: poolSize })
+      : null;
+
+    await mapPoolAsync(
+      pageRows(this.source.customers({}, { concurrency: pageConcurrency })),
+      poolSize,
+      async (customer) => {
         try {
           await ensureActive(this.state);
           await this.destination.upsertUser(T.customerPayload(customer));
           users += 1;
           try {
-            const balance = await this.source.getWalletBalance(customer.id);
+            const sourceId = String(customer.id);
+            let balance;
+            if (walletBalances.has(sourceId)) {
+              balance = walletBalances.get(sourceId);
+            } else {
+              // Bulk list miss: fall back to exactly today's per-id path, so a
+              // gap in the list degrades to the old cost, never to a wrong
+              // balance or a dropped wallet.
+              fallbacks += 1;
+              balance = T.walletBalanceValue(await this.source.getWalletBalance(customer.id));
+            }
             await ensureActive(this.state);
-            await this.destination.upsertWallet(T.walletPayload({
-              id: customer.id,
-              balance: T.walletBalanceValue(balance),
-            }));
+            await this.destination.upsertWallet(T.walletPayload({ id: customer.id, balance }));
             wallets += 1;
           } catch (error) {
-            if (/NOT_FOUND|404/.test(String(error?.payload?.error || error?.message || ""))) return;
+            if (/NOT_FOUND|404/.test(String(error?.payload?.error || error?.message || ""))) {
+              missing += 1;
+              return;
+            }
             throw error;
           }
         } catch (error) {
@@ -673,32 +913,107 @@ class WooSyncService {
             errorCode: safeErrorCode(error),
           });
         }
-      });
-    }
-    return { users, wallets, failed };
+      },
+    );
+    return {
+      users,
+      wallets,
+      failed,
+      wallet: {
+        listed: preload.listed,
+        unique: walletBalances.size,
+        duplicates: preload.duplicates,
+        invalid: preload.invalid,
+        fallbacks,
+        missing,
+        ...(verification ? { divergence: verification.divergent, verified: verification.checked } : {}),
+      },
+    };
   }
 
-  async fullOrders({ concurrency } = {}) {
+  /**
+   * @param {object} [opts]
+   * @param {boolean} [opts.preload] Campaign path: enumerate the provisioned
+   *   customer mappings and the variation index once up front. Off by default so
+   *   a plain fullOrders() call behaves exactly as it always has.
+   */
+  async fullOrders({
+    concurrency,
+    preload = false,
+    mappedCustomers = null,
+    walletBalances = null,
+    variationIndex = null,
+  } = {}) {
     let completed = 0;
     let failed = 0;
+    let softIssues = 0;
     const poolSize = concurrency ?? this.config.concurrency.entities;
-    for await (const page of this.source.orders()) {
-      await mapPool(page.rows, poolSize, async (order) => {
+    const pageConcurrency = this.config.sourcePageConcurrency;
+    // Loaded here rather than by the caller so that stubbing fullOrders in a
+    // test never triggers a source or destination read.
+    const mapped = mappedCustomers || (preload ? await this.loadMappedCustomerIds() : null);
+    // One enumeration replaces a per-line-item Strapi lookup (~150k GETs across
+    // a full order run). It is a snapshot; ensureOrderReferencedVariations
+    // writes anything it creates back into it.
+    const variations = variationIndex
+      || (preload ? await this.catalogRepo().buildExternalIndex("/product-variations") : null);
+    await mapPoolAsync(
+      pageRows(this.source.orders({}, { concurrency: pageConcurrency })),
+      poolSize,
+      async (order) => {
+        const sourceId = order.id;
+        const revisionSha256 = orderRevision(order);
+        const modifiedAt = sourceModifiedAt(order);
         try {
-          await this.syncOrderRow({ source_id: order.id });
+          // The list page already carries the full order payload.
+          const result = await this.syncOrderRow({ source_id: sourceId }, {
+            order,
+            mappedCustomers: mapped,
+            walletBalances,
+            variationIndex: variations,
+          });
+          await this.state.recordOrderOutcome({
+            sourceId,
+            revisionSha256,
+            modifiedAt,
+            outcome: "completed",
+            errorCode: result?.hasSoftIssues
+              ? String(
+                [...(result.sideIssues || []), ...(result.identityIssues || []), ...(result.itemIssues || [])][0]
+                || "ORDER_SOFT_ISSUES",
+              ).slice(0, 128)
+              : null,
+          });
           completed += 1;
+          if (result?.hasSoftIssues) softIssues += 1;
         } catch (error) {
           failed += 1;
+          const errorCode = safeErrorCode(error);
+          await this.state.recordOrderOutcome({
+            sourceId,
+            revisionSha256,
+            modifiedAt,
+            outcome: "failed",
+            errorCode,
+          }).catch(() => undefined);
           console.warn("[WooSync] campaign order failed", {
-            sourceIdHash: logId("order", order.id), errorCode: safeErrorCode(error),
+            sourceIdHash: logId("order", order.id), errorCode,
           });
         }
-      });
-    }
-    return { completed, failed };
+      },
+    );
+    return { completed, failed, softIssues, fetched: completed + failed };
   }
 
-  async friday(scheduledTimestamp = Date.now()) {
+  /**
+   * @param {number} scheduledTimestamp
+   * @param {{ variant?: "full"|"cutover" }} [opts] Defaults to config.campaignVariant.
+   *   "full" keeps the historical stage sequence exactly; "cutover" overlaps
+   *   catalog-full with users/wallets and replaces the separate stock+price
+   *   stages with one inventory pass, to fit a fixed maintenance window.
+   */
+  async friday(scheduledTimestamp = Date.now(), { variant: variantOption } = {}) {
+    const variant = variantOption || this.config.campaignVariant || "full";
     return this.withLease("campaign:friday", async (token) => {
       await ensureActive(this.state);
       const scheduledFor = new Date(scheduledTimestamp);
@@ -714,21 +1029,36 @@ class WooSyncService {
       if (["completed", "completed-with-exceptions", "missed"].includes(campaign.status)) {
         return { skipped: true, reason: `already-${campaign.status}` };
       }
+      const campaignStartedAt = Date.now();
+      const durationsMs = {};
+      let stageStartedAt = campaignStartedAt;
+      const markStage = () => {
+        const now = Date.now();
+        const elapsed = now - stageStartedAt;
+        stageStartedAt = now;
+        return elapsed;
+      };
       try {
         await this.state.campaignStep(campaignKey, token, "new-products");
         const immediate = await this.drain("immediate", null, ["product"]);
+        durationsMs.newProducts = markStage();
         if (immediate.skipped || immediate.failed > 0) {
           const error = new Error("Friday new-product drain did not complete cleanly");
           error.code = immediate.skipped ? "FRIDAY_NEW_PRODUCTS_LEASE_HELD" : "FRIDAY_NEW_PRODUCTS_HAS_FAILURES";
           throw error;
         }
         // Nightly cutover runs off-peak with a large catalog — push concurrency hard.
-        // Product parents stay serial (CatalogEngine safety); media/variations/entities scale up.
+        // Product parents stay serial for catalog-full (CatalogEngine safety: shared
+        // tag/attribute find-or-create caches). "stock" and "price" write neither, so
+        // fridayProducts (opt into WOOCOMMERCE_IMPORT_PROFILE=fast to raise it) actually
+        // parallelizes those two stages — CatalogEngine#resolveProductConcurrency forces
+        // it back to 1 for catalog-full regardless of this value.
         const campaignConcurrency = {
           ...this.config.concurrency,
           variations: this.config.concurrency.fridayInventory,
           images: this.config.concurrency.fridayImages,
           entities: this.config.concurrency.fridayEntities,
+          products: this.config.concurrency.fridayProducts,
         };
         const campaignConfig = {
           ...this.config,
@@ -736,29 +1066,123 @@ class WooSyncService {
           sourcePageConcurrency: Math.max(this.config.sourcePageConcurrency, 8),
         };
         const engineFactory = this.createCatalogEngine || createCatalogEngine;
-        // full-sync: every product + backfill missing media; preserve existing covers.
-        // Soft-fail — media flake must not abort wallets/orders for the night.
-        await this.state.campaignStep(campaignKey, token, "catalog-full", { immediate });
-        const catalog = catalogReportSummary(
-          "full-sync",
-          await engineFactory(campaignConfig).runSync({ dryRun: false, scope: "full-sync" }),
+        const runCatalogScope = async (scope, label = scope) => catalogReportSummary(
+          label,
+          await engineFactory(campaignConfig).runSync({ dryRun: false, scope }),
         );
-        await this.state.campaignStep(campaignKey, token, "inventory", { catalog });
-        const stock = catalogReportSummary(
-          "stock",
-          await engineFactory(campaignConfig).runSync({ dryRun: false, scope: "stock" }),
-        );
-        assertCatalogReportSucceeded(stock);
-        const price = catalogReportSummary(
-          "price",
-          await engineFactory(campaignConfig).runSync({ dryRun: false, scope: "price" }),
-        );
-        assertCatalogReportSucceeded(price);
-        await this.state.campaignStep(campaignKey, token, "inventory-complete", { stock, price });
-        await this.state.campaignStep(campaignKey, token, "users-wallets");
-        const identities = await this.fullUsersAndWallets({ concurrency: campaignConcurrency.entities });
-        await this.state.campaignStep(campaignKey, token, "orders", { identities });
-        const orders = await this.fullOrders({ concurrency: campaignConcurrency.entities });
+        // Shared between the identity and order stages: the order stage takes a
+        // buyer's balance from this snapshot instead of re-reading it.
+        const identityHandoff = {};
+        const runIdentities = async () => this.fullUsersAndWallets({
+          concurrency: campaignConcurrency.entities,
+          verify: Boolean(this.config.walletVerify),
+          handoff: identityHandoff,
+        });
+        // preload:true resolves the provisioned-customer set inside fullOrders,
+        // which runs after the identity stage — so it includes the users this
+        // campaign just created.
+        const runOrders = async () => this.fullOrders({
+          concurrency: campaignConcurrency.entities,
+          preload: true,
+          walletBalances: identityHandoff.balances || null,
+        });
+
+        let catalog;
+        let identities;
+        let orders;
+        let stock = null;
+        let price = null;
+        let inventory = null;
+
+        if (variant === "cutover") {
+          // catalog-full is Woo-bound and forced serial (shared tag/attribute
+          // caches); users/wallets is destination-bound. Overlapping them makes
+          // catalog-full's floor the critical path instead of the sum.
+          await this.state.campaignStep(campaignKey, token, "catalog-full+users-wallets", {
+            immediate, variant, durationsMs: { newProducts: durationsMs.newProducts },
+          });
+          // Each branch times itself: the combined wall clock alone cannot say
+          // which of the two is the critical path, which is precisely what the
+          // rehearsal run has to answer.
+          const timed = async (key, run) => {
+            const startedAt = Date.now();
+            try {
+              return await run();
+            } finally {
+              durationsMs[key] = Date.now() - startedAt;
+            }
+          };
+          // allSettled, not all: a rejected branch must not finish the campaign
+          // and drop the lease while the other branch is still writing.
+          const [catalogSettled, identitySettled] = await Promise.allSettled([
+            timed("catalogFull", () => runCatalogScope("full-sync")),
+            timed("usersWallets", runIdentities),
+          ]);
+          if (catalogSettled.status === "rejected") throw catalogSettled.reason;
+          if (identitySettled.status === "rejected") throw identitySettled.reason;
+          catalog = catalogSettled.value;
+          identities = identitySettled.value;
+          durationsMs.catalogFullUsersWallets = markStage();
+
+          await this.state.campaignStep(campaignKey, token, "orders", {
+            catalog, identities,
+            durationsMs: { catalogFullUsersWallets: durationsMs.catalogFullUsersWallets },
+          });
+          orders = await runOrders();
+          durationsMs.orders = markStage();
+
+          // Inventory last: stock is the value that oversells when stale, and
+          // by here users and orders are already durable.
+          await this.state.campaignStep(campaignKey, token, "inventory", {
+            orders, durationsMs: { orders: durationsMs.orders },
+          });
+          // Labelled "stock" so FRIDAY_STOCK_HAS_FAILURES and the metric keys
+          // stay where the runbook and dashboards expect them.
+          inventory = await runCatalogScope("inventory-instock", "stock");
+          assertCatalogReportSucceeded(inventory);
+          durationsMs.inventory = markStage();
+          await this.state.campaignStep(campaignKey, token, "inventory-complete", {
+            inventory, durationsMs: { inventory: durationsMs.inventory },
+          });
+        } else {
+          // full-sync: every product + backfill missing media; preserve existing covers.
+          // Soft-fail — media flake must not abort wallets/orders for the night.
+          await this.state.campaignStep(campaignKey, token, "catalog-full", { immediate, variant, durationsMs: { newProducts: durationsMs.newProducts } });
+          catalog = await runCatalogScope("full-sync");
+          durationsMs.catalogFull = markStage();
+          await this.state.campaignStep(campaignKey, token, "inventory", { catalog, durationsMs: { catalogFull: durationsMs.catalogFull } });
+          stock = await runCatalogScope("stock");
+          assertCatalogReportSucceeded(stock);
+          durationsMs.stock = markStage();
+          price = await runCatalogScope("price");
+          assertCatalogReportSucceeded(price);
+          durationsMs.price = markStage();
+          await this.state.campaignStep(campaignKey, token, "inventory-complete", {
+            stock, price, durationsMs: { stock: durationsMs.stock, price: durationsMs.price },
+          });
+          await this.state.campaignStep(campaignKey, token, "users-wallets");
+          identities = await runIdentities();
+          durationsMs.usersWallets = markStage();
+          await this.state.campaignStep(campaignKey, token, "orders", { identities, durationsMs: { usersWallets: durationsMs.usersWallets } });
+          orders = await runOrders();
+          durationsMs.orders = markStage();
+        }
+        durationsMs.totalMs = Date.now() - campaignStartedAt;
+        // Denominators are the same wall-clock stage timers reported in durationsMs
+        // (not report.durationMs(), which is measured at toJSON() time inside
+        // catalogReportSummary) so a reader can cross-check duration vs throughput.
+        // In the cutover variant catalog-full and users/wallets share one
+        // wall-clock window, so both rates are measured against it.
+        const identityWindowMs = durationsMs.usersWallets ?? durationsMs.catalogFullUsersWallets;
+        const catalogWindowMs = durationsMs.catalogFull ?? durationsMs.catalogFullUsersWallets;
+        const throughput = {
+          catalogFullProductsPerSec: throughputPerSec(catalog.processed, catalogWindowMs),
+          ...(stock ? { stockProductsPerSec: throughputPerSec(stock.processed, durationsMs.stock) } : {}),
+          ...(price ? { priceProductsPerSec: throughputPerSec(price.processed, durationsMs.price) } : {}),
+          ...(inventory ? { inventoryProductsPerSec: throughputPerSec(inventory.processed, durationsMs.inventory) } : {}),
+          usersWalletsPerSec: throughputPerSec((identities.users || 0) + (identities.wallets || 0), identityWindowMs),
+          ordersPerSec: throughputPerSec(orders.completed, durationsMs.orders),
+        };
         const status = (
           Number(catalog.failed || 0) > 0
           || Number(identities.failed || 0) > 0
@@ -766,8 +1190,27 @@ class WooSyncService {
         )
           ? "completed-with-exceptions"
           : "completed";
+        await this.state.campaignStep(campaignKey, token, "finalizing", {
+          orders,
+          durationsMs,
+          throughput,
+          variant,
+          wallet: identities.wallet || null,
+          ...(inventory?.stockGate ? { stockGate: inventory.stockGate } : {}),
+        });
         await this.state.finishCampaign(campaignKey, token, status);
-        return { campaignKey, status, catalog, identities, orders };
+        console.info("[WooSync] friday campaign finished", {
+          campaignKey, variant, status, durationsMs, throughput,
+          wallet: identities.wallet || null,
+          stockGate: inventory?.stockGate || null,
+        });
+        return {
+          campaignKey, variant, status, catalog, identities, orders,
+          ...(stock ? { stock } : {}),
+          ...(price ? { price } : {}),
+          ...(inventory ? { inventory } : {}),
+          durationsMs, throughput,
+        };
       } catch (error) {
         await this.state.finishCampaign(campaignKey, token, "failed", safeErrorCode(error)).catch(() => undefined);
         throw error;
@@ -940,7 +1383,9 @@ async function start() {
   const worker = new Worker(QUEUE_NAME, async (job) => {
     if (job.name === JOBS.discovery) return service.discovery();
     if (job.name === JOBS.hourly) return service.hourly();
-    if (job.name === JOBS.friday) return service.friday(fridayScheduledTimestamp(job));
+    if (job.name === JOBS.friday) {
+      return service.friday(fridayScheduledTimestamp(job), { variant: job.data?.variant });
+    }
     if (job.name === JOBS.reconcile) return service.reconcile();
     throw new UnrecoverableError(`Unknown Woo sync job: ${job.name}`);
   }, { connection, prefix: config.queuePrefix, concurrency: 1, lockDuration: config.leaseSeconds * 1000 });

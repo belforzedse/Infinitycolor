@@ -5,6 +5,7 @@ import {
   restoreMediaTimestamps,
   upsertOrder,
   upsertUser,
+  upsertWallet,
 } from "../services/wordpress-migration";
 
 describe("WordPress migration write service", () => {
@@ -103,6 +104,125 @@ describe("WordPress migration write service", () => {
       phone: "09123456789",
     })).rejects.toMatchObject({ code: "USER_PHONE_SOURCE_CONFLICT", status: 409 });
     expect(trx.raw).toHaveBeenCalledTimes(3);
+  });
+
+  test("allowPhoneMerge adopts the phone owner without stealing its external_id", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const owner = { id: 52, external_source: "wordpress", external_id: "8", phone: "+989123456789" };
+    const userQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([owner]),
+      update: jest.fn().mockResolvedValue({ ...owner }),
+    };
+    const infoQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 61 }),
+    };
+    const queries: Record<string, any> = {
+      "plugin::users-permissions.user": userQuery,
+      "api::local-user-info.local-user-info": infoQuery,
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid) => queries[uid]),
+      },
+    };
+
+    const result = await upsertUser(strapiMock, {
+      sourceId: "7",
+      phone: "09123456789",
+      allowPhoneMerge: true,
+    });
+
+    expect(result).toMatchObject({ id: 52, matchReason: "phone-merge" });
+    const updated = userQuery.update.mock.calls[0][0].data;
+    expect(updated).not.toHaveProperty("external_id");
+    expect(updated).not.toHaveProperty("external_source");
+  });
+
+  test("refuses to merge onto an account a real person already claimed", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const userQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{
+          id: 52,
+          external_source: "wordpress",
+          external_id: "8",
+          ClaimedAt: "2026-08-18T07:01:03.404Z",
+        }]),
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn(() => userQuery),
+      },
+    };
+
+    await expect(upsertUser(strapiMock, {
+      sourceId: "7",
+      phone: "09123456789",
+      allowPhoneMerge: true,
+    })).rejects.toMatchObject({ code: "USER_PHONE_MERGE_CLAIMED", status: 409 });
+  });
+
+  test("refuses a wallet write that would overwrite a balance the account already holds", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const userQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 52, external_source: "wordpress", external_id: "7" }]),
+    };
+    const walletQuery = { findMany: jest.fn().mockResolvedValue([{ id: 9, Balance: "5730000" }]) };
+    const queries: Record<string, any> = {
+      "plugin::users-permissions.user": userQuery,
+      "api::local-user-wallet.local-user-wallet": walletQuery,
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid) => queries[uid]),
+      },
+    };
+
+    await expect(upsertWallet(strapiMock, {
+      userSourceId: "7",
+      balanceRial: "5180000",
+    })).rejects.toMatchObject({ code: "WALLET_BALANCE_WOULD_CLOBBER", status: 409 });
+  });
+
+  test("a merged holder's wallet resolves through the identity mapping, not external_id", async () => {
+    const trx = {
+      raw: jest.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({ rows: [{ user_id: 52 }] }),
+    };
+    const userQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 52, external_source: "wordpress", external_id: "8" }]),
+    };
+    const walletQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 9 }),
+    };
+    const queries: Record<string, any> = {
+      "plugin::users-permissions.user": userQuery,
+      "api::local-user-wallet.local-user-wallet": walletQuery,
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid) => queries[uid]),
+      },
+    };
+
+    const result = await upsertWallet(strapiMock, {
+      userSourceId: "7",
+      balanceRial: "3000000",
+    });
+
+    expect(result).toEqual({ mode: "created", id: 9 });
+    expect(walletQuery.create.mock.calls[0][0].data).toMatchObject({ Balance: "3000000", user: 52 });
+    expect(userQuery.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 52 } }));
   });
 
   test("requires explicit contract type and a safe tax percentage", async () => {
@@ -302,6 +422,380 @@ describe("WordPress migration write service", () => {
     expect(orderQuery.update.mock.calls[0][0].data.delivery_address).toBe(777);
     expect(strapiMock.db.query).not.toHaveBeenCalledWith("api::shipping-province.shipping-province");
     expect(strapiMock.db.query).not.toHaveBeenCalledWith("api::local-user-address.local-user-address");
+  });
+
+  test("keeps an order when one line variation is missing and records the unresolved issue", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      create: jest.fn().mockResolvedValue({ id: 301 }),
+      delete: jest.fn(),
+    };
+    const variationQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([{ id: 401 }])
+        .mockResolvedValueOnce([]),
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid: string) => {
+          const queries: Record<string, any> = {
+            "api::order.order": orderQuery,
+            "api::contract.contract": contractQuery,
+            "api::order-item.order-item": itemQuery,
+            "api::product-variation.product-variation": variationQuery,
+            "api::shipping-province.shipping-province": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-city.shipping-city": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::local-user-address.local-user-address": { create: jest.fn() },
+          };
+          return queries[uid];
+        }),
+      },
+    };
+
+    const result = await upsertOrder(strapiMock, {
+      sourceId: "88",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "ZarinPal",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "2000",
+      shippingToman: "0",
+      items: [
+        {
+          sourceId: "1",
+          variationSourceId: "4",
+          count: 1,
+          unitPriceToman: "1000",
+          title: "linked",
+          sku: "A",
+        },
+        {
+          sourceId: "2",
+          variationSourceId: "999",
+          count: 1,
+          unitPriceToman: "1000",
+          title: "missing",
+          sku: "B",
+        },
+      ],
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      mode: "created",
+      itemsCreated: 2,
+      itemsUnresolved: 1,
+      itemIssues: ["ORDER_ITEM_VARIATION_UNRESOLVED:999"],
+    }));
+    expect(itemQuery.create.mock.calls[0][0].data.product_variation).toBe(401);
+    expect(itemQuery.create.mock.calls[1][0].data.product_variation).toBeNull();
+  });
+
+  test("keeps an unowned order when registered identity fails and billing phone is unusable", async () => {
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      create: jest.fn().mockResolvedValue({ id: 301 }),
+      delete: jest.fn(),
+    };
+    const mappingRaw = jest.fn().mockResolvedValue({ rows: [] });
+    const userQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({
+          trx: { raw: mappingRaw },
+        })),
+        query: jest.fn((uid: string) => {
+          const queries: Record<string, any> = {
+            "api::order.order": orderQuery,
+            "api::contract.contract": contractQuery,
+            "api::order-item.order-item": itemQuery,
+            "api::product-variation.product-variation": {
+              findMany: jest.fn().mockResolvedValue([{ id: 401 }]),
+            },
+            "plugin::users-permissions.user": userQuery,
+            "api::shipping-province.shipping-province": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-city.shipping-city": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::local-user-address.local-user-address": { create: jest.fn() },
+          };
+          return queries[uid];
+        }),
+      },
+    };
+
+    const result = await upsertOrder(strapiMock, {
+      sourceId: "77",
+      customerSourceId: "182105",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "Wallet",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "1000",
+      shippingToman: "0",
+      // No usable billing phone → guest fallback unresolved.
+      orderIdentity: { phone: "", firstName: "A", lastName: "B" },
+      items: [{
+        sourceId: "1",
+        variationSourceId: "4",
+        count: 1,
+        unitPriceToman: "1000",
+        title: "x",
+        sku: "S",
+      }],
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      mode: "created",
+      userLinked: false,
+      identityIssues: expect.arrayContaining([
+        "ORDER_CUSTOMER_NOT_FOUND",
+        "ORDER_REGISTERED_IDENTITY_GUEST_FALLBACK_UNRESOLVED",
+      ]),
+    }));
+    expect(orderQuery.create.mock.calls[0][0].data.user).toBeNull();
+  });
+
+  test("falls back to billing-phone guest owner when registered customer is missing", async () => {
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      create: jest.fn().mockResolvedValue({ id: 301 }),
+      delete: jest.fn(),
+    };
+    const mappingRaw = jest.fn(async (sql: string) => {
+      if (String(sql).includes("pg_advisory_xact_lock")) return undefined;
+      if (String(sql).includes("INSERT INTO customer_identity_mappings")) {
+        return { rows: [{ user_id: 9001 }] };
+      }
+      return { rows: [] };
+    });
+    const createdUser = {
+      id: 9001,
+      phone: "+989121234567",
+      external_source: "woocommerce-guest",
+      ProfileManagedByCustomer: false,
+    };
+    const userQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue(createdUser),
+    };
+    const roleQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 3, type: "customer" }]),
+    };
+    const infoQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 1 }),
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({
+          trx: { raw: mappingRaw },
+        })),
+        query: jest.fn((uid: string) => {
+          const queries: Record<string, any> = {
+            "api::order.order": orderQuery,
+            "api::contract.contract": contractQuery,
+            "api::order-item.order-item": itemQuery,
+            "api::product-variation.product-variation": {
+              findMany: jest.fn().mockResolvedValue([{ id: 401 }]),
+            },
+            "plugin::users-permissions.user": userQuery,
+            "plugin::users-permissions.role": roleQuery,
+            "api::local-user-info.local-user-info": infoQuery,
+            "api::shipping-province.shipping-province": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-city.shipping-city": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::local-user-address.local-user-address": { create: jest.fn() },
+          };
+          return queries[uid];
+        }),
+      },
+    };
+
+    const result = await upsertOrder(strapiMock, {
+      sourceId: "78",
+      customerSourceId: "182105",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "Wallet",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "1000",
+      shippingToman: "0",
+      orderIdentity: {
+        phone: "+989121234567",
+        email: "a@example.com",
+        firstName: "A",
+        lastName: "B",
+      },
+      items: [{
+        sourceId: "1",
+        variationSourceId: "4",
+        count: 1,
+        unitPriceToman: "1000",
+        title: "x",
+        sku: "S",
+      }],
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      mode: "created",
+      userLinked: true,
+      identityIssues: expect.arrayContaining([
+        "ORDER_CUSTOMER_NOT_FOUND",
+        "ORDER_REGISTERED_IDENTITY_GUEST_FALLBACK",
+      ]),
+    }));
+    expect(orderQuery.create.mock.calls[0][0].data.user).toBe(9001);
+    expect(userQuery.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        external_source: "woocommerce-guest",
+        phone: "+989121234567",
+        AccountOrigin: "WooGuest",
+      }),
+    }));
+  });
+
+  test("guest-fallback matches existing phone owner without claiming wordpress external_id", async () => {
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      create: jest.fn().mockResolvedValue({ id: 301 }),
+      delete: jest.fn(),
+    };
+    const phoneOwner = {
+      id: 5500,
+      phone: "+989121234567",
+      email: "owner@example.com",
+      external_source: "wordpress",
+      external_id: "999",
+      AccountOrigin: "WooRegistered",
+      ClaimedAt: null,
+      IsVerified: false,
+      ProfileManagedByCustomer: false,
+    };
+    const mappingRaw = jest.fn()
+      .mockResolvedValueOnce({ rows: [] }) // registered mapping
+      .mockResolvedValueOnce({ rows: [] }) // guest mapping
+      .mockResolvedValue({ rows: [{ user_id: 5500 }] });
+    const userQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([]) // legacy registered source
+        .mockResolvedValueOnce([phoneOwner]) // guest phone lookup
+        .mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue(phoneOwner),
+      create: jest.fn(),
+    };
+    const infoQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 9, FirstName: "Old", LastName: "Name" }]),
+      update: jest.fn(),
+      create: jest.fn(),
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({
+          trx: { raw: mappingRaw },
+        })),
+        query: jest.fn((uid: string) => {
+          const queries: Record<string, any> = {
+            "api::order.order": orderQuery,
+            "api::contract.contract": contractQuery,
+            "api::order-item.order-item": itemQuery,
+            "api::product-variation.product-variation": {
+              findMany: jest.fn().mockResolvedValue([{ id: 401 }]),
+            },
+            "plugin::users-permissions.user": userQuery,
+            "api::local-user-info.local-user-info": infoQuery,
+            "api::shipping-province.shipping-province": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-city.shipping-city": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::local-user-address.local-user-address": { create: jest.fn() },
+          };
+          return queries[uid];
+        }),
+      },
+    };
+
+    const result = await upsertOrder(strapiMock, {
+      sourceId: "79",
+      customerSourceId: "182105",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "Wallet",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "1000",
+      shippingToman: "0",
+      orderIdentity: { phone: "09121234567", firstName: "A", lastName: "B" },
+      items: [{
+        sourceId: "1",
+        variationSourceId: "4",
+        count: 1,
+        unitPriceToman: "1000",
+        title: "x",
+        sku: "S",
+      }],
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      mode: "created",
+      userLinked: true,
+      identityIssues: expect.arrayContaining([
+        "ORDER_CUSTOMER_NOT_FOUND",
+        "ORDER_REGISTERED_IDENTITY_GUEST_FALLBACK",
+      ]),
+    }));
+    expect(orderQuery.create.mock.calls[0][0].data.user).toBe(5500);
+    expect(userQuery.create).not.toHaveBeenCalled();
+    // Must not rewrite the conflicting wordpress external_id onto another account.
+    expect(userQuery.update).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ external_id: "182105" }),
+    }));
   });
 
   test("restores timestamps only for an existing media record on a trusted request", async () => {

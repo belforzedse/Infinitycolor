@@ -444,6 +444,50 @@ test("price scope: PUTs only {Price,DiscountPrice} on existing variations, creat
   assert.equal(report.entities.variations.updated, pricePuts.length);
 });
 
+test("stock scope: IMPORT_CONCURRENCY_PRODUCTS > 1 still processes every product pulled from the async Woo generator", async () => {
+  // Regression guard: syncProducts' concurrent path must *pull* from
+  // woo.iterateProducts() (an async generator) rather than materializing it
+  // with Array.from, which silently yields zero items and would make this
+  // report an empty, "successful" run.
+  const productCount = 12;
+  const base = products.find((p) => p.id === 102);
+  const synthetic = Array.from({ length: productCount }, (_, i) => ({ ...base, id: 900 + i }));
+  const engine = makeEngine({ products: synthetic });
+  engine.repo.buildExternalIndex = async (endpoint) => {
+    const map = new Map();
+    // The stock scope's onlyExisting check requires both the product and its
+    // variation to already exist in Strapi.
+    if (endpoint === "/products" || endpoint === "/product-variations") {
+      synthetic.forEach((p) => map.set(String(p.id), { id: p.id + 10000, attributes: { Status: "Active" } }));
+    }
+    return map;
+  };
+  engine.config.catalog.concurrency = { products: 4 };
+
+  const report = await engine.runSync({ scope: "stock" });
+
+  assert.equal(report.processed, productCount);
+  assert.equal(engine._calls.stockUpserts.length, productCount);
+  assert.equal(report.entities.stocks.created, productCount);
+});
+
+test("full-sync scope forces product concurrency back to 1 (shared tag/attribute caches) even when configured higher", async () => {
+  const infoLines = [];
+  const engine = makeEngine();
+  engine.logger = { ...noopLogger, info: (msg) => infoLines.push(msg) };
+  engine.config.catalog.concurrency = { products: 5 };
+
+  const report = await engine.runSync({ dryRun: false, scope: "no-media" });
+
+  // Identical to the concurrency=1 baseline above — the clamp doesn't change
+  // correctness, only whether products run serially or in a bounded pool.
+  assert.equal(report.entities.categories.created, 2);
+  assert.equal(report.entities.products.created, 3);
+  assert.equal(report.entities.variations.created, 4);
+  assert.equal(report.entities.stocks.created, 4);
+  assert.ok(infoLines.some((line) => /forcing serial product processing/.test(line)));
+});
+
 test("media scope: attaches media to existing products, creates nothing", async () => {
   const engine = makeEngine({ withExisting: true });
   // Stub media resolution to return ids so an attach PUT happens.
@@ -879,4 +923,170 @@ test("completed parent with a failed child traverses children without product or
   assert.equal(mediaCalls, 0);
   assert.equal(store.getRun("completed-parent-failed-child").items["product:101"].attempts, 1);
   assert.equal(store.getRun("completed-parent-failed-child").items["variation:201"].status, "completed");
+});
+
+/**
+ * The "inventory-instock" gate must be a pure optimisation: it may skip work
+ * when WooCommerce and Strapi already agree the product is empty, and must
+ * never write a stock value it did not read from WooCommerce. WooCommerce's
+ * variable-parent stock_status is known to under-report real stock, so a
+ * disagreement has to cost a fetch, not a zeroing.
+ */
+test("inventory-instock skips the variation fetch for an out-of-stock product Strapi already has at zero", async () => {
+  const engine = makeEngine({ withExisting: true, products: [{ ...products[0], stock_status: "outofstock" }] });
+  engine.woo.fetchAllVariations = async () => {
+    throw new Error("out-of-stock product already at zero must not be fetched");
+  };
+  engine.repo.buildExternalIndex = async (endpoint) => {
+    const map = new Map();
+    if (endpoint === "/products") map.set("101", { id: 10101 });
+    if (endpoint === "/product-variations") {
+      map.set("201", { id: 10201 });
+      map.set("202", { id: 10202 });
+    }
+    if (endpoint === "/product-stocks") {
+      map.set("stock_201", { id: 20201, attributes: { Count: 0 } });
+      map.set("stock_202", { id: 20202, attributes: { Count: 0 } });
+    }
+    return map;
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "inventory-instock" });
+
+  assert.equal(report.stockGate.examined, 1);
+  assert.equal(report.stockGate.verifiedSkipped, 1);
+  assert.equal(report.stockGate.staleNonZero, 0);
+  assert.equal(engine._calls.stockUpserts.length, 0, "nothing may be written for a verified-empty product");
+  assert.equal(engine._calls.puts.length, 0);
+  assert.equal(report.entities.products.skipped, 1);
+});
+
+test("inventory-instock re-reads WooCommerce when Strapi still shows stock for an out-of-stock product", async () => {
+  // The dangerous direction: Woo says outofstock, Strapi holds 5. Blind-zeroing
+  // here would destroy live inventory, so the product takes the full path and
+  // the value written comes from Woo's own stock_quantity.
+  const engine = makeEngine({ withExisting: true, products: [{ ...products[0], stock_status: "outofstock" }] });
+  let fetched = 0;
+  engine.woo.fetchAllVariations = async (productId) => {
+    fetched += 1;
+    return variations.filter((v) => v.parent_id === productId && [201, 202].includes(v.id));
+  };
+  engine.repo.buildExternalIndex = async (endpoint) => {
+    const map = new Map();
+    if (endpoint === "/products") map.set("101", { id: 10101 });
+    if (endpoint === "/product-variations") {
+      map.set("201", { id: 10201 });
+      map.set("202", { id: 10202 });
+    }
+    if (endpoint === "/product-stocks") {
+      map.set("stock_201", { id: 20201, attributes: { Count: 5 } });
+      map.set("stock_202", { id: 20202, attributes: { Count: 0 } });
+    }
+    return map;
+  };
+  const written = [];
+  engine.repo.upsertStock = async ({ externalId, count }) => {
+    written.push({ externalId, count });
+    return "updated";
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "inventory-instock" });
+
+  assert.equal(fetched, 1, "a disagreement must cost a fetch");
+  assert.equal(report.stockGate.staleNonZero, 1);
+  assert.equal(report.stockGate.verifiedSkipped, 0);
+  // Values come from the fixtures' real stock_quantity (201 => 5, 202 => 0),
+  // never from the stock_status flag.
+  assert.deepEqual(
+    written.sort((a, b) => a.externalId.localeCompare(b.externalId)),
+    [{ externalId: "stock_201", count: 5 }, { externalId: "stock_202", count: 0 }],
+  );
+});
+
+test("inventory-instock leaves in-stock products on the normal path and writes price and stock from one fetch", async () => {
+  const engine = makeEngine({ withExisting: true, products: [products[1]] }); // 102: simple, instock
+  let fetched = 0;
+  engine.woo.fetchAllVariations = async () => {
+    fetched += 1;
+    return [];
+  };
+  const written = [];
+  engine.repo.upsertStock = async ({ externalId, count }) => {
+    written.push({ externalId, count });
+    return "updated";
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "inventory-instock" });
+
+  assert.equal(report.stockGate.examined, 0, "in-stock products never enter the gate");
+  assert.equal(fetched, 0, "a simple product has no variations to fetch");
+  assert.deepEqual(written, [{ externalId: "stock_102", count: 7 }]);
+  // price-only variation write goes through PUT, from the same pass.
+  assert.equal(engine._calls.puts.length, 1);
+  assert.match(engine._calls.puts[0].url, /\/product-variations\/10102$/);
+});
+
+test("the stock gate stays off for injected rows, narrowed runs and dry runs", async () => {
+  // The hourly drain injects specific products; narrowing means the caller
+  // already chose them. Second-guessing either would silently drop work.
+  const outOfStock = { ...products[0], stock_status: "outofstock" };
+  for (const [label, options] of [
+    ["injected rows", { sourceProducts: [outOfStock] }],
+    ["narrowed by id", { onlyExternalIds: ["101"] }],
+    ["limited", { limit: 1 }],
+    ["dry run", { dryRun: true }],
+  ]) {
+    const engine = makeEngine({ withExisting: true, products: [outOfStock] });
+    let fetched = 0;
+    engine.woo.fetchAllVariations = async () => {
+      fetched += 1;
+      return variations.filter((v) => [201, 202].includes(v.id));
+    };
+    engine.repo.buildExternalIndex = async (endpoint) => {
+      const map = new Map();
+      if (endpoint === "/products") map.set("101", { id: 10101 });
+      if (endpoint === "/product-variations") {
+        map.set("201", { id: 10201 });
+        map.set("202", { id: 10202 });
+      }
+      if (endpoint === "/product-stocks") {
+        map.set("stock_201", { id: 20201, attributes: { Count: 0 } });
+        map.set("stock_202", { id: 20202, attributes: { Count: 0 } });
+      }
+      return map;
+    };
+    const report = await engine.runSync({ dryRun: false, scope: "inventory-instock", ...options });
+    assert.equal(report.stockGate, null, `${label}: gate must be inactive`);
+    assert.equal(fetched, 1, `${label}: variations must still be fetched`);
+  }
+});
+
+test("a bare stock row created earlier in the same run reads as unknown, not as zero", async () => {
+  // Rows repo.upsert created during this run are { id } with no attributes.
+  // Treating that as a confirmed zero would skip a product we know nothing about.
+  const engine = makeEngine({ withExisting: true, products: [{ ...products[0], stock_status: "outofstock" }] });
+  let fetched = 0;
+  engine.woo.fetchAllVariations = async () => {
+    fetched += 1;
+    return variations.filter((v) => [201, 202].includes(v.id));
+  };
+  engine.repo.buildExternalIndex = async (endpoint) => {
+    const map = new Map();
+    if (endpoint === "/products") map.set("101", { id: 10101 });
+    if (endpoint === "/product-variations") {
+      map.set("201", { id: 10201 });
+      map.set("202", { id: 10202 });
+    }
+    if (endpoint === "/product-stocks") {
+      map.set("stock_201", { id: 20201 }); // bare: no attributes
+      map.set("stock_202", { id: 20202, attributes: { Count: 0 } });
+    }
+    return map;
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "inventory-instock" });
+
+  assert.equal(report.stockGate.verifiedSkipped, 0);
+  assert.equal(report.stockGate.staleNonZero, 1);
+  assert.equal(fetched, 1);
 });

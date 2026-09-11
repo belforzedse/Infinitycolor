@@ -37,6 +37,86 @@ function projectBlogBannerSettings(settings: any) {
   );
 }
 
+const HOMEPAGE_PRODUCT_ID_FIELDS = [
+  "homeNewestProductIds",
+  "homeDiscountedProductIds",
+  "homeWeeklyPicksProductIds",
+  "homeEveryoneFollowsProductIds",
+] as const;
+const HOMEPAGE_PRODUCT_ENABLED_FIELDS = [
+  "homeWeeklyPicksEnabled",
+  "homeEveryoneFollowsEnabled",
+] as const;
+const HOMEPAGE_PRODUCT_FIELDS = [
+  ...HOMEPAGE_PRODUCT_ID_FIELDS,
+  ...HOMEPAGE_PRODUCT_ENABLED_FIELDS,
+] as const;
+
+function projectHomepageProductSettings(settings: any) {
+  return Object.fromEntries(
+    HOMEPAGE_PRODUCT_FIELDS.map((field) => [
+      field,
+      (HOMEPAGE_PRODUCT_ENABLED_FIELDS as readonly string[]).includes(field)
+        ? Boolean(settings?.[field])
+        : Array.isArray(settings?.[field])
+          ? settings[field]
+          : [],
+    ]),
+  );
+}
+
+function sanitizeHomepageProductIds(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const result: number[] = [];
+  const seen = new Set<number>();
+  for (const item of value) {
+    const id = Number(item);
+    if (!Number.isInteger(id) || id <= 0) return null;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+
+const GIF_PROMO_FIELDS = ["homeGifPromoSlot1Assignment", "homeGifPromoSlot2Assignment"] as const;
+const CUSTOM_SECTION_ASSIGNMENT_FIELDS = ["homeCustomSectionAssignment"] as const;
+const CUSTOM_SECTION_FIELDS = [
+  "homeCustomSectionEnabled",
+  "homeCustomSectionTitle",
+  ...CUSTOM_SECTION_ASSIGNMENT_FIELDS,
+] as const;
+
+function lenientProductIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  const ids: number[] = [];
+  for (const item of value) {
+    const id = Number(item);
+    if (!Number.isFinite(id) || id <= 0 || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/** Same shape/defaults the storefront read path (product service) tolerates. */
+function normalizeHomeProductAssignment(value: unknown) {
+  const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const mode = input.mode === "category" ? "category" : "manual";
+  return {
+    mode,
+    productIds: lenientProductIds(input.productIds),
+    categorySlug: typeof input.categorySlug === "string" ? input.categorySlug.trim() : "",
+  };
+}
+
+function projectAssignmentFieldSettings(settings: any, fields: readonly string[]) {
+  return Object.fromEntries(
+    fields.map((field) => [field, normalizeHomeProductAssignment(settings?.[field])]),
+  );
+}
+
 async function ensureSettingsEntity(strapi: any) {
   const existing = await strapi.db.query(SETTINGS_UID).findOne({ where: {} });
   if (existing) {
@@ -202,6 +282,254 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       data: {
         id: updated.id,
         attributes: projectBlogBannerSettings(updated),
+      },
+    };
+  },
+
+  async getHomepageProducts(ctx) {
+    const settingsEntity = await ensureSettingsEntity(strapi);
+    ctx.body = {
+      data: {
+        id: settingsEntity.id,
+        attributes: projectHomepageProductSettings(settingsEntity),
+      },
+    };
+  },
+
+  async updateHomepageProducts(ctx) {
+    const payload = extractPayloadFromRequestBody(ctx.request.body);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return ctx.badRequest("Homepage product payload must be an object");
+    }
+    const allowed = new Set<string>(HOMEPAGE_PRODUCT_FIELDS);
+    const rejectedFields = Object.keys(payload).filter((field) => !allowed.has(field));
+    if (rejectedFields.length > 0) {
+      return ctx.badRequest("Homepage product payload contains protected settings fields", {
+        fields: rejectedFields.sort(),
+      });
+    }
+    const data: Record<string, unknown> = {};
+    for (const field of HOMEPAGE_PRODUCT_ID_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      const sanitized = sanitizeHomepageProductIds(payload[field]);
+      if (!sanitized) {
+        return ctx.badRequest(`${field} must be an array of positive product ids`);
+      }
+      data[field] = sanitized;
+    }
+    for (const field of HOMEPAGE_PRODUCT_ENABLED_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      const value = payload[field];
+      if (typeof value !== "boolean") {
+        return ctx.badRequest(`${field} must be a boolean`);
+      }
+      data[field] = value;
+    }
+    const settingsEntity = await ensureSettingsEntity(strapi);
+    const updated = await strapi.db.transaction(async ({ trx }) => {
+      const entity = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
+        data,
+        transacting: trx,
+      });
+      const changes = settingChanges(settingsEntity, entity, Object.keys(data));
+      await writeAuditEvent(
+        strapi,
+        {
+          eventKey: "content.changed",
+          result: changes.length > 0 ? "success" : "no_op",
+          target: { type: "settings", id: settingsEntity.id, label: "محصولات صفحه اصلی" },
+          changes,
+          summaryFa:
+            changes.length > 0
+              ? "تنظیمات محصولات صفحه اصلی تغییر کرد"
+              : "تنظیمات محصولات صفحه اصلی تغییری نکرد",
+          summaryEn:
+            changes.length > 0
+              ? "Homepage product settings changed"
+              : "Homepage product settings did not change",
+          metadata: { section: "homepage_products", changedFieldCount: changes.length },
+          dedupeKey: settingsDedupeKey("homepage-products", settingsEntity.id),
+        },
+        { trx },
+      );
+      return entity;
+    });
+    ctx.body = {
+      data: {
+        id: updated.id,
+        attributes: projectHomepageProductSettings(updated),
+      },
+    };
+  },
+
+  async getGifPromoProducts(ctx) {
+    const settingsEntity = await ensureSettingsEntity(strapi);
+    ctx.body = {
+      data: {
+        id: settingsEntity.id,
+        attributes: {
+          // Slot images are edited under site customization; surfaced here
+          // read-only so staff can see what their product picks pair with.
+          homeGifPromoSlot1Image:
+            typeof settingsEntity.homeGifPromoSlot1Image === "string"
+              ? settingsEntity.homeGifPromoSlot1Image
+              : "",
+          homeGifPromoSlot2Image:
+            typeof settingsEntity.homeGifPromoSlot2Image === "string"
+              ? settingsEntity.homeGifPromoSlot2Image
+              : "",
+          ...projectAssignmentFieldSettings(settingsEntity, GIF_PROMO_FIELDS),
+        },
+      },
+    };
+  },
+
+  async updateGifPromoProducts(ctx) {
+    const payload = extractPayloadFromRequestBody(ctx.request.body);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return ctx.badRequest("Gif promo product payload must be an object");
+    }
+    const allowed = new Set<string>(GIF_PROMO_FIELDS);
+    const rejectedFields = Object.keys(payload).filter((field) => !allowed.has(field));
+    if (rejectedFields.length > 0) {
+      return ctx.badRequest("Gif promo product payload contains protected settings fields", {
+        fields: rejectedFields.sort(),
+      });
+    }
+    const data: Record<string, unknown> = {};
+    for (const field of GIF_PROMO_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      data[field] = normalizeHomeProductAssignment(payload[field]);
+    }
+    const settingsEntity = await ensureSettingsEntity(strapi);
+    const updated = await strapi.db.transaction(async ({ trx }) => {
+      const entity = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
+        data,
+        transacting: trx,
+      });
+      const changes = settingChanges(settingsEntity, entity, Object.keys(data));
+      await writeAuditEvent(
+        strapi,
+        {
+          eventKey: "content.changed",
+          result: changes.length > 0 ? "success" : "no_op",
+          target: { type: "settings", id: settingsEntity.id, label: "محصولات کمپین گیف" },
+          changes,
+          summaryFa:
+            changes.length > 0
+              ? "تنظیمات محصولات کمپین گیف تغییر کرد"
+              : "تنظیمات محصولات کمپین گیف تغییری نکرد",
+          summaryEn:
+            changes.length > 0
+              ? "Gif promo product settings changed"
+              : "Gif promo product settings did not change",
+          metadata: { section: "gif_promo_products", changedFieldCount: changes.length },
+          dedupeKey: settingsDedupeKey("gif-promo-products", settingsEntity.id),
+        },
+        { trx },
+      );
+      return entity;
+    });
+    ctx.body = {
+      data: {
+        id: updated.id,
+        attributes: {
+          homeGifPromoSlot1Image:
+            typeof updated.homeGifPromoSlot1Image === "string" ? updated.homeGifPromoSlot1Image : "",
+          homeGifPromoSlot2Image:
+            typeof updated.homeGifPromoSlot2Image === "string" ? updated.homeGifPromoSlot2Image : "",
+          ...projectAssignmentFieldSettings(updated, GIF_PROMO_FIELDS),
+        },
+      },
+    };
+  },
+
+  async getHomepageCustomSection(ctx) {
+    const settingsEntity = await ensureSettingsEntity(strapi);
+    ctx.body = {
+      data: {
+        id: settingsEntity.id,
+        attributes: {
+          homeCustomSectionEnabled: Boolean(settingsEntity.homeCustomSectionEnabled),
+          homeCustomSectionTitle:
+            typeof settingsEntity.homeCustomSectionTitle === "string"
+              ? settingsEntity.homeCustomSectionTitle
+              : "",
+          ...projectAssignmentFieldSettings(settingsEntity, CUSTOM_SECTION_ASSIGNMENT_FIELDS),
+        },
+      },
+    };
+  },
+
+  async updateHomepageCustomSection(ctx) {
+    const payload = extractPayloadFromRequestBody(ctx.request.body);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return ctx.badRequest("Homepage custom section payload must be an object");
+    }
+    const allowed = new Set<string>(CUSTOM_SECTION_FIELDS);
+    const rejectedFields = Object.keys(payload).filter((field) => !allowed.has(field));
+    if (rejectedFields.length > 0) {
+      return ctx.badRequest("Homepage custom section payload contains protected settings fields", {
+        fields: rejectedFields.sort(),
+      });
+    }
+    const data: Record<string, unknown> = {};
+    if (Object.prototype.hasOwnProperty.call(payload, "homeCustomSectionEnabled")) {
+      const value = payload.homeCustomSectionEnabled;
+      if (typeof value !== "boolean") {
+        return ctx.badRequest("homeCustomSectionEnabled must be a boolean");
+      }
+      data.homeCustomSectionEnabled = value;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "homeCustomSectionTitle")) {
+      const value = payload.homeCustomSectionTitle;
+      if (typeof value !== "string") {
+        return ctx.badRequest("homeCustomSectionTitle must be a string");
+      }
+      data.homeCustomSectionTitle = value.trim();
+    }
+    for (const field of CUSTOM_SECTION_ASSIGNMENT_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      data[field] = normalizeHomeProductAssignment(payload[field]);
+    }
+    const settingsEntity = await ensureSettingsEntity(strapi);
+    const updated = await strapi.db.transaction(async ({ trx }) => {
+      const entity = await strapi.entityService.update(SETTINGS_UID, settingsEntity.id, {
+        data,
+        transacting: trx,
+      });
+      const changes = settingChanges(settingsEntity, entity, Object.keys(data));
+      await writeAuditEvent(
+        strapi,
+        {
+          eventKey: "content.changed",
+          result: changes.length > 0 ? "success" : "no_op",
+          target: { type: "settings", id: settingsEntity.id, label: "بخش ویژه صفحه اصلی" },
+          changes,
+          summaryFa:
+            changes.length > 0
+              ? "تنظیمات بخش ویژه صفحه اصلی تغییر کرد"
+              : "تنظیمات بخش ویژه صفحه اصلی تغییری نکرد",
+          summaryEn:
+            changes.length > 0
+              ? "Homepage custom section settings changed"
+              : "Homepage custom section settings did not change",
+          metadata: { section: "homepage_custom_section", changedFieldCount: changes.length },
+          dedupeKey: settingsDedupeKey("homepage-custom-section", settingsEntity.id),
+        },
+        { trx },
+      );
+      return entity;
+    });
+    ctx.body = {
+      data: {
+        id: updated.id,
+        attributes: {
+          homeCustomSectionEnabled: Boolean(updated.homeCustomSectionEnabled),
+          homeCustomSectionTitle:
+            typeof updated.homeCustomSectionTitle === "string" ? updated.homeCustomSectionTitle : "",
+          ...projectAssignmentFieldSettings(updated, CUSTOM_SECTION_ASSIGNMENT_FIELDS),
+        },
       },
     };
   },

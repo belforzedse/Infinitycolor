@@ -178,6 +178,18 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "api::product-size-helper": { "product-size-helper": ["delete"] },
   },
   "product.delete": { "api::product": { product: ["delete"] } },
+  "product.homepage.manage": {
+    "api::settings": {
+      settings: [
+        "getHomepageProducts",
+        "updateHomepageProducts",
+        "getGifPromoProducts",
+        "updateGifPromoProducts",
+        "getHomepageCustomSection",
+        "updateHomepageCustomSection",
+      ],
+    },
+  },
   "category.read": { "api::product-category": { "product-category": READ_ACTIONS } },
   "category.create": { "api::product-category": { "product-category": ["create"] } },
   "category.update": { "api::product-category": { "product-category": ["update"] } },

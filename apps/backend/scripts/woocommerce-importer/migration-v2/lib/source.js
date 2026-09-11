@@ -6,6 +6,14 @@ function basic(username, password) {
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 }
 
+/** WP/Woo/TeraWallet each wrap list payloads differently; normalize to an array. */
+function rowsOf(body) {
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body?.data)) return body.data;
+  if (Array.isArray(body?.users)) return body.users;
+  return [];
+}
+
 class WordPressSource {
   constructor(config) {
     const base = `${config.sourceBaseUrl}/wp-json`;
@@ -34,13 +42,7 @@ class WordPressSource {
     let totalPages = null;
     do {
       const response = await client.get(pathname, { ...params, per_page: pageSize, page });
-      const rows = Array.isArray(response.data)
-        ? response.data
-        : Array.isArray(response.data?.data)
-          ? response.data.data
-          : Array.isArray(response.data?.users)
-            ? response.data.users
-            : [];
+      const rows = rowsOf(response.data);
       const headerPages = Number(response.headers.get("x-wp-totalpages"));
       if (Number.isSafeInteger(headerPages) && headerPages > 0) totalPages = headerPages;
       yield { page, rows, total: Number(response.headers.get("x-wp-total")) || null, totalPages };
@@ -49,13 +51,126 @@ class WordPressSource {
     } while (true);
   }
 
-  customers(params = {}) { return this.pages(this.woo, "/customers", { orderby: "id", order: "asc", ...params }); }
-  products(params = {}) { return this.pages(this.woo, "/products", { orderby: "id", order: "asc", ...params }); }
-  orders(params = {}) { return this.pages(this.woo, "/orders", { orderby: "id", order: "asc", ...params }); }
+  /**
+   * `pages()` with a sliding window of in-flight page requests, still yielding
+   * pages in order.
+   *
+   * Sequential pagination pays a full round-trip per page — 2.3 s for
+   * /customers, 4.7 s for /orders, ~2 s for TeraWallet /admin/users. A
+   * 1,884-page wallet walk is therefore over an hour of pure latency with zero
+   * concurrency, which is the single largest fixed cost in the nightly
+   * campaign.
+   *
+   * Termination differs by route and that difference is the risk:
+   *   - When the route sends `x-wp-totalpages` (Woo), that is authoritative and
+   *     an empty page in the middle is not an end signal.
+   *   - TeraWallet's /admin/users sends no such header, so the only stop signal
+   *     is a short page. Prefetching means pages *past* the end may already be
+   *     in flight when that short page arrives. Those must come back empty; a
+   *     non-empty one means the list shifted under us (or the stop rule is
+   *     wrong) and we would silently truncate, so it throws instead.
+   *
+   * Page 1 is fetched alone to learn `x-wp-totalpages` before widening, so a
+   * short list never burns a full window of speculative requests.
+   */
+  async *pagesParallel(client, pathname, params = {}, { pageSize = 100, concurrency = 4 } = {}) {
+    const width = Math.max(1, Number(concurrency) || 1);
+    const fetchPage = async (page) => {
+      const response = await client.get(pathname, { ...params, per_page: pageSize, page });
+      const headerPages = Number(response.headers.get("x-wp-totalpages"));
+      return {
+        page,
+        rows: rowsOf(response.data),
+        total: Number(response.headers.get("x-wp-total")) || null,
+        totalPages: Number.isSafeInteger(headerPages) && headerPages > 0 ? headerPages : null,
+      };
+    };
+
+    const inflight = new Map();
+    let nextToSchedule = 1;
+    let cursor = 1;
+    let totalPages = null;
+    let shortPage = null;
+    let primed = false;
+
+    const schedule = () => {
+      const limit = primed ? width : 1;
+      while (inflight.size < limit) {
+        if (totalPages !== null && nextToSchedule > totalPages) return;
+        if (shortPage !== null && nextToSchedule > shortPage) return;
+        inflight.set(nextToSchedule, fetchPage(nextToSchedule));
+        nextToSchedule += 1;
+      }
+    };
+
+    try {
+      schedule();
+      while (inflight.has(cursor)) {
+        const pending = inflight.get(cursor);
+        inflight.delete(cursor);
+        const result = await pending;
+        primed = true;
+        if (result.totalPages !== null) totalPages = result.totalPages;
+
+        if (shortPage !== null && cursor > shortPage) {
+          if (result.rows.length > 0) {
+            const error = new Error(
+              `Source pagination inconsistent on ${pathname}: page ${cursor} returned ` +
+                `${result.rows.length} rows after short page ${shortPage}`,
+            );
+            error.code = "SOURCE_PAGINATION_INCONSISTENT";
+            throw error;
+          }
+          cursor += 1;
+          continue;
+        }
+
+        yield { page: result.page, rows: result.rows, total: result.total, totalPages };
+
+        if (totalPages !== null) {
+          if (cursor >= totalPages) break;
+        } else if (result.rows.length < pageSize) {
+          shortPage = cursor;
+        }
+        cursor += 1;
+        schedule();
+      }
+    } finally {
+      // A `break`, a throw, or an early `return` from the consumer leaves
+      // speculative fetches outstanding; swallow their rejections so they never
+      // surface as unhandled promise rejections.
+      for (const pending of inflight.values()) pending.catch(() => undefined);
+    }
+  }
+
+  /**
+   * Sequential by default so every existing caller is unchanged; opt into the
+   * windowed fetcher with `{ concurrency: N }`.
+   */
+  pageStream(client, pathname, params = {}, { concurrency = 1, pageSize = 100 } = {}) {
+    return Number(concurrency) > 1
+      ? this.pagesParallel(client, pathname, params, { pageSize, concurrency })
+      : this.pages(client, pathname, params, pageSize);
+  }
+
+  // Woo defaults this endpoint to role=customer; OTP/phone-login plugins register
+  // accounts as subscriber, which hid 285 real customers from the identity sweep.
+  customers(params = {}, opts = {}) {
+    return this.pageStream(this.woo, "/customers", { orderby: "id", order: "asc", role: "all", ...params }, opts);
+  }
+  products(params = {}, opts = {}) {
+    return this.pageStream(this.woo, "/products", { orderby: "id", order: "asc", ...params }, opts);
+  }
+  orders(params = {}, opts = {}) {
+    return this.pageStream(this.woo, "/orders", { orderby: "id", order: "asc", ...params }, opts);
+  }
   productVariations(id, params = {}) {
     return this.pages(this.woo, `/products/${id}/variations`, { orderby: "id", order: "asc", ...params });
   }
-  walletUsers() { return this.pages(this.wallet, "/admin/users", {}, 100); }
+  // TeraWallet returns the balance inline on this route, so one page replaces
+  // 100 per-id /admin/users/{id}/balance calls. It sends no x-wp-totalpages,
+  // so pagesParallel's short-page invariant is what guards completeness.
+  walletUsers(opts = {}) { return this.pageStream(this.wallet, "/admin/users", {}, { pageSize: 100, ...opts }); }
   posts() { return this.pages(this.wp, "/posts", { context: "edit", orderby: "id", order: "asc", status: "any" }); }
   blogCategories() { return this.pages(this.wp, "/categories", { context: "edit", orderby: "id", order: "asc" }); }
   blogTags() { return this.pages(this.wp, "/tags", { context: "edit", orderby: "id", order: "asc" }); }

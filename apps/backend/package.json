@@ -53,6 +53,8 @@
     "benchmark:importer": "node scripts/woocommerce-importer/catalog/benchmark-50000.js",
     "sync:woocommerce": "node scripts/woocommerce-sync/service.js",
     "sync:woocommerce:control": "node scripts/woocommerce-sync/control.js",
+    "sync:woocommerce:friday": "node scripts/woocommerce-sync/run-campaign.js",
+    "sync:woocommerce:reconcile-orders": "node scripts/woocommerce-sync/reconcile-orders.js",
     "type:generate": "strapi ts:generate-types",
     "type-check": "tsc --noEmit",
     "check-types": "tsc --noEmit",

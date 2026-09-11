@@ -339,6 +339,14 @@ function tehranBoundary(value: string, boundary: "start" | "end"): Date | null {
   return isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/**
+ * A missing value falls back to the default window, which is deliberate. A value
+ * that is PRESENT but unparseable throws instead of quietly becoming "now": the
+ * old fallback handed the operator plausible-looking numbers for a window they
+ * never asked for, with nothing on screen to say so. `INVALID_DATE_RANGE` is the
+ * same token the behavior/overview endpoints raise, so both halves of the report
+ * API now fail the same way for the same input.
+ */
 function parseDate(
   value?: string,
   fallbackDays = 30,
@@ -352,7 +360,8 @@ function parseDate(
   const localBoundary = tehranBoundary(value, boundary);
   if (localBoundary) return localBoundary;
   const d = new Date(value);
-  return isNaN(d.getTime()) ? new Date() : d;
+  if (isNaN(d.getTime())) throw new Error("INVALID_DATE_RANGE");
+  return d;
 }
 
 async function ensureCapability(ctx: any, capability: AdminCapability) {
@@ -1142,10 +1151,11 @@ const reportController = {
         },
       };
     } catch (error: any) {
-      if (error?.message === "INVALID_DATE_RANGE") {
-        ctx.badRequest("Invalid date range", { data: { success: false } });
-        return;
-      }
+      // No special case for INVALID_DATE_RANGE here any more. It used to be
+      // rewritten to the English "Invalid date range", which the Persian admin
+      // rendered verbatim (presentAnalyticsMessage only recognises tokens with an
+      // underscore). Letting the token through means every report endpoint reports
+      // a bad range identically and the client owns the wording.
       ctx.badRequest(error?.message || String(error), { data: { success: false } });
     }
   },
@@ -1725,8 +1735,15 @@ const reportController = {
       }
       const categoryId = Number(ctx.query.categoryId);
       if (Number.isFinite(categoryId) && categoryId > 0) {
-        where.push("pc.id = ?");
-        params.push(categoryId);
+        // Membership, not the label join. `pc` is only the product's MAIN category —
+        // filtering on it hid every product filed under the category through
+        // `product_other_categories`, and ignored the category's descendants, so a
+        // parent category reported a fraction of its real sales.
+        const filter = PA.categoryFilterSql(joins, "p.id");
+        if (filter) {
+          where.push(filter);
+          params.push(categoryId);
+        }
       }
       const stockStatus = ctx.query.stockStatus as string;
       if (stockStatus === "out") where.push(`COALESCE(ps.count, 0) <= 0`);
@@ -1796,8 +1813,15 @@ const reportController = {
       }
       const categoryId = Number(ctx.query.categoryId);
       if (Number.isFinite(categoryId) && categoryId > 0) {
-        where.push("pc.id = ?");
-        params.push(categoryId);
+        // Membership, not the label join. `pc` is only the product's MAIN category —
+        // filtering on it hid every product filed under the category through
+        // `product_other_categories`, and ignored the category's descendants, so a
+        // parent category reported a fraction of its real sales.
+        const filter = PA.categoryFilterSql(joins, "p.id");
+        if (filter) {
+          where.push(filter);
+          params.push(categoryId);
+        }
       }
       const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -2129,12 +2153,30 @@ const reportController = {
           definitionVersion: METRIC_CATALOG["sales.net"].definitionVersion,
           source: "commerce",
           refreshedAt: new Date().toISOString(),
-          partial: false,
+          // Truthful, not hardcoded: a degraded category report is partial data and
+          // must not be presented as complete.
+          partial: result.warnings.length > 0,
+          warnings: result.warnings,
           truncated: result.truncated,
+          // "settled" counts gateway-settled orders; "completed" counts Done
+          // orders because the window has no settlement rows. The UI must say
+          // which one produced these numbers.
+          ordersDefinition: result.ordersDefinition,
           rows: result.rows,
         },
       };
+
+      for (const warning of result.warnings) {
+        strapi?.log?.warn?.(
+          `[reports] sales breakdown degraded: ${warning.code} (dimension=${dimension})`,
+        );
+      }
     } catch (error) {
+      // A report that fails must leave a trace on the server. Returning only the
+      // message to the client is how a broken reporting query stays invisible.
+      strapi?.log?.error?.(
+        `[reports] sales breakdown failed (dimension=${ctx.query.dimension}): ${error?.message}`,
+      );
       ctx.badRequest(error.message, { data: { success: false } });
     }
   },
@@ -2171,8 +2213,15 @@ const reportController = {
         coupon: "کد تخفیف",
         geography: "استان",
       };
+      // The category dimension is a tree whose parent rows already CONTAIN their
+      // children's totals. A flat sheet of those rows would read as if the amounts
+      // were additive, so it gets an indent plus an explicit parent column. Every
+      // other dimension keeps the original 7 columns exactly.
+      const isTree = dimension === "category";
+      const labelByKey = new Map(result.rows.map((r) => [r.key, r.label]));
       const columns: WorkbookColumn[] = [
         { header: keyHeaderFa[dimension as SalesBreakdownDimension] },
+        ...(isTree ? [{ header: "دسته والد" } as WorkbookColumn] : []),
         { header: "سفارش‌ها", numeric: true },
         { header: "تعداد", numeric: true },
         { header: "فروش ناخالص (تومان)", numeric: true },
@@ -2181,7 +2230,8 @@ const reportController = {
         { header: "خالص فروش (تومان)", numeric: true },
       ];
       const dataRows = result.rows.map((r) => [
-        r.label,
+        isTree ? `${"— ".repeat(r.depth ?? 0)}${r.label}` : r.label,
+        ...(isTree ? [(r.parentKey && labelByKey.get(r.parentKey)) || ""] : []),
         r.ordersCount,
         r.units,
         r.grossToman,

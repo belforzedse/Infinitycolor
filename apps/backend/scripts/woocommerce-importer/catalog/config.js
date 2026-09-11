@@ -9,7 +9,7 @@
  */
 
 const path = require("path");
-const { boundedInteger } = require("./lib/concurrency");
+const { boundedInteger, resolveImportProfile, profileDefault } = require("./lib/concurrency");
 
 const ENV_CONFIG = {
   production: {
@@ -63,6 +63,11 @@ function buildConfig(envName) {
   config.import.filters.inStockOnly = false;
 
   // New catalog-specific knobs (with safe defaults).
+  // WOOCOMMERCE_IMPORT_PROFILE=fast only changes which *default* a knob falls
+  // back to when its own env var is unset; an explicit IMPORT_CONCURRENCY_*
+  // value always wins, and the profile itself defaults to "default" (today's
+  // unchanged behavior). See catalog/lib/concurrency.js.
+  const importProfile = resolveImportProfile();
   config.catalog = {
     allowHttpMedia: envName === "local" || process.env.IMPORT_MEDIA_ALLOW_HTTP === "true",
     perPage: Number.parseInt(process.env.IMPORT_BATCH_PRODUCTS || "100", 10),
@@ -70,18 +75,34 @@ function buildConfig(envName) {
     baseRetryDelay: Number.parseInt(process.env.IMPORT_ERROR_RETRY_DELAY || "1000", 10),
     trackingDirAbs: path.resolve(process.cwd(), envConfig.trackingDir),
     concurrency: {
-      products: 1,
+      // Product *parents* stay serial by default: syncProductTags/resolveAttributeId
+      // use shared find-or-create caches that are only race-free with one writer.
+      // The engine itself forces this back to 1 for any scope that writes
+      // products/tags/attributes/media, regardless of this value — see
+      // CatalogEngine#resolveProductConcurrency. Only "stock" and "price" (which
+      // touch neither cache) actually benefit from raising it.
+      products: boundedInteger(process.env.IMPORT_CONCURRENCY_PRODUCTS, {
+        name: "IMPORT_CONCURRENCY_PRODUCTS",
+        defaultValue: profileDefault(importProfile, { default: 1, fast: 4 }),
+        max: 6,
+      }),
       variations: boundedInteger(process.env.IMPORT_CONCURRENCY_VARIATIONS, {
-        name: "IMPORT_CONCURRENCY_VARIATIONS", defaultValue: 8, max: 32,
+        name: "IMPORT_CONCURRENCY_VARIATIONS",
+        defaultValue: profileDefault(importProfile, { default: 8, fast: 16 }),
+        max: 32,
       }),
       images: boundedInteger(process.env.IMPORT_CONCURRENCY_IMAGES, {
-        name: "IMPORT_CONCURRENCY_IMAGES", defaultValue: 4, max: 16,
+        name: "IMPORT_CONCURRENCY_IMAGES",
+        defaultValue: profileDefault(importProfile, { default: 4, fast: 8 }),
+        max: 16,
       }),
       videos: boundedInteger(process.env.IMPORT_CONCURRENCY_VIDEOS, {
         name: "IMPORT_CONCURRENCY_VIDEOS", defaultValue: 1, max: 2,
       }),
       entities: boundedInteger(process.env.IMPORT_CONCURRENCY_ENTITIES, {
-        name: "IMPORT_CONCURRENCY_ENTITIES", defaultValue: 8, max: 32,
+        name: "IMPORT_CONCURRENCY_ENTITIES",
+        defaultValue: profileDefault(importProfile, { default: 8, fast: 24 }),
+        max: 32,
       }),
     },
   };

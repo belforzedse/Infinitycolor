@@ -53,6 +53,12 @@ export interface ProductReview {
   Rate: number;
   LikeCounts: number;
   DislikeCounts: number;
+  /**
+   * Server-resolved author name. Storefront callers never receive the `user`
+   * relation (Strapi strips relations they cannot read), so this is the only
+   * author identity a public listing carries.
+   */
+  authorDisplayName?: string;
   user?: {
     id: number;
     username?: string;
@@ -75,6 +81,7 @@ export interface ProductReview {
 export interface ProductReviewReply {
   id: number;
   Content: string;
+  authorDisplayName?: string;
   user?: {
     id: number;
     username?: string;
@@ -142,6 +149,7 @@ interface ProductAttributes {
 
 interface ProductReviewReplyAttributes {
   Content: string;
+  authorDisplayName?: string | null;
   user?: StrapiRelation<StrapiEntry<UserAttributes>> | null;
   createdAt: string;
   updatedAt: string;
@@ -154,6 +162,7 @@ interface ProductReviewAttributes {
   Rate: number;
   LikeCounts: number;
   DislikeCounts: number;
+  authorDisplayName?: string | null;
   user?: StrapiRelation<StrapiEntry<UserAttributes>> | null;
   product?: StrapiRelation<StrapiEntry<ProductAttributes>> | null;
   product_review_replies?: StrapiRelation<StrapiEntry<ProductReviewReplyAttributes>> | null;
@@ -256,6 +265,7 @@ class ProductReviewService {
       return {
         id: reply.id,
         Content: reply.Content,
+        authorDisplayName: reply.authorDisplayName ?? undefined,
         user: replyUser,
         createdAt: reply.createdAt,
         updatedAt: reply.updatedAt,
@@ -270,6 +280,7 @@ class ProductReviewService {
       Rate: attrs.Rate,
       LikeCounts: attrs.LikeCounts,
       DislikeCounts: attrs.DislikeCounts,
+      authorDisplayName: attrs.authorDisplayName ?? undefined,
       user: normalizedUser,
       product: normalizedProduct,
       product_review_replies: normalizedReplies,

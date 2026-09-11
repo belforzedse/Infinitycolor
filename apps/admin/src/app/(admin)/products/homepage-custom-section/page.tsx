@@ -7,8 +7,10 @@ import HomepageProductPicker, {
   type ProductSummary,
 } from "@/components/SuperAdmin/Products/HomepageProductPicker";
 import ProductSmallCard from "@/components/Product/SmallCard";
-import { getSuperAdminSettings } from "@/services/super-admin/settings/get";
-import { updateSuperAdminSettings } from "@/services/super-admin/settings/update";
+import {
+  getHomepageCustomSectionSettings,
+  updateHomepageCustomSectionSettings,
+} from "@/services/super-admin/settings/homepageCustomSection";
 import {
   getGifPromoPreviewProducts,
   getProductSummariesByIds,
@@ -93,7 +95,7 @@ export default function HomepageCustomSectionPage() {
   const load = useCallback(async () => {
     try {
       const [loadedSettings, loadedCategories] = await Promise.all([
-        getSuperAdminSettings(),
+        getHomepageCustomSectionSettings(),
         fetchCategoryDropdownOptions(""),
       ]);
       setSettings(loadedSettings);
@@ -123,12 +125,12 @@ export default function HomepageCustomSectionPage() {
   const save = async () => {
     try {
       setSaving(true);
-      const saved = await updateSuperAdminSettings({
+      const saved = await updateHomepageCustomSectionSettings({
         homeCustomSectionEnabled: enabled,
         homeCustomSectionTitle: title,
         homeCustomSectionAssignment: section.assignment,
       });
-      const nextSettings = saved ?? (await getSuperAdminSettings());
+      const nextSettings = saved ?? (await getHomepageCustomSectionSettings());
       setSettings(nextSettings);
       setEnabled(nextSettings.homeCustomSectionEnabled);
       setTitle(nextSettings.homeCustomSectionTitle);

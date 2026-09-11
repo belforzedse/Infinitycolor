@@ -25,6 +25,7 @@ export const ADMIN_CAPABILITIES = [
   "product.schedule",
   "product.stock.update",
   "product.media.manage",
+  "product.homepage.manage",
   "product.variation.manage",
   "product.variation.delete",
   "product.size-guide.manage",
@@ -164,6 +165,7 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
     inherits: ["seller1"],
     capabilities: [
       "product.schedule",
+      "product.homepage.manage",
       "category.read",
       "category.create",
       "category.update",
@@ -212,6 +214,10 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
       "report.sales.read",
       "report.finance.read",
       "report.carts.read",
+      "wallet.customer.search",
+      "wallet.read",
+      "wallet.history.read",
+      "wallet.adjust",
     ],
   },
   founder: {

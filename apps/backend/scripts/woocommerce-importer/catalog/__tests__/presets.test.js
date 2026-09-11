@@ -89,6 +89,21 @@ test("resolveScope: category-editorial touches no catalog entities", () => {
   assert.ok(SCOPES.includes("category-editorial"));
 });
 
+test("resolveScope: inventory-instock writes stock and price in one pass, gated on stock status", () => {
+  assert.deepEqual(resolveScope("inventory-instock"), {
+    categories: false, categoryEditorial: false, products: false, variations: true, stock: true, media: false,
+    onlyExisting: true, variationFields: "price-only", stockGate: "instock-or-verify",
+  });
+  assert.ok(SCOPES.includes("inventory-instock"));
+  // "all" would make CatalogEngine#resolveProductConcurrency force serial
+  // product processing, undoing the parallelism this scope depends on.
+  assert.notEqual(resolveScope("inventory-instock").variationFields, "all");
+  // The gate is opt-in per scope, never a default.
+  assert.equal(resolveScope("stock").stockGate, undefined);
+  assert.equal(resolveScope("price").stockGate, undefined);
+  assert.equal(resolveScope("full-sync").stockGate, undefined);
+});
+
 test("resolveScope: unknown scope throws", () => {
   assert.throws(() => resolveScope("nope"), /Unknown scope/);
 });

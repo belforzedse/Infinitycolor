@@ -133,6 +133,7 @@ export interface CustomerIdentityInput {
   lastName?: unknown;
   sourceCreatedAt?: string | null;
   sourceUpdatedAt?: string | null;
+  allowPhoneMerge?: boolean;
 }
 
 export interface CustomerIdentityResult {
@@ -180,13 +181,22 @@ export async function reconcileCustomerIdentity(
   if (candidateIds.size > 1) throw new MigrationInputError("USER_IDENTITY_CONFLICT", 409);
   let existing = candidates[0] || null;
 
-  if (
+  const phoneSourceConflict = Boolean(
     input.kind === "registered" &&
     !mappedUser &&
     phoneUser?.external_source === "wordpress" &&
-    String(phoneUser.external_id || "") !== sourceCustomerId
-  ) {
-    throw new MigrationInputError("USER_PHONE_SOURCE_CONFLICT", 409);
+    String(phoneUser.external_id || "") !== sourceCustomerId,
+  );
+  if (phoneSourceConflict) {
+    if (!input.allowPhoneMerge) throw new MigrationInputError("USER_PHONE_SOURCE_CONFLICT", 409);
+    // A claimed account belongs to a real person who took it over; their balance
+    // is not ours to merge into, even when the caller opted in.
+    if (phoneUser.ClaimedAt || phoneUser.IsVerified) {
+      throw new MigrationInputError("USER_PHONE_MERGE_CLAIMED", 409);
+    }
+    // The owner keeps its own external_id — reassigning it would orphan that
+    // account's source identity. The mapping row written below is what makes
+    // this legacy id resolve here on every later run.
   }
 
   const existingPhone = canonicalIranPhone(existing?.phone);
@@ -212,9 +222,11 @@ export async function reconcileCustomerIdentity(
     ? "source-mapping"
     : legacySourceUser
       ? "legacy-source-id"
-      : phoneUser
-        ? "canonical-phone"
-        : "preprovisioned";
+      : phoneSourceConflict
+        ? "phone-merge"
+        : phoneUser
+          ? "canonical-phone"
+          : "preprovisioned";
   let mode: CustomerIdentityResult["mode"];
   const wasCreated = !existing;
   if (!existing) {
@@ -301,6 +313,24 @@ export async function reconcileCustomerIdentity(
 
   await persistMapping(trx, sourceKind, sourceKey, Number(existing.id), matchReason);
   return { user: existing, mode, matchReason, issues };
+}
+
+/**
+ * Resolve the account a legacy WordPress customer id now lives on, honouring a
+ * phone-merge mapping. Wallets must not resolve by `external_id` alone: a merged
+ * holder keeps the owner account's own external_id, so the mapping row is the
+ * only link back to their legacy id.
+ */
+export async function resolveUserForLegacySource(
+  strapiInstance: any,
+  sourceId: string,
+  trx: any,
+): Promise<any | null> {
+  const userQuery = strapiInstance.db.query(USER_UID);
+  const mappedId = await mappingUserId(trx, "customer", sourceId);
+  const mapped = mappedId ? await userById(userQuery, mappedId, trx) : null;
+  if (mapped) return mapped;
+  return uniqueUserByLegacySource(userQuery, sourceId, trx);
 }
 
 export async function resolveRegisteredCustomerForOrder(

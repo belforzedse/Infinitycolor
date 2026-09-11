@@ -147,10 +147,20 @@
     "tailwindcss-animate": "1.0.7",
     "typescript": "7.0.2"
   },
+  "_browserslist_note": "Floor is deliberately older than `defaults`: that resolved to chrome>=109, and the storefront is server-rendered, so on an older Android browser the page painted while hydration threw — customers saw a normal page whose menus would not open. Runtime APIs those browsers still lack are polyfilled in src/lib/legacyRuntimePolyfills.ts.",
   "browserslist": [
-    "defaults and fully supports es6-module",
+    "chrome >= 87",
+    "edge >= 88",
+    "firefox >= 78",
+    "safari >= 14",
+    "ios_saf >= 14",
+    "and_chr >= 87",
+    "and_ff >= 79",
+    "samsung >= 12",
+    "opera >= 73",
     "not dead",
-    "not IE 11"
+    "not IE 11",
+    "not op_mini all"
   ],
   "overrides": {
     "jsdom": "^27.2.0",

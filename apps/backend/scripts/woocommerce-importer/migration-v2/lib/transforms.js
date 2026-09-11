@@ -11,13 +11,25 @@ function toEnglishDigits(value) {
     .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)));
 }
 
+/**
+ * Canonicalise any Iranian mobile input to E.164 (`+989XXXXXXXXX`).
+ *
+ * Strips every non-digit *before* prefix matching. The previous version kept
+ * `+` (`[^\d+]`), so a leading `+` matched none of the digit-prefix branches and
+ * real numbers such as "+09123381098" or "+98 0912 338 1098" fell through to
+ * null — dropping the customer, their wallet and their orders.
+ *
+ * Deliberately shape-based (`9` + 9 digits) rather than an operator-prefix
+ * allowlist: an allowlist silently rejects newly assigned prefixes, which was
+ * measured against production as a net regression.
+ */
 function canonicalPhone(value) {
-  let phone = toEnglishDigits(value).replace(/[^\d+]/g, "");
-  if (phone.startsWith("0098")) phone = `+98${phone.slice(4)}`;
-  else if (phone.startsWith("98")) phone = `+${phone}`;
-  else if (phone.startsWith("09")) phone = `+98${phone.slice(1)}`;
-  else if (phone.startsWith("9")) phone = `+98${phone}`;
-  return /^\+989\d{9}$/.test(phone) ? phone : null;
+  let digits = toEnglishDigits(value).replace(/\D/g, "");
+  if (digits.startsWith("0098")) digits = digits.slice(4);
+  else if (digits.startsWith("98") && digits.length >= 12) digits = digits.slice(2);
+  // Not `else if`: an international prefix can still be followed by a trunk 0.
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  return /^9\d{9}$/.test(digits) ? `+98${digits}` : null;
 }
 
 function decimalToInteger(value, multiplier) {
@@ -39,6 +51,21 @@ function wooMoneyToToman(value) {
 
 function wooMoneyToRial(value) {
   return decimalToInteger(value, 10);
+}
+
+/**
+ * TeraWallet often returns IEEE floats (e.g. 690818999.9999999). Wallet balances
+ * are stored as integer Rial = round(toman) * 10. Order line money must stay exact —
+ * do not use this for order totals/prices.
+ */
+function wooWalletBalanceToRial(value) {
+  const raw = toEnglishDigits(value).trim();
+  if (!raw) throw new Error("MONEY_FORMAT_INVALID");
+  const asNumber = Number(raw);
+  if (!Number.isFinite(asNumber) || asNumber < 0) throw new Error("MONEY_FORMAT_INVALID");
+  const toman = Math.round(asNumber);
+  if (!Number.isSafeInteger(toman)) throw new Error("MONEY_FORMAT_INVALID");
+  return (BigInt(toman) * 10n).toString();
 }
 
 function cleanText(value, max) {
@@ -80,7 +107,14 @@ function rendered(value) {
 }
 
 function customerPayload(customer) {
-  const phone = canonicalPhone(customer?.billing?.phone || customer?.shipping?.phone);
+  // Woo login usernames were phone numbers for most legacy TeraWallet accounts,
+  // and billing/shipping phone is often empty or malformed (e.g. "+09120254536")
+  // even though the account is real. Take the first field that yields a *valid*
+  // number — testing emptiness instead would let a malformed billing entry mask
+  // a good username and drop the customer along with their wallet.
+  const phone = canonicalPhone(customer?.billing?.phone)
+    || canonicalPhone(customer?.shipping?.phone)
+    || canonicalPhone(customer?.username);
   if (!phone) throw new Error("USER_PHONE_INVALID");
   const sourceTimestamps = wooSourceTimestamps(customer);
   return {
@@ -101,7 +135,7 @@ function walletPayload(walletUser) {
   if (!/^\d+$/.test(sourceId) || sourceId === "0") throw new Error("WALLET_USER_ID_INVALID");
   return {
     userSourceId: sourceId,
-    balanceRial: wooMoneyToRial(walletUser.balance ?? 0),
+    balanceRial: wooWalletBalanceToRial(walletUser.balance ?? 0),
   };
 }
 
@@ -150,6 +184,29 @@ function paymentGateway(value, title = "") {
   return "Unknown";
 }
 
+/**
+ * Prefer exact line.total / quantity when both are integers so a noisy float
+ * `price` cannot fail the whole order. Never round half-toman totals.
+ */
+function lineUnitPriceToman(line, count) {
+  const totalRaw = line?.total;
+  if (totalRaw !== undefined && totalRaw !== null && totalRaw !== "") {
+    try {
+      const totalToman = wooMoneyToToman(totalRaw);
+      if (BigInt(totalToman) % BigInt(count) === 0n) {
+        return (BigInt(totalToman) / BigInt(count)).toString();
+      }
+    } catch {
+      // Fall through to price — malformed total is surfaced there or as ORDER totals.
+    }
+  }
+  let price = line?.price;
+  if (price === undefined || price === null || price === "") {
+    throw new Error("ORDER_ITEM_PRICE_INVALID");
+  }
+  return wooMoneyToToman(price);
+}
+
 function orderPayload(order) {
   const sourceId = String(order?.id || "");
   if (!/^\d+$/.test(sourceId) || sourceId === "0") throw new Error("ORDER_ID_INVALID");
@@ -162,15 +219,11 @@ function orderPayload(order) {
     if (!/^\d+$/.test(variationSourceId) || variationSourceId === "0") {
       throw new Error("ORDER_ITEM_PRODUCT_REFERENCE_INVALID");
     }
-    let price = line.price;
-    if (price === undefined || price === null || price === "") {
-      price = (Number(line.total || 0) / count).toString();
-    }
     return {
       sourceId: String(line.id),
       variationSourceId,
       count,
-      unitPriceToman: wooMoneyToToman(price || 0),
+      unitPriceToman: lineUnitPriceToman(line, count),
       title: cleanText(line.name, 255) || "WooCommerce product",
       sku: cleanText(line.sku, 255) || `WC-${variationSourceId}`,
     };
@@ -256,6 +309,8 @@ module.exports = {
   decimalToInteger,
   wooMoneyToToman,
   wooMoneyToRial,
+  wooWalletBalanceToRial,
+  lineUnitPriceToman,
   customerPayload,
   walletPayload,
   walletBalanceValue,

@@ -71,7 +71,9 @@ async function runIdentityAudit({ source = new WordPressSource(configureSourceEn
   await scanWooPages(source, "/customers", (customer) => {
     stats.customers.total += 1;
     const sourceId = String(customer.id);
-    const phone = canonicalPhone(customer?.billing?.phone || customer?.shipping?.phone);
+    const phone = canonicalPhone(customer?.billing?.phone)
+      || canonicalPhone(customer?.shipping?.phone)
+      || canonicalPhone(customer?.username);
     const email = normalizedEmail(customer.email);
     if (phone) {
       stats.customers.validPhone += 1;

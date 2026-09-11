@@ -7,7 +7,14 @@ jest.mock("nuqs", () => ({
   useQueryStates: () => [{}, jest.fn()],
 }));
 
-import { toDateOnly, parseDateOnly, defaultReportStart, defaultReportEnd } from "../useReportQueryState";
+import {
+  toDateOnly,
+  parseDateOnly,
+  defaultReportStart,
+  defaultReportEnd,
+  isReportDateOnly,
+  sanitizeReportRange,
+} from "../useReportQueryState";
 import {
   jalaliBirthDateToGregorianDate,
 } from "@/utils/birthDate";
@@ -79,5 +86,62 @@ describe("Jalali month presets", () => {
         ),
       ),
     );
+  });
+});
+
+describe("isReportDateOnly", () => {
+  it("accepts a plain calendar day", () => {
+    expect(isReportDateOnly("2026-07-23")).toBe(true);
+  });
+
+  it("rejects the shapes the backend also rejects", () => {
+    // The report API matches /^\d{4}-\d{2}-\d{2}$/ exactly; a time component or an
+    // ISO suffix is a 400 there, so it must never leave the client.
+    expect(isReportDateOnly("2026-07-23T00:00:00.000Z")).toBe(false);
+    expect(isReportDateOnly("2026-7-3")).toBe(false);
+    expect(isReportDateOnly("banana")).toBe(false);
+    expect(isReportDateOnly("")).toBe(false);
+  });
+
+  it("rejects a day that doesn't exist rather than letting Date roll it forward", () => {
+    expect(isReportDateOnly("2026-02-31")).toBe(false);
+    expect(isReportDateOnly("2026-13-01")).toBe(false);
+  });
+});
+
+describe("sanitizeReportRange", () => {
+  it("passes a valid range through untouched", () => {
+    expect(sanitizeReportRange("2026-07-23", "2026-08-22")).toEqual({
+      start: "2026-07-23",
+      end: "2026-08-22",
+    });
+  });
+
+  it("replaces a malformed side with that side's default", () => {
+    // start/end are plain nuqs strings, so a hand-edited or truncated URL can put
+    // anything here. Sending it on used to mean either silently-wrong numbers
+    // (sales endpoints substituted today) or an error banner (behavior endpoints).
+    expect(sanitizeReportRange("banana", "2026-08-22")).toEqual({
+      start: defaultReportStart(),
+      end: "2026-08-22",
+    });
+    expect(sanitizeReportRange("2026-07-23", "")).toEqual({
+      start: "2026-07-23",
+      end: defaultReportEnd(),
+    });
+  });
+
+  it("swaps a reversed range instead of forwarding an impossible window", () => {
+    expect(sanitizeReportRange("2026-08-22", "2026-07-23")).toEqual({
+      start: "2026-07-23",
+      end: "2026-08-22",
+    });
+  });
+
+  it("still yields a usable range when both sides are junk", () => {
+    const range = sanitizeReportRange("??", "??");
+    expect(isReportDateOnly(range.start)).toBe(true);
+    expect(isReportDateOnly(range.end)).toBe(true);
+    expect(range.start <= range.end).toBe(true);
   });
 });

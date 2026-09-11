@@ -21,6 +21,7 @@ import {
   TEST_PREFIX,
 } from "../../../../__tests__/integration/factories";
 import { runAnalyticsDailyRollupTick } from "../../../../jobs/analyticsDailyRollup";
+import { ELIGIBLE_ORDER_STATUS } from "../../services/product-analytics";
 
 const externalIdentityMigration = require("../../../../../database/migrations/2026.08.06T09.10.00.convert-external-identity-indexes-to-constraints.js");
 const outboxRepairMigration = require("../../../../../database/migrations/2026.08.10T09.00.00.repair-umami-analytics-outbox.js");
@@ -123,7 +124,7 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
       status: "Success",
       type: "Gateway",
     });
-    const order = await f.createOrder({ status: "Started", contractId: contract.id });
+    const order = await f.createOrder({ status: ELIGIBLE_ORDER_STATUS, contractId: contract.id });
     await f.createOrderItem({
       orderId: order.id,
       variationId: variation.id,
@@ -186,7 +187,7 @@ describe("analytics foundation migration + daily rollup (real Postgres)", () => 
       status: "Success",
       type: "Gateway",
     });
-    const order = await f.createOrder({ status: "Started", contractId: contract.id });
+    const order = await f.createOrder({ status: ELIGIBLE_ORDER_STATUS, contractId: contract.id });
     await f.createOrderItem({
       orderId: order.id,
       variationId: variation.id,

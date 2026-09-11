@@ -79,6 +79,14 @@ class ImportReport {
     this.media = emptyMediaCounters();
     this.categoryAudio = emptyCategoryAudioCounters();
     this.categoryEditorial = null;
+    /**
+     * Populated only by the "instock-or-verify" stock gate. `verifiedSkipped`
+     * is the saving (no Woo variation fetch, no write); `staleNonZero` is the
+     * staleness detector — out-of-stock parents Strapi still shows stock for,
+     * which get the full treatment rather than a blind zero.
+     * @type {{ examined:number, verifiedSkipped:number, staleNonZero:number } | null}
+     */
+    this.stockGate = null;
     this.discovered = 0;
     this.processed = 0;
     /** @type {Array<{ entity:string, wcId:any, stage:string, error:string, sku?:string, strapiId?:any, sourceImageId?:any }>} */
@@ -165,6 +173,11 @@ class ImportReport {
     };
   }
 
+  /** @param {{ examined:number, verifiedSkipped:number, staleNonZero:number }} stats */
+  setStockGate(stats) {
+    this.stockGate = { ...stats };
+  }
+
   durationMs() {
     return Date.now() - this.startedAt;
   }
@@ -181,6 +194,7 @@ class ImportReport {
       media: this.media,
       categoryAudio: this.categoryAudio,
       categoryEditorial: this.categoryEditorial,
+      stockGate: this.stockGate,
       failures: this.failures,
     };
   }
@@ -215,6 +229,12 @@ class ImportReport {
         `cat-editorial batch=${this.categoryEditorial.batchId} manifest=${this.categoryEditorial.manifestHash} ` +
           `source=${this.categoryEditorial.sourceCategoryCount} nonEmpty=${this.categoryEditorial.nonEmptyCategoryCount} ` +
           `audio=${this.categoryEditorial.audioCount} links=${this.categoryEditorial.rewrittenLinkCount}`,
+      );
+    }
+    if (this.stockGate) {
+      this.logger.info(
+        `stock-gate   examined=${this.stockGate.examined} ` +
+          `verifiedSkipped=${this.stockGate.verifiedSkipped} staleNonZero=${this.stockGate.staleNonZero}`,
       );
     }
     this.logger.info(`duration     ${seconds}s`);

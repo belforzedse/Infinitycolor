@@ -164,10 +164,29 @@ describe("canRoleAccessPath", () => {
       expect(canRoleAccessPath("Seller 1", "/orders/reserve")).toBe(false);
       expect(canRoleAccessPath("Editor", "/orders/reserve")).toBe(false);
     });
+
+    it("opens every homepage product surface to every role above Seller 1", () => {
+      for (const role of [
+        "Seller 2",
+        "Store Manager",
+        "Store Manager 2",
+        "Finance",
+        "Founder",
+        "Superadmin",
+      ]) {
+        expect(canRoleAccessPath(role, "/products/homepage")).toBe(true);
+        expect(canRoleAccessPath(role, "/products/gif-promo")).toBe(true);
+        expect(canRoleAccessPath(role, "/products/homepage-custom-section")).toBe(true);
+      }
+      expect(canRoleAccessPath("Seller 1", "/products/homepage")).toBe(false);
+      expect(canRoleAccessPath("Seller 1", "/products/gif-promo")).toBe(false);
+      expect(canRoleAccessPath("Seller 1", "/products/homepage-custom-section")).toBe(false);
+      expect(canRoleAccessPath("Editor", "/products/homepage")).toBe(false);
+    });
   });
 
   describe("Finance", () => {
-    it("inherits Seller 2 and receives financial reports without traffic or wallets", () => {
+    it("inherits Seller 2 and receives financial reports and wallet administration without traffic", () => {
       for (const path of [
         "/products",
         "/products/categories",
@@ -176,16 +195,12 @@ describe("canRoleAccessPath", () => {
         "/sales/products",
         "/sales/breakdown",
         "/sales/liquidity",
+        "/wallets",
       ]) {
         expect(canRoleAccessPath("Finance", path)).toBe(true);
       }
       expect(canRoleAccessPath("Finance", "/stories")).toBe(true);
-      for (const path of [
-        "/sales/traffic",
-        "/sales/funnel",
-        "/wallets",
-        "/orders/add",
-      ]) {
+      for (const path of ["/sales/traffic", "/sales/funnel", "/orders/add"]) {
         expect(canRoleAccessPath("Finance", path)).toBe(false);
       }
     });
@@ -491,7 +506,7 @@ describe("sidebar", () => {
         true,
       );
       expect(
-        items.some((item) => item.id === "product-size-guide" && item.icon),
+        items.some((item) => item.id === "product-tags" && item.icon),
       ).toBe(true);
     }
   });
@@ -499,17 +514,55 @@ describe("sidebar", () => {
   it("keeps every role's top-level information architecture within a useful range", () => {
     const expectedCounts: Record<string, number> = {
       Editor: 11,
-      "Seller 1": 6,
+      "Seller 1": 3,
       "Seller 2": 9,
       "Store Manager": 9,
       "Store Manager 2": 10,
-      Finance: 5,
+      Finance: 6,
       Founder: 7,
       Superadmin: 13,
     };
 
     for (const [role, count] of Object.entries(expectedCounts)) {
       expect(getSidebarItemsForRole(role)).toHaveLength(count);
+    }
+  });
+
+  it("shows the individual catalog editors in the Superadmin sidebar only", () => {
+    const catalogEditorPaths = [
+      "/products/colors",
+      "/products/attributes",
+      "/products/size-guide",
+    ];
+    const linksTo = (role: string, href: string) =>
+      getSidebarItemsForRole(role).some(
+        (item) =>
+          item.href === href ||
+          item.children.some((child) => child.href === href),
+      );
+
+    for (const role of ADMIN_ROLE_IDS) {
+      const strapiName = ADMIN_ROLE_DEFINITIONS[role].strapiName;
+      for (const href of catalogEditorPaths) {
+        expect(linksTo(strapiName, href)).toBe(role === "superadmin");
+      }
+    }
+  });
+
+  it("keeps the hidden catalog editors reachable for the roles that hold the capability", () => {
+    // Hiding them trims the sidebar for support staff; it is not a permission
+    // change, so a direct link must still open the page.
+    for (const role of [
+      "Seller 1",
+      "Seller 2",
+      "Store Manager",
+      "Store Manager 2",
+      "Finance",
+      "Founder",
+    ]) {
+      expect(canRoleAccessPath(role, "/products/colors")).toBe(true);
+      expect(canRoleAccessPath(role, "/products/attributes")).toBe(true);
+      expect(canRoleAccessPath(role, "/products/size-guide")).toBe(true);
     }
   });
 

@@ -275,10 +275,10 @@ const ProductSearch: React.FC<ProductSearchProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="جستجو محصول با نام یا کد..."
-              className="text-sm flex-1 bg-transparent text-right text-neutral-600 placeholder-neutral-400 outline-none"
+              className="text-sm min-w-0 flex-1 bg-transparent text-right text-neutral-600 placeholder-neutral-400 outline-none"
             />
 
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-infinity-primary shadow-sm">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-infinity-primary shadow-sm">
               <SearchIcon className="h-5 w-5 text-white" />
             </div>
           </div>

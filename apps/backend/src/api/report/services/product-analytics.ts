@@ -326,6 +326,22 @@ async function getLinkTables(knex: Knex): Promise<LinkTable[]> {
   return cachedLinks;
 }
 
+/**
+ * How the `product_categories.parent` self-relation is physically stored.
+ *
+ * `table` is either a Strapi link table (`childCol`/`parentCol` are two columns
+ * on it) or `product_categories` itself when the install carries a direct FK —
+ * in that case `childCol` is `"id"`, so `SELECT parentCol FROM table WHERE
+ * childCol = <id>` reads the same either way and callers need no special case.
+ */
+export interface CategoryParentLink {
+  table: string;
+  /** Column holding the CHILD id — the row that owns the `parent` attribute. */
+  childCol: string;
+  /** Column holding the PARENT id. */
+  parentCol: string;
+}
+
 export interface ResolvedJoins {
   /** order_items oi -> orders o */
   oiToOrder: string;
@@ -339,8 +355,31 @@ export interface ResolvedJoins {
   variationToProduct: string;
   /** product_variations pv -> product_stocks ps (LEFT) */
   variationToStock: string;
-  /** products p -> product_categories pc (LEFT); category title expression. */
+  /**
+   * products p -> the product's MAIN product_categories pc (LEFT), plus the title
+   * expression. This is the product's *label* category — the single name shown on a
+   * product row — and is NOT the definition of category membership. A product also
+   * belongs to every category in `product_other_categories`, so anything that
+   * ASSIGNS revenue to a category must use {@link ResolvedJoins.categoryMembershipTables}
+   * (via {@link categoryMembershipCte}) instead of this join. Using this join to
+   * decide membership silently drops every "other category" assignment.
+   */
   productToCategory: { join: string; titleExpr: string };
+  /**
+   * Every link table that expresses "this product belongs to this category" —
+   * `products_product_main_category_links` AND
+   * `products_product_other_categories_links`. Their UNION is the canonical
+   * membership set, and is exactly what the storefront PLP filters on
+   * (`product_main_category.Slug IN (...) OR product_other_categories.Slug IN (...)`,
+   * see apps/frontend/src/services/product/plp.ts). Empty when none resolve.
+   */
+  categoryMembershipTables: string[];
+  /**
+   * The product_categories `parent` self-relation, for reports that roll sales up
+   * the category tree. Null when the relation can't be resolved — callers must
+   * degrade to a flat, non-hierarchical result rather than failing.
+   */
+  categoryParentLink: CategoryParentLink | null;
   /** orders o -> shippings s (LEFT). Empty string when the relation can't be resolved. */
   orderToShipping: string;
   /** orders o -> users-permissions users u (LEFT). Empty string when unresolved. */
@@ -430,6 +469,79 @@ async function resolveRelation(
     return `${joinType} ${opts.targetTable} ${opts.targetAlias} ON ${opts.targetAlias}.${fk} = ${ownerKey}`;
   }
   throw new Error(`RELATION_NOT_FOUND: could not resolve relation for ${opts.targetTable}`);
+}
+
+/**
+ * Resolve every link table that expresses product -> category membership.
+ *
+ * Strapi stores `product_main_category` and `product_other_categories` in two
+ * separate link tables that carry the SAME column pair (product_id,
+ * product_category_id). `resolveRelation` can only ever pick ONE of them, which is
+ * why every category report used to see main-category assignments only — a product
+ * filed under a category through `product_other_categories` contributed nothing to
+ * that category's revenue, and nothing on screen said so.
+ *
+ * Both tables are returned so callers can UNION them into the canonical membership
+ * set. Filtered on a `categor` name fragment so an unrelated link table that
+ * happens to share the column pair can't leak in; `product_categories_parent_links`
+ * is excluded automatically because it has no `product_id` column.
+ *
+ * Never throws: an unresolvable schema costs the caller its category dimension,
+ * not the whole report.
+ */
+async function resolveCategoryMembershipTables(knex: Knex): Promise<string[]> {
+  try {
+    const links = await getLinkTables(knex);
+    return links
+      .filter(
+        ({ table, cols }) =>
+          table.includes("categor") &&
+          cols.has("product_id") &&
+          cols.has("product_category_id"),
+      )
+      .map(({ table }) => table)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolve `product_categories.parent`.
+ *
+ * `resolveRelation` can't express this one: it filters link tables on two
+ * DISTINCT FK column names, and a self-relation names both sides after the same
+ * table (`product_category_id` for the child, `inv_product_category_id` for the
+ * parent). Hence this dedicated lookup, which keeps the same defensive posture —
+ * never throws, returns null when the shape isn't there, so a drifted database
+ * costs the caller its hierarchy rather than the whole report.
+ */
+async function resolveCategoryParentLink(knex: Knex): Promise<CategoryParentLink | null> {
+  try {
+    const links = await getLinkTables(knex);
+    const candidates = links.filter(
+      ({ table, cols }) =>
+        table.includes("product_categor") &&
+        cols.has("product_category_id") &&
+        cols.has("inv_product_category_id"),
+    );
+    const chosen = candidates.find((c) => c.table.includes("parent")) || candidates[0];
+    if (chosen) {
+      return {
+        table: chosen.table,
+        childCol: "product_category_id",
+        parentCol: "inv_product_category_id",
+      };
+    }
+
+    // Fallback: some installs carry the parent as a plain FK on the row itself.
+    const cols = await columns(knex, "product_categories");
+    const fk = pickColumn(cols, "parent_id", "product_category_parent_id");
+    if (fk) return { table: "product_categories", childCol: "id", parentCol: fk };
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
@@ -537,6 +649,9 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
     } catch {
       productToCategory = { join: "", titleExpr: "NULL::text" };
     }
+
+    const categoryParentLink = await resolveCategoryParentLink(knex);
+    const categoryMembershipTables = await resolveCategoryMembershipTables(knex);
 
     // orders -> shippings (owning FK is on the order side; deleted/legacy = null)
     let orderToShipping = "";
@@ -659,6 +774,8 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       variationToProduct,
       variationToStock,
       productToCategory,
+      categoryMembershipTables,
+      categoryParentLink,
       orderToShipping,
       orderToUser,
       userToInfo,
@@ -688,6 +805,19 @@ export function __resetJoinCache() {
  *   - refund_irr:  sum of successful Return transactions in IRR (>= 0)
  * Bindings: [start, end] on order date.
  */
+/**
+ * The single order status that counts as a completed sale.
+ *
+ * BOTH paid-orders definitions gate on it. They used to disagree: `completed`
+ * required it while `settled` required only a successful gateway transaction, so a
+ * Cancelled order that had been paid before it was cancelled was reported as
+ * revenue, and the two definitions described different order sets for the same
+ * window. `settled` now means "completed AND gateway-settled" — a strict subset of
+ * `completed` — so switching definitions can only ever narrow the set, never swap it
+ * for a different one.
+ */
+export const ELIGIBLE_ORDER_STATUS = "Done";
+
 export type PaidOrdersDefinition = "settled" | "completed";
 
 export function paidOrdersCte(
@@ -722,7 +852,7 @@ export function paidOrdersCte(
         FROM orders o
         ${leftify(joins.orderToContract)}
         ${leftify(joins.contractToTx)}
-        WHERE o.status = 'Done'
+        WHERE o.status = '${ELIGIBLE_ORDER_STATUS}'
           AND o.date BETWEEN ? AND ?
         GROUP BY o.id, o.date, o.applied_discount_amount
       )
@@ -740,6 +870,7 @@ export function paidOrdersCte(
       ${joins.orderToContract}
       ${joins.contractToTx}
       WHERE ct.status = 'Success'
+        AND o.status = '${ELIGIBLE_ORDER_STATUS}'
         AND o.date BETWEEN ? AND ?
       GROUP BY o.id, o.date, o.applied_discount_amount
       HAVING SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END) > 0
@@ -770,6 +901,7 @@ export async function resolvePaidOrdersDefinition(
        ${joins.orderToContract}
        ${joins.contractToTx}
        WHERE ct.status = 'Success'
+         AND o.status = '${ELIGIBLE_ORDER_STATUS}'
          AND o.date BETWEEN ? AND ?
      ) AS has_settlement`,
     [start, end],
@@ -903,6 +1035,99 @@ export function itemizedCte(joins: ResolvedJoins): string {
       JOIN paid_orders po ON po.order_id = o.id
     )
   `;
+}
+
+/**
+ * The canonical product -> category membership set: the UNION of every membership
+ * link table (main category + other categories).
+ *
+ * `UNION` (not `UNION ALL`) is load-bearing: it collapses a product that is filed
+ * under the same category through BOTH relations into one row, so a line item can
+ * never be counted twice under a single category. Callers still need their own
+ * DISTINCT when rolling membership up the tree — see {@link categoryAncestryCte}.
+ *
+ * Yields `product_category_membership(product_id, product_category_id)`. When no
+ * membership table resolves it yields an empty set with the right column types,
+ * so a drifted schema produces an empty category report rather than a SQL error.
+ */
+export function categoryMembershipCte(joins: ResolvedJoins): string {
+  const tables = joins.categoryMembershipTables || [];
+  if (tables.length === 0) {
+    return `
+      product_category_membership AS (
+        SELECT NULL::int AS product_id, NULL::int AS product_category_id WHERE false
+      )
+    `;
+  }
+  const union = tables
+    .map((t) => `SELECT product_id, product_category_id FROM ${t}`)
+    .join("\n        UNION\n        ");
+  return `
+    product_category_membership AS (
+        ${union}
+    )
+  `;
+}
+
+/**
+ * Every category paired with itself and each of its ancestors, so a sale filed
+ * under a leaf can be rolled up to every category that contains it.
+ *
+ * Yields `category_ancestry(category_id, ancestor_id, up)` where `up` is the number
+ * of hops (0 = the category itself). Requires the statement to be `WITH RECURSIVE`.
+ * `up < depth` is a cycle guard: a self-referencing category row would otherwise
+ * loop forever.
+ */
+export function categoryAncestryCte(link: CategoryParentLink, maxDepth: number): string {
+  const { table, childCol, parentCol } = link;
+  return `
+    category_ancestry AS (
+      SELECT id::bigint AS category_id, id::bigint AS ancestor_id, 0 AS up FROM product_categories
+      UNION ALL
+      SELECT a.category_id, cl.${parentCol}::bigint, a.up + 1
+      FROM category_ancestry a
+      JOIN ${table} cl ON cl.${childCol} = a.ancestor_id
+      WHERE cl.${parentCol} IS NOT NULL AND a.up < ${maxDepth}
+    )
+  `;
+}
+
+/**
+ * A `WHERE`-clause fragment selecting products that belong to a given category —
+ * or, when the parent relation resolves, to that category or any of its
+ * DESCENDANTS. Matches the storefront's category page, which lists a category
+ * together with everything beneath it.
+ *
+ * Written as `EXISTS` on purpose: a join would multiply a product row once per
+ * matching membership/descendant path and inflate every aggregate downstream.
+ *
+ * Returns `""` when membership can't be resolved, so callers append nothing and
+ * fall back to an unfiltered result rather than a broken one. Takes exactly one
+ * bound parameter (the category id) when non-empty; `productIdExpr` is the SQL
+ * expression naming the product id in the caller's scope.
+ */
+export function categoryFilterSql(joins: ResolvedJoins, productIdExpr: string): string {
+  const tables = joins.categoryMembershipTables || [];
+  if (tables.length === 0) return "";
+
+  const membership = tables
+    .map(
+      (t) =>
+        `SELECT 1 FROM ${t} cm WHERE cm.product_id = ${productIdExpr} AND cm.product_category_id IN (SELECT id FROM cat_scope)`,
+    )
+    .join(" UNION ALL ");
+
+  const link = joins.categoryParentLink;
+  const scope = link
+    ? `WITH RECURSIVE cat_scope AS (
+         SELECT ?::int AS id
+         UNION ALL
+         SELECT cl.${link.childCol}::int
+         FROM ${link.table} cl JOIN cat_scope ON cl.${link.parentCol} = cat_scope.id
+       )`
+    : `WITH cat_scope AS (SELECT ?::int AS id)`;
+
+  return `EXISTS (${scope} SELECT 1 FROM (${membership}) m)`;
 }
 
 /**

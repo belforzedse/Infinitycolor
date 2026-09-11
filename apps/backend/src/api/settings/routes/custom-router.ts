@@ -53,6 +53,72 @@ export default {
     },
     {
       method: "GET",
+      path: "/settings/homepage-products",
+      handler: "settings.getHomepageProducts",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "product.homepage.manage" } },
+        ],
+      },
+    },
+    {
+      method: "PUT",
+      path: "/settings/homepage-products",
+      handler: "settings.updateHomepageProducts",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "product.homepage.manage" } },
+        ],
+      },
+    },
+    {
+      method: "GET",
+      path: "/settings/gif-promo-products",
+      handler: "settings.getGifPromoProducts",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "product.homepage.manage" } },
+        ],
+      },
+    },
+    {
+      method: "PUT",
+      path: "/settings/gif-promo-products",
+      handler: "settings.updateGifPromoProducts",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "product.homepage.manage" } },
+        ],
+      },
+    },
+    {
+      method: "GET",
+      path: "/settings/homepage-custom-section",
+      handler: "settings.getHomepageCustomSection",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "product.homepage.manage" } },
+        ],
+      },
+    },
+    {
+      method: "PUT",
+      path: "/settings/homepage-custom-section",
+      handler: "settings.updateHomepageCustomSection",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "product.homepage.manage" } },
+        ],
+      },
+    },
+    {
+      method: "GET",
       path: "/settings/hero-slider",
       handler: "settings.getHeroSlider",
       config: {

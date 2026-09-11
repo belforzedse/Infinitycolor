@@ -6,7 +6,7 @@ import ThumbsUpIcon from "../Icons/ThumbsUpIcon";
 import StarIcon from "../Icons/StarIcon";
 import EmptyStarIcon from "../Icons/EmptyStarIcon";
 import type { ProductReview, ProductReviewReply } from "@/services/product/product-review.service";
-import { resolveProductReviewUserDisplayName } from "@/utils/productReviewAuthorName";
+import { resolveProductReviewDisplayName } from "@/utils/productReviewAuthorName";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import dayjs from "dayjs";
 import jalaliday from "jalaliday";
@@ -33,7 +33,7 @@ export default function PDPCommentListItem({
   onReply,
 }: Props) {
   const { isAdmin } = useCurrentUser();
-  const displayName = resolveProductReviewUserDisplayName(review.user, review.user?.Phone);
+  const displayName = resolveProductReviewDisplayName(review);
 
   const formatDate = (dateString: string) => {
     try {
@@ -49,6 +49,7 @@ export default function PDPCommentListItem({
     return {
       id: reply.id,
       Content: reply.Content,
+      authorDisplayName: reply.authorDisplayName,
       Status: "Accepted",
       Date: reply.createdAt,
       Rate: 0,

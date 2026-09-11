@@ -20,6 +20,9 @@ import {
 import HomeProductSections from "./HomeProductSections";
 import CategoryCarousel from "@/components/Categories/CategoryCarousel";
 import AdaptiveSiteGifBanner from "@/components/Home/AdaptiveSiteGifBanner";
+// Infinitygram posts section is hidden on the homepage; see the commented-out
+// block below. Import stays so restoring it is a one-line uncomment.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import InfinitygramSection, {
   InfinitygramSectionSkeleton,
 } from "@/components/Home/InfinitygramSection";
@@ -304,11 +307,15 @@ export default async function Home() {
         </Suspense>
       </PageContainer>
 
+      {/* Infinitygram posts section hidden on request. Kept rather than deleted
+          so it can be restored by uncommenting; the imports above stay too. */}
+      {/*
       <RetryablePanelBoundary label="اینفینیتی‌گرام">
         <Suspense fallback={<InfinitygramSectionSkeleton />}>
           <InfinitygramSection />
         </Suspense>
       </RetryablePanelBoundary>
+      */}
 
       <PageContainer variant="wide" className="pb-16 pt-4">
         <RetryablePanelBoundary label="مجله اینفینیتی">

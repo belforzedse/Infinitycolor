@@ -368,6 +368,10 @@ export function presentAnalyticsMessage(value: unknown): string {
     return `${SECTION_LABELS[sectionMatch[1]] ?? "بخشی از گزارش"} موقتاً در دسترس نیست.`;
   }
   if (/realtime.*unavailable/i.test(raw)) return "آمار لحظه‌ای موقتاً در دسترس نیست؛ آخرین اطلاعات موفق نمایش داده شده است.";
+  // Must precede the generic /INVALID_/ branch below, which would otherwise
+  // flatten this into "temporarily unavailable" — a bad range is not an outage,
+  // and waiting will not fix it.
+  if (/INVALID_DATE_RANGE/i.test(raw)) return "بازه تاریخ انتخاب‌شده معتبر نیست؛ تاریخ شروع و پایان را بررسی کنید.";
   if (/UMAMI_TIMEOUT|AbortError|timed?\s*out/i.test(raw)) return "دریافت آمار بیش از حد معمول طول کشید. دوباره تلاش کنید.";
   if (/UMAMI_AUTH|unauthorized|forbidden/i.test(raw)) return "دسترسی گزارش‌گیری نیاز به بررسی مدیر سیستم دارد.";
   // Checked before the generic unavailable branch: a missing configuration

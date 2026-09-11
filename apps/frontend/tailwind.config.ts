@@ -212,6 +212,32 @@ export default {
         ".animate-shimmer": {
           animation: "shimmer 2s infinite",
         },
+        "@keyframes orb-drift-a": {
+          "0%, 100%": { transform: "translate(0, 0) scale(1)" },
+          "50%": { transform: "translate(22px, -18px) scale(1.08)" },
+        },
+        "@keyframes orb-drift-b": {
+          "0%, 100%": { transform: "translate(0, 0) scale(1)" },
+          "50%": { transform: "translate(-20px, 16px) scale(0.94)" },
+        },
+        "@keyframes orb-drift-c": {
+          "0%, 100%": { transform: "translate(0, 0) scale(1)" },
+          "50%": { transform: "translate(16px, 20px) scale(1.05)" },
+        },
+        ".animate-orb-drift-a": {
+          animation: "orb-drift-a 14s ease-in-out infinite",
+        },
+        ".animate-orb-drift-b": {
+          animation: "orb-drift-b 16s ease-in-out infinite",
+        },
+        ".animate-orb-drift-c": {
+          animation: "orb-drift-c 18s ease-in-out infinite",
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          ".animate-orb-drift-a, .animate-orb-drift-b, .animate-orb-drift-c": {
+            animation: "none",
+          },
+        },
       });
     }),
   ],

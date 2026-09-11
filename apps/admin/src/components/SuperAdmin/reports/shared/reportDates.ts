@@ -39,6 +39,39 @@ export function defaultReportEnd(): string {
   return toDateOnly(new Date());
 }
 
+/**
+ * True for a real calendar day written as `yyyy-mm-dd`. Rejects the shapes the
+ * backend rejects too — a time component, an ISO suffix, or a non-existent day
+ * like `2026-02-31` (which `Date` would silently roll forward).
+ */
+export function isReportDateOnly(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Repair a period read from the URL before it is sent anywhere.
+ *
+ * `start`/`end` are plain nuqs strings, so a hand-edited, bookmarked or
+ * truncated link can put anything in them. The report API is split on what it
+ * does with that: the sales/product endpoints used to silently substitute
+ * today's date (plausible numbers for a window nobody asked for), while the
+ * behavior and overview endpoints reject it outright. Neither is something the
+ * operator should have to see, so a malformed side falls back to its default and
+ * a reversed period is swapped — leaving both halves of the API a valid range.
+ */
+export function sanitizeReportRange(
+  start: string,
+  end: string,
+): { start: string; end: string } {
+  const safeStart = isReportDateOnly(start) ? start : defaultReportStart();
+  const safeEnd = isReportDateOnly(end) ? end : defaultReportEnd();
+  return safeStart > safeEnd
+    ? { start: safeEnd, end: safeStart }
+    : { start: safeStart, end: safeEnd };
+}
+
 export type JalaliYmd = { year: number; month: number; day: number };
 
 /** Jalali Y/M/D of `date` as seen in Tehran, matching backend report buckets. */

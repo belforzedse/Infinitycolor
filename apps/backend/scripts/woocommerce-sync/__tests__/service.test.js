@@ -49,6 +49,7 @@ test("sync config defaults to hourly-only and enforces documented concurrency ca
     fridayInventory: 32,
     fridayImages: 12,
     fridayEntities: 24,
+    fridayProducts: 1,
   });
   assert.equal(config.fridayCron, "59 23 * * *");
   assert.throws(() => getSyncConfig({ ...baseEnv(), IMPORT_CONCURRENCY_IMAGES: "17" }), /between 1 and 16/);
@@ -56,6 +57,40 @@ test("sync config defaults to hourly-only and enforces documented concurrency ca
   assert.throws(() => getSyncConfig({ ...baseEnv(), IMPORT_CONCURRENCY_VIDEOS: "3" }), /between 1 and 2/);
   assert.throws(() => getSyncConfig({ ...baseEnv(), WOOCOMMERCE_SYNC_SOURCE_PAGE_CONCURRENCY: "9" }), /between 1 and 8/);
   assert.throws(() => getSyncConfig({ ...baseEnv(), WOOCOMMERCE_SYNC_IDENTITY_SWEEP_PAGES: "26" }), /between 0 and 25/);
+  assert.throws(
+    () => getSyncConfig({ ...baseEnv(), WOOCOMMERCE_SYNC_FRIDAY_PRODUCT_CONCURRENCY: "7" }),
+    /between 1 and 6/,
+  );
+  assert.throws(
+    () => getSyncConfig({ ...baseEnv(), WOOCOMMERCE_IMPORT_PROFILE: "turbo" }),
+    /must be one of default, fast/,
+  );
+});
+
+test("WOOCOMMERCE_IMPORT_PROFILE=fast only changes defaults; explicit env vars still win", () => {
+  const fast = getSyncConfig({ ...baseEnv(), WOOCOMMERCE_IMPORT_PROFILE: "fast" });
+  assert.deepEqual(fast.concurrency, {
+    products: 1, // untouched: only fridayProducts governs the campaign's product-loop concurrency
+    images: 8,
+    variations: 16,
+    videos: 1,
+    entities: 24,
+    fridayInventory: 32, // already at its ceiling on the default profile — no headroom to raise
+    fridayImages: 16,
+    fridayEntities: 32,
+    fridayProducts: 4,
+  });
+
+  // An explicit env var overrides the fast profile's default, same as it overrides the normal default.
+  const overridden = getSyncConfig({
+    ...baseEnv(),
+    WOOCOMMERCE_IMPORT_PROFILE: "fast",
+    WOOCOMMERCE_SYNC_FRIDAY_PRODUCT_CONCURRENCY: "2",
+  });
+  assert.equal(overridden.concurrency.fridayProducts, 2);
+
+  // Profile unset (or "default") reproduces today's exact values.
+  assert.deepEqual(getSyncConfig(baseEnv()).concurrency, getSyncConfig({ ...baseEnv(), WOOCOMMERCE_IMPORT_PROFILE: "default" }).concurrency);
 });
 
 test("historical customer and wallet sweeps require explicit opt-in", async () => {
@@ -586,6 +621,7 @@ test("fullUsersAndWallets skips phoneless customers and continues", async () => 
   service.state = {
     control: async () => ({ mode: "active", reconciliation_run_id: "r1", reconciliation_sha256: "a".repeat(64) }),
   };
+  let perIdBalanceCalls = 0;
   service.source = {
     async *customers() {
       yield {
@@ -596,7 +632,13 @@ test("fullUsersAndWallets skips phoneless customers and continues", async () => 
         ],
       };
     },
+    // Bulk list knows nothing about these customers, so both fall back to the
+    // per-id endpoint — the path that must survive an incomplete list.
+    async *walletUsers() {
+      yield { page: 1, rows: [] };
+    },
     getWalletBalance: async () => {
+      perIdBalanceCalls += 1;
       const error = new Error("NOT_FOUND");
       error.payload = { error: "NOT_FOUND" };
       throw error;
@@ -619,6 +661,9 @@ test("fullUsersAndWallets skips phoneless customers and continues", async () => 
   assert.equal(upserted.length, 1);
   assert.equal(upserted[0].sourceId, "1");
   assert.equal(upserted[0].phone, "+989121234567");
+  assert.equal(perIdBalanceCalls, 1, "a bulk-list miss must fall back to the per-id balance endpoint");
+  assert.equal(result.wallet.fallbacks, 1);
+  assert.equal(result.wallet.missing, 1);
 });
 
 test("friday finishes completed-with-exceptions when users fail but orders succeed", async () => {
@@ -642,13 +687,17 @@ test("friday finishes completed-with-exceptions when users fail but orders succe
   service.drain = async () => ({ completed: 0, failed: 0, skipped: false });
   service.fullUsersAndWallets = async () => ({ users: 1, wallets: 0, failed: 3 });
   service.fullOrders = async () => ({ completed: 2, failed: 0 });
-  service.createCatalogEngine = () => ({
-    runSync: async ({ scope }) => ({
-      toJSON: () => ({ failures: scope === "full-sync" ? [{ wcId: 9 }] : [], totals: {} }),
-      hasFailures: () => scope === "full-sync",
-      durationMs: () => 1,
-    }),
-  });
+  const engineFactoryCalls = [];
+  service.createCatalogEngine = (campaignConfig) => {
+    engineFactoryCalls.push(campaignConfig.concurrency);
+    return {
+      runSync: async ({ scope }) => ({
+        toJSON: () => ({ failures: scope === "full-sync" ? [{ wcId: 9 }] : [], processed: 3393, durationMs: 1000 }),
+        hasFailures: () => scope === "full-sync",
+        durationMs: () => 1,
+      }),
+    };
+  };
 
   const result = await service.friday(scheduledAt);
 
@@ -660,4 +709,258 @@ test("friday finishes completed-with-exceptions when users fail but orders succe
   assert.equal(steps.some((entry) => entry.step === "catalog-full"), true);
   assert.equal(steps.some((entry) => entry.step === "users-wallets"), true);
   assert.equal(steps.some((entry) => entry.step === "orders"), true);
+
+  // Every stage's product-loop concurrency comes from fridayProducts (not the
+  // plain `entities`/hourly `products: 1` default) — this is what actually lets
+  // "stock" and "price" parallelize; CatalogEngine forces catalog-full back to 1.
+  assert.equal(engineFactoryCalls.length, 3);
+  for (const concurrency of engineFactoryCalls) assert.equal(concurrency.products, config.concurrency.fridayProducts);
+
+  // Timing instrumentation: every stage has a duration, plus a total, and the
+  // finalizing step carries both durations and throughput for later inspection.
+  for (const key of ["newProducts", "catalogFull", "stock", "price", "usersWallets", "orders", "totalMs"]) {
+    assert.equal(typeof result.durationsMs[key], "number");
+  }
+  assert.equal(result.durationsMs.totalMs >= 0, true);
+  const finalizing = steps.find((entry) => entry.step === "finalizing");
+  assert.ok(finalizing, "expected a finalizing campaignStep call");
+  assert.deepEqual(Object.keys(finalizing.metrics).sort(), ["durationsMs", "orders", "throughput", "variant", "wallet"]);
+  assert.equal(finalizing.metrics.variant, "full");
+  // Throughput denominators are the same wall-clock stage timers as durationsMs
+  // (not report.durationMs()), so either a finite rate or null (0-duration stage
+  // in this near-instant mock) is correct — never Infinity/NaN.
+  for (const key of Object.keys(finalizing.metrics.throughput)) {
+    const value = finalizing.metrics.throughput[key];
+    assert.equal(value === null || Number.isFinite(value), true, `${key} should be finite or null, got ${value}`);
+  }
+});
+
+function activeService(overrides = {}) {
+  const config = getSyncConfig(overrides.env || baseEnv());
+  const service = new WooSyncService(config, {
+    pool: { end: async () => undefined },
+    source: {},
+    destination: {},
+  });
+  service.state = {
+    control: async () => ({ mode: "active", reconciliation_run_id: "r1", reconciliation_sha256: "a".repeat(64) }),
+  };
+  return service;
+}
+
+test("campaign wallets come from the bulk list, not one balance request per customer", async () => {
+  const service = activeService();
+  const wallets = [];
+  service.source = {
+    async *walletUsers() {
+      yield { page: 1, rows: [{ id: 1, balance: 5, base_currency: "IRT" }, { id: 2, balance: 0 }] };
+    },
+    async *customers() {
+      yield {
+        page: 1,
+        rows: [
+          { id: 1, billing: { phone: "09121234567" } },
+          { id: 2, billing: { phone: "09121234568" } },
+        ],
+      };
+    },
+    getWalletBalance: async () => {
+      throw new Error("the bulk list covered this customer; no per-id read may happen");
+    },
+  };
+  service.destination = {
+    upsertUser: async () => ({ mode: "created" }),
+    upsertWallet: async (payload) => { wallets.push(payload); return { mode: "created" }; },
+  };
+
+  const result = await service.fullUsersAndWallets();
+
+  assert.equal(result.users, 2);
+  assert.equal(result.wallets, 2);
+  assert.equal(result.wallet.fallbacks, 0);
+  assert.equal(result.wallet.unique, 2);
+  // TeraWallet reports toman (base_currency IRT); Strapi Balance is rial.
+  assert.equal(wallets.find((w) => w.userSourceId === "1").balanceRial, "50");
+});
+
+test("the identity stage hands the balance snapshot to the caller without putting it in metrics", async () => {
+  const service = activeService();
+  service.source = {
+    async *walletUsers() { yield { page: 1, rows: [{ id: 1, balance: 3 }] }; },
+    async *customers() { yield { page: 1, rows: [] }; },
+  };
+  service.destination = { upsertUser: async () => ({}), upsertWallet: async () => ({}) };
+  const handoff = {};
+  const result = await service.fullUsersAndWallets({ handoff });
+  assert.equal(handoff.balances.get("1"), 3);
+  assert.ok(!("balances" in result), "the summary is serialized into campaign metrics; keep the map out of it");
+});
+
+test("the rehearsal wallet check counts divergence between the bulk list and the per-id endpoint", async () => {
+  const service = activeService();
+  service.source = {
+    async *walletUsers() {
+      yield { page: 1, rows: [{ id: 1, balance: 5 }, { id: 2, balance: 9 }] };
+    },
+    async *customers() { yield { page: 1, rows: [] }; },
+    // id 1 agrees (different literal, same written value); id 2 disagrees.
+    getWalletBalance: async (id) => (String(id) === "1" ? { balance: "5.0" } : { balance: 11 }),
+  };
+  service.destination = { upsertUser: async () => ({}), upsertWallet: async () => ({}) };
+
+  const result = await service.fullUsersAndWallets({ verify: true });
+
+  assert.equal(result.wallet.verified, 2);
+  assert.equal(result.wallet.divergence, 1, "only a difference in the value actually written counts");
+});
+
+function variantHarness() {
+  const service = activeService();
+  const steps = [];
+  const scopes = [];
+  const finished = [];
+  service.withLease = async (_name, action) => action("fence");
+  service.state = {
+    control: async () => ({ mode: "active", reconciliation_run_id: "r1", reconciliation_sha256: "a".repeat(64) }),
+    startCampaign: async () => ({ status: "running" }),
+    campaignStep: async (_key, _token, step) => { steps.push(step); },
+    finishCampaign: async (_key, _token, status, errorCode = null) => { finished.push({ status, errorCode }); },
+    markMissedCampaign: async () => null,
+  };
+  service.drain = async () => ({ completed: 0, failed: 0, skipped: false });
+  service.fullUsersAndWallets = async () => ({ users: 1, wallets: 1, failed: 0, wallet: {} });
+  service.fullOrders = async () => ({ completed: 1, failed: 0 });
+  service.createCatalogEngine = () => ({
+    runSync: async ({ scope }) => {
+      scopes.push(scope);
+      return { toJSON: () => ({ failures: [], processed: 10, durationMs: 1 }), hasFailures: () => false, durationMs: () => 1 };
+    },
+  });
+  return { service, steps, scopes, finished };
+}
+
+test("the full variant keeps the historical stage sequence", async () => {
+  const { service, steps, scopes } = variantHarness();
+  const result = await service.friday(Date.now() - 60_000, { variant: "full" });
+  assert.equal(result.variant, "full");
+  assert.deepEqual(scopes, ["full-sync", "stock", "price"]);
+  assert.deepEqual(steps, [
+    "new-products", "catalog-full", "inventory", "inventory-complete",
+    "users-wallets", "orders", "finalizing",
+  ]);
+});
+
+test("the cutover variant overlaps catalog with identities and runs inventory last", async () => {
+  const { service, steps, scopes } = variantHarness();
+  const result = await service.friday(Date.now() - 60_000, { variant: "cutover" });
+  assert.equal(result.variant, "cutover");
+  // One combined inventory pass instead of separate stock and price walks.
+  assert.deepEqual(scopes, ["full-sync", "inventory-instock"]);
+  assert.deepEqual(steps, [
+    "new-products", "catalog-full+users-wallets", "orders", "inventory", "inventory-complete", "finalizing",
+  ]);
+  // Stock is the value that oversells when stale, so it is written after
+  // users and orders are already durable.
+  assert.ok(steps.indexOf("inventory") > steps.indexOf("orders"));
+  assert.equal(typeof result.durationsMs.inventory, "number");
+  // The overlap hides the critical path unless each branch times itself.
+  assert.equal(typeof result.durationsMs.catalogFull, "number");
+  assert.equal(typeof result.durationsMs.usersWallets, "number");
+  assert.equal(typeof result.durationsMs.catalogFullUsersWallets, "number");
+});
+
+test("the cutover variant defaults from config so the worker needs no extra wiring", async () => {
+  const { service, scopes } = variantHarness();
+  service.config = getSyncConfig({ ...baseEnv(), WOOCOMMERCE_SYNC_CAMPAIGN_VARIANT: "cutover" });
+  await service.friday(Date.now() - 60_000);
+  assert.deepEqual(scopes, ["full-sync", "inventory-instock"]);
+});
+
+test("fullOrders preload resolves provisioned customers and the variation index once", async () => {
+  // The campaign-only path: unexercised until the first real run otherwise.
+  const config = getSyncConfig(baseEnv());
+  const service = new WooSyncService(config, {
+    pool: { end: async () => undefined, query: async () => ({ rows: [{ source_key: "7" }] }) },
+    source: {
+      async *orders() {
+        yield { page: 1, rows: [{ id: 1, customer_id: 7, date_modified_gmt: "2026-01-01T00:00:00" }] };
+      },
+    },
+    destination: {},
+  });
+  let indexBuilds = 0;
+  service._catalogEngine = {
+    repo: {
+      buildExternalIndex: async () => { indexBuilds += 1; return new Map([["4", { id: 10004 }]]); },
+    },
+  };
+  service.state = { async recordOrderOutcome() { return {}; } };
+  const seen = [];
+  service.syncOrderRow = async (_row, options) => {
+    seen.push(options);
+    return { mode: "created", hasSoftIssues: false };
+  };
+
+  const result = await service.fullOrders({ concurrency: 2, preload: true });
+
+  assert.deepEqual(result, { completed: 1, failed: 0, softIssues: 0, fetched: 1 });
+  assert.equal(indexBuilds, 1, "the variation index is enumerated once for the whole stage");
+  assert.equal(seen[0].mappedCustomers.has("7"), true);
+  assert.equal(seen[0].variationIndex.get("4").id, 10004);
+  assert.equal(seen[0].order.id, 1, "the list row is passed through instead of being refetched");
+});
+
+test("fullOrders without preload behaves exactly as before", async () => {
+  const config = getSyncConfig(baseEnv());
+  const service = new WooSyncService(config, {
+    pool: {
+      end: async () => undefined,
+      query: async () => { throw new Error("no mapping query without preload"); },
+    },
+    source: { async *orders() { yield { page: 1, rows: [{ id: 1, date_modified_gmt: "2026-01-01T00:00:00" }] }; } },
+    destination: {},
+  });
+  service.state = { async recordOrderOutcome() { return {}; } };
+  const seen = [];
+  service.syncOrderRow = async (_row, options) => { seen.push(options); return { mode: "created" }; };
+  await service.fullOrders({ concurrency: 1 });
+  assert.equal(seen[0].mappedCustomers, null);
+  assert.equal(seen[0].variationIndex, null);
+});
+
+test("a failing identity branch waits for the catalog branch before failing the campaign", async () => {
+  // Promise.all would finish the campaign and release the lease while the
+  // catalog engine kept writing to Strapi for another hour.
+  const { service, finished } = variantHarness();
+  let catalogSettled = false;
+  service.createCatalogEngine = () => ({
+    runSync: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      catalogSettled = true;
+      return { toJSON: () => ({ failures: [], processed: 1, durationMs: 1 }), hasFailures: () => false, durationMs: () => 1 };
+    },
+  });
+  service.fullUsersAndWallets = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    throw Object.assign(new Error("IDENTITY_BOOM"), { code: "IDENTITY_BOOM" });
+  };
+
+  await assert.rejects(service.friday(Date.now() - 60_000, { variant: "cutover" }), /IDENTITY_BOOM/);
+  assert.equal(catalogSettled, true, "the campaign must not be torn down mid-write");
+  assert.deepEqual(finished, [{ status: "failed", errorCode: "IDENTITY_BOOM" }]);
+});
+
+test("an inventory failure still raises the historical FRIDAY_STOCK_HAS_FAILURES code", async () => {
+  const { service } = variantHarness();
+  service.createCatalogEngine = () => ({
+    runSync: async ({ scope }) => ({
+      toJSON: () => ({ failures: scope === "inventory-instock" ? [{ wcId: 1 }] : [], processed: 1, durationMs: 1 }),
+      hasFailures: () => scope === "inventory-instock",
+      durationMs: () => 1,
+    }),
+  });
+  await assert.rejects(
+    service.friday(Date.now() - 60_000, { variant: "cutover" }),
+    (error) => error.code === "FRIDAY_STOCK_HAS_FAILURES",
+  );
 });

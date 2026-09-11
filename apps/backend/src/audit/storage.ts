@@ -33,6 +33,20 @@ const auditStorageMigration = require(migrationPath) as AuditStorageMigration;
 async function hasRequiredAuditStorage(knex: any): Promise<boolean> {
   if (!(await knex.schema.hasTable(TABLE))) return false;
 
+  // Columns Strapi schema sync has previously wiped. Missing any of these means
+  // the rebuild migration must re-run; the backfill must not demote modern rows.
+  const requiredColumns = [
+    "event_id",
+    "schema_version",
+    "event_key",
+    "origin",
+    "actor_auth_method",
+    "dedupe_key",
+  ] as const;
+  for (const column of requiredColumns) {
+    if (!(await knex.schema.hasColumn(TABLE, column))) return false;
+  }
+
   const [uniqueIndexes, trigger] = await Promise.all([
     knex.raw(
       `SELECT attr.attname AS column_name

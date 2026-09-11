@@ -6,6 +6,93 @@
 import { factories } from "@strapi/strapi";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
+import {
+  ANONYMOUS_AUTHOR,
+  resolveProductReviewAuthorName,
+} from "../../../utils/productReviewAuthorName";
+
+// Storefront callers (anonymous and customer alike) lack
+// `plugin::users-permissions.user.find`, so `sanitizeOutput` drops the `user`
+// relation from every review it serves and the client has nothing left to build
+// an author name from. Granting that scope publicly would expose /api/users, so
+// the listing resolves the name here instead and ships it as a plain string.
+// Selected down to the name fields: the author lookup must never pull the
+// credential columns (password, resetPasswordToken, confirmationToken) into
+// memory, and only the resolved string ever leaves this module.
+const AUTHOR_USER_POPULATE = {
+  select: ["id", "username", "phone"],
+  populate: { user_info: { select: ["id", "FirstName", "LastName"] } },
+} as const;
+
+const AUTHOR_POPULATE = {
+  user: AUTHOR_USER_POPULATE,
+  product_review_replies: {
+    select: ["id"],
+    populate: { user: AUTHOR_USER_POPULATE },
+  },
+} as const;
+
+async function loadAuthorNames(strapi, reviewIds: number[]) {
+  const reviewNames = new Map<number, string>();
+  const replyNames = new Map<number, string>();
+  if (reviewIds.length === 0) return { reviewNames, replyNames };
+
+  const rows = await strapi.db.query("api::product-review.product-review").findMany({
+    where: { id: { $in: reviewIds } },
+    populate: AUTHOR_POPULATE,
+  });
+
+  for (const row of rows || []) {
+    reviewNames.set(Number(row.id), resolveProductReviewAuthorName(row.user));
+    for (const reply of row.product_review_replies || []) {
+      replyNames.set(Number(reply.id), resolveProductReviewAuthorName(reply.user));
+    }
+  }
+  return { reviewNames, replyNames };
+}
+
+/**
+ * Name-only stand-in for the `user` relation sanitization removed.
+ *
+ * Storefront builds released before `authorDisplayName` existed read the name out
+ * of `user.user_info`, so without this they render every review as "کاربر ناشناس"
+ * until a frontend release ships. It carries the single already-public string the
+ * review header displays — never the id, phone, email, username or role — and is
+ * only ever attached when the relation is absent, so a privileged caller (the
+ * admin moderation table, which needs the real phone) keeps the genuine relation.
+ */
+function nameOnlyUserRelation(displayName: string) {
+  return {
+    data: {
+      id: null,
+      attributes: {
+        user_info: { data: { attributes: { FirstName: displayName, LastName: null } } },
+      },
+    },
+  };
+}
+
+function applyAuthorName(attributes, displayName: string) {
+  attributes.authorDisplayName = displayName;
+  if (displayName !== ANONYMOUS_AUTHOR && !attributes.user) {
+    attributes.user = nameOnlyUserRelation(displayName);
+  }
+}
+
+function attachAuthorNames(entries, reviewNames, replyNames) {
+  for (const entry of entries) {
+    const attributes = entry?.attributes;
+    if (!attributes) continue;
+    applyAuthorName(attributes, reviewNames.get(Number(entry.id)) ?? ANONYMOUS_AUTHOR);
+
+    const replies = attributes.product_review_replies?.data;
+    if (!Array.isArray(replies)) continue;
+    for (const reply of replies) {
+      if (!reply?.attributes) continue;
+      applyAuthorName(reply.attributes, replyNames.get(Number(reply.id)) ?? ANONYMOUS_AUTHOR);
+    }
+  }
+}
 
 export default factories.createCoreController(
   "api::product-review.product-review",
@@ -13,6 +100,28 @@ export default factories.createCoreController(
     async update(ctx) {
       if (!(await enforceOperationalDataFields(ctx, strapi, ["Status", "removedAt"]))) return;
       return super.update(ctx);
+    },
+
+    // Adds `authorDisplayName` to the sanitized payload. A resolution failure
+    // must not blank a product page, so the listing still returns on error.
+    async withAuthorNames(payload) {
+      const entries = Array.isArray(payload?.data)
+        ? payload.data
+        : payload?.data
+          ? [payload.data]
+          : [];
+      if (entries.length === 0) return payload;
+
+      try {
+        const ids = entries
+          .map((entry) => Number(entry?.id))
+          .filter((id) => Number.isSafeInteger(id));
+        const { reviewNames, replyNames } = await loadAuthorNames(strapi, ids);
+        attachAuthorNames(entries, reviewNames, replyNames);
+      } catch (error) {
+        strapi.log.error("Failed to resolve product review author names", error);
+      }
+      return payload;
     },
 
     async find(ctx) {
@@ -27,7 +136,7 @@ export default factories.createCoreController(
           },
         };
       }
-      return super.find(ctx);
+      return this.withAuthorNames(await super.find(ctx));
     },
 
     async findOne(ctx) {
@@ -38,7 +147,7 @@ export default factories.createCoreController(
         });
         if (!review) return ctx.notFound();
       }
-      return super.findOne(ctx);
+      return this.withAuthorNames(await super.findOne(ctx));
     },
 
     async submitReview(ctx) {

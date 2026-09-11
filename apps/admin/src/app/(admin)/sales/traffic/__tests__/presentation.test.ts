@@ -7,6 +7,15 @@ import {
 } from "../presentation";
 
 describe("behavior analytics presentation", () => {
+  it("names a bad date range instead of calling it a temporary outage", () => {
+    // Both spellings reach the client: the raw token from most report endpoints,
+    // and the same token inside a longer message. Neither may fall through to the
+    // generic /INVALID_/ branch, which would tell the operator to wait it out.
+    const expected = "بازه تاریخ انتخاب‌شده معتبر نیست؛ تاریخ شروع و پایان را بررسی کنید.";
+    expect(presentAnalyticsMessage("INVALID_DATE_RANGE")).toBe(expected);
+    expect(presentAnalyticsMessage("Error: INVALID_DATE_RANGE")).toBe(expected);
+  });
+
   it("turns storefront paths into readable Persian labels", () => {
     expect(presentPath("/payment/")).toBe("پرداخت");
     expect(presentPath("/checkout?token=secret")).toBe("ثبت سفارش");

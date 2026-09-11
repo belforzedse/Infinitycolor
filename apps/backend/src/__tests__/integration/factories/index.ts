@@ -40,6 +40,47 @@ export function makeFactories(strapi: any) {
     return row;
   }
 
+  /**
+   * A product category, optionally under a parent — the hierarchy the sales
+   * breakdown rolls up. `parentId` writes the real `parent` relation, so the
+   * `product_categories_parent_links` row is created by Strapi rather than hand-
+   * built here.
+   */
+  async function createCategory(opts: { title?: string; parentId?: number } = {}) {
+    const row = await q("api::product-category.product-category").create({
+      data: {
+        Title: opts.title ?? uniq(),
+        Slug: uniq(),
+        ...(opts.parentId ? { parent: opts.parentId } : {}),
+        external_source: TEST_PREFIX,
+      },
+    });
+    track("api::product-category.product-category", row.id);
+    return row;
+  }
+
+  /**
+   * `otherCategoryIds` writes the `product_other_categories` relation — the second
+   * way a product belongs to a category, and the one category reporting used to
+   * ignore entirely.
+   */
+  async function createProduct(
+    opts: { title?: string; mainCategoryId?: number; otherCategoryIds?: number[] } = {},
+  ) {
+    const row = await q("api::product.product").create({
+      data: {
+        Title: opts.title ?? uniq(),
+        ...(opts.mainCategoryId ? { product_main_category: opts.mainCategoryId } : {}),
+        ...(opts.otherCategoryIds?.length
+          ? { product_other_categories: opts.otherCategoryIds }
+          : {}),
+        external_source: TEST_PREFIX,
+      },
+    });
+    track("api::product.product", row.id);
+    return row;
+  }
+
   async function createVariation(
     opts: {
       price?: number;
@@ -48,6 +89,7 @@ export function makeFactories(strapi: any) {
       stockCount?: number;
       stockReserved?: number;
       stockId?: number;
+      productId?: number;
     } = {},
   ) {
     const stockId = opts.stockId ?? (await createStock({ count: opts.stockCount, reserved: opts.stockReserved })).id;
@@ -58,6 +100,7 @@ export function makeFactories(strapi: any) {
         ...(opts.discountPrice != null ? { DiscountPrice: opts.discountPrice } : {}),
         IsPublished: opts.isPublished ?? true,
         product_stock: stockId,
+        ...(opts.productId ? { product: opts.productId } : {}),
         external_id: uniq(),
         external_source: TEST_PREFIX,
       },
@@ -590,6 +633,8 @@ export function makeFactories(strapi: any) {
 
   return {
     createStock,
+    createCategory,
+    createProduct,
     createVariation,
     createUser,
     createUserInfo,

@@ -9,6 +9,7 @@ import {
 } from "@/services/super-admin/reports/gatewayLiquidity";
 import SalesPage from "../_components/SalesPage";
 import { faNum } from "@/utils/faNum";
+import { compactToman } from "@/utils/price";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import {
   AdminSection,
@@ -272,11 +273,10 @@ function LiquidityChart({
                 interval="preserveStartEnd"
               />
               <YAxis
-                tickFormatter={(value) =>
-                  `${faNum((value / 1000).toFixed(0))}K`
-                }
+                tickFormatter={(value) => compactToman(Number(value))}
                 stroke="#6b7280"
                 fontSize={12}
+                width={64}
               />
               <Tooltip content={<CustomTooltip />} />
               <Line

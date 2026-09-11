@@ -22,15 +22,15 @@ import type { SuperAdminSettings } from "@/types/super-admin/settings";
 import type { ProductCardProps } from "@/components/Product/Card";
 
 const NEWEST_BACKGROUND_ELLIPSES = [
-  "right-[-8%] top-[-18%] h-[230px] w-[390px] bg-[#E2EBFE] md:h-[300px] md:w-[520px]",
-  "right-[22%] top-[8%] h-[180px] w-[320px] bg-[#E2EBFE] md:h-[240px] md:w-[430px]",
-  "left-[18%] bottom-[-24%] h-[220px] w-[410px] bg-[#E2EBFE] md:h-[290px] md:w-[560px]",
-  "right-[6%] bottom-[-16%] h-[210px] w-[360px] bg-[#FFFEED] md:h-[280px] md:w-[500px]",
-  "left-[36%] top-[-20%] h-[190px] w-[340px] bg-[#FFFEED] md:h-[260px] md:w-[460px]",
-  "left-[-10%] top-[18%] h-[240px] w-[420px] bg-[#FFFEED] md:h-[320px] md:w-[570px]",
-  "left-[-4%] bottom-[8%] h-[190px] w-[340px] bg-[#FFF3E3] md:h-[270px] md:w-[470px]",
-  "left-[46%] bottom-[-20%] h-[200px] w-[380px] bg-[#FFF3E3] md:h-[280px] md:w-[520px]",
-  "right-[44%] top-[30%] h-[170px] w-[310px] bg-[#FFF3E3] md:h-[230px] md:w-[440px]",
+  "right-[-8%] top-[-18%] h-[230px] w-[390px] bg-[#8FB4FF] md:h-[300px] md:w-[520px] animate-orb-drift-a",
+  "right-[22%] top-[8%] h-[180px] w-[320px] bg-[#FFE8F3] md:h-[240px] md:w-[430px] animate-orb-drift-b [animation-delay:-4s]",
+  "left-[18%] bottom-[-24%] h-[220px] w-[410px] bg-[#8FB4FF] md:h-[290px] md:w-[560px] animate-orb-drift-c [animation-delay:-8s]",
+  "right-[6%] bottom-[-16%] h-[210px] w-[360px] bg-[#FFE56A] md:h-[280px] md:w-[500px] animate-orb-drift-a [animation-delay:-5s]",
+  "left-[36%] top-[-20%] h-[190px] w-[340px] bg-[#FFE56A] md:h-[260px] md:w-[460px] animate-orb-drift-b [animation-delay:-10s]",
+  "left-[-10%] top-[18%] h-[240px] w-[420px] bg-[#E6F7F0] md:h-[320px] md:w-[570px] animate-orb-drift-c [animation-delay:-2s]",
+  "left-[-4%] bottom-[8%] h-[190px] w-[340px] bg-[#FFE4C0] md:h-[270px] md:w-[470px] animate-orb-drift-a [animation-delay:-9s]",
+  "left-[46%] bottom-[-20%] h-[200px] w-[380px] bg-[#FFE4C0] md:h-[280px] md:w-[520px] animate-orb-drift-b [animation-delay:-6s]",
+  "right-[44%] top-[30%] h-[170px] w-[310px] bg-[#E6F7F0] md:h-[230px] md:w-[440px] animate-orb-drift-c [animation-delay:-12s]",
 ] as const;
 
 type HomepageSectionsPromise = ReturnType<typeof getHomepageSections>;
@@ -163,7 +163,7 @@ async function NewestSection({
     >
       <div
         aria-hidden="true"
-        data-newest-static-backdrop
+        data-newest-backdrop
         className="pointer-events-none absolute inset-[-160px] z-0 overflow-hidden blur-[74.5px]"
       >
         {NEWEST_BACKGROUND_ELLIPSES.map((ellipseClass, index) => (

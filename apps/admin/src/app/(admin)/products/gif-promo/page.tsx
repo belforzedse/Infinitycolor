@@ -7,8 +7,10 @@ import HomepageProductPicker, {
   type ProductSummary,
 } from "@/components/SuperAdmin/Products/HomepageProductPicker";
 import ProductSmallCard from "@/components/Product/SmallCard";
-import { getSuperAdminSettings } from "@/services/super-admin/settings/get";
-import { updateSuperAdminSettings } from "@/services/super-admin/settings/update";
+import {
+  getGifPromoProductSettings,
+  updateGifPromoProductSettings,
+} from "@/services/super-admin/settings/gifPromoProducts";
 import {
   getGifPromoPreviewProducts,
   getProductSummariesByIds,
@@ -114,7 +116,7 @@ export default function GifPromoProductsPage() {
   const load = useCallback(async () => {
     try {
       const [loadedSettings, loadedCategories] = await Promise.all([
-        getSuperAdminSettings(),
+        getGifPromoProductSettings(),
         fetchCategoryDropdownOptions(""),
       ]);
       setSettings(loadedSettings);
@@ -159,11 +161,11 @@ export default function GifPromoProductsPage() {
   const save = async () => {
     try {
       setSaving(true);
-      const saved = await updateSuperAdminSettings({
+      const saved = await updateGifPromoProductSettings({
         homeGifPromoSlot1Assignment: slot1.assignment,
         homeGifPromoSlot2Assignment: slot2.assignment,
       });
-      const nextSettings = saved ?? (await getSuperAdminSettings());
+      const nextSettings = saved ?? (await getGifPromoProductSettings());
       setSettings(nextSettings);
       toast.success("تنظیمات محصولات کمپین ذخیره شد");
       const [nextSlot1, nextSlot2] = await Promise.all([

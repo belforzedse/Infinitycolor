@@ -25,6 +25,9 @@ export const GEOGRAPHY_MAP_COLORS = [
 const MAP_ASPECT_RATIO = 1.23;
 const MAP_MIN_HEIGHT = 560;
 const MAP_FALLBACK_WIDTH = 1100;
+// Below this frame width the min-height floor would force a box far taller
+// than the aspect-locked map, leaving a large blank strip under it on phones.
+const MAP_MIN_HEIGHT_BREAKPOINT = 640;
 
 /** Escapes text interpolated into `renderTooltipContent`'s HTML-string return. */
 export function escapeGeographyTooltipHtml(value: string): string {
@@ -61,10 +64,11 @@ function useMapFrameSize(): {
 
     const update = (width: number) => {
       const nextWidth = Math.max(Math.floor(width), 320);
-      const nextHeight = Math.max(
-        Math.round(nextWidth / MAP_ASPECT_RATIO),
-        MAP_MIN_HEIGHT,
-      );
+      const aspectHeight = Math.round(nextWidth / MAP_ASPECT_RATIO);
+      const nextHeight =
+        nextWidth >= MAP_MIN_HEIGHT_BREAKPOINT
+          ? Math.max(aspectHeight, MAP_MIN_HEIGHT)
+          : aspectHeight;
       setSize((prev) =>
         prev.width === nextWidth && prev.height === nextHeight
           ? prev
@@ -211,7 +215,7 @@ export default function SalesGeographyMap({ rows }: SalesGeographyMapProps) {
             <div
               ref={mapFrameRef}
               className="w-full overflow-hidden rounded-2xl bg-white p-2 shadow-sm ring-1 ring-neutral-100 sm:p-4"
-              style={{ minHeight: MAP_MIN_HEIGHT }}
+              style={{ minHeight: mapSize.height }}
               data-testid="geography-map-frame"
             >
               <div className="mx-auto w-full" style={{ minHeight: mapSize.height }}>
@@ -220,7 +224,14 @@ export default function SalesGeographyMap({ rows }: SalesGeographyMapProps) {
                   width={mapSize.width}
                   height={mapSize.height}
                   aspectRatio={String(MAP_ASPECT_RATIO)}
-                  legend={{ mode: "quantitative", colors: [...GEOGRAPHY_MAP_COLORS] }}
+                  // The library's own legend renders in a fixed-width, forced-ltr row that
+                  // overflows/garbles on narrow (mobile) screens; we show our own
+                  // RTL-safe "کم/زیاد" legend above instead (see figcaption).
+                  legend={{
+                    mode: "quantitative",
+                    colors: [...GEOGRAPHY_MAP_COLORS],
+                    disable: true,
+                  }}
                   renderTooltipContent={(provinceData) => {
                     if (!provinceData) return "";
                     const name = escapeGeographyTooltipHtml(provinceData.name);

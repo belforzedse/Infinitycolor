@@ -41,3 +41,21 @@ export function resolveProductReviewUserDisplayName(
   return fallbackPhone || "کاربر ناشناس";
 }
 
+/**
+ * Preferred author name for a rendered review or reply.
+ *
+ * The API resolves the name server side (`authorDisplayName`) because public
+ * responses never carry the `user` relation. The relation-based resolver stays
+ * as the fallback for privileged callers and for responses served by a backend
+ * that predates the field.
+ */
+export function resolveProductReviewDisplayName(review?: {
+  authorDisplayName?: string;
+  user?: ProductReview["user"];
+}): string {
+  const provided = review?.authorDisplayName?.trim();
+  if (provided) {
+    return provided;
+  }
+  return resolveProductReviewUserDisplayName(review?.user, review?.user?.Phone);
+}

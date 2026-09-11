@@ -83,6 +83,9 @@ export const ERROR_MESSAGE_MAP: Record<string, string> = {
     "نوع رسانه ویدیو است اما فایل انتخاب‌شده ویدیو نیست. یک فایل ویدیو برای رسانه انتخاب کنید و از تصویر جلد برای پیش‌نمایش استفاده کنید. دوباره تلاش کنید.",
   "select a video file for media":
     "نوع رسانه ویدیو است اما فایل انتخاب‌شده ویدیو نیست. یک فایل ویدیو برای رسانه انتخاب کنید و از تصویر جلد برای پیش‌نمایش استفاده کنید. دوباره تلاش کنید.",
+  // Raised by every report endpoint when start/end can't be read as a real
+  // calendar range. Keys are matched as case-insensitive substrings.
+  invalid_date_range: "بازه تاریخ انتخاب‌شده معتبر نیست؛ تاریخ شروع و پایان را بررسی کنید.",
   "story mediatype is image":
     "نوع رسانه تصویر است اما فایل انتخاب‌شده تصویر نیست. یک فایل تصویر برای رسانه انتخاب کنید. دوباره تلاش کنید.",
   "select an image file for media":

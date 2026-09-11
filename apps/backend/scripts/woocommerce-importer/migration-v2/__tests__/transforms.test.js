@@ -10,6 +10,31 @@ test("canonicalPhone normalizes Iranian digits and formats", () => {
   assert.equal(T.canonicalPhone("not-a-phone"), null);
 });
 
+test("canonicalPhone recovers numbers written with a stray leading +", () => {
+  // A leading "+" used to survive the strip and match no prefix branch, so these
+  // real numbers normalized to null and the customer was dropped entirely.
+  assert.equal(T.canonicalPhone("+09123381098"), "+989123381098");
+  assert.equal(T.canonicalPhone("+98 0912 338 1098"), "+989123381098");
+  assert.equal(T.canonicalPhone("+989123381098"), "+989123381098");
+  assert.equal(T.canonicalPhone("+9123381098"), "+989123381098");
+});
+
+test("canonicalPhone accepts every legacy storage shape for one number", () => {
+  for (const shape of ["09123381098", "9123381098", "989123381098", "00989123381098", "+989123381098"]) {
+    assert.equal(T.canonicalPhone(shape), "+989123381098", shape);
+  }
+});
+
+test("canonicalPhone still rejects non-mobile and malformed values", () => {
+  assert.equal(T.canonicalPhone("02112345678"), null, "landline");
+  assert.equal(T.canonicalPhone("0912"), null, "too short");
+  assert.equal(T.canonicalPhone("091233810980"), null, "too long");
+  assert.equal(T.canonicalPhone(""), null);
+  assert.equal(T.canonicalPhone(null), null);
+  // 10 digits that are not a mobile NSN (national IDs are 10 digits too).
+  assert.equal(T.canonicalPhone("0079542619"), null);
+});
+
 test("decimalToInteger converts toman to rial exactly without floating point", () => {
   assert.equal(T.decimalToInteger("123456789012345678", 10), "1234567890123456780");
   assert.equal(T.decimalToInteger("12.5", 10), "125");
@@ -46,6 +71,44 @@ test("customer payload excludes every address field and password", () => {
   });
   assert.deepEqual(Object.keys(payload).sort(), ["email", "firstName", "lastName", "phone", "sourceId"]);
   assert.ok(!JSON.stringify(payload).includes("must-not-leak"));
+});
+
+test("customer payload falls back to the login username when billing/shipping phone is empty", () => {
+  const payload = T.customerPayload({
+    id: 8,
+    username: "9368954421",
+    billing: {},
+    shipping: {},
+  });
+  assert.equal(payload.phone, "+989368954421");
+});
+
+test("customer payload recovers a malformed billing phone instead of dropping the customer", () => {
+  const payload = T.customerPayload({
+    id: 10,
+    username: "9120254536",
+    billing: { phone: "+09120254536" },
+    shipping: {},
+  });
+  assert.equal(payload.phone, "+989120254536");
+});
+
+test("customer payload takes the first field yielding a valid number, not the first non-empty one", () => {
+  // A junk billing entry must not mask a good shipping number.
+  const payload = T.customerPayload({
+    id: 11,
+    username: "shop_customer_11",
+    billing: { phone: "-" },
+    shipping: { phone: "09123381098" },
+  });
+  assert.equal(payload.phone, "+989123381098");
+});
+
+test("customer payload ignores a non-phone username and still requires billing/shipping phone", () => {
+  assert.throws(
+    () => T.customerPayload({ id: 9, username: "shop_customer_9", billing: {}, shipping: {} }),
+    /USER_PHONE_INVALID/,
+  );
 });
 
 test("customer payload preserves Woo creation and modification timestamps", () => {

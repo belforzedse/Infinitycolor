@@ -1,0 +1,145 @@
+"use strict";
+
+/**
+ * Narrow repair path for Woo order lines whose sellable units were skipped by
+ * the catalog unmanaged-stock gate. Upserts the referenced variation (or
+ * synthetic simple) with managed stock count 0 when Woo does not manage stock.
+ * Does NOT relax the nightly catalog eligibility gate.
+ */
+
+const CatalogT = require("../woocommerce-importer/catalog/lib/transforms");
+
+function lineRefs(order) {
+  const lines = Array.isArray(order?.line_items) ? order.line_items : [];
+  return lines.map((line) => {
+    const productSourceId = String(line.product_id || "");
+    const variationSourceId = String(
+      Number(line.variation_id) > 0 ? line.variation_id : line.product_id,
+    );
+    return { productSourceId, variationSourceId, lineId: String(line.id || "") };
+  }).filter((ref) => /^\d+$/.test(ref.productSourceId) && /^\d+$/.test(ref.variationSourceId));
+}
+
+/**
+ * @param {object} args
+ * @param {import('../woocommerce-importer/migration-v2/lib/source').WordPressSource} args.source
+ * @param {import('../woocommerce-importer/catalog/lib/strapiRepo')} args.repo
+ * @param {object} args.order Woo order payload (needs line_items)
+ * @param {{ warn?: Function, info?: Function, debug?: Function }} [args.logger]
+ * @param {Map<string, { id:number }>} [args.variationIndex] Optional external_id -> row
+ *   snapshot (repo.buildExternalIndex("/product-variations")). Without it the
+ *   campaign pays one Strapi GET per distinct line item — ~150k round-trips
+ *   across a full order run. A miss still falls back to findByExternalId,
+ *   because the index is a snapshot and another worker may have created the
+ *   row since; anything this function creates is written back into it.
+ * @returns {Promise<{ ensured: string[], present: string[], failed: Array<{ variationSourceId: string, error: string }> }>}
+ */
+async function ensureOrderReferencedVariations({
+  source,
+  repo,
+  order,
+  logger = console,
+  variationIndex = null,
+}) {
+  const ensured = [];
+  const present = [];
+  const failed = [];
+  const seen = new Set();
+
+  for (const ref of lineRefs(order)) {
+    if (seen.has(ref.variationSourceId)) continue;
+    seen.add(ref.variationSourceId);
+    try {
+      const indexed = variationIndex ? variationIndex.get(ref.variationSourceId) : null;
+      const existing = indexed?.id
+        ? indexed
+        : await repo.findByExternalId("/product-variations", ref.variationSourceId);
+      if (existing?.id) {
+        present.push(ref.variationSourceId);
+        continue;
+      }
+
+      const parent = await repo.findByExternalId("/products", ref.productSourceId);
+      if (!parent?.id) {
+        failed.push({
+          variationSourceId: ref.variationSourceId,
+          error: `ORDER_VARIATION_PARENT_MISSING:${ref.productSourceId}`,
+        });
+        continue;
+      }
+
+      const wcProduct = await source.getProduct(ref.productSourceId);
+      const isSimple = ref.productSourceId === ref.variationSourceId;
+      let wcVariation;
+      if (isSimple) {
+        wcVariation = CatalogT.synthesizeSimpleVariation(wcProduct);
+      } else {
+        const response = await source.woo.get(
+          `/products/${ref.productSourceId}/variations/${ref.variationSourceId}`,
+        );
+        wcVariation = response.data;
+      }
+      if (!wcVariation?.id) {
+        failed.push({
+          variationSourceId: ref.variationSourceId,
+          error: "ORDER_VARIATION_SOURCE_MISSING",
+        });
+        continue;
+      }
+
+      const { data, priceMissing, sourceTimestamps } = CatalogT.mapVariation(wcVariation, {
+        parentStrapiId: Number(parent.id),
+        parentProduct: wcProduct,
+        preserveMissingPrice: false,
+      });
+      if (priceMissing && (data.Price === undefined || data.Price === null)) {
+        data.Price = 0;
+      }
+
+      // Passing the shared index (when we have one) makes repo.upsert write the
+      // new row straight back into it, so a later order referencing the same
+      // variation is a Map hit rather than another POST + 409 recovery.
+      const { id: variationStrapiId, mode } = await repo.upsert({
+        endpoint: "/product-variations",
+        externalId: ref.variationSourceId,
+        payload: data,
+        index: variationIndex || new Map(),
+        sourceTimestamps,
+      });
+
+      const managed = wcVariation.manage_stock === true;
+      const qty = Number(wcVariation.stock_quantity);
+      const count = managed && Number.isFinite(qty) ? Math.max(0, qty) : 0;
+      await repo.upsertStock({
+        externalId: `stock_${ref.variationSourceId}`,
+        count,
+        variationId: variationStrapiId,
+        stockIndex: new Map(),
+        sourceTimestamps,
+      });
+
+      ensured.push(ref.variationSourceId);
+      logger.info?.("[WooSync] ensured order-referenced variation", {
+        variationSourceId: ref.variationSourceId,
+        productSourceId: ref.productSourceId,
+        mode,
+        stockCount: count,
+        forcedUnmanagedStock: !managed,
+      });
+    } catch (error) {
+      const message = String(error?.payload?.error || error?.message || error);
+      failed.push({ variationSourceId: ref.variationSourceId, error: message.slice(0, 200) });
+      logger.warn?.("[WooSync] failed ensuring order-referenced variation", {
+        variationSourceId: ref.variationSourceId,
+        error: message.slice(0, 200),
+      });
+    }
+  }
+
+  return { ensured, present, failed };
+}
+
+module.exports = {
+  ensureOrderReferencedVariations,
+  lineRefs,
+};

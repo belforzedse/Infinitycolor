@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { BarChart3, TicketPercent } from "lucide-react";
+import { BarChart3, ChevronLeft, TicketPercent } from "lucide-react";
 import SalesPage from "../_components/SalesPage";
 import { SuperAdminTable } from "@/components/SuperAdmin/Table";
 import ReportExportButton from "@/components/SuperAdmin/reports/shared/ReportExportButton";
@@ -18,6 +18,13 @@ import {
   type SalesBreakdownDimension,
   type SalesBreakdownResponse,
 } from "@/services/super-admin/reports/salesBreakdown";
+import {
+  buildCategoryTree,
+  expandableKeys,
+  flattenVisible,
+  hasHierarchy,
+  type FlatCategoryRow,
+} from "./categoryTree";
 import { priceFormatter } from "@/utils/price";
 import { faNum } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
@@ -109,6 +116,51 @@ function RankedBreakdownChart({
   );
 }
 
+/** Indent step per tree level, in px. */
+const TREE_INDENT = 18;
+
+/**
+ * The category label cell: indent, plus a disclosure button on any row that has
+ * children. Padding is `inline-start`, not `left` — this page renders RTL, so a
+ * left-hand indent would put the nesting on the wrong side.
+ */
+function CategoryLabelCell({
+  row,
+  onToggle,
+}: {
+  row: FlatCategoryRow;
+  onToggle: (key: string) => void;
+}) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2"
+      style={{ paddingInlineStart: row.treeDepth * TREE_INDENT }}
+    >
+      {row.hasChildren ? (
+        <button
+          type="button"
+          onClick={() => onToggle(row.key)}
+          aria-expanded={row.isExpanded}
+          aria-label={`${row.isExpanded ? "بستن" : "باز کردن"} زیرمجموعه‌های ${row.label}`}
+          className="grid size-6 shrink-0 place-items-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700"
+        >
+          <ChevronLeft
+            aria-hidden
+            className={`size-4 transition-transform ${row.isExpanded ? "-rotate-90" : ""}`}
+          />
+        </button>
+      ) : (
+        <span aria-hidden className="grid size-6 shrink-0 place-items-center text-neutral-300">
+          {row.treeDepth > 0 ? "•" : ""}
+        </span>
+      )}
+      <span className="truncate" title={row.label}>
+        {row.label}
+      </span>
+    </div>
+  );
+}
+
 export default function SalesBreakdownReportPage() {
   const { start, end, tab, setTab } = useReportQueryState<never>({
     tab: { defaultValue: "status" },
@@ -118,11 +170,16 @@ export default function SalesBreakdownReportPage() {
   const [data, setData] = useState<SalesBreakdownResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Collapsed by default: the point of the tree is that the first screen is the
+  // top-level picture. Keys are stale once the dimension or period changes, so
+  // this resets alongside the fetch below.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError(null);
+    setExpanded(new Set());
     getSalesBreakdown({ dimension, start, end })
       .then((res) => {
         if (active) setData(res);
@@ -138,9 +195,41 @@ export default function SalesBreakdownReportPage() {
     };
   }, [dimension, start, end]);
 
+  const rows = useMemo(() => data?.rows ?? [], [data]);
+  const isTree = dimension === "category" && hasHierarchy(rows);
+  const tree = useMemo(() => (isTree ? buildCategoryTree(rows) : []), [isTree, rows]);
+  const visibleRows = useMemo(
+    () => (isTree ? flattenVisible(tree, expanded) : rows),
+    [isTree, tree, expanded, rows],
+  );
+
+  const toggleRow = useCallback((key: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const allExpandable = useMemo(() => (isTree ? expandableKeys(tree) : []), [isTree, tree]);
+  const allExpanded = allExpandable.length > 0 && allExpandable.every((k) => expanded.has(k));
+  const toggleAll = useCallback(() => {
+    setExpanded(allExpanded ? new Set() : new Set(allExpandable));
+  }, [allExpanded, allExpandable]);
+
   const columns = useMemo<ColumnDef<SalesBreakdownResponse["rows"][number]>[]>(
     () => [
-      { accessorKey: "label", header: DIMENSION_LABELS[dimension] },
+      {
+        accessorKey: "label",
+        header: DIMENSION_LABELS[dimension],
+        cell: ({ row }) =>
+          isTree ? (
+            <CategoryLabelCell row={row.original as FlatCategoryRow} onToggle={toggleRow} />
+          ) : (
+            row.original.label
+          ),
+      },
       {
         accessorKey: "ordersCount",
         header: "سفارش‌ها",
@@ -172,13 +261,12 @@ export default function SalesBreakdownReportPage() {
         cell: ({ getValue }) => priceFormatter(getValue() as number),
       },
     ],
-    [dimension],
+    [dimension, isTree, toggleRow],
   );
 
-  const chartRows = useMemo(
-    () => (data?.rows ?? []).slice(0, CHART_TOP_N),
-    [data],
-  );
+  // Deliberately the full row set, not the visible one: the chart ranks by net
+  // across every depth and does not follow what is expanded.
+  const chartRows = useMemo(() => rows.slice(0, CHART_TOP_N), [rows]);
 
   return (
     <SalesPage
@@ -214,13 +302,50 @@ export default function SalesBreakdownReportPage() {
                 </button>
               ))}
             </div>
-            <ReportExportButton
-              onExport={() => downloadSalesBreakdownExcel({ dimension, start, end })}
-            />
+            <div className="flex items-center gap-2">
+              {isTree && (
+                <button
+                  type="button"
+                  onClick={toggleAll}
+                  className="rounded-lg bg-neutral-100 px-3 py-2 text-sm font-medium text-neutral-600 transition hover:bg-neutral-200"
+                >
+                  {allExpanded ? "بستن همه" : "باز کردن همه"}
+                </button>
+              )}
+              <ReportExportButton
+                onExport={() => downloadSalesBreakdownExcel({ dimension, start, end })}
+              />
+            </div>
           </div>
 
           {error && (
             <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+          )}
+
+          {!loading && data?.ordersDefinition === "completed" && (
+            <div className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              در این بازه هیچ تراکنش موفق درگاهی ثبت نشده است، بنابراین این گزارش بر پایه سفارش‌های
+              «تحویل شده» محاسبه شده و مبالغ تسویه‌نشده صفر در نظر گرفته شده‌اند.
+            </div>
+          )}
+
+          {isTree && (
+            <p className="mb-4 rounded-lg bg-neutral-50 px-4 py-3 text-xs leading-5 text-neutral-600">
+              دسته‌های اصلی نمایش داده شده‌اند و عدد هر دسته شامل زیرمجموعه‌های آن هم هست. برای دیدن
+              جزئیات، دسته را باز کنید. ردیف «(مستقیم)» فروشی است که روی خودِ آن دسته ثبت شده و در
+              هیچ زیرمجموعه‌ای نیست. هر کالا در همهٔ دسته‌هایی که به آن اختصاص داده شده (دستهٔ اصلی و
+              دسته‌های دیگر) شمرده می‌شود؛ بنابراین هیچ‌کدام از ستون‌ها جمع‌پذیر نیستند و جمع ردیف‌ها
+              بیشتر از فروش کل می‌شود. عدد هر ردیف به‌تنهایی درست است و هر قلم فروش در هر دسته فقط
+              یک‌بار حساب شده است.
+            </p>
+          )}
+
+          {!loading && (data?.warnings?.length ?? 0) > 0 && (
+            <div className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {data!.warnings!.map((warning) => (
+                <p key={warning.code}>{warning.message}</p>
+              ))}
+            </div>
           )}
 
           {data?.truncated && (
@@ -237,7 +362,22 @@ export default function SalesBreakdownReportPage() {
             <RankedBreakdownChart dimension={dimension} rows={chartRows} />
           ) : null}
 
-          <SuperAdminTable columns={columns} data={data?.rows ?? []} loading={loading} />
+          {/*
+            The flattened visible rows are passed straight through: SuperAdminTable
+            renders a supplied `data` array verbatim (its page/pageSize keys only
+            slice its own fetch path), so a parent and its children can never end
+            up separated.
+
+            `getRowId` matters here: these rows carry `key`, not `id`, so without it
+            the table falls back to the row INDEX — and every index below an
+            expanded category shifts, which makes React reuse the wrong row.
+          */}
+          <SuperAdminTable
+            columns={columns}
+            data={visibleRows}
+            getRowId={(row) => row.key}
+            loading={loading}
+          />
         </div>
       </div>
     </SalesPage>

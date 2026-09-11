@@ -184,12 +184,14 @@ const PLPBottomNavigation = () => {
                 </div>
               </NavTabLink>
 
-              <a
-                href="https://infinitygram.co"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="اینفینیتی‌گرام"
-                className="flex size-16 shrink-0 items-center justify-center justify-self-center rounded-full bg-[linear-gradient(180deg,#566D97_0%,#98BDFF_100%)] shadow-[0_0_5.8px_rgba(0,0,0,0.09)]"
+              {/* Adapted from the Social app's infinity circle: same solid
+                  infinity-primary fill and mark, rather than the gradient that
+                  app uses for its create-post button. Points at the storefront
+                  home instead of infinitygram. */}
+              <Link
+                href="/"
+                aria-label="خانه اینفینیتی"
+                className="flex size-16 shrink-0 items-center justify-center justify-self-center rounded-full bg-infinity-primary shadow-[0_0_5.8px_rgba(0,0,0,0.09)]"
               >
                 <img
                   src={INFINITY_MARK_SRC}
@@ -198,7 +200,7 @@ const PLPBottomNavigation = () => {
                   height={49}
                   className="size-[49px] object-contain"
                 />
-              </a>
+              </Link>
 
               <NavTabLink
                 href="#"

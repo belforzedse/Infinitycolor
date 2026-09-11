@@ -147,7 +147,7 @@ export default function ContentWrapper({
 
         {hasPagination && (
           <div className="sticky bottom-0 z-30 mt-3 flex justify-end pb-[env(safe-area-inset-bottom)] lg:bottom-2 lg:mt-4 lg:justify-center">
-            <div className="rounded-xl border border-gray-200/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:backdrop-blur lg:rounded-3xl lg:bg-slate-700/10 lg:backdrop-blur-2xl">
+            <div className="min-w-0 max-w-full rounded-xl border border-gray-200/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:backdrop-blur lg:rounded-3xl lg:bg-slate-700/10 lg:backdrop-blur-2xl">
               <SuperAdminPagination />
             </div>
           </div>

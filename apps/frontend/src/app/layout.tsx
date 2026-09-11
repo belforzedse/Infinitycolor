@@ -15,6 +15,7 @@ import { SITE_URL } from "@/config/site";
 import { getSiteIdentity, resolveSiteName } from "@/services/site-identity";
 import { SiteIdentityProvider } from "@/components/providers/SiteIdentityProvider";
 import { getAdaptiveQualityBootstrapScript } from "@/lib/adaptive-quality/bootstrap-script";
+import { getLegacyRuntimePolyfillScript } from "@/lib/legacyRuntimePolyfills";
 import { cacheLife, cacheTag } from "next/cache";
 
 // TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
@@ -157,6 +158,7 @@ export default async function RootLayout({
     new Set([apiOrigin, imageOrigin, mediaCdnOrigin].filter(Boolean)),
   ) as string[];
   const adaptiveQualityBootstrap = getAdaptiveQualityBootstrapScript();
+  const legacyRuntimePolyfills = getLegacyRuntimePolyfillScript();
 
   return (
     <html
@@ -166,6 +168,13 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        {/* Must stay first: dependencies call these during hydration, and an
+            older Android browser without them throws before any handler binds,
+            leaving a rendered page whose menus do not open. */}
+        <script
+          id="infinity-legacy-runtime-polyfills"
+          dangerouslySetInnerHTML={{ __html: legacyRuntimePolyfills }}
+        />
         <script
           id="infinity-adaptive-quality-bootstrap"
           dangerouslySetInnerHTML={{ __html: adaptiveQualityBootstrap }}

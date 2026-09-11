@@ -46,6 +46,21 @@ jest.mock("react-iran-maps", () => ({
 
 import SalesGeographyMap from "../SalesGeographyMap";
 
+function mockResizeObserverWidth(width: number) {
+  class StubResizeObserver {
+    private callback: (entries: Array<{ contentRect: { width: number } }>) => void;
+    constructor(callback: (entries: Array<{ contentRect: { width: number } }>) => void) {
+      this.callback = callback;
+    }
+    observe() {
+      this.callback([{ contentRect: { width } }]);
+    }
+    unobserve() {}
+    disconnect() {}
+  }
+  (global as unknown as { ResizeObserver: unknown }).ResizeObserver = StubResizeObserver;
+}
+
 function row(
   partial: Partial<SalesBreakdownRow> & Pick<SalesBreakdownRow, "key" | "label">,
 ): SalesBreakdownRow {
@@ -61,8 +76,16 @@ function row(
 }
 
 describe("SalesGeographyMap", () => {
+  const originalResizeObserver = (global as unknown as { ResizeObserver?: unknown })
+    .ResizeObserver;
+
   beforeEach(() => {
     lastChoroplethProps = null;
+  });
+
+  afterEach(() => {
+    (global as unknown as { ResizeObserver?: unknown }).ResizeObserver =
+      originalResizeObserver;
   });
 
   it("excludes the unmapped ('') row from the map and surfaces a notice", async () => {
@@ -83,6 +106,7 @@ describe("SalesGeographyMap", () => {
   });
 
   it("renders a large map frame and passes wide choropleth dimensions", async () => {
+    mockResizeObserverWidth(1100);
     render(
       <SalesGeographyMap
         rows={[row({ key: "تهران", label: "تهران", ordersCount: 5, netToman: 500 })]}
@@ -90,9 +114,31 @@ describe("SalesGeographyMap", () => {
     );
 
     await screen.findByTestId("choropleth");
-    expect(screen.getByTestId("geography-map-frame")).toHaveStyle({ minHeight: "560px" });
+    // The frame's minHeight must always track the actual map height passed to
+    // the choropleth so it never wraps a box taller than the map it contains.
+    expect(screen.getByTestId("geography-map-frame")).toHaveStyle({
+      minHeight: `${lastChoroplethProps?.height}px`,
+    });
     expect(lastChoroplethProps?.width).toBeGreaterThanOrEqual(800);
     expect(lastChoroplethProps?.height).toBeGreaterThanOrEqual(560);
+  });
+
+  it("does not force the 560px desktop floor on narrow (mobile) frames", async () => {
+    // A phone-width frame: forcing the desktop min-height here would leave a
+    // large blank strip below the aspect-locked map (the "بدنمایش میده" bug).
+    mockResizeObserverWidth(360);
+    render(
+      <SalesGeographyMap
+        rows={[row({ key: "تهران", label: "تهران", ordersCount: 5, netToman: 500 })]}
+      />,
+    );
+
+    await screen.findByTestId("choropleth");
+    expect(lastChoroplethProps?.width).toBe(360);
+    expect(lastChoroplethProps?.height).toBeLessThan(560);
+    expect(screen.getByTestId("geography-map-frame")).toHaveStyle({
+      minHeight: `${lastChoroplethProps?.height}px`,
+    });
   });
 
   it("renders nothing when there are no mappable rows and no unmapped orders", () => {

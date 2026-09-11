@@ -18,6 +18,10 @@ import {
   gatewayBreakdownQuery,
   gatewaySettlementWarnings,
   shippingBreakdownQuery,
+  paidOrdersCte,
+  categoryMembershipCte,
+  categoryFilterSql,
+  ELIGIBLE_ORDER_STATUS,
   PERFORMANCE_SORT_COLUMNS,
   MAX_PAGE_SIZE,
   type ResolvedJoins,
@@ -374,6 +378,95 @@ describe("product-analytics pure helpers", () => {
       } as unknown as ResolvedJoins);
       expect(sql).toContain("NULL::text");
       expect(sql).toContain("__UNKNOWN__");
+    });
+  });
+
+  describe("eligible-order definition", () => {
+    const joins = {
+      orderToContract: "JOIN contracts c ON c.order_id = o.id",
+      contractToTx: "JOIN contract_transactions ct ON ct.contract_id = c.id",
+    } as unknown as ResolvedJoins;
+
+    it("gates BOTH definitions on the completed-order status", () => {
+      // Regression: `settled` used to require only a successful gateway transaction.
+      // An order that was paid and then cancelled therefore counted as revenue, and
+      // the two definitions described different order populations for one window.
+      for (const definition of ["settled", "completed"] as const) {
+        expect(paidOrdersCte(joins, definition)).toContain(
+          `o.status = '${ELIGIBLE_ORDER_STATUS}'`,
+        );
+      }
+    });
+
+    it("makes 'settled' a strict subset of 'completed'", () => {
+      // Same status gate on both sides, plus a settlement requirement on `settled`
+      // only — so switching definitions can narrow the set but never swap it for a
+      // different one.
+      const settled = paidOrdersCte(joins, "settled");
+      const completed = paidOrdersCte(joins, "completed");
+      expect(settled).toContain("ct.status = 'Success'");
+      expect(settled).toMatch(/HAVING SUM/);
+      expect(completed).not.toMatch(/HAVING SUM/);
+    });
+  });
+
+  describe("category membership", () => {
+    const joins = {
+      categoryMembershipTables: [
+        "products_product_main_category_links",
+        "products_product_other_categories_links",
+      ],
+      categoryParentLink: {
+        table: "product_categories_parent_links",
+        childCol: "product_category_id",
+        parentCol: "inv_product_category_id",
+      },
+    } as unknown as ResolvedJoins;
+
+    it("unions every membership table so additional categories count", () => {
+      const sql = categoryMembershipCte(joins);
+      expect(sql).toContain("products_product_main_category_links");
+      expect(sql).toContain("products_product_other_categories_links");
+      // UNION, not UNION ALL: a product filed under one category through both
+      // relations must yield a single membership row.
+      expect(sql).toMatch(/UNION(?!\s+ALL)/);
+    });
+
+    it("yields a typed empty set when no membership table resolves", () => {
+      const sql = categoryMembershipCte({
+        ...joins,
+        categoryMembershipTables: [],
+      } as unknown as ResolvedJoins);
+      // A drifted schema must produce an empty category report, not a SQL error.
+      expect(sql).toContain("WHERE false");
+      expect(sql).toContain("NULL::int AS product_category_id");
+    });
+
+    it("filters on membership + descendants, via EXISTS rather than a join", () => {
+      const sql = categoryFilterSql(joins, "p.id");
+      // Regression: this filter used to read `pc.id = ?`, i.e. the product's MAIN
+      // category only, and ignored the category's descendants entirely.
+      expect(sql).toContain("products_product_other_categories_links");
+      expect(sql).toContain("WITH RECURSIVE cat_scope");
+      expect(sql.startsWith("EXISTS (")).toBe(true);
+      // Exactly one bound parameter: the category id.
+      expect(sql.match(/\?/g)).toHaveLength(1);
+    });
+
+    it("drops the descendant walk when the parent relation is unresolved", () => {
+      const sql = categoryFilterSql(
+        { ...joins, categoryParentLink: null } as unknown as ResolvedJoins,
+        "p.id",
+      );
+      expect(sql).not.toContain("RECURSIVE");
+      expect(sql).toContain("cat_scope");
+      expect(sql.match(/\?/g)).toHaveLength(1);
+    });
+
+    it("returns an empty fragment when membership is unresolvable, so callers append nothing", () => {
+      expect(
+        categoryFilterSql({ ...joins, categoryMembershipTables: [] } as unknown as ResolvedJoins, "p.id"),
+      ).toBe("");
     });
   });
 

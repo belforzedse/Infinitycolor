@@ -25,6 +25,7 @@
  *   --limit <n>         Max paid orders to process (default: all)
  *   --batch <n>         Commit batch size (default: 200)
  *   --statuses <list>   Comma-separated paid order statuses (default: Done,Started)
+ *   --external-ids <list>  Optional Woo order external_id filter (comma-separated)
  */
 
 "use strict";
@@ -46,6 +47,7 @@ function parseArgs(argv) {
     batch: 200,
     envFile: null,
     statuses: ["Done", "Started"],
+    externalIds: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -64,11 +66,17 @@ function parseArgs(argv) {
     } else if (token === "--statuses" && next) {
       options.statuses = next.split(",").map((value) => value.trim()).filter(Boolean);
       index += 1;
+    } else if (token === "--external-ids" && next) {
+      options.externalIds = next.split(",").map((value) => value.trim()).filter(Boolean);
+      index += 1;
     } else if (token === "--help" || token === "-h") {
       options.help = true;
     } else {
       throw new Error(`Unexpected argument: ${token}`);
     }
+  }
+  if (options.externalIds != null && options.externalIds.length === 0) {
+    throw new Error("--external-ids must not be empty");
   }
   if (options.limit != null && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
     throw new Error("--limit must be a positive integer");
@@ -219,9 +227,14 @@ async function audit(client, statuses) {
   return summary[0];
 }
 
-async function fetchCandidates(client, { statuses, limit }) {
+async function fetchCandidates(client, { statuses, limit, externalIds }) {
   const params = [statuses];
+  let filterSql = "";
   let limitSql = "";
+  if (externalIds != null && externalIds.length > 0) {
+    params.push(externalIds);
+    filterSql = `AND o.external_id = ANY($${params.length}::text[])`;
+  }
   if (limit != null) {
     params.push(limit);
     limitSql = `LIMIT $${params.length}`;
@@ -253,6 +266,7 @@ async function fetchCandidates(client, { statuses, limit }) {
     LEFT JOIN orders_user_links oul ON oul.order_id = o.id
     WHERE o.external_source = 'woocommerce'
       AND o.status = ANY($1::text[])
+      ${filterSql}
       AND (
         ocl.contract_id IS NULL
         OR NOT EXISTS (
@@ -460,7 +474,7 @@ async function ensureContractAndSettlement(client, row, gatewayMap) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    console.log(`Usage: node scripts/backfill-woo-order-contracts.js [--env-file PATH] [--apply] [--force] [--limit N]`);
+    console.log(`Usage: node scripts/backfill-woo-order-contracts.js [--env-file PATH] [--apply] [--force] [--limit N] [--external-ids IDS]`);
     return;
   }
 
@@ -491,6 +505,7 @@ async function main() {
     database: config.database,
     host: config.host,
     statuses: options.statuses,
+    externalIds: options.externalIds,
     limit: options.limit,
     batch: options.batch,
     summaryBefore: null,
@@ -511,6 +526,7 @@ async function main() {
     const candidates = await fetchCandidates(client, {
       statuses: options.statuses,
       limit: options.limit,
+      externalIds: options.externalIds,
     });
     console.log(`candidates=${candidates.length}`);
 

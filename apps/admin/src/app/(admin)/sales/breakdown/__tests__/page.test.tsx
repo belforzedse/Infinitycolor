@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 jest.mock("zaman", () => ({
   DatePicker: ({ onChange }: any) => (
@@ -19,27 +19,24 @@ jest.mock("@/components/SuperAdmin/Layout/ContentWrapper", () => ({
 }));
 
 jest.mock("@/components/SuperAdmin/Table", () => ({
-  SuperAdminTable: ({ data }: any) => (
-    <div data-testid="table">
-      {(data ?? []).map((row: any) => (
-        <div key={row.key} data-testid="table-row">
-          {row.label}: {row.netToman}
-        </div>
-      ))}
-    </div>
-  ),
-}));
-
-jest.mock("@/components/SuperAdmin/reports/shared/charts", () => ({
-  ResponsiveContainer: ({ children }: any) => <div>{children}</div>,
-  BarChart: ({ children }: any) => <div>{children}</div>,
-  Bar: ({ children }: any) => <div>{children}</div>,
-  Cell: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  REPORT_CHART_COLORS: ["#000000"],
+  SuperAdminTable: ({ columns, data }: any) => {
+    // Renders the first column through its `cell` renderer when it has one, so
+    // the category tab's disclosure button is reachable from these tests. Mirrors
+    // just enough of TanStack's cell context to drive it.
+    const labelColumn = columns?.[0];
+    return (
+      <div data-testid="table">
+        {(data ?? []).map((row: any) => (
+          <div key={row.key} data-testid="table-row">
+            {labelColumn?.cell
+              ? labelColumn.cell({ row: { original: row }, getValue: () => row.label })
+              : row.label}
+            : {row.netToman}
+          </div>
+        ))}
+      </div>
+    );
+  },
 }));
 
 jest.mock("@/components/SuperAdmin/reports/shared/SalesGeographyMap", () => ({
@@ -188,6 +185,138 @@ describe("SalesBreakdownReportPage", () => {
     expect(await screen.findByTestId("geography-map")).toHaveTextContent("2 rows");
     expect(screen.getAllByTestId("table-row")).toHaveLength(2);
     expect(screen.queryByText(/بیشترین فروش بر اساس/)).not.toBeInTheDocument();
+  });
+
+  describe("category tab hierarchy", () => {
+    const categoryRows = [
+      { key: "1", label: "آرایشی", parentKey: null, depth: 0, ordersCount: 12, units: 3, grossToman: 900, discountsToman: 0, refundsToman: 0, netToman: 900 },
+      { key: "2", label: "رژ لب", parentKey: "1", depth: 1, ordersCount: 7, units: 2, grossToman: 600, discountsToman: 0, refundsToman: 0, netToman: 600 },
+      { key: "1:__self__", label: "آرایشی (مستقیم)", parentKey: "1", depth: 1, ordersCount: 4, units: 1, grossToman: 300, discountsToman: 0, refundsToman: 0, netToman: 300 },
+      { key: "3", label: "مات", parentKey: "2", depth: 2, ordersCount: 2, units: 1, grossToman: 200, discountsToman: 0, refundsToman: 0, netToman: 200 },
+    ];
+
+    beforeEach(() => {
+      mockTab = "category";
+      getSalesBreakdownMock.mockResolvedValue(
+        makeResponse({ dimension: "category", rows: categoryRows }),
+      );
+    });
+
+    it("opens on the top-level categories only, with their rolled-up totals", async () => {
+      render(<SalesBreakdownReportPage />);
+      await screen.findByTestId("table");
+      expect(screen.getAllByTestId("table-row")).toHaveLength(1);
+      expect(screen.getByTestId("table-row")).toHaveTextContent("آرایشی: 900");
+      expect(within(screen.getByTestId("table")).queryByText("رژ لب")).not.toBeInTheDocument();
+    });
+
+    it("reveals one level per disclosure click, not the whole subtree", async () => {
+      render(<SalesBreakdownReportPage />);
+      await screen.findByTestId("table");
+
+      fireEvent.click(screen.getByRole("button", { name: /باز کردن زیرمجموعه‌های آرایشی/ }));
+      await waitFor(() => expect(screen.getAllByTestId("table-row")).toHaveLength(3));
+      const table = () => within(screen.getByTestId("table"));
+      expect(table().getByText("رژ لب")).toBeInTheDocument();
+      expect(table().getByText("آرایشی (مستقیم)")).toBeInTheDocument();
+      // Grandchild stays hidden until its own parent is opened.
+      expect(table().queryByText("مات")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /باز کردن زیرمجموعه‌های رژ لب/ }));
+      await waitFor(() => expect(table().getByText("مات")).toBeInTheDocument());
+    });
+
+    it("collapses again on a second click", async () => {
+      render(<SalesBreakdownReportPage />);
+      await screen.findByTestId("table");
+      const toggle = () => screen.getByRole("button", { name: /زیرمجموعه‌های آرایشی/ });
+      fireEvent.click(toggle());
+      await waitFor(() => expect(screen.getAllByTestId("table-row")).toHaveLength(3));
+      fireEvent.click(toggle());
+      await waitFor(() => expect(screen.getAllByTestId("table-row")).toHaveLength(1));
+    });
+
+    it("expand-all opens every level, and toggles back to collapsed", async () => {
+      render(<SalesBreakdownReportPage />);
+      await screen.findByTestId("table");
+      fireEvent.click(screen.getByText("باز کردن همه"));
+      await waitFor(() => expect(screen.getAllByTestId("table-row")).toHaveLength(4));
+      fireEvent.click(screen.getByText("بستن همه"));
+      await waitFor(() => expect(screen.getAllByTestId("table-row")).toHaveLength(1));
+    });
+
+    it("explains that a parent's number includes its children and that no column adds up", async () => {
+      render(<SalesBreakdownReportPage />);
+      expect(await screen.findByText(/شامل زیرمجموعه‌های آن هم هست/)).toBeInTheDocument();
+      // A product belongs to every category it is filed under, so the overlap is not
+      // limited to order counts — the note must not imply the money columns sum.
+      expect(screen.getByText(/هیچ‌کدام از ستون‌ها جمع‌پذیر نیستند/)).toBeInTheDocument();
+      expect(screen.getByText(/فقط\s*یک‌بار حساب شده است/)).toBeInTheDocument();
+    });
+
+    it("ranks the chart across all depths, not just the visible rows", async () => {
+      render(<SalesBreakdownReportPage />);
+      await screen.findByTestId("table");
+      // Only the root is visible in the table, but every depth is ranked above it.
+      expect(screen.getByText("بیشترین فروش بر اساس دسته‌بندی")).toBeInTheDocument();
+      expect(screen.getByText("۹۰۰ تومان")).toBeInTheDocument();
+      expect(screen.getByText("۶۰۰ تومان")).toBeInTheDocument();
+      expect(screen.getByText("۲۰۰ تومان")).toBeInTheDocument();
+    });
+
+    it("stays flat, with no disclosure controls, when the backend sends no hierarchy", async () => {
+      // The parent relation can't always be resolved (schema drift); the tab must
+      // still render rather than losing its rows to a tree that isn't there.
+      getSalesBreakdownMock.mockResolvedValue(
+        makeResponse({
+          dimension: "category",
+          rows: [
+            { key: "1", label: "آرایشی", parentKey: null, depth: 0, ordersCount: 1, units: 1, grossToman: 100, discountsToman: 0, refundsToman: 0, netToman: 100 },
+            { key: "2", label: "رژ لب", parentKey: null, depth: 0, ordersCount: 1, units: 1, grossToman: 50, discountsToman: 0, refundsToman: 0, netToman: 50 },
+          ],
+        }),
+      );
+      render(<SalesBreakdownReportPage />);
+      await screen.findByTestId("table");
+      expect(screen.getAllByTestId("table-row")).toHaveLength(2);
+      expect(screen.queryByText("باز کردن همه")).not.toBeInTheDocument();
+    });
+  });
+
+  it("warns when the window had no settlement and the numbers fell back to delivered orders", async () => {
+    getSalesBreakdownMock.mockResolvedValue(makeResponse({ ordersDefinition: "completed" }));
+    render(<SalesBreakdownReportPage />);
+    await screen.findByText(/بر پایه سفارش‌های «تحویل شده» محاسبه شده/);
+  });
+
+  it("stays silent about the definition when the window is settled", async () => {
+    getSalesBreakdownMock.mockResolvedValue(makeResponse({ ordersDefinition: "settled" }));
+    render(<SalesBreakdownReportPage />);
+    await screen.findByTestId("table");
+    expect(screen.queryByText(/بر پایه سفارش‌های «تحویل شده»/)).not.toBeInTheDocument();
+  });
+
+  it("surfaces a degradation warning so incomplete numbers are never shown as complete", async () => {
+    getSalesBreakdownMock.mockResolvedValue(
+      makeResponse({
+        partial: true,
+        warnings: [
+          {
+            code: "CATEGORY_HIERARCHY_UNAVAILABLE",
+            message: "ساختار درختی دسته‌بندی‌ها قابل تشخیص نبود؛ فروش زیرمجموعه‌ها در دستهٔ والد جمع نشده است.",
+          },
+        ],
+      }),
+    );
+    render(<SalesBreakdownReportPage />);
+    await screen.findByText(/ساختار درختی دسته‌بندی‌ها قابل تشخیص نبود/);
+  });
+
+  it("shows no degradation banner on a full-fidelity response", async () => {
+    getSalesBreakdownMock.mockResolvedValue(makeResponse({ warnings: [] }));
+    render(<SalesBreakdownReportPage />);
+    await screen.findByTestId("table");
+    expect(screen.queryByText(/قابل تشخیص نبود/)).not.toBeInTheDocument();
   });
 
   it("shows the truncation warning when the response is truncated", async () => {

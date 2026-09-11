@@ -96,4 +96,12 @@ export interface StoryRailProps<TStory extends StoryRailStory = StoryRailStory> 
   renderMobileBadge?: (args: StoryRailMobileBadgeRenderArgs<TStory>) => ReactNode;
   emptyPreviewLabel?: string;
   unavailableText?: string;
+  /**
+   * Show previous/next buttons over the rail when it overflows. Opt-in so the
+   * existing rails keep their current look. Pointer-only: touch users swipe,
+   * and arrows would sit on top of the avatars at mobile width.
+   */
+  showPagination?: boolean;
+  /** Accessible labels for the pagination buttons; supply localized text. */
+  paginationLabels?: { previous: string; next: string };
 }

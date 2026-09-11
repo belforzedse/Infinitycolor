@@ -2,9 +2,16 @@
 
 import { useCallback, useMemo } from "react";
 import { parseAsString, useQueryState, useQueryStates } from "nuqs";
-import { toDateOnly, defaultReportStart, defaultReportEnd } from "./reportDates";
+import { defaultReportStart, defaultReportEnd, sanitizeReportRange } from "./reportDates";
 
-export { toDateOnly, parseDateOnly, defaultReportStart, defaultReportEnd } from "./reportDates";
+export {
+  toDateOnly,
+  parseDateOnly,
+  defaultReportStart,
+  defaultReportEnd,
+  isReportDateOnly,
+  sanitizeReportRange,
+} from "./reportDates";
 
 export interface UseReportQueryStateOptions<K extends string> {
   /** Extra report-specific filter keys (e.g. ["cat","ptype","stock"]); each defaults to "". */
@@ -60,11 +67,19 @@ export function useReportQueryState<K extends string = never>(
     setValues({ page: String(page) });
   }, [setValues]);
 
+  // Repaired on read, so no report page can send the API a period the URL made up.
+  const range = sanitizeReportRange(values.start, values.end);
+
   return {
-    start: values.start,
-    end: values.end,
+    start: range.start,
+    end: range.end,
     page: values.page,
-    values: values as Record<K, string> & { start: string; end: string; page: string },
+    // Repaired here too, so a caller reading the bag can't reach around the fix.
+    values: { ...values, ...range } as Record<K, string> & {
+      start: string;
+      end: string;
+      page: string;
+    },
     tab,
     setTab: options.tab === false ? undefined : setTab,
     setRange,

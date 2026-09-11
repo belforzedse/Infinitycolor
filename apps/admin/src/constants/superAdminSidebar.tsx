@@ -70,6 +70,13 @@ type SidebarChild = {
   label: string;
   href: string;
   icon?: ReactNode;
+  /**
+   * Hides the entry from every role except Superadmin to keep the catalog
+   * group readable. This is presentation only: the route guards in
+   * `ADMIN_ROUTE_RULES` still decide who may open the page, so roles that
+   * hold the capability keep working access through a direct link.
+   */
+  superadminOnly?: boolean;
 };
 
 export type SidebarItem = {
@@ -179,18 +186,21 @@ const superAdminSidebar: SidebarItem[] = [
         label: "مدیریت رنگ‌ها",
         href: "/products/colors",
         icon: <FiDroplet className="h-5 w-5 text-infinity-primary" />,
+        superadminOnly: true,
       },
       {
         id: "product-attributes",
         label: "ویژگی ها",
         href: "/products/attributes",
         icon: <FiList className="h-5 w-5 text-infinity-primary" />,
+        superadminOnly: true,
       },
       {
         id: "product-size-guide",
         label: "راهنمای سایز",
         href: "/products/size-guide",
         icon: <FiBookOpen className="h-5 w-5 text-infinity-primary" />,
+        superadminOnly: true,
       },
     ],
   },
@@ -556,8 +566,10 @@ export const getSidebarItemsForCapabilities = (
 
   const filtered = superAdminSidebar.flatMap((item) => {
     const children = item.children
-      .filter((child) =>
-        canCapabilitiesAccessPath(capabilities, child.href, role),
+      .filter(
+        (child) =>
+          (!child.superadminOnly || normalizedRole === "superadmin") &&
+          canCapabilitiesAccessPath(capabilities, child.href, role),
       )
       .map((child) => ({ ...child }));
     const parentAllowed = item.href

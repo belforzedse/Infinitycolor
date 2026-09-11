@@ -28,6 +28,23 @@ export interface SalesBreakdownRow {
   discountsToman: number;
   refundsToman: number;
   netToman: number;
+  /**
+   * Hierarchy, sent by the "category" dimension only — that dimension rolls each
+   * category's whole subtree into its row, so `netToman` on a parent already
+   * includes its children. Every other dimension omits both and renders flat.
+   */
+  parentKey?: string | null;
+  depth?: number;
+}
+
+/**
+ * A dimension that ran but not at full fidelity — currently only the category
+ * dimension, whose membership and tree are both resolved from the live schema.
+ * Present and non-empty means the numbers are known to be incomplete.
+ */
+export interface SalesBreakdownWarning {
+  code: "CATEGORY_HIERARCHY_UNAVAILABLE" | "CATEGORY_MEMBERSHIP_UNAVAILABLE";
+  message: string;
 }
 
 export interface SalesBreakdownResponse {
@@ -40,6 +57,14 @@ export interface SalesBreakdownResponse {
   refreshedAt: string;
   partial: boolean;
   truncated: boolean;
+  /** Non-empty when the report is known to be incomplete; the UI must surface it. */
+  warnings?: SalesBreakdownWarning[];
+  /**
+   * Which orders the numbers count. "completed" means the window had no
+   * successful gateway settlement at all, so the report fell back to delivered
+   * orders — the UI has to say so rather than present it as settled revenue.
+   */
+  ordersDefinition?: "settled" | "completed";
   rows: SalesBreakdownRow[];
 }
 

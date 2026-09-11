@@ -1,11 +1,23 @@
 "use strict";
 
 const axios = require("axios");
+const http = require("node:http");
+const https = require("node:https");
 const {
   computeBackoffDelay,
   parseRetryAfter,
   isRetryableError,
 } = require("./backoff");
+
+// Reused across every request: without keep-alive, axios' default agents open
+// a fresh TCP+TLS connection per request, which dominates latency once many
+// short requests run back to back (e.g. one Woo/Strapi round trip per
+// product/variation). maxSockets is generous rather than tied to a specific
+// concurrency knob, since Woo and Strapi clients are each shared across
+// product-loop, variation-pool, and entity-pool callers with independent caps.
+const KEEP_ALIVE_MAX_SOCKETS = 64;
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: KEEP_ALIVE_MAX_SOCKETS });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: KEEP_ALIVE_MAX_SOCKETS });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -106,6 +118,8 @@ function createWooAxios(config) {
       username: config.woocommerce.auth.consumerKey,
       password: config.woocommerce.auth.consumerSecret,
     },
+    httpAgent,
+    httpsAgent,
   });
   instance.interceptors.request.use((request) => {
     const method = String(request.method || "get").toLowerCase();
@@ -134,6 +148,8 @@ function createStrapiAxios(config) {
     baseURL: config.strapi.baseUrl,
     timeout: config.strapi.timeout || 30000,
     headers,
+    httpAgent,
+    httpsAgent,
   });
 }
 

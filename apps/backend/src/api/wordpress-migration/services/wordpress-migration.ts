@@ -5,6 +5,7 @@ import {
   MigrationInputError,
   reconcileCustomerIdentity,
   resolveRegisteredCustomerForOrder,
+  resolveUserForLegacySource,
   USER_UID,
 } from "./customer-identity";
 import {
@@ -112,16 +113,6 @@ export async function restoreMediaTimestamps(strapiInstance: any, body: any) {
   return { id: Number(saved?.id || id), mode: "updated" };
 }
 
-async function findUniqueUserForSource(query: any, sourceId: string, trx: any): Promise<any | null> {
-  const matches = await findMany(
-    query,
-    { external_source: "wordpress", external_id: sourceId },
-    trx,
-  );
-  if (matches.length > 1) throw new MigrationInputError("USER_SOURCE_ID_AMBIGUOUS", 409);
-  return matches[0] || null;
-}
-
 export async function upsertUser(strapiInstance: any, body: any) {
   const sourceId = requiredId(body?.sourceId, "USER_SOURCE_ID_INVALID");
   return strapiInstance.db.transaction(async ({ trx }: { trx: any }) => {
@@ -134,6 +125,7 @@ export async function upsertUser(strapiInstance: any, body: any) {
       lastName: body?.lastName,
       sourceCreatedAt: body?.sourceCreatedAt,
       sourceUpdatedAt: body?.sourceUpdatedAt,
+      allowPhoneMerge: body?.allowPhoneMerge === true,
     }, trx);
     return {
       mode: result.mode,
@@ -150,11 +142,17 @@ export async function upsertWallet(strapiInstance: any, body: any) {
 
   return strapiInstance.db.transaction(async ({ trx }: { trx: any }) => {
     await trx.raw("SELECT pg_advisory_xact_lock(?)", [advisoryKey(`wordpress-wallet:${userSourceId}`)]);
-    const user = await findUniqueUserForSource(strapiInstance.db.query(USER_UID), userSourceId, trx);
+    const user = await resolveUserForLegacySource(strapiInstance, userSourceId, trx);
     if (!user) throw new MigrationInputError("WALLET_USER_NOT_FOUND", 409);
     const walletQuery = strapiInstance.db.query(WALLET_UID);
     const wallets = await findMany(walletQuery, { user: user.id }, trx);
     if (wallets.length > 1) throw new MigrationInputError("USER_WALLET_AMBIGUOUS", 409);
+    // Balance is replaced, not incremented, so a legacy figure must never land on
+    // an account that has since transacted — that would silently destroy money.
+    const current = exactNonNegativeInteger(wallets[0]?.Balance ?? "0", "WALLET_BALANCE_INVALID");
+    if (current !== "0" && current !== balance) {
+      throw new MigrationInputError("WALLET_BALANCE_WOULD_CLOBBER", 409);
+    }
     const data = { Balance: balance, user: user.id };
     const saved = wallets[0]
       ? await walletQuery.update({ where: { id: wallets[0].id }, data, transacting: trx } as any)
@@ -273,17 +271,30 @@ async function resolveWooDeliveryAddress(
   return { id: Number(saved.id), mode: "created", reason: "SOURCE_ADDRESS_ATTACHED" };
 }
 
-async function resolveOrderUser(strapiInstance: any, body: any, trx: any): Promise<any> {
-  if (body?.customerSourceId) {
-    const sourceId = requiredId(body.customerSourceId, "ORDER_CUSTOMER_SOURCE_ID_INVALID");
-    const user = await resolveRegisteredCustomerForOrder(
-      strapiInstance,
-      sourceId,
-      trx,
-      body?.orderIdentity,
-    );
-    return { user, matchReason: "source-customer-id", issues: [] };
-  }
+/** Soft-fail identity codes: keep the order; prefer guest-phone fallback when possible. */
+const ORDER_IDENTITY_SOFT_FAIL = new Set([
+  "ORDER_CUSTOMER_NOT_FOUND",
+  "ORDER_CUSTOMER_MAPPING_CONFLICT",
+  "ORDER_USER_IDENTITY_CONFLICT",
+  "USER_PHONE_SOURCE_CONFLICT",
+  "USER_SOURCE_PHONE_CONFLICT",
+  "USER_IDENTITY_CONFLICT",
+  "USER_PHONE_AMBIGUOUS",
+  "USER_PHONE_CONFLICT",
+  "USER_CLAIMED_PHONE_CONFLICT",
+  "USER_PHONE_INVALID",
+  "IDENTITY_MAPPING_USER_NOT_FOUND",
+]);
+
+function isIdentitySoftFail(error: unknown): error is MigrationInputError {
+  return error instanceof MigrationInputError && ORDER_IDENTITY_SOFT_FAIL.has(error.code);
+}
+
+async function resolveGuestOrderUser(
+  strapiInstance: any,
+  body: any,
+  trx: any,
+): Promise<{ user: any; matchReason: string; issues: string[] }> {
   const guest = body?.guestIdentity || body?.orderIdentity || { phone: body?.guestPhone };
   return reconcileCustomerIdentity(strapiInstance, {
     kind: "guest",
@@ -295,6 +306,56 @@ async function resolveOrderUser(strapiInstance: any, body: any, trx: any): Promi
     sourceCreatedAt: body?.sourceCreatedAt,
     sourceUpdatedAt: body?.sourceUpdatedAt,
   }, trx);
+}
+
+/**
+ * Prefer the registered Woo customer. If that identity collides or was never
+ * provisioned, fall back to billing-phone guest reconcile so the order still
+ * gets an owner without merging conflicting wordpress external_ids.
+ */
+async function resolveOrderUser(strapiInstance: any, body: any, trx: any): Promise<any> {
+  if (body?.customerSourceId) {
+    const sourceId = requiredId(body.customerSourceId, "ORDER_CUSTOMER_SOURCE_ID_INVALID");
+    try {
+      const user = await resolveRegisteredCustomerForOrder(
+        strapiInstance,
+        sourceId,
+        trx,
+        body?.orderIdentity,
+      );
+      return { user, matchReason: "source-customer-id", issues: [] };
+    } catch (error) {
+      if (!isIdentitySoftFail(error)) throw error;
+      const registeredIssue = error.code;
+      try {
+        const guest = await resolveGuestOrderUser(strapiInstance, body, trx);
+        if (!guest.user) {
+          return {
+            user: null,
+            matchReason: "unresolved",
+            issues: [registeredIssue, "ORDER_REGISTERED_IDENTITY_GUEST_FALLBACK_UNRESOLVED"],
+          };
+        }
+        return {
+          user: guest.user,
+          matchReason: `guest-fallback:${guest.matchReason}`,
+          issues: [
+            registeredIssue,
+            "ORDER_REGISTERED_IDENTITY_GUEST_FALLBACK",
+            ...(guest.issues || []),
+          ],
+        };
+      } catch (guestError) {
+        if (!isIdentitySoftFail(guestError)) throw guestError;
+        return {
+          user: null,
+          matchReason: "unresolved",
+          issues: [registeredIssue, guestError.code],
+        };
+      }
+    }
+  }
+  return resolveGuestOrderUser(strapiInstance, body, trx);
 }
 
 export async function upsertOrder(strapiInstance: any, body: any) {
@@ -332,19 +393,39 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     } as any);
     if (existingOrders.length > 1) throw new MigrationInputError("ORDER_SOURCE_ID_AMBIGUOUS", 409);
     const existing = existingOrders[0] || null;
-    const identity = await resolveOrderUser(strapiInstance, body, trx);
+
+    let identity: { user: any; matchReason: string | null; issues: string[] } = {
+      user: null,
+      matchReason: null,
+      issues: [],
+    };
+    try {
+      identity = await resolveOrderUser(strapiInstance, body, trx);
+    } catch (error) {
+      if (!isIdentitySoftFail(error)) throw error;
+      identity = {
+        user: null,
+        matchReason: "unresolved",
+        issues: [error.code],
+      };
+    }
     const resolvedUser = identity.user || null;
     const existingUser = existing?.user || null;
-    if (existingUser && resolvedUser && Number(existingUser.id) !== Number(resolvedUser.id)) {
-      throw new MigrationInputError("ORDER_USER_IDENTITY_CONFLICT", 409);
+    const identityConflict = Boolean(
+      existingUser && resolvedUser && Number(existingUser.id) !== Number(resolvedUser.id),
+    );
+    if (identityConflict) {
+      identity.issues = [...(identity.issues || []), "ORDER_USER_IDENTITY_CONFLICT"];
     }
-    const user = resolvedUser || existingUser;
+    // Keep an existing owner on conflict; otherwise use resolved or existing.
+    const linkedUser = identityConflict ? existingUser : (resolvedUser || existingUser);
+
     const address = await resolveWooDeliveryAddress(
       strapiInstance,
       sourceId,
       body?.deliveryAddress,
       existing?.delivery_address,
-      user,
+      linkedUser,
       trx,
     );
     const orderData = {
@@ -356,7 +437,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       ShippingMethodCode: optionalText(body?.shippingMethodCode, 255) || null,
       ShippingMethodTitle: optionalText(body?.shippingMethodTitle, 255) || null,
       PaymentGateway: paymentGateway,
-      user: user?.id || null,
+      user: linkedUser?.id || null,
       Description: null,
       Note: null,
       external_source: "woocommerce",
@@ -380,7 +461,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       Amount: totalToman,
       TaxPercent: taxPercent,
       Date: date,
-      local_user: user?.id || null,
+      local_user: linkedUser?.id || null,
       order: order.id,
       external_source: "woocommerce",
       external_id: `contract_${sourceId}`,
@@ -392,6 +473,8 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     const itemQuery = strapiInstance.db.query(ORDER_ITEM_UID);
     let itemsCreated = 0;
     let itemsUpdated = 0;
+    let itemsUnresolved = 0;
+    const itemIssues: string[] = [];
     const retainedExternalIds = new Set<string>();
     for (const sourceItem of items) {
       const sourceItemId = requiredId(sourceItem?.sourceId, "ORDER_ITEM_SOURCE_ID_INVALID");
@@ -409,13 +492,19 @@ export async function upsertOrder(strapiInstance: any, body: any) {
         { external_source: "woocommerce", external_id: variationSourceId },
         trx,
       );
-      if (variationMatches.length !== 1) throw new MigrationInputError("ORDER_ITEM_VARIATION_NOT_UNIQUE", 409);
+      let variationId: number | null = null;
+      if (variationMatches.length === 1) {
+        variationId = Number(variationMatches[0].id);
+      } else {
+        itemsUnresolved += 1;
+        itemIssues.push(`ORDER_ITEM_VARIATION_UNRESOLVED:${variationSourceId}`);
+      }
       const itemData = {
         Count: positiveCount(sourceItem?.count),
         PerAmount: exactNonNegativeInteger(sourceItem?.unitPriceToman, "ORDER_ITEM_PRICE_INVALID"),
         ProductTitle: optionalText(sourceItem?.title, 255) || "WooCommerce product",
         ProductSKU: optionalText(sourceItem?.sku, 255) || `WC-${variationSourceId}`,
-        product_variation: variationMatches[0].id,
+        product_variation: variationId,
         order: order.id,
         external_source: "woocommerce",
         external_id: externalId,
@@ -450,9 +539,11 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       itemsCreated,
       itemsUpdated,
       itemsDeleted,
-      userLinked: Boolean(user),
+      itemsUnresolved,
+      userLinked: Boolean(linkedUser),
       identityMatchReason: identity.matchReason,
       identityIssues: identity.issues || [],
+      itemIssues,
       addressLinked: Boolean(address.id),
       addressMode: address.mode,
       addressReason: address.reason,

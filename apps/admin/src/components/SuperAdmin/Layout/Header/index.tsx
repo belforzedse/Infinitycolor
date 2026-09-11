@@ -34,7 +34,11 @@ export default function SuperAdminLayoutHeader({
           dir="ltr"
         >
           <div className="relative z-10 flex w-28 items-center justify-start">
-            <div className="flex items-center gap-2 rounded-full border border-slate-200/70 bg-white/70 p-1 shadow-sm">
+            <Link
+              href="/account"
+              aria-label="حساب مدیریتی"
+              className="flex items-center gap-2 rounded-full border border-slate-200/70 bg-white/70 p-1 shadow-sm"
+            >
               <div className="h-10 w-10 overflow-hidden rounded-full bg-neutral-100">
                 <Image
                   src="/icons/admin-192.png"
@@ -44,7 +48,7 @@ export default function SuperAdminLayoutHeader({
                   className="object-cover"
                 />
               </div>
-            </div>
+            </Link>
           </div>
 
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

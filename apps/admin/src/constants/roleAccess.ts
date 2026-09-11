@@ -26,10 +26,10 @@ export const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: "/orders", capability: "order.read" },
   {
     prefix: "/products/homepage-custom-section",
-    capability: "system.customization.manage",
+    capability: "product.homepage.manage",
   },
-  { prefix: "/products/homepage", capability: "system.customization.manage" },
-  { prefix: "/products/gif-promo", capability: "system.customization.manage" },
+  { prefix: "/products/homepage", capability: "product.homepage.manage" },
+  { prefix: "/products/gif-promo", capability: "product.homepage.manage" },
   { prefix: "/products/comments", capability: "system.reviews.manage" },
   { prefix: "/products/size-guide", capability: "product.size-guide.manage" },
   { prefix: "/products/colors", capability: "product.variation.manage" },

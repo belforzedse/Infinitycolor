@@ -1,6 +1,14 @@
 "use client";
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { StoryViewer as LibStoryViewer } from "react-instagram-stories";
 import type { StoryItemControls, User } from "react-instagram-stories";
 import type { StoriesViewerModalProps, StoryRailStory } from "./types";
@@ -9,6 +17,62 @@ import { hasUsableMediaUrl, isImageStory, isVideoStory } from "./story-utils";
 const FALLBACK_AVATAR_URL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 const VIDEO_LOADING_DURATION_MS = 10 * 60 * 1000;
+
+/**
+ * Sound is off for the first story and stays wherever the viewer last put it.
+ *
+ * Browsers refuse unattended autoplay with audio, so a story that started
+ * unmuted would simply never play — which is why the element is muted at load
+ * and only unmuted by an explicit tap. The preference lives outside React
+ * because the viewer builds a fresh component per story item, so component
+ * state would reset the choice on every advance.
+ */
+const storyAudio = {
+  enabled: false,
+  listeners: new Set<() => void>(),
+  subscribe(listener: () => void): () => void {
+    storyAudio.listeners.add(listener);
+    return () => {
+      storyAudio.listeners.delete(listener);
+    };
+  },
+  getSnapshot(): boolean {
+    return storyAudio.enabled;
+  },
+  set(enabled: boolean): void {
+    if (storyAudio.enabled === enabled) return;
+    storyAudio.enabled = enabled;
+    storyAudio.listeners.forEach((listener) => listener());
+  },
+};
+
+function SpeakerIcon({ muted }: { muted: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-5 w-5"
+      aria-hidden="true"
+    >
+      <path d="M11 5 6 9H2v6h4l5 4z" />
+      {muted ? (
+        <>
+          <line x1="22" y1="9" x2="16" y2="15" />
+          <line x1="16" y1="9" x2="22" y2="15" />
+        </>
+      ) : (
+        <>
+          <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+          <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+        </>
+      )}
+    </svg>
+  );
+}
 
 function getStaticAvatarUrl(story: StoryRailStory, resolveMediaUrl: (url: string) => string): string {
   if (story.Thumbnail?.url) return resolveMediaUrl(story.Thumbnail.url);
@@ -51,6 +115,11 @@ function createVideoStoryComponent({
     const controlsRef = useRef(controls);
     const loadStartedAtRef = useRef<number>(0);
     const hasAdvancedRef = useRef(false);
+    const audioEnabled = useSyncExternalStore(
+      storyAudio.subscribe,
+      storyAudio.getSnapshot,
+      () => false,
+    );
 
     useLayoutEffect(() => {
       controlsRef.current = controls;
@@ -65,7 +134,15 @@ function createVideoStoryComponent({
         if (!isMounted) return;
         const playPromise = video.play();
         if (typeof playPromise?.catch === "function") {
-          playPromise.catch(() => undefined);
+          playPromise.catch(() => {
+            // Playback with sound is refused until this tab has seen a gesture.
+            // Drop back to muted so the story still plays instead of stalling.
+            if (!isMounted || video.muted) return;
+            video.muted = true;
+            storyAudio.set(false);
+            const retry = video.play();
+            if (typeof retry?.catch === "function") retry.catch(() => undefined);
+          });
         }
       };
 
@@ -95,6 +172,10 @@ function createVideoStoryComponent({
       hasAdvancedRef.current = false;
       controlsRef.current.setDuration(VIDEO_LOADING_DURATION_MS);
       cleanupVideo(video);
+      // Set imperatively rather than via the JSX prop: React does not apply the
+      // `muted` attribute on first paint, which would make the initial autoplay
+      // attempt an unmuted one and get it refused.
+      video.muted = !storyAudio.getSnapshot();
       video.addEventListener("loadedmetadata", handleLoadedMetadata);
       video.addEventListener("loadeddata", handlePlayable);
       video.addEventListener("canplay", handlePlayable);
@@ -136,6 +217,26 @@ function createVideoStoryComponent({
       };
     }, []);
 
+    const toggleAudio = (event: React.SyntheticEvent) => {
+      // The viewer advances the story on taps anywhere over the surface, so the
+      // toggle has to keep its own tap from reaching it.
+      event.stopPropagation();
+      event.preventDefault();
+      const next = !storyAudio.getSnapshot();
+      storyAudio.set(next);
+      const video = videoRef.current;
+      if (!video) return;
+      video.muted = !next;
+      if (next) {
+        const playPromise = video.play();
+        if (typeof playPromise?.catch === "function") playPromise.catch(() => undefined);
+      }
+    };
+
+    const stopTap = (event: React.SyntheticEvent) => {
+      event.stopPropagation();
+    };
+
     return (
       <div className="relative flex h-full w-full items-center justify-center bg-black">
         <video
@@ -143,12 +244,26 @@ function createVideoStoryComponent({
           src={src}
           poster={poster}
           className="h-full w-full object-contain"
-          muted
           playsInline
           autoPlay
           preload="auto"
           controls={false}
         />
+        <button
+          type="button"
+          onClick={toggleAudio}
+          onPointerDown={stopTap}
+          onPointerUp={stopTap}
+          onMouseDown={stopTap}
+          onMouseUp={stopTap}
+          onTouchStart={stopTap}
+          onTouchEnd={stopTap}
+          aria-label={audioEnabled ? "قطع صدا" : "پخش صدا"}
+          aria-pressed={audioEnabled}
+          className="absolute bottom-6 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+        >
+          <SpeakerIcon muted={!audioEnabled} />
+        </button>
         {isLoading ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/35 border-t-white" />

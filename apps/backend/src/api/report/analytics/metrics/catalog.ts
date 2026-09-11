@@ -60,16 +60,18 @@ const ELIGIBLE_ORDER_NOTE =
 export const METRIC_CATALOG: Record<string, MetricDefinition> = {
   "sales.eligibleOrders": {
     id: "sales.eligibleOrders",
-    definitionVersion: "sales.eligibleOrders@1",
+    definitionVersion: "sales.eligibleOrders@2",
     businessName: "سفارش‌های واجد شرایط",
     formula:
-      "COUNT(orders) WHERE SUM(CASE WHEN contract_transactions.type='Return' THEN -amount ELSE amount END) " +
-      "OVER contract_transactions.status='Success' rows > 0, grouped by order",
+      "COUNT(orders) WHERE orders.Status='Done' AND SUM(CASE WHEN contract_transactions.type='Return' " +
+      "THEN -amount ELSE amount END) OVER contract_transactions.status='Success' rows > 0, grouped by order",
     grain: "one row per eligible order",
     source: "commerce",
     sourceTables: ["orders", "contracts", "contract_transactions"],
-    includedStatuses: "any orders.Status; gated on settlement, not fulfillment status",
-    excludedStatuses: "orders with no Status='Success' transaction; orders net-refunded to <= 0",
+    includedStatuses: "orders.Status='Done' only, additionally gated on settlement",
+    excludedStatuses:
+      "any status other than 'Done' — including an order that was paid and then Cancelled; " +
+      "orders with no Status='Success' transaction; orders net-refunded to <= 0",
     dateBasis: "orders.Date",
     refundTreatment: "Type='Return' transactions subtracted from settlement before the >0 test",
     discountTreatment:
@@ -81,19 +83,69 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     missingDataBehavior: "0, never null",
     limitations: [
       ELIGIBLE_ORDER_NOTE,
-      "Known pre-existing inconsistency (not fixed by this catalog): /reports/traffic/dashboard's " +
-        "ecommerce.orders and conversionRate fields still use the legacy orders.status='Done' " +
-        "definition, which undercounts relative to this one for any order not yet manually advanced " +
-        "by an admin. Left as-is deliberately — changing a live dashboard's numbers without explicit " +
-        "product sign-off is out of scope for this release; new code should use this definition, not that one.",
+      "@2 added the orders.Status='Done' gate. Before it, settlement alone made an order eligible, so " +
+        "an order paid and later Cancelled was counted as revenue, and the 'settled' and 'completed' " +
+        "definitions described different order populations for the same window. This also resolves the " +
+        "divergence with /reports/traffic/dashboard, which always used Status='Done'; the two now agree.",
+      "Consequence of @2: an order that has been paid but not yet advanced to 'Done' by an operator " +
+        "(e.g. Status='Started') contributes no revenue until it is completed.",
     ],
     status: "implemented",
     implementation: "src/api/report/analytics/sources/commerce.ts#getEligibleOrderStats",
   },
 
+  "sales.categorySales": {
+    id: "sales.categorySales",
+    definitionVersion: "sales.categorySales@2",
+    businessName: "فروش بر اساس دسته‌بندی",
+    formula:
+      "sales.gross / sales.units / COUNT(DISTINCT order_id) over the line items whose PRODUCT is a member " +
+      "of the category or any of its descendants. Membership = product_main_category UNION " +
+      "product_other_categories (a product belongs to every category it is filed under, not just its main one).",
+    grain: "one row per category that has sales, rolled up over its whole subtree",
+    source: "commerce",
+    sourceTables: [
+      "order_items",
+      "orders",
+      "product_variations",
+      "products",
+      "products_product_main_category_links",
+      "products_product_other_categories_links",
+      "product_categories",
+      "product_categories_parent_links",
+    ],
+    includedStatuses: "eligible orders only (see sales.eligibleOrders)",
+    excludedStatuses: "line items of non-eligible orders",
+    dateBasis: "orders.Date",
+    refundTreatment: "pro-rated to the line by its share of its order's gross (see sales.refunds)",
+    discountTreatment: "pro-rated to the line by its share of its order's gross (see sales.discounts)",
+    taxTreatment: "n/a (no line-level tax field)",
+    shippingTreatment: "excludes shipping cost (product-line revenue only)",
+    currency: "Toman",
+    timezone: "Asia/Tehran",
+    missingDataBehavior:
+      "a line whose product is in no category is reported under an explicit 'بدون دسته‌بندی' row, never dropped",
+    limitations: [
+      "Rows are NOT additive. A product belongs to every category it is filed under, so one line can " +
+        "legitimately appear under several unrelated categories, and a product whose additional category " +
+        "is also an ancestor of its main category appears both in a child row and in the parent's " +
+        "'(مستقیم)' row. Each row is individually de-duplicated and correct; summing rows is not meaningful " +
+        "for any column, orders or money alike.",
+      "A category's own row counts each order item exactly once no matter how many valid relationships " +
+        "connect the product to that category (deduplicated on order_items.id).",
+      "@2 fixed membership: before it, only product_main_category counted, so revenue from products filed " +
+        "under a category via product_other_categories was missing from that category entirely.",
+      "Membership is evaluated against products' CURRENT categories. Recategorising a product moves its " +
+        "historical sales with it; there is no point-in-time category snapshot in this data model.",
+    ],
+    status: "implemented",
+    implementation:
+      "src/api/report/analytics/semantic/salesBreakdown.ts#categoryBreakdownSql",
+  },
+
   "sales.gross": {
     id: "sales.gross",
-    definitionVersion: "sales.gross@1",
+    definitionVersion: "sales.gross@2",
     businessName: "فروش ناخالص",
     formula: "SUM(order_items.per_amount * order_items.count) over eligible orders' line items",
     grain: "one row per eligible order (or per day when aggregated)",
@@ -118,7 +170,7 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
 
   "sales.discounts": {
     id: "sales.discounts",
-    definitionVersion: "sales.discounts@1",
+    definitionVersion: "sales.discounts@2",
     businessName: "تخفیف",
     formula:
       "SUM(orders.applied_discount_amount) over eligible orders, pro-rated to line when itemized",
@@ -143,7 +195,7 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
 
   "sales.refunds": {
     id: "sales.refunds",
-    definitionVersion: "sales.refunds@1",
+    definitionVersion: "sales.refunds@2",
     businessName: "مرجوعی",
     formula:
       "SUM(contract_transactions.amount) WHERE type='Return' AND status='Success', divided by 10 for Toman",
@@ -171,7 +223,7 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
 
   "sales.net": {
     id: "sales.net",
-    definitionVersion: "sales.net@1",
+    definitionVersion: "sales.net@2",
     businessName: "فروش خالص",
     formula: "sales.gross - sales.discounts - sales.refunds",
     grain: "one row per eligible order (or per day when aggregated)",
@@ -197,7 +249,7 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
 
   "sales.unitsSold": {
     id: "sales.unitsSold",
-    definitionVersion: "sales.unitsSold@1",
+    definitionVersion: "sales.unitsSold@2",
     businessName: "تعداد فروش",
     formula: "SUM(order_items.count) over eligible orders' line items",
     grain: "one row per eligible order (or per day when aggregated)",
@@ -223,7 +275,7 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
 
   "sales.averageOrderValue": {
     id: "sales.averageOrderValue",
-    definitionVersion: "sales.averageOrderValue@1",
+    definitionVersion: "sales.averageOrderValue@2",
     businessName: "میانگین ارزش سفارش",
     formula: "sales.gross / sales.eligibleOrders (0 when eligibleOrders = 0)",
     grain: "one value per window",

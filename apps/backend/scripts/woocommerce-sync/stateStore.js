@@ -237,6 +237,104 @@ class SyncStateStore {
     return result.rows[0];
   }
 
+  /**
+   * Durable campaign/reconcile outcome for an order without hourly claim fencing.
+   * Idempotent on (source_type, source_id).
+   */
+  async recordOrderOutcome({
+    sourceId,
+    revisionSha256,
+    modifiedAt = null,
+    outcome,
+    errorCode = null,
+    lane = "campaign",
+  }) {
+    if (!sha256Pattern.test(String(revisionSha256))) throw new Error("WOOCOMMERCE_SYNC_REVISION_INVALID");
+    if (!["completed", "failed", "quarantined"].includes(outcome)) {
+      throw new Error("WOOCOMMERCE_SYNC_OUTCOME_INVALID");
+    }
+    const result = await this.pool.query(
+      `INSERT INTO woocommerce_sync_items
+         (source_type, source_id, source_revision_sha256, source_modified_at,
+          lane, status, attempts, next_attempt_at, last_error_code,
+          first_seen_at, last_seen_at, completed_at)
+       VALUES ('order', $1::bigint, $2::varchar, $3::timestamptz, $4::varchar, $5::varchar,
+               1,
+               now(),
+               $6::varchar, now(), now(),
+               CASE WHEN $5::varchar = 'completed' THEN now() ELSE NULL END)
+       ON CONFLICT (source_type, source_id) DO UPDATE
+         SET source_revision_sha256 = EXCLUDED.source_revision_sha256,
+             source_modified_at = COALESCE(EXCLUDED.source_modified_at, woocommerce_sync_items.source_modified_at),
+             last_seen_at = now(),
+             lane = EXCLUDED.lane,
+             status = EXCLUDED.status,
+             attempts = CASE
+               WHEN EXCLUDED.status = 'completed' THEN woocommerce_sync_items.attempts
+               ELSE woocommerce_sync_items.attempts + 1
+             END,
+             last_error_code = EXCLUDED.last_error_code,
+             completed_at = CASE
+               WHEN EXCLUDED.status = 'completed' THEN now()
+               ELSE woocommerce_sync_items.completed_at
+             END,
+             claim_fencing_token = NULL,
+             claimed_revision_sha256 = NULL,
+             claim_until = NULL,
+             next_attempt_at = CASE
+               WHEN EXCLUDED.status = 'completed' THEN now()
+               ELSE now() + interval '30 seconds'
+             END
+       RETURNING id, status, attempts, last_error_code`,
+      [
+        sourceId,
+        revisionSha256,
+        modifiedAt,
+        lane,
+        outcome,
+        errorCode ? String(errorCode).slice(0, 128) : null,
+      ],
+    );
+    return result.rows[0];
+  }
+
+  /**
+   * Requeue quarantined (and optionally failed) order rows for another attempt.
+   * Used by reconcile --apply and post-catalog repair — quarantine is not terminal.
+   */
+  async requeueOrders({ statuses = ["quarantined", "failed"], errorCodes = null, limit = 5000 } = {}) {
+    const params = [statuses, limit];
+    let errorFilter = "";
+    if (Array.isArray(errorCodes) && errorCodes.length > 0) {
+      errorFilter = " AND last_error_code = ANY($3::text[])";
+      params.push(errorCodes);
+    }
+    const result = await this.pool.query(
+      `WITH due AS (
+         SELECT id
+           FROM woocommerce_sync_items
+          WHERE source_type = 'order'
+            AND status = ANY($1::text[])
+            ${errorFilter}
+          ORDER BY id
+          LIMIT $2
+          FOR UPDATE SKIP LOCKED
+       )
+       UPDATE woocommerce_sync_items AS item
+          SET status = 'pending',
+              lane = 'hourly',
+              next_attempt_at = now(),
+              claim_fencing_token = NULL,
+              claimed_revision_sha256 = NULL,
+              claim_until = NULL
+         FROM due
+        WHERE item.id = due.id
+      RETURNING item.id, item.source_id, item.last_error_code`,
+      params,
+    );
+    return result.rows;
+  }
+
   async promoteHourly() {
     const result = await this.pool.query(
       `UPDATE woocommerce_sync_items SET lane = 'hourly', status = 'pending', next_attempt_at = now()

@@ -551,6 +551,12 @@ function createActionTree() {
         ...crud,
         "getBlogBanners",
         "updateBlogBanners",
+        "getHomepageProducts",
+        "updateHomepageProducts",
+        "getGifPromoProducts",
+        "updateGifPromoProducts",
+        "getHomepageCustomSection",
+        "updateHomepageCustomSection",
         "getHeroSlider",
         "updateHeroSliderDraft",
         "publishHeroSliderDraft",
@@ -761,6 +767,17 @@ describe("role permission templates", () => {
       {
         capabilities: ["product.schedule"],
         actions: ["api::product.product.updateDisplayDate"],
+      },
+      {
+        capabilities: ["product.homepage.manage"],
+        actions: [
+          "api::settings.settings.getHomepageProducts",
+          "api::settings.settings.updateHomepageProducts",
+          "api::settings.settings.getGifPromoProducts",
+          "api::settings.settings.updateGifPromoProducts",
+          "api::settings.settings.getHomepageCustomSection",
+          "api::settings.settings.updateHomepageCustomSection",
+        ],
       },
       {
         capabilities: ["order.read"],
@@ -1303,7 +1320,7 @@ describe("role permission templates", () => {
     expect(enabled("api::commerce-maintenance", "commerce-maintenance")).toEqual([]);
   });
 
-  it("grants wallet administration only to Store Manager 2, Founder, and Superadmin", () => {
+  it("grants wallet administration only to Store Manager 2, Finance, Founder, and Superadmin", () => {
     const walletCtrl = (tree: any) =>
       tree["api::local-user-wallet"].controllers["local-user-wallet"];
 
@@ -1318,6 +1335,10 @@ describe("role permission templates", () => {
     const storeManager2 = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
       "store-manager-2",
+    );
+    const finance = __rolePermissionTestUtils.getDefaultPermissions(
+      createStrapiForPermissions() as any,
+      "finance",
     );
     const editor = __rolePermissionTestUtils.getDefaultPermissions(
       createStrapiForPermissions() as any,
@@ -1345,6 +1366,13 @@ describe("role permission templates", () => {
     ).toBe(true);
     expect(storeManager2["api::report"].controllers.report.productSales.enabled).toBe(false);
     expect(storeManager2["api::admin-user"].controllers["admin-user"].query.enabled).toBe(false);
+
+    expect(walletCtrl(finance).adminAdjustWallet.enabled).toBe(true);
+    expect(walletCtrl(finance).adminGetUserWallet.enabled).toBe(true);
+    expect(walletCtrl(finance).adminGetUserWalletHistory.enabled).toBe(true);
+    expect(
+      finance["api::plugin-user"].controllers["plugin-user"].searchCustomers.enabled,
+    ).toBe(true);
 
     // Superadmin (full access) keeps them.
     expect(walletCtrl(superadmin).adminAdjustWallet.enabled).toBe(true);
