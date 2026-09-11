@@ -162,3 +162,12 @@ apps/frontend/public/sw-version.js
 # Lock files (optional - uncomment to ignore)
 # yarn.lock
 # package-lock.json
+
+############################
+# Agent / tool scratch (keep out of git)
+############################
+
+.codex-*/
+/.playwright-cli/
+/output/
+*.bak
