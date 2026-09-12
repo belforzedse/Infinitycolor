@@ -31,7 +31,41 @@
 const { parseArgs } = require("node:util");
 const { Pool } = require("pg");
 const { getSyncConfig, resolveCampaignVariant } = require("./config");
-const { WooSyncService } = require("./service");
+const { WooSyncService, describeError } = require("./service");
+
+/**
+ * A campaign killed out-of-band leaves its row `running`. That status is NOT
+ * terminal, so `startCampaign`'s ON CONFLICT resets it and the next scheduled
+ * campaign re-runs everything from the top instead of skipping. Worse, the
+ * failure is invisible: no `failed` row, no error code, nothing to alert on.
+ *
+ * On 2026-09-12 a network blip rejected a speculative prefetch that nothing was
+ * awaiting; Node terminated the process, `main().catch` never ran, and the row
+ * sat `running` for hours. These handlers close that gap for every cause of
+ * sudden death, not just that one.
+ */
+function installFatalHandlers(getService) {
+  let handling = false;
+  const die = (label, reason) => {
+    if (handling) return;
+    handling = true;
+    console.error(`Friday campaign ${label}: ${describeError(reason)}`);
+    if (reason?.stack) console.error(reason.stack);
+    const service = getService();
+    const settle = service
+      ? service.finalizeActiveCampaign(`PROCESS_${label.toUpperCase().replace(/[^A-Z]+/g, "_")}`)
+      : Promise.resolve(false);
+    // Bounded: never let cleanup itself hang the exit.
+    const timer = setTimeout(() => process.exit(1), 10_000);
+    timer.unref?.();
+    settle
+      .then((marked) => console.error(`campaign row marked failed: ${marked}`))
+      .catch(() => undefined)
+      .finally(() => process.exit(1));
+  };
+  process.on("unhandledRejection", (reason) => die("unhandled rejection", reason));
+  process.on("uncaughtException", (error) => die("uncaught exception", error));
+}
 
 async function main() {
   const { values } = parseArgs({ options: { variant: { type: "string" } }, allowPositionals: false });
@@ -41,6 +75,7 @@ async function main() {
   const variant = requestedVariant || config.campaignVariant;
   const pool = new Pool({ ...config.postgres, max: 4, idleTimeoutMillis: 30_000 });
   const service = new WooSyncService(config, { pool });
+  serviceRef = service;
   try {
     console.error(`Starting friday campaign (variant=${variant})`);
     const result = await service.friday(Date.now(), { variant });
@@ -51,7 +86,13 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(`Friday campaign run failed: ${error.message}`);
+let serviceRef = null;
+installFatalHandlers(() => serviceRef);
+
+main().catch(async (error) => {
+  console.error(`Friday campaign run failed: ${describeError(error)}`);
+  // The in-band catch inside friday() already marks the row failed; this is the
+  // backstop for anything that threw before or outside it.
+  await serviceRef?.finalizeActiveCampaign("PROCESS_RUN_FAILED").catch(() => undefined);
   process.exitCode = 1;
 });

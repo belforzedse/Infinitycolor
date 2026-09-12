@@ -2,8 +2,68 @@
 
 const { setTimeout: delay } = require("node:timers/promises");
 
+/**
+ * Transport-level failures worth retrying.
+ *
+ * Node's `fetch` does not surface these the way axios does: it throws a bare
+ * `TypeError: fetch failed` and puts the real reason on `error.cause.code`.
+ * The retry predicate below used to test only `error.status`, so every one of
+ * these fell straight through the retry loop on the first attempt. On
+ * 2026-09-12 a ~10s DNS blip (EAI_AGAIN, then UND_ERR_CONNECT_TIMEOUT
+ * reaching the source) killed a 5-hour unattended campaign 65 minutes in,
+ * because the rejection escaped `source.js#pagesParallel` and nothing above it
+ * catches.
+ *
+ * A sibling list lives in `catalog/lib/backoff.js`, which is axios-shaped and
+ * therefore never sees the `UND_ERR_*` codes; unifying the two is a separate
+ * refactor, so this set is deliberately the superset of both.
+ */
+const RETRYABLE_NETWORK_CODES = new Set([
+  // POSIX / Node socket errors
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+  "ECONNABORTED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  // undici (the engine behind global fetch)
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+/**
+ * Walk the `cause` chain looking for a recognised transport code.
+ *
+ * Depth-capped because a self-referential `cause` would otherwise hang, and
+ * `AggregateError.errors` is inspected too: on a dual-stack host Node reports a
+ * failed connect as an aggregate whose children carry the code, not the parent.
+ *
+ * Only *recognised* codes retry. A `TypeError: fetch failed` carrying no known
+ * code is far more likely to be a malformed URL from our own caller than a
+ * blip, and looping on that just delays a real bug by 30 seconds.
+ */
+function isRetryableNetworkError(error) {
+  for (let current = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
+    if (typeof current.code === "string" && RETRYABLE_NETWORK_CODES.has(current.code)) return true;
+    for (const nested of Array.isArray(current.errors) ? current.errors : []) {
+      if (typeof nested?.code === "string" && RETRYABLE_NETWORK_CODES.has(nested.code)) return true;
+    }
+  }
+  return false;
+}
+
 class JsonHttp {
-  constructor({ baseUrl, headers, sourceReadOnly = false, retries = 4, timeoutMs = 30_000 }) {
+  // retries=6 with the capped backoff below is ~30s of budget. The 4 it used to
+  // be gave ~7.5s, which is shorter than an ordinary DNS or upstream-restart
+  // blip and is what made the campaign crash survivable-in-principle but not in
+  // practice. Retrying writes is safe and intentional: the importer's writes are
+  // idempotent upserts keyed on `external_id`.
+  constructor({ baseUrl, headers, sourceReadOnly = false, retries = 6, timeoutMs = 30_000 }) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.headers = { ...headers };
     this.sourceReadOnly = sourceReadOnly;
@@ -62,7 +122,10 @@ class JsonHttp {
       } catch (error) {
         lastError = error;
         const status = error?.status;
-        const retryable = error?.name === "AbortError" || status === 429 || (status >= 500 && status < 600);
+        const retryable = error?.name === "AbortError"
+          || isRetryableNetworkError(error)
+          || status === 429
+          || (status >= 500 && status < 600);
         if (!retryable || attempt >= this.retries) {
           this.metrics.failures += 1;
           throw error;
@@ -81,4 +144,4 @@ class JsonHttp {
   put(pathname, body, headers) { return this.request("PUT", pathname, { body, headers }); }
 }
 
-module.exports = { JsonHttp };
+module.exports = { JsonHttp, isRetryableNetworkError, RETRYABLE_NETWORK_CODES };

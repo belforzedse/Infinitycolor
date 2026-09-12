@@ -241,6 +241,30 @@ async function ensureActive(state) {
   return control;
 }
 
+/**
+ * Describe a thrown value completely, including the `cause` chain.
+ *
+ * Node's `fetch` reports transport failures as a bare `TypeError: fetch failed`
+ * whose actual reason (EAI_AGAIN, UND_ERR_CONNECT_TIMEOUT, ...) lives on
+ * `error.cause.code`. Logging only `error.message` on a multi-hour unattended
+ * run throws away the one detail that separates a network blip from a real bug
+ * — which is exactly what made the 2026-09-12 crash take so long to read.
+ */
+function describeError(error) {
+  const parts = [];
+  for (let current = error, depth = 0; current && depth < 5; current = current.cause, depth += 1) {
+    // A `cause` is not always an Error — undici sometimes hands back a plain
+    // object carrying only `code`. Naively interpolating that prints
+    // "Error: [object Object]", burying the one useful field.
+    const name = current.name || (current instanceof Error ? "Error" : "");
+    const text = [name && `${name}:`, current.message, current.code && `(${current.code})`]
+      .filter(Boolean)
+      .join(" ");
+    if (text) parts.push(text);
+  }
+  return parts.join(" <- ") || "unknown error";
+}
+
 class WooSyncService {
   constructor(config, { pool = null, source = null, destination = null } = {}) {
     this.config = config;
@@ -250,6 +274,11 @@ class WooSyncService {
     this.destination = destination || new Destination({ ...config.source, ...config.destination });
     this.stopping = false;
     this._catalogEngine = null;
+    // Set while a campaign owns the lease, so a fatal out-of-band error (an
+    // unhandled rejection, an uncaught exception, a SIGTERM) can still mark the
+    // row failed instead of leaving it `running` forever. See
+    // `finalizeActiveCampaign` and run-campaign.js's process handlers.
+    this.activeCampaign = null;
   }
 
   catalogRepo() {
@@ -1029,6 +1058,7 @@ class WooSyncService {
       if (["completed", "completed-with-exceptions", "missed"].includes(campaign.status)) {
         return { skipped: true, reason: `already-${campaign.status}` };
       }
+      this.activeCampaign = { campaignKey, token };
       const campaignStartedAt = Date.now();
       const durationsMs = {};
       let stageStartedAt = campaignStartedAt;
@@ -1214,8 +1244,34 @@ class WooSyncService {
       } catch (error) {
         await this.state.finishCampaign(campaignKey, token, "failed", safeErrorCode(error)).catch(() => undefined);
         throw error;
+      } finally {
+        this.activeCampaign = null;
       }
     });
+  }
+
+  /**
+   * Best-effort "this process is dying" finalizer, for callers wiring up
+   * `unhandledRejection` / `uncaughtException` / signal handlers.
+   *
+   * A campaign that dies out-of-band leaves its row `running`, which is not a
+   * terminal status: `startCampaign`'s ON CONFLICT resets it, so the next
+   * scheduled campaign silently re-runs the whole thing instead of skipping.
+   * That is exactly what happened on 2026-09-12 — the process was killed by an
+   * unhandled rejection, so the catch above never ran.
+   *
+   * Never throws: it is called from a path that is already failing.
+   */
+  async finalizeActiveCampaign(errorCode = "PROCESS_FATAL") {
+    const active = this.activeCampaign;
+    if (!active) return false;
+    this.activeCampaign = null;
+    try {
+      await this.state.finishCampaign(active.campaignKey, active.token, "failed", errorCode);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -1404,6 +1460,37 @@ async function start() {
   };
   process.once("SIGTERM", () => void shutdown());
   process.once("SIGINT", () => void shutdown());
+
+  // Without these, an unhandled rejection anywhere — including a speculative
+  // prefetch nobody is awaiting — terminates this worker outright, taking the
+  // hourly poll, discovery and the campaign scheduler down with it, and leaving
+  // any in-flight campaign row stuck at `running` (a NON-terminal status, so the
+  // next scheduled campaign silently re-runs everything). That is how the
+  // 2026-09-12 run died.
+  //
+  // Exiting non-zero is deliberate: the container runs `unless-stopped`, so
+  // Docker restarts it and the worker self-heals. Swallowing the rejection and
+  // limping on would hide a real bug and risk acting on corrupt state.
+  let dying = false;
+  const dieFatal = (label) => (reason) => {
+    if (dying) return;
+    dying = true;
+    console.error("[WooSync] fatal", {
+      label,
+      errorCode: safeErrorCode(reason),
+      message: reason?.message,
+      causeCode: reason?.cause?.code,
+    });
+    if (reason?.stack) console.error(reason.stack);
+    const timer = setTimeout(() => process.exit(1), 10_000);
+    timer.unref?.();
+    service.finalizeActiveCampaign(`PROCESS_${label}`)
+      .then((marked) => console.error("[WooSync] campaign row marked failed", { marked }))
+      .catch(() => undefined)
+      .finally(() => process.exit(1));
+  };
+  process.on("unhandledRejection", dieFatal("UNHANDLED_REJECTION"));
+  process.on("uncaughtException", dieFatal("UNCAUGHT_EXCEPTION"));
   console.info("[WooSync] ready", {
     mode: (await service.state.control()).mode,
     pollMs: config.pollMs,
@@ -1421,6 +1508,7 @@ if (require.main === module) {
 
 module.exports = {
   WooSyncService,
+  describeError,
   registerSchedulers,
   redisConnection,
   productRevision,

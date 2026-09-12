@@ -14,6 +14,7 @@ const {
   assertCatalogReportSucceeded,
   safeErrorCode,
   fridayScheduledTimestamp,
+  describeError,
 } = require("../service");
 
 function baseEnv() {
@@ -963,4 +964,59 @@ test("an inventory failure still raises the historical FRIDAY_STOCK_HAS_FAILURES
     service.friday(Date.now() - 60_000, { variant: "cutover" }),
     (error) => error.code === "FRIDAY_STOCK_HAS_FAILURES",
   );
+});
+
+test("finalizeActiveCampaign marks a campaign failed when the process dies out-of-band", async () => {
+  // The 2026-09-12 gap: the process was killed by an unhandled rejection, so
+  // friday()'s own catch never ran and the row sat at `running` — a NON-terminal
+  // status, which startCampaign's ON CONFLICT resets, so the next scheduled
+  // campaign silently re-ran everything instead of skipping.
+  const calls = [];
+  const service = Object.create(WooSyncService.prototype);
+  service.activeCampaign = { campaignKey: "friday:2026-09-12", token: "tok-1" };
+  service.state = {
+    finishCampaign: async (...args) => { calls.push(args); },
+  };
+
+  assert.equal(await service.finalizeActiveCampaign("PROCESS_UNHANDLED_REJECTION"), true);
+  assert.deepEqual(calls, [["friday:2026-09-12", "tok-1", "failed", "PROCESS_UNHANDLED_REJECTION"]]);
+
+  // Idempotent: a second handler firing during the same death must not re-write.
+  assert.equal(await service.finalizeActiveCampaign("PROCESS_UNCAUGHT_EXCEPTION"), false);
+  assert.equal(calls.length, 1);
+});
+
+test("finalizeActiveCampaign never throws from an already-failing path", async () => {
+  const service = Object.create(WooSyncService.prototype);
+  service.activeCampaign = { campaignKey: "friday:2026-09-12", token: "stale" };
+  service.state = {
+    finishCampaign: async () => {
+      throw Object.assign(new Error("fence rejected"), { code: "WOOCOMMERCE_SYNC_FENCE_REJECTED" });
+    },
+  };
+  // A lost fence is expected (another process may have taken over); it must be
+  // reported as "not marked", never propagated into the dying process.
+  assert.equal(await service.finalizeActiveCampaign(), false);
+
+  const idle = Object.create(WooSyncService.prototype);
+  idle.activeCampaign = null;
+  assert.equal(await idle.finalizeActiveCampaign(), false);
+});
+
+test("describeError unwraps the cause chain that hides the real transport code", () => {
+  // The 2026-09-12 log showed only "TypeError: fetch failed" for a long while —
+  // useless. The reason lives on cause.code.
+  const crash = Object.assign(new TypeError("fetch failed"), {
+    cause: Object.assign(new Error("Connect Timeout Error"), { code: "UND_ERR_CONNECT_TIMEOUT" }),
+  });
+  const described = describeError(crash);
+  assert.match(described, /TypeError: fetch failed/);
+  assert.match(described, /UND_ERR_CONNECT_TIMEOUT/);
+
+  // Must terminate on a self-referential chain rather than spin.
+  const looping = new Error("a");
+  looping.cause = looping;
+  assert.ok(describeError(looping).length > 0);
+
+  assert.equal(describeError(null), "unknown error");
 });

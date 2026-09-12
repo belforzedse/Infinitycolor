@@ -98,7 +98,19 @@ class WordPressSource {
       while (inflight.size < limit) {
         if (totalPages !== null && nextToSchedule > totalPages) return;
         if (shortPage !== null && nextToSchedule > shortPage) return;
-        inflight.set(nextToSchedule, fetchPage(nextToSchedule));
+        const pending = fetchPage(nextToSchedule);
+        // Mark handled the instant it is scheduled. While this generator is
+        // suspended at `yield`, nothing is awaiting these speculative fetches,
+        // so a rejection here is an *unhandled* rejection and Node (>=15) kills
+        // the process outright — bypassing the campaign's own error handling,
+        // which would otherwise mark the run failed. That is precisely how a
+        // 10s DNS blip destroyed the 2026-09-12 campaign 65 minutes in: the
+        // crash stack ended at `fetchPage` with no caller frames above it.
+        // The `finally` below only covers the exit path, not this window.
+        // Attaching a catch does not swallow anything for the consumer: the
+        // awaited `pending` in the loop still rejects normally.
+        pending.catch(() => undefined);
+        inflight.set(nextToSchedule, pending);
         nextToSchedule += 1;
       }
     };

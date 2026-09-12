@@ -146,3 +146,39 @@ test("walletUsers reads the bulk balance route and honours a concurrency overrid
   assert.equal(queries[0].query.per_page, 100);
   assert.equal(pages[0].rows[0].id, 70884);
 });
+
+test("a speculative page rejecting while the consumer works never becomes an unhandled rejection", async (t) => {
+  // The 2026-09-12 campaign death, reproduced. pagesParallel prefetches a window
+  // of pages, then suspends at `yield` while the caller processes 100 customers.
+  // A prefetched page that rejects during that window has nothing awaiting it,
+  // so Node terminates the process — bypassing the campaign's own failure
+  // handling entirely. The rejection must still reach the consumer in order.
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  t.after(() => process.off("unhandledRejection", onUnhandled));
+
+  const client = {
+    async get(_pathname, query) {
+      if (query.page === 3) throw Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "UND_ERR_CONNECT_TIMEOUT" },
+      });
+      return { data: [{ id: query.page }], headers: headers(4) };
+    },
+  };
+
+  const source = Object.create(WordPressSource.prototype);
+  const seen = [];
+  await assert.rejects(async () => {
+    for await (const page of source.pagesParallel(client, "/rows", {}, { pageSize: 1, concurrency: 4 })) {
+      seen.push(page.page);
+      // Simulate real per-page work: pages 3 and 4 are already in flight and
+      // page 3 rejects right here, with the generator suspended.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }, /fetch failed/);
+
+  assert.deepEqual(seen, [1, 2], "pages before the failure are still yielded in order");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(unhandled, [], "no rejection may escape unhandled");
+});
