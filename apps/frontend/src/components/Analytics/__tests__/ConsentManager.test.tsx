@@ -15,7 +15,6 @@ const STORAGE_KEY = "analytics-consent";
  * tests exercise the script that actually ships rather than a re-implementation.
  */
 function runBootstrapScript() {
-  // eslint-disable-next-line no-new-func -- executing the shipped browser source is the point
   new Function(getAnalyticsConsentBootstrapScript())();
 }
 

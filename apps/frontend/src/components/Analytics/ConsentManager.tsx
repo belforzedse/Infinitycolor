@@ -1,7 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ANALYTICS_CONSENT_STORAGE_KEY, setAnalyticsConsent } from "@/lib/analytics";
+import { useSyncExternalStore } from "react";
+import {
+  ANALYTICS_CONSENT_EVENT,
+  getAnalyticsConsent,
+  setAnalyticsConsent,
+  type AnalyticsConsent,
+} from "@/lib/analytics";
+
+/**
+ * `setAnalyticsConsent` dispatches the in-page event; `storage` covers another tab
+ * answering the banner while this one is open.
+ */
+function subscribeToConsent(onChange: () => void) {
+  window.addEventListener(ANALYTICS_CONSENT_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(ANALYTICS_CONSENT_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+/** The server cannot read `localStorage`, so it always renders the banner. */
+const getServerConsent = (): AnalyticsConsent => null;
 
 /**
  * The banner renders on the server and in the first hydration render, and the
@@ -12,39 +33,21 @@ import { ANALYTICS_CONSENT_STORAGE_KEY, setAnalyticsConsent } from "@/lib/analyt
  * which meant that on a first visit it painted after hydration — at ~5.0s on a
  * throttled mobile PDP, late enough to take LCP from the product hero (done at
  * ~1.6s). Rendering it up front costs nothing for returning visitors (CSS hides
- * it before paint and the effect below unmounts it) and moves a first visitor's
- * banner paint next to FCP.
+ * it before paint and the store read below unmounts it) and moves a first
+ * visitor's banner paint next to FCP.
  */
 export function ConsentManager() {
-  // Must match the server render, which cannot know the stored choice.
-  const [showBanner, setShowBanner] = useState(true);
+  // `getServerConsent` is what hydration renders, so SSR and the first client
+  // render agree; React then re-renders with the stored choice. Storage being
+  // unavailable reads as "no decision" and keeps asking, exactly as before —
+  // `getAnalyticsConsent` swallows the throw and `setAnalyticsConsent` tolerates
+  // a failing write.
+  const consent = useSyncExternalStore(subscribeToConsent, getAnalyticsConsent, getServerConsent);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    let storedConsent: string | null = null;
-    try {
-      storedConsent = localStorage.getItem(ANALYTICS_CONSENT_STORAGE_KEY);
-    } catch {
-      // Storage unavailable: treat it as no decision and keep asking, exactly as
-      // before. `setAnalyticsConsent` already tolerates a failing write.
-    }
-    const hasConsent = storedConsent === "granted" || storedConsent === "denied";
-    if (hasConsent) setShowBanner(false);
-  }, []);
+  const grantConsent = () => setAnalyticsConsent("granted");
+  const denyConsent = () => setAnalyticsConsent("denied");
 
-  const grantConsent = () => {
-    if (typeof window === "undefined") return;
-    setAnalyticsConsent("granted");
-    setShowBanner(false);
-  };
-
-  const denyConsent = () => {
-    if (typeof window === "undefined") return;
-    setAnalyticsConsent("denied");
-    setShowBanner(false);
-  };
-
-  if (!showBanner) {
+  if (consent !== null) {
     return null;
   }
 
