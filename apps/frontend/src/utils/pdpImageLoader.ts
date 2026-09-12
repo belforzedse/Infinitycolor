@@ -2,12 +2,13 @@ import type { ImageLoaderProps } from "next/image";
 import { buildEdgeImageUrl } from "@/utils/edgeImageUrl";
 
 /**
- * High-quality image loader specifically for PDP (Product Detail Page) images
- * Uses quality=95 to prevent compression and maintain image quality
+ * The loader for PDP (Product Detail Page) imagery.
  *
- * The quality only reaches the Next optimizer fallback (local assets, or any
- * environment without the media CDN). Arvan's resize takes no quality parameter,
- * so catalogue media on the edge is unaffected by it.
+ * The quality argument no longer changes anything: nothing in the pipeline
+ * re-encodes. Catalogue media is resized by the edge, which takes `width` and
+ * `height` only, and every other source is served as its own original. It is
+ * kept so the call sites that pass a quality keep type-checking, and so the
+ * intent — PDP imagery must not be degraded — stays recorded.
  */
 export default function pdpImageLoader({ src, width, quality = 95 }: ImageLoaderProps) {
   return buildEdgeImageUrl({ src, width, quality });

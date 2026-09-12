@@ -344,6 +344,18 @@ export function isMediaCdnImageUrl(src: string, options?: ImagePolicyOptions): b
   return sameOrigin(url, cdn) && hasAllowedUploadPath(url);
 }
 
+/**
+ * Builds a `/_next/image` URL.
+ *
+ * DEAD IN PRODUCTION, and deliberately not called by any loader. `next.config.ts`
+ * sets `images.loader: "custom"`, and the Next server answers `/_next/image`
+ * with `render404()` whenever `images.loader !== "default"`
+ * (`next/dist/server/next-server.js`, in `handleNextImageRequest`). Calling this
+ * from a loader is what took every `public/` image down in wt202609121652.
+ *
+ * Kept only so that dropping `loader`/`loaderFile` from the config restores the
+ * optimizer path in one edit. Until then, use `buildEdgeImageUrl`.
+ */
 export function buildOptimizedImageUrl(
   src: string,
   width: number,

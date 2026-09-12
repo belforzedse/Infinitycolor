@@ -27,18 +27,16 @@ describe("StorefrontLogo", () => {
     expect(link).toHaveAttribute("href", "/");
   });
 
+  // The logo is a local `public/` asset, and `images.loader: "custom"` makes the
+  // Next server 404 `/_next/image`. It has to resolve to the file's own path.
   it("should use correct image source", () => {
     render(<StorefrontLogo />);
 
     const img = screen.getByAltText("Logo");
-    const optimizedSource = new URL(
-      img.getAttribute("src") || "",
-      "http://localhost",
-    );
-    expect(optimizedSource.pathname).toBe("/_next/image");
-    expect(optimizedSource.searchParams.get("url")).toBe(
-      "/images/full-logo.png",
-    );
+    const source = new URL(img.getAttribute("src") || "", "http://localhost");
+
+    expect(source.pathname).toBe("/images/full-logo.png");
+    expect(img.getAttribute("src")).not.toContain("/_next/image");
   });
 
   it("should preload rather than lazy-load the storefront logo", () => {

@@ -1,10 +1,5 @@
 import type { ImageLoaderProps } from "next/image";
-import {
-  buildOptimizedImageUrl,
-  getNextImageWidth,
-  isMediaCdnImageUrl,
-  resolveSafeImageSrc,
-} from "@/utils/imageSecurity";
+import { getNextImageWidth, isMediaCdnImageUrl, resolveSafeImageSrc } from "@/utils/imageSecurity";
 
 /**
  * Formats ArvanCloud's Image Resize will actually resize.
@@ -40,41 +35,48 @@ function isEdgeResizable(pathname: string): boolean {
  * boundary. Only `arvanImageLoader` — the module Next serializes for
  * `images.loaderFile` — carries the directive.
  *
- * Catalogue media goes to the edge, which resizes from the original and caches
- * the result; the origin then serves originals off disk and sharp never runs for
- * them. Everything else keeps the Next optimizer:
+ * EVERY RETURNED URL MUST BE DIRECTLY SERVABLE. `next.config.ts` sets
+ * `images.loader: "custom"`, and the Next server answers `/_next/image` with
+ * `render404()` whenever `images.loader !== "default"`
+ * (`next/dist/server/next-server.js`, inside `handleNextImageRequest`). There is
+ * no optimizer to fall back to: a loader that emits `/_next/image` emits a 404.
+ * Configuring `loaderFile` and keeping an optimizer fallback is precisely the
+ * mistake that took the storefront logo and every other `public/` image down in
+ * `wt202609121652`.
  *
- *   - no `NEXT_PUBLIC_MEDIA_CDN_URL` (dev, staging, any environment without the
- *     CDN) leaves `resolveSafeImageSrc` on the API origin, which cannot resize;
- *   - local `public/` assets are a fixed set of 145 files whose derivatives the
- *     gateway holds for a year, so their optimizer cost is paid once, and the
- *     largest of them exceed Arvan's 2 MB resize input limit anyway;
- *   - `NEXT_PUBLIC_IMAGE_LOADER=next` forces the old path for everything, which
- *     is the rollback: rebuild with one changed build argument, no code change.
+ * So the policy is a two-way split rather than a fallback chain:
  *
- * `quality` reaches the optimizer branches only. Arvan's resize takes `width` and
- * `height` and nothing else, so passing a quality would just fork the cache key
- * for an identical image.
+ *   - catalogue media on the media CDN gets `?width=`, and the edge resizes from
+ *     the original — the origin serves originals off disk and sharp never runs;
+ *   - everything else (local `public/` assets, `data:` URIs, and uploads still on
+ *     the API origin because no CDN is configured) is returned untouched, because
+ *     each of those is already a URL that serves the image on its own.
+ *
+ * `quality` is accepted for signature compatibility with `ImageLoaderProps` and
+ * deliberately unused: Arvan's resize takes `width` and `height` and nothing
+ * else, and no other branch re-encodes anything.
  */
-export function buildEdgeImageUrl({ src, width, quality = 70 }: ImageLoaderProps): string {
-  if (process.env.NEXT_PUBLIC_IMAGE_LOADER === "next") {
-    return buildOptimizedImageUrl(src, width, quality);
-  }
-
+export function buildEdgeImageUrl({ src, width }: ImageLoaderProps): string {
   const resolved = resolveSafeImageSrc(src);
 
-  // Rejected by the allowlist. Returning "" matches what the optimizer path
-  // does rather than inventing a new failure mode for the same bad input.
+  // Rejected by the allowlist. "" is the existing contract for bad input.
   if (!resolved) return "";
 
-  // A data URI is already the image, and a local public asset is served by the
-  // app itself at a path Arvan does not host.
-  if (resolved.startsWith("data:") || !isMediaCdnImageUrl(resolved)) {
-    return buildOptimizedImageUrl(src, width, quality);
-  }
+  // Already the image itself.
+  if (resolved.startsWith("data:")) return resolved;
+
+  // A local `public/` asset (origin-relative path) or an upload on the API
+  // origin. Served as-is; neither host resizes, and neither needs to.
+  if (!isMediaCdnImageUrl(resolved)) return resolved;
 
   const url = new URL(resolved);
   if (!isEdgeResizable(url.pathname)) return url.toString();
+
+  // The rollback lever: rebuild with NEXT_PUBLIC_IMAGE_LOADER=next and the edge
+  // stops being asked to resize, while every URL stays servable. It can no
+  // longer mean "use the Next optimizer" — under a custom loader there isn't
+  // one — so it means "originals only".
+  if (process.env.NEXT_PUBLIC_IMAGE_LOADER === "next") return url.toString();
 
   url.searchParams.set("width", String(getNextImageWidth(width)));
   return url.toString();

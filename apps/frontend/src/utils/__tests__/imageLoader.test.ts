@@ -37,41 +37,33 @@ describe("imageLoader", () => {
     expect(result).toBe("");
   });
 
-  it("should route through the Next image optimizer with width and quality parameters", () => {
+  // `images.loader: "custom"` makes the Next server 404 `/_next/image`, so a
+  // local public asset must come back as the path the app already serves.
+  it("should serve a local public asset from its own path", () => {
     const result = imageLoader({ src: "/images/image.jpg", width: 800, quality: 90 });
-    const url = parseResult(result);
 
-    expect(url.pathname).toBe("/_next/image");
-    expect(url.searchParams.get("url")).toBe("/images/image.jpg");
-    expect(url.searchParams.get("w")).toBe("828");
-    expect(url.searchParams.get("q")).toBe("90");
+    expect(result).toBe("/images/image.jpg");
+    expect(result).not.toContain("/_next/image");
   });
 
-  it("should use default quality of 70", () => {
-    const result = imageLoader({ src: "/images/image.jpg", width: 800 });
-    const url = parseResult(result);
+  it("should not vary a local public asset by width or quality", () => {
+    const narrow = imageLoader({ src: "/images/image.jpg", width: 16, quality: 50 });
+    const wide = imageLoader({ src: "/images/image.jpg", width: 3840, quality: 95 });
 
-    expect(url.searchParams.get("q")).toBe("70");
+    expect(narrow).toBe(wide);
   });
 
-  it("should not add fake CDN format parameters", () => {
-    const result = imageLoader({ src: "/images/image.jpg", width: 800 });
-    const url = parseResult(result);
-
-    expect(url.searchParams.has("f")).toBe(false);
-  });
-
-  it("should handle trusted absolute Strapi upload URLs", () => {
+  it("should serve a trusted absolute Strapi upload URL as-is when no CDN is configured", () => {
     process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://api.infinitycolor.co";
+    delete process.env.NEXT_PUBLIC_MEDIA_CDN_URL;
 
     const result = imageLoader({
       src: "https://api.infinitycolor.co/uploads/image.jpg",
       width: 800,
     });
-    const url = parseResult(result);
 
-    expect(url.searchParams.get("url")).toBe("https://api.infinitycolor.co/uploads/image.jpg");
-    expect(url.searchParams.get("w")).toBe("828");
+    expect(result).toBe("https://api.infinitycolor.co/uploads/image.jpg");
+    expect(result).not.toContain("/_next/image");
   });
 
   it("should reject arbitrary external absolute URLs", () => {
@@ -83,14 +75,14 @@ describe("imageLoader", () => {
     expect(result).toBe("");
   });
 
-  it("should handle relative URLs with BASE_URL", () => {
+  it("should absolutize a relative upload against BASE_URL when no CDN is configured", () => {
     process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://cdn.example.com";
+    delete process.env.NEXT_PUBLIC_MEDIA_CDN_URL;
 
     const result = imageLoader({ src: "/uploads/image.jpg", width: 800 });
-    const url = parseResult(result);
 
-    expect(url.searchParams.get("url")).toBe("https://cdn.example.com/uploads/image.jpg");
-    expect(url.searchParams.get("w")).toBe("828");
+    expect(result).toBe("https://cdn.example.com/uploads/image.jpg");
+    expect(result).not.toContain("/_next/image");
   });
 
   // This loader is passed explicitly as `loader={imageLoader}` by the product
@@ -120,25 +112,22 @@ describe("imageLoader", () => {
     expect(result).toBe("https://cdn.infinitycolor.co/uploads/banner.gif");
   });
 
-  it("keeps local public assets on the optimizer even with the CDN configured", () => {
+  it("keeps local public assets off the CDN even when one is configured", () => {
     process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
 
     const result = imageLoader({ src: "/images/image.jpg", width: 800 });
-    const url = parseResult(result);
 
-    expect(url.pathname).toBe("/_next/image");
+    expect(result).toBe("/images/image.jpg");
     expect(result).not.toContain("cdn.infinitycolor.co");
   });
 
-  it("should handle local public URLs with existing query parameters", () => {
+  it("should preserve an existing query string on a local public URL", () => {
     const result = imageLoader({
       src: "/images/image.jpg?existing=param",
       width: 800,
     });
-    const url = parseResult(result);
 
-    expect(url.searchParams.get("url")).toBe("/images/image.jpg?existing=param");
-    expect(url.searchParams.get("w")).toBe("828");
+    expect(result).toBe("/images/image.jpg?existing=param");
   });
 
   it("should reject unrecognized relative sources instead of treating them as remote images", () => {
@@ -148,39 +137,59 @@ describe("imageLoader", () => {
     expect(result).toBe("");
   });
 
-  it("should use & for URLs with existing params in fallback", () => {
-    const urlWithParams = "/images/image.jpg?existing=param";
-    const result = imageLoader({ src: urlWithParams, width: 800, quality: 90 });
-    const url = parseResult(result);
-
-    expect(url.pathname).toBe("/_next/image");
-    expect(url.searchParams.get("url")).toBe("/images/image.jpg?existing=param");
-    expect(url.searchParams.get("w")).toBe("828");
-  });
-
   it("should handle different width values", () => {
-    const result1 = imageLoader({ src: "/images/image.jpg", width: 400 });
-    const result2 = imageLoader({ src: "/images/image.jpg", width: 1920 });
+    process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
 
-    expect(parseResult(result1).searchParams.get("w")).toBe("640");
-    expect(parseResult(result2).searchParams.get("w")).toBe("1920");
+    const result1 = imageLoader({ src: "/uploads/image.jpg", width: 400 });
+    const result2 = imageLoader({ src: "/uploads/image.jpg", width: 1920 });
+
+    expect(parseResult(result1).searchParams.get("width")).toBe("640");
+    expect(parseResult(result2).searchParams.get("width")).toBe("1920");
   });
 
   it("should snap unsupported widths up to configured Next image widths", () => {
-    const invalidDesktopWidth = imageLoader({ src: "/images/image.jpg", width: 2568 });
-    const invalidHeroWidth = imageLoader({ src: "/images/image.jpg", width: 1208 });
-    const smallAvatarWidth = imageLoader({ src: "/images/image.jpg", width: 74 });
+    process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
 
-    expect(parseResult(invalidDesktopWidth).searchParams.get("w")).toBe("3840");
-    expect(parseResult(invalidHeroWidth).searchParams.get("w")).toBe("1920");
-    expect(parseResult(smallAvatarWidth).searchParams.get("w")).toBe("96");
+    const invalidDesktopWidth = imageLoader({ src: "/uploads/image.jpg", width: 2568 });
+    const invalidHeroWidth = imageLoader({ src: "/uploads/image.jpg", width: 1208 });
+    const smallAvatarWidth = imageLoader({ src: "/uploads/image.jpg", width: 74 });
+
+    expect(parseResult(invalidDesktopWidth).searchParams.get("width")).toBe("3840");
+    expect(parseResult(invalidHeroWidth).searchParams.get("width")).toBe("1920");
+    expect(parseResult(smallAvatarWidth).searchParams.get("width")).toBe("96");
   });
 
   it("should convert width to string", () => {
-    const result = imageLoader({ src: "/images/image.jpg", width: 800 });
+    process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
+
+    const result = imageLoader({ src: "/uploads/image.jpg", width: 800 });
     const url = parseResult(result);
 
-    expect(url.searchParams.get("w")).toBe("828");
-    expect(result).not.toContain("w=[object");
+    expect(url.searchParams.get("width")).toBe("828");
+    expect(result).not.toContain("width=[object");
+  });
+
+  // The regression that took every `public/` image down in wt202609121652: a
+  // loader branch emitted `/_next/image`, which the server 404s whenever
+  // `images.loader !== "default"`. No input may produce that path.
+  it("never emits the optimizer path, whatever the input", () => {
+    process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://api.infinitycolor.co";
+    process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
+
+    const sources = [
+      "/images/image.jpg",
+      "/images/logo.PNG",
+      "/images/banner.svg",
+      "/uploads/shirt.webp",
+      "/uploads/banner.gif",
+      "https://api.infinitycolor.co/uploads/image.jpg",
+      "data:image/png;base64,iVBORw0KGgo=",
+    ];
+
+    for (const src of sources) {
+      for (const width of [16, 828, 3840]) {
+        expect(imageLoader({ src, width })).not.toContain("/_next/image");
+      }
+    }
   });
 });

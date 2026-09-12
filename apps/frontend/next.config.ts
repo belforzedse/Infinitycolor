@@ -123,10 +123,15 @@ const nextConfig = {
     // and keeping 8,434 derivatives — and the edge caches each size once per
     // PoP rather than the origin serving every byte.
     //
-    // `/_next/image` stays available (the handler is gated on minimalMode and
-    // `output: export`, not on this setting), which is what the loader falls
-    // back to for local public assets and for any environment with no
-    // NEXT_PUBLIC_MEDIA_CDN_URL configured.
+    // Setting this REMOVES `/_next/image`: the Next server calls `render404()`
+    // for that route whenever `images.loader !== "default"`
+    // (`next/dist/server/next-server.js`, in `handleNextImageRequest`). There is
+    // no optimizer fallback, so `edgeImageUrl` must return a directly-servable
+    // URL for every input — local `public/` assets included. `deviceSizes`,
+    // `imageSizes`, `qualities`, `formats`, `minimumCacheTTL` and
+    // `remotePatterns` below are inert while a custom loader is configured; they
+    // are kept so that dropping `loader`/`loaderFile` restores the optimizer in
+    // one edit.
     loader: "custom",
     loaderFile: "./src/utils/arvanImageLoader.ts",
     // Allow local backend image URLs (localhost/127.0.0.1) during local development.

@@ -75,10 +75,13 @@ describe("arvanImageLoader", () => {
       expect(arvanImageLoader({ src, width: 640, quality: 70 })).toBe(src);
     });
 
-    it("keeps local public assets on the optimizer, not the CDN", () => {
+    // `images.loader: "custom"` removes `/_next/image` from the server, so a
+    // public asset has to be returned as the plain path the app already serves.
+    it("serves local public assets from their own path, untouched", () => {
       const result = arvanImageLoader({ src: "/images/hero.png", width: 640, quality: 70 });
+      expect(result).toBe("/images/hero.png");
       expect(result).not.toContain(CDN);
-      expect(result).toContain("/_next/image");
+      expect(result).not.toContain("/_next/image");
     });
 
     it("returns nothing for a source the allowlist rejects", () => {
@@ -88,21 +91,23 @@ describe("arvanImageLoader", () => {
   });
 
   describe("fallbacks", () => {
-    it("uses the Next optimizer when no CDN is configured", () => {
+    it("serves uploads straight from the API origin when no CDN is configured", () => {
       process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "";
 
       const result = arvanImageLoader({ src: "/uploads/shirt.webp", width: 640, quality: 70 });
-      expect(result).toContain("/_next/image");
-      expect(result).not.toContain(CDN);
+      expect(result).toBe(`${API}/uploads/shirt.webp`);
+      expect(result).not.toContain("/_next/image");
     });
 
-    // The phase-1 rollback: one changed build argument, no code change.
-    it("uses the Next optimizer when the loader is pinned back to next", () => {
+    // The rollback: one changed build argument, no code change. It cannot mean
+    // "use the Next optimizer" any more — a custom loader removes it — so it
+    // means "stop asking the edge to resize".
+    it("stops emitting a width when the loader is pinned back to next", () => {
       process.env.NEXT_PUBLIC_IMAGE_LOADER = "next";
 
       const result = arvanImageLoader({ src: "/uploads/shirt.webp", width: 640, quality: 70 });
-      expect(result).toContain("/_next/image");
-      expect(result).not.toContain(CDN);
+      expect(result).toBe(`${CDN}/uploads/shirt.webp`);
+      expect(result).not.toContain("/_next/image");
     });
   });
 
