@@ -189,6 +189,16 @@ async function buildPlan({ classified, legacyMaps, engine, registry }) {
         const sourceVariation = sourceById.get(String(variation.externalId));
         if (!sourceVariation) throw new Error(`SOURCE_VARIATION_MISSING:${variation.externalId}`);
         const desired = Repair.desiredForVariation(sourceVariation, context);
+        const legacyRelations = [
+          ["color", variation.colorIds?.[0], desired.product_variation_color],
+          ["size", variation.sizeIds?.[0], desired.product_variation_size],
+          ["model", variation.modelIds?.[0], desired.product_variation_model],
+        ];
+        for (const [projection, currentId, desiredId] of legacyRelations) {
+          if (Number(currentId || 0) !== Number(desiredId || 0)) {
+            throw new Error(`LEGACY_RELATION_MISMATCH:${variation.id}:${projection}`);
+          }
+        }
         if (Repair.variationNeedsRepair(variation, desired)) {
           productActions.push({
             productId: product.id, productExternalId: product.externalId, slug: product.slug,

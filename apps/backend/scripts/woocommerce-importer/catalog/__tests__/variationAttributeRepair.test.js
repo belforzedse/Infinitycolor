@@ -136,6 +136,33 @@ test("source-backed planner repairs exact external identity and then proposes ze
   assert.equal(second.actions.length, 0);
 });
 
+test("source-backed planner fails closed when a legacy relation is inconsistent", async () => {
+  const product = fixtureProduct();
+  const source = sourceFixtures();
+  source.product.attributes.unshift({
+    id: 8, name: "سایز", visible: true, variation: true, options: ["M"],
+  });
+  source.variation.attributes.unshift({ id: 8, name: "سایز", option: "m" });
+  source.registry.set(8, {
+    id: 8, name: "سایز", slug: "pa_size",
+    termsByName: new Map([["m", { id: 900, name: "M", slug: "m" }]]),
+  });
+  const plan = await buildPlan({
+    classified: Repair.classifyPopulation([product]),
+    legacyMaps: { Color: new Map(), Size: new Map([["term:900", [41]]]), Model: new Map() },
+    engine: {
+      woo: {
+        fetchProductById: async () => source.product,
+        fetchAllVariations: async () => [source.variation],
+      },
+    },
+    registry: source.registry,
+  });
+
+  assert.equal(plan.actions.length, 0);
+  assert.match(plan.ambiguous[0].reasons[0], /LEGACY_RELATION_MISMATCH/);
+});
+
 test("canonical mapper rejects a source term that the product assignment cannot resolve", () => {
   const destination = fixtureProduct();
   const source = sourceFixtures();
