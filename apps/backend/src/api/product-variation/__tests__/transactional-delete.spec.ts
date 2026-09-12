@@ -25,6 +25,10 @@ describe("product variation operational field contract", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockStrapi.entityService = {
+      findMany: jest.fn(async () => []),
+      findOne: jest.fn(async () => null),
+    };
   });
 
   it("allows product ownership when creating a variation", async () => {
@@ -41,6 +45,25 @@ describe("product variation operational field contract", () => {
       "This role cannot write protected fields: product, AttributeSignature",
     );
     expect(base.update).not.toHaveBeenCalled();
+  });
+
+  it("derives a canonical signature for admin-created generic variations", async () => {
+    mockStrapi.entityService.findMany.mockResolvedValue([
+      { id: 725, product_attribute: { id: 31 } },
+    ]);
+    const ctx = createCtx({
+      product: 4557,
+      SKU: "SKU-CUSTOM",
+      Price: 299000,
+      IsPublished: false,
+      selected_attribute_terms: [725],
+    });
+    await controller.create(ctx as any);
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+    expect(ctx.request.body.data.AttributeSignature).toBe(
+      "attribute:31=725",
+    );
+    expect(base.create).toHaveBeenCalledWith(ctx);
   });
 });
 

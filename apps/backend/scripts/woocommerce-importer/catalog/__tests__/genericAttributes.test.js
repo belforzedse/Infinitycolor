@@ -98,3 +98,27 @@ test("selectVariationTerms: maps exact terms and permits an unset optional size"
   assert.deepEqual(missingSize.omitted.map((item) => item.code), ["OPTIONAL_SIZE_UNSET"]);
   assert.deepEqual(missingSize.selected.map(({ dimension }) => dimension.legacyProjection), ["None"]);
 });
+
+test("selectVariationTerms maps Woo percent-encoded global slugs to the exact registry term", () => {
+  const registryWithEncodedSlug = new Map([[10, {
+    id: 10,
+    name: "کد رنگ",
+    slug: "کد-رنگ",
+    termsByName: new Map([["کد 3", {
+      id: 3035,
+      name: "کد 3",
+      slug: "%da%a9%d8%af-3",
+    }]]),
+  }]]);
+  const plan = G.buildProductAttributePlan({
+    id: 1291566,
+    attributes: [{ id: 10, name: "کد رنگ", variation: true, options: ["کد 3"] }],
+  }, registryWithEncodedSlug);
+  const selection = G.selectVariationTerms({
+    id: 1291570,
+    attributes: [{ id: 10, name: "کد رنگ", option: "%da%a9%d8%af-3" }],
+  }, plan);
+  assert.deepEqual(selection.errors, []);
+  assert.equal(selection.selected[0].term.externalId, "term:3035");
+  assert.equal(selection.selected[0].term.title, "کد 3");
+});

@@ -133,6 +133,65 @@ test("ensureOrderReferencedVariations creates missing variation with stock 0", a
   assert.equal(created.some((row) => row.stock && row.stock.count === 0), true);
 });
 
+test("ensureOrderReferencedVariations persists canonical custom relations and signature", async () => {
+  const created = [];
+  const repo = {
+    async findByExternalId(endpoint) {
+      return endpoint === "/products" ? { id: 4557 } : null;
+    },
+    async upsert(args) { created.push(args); return { id: 30173, mode: "created" }; },
+    async upsertStock() { return "created"; },
+  };
+  const sourceProduct = {
+    id: 1291566, type: "variable", variations: [1291570],
+    attributes: [{ id: 10, name: "کد رنگ", variation: true, options: ["کد 1"] }],
+  };
+  const sourceVariation = {
+    id: 1291570, parent_id: 1291566, regular_price: "299000", price: "299000",
+    status: "publish", manage_stock: true, stock_quantity: 1,
+    attributes: [{ id: 10, name: "کد رنگ", option: "کد 1" }],
+  };
+  let verified = null;
+  const catalogEngine = {
+    async prepareProductAttributeContext(product, destinationProductId) {
+      assert.equal(product.id, 1291566);
+      assert.equal(destinationProductId, 4557);
+      return {
+        plan: {
+          sourceProductId: 1291566,
+          dimensions: [{
+            sourceKey: "global:10", isVariation: true, legacyProjection: "None",
+            termsBySourceKey: new Map([["کد 1", { sourceKey: "کد 1", title: "کد 1" }]]),
+          }],
+        },
+        resolvedDimensions: new Map([["global:10", {
+          definitionId: 31,
+          resolvedTerms: new Map([["کد 1", { id: 725 }]]),
+        }]]),
+      };
+    },
+    async verifyVariationAttributeRelations(id, payload) {
+      verified = { id, payload };
+      return { ok: true };
+    },
+  };
+  const result = await ensureOrderReferencedVariations({
+    source: {
+      getProduct: async () => sourceProduct,
+      woo: { get: async () => ({ data: sourceVariation }) },
+    },
+    repo,
+    catalogEngine,
+    order: { line_items: [{ id: 1, product_id: 1291566, variation_id: 1291570 }] },
+    logger: { info() {}, warn() {} },
+  });
+  assert.deepEqual(result.ensured, ["1291570"]);
+  const variationWrite = created.find((call) => call.endpoint === "/product-variations");
+  assert.deepEqual(variationWrite.payload.selected_attribute_terms, [725]);
+  assert.equal(variationWrite.payload.AttributeSignature, "attribute:31=725");
+  assert.equal(verified.id, 30173);
+});
+
 test("syncOrderRow isolates wallet failure and still upserts the order", async () => {
   const config = getSyncConfig(baseEnv());
   const upserted = [];

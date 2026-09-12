@@ -64,7 +64,8 @@
     "clean": "rm -rf .cache build dist .tmp",
     "logs": "pm2 logs infinity-backend --lines 100",
     "validate": "pnpm run check-types && pnpm run test && pnpm run test:importer",
-    "repair:slugs": "node scripts/repair-product-slugs.js"
+    "repair:slugs": "node scripts/repair-product-slugs.js",
+    "repair:variation-attributes": "node scripts/repair-woocommerce-variation-attributes.js"
   },
   "dependencies": {
     "@repo/api": "workspace:*",
