@@ -124,6 +124,7 @@ function makeEngine(opts = {}) {
   };
   engine.repo.resolveAttributeId = async () => 1;
   engine.repo.http = { put: async (url, body) => { calls.puts.push({ url, body }); return {}; } };
+  engine.verifyVariationAttributeRelations = async () => ({ ok: true });
 
   engine.woo.fetchAllCategories = async () => [
     { id: 5, name: "کیف", slug: "kif", parent: 0 },

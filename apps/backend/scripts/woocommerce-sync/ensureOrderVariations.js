@@ -8,6 +8,7 @@
  */
 
 const CatalogT = require("../woocommerce-importer/catalog/lib/transforms");
+const CatalogG = require("../woocommerce-importer/catalog/lib/genericAttributes");
 
 function lineRefs(order) {
   const lines = Array.isArray(order?.line_items) ? order.line_items : [];
@@ -24,6 +25,7 @@ function lineRefs(order) {
  * @param {object} args
  * @param {import('../woocommerce-importer/migration-v2/lib/source').WordPressSource} args.source
  * @param {import('../woocommerce-importer/catalog/lib/strapiRepo')} args.repo
+ * @param {import('../woocommerce-importer/catalog/engine').CatalogEngine} [args.catalogEngine]
  * @param {object} args.order Woo order payload (needs line_items)
  * @param {{ warn?: Function, info?: Function, debug?: Function }} [args.logger]
  * @param {Map<string, { id:number }>} [args.variationIndex] Optional external_id -> row
@@ -37,6 +39,7 @@ function lineRefs(order) {
 async function ensureOrderReferencedVariations({
   source,
   repo,
+  catalogEngine = null,
   order,
   logger = console,
   variationIndex = null,
@@ -96,6 +99,26 @@ async function ensureOrderReferencedVariations({
         data.Price = 0;
       }
 
+      const hasVariationAttributes = (Array.isArray(wcProduct?.attributes)
+        && wcProduct.attributes.some((attribute) => attribute?.variation === true))
+        || (Array.isArray(wcVariation?.attributes) && wcVariation.attributes.length > 0);
+      if (!catalogEngine && hasVariationAttributes) {
+        const error = new Error("ORDER_VARIATION_ATTRIBUTE_CONTEXT_REQUIRED");
+        error.code = "ORDER_VARIATION_ATTRIBUTE_CONTEXT_REQUIRED";
+        throw error;
+      }
+      const attributeContext = catalogEngine
+        ? await catalogEngine.prepareProductAttributeContext(wcProduct, Number(parent.id))
+        : { plan: { sourceProductId: Number(wcProduct.id), dimensions: [] }, resolvedDimensions: new Map() };
+      Object.assign(
+        data,
+        CatalogG.buildVariationAttributePayload(
+          wcVariation,
+          attributeContext.plan,
+          attributeContext.resolvedDimensions,
+        ),
+      );
+
       // Passing the shared index (when we have one) makes repo.upsert write the
       // new row straight back into it, so a later order referencing the same
       // variation is a Map hit rather than another POST + 409 recovery.
@@ -106,6 +129,14 @@ async function ensureOrderReferencedVariations({
         index: variationIndex || new Map(),
         sourceTimestamps,
       });
+      const relationCheck = catalogEngine
+        ? await catalogEngine.verifyVariationAttributeRelations(variationStrapiId, data)
+        : { ok: true };
+      if (!relationCheck.ok) {
+        const error = new Error(`ORDER_VARIATION_ATTRIBUTE_PERSISTENCE_FAILED:${relationCheck.error}`);
+        error.code = "ORDER_VARIATION_ATTRIBUTE_PERSISTENCE_FAILED";
+        throw error;
+      }
 
       const managed = wcVariation.manage_stock === true;
       const qty = Number(wcVariation.stock_quantity);

@@ -169,6 +169,29 @@ class CatalogEngine {
 
     this.multiplier = config.import.currency.multiplier || 1;
     this.statusMappings = config.import.statusMappings.product || {};
+    this.attributeIndexesPromise = null;
+    this.globalAttributeRegistryPromise = null;
+  }
+
+  async prepareProductAttributeContext(wcProduct, destinationProductId) {
+    if (!this.attributeIndexesPromise) {
+      this.attributeIndexesPromise = (async () => {
+        await this.repo.preloadAttributes();
+        await this.repo.preloadGenericAttributes();
+      })();
+    }
+    await this.attributeIndexesPromise;
+    if (!this.globalAttributeRegistryPromise) {
+      this.globalAttributeRegistryPromise = this.woo.fetchGlobalAttributeRegistry();
+    }
+    const registry = await this.globalAttributeRegistryPromise;
+    const plan = G.buildProductAttributePlan(wcProduct, registry);
+    const productId = Number(destinationProductId);
+    if (!Number.isInteger(productId) || productId <= 0) {
+      throw new Error("A destination product id is required for attribute resolution");
+    }
+    const synced = await this.repo.syncProductAttributePlan(plan, productId);
+    return { plan, resolvedDimensions: synced.resolvedDimensions };
   }
 
   async preflight() {
@@ -1527,6 +1550,14 @@ class CatalogEngine {
         this.mapping.set("variations", wcVariation.id, id, { productId: parentProduct.id, sku: data.SKU });
         report.count("variations", mode);
         variationStrapiId = id;
+        const relationCheck = await this.verifyVariationAttributeRelations(id, data);
+        if (!relationCheck.ok) {
+          const error = new Error(
+            `Variation attribute persistence failed for ${wcVariation.id}: ${relationCheck.error}`,
+          );
+          error.code = "VARIATION_ATTRIBUTE_PERSISTENCE_FAILED";
+          throw error;
+        }
         ctx.variationWriteMs = (ctx.variationWriteMs || 0) + Number(process.hrtime.bigint() - variationWriteStarted) / 1e6;
         await ctx.crashHooks?.afterVariationWrite?.({ wcVariation, variationStrapiId: id, mode });
       }
@@ -1633,46 +1664,60 @@ class CatalogEngine {
   }
 
   async attachAttributes(wcVariation, data, attributeContext) {
-    const selection = G.selectVariationTerms(wcVariation, attributeContext.plan);
-    if (selection.errors.length > 0) {
-      const error = new Error(
-        `Variation attribute mapping failed: ${selection.errors.map((item) => item.code).join(",")}`,
-      );
-      error.code = "VARIATION_ATTRIBUTE_MAPPING_FAILED";
-      throw error;
-    }
-    if (!attributeContext.resolvedDimensions) {
-      throw new Error("Resolved product attributes are required for a write run");
-    }
+    Object.assign(
+      data,
+      G.buildVariationAttributePayload(
+        wcVariation,
+        attributeContext.plan,
+        attributeContext.resolvedDimensions,
+      ),
+    );
+  }
 
-    data.product_variation_color = null;
-    data.product_variation_size = null;
-    data.product_variation_model = null;
-    data.selected_attribute_terms = [];
-    const signatureTokens = [];
-
-    for (const { dimension, term } of selection.selected) {
-      const resolvedDimension = attributeContext.resolvedDimensions.get(dimension.sourceKey);
-      const resolvedTerm = resolvedDimension?.resolvedTerms.get(term.sourceKey);
-      if (!resolvedDimension || !resolvedTerm?.id) {
-        throw new Error(`Resolved attribute term missing: ${dimension.sourceKey}/${term.sourceKey}`);
+  async verifyVariationAttributeRelations(variationId, expected) {
+    try {
+      const response = await this.repo.http.get(`/product-variations/${variationId}`, {
+        params: {
+          "fields[0]": "AttributeSignature",
+          "populate[product_variation_color][fields][0]": "id",
+          "populate[product_variation_size][fields][0]": "id",
+          "populate[product_variation_model][fields][0]": "id",
+          "populate[selected_attribute_terms][fields][0]": "id",
+        },
+      });
+      const raw = response?.data?.data || response?.data || response;
+      const attrs = raw?.attributes || raw || {};
+      const relationId = (value) => Number(value?.data?.id ?? value?.id ?? value) || null;
+      const relationIds = (value) => {
+        const rows = value?.data ?? value ?? [];
+        return (Array.isArray(rows) ? rows : [rows])
+          .map((row) => Number(row?.id ?? row))
+          .filter((id) => Number.isInteger(id) && id > 0)
+          .sort((left, right) => left - right);
+      };
+      const got = {
+        product_variation_color: relationId(attrs.product_variation_color),
+        product_variation_size: relationId(attrs.product_variation_size),
+        product_variation_model: relationId(attrs.product_variation_model),
+        selected_attribute_terms: relationIds(attrs.selected_attribute_terms),
+        AttributeSignature: String(attrs.AttributeSignature || ""),
+      };
+      const wanted = {
+        product_variation_color: Number(expected.product_variation_color) || null,
+        product_variation_size: Number(expected.product_variation_size) || null,
+        product_variation_model: Number(expected.product_variation_model) || null,
+        selected_attribute_terms: [...(expected.selected_attribute_terms || [])]
+          .map(Number)
+          .sort((left, right) => left - right),
+        AttributeSignature: String(expected.AttributeSignature || ""),
+      };
+      if (JSON.stringify(got) !== JSON.stringify(wanted)) {
+        return { ok: false, error: `expected=${JSON.stringify(wanted)} got=${JSON.stringify(got)}` };
       }
-
-      if (dimension.legacyProjection === "Color") {
-        if (!resolvedTerm.legacyId) throw new Error(`Legacy color projection missing: ${term.title}`);
-        data.product_variation_color = resolvedTerm.legacyId;
-        signatureTokens.push(`color=${resolvedTerm.legacyId}`);
-      } else if (dimension.legacyProjection === "Size") {
-        if (!resolvedTerm.legacyId) throw new Error(`Legacy size projection missing: ${term.title}`);
-        data.product_variation_size = resolvedTerm.legacyId;
-        signatureTokens.push(`size=${resolvedTerm.legacyId}`);
-      } else {
-        data.selected_attribute_terms.push(resolvedTerm.id);
-        signatureTokens.push(`attribute:${resolvedDimension.definitionId}=${resolvedTerm.id}`);
-      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error.message || "relation-readback-failed" };
     }
-
-    data.AttributeSignature = signatureTokens.sort().join("|");
   }
 }
 

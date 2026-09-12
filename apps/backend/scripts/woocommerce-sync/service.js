@@ -288,6 +288,11 @@ class WooSyncService {
     return this._catalogEngine.repo;
   }
 
+  catalogEngine() {
+    this.catalogRepo();
+    return this._catalogEngine;
+  }
+
   async withLease(name, action) {
     const lease = await this.state.acquireLease(name);
     if (!lease) return { skipped: true, reason: "lease-held" };
@@ -474,6 +479,7 @@ class WooSyncService {
       variationRepair = await ensureFn({
         source: this.source,
         repo: this.catalogRepo(),
+        catalogEngine: this.catalogEngine(),
         order,
         logger: console,
         variationIndex: options.variationIndex || null,

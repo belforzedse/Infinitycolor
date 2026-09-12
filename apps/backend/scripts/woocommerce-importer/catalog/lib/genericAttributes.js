@@ -6,7 +6,13 @@ const { resolveColorMapping } = require("../../utils/colorMappings");
 const EXTERNAL_SOURCE = "woocommerce";
 
 function canonicalKey(value) {
-  return String(value ?? "")
+  let decoded = String(value ?? "");
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    // Invalid percent escapes are kept verbatim and will fail exact matching.
+  }
+  return decoded
     .normalize("NFKC")
     .replace(/ي/g, "ی")
     .replace(/ك/g, "ک")
@@ -53,10 +59,11 @@ function colorCodeFor(type, title) {
     : undefined;
 }
 
-function makeTerm({ externalId, sourceKey, title, slug, position, type }) {
+function makeTerm({ externalId, sourceKey, sourceAliases = [], title, slug, position, type }) {
   return {
     externalId,
     sourceKey,
+    sourceAliases: Array.from(new Set([sourceKey, ...sourceAliases].filter(Boolean))),
     title: String(title || "").trim(),
     slug: String(slug || "").trim(),
     position: Number(position || 0),
@@ -112,12 +119,26 @@ function buildProductAttributePlan(wcProduct, globalRegistry = new Map()) {
             sourceKey: optionKey,
             title,
             slug: globalTerm?.slug || optionKey.replace(/\s+/g, "-"),
+            sourceAliases: globalTerm?.slug ? [canonicalKey(globalTerm.slug)] : [],
             position: globalTerm?.menu_order ?? optionPosition,
             type,
           }),
         );
       },
     );
+
+    const termsBySourceKey = new Map();
+    const ambiguousTermKeys = new Set();
+    for (const term of terms) {
+      for (const alias of term.sourceAliases) {
+        if (termsBySourceKey.has(alias) && termsBySourceKey.get(alias) !== term) {
+          ambiguousTermKeys.add(alias);
+          termsBySourceKey.delete(alias);
+        } else if (!ambiguousTermKeys.has(alias)) {
+          termsBySourceKey.set(alias, term);
+        }
+      }
+    }
 
     dimensions.push({
       sourceKey,
@@ -133,7 +154,8 @@ function buildProductAttributePlan(wcProduct, globalRegistry = new Map()) {
       definitionExternalId,
       assignmentExternalId: `assignment:${sourceProductId}:${sourceKey}`,
       terms,
-      termsBySourceKey: new Map(terms.map((term) => [term.sourceKey, term])),
+      termsBySourceKey,
+      ambiguousTermKeys,
     });
   });
 
@@ -162,6 +184,10 @@ function selectVariationTerms(wcVariation, productPlan) {
     }
     if (!dimension.isVariation) continue;
     const optionKey = canonicalKey(attribute?.option);
+    if (dimension.ambiguousTermKeys?.has(optionKey)) {
+      errors.push({ code: "AMBIGUOUS_TERM", sourceKey: key, optionKey });
+      continue;
+    }
     const term = dimension.termsBySourceKey.get(optionKey);
     if (!term) {
       errors.push({ code: "UNKNOWN_TERM", sourceKey: key, optionKey });
@@ -189,6 +215,70 @@ function selectVariationTerms(wcVariation, productPlan) {
   });
 
   return { selected, errors, omitted };
+}
+
+/**
+ * Resolve one Woo variation's selected values to the exact Strapi relation ids.
+ * This is the canonical writer used by catalog imports, order-completeness
+ * repair, and the historical-data repair command. It deliberately returns the
+ * complete relation shape (including explicit nulls/empty arrays) so a retry
+ * cannot retain stale values from an older source variation.
+ */
+function buildVariationAttributePayload(wcVariation, productPlan, resolvedDimensions) {
+  const selection = selectVariationTerms(wcVariation, productPlan);
+  if (selection.errors.length > 0) {
+    const error = new Error(
+      `Variation attribute mapping failed: ${selection.errors.map((item) => item.code).join(",")}`,
+    );
+    error.code = "VARIATION_ATTRIBUTE_MAPPING_FAILED";
+    error.details = selection.errors;
+    throw error;
+  }
+  if (!resolvedDimensions) {
+    throw new Error("Resolved product attributes are required for a variation write");
+  }
+
+  const payload = {
+    product_variation_color: null,
+    product_variation_size: null,
+    product_variation_model: null,
+    selected_attribute_terms: [],
+    AttributeSignature: "",
+  };
+  const signatureTokens = [];
+
+  for (const { dimension, term } of selection.selected) {
+    const resolvedDimension = resolvedDimensions.get(dimension.sourceKey);
+    const resolvedTerm = resolvedDimension?.resolvedTerms?.get(term.sourceKey);
+    if (!resolvedDimension?.definitionId || !resolvedTerm?.id) {
+      const error = new Error(
+        `Resolved attribute term missing: ${dimension.sourceKey}/${term.sourceKey}`,
+      );
+      error.code = "RESOLVED_VARIATION_TERM_MISSING";
+      throw error;
+    }
+
+    if (dimension.legacyProjection === "Color") {
+      if (!resolvedTerm.legacyId) throw new Error(`Legacy color projection missing: ${term.title}`);
+      payload.product_variation_color = resolvedTerm.legacyId;
+      signatureTokens.push(`color=${resolvedTerm.legacyId}`);
+    } else if (dimension.legacyProjection === "Size") {
+      if (!resolvedTerm.legacyId) throw new Error(`Legacy size projection missing: ${term.title}`);
+      payload.product_variation_size = resolvedTerm.legacyId;
+      signatureTokens.push(`size=${resolvedTerm.legacyId}`);
+    } else if (dimension.legacyProjection === "Model") {
+      if (!resolvedTerm.legacyId) throw new Error(`Legacy model projection missing: ${term.title}`);
+      payload.product_variation_model = resolvedTerm.legacyId;
+      signatureTokens.push(`model=${resolvedTerm.legacyId}`);
+    } else {
+      payload.selected_attribute_terms.push(resolvedTerm.id);
+      signatureTokens.push(`attribute:${resolvedDimension.definitionId}=${resolvedTerm.id}`);
+    }
+  }
+
+  payload.selected_attribute_terms.sort((left, right) => left - right);
+  payload.AttributeSignature = signatureTokens.sort().join("|");
+  return payload;
 }
 
 function definitionPayload(dimension, ownerProductId) {
@@ -237,6 +327,7 @@ module.exports = {
   attributeType,
   buildProductAttributePlan,
   selectVariationTerms,
+  buildVariationAttributePayload,
   definitionPayload,
   termPayload,
   assignmentPayload,
