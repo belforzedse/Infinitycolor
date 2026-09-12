@@ -85,7 +85,11 @@ export default function ProductPublicationCard({
               ? "زمان‌بندی لغو شد"
               : action === "unpublish"
                 ? "محصول از انتشار خارج شد"
-                : "وضعیت انتشار محصول به‌روزرسانی شد",
+                : action === "publish-now"
+                  ? result.publishedVariationCount > 0
+                    ? `محصول و ${result.publishedVariationCount} تنوع آن منتشر شد`
+                    : "محصول منتشر شد"
+                  : "وضعیت انتشار محصول به‌روزرسانی شد",
         );
       }
       if (action === "schedule") setShowSchedule(false);

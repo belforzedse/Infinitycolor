@@ -28,6 +28,31 @@ export default {
         middlewares: [],
       },
     },
+    // Reversible removal to the recycle bin and its undo. Separate routes rather
+    // than a `removedAt` write through the generic update path, so each half is
+    // gated on its own capability and `removedAt` stays out of the operational
+    // free-write allowlist. Permanent deletion is `product.delete` and is not
+    // reachable from either of these.
+    {
+      method: "POST",
+      path: "/products/:id/soft-delete",
+      handler: "product.softDelete",
+      config: {
+        auth: { scope: [] },
+        policies: [capabilityPolicy("product.softDelete")],
+        middlewares: [],
+      },
+    },
+    {
+      method: "POST",
+      path: "/products/:id/restore",
+      handler: "product.restore",
+      config: {
+        auth: { scope: [] },
+        policies: [capabilityPolicy("product.restore")],
+        middlewares: [],
+      },
+    },
     {
       method: "PUT",
       path: "/products/:id/display-date",

@@ -47,6 +47,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   const [showDuplicateConfirm, setShowDuplicateConfirm] = useState(false);
   // Raw LastEditedByAdminAt used to seed the display-date picker (admin reorder control).
   const [displayDate, setDisplayDate] = useState<string | null>(null);
+  const [variationsRefreshKey, setVariationsRefreshKey] = useState(0);
 
   const isDirty = () =>
     savedSnapshotRef.current !== null && JSON.stringify(productData) !== savedSnapshotRef.current;
@@ -174,6 +175,8 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
     const refreshed = transformToProductData(refreshedResult.data.attributes);
     setProductData(refreshed);
     savedSnapshotRef.current = JSON.stringify(refreshed);
+    // Publishing the product also publishes its variations server-side.
+    setVariationsRefreshKey((key) => key + 1);
   };
 
   const handleDuplicateProduct = async () => {
@@ -257,7 +260,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           />
         )}
         {!isSimpleProduct && canManageVariations && (
-          <PublishAllVariations productId={Number(id)} />
+          <PublishAllVariations productId={Number(id)} refreshKey={variationsRefreshKey} />
         )}
         {/* <SetPrice />
         <SetStatus /> */}
@@ -271,7 +274,13 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         <Tabs tabs={tabs} tabsClassName="!bg-transparent">
           {[
             <Overall key={"overall"} productData={productData} isEditMode />,
-            ...(!isSimpleProduct ? [<Variables key={"variables"} productId={Number(id)} />] : []),
+            ...(!isSimpleProduct ? [
+                  <Variables
+                    key={"variables"}
+                    productId={Number(id)}
+                    refreshKey={variationsRefreshKey}
+                  />,
+                ] : []),
             ...(canManageSizeGuide
               ? [<Sizes key={"sizes"} ref={sizeGuideRef} productId={Number(id)} />]
               : []),

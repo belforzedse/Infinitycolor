@@ -162,8 +162,13 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     "api::product-variation-model": { "product-variation-model": CREATE_UPDATE_ACTIONS },
     "api::product-attribute": { "product-attribute": CREATE_UPDATE_ACTIONS },
     "api::product-attribute-term": { "product-attribute-term": CREATE_UPDATE_ACTIONS },
+    // Delete is granted here and nowhere else in the operational catalog on
+    // purpose. An assignment is a join row (product × attribute), so deleting one
+    // detaches an attribute from a single product and destroys no shared data —
+    // unlike deleting a colour or a term, which other products still reference.
+    // Without it a seller could attach a custom attribute but never remove it.
     "api::product-attribute-assignment": {
-      "product-attribute-assignment": CREATE_UPDATE_ACTIONS,
+      "product-attribute-assignment": CHILD_CRUD_ACTIONS,
     },
   },
   "product.size-guide.manage": {
@@ -177,6 +182,11 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   "product.size-guide.delete": {
     "api::product-size-helper": { "product-size-helper": ["delete"] },
   },
+  // The capability policy on these routes is not enough on its own — Strapi U&P
+  // still 403s a route whose action the role has no permission row for, the same
+  // way it does for admin-product-list.query above.
+  "product.softDelete": { "api::product": { product: ["softDelete"] } },
+  "product.restore": { "api::product": { product: ["restore"] } },
   "product.delete": { "api::product": { product: ["delete"] } },
   "product.homepage.manage": {
     "api::settings": {
@@ -587,6 +597,10 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       "api::admin-dashboard": { "admin-dashboard": ["query"] },
     },
   },
+  support: {
+    inherits: ["staff-self"],
+    grants: grantsForAdminRole("support"),
+  },
   editor: {
     inherits: ["staff-self"],
     grants: grantsForAdminRole("editor"),
@@ -843,14 +857,30 @@ async function captureRoleSyncSnapshot(
     )
     .map((role) => Number(role.id));
   const userQuery = strapi.query("plugin::users-permissions.user") as any;
-  const assignmentRows =
-    staffRoleIds.length > 0 && typeof userQuery?.findMany === "function"
-      ? await userQuery.findMany({
-          where: { role: { id: { $in: staffRoleIds } } },
-          select: ["id"],
-          populate: { role: { select: ["id"] } },
-        })
-      : [];
+  // `staffRoleIds` deliberately includes the customer role, and `populate` makes
+  // Strapi resolve roles with a second `... WHERE user_id IN (...)` carrying ONE
+  // BIND PARAMETER PER ROW. Unpaged, that sends one parameter per customer and
+  // blows past PostgreSQL's 65535-parameter ceiling, which throws here, fails
+  // bootstrap, and crash-loops every backend container — a latent bomb that goes
+  // off the first time the customer table crosses ~65k. Page it so each populate
+  // stays bounded; the snapshot produced is identical.
+  const ROLE_SNAPSHOT_PAGE_SIZE = 2000;
+  const assignmentRows: any[] = [];
+  if (staffRoleIds.length > 0 && typeof userQuery?.findMany === "function") {
+    for (let offset = 0; ; offset += ROLE_SNAPSHOT_PAGE_SIZE) {
+      const page = await userQuery.findMany({
+        where: { role: { id: { $in: staffRoleIds } } },
+        select: ["id"],
+        populate: { role: { select: ["id"] } },
+        orderBy: { id: "asc" },
+        limit: ROLE_SNAPSHOT_PAGE_SIZE,
+        offset,
+      });
+      if (!Array.isArray(page) || page.length === 0) break;
+      assignmentRows.push(...page);
+      if (page.length < ROLE_SNAPSHOT_PAGE_SIZE) break;
+    }
+  }
 
   const snapshot: RoleSyncSnapshot = {
     capturedAt: new Date().toISOString(),
@@ -1099,6 +1129,7 @@ function isCounterOnlyUpdate(uid: string, payload: Record<string, unknown> | und
 async function ensurePluginRolesAndPermissions(strapi: Strapi) {
   const descriptions: Record<string, string> = {
     superadmin: "Full system administration",
+    support: "Product review moderation and the issue report inbox only",
     editor: "Blog-only content administration",
     "seller-1": "Non-destructive catalog administration",
     "seller-2": "Seller 1 plus categories, order read, status changes, and notes",

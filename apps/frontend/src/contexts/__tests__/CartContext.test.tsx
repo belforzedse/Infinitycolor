@@ -25,6 +25,7 @@ jest.mock("@/services", () => ({
     removeCartItem: jest.fn().mockResolvedValue({}),
     updateCartItem: jest.fn().mockResolvedValue({}),
     clearCart: jest.fn().mockResolvedValue({}),
+    mergeGuestCart: jest.fn().mockResolvedValue({ adjusted: [], rejected: [] }),
   },
 }));
 
@@ -33,6 +34,12 @@ jest.mock("@/utils/offlineQueue", () => ({
   removeQueuedAction: jest.fn(),
   setupOfflineQueueListener: jest.fn(() => jest.fn()),
   isOnline: jest.fn(() => true),
+}));
+
+jest.mock("@/utils/notify", () => ({
+  __esModule: true,
+  notify: { success: jest.fn(), error: jest.fn() },
+  default: { success: jest.fn(), error: jest.fn() },
 }));
 
 jest.mock("@/utils/haptics", () => ({
@@ -69,6 +76,7 @@ const mockCartService = jest.requireMock("@/services").CartService as {
   removeCartItem: jest.Mock;
   updateCartItem: jest.Mock;
   clearCart: jest.Mock;
+  mergeGuestCart: jest.Mock;
 };
 const mockIsOnline = jest.requireMock("@/utils/offlineQueue").isOnline as jest.Mock;
 
@@ -315,3 +323,65 @@ describe("CartProvider identity and storage hardening", () => {
     expect(localStorage.getItem("cart")).toBeNull();
   });
 });
+
+describe("CartProvider guest cart handover", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthStateListener = undefined;
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation((listener) => {
+      mockAuthStateListener = listener;
+      return jest.fn();
+    });
+    mockIsOnline.mockReturnValue(true);
+    mockCartService.getUserCart.mockResolvedValue({ cart_items: [] });
+    mockCartService.checkCartStock.mockResolvedValue({ valid: true });
+    mockCartService.mergeGuestCart.mockResolvedValue({ adjusted: [], rejected: [] });
+    localStorage.clear();
+  });
+
+  it("merges a stored guest cart when the provider initializes for a signed-in shopper", async () => {
+    // The live central-auth handoff never passes through the legacy login pages that
+    // used to trigger this, so the merge has to happen where the provider resolves.
+    localStorage.setItem("cart", JSON.stringify([{ ...cartItem, variationId: "42" }]));
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("account-a");
+
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(mockCartService.mergeGuestCart).toHaveBeenCalledTimes(1));
+    const [, mergeItems] = mockCartService.mergeGuestCart.mock.calls[0];
+    expect(mergeItems).toEqual([{ productVariationId: 42, quantity: 1 }]);
+    await waitFor(() => expect(localStorage.getItem("cart")).toBeNull());
+  });
+
+  it("does not call the merge endpoint when there is no guest cart", async () => {
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("account-a");
+
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("cart-count")).toHaveTextContent("0"));
+    expect(mockCartService.mergeGuestCart).not.toHaveBeenCalled();
+  });
+
+  it("leaves the guest cart in place for a signed-out shopper", async () => {
+    localStorage.setItem("cart", JSON.stringify([cartItem]));
+
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("cart-count")).toHaveTextContent("1"));
+    expect(mockCartService.mergeGuestCart).not.toHaveBeenCalled();
+  });
+});
+

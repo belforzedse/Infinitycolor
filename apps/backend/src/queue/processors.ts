@@ -5,6 +5,7 @@ import { runExpireStockReservationsTick } from "../jobs/expireStockReservations"
 import {
   ANALYTICS_MAINTENANCE_JOBS,
   COMMERCE_MAINTENANCE_JOBS,
+  MEDIA_JOBS,
   SNAPPAY_PAYMENT_JOBS,
   WALLET_TOPUP_PAYMENT_JOBS,
   type MaintenanceJobData,
@@ -57,6 +58,26 @@ export async function processMaintenanceJob(
     case ANALYTICS_MAINTENANCE_JOBS.analyticsOutboxRepair: {
       const { runAnalyticsOutboxRepairTick } = await import("../jobs/analyticsOutboxRepair");
       return runAnalyticsOutboxRepairTick(strapi);
+    }
+    case MEDIA_JOBS.normalizeStoryVideo: {
+      const { storyId } = job.data as { storyId: number };
+      const { normalizeStoryVideo } = await import("../services/media/normalize-story-video");
+      const { FfmpegUnavailableError } = await import("../services/media/video-normalization");
+      const path = await import("node:path");
+      try {
+        return await normalizeStoryVideo(storyId, {
+          strapi,
+          uploadsDir: path.join(strapi.dirs.static.public, "uploads"),
+        });
+      } catch (error) {
+        if (error instanceof FfmpegUnavailableError) {
+          // Retrying will not conjure a binary. Fail the job permanently and leave a
+          // clear line rather than burning the backoff schedule.
+          strapi.log.error(`[media] ${error.message}`);
+          throw new UnrecoverableError(error.message);
+        }
+        throw error;
+      }
     }
     case SNAPPAY_PAYMENT_JOBS.operation: {
       const operationId = Number((job as any)?.data?.operationId);

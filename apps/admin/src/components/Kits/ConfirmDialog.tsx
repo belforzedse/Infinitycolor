@@ -12,6 +12,12 @@ interface ConfirmDialogProps {
   onConfirm: () => void;
   onCancel: () => void;
   confirmDisabled?: boolean;
+  /**
+   * "danger" paints the confirm button destructively. Previously every dialog —
+   * including permanent deletion — used the same primary button, so nothing in
+   * the UI distinguished an irreversible action from a routine one.
+   */
+  variant?: "default" | "danger";
   children?: ReactNode;
 }
 
@@ -24,6 +30,7 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
   confirmDisabled = false,
+  variant = "default",
   children,
 }: ConfirmDialogProps) {
   return (
@@ -44,7 +51,9 @@ export default function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={confirmDisabled}
-            className="rounded-control bg-actions-primary px-5 py-2.5 text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            className={`rounded-control px-5 py-2.5 text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
+              variant === "danger" ? "bg-red-600" : "bg-actions-primary"
+            }`}
           >
             {confirmText}
           </button>

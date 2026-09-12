@@ -89,6 +89,8 @@ function createActionTree() {
           publication: action(),
           updateDisplayDate: action(),
           generateVariationCombinations: action(),
+          softDelete: action(),
+          restore: action(),
           delete: action(),
         },
       },
@@ -731,6 +733,7 @@ describe("role permission templates", () => {
 
   it("wires capability-gated handlers for every staff role that holds the capability", () => {
     const strapiRoleType: Record<string, string> = {
+      support: "support",
       editor: "editor",
       seller1: "seller-1",
       seller2: "seller-2",
@@ -767,6 +770,14 @@ describe("role permission templates", () => {
       {
         capabilities: ["product.schedule"],
         actions: ["api::product.product.updateDisplayDate"],
+      },
+      {
+        capabilities: ["product.softDelete"],
+        actions: ["api::product.product.softDelete"],
+      },
+      {
+        capabilities: ["product.restore"],
+        actions: ["api::product.product.restore"],
       },
       {
         capabilities: ["product.homepage.manage"],
@@ -883,6 +894,15 @@ describe("role permission templates", () => {
         ],
       },
       {
+        capabilities: ["system.reviews.manage"],
+        actions: [
+          "api::product-review.product-review.update",
+          "api::product-review.product-review.delete",
+          "api::product-review-reply.product-review-reply.create",
+          "api::product-review-reply.product-review-reply.delete",
+        ],
+      },
+      {
         capabilities: ["system.issueReports.manage"],
         actions: [
           "api::issue-report.issue-report.query",
@@ -923,6 +943,7 @@ describe("role permission templates", () => {
     const leaks: string[] = [];
 
     for (const role of [
+      "support",
       "editor",
       "seller1",
       "seller2",
@@ -1170,10 +1191,15 @@ describe("role permission templates", () => {
       expect(controller(typeKey, name).delete.enabled).toBe(false);
     }
 
+    // The only delete in this otherwise create/update-only catalog matrix. An
+    // assignment is a join row (product × attribute): removing one detaches an
+    // attribute from a single product and destroys no shared data, unlike the
+    // colour/size/model/term rows above, which other products reference. Sellers
+    // could attach a custom attribute but never detach it until this was granted.
     expect(
       controller("api::product-attribute-assignment", "product-attribute-assignment").delete
         .enabled,
-    ).toBe(false);
+    ).toBe(true);
     expect(controller("api::discount", "discount").create.enabled).toBe(false);
     expect(controller("api::discount", "discount").update.enabled).toBe(false);
     expect(controller("api::discount", "discount").delete.enabled).toBe(false);
@@ -1237,13 +1263,18 @@ describe("role permission templates", () => {
     const enabled = (typeKey: string, controllerName: string) =>
       enabledActionNames(tree[typeKey].controllers[controllerName]);
 
+    // softDelete/restore are the reversible recycle-bin pair, inherited from
+    // Seller 1. Note "delete" is still absent: permanent deletion stays
+    // Superadmin-only.
     expect(enabled("api::product", "product")).toEqual([
       "create",
       "find",
       "findOne",
       "generateVariationCombinations",
       "publication",
+      "restore",
       "search",
+      "softDelete",
       "update",
       "updateDisplayDate",
     ]);

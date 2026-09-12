@@ -32,12 +32,16 @@ const cleanText = (value, max) => String(value ?? "").trim().slice(0, max);
  * Deliberately self-contained rather than calling T.customerPayload: a deployed
  * sync image may predate the username fallback, and this runner must not depend
  * on — or force an overwrite of — the shared transforms the nightly service uses.
- * Same shape and same precedence, with the username as the final phone source.
+ * Same shape and same precedence, login-first (username before billing/shipping).
+ *
+ * This precedence MUST match T.customerPayload. It resolves which account a
+ * wallet balance is credited to, so any divergence pays a customer's balance
+ * into a different user than the importer created.
  */
 function customerPayload(customer) {
-  const phone = T.canonicalPhone(customer?.billing?.phone)
-    || T.canonicalPhone(customer?.shipping?.phone)
-    || T.canonicalPhone(customer?.username);
+  const phone = T.canonicalPhone(customer?.username)
+    || T.canonicalPhone(customer?.billing?.phone)
+    || T.canonicalPhone(customer?.shipping?.phone);
   if (!phone) throw new Error("USER_PHONE_INVALID");
   const timestamps = wooSourceTimestamps(customer);
   return {

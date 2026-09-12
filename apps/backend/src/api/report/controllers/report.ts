@@ -938,6 +938,7 @@ const reportController = {
             ${selectProductVariationId},
             oi.product_title,
             oi.product_sku,
+            po.order_date,
             oi.count AS item_count,
             oi.per_amount AS item_unit_amount,
             (oi.per_amount * oi.count)::numeric AS item_total_toman,
@@ -951,8 +952,12 @@ const reportController = {
         )
         SELECT
           product_variation_id,
-          product_title,
-          product_sku,
+          -- Snapshot columns, so identity is the variation alone (see aggCte).
+          -- Grouping by them split a renamed product across two rows.
+          (ARRAY_AGG(product_title ORDER BY order_date DESC)
+             FILTER (WHERE product_title IS NOT NULL))[1] AS product_title,
+          (ARRAY_AGG(product_sku ORDER BY order_date DESC)
+             FILTER (WHERE product_sku IS NOT NULL))[1] AS product_sku,
           SUM(item_count)::bigint AS total_count,
           ROUND(
             SUM(
@@ -967,7 +972,8 @@ const reportController = {
             )
           )::bigint AS total_revenue
         FROM itemized
-        GROUP BY product_variation_id, product_title, product_sku
+        GROUP BY product_variation_id,
+                 CASE WHEN product_variation_id IS NULL THEN product_sku END
         ORDER BY total_revenue DESC
       `;
 
@@ -1725,7 +1731,7 @@ const reportController = {
       const params: any[] = [start, end];
       const q = (ctx.query.q as string)?.trim();
       if (q) {
-        where.push("(agg.product_title ILIKE ? OR agg.product_sku ILIKE ?)");
+        where.push("(agg.title_search ILIKE ? OR agg.sku_search ILIKE ?)");
         params.push(`%${q}%`, `%${q}%`);
       }
       const type = ctx.query.productType as string;
@@ -1803,7 +1809,7 @@ const reportController = {
       const params: any[] = [start, end];
       const q = (ctx.query.q as string)?.trim();
       if (q) {
-        where.push("(agg.product_title ILIKE ? OR agg.product_sku ILIKE ?)");
+        where.push("(agg.title_search ILIKE ? OR agg.sku_search ILIKE ?)");
         params.push(`%${q}%`, `%${q}%`);
       }
       const type = ctx.query.productType as string;

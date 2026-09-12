@@ -170,15 +170,13 @@ export function StoryRail<TStory extends StoryRailStory = StoryRailStory>({
     [onMarkSeen],
   );
 
-  const handleAvatarClick = useCallback(
-    (index: number) => {
-      setActiveIndex(index);
-      setViewerOpen(true);
-      const story = orderedStories[index];
-      if (story) void onMarkSeen(story.id);
-    },
-    [orderedStories, onMarkSeen],
-  );
+  const handleAvatarClick = useCallback((index: number) => {
+    // Deliberately does not mark seen: the viewer reports the story it lands on through
+    // `onStoryView` as soon as it mounts. Marking here as well produced two view records
+    // for every story the user opened.
+    setActiveIndex(index);
+    setViewerOpen(true);
+  }, []);
 
   if (!orderedStories.length) return null;
 

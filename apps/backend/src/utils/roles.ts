@@ -14,6 +14,7 @@ export const ROLE_NAMES = {
   FINANCE: "Finance",
   EDITOR: "Editor",
   FOUNDER: "Founder",
+  SUPPORT: "Support",
   CUSTOMER: "Customer",
 } as const;
 
@@ -27,6 +28,7 @@ const ROLE_ALIAS_MAP: Record<string, RoleName> = {
   seller2: ROLE_NAMES.SELLER_2,
   finance: ROLE_NAMES.FINANCE,
   editor: ROLE_NAMES.EDITOR,
+  support: ROLE_NAMES.SUPPORT,
   founder: ROLE_NAMES.FOUNDER,
   founders: ROLE_NAMES.FOUNDER,
   customer: ROLE_NAMES.CUSTOMER,
@@ -34,6 +36,7 @@ const ROLE_ALIAS_MAP: Record<string, RoleName> = {
 
 export const MANAGEMENT_ROLES: RoleName[] = [
   ROLE_NAMES.SUPERADMIN,
+  ROLE_NAMES.SUPPORT,
   ROLE_NAMES.SELLER_1,
   ROLE_NAMES.SELLER_2,
   ROLE_NAMES.STORE_MANAGER,
@@ -47,6 +50,7 @@ export const CONTENT_EDITOR_ROLES: RoleName[] = [ROLE_NAMES.SUPERADMIN, ROLE_NAM
 
 export const CUSTOMER_CAPABLE_ROLES: RoleName[] = [
   ROLE_NAMES.CUSTOMER,
+  ROLE_NAMES.SUPPORT,
   ROLE_NAMES.EDITOR,
   ROLE_NAMES.SELLER_1,
   ROLE_NAMES.SELLER_2,

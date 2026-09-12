@@ -198,7 +198,11 @@ export default function EditCategoryPage() {
     try {
       await updateCategory(categoryId, payload);
       toast.success("تغییرات با موفقیت ذخیره شد");
-      window.location.assign("/products/categories");
+      // Soft-navigate: a full reload tears down the Toaster before the success
+      // toast paints, so saving looked identical to failing. The list page calls
+      // useFreshDataOnPageLoad(), which fires setRefresh(true) on mount, so the
+      // hard reload this replaces was not buying fresh data.
+      router.push("/products/categories");
     } catch (error: unknown) {
       console.error("Failed to update category:", error);
       const rawErrorMessage = extractErrorMessage(error);

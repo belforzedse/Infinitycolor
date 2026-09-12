@@ -241,7 +241,10 @@ export default function SuperAdminLayoutContentWrapperButtonFilter({
               const operators = operatorsForField(selectedField).map(
                 (operator) => ({
                   id: operator,
-                  title: OPERATOR_LABELS[operator] ?? operator,
+                  title:
+                    selectedField?.operatorLabels?.[operator] ??
+                    OPERATOR_LABELS[operator] ??
+                    operator,
                 }),
               );
               const valueOptions = defaultOptionsForField(selectedField);

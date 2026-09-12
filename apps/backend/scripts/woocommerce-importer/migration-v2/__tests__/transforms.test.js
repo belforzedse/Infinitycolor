@@ -83,6 +83,19 @@ test("customer payload falls back to the login username when billing/shipping ph
   assert.equal(payload.phone, "+989368954421");
 });
 
+test("customer payload prefers the login username over a valid but different billing phone", () => {
+  // The discriminating case: both fields are valid and disagree. The username is
+  // the number the customer authenticates with; the billing number is checkout
+  // form data that is routinely shared between accounts and therefore collides.
+  const payload = T.customerPayload({
+    id: 12,
+    username: "9368954421",
+    billing: { phone: "09123456789" },
+    shipping: { phone: "09123381098" },
+  });
+  assert.equal(payload.phone, "+989368954421");
+});
+
 test("customer payload recovers a malformed billing phone instead of dropping the customer", () => {
   const payload = T.customerPayload({
     id: 10,

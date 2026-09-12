@@ -2,7 +2,7 @@ import EditIcon from "@/components/SuperAdmin/Layout/Icons/EditIcon";
 import DuplicateIcon from "@/components/SuperAdmin/Layout/Icons/DuplicateIcon";
 import ShowMoreIcon from "@/components/SuperAdmin/Layout/Icons/ShowMoreIcon";
 import SuperAdminTableCellActionButton from "@/components/SuperAdmin/Table/Cells/ActionButton";
-import RemoveActionButton from "@/components/SuperAdmin/Table/Cells/RemoveActionButton";
+import ProductRemoveActionButton from "./ProductRemoveActionButton";
 import SuperAdminTableCellSimplePrice from "@/components/SuperAdmin/Table/Cells/SimplePrice";
 import SuperAdminTableCellFullDateTime from "@/components/SuperAdmin/Table/Cells/FullDateTime";
 import type { ProductCoverImage } from "@/types/Product";
@@ -255,11 +255,9 @@ export const columns: ColumnDef<Product>[] = [
     cell: ({ row }) => {
       return (
         <div className="flex flex-row-reverse items-center gap-3 p-1">
-          <RemoveActionButton
+          <ProductRemoveActionButton
             isRemoved={!!row.original?.attributes?.removedAt}
             id={row.original?.id.toString()}
-            apiUrl={"/products"}
-            testIdPrefix="admin-product"
           />
 
           <SuperAdminTableCellActionButton

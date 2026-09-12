@@ -16,6 +16,7 @@ export type ProductPublicationResponse = {
   scheduledPublishTimezone: string | null;
   scheduledPublishRevision: number;
   publicationRevision: number;
+  publishedVariationCount: number;
   queueState: "queued" | "pending-reconciliation" | "not-required";
   changed: boolean;
 };

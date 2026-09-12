@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 
 let mockTableProps: any;
 let mockWrapperProps: any;
@@ -27,8 +27,9 @@ jest.mock("@/services", () => ({
 jest.mock("@/hooks/useCurrentUser", () => ({
   useCurrentUser: () => ({ isStoreManager: false, isFounder: false }),
 }));
+let mockCapabilities = new Set<string>();
 jest.mock("@/hooks/useCan", () => ({
-  useCan: () => true,
+  useCan: (capability: string) => mockCapabilities.has(capability),
 }));
 jest.mock("@/hooks/useEditorRedirect", () => ({
   useEditorRedirect: jest.fn(),
@@ -86,5 +87,95 @@ describe("products page bounded data ownership", () => {
         signal: controller.signal,
       }),
     );
+  });
+});
+
+
+/**
+ * Bulk actions had no capability coverage at all — `useCan` was mocked to a
+ * blanket `true`, so nothing caught a gating regression. That matters most for
+ * the removal pair: `product.softDelete` is the reversible recycle-bin move
+ * available from Seller 1 up, while `product.delete` is permanent and
+ * Superadmin-only, and the UI used to gate both on the latter.
+ */
+describe("products page bulk action gating", () => {
+  const ids = () =>
+    (mockTableProps.bulkOptions as { id: string }[]).map((option) => option.id);
+
+  beforeEach(() => {
+    mockTableProps = undefined;
+    (listAdminProducts as jest.Mock).mockReset().mockResolvedValue({
+      data: [],
+      meta: {
+        pagination: { page: 1, pageSize: 25, pageCount: 0, total: 0 },
+        recycleCount: 0,
+      },
+    });
+  });
+
+  afterEach(() => {
+    mockCapabilities = new Set(["product.read"]);
+  });
+
+  it("offers nothing, and no selection, without any write capability", () => {
+    mockCapabilities = new Set(["product.read"]);
+    render(<ProductsPage />);
+
+    expect(ids()).toEqual([]);
+    expect(mockTableProps.enableSelection).toBe(false);
+  });
+
+  it("lets a seller soft-delete without granting permanent deletion", () => {
+    mockCapabilities = new Set(["product.read", "product.softDelete"]);
+    render(<ProductsPage />);
+
+    expect(ids()).toEqual(["soft_delete"]);
+    expect(ids()).not.toContain("permanent_delete");
+    expect(mockWrapperProps.hasRecycleBin).toBe(true);
+  });
+
+  it("confirms before removing a selection, as permanent delete already did", () => {
+    mockCapabilities = new Set(["product.read", "product.softDelete"]);
+    render(<ProductsPage />);
+
+    const softDelete = (mockTableProps.bulkOptions as any[]).find(
+      (option) => option.id === "soft_delete",
+    );
+    expect(softDelete.variant).toBe("danger");
+    expect(softDelete.confirm).toBeTruthy();
+  });
+
+  it("asks for the value instead of using a native prompt", () => {
+    mockCapabilities = new Set(["product.read", "product.stock.update"]);
+    render(<ProductsPage />);
+
+    const setStock = (mockTableProps.bulkOptions as any[]).find(
+      (option) => option.id === "set_stock",
+    );
+    expect(setStock.confirm.input.type).toBe("number");
+    expect(setStock.confirm.input.validate("")).toBeTruthy();
+    expect(setStock.confirm.input.validate("-1")).toBeTruthy();
+    expect(setStock.confirm.input.validate("5")).toBeNull();
+  });
+
+  it("keeps permanent deletion behind product.delete in the recycle bin", () => {
+    mockCapabilities = new Set([
+      "product.read",
+      "product.softDelete",
+      "product.restore",
+    ]);
+    render(<ProductsPage />);
+
+    act(() => mockWrapperProps.setIsRecycleBinOpen(true));
+    expect(ids()).toEqual(["restore"]);
+
+    mockCapabilities = new Set([
+      "product.read",
+      "product.restore",
+      "product.delete",
+    ]);
+    render(<ProductsPage />);
+    act(() => mockWrapperProps.setIsRecycleBinOpen(true));
+    expect(ids()).toContain("permanent_delete");
   });
 });

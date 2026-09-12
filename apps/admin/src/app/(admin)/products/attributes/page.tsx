@@ -5,6 +5,8 @@ import toast from "react-hot-toast";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { apiClient } from "@/services";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import { ENDPOINTS } from "@/constants/api";
+import { useDebounce } from "use-debounce";
 
 type AttributeTerm = {
   id: number;
@@ -58,6 +60,10 @@ const emptyTerm: TermForm = { Title: "", Slug: "", ColorCode: "", Position: 0 };
 
 export default function AttributesPage() {
   const [attributes, setAttributes] = useState<ProductAttribute[]>([]);
+  /** Server-reported total, so the count is not just "what fitted on this page". */
+  const [totalAttributes, setTotalAttributes] = useState(0);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm] = useDebounce(searchTerm, 300);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [attributeForm, setAttributeForm] = useState<AttributeForm>({ ...emptyAttribute });
@@ -66,14 +72,27 @@ export default function AttributesPage() {
   const [editingTermId, setEditingTermId] = useState<number | null>(null);
   const [termForm, setTermForm] = useState<TermForm>({ ...emptyTerm });
 
-  const load = useCallback(async () => {
+  /**
+   * `pageSize` reads 100 rather than the 200 it used to claim: the backend caps
+   * `rest.maxLimit` at 100, so the larger number was never honoured and the page
+   * quietly showed a truncated list with no way to reach the rest. Searching
+   * server-side is what actually makes the remainder reachable.
+   */
+  const load = useCallback(async (query: string = "") => {
     setLoading(true);
     try {
+      const trimmed = query.trim();
+      const filter = trimmed
+        ? `&filters[Title][$containsi]=${encodeURIComponent(trimmed)}`
+        : "";
       const response = await apiClient.get<any>(
-        "/product-attributes?populate[product_attribute_terms]=*&pagination[pageSize]=200&sort=Position:asc",
+        `${ENDPOINTS.PRODUCT.ATTRIBUTES}?populate[product_attribute_terms]=*` +
+          `&pagination[pageSize]=100&sort=Position:asc${filter}`,
         { cache: "no-store" },
       );
       setAttributes(((response as any)?.data || []).map(normalizeAttribute));
+      const total = (response as any)?.meta?.pagination?.total;
+      if (typeof total === "number") setTotalAttributes(total);
     } catch (error) {
       toast.error("خطا در دریافت ویژگی‌ها");
     } finally {
@@ -82,8 +101,8 @@ export default function AttributesPage() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(debouncedSearchTerm);
+  }, [debouncedSearchTerm, load]);
 
   const orderedAttributes = useMemo(
     () => [...attributes].sort((a, b) => a.Position - b.Position || a.Title.localeCompare(b.Title)),
@@ -111,7 +130,7 @@ export default function AttributesPage() {
       toast.success(editingAttributeId ? "ویژگی به‌روزرسانی شد" : "ویژگی ایجاد شد");
       setEditingAttributeId(null);
       setAttributeForm({ ...emptyAttribute });
-      await load();
+      await load(debouncedSearchTerm);
     } catch (error) {
       toast.error(translateErrorMessage(extractErrorMessage(error), "خطا در ذخیره ویژگی"));
     } finally {
@@ -142,7 +161,7 @@ export default function AttributesPage() {
       setTermParentId(null);
       setEditingTermId(null);
       setTermForm({ ...emptyTerm });
-      await load();
+      await load(debouncedSearchTerm);
     } catch (error) {
       toast.error(translateErrorMessage(extractErrorMessage(error), "خطا در ذخیره مقدار"));
     } finally {
@@ -236,8 +255,25 @@ export default function AttributesPage() {
           </div>
         </section>
 
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="جستجوی ویژگی بر اساس نام"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-infinity-primary focus:outline-none focus:ring-1 focus:ring-infinity-primary/30 sm:max-w-sm"
+          />
+          <span className="text-xs text-neutral-500">
+            {debouncedSearchTerm.trim()
+              ? `${attributes.length} نتیجه از ${totalAttributes} ویژگی`
+              : `${totalAttributes} ویژگی ثبت شده`}
+          </span>
+        </div>
+
         {loading ? (
           <div className="py-10 text-center text-slate-500">در حال دریافت ویژگی‌ها...</div>
+        ) : orderedAttributes.length === 0 ? (
+          <div className="py-10 text-center text-slate-500">ویژگی‌ای یافت نشد</div>
         ) : (
           orderedAttributes.map((attribute) => (
             <section

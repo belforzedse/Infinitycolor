@@ -15,7 +15,12 @@ import {
   Text,
   VerificationInput,
 } from "@repo/auth-ui";
-import { jalaliBirthDateToGregorianDate } from "@repo/auth-core/birth-date";
+import {
+  BIRTH_DATE_PLACEHOLDERS,
+  jalaliBirthDateToGregorianDate,
+  jalaliMonthLength,
+  normalizeBirthDatePart,
+} from "@repo/auth-core/birth-date";
 import { authGet, authPost } from "./auth-api";
 import { useAuthFlow } from "./auth-flow-context";
 import { useOtpCountdown } from "./countdown";
@@ -659,6 +664,7 @@ export function RegistrationInfoForm() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showBirthDateIssue, setShowBirthDateIssue] = useState(false);
 
   useEffect(() => {
     if (flowReady && !phone) go("/auth");
@@ -691,23 +697,53 @@ export function RegistrationInfoForm() {
     (field: keyof typeof form) =>
     (event: React.ChangeEvent<HTMLInputElement>) =>
       setForm((current) => ({ ...current, [field]: event.target.value }));
-  const birthDate = jalaliBirthDateToGregorianDate(
+  const changeBirthPart =
+    (field: "birthYear" | "birthMonth" | "birthDay", maxLength: number) =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      setShowBirthDateIssue(false);
+      setForm((current) => ({
+        ...current,
+        [field]: normalizeBirthDatePart(event.target.value, maxLength),
+      }));
+    };
+  const filledBirthParts = [
     form.birthYear,
     form.birthMonth,
     form.birthDay,
-  );
-  const hasBirthParts = Boolean(
-    form.birthYear || form.birthMonth || form.birthDay,
-  );
+  ].filter(Boolean).length;
+  const birthDate =
+    filledBirthParts === 3
+      ? jalaliBirthDateToGregorianDate(
+          form.birthYear,
+          form.birthMonth,
+          form.birthDay,
+        )
+      : null;
+  /**
+   * The birth date is optional, but an incomplete or impossible one has to say so. It
+   * previously just disabled the submit button with no message, which read as a dead
+   * button -- 1388/08/31 looks fine but Aban has 30 days, so the conversion returns null.
+   */
+  const birthDateIssue = (() => {
+    if (filledBirthParts === 0) return null;
+    if (filledBirthParts < 3)
+      return "تاریخ تولد را کامل وارد کنید: سال، ماه و روز.";
+    if (!birthDate) {
+      const monthLength = jalaliMonthLength(form.birthYear, form.birthMonth);
+      return monthLength > 0 && Number(form.birthDay) > monthLength
+        ? `این ماه ${monthLength} روز دارد.`
+        : "تاریخ تولد وارد شده معتبر نیست.";
+    }
+    return null;
+  })();
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (
-      !form.firstName.trim() ||
-      !form.lastName.trim() ||
-      (hasBirthParts && !birthDate)
-    )
+    if (!form.firstName.trim() || !form.lastName.trim()) return;
+    if (birthDateIssue) {
+      setShowBirthDateIssue(true);
       return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -731,9 +767,7 @@ export function RegistrationInfoForm() {
     }
   };
 
-  const ready = Boolean(
-    form.firstName && form.lastName && (!hasBirthParts || birthDate),
-  );
+  const ready = Boolean(form.firstName && form.lastName);
   return (
     <div className="space-y-8" dir="rtl">
       <AuthTitle subtitle="لطفا اطلاعات خود را تکمیل نمایید">
@@ -781,43 +815,48 @@ export function RegistrationInfoForm() {
             role="group"
             aria-labelledby="birth-date-label"
           >
+            {/* `type="text"` with a numeric keypad rather than `type="number"`:
+                browsers reject Persian digits in a number field, so the value silently
+                read back empty for anyone typing ۱۳۷۰. */}
             <AuthInput
               id="birth-year"
               name="bday-year"
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={form.birthYear}
-              onChange={change("birthYear")}
-              placeholder="سال (مثلا 1370)"
-              min="1300"
-              max="1450"
+              onChange={changeBirthPart("birthYear", 4)}
+              placeholder={BIRTH_DATE_PLACEHOLDERS.year}
               autoComplete="bday-year"
               aria-label="سال تولد"
             />
             <AuthInput
               id="birth-month"
               name="bday-month"
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={form.birthMonth}
-              onChange={change("birthMonth")}
-              placeholder="ماه (1-12)"
-              min="1"
-              max="12"
+              onChange={changeBirthPart("birthMonth", 2)}
+              placeholder={BIRTH_DATE_PLACEHOLDERS.month}
               autoComplete="bday-month"
               aria-label="ماه تولد"
             />
             <AuthInput
               id="birth-day"
               name="bday-day"
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={form.birthDay}
-              onChange={change("birthDay")}
-              placeholder="روز (1-31)"
-              min="1"
-              max="31"
+              onChange={changeBirthPart("birthDay", 2)}
+              placeholder={BIRTH_DATE_PLACEHOLDERS.day}
               autoComplete="bday-day"
               aria-label="روز تولد"
             />
           </div>
+          {showBirthDateIssue && birthDateIssue && (
+            <p role="alert" className="mt-1 text-red-500">
+              <Text className="text-red-500">{birthDateIssue}</Text>
+            </p>
+          )}
         </div>
         <div>
           <FieldLabel htmlFor="registration-phone" className="mb-2">

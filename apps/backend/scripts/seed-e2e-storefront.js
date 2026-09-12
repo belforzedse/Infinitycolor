@@ -256,6 +256,16 @@ const FIXTURE = {
       externalId: "e2e-storefront:user:store-manager-2",
       optional: true,
     },
+    support: {
+      phone: envOrDefault("E2E_SUPPORT_PHONE", "+989000000209"),
+      password: envOrDefault("E2E_SUPPORT_PASSWORD", "E2eSupport!123"),
+      email: "e2e.support@infinitycolor.local",
+      firstName: "E2E",
+      lastName: "Support",
+      roleName: "Support",
+      externalId: "e2e-storefront:user:support",
+      optional: true,
+    },
     editor: {
       phone: envOrDefault("E2E_EDITOR_PHONE", "+989000000204"),
       password: envOrDefault("E2E_EDITOR_PASSWORD", "E2eEditor!123"),
@@ -1018,6 +1028,7 @@ async function seedUsers(client, now) {
     ["storeManager", FIXTURE.auth.storeManager],
     ["storeManager2", FIXTURE.auth.storeManager2],
     ["editor", FIXTURE.auth.editor],
+    ["support", FIXTURE.auth.support],
     ["seller1", FIXTURE.auth.seller1],
     ["seller2", FIXTURE.auth.seller2],
     ["finance", FIXTURE.auth.finance],
@@ -1454,6 +1465,7 @@ async function seed(client) {
     seller1UserId: users.seller1 ? users.seller1.id : null,
     seller2UserId: users.seller2 ? users.seller2.id : null,
     financeUserId: users.finance ? users.finance.id : null,
+    supportUserId: users.support ? users.support.id : null,
   };
 }
 

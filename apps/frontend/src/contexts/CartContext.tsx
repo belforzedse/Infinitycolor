@@ -178,6 +178,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           try {
             await Promise.race([
               (async () => {
+                // The guest cart lives only in localStorage, and the central-auth
+                // handoff (/auth/callback -> /auth/complete -> full page load) never
+                // passes through the legacy login pages that used to trigger the merge,
+                // so it was left orphaned. Running it here covers every entry point.
+                // It is a no-op when there is no guest cart, and idempotent through
+                // `guestCartMergeId` when the legacy pages call it too.
+                await migrateLocalCartToApi();
                 await CartService.checkCartStock().catch((error) => {
                   console.error("Failed to check cart stock:", error);
                 });

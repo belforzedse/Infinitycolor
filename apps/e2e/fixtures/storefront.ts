@@ -33,6 +33,8 @@ export const E2E_DEFAULT_SELLER_2_PHONE = "+989000000206";
 export const E2E_DEFAULT_SELLER_2_PASSWORD = "E2eSeller2!123";
 export const E2E_DEFAULT_FINANCE_PHONE = "+989000000207";
 export const E2E_DEFAULT_FINANCE_PASSWORD = "E2eFinance!123";
+export const E2E_DEFAULT_SUPPORT_PHONE = "+989000000209";
+export const E2E_DEFAULT_SUPPORT_PASSWORD = "E2eSupport!123";
 
 // Dedicated high-stock variation so repeated payment runs never exhaust inventory.
 export const E2E_PAYMENT_VARIATION_SKU = "E2E-STOREFRONT-PAY";

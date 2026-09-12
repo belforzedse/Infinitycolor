@@ -9,6 +9,7 @@ export const PLUGIN_ROLE_LABELS: Record<string, string> = {
   Founder: "بنیان‌گذار",
   Customer: "مشتری",
   Editor: "ویرایشگر",
+  Support: "پشتیبان",
 };
 
 export const translatePluginRoleLabel = (roleName?: string | null) => {
@@ -43,6 +44,7 @@ export const MANAGEMENT_ROLE_NAMES = [
   "Finance",
   "Founder",
   "Editor",
+  "Support",
 ] as const;
 
 const ASSIGNABLE_ROLE_TYPES = new Set([
@@ -54,6 +56,7 @@ const ASSIGNABLE_ROLE_TYPES = new Set([
   "store-manager-2",
   "finance",
   "founder",
+  "support",
   "superadmin",
 ]);
 

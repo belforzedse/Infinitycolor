@@ -30,10 +30,10 @@ describe("canRoleAccessPath", () => {
       expect(canRoleAccessPath("Superadmin", "/sales/activity")).toBe(true);
     });
 
-    it("owns the issue report workspace exclusively", () => {
+    it("shares the issue report workspace with Support only", () => {
       for (const role of ADMIN_ROLE_IDS) {
         expect(canRoleAccessPath(role, "/issue-reports")).toBe(
-          role === "superadmin",
+          role === "superadmin" || role === "support",
         );
       }
     });
@@ -352,11 +352,14 @@ describe("sidebar", () => {
     expect(parentIds("Superadmin")).not.toContain("carts");
   });
 
-  it("shows issue reports in the Superadmin sidebar only", () => {
+  it("shows issue reports in the Superadmin and Support sidebars only", () => {
     for (const role of ADMIN_ROLE_IDS) {
       const items = parentIds(ADMIN_ROLE_DEFINITIONS[role].strapiName);
-      if (role === "superadmin") expect(items).toContain("issue-reports");
-      else expect(items).not.toContain("issue-reports");
+      if (role === "superadmin" || role === "support") {
+        expect(items).toContain("issue-reports");
+      } else {
+        expect(items).not.toContain("issue-reports");
+      }
     }
   });
 

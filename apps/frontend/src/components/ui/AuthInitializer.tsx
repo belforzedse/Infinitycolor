@@ -67,6 +67,9 @@ async function clearStaleRouteHint(): Promise<void> {
   }
 }
 
+/** Throttle so a tab-switch storm cannot mint tokens in a loop. */
+const REVALIDATE_MIN_INTERVAL_MS = 30_000;
+
 /** Restores a Better Auth session by obtaining a short-lived in-memory API JWT. */
 export default function AuthInitializer() {
   const setUser = useSetAtom(currentUserAtom);
@@ -123,7 +126,34 @@ export default function AuthInitializer() {
       }
     };
 
+    /**
+     * A session can die somewhere this tab never hears about: a password reset happens on
+     * the central auth origin, revokes every session there, and publishes no event here.
+     * Without this the tab keeps rendering the account UI with a stale identity until it
+     * is reloaded, because `restore()` only ever ran on mount and on a local auth event.
+     *
+     * Deliberately silent rather than `restore(true)`: that flips `userLoadingAtom`, and
+     * the header account menu gates on it, so the icon would flicker on every tab switch.
+     */
+    let lastRevalidatedAt = Date.now();
+    const revalidateOnFocus = () => {
+      if (!active || document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastRevalidatedAt < REVALIDATE_MIN_INTERVAL_MS) return;
+      lastRevalidatedAt = now;
+
+      void (async () => {
+        const token = await centralAuth.tokenManager
+          .getToken({ forceRefresh: true })
+          .catch(() => null);
+        if (!active || token) return;
+        clearIdentityState();
+        await clearStaleRouteHint();
+      })();
+    };
+
     void restore();
+    document.addEventListener("visibilitychange", revalidateOnFocus);
     const unsubscribe = subscribeToAuthState((event) => {
       if (event.type === "logout") {
         clearIdentityState();
@@ -134,6 +164,7 @@ export default function AuthInitializer() {
     });
     return () => {
       active = false;
+      document.removeEventListener("visibilitychange", revalidateOnFocus);
       unsubscribe();
     };
   }, [setError, setIsLoading, setUser]);

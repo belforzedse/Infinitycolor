@@ -33,6 +33,18 @@ const FILTER_FIELDS: Record<string, AdminFilterDefinition> = {
   },
   "[user][phone]": { path: ["user", "phone"], type: "text" },
   "[createdAt]": { path: ["createdAt"], type: "date" },
+  // Separates combined-shipping orders from ordinary ones so they can be picked
+  // out and printed apart — reserve invoices were coming off the printer mixed
+  // in with the rest of the «در حال انجام» batch.
+  //
+  // Filters the RELATION, never the frozen `is_reserve_order` column: that column
+  // is stamped at checkout and never rewritten, so it lies about closed groups.
+  // `projectOrderReserve` derives the row's reserve view the same way.
+  //
+  // Typed "select" because the shared AdminFilterType has no "boolean"; it is
+  // driven by $null/$notNull, both of which SELECT_OPERATORS already allows and
+  // normalizeValue short-circuits to `true`.
+  "[reserve_shipment][id]": { path: ["reserve_shipment", "id"], type: "select" },
 };
 
 const TAB_FILTERS: Record<string, Record<string, unknown> | null> = {

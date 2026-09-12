@@ -3,6 +3,7 @@ import type { Strapi } from "@strapi/strapi";
 import { QUEUE_NAMES } from "./contracts";
 import { getQueueSettings, toBullMqConnectionOptions } from "./env";
 import { processMaintenanceJob } from "./processors";
+import { closeMediaQueues } from "./media";
 import { closeSnappayQueues } from "./snappay";
 import { createLoadedStrapi } from "./strapi-instance";
 
@@ -14,6 +15,7 @@ async function closeAll(strapi: Strapi | undefined, workers: Closable[]) {
   await Promise.allSettled(workers.map((worker) => worker.close()));
   // The SnappPay producer keeps a cached queue connection open for reuse.
   await closeSnappayQueues().catch(() => undefined);
+  await closeMediaQueues().catch(() => undefined);
   if (strapi && typeof (strapi as any).destroy === "function") {
     await (strapi as any).destroy();
   }
@@ -50,6 +52,15 @@ export async function startMaintenanceWorkers(): Promise<void> {
         connection,
         prefix: settings.prefix,
         concurrency: settings.concurrency.payments,
+      },
+    ),
+    new Worker(
+      QUEUE_NAMES.media,
+      (job, token) => processMaintenanceJob(strapi, job, token),
+      {
+        connection,
+        prefix: settings.prefix,
+        concurrency: settings.concurrency.media,
       },
     ),
   ];

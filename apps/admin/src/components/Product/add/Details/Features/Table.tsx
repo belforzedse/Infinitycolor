@@ -1,5 +1,5 @@
 import DeleteIcon from "@/components/Kits/Icons/DeleteIcon";
-import React, { Fragment, useState, useEffect, useCallback } from "react";
+import React, { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { apiClient } from "@/services";
 import toast from "react-hot-toast";
@@ -8,6 +8,16 @@ import {
   extractErrorMessage,
   translateErrorMessage,
 } from "@/lib/errorTranslations";
+import AsyncSearchPicker from "@/components/Kits/Form/AsyncSearchPicker";
+import { ENDPOINTS } from "@/constants/api";
+import { apiCache } from "@/lib/api-cache";
+import {
+  searchAttributeTerms,
+  searchColors,
+  searchModels,
+  searchSizes,
+  type VariationOption,
+} from "@/services/product/variation-options";
 
 interface Feature {
   id: string;
@@ -83,12 +93,16 @@ interface GenericFeatureGroup {
   terms: Feature[];
 }
 
+/**
+ * A definition offered in the "add attribute" dropdown. Values are not carried
+ * here: each attached row searches its own terms on demand, so the dropdown only
+ * needs identity.
+ */
 interface GenericAttributeOption {
   id: number;
   title: string;
   type: "Text" | "Color";
   position: number;
-  terms: Feature[];
 }
 
 interface FeaturesTableProps {
@@ -146,12 +160,50 @@ const COLOR_PALETTE = [
 ];
 
 const ATTRIBUTE_ENDPOINTS = {
-  colors: "/product-variation-colors",
-  sizes: "/product-variation-sizes",
-  models: "/product-variation-models",
+  colors: ENDPOINTS.PRODUCT.COLORS,
+  sizes: ENDPOINTS.PRODUCT.SIZES,
+  models: ENDPOINTS.PRODUCT.MODELS,
 } as const;
 
 // DEFAULT_TITLES removed - sizes and models are now optional, no default values should be used
+
+/**
+ * Colour row for the search dropdown.
+ *
+ * Colours imported without a ColorCode all rendered as the same anonymous grey
+ * dot, so a list of them read as one option repeated. Mark those as deliberately
+ * colourless instead.
+ */
+function renderColorOption(option: VariationOption, isSelected: boolean) {
+  return (
+    <>
+      {option.colorCode ? (
+        <span
+          className="h-5 w-5 shrink-0 rounded-full border border-slate-200"
+          style={{ backgroundColor: option.colorCode }}
+        />
+      ) : (
+        <span
+          aria-hidden="true"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-[10px] text-slate-400"
+        >
+          —
+        </span>
+      )}
+      <span className="min-w-0 truncate">{option.title}</span>
+      {option.colorCode ? (
+        <span className="shrink-0 text-xs text-slate-400" dir="ltr">
+          {option.colorCode.toUpperCase()}
+        </span>
+      ) : (
+        <span className="shrink-0 text-xs text-slate-400">بدون رنگ</span>
+      )}
+      {isSelected && (
+        <span className="text-[11px] text-green-600">افزوده شده</span>
+      )}
+    </>
+  );
+}
 
 export const FeaturesTable = ({
   productId,
@@ -164,32 +216,6 @@ export const FeaturesTable = ({
     generic: [],
   });
 
-  const [availableOptions, setAvailableOptions] = useState<{
-    colors: ApiFeature[];
-    sizes: ApiFeature[];
-    models: ApiFeature[];
-  }>({
-    colors: [],
-    sizes: [],
-    models: [],
-  });
-
-  const [inputValues, setInputValues] = useState({
-    colors: "",
-    sizes: "",
-    models: "",
-  });
-
-  const [filteredOptions, setFilteredOptions] = useState<{
-    colors: ApiFeature[];
-    sizes: ApiFeature[];
-    models: ApiFeature[];
-  }>({
-    colors: [],
-    sizes: [],
-    models: [],
-  });
-
   const [isGeneratingVariations, setIsGeneratingVariations] = useState(false);
   const [variationsCount, setVariationsCount] = useState(0);
   const [availableGenericAttributes, setAvailableGenericAttributes] = useState<
@@ -197,7 +223,50 @@ export const FeaturesTable = ({
   >([]);
   const [selectedGenericAttributeId, setSelectedGenericAttributeId] =
     useState("");
-  const [isSavingAssignment, setIsSavingAssignment] = useState(false);
+  const [isAddingAssignment, setIsAddingAssignment] = useState(false);
+  /**
+   * Per-row busy set, not one global flag. Each attached attribute now has its
+   * own value picker, so a single flag would freeze every row whenever any one
+   * of them was saving — and two quick picks on the same row would both compute
+   * the new term list from the same stale state, losing the first.
+   */
+  const [savingAssignmentIds, setSavingAssignmentIds] = useState<Set<number>>(
+    new Set(),
+  );
+
+  /**
+   * One stable search function per attribute id.
+   *
+   * The picker keeps `search` in an effect dependency list, so handing it a
+   * freshly-built closure on every parent render would re-run the query on every
+   * render. Cached in a ref, which never needs to trigger one.
+   */
+  const termSearchCacheRef = useRef(
+    new Map<number, (query: string) => Promise<VariationOption[]>>(),
+  );
+  const termSearchFor = (attributeId: number) => {
+    const cache = termSearchCacheRef.current;
+    let search = cache.get(attributeId);
+    if (!search) {
+      search = searchAttributeTerms(attributeId);
+      cache.set(attributeId, search);
+    }
+    return search;
+  };
+
+  // Picker inputs are uncontrolled from here; each one owns its own query state.
+  const selectedColorIds = new Set(features.colors.map((color) => color.id));
+  const selectedSizeIds = new Set(features.sizes.map((size) => size.id));
+  const selectedModelIds = new Set(features.models.map((model) => model.id));
+
+  const markAssignmentSaving = (assignmentId: number, saving: boolean) => {
+    setSavingAssignmentIds((prev) => {
+      const next = new Set(prev);
+      if (saving) next.add(assignmentId);
+      else next.delete(assignmentId);
+      return next;
+    });
+  };
   const [colorModal, setColorModal] = useState({
     isOpen: false,
     name: "",
@@ -230,12 +299,16 @@ export const FeaturesTable = ({
       );
       const created = response.data;
 
-      setAvailableOptions((prev) => ({
-        ...prev,
-        [type]: [...prev[type], created],
-      }));
+      // The pickers now read through the 60s colour/size/model cache instead of
+      // holding a prefetched catalogue, so a newly created option has to be
+      // invalidated or searches would not find it for another minute.
+      apiCache.clearByPattern(/product-variation-(colors|sizes|models)/i);
 
-      addFeature(type, created);
+      addFeature(type, {
+        id: String(created.id),
+        title: created.attributes.Title,
+        colorCode: created.attributes.ColorCode,
+      });
       toast.success(`${title} با موفقیت اضافه شد`);
       return created;
     } catch (error: any) {
@@ -293,7 +366,6 @@ export const FeaturesTable = ({
 
     const saved = await createAttributeOption("colors", colorPayload);
     if (saved) {
-      setInputValues((prev) => ({ ...prev, colors: "" }));
       closeColorModal();
     }
   };
@@ -302,105 +374,64 @@ export const FeaturesTable = ({
     type: "sizes" | "models",
     label: string,
   ) => {
-    const created = await createAttributeOption(type, {
-      Title: label.trim(),
-    });
-    if (created) {
-      setInputValues((prev) => ({ ...prev, [type]: "" }));
-    }
+    await createAttributeOption(type, { Title: label.trim() });
   };
 
-  const fetchVariationData = useCallback(async () => {
+  /**
+   * Catalogue of generic attribute definitions for the "add attribute" dropdown.
+   *
+   * Values are no longer fetched with the definition — each attached row searches
+   * its own terms on demand — so this only needs the identity fields.
+   */
+  const loadGenericAttributeDefinitions = useCallback(async () => {
     try {
-      const [colorsRes, sizesRes, modelsRes, assignmentsRes, attributesRes] =
-        await Promise.all([
-          apiClient.get<ApiResponse<ApiFeature[]>>(
-            "/product-variation-colors?pagination[pageSize]=1000&sort=Title:asc",
-            {
-              cache: "no-store",
-            },
-          ),
-          apiClient.get<ApiResponse<ApiFeature[]>>(
-            "/product-variation-sizes?pagination[pageSize]=1000&sort=Title:asc",
-            {
-              cache: "no-store",
-            },
-          ),
-          apiClient.get<ApiResponse<ApiFeature[]>>(
-            "/product-variation-models?pagination[pageSize]=1000&sort=Title:asc",
-            {
-              cache: "no-store",
-            },
-          ),
-          productId
-            ? apiClient.get<ApiResponse<any[]>>(
-                `/product-attribute-assignments?filters[product][id][$eq]=${productId}&filters[IsVariation][$eq]=true&populate[product_attribute]=true&populate[terms][populate][product_attribute]=true&pagination[pageSize]=100&sort=Position:asc`,
-                { cache: "no-store" },
-              )
-            : Promise.resolve({ data: [] } as any),
-          apiClient.get<ApiResponse<any[]>>(
-            "/product-attributes?filters[LegacyProjection][$eq]=None&populate[product_attribute_terms]=true&pagination[pageSize]=200&sort=Position:asc",
-            { cache: "no-store" },
-          ),
-        ]);
-
-      setAvailableOptions({
-        colors: (colorsRes as any).data || [],
-        sizes: (sizesRes as any).data || [],
-        models: (modelsRes as any).data || [],
-      });
-
+      const response = await apiClient.get<ApiResponse<any[]>>(
+        `${ENDPOINTS.PRODUCT.ATTRIBUTES}?filters[LegacyProjection][$eq]=None` +
+          `&pagination[pageSize]=100&sort=Position:asc`,
+        { cache: "no-store" },
+      );
       setAvailableGenericAttributes(
-        (((attributesRes as any).data || []) as any[])
+        (((response as any).data || []) as any[])
           .map((attribute): GenericAttributeOption | null => {
             const value = attribute.attributes || attribute;
-            const terms = (value.product_attribute_terms?.data || [])
-              .map((term: any) => ({
-                id: String(term.id),
-                value: String(term.attributes?.Title || term.Title || ""),
-                colorCode: term.attributes?.ColorCode || term.ColorCode,
-              }))
-              .filter((term: Feature) => term.id && term.value);
-            if (!attribute.id || terms.length === 0) return null;
+            if (!attribute.id) return null;
             return {
               id: Number(attribute.id),
               title: String(value.Title || ""),
               type: value.Type === "Color" ? "Color" : "Text",
               position: Number(value.Position || 0),
-              terms,
             };
           })
           .filter((attribute): attribute is GenericAttributeOption =>
             Boolean(attribute),
           ),
       );
+    } catch (error) {
+      console.error("Error fetching attribute definitions:", error);
+      toast.error("خطا در دریافت ویژگی‌ها");
+    }
+  }, []);
 
-      if (!productId) {
-        setFeatures({
-          colors: [],
-          sizes: [],
-          models: [],
-          generic: [],
-        });
-        setVariationsCount(0);
-        return;
-      }
-
-      const existingVariationsRes = await apiClient.get<
-        ApiResponse<ProductVariation[]>
-      >(
-        `/product-variations?filters[product][id][$eq]=${productId}&populate=product_variation_color,product_variation_size,product_variation_model`,
-        {
-          cache: "no-store",
-        },
+  /**
+   * The product's own attribute assignments.
+   *
+   * Writes only the `generic` slice. It used to be one loader that rebuilt the
+   * whole `features` object, so attaching an attribute discarded any colour or
+   * size the user had picked but not yet generated variations from.
+   */
+  const loadProductAssignments = useCallback(async () => {
+    if (!productId) {
+      setFeatures((prev) => ({ ...prev, generic: [] }));
+      return;
+    }
+    try {
+      const response = await apiClient.get<ApiResponse<any[]>>(
+        `${ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS}?filters[product][id][$eq]=${productId}` +
+          `&filters[IsVariation][$eq]=true&populate[product_attribute]=true&populate[terms]=true` +
+          `&pagination[pageSize]=100&sort=Position:asc`,
+        { cache: "no-store" },
       );
-
-      const existingVariations = (existingVariationsRes as any).data || [];
-
-      const existingColors = new Map<string, Feature>();
-      const existingSizes = new Map<string, Feature>();
-      const existingModels = new Map<string, Feature>();
-      const generic = (((assignmentsRes as any).data || []) as any[])
+      const generic = (((response as any).data || []) as any[])
         .map((assignment): GenericFeatureGroup | null => {
           const attributes = assignment.attributes || assignment;
           const definition = attributes.product_attribute?.data;
@@ -414,7 +445,9 @@ export const FeaturesTable = ({
               colorCode: term.attributes?.ColorCode || term.ColorCode,
             }))
             .filter((term: Feature) => term.id && term.value);
-          if (terms.length === 0) return null;
+          // An assignment with no values yet is kept deliberately: attributes are
+          // now attached empty and filled in afterwards, so dropping empty ones
+          // would make a freshly added attribute invisible.
           return {
             assignmentId: Number(assignment.id),
             attributeId: Number(definition.id),
@@ -426,6 +459,38 @@ export const FeaturesTable = ({
         })
         .filter((group): group is GenericFeatureGroup => Boolean(group))
         .sort((left, right) => left.position - right.position);
+
+      setFeatures((prev) => ({ ...prev, generic }));
+    } catch (error) {
+      console.error("Error fetching product attribute assignments:", error);
+      toast.error("خطا در دریافت مقادیر ویژگی‌های محصول");
+    }
+  }, [productId]);
+
+  /**
+   * Seeds the colour/size/model rows from variations that already exist, so an
+   * edited product opens showing the axes it was built from. Writes only those
+   * three slices.
+   */
+  const loadExistingVariationAxes = useCallback(async () => {
+    if (!productId) {
+      setFeatures((prev) => ({ ...prev, colors: [], sizes: [], models: [] }));
+      return;
+    }
+    try {
+      const response = await apiClient.get<ApiResponse<ProductVariation[]>>(
+        `/product-variations?filters[product][id][$eq]=${productId}` +
+          `&populate=product_variation_color,product_variation_size,product_variation_model` +
+          `&pagination[pageSize]=100`,
+        // Kept: /product-variations is cached for 30s, and this must reflect a
+        // generation that just happened.
+        { cache: "no-store" },
+      );
+      const existingVariations = (response as any).data || [];
+
+      const existingColors = new Map<string, Feature>();
+      const existingSizes = new Map<string, Feature>();
+      const existingModels = new Map<string, Feature>();
 
       existingVariations.forEach((variation: any) => {
         if (variation.attributes.product_variation_color?.data) {
@@ -454,23 +519,28 @@ export const FeaturesTable = ({
         }
       });
 
-      setFeatures({
+      setFeatures((prev) => ({
+        ...prev,
         colors: Array.from(existingColors.values()),
         sizes: Array.from(existingSizes.values()),
         models: Array.from(existingModels.values()),
-        generic,
-      });
-
-      setVariationsCount(existingVariations.length);
+      }));
     } catch (error) {
-      console.error("Error fetching variation data:", error);
+      console.error("Error fetching existing variations:", error);
+      toast.error("خطا در دریافت تنوع‌های موجود");
     }
   }, [productId]);
 
-  // Fetch all available options and existing variations
+  // Independent, so one failing endpoint no longer blanks the whole editor.
   useEffect(() => {
-    fetchVariationData();
-  }, [fetchVariationData]);
+    void loadGenericAttributeDefinitions();
+    void loadProductAssignments();
+    void loadExistingVariationAxes();
+  }, [
+    loadGenericAttributeDefinitions,
+    loadProductAssignments,
+    loadExistingVariationAxes,
+  ]);
 
   // Generate combinations and calculate potential variations count
   useEffect(() => {
@@ -494,69 +564,21 @@ export const FeaturesTable = ({
     setVariationsCount(potentialVariationsCount);
   }, [features]);
 
-  // Filter options based on input (keep showing already-added items for clarity)
-  useEffect(() => {
-    const filterOptions = (type: "colors" | "sizes" | "models") => {
-      const query = inputValues[type].trim().toLowerCase();
-      if (!query) return [];
-
-      return availableOptions[type].filter((option) => {
-        const title = (option.attributes.Title || "").toLowerCase();
-
-        // For colors, also search by ColorCode
-        if (type === "colors") {
-          const colorCode = (option.attributes.ColorCode || "").toLowerCase();
-          return title.includes(query) || colorCode.includes(query);
-        }
-
-        // For sizes and models, only search by Title
-        return title.includes(query);
-      });
-    };
-
-    setFilteredOptions({
-      colors: filterOptions("colors"),
-      sizes: filterOptions("sizes"),
-      models: filterOptions("models"),
-    });
-  }, [inputValues, availableOptions]);
-
-  const handleInputChange = (
-    type: "colors" | "sizes" | "models",
-    value: string,
-  ) => {
-    setInputValues((prev) => ({
-      ...prev,
-      [type]: value,
-    }));
-  };
-
   const addFeature = (
     type: "colors" | "sizes" | "models",
-    item: ApiFeature,
+    option: VariationOption,
   ) => {
-    // Check if this item is already selected
     const isDuplicate = features[type].some(
-      (feature) => feature.id === String(item.id),
+      (feature) => feature.id === option.id,
     );
-
     if (isDuplicate) return;
-
-    const newFeature: Feature = {
-      id: String(item.id),
-      value: item.attributes.Title,
-      colorCode: item.attributes.ColorCode,
-    };
 
     setFeatures((prev) => ({
       ...prev,
-      [type]: [...prev[type], newFeature],
-    }));
-
-    // Clear input after selection
-    setInputValues((prev) => ({
-      ...prev,
-      [type]: "",
+      [type]: [
+        ...prev[type],
+        { id: option.id, value: option.title, colorCode: option.colorCode },
+      ],
     }));
   };
 
@@ -567,18 +589,82 @@ export const FeaturesTable = ({
     }));
   };
 
-  const removeGenericTerm = (attributeId: number, termId: string) => {
-    setFeatures((prev) => ({
-      ...prev,
-      generic: prev.generic.map((group) =>
-        group.attributeId === attributeId
-          ? {
-              ...group,
-              terms: group.terms.filter((term) => term.id !== termId),
-            }
-          : group,
-      ),
-    }));
+  /**
+   * Persists an assignment's value list.
+   *
+   * The assignment's `terms` is what the storefront PDP renders as the option
+   * list, so a value change that only touched React state left shoppers being
+   * offered values the admin had removed. Every add and remove writes through.
+   *
+   * Pessimistic: state is committed from `nextTerms` only after the server
+   * accepts, so a failed write leaves the row exactly as it was.
+   */
+  const saveAssignmentTerms = async (
+    group: GenericFeatureGroup,
+    nextTerms: Feature[],
+    successMessage: string,
+    failureMessage: string,
+  ) => {
+    markAssignmentSaving(group.assignmentId, true);
+    try {
+      await apiClient.put(
+        `${ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS}/${group.assignmentId}`,
+        { data: { terms: nextTerms.map((term) => Number(term.id)) } },
+      );
+      setFeatures((prev) => ({
+        ...prev,
+        generic: prev.generic.map((candidate) =>
+          candidate.assignmentId === group.assignmentId
+            ? { ...candidate, terms: nextTerms }
+            : candidate,
+        ),
+      }));
+      toast.success(successMessage);
+      return true;
+    } catch (error) {
+      console.error("Error saving attribute assignment terms:", error);
+      toast.error(
+        translateErrorMessage(extractErrorMessage(error), failureMessage),
+      );
+      return false;
+    } finally {
+      markAssignmentSaving(group.assignmentId, false);
+    }
+  };
+
+  const addGenericTerm = async (
+    group: GenericFeatureGroup,
+    option: VariationOption,
+  ) => {
+    if (group.terms.some((term) => term.id === option.id)) return;
+    await saveAssignmentTerms(
+      group,
+      [
+        ...group.terms,
+        { id: option.id, value: option.title, colorCode: option.colorCode },
+      ],
+      `«${option.title}» افزوده شد`,
+      "ثبت مقدار ویژگی با خطا مواجه شد",
+    );
+  };
+
+  const removeGenericTerm = async (
+    group: GenericFeatureGroup,
+    termId: string,
+  ) => {
+    const removed = group.terms.find((term) => term.id === termId);
+    const saved = await saveAssignmentTerms(
+      group,
+      group.terms.filter((term) => term.id !== termId),
+      `«${removed?.value ?? ""}» حذف شد`,
+      "حذف مقدار ویژگی با خطا مواجه شد",
+    );
+    // Variation generation is strictly additive — it never prunes — so any
+    // variation already built from this value survives its removal. Say so
+    // rather than letting the count silently disagree with the option list.
+    if (saved && variationsCount > 0) {
+      toast("تنوع‌های ساخته‌شده با این مقدار حذف نمی‌شوند", { icon: "ℹ️" });
+    }
   };
 
   const addGenericAssignment = async () => {
@@ -587,39 +673,88 @@ export const FeaturesTable = ({
       (item) => item.id === attributeId,
     );
     if (!attribute || !productId) return;
+    // The backend rejects an attribute configured more than once on a product,
+    // and it is not recoverable from this UI, so refuse the duplicate here.
+    if (features.generic.some((group) => group.attributeId === attributeId)) {
+      toast.error("این ویژگی قبلاً به محصول افزوده شده است");
+      return;
+    }
 
-    setIsSavingAssignment(true);
+    setIsAddingAssignment(true);
     try {
-      await apiClient.post("/product-attribute-assignments", {
-        data: {
-          product: productId,
-          product_attribute: attribute.id,
-          terms: attribute.terms.map((term) => Number(term.id)),
-          Position: attribute.position,
-          IsVisible: true,
-          IsVariation: true,
+      const response = await apiClient.post<{ id: number }>(
+        ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS,
+        {
+          data: {
+            product: productId,
+            product_attribute: attribute.id,
+            // Attached empty on purpose. Sending the definition's whole term list
+            // dumped every possible value onto the product; values are chosen one
+            // at a time afterwards, like every other row in this table.
+            terms: [],
+            Position: attribute.position,
+            IsVisible: true,
+            IsVariation: true,
+          },
         },
-      });
+      );
+
+      // Merge locally instead of refetching everything: a full reload rebuilt
+      // colours/sizes/models from existing variations and so threw away any axis
+      // the user had picked but not yet generated.
+      const assignmentId = Number((response as any).data?.id ?? (response as any).id);
+      setFeatures((prev) => ({
+        ...prev,
+        generic: [
+          ...prev.generic,
+          {
+            assignmentId,
+            attributeId: attribute.id,
+            title: attribute.title,
+            type: attribute.type,
+            position: attribute.position,
+            terms: [],
+          },
+        ].sort((left, right) => left.position - right.position),
+      }));
       setSelectedGenericAttributeId("");
-      await fetchVariationData();
       toast.success("ویژگی به محصول افزوده شد");
     } catch (error) {
-      toast.error("افزودن ویژگی به محصول با خطا مواجه شد");
+      console.error("Error adding attribute assignment:", error);
+      toast.error(
+        translateErrorMessage(
+          extractErrorMessage(error),
+          "افزودن ویژگی به محصول با خطا مواجه شد",
+        ),
+      );
     } finally {
-      setIsSavingAssignment(false);
+      setIsAddingAssignment(false);
     }
   };
 
   const removeGenericAssignment = async (assignmentId: number) => {
-    setIsSavingAssignment(true);
+    markAssignmentSaving(assignmentId, true);
     try {
-      await apiClient.delete(`/product-attribute-assignments/${assignmentId}`);
-      await fetchVariationData();
+      await apiClient.delete(
+        `${ENDPOINTS.PRODUCT.ATTRIBUTE_ASSIGNMENTS}/${assignmentId}`,
+      );
+      setFeatures((prev) => ({
+        ...prev,
+        generic: prev.generic.filter(
+          (group) => group.assignmentId !== assignmentId,
+        ),
+      }));
       toast.success("ویژگی از محصول حذف شد");
     } catch (error) {
-      toast.error("حذف ویژگی از محصول با خطا مواجه شد");
+      console.error("Error removing attribute assignment:", error);
+      toast.error(
+        translateErrorMessage(
+          extractErrorMessage(error),
+          "حذف ویژگی از محصول با خطا مواجه شد",
+        ),
+      );
     } finally {
-      setIsSavingAssignment(false);
+      markAssignmentSaving(assignmentId, false);
     }
   };
 
@@ -674,8 +809,9 @@ export const FeaturesTable = ({
       );
       const result = response.data || response;
 
-      // Refresh variation data after creation
-      await fetchVariationData();
+      // Generation is the one moment the server knows more than this component
+      // does, so re-read both slices it can have changed.
+      await Promise.all([loadExistingVariationAxes(), loadProductAssignments()]);
       onVariationsGenerated?.();
 
       if (!result.created) {
@@ -738,104 +874,16 @@ export const FeaturesTable = ({
                         </button>
                       </div>
                     ))}
-                    <div className="relative min-w-[140px] flex-1">
-                      <input
-                        type="text"
-                        className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
-                        placeholder="جستجوی رنگ..."
-                        value={inputValues.colors}
-                        onChange={(e) =>
-                          handleInputChange("colors", e.target.value)
-                        }
-                      />
-                      {inputValues.colors && (
-                        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                          {filteredOptions.colors.length > 0 ? (
-                            filteredOptions.colors.map((option) => {
-                              const isSelected = features.colors.some(
-                                (feature) => feature.id === String(option.id),
-                              );
-
-                              return (
-                                <button
-                                  type="button"
-                                  key={option.id}
-                                  onClick={() =>
-                                    !isSelected && addFeature("colors", option)
-                                  }
-                                  className={`flex w-full items-center gap-3 px-3 py-2 text-right text-sm ${
-                                    isSelected
-                                      ? "cursor-not-allowed text-slate-400"
-                                      : "cursor-pointer hover:bg-slate-100"
-                                  }`}
-                                  aria-disabled={isSelected}
-                                >
-                                  {/*
-                                    Colour records imported without a ColorCode all
-                                    rendered as the same anonymous grey dot, so a list
-                                    of them read as one option repeated. Mark them as
-                                    deliberately colourless instead.
-                                  */}
-                                  {option.attributes.ColorCode ? (
-                                    <span
-                                      className="h-5 w-5 shrink-0 rounded-full border border-slate-200"
-                                      style={{
-                                        backgroundColor:
-                                          option.attributes.ColorCode,
-                                      }}
-                                    />
-                                  ) : (
-                                    <span
-                                      aria-hidden="true"
-                                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-[10px] text-slate-400"
-                                    >
-                                      —
-                                    </span>
-                                  )}
-                                  <span className="min-w-0 truncate">
-                                    {option.attributes.Title}
-                                  </span>
-                                  {option.attributes.ColorCode ? (
-                                    <span
-                                      className="text-xs shrink-0 text-slate-400"
-                                      dir="ltr"
-                                    >
-                                      {option.attributes.ColorCode.toUpperCase()}
-                                    </span>
-                                  ) : (
-                                    <span className="text-xs shrink-0 text-slate-400">
-                                      بدون رنگ
-                                    </span>
-                                  )}
-                                  {isSelected && (
-                                    <span className="text-[11px] text-green-600">
-                                      افزوده شده
-                                    </span>
-                                  )}
-                                </button>
-                              );
-                            })
-                          ) : (
-                            <div className="px-3 py-2 text-xs text-neutral-500">
-                              موردی یافت نشد
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            disabled={creationLoading.colors}
-                            onClick={() => openColorModal(inputValues.colors)}
-                            className={`flex w-full items-center justify-between border-t border-slate-100 px-3 py-2 text-xs ${
-                              creationLoading.colors
-                                ? "cursor-not-allowed text-slate-400"
-                                : "text-blue-600 hover:bg-blue-50"
-                            }`}
-                          >
-                            <span>افزودن رنگ «{inputValues.colors}»</span>
-                            <span aria-hidden="true">+</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <AsyncSearchPicker
+                      placeholder="جستجوی رنگ..."
+                      search={searchColors}
+                      selectedIds={selectedColorIds}
+                      onPick={(option) => addFeature("colors", option)}
+                      renderOption={renderColorOption}
+                      onCreate={(query) => openColorModal(query)}
+                      createLabel={(query) => `افزودن رنگ «${query}»`}
+                      createDisabled={creationLoading.colors}
+                    />
                     <button
                       type="button"
                       disabled={creationLoading.colors}
@@ -875,70 +923,15 @@ export const FeaturesTable = ({
                         </button>
                       </div>
                     ))}
-                    <div className="relative min-w-[140px] flex-1">
-                      <input
-                        type="text"
-                        className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
-                        placeholder="جستجوی سایز..."
-                        value={inputValues.sizes}
-                        onChange={(e) =>
-                          handleInputChange("sizes", e.target.value)
-                        }
-                      />
-                      {inputValues.sizes && (
-                        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                          {filteredOptions.sizes.length > 0 ? (
-                            filteredOptions.sizes.map((option) => {
-                              const isSelected = features.sizes.some(
-                                (feature) => feature.id === String(option.id),
-                              );
-
-                              return (
-                                <button
-                                  type="button"
-                                  key={option.id}
-                                  onClick={() =>
-                                    !isSelected && addFeature("sizes", option)
-                                  }
-                                  className={`w-full px-3 py-2 text-right text-sm ${
-                                    isSelected
-                                      ? "cursor-not-allowed text-slate-400"
-                                      : "cursor-pointer hover:bg-slate-100"
-                                  }`}
-                                  aria-disabled={isSelected}
-                                >
-                                  <span>{option.attributes.Title}</span>
-                                  {isSelected && (
-                                    <span className="mr-2 text-[11px] text-green-600">
-                                      افزوده شده
-                                    </span>
-                                  )}
-                                </button>
-                              );
-                            })
-                          ) : (
-                            <div className="px-3 py-2 text-xs text-neutral-500">
-                              موردی یافت نشد
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            disabled={creationLoading.sizes}
-                            onClick={() =>
-                              handleCreateTextOption("sizes", inputValues.sizes)
-                            }
-                            className={`flex w-full items-center justify-between border-t border-slate-100 px-3 py-2 text-xs ${
-                              creationLoading.sizes
-                                ? "cursor-not-allowed text-slate-400"
-                                : "text-blue-600 hover:bg-blue-50"
-                            }`}
-                          >
-                            <span>افزودن سایز «{inputValues.sizes}»</span>
-                            <span aria-hidden="true">+</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <AsyncSearchPicker
+                      placeholder="جستجوی سایز..."
+                      search={searchSizes}
+                      selectedIds={selectedSizeIds}
+                      onPick={(option) => addFeature("sizes", option)}
+                      onCreate={(query) => handleCreateTextOption("sizes", query)}
+                      createLabel={(query) => `افزودن سایز «${query}»`}
+                      createDisabled={creationLoading.sizes}
+                    />
                   </div>
                 </td>
               </tr>
@@ -966,73 +959,15 @@ export const FeaturesTable = ({
                         </button>
                       </div>
                     ))}
-                    <div className="relative min-w-[140px] flex-1">
-                      <input
-                        type="text"
-                        className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
-                        placeholder="جستجوی مدل..."
-                        value={inputValues.models}
-                        onChange={(e) =>
-                          handleInputChange("models", e.target.value)
-                        }
-                      />
-                      {inputValues.models && (
-                        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                          {filteredOptions.models.length > 0 ? (
-                            filteredOptions.models.map((option) => {
-                              const isSelected = features.models.some(
-                                (feature) => feature.id === String(option.id),
-                              );
-
-                              return (
-                                <button
-                                  type="button"
-                                  key={option.id}
-                                  onClick={() =>
-                                    !isSelected && addFeature("models", option)
-                                  }
-                                  className={`w-full px-3 py-2 text-right text-sm ${
-                                    isSelected
-                                      ? "cursor-not-allowed text-slate-400"
-                                      : "cursor-pointer hover:bg-slate-100"
-                                  }`}
-                                  aria-disabled={isSelected}
-                                >
-                                  <span>{option.attributes.Title}</span>
-                                  {isSelected && (
-                                    <span className="mr-2 text-[11px] text-green-600">
-                                      افزوده شده
-                                    </span>
-                                  )}
-                                </button>
-                              );
-                            })
-                          ) : (
-                            <div className="px-3 py-2 text-xs text-neutral-500">
-                              موردی یافت نشد
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            disabled={creationLoading.models}
-                            onClick={() =>
-                              handleCreateTextOption(
-                                "models",
-                                inputValues.models,
-                              )
-                            }
-                            className={`flex w-full items-center justify-between border-t border-slate-100 px-3 py-2 text-xs ${
-                              creationLoading.models
-                                ? "cursor-not-allowed text-slate-400"
-                                : "text-blue-600 hover:bg-blue-50"
-                            }`}
-                          >
-                            <span>افزودن مدل «{inputValues.models}»</span>
-                            <span aria-hidden="true">+</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    <AsyncSearchPicker
+                      placeholder="جستجوی مدل..."
+                      search={searchModels}
+                      selectedIds={selectedModelIds}
+                      onPick={(option) => addFeature("models", option)}
+                      onCreate={(query) => handleCreateTextOption("models", query)}
+                      createLabel={(query) => `افزودن مدل «${query}»`}
+                      createDisabled={creationLoading.models}
+                    />
                   </div>
                 </td>
               </tr>
@@ -1072,7 +1007,7 @@ export const FeaturesTable = ({
                       <button
                         type="button"
                         disabled={
-                          !selectedGenericAttributeId || isSavingAssignment
+                          !selectedGenericAttributeId || isAddingAssignment
                         }
                         onClick={addGenericAssignment}
                         className="rounded-lg bg-slate-800 px-4 py-2 text-sm text-white disabled:opacity-50"
@@ -1083,7 +1018,9 @@ export const FeaturesTable = ({
                   </td>
                 </tr>
               )}
-              {features.generic.map((group) => (
+              {features.generic.map((group) => {
+                const isSaving = savingAssignmentIds.has(group.assignmentId);
+                return (
                 <tr
                   key={group.attributeId}
                   className="border-t border-slate-100"
@@ -1093,13 +1030,13 @@ export const FeaturesTable = ({
                       <span>{group.title}</span>
                       <button
                         type="button"
-                        disabled={isSavingAssignment}
+                        disabled={isSaving}
                         onClick={() =>
                           removeGenericAssignment(group.assignmentId)
                         }
                         className="text-xs text-red-500 disabled:opacity-50"
                       >
-                        حذف از محصول
+                        {isSaving ? "در حال حذف..." : "حذف از محصول"}
                       </button>
                     </div>
                     <div className="mt-1 text-[11px] text-slate-400">
@@ -1126,20 +1063,36 @@ export const FeaturesTable = ({
                           </span>
                           <button
                             type="button"
+                            disabled={isSaving}
                             onClick={() =>
-                              removeGenericTerm(group.attributeId, term.id)
+                              void removeGenericTerm(group, term.id)
                             }
-                            className="text-slate-400"
+                            className="text-slate-400 disabled:opacity-50"
                             aria-label={`حذف ${term.value}`}
                           >
                             <DeleteIcon />
                           </button>
                         </div>
                       ))}
+                      {/*
+                        Values are searched per attribute rather than dumped in
+                        wholesale when the attribute is attached, so this row
+                        behaves like the colour/size/model rows above it.
+                        Inline creation is not offered: a Color-typed term needs a
+                        ColorCode, which belongs in the attributes screen.
+                      */}
+                      <AsyncSearchPicker
+                        placeholder={`جستجوی ${group.title}...`}
+                        search={termSearchFor(group.attributeId)}
+                        selectedIds={new Set(group.terms.map((term) => term.id))}
+                        onPick={(option) => addGenericTerm(group, option)}
+                        disabled={isSaving}
+                      />
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

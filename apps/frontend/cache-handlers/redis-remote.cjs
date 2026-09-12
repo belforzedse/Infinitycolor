@@ -44,7 +44,17 @@ async function redis() {
     client = createClient({
       url,
       disableOfflineQueue: true,
-      socket: { connectTimeout: commandTimeoutMs, reconnectStrategy: false },
+      socket: {
+        connectTimeout: commandTimeoutMs,
+        // Same failure, same fix as cache-handler.mjs: with reconnection
+        // disabled a single Redis blip demoted this process to origin-only
+        // reads for the rest of its lifetime, and independently-demoting
+        // replicas stopped agreeing on cached content. Now that every PDP/PLP
+        // render depends on this handler across 40 replicas, that is no longer
+        // a latent bug. `disableOfflineQueue` above still makes commands fail
+        // fast while the socket is down, so requests fall through to origin.
+        reconnectStrategy: (retries) => Math.min(200 * 2 ** Math.min(retries, 5), 5000),
+      },
     });
     client.on("error", () => undefined);
   }

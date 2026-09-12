@@ -40,11 +40,35 @@ test("never assumes a timezone for a non-GMT source field", () => {
   assert.equal(parseTimestamp("2026-01-01T00:00:00+03:30"), "2025-12-31T20:30:00.000Z");
 });
 
-test("rejects source modification timestamps before creation", () => {
-  assert.throws(() => wooSourceTimestamps({
+test("clamps a source modification timestamp that precedes creation", () => {
+  // Ordinary WooCommerce data (clock skew, bulk edits, host migrations).
+  // Throwing here used to fail the whole product — fields, variations, stock
+  // and publication — over a cosmetic timestamp.
+  assert.deepEqual(wooSourceTimestamps({
     date_created_gmt: "2026-01-02T00:00:00",
     date_modified_gmt: "2026-01-01T00:00:00",
-  }), /SOURCE_UPDATED_BEFORE_CREATED/);
+  }), {
+    createdAt: "2026-01-02T00:00:00.000Z",
+    updatedAt: "2026-01-02T00:00:00.000Z",
+  });
+});
+
+test("clamped timestamps still satisfy the destination's updatedAt >= createdAt invariant", () => {
+  const t = wordpressSourceTimestamps({
+    date_gmt: "2021-06-01T10:00:00",
+    modified_gmt: "2019-01-01T00:00:00",
+  });
+  assert.ok(new Date(t.updatedAt).getTime() >= new Date(t.createdAt).getTime());
+});
+
+test("keeps a normal modification timestamp untouched", () => {
+  assert.deepEqual(wooSourceTimestamps({
+    date_created_gmt: "2026-01-01T00:00:00",
+    date_modified_gmt: "2026-01-02T00:00:00",
+  }), {
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-02T00:00:00.000Z",
+  });
 });
 
 test("builds migration headers only when source timestamps exist", () => {

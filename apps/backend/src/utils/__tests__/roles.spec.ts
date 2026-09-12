@@ -23,6 +23,7 @@ describe("role hierarchy helpers", () => {
   it("defines customer and manager-plus role groups", () => {
     expect(CUSTOMER_CAPABLE_ROLES).toEqual([
       ROLE_NAMES.CUSTOMER,
+      ROLE_NAMES.SUPPORT,
       ROLE_NAMES.EDITOR,
       ROLE_NAMES.SELLER_1,
       ROLE_NAMES.SELLER_2,

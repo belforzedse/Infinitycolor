@@ -31,8 +31,8 @@ describe("issue report direct API authorization", () => {
 
     const actor = await requireCapability(ctx, strapi, "system.issueReports.manage");
 
-    if (role === "superadmin") {
-      expect(actor).toEqual(expect.objectContaining({ role: "superadmin" }));
+    if (role === "superadmin" || role === "support") {
+      expect(actor).toEqual(expect.objectContaining({ role }));
       expect(ctx.forbidden).not.toHaveBeenCalled();
     } else {
       expect(actor).toBeNull();

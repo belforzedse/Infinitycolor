@@ -404,6 +404,46 @@ async function findProductBySlugInternal(
   return product;
 }
 
+/**
+ * Shared body of the soft-delete / restore handlers. `removedAt` is the only
+ * field either one writes.
+ */
+async function setProductRemovedAt(ctx: any, strapi: any, removedAt: string | null) {
+  const productId = Number(ctx.params?.id);
+  if (!Number.isSafeInteger(productId) || productId <= 0) {
+    ctx.status = 400;
+    ctx.body = {
+      error: { code: "INVALID_PRODUCT_ID", message: "A valid product ID is required" },
+    };
+    return;
+  }
+
+  const existing = await strapi.db
+    .query("api::product.product")
+    .findOne({ where: { id: productId }, select: ["id", "removedAt"] });
+  if (!existing) {
+    return ctx.notFound("Product not found");
+  }
+
+  // Idempotent: repeating the action (a double-click, a retried bulk item) is a
+  // no-op rather than a second audit entry with a fresh timestamp.
+  const alreadyInTargetState = Boolean(existing.removedAt) === Boolean(removedAt);
+  if (alreadyInTargetState) {
+    ctx.body = {
+      data: { id: productId, removedAt: existing.removedAt ?? null, unchanged: true },
+    };
+    return;
+  }
+
+  const product = await strapi.entityService.update("api::product.product", productId, {
+    data: { removedAt },
+  });
+
+  ctx.body = {
+    data: { id: product.id, removedAt: product.removedAt ?? null, unchanged: false },
+  };
+}
+
 export default factories.createCoreController("api::product.product", ({ strapi }) => ({
   async create(ctx) {
     discardLegacyDraftStatusOnCreate(ctx);
@@ -418,6 +458,31 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     if (rejectPublicationFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
     return super.update(ctx);
+  },
+
+  /**
+   * Reversible removal to the recycle bin, and its undo.
+   *
+   * `removedAt` is deliberately absent from OPERATIONAL_PRODUCT_FIELDS, so a
+   * plain `PUT /products/:id` carrying it is rejected for every non-Superadmin by
+   * `enforceOperationalDataFields`. Rather than widening that allowlist — which
+   * would let any role with product.update stamp the field through the generic
+   * update path — removal gets dedicated routes gated on their own capabilities,
+   * the same shape as `publication` and `updateDisplayDate`.
+   *
+   * Authorization lives in the router (`global::require-capability`):
+   * product.softDelete here, product.restore below. Permanent deletion is a
+   * different capability entirely and is not reachable from either.
+   *
+   * Both go through entityService so the product lifecycle hook fires and writes
+   * the admin-audit entry that distinguishes a removal from a restore.
+   */
+  async softDelete(ctx) {
+    return setProductRemovedAt(ctx, strapi, new Date().toISOString());
+  },
+
+  async restore(ctx) {
+    return setProductRemovedAt(ctx, strapi, null);
   },
 
   async updateDisplayDate(ctx) {
@@ -549,6 +614,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
           scheduledPublishTimezone: result.scheduledPublishTimezone,
           scheduledPublishRevision: result.scheduleRevision,
           publicationRevision: result.publicationRevision,
+          publishedVariationCount: result.publishedVariationCount || 0,
           queueState,
           changed: result.changed,
         },

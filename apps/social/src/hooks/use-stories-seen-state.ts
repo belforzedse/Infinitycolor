@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getMySeenStoryIds, markStorySeen } from "@/services/story.service";
 
 const LS_KEY = "story_seen_ids";
@@ -30,6 +30,12 @@ function writeLocalSeenIds(ids: number[]) {
  */
 export function useStoriesSeenState(isAuthenticated: boolean) {
   const [seenIds, setSeenIds] = useState<Set<number>>(new Set());
+
+  // Ids this session has already reported. The `setSeenIds` guard below cannot serve
+  // this purpose: it runs inside a state updater, which React may invoke twice (Strict
+  // Mode) and which does not gate the network call that follows it. Without this, opening
+  // a story posted a view for it more than once.
+  const reportedRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     const localIds = readLocalSeenIds();
@@ -74,12 +80,17 @@ export function useStoriesSeenState(isAuthenticated: boolean) {
         return next;
       });
 
-      if (isAuthenticated) {
-        try {
-          await markStorySeen(storyId);
-        } catch {
-          // local state already updated
-        }
+      if (!isAuthenticated) return;
+      if (reportedRef.current.has(storyId)) return;
+      reportedRef.current.add(storyId);
+
+      try {
+        await markStorySeen(storyId);
+      } catch {
+        // local state already updated
+        // Allow a later attempt: the view is recorded locally either way, but a dropped
+        // request should not permanently lose the server-side record.
+        reportedRef.current.delete(storyId);
       }
     },
     [isAuthenticated],

@@ -13,6 +13,7 @@ import {
   type OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
 import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTranslations";
+import { describeOrderTransitionError } from "@/utils/orderTransition";
 import { PersianOrderStatus } from "@/constants/enums";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
 
@@ -123,10 +124,11 @@ export default function OrderStatusActions({
       setCancelReason("");
       onSuccess();
     } catch (error: unknown) {
-      const message =
-        (error as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-        "عملیات با خطا مواجه شد";
-      toast.error(typeof message === "string" ? message : "عملیات با خطا مواجه شد");
+      // This read an axios-shaped `response.data.error`, but apiClient throws a
+      // flat ApiError — so the lookup was always undefined and every failure,
+      // including a refused status transition, showed the same fixed sentence.
+      console.error("Order status action failed:", error);
+      toast.error(describeOrderTransitionError(error));
     } finally {
       setLoading(false);
     }

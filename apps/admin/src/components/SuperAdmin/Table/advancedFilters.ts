@@ -14,6 +14,12 @@ export type AdvancedFilterField = {
   type?: AdvancedFilterFieldType;
   operators?: string[];
   options?: AdvancedFilterOption[];
+  /**
+   * Per-field overrides for OPERATOR_LABELS. Relation-presence filters read as
+   * nonsense under the generic labels — «غیر خالی» for "is a reserve order" — so
+   * the field that owns the operator gets to name it.
+   */
+  operatorLabels?: Record<string, string>;
 };
 
 export type AdvancedFilterItem = {

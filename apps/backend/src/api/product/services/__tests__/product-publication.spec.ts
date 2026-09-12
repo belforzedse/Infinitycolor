@@ -6,6 +6,10 @@ jest.mock("../../../../utils/revalidate", () => ({
   triggerFrontendRevalidation: jest.fn(),
 }));
 
+jest.mock("../../../../utils/homepageRevalidation", () => ({
+  scheduleHomeProductsRevalidation: jest.fn(),
+}));
+
 jest.mock("../../../../audit/writer", () => ({
   resolveCurrentAuditContext: jest.fn(() => ({
     actor: { type: "human", id: 7, label: "Admin", role: "Superadmin" },
@@ -25,6 +29,7 @@ jest.mock("../../../../audit/writer", () => ({
 import { delByPatternStrict } from "../../../../utils/responseCache";
 import { triggerFrontendRevalidation } from "../../../../utils/revalidate";
 import { writeAuditEvent } from "../../../../audit/writer";
+import { scheduleHomeProductsRevalidation } from "../../../../utils/homepageRevalidation";
 import {
   executePublicationCommand,
   PublicationCommandError,
@@ -38,6 +43,9 @@ const mockedRevalidate = triggerFrontendRevalidation as jest.MockedFunction<
   typeof triggerFrontendRevalidation
 >;
 const mockedWriteAudit = writeAuditEvent as jest.MockedFunction<typeof writeAuditEvent>;
+const mockedHomeRevalidate = scheduleHomeProductsRevalidation as jest.MockedFunction<
+  typeof scheduleHomeProductsRevalidation
+>;
 
 type Row = Record<string, any> & { id: number };
 
@@ -66,11 +74,41 @@ function productRow(overrides: Partial<Row> = {}): Row {
   };
 }
 
-function makeStrapi(initialRows: Row[], opts: { cover?: unknown } = {}) {
-  const rows = new Map(initialRows.map((row) => [row.id, { ...row }]));
+type VariationRow = { id: number; is_published: boolean | null };
+
+/**
+ * Fake knex over a table-keyed row store: `products` plus the variation tables
+ * the publish cascade touches.
+ */
+function makeStrapi(
+  initialRows: Row[],
+  opts: { cover?: unknown; variations?: VariationRow[]; variationProductId?: number } = {},
+) {
+  const rows = new Map(initialRows.map((row) => [row.id, { ...row }] as [number, any]));
+  const linkedProductId = opts.variationProductId ?? 1;
+  const variations = new Map(
+    (opts.variations || []).map((row) => [row.id, { ...row }] as [number, any]),
+  );
+  const links = new Map(
+    (opts.variations || []).map(
+      (row, index) =>
+        [
+          index + 1,
+          { id: index + 1, product_variation_id: row.id, product_id: linkedProductId },
+        ] as [number, any],
+    ),
+  );
+  const tables: Record<string, Map<number, any>> = {
+    products: rows,
+    product_variations: variations,
+    product_variations_product_links: links,
+  };
 
   class Query {
-    filters: Array<(row: Row) => boolean> = [];
+    filters: Array<(row: any) => boolean> = [];
+    columns: string[] | null = null;
+
+    constructor(private store: Map<number, any>) {}
 
     where(arg1: Record<string, unknown> | string, arg2?: unknown) {
       if (typeof arg1 === "string") {
@@ -87,12 +125,35 @@ function makeStrapi(initialRows: Row[], opts: { cover?: unknown } = {}) {
       return this.where(arg1 as any, arg2);
     }
 
+    whereIn(column: string, values: unknown[]) {
+      const allowed = new Set(values);
+      this.filters.push((row) => allowed.has(row[column]));
+      return this;
+    }
+
+    select(...columns: string[]) {
+      this.columns = columns.flat();
+      return this;
+    }
+
     forUpdate() {
       return this;
     }
 
     matching() {
-      return Array.from(rows.values()).filter((row) => this.filters.every((filter) => filter(row)));
+      return Array.from(this.store.values()).filter((row) =>
+        this.filters.every((filter) => filter(row)),
+      );
+    }
+
+    /** Awaiting the builder resolves the projected rows, the way knex does. */
+    then(resolve: (value: any) => unknown, reject?: (reason: unknown) => unknown) {
+      const projected = this.matching().map((row) =>
+        this.columns
+          ? Object.fromEntries(this.columns.map((column) => [column, row[column]]))
+          : { ...row },
+      );
+      return Promise.resolve(projected).then(resolve, reject);
     }
 
     async first() {
@@ -102,14 +163,15 @@ function makeStrapi(initialRows: Row[], opts: { cover?: unknown } = {}) {
 
     async update(data: Record<string, unknown>) {
       const matches = this.matching();
-      matches.forEach((row) => Object.assign(rows.get(row.id)!, data));
+      matches.forEach((row) => Object.assign(this.store.get(row.id)!, data));
       return matches.length;
     }
   }
 
   const connection = jest.fn((table: string) => {
-    expect(table).toBe("products");
-    return new Query();
+    const store = tables[table];
+    if (!store) throw new Error(`Unexpected table in publication query: ${table}`);
+    return new Query(store);
   });
   const trx = (table: string) => connection(table);
   const entityCreate = jest.fn().mockResolvedValue({ id: 99 });
@@ -126,6 +188,9 @@ function makeStrapi(initialRows: Row[], opts: { cover?: unknown } = {}) {
     log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
     __row(id = 1) {
       return rows.get(id)!;
+    },
+    __variation(id: number) {
+      return variations.get(id)!;
     },
     __entityCreate: entityCreate,
   };
@@ -245,6 +310,82 @@ describe("canonical product publication service", () => {
       changed: false,
     }));
     expect(strapi.__entityCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes the product's unpublished variations along with it", async () => {
+    const strapi = makeStrapi([productRow()], {
+      variations: [
+        { id: 10, is_published: false },
+        { id: 11, is_published: true },
+        { id: 12, is_published: null },
+      ],
+    });
+
+    const result = await executePublicationCommand(
+      strapi,
+      1,
+      { action: "publish-now" },
+      { origin: "admin", now },
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "Active",
+      changed: true,
+      publishedVariationCount: 2,
+    }));
+    expect(strapi.__variation(10).is_published).toBe(true);
+    expect(strapi.__variation(11).is_published).toBe(true);
+    expect(strapi.__variation(12).is_published).toBe(true);
+    expect(mockedHomeRevalidate).toHaveBeenCalledWith(
+      "product-publication-cascade",
+      expect.objectContaining({ productId: 1, publishedVariationCount: 2 }),
+    );
+  });
+
+  it("leaves other products' variations untouched and re-publishes nothing when already Active", async () => {
+    const strapi = makeStrapi([productRow(), productRow({ id: 2, slug: "other" })], {
+      variations: [{ id: 10, is_published: false }],
+      variationProductId: 2,
+    });
+
+    const result = await executePublicationCommand(
+      strapi,
+      1,
+      { action: "publish-now" },
+      { origin: "admin", now },
+    );
+
+    expect(result.publishedVariationCount).toBe(0);
+    expect(strapi.__variation(10).is_published).toBe(false);
+    expect(mockedHomeRevalidate).not.toHaveBeenCalled();
+  });
+
+  it("does not cascade for importer-driven publishes, which map variation status themselves", async () => {
+    const strapi = makeStrapi([productRow()], {
+      variations: [{ id: 10, is_published: false }],
+    });
+
+    const result = await executePublicationCommand(
+      strapi,
+      1,
+      { action: "publish-now", expectedExternalSource: "woocommerce", expectedExternalId: "101" },
+      { origin: "importer", now },
+    );
+
+    expect(result.status).toBe("Active");
+    expect(result.publishedVariationCount).toBe(0);
+    expect(strapi.__variation(10).is_published).toBe(false);
+  });
+
+  it("leaves variation flags alone when unpublishing", async () => {
+    const strapi = makeStrapi([productRow({ status: "Active", publication_revision: 1 })], {
+      variations: [{ id: 10, is_published: true }],
+    });
+
+    await executePublicationCommand(strapi, 1, { action: "unpublish" }, { origin: "admin", now });
+
+    expect(strapi.__row(1).status).toBe("InActive");
+    expect(strapi.__variation(10).is_published).toBe(true);
   });
 
   it("rejects future scheduling for an already Active product", async () => {
@@ -380,6 +521,57 @@ describe("canonical product publication service", () => {
     );
     expect(strapi.__row().publication_revision).toBe(1);
     expect(strapi.__entityCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("cascades to variations when the scheduler publishes, same as an immediate publish", async () => {
+    const strapi = makeStrapi(
+      [productRow({
+        status: "Scheduled",
+        scheduled_publish_at: firstAt,
+        scheduled_publish_timezone: "Asia/Tehran",
+        scheduled_publish_revision: 1,
+      })],
+      { variations: [{ id: 10, is_published: false }, { id: 11, is_published: true }] },
+    );
+
+    const attempt = await publishScheduledProduct(strapi, {
+      productId: 1,
+      scheduleRevision: 1,
+      expectedPublishAt: firstAt,
+      now: new Date("2026-08-08T12:01:00.000Z"),
+    });
+
+    expect(attempt.outcome).toBe("published");
+    expect(attempt.result.publishedVariationCount).toBe(1);
+    expect(strapi.__variation(10).is_published).toBe(true);
+    expect(mockedHomeRevalidate).toHaveBeenCalledWith(
+      "product-publication-cascade",
+      expect.objectContaining({ productId: 1, publishedVariationCount: 1 }),
+    );
+  });
+
+  it("skips the cascade when the scheduler fires an importer-created schedule", async () => {
+    const strapi = makeStrapi(
+      [productRow({
+        status: "Scheduled",
+        scheduled_publish_at: firstAt,
+        scheduled_publish_timezone: "Asia/Tehran",
+        scheduled_publish_revision: 1,
+        scheduled_publish_audit_context: { schemaVersion: 1, origin: "import" } as any,
+      })],
+      { variations: [{ id: 10, is_published: false }] },
+    );
+
+    const attempt = await publishScheduledProduct(strapi, {
+      productId: 1,
+      scheduleRevision: 1,
+      expectedPublishAt: firstAt,
+      now: new Date("2026-08-08T12:01:00.000Z"),
+    });
+
+    expect(attempt.outcome).toBe("published");
+    expect(attempt.result.publishedVariationCount).toBe(0);
+    expect(strapi.__variation(10).is_published).toBe(false);
   });
 
   it("persists transient retry metadata only while the schedule revision is current", async () => {

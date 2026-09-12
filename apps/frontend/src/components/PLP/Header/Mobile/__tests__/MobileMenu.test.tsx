@@ -250,4 +250,28 @@ describe("MobileMenu", () => {
       jest.useRealTimers();
     });
   });
+
+  // Reported in production: the hamburger opened once, then never again after
+  // visiting any page from the menu. A nav link closes via onClose(), so the
+  // parent flips `isOpen` false BEFORE the exit animation ends; finishMenuClose()
+  // then latched a ref that only an `isOpen` transition cleared, and the latch
+  // swallowed every later open for the rest of the session.
+  it("opens again after a nav link closed it", async () => {
+    const onClose = jest.fn();
+    const { rerender } = render(<MobileMenu isOpen onClose={onClose} />);
+    await screen.findByRole("button", { name: "بالاتنه" });
+
+    const panel = document.querySelector(".storefront-mobile-menu-panel");
+    expect(panel).not.toBeNull();
+
+    // Nav link: isOpen flips first, the exit animation finishes afterwards.
+    rerender(<MobileMenu isOpen={false} onClose={onClose} />);
+    fireEvent.animationEnd(panel as Element);
+    expect(document.querySelector(".storefront-mobile-menu-panel")).toBeNull();
+
+    rerender(<MobileMenu isOpen onClose={onClose} />);
+    await screen.findByRole("button", { name: "بالاتنه" });
+
+    expect(document.querySelector(".storefront-mobile-menu-panel")).not.toBeNull();
+  });
 });

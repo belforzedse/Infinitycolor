@@ -4,6 +4,7 @@ export const QUEUE_NAMES = {
   commerceMaintenance: "commerce-maintenance",
   analyticsMaintenance: "analytics-maintenance",
   payments: "payments",
+  media: "media",
 } as const;
 
 export const COMMERCE_MAINTENANCE_JOBS = {
@@ -29,6 +30,17 @@ export const SNAPPAY_PAYMENT_JOBS = {
 export const WALLET_TOPUP_PAYMENT_JOBS = {
   reconcile: "walletTopups.reconcile",
 } as const;
+
+export const MEDIA_JOBS = {
+  /** Transcode a story's video to web-safe progressive MP4 (see services/media). */
+  normalizeStoryVideo: "media.normalizeStoryVideo",
+} as const;
+
+export type MediaJobName = (typeof MEDIA_JOBS)[keyof typeof MEDIA_JOBS];
+
+export type NormalizeStoryVideoJobData = {
+  storyId: number;
+};
 
 export const MAINTENANCE_SCHEDULERS = {
   stockReservationExpiry: "sched:stockReservations.expire",
@@ -64,6 +76,7 @@ export type ScheduledProductPublicationJobData = {
 
 export type MaintenanceJobData =
   | Record<string, never>
+  | NormalizeStoryVideoJobData
   | ScheduledProductPublicationJobData
   | {
       operationId: number;

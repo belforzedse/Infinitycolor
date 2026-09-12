@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from "react";
 import type { UseFormRegister, FieldErrors, Control, UseFormSetValue } from "react-hook-form";
-import { Controller, useWatch } from "react-hook-form";
+import { Controller, useWatch, useFormState } from "react-hook-form";
 import { useAtom, useAtomValue } from "jotai";
 import Input from "@/components/Kits/Form/Input";
 import type { Option } from "@/components/Kits/Form/Select";
@@ -54,6 +54,7 @@ function ShoppingCartBillInformationForm({
   const [errorCities, setErrorCities] = useState<string | null>(null);
   const [lastProvinceId, setLastProvinceId] = useState<number | null>(null);
   const lastHydratedAddressIdRef = React.useRef<number | null>(null);
+  const autoSelectedAddressRef = React.useRef(false);
 
   useEffect(() => {
     const fetchAddresses = async () => {
@@ -119,6 +120,7 @@ function ShoppingCartBillInformationForm({
   // Watch the current address value from the form
   const selectedAddress = useWatch({ control, name: "address" });
   const selectedProvince = useWatch({ control, name: "province" });
+  const { dirtyFields } = useFormState({ control });
 
   // Clear form value if selected address was deleted
   useEffect(() => {
@@ -198,6 +200,33 @@ function ShoppingCartBillInformationForm({
         name: `${address.FullAddress} - ${address.shipping_city.Title}, ${address.shipping_city.shipping_province.Title}`,
       }));
   }, [addresses]);
+
+  // Preselect the only saved address. There is no server-side default-address flag on
+  // `local-user-address`, so the single-option case is the only one we can decide for the
+  // shopper without guessing. Keyed off `addressOptions` rather than `addresses` because
+  // entries missing a province are filtered out above and are not selectable.
+  useEffect(() => {
+    if (hideAddressFields) return;
+    if (autoSelectedAddressRef.current) return;
+    if (loading) return;
+    if (selectedAddress?.id) return;
+    if (addressOptions.length !== 1) return;
+    // The fetch is async, so a fast shopper can start typing a new address before it
+    // resolves. Auto-selecting then would let the hydrate effect below overwrite what
+    // they typed, so only fill in while the inline fields are untouched.
+    if (
+      dirtyFields.province ||
+      dirtyFields.city ||
+      dirtyFields.postalCode ||
+      dirtyFields.fullAddress ||
+      dirtyFields.addressDescription
+    ) {
+      return;
+    }
+
+    autoSelectedAddressRef.current = true;
+    setValue("address", addressOptions[0]);
+  }, [addressOptions, selectedAddress, loading, hideAddressFields, dirtyFields, setValue]);
 
   const provinceOptions: Option[] = useMemo(
     () =>

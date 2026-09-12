@@ -466,7 +466,9 @@ export async function getPLPHeroProducts(categorySlug?: string): Promise<Product
   const fetchCards = async (endpoint: string) => {
     const response = await fetchWithTimeout(`${strapiBase}${endpoint}`, {
       timeoutMs: 10000,
-      next: { revalidate: 120 },
+      // Previously untagged, so no product mutation could ever reach it — only
+      // the 120s clock could.
+      next: { revalidate: 120, tags: [PRODUCT_TAG, PRODUCT_COLLECTION_TAG] },
     });
     if (!response.ok) return [];
     const data = await response.json();

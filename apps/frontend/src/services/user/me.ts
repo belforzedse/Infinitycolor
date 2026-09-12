@@ -17,7 +17,8 @@ export interface MeResponse {
   LastName: string;
   NationalCode: string | null;
   Phone: string;
-  Sex: string | null;
+  /** The API speaks the string form; the column behind it is a boolean. */
+  Sex: "male" | "female" | null;
   createdAt: string;
   id: number;
   updatedAt: string;

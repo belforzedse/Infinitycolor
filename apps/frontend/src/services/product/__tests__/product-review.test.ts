@@ -13,3 +13,16 @@ it('keeps public review reads restricted to accepted, nonremoved reviews', async
   await productReviewService.getProductReviews(1);
   expect(apiClient.get).toHaveBeenCalledWith('/product-reviews', { cache: 'no-store', params: expect.objectContaining({ 'filters[Status][$eq]': 'Accepted', 'filters[removedAt][$null]': 'true' }) });
 });
+// The `no-store` default must survive: browser callers re-read immediately after
+// posting a review and must not be served their own submission from a cache.
+// Only an explicit opt-in — the PDP's `"use cache: remote"` wrapper — may share a
+// response between callers, and that is what makes the render cacheable at all.
+it('defaults to no-store but honours an explicit cache override', async () => {
+  (apiClient.get as jest.Mock).mockResolvedValue({ data: [], meta: { pagination: { page: 1, pageCount: 1, total: 0 } } });
+
+  await productReviewService.getProductReviews(1, {}, { cache: 'default' });
+  expect(apiClient.get).toHaveBeenLastCalledWith('/product-reviews', expect.objectContaining({ cache: 'default' }));
+
+  await productReviewService.getProductReviews(1, {});
+  expect(apiClient.get).toHaveBeenLastCalledWith('/product-reviews', expect.objectContaining({ cache: 'no-store' }));
+});

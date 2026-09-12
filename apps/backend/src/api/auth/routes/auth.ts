@@ -71,7 +71,16 @@ export default {
       config: {
         auth: false,
         policies: [],
-        middlewares: ["api::auth.login-throttle"], // Prevent brute force: 5 attempts per 10 min
+        // Browser-reachable password resets belong to the central auth app, which is the
+        // only place that can revoke the Better Auth sessions a reset has to invalidate.
+        // Strapi has no access to `auth.sessions`, so this handler could change the
+        // password and leave every existing session alive -- the behaviour
+        // docs/auth/architecture.md promises against. Requiring the signed bridge means
+        // the only route into it is apps/auth, which revokes.
+        middlewares: [
+          "api::internal-auth.verify-bridge",
+          "api::auth.login-throttle", // Prevent brute force: 5 attempts per 10 min
+        ],
       },
     },
   ],

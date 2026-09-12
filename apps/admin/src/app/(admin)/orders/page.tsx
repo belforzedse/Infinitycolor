@@ -16,8 +16,13 @@ import {
   OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
 import { translateOrderStatus } from "@/utils/statusTranslations";
+import {
+  describeOrderTransitionError,
+  orderTransitionBlockReason,
+} from "@/utils/orderTransition";
 import { listAdminOrders } from "@/services/super-admin/orders/list";
 import type { AdvancedFilterItem } from "@/components/SuperAdmin/Table/advancedFilters";
+import type { BulkActionOption } from "@/components/SuperAdmin/Table/bulkActions";
 import { useCan } from "@/hooks/useCan";
 import { useLegacyFilterQueryCleanup } from "@/hooks/useLegacyFilterQueryCleanup";
 
@@ -43,8 +48,12 @@ const ORDER_TABS: { key: OrderTab; label: string }[] = [
 
 // Fulfilment transitions only. Cancel is a separate bulk action that hits
 // `/admin/cancel` (refund/restock) instead of the status-transition endpoint.
+//
+// «در حال انجام» (Started) used to be offered here and could never succeed:
+// nothing in the backend's transition chain leads *to* Started — an order gets
+// there by being paid for. Only the two reachable steps are listed.
 const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
-  { status: "Started", label: "در حال انجام" },
+  { status: "Shipment", label: "ارسال شده" },
   { status: "Done", label: "تکمیل شده" },
 ];
 
@@ -96,17 +105,39 @@ export default function OrdersPage() {
     };
   }, [debouncedSearch]);
 
-  const bulkOptions = useMemo(() => {
-    const statusOptions = canChangeOrderStatus
+  const bulkOptions = useMemo<BulkActionOption[]>(() => {
+    const statusOptions: BulkActionOption[] = canChangeOrderStatus
       ? BULK_STATUS_OPTIONS.map(({ status, label }) => ({
           id: `status-${status}`,
           title: `تغییر وضعیت به «${label}»`,
+          confirm: {
+            title: `تغییر وضعیت به «${label}»`,
+            description: (count: number) =>
+              `وضعیت ${count} سفارش به «${label}» تغییر می‌کند. سفارش‌هایی که این مرحله برایشان ممکن نیست نادیده گرفته می‌شوند.`,
+            confirmText: "بله، تغییر بده",
+          },
         }))
       : [];
     return [
       ...(canPrintOrders ? [{ id: "print", title: "پرینت دسته‌ای" }] : []),
       ...statusOptions,
-      ...(canCancelOrders ? [{ id: "cancel", title: "لغو سفارش" }] : []),
+      ...(canCancelOrders
+        ? [
+            {
+              id: "cancel",
+              title: "لغو سفارش",
+              variant: "danger" as const,
+              // Single-order cancel has always confirmed; cancelling a whole
+              // selection — which refunds and restocks each one — did not.
+              confirm: {
+                title: "لغو سفارش‌ها",
+                description: (count: number) =>
+                  `${count} سفارش لغو می‌شود، موجودی بازمی‌گردد و مبلغ پرداختی به مشتری برگردانده می‌شود.`,
+                confirmText: "بله، لغو کن",
+              },
+            },
+          ]
+        : []),
     ];
   }, [canCancelOrders, canChangeOrderStatus, canPrintOrders]);
 
@@ -155,39 +186,83 @@ export default function OrdersPage() {
           "",
         ) as OrderLifecycleStatus;
 
-        // Held reserve orders are refused server-side (`RESERVE_HOLD_ACTIVE`)
-        // for fulfilment transitions. Filtering them out here means a mixed
-        // selection still succeeds for the rest instead of failing as a
-        // partially-applied batch. Cancel is handled above and does not skip
-        // held reserve orders.
-        const held = selectedRows.filter((row) => row.attributes.reserveIsHeld);
-        const eligible = selectedRows.filter((row) => !row.attributes.reserveIsHeld);
+        // Two reasons an order in the selection cannot move, both known before
+        // sending anything:
+        //  - it is inside a live 48h reserve window, which the server refuses
+        //    with RESERVE_HOLD_ACTIVE;
+        //  - the transition is not the next step in the fulfilment chain, which
+        //    the server refuses with INVALID_ORDER_TRANSITION.
+        // Skipping them locally means a mixed selection still succeeds for the
+        // rest, and the operator is told which orders were left behind and why
+        // instead of getting one generic failure. Cancel is handled above and
+        // does not skip held reserve orders.
+        const skipped: { row: Order; reason: string }[] = [];
+        const eligible: Order[] = [];
+        for (const row of selectedRows) {
+          if (row.attributes.reserveIsHeld) {
+            skipped.push({ row, reason: "در مهلت رزرو" });
+            continue;
+          }
+          const blocked = orderTransitionBlockReason(
+            row.attributes.Status,
+            statusKey,
+          );
+          if (blocked) {
+            skipped.push({ row, reason: blocked });
+            continue;
+          }
+          eligible.push(row);
+        }
 
         if (eligible.length === 0) {
+          const reasons = [...new Set(skipped.map((entry) => entry.reason))];
           toast.error(
-            "همه سفارش‌های انتخاب‌شده در مهلت رزرو هستند و تا پایان مهلت ارسال نمی‌شوند.",
+            `هیچ سفارشی قابل تغییر به «${translateOrderStatus(statusKey)}» نبود. ${reasons.join("؛ ")}`,
           );
           return;
         }
 
-        try {
-          await Promise.all(
-            eligible.map((row) => changeOrderStatus(row.id, statusKey)),
-          );
+        // allSettled, not all: one refusal used to discard the outcome of every
+        // order that had already succeeded.
+        const results = await Promise.allSettled(
+          eligible.map((row) => changeOrderStatus(row.id, statusKey)),
+        );
+        const failures = results.flatMap((result, index) =>
+          result.status === "rejected"
+            ? [{ row: eligible[index], error: result.reason }]
+            : [],
+        );
+        const succeeded = results.length - failures.length;
+
+        if (succeeded > 0) {
           toast.success(
-            `${eligible.length} سفارش به وضعیت «${translateOrderStatus(statusKey)}» منتقل شد.`,
+            `${succeeded} سفارش به وضعیت «${translateOrderStatus(statusKey)}» منتقل شد.`,
           );
-          if (held.length > 0) {
-            toast(
-              `${held.length} سفارش به دلیل بودن در مهلت رزرو تغییر نکرد.`,
-              { icon: "⏳" },
-            );
-          }
-          setRefresh(true);
-        } catch (error) {
-          console.error("Bulk order status update error:", error);
-          toast.error("خطا در بروزرسانی وضعیت سفارش‌ها. دوباره تلاش کنید");
         }
+        if (skipped.length > 0) {
+          const reasons = [...new Set(skipped.map((entry) => entry.reason))];
+          toast(
+            `${skipped.length} سفارش تغییر نکرد: ${reasons.join("؛ ")}`,
+            { icon: "⏳" },
+          );
+        }
+        for (const failure of failures) {
+          console.error(
+            `Bulk order status update failed for order ${failure.row.id}:`,
+            failure.error,
+          );
+        }
+        if (failures.length > 0) {
+          // The server's reason is the useful part, so surface it rather than a
+          // fixed sentence. Distinct reasons only, to stay toast-sized.
+          const messages = [
+            ...new Set(failures.map((failure) => describeOrderTransitionError(failure.error))),
+          ];
+          toast.error(
+            `${failures.length} سفارش تغییر نکرد. ${messages.join("؛ ")}`,
+          );
+        }
+        if (succeeded > 0) setRefresh(true);
       }
     },
     [canCancelOrders, canChangeOrderStatus, canPrintOrders, setRefresh],
@@ -245,6 +320,16 @@ export default function OrdersPage() {
         },
         { id: "[user][phone]", title: "شماره تلفن", type: "text" },
         { id: "[createdAt]", title: "تاریخ ایجاد", type: "date" },
+        // Lets reserve orders be picked out of a status tab and printed on their
+        // own, instead of coming off the printer mixed into the «در حال انجام»
+        // batch. Presence of the reserve group, not the frozen order column.
+        {
+          id: "[reserve_shipment][id]",
+          title: "سفارش رزروی",
+          type: "select",
+          operators: ["$notNull", "$null"],
+          operatorLabels: { $notNull: "فقط رزروی", $null: "فقط غیر رزروی" },
+        },
       ]}
       hasAddButton={canCreateManualOrder}
       addButtonText="افزودن سفارش جدید"

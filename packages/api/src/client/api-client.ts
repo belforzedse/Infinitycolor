@@ -70,6 +70,14 @@ const defaultRetryConfig = {
   retryableStatusCodes: [...RETRY_CONFIG.retryableStatusCodes],
 };
 
+/**
+ * Methods whose 401 may be replayed once with a refreshed token. A 401 is raised during
+ * authentication, before the handler runs, so an idempotent request had no effect. The
+ * unsafe methods stay off the list on purpose -- see the matching
+ * "never retries a mutation" contract in apps/auth/src/security-contract.test.ts.
+ */
+const IDEMPOTENT_RETRY_METHODS = new Set(["GET", "HEAD", "PUT"]);
+
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly requestTimeout: number;
@@ -386,21 +394,30 @@ export class ApiClient {
       });
 
       const methodUpper = method.toUpperCase();
-      const mayRetryAuth =
+      const authRejected =
         response.status === 401 &&
-        (methodUpper === "GET" || methodUpper === "HEAD") &&
         !options?.skipAuth &&
         !options?.headers?.Authorization &&
         Boolean(this.getAuthToken);
 
-      if (mayRetryAuth) {
+      if (authRejected) {
+        // Always evict first, even when the request will not be replayed. This used to
+        // live inside the GET/HEAD branch, so a rejected mutation kept the stale JWT
+        // cached and the retry the user made by hand failed for the same reason.
         this.onAuthTokenRejected?.();
-        headers = await this.buildHeaders(options?.headers, false, true);
-        if (etag && methodUpper === "GET") {
-          (headers as Record<string, string>)["If-None-Match"] = etag;
-        }
-        if (new Headers(headers).has("authorization")) {
-          response = await fetch(url, { ...config, headers, signal: controller.signal });
+
+        // API JWTs live 60 seconds, so a form left open longer than that saves with an
+        // expired token. A 401 is raised during authentication, before the handler runs,
+        // so the request had no effect and replaying an idempotent one is safe --
+        // `PUT /auth/self` is exactly that case. POST/PATCH/DELETE are never replayed.
+        if (IDEMPOTENT_RETRY_METHODS.has(methodUpper)) {
+          headers = await this.buildHeaders(options?.headers, false, true);
+          if (etag && methodUpper === "GET") {
+            (headers as Record<string, string>)["If-None-Match"] = etag;
+          }
+          if (new Headers(headers).has("authorization")) {
+            response = await fetch(url, { ...config, headers, signal: controller.signal });
+          }
         }
       }
 

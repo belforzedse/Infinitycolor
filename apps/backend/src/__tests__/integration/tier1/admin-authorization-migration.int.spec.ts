@@ -71,6 +71,8 @@ describe("admin authorization migration on isolated PostgreSQL", () => {
     const byType = new Map(migratedRoles.map((role: any) => [role.type, role]));
     expect([...byType.keys()]).toEqual(
       expect.arrayContaining([
+        "support",
+        "support",
         "editor",
         "seller-1",
         "seller-2",

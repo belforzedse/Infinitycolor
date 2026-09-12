@@ -11,7 +11,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/utils/tailwind";
 import { twMerge } from "tailwind-merge";
-import SuperAdminTableSelect from "./Select";
 import DragIcon from "../Layout/Icons/DragIcon";
 import { apiClient } from "@/services";
 import { atom, useAtom } from "jotai";
@@ -21,6 +20,15 @@ import { apiCache } from "@/lib/api-cache";
 import { AnimatedTableRow } from "./AnimatedTableRow";
 import { EmptyState, ErrorState, FilteredEmptyState } from "@/components/admin";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
+import toast from "react-hot-toast";
+import ConfirmDialog from "@/components/Kits/ConfirmDialog";
+import BulkActionsToolbar from "./BulkActionsToolbar";
+import {
+  bulkConfirmDescription,
+  resolveBulkConfirm,
+  type BulkActionContext,
+  type BulkActionOption,
+} from "./bulkActions";
 import {
   buildSuperAdminTableRequestUrl,
   parseAdvancedFiltersParam,
@@ -57,10 +65,11 @@ interface TableProps<TData, TValue> {
   // Enable row selection + bulk actions
   enableSelection?: boolean;
   getRowId?: (row: TData) => string;
-  bulkOptions?: { id: string; title: string }[];
+  bulkOptions?: BulkActionOption[];
   onBulkAction?: (
     actionId: string,
     selectedRows: TData[],
+    context?: BulkActionContext,
   ) => void | Promise<void>;
   // Optional client-side sorting when API sort is not feasible
   clientSort?:
@@ -168,6 +177,10 @@ export function SuperAdminTable<TData, TValue>({
   const [tableData, setTableData] = useState(data);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = useState<string>("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [pendingBulkAction, setPendingBulkAction] =
+    useState<BulkActionOption | null>(null);
+  const [bulkConfirmInput, setBulkConfirmInput] = useState("");
   const [draggedRow, setDraggedRow] = useState<Row<TData> | null>(null);
   const [dragOverRow, setDragOverRow] = useState<Row<TData> | null>(null);
   const [internalLoading, setInternalLoading] = useState(false);
@@ -218,6 +231,76 @@ export function SuperAdminTable<TData, TValue>({
     },
     [getRowId],
   );
+
+  const allRowsSelected =
+    !!tableData && selectedIds.size > 0 && selectedIds.size === tableData.length;
+
+  const toggleAllRows = useCallback(
+    (checked: boolean) => {
+      if (!tableData) return;
+      const next = new Set<string>();
+      if (checked) tableData.forEach((row) => next.add(resolveRowKey(row)));
+      setSelectedIds(next);
+    },
+    [resolveRowKey, tableData],
+  );
+
+  /**
+   * Runs a bulk action and, unlike before, waits for it.
+   *
+   * The returned promise used to be discarded, which is why there was no busy
+   * state, no way to surface a thrown error, and nothing to hang "clear the
+   * selection once it worked" off. The selection survives a failure on purpose,
+   * so the operator can retry without re-picking every row.
+   */
+  const executeBulkAction = useCallback(
+    async (option: BulkActionOption, context?: BulkActionContext) => {
+      if (!onBulkAction || !tableData || option.disabled) return;
+      if (selectedIds.size === 0) {
+        toast.error("هیچ ردیفی انتخاب نشده است");
+        return;
+      }
+      const rows = tableData.filter((row) => selectedIds.has(resolveRowKey(row)));
+      setBulkBusy(true);
+      try {
+        await onBulkAction(option.id, rows, context);
+        setSelectedIds(new Set());
+        setBulkAction("");
+      } catch (error) {
+        console.error("Bulk action failed:", error);
+        toast.error(
+          getUserFacingErrorMessage(error, "انجام عملیات دسته‌جمعی ناموفق بود"),
+        );
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [onBulkAction, resolveRowKey, selectedIds, tableData],
+  );
+
+  const requestBulkAction = useCallback(() => {
+    const option = (bulkOptions || []).find((item) => item.id === bulkAction);
+    if (!option) return;
+    const confirm = resolveBulkConfirm(option);
+    if (confirm) {
+      setBulkConfirmInput(confirm.input?.defaultValue ?? "");
+      setPendingBulkAction(option);
+      return;
+    }
+    void executeBulkAction(option);
+  }, [bulkAction, bulkOptions, executeBulkAction]);
+
+  const pendingBulkConfirm = pendingBulkAction
+    ? resolveBulkConfirm(pendingBulkAction)
+    : null;
+  const bulkConfirmInputError =
+    pendingBulkConfirm?.input?.validate?.(bulkConfirmInput) ?? null;
+
+  const closeBulkConfirm = useCallback(() => {
+    if (bulkBusy) return;
+    setPendingBulkAction(null);
+    setBulkConfirmInput("");
+  }, [bulkBusy]);
 
   const clearNewRowsTimeout = useCallback(() => {
     if (newRowsTimeoutRef.current) {
@@ -562,52 +645,17 @@ export function SuperAdminTable<TData, TValue>({
         <div className="flex flex-col gap-2">
           {enableSelection && (
             <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2">
-              <div className="flex shrink-0 items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={
-                    !!tableData &&
-                    selectedIds.size > 0 &&
-                    selectedIds.size === tableData.length
-                  }
-                  onChange={(e) => {
-                    if (!tableData) return;
-                    const next = new Set<string>();
-                    if (e.target.checked) {
-                      tableData.forEach((row) => next.add(resolveRowKey(row)));
-                    }
-                    setSelectedIds(next);
-                  }}
-                />
-                <span className="text-foreground-primary text-xs">
-                  انتخاب همه
-                </span>
-              </div>
-
-              <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-                <SuperAdminTableSelect
-                  className="min-w-0 max-w-full flex-1 sm:flex-none"
-                  selectedOption={bulkAction}
-                  onOptionSelect={(id) => setBulkAction(String(id))}
-                  options={[
-                    { id: "", title: "اقدام دسته جمعی" },
-                    ...(bulkOptions || []),
-                  ]}
-                />
-
-                <button
-                  onClick={() => {
-                    if (!onBulkAction || !tableData || !bulkAction) return;
-                    const rows = tableData.filter((r) =>
-                      selectedIds.has(resolveRowKey(r)),
-                    );
-                    onBulkAction(bulkAction, rows);
-                  }}
-                  className="flex shrink-0 items-center justify-between rounded-lg bg-actions-primary px-3 py-2 text-white"
-                >
-                  اجرا
-                </button>
-              </div>
+              <BulkActionsToolbar
+                compact
+                options={bulkOptions || []}
+                selectedCount={selectedIds.size}
+                allSelected={allRowsSelected}
+                onToggleAll={toggleAllRows}
+                selectedActionId={bulkAction}
+                onSelectAction={setBulkAction}
+                onExecute={requestBulkAction}
+                busy={bulkBusy}
+              />
             </div>
           )}
         </div>
@@ -645,54 +693,16 @@ export function SuperAdminTable<TData, TValue>({
                 <tr>
                   <td colSpan={columns.length}>
                     <div className="my-3 flex h-auto w-full items-center justify-between px-4">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={
-                            !!tableData &&
-                            selectedIds.size > 0 &&
-                            selectedIds.size === tableData.length
-                          }
-                          onChange={(e) => {
-                            if (!tableData) return;
-                            const next = new Set<string>();
-                            if (e.target.checked) {
-                              tableData.forEach((row) =>
-                                next.add(resolveRowKey(row)),
-                              );
-                            }
-                            setSelectedIds(next);
-                          }}
-                        />
-                        <span className="text-foreground-primary text-xs">
-                          انتخاب همه
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <SuperAdminTableSelect
-                          selectedOption={bulkAction}
-                          onOptionSelect={(id) => setBulkAction(String(id))}
-                          options={[
-                            { id: "", title: "اقدام دسته جمعی" },
-                            ...(bulkOptions || []),
-                          ]}
-                        />
-
-                        <button
-                          onClick={() => {
-                            if (!onBulkAction || !tableData || !bulkAction)
-                              return;
-                            const rows = tableData.filter((r) =>
-                              selectedIds.has(resolveRowKey(r)),
-                            );
-                            onBulkAction(bulkAction, rows);
-                          }}
-                          className="flex items-center justify-between rounded-lg bg-actions-primary px-3 py-2 text-white"
-                        >
-                          اجرا
-                        </button>
-                      </div>
+                      <BulkActionsToolbar
+                        options={bulkOptions || []}
+                        selectedCount={selectedIds.size}
+                        allSelected={allRowsSelected}
+                        onToggleAll={toggleAllRows}
+                        selectedActionId={bulkAction}
+                        onSelectAction={setBulkAction}
+                        onExecute={requestBulkAction}
+                        busy={bulkBusy}
+                      />
                     </div>
                   </td>
                 </tr>
@@ -889,6 +899,62 @@ export function SuperAdminTable<TData, TValue>({
           </div>
         )}
       </div>
+
+      {/*
+        Rendered at the component root, not inside the <thead> cell that hosts the
+        desktop toolbar: that cell re-renders on every selection change, and
+        Modal's focus trap and scroll lock do not survive remounting well.
+      */}
+      {pendingBulkAction && pendingBulkConfirm && (
+        <ConfirmDialog
+          isOpen
+          variant={pendingBulkAction.variant === "danger" ? "danger" : "default"}
+          title={pendingBulkConfirm.title ?? "تأیید عملیات"}
+          description={bulkConfirmDescription(
+            pendingBulkConfirm,
+            selectedIds.size,
+          )}
+          confirmText={
+            bulkBusy
+              ? "در حال انجام..."
+              : (pendingBulkConfirm.confirmText ?? pendingBulkAction.title)
+          }
+          cancelText={pendingBulkConfirm.cancelText ?? "انصراف"}
+          confirmDisabled={bulkBusy || Boolean(bulkConfirmInputError)}
+          onCancel={closeBulkConfirm}
+          onConfirm={() => {
+            if (bulkConfirmInputError) return;
+            const option = pendingBulkAction;
+            const input = pendingBulkConfirm.input ? bulkConfirmInput : undefined;
+            setPendingBulkAction(null);
+            setBulkConfirmInput("");
+            void executeBulkAction(option, input !== undefined ? { input } : undefined);
+          }}
+        >
+          {pendingBulkConfirm.input && (
+            <div className="flex flex-col gap-1.5 text-right">
+              <label className="text-sm text-neutral-700">
+                {pendingBulkConfirm.input.label}
+              </label>
+              <input
+                type={pendingBulkConfirm.input.type}
+                min={pendingBulkConfirm.input.min}
+                placeholder={pendingBulkConfirm.input.placeholder}
+                value={bulkConfirmInput}
+                autoFocus
+                onChange={(event) => setBulkConfirmInput(event.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-actions-primary/30"
+                data-testid="bulk-confirm-input"
+              />
+              {bulkConfirmInputError && (
+                <span className="text-xs text-red-600">
+                  {bulkConfirmInputError}
+                </span>
+              )}
+            </div>
+          )}
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

@@ -290,8 +290,24 @@ class ProductReviewService {
     };
   }
 
-  // Get approved reviews for a specific product
-  async getProductReviews(productId: number | string, params: ProductReviewListParams = {}): Promise<PaginatedResponse<ProductReview>> {
+  /**
+   * Get approved reviews for a specific product.
+   *
+   * Defaults to `no-store` because browser callers re-read this immediately
+   * after posting a review and must not see their own submission missing. That
+   * default also makes `api-client` append a `_cb` timestamp, which by design
+   * defeats every shared cache.
+   *
+   * Server renders have the opposite requirement: thousands of concurrent
+   * visitors to one PDP want the *same* answer, so they pass `"default"` and
+   * let the surrounding `"use cache: remote"` scope hold it. Reviews are public
+   * and carry no stock or price, so sharing them between callers is safe.
+   */
+  async getProductReviews(
+    productId: number | string,
+    params: ProductReviewListParams = {},
+    options: { cache?: "no-store" | "default" } = {},
+  ): Promise<PaginatedResponse<ProductReview>> {
     const query: ProductReviewQuery = {
       "filters[product][id][$eq]": productId.toString(),
       "filters[Status][$eq]": "Accepted",
@@ -305,7 +321,7 @@ class ProductReviewService {
 
     const response = await apiClient.get<StrapiApiResponse<StrapiEntry<ProductReviewAttributes>>>(
       "/product-reviews",
-      { params: query, cache: "no-store" }
+      { params: query, cache: options.cache ?? "no-store" }
     );
 
     const dataArray = Array.isArray(response.data) ? response.data : response.data ? [response.data] : [];

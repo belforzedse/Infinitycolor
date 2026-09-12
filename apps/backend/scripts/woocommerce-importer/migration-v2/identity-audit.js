@@ -71,9 +71,12 @@ async function runIdentityAudit({ source = new WordPressSource(configureSourceEn
   await scanWooPages(source, "/customers", (customer) => {
     stats.customers.total += 1;
     const sourceId = String(customer.id);
-    const phone = canonicalPhone(customer?.billing?.phone)
-      || canonicalPhone(customer?.shipping?.phone)
-      || canonicalPhone(customer?.username);
+    // Login-first, matching T.customerPayload — the audit must model the same
+    // identity the importer will actually create, or its collision counts
+    // describe a precedence nothing runs.
+    const phone = canonicalPhone(customer?.username)
+      || canonicalPhone(customer?.billing?.phone)
+      || canonicalPhone(customer?.shipping?.phone);
     const email = normalizedEmail(customer.email);
     if (phone) {
       stats.customers.validPhone += 1;

@@ -97,6 +97,37 @@ async function validateStoryMedia(event: any) {
   assertMediaMatchesType(mediaType, media);
 }
 
+/**
+ * Queues a story's video for normalization when it is not already web-safe.
+ *
+ * Uploads are accepted as-is — admins routinely attach phone recordings, and the
+ * WooCommerce import brought in a catalogue of HEVC `.mov` files — so the conversion
+ * happens server-side afterwards instead of rejecting the upload. Enqueueing is
+ * best-effort: a story must still save if Redis is unavailable.
+ */
+async function enqueueVideoNormalization(event: any) {
+  const storyId = event.result?.id ?? event.params?.where?.id;
+  if (!storyId) return;
+
+  try {
+    const story = await strapi.entityService.findOne("api::story.story", storyId, {
+      populate: { Media: true },
+    });
+    if (!story || story.MediaType !== "video" || !story.Media?.url) return;
+
+    const mime = String(story.Media.mime ?? "").toLowerCase();
+    // Cheap pre-filter; the job re-probes and may still decide the file is fine.
+    if (mime === "video/mp4" || mime === "video/webm") return;
+
+    const { enqueueStoryVideoNormalization } = await import("../../../../queue/media");
+    await enqueueStoryVideoNormalization(storyId);
+  } catch (error) {
+    strapi.log.warn(
+      `[story] could not queue video normalization for ${storyId}: ${(error as Error).message}`,
+    );
+  }
+}
+
 export default {
   async beforeCreate(event: any) {
     await validateStoryMedia(event);
@@ -104,5 +135,13 @@ export default {
 
   async beforeUpdate(event: any) {
     await validateStoryMedia(event);
+  },
+
+  async afterCreate(event: any) {
+    await enqueueVideoNormalization(event);
+  },
+
+  async afterUpdate(event: any) {
+    await enqueueVideoNormalization(event);
   },
 };

@@ -1133,21 +1133,41 @@ export function categoryFilterSql(joins: ResolvedJoins, productIdExpr: string): 
 /**
  * Aggregate `itemized` to one row per variation (or per SKU when the variation
  * was deleted), with pro-rated discount and refund. Assumes `itemized` is declared.
+ *
+ * `order_items.product_sku` / `.product_title` are SNAPSHOTS taken at order time,
+ * so they are not identity. Grouping by the SKU snapshot split one variation into
+ * several rows the moment an import renamed it — a catalog rename made a live
+ * product's sales look frozen while a second row quietly collected the new
+ * orders. Identity is the variation; the SKU only discriminates rows that have no
+ * variation at all (`oiToVariation` is a LEFT JOIN, so NULL is reachable).
+ *
+ * Title and SKU are then reported from the MOST RECENT line rather than MAX(), so
+ * a renamed product shows what the catalog calls it today. `sku_search` and
+ * `title_search` keep every historical spelling searchable — collapsing to the
+ * newest snapshot alone made an operator's usual search term stop matching the
+ * moment an import renamed the product (e.g. "G00700" no longer matches after the
+ * title became "G 00700"). The `q` filters in the report controller search these,
+ * never the display columns.
  */
 export function aggCte(): string {
   return `
     agg AS (
       SELECT
         product_variation_id,
-        MAX(product_title) AS product_title,
-        product_sku,
+        (ARRAY_AGG(product_title ORDER BY order_date DESC)
+           FILTER (WHERE product_title IS NOT NULL))[1] AS product_title,
+        (ARRAY_AGG(product_sku ORDER BY order_date DESC)
+           FILTER (WHERE product_sku IS NOT NULL))[1] AS product_sku,
+        string_agg(DISTINCT product_sku, ' ') AS sku_search,
+        string_agg(DISTINCT product_title, ' ') AS title_search,
         SUM(cnt)::bigint AS units,
         SUM(line_gross)::numeric AS gross,
         COUNT(DISTINCT order_id)::bigint AS orders_count,
         SUM(CASE WHEN order_gross > 0 THEN order_discount * line_gross / order_gross ELSE 0 END)::numeric AS discounts,
         SUM(CASE WHEN order_gross > 0 THEN refund_irr * line_gross / order_gross ELSE 0 END)::numeric AS refunds_irr
       FROM itemized
-      GROUP BY product_variation_id, product_sku
+      GROUP BY product_variation_id,
+               CASE WHEN product_variation_id IS NULL THEN product_sku END
     )
   `;
 }
@@ -1175,6 +1195,13 @@ export function performanceCoreSelect(joins: ResolvedJoins): string {
       agg.discounts,
       agg.refunds_irr,
       agg.orders_count,
+      -- Derived columns exist ONLY so PERFORMANCE_SORT_COLUMNS can ORDER BY them;
+      -- serializeProductRow still computes the values it returns. Keep these three
+      -- in step with it (net floors at 0, avgPrice divides gross, IRR/10 -> Toman)
+      -- or the table sorts by one number and displays another.
+      GREATEST(0, agg.gross - agg.discounts - (agg.refunds_irr / 10.0)) AS net,
+      (agg.refunds_irr / 10.0) AS refunds,
+      CASE WHEN agg.units > 0 THEN agg.gross / agg.units ELSE 0 END AS avg_price,
       ps.count AS current_stock,
       ps.reserved_count AS reserved_stock
     FROM agg

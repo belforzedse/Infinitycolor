@@ -30,6 +30,9 @@ export const ADMIN_CAPABILITIES = [
   "product.variation.delete",
   "product.size-guide.manage",
   "product.size-guide.delete",
+  // Reversible removal to the recycle bin (stamps `removedAt`). Distinct from
+  // `product.delete`, which is permanent and stays Superadmin-only.
+  "product.softDelete",
   "product.delete",
   "product.restore",
   "category.read",
@@ -74,6 +77,7 @@ export const ADMIN_CAPABILITIES = [
 export type AdminCapability = (typeof ADMIN_CAPABILITIES)[number];
 
 export const ADMIN_ROLE_IDS = [
+  "support",
   "editor",
   "seller1",
   "seller2",
@@ -113,6 +117,22 @@ const CUSTOMER_STOREFRONT_CAPABILITIES = [
 export const ADMIN_ROLE_DEFINITIONS: Readonly<
   Record<AdminRoleId, AdminRoleDefinition>
 > = {
+  support: {
+    id: "support",
+    englishLabel: "Support",
+    persianLabel: "پشتیبان",
+    strapiType: "support",
+    strapiName: "Support",
+    inherits: [],
+    // Customer-facing moderation only: product reviews and the issue-report
+    // inbox. Deliberately no catalog, order, wallet, or reporting access.
+    capabilities: [
+      ...ACCOUNT_SELF_CAPABILITIES,
+      ...CUSTOMER_STOREFRONT_CAPABILITIES,
+      "system.reviews.manage",
+      "system.issueReports.manage",
+    ],
+  },
   editor: {
     id: "editor",
     englishLabel: "Editor",
@@ -154,6 +174,10 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
       "product.media.manage",
       "product.variation.manage",
       "product.size-guide.manage",
+      // Reversible pair: a seller who removes a product by mistake can put it
+      // back themselves. Permanent deletion remains Superadmin-only.
+      "product.softDelete",
+      "product.restore",
     ],
   },
   seller2: {
@@ -257,6 +281,7 @@ const compactRoleKey = (value: string): string =>
     .replace(/[\s_-]+/g, "");
 
 const ROLE_ALIASES: Readonly<Record<string, AdminRoleId>> = {
+  support: "support",
   editor: "editor",
   seller1: "seller1",
   seller2: "seller2",

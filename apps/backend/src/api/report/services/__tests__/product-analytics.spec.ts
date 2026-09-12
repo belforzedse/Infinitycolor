@@ -19,6 +19,8 @@ import {
   gatewaySettlementWarnings,
   shippingBreakdownQuery,
   paidOrdersCte,
+  aggCte,
+  performanceCoreSelect,
   categoryMembershipCte,
   categoryFilterSql,
   ELIGIBLE_ORDER_STATUS,
@@ -491,6 +493,49 @@ describe("product-analytics pure helpers", () => {
       ]);
       expect(filled[0].net).toBe(500000);
       expect(filled.slice(1).every((point) => point.net === 0)).toBe(true);
+    });
+  });
+
+  describe("product identity in the aggregate", () => {
+    it("groups by variation, falling back to the SKU only when there is none", () => {
+      // Regression: order_items.product_sku is a snapshot taken at order time, so
+      // an import that renamed a product split its variation into two rows — the
+      // row an operator was watching stayed frozen while a second row silently
+      // collected the new orders. Identity is the variation; the SKU only
+      // discriminates rows with no variation at all.
+      const sql = aggCte();
+      expect(sql).toMatch(
+        /GROUP BY product_variation_id,\s*CASE WHEN product_variation_id IS NULL THEN product_sku END/i,
+      );
+      expect(sql).not.toMatch(/GROUP BY product_variation_id,\s*product_sku\b/i);
+    });
+
+    it("reports the newest title and SKU while keeping old SKUs searchable", () => {
+      const sql = aggCte();
+      expect(sql).toMatch(/ARRAY_AGG\(product_title ORDER BY order_date DESC\)/i);
+      expect(sql).toMatch(/ARRAY_AGG\(product_sku ORDER BY order_date DESC\)/i);
+      expect(sql).toContain("string_agg(DISTINCT product_sku, ' ') AS sku_search");
+      expect(sql).not.toContain("MAX(product_title)");
+    });
+
+    it("exposes every sortable column as an output alias", () => {
+      // PERFORMANCE_SORT_COLUMNS is interpolated straight into ORDER BY, so a key
+      // whose column the SELECT never emits is a runtime 400 ("column net does
+      // not exist"), not a compile error. `net`, `refunds` and `avgPrice` were all
+      // reachable from the UI's sort dropdown while missing from the SELECT.
+      const joins = {
+        variationToProduct: "JOIN products p ON p.id = pv.product_id",
+        variationToStock: "LEFT JOIN product_stocks ps ON ps.product_variation_id = pv.id",
+        productToCategory: {
+          join: "LEFT JOIN product_categories pc ON pc.id = p.category_id",
+          titleExpr: "pc.title",
+        },
+      } as unknown as ResolvedJoins;
+
+      const sql = performanceCoreSelect(joins);
+      for (const column of Object.values(PERFORMANCE_SORT_COLUMNS)) {
+        expect(sql).toMatch(new RegExp(`(AS\\s+|\\.)${column}\\b`, "i"));
+      }
     });
   });
 });

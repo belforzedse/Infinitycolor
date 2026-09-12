@@ -13,7 +13,12 @@ import toast from "react-hot-toast";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import { jalaliBirthDateToGregorianDate } from "@/utils/birthDate";
+import {
+  BIRTH_DATE_PLACEHOLDERS,
+  jalaliBirthDateToGregorianDate,
+  jalaliMonthLength,
+  normalizeBirthDatePart,
+} from "@/utils/birthDate";
 import { safeInternalRedirect } from "@/utils/authRedirect";
 import { trackAnalyticsEvent } from "@/lib/analytics";
 
@@ -32,6 +37,7 @@ export default function RegisterInfoPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
+  const [birthDateError, setBirthDateError] = useState<string | null>(null);
   const [, setUserData] = useAtom(currentUserAtom);
   const [, setUserLoading] = useAtom(userLoadingAtom);
   const [, setUserError] = useAtom(userErrorAtom);
@@ -71,8 +77,37 @@ export default function RegisterInfoPage() {
     return jalaliBirthDateToGregorianDate(year, month, day) || "";
   };
 
+  /**
+   * The birth date is optional here, but a partial or impossible one must not be dropped
+   * silently: it used to be coerced to "" and posted as if the shopper had left it blank.
+   */
+  const validateBirthDate = (): boolean => {
+    const { birthYear, birthMonth, birthDay } = formData;
+    const filledParts = [birthYear, birthMonth, birthDay].filter(Boolean).length;
+    if (filledParts === 0) {
+      setBirthDateError(null);
+      return true;
+    }
+    if (filledParts < 3) {
+      setBirthDateError("تاریخ تولد را کامل وارد کنید: سال، ماه و روز.");
+      return false;
+    }
+    if (!jalaliBirthDateToGregorianDate(birthYear, birthMonth, birthDay)) {
+      const monthLength = jalaliMonthLength(birthYear, birthMonth);
+      setBirthDateError(
+        monthLength > 0 && Number(birthDay) > monthLength
+          ? `این ماه ${monthLength} روز دارد.`
+          : "تاریخ تولد وارد شده معتبر نیست.",
+      );
+      return false;
+    }
+    setBirthDateError(null);
+    return true;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validateBirthDate()) return;
     setIsLoading(true);
     try {
       const normalizedPhone = normalizePhone(formData.phoneNumber);
@@ -122,6 +157,16 @@ export default function RegisterInfoPage() {
     }));
   };
 
+  const handleBirthPartChange =
+    (field: "birthYear" | "birthMonth" | "birthDay", maxLength: number) =>
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setBirthDateError(null);
+      setFormData((prev) => ({
+        ...prev,
+        [field]: normalizeBirthDatePart(e.target.value, maxLength),
+      }));
+    };
+
   return (
     <div className="space-y-8" dir="rtl">
       <AuthTitle subtitle="لطفاً اطلاعات خود را تکمیل نمایید">ایجاد حساب کاربری</AuthTitle>
@@ -159,38 +204,46 @@ export default function RegisterInfoPage() {
           <Text variant="label" className="mb-2 md:mb-2.5">
             تاریخ تولد
           </Text>
+          {/* `type="text"` with a numeric keypad rather than `type="number"`: browsers
+              reject Persian digits in a number field, so the value silently read back
+              empty for anyone typing ۱۳۷۰. */}
           <div className="flex gap-2">
             <div className="flex-1">
               <AuthInput
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={formData.birthYear}
-                onChange={handleChange("birthYear")}
-                placeholder="سال (مثلا 1370)"
-                min="1300"
-                max="1450"
+                onChange={handleBirthPartChange("birthYear", 4)}
+                placeholder={BIRTH_DATE_PLACEHOLDERS.year}
+                aria-label="سال تولد"
               />
             </div>
             <div className="flex-1">
               <AuthInput
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={formData.birthMonth}
-                onChange={handleChange("birthMonth")}
-                placeholder="ماه (1-12)"
-                min="1"
-                max="12"
+                onChange={handleBirthPartChange("birthMonth", 2)}
+                placeholder={BIRTH_DATE_PLACEHOLDERS.month}
+                aria-label="ماه تولد"
               />
             </div>
             <div className="flex-1">
               <AuthInput
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={formData.birthDay}
-                onChange={handleChange("birthDay")}
-                placeholder="روز (1-31)"
-                min="1"
-                max="31"
+                onChange={handleBirthPartChange("birthDay", 2)}
+                placeholder={BIRTH_DATE_PLACEHOLDERS.day}
+                aria-label="روز تولد"
               />
             </div>
           </div>
+          {birthDateError && (
+            <p role="alert" className="mt-1 text-right text-sm text-red-500">
+              {birthDateError}
+            </p>
+          )}
         </div>
 
         <div>

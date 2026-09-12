@@ -4,13 +4,22 @@ import {
   runPublicationEffects,
 } from "../../../api/product/services/product-publication";
 import { setupStrapi, teardownStrapi, getStrapi } from "../strapiInstance";
-import { TEST_PREFIX } from "../factories";
+import { makeFactories, type Factories, TEST_PREFIX } from "../factories";
 
 let strapi: any;
+let f: Factories;
 const productIds: number[] = [];
 
 beforeAll(async () => {
   strapi = await setupStrapi();
+});
+
+beforeEach(() => {
+  f = makeFactories(strapi);
+});
+
+afterEach(async () => {
+  await f.cleanup();
 });
 
 afterAll(async () => {
@@ -159,5 +168,30 @@ describe("product publication on real PostgreSQL", () => {
       where: { id: product.id },
     });
     expect(effectsCompleted.publicationEffectsCompletedRevision).toBe(1);
+  });
+
+  it("publishes the product's own variations and leaves other products' alone", async () => {
+    const product = await createProduct();
+    const other = await createProduct();
+    const draft = await f.createVariation({ productId: product.id, isPublished: false });
+    const alreadyLive = await f.createVariation({ productId: product.id, isPublished: true });
+    const foreign = await f.createVariation({ productId: other.id, isPublished: false });
+
+    const result = await executePublicationCommand(
+      strapi,
+      product.id,
+      { action: "publish-now" },
+      { origin: "admin", now: new Date("2026-08-08T10:00:00.000Z") },
+    );
+
+    expect(result.status).toBe("Active");
+    // Only the unpublished one was flipped; the already-live row was left alone.
+    expect(result.publishedVariationCount).toBe(1);
+
+    const readVariation = async (id: number) =>
+      strapi.db.query("api::product-variation.product-variation").findOne({ where: { id } });
+    expect((await readVariation(draft.id)).IsPublished).toBe(true);
+    expect((await readVariation(alreadyLive.id)).IsPublished).toBe(true);
+    expect((await readVariation(foreign.id)).IsPublished).toBe(false);
   });
 });

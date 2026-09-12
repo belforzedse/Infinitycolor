@@ -112,9 +112,19 @@ function customerPayload(customer) {
   // even though the account is real. Take the first field that yields a *valid*
   // number — testing emptiness instead would let a malformed billing entry mask
   // a good username and drop the customer along with their wallet.
-  const phone = canonicalPhone(customer?.billing?.phone)
-    || canonicalPhone(customer?.shipping?.phone)
-    || canonicalPhone(customer?.username);
+  //
+  // Login-first: the username is the number the customer actually authenticates
+  // with, whereas billing phone is checkout form data that is routinely shared
+  // across accounts (a spouse, an office line, a courier). Since a phone can
+  // only belong to one account, the loser of a collision fails with
+  // USER_PHONE_SOURCE_CONFLICT — and billing numbers collide roughly twice as
+  // often as login numbers (1,876 duplicate groups vs 1,120; 67 groups with
+  // orders/balance on both sides vs 38) at identical coverage. The billing
+  // number is not lost: orders carry it independently as recipientPhone and
+  // billingIdentity.phone.
+  const phone = canonicalPhone(customer?.username)
+    || canonicalPhone(customer?.billing?.phone)
+    || canonicalPhone(customer?.shipping?.phone);
   if (!phone) throw new Error("USER_PHONE_INVALID");
   const sourceTimestamps = wooSourceTimestamps(customer);
   return {

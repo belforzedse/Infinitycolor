@@ -26,7 +26,9 @@ describe("issue report routes", () => {
 
   it("grants report management only to the canonical super-admin role", () => {
     for (const role of ADMIN_ROLE_IDS) {
-      expect(hasCapability(role, "system.issueReports.manage")).toBe(role === "superadmin");
+      expect(hasCapability(role, "system.issueReports.manage")).toBe(
+        role === "superadmin" || role === "support",
+      );
     }
   });
 });

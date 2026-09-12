@@ -1,44 +1,55 @@
 "use client";
 import type { FormEvent, ChangeEvent } from "react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Input from "@/components/Kits/Form/Input";
 import SaveIcon from "../Icons/SaveIcon";
-import CalenderIcon from "../Icons/CalenderIcon";
 import useUser from "@/hooks/useUser";
 import { updateProfile } from "@/services/user/updateProfile";
 import { toast } from "react-hot-toast";
 import { extractErrorMessage, translateErrorMessage } from "@/lib/errorTranslations";
+import { faNum } from "@/utils/faNum";
 import {
+  BIRTH_DATE_PLACEHOLDERS,
+  BIRTH_DATE_YEAR_MIN,
+  currentJalaliYear,
   jalaliBirthDateToGregorianDate,
+  jalaliMonthLength,
+  normalizeBirthDatePart,
   parseStoredBirthDateToJalaliParts,
+  unpadBirthDatePart,
 } from "@/utils/birthDate";
+
+type Gender = "male" | "female" | "";
+
 interface AccountFormData {
   firstName: string;
   lastName: string;
-  nationalId: string;
   phone: string;
   birthYear: string;
   birthMonth: string;
   birthDay: string;
-  gender: "male" | "female" | "";
+  gender: Gender;
 }
 
-const formatBirthDate = (year: string, month: string, day: string): string | null => {
-  return jalaliBirthDateToGregorianDate(year, month, day);
+const GENDER_OPTIONS: { value: Exclude<Gender, "">; label: string }[] = [
+  { value: "female", label: "زن" },
+  { value: "male", label: "مرد" },
+];
+
+const EMPTY_FORM: AccountFormData = {
+  firstName: "",
+  lastName: "",
+  phone: "",
+  birthYear: "",
+  birthMonth: "",
+  birthDay: "",
+  gender: "",
 };
 
 export default function AccountForm() {
   const { userData, isLoading, error, refetch } = useUser();
-  const [formData, setFormData] = useState<AccountFormData>({
-    firstName: "",
-    lastName: "",
-    nationalId: "",
-    phone: "",
-    birthYear: "",
-    birthMonth: "",
-    birthDay: "",
-    gender: "",
-  });
+  const [formData, setFormData] = useState<AccountFormData>(EMPTY_FORM);
+  const [birthDateError, setBirthDateError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
 
@@ -56,34 +67,69 @@ export default function AccountForm() {
       setFormData({
         firstName: userData.FirstName || "",
         lastName: userData.LastName || "",
-        nationalId: userData.NationalCode || "",
         phone: userData.Phone || "",
-        birthYear,
-        birthMonth,
-        birthDay,
-        gender: (userData.Sex as "male" | "female" | "") || "",
+        // The stored parts are zero-padded for storage; `01`/`08` in an input reads as a
+        // defect, so show them the way a person writes them.
+        birthYear: unpadBirthDatePart(birthYear),
+        birthMonth: unpadBirthDatePart(birthMonth),
+        birthDay: unpadBirthDatePart(birthDay),
+        gender: userData.Sex ?? "",
       });
+      setBirthDateError(null);
     }
   }, [userData]);
+
+  const maxYear = useMemo(() => currentJalaliYear(), []);
+
+  // The day bound is the real length of the chosen month, not a flat 31: Mehr-Esfand
+  // have 30 days (29 in a common-year Esfand), so a hardcoded 31 invited a date that
+  // does not exist and then failed to convert.
+  const maxDay = useMemo(() => {
+    const length = jalaliMonthLength(formData.birthYear, formData.birthMonth);
+    return length > 0 ? length : 31;
+  }, [formData.birthYear, formData.birthMonth]);
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
+    const { birthYear, birthMonth, birthDay } = formData;
+    const filledParts = [birthYear, birthMonth, birthDay].filter(Boolean).length;
+
+    let birthDatePayload: string | null;
+    if (filledParts === 0) {
+      // All three cleared means "remove my birth date"; the backend accepts null.
+      birthDatePayload = null;
+    } else if (filledParts < 3) {
+      setBirthDateError("تاریخ تولد را کامل وارد کنید: سال، ماه و روز.");
+      return;
+    } else {
+      const formatted = jalaliBirthDateToGregorianDate(birthYear, birthMonth, birthDay);
+      if (!formatted) {
+        // Previously this fell back to the stored value and still showed a success
+        // toast, which is why the birth date looked impossible to change.
+        const monthLength = jalaliMonthLength(birthYear, birthMonth);
+        setBirthDateError(
+          monthLength > 0 && Number(birthDay) > monthLength
+            ? `این ماه ${faNum(String(monthLength))} روز دارد.`
+            : "تاریخ تولد وارد شده معتبر نیست.",
+        );
+        return;
+      }
+      birthDatePayload = formatted;
+    }
+
+    setBirthDateError(null);
+
     try {
       setIsSaving(true);
-
-      const formattedBirthDate = formatBirthDate(
-        formData.birthYear,
-        formData.birthMonth,
-        formData.birthDay,
-      );
 
       await updateProfile({
         FirstName: formData.firstName,
         LastName: formData.lastName,
-        NationalCode: formData.nationalId,
-        BirthDate: formattedBirthDate ?? userData?.BirthDate ?? undefined,
-        Sex: (formData.gender || null) as any,
+        BirthDate: birthDatePayload,
+        // Only sent when there is an answer to send. The form does not render a national
+        // code field, so that one is never submitted either.
+        ...(formData.gender ? { Sex: formData.gender } : {}),
       });
 
       // Refresh user data
@@ -107,6 +153,13 @@ export default function AccountForm() {
     }));
   };
 
+  const handleBirthPartChange =
+    (name: "birthYear" | "birthMonth" | "birthDay", maxLength: number) =>
+    (event: ChangeEvent<HTMLInputElement>) => {
+      setBirthDateError(null);
+      handleInputChange(name, normalizeBirthDatePart(event.target.value, maxLength));
+    };
+
   // Only show loading/error states after hydration to prevent mismatches
   if (isHydrated && isLoading) {
     return (
@@ -124,7 +177,7 @@ export default function AccountForm() {
         <span className="text-lg font-medium text-red-600">خطا در بارگذاری اطلاعات کاربر</span>
         <button
           onClick={refetch}
-          className="w-fit rounded-lg bg-[#3d4c6e] px-6 py-2.5 text-sm font-medium text-white hover:bg-infinity-primary transition-colors"
+          className="w-fit rounded-lg bg-[#3d4c6e] px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-infinity-primary"
         >
           تلاش مجدد
         </button>
@@ -134,7 +187,7 @@ export default function AccountForm() {
 
   return (
     <div className="flex flex-col gap-6 rounded-lg bg-white p-6 shadow-sm">
-      <h2 className="text-lg font-semibold text-foreground-primary">اطلاعات حساب کاربری</h2>
+      <h2 className="text-foreground-primary text-lg font-semibold">اطلاعات حساب کاربری</h2>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -159,6 +212,43 @@ export default function AccountForm() {
           />
         </div>
 
+        <fieldset>
+          <legend className="text-foreground-primary mb-2 block text-sm font-medium">
+            جنسیت
+          </legend>
+          <div className="flex flex-wrap gap-3">
+            {GENDER_OPTIONS.map((option) => (
+              <label
+                key={option.value}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2.5 text-sm transition-colors ${
+                  formData.gender === option.value
+                    ? "border-infinity-primary bg-infinity-primary/5 text-infinity-primary"
+                    : "border-neutral-200 text-slate-600 hover:border-infinity-primary-lighter"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="gender"
+                  value={option.value}
+                  checked={formData.gender === option.value}
+                  onChange={() => handleInputChange("gender", option.value)}
+                  className="accent-infinity-primary"
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+            {formData.gender && (
+              <button
+                type="button"
+                onClick={() => handleInputChange("gender", "")}
+                className="rounded-lg px-3 py-2.5 text-sm text-slate-500 underline-offset-4 hover:underline"
+              >
+                پاک کردن
+              </button>
+            )}
+          </div>
+        </fieldset>
+
         <div>
           <Input
             label="شماره همراه"
@@ -172,49 +262,55 @@ export default function AccountForm() {
         </div>
 
         <div>
-          <label className="mb-2 block text-sm font-medium text-foreground-primary">
+          <label className="text-foreground-primary mb-2 block text-sm font-medium">
             تاریخ تولد
           </label>
           <div className="flex gap-2">
+            {/* `type="text"` with a numeric keypad rather than `type="number"`: browsers
+                reject Persian digits in a number field, so the value silently read back
+                empty for anyone typing ۱۳۷۰. */}
             <Input
               label=""
               name="birthYear"
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={formData.birthYear}
-              onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                handleInputChange("birthYear", e.target.value)
-              }
-              placeholder="سال"
-              min="1300"
-              max="1500"
+              onChange={handleBirthPartChange("birthYear", 4)}
+              placeholder={BIRTH_DATE_PLACEHOLDERS.year}
+              aria-label="سال تولد"
+              dir="ltr"
             />
             <Input
               label=""
               name="birthMonth"
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={formData.birthMonth}
-              onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                handleInputChange("birthMonth", e.target.value)
-              }
-              placeholder="ماه"
-              min="1"
-              max="12"
+              onChange={handleBirthPartChange("birthMonth", 2)}
+              placeholder={BIRTH_DATE_PLACEHOLDERS.month}
+              aria-label="ماه تولد"
+              dir="ltr"
             />
             <Input
               label=""
               name="birthDay"
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={formData.birthDay}
-              onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                handleInputChange("birthDay", e.target.value)
-              }
-              placeholder="روز"
-              min="1"
-              max="31"
-              icon={<CalenderIcon />}
-              onIconClick={() => {}}
+              onChange={handleBirthPartChange("birthDay", 2)}
+              placeholder={BIRTH_DATE_PLACEHOLDERS.day}
+              aria-label="روز تولد"
+              dir="ltr"
             />
           </div>
+          <p className="mt-1 text-right text-xs text-slate-500">
+            {`سال بین ${faNum(String(BIRTH_DATE_YEAR_MIN))} تا ${faNum(String(maxYear))}، ماه ۱ تا ۱۲، روز ۱ تا ${faNum(String(maxDay))}`}
+          </p>
+          {birthDateError && (
+            <p role="alert" className="mt-1 text-right text-sm text-red-500">
+              {birthDateError}
+            </p>
+          )}
         </div>
 
         <div className="flex w-full justify-end border-t border-neutral-200 pt-6">

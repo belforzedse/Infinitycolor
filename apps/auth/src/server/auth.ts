@@ -10,6 +10,7 @@ import {
   infinityCredentialsPlugin,
 } from "./infinity-plugin";
 import { startAuthAuditDeliveryLoop } from "./audit-outbox";
+import { startAuthSessionPruneLoop } from "./session-prune";
 
 const env = getAuthEnv();
 const pool = getAuthPool();
@@ -125,5 +126,6 @@ export const auth = betterAuth({
 });
 
 startAuthAuditDeliveryLoop(pool);
+startAuthSessionPruneLoop(pool);
 
 export type InfinityAuth = typeof auth;

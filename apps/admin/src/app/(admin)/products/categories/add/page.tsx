@@ -2,6 +2,7 @@
 
 import UpsertPageContentWrapper from "@/components/SuperAdmin/UpsertPage/ContentWrapper";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import {
   buildCategoryWritePayload,
@@ -24,6 +25,7 @@ import CategoryAppearancePanel, {
 export default function AddCategoryPage() {
   // Redirect editors away from product pages
   useEditorRedirect();
+  const router = useRouter();
 
   const [categoryImage, setCategoryImage] = useState<
     CategoryImageValue | undefined
@@ -52,7 +54,11 @@ export default function AddCategoryPage() {
     try {
       await createCategory(payload);
       toast.success("دسته‌بندی با موفقیت ایجاد شد");
-      window.location.assign("/products/categories");
+      // Soft-navigate: a full reload tears down the Toaster before the success
+      // toast paints, so creating a category looked identical to failing. The
+      // list page calls useFreshDataOnPageLoad(), which fires setRefresh(true)
+      // on mount, so the hard reload this replaces was not buying fresh data.
+      router.push("/products/categories");
     } catch (error: unknown) {
       console.error("Failed to create category:", error);
       const rawErrorMessage = extractErrorMessage(error);

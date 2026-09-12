@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { useDebounce } from "use-debounce";
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import { apiClient } from "@/services";
 import { ENDPOINTS } from "@/constants/api";
@@ -48,8 +49,11 @@ const INITIAL_MODAL_STATE: ModalState = {
 export default function ProductColorsPage() {
   const canDeleteColors = useCan("product.variation.delete");
   const [colors, setColors] = useState<ApiColor[]>([]);
+  /** Server-reported total, so the footer count stops describing the page. */
+  const [totalColors, setTotalColors] = useState(0);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm] = useDebounce(searchTerm, 300);
   const [modalState, setModalState] = useState<ModalState>({
     ...INITIAL_MODAL_STATE,
   });
@@ -63,17 +67,35 @@ export default function ProductColorsPage() {
     apiCache.clearByPattern(/product-variations/i);
   }, []);
 
-  const fetchColors = useCallback(async () => {
+  /**
+   * Searches server-side.
+   *
+   * This used to request `pageSize=400` and filter in the browser, but the
+   * backend caps `rest.maxLimit` at 100, so it silently received only the
+   * alphabetically-first 100 colours — every colour after that was invisible
+   * here and unsearchable.
+   */
+  const fetchColors = useCallback(async (query: string = "") => {
     setLoading(true);
     try {
+      const trimmed = query.trim();
+      // `#` must be encoded or it would be read as the URL fragment, leaving the
+      // server with an empty colour-code filter.
+      const encoded = encodeURIComponent(trimmed);
+      const filter = trimmed
+        ? `&filters[$or][0][Title][$containsi]=${encoded}` +
+          `&filters[$or][1][ColorCode][$containsi]=${encoded}`
+        : "";
       const response = await apiClient.get<{ data: ApiColor[] }>(
-        `${ENDPOINTS.PRODUCT.COLORS}?pagination[pageSize]=400&sort=Title:asc`,
+        `${ENDPOINTS.PRODUCT.COLORS}?pagination[pageSize]=100&sort=Title:asc${filter}`,
         {
           cache: "no-store",
         },
       );
       const data = ((response as any)?.data ?? []) as ApiColor[];
       setColors(data);
+      const total = (response as any)?.meta?.pagination?.total;
+      if (typeof total === "number") setTotalColors(total);
     } catch (error) {
       console.error(error);
       toast.error("خطا در بارگذاری رنگ‌ها");
@@ -83,21 +105,8 @@ export default function ProductColorsPage() {
   }, []);
 
   useEffect(() => {
-    fetchColors();
-  }, [fetchColors]);
-
-  const filteredColors = useMemo(() => {
-    if (!searchTerm.trim()) {
-      return colors;
-    }
-
-    const term = searchTerm.toLowerCase();
-    return colors.filter((color) => {
-      const title = color.attributes?.Title?.toLowerCase() || "";
-      const code = color.attributes?.ColorCode?.toLowerCase() || "";
-      return title.includes(term) || code.includes(term);
-    });
-  }, [colors, searchTerm]);
+    void fetchColors(debouncedSearchTerm);
+  }, [debouncedSearchTerm, fetchColors]);
 
   const openModal = (color?: ApiColor) => {
     if (color) {
@@ -227,13 +236,15 @@ export default function ProductColorsPage() {
             <button
               type="button"
               disabled={loading}
-              onClick={fetchColors}
+              onClick={() => void fetchColors(debouncedSearchTerm)}
               className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-neutral-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
             >
               بروزرسانی
             </button>
             <span className="text-xs text-neutral-500">
-              {filteredColors.length} رنگ ثبت شده
+              {debouncedSearchTerm.trim()
+                ? `${colors.length} نتیجه از ${totalColors} رنگ`
+                : `${totalColors} رنگ ثبت شده`}
             </span>
           </div>
         </div>
@@ -243,13 +254,13 @@ export default function ProductColorsPage() {
             <div className="py-12 text-center text-sm text-neutral-500">
               در حال بارگذاری...
             </div>
-          ) : filteredColors.length === 0 ? (
+          ) : colors.length === 0 ? (
             <div className="py-12 text-center text-sm text-neutral-500">
               رنگی مطابق با جستجو یافت نشد
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {filteredColors.map((color) => (
+              {colors.map((color) => (
                 <div
                   key={color.id}
                   className="flex flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm"

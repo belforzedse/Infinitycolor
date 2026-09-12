@@ -101,6 +101,7 @@ export function getAdminLandingPath(
 ): string {
   const adminRole = normalizeAdminRole(role);
   const preferredByRole: Partial<Record<AdminRoleId, string>> = {
+    support: "/issue-reports",
     editor: "/blog",
     seller1: "/products",
     seller2: "/products",

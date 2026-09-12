@@ -126,6 +126,28 @@ async function login(ctx) {
  *
  * @param ctx - Koa request/response context used to resolve the current user and to set the HTTP response
  */
+/**
+ * The column is a boolean and stays one: `true` is male, `false` is female, `null` is
+ * unset. The API speaks `"male" | "female" | null` in both directions so callers never
+ * have to know that. Anything else is rejected rather than coerced -- the previous
+ * `rawSex === "true" || rawSex === "1"` test silently turned both "male" and "female"
+ * into `false`, so every profile save overwrote the answer.
+ */
+const INVALID_SEX = Symbol("invalid-sex");
+
+function parseSexInput(rawSex: unknown): boolean | null | typeof INVALID_SEX {
+  if (rawSex === null || rawSex === undefined || rawSex === "") return null;
+  if (typeof rawSex === "boolean") return rawSex;
+  if (rawSex === "male") return true;
+  if (rawSex === "female") return false;
+  return INVALID_SEX;
+}
+
+function serializeSex(storedSex: unknown): "male" | "female" | null {
+  if (typeof storedSex !== "boolean") return null;
+  return storedSex ? "male" : "female";
+}
+
 async function self(ctx) {
   try {
     let pluginUserId = await resolvePluginUserId(ctx);
@@ -177,6 +199,7 @@ async function self(ctx) {
       ...profile,
       Phone: phone || profile?.Phone || null,
       phone: phone || profile?.phone || null,
+      Sex: serializeSex((profile as any)?.Sex),
       UserName: fullUser?.username ?? profile?.UserName,
       Email: fullUser?.email ?? profile?.Email,
       confirmed: Boolean(fullUser?.confirmed),
@@ -274,16 +297,16 @@ async function updateSelf(ctx) {
       profilePayload.BirthDate = normalizedBirthDate;
     }
     if (hasOwn(body, "Sex")) {
-      const rawSex = body.Sex;
-      if (rawSex === null || rawSex === undefined || rawSex === "") {
-        profilePayload.Sex = null;
-      } else if (typeof rawSex === "boolean") {
-        profilePayload.Sex = rawSex;
-      } else if (typeof rawSex === "string") {
-        profilePayload.Sex = rawSex === "true" || rawSex === "1";
-      } else {
-        profilePayload.Sex = Boolean(rawSex);
+      const normalizedSex = parseSexInput(body.Sex);
+      if (normalizedSex === INVALID_SEX) {
+        ctx.status = 400;
+        ctx.body = {
+          message: "مقدار جنسیت نامعتبر است.",
+          error: "PROFILE_SEX_INVALID",
+        };
+        return;
       }
+      profilePayload.Sex = normalizedSex;
     }
     if (hasOwn(body, "Bio")) {
       profilePayload.Bio =

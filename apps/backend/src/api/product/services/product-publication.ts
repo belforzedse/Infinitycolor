@@ -6,6 +6,8 @@ import type { AuditJobContext, AuditPrincipal, AuditActorType, AuditOrigin } fro
 import { serializeAuditJobContext } from "../../../audit/sanitizer";
 import { delByPatternStrict } from "../../../utils/responseCache";
 import { triggerFrontendRevalidation } from "../../../utils/revalidate";
+import { getProductAvailabilityJoinContext } from "../../../utils/productAvailability";
+import { scheduleHomeProductsRevalidation } from "../../../utils/homepageRevalidation";
 
 export const PRODUCT_UID = "api::product.product" as const;
 export const BUSINESS_TIMEZONE = "Asia/Tehran";
@@ -45,6 +47,8 @@ export type PublicationResult = {
   previousScheduleRevision?: number;
   changed: boolean;
   needsPublicationEffects: boolean;
+  /** Variations flipped to published by this command; 0 unless it published the product. */
+  publishedVariationCount?: number;
   /** Internal queue hand-off only; controllers must not expose this in API responses. */
   auditJobContext?: AuditJobContext;
 };
@@ -158,6 +162,46 @@ async function assertRequiredMedia(strapi: Strapi, productId: number, required: 
   if (!hasMediaRelation((product as any)?.CoverImage)) {
     throw new PublicationCommandError("PRODUCT_COVER_MEDIA_REQUIRED", 422);
   }
+}
+
+/**
+ * Publishing a product makes it visible only when at least one of its variations
+ * is published too — the storefront ANDs `products.status = Active` with
+ * `product_variations.is_published`. A publish command therefore cascades to the
+ * product's own variations inside the same transaction, so the two gates can
+ * never commit out of step.
+ *
+ * Rows already published are left untouched, and the count of rows actually
+ * flipped is returned so callers can report it.
+ */
+async function publishProductVariations(
+  strapi: Strapi,
+  trx: any,
+  productId: number,
+  now: Date,
+): Promise<number> {
+  const joins = getProductAvailabilityJoinContext(strapi);
+  const links = (await trx(joins.productVariationProductLinkTable)
+    .select(joins.productVariationProductJoinColumn)
+    .where(joins.productVariationProductInverseColumn, productId)) as Array<Record<string, unknown>>;
+
+  const variationIds = links
+    .map((link) => Number(link[joins.productVariationProductJoinColumn]))
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+  if (variationIds.length === 0) return 0;
+
+  // `is_published` is nullable on legacy rows, so filter in JS rather than with
+  // `whereNot(..., true)` — SQL would drop the NULLs that most need publishing.
+  const existing = (await trx("product_variations")
+    .select("id", "is_published")
+    .whereIn("id", variationIds)) as Array<{ id: number; is_published: boolean | null }>;
+  const pending = existing.filter((row) => row.is_published !== true).map((row) => Number(row.id));
+  if (pending.length === 0) return 0;
+
+  await trx("product_variations")
+    .whereIn("id", pending)
+    .update({ is_published: true, updated_at: now });
+  return pending.length;
 }
 
 function resultFromRow(row: ProductRow, changed: boolean, previousScheduleRevision?: number): PublicationResult {
@@ -291,6 +335,7 @@ async function writePublicationAudit(
   changed: boolean,
   eventId: string,
   trx: any,
+  publishedVariationCount = 0,
 ) {
   const ambient = resolveCurrentAuditContext();
   const parties = publicationParties(context);
@@ -320,6 +365,7 @@ async function writePublicationAudit(
       scheduleRevision: Number(after.scheduled_publish_revision || 0),
       publicationRevision: Number(after.publication_revision || 0),
       requireMedia: Boolean(after.scheduled_publish_require_media),
+      publishedVariationCount,
     },
     requestId: ambient?.requestId,
     interactionId: ambient?.interactionId,
@@ -331,6 +377,16 @@ async function writePublicationAudit(
       ambient?.interactionId || ambient?.requestId || eventId
     }`,
   }, { trx });
+}
+
+/**
+ * A schedule created by the importer carries `origin: "import"` in the context
+ * persisted on the row, so the scheduler can honour the same cascade exemption
+ * the immediate path applies to importer publishes.
+ */
+function scheduledByImporter(row: ProductRow, fallback?: AuditJobContext): boolean {
+  const context = storedPublicationAuditContext(row) || fallback || null;
+  return context?.origin === publicationOrigin("importer");
 }
 
 function storedPublicationAuditContext(row: ProductRow): AuditJobContext | null {
@@ -417,6 +473,7 @@ export async function executePublicationCommand(
     const previousScheduleRevision = Number(row.scheduled_publish_revision || 0);
     const publicationRevision = Number(row.publication_revision || 0);
     let changed = false;
+    let publishedVariationCount = 0;
 
     if (command.action === "schedule") {
       if (status === "Active") {
@@ -514,6 +571,11 @@ export async function executePublicationCommand(
       if (status !== "Active") {
         assertPublishable(row);
         await assertRequiredMedia(strapi, productId, command.requireMedia === true);
+        // The importer maps each WooCommerce variation's own status onto
+        // IsPublished, so cascading here would overwrite that mapping.
+        if (context.origin !== "importer") {
+          publishedVariationCount = await publishProductVariations(strapi, trx, productId, now);
+        }
         await productTable(trx).where({ id: productId }).update({
           status: "Active",
           scheduled_publish_at: null,
@@ -546,10 +608,19 @@ export async function executePublicationCommand(
       changed,
       auditEventId,
       trx,
+      publishedVariationCount,
     );
-    return resultFromRow(updated, changed, changed ? previousScheduleRevision : undefined);
+    const commandResult = resultFromRow(updated, changed, changed ? previousScheduleRevision : undefined);
+    commandResult.publishedVariationCount = publishedVariationCount;
+    return commandResult;
   });
 
+  if (result.publishedVariationCount) {
+    scheduleHomeProductsRevalidation("product-publication-cascade", {
+      productId,
+      publishedVariationCount: result.publishedVariationCount,
+    });
+  }
   await writePublicationLog(strapi, result, command.action, context);
   strapi.log.info("[product-publication] command completed", {
     productId,
@@ -678,6 +749,9 @@ export async function publishScheduledProduct(
       return { outcome: "permanent-failure" as const, code: failureCode, result: resultFromRow(blocked, true) };
     }
 
+    const publishedVariationCount = scheduledByImporter(row, input.auditContext)
+      ? 0
+      : await publishProductVariations(strapi, trx, input.productId, now);
     const nextPublicationRevision = Number(row.publication_revision || 0) + 1;
     await productTable(trx).where({ id: input.productId }).update({
       status: "Active",
@@ -701,10 +775,18 @@ export async function publishScheduledProduct(
       auditContext: input.auditContext,
       jobId: input.jobId,
     }, trx);
-    return { outcome: "published" as const, result: resultFromRow(published, true) };
+    const publishedResult = resultFromRow(published, true);
+    publishedResult.publishedVariationCount = publishedVariationCount;
+    return { outcome: "published" as const, result: publishedResult };
   });
 
   if (attempt.outcome === "published") {
+    if (attempt.result.publishedVariationCount) {
+      scheduleHomeProductsRevalidation("product-publication-cascade", {
+        productId: input.productId,
+        publishedVariationCount: attempt.result.publishedVariationCount,
+      });
+    }
     await writePublicationLog(strapi, attempt.result, "publish-now", { origin: "scheduler", now });
   }
   if (attempt.outcome === "permanent-failure") {

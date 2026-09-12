@@ -161,4 +161,79 @@ describe("AuthInitializer", () => {
     expect(mockedCentralAuth.centralAuth.tokenManager.expire).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  it("drops a session that died elsewhere when the tab regains focus", async () => {
+    // A password reset happens on the central auth origin and publishes no event here, so
+    // without this the tab kept rendering the account UI with a stale identity.
+    mockedMe.mockResolvedValueOnce(buildUser({ id: 1 }));
+
+    await act(async () => {
+      render(
+        <Provider store={jotaiStore}>
+          <AuthInitializer />
+        </Provider>,
+      );
+    });
+    await waitFor(() => expect(jotaiStore.get(currentUserAtom)).not.toBeNull());
+
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue(null);
+    // The check is throttled, and mounting counts as the most recent one.
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(jotaiStore.get(currentUserAtom)).toBeNull());
+    nowSpy.mockRestore();
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/auth/route-hint",
+      expect.objectContaining({ method: "DELETE", credentials: "same-origin" }),
+    );
+  });
+
+  it("keeps the identity when the session is still alive on focus", async () => {
+    mockedMe.mockResolvedValueOnce(buildUser({ id: 1 }));
+
+    await act(async () => {
+      render(
+        <Provider store={jotaiStore}>
+          <AuthInitializer />
+        </Provider>,
+      );
+    });
+    await waitFor(() => expect(jotaiStore.get(currentUserAtom)).not.toBeNull());
+
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    nowSpy.mockRestore();
+
+    expect(jotaiStore.get(currentUserAtom)).not.toBeNull();
+  });
+
+  it("throttles the focus check so a tab-switch storm cannot mint tokens in a loop", async () => {
+    mockedMe.mockResolvedValueOnce(buildUser({ id: 1 }));
+
+    await act(async () => {
+      render(
+        <Provider store={jotaiStore}>
+          <AuthInitializer />
+        </Provider>,
+      );
+    });
+    await waitFor(() => expect(jotaiStore.get(currentUserAtom)).not.toBeNull());
+
+    const callsAfterMount =
+      mockedCentralAuth.centralAuth.tokenManager.getToken.mock.calls.length;
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(mockedCentralAuth.centralAuth.tokenManager.getToken).toHaveBeenCalledTimes(
+      callsAfterMount,
+    );
+  });
 });

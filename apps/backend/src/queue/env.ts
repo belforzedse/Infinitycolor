@@ -9,6 +9,7 @@ export type QueueSettings = {
     commerce: number;
     analytics: number;
     payments: number;
+    media: number;
   };
   crons: {
     stockReservationExpiry: string;
@@ -42,6 +43,9 @@ export function getQueueSettings(env: NodeJS.ProcessEnv = process.env): QueueSet
       commerce: readPositiveInt(env.WORKER_CONCURRENCY_COMMERCE, 1),
       analytics: readPositiveInt(env.WORKER_CONCURRENCY_ANALYTICS, 1),
       payments: readPositiveInt(env.WORKER_CONCURRENCY_PAYMENTS, 1),
+      // Transcoding is CPU-bound and shares the host with the API replicas; one at a
+      // time is deliberate.
+      media: readPositiveInt(env.WORKER_CONCURRENCY_MEDIA, 1),
     },
     crons: {
       stockReservationExpiry: env.QUEUE_CRON_STOCK_RESERVATION_EXPIRY || "*/1 * * * *",

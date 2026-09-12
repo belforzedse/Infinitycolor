@@ -29,4 +29,9 @@ describe("resolveUserRoleLabel", () => {
     ).toBe("مدیر فروشگاه ۲");
     expect(isAssignablePluginRole({ type: "store-manager-2" })).toBe(true);
   });
+
+  it("translates and permits assignment of Support", () => {
+    expect(resolveUserRoleLabel({ role: { name: "Support" } })).toBe("پشتیبان");
+    expect(isAssignablePluginRole({ type: "support" })).toBe(true);
+  });
 });

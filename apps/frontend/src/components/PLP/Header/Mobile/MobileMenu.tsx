@@ -156,9 +156,14 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
 
   useEffect(() => {
     if (isOpen) {
-      // finishMenuClose() sets local state to "closed" before the parent
-      // flips `isOpen`. Do not reopen on that in-between render.
-      if (finishingCloseRef.current) return;
+      // finishMenuClose() latches this ref, and only an `isOpen` transition
+      // cleared it. Closing from a nav link flips `isOpen` false *before* the
+      // exit animation ends, so the second onClose() inside finishMenuClose()
+      // is a no-op, this effect never re-runs, and the latch outlives its
+      // render — swallowing every later open and killing the menu for the rest
+      // of the session. Clearing it here is enough: the effect only runs on an
+      // `isOpen` transition, so it cannot fire on that in-between render.
+      finishingCloseRef.current = false;
       setMenuState("open");
       return;
     }

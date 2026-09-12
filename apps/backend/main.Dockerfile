@@ -100,7 +100,9 @@ RUN chmod +x /usr/local/bin/fallback-apk.sh /usr/local/bin/fallback-registry.sh
 
 # su-exec so entrypoint can create uploads dir then run as node
 # Alpine default CDN (dl-cdn.alpinelinux.org) is often unreachable from same networks as Docker Hub; use Arvan APK mirror
-RUN /usr/local/bin/fallback-apk.sh su-exec vips vips-dev
+# ffmpeg normalizes story video uploads (see src/services/media): the catalogue arrives
+# as HEVC in QuickTime containers, which Chromium parses and then decodes to nothing.
+RUN /usr/local/bin/fallback-apk.sh su-exec vips vips-dev ffmpeg
 # Prepare pnpm in the runner layer (builder corepack cache uses --mount=cache and is not COPY-able).
 RUN /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" pnpm --version \
     && mkdir -p /home/node/.cache/node \

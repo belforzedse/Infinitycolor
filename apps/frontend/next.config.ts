@@ -42,6 +42,23 @@ const nextConfig = {
       revalidate: 300,
       expire: 3600,
     },
+    // Commerce pages whose payload carries stock and price. The window is
+    // deliberately tiny: it exists to collapse duplicate renders of the same URL
+    // under load, not to hold data. At 4k concurrent this still turns thousands
+    // of identical renders into one per URL per 5s, while being *fresher* than
+    // the 30s (PDP) / 120s (PLP) fetch windows it replaces.
+    storefrontLive: {
+      // 30s, not 5s. Under load every distinct hot URL is re-rendered once per
+      // TTL regardless of traffic volume, so the render cost is
+      // (hot URLs / TTL) x render cost. Measured on prod: 359 hot URLs at a 5s
+      // TTL cost ~12 of 64 cores in steady state even at a 100% cache hit rate.
+      // At 30s that is ~2 cores, and it is what makes a wide catalog affordable.
+      stale: 30,
+      revalidate: 30,
+      // Must exceed `revalidate`; it is the hard ceiling before Next falls back
+      // to a fully dynamic render, not an expected staleness.
+      expire: 300,
+    },
   },
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),

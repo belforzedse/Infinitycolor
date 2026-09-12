@@ -18,11 +18,43 @@ type Props = {
   itemName?: string;
   payloadFormatter?: (removedAt: string | null) => Record<string, unknown>;
   testIdPrefix?: string;
+  /**
+   * Override the `PUT ${apiUrl}/${id} { removedAt }` default for collections
+   * whose removal is not a plain field write.
+   *
+   * Products need this: `removedAt` is outside the backend's operational field
+   * allowlist, so the generic update path 400s for every non-Superadmin, and
+   * removal goes through dedicated capability-gated endpoints instead. Every
+   * other collection using this component (shipping, coupons, general discounts,
+   * tags, comments, users) does carry `removedAt` in its allowlist and keeps the
+   * default path.
+   */
+  onSoftDelete?: (id: string) => Promise<unknown>;
+  onRestore?: (id: string) => Promise<unknown>;
+  /**
+   * Hides the soft-delete / restore controls when the role lacks the capability.
+   * Defaults to visible, preserving today's behaviour for callers that pass
+   * nothing. Column definitions are module-level consts in several tables, so
+   * `useCan` cannot run in the cell — the caller resolves it and passes it down,
+   * the same way this component already resolves hard delete for itself.
+   */
+  canSoftDelete?: boolean;
+  canRestore?: boolean;
 };
 
 export default function RemoveActionButton(props: Props) {
   const { testIdPrefix } = props;
-  const { isRemoved, id, apiUrl, itemName = "محصول", payloadFormatter } = props;
+  const {
+    isRemoved,
+    id,
+    apiUrl,
+    itemName = "محصول",
+    payloadFormatter,
+    onSoftDelete,
+    onRestore,
+    canSoftDelete = true,
+    canRestore = true,
+  } = props;
   const [, setRefresh] = useAtom(refreshTable);
   const canHardDelete = useCan("system.purge.execute");
   const [isDeleting, setIsDeleting] = useState(false);
@@ -44,7 +76,8 @@ export default function RemoveActionButton(props: Props) {
   const handleRestore = async () => {
     try {
       setIsDeleting(true);
-      await apiClient.put(`${apiUrl}/${id}`, buildPayload(null));
+      if (onRestore) await onRestore(id);
+      else await apiClient.put(`${apiUrl}/${id}`, buildPayload(null));
       setRefresh(true);
       toast.success("با موفقیت بازیابی شد");
     } catch (error) {
@@ -79,8 +112,8 @@ export default function RemoveActionButton(props: Props) {
     // Soft delete action - directly call API
     try {
       setIsDeleting(true);
-      const now = new Date().toISOString();
-      await apiClient.put(`${apiUrl}/${id}`, buildPayload(now));
+      if (onSoftDelete) await onSoftDelete(id);
+      else await apiClient.put(`${apiUrl}/${id}`, buildPayload(new Date().toISOString()));
       setRefresh(true);
       toast.success(`${itemName} با موفقیت حذف شد`);
     } catch (error) {
@@ -107,14 +140,16 @@ export default function RemoveActionButton(props: Props) {
     return (
       <>
         <div className="flex flex-row-reverse items-center gap-2">
-          <SuperAdminTableCellActionButton
-            variant="primary"
-            icon={<UndoIcon />}
-            onClick={() => setShowRestoreConfirm(true)}
-            disabled={isDeleting}
-            testId={testIdPrefix ? `${testIdPrefix}-restore` : undefined}
-            dataAttributes={{ id }}
-          />
+          {canRestore && (
+            <SuperAdminTableCellActionButton
+              variant="primary"
+              icon={<UndoIcon />}
+              onClick={() => setShowRestoreConfirm(true)}
+              disabled={isDeleting}
+              testId={testIdPrefix ? `${testIdPrefix}-restore` : undefined}
+              dataAttributes={{ id }}
+            />
+          )}
           <SuperAdminTableCellActionButton
             variant="secondary"
             icon={<TrashIcon />}
@@ -162,6 +197,8 @@ export default function RemoveActionButton(props: Props) {
   }
 
   // When item is not removed, show only the soft delete button
+  if (!canSoftDelete) return null;
+
   return (
     <SuperAdminTableCellActionButton
       variant="primary"

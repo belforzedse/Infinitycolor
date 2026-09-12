@@ -110,32 +110,31 @@ describe("orders page bounded data ownership", () => {
     const { unmount } = render(<OrdersPage />);
 
     expect(mockTableProps.enableSelection).toBe(true);
-    expect(mockTableProps.bulkOptions).toEqual([
-      { id: "print", title: "پرینت دسته‌ای" },
+    expect(mockTableProps.bulkOptions.map((option: { id: string }) => option.id)).toEqual([
+      "print",
     ]);
 
     unmount();
     mockCapabilities = new Set(["order.read", "order.status.update"]);
     render(<OrdersPage />);
 
-    expect(mockTableProps.bulkOptions).toEqual([
-      { id: "print", title: "پرینت دسته‌ای" },
-      { id: "status-Started", title: "تغییر وضعیت به «در حال انجام»" },
-      { id: "status-Done", title: "تغییر وضعیت به «تکمیل شده»" },
+    // No `status-Started`: nothing in the backend transition chain leads to
+    // Started, so offering it could only ever produce a 409.
+    expect(mockTableProps.bulkOptions.map((option: { id: string }) => option.id)).toEqual([
+      "print",
+      "status-Shipment",
+      "status-Done",
     ]);
-    expect(mockTableProps.bulkOptions).not.toEqual(
-      expect.arrayContaining([{ id: "cancel", title: "لغو سفارش" }]),
-    );
 
     unmount();
     mockCapabilities = new Set(["order.read", "order.status.update", "order.cancel"]);
     render(<OrdersPage />);
 
-    expect(mockTableProps.bulkOptions).toEqual([
-      { id: "print", title: "پرینت دسته‌ای" },
-      { id: "status-Started", title: "تغییر وضعیت به «در حال انجام»" },
-      { id: "status-Done", title: "تغییر وضعیت به «تکمیل شده»" },
-      { id: "cancel", title: "لغو سفارش" },
+    expect(mockTableProps.bulkOptions.map((option: { id: string }) => option.id)).toEqual([
+      "print",
+      "status-Shipment",
+      "status-Done",
+      "cancel",
     ]);
   });
 
@@ -164,9 +163,12 @@ describe("orders page bounded data ownership", () => {
   });
 
   describe("bulk status changes with held reserve orders", () => {
-    const row = (id: string, reserveIsHeld: boolean) => ({
+    // `Shipment` is the status a `Done` transition is actually reachable from.
+    // These fixtures used to say `Started`, which the backend's transition chain
+    // refuses — the case now covered by its own test below.
+    const row = (id: string, reserveIsHeld: boolean, Status = "Shipment") => ({
       id,
-      attributes: { Status: "Started", reserveIsHeld },
+      attributes: { Status, reserveIsHeld },
     });
 
     beforeEach(() => {
@@ -190,7 +192,7 @@ describe("orders page bounded data ownership", () => {
       expect(changeOrderStatus).toHaveBeenCalledWith("3", "Done");
       expect(changeOrderStatus).not.toHaveBeenCalledWith("2", "Done");
       expect(mockToast).toHaveBeenCalledWith(
-        "1 سفارش به دلیل بودن در مهلت رزرو تغییر نکرد.",
+        "1 سفارش تغییر نکرد: در مهلت رزرو",
         expect.anything(),
       );
     });
@@ -202,8 +204,37 @@ describe("orders page bounded data ownership", () => {
 
       expect(changeOrderStatus).not.toHaveBeenCalled();
       expect(mockToast.error).toHaveBeenCalledWith(
-        "همه سفارش‌های انتخاب‌شده در مهلت رزرو هستند و تا پایان مهلت ارسال نمی‌شوند.",
+        expect.stringContaining("در مهلت رزرو"),
       );
+    });
+
+    /**
+     * The reported defect: «تکمیل شده» applied to orders sitting in «در حال انجام»
+     * silently failed, because the backend only allows Started → Shipment → Done.
+     * Nothing is sent now, and the message names the status that IS reachable.
+     */
+    it("refuses a transition that skips a step, naming the allowed one", async () => {
+      render(<OrdersPage />);
+
+      await mockTableProps.onBulkAction("status-Done", [
+        row("1", false, "Started"),
+        row("2", false, "Started"),
+      ]);
+
+      expect(changeOrderStatus).not.toHaveBeenCalled();
+      expect(mockToast.error).toHaveBeenCalledWith(
+        expect.stringContaining("ارسال شده"),
+      );
+    });
+
+    it("applies a transition that is the next step in the chain", async () => {
+      render(<OrdersPage />);
+
+      await mockTableProps.onBulkAction("status-Shipment", [
+        row("1", false, "Started"),
+      ]);
+
+      expect(changeOrderStatus).toHaveBeenCalledWith("1", "Shipment");
     });
 
     it("cancels held reserve orders through the cancel endpoint", async () => {

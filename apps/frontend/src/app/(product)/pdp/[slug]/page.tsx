@@ -11,8 +11,14 @@ import {
 import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { cache, Suspense } from "react";
+import { cacheLife, cacheTag } from "next/cache";
 import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
-import { PRODUCT_TAG, productIdTag, productSlugTag } from "@/constants/cacheTags";
+import {
+  PRODUCT_COLLECTION_TAG,
+  PRODUCT_TAG,
+  productIdTag,
+  productSlugTag,
+} from "@/constants/cacheTags";
 import { fetchWithTimeout } from "@repo/api";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { SITE_NAME } from "@/config/site";
@@ -286,9 +292,52 @@ const fetchPdpProduct = async (
   return { product, errorDetails: { endpoint: apiUrl } };
 };
 
+/**
+ * Shared across replicas, not just across one render.
+ *
+ * The fetch below was already cached (`next.revalidate`), which is why Strapi
+ * stayed idle under load — but the *render* was not, so 4k concurrent visitors
+ * to one PDP produced ~1 API call and ~4k full renders of a ~1MB page. That is
+ * what saturated the frontend while `api` sat at 0.26 of 32 cores.
+ *
+ * `storefrontLive` is a 5s window. This payload carries stock and price
+ * (`view=shell` populates `product_stock`), so the window is deliberately
+ * shorter than the 30s fetch revalidate it supersedes: strictly fresher than
+ * before, while still collapsing a stampede into one render per URL per 5s.
+ */
+async function getRemoteCachedPdpProduct(
+  decodedSlug: string,
+): Promise<ProductLookupResult> {
+  "use cache: remote";
+  cacheLife("storefrontLive");
+  cacheTag(PRODUCT_TAG, productSlugTag(decodedSlug));
+  return fetchPdpProduct(decodedSlug, PDP_REVALIDATE_SECONDS);
+}
+
+// React `cache` on top so `generateMetadata` and the page body share one
+// result within a single request rather than each consulting the remote cache.
 const getCachedPdpProduct = cache((decodedSlug: string) =>
-  fetchPdpProduct(decodedSlug, PDP_REVALIDATE_SECONDS),
+  getRemoteCachedPdpProduct(decodedSlug),
 );
+
+/**
+ * Related rails are identical for every visitor, so one render per 5s serves
+ * all of them. Cached on the same `storefrontLive` window as the shell because
+ * the `view=card` projection also carries `IsAvailable`/`InventoryCount`.
+ */
+async function getCachedRelatedProducts(
+  mainCategoryId: string,
+  otherCategoryIds: string[],
+  productId: string,
+) {
+  "use cache: remote";
+  cacheLife("storefrontLive");
+  cacheTag(PRODUCT_TAG, PRODUCT_COLLECTION_TAG, productIdTag(productId));
+  return Promise.allSettled([
+    getRelatedProductsByMainCategory(mainCategoryId, productId),
+    getRelatedProductsByOtherCategories(otherCategoryIds, productId),
+  ]);
+}
 
 async function PDPRelatedProductsSection({
   mainCategoryId,
@@ -303,10 +352,11 @@ async function PDPRelatedProductsSection({
   let otherCategoriesProducts: any[] = [];
 
   try {
-    const results = await Promise.allSettled([
-      getRelatedProductsByMainCategory(mainCategoryId, productId),
-      getRelatedProductsByOtherCategories(otherCategoryIds, productId),
-    ]);
+    const results = await getCachedRelatedProducts(
+      mainCategoryId,
+      otherCategoryIds,
+      productId,
+    );
 
     if (results[0].status === "fulfilled") {
       sameMainCategoryProducts = results[0].value;
@@ -352,6 +402,27 @@ async function PDPRelatedProductsSection({
   );
 }
 
+/**
+ * Reviews are public, identical for every visitor, and carry no stock or price.
+ *
+ * The explicit `"default"` opts out of the service's `no-store` default, which
+ * exists for browser callers that must see their own just-posted review. That
+ * default also makes the shared api-client append a `_cb` timestamp, producing
+ * a unique URL per request — which is why the production API logs showed the
+ * same review query for the same product repeated hundreds of times per second
+ * during the load test.
+ */
+async function getCachedProductReviews(productId: string) {
+  "use cache: remote";
+  cacheLife("storefrontLive");
+  cacheTag(PRODUCT_TAG, productIdTag(productId));
+  return productReviewService.getProductReviews(
+    productId,
+    { page: 1, pageSize: 10, sort: "createdAt:desc" },
+    { cache: "default" },
+  );
+}
+
 async function PDPReviewsSection({
   productId,
   productData,
@@ -372,11 +443,7 @@ async function PDPReviewsSection({
 
   if (productId) {
     try {
-      const response = await productReviewService.getProductReviews(productId, {
-        page: 1,
-        pageSize: 10,
-        sort: "createdAt:desc",
-      });
+      const response = await getCachedProductReviews(productId);
       productReviews = response.data || [];
       reviewTotalPages = response.meta?.totalPages || 1;
     } catch (error) {

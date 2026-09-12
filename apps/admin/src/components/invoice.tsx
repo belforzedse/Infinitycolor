@@ -47,6 +47,16 @@ export type InvoiceOrder = {
     gatewayTrackingCode?: string;
     DiscountCode?: string;
     AppliedDiscountAmount?: number | string;
+    /**
+     * Projected from the order's reserve group by `projectOrderReserve`, not read
+     * from the frozen `is_reserve_order` column. `/orders/:id` already spreads the
+     * projection, so this arrives without any change to the print populate.
+     *
+     * Deliberately NOT `reserveIsHeld`: the hold only covers PendingActivation /
+     * Active, and invoices print at fulfilment when the group has already moved to
+     * ReadyToFulfill / Fulfilling — a hold-gated flag would almost never show.
+     */
+    isReserveOrder?: boolean;
     shipping?: Relation<{ Name?: string; Title?: string }>;
     user?: Relation<{
       Phone?: string;
@@ -216,6 +226,7 @@ export default function Invoice({
   const storePostalCode = textValue(primaryStore?.postalCode) || INVOICE_STORE_POSTAL_CODE;
   const orderId = textValue(order.id);
   const hasBarcode = Boolean(orderId && orderId !== "temp-preview");
+  const isReserveOrder = Boolean(attributes.isReserveOrder);
   const missingValue = isPreInvoice ? "----" : "";
 
   return (
@@ -263,6 +274,11 @@ export default function Invoice({
                     <span className="title">شناسه سفارش:</span>{" "}
                     {hasBarcode ? orderId : missingValue || "—"}
                   </span>
+                  {isReserveOrder ? (
+                    <span className="fc-reserve-flag" data-testid="invoice-reserve-flag">
+                      سفارش رزروی
+                    </span>
+                  ) : null}
                 </td>
               </tr>
             </tbody>

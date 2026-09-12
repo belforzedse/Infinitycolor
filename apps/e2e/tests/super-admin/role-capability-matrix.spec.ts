@@ -33,6 +33,7 @@ type StaffRoleCase = {
     | "store-manager-2"
     | "finance"
     | "founder"
+    | "support"
     | "admin"
   >;
   adminRole: string;
@@ -353,6 +354,33 @@ const STAFF_ROLES: StaffRoleCase[] = [
     allowedApi: (request, role) =>
       apiGet(request, role, "/reports/behavior/overview"),
     forbiddenApi: (request, role) => apiGet(request, role, "/users"),
+  },
+  {
+    authRole: "support",
+    adminRole: "support",
+    label: "Support",
+    sidebarCount: 3,
+    visibleSidebarIds: ["dashboard", "issue-reports", "product-comments"],
+    hiddenSidebarIds: ["manage-products", "orders", "sales", "blog", "users"],
+    requiredCapabilities: [
+      "system.reviews.manage",
+      "system.issueReports.manage",
+    ],
+    absentCapabilities: [
+      "product.read",
+      "order.read",
+      "content.blog.read",
+      "wallet.read",
+      "system.users.manage",
+    ],
+    forbiddenPath: "/products",
+    allowedApi: (request, role) => apiGet(request, role, "/issue-reports/admin"),
+    forbiddenApi: (request, role) =>
+      apiPost(request, role, "/admin/products-list/query", {
+        page: 1,
+        pageSize: 1,
+        removed: false,
+      }),
   },
   {
     authRole: "admin",

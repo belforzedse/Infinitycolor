@@ -25,13 +25,22 @@
     "sanitize:admin-artifacts": "node scripts/sanitize-admin-artifacts.mjs",
     "test:artifact-sanitizer": "node --test scripts/sanitize-admin-artifacts.test.mjs",
     "test": "pnpm run e2e",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "e2e:stories": "playwright test --config stories.playwright.config.ts",
+    "stories:harness": "node scripts/stories-harness-server.mjs"
   },
   "devDependencies": {
     "@next/playwright": "16.3.2",
     "@playwright/test": "1.60.0",
     "@types/node": "20.17.30",
+    "esbuild": "0.25.12",
     "jszip": "3.10.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-instagram-stories": "1.1.1",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@repo/story-rail": "workspace:*"
   }
 }

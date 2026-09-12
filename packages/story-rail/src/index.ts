@@ -1,6 +1,9 @@
 export { StoryRail } from "./StoryRail";
 export { StoriesAvatarList } from "./StoriesAvatarList";
 export { StoriesViewerModal } from "./StoriesViewerModal";
+export { StoryMediaSurface } from "./media/StoryMediaSurface";
+export type { StoryMediaPayload } from "./media/StoryMediaSurface";
+export type { StoryMediaIssue, StoryPlaybackStore } from "./media/playback-store";
 export {
   getStoryRailPreview,
   getStorySortTimestamp,

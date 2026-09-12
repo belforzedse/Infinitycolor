@@ -17,7 +17,16 @@ function buildSourceTimestamps(createdAt, updatedAt) {
   if (!createdAt) return null;
   const effectiveUpdatedAt = updatedAt || createdAt;
   if (new Date(effectiveUpdatedAt).getTime() < new Date(createdAt).getTime()) {
-    throw new Error("SOURCE_UPDATED_BEFORE_CREATED");
+    // WooCommerce routinely emits date_modified earlier than date_created
+    // (store clock skew, bulk edits, and legacy rows migrated between hosts).
+    // This is ordinary source data, not corruption, so clamp instead of
+    // throwing: rejecting here failed the *entire* product — catalog fields,
+    // variations, stock and publication all lost over a cosmetic timestamp.
+    // createdAt is the trustworthy value; treating the record as never modified
+    // after creation is the conservative reading and keeps the invariant
+    // (updatedAt >= createdAt) that the destination enforces in
+    // src/utils/migration-context.ts, which stays strict as a backstop.
+    return { createdAt, updatedAt: createdAt };
   }
   return { createdAt, updatedAt: effectiveUpdatedAt };
 }

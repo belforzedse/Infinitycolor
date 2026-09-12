@@ -19,6 +19,11 @@ import { plpQueryOptions, plpQueryParsers, toggleFilterValue } from "@/component
 import { getCategoryPlpHrefWithQuery } from "@/utils/plpRoutes";
 import { buildSizeBuckets } from "@/utils/plpSizeFilter";
 import { buildColorFamilyBuckets } from "@/utils/plpColorFilter";
+import {
+  applyCategoryFilterRuleToColors,
+  applyCategoryFilterRuleToSizes,
+  resolveCategoryFilterRule,
+} from "@/utils/plpCategoryFilters";
 
 interface FilterProps {
   showAvailableOnly?: boolean;
@@ -191,8 +196,37 @@ export default function Filter({
   const resolvedIsLoading = categoriesProp
     ? (isLoadingCategoriesProp ?? false)
     : isFetchingCategories;
-  const sizeBuckets = useMemo(() => buildSizeBuckets(sizeTitles), [sizeTitles]);
-  const colorBuckets = useMemo(() => buildColorFamilyBuckets(catalogColors), [catalogColors]);
+  // The catalogue endpoints have no category parameter -- the colour and size content
+  // types hold no relation back to a variation -- so the two fetches above stay global and
+  // the category scoping happens here. Keeping `selectedCategory` in these dependencies is
+  // also what fixes the stale list: the fetch effect runs once with `[]` deps, so nothing
+  // recomputed when the shopper moved between categories.
+  const categoryFilterRule = useMemo(
+    () => resolveCategoryFilterRule(selectedCategory, resolvedCategories),
+    [selectedCategory, resolvedCategories],
+  );
+  const sizeBuckets = useMemo(
+    () => applyCategoryFilterRuleToSizes(buildSizeBuckets(sizeTitles), categoryFilterRule),
+    [sizeTitles, categoryFilterRule],
+  );
+  const colorBuckets = useMemo(
+    () =>
+      applyCategoryFilterRuleToColors(
+        buildColorFamilyBuckets(catalogColors),
+        categoryFilterRule,
+      ),
+    [catalogColors, categoryFilterRule],
+  );
+  // An empty box is worse than no box: a category with no sized variations at all (shawls,
+  // socks, glasses) should not show a "سایز" heading over nothing, and should not flash
+  // one while the catalogue loads either.
+  const sizeFilterApplies =
+    categoryFilterRule.clothing ||
+    categoryFilterRule.numericRanges === null ||
+    categoryFilterRule.numericRanges.length > 0;
+  const showSizeFilter = sizeFilterApplies && (isLoadingSizes || sizeBuckets.length > 0);
+  const showColorFilter =
+    categoryFilterRule.colors !== false && (isLoadingColors || colorBuckets.length > 0);
 
   return (
     <div className="flex flex-col gap-3">
@@ -221,27 +255,31 @@ export default function Filter({
         />
       )}
 
-      <div data-testid="plp-size-filter">
-        <PLPFilterBox title="سایز" defaultOpen>
-          <SizeFilter
-            buckets={sizeBuckets}
-            selectedKeys={selectedSizes}
-            isLoading={isLoadingSizes}
-            onToggle={handleSizeToggle}
-          />
-        </PLPFilterBox>
-      </div>
+      {showSizeFilter && (
+        <div data-testid="plp-size-filter">
+          <PLPFilterBox title="سایز" defaultOpen>
+            <SizeFilter
+              buckets={sizeBuckets}
+              selectedKeys={selectedSizes}
+              isLoading={isLoadingSizes}
+              onToggle={handleSizeToggle}
+            />
+          </PLPFilterBox>
+        </div>
+      )}
 
-      <div data-testid="plp-color-filter">
-        <PLPFilterBox title="رنگ" defaultOpen>
-          <ColorFilter
-            buckets={colorBuckets}
-            selectedKeys={selectedColors}
-            isLoading={isLoadingColors}
-            onToggle={handleColorToggle}
-          />
-        </PLPFilterBox>
-      </div>
+      {showColorFilter && (
+        <div data-testid="plp-color-filter">
+          <PLPFilterBox title="رنگ" defaultOpen>
+            <ColorFilter
+              buckets={colorBuckets}
+              selectedKeys={selectedColors}
+              isLoading={isLoadingColors}
+              onToggle={handleColorToggle}
+            />
+          </PLPFilterBox>
+        </div>
+      )}
 
       <PLPFilterBox title="قیمت">
         <PriceFilter

@@ -9,6 +9,10 @@ import { useDismissOnOutside } from "@/hooks/useDismissOnOutside";
 interface Option {
   id: string | number;
   title: string;
+  /** Renders the row muted and unselectable; pair with `description` to say why. */
+  disabled?: boolean;
+  /** Secondary line under the title, and the tooltip when disabled. */
+  description?: string;
 }
 
 interface Props {
@@ -53,6 +57,7 @@ const SuperAdminTableSelect = ({
   }, [filterOptions, selectedOptionId]);
 
   const handleOptionClick = (option: Option) => {
+    if (option.disabled) return;
     setSelectedOption(option);
     onOptionSelect?.(option.id);
     setIsOpen(false);
@@ -93,13 +98,23 @@ const SuperAdminTableSelect = ({
                 <button
                   type="button"
                   onClick={() => handleOptionClick(option)}
-                  className={`text-xs w-full min-w-0 rounded-lg px-2 py-1.5 text-right transition-colors hover:bg-stone-50 ${
-                    selectedOption.id === option.id
-                      ? "text-primary bg-stone-50"
-                      : "text-gray-800"
+                  disabled={option.disabled}
+                  aria-disabled={option.disabled}
+                  title={option.description}
+                  className={`text-xs w-full min-w-0 rounded-lg px-2 py-1.5 text-right transition-colors ${
+                    option.disabled
+                      ? "cursor-not-allowed text-gray-400"
+                      : selectedOption.id === option.id
+                        ? "text-primary bg-stone-50 hover:bg-stone-50"
+                        : "text-gray-800 hover:bg-stone-50"
                   }`}
                 >
                   <span className="block truncate">{option.title}</span>
+                  {option.description && (
+                    <span className="block truncate text-[11px] text-gray-400">
+                      {option.description}
+                    </span>
+                  )}
                 </button>
               </li>
             ))}

@@ -148,9 +148,11 @@ export interface ProductDailyRollupRow {
 }
 
 /**
- * One row per (Tehran-local day, variation, sku) with at least one unit sold.
- * `product_variation_id = 0` is the deleted-variation sentinel — see the migration
- * docstring for why NULL is avoided in this column. Bindings: [start, end].
+ * One row per (Tehran-local day, variation) with at least one unit sold; the SKU
+ * snapshot only splits rows that have no variation. `product_variation_id = 0` is
+ * the deleted-variation sentinel — see the migration docstring for why NULL is
+ * avoided in this column. The reported sku/title come from the most recent line, so
+ * an import renaming a product does not fragment its history. Bindings: [start, end].
  */
 export async function getProductDailyRollupRows(
   knex: Knex,
@@ -165,15 +167,18 @@ export async function getProductDailyRollupRows(
     SELECT
       ${bucketExpr}::date AS bucket_date,
       COALESCE(product_variation_id, 0) AS product_variation_id,
-      COALESCE(product_sku, '') AS product_sku,
-      MAX(product_title) AS product_title,
+      COALESCE((ARRAY_AGG(product_sku ORDER BY order_date DESC)
+                  FILTER (WHERE product_sku IS NOT NULL))[1], '') AS product_sku,
+      (ARRAY_AGG(product_title ORDER BY order_date DESC)
+         FILTER (WHERE product_title IS NOT NULL))[1] AS product_title,
       SUM(cnt)::bigint AS units,
       SUM(line_gross)::numeric AS gross,
       SUM(CASE WHEN order_gross > 0 THEN order_discount * line_gross / order_gross ELSE 0 END)::numeric AS discounts,
       SUM(CASE WHEN order_gross > 0 THEN refund_irr * line_gross / order_gross ELSE 0 END)::numeric AS refund_irr,
       COUNT(DISTINCT order_id)::bigint AS orders_count
     FROM itemized
-    GROUP BY 1, COALESCE(product_variation_id, 0), COALESCE(product_sku, '')
+    GROUP BY 1, COALESCE(product_variation_id, 0),
+             CASE WHEN product_variation_id IS NULL THEN COALESCE(product_sku, '') END
     ORDER BY 1
   `;
   const res = await knex.raw(sql, [start, end]);

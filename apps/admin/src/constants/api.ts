@@ -46,6 +46,11 @@ export const ENDPOINTS = {
     CATEGORY: "/product-categories",
     PRODUCT: "/products",
     COLORS: "/product-variation-colors",
+    SIZES: "/product-variation-sizes",
+    MODELS: "/product-variation-models",
+    ATTRIBUTES: "/product-attributes",
+    ATTRIBUTE_TERMS: "/product-attribute-terms",
+    ATTRIBUTE_ASSIGNMENTS: "/product-attribute-assignments",
     SIZE_HELPER: "/product-size-helpers",
     REVIEWS: {
       SUBMIT: "/product-reviews/submit",

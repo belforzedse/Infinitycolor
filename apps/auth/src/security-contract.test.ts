@@ -666,3 +666,36 @@ test("credentialed CORS echoes only an explicitly trusted application origin", (
   assert.equal(rejected.headers.get("access-control-allow-origin"), null);
   assert.notEqual(rejected.headers.get("access-control-allow-origin"), "*");
 });
+
+test("a password reset revokes every session for the identity", () => {
+  const plugin = fs.readFileSync(
+    path.resolve(process.cwd(), "src/server/infinity-plugin.ts"),
+    "utf8",
+  );
+
+  // docs/auth/architecture.md promises that a reset revokes every session. Nothing
+  // pinned that promise before, so a regression would have been silent.
+  assert.match(plugin, /"\/infinity\/password\/reset"/);
+  assert.match(
+    plugin,
+    /deleteUserSessions\(\s*identity\.betterAuthUserId,\s*\)/,
+  );
+  assert.match(plugin, /deleteSessionCookie\(ctx\)/);
+  assert.match(plugin, /reasonCode: "PASSWORD_RESET"/);
+});
+
+test("strapi's password reset is reachable only through the signed bridge", () => {
+  const routes = fs.readFileSync(
+    path.resolve(process.cwd(), "../backend/src/api/auth/routes/auth.ts"),
+    "utf8",
+  );
+
+  // Strapi cannot touch auth.sessions, so a browser-reachable reset there would change
+  // the password and leave every session alive.
+  const resetRoute = routes.slice(routes.indexOf('path: "/auth/reset-password"'));
+  assert.match(
+    resetRoute.slice(0, resetRoute.indexOf("},\n    {") + 1 || undefined),
+    /api::internal-auth\.verify-bridge/,
+  );
+});
+

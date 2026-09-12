@@ -20,6 +20,22 @@ describe("resolveProductReviewUserDisplayName", () => {
     ).toBe("+989121234567");
   });
 
+  // Roles without `plugin::users-permissions.user.find` (Support is the first
+  // granular one) have the real `user` relation stripped by Strapi's
+  // remove-restricted-relations sanitizer. The product-review controller
+  // substitutes a name-only relation so the moderation table still shows an
+  // author; the phone is legitimately absent for those roles.
+  it("reads the name-only relation served to roles that cannot populate users", () => {
+    expect(
+      resolveProductReviewUserDisplayName({
+        id: null,
+        user_info: {
+          data: { attributes: { FirstName: "علی رضایی", LastName: null } },
+        },
+      } as never),
+    ).toBe("علی رضایی");
+  });
+
   it("does not require the legacy Phone attribute", () => {
     expect(
       resolveProductReviewUserDisplayName({

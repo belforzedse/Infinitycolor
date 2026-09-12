@@ -19,6 +19,29 @@ describe("canonical admin capability matrix", () => {
     }
   });
 
+  it("limits Support to product reviews and issue reports", () => {
+    const capabilities = capabilitiesForRole("support");
+    expect(capabilities).toContain("system.reviews.manage");
+    expect(capabilities).toContain("system.issueReports.manage");
+    expect(capabilities).not.toContain("product.read");
+    expect(capabilities).not.toContain("order.read");
+    expect(capabilities).not.toContain("content.blog.read");
+    expect(capabilities).not.toContain("wallet.read");
+    expect(capabilities).not.toContain("system.users.manage");
+    expect(normalizeAdminRole("Support")).toBe("support");
+  });
+
+  it("keeps review moderation on Support and Superadmin only", () => {
+    for (const role of ADMIN_ROLE_IDS) {
+      expect(hasCapability(role, "system.reviews.manage")).toBe(
+        role === "support" || role === "superadmin",
+      );
+      expect(hasCapability(role, "system.issueReports.manage")).toBe(
+        role === "support" || role === "superadmin",
+      );
+    }
+  });
+
   it("gives Editor blog and stories without commerce access", () => {
     const capabilities = capabilitiesForRole("editor");
     expect(capabilities).toContain("content.blog.read");
@@ -98,8 +121,20 @@ describe("canonical admin capability matrix", () => {
   it("starts scheduling at Seller 2 while immediate publication begins at Seller 1", () => {
     expect(hasCapability("seller1", "product.publish")).toBe(true);
     expect(hasCapability("editor", "product.schedule")).toBe(false);
+    expect(hasCapability("support", "product.schedule")).toBe(false);
     expect(hasCapability("seller1", "product.schedule")).toBe(false);
-    for (const role of ADMIN_ROLE_IDS.slice(2)) {
+    // Every role on the Seller 2 branch and above. Listed explicitly rather than
+    // sliced by position, since Editor and Support are standalone branches that
+    // sit outside the seller inheritance chain.
+    const seller2AndAbove = [
+      "seller2",
+      "store_manager",
+      "store_manager_2",
+      "finance",
+      "founder",
+      "superadmin",
+    ] as const satisfies readonly (typeof ADMIN_ROLE_IDS)[number][];
+    for (const role of seller2AndAbove) {
       expect(hasCapability(role, "product.schedule")).toBe(true);
     }
   });

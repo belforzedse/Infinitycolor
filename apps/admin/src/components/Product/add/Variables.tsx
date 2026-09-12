@@ -2,7 +2,14 @@ import { useState, useCallback } from "react";
 import VariablesFeatures from "./Details/Features";
 import ProductVariables from "./Details/Variable";
 
-export default function Variables({ productId }: { productId: number }) {
+export default function Variables({
+  productId,
+  refreshKey: externalRefreshKey = 0,
+}: {
+  productId: number;
+  /** Bumped by the product page when a publish cascades to the variations. */
+  refreshKey?: number;
+}) {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleVariationsGenerated = useCallback(() => {
@@ -16,7 +23,7 @@ export default function Variables({ productId }: { productId: number }) {
           productId={productId}
           onVariationsGenerated={handleVariationsGenerated}
         />
-        <ProductVariables productId={productId} refreshKey={refreshKey} />
+        <ProductVariables productId={productId} refreshKey={refreshKey + externalRefreshKey} />
       </div>
       {/* <MetaOptions /> */}
     </div>

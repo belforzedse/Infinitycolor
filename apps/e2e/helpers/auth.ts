@@ -21,6 +21,8 @@ import {
   E2E_DEFAULT_STORE_MANAGER_PHONE,
   E2E_DEFAULT_STORE_MANAGER_2_PASSWORD,
   E2E_DEFAULT_STORE_MANAGER_2_PHONE,
+  E2E_DEFAULT_SUPPORT_PASSWORD,
+  E2E_DEFAULT_SUPPORT_PHONE,
 } from "../fixtures/storefront";
 
 export type E2EAuthRole =
@@ -33,7 +35,8 @@ export type E2EAuthRole =
   | "seller-2"
   | "store-manager"
   | "store-manager-2"
-  | "editor";
+  | "editor"
+  | "support";
 
 /** All seeded roles, in the order auth states are generated. */
 export const E2E_AUTH_ROLES: E2EAuthRole[] = [
@@ -47,6 +50,7 @@ export const E2E_AUTH_ROLES: E2EAuthRole[] = [
   "store-manager",
   "store-manager-2",
   "editor",
+  "support",
 ];
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -75,6 +79,7 @@ const DEFAULT_CREDENTIALS: Record<E2EAuthRole, Credentials> = {
     password: E2E_DEFAULT_STORE_MANAGER_2_PASSWORD,
   },
   editor: { phone: E2E_DEFAULT_EDITOR_PHONE, password: E2E_DEFAULT_EDITOR_PASSWORD },
+  support: { phone: E2E_DEFAULT_SUPPORT_PHONE, password: E2E_DEFAULT_SUPPORT_PASSWORD },
 };
 
 /** Env var override prefix per role, e.g. E2E_CUSTOMER_PHONE / E2E_STORE_MANAGER_PASSWORD. */
@@ -89,6 +94,7 @@ const ENV_PREFIX: Record<E2EAuthRole, string> = {
   "store-manager": "E2E_STORE_MANAGER",
   "store-manager-2": "E2E_STORE_MANAGER_2",
   editor: "E2E_EDITOR",
+  support: "E2E_SUPPORT",
 };
 
 export function authCredentials(role: E2EAuthRole): Credentials {

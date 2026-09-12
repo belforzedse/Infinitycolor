@@ -247,6 +247,25 @@ body:has(.factorchi-document) {
   font-weight: 700;
 }
 
+/*
+  Reserve-order marker. Lives in the header meta cell rather than in the
+  full-width `fc-document-type` banner for two reasons: that banner only renders
+  for pre-invoices (bulk print never passes `isPreInvoice`, and bulk print is the
+  flow this marker exists for), and this cell is `vertical-align: top` with block
+  children, so the marker costs no extra height on the A5 sheet.
+  `.order-id` above sets `margin-bottom: 0`, hence the explicit `margin-top`.
+*/
+.factorchi-document .shop-meta-dates .fc-reserve-flag {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--fc-radius);
+  font-size: var(--fc-font-size-sm);
+  font-weight: 700;
+  text-align: left;
+}
+
 .factorchi-document .print-date,
 .factorchi-document .transmission-date,
 .factorchi-document .shop-url,

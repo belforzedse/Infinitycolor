@@ -116,4 +116,68 @@ describe("auth/self profile write allowlist", () => {
       effectivePermissions: [],
     });
   });
+
+  it.each([
+    ["male", true],
+    ["female", false],
+  ])("stores the %s gender as the documented boolean", async (input, stored) => {
+    const ctx: any = {
+      state: { user: { id: 7 } },
+      request: { body: { Sex: input } },
+      unauthorized: jest.fn(),
+    };
+
+    await authController.updateSelf(ctx);
+
+    expect((global as any).strapi.entityService.update).toHaveBeenCalledWith(
+      "api::local-user-info.local-user-info",
+      10,
+      { data: { Sex: stored } },
+    );
+  });
+
+  it("clears the gender for an empty value", async () => {
+    const ctx: any = {
+      state: { user: { id: 7 } },
+      request: { body: { Sex: null } },
+      unauthorized: jest.fn(),
+    };
+
+    await authController.updateSelf(ctx);
+
+    expect((global as any).strapi.entityService.update).toHaveBeenCalledWith(
+      "api::local-user-info.local-user-info",
+      10,
+      { data: { Sex: null } },
+    );
+  });
+
+  it("rejects an unrecognized gender instead of coercing it", async () => {
+    const ctx: any = {
+      state: { user: { id: 7 } },
+      request: { body: { Sex: "yes" } },
+      unauthorized: jest.fn(),
+    };
+
+    await authController.updateSelf(ctx);
+
+    expect(ctx.status).toBe(400);
+    expect(ctx.body).toMatchObject({ error: "PROFILE_SEX_INVALID" });
+    expect((global as any).strapi.entityService.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [true, "male"],
+    [false, "female"],
+    [null, null],
+  ])("reads the stored %s back as the documented gender", async (stored, expected) => {
+    (global as any).strapi.db.query = jest.fn(() => ({
+      findOne: jest.fn().mockResolvedValue({ id: 10, FirstName: "Nima", Sex: stored }),
+    }));
+    const ctx: any = { state: { user: { id: 7 } }, unauthorized: jest.fn() };
+
+    await authController.self(ctx);
+
+    expect(ctx.body.Sex).toBe(expected);
+  });
 });
