@@ -1656,6 +1656,7 @@ export default {
               blogDefaultBannerLinkColor: "",
               blogCategoryBannerOrder: [],
               homeNewestProductIds: [],
+              homeFavoriteProductIds: [],
               homeDiscountedProductIds: [],
             },
           });

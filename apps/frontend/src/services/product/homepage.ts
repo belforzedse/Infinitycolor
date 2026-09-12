@@ -327,6 +327,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     // Wait for settings to determine strategy for "new" and "discounted" sections
     const settings = await settingsPromise;
     const curatedNewest = settings.homeNewestProductIds.length > 0;
+    const curatedFavorites = settings.homeFavoriteProductIds.length > 0;
     const curatedDiscounted = settings.homeDiscountedProductIds.length > 0;
 
     // Start new products and curated discounted fetches in parallel
@@ -353,12 +354,16 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     const discountedCuratedPromise = curatedDiscounted
       ? getProductsByIds(settings.homeDiscountedProductIds, false)
       : getDiscountedProducts();
+    const favoriteCuratedPromise = curatedFavorites
+      ? getProductsByIds(settings.homeFavoriteProductIds, false)
+      : Promise.resolve(null);
 
     // Wait for all fetches to complete
-    const [batchResponse, newProducts, discountedCurated] = await Promise.all([
+    const [batchResponse, newProducts, discountedCurated, favoriteCurated] = await Promise.all([
       batchPromise,
       newPromise,
       discountedCuratedPromise,
+      favoriteCuratedPromise,
     ]);
 
     const allProducts = (batchResponse as { data?: unknown[] })?.data ?? [];
@@ -382,15 +387,17 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
       discounted = formatProductsToCardProps(discountedProducts);
     }
 
-    const favoriteProducts = [...availableProducts]
-      .sort((a: any, b: any) => {
-        const attrsA = a?.attributes;
-        const attrsB = b?.attributes;
-        const ratingA = parseFloat(String(attrsA?.AverageRating ?? 0)) || 0;
-        const ratingB = parseFloat(String(attrsB?.AverageRating ?? 0)) || 0;
-        return ratingB - ratingA;
-      })
-      .slice(0, 20);
+    const favoriteProducts = favoriteCurated ?? formatProductsToCardProps(
+      [...availableProducts]
+        .sort((a: any, b: any) => {
+          const attrsA = a?.attributes;
+          const attrsB = b?.attributes;
+          const ratingA = parseFloat(String(attrsA?.AverageRating ?? 0)) || 0;
+          const ratingB = parseFloat(String(attrsB?.AverageRating ?? 0)) || 0;
+          return ratingB - ratingA;
+        })
+        .slice(0, 20),
+    );
 
     logger.info(
       `[BatchHomepage] Split into: ${discounted.length} discounted, ${newProducts.length} new, ${favoriteProducts.length} favorites`,
@@ -399,7 +406,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     return {
       discounted,
       new: newProducts,
-      favorites: formatProductsToCardProps(favoriteProducts),
+      favorites: favoriteProducts,
     };
   } catch (error) {
     logger.error("[BatchHomepage] Error fetching homepage sections:", error as any);

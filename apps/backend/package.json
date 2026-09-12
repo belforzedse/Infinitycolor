@@ -54,6 +54,7 @@
     "sync:woocommerce": "node scripts/woocommerce-sync/service.js",
     "sync:woocommerce:control": "node scripts/woocommerce-sync/control.js",
     "sync:woocommerce:friday": "node scripts/woocommerce-sync/run-campaign.js",
+    "sync:friday-homepage": "node scripts/friday-homepage.js",
     "sync:woocommerce:reconcile-orders": "node scripts/woocommerce-sync/reconcile-orders.js",
     "type:generate": "strapi ts:generate-types",
     "type-check": "tsc --noEmit",

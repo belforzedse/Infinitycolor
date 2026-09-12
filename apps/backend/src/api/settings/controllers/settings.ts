@@ -39,6 +39,7 @@ function projectBlogBannerSettings(settings: any) {
 
 const HOMEPAGE_PRODUCT_ID_FIELDS = [
   "homeNewestProductIds",
+  "homeFavoriteProductIds",
   "homeDiscountedProductIds",
   "homeWeeklyPicksProductIds",
   "homeEveryoneFollowsProductIds",

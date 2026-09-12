@@ -42,6 +42,7 @@ export default function HomepageProductsPage() {
   const [saving, setSaving] = useState(false);
 
   const [newestIds, setNewestIds] = useState<number[]>([]);
+  const [favoriteIds, setFavoriteIds] = useState<number[]>([]);
   const [discountedIds, setDiscountedIds] = useState<number[]>([]);
   const [weeklyPicksEnabled, setWeeklyPicksEnabled] = useState(false);
   const [weeklyPicksIds, setWeeklyPicksIds] = useState<number[]>([]);
@@ -49,6 +50,7 @@ export default function HomepageProductsPage() {
   const [everyoneFollowsIds, setEveryoneFollowsIds] = useState<number[]>([]);
 
   const [newestSummaries, setNewestSummaries] = useState<ProductSummary[]>([]);
+  const [favoriteSummaries, setFavoriteSummaries] = useState<ProductSummary[]>([]);
   const [discountedSummaries, setDiscountedSummaries] = useState<ProductSummary[]>([]);
   const [weeklyPicksSummaries, setWeeklyPicksSummaries] = useState<ProductSummary[]>([]);
   const [everyoneFollowsSummaries, setEveryoneFollowsSummaries] = useState<ProductSummary[]>([]);
@@ -57,19 +59,22 @@ export default function HomepageProductsPage() {
     try {
       const settings = await getHomepageProductSettings();
       setNewestIds(settings.homeNewestProductIds);
+      setFavoriteIds(settings.homeFavoriteProductIds);
       setDiscountedIds(settings.homeDiscountedProductIds);
       setWeeklyPicksEnabled(settings.homeWeeklyPicksEnabled);
       setWeeklyPicksIds(settings.homeWeeklyPicksProductIds);
       setEveryoneFollowsEnabled(settings.homeEveryoneFollowsEnabled);
       setEveryoneFollowsIds(settings.homeEveryoneFollowsProductIds);
 
-      const [newest, discounted, weeklyPicks, everyoneFollows] = await Promise.all([
+      const [newest, favorites, discounted, weeklyPicks, everyoneFollows] = await Promise.all([
         getProductSummariesByIds(settings.homeNewestProductIds),
+        getProductSummariesByIds(settings.homeFavoriteProductIds),
         getProductSummariesByIds(settings.homeDiscountedProductIds),
         getProductSummariesByIds(settings.homeWeeklyPicksProductIds),
         getProductSummariesByIds(settings.homeEveryoneFollowsProductIds),
       ]);
       setNewestSummaries(newest);
+      setFavoriteSummaries(favorites);
       setDiscountedSummaries(discounted);
       setWeeklyPicksSummaries(weeklyPicks);
       setEveryoneFollowsSummaries(everyoneFollows);
@@ -89,6 +94,10 @@ export default function HomepageProductsPage() {
     () => newestSummaries.filter((s) => newestIds.includes(s.id)),
     [newestSummaries, newestIds],
   );
+  const favoriteSummariesForPicker = useMemo(
+    () => favoriteSummaries.filter((s) => favoriteIds.includes(s.id)),
+    [favoriteSummaries, favoriteIds],
+  );
   const discountedSummariesForPicker = useMemo(
     () => discountedSummaries.filter((s) => discountedIds.includes(s.id)),
     [discountedSummaries, discountedIds],
@@ -107,6 +116,7 @@ export default function HomepageProductsPage() {
     try {
       const saved = await updateHomepageProductSettings({
         homeNewestProductIds: newestIds,
+        homeFavoriteProductIds: favoriteIds,
         homeDiscountedProductIds: discountedIds,
         homeWeeklyPicksEnabled: weeklyPicksEnabled,
         homeWeeklyPicksProductIds: weeklyPicksIds,
@@ -116,19 +126,22 @@ export default function HomepageProductsPage() {
       toast.success("تنظیمات با موفقیت ذخیره شد");
       const settings = saved ?? (await getHomepageProductSettings());
       setNewestIds(settings.homeNewestProductIds);
+      setFavoriteIds(settings.homeFavoriteProductIds);
       setDiscountedIds(settings.homeDiscountedProductIds);
       setWeeklyPicksEnabled(settings.homeWeeklyPicksEnabled);
       setWeeklyPicksIds(settings.homeWeeklyPicksProductIds);
       setEveryoneFollowsEnabled(settings.homeEveryoneFollowsEnabled);
       setEveryoneFollowsIds(settings.homeEveryoneFollowsProductIds);
 
-      const [newest, discounted, weeklyPicks, everyoneFollows] = await Promise.all([
+      const [newest, favorites, discounted, weeklyPicks, everyoneFollows] = await Promise.all([
         getProductSummariesByIds(settings.homeNewestProductIds),
+        getProductSummariesByIds(settings.homeFavoriteProductIds),
         getProductSummariesByIds(settings.homeDiscountedProductIds),
         getProductSummariesByIds(settings.homeWeeklyPicksProductIds),
         getProductSummariesByIds(settings.homeEveryoneFollowsProductIds),
       ]);
       setNewestSummaries(newest);
+      setFavoriteSummaries(favorites);
       setDiscountedSummaries(discounted);
       setWeeklyPicksSummaries(weeklyPicks);
       setEveryoneFollowsSummaries(everyoneFollows);
@@ -163,6 +176,13 @@ export default function HomepageProductsPage() {
             productSummaries={newestSummariesForPicker}
             onProductsChange={setNewestIds}
             onProductAdded={(p) => setNewestSummaries((prev) => [...prev, p])}
+          />
+          <HomepageProductPicker
+            title="محبوب ترین ها"
+            selectedProductIds={favoriteIds}
+            productSummaries={favoriteSummariesForPicker}
+            onProductsChange={setFavoriteIds}
+            onProductAdded={(p) => setFavoriteSummaries((prev) => [...prev, p])}
           />
           <HomepageProductPicker
             title="تخفیف‌های وسوسه انگیز"

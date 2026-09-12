@@ -457,6 +457,7 @@ export default factories.createCoreService(
       const settings = attrsOf(settingsEntity);
 
       const newestManualIds = normalizeIds(settings.homeNewestProductIds);
+      const favoriteManualIds = normalizeIds(settings.homeFavoriteProductIds);
       const discountedManualIds = normalizeIds(settings.homeDiscountedProductIds);
       const gifPromoSlot1Assignment = normalizeAssignment(settings.homeGifPromoSlot1Assignment);
       const gifPromoSlot2Assignment = normalizeAssignment(settings.homeGifPromoSlot2Assignment);
@@ -540,6 +541,7 @@ export default factories.createCoreService(
       const allIds = uniqueOrderedIds([
         batch.ids,
         newest.ids,
+        favoriteManualIds,
         discountedManual.ids,
         gifPromoSlot1.ids,
         gifPromoSlot2.ids,
@@ -559,15 +561,17 @@ export default factories.createCoreService(
       const batchCards = byIds(batch.ids, HOMEPAGE_BATCH_LIMIT, true);
       const discounted = byIds(discountedManual.ids, HOMEPAGE_CARD_LIMIT);
 
-      const favorites = [...batchCards]
-        .sort((a: any, b: any) => {
-          const attrsA = a?.attributes;
-          const attrsB = b?.attributes;
-          const ratingA = toNumber(attrsA?.AverageRating);
-          const ratingB = toNumber(attrsB?.AverageRating);
-          return ratingB - ratingA;
-        })
-        .slice(0, HOMEPAGE_CARD_LIMIT);
+      const favorites = favoriteManualIds.length > 0
+        ? byIds(favoriteManualIds, HOMEPAGE_CARD_LIMIT, true)
+        : [...batchCards]
+            .sort((a: any, b: any) => {
+              const attrsA = a?.attributes;
+              const attrsB = b?.attributes;
+              const ratingA = toNumber(attrsA?.AverageRating);
+              const ratingB = toNumber(attrsB?.AverageRating);
+              return ratingB - ratingA;
+            })
+            .slice(0, HOMEPAGE_CARD_LIMIT);
 
       return {
         data: {
@@ -578,7 +582,12 @@ export default factories.createCoreService(
               HOMEPAGE_CARD_LIMIT,
               newest.source,
             ),
-            sectionPayload("favorites", favorites, HOMEPAGE_CARD_LIMIT, "algorithm"),
+            sectionPayload(
+              "favorites",
+              favorites,
+              HOMEPAGE_CARD_LIMIT,
+              favoriteManualIds.length > 0 ? "manual" : "algorithm",
+            ),
             sectionPayload(
               "discounted",
               discounted,

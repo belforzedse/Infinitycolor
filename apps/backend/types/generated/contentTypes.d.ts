@@ -3750,6 +3750,7 @@ export interface ApiSettingsSettings extends Schema.SingleType {
     homeHeroSliderDraft: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeHeroSliderMeta: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeHeroSliderPublished: Attribute.JSON & Attribute.DefaultTo<{}>;
+    homeFavoriteProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     homeNewestProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     homeWeeklyPicksEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
     homeWeeklyPicksProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;

@@ -185,6 +185,7 @@ export type SuperAdminSettings = {
   homeHeroSliderPublished: HeroSliderPayload;
   homeHeroSliderMeta: HeroSliderMeta | null;
   homeNewestProductIds: number[];
+  homeFavoriteProductIds: number[];
   homeDiscountedProductIds: number[];
   siteGifEnabled: boolean;
   siteGifImage: string;
@@ -269,6 +270,7 @@ export const defaultSettings = (): SuperAdminSettings => ({
   homeHeroSliderPublished: createDefaultHeroSliderPayload(),
   homeHeroSliderMeta: null,
   homeNewestProductIds: [],
+  homeFavoriteProductIds: [],
   homeDiscountedProductIds: [],
   siteGifEnabled: false,
   siteGifImage: "",
@@ -373,6 +375,7 @@ export const normalizeSuperAdminSettings = (
   homeHeroSliderPublished: normalizeHeroSliderPayload(data?.homeHeroSliderPublished),
   homeHeroSliderMeta: normalizeHeroSliderMeta(data?.homeHeroSliderMeta),
   homeNewestProductIds: normalizeHomepageProductIds(data?.homeNewestProductIds),
+  homeFavoriteProductIds: normalizeHomepageProductIds(data?.homeFavoriteProductIds),
   homeDiscountedProductIds: normalizeHomepageProductIds(data?.homeDiscountedProductIds),
   siteGifEnabled: Boolean(data?.siteGifEnabled),
   siteGifImage: normalizeString(data?.siteGifImage),

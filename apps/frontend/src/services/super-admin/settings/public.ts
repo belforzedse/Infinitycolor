@@ -62,6 +62,7 @@ const PUBLIC_SETTINGS_FIELDS = [
   "blogDefaultBannerLinkColor",
   "blogCategoryBannerOrder",
   "homeNewestProductIds",
+  "homeFavoriteProductIds",
   "homeDiscountedProductIds",
   "siteGifEnabled",
   "siteGifImage",

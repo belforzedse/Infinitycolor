@@ -12,6 +12,7 @@ export async function updateHomepageProductSettings(
   settings: Pick<
     SuperAdminSettings,
     | "homeNewestProductIds"
+    | "homeFavoriteProductIds"
     | "homeDiscountedProductIds"
     | "homeWeeklyPicksEnabled"
     | "homeWeeklyPicksProductIds"

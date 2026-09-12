@@ -266,6 +266,11 @@
       "default": [],
       "description": "Curated product IDs for the 'جدیدترین ها' section on the homepage. Empty array = algorithmic fallback."
     },
+    "homeFavoriteProductIds": {
+      "type": "json",
+      "default": [],
+      "description": "Curated product IDs for the 'محبوب ترین ها' section on the homepage. Empty array = algorithmic fallback."
+    },
     "homeDiscountedProductIds": {
       "type": "json",
       "default": [],
