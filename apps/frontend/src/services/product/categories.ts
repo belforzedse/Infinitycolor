@@ -60,6 +60,39 @@ interface RawProductCategory {
   children?: ChildrenRelation | null;
 }
 
+/**
+ * The only category fields the PLP filter reads.
+ *
+ * `resolveCategoryFilterRule` walks `parentId`, and `buildGroupedCategorySections`
+ * groups on `name`/`slug` and rebuilds the tree from `parentId`. The other twelve
+ * fields on `ProductCategorySummary` — both image sets, their dimensions, the
+ * mega-menu alt text, `isMainCategory`, `featured`, `hasChildren` — are never read
+ * there, yet the whole 238-entry array was serialized into the PLP's client
+ * boundary (~85 KB of the RSC payload) on every category page.
+ *
+ * `ProductCategorySummary` satisfies this structurally, so a caller holding full
+ * summaries (the mega menu, the `/plp` client fetch) needs no conversion.
+ */
+export interface CategoryFilterOption {
+  id: number;
+  name: string;
+  slug: string;
+  parentId: number | null;
+  children?: CategoryFilterOption[];
+}
+
+/** Narrows a full summary to what the PLP filter needs, children included. */
+export function toCategoryFilterOption(category: CategoryFilterOption): CategoryFilterOption {
+  const { id, name, slug, parentId, children } = category;
+  return {
+    id,
+    name,
+    slug,
+    parentId,
+    ...(children ? { children: children.map(toCategoryFilterOption) } : {}),
+  };
+}
+
 export interface ProductCategorySummary {
   id: number;
   name: string;
@@ -378,9 +411,7 @@ export async function getProductCategories(
     // data and retries.
     throw error instanceof CategoryFetchError
       ? error
-      : new CategoryFetchError(
-          error instanceof Error ? error.message : String(error),
-        );
+      : new CategoryFetchError(error instanceof Error ? error.message : String(error));
   }
 }
 

@@ -1,11 +1,10 @@
 import { useMemo } from "react";
 import type { ProductCardProps } from "@/components/Product/Card";
 import type { ProductSmallCardProps } from "@/components/Product/SmallCard";
-import { formatProductsToCardProps } from "@/services/product/product";
-import type { PLPProduct } from "@/components/PLP/types";
 
 interface UseSidebarProductsArgs {
-  validProducts: PLPProduct[];
+  /** Already-projected cards. Pass an empty list to skip the derived fallback. */
+  cards: ProductCardProps[];
   discountedSidebarProducts?: ProductCardProps[];
   suggestedSidebarProducts?: ProductCardProps[];
 }
@@ -16,18 +15,16 @@ interface UseSidebarProductsResult {
   mappedSuggestedSidebar: ProductSmallCardProps[];
 }
 
-const hasImage = (product: PLPProduct): boolean => {
-  return Boolean(
-    product.attributes?.CoverImage?.data?.attributes?.url ||
-      product.attributes?.CoverImage?.data,
-  );
-};
-
-const mapProductCardToSmallCard = (
-  products: ProductCardProps[],
-): ProductSmallCardProps[] => {
+/**
+ * A small card needs an image, a price and available stock; anything else is not
+ * worth a suggestion slot. The price guard used to be a throwing branch around
+ * `formatProductsToCardProps`, which now runs on the server — a card with a
+ * non-positive price never reaches here, but the guard stays so a bad row cannot
+ * render "0 تومان".
+ */
+const mapProductCardToSmallCard = (products: ProductCardProps[]): ProductSmallCardProps[] => {
   return products
-    .filter((p) => p.isAvailable && p.images && p.images[0] && p.images[0] !== "")
+    .filter((p) => p.isAvailable && p.images?.[0] && p.price > 0)
     .slice(0, 3)
     .map((p) => ({
       id: p.id,
@@ -46,50 +43,21 @@ const mapProductCardToSmallCard = (
 };
 
 export const useSidebarProducts = ({
-  validProducts,
+  cards,
   discountedSidebarProducts = [],
   suggestedSidebarProducts = [],
 }: UseSidebarProductsArgs): UseSidebarProductsResult => {
-  const sidebarProducts = useMemo(() => {
-    return validProducts
-      .filter((product) => product.attributes.IsAvailable === true && hasImage(product))
-      .slice(0, 3)
-      .map((product): ProductSmallCardProps | null => {
-        try {
-          const card = formatProductsToCardProps([product])[0];
+  const sidebarProducts = useMemo(() => mapProductCardToSmallCard(cards), [cards]);
 
-          if (!card || Number.isNaN(card.price) || card.price <= 0) {
-            throw new Error("Invalid price for sidebar product");
-          }
+  const mappedDiscountedSidebar = useMemo(
+    () => mapProductCardToSmallCard(discountedSidebarProducts),
+    [discountedSidebarProducts],
+  );
 
-          return {
-            id: card.id,
-            slug: card.slug,
-            title: card.title,
-            category: card.category,
-            likedCount: card.seenCount || 0,
-            price: card.price,
-            discountedPrice: card.discountPrice,
-            discount: card.discount,
-            image: card.images[0] || "",
-            colorsCount: card.colorsCount,
-            colorCodes: card.colorCodes,
-            isAvailable: card.isAvailable,
-          };
-        } catch (error) {
-          return null;
-        }
-      })
-      .filter((product): product is ProductSmallCardProps => product !== null);
-  }, [validProducts]);
-
-  const mappedDiscountedSidebar = useMemo(() => {
-    return mapProductCardToSmallCard(discountedSidebarProducts);
-  }, [discountedSidebarProducts]);
-
-  const mappedSuggestedSidebar = useMemo(() => {
-    return mapProductCardToSmallCard(suggestedSidebarProducts);
-  }, [suggestedSidebarProducts]);
+  const mappedSuggestedSidebar = useMemo(
+    () => mapProductCardToSmallCard(suggestedSidebarProducts),
+    [suggestedSidebarProducts],
+  );
 
   return { sidebarProducts, mappedDiscountedSidebar, mappedSuggestedSidebar };
 };

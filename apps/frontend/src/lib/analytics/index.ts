@@ -8,7 +8,11 @@
  * never construct collector payloads or access window.umami directly.
  */
 
-export const ANALYTICS_CONSENT_STORAGE_KEY = "analytics-consent";
+import { ANALYTICS_CONSENT_STORAGE_KEY, applyAnalyticsConsentAttribute } from "./consent-bootstrap";
+
+// Owned by `./consent-bootstrap`, which the server layout also imports for the
+// pre-paint script, so the key has exactly one definition.
+export { ANALYTICS_CONSENT_STORAGE_KEY };
 export const ANALYTICS_CONSENT_EVENT = "analytics-consent-changed";
 const ANALYTICS_ONCE_PREFIX = "analytics-once:";
 const MAX_PENDING_CALLS = 100;
@@ -279,6 +283,9 @@ export function setAnalyticsConsent(value: Exclude<AnalyticsConsent, null>) {
   } catch {
     // The tracker remains cookieless and basic if storage is unavailable.
   }
+  // Keep the `<html>` attribute the pre-paint bootstrap wrote in step with storage,
+  // so the consent banner's CSS gate is correct for the rest of this session too.
+  applyAnalyticsConsentAttribute(value);
   window.dispatchEvent(new CustomEvent(ANALYTICS_CONSENT_EVENT, { detail: { consent: value } }));
 }
 

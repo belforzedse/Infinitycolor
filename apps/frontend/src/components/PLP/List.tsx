@@ -1,7 +1,11 @@
 "use client";
 
 import NoData from "./NoData";
-import { getProductCategories, type ProductCategorySummary } from "@/services/product/categories";
+import {
+  getProductCategories,
+  toCategoryFilterOption,
+  type CategoryFilterOption,
+} from "@/services/product/categories";
 import { faNum } from "@/utils/faNum";
 import type { ProductCardProps } from "@/components/Product/Card";
 import Filter from "./List/Filter";
@@ -16,7 +20,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { SORT_LABELS } from "./sortOptions";
 import { useSidebarProducts } from "@/hooks/useSidebarProducts";
 import PLPDesktopList from "./List/PLPDesktopList";
-import type { PLPProduct, PLPPagination } from "./types";
+import type { PLPPagination } from "./types";
 import { plpQueryOptions, plpQueryParsers } from "./queryState";
 import { getPlpHref } from "@/utils/plpRoutes";
 import { sizeFilterChipLabel } from "@/utils/plpSizeFilter";
@@ -28,12 +32,23 @@ import { PLP_PRODUCTS_ANCHOR_ID } from "./plpHeroSlides";
 const humanize = (value: string) =>
   value.toString().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
 
+/** Stable empty list so the sidebar fallback memo never re-runs when unused. */
+const NO_CARDS: ProductCardProps[] = [];
+
 interface PLPListProps {
-  products: PLPProduct[];
+  /**
+   * Card props projected on the server. The grid used to receive raw Strapi
+   * entities and call `formatProductsToCardProps([product])[0]` per card per
+   * render, which serialized every nested variation/media envelope into the RSC
+   * payload and repeated the projection in the browser.
+   */
+  cards: ProductCardProps[];
   pagination: PLPPagination;
   category?: string;
-  /** All categories with parentId (for resolving category + children in filter). */
-  allCategories?: ProductCategorySummary[];
+  /** Server-resolved title for the active category, used for the filter chip. */
+  categoryTitle?: string;
+  /** Categories with parentId (for resolving category + children in filter). */
+  allCategories?: CategoryFilterOption[];
   searchQuery?: string;
   discountedSidebarProducts?: ProductCardProps[];
   suggestedSidebarProducts?: ProductCardProps[];
@@ -42,9 +57,10 @@ interface PLPListProps {
 }
 
 export default function PLPList({
-  products: initialProducts,
+  cards,
   pagination: initialPagination,
   category: initialCategory,
+  categoryTitle,
   allCategories: allCategoriesProp = [],
   searchQuery,
   discountedSidebarProducts = [],
@@ -71,9 +87,7 @@ export default function PLPList({
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const products = initialProducts;
-
-  const [categoryOptions, setCategoryOptions] = useState<ProductCategorySummary[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<CategoryFilterOption[]>([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(false);
 
   // When server passed allCategories (e.g. category PLP), use them for filter and skip client fetch.
@@ -90,7 +104,7 @@ export default function PLPList({
           setCategoryOptions([]);
           return;
         }
-        setCategoryOptions(categories);
+        setCategoryOptions(categories.map(toCategoryFilterOption));
       } catch (error) {
         console.error("[PLP] Error fetching categories:", error);
         setCategoryOptions([]);
@@ -101,8 +115,10 @@ export default function PLPList({
     fetchCategories();
   }, [allCategoriesProp]);
 
+  // The page always passes `sidebarSlot`, so the derived fallback below is only
+  // computed for a caller that omits it.
   const { sidebarProducts, mappedDiscountedSidebar, mappedSuggestedSidebar } = useSidebarProducts({
-    validProducts: products,
+    cards: sidebarSlot ? NO_CARDS : cards,
     discountedSidebarProducts,
     suggestedSidebarProducts,
   });
@@ -127,23 +143,17 @@ export default function PLPList({
   const selectedCategoryTitle = useMemo(() => {
     if (!initialCategory) return null;
 
+    // The server already resolved this from the category record, which is what the
+    // old fallback (scanning products for a matching main category) approximated.
+    if (categoryTitle) return categoryTitle;
+
     const option = categoryOptions.find(
       (item) => item.slug === initialCategory || String(item.id) === initialCategory,
     );
     if (option) return option.name || option.slug || String(option.id);
 
-    const dynamicMatch = products.find(
-      (product) =>
-        product.attributes.product_main_category?.data?.attributes?.Slug === initialCategory ||
-        product.attributes.product_main_category?.data?.attributes?.Title === initialCategory,
-    );
-
-    if (dynamicMatch?.attributes.product_main_category?.data?.attributes?.Title) {
-      return dynamicMatch.attributes.product_main_category.data.attributes.Title;
-    }
-
     return initialCategory.replace(/[-_]/g, " ");
-  }, [initialCategory, categoryOptions, products]);
+  }, [initialCategory, categoryTitle, categoryOptions]);
 
   const activeFilters = useMemo(() => {
     const filters: Array<{ key: string; label: string; onRemove: () => void }> = [];
@@ -406,15 +416,11 @@ export default function PLPList({
             </div>
           )}
 
-          {products.length === 0 ? (
+          {cards.length === 0 ? (
             <NoData category={initialCategory} searchQuery={searchQuery} />
           ) : (
             <>
-              {isPagePending ? (
-                <ProductResultsSkeleton />
-              ) : (
-                <PLPDesktopList products={products} />
-              )}
+              {isPagePending ? <ProductResultsSkeleton /> : <PLPDesktopList cards={cards} />}
 
               {/* Pagination */}
               <Pagination

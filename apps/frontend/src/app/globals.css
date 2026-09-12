@@ -1151,3 +1151,19 @@ textarea:focus-visible {
       transform 500ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
+
+/*
+ * Consent banner: hidden before first paint for a visitor who already chose.
+ *
+ * The banner is always in the server HTML (see components/Analytics/ConsentManager)
+ * because the stored choice is in `localStorage` and the page HTML is shared by a
+ * gateway/CDN cache that does not key on cookies. The pre-paint script in
+ * lib/analytics/consent-bootstrap writes the attribute below, so a returning
+ * visitor never sees the banner paint; the component then unmounts it on hydration.
+ *
+ * Deliberately outside `@layer`, so it wins over the banner's utility classes.
+ */
+html[data-analytics-consent="granted"] [data-consent-banner],
+html[data-analytics-consent="denied"] [data-consent-banner] {
+  display: none;
+}

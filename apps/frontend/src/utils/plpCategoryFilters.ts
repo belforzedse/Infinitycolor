@@ -1,4 +1,4 @@
-import type { ProductCategorySummary } from "@/services/product/categories";
+import type { CategoryFilterOption } from "@/services/product/categories";
 import type { ColorFamilyBucket } from "@/utils/plpColorFilter";
 import type { SizeBucket } from "@/utils/plpSizeFilter";
 
@@ -97,7 +97,7 @@ export const CATEGORY_FILTER_RULES: Readonly<Record<string, CategoryFilterRule>>
  */
 export function resolveCategoryFilterRule(
   slug: string | undefined,
-  categories: readonly ProductCategorySummary[],
+  categories: readonly CategoryFilterOption[],
 ): CategoryFilterRule {
   if (!slug) return DEFAULT_CATEGORY_FILTER_RULE;
 
@@ -118,10 +118,8 @@ export function resolveCategoryFilterRule(
   return DEFAULT_CATEGORY_FILTER_RULE;
 }
 
-const inAnyRange = (
-  value: number,
-  ranges: readonly (readonly [number, number])[],
-): boolean => ranges.some(([min, max]) => value >= min && value <= max);
+const inAnyRange = (value: number, ranges: readonly (readonly [number, number])[]): boolean =>
+  ranges.some(([min, max]) => value >= min && value <= max);
 
 export function applyCategoryFilterRuleToSizes(
   buckets: readonly SizeBucket[],

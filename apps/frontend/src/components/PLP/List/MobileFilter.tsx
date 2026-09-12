@@ -9,10 +9,10 @@ import { Fragment, useEffect, useState } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { useQueryStates } from "nuqs";
 import { plpQueryOptions, plpQueryParsers } from "@/components/PLP/queryState";
-import type { ProductCategorySummary } from "@/services/product/categories";
+import type { CategoryFilterOption } from "@/services/product/categories";
 
 interface MobileFilterProps {
-  categories?: ProductCategorySummary[];
+  categories?: CategoryFilterOption[];
   isLoadingCategories?: boolean;
   selectedCategory?: string;
 }

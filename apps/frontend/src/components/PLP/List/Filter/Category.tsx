@@ -1,7 +1,7 @@
 "use client";
 
 import ChevronDownIcon from "@/components/Search/Icons/ChevronDownIcon";
-import type { ProductCategorySummary } from "@/services/product/categories";
+import type { CategoryFilterOption } from "@/services/product/categories";
 import {
   buildGroupedCategorySections,
   type GroupedCategoryOption,
@@ -13,7 +13,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 interface Props {
   title: string;
   value: string;
-  categories: ProductCategorySummary[];
+  categories: CategoryFilterOption[];
   onOptionSelect?: (optionId: string | number) => void;
   isLoading?: boolean;
   placeholder?: string;

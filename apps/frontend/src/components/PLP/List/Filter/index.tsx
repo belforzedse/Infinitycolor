@@ -9,7 +9,11 @@ import PLPFilterBox from "@/components/Kits/PLP/FilterBox";
 import { useQueryStates } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getProductCategories, type ProductCategorySummary } from "@/services/product/categories";
+import {
+  getProductCategories,
+  toCategoryFilterOption,
+  type CategoryFilterOption,
+} from "@/services/product/categories";
 import {
   getProductVariationColors,
   getProductVariationSizes,
@@ -27,7 +31,7 @@ import {
 
 interface FilterProps {
   showAvailableOnly?: boolean;
-  categories?: ProductCategorySummary[];
+  categories?: CategoryFilterOption[];
   isLoadingCategories?: boolean;
   selectedCategory?: string;
   /** Hide availability toggle (e.g. mobile drawer shows it in the toolbar). */
@@ -47,7 +51,7 @@ export default function Filter({
   const selectedColors = color ?? [];
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [localCategories, setLocalCategories] = useState<ProductCategorySummary[]>([]);
+  const [localCategories, setLocalCategories] = useState<CategoryFilterOption[]>([]);
   const [isFetchingCategories, setIsFetchingCategories] = useState(!categoriesProp);
   const [sizeTitles, setSizeTitles] = useState<string[]>([]);
   const [isLoadingSizes, setIsLoadingSizes] = useState(true);
@@ -68,7 +72,9 @@ export default function Filter({
         setIsFetchingCategories(true);
         const categories = await getProductCategories({ sort: "Title:asc" });
         if (!isMounted) return;
-        setLocalCategories(categories);
+        // Narrowed on arrival: only the filter's four fields are ever read, and
+        // holding 238 full summaries in state is pure retained memory.
+        setLocalCategories(categories.map(toCategoryFilterOption));
       } catch (error) {
         console.error("Error fetching categories:", error);
         if (!isMounted) return;
@@ -211,10 +217,7 @@ export default function Filter({
   );
   const colorBuckets = useMemo(
     () =>
-      applyCategoryFilterRuleToColors(
-        buildColorFamilyBuckets(catalogColors),
-        categoryFilterRule,
-      ),
+      applyCategoryFilterRuleToColors(buildColorFamilyBuckets(catalogColors), categoryFilterRule),
     [catalogColors, categoryFilterRule],
   );
   // An empty box is worse than no box: a category with no sized variations at all (shawls,

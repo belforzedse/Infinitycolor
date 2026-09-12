@@ -12,7 +12,6 @@ import CustomDimensionTracker from "@/components/Analytics/CustomDimensionTracke
 import { SkeletonBlock } from "@repo/ui/skeleton";
 import { CollectionPageSchema } from "@/components/SEO/CollectionPageSchema";
 import CategoryEditorialSection from "@/components/PLP/CategoryEditorialSection";
-import type { PLPProduct as PLPListProduct } from "@/components/PLP/types";
 import {
   buildCollectionItems,
   buildPLPPageCopy,
@@ -21,6 +20,8 @@ import {
   parsePLPQuery,
 } from "@/services/product/plp";
 import { getCategoryPlpHrefWithQuery } from "@/utils/plpRoutes";
+import { formatProductsToCardProps } from "@/services/product/product";
+import { toCategoryFilterOption } from "@/services/product/categories";
 import logger from "@/utils/logger";
 import {
   getPublishedCategoryEditorial,
@@ -105,6 +106,16 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
       : Promise.resolve(null),
   ]);
   const { products, pagination } = productResult;
+  // Projected here rather than inside the client grid: the boundary then carries
+  // ~13 scalars per card instead of a fully nested Strapi envelope, and the
+  // browser no longer repeats the projection for every card on every render.
+  const cards = formatProductsToCardProps(products);
+  // The filter reads four fields; the other twelve on a full summary — both image
+  // sets and their dimensions, the mega-menu alt, isMainCategory, featured — were
+  // being serialized 238 times per category PLP.
+  const filterCategories = (resolvedCategoryContext?.allCategories ?? []).map(
+    toCategoryFilterOption,
+  );
   const sidebarSlot = (
     <Suspense
       key="plp-sidebar-slot"
@@ -153,10 +164,11 @@ export default async function PLPPageView({ categorySlug, searchParams }: PLPPag
 
       <Suspense fallback={<ProductListSkeleton />}>
         <PLPList
-          products={products as PLPListProduct[]}
+          cards={cards}
           pagination={pagination}
           category={resolvedCategoryContext?.slug}
-          allCategories={resolvedCategoryContext?.allCategories ?? []}
+          categoryTitle={resolvedCategoryContext?.title}
+          allCategories={filterCategories}
           searchQuery={query.search}
           sidebarSlot={sidebarSlot}
         />

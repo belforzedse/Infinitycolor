@@ -1,4 +1,4 @@
-import type { ProductCategorySummary } from "@/services/product/categories";
+import type { CategoryFilterOption } from "@/services/product/categories";
 
 export type CategoryGroupDefinition = {
   key: string;
@@ -21,9 +21,10 @@ export type GroupedCategorySection = {
   source: "mobile" | "parent" | "other";
 };
 
-export type MobileCategoryGroup = CategoryGroupDefinition & {
-  categories: ProductCategorySummary[];
-};
+export type MobileCategoryGroup<T extends CategoryFilterOption = CategoryFilterOption> =
+  CategoryGroupDefinition & {
+    categories: T[];
+  };
 
 export const MOBILE_CATEGORY_GROUPS: readonly CategoryGroupDefinition[] = [
   {
@@ -82,7 +83,7 @@ export const normalizeCategoryText = (value: string) =>
     .replace(/\s+/g, " ");
 
 export function categoryMatchesGroup(
-  category: ProductCategorySummary,
+  category: CategoryFilterOption,
   group: CategoryGroupDefinition,
 ) {
   const name = normalizeCategoryText(category.name);
@@ -99,14 +100,12 @@ export function categoryMatchesGroup(
   });
 }
 
-export function buildMobileCategoryGroups(
-  categories: ProductCategorySummary[],
+export function buildMobileCategoryGroups<T extends CategoryFilterOption>(
+  categories: T[],
   options: { includeFallback?: boolean } = {},
-): MobileCategoryGroup[] {
+): MobileCategoryGroup<T>[] {
   const includeFallback = options.includeFallback ?? true;
-  const grouped = new Map<string, ProductCategorySummary[]>(
-    MOBILE_CATEGORY_GROUPS.map((group) => [group.key, []]),
-  );
+  const grouped = new Map<string, T[]>(MOBILE_CATEGORY_GROUPS.map((group) => [group.key, []]));
 
   for (const category of categories) {
     const matchingGroup =
@@ -125,10 +124,10 @@ export function buildMobileCategoryGroups(
   })).filter((group) => group.categories.length > 0);
 }
 
-function flattenCategories(categories: ProductCategorySummary[]): ProductCategorySummary[] {
-  const byId = new Map<number, ProductCategorySummary>();
+function flattenCategories(categories: CategoryFilterOption[]): CategoryFilterOption[] {
+  const byId = new Map<number, CategoryFilterOption>();
 
-  const addCategory = (category: ProductCategorySummary, parentId: number | null = null) => {
+  const addCategory = (category: CategoryFilterOption, parentId: number | null = null) => {
     const normalized =
       parentId !== null && category.parentId === null ? { ...category, parentId } : category;
     const existing = byId.get(normalized.id);
@@ -146,8 +145,8 @@ function flattenCategories(categories: ProductCategorySummary[]): ProductCategor
   return Array.from(byId.values());
 }
 
-function buildChildrenByParent(categories: ProductCategorySummary[]) {
-  const childrenByParent = new Map<number, ProductCategorySummary[]>();
+function buildChildrenByParent(categories: CategoryFilterOption[]) {
+  const childrenByParent = new Map<number, CategoryFilterOption[]>();
 
   for (const category of categories) {
     if (category.parentId === null) continue;
@@ -160,8 +159,8 @@ function buildChildrenByParent(categories: ProductCategorySummary[]) {
 }
 
 function buildOptionsForCategory(
-  category: ProductCategorySummary,
-  childrenByParent: Map<number, ProductCategorySummary[]>,
+  category: CategoryFilterOption,
+  childrenByParent: Map<number, CategoryFilterOption[]>,
   depth = 0,
   parentTitle?: string,
 ): GroupedCategoryOption[] {
@@ -184,8 +183,8 @@ function buildOptionsForCategory(
 }
 
 function categoryOrDescendantMatchesGroup(
-  category: ProductCategorySummary,
-  childrenByParent: Map<number, ProductCategorySummary[]>,
+  category: CategoryFilterOption,
+  childrenByParent: Map<number, CategoryFilterOption[]>,
   group: CategoryGroupDefinition,
 ): boolean {
   if (categoryMatchesGroup(category, group)) return true;
@@ -195,7 +194,7 @@ function categoryOrDescendantMatchesGroup(
 }
 
 export function buildGroupedCategorySections(
-  categories: ProductCategorySummary[],
+  categories: CategoryFilterOption[],
 ): GroupedCategorySection[] {
   const flatCategories = flattenCategories(categories);
   const byId = new Map(flatCategories.map((category) => [category.id, category]));

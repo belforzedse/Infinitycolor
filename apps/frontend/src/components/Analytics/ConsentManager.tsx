@@ -3,14 +3,33 @@
 import { useEffect, useState } from "react";
 import { ANALYTICS_CONSENT_STORAGE_KEY, setAnalyticsConsent } from "@/lib/analytics";
 
+/**
+ * The banner renders on the server and in the first hydration render, and the
+ * pre-paint script in `lib/analytics/consent-bootstrap` hides it via
+ * `html[data-analytics-consent]` for a visitor who already chose.
+ *
+ * It used to start at `null` and only appear after an effect read `localStorage`,
+ * which meant that on a first visit it painted after hydration — at ~5.0s on a
+ * throttled mobile PDP, late enough to take LCP from the product hero (done at
+ * ~1.6s). Rendering it up front costs nothing for returning visitors (CSS hides
+ * it before paint and the effect below unmounts it) and moves a first visitor's
+ * banner paint next to FCP.
+ */
 export function ConsentManager() {
-  const [showBanner, setShowBanner] = useState(false);
+  // Must match the server render, which cannot know the stored choice.
+  const [showBanner, setShowBanner] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const storedConsent = localStorage.getItem(ANALYTICS_CONSENT_STORAGE_KEY);
+    let storedConsent: string | null = null;
+    try {
+      storedConsent = localStorage.getItem(ANALYTICS_CONSENT_STORAGE_KEY);
+    } catch {
+      // Storage unavailable: treat it as no decision and keep asking, exactly as
+      // before. `setAnalyticsConsent` already tolerates a failing write.
+    }
     const hasConsent = storedConsent === "granted" || storedConsent === "denied";
-    setShowBanner(!hasConsent);
+    if (hasConsent) setShowBanner(false);
   }, []);
 
   const grantConsent = () => {
@@ -31,6 +50,7 @@ export function ConsentManager() {
 
   return (
     <div
+      data-consent-banner
       className="fixed inset-x-0 bottom-0 z-[9999] border-t border-slate-200 bg-white shadow-lg"
       dir="rtl"
       role="dialog"
