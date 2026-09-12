@@ -93,14 +93,41 @@ describe("imageLoader", () => {
     expect(url.searchParams.get("w")).toBe("828");
   });
 
-  it("routes relative uploads through the media CDN when configured", () => {
+  // This loader is passed explicitly as `loader={imageLoader}` by the product
+  // cards, the PDP gallery, cart and order rows and the banners. An explicit
+  // loader prop bypasses images.loaderFile, so these call sites reach the edge
+  // only because this module shares the policy — hence the coverage here and
+  // not only in arvanImageLoader.test.ts.
+  it("sends relative uploads to the media CDN to be resized, not to the optimizer", () => {
     process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://api.infinitycolor.co";
     process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
 
     const result = imageLoader({ src: "/uploads/image.jpg", width: 800 });
     const url = parseResult(result);
 
-    expect(url.searchParams.get("url")).toBe("https://cdn.infinitycolor.co/uploads/image.jpg");
+    expect(url.origin).toBe("https://cdn.infinitycolor.co");
+    expect(url.pathname).toBe("/uploads/image.jpg");
+    expect(url.searchParams.get("width")).toBe("828");
+    expect(result).not.toContain("/_next/image");
+  });
+
+  it("leaves a catalogue GIF animated by never asking the edge to resize it", () => {
+    process.env.NEXT_PUBLIC_IMAGE_BASE_URL = "https://api.infinitycolor.co";
+    process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
+
+    const result = imageLoader({ src: "/uploads/banner.gif", width: 800 });
+
+    expect(result).toBe("https://cdn.infinitycolor.co/uploads/banner.gif");
+  });
+
+  it("keeps local public assets on the optimizer even with the CDN configured", () => {
+    process.env.NEXT_PUBLIC_MEDIA_CDN_URL = "https://cdn.infinitycolor.co";
+
+    const result = imageLoader({ src: "/images/image.jpg", width: 800 });
+    const url = parseResult(result);
+
+    expect(url.pathname).toBe("/_next/image");
+    expect(result).not.toContain("cdn.infinitycolor.co");
   });
 
   it("should handle local public URLs with existing query parameters", () => {

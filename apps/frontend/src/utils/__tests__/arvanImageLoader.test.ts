@@ -105,4 +105,56 @@ describe("arvanImageLoader", () => {
       expect(result).not.toContain(CDN);
     });
   });
+
+  // Arvan resizes JPG, PNG and WebP only; any other format is returned
+  // untouched, so a width would mint a cache key per breakpoint for identical
+  // bytes. GIF is the case that actually breaks: the edge resizes the first
+  // frame and stores it as a still, and apps/frontend/AGENTS.md requires
+  // storefront GIFs keep their animated source.
+  describe("formats the edge cannot resize", () => {
+    it.each([["gif"], ["GIF"], ["svg"], ["mp4"], ["mov"], ["webm"], ["avif"]])(
+      "serves .%s from the CDN with no width",
+      (extension) => {
+        const result = arvanImageLoader({
+          src: `/uploads/banner.${extension}`,
+          width: 640,
+          quality: 70,
+        });
+        const url = new URL(result);
+
+        expect(url.origin).toBe(CDN);
+        expect(url.pathname).toBe(`/uploads/banner.${extension}`);
+        expect(url.search).toBe("");
+        expect(result).not.toContain("/_next/image");
+      },
+    );
+
+    it("collapses every breakpoint of a GIF onto one cache key", () => {
+      const widths = [16, 640, 1920, 3840];
+      const urls = new Set(
+        widths.map((width) => arvanImageLoader({ src: "/uploads/banner.gif", width, quality: 70 })),
+      );
+
+      expect(urls.size).toBe(1);
+    });
+
+    // public/ holds Slide4Foreground.PNG, so the extension test cannot be
+    // case-sensitive in the other direction either.
+    it.each([["PNG"], ["JPG"], ["Jpeg"], ["WEBP"]])("still resizes .%s", (extension) => {
+      const url = new URL(
+        arvanImageLoader({ src: `/uploads/shirt.${extension}`, width: 640, quality: 70 }),
+      );
+
+      expect(url.searchParams.get("width")).toBe("640");
+    });
+
+    it("reads the extension from the path, not a query string", () => {
+      const url = new URL(
+        arvanImageLoader({ src: "/uploads/banner.gif?updatedAt=123", width: 640, quality: 70 }),
+      );
+
+      expect(url.searchParams.has("width")).toBe(false);
+    });
+  });
+
 });
