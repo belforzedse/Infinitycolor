@@ -4,7 +4,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   buildProductMap,
+  collectProductMappings,
   distributeProducts,
+  getHomepageConfig,
   parseArgs,
   selectPublishedProducts,
   tehranDayWindow,
@@ -15,6 +17,37 @@ test("accepts multiple distinct date windows", () => {
     parseArgs(["--date", "2026-09-11", "--date", "2026-09-12", "--date", "2026-09-11"]),
     { apply: false, dates: ["2026-09-11", "2026-09-12"], reportDir: "" },
   );
+});
+
+test("uses only the standalone homepage job's required configuration", () => {
+  const config = getHomepageConfig({
+    WORDPRESS_SOURCE_URL: "https://wordpress.example",
+    WP_USERNAME: "reader",
+    WP_APPLICATION_PASSWORD: "application-password",
+    WOOCOMMERCE_CONSUMER_KEY: "key",
+    WOOCOMMERCE_CONSUMER_SECRET: "secret",
+    STRAPI_API_TOKEN_PRODUCTION: "token",
+    FRIDAY_HOMEPAGE_STRAPI_URL: "https://api.example/api/",
+  });
+  assert.equal(config.source.sourceBaseUrl, "https://wordpress.example");
+  assert.equal(config.destination.baseUrl, "https://api.example/api");
+});
+
+test("resolves only selected Woo products through the capability-protected mapping API", async () => {
+  const calls = [];
+  const destination = {
+    async post(pathname, body) {
+      calls.push({ pathname, body });
+      return { data: { data: [{ id: 101, external_source: "woocommerce", external_id: "1" }] } };
+    },
+  };
+  assert.deepEqual(
+    await collectProductMappings(destination, [{ id: 1 }, { id: 2 }]),
+    [{ id: 101, external_source: "woocommerce", external_id: "1" }],
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].pathname, "/settings/homepage-product-mappings");
+  assert.deepEqual(calls[0].body, { data: { sourceIds: ["1", "2"] } });
 });
 
 test("builds the exact half-open Friday window in Tehran", () => {

@@ -80,6 +80,20 @@ function sanitizeHomepageProductIds(value: unknown): number[] | null {
   return result;
 }
 
+function sanitizeWooSourceIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > 1000) return null;
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const id = String(item).trim();
+    if (!/^\d+$/.test(id) || id === "0") return null;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+
 const GIF_PROMO_FIELDS = ["homeGifPromoSlot1Assignment", "homeGifPromoSlot2Assignment"] as const;
 const CUSTOM_SECTION_ASSIGNMENT_FIELDS = ["homeCustomSectionAssignment"] as const;
 const CUSTOM_SECTION_FIELDS = [
@@ -361,6 +375,22 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
         attributes: projectHomepageProductSettings(updated),
       },
     };
+  },
+
+  async resolveHomepageProductMappings(ctx) {
+    const payload = extractPayloadFromRequestBody(ctx.request.body);
+    const sourceIds = sanitizeWooSourceIds(payload?.sourceIds);
+    if (!sourceIds || sourceIds.length === 0) {
+      return ctx.badRequest("sourceIds must contain 1 to 1000 positive WooCommerce product ids");
+    }
+    const rows = await strapi.db.query("api::product.product").findMany({
+      where: {
+        external_source: "woocommerce",
+        external_id: { $in: sourceIds },
+      },
+      select: ["id", "external_id", "external_source"],
+    });
+    ctx.body = { data: rows };
   },
 
   async getGifPromoProducts(ctx) {

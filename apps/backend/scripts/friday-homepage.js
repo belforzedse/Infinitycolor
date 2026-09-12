@@ -3,7 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { getSyncConfig } = require("./woocommerce-sync/config");
+const { loadSecretFile } = require("./woocommerce-importer/migration-v2/lib/env");
 const { WordPressSource } = require("./woocommerce-importer/migration-v2/lib/source");
 const { JsonHttp } = require("./woocommerce-importer/migration-v2/lib/http");
 
@@ -39,6 +39,33 @@ function parseArgs(argv) {
   if (!result.help && result.dates.length === 0) throw new Error("at least one --date is required");
   result.dates = [...new Set(result.dates)];
   return result;
+}
+
+function requiredSetting(env, name) {
+  const value = String(env[name] || "").trim();
+  if (!value) throw new Error(`Missing homepage curation setting: ${name}`);
+  return value;
+}
+
+function getHomepageConfig(env = process.env) {
+  if (env === process.env) {
+    loadSecretFile(env.FRIDAY_HOMEPAGE_SECRETS_FILE || env.WOOCOMMERCE_SYNC_SECRETS_FILE || env.MIGRATION_SECRETS_FILE);
+  }
+  return {
+    source: {
+      sourceBaseUrl: String(env.WORDPRESS_SOURCE_URL || "https://infinitycolor.co").replace(/\/$/, ""),
+      wpUsername: requiredSetting(env, "WP_USERNAME"),
+      wpApplicationPassword: requiredSetting(env, "WP_APPLICATION_PASSWORD"),
+      wooKey: requiredSetting(env, "WOOCOMMERCE_CONSUMER_KEY"),
+      wooSecret: requiredSetting(env, "WOOCOMMERCE_CONSUMER_SECRET"),
+    },
+    destination: {
+      baseUrl: String(
+        env.FRIDAY_HOMEPAGE_STRAPI_URL || env.STRAPI_IMPORT_PRODUCTION_URL || "http://api:1337/api",
+      ).replace(/\/$/, ""),
+      strapiToken: requiredSetting(env, "STRAPI_API_TOKEN_PRODUCTION"),
+    },
+  };
 }
 
 function tehranDayWindow(dateText) {
@@ -157,22 +184,10 @@ async function collectWindowProducts(source, window) {
   return selectPublishedProducts(rows, window);
 }
 
-async function collectSnapshot(destination) {
-  const rows = [];
-  let page = 1;
-  do {
-    const response = await destination.get("/internal/migrations/wordpress-v2/snapshot", {
-      entity: "products",
-      page,
-      pageSize: 1000,
-    });
-    const data = response.data?.data;
-    const batch = Array.isArray(data?.rows) ? data.rows : [];
-    rows.push(...batch);
-    if (!data?.hasMore || batch.length < 1000) break;
-    page += 1;
-  } while (true);
-  return rows;
+async function collectProductMappings(destination, sourceProducts) {
+  const sourceIds = sourceProducts.map((product) => String(product.id));
+  const response = await destination.post("/settings/homepage-product-mappings", { data: { sourceIds } });
+  return Array.isArray(response.data?.data) ? response.data.data : [];
 }
 
 function homepagePayload(distribution) {
@@ -276,21 +291,12 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     process.stdout.write(`${usage()}\n`);
     return;
   }
-  const config = getSyncConfig(env);
+  const config = getHomepageConfig(env);
   const windows = args.dates.map(tehranDayWindow);
   const startedAt = new Date().toISOString();
   const source = new WordPressSource(config.source);
-  const migrationClient = new JsonHttp({
-    baseUrl: config.destination.destinationBaseUrl,
-    headers: {
-      Authorization: `Bearer ${config.destination.strapiToken}`,
-      "X-Infinity-Migration-Mode": "wordpress-v2",
-      "X-Infinity-Migration-Control": config.destination.controlToken,
-    },
-    timeoutMs: 60_000,
-  });
   const homepageClient = new JsonHttp({
-    baseUrl: String(env.FRIDAY_HOMEPAGE_STRAPI_URL || "http://api:1337/api").replace(/\/$/, ""),
+    baseUrl: config.destination.baseUrl,
     headers: { Authorization: `Bearer ${config.destination.strapiToken}` },
     timeoutMs: 60_000,
   });
@@ -308,8 +314,8 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   if (sourceProducts.length === 0) {
     throw new Error(`No published WooCommerce products found for ${args.dates.join(",")}`);
   }
-  const snapshot = await collectSnapshot(migrationClient);
-  const distribution = distributeProducts(sourceProducts, buildProductMap(snapshot));
+  const mappings = await collectProductMappings(homepageClient, sourceProducts);
+  const distribution = distributeProducts(sourceProducts, buildProductMap(mappings));
   const report = {
     mode: args.apply ? "apply" : "preview",
     dates: args.dates,
@@ -351,7 +357,9 @@ module.exports = {
   RAILS,
   applyAssignments,
   buildProductMap,
+  collectProductMappings,
   distributeProducts,
+  getHomepageConfig,
   homepagePayload,
   parseArgs,
   selectPublishedProducts,

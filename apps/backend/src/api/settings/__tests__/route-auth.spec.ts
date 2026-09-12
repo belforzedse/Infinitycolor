@@ -16,6 +16,7 @@ describe("site settings route authorization", () => {
   it.each([
     ["GET", "/settings/homepage-products"],
     ["PUT", "/settings/homepage-products"],
+    ["POST", "/settings/homepage-product-mappings"],
     ["GET", "/settings/gif-promo-products"],
     ["PUT", "/settings/gif-promo-products"],
     ["GET", "/settings/homepage-custom-section"],

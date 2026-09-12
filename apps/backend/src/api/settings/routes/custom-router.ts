@@ -74,6 +74,17 @@ export default {
       },
     },
     {
+      method: "POST",
+      path: "/settings/homepage-product-mappings",
+      handler: "settings.resolveHomepageProductMappings",
+      config: {
+        auth: { scope: [] },
+        policies: [
+          { name: "global::require-capability", config: { capability: "product.homepage.manage" } },
+        ],
+      },
+    },
+    {
       method: "GET",
       path: "/settings/gif-promo-products",
       handler: "settings.getGifPromoProducts",
