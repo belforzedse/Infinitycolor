@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface UseAudioPlayerProps {
   audioSrc: string;
@@ -10,229 +10,125 @@ interface UseAudioPlayerReturn {
   currentTime: number;
   audioDuration: number;
   error: string | null;
-  isDragging: boolean;
-  progressRef: React.RefObject<HTMLDivElement | null>;
   handlePlay: () => Promise<void>;
-  handlePositionChange: (clientX: number) => void;
-  handleMouseDown: (e: React.MouseEvent) => void;
-  handleMouseMove: (e: React.MouseEvent) => void;
-  handleMouseUp: () => void;
-  handleTouchStart: (e: React.TouchEvent) => void;
-  handleTouchMove: (e: React.TouchEvent) => void;
-  handleTouchEnd: () => void;
+  seekTo: (time: number) => void;
   getProgress: () => number;
   formatTime: (time: number) => string;
 }
 
+const AUDIO_ERROR_MESSAGE = "پخش فایل صوتی در دسترس نیست.";
+
 export const useAudioPlayer = ({ audioSrc, onPlay }: UseAudioPlayerProps): UseAudioPlayerReturn => {
-  const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const progressRef = useRef<HTMLDivElement>(null);
+  const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
+  const [trackedAudioSrc, setTrackedAudioSrc] = useState(audioSrc);
 
-  const handleError = useCallback((e: Event) => {
-    const audio = e.target as HTMLAudioElement;
-    setError(audio.error?.message || "Failed to load audio");
+  if (trackedAudioSrc !== audioSrc) {
+    setTrackedAudioSrc(audioSrc);
     setPlaying(false);
-  }, []);
+    setCurrentTime(0);
+    setAudioDuration(0);
+    setError(null);
+  }
 
-  const formatTime = (timeInSeconds: number): string => {
-    const minutes = Math.floor(timeInSeconds / 60);
-    const seconds = Math.floor(timeInSeconds % 60);
+  const formatTime = useCallback((timeInSeconds: number): string => {
+    const safeTime = Number.isFinite(timeInSeconds) ? Math.max(0, timeInSeconds) : 0;
+    const minutes = Math.floor(safeTime / 60);
+    const seconds = Math.floor(safeTime % 60);
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-  };
-
-  const handleTimeUpdate = useCallback(() => {
-    if (audioRef.current && !isDragging) {
-      setCurrentTime(audioRef.current.currentTime);
-    }
-  }, [isDragging]);
-
-  const handleLoadedMetadata = useCallback(() => {
-    if (audioRef.current) {
-      setAudioDuration(audioRef.current.duration);
-      setError(null);
-    }
   }, []);
 
-  const handleEnded = useCallback(() => {
-    setPlaying(false);
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-    }
-  }, []);
+  const handlePlay = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
 
-  const handlePlay = async () => {
-    if (audioRef.current) {
-      try {
-        if (playing) {
-          await audioRef.current.pause();
-        } else {
-          await audioRef.current.play();
-        }
-        setPlaying(!playing);
+    try {
+      if (audio.paused) {
+        await audio.play();
         onPlay?.();
-      } catch (err) {
-        console.error("Playback error:", err);
-        setError("Failed to play audio");
-        setPlaying(false);
+      } else {
+        audio.pause();
       }
+    } catch {
+      setError(AUDIO_ERROR_MESSAGE);
+      setPlaying(false);
     }
-  };
+  }, [onPlay]);
 
-  const calculateTimeFromPosition = useCallback(
-    (clientX: number) => {
-      if (!progressRef.current || !audioDuration) return;
-      const rect = progressRef.current.getBoundingClientRect();
-      const offsetX = clientX - rect.left;
-      const percentage = Math.max(0, Math.min(1, offsetX / rect.width));
-      return percentage * audioDuration;
+  const seekTo = useCallback(
+    (time: number) => {
+      const audio = audioRef.current;
+      if (!audio || !audioDuration || !Number.isFinite(time)) return;
+
+      const nextTime = Math.min(Math.max(time, 0), audioDuration);
+      audio.currentTime = nextTime;
+      setCurrentTime(nextTime);
     },
     [audioDuration],
   );
 
-  const handlePositionChange = useCallback(
-    (clientX: number) => {
-      const newTime = calculateTimeFromPosition(clientX);
-      if (newTime !== undefined) {
-        setCurrentTime(newTime);
-        if (!isDragging && audioRef.current) {
-          audioRef.current.currentTime = newTime;
-        }
-      }
-    },
-    [calculateTimeFromPosition, isDragging],
-  );
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    handlePositionChange(e.clientX);
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    e.preventDefault();
-    if (isDragging) {
-      handlePositionChange(e.clientX);
-    }
-  };
-
-  const handleMouseUp = useCallback(() => {
-    if (isDragging && audioRef.current) {
-      audioRef.current.currentTime = currentTime;
-      setIsDragging(false);
-    }
-  }, [isDragging, currentTime]);
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    handlePositionChange(e.touches[0].clientX);
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    e.preventDefault();
-    if (isDragging) {
-      handlePositionChange(e.touches[0].clientX);
-    }
-  };
-
-  const handleTouchEnd = useCallback(() => {
-    if (isDragging && audioRef.current) {
-      audioRef.current.currentTime = currentTime;
-      setIsDragging(false);
-    }
-  }, [isDragging, currentTime]);
-
-  useEffect(() => {
-    const handleGlobalMouseMove = (e: MouseEvent) => {
-      if (isDragging) {
-        handlePositionChange(e.clientX);
-      }
-    };
-
-    const handleGlobalMouseUp = () => {
-      handleMouseUp();
-    };
-
-    const handleGlobalTouchMove = (e: TouchEvent) => {
-      e.preventDefault();
-      if (isDragging) {
-        handlePositionChange(e.touches[0].clientX);
-      }
-    };
-
-    const handleGlobalTouchEnd = () => {
-      handleTouchEnd();
-    };
-
-    if (isDragging) {
-      window.addEventListener("mousemove", handleGlobalMouseMove);
-      window.addEventListener("mouseup", handleGlobalMouseUp);
-      window.addEventListener("touchmove", handleGlobalTouchMove, {
-        passive: false,
-      });
-      window.addEventListener("touchend", handleGlobalTouchEnd);
-    }
-
-    return () => {
-      window.removeEventListener("mousemove", handleGlobalMouseMove);
-      window.removeEventListener("mouseup", handleGlobalMouseUp);
-      window.removeEventListener("touchmove", handleGlobalTouchMove);
-      window.removeEventListener("touchend", handleGlobalTouchEnd);
-    };
-  }, [isDragging, handlePositionChange, handleMouseUp, handleTouchEnd]);
-
   useEffect(() => {
     const audio = new Audio();
     audioRef.current = audio;
+    audio.preload = "metadata";
+    audio.src = audioSrc;
 
-    audio.addEventListener("timeupdate", handleTimeUpdate);
+    const handleLoadedMetadata = () => {
+      const duration = Number.isFinite(audio.duration) ? Math.max(0, audio.duration) : 0;
+      setAudioDuration(duration);
+      setError(null);
+    };
+    const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
+    const handleEnded = () => {
+      setPlaying(false);
+      audio.currentTime = 0;
+      setCurrentTime(0);
+    };
+    const handleError = () => {
+      setError(AUDIO_ERROR_MESSAGE);
+      setPlaying(false);
+    };
+    const handlePlaying = () => setPlaying(true);
+    const handlePause = () => setPlaying(false);
+
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("durationchange", handleLoadedMetadata);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("error", handleError);
-
-    try {
-      audio.src = audioSrc;
-      audio.preload = "metadata";
-    } catch (err) {
-      setError("Failed to load audio file");
-      console.error("Error loading audio:", err);
-    }
+    audio.addEventListener("play", handlePlaying);
+    audio.addEventListener("pause", handlePause);
 
     return () => {
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("durationchange", handleLoadedMetadata);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("error", handleError);
+      audio.removeEventListener("play", handlePlaying);
+      audio.removeEventListener("pause", handlePause);
       audio.pause();
-      audio.src = "";
+      audio.removeAttribute("src");
+      audio.load();
+      if (audioRef.current === audio) audioRef.current = null;
     };
-  }, [audioSrc, handleTimeUpdate, handleLoadedMetadata, handleEnded, handleError]);
+  }, [audioSrc]);
 
-  const getProgress = () => {
+  const getProgress = useCallback(() => {
     if (!audioDuration) return 0;
-    return (currentTime / audioDuration) * 26;
-  };
+    return (currentTime / audioDuration) * 100;
+  }, [audioDuration, currentTime]);
 
   return {
     playing,
     currentTime,
     audioDuration,
     error,
-    isDragging,
-    progressRef,
     handlePlay,
-    handlePositionChange,
-    handleMouseDown,
-    handleMouseMove,
-    handleMouseUp,
-    handleTouchStart,
-    handleTouchMove,
-    handleTouchEnd,
+    seekTo,
     getProgress,
     formatTime,
   };

@@ -276,6 +276,12 @@ textarea:focus-visible {
     transition-duration: 1ms !important;
   }
 
+  html[data-aq-scope="storefront"][data-aq-motion="minimal"] [data-aq-motion-sensitive] {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
   html[data-aq-scope="storefront"][data-aq-motion="minimal"] .smooth-scroll {
     scroll-behavior: auto !important;
   }
