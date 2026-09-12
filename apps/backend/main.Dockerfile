@@ -39,7 +39,14 @@ RUN --mount=type=cache,target=/root/.npm \
     --mount=type=cache,target=/root/.cache/node/corepack \
     /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
     pnpm install --filter @repo/backend... --frozen-lockfile --store-dir /pnpm-store
-RUN pnpm --filter @repo/auth-core build
+# Same corepack cache and registry fallback as every other pnpm invocation
+# here. Without them this line calls bare `pnpm`, corepack tries to fetch
+# pnpm from registry.npmjs.org, and the build dies on a Cloudflare address
+# that is not reachable from this network. The layer cache hid it until a
+# change under packages/ invalidated it.
+RUN --mount=type=cache,target=/root/.cache/node/corepack \
+    /usr/local/bin/fallback-registry.sh "${NPM_REGISTRY_URL}" "${NPM_REGISTRY_SECOND_FALLBACK_URL}" "${NPM_REGISTRY_THIRD_FALLBACK_URL}" "${NPM_REGISTRY_FALLBACK_URL}" \
+    pnpm --filter @repo/auth-core build
 
 # Materialize production dependencies before application source is copied. This
 # keeps the expensive pnpm deploy layer reusable for source-only changes.
