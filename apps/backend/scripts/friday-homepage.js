@@ -19,24 +19,25 @@ const RAILS = Object.freeze([
 
 function usage() {
   return [
-    "Usage: node scripts/friday-homepage.js --date YYYY-MM-DD [--apply] [--report-dir PATH]",
+    "Usage: node scripts/friday-homepage.js --date YYYY-MM-DD [--date YYYY-MM-DD ...] [--apply] [--report-dir PATH]",
     "",
-    "Reads only WooCommerce products published during the given Tehran calendar day.",
+    "Reads currently published WooCommerce products added/published during any supplied Tehran calendar day.",
     "Without --apply it prints the proposed homepage assignments and performs no writes.",
   ].join("\n");
 }
 
 function parseArgs(argv) {
-  const result = { apply: false, date: "", reportDir: "" };
+  const result = { apply: false, dates: [], reportDir: "" };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--apply") result.apply = true;
-    else if (arg === "--date") result.date = String(argv[++index] || "");
+    else if (arg === "--date") result.dates.push(String(argv[++index] || ""));
     else if (arg === "--report-dir") result.reportDir = String(argv[++index] || "");
     else if (arg === "--help" || arg === "-h") result.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (!result.help && !result.date) throw new Error("--date is required");
+  if (!result.help && result.dates.length === 0) throw new Error("at least one --date is required");
+  result.dates = [...new Set(result.dates)];
   return result;
 }
 
@@ -111,7 +112,7 @@ function distributeProducts(sourceProducts, targetBySourceId) {
     if (!targetId) missing.push(sourceId);
     return { sourceId, targetId, onSale: product.on_sale === true };
   });
-  if (missing.length > 0) throw new Error(`Friday products missing from Strapi: ${missing.join(",")}`);
+  if (missing.length > 0) throw new Error(`Selected products missing from Strapi: ${missing.join(",")}`);
 
   const assignments = Object.fromEntries(RAILS.map(({ section }) => [section, []]));
   mapped.forEach((product, index) => {
@@ -140,7 +141,7 @@ function sameIds(actual, expected) {
   return actual.length === expected.length && actual.every((id, index) => id === expected[index]);
 }
 
-async function collectFridayProducts(source, window) {
+async function collectWindowProducts(source, window) {
   const rows = [];
   const query = {
     status: "publish",
@@ -263,7 +264,8 @@ function writeReport(report, reportDir) {
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
   if (!reportDir) return;
   fs.mkdirSync(reportDir, { recursive: true, mode: 0o750 });
-  const target = path.join(reportDir, `friday-homepage-${report.date}-${report.startedAt.replace(/[:.]/g, "-")}.json`);
+  const dateSlug = report.dates.join("_");
+  const target = path.join(reportDir, `friday-homepage-${dateSlug}-${report.startedAt.replace(/[:.]/g, "-")}.json`);
   fs.writeFileSync(target, serialized, { mode: 0o640 });
   report.reportFile = target;
 }
@@ -275,7 +277,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     return;
   }
   const config = getSyncConfig(env);
-  const window = tehranDayWindow(args.date);
+  const windows = args.dates.map(tehranDayWindow);
   const startedAt = new Date().toISOString();
   const source = new WordPressSource(config.source);
   const migrationClient = new JsonHttp({
@@ -293,15 +295,26 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     timeoutMs: 60_000,
   });
 
-  const sourceProducts = await collectFridayProducts(source, window);
-  if (sourceProducts.length === 0) throw new Error(`No published WooCommerce products found for ${args.date}`);
+  const sourceById = new Map();
+  for (const window of windows) {
+    for (const product of await collectWindowProducts(source, window)) {
+      sourceById.set(Number(product.id), product);
+    }
+  }
+  const sourceProducts = [...sourceById.values()].sort((left, right) => {
+    const byDate = sourceInstant(right) - sourceInstant(left);
+    return byDate || Number(right.id) - Number(left.id);
+  });
+  if (sourceProducts.length === 0) {
+    throw new Error(`No published WooCommerce products found for ${args.dates.join(",")}`);
+  }
   const snapshot = await collectSnapshot(migrationClient);
   const distribution = distributeProducts(sourceProducts, buildProductMap(snapshot));
   const report = {
     mode: args.apply ? "apply" : "preview",
-    date: args.date,
-    timezone: window.timezone,
-    windowUtc: { start: window.startUtc, end: window.endUtc },
+    dates: args.dates,
+    timezone: "Asia/Tehran",
+    windowsUtc: windows.map((window) => ({ date: window.date, start: window.startUtc, end: window.endUtc })),
     startedAt,
     completedAt: null,
     sourceProductCount: sourceProducts.length,

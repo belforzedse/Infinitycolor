@@ -5,9 +5,17 @@ const assert = require("node:assert/strict");
 const {
   buildProductMap,
   distributeProducts,
+  parseArgs,
   selectPublishedProducts,
   tehranDayWindow,
 } = require("../../friday-homepage");
+
+test("accepts multiple distinct date windows", () => {
+  assert.deepEqual(
+    parseArgs(["--date", "2026-09-11", "--date", "2026-09-12", "--date", "2026-09-11"]),
+    { apply: false, dates: ["2026-09-11", "2026-09-12"], reportDir: "" },
+  );
+});
 
 test("builds the exact half-open Friday window in Tehran", () => {
   const window = tehranDayWindow("2026-09-11");
@@ -43,11 +51,11 @@ test("distributes every mapped product evenly and duplicates only sale products 
   assert.deepEqual(result.discounted, [101, 105, 109, 113]);
 });
 
-test("fails closed when any Friday product has not been imported", () => {
+test("fails closed when any selected product has not been imported", () => {
   const map = buildProductMap([{ id: 10, external_source: "woocommerce", external_id: "1" }]);
   assert.throws(
     () => distributeProducts([{ id: 1 }, { id: 2 }], map),
-    /Friday products missing from Strapi: 2/,
+    /Selected products missing from Strapi: 2/,
   );
 });
 
