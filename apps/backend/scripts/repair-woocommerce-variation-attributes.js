@@ -216,9 +216,15 @@ async function buildPlan({ classified, legacyMaps, engine, registry }) {
   return { actions, ambiguous };
 }
 
-async function purgeAndRevalidate(slugs, syncConfig) {
+async function purgeAndRevalidate(slugs) {
   const uniqueSlugs = [...new Set(slugs.filter(Boolean))];
-  const redis = createClient({ url: syncConfig.redisUrl, password: syncConfig.redisPassword });
+  const cacheRedisUrl = process.env.RESPONSE_CACHE_REDIS_URL
+    || process.env.REDIS_URL
+    || `redis://${process.env.REDIS_HOST || "localhost"}:${process.env.REDIS_PORT || "6379"}`;
+  const redis = createClient({
+    url: cacheRedisUrl,
+    password: process.env.REDIS_PASSWORD || undefined,
+  });
   await redis.connect();
   let cacheKeysRemoved = 0;
   try {
@@ -312,7 +318,6 @@ async function main(argv = process.argv.slice(2)) {
     }
     const cache = await purgeAndRevalidate(
       lockedPlan.actions.map((action) => action.slug),
-      syncConfig,
     );
     console.log(JSON.stringify({
       mode: "apply-complete", changed: lockedPlan.actions.length,
