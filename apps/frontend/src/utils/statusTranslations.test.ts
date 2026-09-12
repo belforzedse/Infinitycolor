@@ -18,4 +18,8 @@ describe("customer order status translations", () => {
   it("keeps granular shipment status in the broader in-progress tab", () => {
     expect(getOrderStatusCategory("Shipment")).toBe(PersianOrderStatus.INPROGRESS);
   });
+
+  it("never exposes an unknown backend order status to customers", () => {
+    expect(translateOrderStatus("AwaitingWarehouseRobot")).toBe("نامشخص");
+  });
 });

@@ -144,6 +144,34 @@
     "AnipoLastError": {
       "type": "text"
     },
+    "AnipoRecipientRevision": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoRecipientSyncedRevision": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoRecipientSyncState": {
+      "type": "enumeration",
+      "enum": ["Pending", "Synced", "NeedsAttention"]
+    },
+    "AnipoRecipientSyncAttempts": {
+      "type": "integer",
+      "min": 0,
+      "default": 0
+    },
+    "AnipoRecipientSyncLastAttemptAt": {
+      "type": "datetime"
+    },
+    "AnipoRecipientSyncLastError": {
+      "type": "text"
+    },
+    "AnipoRecipientSyncedAt": {
+      "type": "datetime"
+    },
     "external_id": {
       "type": "string",
       "unique": false

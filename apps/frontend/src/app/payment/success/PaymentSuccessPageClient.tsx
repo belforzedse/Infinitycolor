@@ -4,7 +4,7 @@ import React, { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
 import { useCart } from "@/contexts/CartContext";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 
 interface OrderDetails {
   id: number;

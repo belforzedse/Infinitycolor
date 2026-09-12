@@ -76,6 +76,12 @@ ENV FRONTEND_REDIS_URL=${FRONTEND_REDIS_URL}
 ENV CENTRAL_AUTH_CUTOVER_ENABLED=${CENTRAL_AUTH_CUTOVER_ENABLED}
 ENV GITHUB_SHA=${GITHUB_SHA}
 ENV NEXT_PUBLIC_RELEASE_SHA=${GITHUB_SHA}
+# Version-skew protection, derived from the release rather than from a new build
+# argument so both deploy paths (CI and ~bel4/build-all.sh) get it for free --
+# they already agree on GITHUB_SHA. Assets carry `?dpl=`, navigations carry
+# `x-deployment-id`, and a client holding a page from the previous build does a
+# full reload instead of a half-broken client-side transition.
+ENV NEXT_DEPLOYMENT_ID=${GITHUB_SHA}
 
 WORKDIR /repo/apps/frontend
 ENV NODE_ENV=production
@@ -101,7 +107,8 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
     FRONTEND_REDIS_URL=${FRONTEND_REDIS_URL} \
     NEXT_CACHE_ENVIRONMENT=${NEXT_PUBLIC_AUTH_ENVIRONMENT} \
     NEXT_CACHE_RELEASE=${GITHUB_SHA} \
-    CACHE_RELEASE_ID=${GITHUB_SHA}
+    CACHE_RELEASE_ID=${GITHUB_SHA} \
+    NEXT_DEPLOYMENT_ID=${GITHUB_SHA}
 
 COPY --from=builder /repo/apps/frontend/.next/standalone ./
 COPY --from=builder /repo/apps/frontend/public ./apps/frontend/public

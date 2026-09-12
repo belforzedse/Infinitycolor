@@ -207,6 +207,7 @@ const STAFF_ROLES: StaffRoleCase[] = [
     requiredCapabilities: [
       "product.schedule",
       "product.homepage.manage",
+      "order.read",
       "order.status.update",
       "order.notes.update",
       "order.cancel",
@@ -473,15 +474,59 @@ for (const role of STAFF_ROLES) {
       }
 
       await expectCustomerInheritance(request, role);
-      await expectApiOk(
-        await apiPost(
-          request,
-          role.authRole,
-          "/admin/dashboard-summary/query",
-          {},
-        ),
-        `${role.label} dashboard summary`,
+      const canReadOrders = self.capabilities.includes("order.read");
+      const dashboardResponse = await apiPost(
+        request,
+        role.authRole,
+        "/admin/dashboard-summary/query",
+        {},
       );
+      await expectApiOk(dashboardResponse, `${role.label} dashboard summary`);
+      const dashboard = (await dashboardResponse.json()) as {
+        data?: {
+          todayOrderCounts?: Record<string, number> | null;
+          activeReserveGroups?: number | null;
+        };
+      };
+      if (canReadOrders) {
+        expect(dashboard.data?.todayOrderCounts).toEqual(
+          expect.objectContaining({
+            all: expect.any(Number),
+            paying: expect.any(Number),
+            inprogress: expect.any(Number),
+            completed: expect.any(Number),
+            cancelled: expect.any(Number),
+          }),
+        );
+        expect(dashboard.data?.activeReserveGroups).toEqual(expect.any(Number));
+      } else {
+        expect(dashboard.data?.todayOrderCounts).toBeNull();
+        expect(dashboard.data?.activeReserveGroups).toBeNull();
+      }
+
+      const orderCountsResponse = await apiPost(
+        request,
+        role.authRole,
+        "/admin/orders-list/counts",
+        { search: "", shippingMethodCodes: [], filters: [] },
+      );
+      if (canReadOrders) {
+        await expectApiOk(orderCountsResponse, `${role.label} order counts`);
+        const orderCounts = await orderCountsResponse.json();
+        expect(orderCounts).toEqual(
+          expect.objectContaining({
+            data: {
+              counts: expect.objectContaining({
+                all: expect.any(Number),
+                manual: expect.any(Number),
+              }),
+              activeReserveGroups: expect.any(Number),
+            },
+          }),
+        );
+      } else {
+        await expectApiForbidden(orderCountsResponse);
+      }
 
       if (role.allowedApi) {
         await expectApiOk(
@@ -508,6 +553,16 @@ for (const role of STAFF_ROLES) {
       await expect(visibleTopLevelItems(page)).toHaveCount(role.sidebarCount, {
         timeout: 30_000,
       });
+      if (canReadOrders) {
+        await expect(
+          page.getByRole("heading", { name: "سفارش‌های امروز" }),
+        ).toBeVisible();
+        await expect(page.getByRole("link", { name: /رزروهای فعال/ })).toBeVisible();
+      } else {
+        await expect(
+          page.getByRole("heading", { name: "سفارش‌های امروز" }),
+        ).toHaveCount(0);
+      }
       for (const id of role.visibleSidebarIds) {
         await expect(visibleSidebarItem(page, id)).toBeVisible();
       }
@@ -533,6 +588,11 @@ for (const role of STAFF_ROLES) {
     }) => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto("/", { waitUntil: "domcontentloaded" });
+      if (role.requiredCapabilities.includes("order.read")) {
+        await expect(
+          page.getByRole("heading", { name: "سفارش‌های امروز" }),
+        ).toBeVisible();
+      }
       await page.getByRole("button", { name: "باز کردن منوی مدیریت" }).click();
       await expect(page.getByRole("dialog")).toBeVisible();
       await expect(visibleTopLevelItems(page)).toHaveCount(role.sidebarCount, {

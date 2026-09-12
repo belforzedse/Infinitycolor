@@ -11,7 +11,7 @@ import type { BetterAuthPlugin } from "better-auth";
 import type { Pool } from "pg";
 import type { BridgeVerifiedIdentityResponse } from "@repo/auth-core/contracts";
 import { getAuthEnv } from "./env";
-import { authEvent, keyedSubjectTag } from "./event-logger";
+import { authEvent, keyedSubjectTag, safeAuthRequestId } from "./event-logger";
 import {
   clearFlowState,
   purposeFromHeaders,
@@ -51,20 +51,36 @@ interface InfinityPluginOptions {
 }
 
 function auditRequestId(ctx: { headers?: Headers }): string {
-  const supplied = ctx.headers?.get("x-request-id");
-  return supplied && /^[A-Za-z0-9._:-]{8,160}$/.test(supplied) ? supplied : randomUUID();
+  return safeAuthRequestId(ctx.headers?.get("x-request-id"));
 }
 
 function auditFailureCode(error: unknown): string {
   if (error instanceof StrapiBridgeError) return error.reasonCode;
-  if (error instanceof APIError) return String((error as any).body?.code || error.status || "AUTH_FAILED");
+  if (error instanceof APIError)
+    return String((error as any).body?.code || error.status || "AUTH_FAILED");
   return error instanceof Error ? error.name : "AUTH_FAILED";
 }
 
 function bridgeApiError(error: unknown): APIError {
+  if (error instanceof APIError) return error;
   if (error instanceof StrapiBridgeError) {
+    if (error.status === 429) {
+      return new APIError(
+        "TOO_MANY_REQUESTS",
+        { message: error.message },
+        error.retryAfterSeconds
+          ? { "Retry-After": String(error.retryAfterSeconds) }
+          : undefined,
+      );
+    }
     if (error.status === 401 || error.status === 403) {
       return new APIError("UNAUTHORIZED", { message: error.message });
+    }
+    if (error.status === 502) {
+      return new APIError("BAD_GATEWAY", { message: error.message });
+    }
+    if (error.status === 503) {
+      return new APIError("SERVICE_UNAVAILABLE", { message: error.message });
     }
     if (error.status >= 500) {
       return new APIError("INTERNAL_SERVER_ERROR", { message: error.message });
@@ -74,6 +90,15 @@ function bridgeApiError(error: unknown): APIError {
   return new APIError("INTERNAL_SERVER_ERROR", {
     message: "احراز هویت ناموفق بود. دوباره تلاش کنید.",
   });
+}
+
+function authErrorStatus(error: unknown): number {
+  if (error instanceof StrapiBridgeError) return error.status;
+  if (error instanceof APIError) {
+    const statusCode = Number((error as { statusCode?: unknown }).statusCode);
+    if (Number.isSafeInteger(statusCode)) return statusCode;
+  }
+  return 500;
 }
 
 function assertTrustedRequest(ctx: {
@@ -95,6 +120,66 @@ function assertTrustedRequest(ctx: {
   const fetchSite = ctx.headers?.get("sec-fetch-site");
   if (fetchSite === "cross-site" && !origin) {
     throw new APIError("FORBIDDEN", { message: "درخواست نامعتبر است" });
+  }
+}
+
+type FlowCookieContext = Parameters<typeof readFlowState>[0];
+
+interface OtpStartContext extends FlowCookieContext {
+  body: {
+    phone: string;
+    purpose: "login" | "reset";
+    returnTo?: string | null;
+  };
+  context: {
+    isTrustedOrigin(
+      url: string,
+      settings?: { allowRelativePaths: boolean },
+    ): boolean;
+  };
+}
+
+export async function startInfinityOtpFlow(
+  ctx: OtpStartContext,
+  bridge: Pick<StrapiBridgeClient, "requestOtp">,
+): Promise<{ message: "otp sent" }> {
+  const requestId = auditRequestId(ctx);
+  const startedAt = Date.now();
+  try {
+    assertTrustedRequest(ctx);
+    const current = readFlowState(ctx);
+    const returnTo = resolveFlowReturnTarget(
+      ctx.body.returnTo,
+      current?.returnTo,
+    );
+    writeFlowState(ctx, {
+      phone: ctx.body.phone,
+      purpose: ctx.body.purpose,
+      returnTo,
+    });
+    const response = await bridge.requestOtp(ctx.body.phone, requestId);
+    writeFlowState(ctx, {
+      phone: ctx.body.phone,
+      challengeId: response.challengeId,
+      purpose: ctx.body.purpose,
+      returnTo,
+    });
+    authEvent("auth_operation_timing", {
+      operation: "otp_start",
+      requestId,
+      status: 200,
+      durationMs: Date.now() - startedAt,
+    });
+    return { message: "otp sent" };
+  } catch (error) {
+    authEvent("auth_operation_timing", {
+      operation: "otp_start",
+      requestId,
+      status: authErrorStatus(error),
+      reasonCode: auditFailureCode(error),
+      durationMs: Date.now() - startedAt,
+    });
+    throw bridgeApiError(error);
   }
 }
 
@@ -148,7 +233,9 @@ export function infinityCredentialsPlugin(
           ipAddress: session.ipAddress || null,
         });
       } catch (error) {
-        await ctx.context.internalAdapter.deleteSession(session.token).catch(() => undefined);
+        await ctx.context.internalAdapter
+          .deleteSession(session.token)
+          .catch(() => undefined);
         deleteSessionCookie(ctx);
         throw new APIError("INTERNAL_SERVER_ERROR", {
           message: "ثبت رویداد امنیتی ورود ناموفق بود. دوباره تلاش کنید.",
@@ -171,6 +258,14 @@ export function infinityCredentialsPlugin(
   return {
     id: "infinity-credentials",
     version: "1.0.0",
+    rateLimit: [
+      {
+        pathMatcher: (path) =>
+          path === "/infinity/otp/start" || path === "/infinity/otp/request",
+        window: 120,
+        max: 4,
+      },
+    ],
     endpoints: {
       infinityPhoneStatus: createAuthEndpoint(
         "/infinity/phone-status",
@@ -183,10 +278,7 @@ export function infinityCredentialsPlugin(
             writeFlowState(ctx, {
               phone: ctx.body.phone,
               purpose: purposeFromHeaders(ctx.headers),
-              returnTo: returnTargetFromHeaders(
-                ctx.headers,
-                current?.returnTo,
-              ),
+              returnTo: returnTargetFromHeaders(ctx.headers, current?.returnTo),
             });
             // Keep the public response indistinguishable for existing and new phones.
             // The bridge result is intentionally not exposed to prevent account enumeration.
@@ -198,7 +290,13 @@ export function infinityCredentialsPlugin(
       ),
       infinityOtpRequest: createAuthEndpoint(
         "/infinity/otp/request",
-        { method: "POST", body: z.object({ phone: phoneSchema, purpose: z.enum(["login", "reset"]).optional() }) },
+        {
+          method: "POST",
+          body: z.object({
+            phone: phoneSchema,
+            purpose: z.enum(["login", "reset"]).optional(),
+          }),
+        },
         async (ctx) => {
           assertTrustedRequest(ctx);
           const current = readFlowState(ctx);
@@ -208,15 +306,15 @@ export function infinityCredentialsPlugin(
             });
           }
           try {
-            const response = await options.bridge.requestOtp(ctx.body.phone);
+            const response = await options.bridge.requestOtp(
+              ctx.body.phone,
+              auditRequestId(ctx),
+            );
             writeFlowState(ctx, {
               phone: ctx.body.phone,
               challengeId: response.challengeId,
               purpose: ctx.body.purpose ?? purposeFromHeaders(ctx.headers),
-              returnTo: returnTargetFromHeaders(
-                ctx.headers,
-                current?.returnTo,
-              ),
+              returnTo: returnTargetFromHeaders(ctx.headers, current?.returnTo),
             });
             return ctx.json({ message: "otp sent" });
           } catch (error) {
@@ -224,11 +322,27 @@ export function infinityCredentialsPlugin(
           }
         },
       ),
+      infinityOtpStart: createAuthEndpoint(
+        "/infinity/otp/start",
+        {
+          method: "POST",
+          body: z.object({
+            phone: phoneSchema,
+            purpose: z.enum(["login", "reset"]),
+            returnTo: z.string().max(2_048).nullable().optional(),
+          }),
+        },
+        async (ctx) =>
+          ctx.json(await startInfinityOtpFlow(ctx, options.bridge)),
+      ),
       infinityOtpVerify: createAuthEndpoint(
         "/infinity/otp/verify",
         {
           method: "POST",
-          body: z.object({ otp: otpSchema, rememberMe: z.boolean().optional() }),
+          body: z.object({
+            otp: otpSchema,
+            rememberMe: z.boolean().optional(),
+          }),
         },
         async (ctx) => {
           assertTrustedRequest(ctx);
@@ -264,12 +378,19 @@ export function infinityCredentialsPlugin(
                 subject: flow.phone,
                 reasonCode: auditFailureCode(error),
                 requestId: auditRequestId(ctx),
-              }).then(() => kickAuthAuditDelivery(options.pool)).catch((auditError) => {
-                console.error(JSON.stringify({
-                  event: "auth_audit_enqueue_failed",
-                  reasonCode: auditError instanceof Error ? auditError.name : "UNKNOWN",
-                }));
-              });
+              })
+                .then(() => kickAuthAuditDelivery(options.pool))
+                .catch((auditError) => {
+                  console.error(
+                    JSON.stringify({
+                      event: "auth_audit_enqueue_failed",
+                      reasonCode:
+                        auditError instanceof Error
+                          ? auditError.name
+                          : "UNKNOWN",
+                    }),
+                  );
+                });
             }
             throw bridgeApiError(error);
           }
@@ -319,12 +440,19 @@ export function infinityCredentialsPlugin(
                 subject: ctx.body.phone,
                 reasonCode: auditFailureCode(error),
                 requestId: auditRequestId(ctx),
-              }).then(() => kickAuthAuditDelivery(options.pool)).catch((auditError) => {
-                console.error(JSON.stringify({
-                  event: "auth_audit_enqueue_failed",
-                  reasonCode: auditError instanceof Error ? auditError.name : "UNKNOWN",
-                }));
-              });
+              })
+                .then(() => kickAuthAuditDelivery(options.pool))
+                .catch((auditError) => {
+                  console.error(
+                    JSON.stringify({
+                      event: "auth_audit_enqueue_failed",
+                      reasonCode:
+                        auditError instanceof Error
+                          ? auditError.name
+                          : "UNKNOWN",
+                    }),
+                  );
+                });
             }
             throw bridgeApiError(error);
           }
@@ -393,16 +521,22 @@ export function infinityCredentialsPlugin(
               `${env.strapiInternalUrl}/api/auth/self`,
               {
                 method: "GET",
-                headers: { accept: "application/json", authorization: `Bearer ${token}` },
+                headers: {
+                  accept: "application/json",
+                  authorization: `Bearer ${token}`,
+                },
                 cache: "no-store",
                 signal: controller.signal,
               },
             );
             const body = await response.json().catch(() => ({}));
             if (!response.ok) {
-              throw new APIError(response.status === 401 ? "UNAUTHORIZED" : "BAD_REQUEST", {
-                message: "بازیابی اطلاعات حساب ناموفق بود.",
-              });
+              throw new APIError(
+                response.status === 401 ? "UNAUTHORIZED" : "BAD_REQUEST",
+                {
+                  message: "بازیابی اطلاعات حساب ناموفق بود.",
+                },
+              );
             }
             return ctx.json(body);
           } finally {
@@ -429,7 +563,7 @@ export function infinityCredentialsPlugin(
           assertTrustedRequest(ctx);
           const flow = readFlowState(ctx);
           const sessionState = ctx.context.session;
-          if (!flow?.phone || !sessionState) throw new APIError("UNAUTHORIZED");
+          if (!flow || !sessionState) throw new APIError("UNAUTHORIZED");
           const token = await getJwtToken(ctx, options.jwtOptions);
           const env = getAuthEnv();
           const controller = new AbortController();
@@ -535,10 +669,7 @@ export function infinityCredentialsPlugin(
           const sessionState = await ctx.context.internalAdapter.findSession(
             applicationSession.sessionToken,
           );
-          if (
-            !sessionState ||
-            sessionState.session.expiresAt <= new Date()
-          ) {
+          if (!sessionState || sessionState.session.expiresAt <= new Date()) {
             authEvent("application_session_rejected", {
               reasonCode: "SESSION_NOT_FOUND",
             });
@@ -563,21 +694,40 @@ export function infinityCredentialsPlugin(
           body: z.object({}),
         },
         async (ctx) => {
-          assertTrustedRequest(ctx);
-          const flow = readFlowState(ctx);
-          const sessionState = ctx.context.session;
-          if (!flow || flow.purpose === "reset" || !sessionState) {
-            throw new APIError("UNAUTHORIZED");
+          const requestId = auditRequestId(ctx);
+          const startedAt = Date.now();
+          try {
+            assertTrustedRequest(ctx);
+            const flow = readFlowState(ctx);
+            const sessionState = ctx.context.session;
+            if (!flow || flow.purpose === "reset" || !sessionState) {
+              throw new APIError("UNAUTHORIZED");
+            }
+            const redirectTo = await createReturn(
+              sessionState.session.id,
+              flow.returnTo,
+            );
+            clearFlowState(ctx);
+            authEvent("session_continued", {
+              subjectTag: keyedSubjectTag(sessionState.session.id),
+            });
+            authEvent("auth_operation_timing", {
+              operation: "session_continue",
+              requestId,
+              status: 200,
+              durationMs: Date.now() - startedAt,
+            });
+            return ctx.json({ authenticated: true as const, redirectTo });
+          } catch (error) {
+            authEvent("auth_operation_timing", {
+              operation: "session_continue",
+              requestId,
+              status: authErrorStatus(error),
+              reasonCode: auditFailureCode(error),
+              durationMs: Date.now() - startedAt,
+            });
+            throw error;
           }
-          const redirectTo = await createReturn(
-            sessionState.session.id,
-            flow.returnTo,
-          );
-          clearFlowState(ctx);
-          authEvent("session_continued", {
-            subjectTag: keyedSubjectTag(sessionState.session.id),
-          });
-          return ctx.json({ authenticated: true as const, redirectTo });
         },
       ),
       infinityFlowStart: createAuthEndpoint(

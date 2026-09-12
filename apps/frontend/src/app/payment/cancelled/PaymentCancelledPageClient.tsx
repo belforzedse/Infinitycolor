@@ -3,7 +3,7 @@
 import React, { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 
 function PaymentCancelledContent() {
   const router = useRouter();

@@ -906,12 +906,13 @@ function ShoppingCartBillForm({}: Props) {
             valueToman: totalToman,
             properties: { gateway: "wallet" },
           });
-          // Wallet flow returns no redirect; just move to success
+          // Wallet settles immediately; show the same authoritative result surface
+          // used by provider callbacks so fulfillment details stay consistent.
           await clearCartSafely();
           localStorage.removeItem("pendingCheckoutAttemptId");
           localStorage.removeItem("pendingCheckoutQuoteHash");
           setSubmitOrderStep(SubmitOrderStep.Success);
-          router.push("/orders/success");
+          router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
         }
       } else {
         trackAnalyticsEvent({
@@ -926,7 +927,7 @@ function ShoppingCartBillForm({}: Props) {
           localStorage.removeItem("pendingCheckoutQuoteHash");
         }
         setSubmitOrderStep(SubmitOrderStep.Success);
-        router.push("/orders/success");
+        router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
       }
     } catch (err: any) {
       const errorMsg = err instanceof Error ? err.message : JSON.stringify(err);

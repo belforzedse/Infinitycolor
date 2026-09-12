@@ -3,7 +3,7 @@
 import OrdersTabs from "@/components/User/Orders/Tabs";
 import UserContainer from "@/components/layout/UserContainer";
 import AccountQuickLinks from "@/components/User/Account/QuickLinks";
-import { StorefrontAccountShell } from "@/components/storefront";
+import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 
 export default function OrdersPage() {
   return (

@@ -32,6 +32,14 @@ export type DashboardSummaryOrder = {
   };
 };
 
+export type DashboardTodayOrderCounts = {
+  all: number;
+  paying: number;
+  inprogress: number;
+  completed: number;
+  cancelled: number;
+};
+
 export type AdminDashboardSummary = {
   metrics: {
     ordersTotal: number | null;
@@ -39,6 +47,8 @@ export type AdminDashboardSummary = {
     activeProductsTotal: number | null;
     customerAccountsTotal: number | null;
   };
+  todayOrderCounts: DashboardTodayOrderCounts | null;
+  activeReserveGroups: number | null;
   latestOrders: DashboardSummaryOrder[];
   latestOrdersAmount: number;
   authorizedModules: {

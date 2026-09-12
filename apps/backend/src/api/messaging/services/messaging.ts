@@ -15,7 +15,7 @@ export default () => ({
         });
         if (!result.ok) {
           if (result.disabled && process.env.NODE_ENV === "development") {
-            strapi.log.info(`[dev-otp] SMS disabled; local OTP is ${message}`);
+            strapi.log.info("[dev-otp] SMS disabled; local delivery stub accepted");
             return 200;
           }
           return false;
@@ -25,7 +25,7 @@ export default () => ({
       return 200;
     } catch (err) {
       strapi.log.error("[messaging] SMS send failed", {
-        error: (err as Error)?.message || err,
+        reasonCode: err instanceof Error ? err.name : "UNKNOWN",
       });
       return false;
     }

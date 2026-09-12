@@ -3,7 +3,7 @@
 import AddressContainer from "@/components/User/Address";
 import UserContainer from "@/components/layout/UserContainer";
 import AccountQuickLinks from "@/components/User/Account/QuickLinks";
-import { StorefrontAccountShell } from "@/components/storefront";
+import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 
 export default function AddressesPage() {
   return (

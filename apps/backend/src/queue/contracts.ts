@@ -14,6 +14,8 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   scheduledProductReconcile: "scheduledProducts.reconcile",
   cartCleanupReconcile: "cartCleanup.reconcile",
   anipoBarcodeReconcile: "anipoBarcodes.reconcile",
+  anipoRecipientSyncOne: "anipoRecipients.syncOne",
+  edgeCachePurge: "edgeCache.purge",
 } as const;
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
@@ -74,10 +76,29 @@ export type ScheduledProductPublicationJobData = {
   auditContext?: AuditJobContext;
 };
 
+export type AnipoRecipientSyncJobData = {
+  orderId: number;
+  expectedRevision: number;
+};
+
+/**
+ * Refresh the gateway page cache and purge the edge for a set of storefront
+ * paths. Carried on the queue rather than done inline so that a slow or
+ * unreachable CDN can never delay a publish, a price change or a checkout.
+ */
+export type EdgeCachePurgeJobData = {
+  /** What happened, for the log and for collapsing duplicates. */
+  kind: string;
+  paths: string[];
+  reason?: string;
+};
+
 export type MaintenanceJobData =
   | Record<string, never>
   | NormalizeStoryVideoJobData
   | ScheduledProductPublicationJobData
+  | AnipoRecipientSyncJobData
+  | EdgeCachePurgeJobData
   | {
       operationId: number;
       retryCount: number;

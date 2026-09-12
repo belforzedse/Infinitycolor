@@ -125,6 +125,8 @@ export interface OrderPaymentStatusResponse {
   isPaid: boolean;
   transactionId?: string | number | null;
   paymentGateway?: string | null;
+  shippingMethodCode?: string | null;
+  shippingMethodTitle?: string | null;
   paymentStatus?: PaymentAttemptStatus;
   attemptId?: string;
   amountIrr?: number;

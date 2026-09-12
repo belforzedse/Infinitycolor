@@ -31,6 +31,14 @@ export interface SuperAdminOrderDetail {
   note?: string;
   phoneNumber: string;
   address?: string;
+  addressLine?: string;
+  deliveryAddressId?: number;
+  shippingCityId?: number;
+  shippingCityTitle?: string;
+  shippingProvinceId?: number;
+  shippingProvinceTitle?: string;
+  recipientName?: string;
+  recipientPhone?: string;
   postalCode?: string;
   paymentGateway?: string;
   transactionId?: string;
@@ -65,6 +73,13 @@ export interface SuperAdminOrderDetail {
   anipoProviderStatus?: string;
   anipoLastMessage?: string;
   anipoLastError?: string;
+  anipoRecipientRevision?: number;
+  anipoRecipientSyncedRevision?: number;
+  anipoRecipientSyncState?: "Pending" | "Synced" | "NeedsAttention";
+  anipoRecipientSyncAttempts?: number;
+  anipoRecipientSyncLastAttemptAt?: string;
+  anipoRecipientSyncLastError?: string;
+  anipoRecipientSyncedAt?: string;
   /**
    * Projected server-side from the order's reserve group, never from the order's
    * frozen reserve columns. `reserveIsHeld` means fulfillment is blocked at the
@@ -72,6 +87,7 @@ export interface SuperAdminOrderDetail {
    */
   isReserveOrder?: boolean;
   reserveGroupId?: string | null;
+  hasSharedReserveAddress?: boolean;
   reserveState?: string | null;
   reserveClosureReason?: string | null;
   reserveExpiresAt?: string | null;

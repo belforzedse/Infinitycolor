@@ -23,6 +23,14 @@ const statusToneBadge: Record<string, string> = {
   info: "bg-blue-100 text-blue-700",
 };
 
+const TODAY_ORDER_CARDS = [
+  { key: "all", label: "کل سفارش‌های امروز" },
+  { key: "paying", label: "در انتظار پرداخت" },
+  { key: "inprogress", label: "در حال انجام" },
+  { key: "completed", label: "تکمیل‌شده" },
+  { key: "cancelled", label: "لغو یا مرجوع" },
+] as const;
+
 export default function SuperAdminPage() {
   const { data: me, isLoading, error } = useMe();
   const { adminRole, capabilities } = useCurrentUser();
@@ -32,6 +40,8 @@ export default function SuperAdminPage() {
     metrics,
     latestOrders,
     latestOrdersAmount,
+    todayOrderCounts,
+    activeReserveGroups,
     loading: metricsLoading,
     error: metricsError,
   } = useDashboardMetrics({
@@ -126,6 +136,53 @@ export default function SuperAdminPage() {
           </article>
         ))}
       </section>
+
+      {canReadOrders && (metricsLoading || todayOrderCounts) && (
+        <section className="mt-6" aria-labelledby="today-orders-heading">
+          <h2
+            id="today-orders-heading"
+            className="text-lg font-semibold text-slate-900"
+          >
+            سفارش‌های امروز
+          </h2>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            {TODAY_ORDER_CARDS.map((card) => (
+              <article
+                key={card.key}
+                className={`rounded-2xl border border-slate-200 bg-white/80 px-4 py-4 shadow-sm ${
+                  metricsLoading ? "animate-pulse" : ""
+                }`}
+              >
+                <p className="text-sm text-slate-500">{card.label}</p>
+                <strong className="mt-2 block text-2xl font-semibold text-slate-900">
+                  {metricsLoading || !todayOrderCounts
+                    ? "\u00A0"
+                    : faNum(todayOrderCounts[card.key])}
+                </strong>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {canReadOrders &&
+        (metricsLoading || typeof activeReserveGroups === "number") && (
+          <section className="mt-4">
+            {metricsLoading || activeReserveGroups === undefined ? (
+              <div className="h-14 animate-pulse rounded-2xl border border-slate-200 bg-white/80" />
+            ) : (
+              <Link
+                href="/orders/reserve"
+                className="flex min-h-14 items-center justify-between rounded-2xl border border-infinity-primary-lighter/40 bg-white px-4 py-3 text-sm font-semibold text-infinity-primary transition hover:bg-infinity-primary-lighter/20"
+              >
+                <span>رزروهای فعال</span>
+                <span className="rounded-full bg-infinity-primary/10 px-2.5 py-1 text-sm">
+                  {faNum(activeReserveGroups ?? 0)}
+                </span>
+              </Link>
+            )}
+          </section>
+        )}
 
       <section className="mt-6 flex flex-col gap-3">
         <h2 className="text-lg font-semibold text-slate-900">اقدامات سریع</h2>

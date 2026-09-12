@@ -29,6 +29,10 @@ jest.mock("../../jobs/analyticsOutboxRepair", () => ({
 jest.mock("../../api/order/services/anipoBarcodeWorkflow", () => ({
   runAnipoBarcodeReconciliation: jest.fn(),
 }));
+jest.mock("../../api/order/services/anipoRecipientSync", () => ({
+  processAnipoRecipientSync: jest.fn(),
+  runAnipoRecipientSyncReconciliation: jest.fn(),
+}));
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
 import { runExpireStockReservationsTick } from "../../jobs/expireStockReservations";
@@ -49,6 +53,10 @@ import {
 import { runAnalyticsDailyRollupTick } from "../../jobs/analyticsDailyRollup";
 import { runAnalyticsOutboxRepairTick } from "../../jobs/analyticsOutboxRepair";
 import { runAnipoBarcodeReconciliation } from "../../api/order/services/anipoBarcodeWorkflow";
+import {
+  processAnipoRecipientSync,
+  runAnipoRecipientSyncReconciliation,
+} from "../../api/order/services/anipoRecipientSync";
 
 const mockedRunExpireStockReservationsTick = runExpireStockReservationsTick as jest.MockedFunction<
   typeof runExpireStockReservationsTick
@@ -79,6 +87,13 @@ const mockedRunAnalyticsOutboxRepairTick = runAnalyticsOutboxRepairTick as jest.
 const mockedRunAnipoBarcodeReconciliation =
   runAnipoBarcodeReconciliation as jest.MockedFunction<
     typeof runAnipoBarcodeReconciliation
+  >;
+const mockedProcessAnipoRecipientSync = processAnipoRecipientSync as jest.MockedFunction<
+  typeof processAnipoRecipientSync
+>;
+const mockedRunAnipoRecipientSyncReconciliation =
+  runAnipoRecipientSyncReconciliation as jest.MockedFunction<
+    typeof runAnipoRecipientSyncReconciliation
   >;
 
 function createMockStrapi() {
@@ -169,6 +184,7 @@ describe("queue processors", () => {
   it("dispatches Anipo barcode reconciliation jobs", async () => {
     const strapi = createMockStrapi();
     mockedRunAnipoBarcodeReconciliation.mockResolvedValue({ status: "completed" } as any);
+    mockedRunAnipoRecipientSyncReconciliation.mockResolvedValue({ scanned: 0, queued: 0 });
 
     await processMaintenanceJob(strapi, {
       name: COMMERCE_MAINTENANCE_JOBS.anipoBarcodeReconcile,
@@ -176,6 +192,17 @@ describe("queue processors", () => {
     } as any);
 
     expect(mockedRunAnipoBarcodeReconciliation).toHaveBeenCalledWith(strapi);
+    expect(mockedRunAnipoRecipientSyncReconciliation).toHaveBeenCalledWith(strapi);
+  });
+
+  it("dispatches one Anipo recipient synchronization", async () => {
+    const strapi = createMockStrapi();
+    mockedProcessAnipoRecipientSync.mockResolvedValue({ status: "synced" });
+    await processMaintenanceJob(strapi, {
+      name: COMMERCE_MAINTENANCE_JOBS.anipoRecipientSyncOne,
+      data: { orderId: 42, expectedRevision: 3 },
+    } as any);
+    expect(mockedProcessAnipoRecipientSync).toHaveBeenCalledWith(strapi, 42, 3);
   });
 
   it("dispatches view-counter flush jobs to the product-view service", async () => {

@@ -3,6 +3,7 @@
 import {
   getAdminDashboardSummary,
   type DashboardSummaryOrder,
+  type DashboardTodayOrderCounts,
 } from "@/services/super-admin/dashboard/summary";
 import { useEffect, useState } from "react";
 
@@ -17,6 +18,8 @@ type DashboardState = {
   metrics?: DashboardMetric[];
   latestOrders?: DashboardSummaryOrder[];
   latestOrdersAmount?: number;
+  todayOrderCounts?: DashboardTodayOrderCounts | null;
+  activeReserveGroups?: number | null;
   error?: string;
 };
 
@@ -47,7 +50,7 @@ export function useDashboardMetrics(options: UseDashboardMetricsOptions = {}) {
           ...(summary.metrics.doneOrdersTotal !== null ? [{
             label: "سفارش‌های انجام‌شده",
             value: summary.metrics.doneOrdersTotal,
-            helper: "سفارش‌هایی که وضعیت آن‌ها Done است",
+            helper: "کل سفارش‌های تکمیل‌شده",
           }] : []),
           ...(summary.metrics.activeProductsTotal !== null ? [{
             label: "محصولات فعال",
@@ -72,6 +75,8 @@ export function useDashboardMetrics(options: UseDashboardMetricsOptions = {}) {
           metrics,
           latestOrders: summary.latestOrders,
           latestOrdersAmount: summary.latestOrdersAmount,
+          todayOrderCounts: summary.todayOrderCounts,
+          activeReserveGroups: summary.activeReserveGroups,
         });
       })
       .catch((error: unknown) => {
@@ -79,7 +84,7 @@ export function useDashboardMetrics(options: UseDashboardMetricsOptions = {}) {
         const message =
           error && typeof error === "object" && "message" in error
             ? String(error.message)
-            : "خطا در بارگذاری آمار Dashboard";
+            : "خطا در بارگذاری آمار پیشخوان";
         setState({ loading: false, error: message });
       });
 

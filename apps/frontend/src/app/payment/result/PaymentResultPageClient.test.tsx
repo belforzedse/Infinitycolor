@@ -29,7 +29,7 @@ jest.mock("@/services", () => ({
 jest.mock("@/contexts/CartContext", () => ({
   useCart: () => ({ clearCart }),
 }));
-jest.mock("@/components/storefront", () => ({
+jest.mock("@/components/storefront/StorefrontContainer", () => ({
   StorefrontContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
@@ -64,6 +64,9 @@ describe("PaymentResultPageClient", () => {
       status: "Started",
       paymentStatus: "Succeeded",
       isPaid: true,
+      paymentGateway: "SamanKish",
+      shippingMethodCode: "local-courier",
+      shippingMethodTitle: "پیک گرگان",
       nextAction: "view_order",
       transactionId: "bank-reference",
     }));
@@ -72,6 +75,15 @@ describe("PaymentResultPageClient", () => {
 
     expect(await screen.findByText("پرداخت با موفقیت ثبت شد")).toBeVisible();
     expect(screen.getByText("bank-reference")).toBeVisible();
+    expect(screen.getByText("در حال انجام")).toBeVisible();
+    expect(screen.getByText("سامان کیش")).toBeVisible();
+    expect(screen.queryByText("Started")).not.toBeInTheDocument();
+    expect(screen.queryByText("SamanKish")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "سفارش‌های گرگان حداکثر پس از ۲۴ ساعت کاری برای ارسال با پیک آماده خواهند بود.",
+      ),
+    ).toBeVisible();
     await waitFor(() => expect(clearCart).toHaveBeenCalledTimes(1));
     expect(getStatus).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("pendingCheckoutAttemptId")).toBeNull();
@@ -92,11 +104,77 @@ describe("PaymentResultPageClient", () => {
     render(<PaymentResultPageClient />);
 
     expect(await screen.findByText("پرداخت تکمیل نشد")).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "زمان آماده‌سازی و ارسال سفارش" }),
+    ).not.toBeInTheDocument();
     expect(clearCart).not.toHaveBeenCalled();
     expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe("attempt-42");
     fireEvent.click(screen.getByRole("button", { name: "بازگشت به سبد و تلاش دوباره" }));
     expect(push).toHaveBeenCalledWith("/cart");
     expect(localStorage.getItem("pendingCheckoutAttemptId")).toBeNull();
+  });
+
+  it.each([
+    [
+      "tipax",
+      "تیپاکس",
+      "سفارش شما ۲۴ الی ۴۸ ساعت کاری پس از ثبت سفارش، تحویل تیپاکس خواهد شد.",
+    ],
+    [
+      "post",
+      "پست",
+      "سفارش شما ۷۲ الی ۸۶ ساعت کاری پس از ثبت سفارش، تحویل اداره پست خواهد شد.",
+    ],
+    [
+      "local-courier",
+      "پیک گرگان",
+      "سفارش‌های گرگان حداکثر پس از ۲۴ ساعت کاری برای ارسال با پیک آماده خواهند بود.",
+    ],
+    [
+      "pickup",
+      "تحویل حضوری",
+      "سفارش‌های گرگان حداکثر پس از ۲۴ ساعت کاری برای تحویل حضوری آماده خواهند بود.",
+    ],
+    [
+      "legacy-method",
+      "روش قدیمی",
+      "زمان آماده‌سازی سفارش بر اساس روش ارسال ثبت‌شده تعیین می‌شود.",
+    ],
+  ])("shows the relevant preparation copy for %s", async (code, title, message) => {
+    getStatus.mockResolvedValue(
+      response({
+        status: "Started",
+        paymentStatus: "Succeeded",
+        isPaid: true,
+        shippingMethodCode: code,
+        shippingMethodTitle: title,
+      }),
+    );
+
+    render(<PaymentResultPageClient />);
+
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(
+      screen.getByText("زمان رسیدن سفارش پس از ارسال، بسته به روش ارسال و مقصد متفاوت است."),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "پشتیبانی" })).toHaveAttribute("href", "/contact");
+  });
+
+  it("uses Persian fallbacks for unknown customer-facing status and gateway values", async () => {
+    getStatus.mockResolvedValue(
+      response({
+        status: "AwaitingWarehouseRobot",
+        paymentStatus: "Succeeded",
+        isPaid: true,
+        paymentGateway: "InternalGatewayV2",
+      }),
+    );
+
+    render(<PaymentResultPageClient />);
+
+    expect(await screen.findAllByText("نامشخص")).toHaveLength(2);
+    expect(screen.queryByText("AwaitingWarehouseRobot")).not.toBeInTheDocument();
+    expect(screen.queryByText("InternalGatewayV2")).not.toBeInTheDocument();
   });
 
   it("warns against duplicate payment while ambiguous and reconciles on demand", async () => {

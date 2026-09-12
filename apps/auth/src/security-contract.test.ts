@@ -208,7 +208,10 @@ test("typed session management wrappers use central auth with no-store credentia
     assert.equal(request.init?.cache, "no-store");
   }
   assert.equal(requests[0].init?.method, "GET");
-  assert.equal(requests[1].init?.body, JSON.stringify({ token: "opaque-session-token" }));
+  assert.equal(
+    requests[1].init?.body,
+    JSON.stringify({ token: "opaque-session-token" }),
+  );
 });
 
 test("authenticated fetch retries one read but never retries a mutation", async () => {
@@ -348,8 +351,7 @@ test("application sessions are encrypted, expiring, and bound to one trusted ori
   });
   assert.equal(sealed.includes(sessionToken), false);
   assert.equal(
-    unsealApplicationSession(sealed, "https://infinitygram.co")
-      ?.sessionToken,
+    unsealApplicationSession(sealed, "https://infinitygram.co")?.sessionToken,
     sessionToken,
   );
   assert.equal(
@@ -529,10 +531,7 @@ test("no-referrer auth initializes the validated return target explicitly", () =
     "utf8",
   );
   const flowContext = fs.readFileSync(
-    path.resolve(
-      process.cwd(),
-      "src/components/auth/auth-flow-context.tsx",
-    ),
+    path.resolve(process.cwd(), "src/components/auth/auth-flow-context.tsx"),
     "utf8",
   );
   const plugin = fs.readFileSync(
@@ -541,14 +540,21 @@ test("no-referrer auth initializes the validated return target explicitly", () =
   );
 
   assert.match(nextConfig, /Referrer-Policy"\s*,\s*value:\s*"no-referrer"/);
-  assert.match(flowContext, /authPost<\{ phone: string \| null \}>\("\/infinity\/flow\/start", \{ returnTo \}\)/);
+  assert.match(flowContext, /"\/infinity\/flow\/start"/);
+  assert.match(flowContext, /\{ returnTo \}/);
+  assert.match(flowContext, /hasSessionCookie/);
   assert.match(plugin, /"\/infinity\/flow\/start"/);
+  assert.match(plugin, /"\/infinity\/otp\/start"/);
   assert.match(plugin, /returnTo:\s*resolveFlowReturnTarget\(/);
 });
 
 test("an existing central session resumes through a one-time allowlisted return grant", () => {
   const flowContext = fs.readFileSync(
     path.resolve(process.cwd(), "src/components/auth/auth-flow-context.tsx"),
+    "utf8",
+  );
+  const bootstrap = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/auth/auth-flow-bootstrap.ts"),
     "utf8",
   );
   const plugin = fs.readFileSync(
@@ -564,12 +570,15 @@ test("an existing central session resumes through a one-time allowlisted return 
   );
   assert.match(plugin, /flow\.purpose === "reset"/);
   assert.match(plugin, /clearFlowState\(ctx\)/);
-  assert.match(flowContext, /pathname !== "\/auth"/);
+  assert.match(bootstrap, /return "continue-session"/);
   assert.match(
     flowContext,
     /authPost<[\s\S]*?>\("\/infinity\/session\/continue"\)/,
   );
-  assert.match(flowContext, /window\.location\.replace\(continuation\.redirectTo\)/);
+  assert.match(
+    flowContext,
+    /window\.location\.replace\(continuation\.redirectTo\)/,
+  );
 });
 
 test("step-up login skips silent session continue so stale list-sessions cannot loop", () => {
@@ -577,8 +586,12 @@ test("step-up login skips silent session continue so stale list-sessions cannot 
     path.resolve(process.cwd(), "src/components/auth/auth-flow-context.tsx"),
     "utf8",
   );
+  const bootstrap = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/auth/auth-flow-bootstrap.ts"),
+    "utf8",
+  );
   assert.match(flowContext, /searchParams\.get\("stepUp"\) === "1"/);
-  assert.match(flowContext, /if \(stepUp\) return;/);
+  assert.match(bootstrap, /if \(stepUp \|\| sessionKnownAbsent/);
   assert.match(flowContext, /url\.searchParams\.set\("stepUp", "1"\)/);
 });
 
@@ -591,8 +604,54 @@ test("Better Auth source freezes absolute sessions and the native secure cookie 
   assert.match(source, /cookieCache:\s*\{ enabled: false \}/);
   assert.match(source, /crossSubDomainCookies:\s*\{ enabled: false \}/);
   assert.match(source, /trustedProxyHeaders:\s*false/);
+  assert.match(source, /ipAddressHeaders:\s*\["x-real-ip"\]/);
   assert.match(source, /name:\s*"infinity-auth\.session_token"/);
   assert.doesNotMatch(source, /useSecureCookies:\s*false/);
+});
+
+test("the production proxy chain preserves only the sanitized client IP for auth", () => {
+  const publicNginx = fs.readFileSync(
+    path.resolve(process.cwd(), "../../deploy/production/nginx.conf"),
+    "utf8",
+  );
+  const gatewayNginx = fs.readFileSync(
+    path.resolve(process.cwd(), "../../deploy/production/gateway.conf"),
+    "utf8",
+  );
+  const compose = fs.readFileSync(
+    path.resolve(process.cwd(), "../../deploy/production/compose.yaml"),
+    "utf8",
+  );
+
+  assert.match(
+    publicNginx,
+    /server_name auth\.infinitycolor\.co;[\s\S]{0,800}proxy_set_header X-Real-IP \$remote_addr;/,
+  );
+  assert.match(
+    gatewayNginx,
+    /server_name auth\.infinitycolor\.co;[\s\S]{0,800}proxy_set_header X-Real-IP \$http_x_real_ip;/,
+  );
+  assert.match(compose, /127\.0\.0\.1:\$\{GATEWAY_PORT\}:8080/);
+});
+
+test("OTP start and resend have explicit Better Auth IP limits", () => {
+  const plugin = fs.readFileSync(
+    path.resolve(process.cwd(), "src/server/infinity-plugin.ts"),
+    "utf8",
+  );
+  assert.match(plugin, /path === "\/infinity\/otp\/start"/);
+  assert.match(plugin, /path === "\/infinity\/otp\/request"/);
+  assert.match(plugin, /window:\s*120/);
+  assert.match(plugin, /max:\s*4/);
+});
+
+test("profile completion requires the session and sanitized flow, not pre-auth phone", () => {
+  const plugin = fs.readFileSync(
+    path.resolve(process.cwd(), "src/server/infinity-plugin.ts"),
+    "utf8",
+  );
+  assert.match(plugin, /if \(!flow \|\| !sessionState\)/);
+  assert.doesNotMatch(plugin, /if \(!flow\?\.phone \|\| !sessionState\)/);
 });
 
 test("remember-me picks the session TTL at creation without reviving sliding renewal", () => {
@@ -610,17 +669,20 @@ test("remember-me picks the session TTL at creation without reviving sliding ren
   assert.match(plugin, /const dontRememberMe = rememberMe === false;/);
   // The choice must reach both the database row and the cookie, or the two
   // would disagree about when the session ends.
-  assert.match(
-    plugin,
-    /createSession\(\s*user\.id,\s*dontRememberMe,\s*\)/,
-  );
+  assert.match(plugin, /createSession\(\s*user\.id,\s*dontRememberMe,\s*\)/);
   assert.match(
     plugin,
     /setSessionCookie\(ctx, \{ session, user \}, dontRememberMe\)/,
   );
   // Both credential endpoints must accept the flag.
-  assert.match(plugin, /otp:\s*otpSchema,\s*rememberMe:\s*z\.boolean\(\)\.optional\(\)/);
-  assert.match(plugin, /password:\s*passwordSchema,\s*\n\s*rememberMe:\s*z\.boolean\(\)\.optional\(\),/);
+  assert.match(
+    plugin,
+    /otp:\s*otpSchema,\s*rememberMe:\s*z\.boolean\(\)\.optional\(\)/,
+  );
+  assert.match(
+    plugin,
+    /password:\s*passwordSchema,\s*\n\s*rememberMe:\s*z\.boolean\(\)\.optional\(\),/,
+  );
   // Remember-me must not become a licence to extend sessions after the fact.
   assert.match(auth, /disableSessionRefresh:\s*true/);
 });
@@ -692,10 +754,11 @@ test("strapi's password reset is reachable only through the signed bridge", () =
 
   // Strapi cannot touch auth.sessions, so a browser-reachable reset there would change
   // the password and leave every session alive.
-  const resetRoute = routes.slice(routes.indexOf('path: "/auth/reset-password"'));
+  const resetRoute = routes.slice(
+    routes.indexOf('path: "/auth/reset-password"'),
+  );
   assert.match(
     resetRoute.slice(0, resetRoute.indexOf("},\n    {") + 1 || undefined),
     /api::internal-auth\.verify-bridge/,
   );
 });
-

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
-import { StorefrontGrid } from "@/components/storefront";
+import { StorefrontGrid } from "@/components/storefront/StorefrontGrid";
 import { useAdaptiveCarouselTransition } from "@/hooks/useAdaptiveCarouselTransition";
 import { cn } from "@/lib/utils";
 import ArrowLeftIcon from "./Icons/ArrowLeftIcon";
@@ -147,7 +147,10 @@ export default function OffersListHomePage({
 
           <Link
             href={getPlpHref()}
-            prefetch={getPlpHref() === "/plp" ? undefined : false}
+            /* Measured at 127 KB of full-segment RSC per PDP view, competing with the
+               hero image for bandwidth. These "view more" links sit below the rail,
+               not on the primary path; the homepage hero CTAs keep their prefetch. */
+            prefetch={false}
             className="hidden text-sm text-infinity-primary underline-offset-4 transition-colors hover:text-infinity-primary-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white md:block"
           >
             مشاهده همه
@@ -189,7 +192,10 @@ export default function OffersListHomePage({
         <div className="mt-4 flex items-center justify-center md:mt-6">
           <Link
             href={getPlpHref()}
-            prefetch={getPlpHref() === "/plp" ? undefined : false}
+            /* Measured at 127 KB of full-segment RSC per PDP view, competing with the
+               hero image for bandwidth. These "view more" links sit below the rail,
+               not on the primary path; the homepage hero CTAs keep their prefetch. */
+            prefetch={false}
             className="pressable text-foreground-primary flex items-center gap-1 rounded-full border border-infinity-primary-lighter/40 px-4 py-2 text-base underline-offset-4 transition-colors hover:bg-infinity-primary-lighter/20 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
           >
             <span>مشاهده محصولات بیشتر</span>

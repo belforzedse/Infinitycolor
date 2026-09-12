@@ -787,12 +787,16 @@ export const getGenericAttributeSelectors = (
       const definitionAttributes = getRelationAttributes(definition);
       if (
         !definition?.id ||
-        assignmentAttributes?.IsVisible === false ||
         assignmentAttributes?.IsVariation === false ||
         definitionAttributes?.LegacyProjection !== "None"
       ) {
         return null;
       }
+
+      // `IsVisible` is the WooCommerce-style "show in specifications" flag.
+      // A variation attribute still has to be rendered as a PDP selector when
+      // that flag is false; otherwise the customer cannot choose the variation
+      // and every custom axis appears to be missing from the product page.
 
       const options = relationArray(assignmentAttributes?.terms)
         .map((term) => {

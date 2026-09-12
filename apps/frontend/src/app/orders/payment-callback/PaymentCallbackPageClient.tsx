@@ -4,7 +4,7 @@ import React, { Suspense, useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OrderService } from "@/services";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 import {
   orderIdAtom,
   orderNumberAtom,
@@ -69,7 +69,11 @@ function PaymentCallbackContent() {
         });
       }
       setSubmitOrderStep(SubmitOrderStep.Success);
-      router.push("/orders/success");
+      router.push(
+        completedOrderId
+          ? `/payment/result?orderId=${encodeURIComponent(completedOrderId)}`
+          : "/orders/success",
+      );
     },
     [clearCart, router, setSubmitOrderStep],
   );

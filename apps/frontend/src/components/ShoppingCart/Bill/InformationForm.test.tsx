@@ -122,6 +122,23 @@ describe("ShoppingCartBillInformationForm", () => {
     const phoneInput = document.querySelector('input[name="phoneNumber"]');
     expect(phoneInput).toHaveAttribute("inputmode", "numeric");
   });
+
+  it("uses searchable controls for province and city without changing the saved-address picker", async () => {
+    const store = createStore();
+    store.set(currentUserAtom, { Phone: "09123456789" });
+
+    await act(async () => {
+      render(
+        <Provider store={store}>
+          <InformationFormHarness />
+        </Provider>,
+      );
+    });
+
+    expect(screen.getByRole("combobox", { name: "استان" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "شهر" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "انتخاب آدرس" })).toBeVisible();
+  });
 });
 
 describe("ShoppingCartBillInformationForm address preselection", () => {
@@ -173,4 +190,3 @@ describe("ShoppingCartBillInformationForm address preselection", () => {
     expect(screen.getByTestId("selected-address")).toHaveTextContent("none");
   });
 });
-

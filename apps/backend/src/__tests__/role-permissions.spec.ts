@@ -278,6 +278,7 @@ function createActionTree() {
           verifyPayment: action(),
           adminAdjustItems: action(),
           adminUpdateNotes: action(),
+          adminUpdateAddress: action(),
           adminTransition: action(),
           adminCancel: action(),
           adminPaymentOperation: action(),
@@ -292,6 +293,8 @@ function createActionTree() {
       controllers: {
         "admin-order-list": {
           query: action(),
+          counts: action(),
+          shippingMethods: action(),
           queryReserveGroups: action(),
           getReserveGroup: action(),
         },
@@ -718,6 +721,13 @@ describe("role permission templates", () => {
     expect(seller1["api::admin-order-list"].controllers["admin-order-list"].query.enabled).toBe(
       false,
     );
+    expect(seller1["api::admin-order-list"].controllers["admin-order-list"].counts.enabled).toBe(
+      false,
+    );
+    expect(
+      seller1["api::admin-order-list"].controllers["admin-order-list"].shippingMethods
+        .enabled,
+    ).toBe(false);
     expect(
       seller1["api::admin-order-list"].controllers["admin-order-list"].queryReserveGroups
         .enabled,
@@ -794,6 +804,8 @@ describe("role permission templates", () => {
         capabilities: ["order.read"],
         actions: [
           "api::admin-order-list.admin-order-list.query",
+          "api::admin-order-list.admin-order-list.counts",
+          "api::admin-order-list.admin-order-list.shippingMethods",
           "api::admin-order-list.admin-order-list.queryReserveGroups",
           "api::admin-order-list.admin-order-list.getReserveGroup",
         ],
@@ -805,6 +817,10 @@ describe("role permission templates", () => {
       {
         capabilities: ["order.notes.update"],
         actions: ["api::order.order.adminUpdateNotes"],
+      },
+      {
+        capabilities: ["order.address.update"],
+        actions: ["api::order.order.adminUpdateAddress"],
       },
       {
         capabilities: ["order.cancel"],
@@ -1213,6 +1229,7 @@ describe("role permission templates", () => {
     expect(order.find.enabled).toBe(false);
     expect(order.adminAdjustItems.enabled).toBe(false);
     expect(order.adminUpdateNotes.enabled).toBe(true);
+    expect(order.adminUpdateAddress.enabled).toBe(true);
     expect(order.adminTransition.enabled).toBe(true);
     expect(order.adminCancel.enabled).toBe(true);
     expect(order.create.enabled).toBe(false);
@@ -1304,6 +1321,7 @@ describe("role permission templates", () => {
     expect(enabled("api::order", "order")).toEqual([
       "adminCancel",
       "adminTransition",
+      "adminUpdateAddress",
       "adminUpdateNotes",
       "checkPaymentStatus",
       "findOne",
@@ -1317,9 +1335,11 @@ describe("role permission templates", () => {
       "verifyPayment",
     ]);
     expect(enabled("api::admin-order-list", "admin-order-list")).toEqual([
+      "counts",
       "getReserveGroup",
       "query",
       "queryReserveGroups",
+      "shippingMethods",
     ]);
     expect(enabled("api::product-review", "product-review")).toEqual([
       "find",

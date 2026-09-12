@@ -28,6 +28,8 @@ try {
 // Inject build version as environment variable for client-side access
 process.env.NEXT_PUBLIC_BUILD_VERSION = BUILD_VERSION;
 
+const DEPLOYMENT_ID = process.env.NEXT_DEPLOYMENT_ID?.trim() || "";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   cacheComponents: true,
@@ -60,6 +62,21 @@ const nextConfig = {
       expire: 300,
     },
   },
+  // Rolling deploys put old and new builds behind one gateway for minutes, and
+  // an edge in front can hold a page from build A while B is live. With this
+  // set, assets carry `?dpl=`, navigations carry `x-deployment-id`, and a
+  // mismatch makes the client do a full reload instead of a broken client-side
+  // transition. Also folds into the `use cache` key, so a release cannot serve
+  // another release's cached data.
+  //
+  // Spread rather than assigned, because the KEY BEING PRESENT is what matters:
+  // Next does `process.env.NEXT_DEPLOYMENT_ID = config.deploymentId || ""` at
+  // build time (next/dist/build/index.js), and an empty id makes some asset
+  // URLs carry a valueless `?dpl=` while others omit it. The same chunk then
+  // appears under two URLs and the browser downloads it twice — measured at 56
+  // requests / 2.2 MB against 37 / 1.7 MB on a PLP. An unset variable must
+  // leave the feature off, not half on.
+  ...(DEPLOYMENT_ID ? { deploymentId: DEPLOYMENT_ID } : {}),
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: ["@repo/api", "@repo/brand", "@repo/fonts", "@repo/social-posts", "@repo/story-rail"],
@@ -100,6 +117,18 @@ const nextConfig = {
   },
   images: {
     unoptimized: false,
+    // Resizing moves to the edge. The loader emits
+    // `https://cdn.infinitycolor.co/uploads/<file>?width=<w>` for catalogue
+    // media, so the origin serves originals off disk instead of running sharp
+    // and keeping 8,434 derivatives — and the edge caches each size once per
+    // PoP rather than the origin serving every byte.
+    //
+    // `/_next/image` stays available (the handler is gated on minimalMode and
+    // `output: export`, not on this setting), which is what the loader falls
+    // back to for local public assets and for any environment with no
+    // NEXT_PUBLIC_MEDIA_CDN_URL configured.
+    loader: "custom",
+    loaderFile: "./src/utils/arvanImageLoader.ts",
     // Allow local backend image URLs (localhost/127.0.0.1) during local development.
     dangerouslyAllowLocalIP: process.env.NODE_ENV !== "production",
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],

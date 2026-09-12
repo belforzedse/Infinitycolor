@@ -43,6 +43,12 @@ const customJestConfig = {
   moduleDirectories: ["node_modules", "<rootDir>/"],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
+    // `images.loaderFile` is wired by a webpack alias on this exact module at
+    // build time, and next/jest does not replicate it -- so without this every
+    // <Image> in the suite throws "missing loader prop" while the real build is
+    // fine. Mapping it here means the tests exercise the actual loader rather
+    // than a mock of it.
+    "^next/dist/shared/lib/image-loader$": "<rootDir>/src/utils/arvanImageLoader.ts",
   },
   testEnvironment: "jest-environment-jsdom",
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],

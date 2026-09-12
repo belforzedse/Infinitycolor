@@ -11,7 +11,7 @@ import UserContainer from "@/components/layout/UserContainer";
 import AccountQuickLinks from "@/components/User/Account/QuickLinks";
 import { likedProductsAtom, likedProductsLoadedAtom, likedProductsOwnerAtom } from "@/hooks/useProductLike";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { StorefrontAccountShell } from "@/components/storefront";
+import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 
 export default function FavoritesPage() {
   const [favorites, setFavorites] = useState<ProductLike[]>([]);

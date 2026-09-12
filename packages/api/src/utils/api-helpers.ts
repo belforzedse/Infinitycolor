@@ -72,15 +72,28 @@ export const handleApiError = (
   };
 };
 
+/**
+ * Decode base64 to a latin1 string. `Buffer` is reached through `globalThis`
+ * rather than as a bare identifier so bundlers do not inject the `buffer` npm
+ * polyfill into the client graph; `atob` covers both browsers and Node 16+.
+ */
+const decodeBase64Binary = (value: string): string => {
+  if (typeof atob === "function") return atob(value);
+  const nodeBuffer = (
+    globalThis as {
+      Buffer?: { from(input: string, encoding: string): { toString(encoding: string): string } };
+    }
+  ).Buffer;
+  if (!nodeBuffer) throw new Error("No base64 decoder available in this runtime");
+  return nodeBuffer.from(value, "base64").toString("binary");
+};
+
 export const parseJwt = (token: string): JwtPayload | null => {
   try {
     const base64Url = token.split(".")[1];
     if (!base64Url) return null;
     const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const decodedString =
-      typeof window === "undefined"
-        ? Buffer.from(base64, "base64").toString("binary")
-        : atob(base64);
+    const decodedString = decodeBase64Binary(base64);
 
     const jsonPayload = decodeURIComponent(
       decodedString

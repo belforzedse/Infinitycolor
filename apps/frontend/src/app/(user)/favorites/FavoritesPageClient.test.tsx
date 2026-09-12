@@ -31,7 +31,7 @@ jest.mock("@/components/User/Account/QuickLinks", () => ({
   default: () => <div />,
 }));
 
-jest.mock("@/components/storefront", () => ({
+jest.mock("@/components/storefront/StorefrontAccountShell", () => ({
   StorefrontAccountShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useProductCategories } from "@/hooks/useProductCategories";
 import { usePathname, useSearchParams } from "next/navigation";
 import { getCategoryPlpHref, isActiveNavHref } from "@/utils/plpRoutes";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 import { OPPSI_HEADER_ITEM } from "@/constants/categories";
 import DesktopMegaMenu from "./DesktopMegaMenu";
 import SaleBadgeIcon from "./SaleBadgeIcon";

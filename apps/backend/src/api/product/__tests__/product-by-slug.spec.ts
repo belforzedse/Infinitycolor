@@ -215,7 +215,22 @@ describe("product.findBySlug", () => {
             product_variation_color: true,
             product_variation_size: true,
             product_variation_model: true,
+            selected_attribute_terms: expect.objectContaining({
+              populate: expect.objectContaining({
+                product_attribute: true,
+              }),
+            }),
             product_stock: true,
+          }),
+        }),
+        product_attribute_assignments: expect.objectContaining({
+          populate: expect.objectContaining({
+            product_attribute: true,
+            terms: expect.objectContaining({
+              populate: expect.objectContaining({
+                product_attribute: true,
+              }),
+            }),
           }),
         }),
         product_size_helper: expect.objectContaining({

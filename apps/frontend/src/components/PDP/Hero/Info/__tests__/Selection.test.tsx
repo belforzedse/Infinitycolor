@@ -13,7 +13,17 @@ jest.mock("../Size", () => ({ sizes, selectedSize, onSizeChange }: any) =>
 jest.mock("../Color", () => ({ colors, selectedColor, onColorChange }: any) =>
   <div>{colors.map((c: any) => <button key={c.id} aria-pressed={selectedColor === c.id} onClick={() => onColorChange(c.id)}>{c.title}</button>)}</div>);
 jest.mock("../Model", () => () => null);
-jest.mock("../GenericAttributes", () => () => null);
+jest.mock("../GenericAttributes", () => {
+  function GenericAttributesMock({ selectors }: { selectors: Array<{ title: string }> }) {
+    return (
+      <div data-testid="generic-selectors">
+        {selectors.map((selector) => selector.title).join(",")}
+      </div>
+    );
+  }
+
+  return GenericAttributesMock;
+});
 
 const variation = (id: number, color: number, size: number, stock: number) => ({ id, attributes: {
   IsPublished: true, Price: id * 1000,
@@ -55,4 +65,36 @@ it("preserves explicit selection across same-product refresh and reflects change
   expect(screen.getByText("size 2")).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByTestId("cart")).toBeDisabled();
   expect(screen.getByTestId("cart")).toHaveAttribute("data-variation", "3");
+});
+
+it("renders a custom variation axis even when it is hidden from specifications", () => {
+  const withCustomAttribute = JSON.parse(JSON.stringify(productData));
+  withCustomAttribute.attributes.product_attribute_assignments = {
+    data: [
+      {
+        id: 9,
+        attributes: {
+          IsVisible: false,
+          IsVariation: true,
+          product_attribute: {
+            data: {
+              id: 31,
+              attributes: {
+                Title: "کد رنگ",
+                Type: "Text",
+                LegacyProjection: "None",
+              },
+            },
+          },
+          terms: {
+            data: [{ id: 101, attributes: { Title: "کد ۱" } }],
+          },
+        },
+      },
+    ],
+  };
+
+  render(<Info {...props} productData={withCustomAttribute} />);
+
+  expect(screen.getByTestId("generic-selectors")).toHaveTextContent("کد رنگ");
 });

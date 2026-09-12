@@ -5,13 +5,16 @@ import { useCallback, useEffect, useState } from "react";
 const toPersianDigits = (value: string) =>
   value.replace(/[0-9]/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)] ?? digit);
 
-export function useOtpCountdown(initialSeconds = 120) {
+export function useOtpCountdown(initialSeconds = 120, initiallyActive = true) {
   const [seconds, setSeconds] = useState(initialSeconds);
-  const [active, setActive] = useState(true);
-  const restart = useCallback(() => {
-    setSeconds(initialSeconds);
-    setActive(true);
-  }, [initialSeconds]);
+  const [active, setActive] = useState(initiallyActive && initialSeconds > 0);
+  const restart = useCallback(
+    (secondsOverride = initialSeconds) => {
+      setSeconds(Math.max(1, Math.min(secondsOverride, 120)));
+      setActive(true);
+    },
+    [initialSeconds],
+  );
 
   useEffect(() => {
     if (!active) return;

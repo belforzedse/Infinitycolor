@@ -1964,6 +1964,34 @@ export interface ApiOrderOrder extends Schema.CollectionType {
     AnipoPollingDeadlineAt: Attribute.DateTime;
     AnipoProviderStatus: Attribute.String;
     AnipoReadyToIssue: Attribute.Boolean;
+    AnipoRecipientRevision: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    AnipoRecipientSyncAttempts: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    AnipoRecipientSyncedAt: Attribute.DateTime;
+    AnipoRecipientSyncedRevision: Attribute.Integer &
+      Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Attribute.DefaultTo<0>;
+    AnipoRecipientSyncLastAttemptAt: Attribute.DateTime;
+    AnipoRecipientSyncLastError: Attribute.Text;
+    AnipoRecipientSyncState: Attribute.Enumeration<["Pending", "Synced", "NeedsAttention"]>;
     AnipoSubmittedAt: Attribute.DateTime;
     AppliedDiscountAmount: Attribute.Integer &
       Attribute.SetMinMax<
@@ -2646,8 +2674,7 @@ export interface ApiProductCategoryContentProductCategoryContent extends Schema.
     ImportBatchId: Attribute.String & Attribute.Private;
     ImportedAt: Attribute.DateTime & Attribute.Private;
     ImportedSourceHash: Attribute.String & Attribute.Private;
-    ImportSource: Attribute.Enumeration<["woocommerce-category-description"]> &
-      Attribute.Private;
+    ImportSource: Attribute.Enumeration<["woocommerce-category-description"]> & Attribute.Private;
     IsPublished: Attribute.Boolean & Attribute.DefaultTo<false>;
     IsRTL: Attribute.Boolean & Attribute.DefaultTo<false>;
     Paragraph: Attribute.Text;

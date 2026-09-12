@@ -8,7 +8,7 @@ import { useSearchParams } from "next/navigation";
 import { orderIdAtom, orderNumberAtom, transactionIdAtom } from "@/atoms/Order";
 import PaymentStatus from "@/components/User/Orders/PaymentStatus";
 import { trackAnalyticsEvent } from "@/lib/analytics";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 
 export default function OrderSuccess() {
   const [orderId] = useAtom(orderIdAtom);

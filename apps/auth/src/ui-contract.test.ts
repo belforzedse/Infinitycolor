@@ -40,6 +40,9 @@ test("phone collection exposes browser autofill and an associated label", () => 
     forms,
     /id="login-phone"[\s\S]*name="username"[\s\S]*autoComplete="username"/,
   );
+  assert.match(forms, /"\/infinity\/otp\/start"/);
+  assert.doesNotMatch(forms, /"\/infinity\/phone-status"/);
+  assert.match(forms, /"در حال ارسال\.\.\."\s*:\s*"دریافت کد تأیید"/);
 });
 
 test("OTP destinations isolate phone numbers from surrounding RTL copy", () => {
@@ -73,8 +76,20 @@ test("OTP onboarding routing uses durable profile completion instead of pre-auth
     path.join(appRoot, "src/server/flow-state.ts"),
     "utf8",
   );
+  const forms = fs.readFileSync(
+    path.join(appRoot, "src/components/auth/forms.tsx"),
+    "utf8",
+  );
+  const registrationForm = forms.slice(
+    forms.indexOf("export function RegistrationInfoForm"),
+  );
 
   assert.match(plugin, /if \(verified\.needsProfileCompletion === true\)/);
   assert.doesNotMatch(plugin, /flow\.hasUser/);
   assert.doesNotMatch(flowState, /hasUser\??:/);
+  assert.match(registrationForm, /authGet<[\s\S]*?>\("\/infinity\/profile"\)/);
+  assert.doesNotMatch(
+    registrationForm,
+    /if \(flowReady && !phone\) go\("\/auth"\)/,
+  );
 });

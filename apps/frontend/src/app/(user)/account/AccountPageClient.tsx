@@ -8,7 +8,7 @@ import useUserAccountOverview from "@/hooks/useUserAccountOverview";
 import OverviewCards from "@/components/User/Account/OverviewCards";
 import RecentOrders from "@/components/User/Account/RecentOrders";
 import AccountQuickLinks from "@/components/User/Account/QuickLinks";
-import { StorefrontAccountShell } from "@/components/storefront";
+import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 import { useEffect, useState } from "react";
 
 export default function AccountPage() {

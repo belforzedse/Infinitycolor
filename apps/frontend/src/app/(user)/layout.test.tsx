@@ -47,7 +47,7 @@ jest.mock("@/hooks/useUser", () => ({
   __esModule: true,
   default: () => mockUseUser(),
 }));
-jest.mock("@/components/storefront", () => ({
+jest.mock("@/components/storefront/StorefrontContainer", () => ({
   StorefrontContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 jest.mock(

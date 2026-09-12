@@ -10,7 +10,7 @@ import AccountQuickLinks from "@/components/User/Account/QuickLinks";
 import { AlertCircleIcon, CheckIcon, InfoIcon } from "lucide-react";
 import WalletService from "@/services/wallet";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
-import { StorefrontAccountShell } from "@/components/storefront";
+import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 
 const WALLET_CHARGE_DISABLED = true;
 

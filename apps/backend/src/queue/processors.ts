@@ -42,7 +42,31 @@ export async function processMaintenanceJob(
       const { runAnipoBarcodeReconciliation } = await import(
         "../api/order/services/anipoBarcodeWorkflow"
       );
-      return runAnipoBarcodeReconciliation(strapi);
+      const barcode = await runAnipoBarcodeReconciliation(strapi);
+      const { runAnipoRecipientSyncReconciliation } = await import(
+        "../api/order/services/anipoRecipientSync"
+      );
+      const recipient = await runAnipoRecipientSyncReconciliation(strapi);
+      return { barcode, recipient };
+    }
+    case COMMERCE_MAINTENANCE_JOBS.anipoRecipientSyncOne: {
+      const { orderId, expectedRevision } = job.data as {
+        orderId: number;
+        expectedRevision: number;
+      };
+      const { processAnipoRecipientSync } = await import(
+        "../api/order/services/anipoRecipientSync"
+      );
+      return processAnipoRecipientSync(strapi, orderId, expectedRevision);
+    }
+    case COMMERCE_MAINTENANCE_JOBS.edgeCachePurge: {
+      const { kind, paths, reason } = job.data as {
+        kind: string;
+        paths: string[];
+        reason?: string;
+      };
+      const { invalidatePaths } = await import("../utils/edgeCache");
+      return invalidatePaths(paths, { logPrefix: `edge-cache:${kind}${reason ? `:${reason}` : ""}` });
     }
     case ANALYTICS_MAINTENANCE_JOBS.viewCounterFlush: {
       const viewService = strapi.service("api::product-view.product-view") as {

@@ -5,6 +5,7 @@ describe("order operational route authorization", () => {
     ["/orders/:id/anipo-barcode/check", "order.shipping.manage"],
     ["/orders/:id/admin/adjust-items", "order.items.adjust"],
     ["/orders/:id/admin/notes", "order.notes.update"],
+    ["/orders/:id/admin/address", "order.address.update"],
     ["/orders/:id/admin/transition", "order.status.update"],
     ["/orders/:id/admin/cancel", "order.cancel"],
     ["/orders/:id/admin/void-barcode", "order.shipping.manage"],

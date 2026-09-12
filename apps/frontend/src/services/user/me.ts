@@ -6,7 +6,6 @@ import {
 import { handleAuthErrors } from "@/utils/auth";
 import type { ApiError } from "@/types/api";
 import { apiClient } from "@/lib/api-client";
-import { User } from '../../app/(super-admin)/super-admin/users/edit/[id]/page';
 
 export interface MeResponse {
   Bio: string | null;

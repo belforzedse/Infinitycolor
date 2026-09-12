@@ -20,24 +20,25 @@ import {
   describeOrderTransitionError,
   orderTransitionBlockReason,
 } from "@/utils/orderTransition";
-import { listAdminOrders } from "@/services/super-admin/orders/list";
+import {
+  listAdminOrders,
+  listAdminShippingMethods,
+  type AdminOrderTab,
+  type AdminShippingMethodOption,
+} from "@/services/super-admin/orders/list";
 import type { AdvancedFilterItem } from "@/components/SuperAdmin/Table/advancedFilters";
 import type { BulkActionOption } from "@/components/SuperAdmin/Table/bulkActions";
 import { useCan } from "@/hooks/useCan";
 import { useLegacyFilterQueryCleanup } from "@/hooks/useLegacyFilterQueryCleanup";
+import ShippingMethodFilters from "./ShippingMethodFilters";
+import { useOrderStatusCounts } from "@/hooks/useOrderStatusCounts";
+import { faNum } from "@/utils/faNum";
+import Link from "next/link";
 
 // Server-side category tabs. Buckets map to the real backend Status enum
 // (Paying/Started/Shipment/Done/Returned/Cancelled); «سفارش‌های دستی» filters by
 // the Manual order Type, so manual orders still appear in their status bucket too.
-type OrderTab =
-  | "all"
-  | "paying"
-  | "inprogress"
-  | "completed"
-  | "cancelled"
-  | "manual";
-
-const ORDER_TABS: { key: OrderTab; label: string }[] = [
+const ORDER_TABS: { key: AdminOrderTab; label: string }[] = [
   { key: "all", label: "همه" },
   { key: "paying", label: "در انتظار پرداخت" },
   { key: "inprogress", label: "در حال انجام" },
@@ -65,15 +66,41 @@ export default function OrdersPage() {
   const canCancelOrders = useCan("order.cancel");
   const canPrintOrders = useCan("order.read");
   const [, setRefresh] = useAtom(refreshTable);
-  const [activeTab, setActiveTab] = useState<OrderTab>("all");
+  const [activeTab, setActiveTab] = useState<AdminOrderTab>("all");
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterItem[]>(
     [],
   );
+  const [shippingMethods, setShippingMethods] = useState<
+    AdminShippingMethodOption[]
+  >([]);
+  const [selectedShippingMethodCodes, setSelectedShippingMethodCodes] =
+    useState<string[]>([]);
+  const [shippingMethodsLoading, setShippingMethodsLoading] = useState(true);
+  const [shippingMethodsFailed, setShippingMethodsFailed] = useState(false);
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
   useLegacyFilterQueryCleanup();
 
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void listAdminShippingMethods(controller.signal)
+      .then((methods) => {
+        setShippingMethods(methods);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        console.error("Loading shipping methods for order filters failed:", error);
+        setShippingMethodsFailed(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setShippingMethodsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, []);
+
   const handleTabChange = useCallback(
-    (tabKey: OrderTab) => {
+    (tabKey: AdminOrderTab) => {
       setActiveTab(tabKey);
       // Reset to the first page so a filtered result set never lands on an empty page.
       void setPage("1");
@@ -86,6 +113,17 @@ export default function OrdersPage() {
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const {
+    counts: statusCounts,
+    activeReserveGroups,
+    loading: countsLoading,
+    error: countsError,
+    refresh: refreshOrderCounts,
+  } = useOrderStatusCounts({
+    filters: advancedFilters,
+    search: debouncedSearchQuery,
+    shippingMethodCodes: selectedShippingMethodCodes,
+  });
 
   // Debounce search input to avoid excessive API calls
   const debouncedSearch = useDebouncedCallback((query: string) => {
@@ -164,14 +202,24 @@ export default function OrdersPage() {
         }
 
         try {
-          await Promise.all(
+          const results = await Promise.allSettled(
             eligible.map((row) => cancelOrder(Number(row.id))),
           );
-          toast.success(`${eligible.length} سفارش لغو شد.`);
+          const succeeded = results.filter(
+            (result) => result.status === "fulfilled",
+          ).length;
+          const failed = results.length - succeeded;
+          if (succeeded > 0) {
+            toast.success(`${succeeded} سفارش لغو شد.`);
+            setRefresh(true);
+            refreshOrderCounts();
+          }
           if (alreadyCancelled.length > 0) {
             toast(`${alreadyCancelled.length} سفارش از قبل لغو شده بود.`);
           }
-          setRefresh(true);
+          if (failed > 0) {
+            toast.error(`${failed} سفارش لغو نشد. دوباره تلاش کنید.`);
+          }
         } catch (error) {
           console.error("Bulk order cancel error:", error);
           toast.error("لغو سفارش‌ها انجام نشد. دوباره تلاش کنید");
@@ -262,10 +310,19 @@ export default function OrdersPage() {
             `${failures.length} سفارش تغییر نکرد. ${messages.join("؛ ")}`,
           );
         }
-        if (succeeded > 0) setRefresh(true);
+        if (succeeded > 0) {
+          setRefresh(true);
+          refreshOrderCounts();
+        }
       }
     },
-    [canCancelOrders, canChangeOrderStatus, canPrintOrders, setRefresh],
+    [
+      canCancelOrders,
+      canChangeOrderStatus,
+      canPrintOrders,
+      refreshOrderCounts,
+      setRefresh,
+    ],
   );
 
   const loadOrders = useCallback(
@@ -288,8 +345,9 @@ export default function OrdersPage() {
         tab: activeTab,
         sort,
         search: debouncedSearchQuery,
+        shippingMethodCodes: selectedShippingMethodCodes,
       }),
-    [activeTab, debouncedSearchQuery, sort],
+    [activeTab, debouncedSearchQuery, selectedShippingMethodCodes, sort],
   );
 
   const handleFiltersChange = useCallback(
@@ -341,13 +399,41 @@ export default function OrdersPage() {
     >
       {/* Shared tab pattern: scrolls horizontally on phones instead of wrapping
           to three rows, and every tab clears a 44px touch target. */}
-      <SubNav
-        className="mb-3"
-        ariaLabel="وضعیت سفارش‌ها"
-        items={ORDER_TABS.map((tab) => ({ id: tab.key, label: tab.label }))}
-        activeId={activeTab}
-        onSelect={(id) => handleTabChange(id as OrderTab)}
-      />
+      <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-end">
+        <SubNav
+          className="min-w-0 flex-1"
+          ariaLabel="وضعیت سفارش‌ها"
+          items={ORDER_TABS.map((tab) => ({
+            id: tab.key,
+            label: tab.label,
+            badge: countsLoading
+              ? "…"
+              : statusCounts
+                ? faNum(statusCounts[tab.key])
+                : "—",
+          }))}
+          activeId={activeTab}
+          onSelect={(id) => handleTabChange(id as AdminOrderTab)}
+        />
+        <Link
+          href="/orders/reserve"
+          className="flex min-h-11 shrink-0 items-center justify-between gap-3 rounded-xl border border-infinity-primary-lighter/40 bg-white px-3 text-sm font-semibold text-infinity-primary transition hover:bg-infinity-primary-lighter/20 xl:mb-px"
+        >
+          <span>رزروهای فعال</span>
+          <span className="rounded-full bg-infinity-primary/10 px-2 py-0.5 text-xs">
+            {countsLoading
+              ? "…"
+              : activeReserveGroups === undefined
+                ? "—"
+                : faNum(activeReserveGroups)}
+          </span>
+        </Link>
+      </div>
+      {countsError && (
+        <p className="mb-3 text-xs text-amber-700" role="status">
+          {countsError}
+        </p>
+      )}
       <div className="mb-3 flex flex-col gap-3 rounded-2xl bg-white/70 p-3 md:flex-row md:flex-wrap md:items-center md:bg-transparent md:p-0">
         <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
           <label className="text-sm text-neutral-600">مرتب‌سازی:</label>
@@ -401,6 +487,24 @@ export default function OrdersPage() {
           )}
         </div>
       </div>
+      <ShippingMethodFilters
+        methods={shippingMethods}
+        selectedCodes={selectedShippingMethodCodes}
+        loading={shippingMethodsLoading}
+        failed={shippingMethodsFailed}
+        onToggle={(code) => {
+          setSelectedShippingMethodCodes((current) =>
+            current.includes(code)
+              ? current.filter((item) => item !== code)
+              : [...current, code],
+          );
+          void setPage("1");
+        }}
+        onClear={() => {
+          setSelectedShippingMethodCodes([]);
+          void setPage("1");
+        }}
+      />
       <SuperAdminTable
         columns={columns}
         enableSelection={bulkOptions.length > 0}
@@ -412,12 +516,18 @@ export default function OrdersPage() {
           tab: activeTab,
           sort,
           search: debouncedSearchQuery,
+          shippingMethodCodes: selectedShippingMethodCodes,
         })}
         refreshOnVisibility={false}
-        isFiltered={Boolean(debouncedSearchQuery) || advancedFilters.length > 0}
+        isFiltered={
+          Boolean(debouncedSearchQuery) ||
+          advancedFilters.length > 0 ||
+          selectedShippingMethodCodes.length > 0
+        }
         onClearFilters={() => {
           setSearchQuery("");
           setDebouncedSearchQuery("");
+          setSelectedShippingMethodCodes([]);
           handleFiltersChange([]);
         }}
         // `selectionProps` must be threaded through: without it the mobile rows

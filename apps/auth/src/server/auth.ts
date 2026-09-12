@@ -81,6 +81,9 @@ export const auth = betterAuth({
     disableOriginCheck: false,
     crossSubDomainCookies: { enabled: false },
     trustedProxyHeaders: false,
+    ipAddress: {
+      ipAddressHeaders: ["x-real-ip"],
+    },
     cookiePrefix: "infinity-auth",
     defaultCookieAttributes: {
       secure: env.nodeEnv === "production",

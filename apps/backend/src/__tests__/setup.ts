@@ -34,6 +34,7 @@ process.env.IP_PANEL_SENDER = '+983000505';
 
 process.env.JWT_SECRET = 'test-jwt-secret-key-for-testing';
 process.env.REDIS_URL = 'redis://localhost:6379';
+process.env.APP_KEYS = 'test-app-key-for-otp-cooldown';
 
 // Mock strapi global with any type to allow jest mock methods
 // This overrides the strapi global from @strapi/types
@@ -84,7 +85,9 @@ jest.mock('../index', () => ({
     ping: jest.fn().mockResolvedValue('PONG'),
     get: jest.fn(),
     set: jest.fn(),
+    ttl: jest.fn(),
     del: jest.fn(),
+    eval: jest.fn(),
     exists: jest.fn(),
     incr: jest.fn(),
     expire: jest.fn(),

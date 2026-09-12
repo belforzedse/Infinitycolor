@@ -134,7 +134,8 @@ const CANCELLED_KEYS = [
 // granular ORDER_STATUS_MAP so customers can tell paid, shipped, and delivered
 // orders apart.
 export const getOrderStatusMeta = (status?: string | null): StatusMeta => {
-  return getMeta(ORDER_STATUS_MAP, status);
+  if (!status) return { label: "نامشخص", tone: "info" };
+  return ORDER_STATUS_MAP[normalizeKey(status)] ?? { label: "نامشخص", tone: "info" };
 };
 
 export const translateOrderStatus = (status?: string | null): string =>

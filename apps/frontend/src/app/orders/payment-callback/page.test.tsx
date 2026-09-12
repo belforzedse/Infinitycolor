@@ -78,7 +78,7 @@ describe("PaymentCallback page", () => {
     });
 
     await waitFor(() => {
-      expect(mockPush).toHaveBeenCalledWith("/orders/success");
+      expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=1");
     });
 
     expect(paymentStatusMock).toHaveBeenCalledWith(1);
@@ -114,7 +114,7 @@ describe("PaymentCallback page", () => {
       expect(paymentStatusMock).toHaveBeenCalledWith(2);
     });
     await waitFor(() => {
-      expect(mockPush).toHaveBeenCalledWith("/orders/success");
+      expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=2");
     });
 
     expect(mockClearCart).toHaveBeenCalled();

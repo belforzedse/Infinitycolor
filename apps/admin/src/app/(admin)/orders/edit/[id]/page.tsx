@@ -5,6 +5,9 @@ import Footer from "@/components/SuperAdmin/Order/SummaryFooter";
 import GatewayLogs from "@/components/SuperAdmin/Order/GatewayLogs";
 import AdjustItemsPanel from "@/components/SuperAdmin/Order/AdjustItemsPanel";
 import OrderStatusActions from "@/components/SuperAdmin/Order/OrderStatusActions";
+import OrderAddressEditor, {
+  type AddressUpdateResponse,
+} from "@/components/SuperAdmin/Order/OrderAddressEditor";
 import { config } from "./config";
 import Sidebar from "@/components/SuperAdmin/Order/Sidebar";
 import { useState, useEffect, useRef } from "react";
@@ -59,12 +62,22 @@ type OrderResponse = {
     AnipoProviderStatus?: string;
     AnipoLastMessage?: string;
     AnipoLastError?: string;
+    AnipoRecipientRevision?: number;
+    AnipoRecipientSyncedRevision?: number;
+    AnipoRecipientSyncState?: "Pending" | "Synced" | "NeedsAttention";
+    AnipoRecipientSyncAttempts?: number;
+    AnipoRecipientSyncLastAttemptAt?: string;
+    AnipoRecipientSyncLastError?: string;
+    AnipoRecipientSyncedAt?: string;
+    hasSharedReserveAddress?: boolean;
     delivery_address?: {
       data: {
         id: string;
         attributes: {
           PostalCode?: string;
           FullAddress?: string;
+          FullName?: string;
+          Phone?: string;
           shipping_city?: {
             data: {
               id: string;
@@ -170,12 +183,14 @@ export default function EditOrderPage() {
   const canChangeStatus = useCan("order.status.update");
   const canCancel = useCan("order.cancel");
   const canEditNotes = useCan("order.notes.update");
+  const canEditAddress = useCan("order.address.update");
   const canAdjustItems = useCan("order.items.adjust");
   const canReadFinancials = useCan("order.financial.read");
   const canReadAudit = useCan("order.audit.read");
   const canCreateOrder = useCan("order.manual.create");
   const canManageUsers = useCan("system.users.manage");
   const [data, setData] = useState<SuperAdminOrderDetail>();
+  const [addressEditorOpen, setAddressEditorOpen] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -322,6 +337,13 @@ export default function EditOrderPage() {
         const transactionId = contract?.external_id || (normalizedOrder as any)?.external_id;
 
         const userName = (userInfo?.FirstName || "") + " " + (userInfo?.LastName || "");
+        const recipientName = String(addr?.FullName || userName).trim();
+        const recipientPhone =
+          addr?.Phone ||
+          user?.Phone ||
+          (user as any)?.phone ||
+          (normalizedOrder as any)?.phone ||
+          (normalizedOrder as any)?.Phone;
 
         setError(null);
         setData({
@@ -342,6 +364,14 @@ export default function EditOrderPage() {
             (normalizedOrder as any)?.phone ??
             (normalizedOrder as any)?.Phone,
           address: fullAddress || addr?.Description || undefined,
+          addressLine: addr?.FullAddress || "",
+          deliveryAddressId: Number(addr?.id || 0) || undefined,
+          shippingCityId: Number(city?.id || 0) || undefined,
+          shippingCityTitle: city?.Title,
+          shippingProvinceId: Number(province?.id || 0) || undefined,
+          shippingProvinceTitle: province?.Title,
+          recipientName,
+          recipientPhone,
           postalCode: addr?.PostalCode,
           paymentGateway,
           transactionId,
@@ -372,8 +402,16 @@ export default function EditOrderPage() {
           anipoProviderStatus: normalizedOrder?.AnipoProviderStatus,
           anipoLastMessage: normalizedOrder?.AnipoLastMessage,
           anipoLastError: normalizedOrder?.AnipoLastError,
+          anipoRecipientRevision: normalizedOrder?.AnipoRecipientRevision,
+          anipoRecipientSyncedRevision: normalizedOrder?.AnipoRecipientSyncedRevision,
+          anipoRecipientSyncState: normalizedOrder?.AnipoRecipientSyncState,
+          anipoRecipientSyncAttempts: normalizedOrder?.AnipoRecipientSyncAttempts,
+          anipoRecipientSyncLastAttemptAt: normalizedOrder?.AnipoRecipientSyncLastAttemptAt,
+          anipoRecipientSyncLastError: normalizedOrder?.AnipoRecipientSyncLastError,
+          anipoRecipientSyncedAt: normalizedOrder?.AnipoRecipientSyncedAt,
           isReserveOrder: (normalizedOrder as any)?.isReserveOrder,
           reserveGroupId: (normalizedOrder as any)?.reserveGroupId,
+          hasSharedReserveAddress: Boolean((normalizedOrder as any)?.hasSharedReserveAddress),
           reserveState: (normalizedOrder as any)?.reserveState,
           reserveClosureReason: (normalizedOrder as any)?.reserveClosureReason,
           reserveExpiresAt: (normalizedOrder as any)?.reserveExpiresAt,
@@ -414,18 +452,19 @@ export default function EditOrderPage() {
     };
   }, []);
 
-  // Note: Automatic polling has been disabled on the order edit page to prevent
-  // conflicts when admins are making changes. The order data will update:
-  // - When the admin manually refreshes the page
-  // - After saving changes (onSuccess callback reloads data)
-  // - After barcode operations
+  // Keep ordinary form polling disabled, but refresh the read-only carrier state
+  // while a recipient correction is pending. Pause while the editor is open so
+  // a refresh can never replace values the operator is typing.
   useEffect(() => {
-    // Polling disabled - prevents interrupting admin edits
-    // Manual refresh or save operations will update the data
+    if (data?.anipoRecipientSyncState !== "Pending" || addressEditorOpen) return;
+    pollingIntervalRef.current = setInterval(() => {
+      if (isPageVisibleRef.current) void load({ silent: true });
+    }, 8_000);
     return () => {
-      // Cleanup placeholder
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
     };
-  }, [id]);
+  }, [id, data?.anipoRecipientSyncState, addressEditorOpen]);
 
   const performOrderUpdate = async (formData: SuperAdminOrderDetail) => {
     try {
@@ -472,6 +511,19 @@ export default function EditOrderPage() {
     setPendingStatusChange(null);
   };
 
+  const handleAddressSaved = async (result: AddressUpdateResponse) => {
+    if (result.noChange) {
+      toast("تغییری ثبت نشد");
+    } else if (result.carrierSync.status === "pending") {
+      toast.success("نشانی ذخیره شد؛ همگام‌سازی آنیپو در حال انجام است");
+    } else if (result.carrierSync.status === "needs_attention") {
+      toast.error("نشانی ذخیره شد؛ همگام‌سازی آنیپو نیاز به بررسی دارد");
+    } else {
+      toast.success("اطلاعات گیرنده ذخیره شد");
+    }
+    await load({ silent: true });
+  };
+
   if (loading) {
     return <div>Loading...</div>;
   }
@@ -509,6 +561,20 @@ export default function EditOrderPage() {
             if (!("name" in field)) return field;
             if (field.name === "userName" && !canManageUsers) {
               return { ...field, labelAction: undefined };
+            }
+            if (field.name === "address" && canEditAddress) {
+              return {
+                ...field,
+                labelAction: () => (
+                  <button
+                    type="button"
+                    className="text-sm font-medium text-actions-link"
+                    onClick={() => setAddressEditorOpen(true)}
+                  >
+                    ویرایش اطلاعات گیرنده
+                  </button>
+                ),
+              };
             }
             if (["description", "note"].includes(String(field.name)) && !canEditNotes) {
               return { ...field, readOnly: true };
@@ -577,6 +643,23 @@ export default function EditOrderPage() {
         />
       )}
 
+      {data?.anipoRecipientSyncState === "Pending" ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          اطلاعات گیرنده در آنیپو در حال همگام‌سازی است.
+        </div>
+      ) : null}
+      {data?.anipoRecipientSyncState === "NeedsAttention" ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          اطلاعات گیرنده ذخیره شده، اما همگام‌سازی آنیپو هنوز انجام نشده است و دوباره تلاش می‌شود.
+        </div>
+      ) : null}
+      {data?.anipoRecipientSyncState === "Synced" &&
+      Number(data.anipoRecipientRevision || 0) > 0 ? (
+        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          اطلاعات گیرنده با آنیپو همگام است.
+        </div>
+      ) : null}
+
       {/* Purchased items: the point of the page, previously rendered last. */}
       <Footer order={data} onReload={refreshAfterOrderAction} />
 
@@ -589,6 +672,15 @@ export default function EditOrderPage() {
         onConfirm={confirmStatusChange}
         onCancel={cancelStatusChange}
       />
+
+      {data ? (
+        <OrderAddressEditor
+          isOpen={addressEditorOpen}
+          order={data}
+          onClose={() => setAddressEditorOpen(false)}
+          onSaved={handleAddressSaved}
+        />
+      ) : null}
 
       <UpsertPageContentWrapper<SuperAdminOrderDetail>
         config={pageConfig}

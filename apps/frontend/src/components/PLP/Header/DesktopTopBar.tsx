@@ -1,7 +1,7 @@
 import { StorefrontLogo } from "@repo/brand";
 import DesktopHeaderActions from "@/components/PLP/Header/DesktopActions";
 import PLPDesktopSearch from "@/components/Search/PLPDesktopSearch";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 
 /**
  * Desktop storefront header row — Figma `header` / `desktop-model2` (10151:23342).

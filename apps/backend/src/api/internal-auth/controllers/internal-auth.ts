@@ -29,8 +29,11 @@ function validatePhoneOrRespond(ctx, phone: unknown): phone is string {
   return false;
 }
 
-function handleCredentialError(ctx, error: unknown): void {
+export function handleCredentialError(ctx, error: unknown): void {
   if (error instanceof CredentialFlowError) {
+    if (error.retryAfterSeconds) {
+      ctx.set("Retry-After", String(error.retryAfterSeconds));
+    }
     ctx.status = error.status;
     ctx.body = { message: error.message, error: error.code };
     return;

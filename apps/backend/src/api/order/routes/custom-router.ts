@@ -135,6 +135,15 @@ export default {
       },
     },
     {
+      method: "PUT",
+      path: "/orders/:id/admin/address",
+      handler: "order.adminUpdateAddress",
+      config: {
+        auth: { scope: [] },
+        policies: capabilityPolicy("order.address.update"),
+      },
+    },
+    {
       method: "POST",
       path: "/orders/:id/admin/transition",
       handler: "order.adminTransition",

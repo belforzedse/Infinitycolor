@@ -190,6 +190,7 @@ const PLPBottomNavigation = () => {
                   home instead of infinitygram. */}
               <Link
                 href="/"
+                prefetch={false}
                 aria-label="خانه اینفینیتی"
                 className="flex size-16 shrink-0 items-center justify-center justify-self-center rounded-full bg-infinity-primary shadow-[0_0_5.8px_rgba(0,0,0,0.09)]"
               >

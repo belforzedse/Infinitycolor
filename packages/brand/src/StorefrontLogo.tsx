@@ -5,6 +5,12 @@ export type StorefrontLogoProps = {
   /** Defaults to `/` (store home). */
   href?: string;
   /**
+   * Defaults to `false`. The logo is a fallback way back to the store rather
+   * than a likely next click, and prefetching it pulled the whole home page
+   * segment on every product and listing view.
+   */
+  prefetch?: boolean;
+  /**
    * Fixed display size in px for both dimensions. When omitted, uses storefront
    * defaults (responsive, up to 210×72).
    */
@@ -18,6 +24,7 @@ export type StorefrontLogoProps = {
  */
 export function StorefrontLogo({
   href = "/",
+  prefetch = false,
   width: widthProp,
   height: heightProp,
 }: StorefrontLogoProps) {
@@ -31,7 +38,11 @@ export function StorefrontLogo({
   const intrinsicH = fixed ? heightProp : 72;
 
   return (
-    <Link href={href} style={{ display: "inline-block", lineHeight: 0 }}>
+    <Link
+      href={href}
+      prefetch={prefetch}
+      style={{ display: "inline-block", lineHeight: 0 }}
+    >
       <Image
         src="/images/full-logo.png"
         alt="Logo"

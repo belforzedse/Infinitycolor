@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { OrderService } from "@/services";
 import PaymentOrderInfo from "@/components/User/Orders/Payment/PaymentOrderInfo";
 import PaymentActions from "@/components/User/Orders/Payment/PaymentActions";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 
 function PaymentIssueContent(): React.ReactElement {
   const router = useRouter();

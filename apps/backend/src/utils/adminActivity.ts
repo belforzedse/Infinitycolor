@@ -136,6 +136,59 @@ export async function logAdminOrderFieldUpdate(
 }
 
 /**
+ * Audit an order-recipient correction without persisting recipient PII. The
+ * changed field names and snapshot ids are sufficient to explain the action;
+ * raw names, phones, postal codes, and addresses must never reach the audit log.
+ */
+export async function logAdminOrderAddressUpdate(
+  strapi: Strapi,
+  orderId: number,
+  changedFields: string[],
+  previousAddressId: number | null,
+  nextAddressId: number,
+  adminId: number,
+  metadata: { reserveGroupId?: number | null; affectedOrderIds: number[] },
+  ip?: string | null,
+  userAgent?: string | null,
+  adminRole?: string,
+  trx?: unknown,
+) {
+  const labels: Record<string, string> = {
+    shippingCityId: "استان و شهر",
+    fullAddress: "آدرس ارسال",
+    postalCode: "کدپستی",
+    recipientName: "نام گیرنده",
+    recipientPhone: "شماره تماس گیرنده",
+  };
+  const safeFields = changedFields.filter((field) => labels[field]);
+  return recordAdminAudit(strapi, {
+    resourceType: "Order",
+    resourceId: orderId,
+    action: "Update",
+    title: "اطلاعات گیرنده ویرایش شد",
+    message: `اطلاعات گیرنده سفارش #${orderId} ویرایش شد. تغییرات: ${safeFields
+      .map((field) => labels[field])
+      .join("، ")}`,
+    messageEn: `Recipient information for order #${orderId} was edited. Fields: ${safeFields.join(", ")}`,
+    severity: "info",
+    changes: {
+      deliveryAddressSnapshot: { from: previousAddressId, to: nextAddressId },
+      fields: { from: null, to: safeFields },
+    },
+    description: `Order #${orderId} recipient snapshot changed`,
+    metadata: {
+      fields: safeFields,
+      reserveGroupId: metadata.reserveGroupId ?? null,
+      affectedOrderIds: metadata.affectedOrderIds,
+    },
+    actor: { id: adminId, role: adminRole },
+    ip,
+    userAgent,
+    trx,
+  });
+}
+
+/**
  * Log order cancellation + refund action.
  */
 export async function logAdminOrderCancel(

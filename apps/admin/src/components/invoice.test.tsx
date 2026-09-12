@@ -43,3 +43,39 @@ describe("reserve order marker", () => {
     expect(screen.queryByTestId("invoice-reserve-flag")).not.toBeInTheDocument();
   });
 });
+
+describe("order-specific recipient", () => {
+  it("prefers recipient name and phone from the order address snapshot", () => {
+    const order: InvoiceOrder = {
+      id: "123",
+      attributes: {
+        order_items: { data: [] },
+        user: {
+          data: {
+            attributes: {
+              Phone: "+989111111111",
+              user_info: {
+                data: { attributes: { FirstName: "نام", LastName: "مشتری" } },
+              },
+            },
+          },
+        },
+        delivery_address: {
+          data: {
+            attributes: {
+              FullName: "گیرنده سفارش",
+              Phone: "+989122222222",
+              FullAddress: "نشانی سفارش",
+            },
+          },
+        },
+      },
+    };
+
+    render(<Invoice order={order} />);
+    expect(screen.getByText("گیرنده سفارش")).toBeInTheDocument();
+    expect(screen.getByText("+989122222222")).toBeInTheDocument();
+    expect(screen.queryByText("نام مشتری")).not.toBeInTheDocument();
+    expect(screen.queryByText("+989111111111")).not.toBeInTheDocument();
+  });
+});

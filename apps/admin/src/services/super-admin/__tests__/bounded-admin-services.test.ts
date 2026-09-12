@@ -1,5 +1,5 @@
 jest.mock("@/services", () => ({
-  apiClient: { post: jest.fn() },
+  apiClient: { get: jest.fn(), post: jest.fn() },
 }));
 
 import { apiClient } from "@/services";
@@ -7,16 +7,27 @@ import {
   ADMIN_DASHBOARD_SUMMARY_ENDPOINT,
   getAdminDashboardSummary,
 } from "../dashboard/summary";
-import { ADMIN_ORDERS_LIST_ENDPOINT, listAdminOrders } from "../orders/list";
+import {
+  ADMIN_ORDERS_COUNTS_ENDPOINT,
+  ADMIN_ORDERS_LIST_ENDPOINT,
+  ADMIN_ORDERS_SHIPPING_METHODS_ENDPOINT,
+  getAdminOrderCounts,
+  listAdminOrders,
+  listAdminShippingMethods,
+} from "../orders/list";
 import {
   ADMIN_PRODUCTS_LIST_ENDPOINT,
   listAdminProducts,
 } from "../product/list";
 
 const mockPost = apiClient.post as jest.Mock;
+const mockGet = apiClient.get as jest.Mock;
 
 describe("bounded admin read services", () => {
-  beforeEach(() => mockPost.mockReset());
+  beforeEach(() => {
+    mockGet.mockReset();
+    mockPost.mockReset();
+  });
 
   it("loads the dashboard through one private POST contract", async () => {
     const summary = {
@@ -26,6 +37,14 @@ describe("bounded admin read services", () => {
         activeProductsTotal: 1,
         customerAccountsTotal: 1,
       },
+      todayOrderCounts: {
+        all: 1,
+        paying: 0,
+        inprogress: 0,
+        completed: 1,
+        cancelled: 0,
+      },
+      activeReserveGroups: 0,
       latestOrders: [],
       latestOrdersAmount: 0,
     };
@@ -38,6 +57,40 @@ describe("bounded admin read services", () => {
     expect(mockPost).toHaveBeenCalledWith(
       ADMIN_DASHBOARD_SUMMARY_ENDPOINT,
       {},
+      { signal: controller.signal, retries: 0, timeout: 20_000 },
+    );
+  });
+
+  it("loads filter-aware order counts through a private POST body", async () => {
+    const counts = {
+      counts: {
+        all: 8,
+        paying: 1,
+        inprogress: 3,
+        completed: 3,
+        cancelled: 1,
+        manual: 2,
+      },
+      activeReserveGroups: 2,
+    };
+    mockPost.mockResolvedValue({ data: counts });
+    const controller = new AbortController();
+
+    await expect(
+      getAdminOrderCounts({
+        search: "synthetic-private-id",
+        shippingMethodCodes: ["post"],
+        filters: [{ field: "[Description]", operator: "$containsi", value: "ویژه" }],
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual(counts);
+    expect(mockPost).toHaveBeenCalledWith(
+      ADMIN_ORDERS_COUNTS_ENDPOINT,
+      {
+        search: "synthetic-private-id",
+        shippingMethodCodes: ["post"],
+        filters: [{ field: "[Description]", operator: "$containsi", value: "ویژه" }],
+      },
       { signal: controller.signal, retries: 0, timeout: 20_000 },
     );
   });
@@ -77,6 +130,21 @@ describe("bounded admin read services", () => {
         ],
       }),
       expect.objectContaining({ retries: 0 }),
+    );
+  });
+
+  it("loads shipping-method filter options through the private order-read route", async () => {
+    const methods = [
+      { code: "post", title: "پست" },
+      { code: "tipax", title: "تیپاکس" },
+    ];
+    mockGet.mockResolvedValue({ data: methods });
+    const controller = new AbortController();
+
+    await expect(listAdminShippingMethods(controller.signal)).resolves.toEqual(methods);
+    expect(mockGet).toHaveBeenCalledWith(
+      ADMIN_ORDERS_SHIPPING_METHODS_ENDPOINT,
+      { signal: controller.signal, retries: 0, timeout: 20_000 },
     );
   });
 

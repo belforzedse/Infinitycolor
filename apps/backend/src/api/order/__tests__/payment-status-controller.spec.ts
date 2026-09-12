@@ -38,6 +38,9 @@ describe("order.checkPaymentStatus", () => {
         id: 60,
         Status: "Started",
         PaymentGateway: "Mellat",
+        ShippingMethodCode: "tipax",
+        ShippingMethodTitle: "تیپاکس",
+        shipping: { Code: "post", Title: "پست" },
         contract: { contract_transactions: [] },
       },
       {
@@ -60,6 +63,7 @@ describe("order.checkPaymentStatus", () => {
     expect(orderFindOne).toHaveBeenCalledWith({
       where: { id: "60", user: { id: 10 } },
       populate: {
+        shipping: { fields: ["Code", "Title"] },
         // The reserve group is joined so the confirmation screen can state the
         // live window rather than the order's frozen reserve columns.
         reserve_shipment: { populate: { rootOrder: true } },
@@ -87,6 +91,8 @@ describe("order.checkPaymentStatus", () => {
         paymentStatus: "Succeeded",
         isPaid: true,
         paymentGateway: "Mellat",
+        shippingMethodCode: "tipax",
+        shippingMethodTitle: "تیپاکس",
         transactionId: "bank-ref-60",
         attemptId: "attempt-60",
         amountIrr: 1_500_000,
@@ -95,6 +101,35 @@ describe("order.checkPaymentStatus", () => {
         authoritative: true,
       }),
     });
+  });
+
+  it("falls back to the shipping relation for an order without a shipping snapshot", async () => {
+    const { controller } = loadController({
+      id: 63,
+      Status: "Started",
+      PaymentGateway: "Wallet",
+      ShippingMethodCode: null,
+      ShippingMethodTitle: null,
+      shipping: { Code: "pickup", Title: "تحویل حضوری" },
+      contract: { contract_transactions: [] },
+    });
+    const ctx = {
+      params: { id: "63" },
+      state: { user: { id: 10 } },
+      forbidden: jest.fn(),
+      badRequest: jest.fn(),
+    };
+
+    const result = await controller.checkPaymentStatus(ctx);
+
+    expect(result.data).toEqual(
+      expect.objectContaining({
+        orderId: 63,
+        isPaid: true,
+        shippingMethodCode: "pickup",
+        shippingMethodTitle: "تحویل حضوری",
+      }),
+    );
   });
 
   it("keeps a recent redirected payment ambiguous and tells the customer to recheck", async () => {
@@ -168,6 +203,8 @@ describe("order.checkPaymentStatus", () => {
         paymentStatus: "Unknown",
         isPaid: false,
         paymentGateway: "SnappPay",
+        shippingMethodCode: null,
+        shippingMethodTitle: null,
         // No reserve group on this order, so the reserve view is empty rather
         // than absent -- the client renders structurally off these fields.
         reserveGroupId: null,

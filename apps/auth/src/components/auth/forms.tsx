@@ -21,7 +21,7 @@ import {
   jalaliMonthLength,
   normalizeBirthDatePart,
 } from "@repo/auth-core/birth-date";
-import { authGet, authPost } from "./auth-api";
+import { AuthApiError, authGet, authPost } from "./auth-api";
 import { useAuthFlow } from "./auth-flow-context";
 import { useOtpCountdown } from "./countdown";
 
@@ -88,10 +88,15 @@ export function PhoneStatusForm({
 }: {
   storefrontOrigin: string;
 }) {
-  const { flowReady, setPhone, go, passwordReset } = useAuthFlow();
+  const { flowReady, acceptStartedFlow, go, passwordReset } = useAuthFlow();
   const [phoneValue, setPhoneValue] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const {
+    timeLeft,
+    active: rateLimited,
+    restart: startRateLimit,
+  } = useOtpCountdown(0, false);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -103,15 +108,19 @@ export function PhoneStatusForm({
     }
     setLoading(true);
     try {
-      await authPost<{ message: string }>("/infinity/phone-status", {
+      await authPost<{ message: string }>("/infinity/otp/start", {
         phone: phoneValue,
+        purpose: "login",
+        returnTo: new URL(window.location.href).searchParams.get("returnTo"),
       });
-      setPhone(phoneValue);
-      await authPost("/infinity/otp/request", { phone: phoneValue });
+      acceptStartedFlow(phoneValue);
       go("/auth/login/otp");
     } catch (cause) {
+      if (cause instanceof AuthApiError && cause.retryAfterSeconds) {
+        startRateLimit(cause.retryAfterSeconds);
+      }
       setError(
-        cause instanceof Error ? cause.message : "بررسی شماره همراه ناموفق بود",
+        cause instanceof Error ? cause.message : "ارسال کد تأیید ناموفق بود",
       );
     } finally {
       setLoading(false);
@@ -125,7 +134,7 @@ export function PhoneStatusForm({
           رمز عبور تغییر کرد. با رمز جدید وارد شوید.
         </p>
       )}
-      <AuthTitle subtitle="لطفا شماره همراه خود را جهت بررسی وارد نمایید">
+      <AuthTitle subtitle="لطفا شماره همراه خود را وارد نمایید">
         ورود به حساب کاربری
       </AuthTitle>
       <div className="mb-6">
@@ -162,11 +171,19 @@ export function PhoneStatusForm({
         </div>
         <AuthButton
           type="submit"
-          disabled={loading || !flowReady}
+          disabled={loading || !flowReady || rateLimited}
           icon={loading ? <Spinner /> : undefined}
         >
-          {loading ? "در حال بررسی..." : "بررسی شماره همراه"}
+          {loading ? "در حال ارسال..." : "دریافت کد تأیید"}
         </AuthButton>
+        {rateLimited ? (
+          <p
+            className="text-center text-sm text-foreground-primary/70"
+            role="status"
+          >
+            امکان ارسال مجدد تا {timeLeft} وجود ندارد.
+          </p>
+        ) : null}
       </form>
     </>
   );
@@ -182,6 +199,11 @@ export function PasswordLoginForm({
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const {
+    timeLeft: otpRetryTime,
+    active: otpRateLimited,
+    restart: restartOtpRateLimit,
+  } = useOtpCountdown(0, false);
 
   useEffect(() => {
     if (flowReady && !phone) go("/auth");
@@ -214,13 +236,16 @@ export function PasswordLoginForm({
   };
 
   const beginOtp = async () => {
-    if (!phone || loading) return;
+    if (!phone || loading || otpRateLimited) return;
     setLoading(true);
     setError("");
     try {
       await authPost("/infinity/otp/request", { phone });
       go("/auth/login/otp");
     } catch (cause) {
+      if (cause instanceof AuthApiError && cause.retryAfterSeconds) {
+        restartOtpRateLimit(cause.retryAfterSeconds);
+      }
       setError(
         cause instanceof Error ? cause.message : "خطا در ارسال کد تایید",
       );
@@ -298,12 +323,21 @@ export function PasswordLoginForm({
         <AuthButton
           type="button"
           onClick={() => void beginOtp()}
+          disabled={loading || otpRateLimited}
           className="border border-infinity-primary !bg-transparent !text-infinity-primary"
           icon={<OtpIcon className="h-5 w-5 md:h-6 md:w-6" />}
         >
           ورود با رمز یکبار مصرف
         </AuthButton>
       </div>
+      {otpRateLimited ? (
+        <p
+          className="mt-3 text-center text-sm text-foreground-primary/70"
+          role="status"
+        >
+          امکان ارسال مجدد تا {otpRetryTime} وجود ندارد.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -333,6 +367,9 @@ function OtpForm({
       await authPost("/infinity/otp/request", { phone });
       restart();
     } catch (cause) {
+      if (cause instanceof AuthApiError && cause.retryAfterSeconds) {
+        restart(cause.retryAfterSeconds);
+      }
       setError(
         cause instanceof Error ? cause.message : "خطا در ارسال کد تایید",
       );
@@ -436,10 +473,15 @@ export function RegistrationOtpForm(props: { storefrontOrigin: string }) {
 }
 
 export function ForgotPasswordForm() {
-  const { setPhone, go } = useAuthFlow();
+  const { acceptStartedFlow, go } = useAuthFlow();
   const [phone, setPhoneValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const {
+    timeLeft,
+    active: rateLimited,
+    restart: startRateLimit,
+  } = useOtpCountdown(0, false);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -450,10 +492,17 @@ export function ForgotPasswordForm() {
     setLoading(true);
     setError("");
     try {
-      setPhone(phone);
-      await authPost("/infinity/otp/request", { phone, purpose: "reset" });
+      await authPost("/infinity/otp/start", {
+        phone,
+        purpose: "reset",
+        returnTo: new URL(window.location.href).searchParams.get("returnTo"),
+      });
+      acceptStartedFlow(phone);
       go("/auth/forgot-password/verify");
     } catch (cause) {
+      if (cause instanceof AuthApiError && cause.retryAfterSeconds) {
+        startRateLimit(cause.retryAfterSeconds);
+      }
       setError(
         cause instanceof Error ? cause.message : "کد تایید ارسال نشده است",
       );
@@ -499,18 +548,33 @@ export function ForgotPasswordForm() {
         </div>
         <AuthButton
           type="submit"
-          disabled={loading}
+          disabled={loading || rateLimited}
           icon={loading ? <Spinner /> : undefined}
         >
-          تایید شماره همراه
+          {loading ? "در حال ارسال..." : "دریافت کد تأیید"}
         </AuthButton>
+        {rateLimited ? (
+          <p
+            className="text-center text-sm text-foreground-primary/70"
+            role="status"
+          >
+            امکان ارسال مجدد تا {timeLeft} وجود ندارد.
+          </p>
+        ) : null}
       </form>
     </div>
   );
 }
 
 export function ResetPasswordForm() {
-  const { phone, flowReady, setPhone, go, setPasswordReset } = useAuthFlow();
+  const {
+    phone,
+    flowReady,
+    setPhone,
+    go,
+    setPasswordReset,
+    markSessionAbsent,
+  } = useAuthFlow();
   const resetCompleted = useRef(false);
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
@@ -530,6 +594,9 @@ export function ResetPasswordForm() {
       await authPost("/infinity/otp/request", { phone, purpose: "reset" });
       restart();
     } catch (cause) {
+      if (cause instanceof AuthApiError && cause.retryAfterSeconds) {
+        restart(cause.retryAfterSeconds);
+      }
       setError(
         cause instanceof Error ? cause.message : "خطا در ارسال کد تایید",
       );
@@ -555,6 +622,7 @@ export function ResetPasswordForm() {
       setOtp("");
       setError("");
       setPasswordReset(true);
+      markSessionAbsent();
       setPhone("");
       go("/auth");
     } catch (cause) {
@@ -654,7 +722,7 @@ export function ResetPasswordForm() {
 }
 
 export function RegistrationInfoForm() {
-  const { phone, flowReady, go } = useAuthFlow();
+  const { phone, flowReady, setPhone, go, markSessionAbsent } = useAuthFlow();
   const [form, setForm] = useState({
     firstName: "",
     lastName: "",
@@ -664,35 +732,50 @@ export function RegistrationInfoForm() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [profileState, setProfileState] = useState<
+    "loading" | "ready" | "retry"
+  >("loading");
+  const [profileAttempt, setProfileAttempt] = useState(0);
   const [showBirthDateIssue, setShowBirthDateIssue] = useState(false);
 
   useEffect(() => {
-    if (flowReady && !phone) go("/auth");
-  }, [phone, flowReady, go]);
-  useEffect(() => {
-    if (!flowReady || !phone) return;
+    if (!flowReady) return;
     let cancelled = false;
-    void authGet<{ FirstName?: string; LastName?: string }>("/infinity/profile")
+    setProfileState("loading");
+    setError("");
+    void authGet<{
+      FirstName?: string;
+      LastName?: string;
+      Phone?: string | null;
+      phone?: string | null;
+    }>("/infinity/profile")
       .then((profile) => {
         if (cancelled) return;
+        const profilePhone =
+          profile.Phone?.trim() || profile.phone?.trim() || "";
+        setPhone(profilePhone);
         setForm((current) => ({
           ...current,
           firstName: profile.FirstName?.trim() || current.firstName,
           lastName: profile.LastName?.trim() || current.lastName,
         }));
+        setProfileState("ready");
       })
       .catch((cause) => {
-        if (!cancelled)
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "بازیابی اطلاعات حساب ناموفق بود",
-          );
+        if (cancelled) return;
+        if (cause instanceof AuthApiError && cause.status === 401) {
+          markSessionAbsent();
+          setPhone("");
+          go("/auth");
+          return;
+        }
+        setProfileState("retry");
+        setError("بازیابی اطلاعات حساب موقتاً ممکن نیست. دوباره تلاش کنید.");
       });
     return () => {
       cancelled = true;
     };
-  }, [phone, flowReady]);
+  }, [flowReady, go, markSessionAbsent, profileAttempt, setPhone]);
   const change =
     (field: keyof typeof form) =>
     (event: React.ChangeEvent<HTMLInputElement>) =>
@@ -873,9 +956,18 @@ export function RegistrationInfoForm() {
           />
         </div>
         <ErrorAlert message={error} />
+        {profileState === "retry" ? (
+          <AuthButton
+            type="button"
+            onClick={() => setProfileAttempt((value) => value + 1)}
+            className="border border-infinity-primary !bg-transparent !text-infinity-primary"
+          >
+            تلاش دوباره
+          </AuthButton>
+        ) : null}
         <AuthButton
           type="submit"
-          disabled={loading || !ready}
+          disabled={loading || profileState !== "ready" || !ready}
           icon={loading ? <Spinner /> : undefined}
         >
           {loading ? "در حال ثبت نام..." : "ایجاد حساب کاربری"}

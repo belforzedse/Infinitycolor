@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useAtom } from "jotai";
-import { refreshTable } from "@/components/SuperAdmin/Table";
+import { refreshTable } from "@/atoms/refreshTable";
 
 /**
  * Hook that ensures fresh data is loaded when a super-admin page is entered

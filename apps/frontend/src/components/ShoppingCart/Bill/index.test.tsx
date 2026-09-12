@@ -6,8 +6,10 @@ import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { CartService } from "@/services";
 import WalletService from "@/services/wallet";
 
+const mockPush = jest.fn();
+
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
+  useRouter: () => ({ push: mockPush, replace: jest.fn(), refresh: jest.fn() }),
 }));
 
 jest.mock("@/lib/central-auth", () => ({
@@ -152,6 +154,11 @@ jest.mock("./PaymentGateway", () => ({
           select SnappPay
         </button>
       )}
+      {availableGateways?.includes("wallet") && (
+        <button type="button" data-testid="select-wallet" onClick={() => onChange("wallet")}>
+          select wallet
+        </button>
+      )}
     </div>
   ),
 }));
@@ -179,6 +186,7 @@ describe("ShoppingCartBillForm auth gate", () => {
       ],
     };
     jest.clearAllMocks();
+    mockPush.mockReset();
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["samankish"]);
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: false });
@@ -451,6 +459,47 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(submitted.attemptId).toBeTruthy();
     expect(localStorage.getItem("pendingCheckoutAttemptId")).toBe(submitted.attemptId);
     expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe("sha256:snappay-quote");
+  });
+
+  it("routes an immediately paid wallet order to the canonical result page", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet"]);
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:wallet-quote",
+      financialSummary: {
+        subtotal: 100_000,
+        discount: 0,
+        tax: 0,
+        shipping: 20_000,
+        total: 120_000,
+      },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: true,
+      orderId: 88,
+      redirectUrl: "",
+      paymentStatus: "Succeeded",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("select-wallet")).toBeVisible());
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("select-wallet"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=88");
+    });
   });
 
   it("blocks payment until the shopper accepts the site terms", async () => {

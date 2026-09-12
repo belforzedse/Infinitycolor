@@ -29,7 +29,7 @@ import {
 } from "@/utils/reserveTime";
 import { formatFaDateTime } from "@/utils/formatFaRelativeDateTime";
 import toast from "react-hot-toast";
-import { StorefrontAccountShell } from "@/components/storefront";
+import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 
 export default function ReserveGroupPage() {
   const params = useParams();

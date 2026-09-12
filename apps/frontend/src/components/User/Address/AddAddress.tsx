@@ -261,6 +261,8 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
             isLoading={loadingProvinces}
             error={errorProvinces || undefined}
             className="col-span-1"
+            searchable
+            searchPlaceholder="جست‌وجوی استان"
           />
 
           <Select
@@ -278,6 +280,8 @@ export default function AddAddress({ onAddressAdded, isOpen: externalIsOpen, onO
             }
             error={errorCities || undefined}
             className="col-span-1"
+            searchable
+            searchPlaceholder="جست‌وجوی شهر"
           />
 
           <div className="col-span-1 flex flex-col gap-1">

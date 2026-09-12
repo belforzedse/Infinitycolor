@@ -9,7 +9,7 @@ import {
   pendingDeleteConfirmations,
   undoToastIds,
 } from "@/lib/atoms/optimisticDelete";
-import { refreshTable } from "@/components/SuperAdmin/Table";
+import { refreshTable } from "@/atoms/refreshTable";
 
 const UNDO_TIMEOUT_MS = 5000; // 5 seconds to undo
 

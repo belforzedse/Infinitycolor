@@ -208,6 +208,50 @@ describe("sms service", () => {
     );
   });
 
+  it("never logs raw OTP delivery identifiers even if the provider echoes them", async () => {
+    const logger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    (global.fetch as jest.Mock).mockResolvedValue(
+      createResponse(502, {
+        meta: {
+          status: false,
+          message: "09123456789 654321",
+          message_code: "PROVIDER_REJECTED",
+        },
+      }),
+    );
+
+    await sendLegacyOtpSms({
+      phone: "09123456789",
+      code: "654321",
+      logger,
+      config: loadSmsConfig({
+        SMS_ENABLED: "true",
+        IP_PANEL_API_KEY: "secret-key",
+        IP_PANEL_PATTERN_CODE: "otp-pattern",
+        IP_PANEL_SENDER: "+983000505",
+      }),
+    });
+
+    const logs = JSON.stringify([
+      ...logger.debug.mock.calls,
+      ...logger.info.mock.calls,
+      ...logger.warn.mock.calls,
+      ...logger.error.mock.calls,
+    ]);
+    expect(logs).not.toContain("09123456789");
+    expect(logs).not.toContain("+989123456789");
+    expect(logs).not.toContain("654321");
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[sms] IPPanel legacy OTP SMS failed",
+      expect.objectContaining({ recipient: "+98****6789" }),
+    );
+  });
+
   it("returns non-throwing failure results for provider and request failures", async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce(
       createResponse(200, { meta: { status: false, message: "Invalid pattern" } }),
@@ -359,12 +403,14 @@ describe("sms service", () => {
       },
     };
 
-    await expect(notifyOrderStatusSms(strapi, {
-      orderId: 11,
-      oldStatus: "Started",
-      newStatus: "Shipment",
-      trackingCode: "TRACK-11",
-    })).resolves.toMatchObject({
+    await expect(
+      notifyOrderStatusSms(strapi, {
+        orderId: 11,
+        oldStatus: "Started",
+        newStatus: "Shipment",
+        trackingCode: "TRACK-11",
+      }),
+    ).resolves.toMatchObject({
       ok: false,
       skipped: true,
       disabled: true,

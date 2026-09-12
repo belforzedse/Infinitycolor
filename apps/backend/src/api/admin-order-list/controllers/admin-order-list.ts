@@ -14,6 +14,12 @@ import {
   projectOrderReserve,
   UID as RESERVE_GROUP_UID,
 } from "../../reserve-group/lib/reserve-group";
+import {
+  activeReserveGroupsWhere,
+  ORDER_TAB_KEYS,
+  orderWhereForTab,
+  type OrderTabKey,
+} from "../lib/order-buckets";
 
 const FILTER_FIELDS: Record<string, AdminFilterDefinition> = {
   "[id]": { path: ["id"], type: "number" },
@@ -47,20 +53,77 @@ const FILTER_FIELDS: Record<string, AdminFilterDefinition> = {
   "[reserve_shipment][id]": { path: ["reserve_shipment", "id"], type: "select" },
 };
 
-const TAB_FILTERS: Record<string, Record<string, unknown> | null> = {
-  all: null,
-  paying: { Status: { $eq: "Paying" } },
-  inprogress: { Status: { $in: ["Started", "Shipment"] } },
-  completed: { Status: { $eq: "Done" } },
-  cancelled: { Status: { $in: ["Returned", "Cancelled"] } },
-  manual: { Type: { $eq: "Manual" } },
-};
-
 const SORTS: Record<string, Array<Record<string, "asc" | "desc">>> = {
   "last-edited": [{ updatedAt: "desc" }, { id: "desc" }],
   newest: [{ createdAt: "desc" }, { id: "desc" }],
   oldest: [{ createdAt: "asc" }, { id: "asc" }],
 };
+
+const MAX_SHIPPING_METHOD_FILTERS = 100;
+
+function parseShippingMethodCodes(ctx: any, value: unknown): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_SHIPPING_METHOD_FILTERS) {
+    return rejectAdminListRequest(
+      ctx,
+      `shippingMethodCodes must be an array with at most ${MAX_SHIPPING_METHOD_FILTERS} items`,
+    );
+  }
+
+  const codes: string[] = [];
+  for (const rawCode of value) {
+    if (typeof rawCode !== "string") {
+      return rejectAdminListRequest(ctx, "Each shipping method code must be a string");
+    }
+    const code = rawCode.trim();
+    if (!code || code.length > MAX_ADMIN_SEARCH_LENGTH) {
+      return rejectAdminListRequest(
+        ctx,
+        "Shipping method codes must contain 1 to 80 characters",
+      );
+    }
+    if (!codes.includes(code)) codes.push(code);
+  }
+  return codes;
+}
+
+type OrderListCriteria = {
+  conditions: Record<string, unknown>[];
+  filters: Record<string, unknown>[];
+  search: string;
+  shippingMethodCodes: string[];
+};
+
+function parseOrderListCriteria(ctx: any, body: Record<string, unknown>): OrderListCriteria | null {
+  const search = String(body.search ?? "").trim();
+  if (search.length > MAX_ADMIN_SEARCH_LENGTH) {
+    rejectAdminListRequest(ctx, "search must contain at most 80 characters");
+    return null;
+  }
+
+  const filters = parseAdminFilters(ctx, body.filters, FILTER_FIELDS, "orders-list");
+  if (!filters) return null;
+  const shippingMethodCodes = parseShippingMethodCodes(ctx, body.shippingMethodCodes);
+  if (!shippingMethodCodes) return null;
+
+  const conditions: Record<string, unknown>[] = [...filters];
+  if (shippingMethodCodes.length > 0) {
+    conditions.push({
+      $or: [
+        { ShippingMethodCode: { $in: shippingMethodCodes } },
+        {
+          $and: [
+            { ShippingMethodCode: { $null: true } },
+            { shipping: { Code: { $in: shippingMethodCodes } } },
+          ],
+        },
+      ],
+    });
+  }
+  if (search) conditions.push(buildOrderSearchCondition(search));
+
+  return { conditions, filters, search, shippingMethodCodes };
+}
 
 function projectOrder(order: any) {
   const user = order.user;
@@ -194,10 +257,7 @@ const RESERVE_TAB_FILTERS: Record<
   (now: Date) => Record<string, unknown> | null
 > = {
   all: () => null,
-  active: (now) => ({
-    State: { $eq: "Active" },
-    expiresAt: { $gt: now.toISOString() },
-  }),
+  active: (now) => activeReserveGroupsWhere(now),
   ending_soon: (now) => ({
     State: { $eq: "Active" },
     expiresAt: {
@@ -322,28 +382,17 @@ export default {
       positiveAdminInteger(body.pageSize, DEFAULT_ADMIN_PAGE_SIZE),
       MAX_ADMIN_PAGE_SIZE,
     );
-    const search = String(body.search ?? "").trim();
-    if (search.length > MAX_ADMIN_SEARCH_LENGTH) {
-      return rejectAdminListRequest(ctx, "search must contain at most 80 characters");
-    }
-
     const tab = String(body.tab || "all");
-    if (!(tab in TAB_FILTERS)) {
+    if (!ORDER_TAB_KEYS.includes(tab as OrderTabKey)) {
       return rejectAdminListRequest(ctx, "Unsupported orders-list tab");
     }
     const sort = String(body.sort || "last-edited");
     if (!SORTS[sort]) {
       return rejectAdminListRequest(ctx, "Unsupported orders-list sort");
     }
-    const filters = parseAdminFilters(ctx, body.filters, FILTER_FIELDS, "orders-list");
-    if (!filters) return;
-
-    const conditions = [...filters];
-    if (TAB_FILTERS[tab]) conditions.push(TAB_FILTERS[tab]!);
-    if (search) {
-      conditions.push(buildOrderSearchCondition(search));
-    }
-    const where = conditions.length > 0 ? { $and: conditions } : {};
+    const criteria = parseOrderListCriteria(ctx, body);
+    if (!criteria) return;
+    const where = orderWhereForTab(criteria.conditions, tab as OrderTabKey);
     const orderQuery = strapi.query("api::order.order");
 
     const [rows, total] = await Promise.all([
@@ -412,9 +461,74 @@ export default {
       total,
       tab,
       sort,
-      hasSearch: Boolean(search),
-      filterCount: filters.length,
+      hasSearch: Boolean(criteria.search),
+      filterCount: criteria.filters.length,
+      shippingMethodFilterCount: criteria.shippingMethodCodes.length,
     });
+  },
+
+  async counts(ctx) {
+    const startedAt = Date.now();
+    const body = ctx.request?.body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return rejectAdminListRequest(ctx, "Request body must be an object");
+    }
+
+    const criteria = parseOrderListCriteria(ctx, body);
+    if (!criteria) return;
+
+    const orderQuery = strapi.query("api::order.order");
+    const reserveGroupQuery = strapi.query(RESERVE_GROUP_UID);
+    const now = new Date();
+    const [tabTotals, activeReserveGroups] = await Promise.all([
+      Promise.all(
+        ORDER_TAB_KEYS.map((tab) =>
+          orderQuery.count({ where: orderWhereForTab(criteria.conditions, tab) }),
+        ),
+      ),
+      reserveGroupQuery.count({ where: activeReserveGroupsWhere(now) }),
+    ]);
+    const counts = Object.fromEntries(
+      ORDER_TAB_KEYS.map((tab, index) => [tab, Number(tabTotals[index]) || 0]),
+    );
+
+    ctx.set("Cache-Control", "private, no-store");
+    ctx.body = {
+      data: {
+        counts,
+        activeReserveGroups: Number(activeReserveGroups) || 0,
+      },
+    };
+
+    strapi.log.info("admin order counts completed", {
+      durationMs: Date.now() - startedAt,
+      hasSearch: Boolean(criteria.search),
+      filterCount: criteria.filters.length,
+      shippingMethodFilterCount: criteria.shippingMethodCodes.length,
+    });
+  },
+
+  async shippingMethods(ctx) {
+    const rows = await strapi.query("api::shipping.shipping").findMany({
+      select: ["id", "Title", "Code", "SortOrder"],
+      orderBy: [{ SortOrder: "asc" }, { id: "asc" }],
+      limit: MAX_SHIPPING_METHOD_FILTERS,
+    });
+    const seen = new Set<string>();
+    const data = ((rows as any[]) || []).flatMap((method) => {
+      const code = String(method?.Code || method?.id || "").trim();
+      if (!code || seen.has(code)) return [];
+      seen.add(code);
+      return [
+        {
+          code,
+          title: String(method?.Title || `روش ارسال ${method?.id}`).trim(),
+        },
+      ];
+    });
+
+    ctx.set("Cache-Control", "private, no-store");
+    ctx.body = { data };
   },
 
   /**

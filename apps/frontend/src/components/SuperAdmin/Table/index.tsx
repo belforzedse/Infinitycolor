@@ -14,7 +14,8 @@ import { twMerge } from "tailwind-merge";
 import SuperAdminTableSelect from "./Select";
 import DragIcon from "../Layout/Icons/DragIcon";
 import { apiClient } from "@/services";
-import { atom, useAtom } from "jotai";
+import { useAtom } from "jotai";
+import { refreshTable } from "@/atoms/refreshTable";
 import { useQueryState } from "nuqs";
 import ReportTableSkeleton from "@/components/Skeletons/ReportTableSkeleton";
 import { apiCache } from "@/lib/api-cache";
@@ -70,7 +71,7 @@ interface TableProps<TData, TValue> {
 
 // Strapi-like response meta is returned by our ApiClient as ApiResponse<T>
 
-export const refreshTable = atom(true);
+export { refreshTable };
 
 export function SuperAdminTable<TData, TValue>({
   columns,

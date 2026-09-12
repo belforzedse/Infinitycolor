@@ -91,7 +91,7 @@ describe("Product Service Helpers", () => {
   });
 
   describe("generic product attributes", () => {
-    it("returns only visible non-projected selectors in configured order", () => {
+    it("returns non-projected variation selectors even when the assignment is not a spec", () => {
       const product = createMockProduct();
       product.attributes.product_attribute_assignments = {
         data: [
@@ -99,7 +99,9 @@ describe("Product Service Helpers", () => {
             id: 9,
             attributes: {
               Position: 2,
-              IsVisible: true,
+              // WooCommerce's "visible" flag controls the specifications tab,
+              // not whether a variation axis is selectable on the PDP.
+              IsVisible: false,
               IsVariation: true,
               product_attribute: {
                 data: {

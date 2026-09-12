@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import PageContainer from "@/components/layout/PageContainer";
-import { StorefrontGrid } from "@/components/storefront";
+import { StorefrontGrid } from "@/components/storefront/StorefrontGrid";
 import CategoryCard from "@/components/Categories/CategoryCard";
 import { SITE_NAME, SITE_URL } from "@/config/site";
 import { getProductCategoriesForRender } from "@/services/product/categories";

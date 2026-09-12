@@ -6,10 +6,15 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { authPost } from "./auth-api";
+import { AuthApiError, authPost } from "./auth-api";
+import {
+  authBootstrapAction,
+  classifyBootstrapFailure,
+} from "./auth-flow-bootstrap";
 
 interface AuthFlowContextValue {
   phone: string;
@@ -17,51 +22,123 @@ interface AuthFlowContextValue {
   setPasswordReset(value: boolean): void;
   flowReady: boolean;
   setPhone(phone: string): void;
+  acceptStartedFlow(phone: string): void;
+  markSessionAbsent(): void;
   href(path: string): string;
   go(path: string): void;
 }
 
 const AuthFlowContext = createContext<AuthFlowContextValue | null>(null);
 
-export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
+export function AuthFlowProvider({
+  children,
+  hasSessionCookie,
+}: {
+  children: React.ReactNode;
+  hasSessionCookie: boolean;
+}) {
   const [phone, setPhone] = useState("");
   const [passwordReset, setPasswordReset] = useState(false);
-  const [flowReady, setFlowReady] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   const stepUp = searchParams.get("stepUp") === "1";
+  const flowInitialized = useRef(false);
+  const sessionKnownAbsent = useRef(!hasSessionCookie || stepUp);
+  const pendingBootstrap = useRef<{
+    key: string;
+    promise: Promise<"ready" | "redirect" | "retry">;
+  } | null>(null);
+  const [retryVersion, setRetryVersion] = useState(0);
+  const initialAction = authBootstrapAction({
+    pathname,
+    hasSessionCookie,
+    stepUp,
+    flowInitialized: false,
+    sessionKnownAbsent: sessionKnownAbsent.current,
+  });
+  const [bootstrapState, setBootstrapState] = useState<
+    "ready" | "loading" | "retry"
+  >(initialAction === "none" ? "ready" : "loading");
 
   useEffect(() => {
+    if (stepUp) sessionKnownAbsent.current = true;
+    const action = authBootstrapAction({
+      pathname,
+      hasSessionCookie,
+      stepUp,
+      flowInitialized: flowInitialized.current,
+      sessionKnownAbsent: sessionKnownAbsent.current,
+    });
+    if (action === "none") {
+      setBootstrapState("ready");
+      return;
+    }
+
     let active = true;
-    authPost<{ phone: string | null }>("/infinity/flow/start", { returnTo })
-      .then(async (flow) => {
-        if (!active) return;
-        if (flow.phone) setPhone(flow.phone);
-        if (pathname !== "/auth") return;
-        // Step-up (fresh session for list-sessions) must not reuse the current
-        // cookie via /infinity/session/continue — that path never updates
-        // createdAt and would bounce the caller forever.
-        if (stepUp) return;
+    setBootstrapState("loading");
+    const key = `${action}:${pathname}:${returnTo ?? ""}:${retryVersion}`;
+    let operation = pendingBootstrap.current;
+    if (!operation || operation.key !== key) {
+      const run = async (): Promise<"ready" | "redirect" | "retry"> => {
+        let flow: { phone: string | null };
+        try {
+          flow = await authPost<{ phone: string | null }>(
+            "/infinity/flow/start",
+            { returnTo },
+          );
+          flowInitialized.current = true;
+          if (flow.phone) setPhone(flow.phone);
+        } catch (cause) {
+          const status = cause instanceof AuthApiError ? cause.status : 0;
+          return classifyBootstrapFailure("flow", status);
+        }
+        if (action === "hydrate-flow") return "ready";
+
         try {
           const continuation = await authPost<{
             authenticated: true;
             redirectTo: string;
           }>("/infinity/session/continue");
-          if (active) window.location.replace(continuation.redirectTo);
-        } catch {
-          // No reusable central session: reveal the normal credential flow.
+          window.location.replace(continuation.redirectTo);
+          return "redirect";
+        } catch (cause) {
+          const status = cause instanceof AuthApiError ? cause.status : 0;
+          if (
+            classifyBootstrapFailure("continuation", status) === "credentials"
+          ) {
+            sessionKnownAbsent.current = true;
+            return "ready";
+          }
+          return "retry";
         }
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) setFlowReady(true);
+      };
+      operation = { key, promise: run() };
+      pendingBootstrap.current = operation;
+      void operation.promise.finally(() => {
+        if (pendingBootstrap.current?.key === key)
+          pendingBootstrap.current = null;
       });
+    }
+    void operation.promise.then((result) => {
+      if (!active || result === "redirect") return;
+      setBootstrapState(result);
+    });
     return () => {
       active = false;
     };
-  }, [pathname, returnTo, stepUp]);
+  }, [hasSessionCookie, pathname, retryVersion, returnTo, stepUp]);
+
+  const acceptStartedFlow = useCallback((acceptedPhone: string) => {
+    flowInitialized.current = true;
+    sessionKnownAbsent.current = true;
+    setPhone(acceptedPhone);
+    setBootstrapState("ready");
+  }, []);
+  const markSessionAbsent = useCallback(() => {
+    sessionKnownAbsent.current = true;
+  }, []);
 
   const href = useCallback(
     (path: string) => {
@@ -77,13 +154,54 @@ export function AuthFlowProvider({ children }: { children: React.ReactNode }) {
     [href, router],
   );
   const value = useMemo(
-    () => ({ phone, flowReady, setPhone, href, go, passwordReset, setPasswordReset }),
-    [phone, flowReady, href, go, passwordReset],
+    () => ({
+      phone,
+      flowReady: bootstrapState === "ready",
+      setPhone,
+      acceptStartedFlow,
+      markSessionAbsent,
+      href,
+      go,
+      passwordReset,
+      setPasswordReset,
+    }),
+    [
+      phone,
+      bootstrapState,
+      acceptStartedFlow,
+      markSessionAbsent,
+      href,
+      go,
+      passwordReset,
+    ],
   );
 
   return (
     <AuthFlowContext.Provider value={value}>
-      {children}
+      {bootstrapState === "ready" ? (
+        children
+      ) : (
+        <div
+          className="p-8 text-center"
+          dir="rtl"
+          role={bootstrapState === "retry" ? "alert" : "status"}
+        >
+          <p>
+            {bootstrapState === "retry"
+              ? "بررسی نشست موقتاً ممکن نیست. دوباره تلاش کنید."
+              : "در حال بررسی نشست..."}
+          </p>
+          {bootstrapState === "retry" ? (
+            <button
+              type="button"
+              className="mt-4 text-sm text-infinity-primary underline"
+              onClick={() => setRetryVersion((value) => value + 1)}
+            >
+              تلاش دوباره
+            </button>
+          ) : null}
+        </div>
+      )}
     </AuthFlowContext.Provider>
   );
 }

@@ -21,16 +21,36 @@ export interface TokenManager {
 
 type CachedToken = { value: string; expiresAtMs: number };
 
+/**
+ * `Buffer` is referenced through `globalThis` on purpose: a bare `Buffer`
+ * identifier makes bundlers inject the `buffer` npm polyfill (plus base64-js
+ * and ieee754) into every client chunk that can reach this module. Browsers
+ * and Node 16+ both provide `atob`, so the Node path is only a fallback.
+ */
+function decodeBase64(value: string): string {
+  if (typeof atob === "function") return atob(value);
+  const nodeBuffer = (
+    globalThis as {
+      Buffer?: {
+        from(
+          input: string,
+          encoding: string,
+        ): { toString(encoding: string): string };
+      };
+    }
+  ).Buffer;
+  if (!nodeBuffer)
+    throw new Error("No base64 decoder available in this runtime");
+  return nodeBuffer.from(value, "base64").toString("utf8");
+}
+
 function readJwtExpiry(token: string): number | null {
   const payloadPart = token.split(".")[1];
   if (!payloadPart) return null;
   try {
     const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
     const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-    const json =
-      typeof atob === "function"
-        ? atob(padded)
-        : Buffer.from(padded, "base64").toString("utf8");
+    const json = decodeBase64(padded);
     const payload = JSON.parse(json) as { exp?: unknown };
     return typeof payload.exp === "number" && Number.isFinite(payload.exp)
       ? payload.exp * 1_000

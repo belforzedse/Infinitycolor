@@ -70,6 +70,8 @@ export type InvoiceOrder = {
     delivery_address?: Relation<{
       FullAddress?: string;
       PostalCode?: string;
+      FullName?: string;
+      Phone?: string;
     }>;
     contract?: Relation<{
       Amount?: number | string;
@@ -194,11 +196,10 @@ export default function Invoice({
   const contract = relationAttributes(attributes.contract);
   const shipping = relationAttributes(attributes.shipping);
 
-  const fullName = [userInfo?.FirstName, userInfo?.LastName]
-    .map(textValue)
-    .filter(Boolean)
-    .join(" ");
-  const phone = textValue(user?.Phone ?? user?.phone);
+  const fullName =
+    textValue(address?.FullName) ||
+    [userInfo?.FirstName, userInfo?.LastName].map(textValue).filter(Boolean).join(" ");
+  const phone = textValue(address?.Phone) || textValue(user?.Phone ?? user?.phone);
   const orderDate = formatDate(attributes.Date ?? attributes.createdAt);
   const paymentMethod = invoicePaymentMethod(
     attributes.PaymentMethod,

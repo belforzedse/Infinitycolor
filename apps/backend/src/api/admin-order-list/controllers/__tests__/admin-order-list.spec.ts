@@ -18,13 +18,19 @@ function createContext(body: Record<string, unknown> = {}) {
 function installStrapi(rows: any[] = []) {
   const findMany = jest.fn().mockResolvedValue(rows);
   const count = jest.fn().mockResolvedValue(49_518);
+  const reserveFindMany = jest.fn().mockResolvedValue([]);
+  const reserveCount = jest.fn().mockResolvedValue(7);
   const info = jest.fn();
   (global as any).strapi = {
-    query: jest.fn(() => ({ findMany, count })),
+    query: jest.fn((uid: string) =>
+      uid === "api::reserve-group.reserve-group"
+        ? { findMany: reserveFindMany, count: reserveCount }
+        : { findMany, count },
+    ),
     contentType: jest.fn(() => ({})),
     log: { info },
   };
-  return { findMany, count, info };
+  return { findMany, count, reserveFindMany, reserveCount, info };
 }
 
 describe("bounded admin orders list", () => {
@@ -35,6 +41,8 @@ describe("bounded admin orders list", () => {
     };
     expect(routeConfig.routes.map((route) => route.handler)).toEqual([
       "admin-order-list.query",
+      "admin-order-list.counts",
+      "admin-order-list.shippingMethods",
       "admin-order-list.queryReserveGroups",
       "admin-order-list.getReserveGroup",
     ]);
@@ -45,7 +53,7 @@ describe("bounded admin orders list", () => {
   });
 
   it.each([
-    ["paying", { Status: { $eq: "Paying" } }],
+    ["paying", { Status: { $in: ["Paying"] } }],
     ["inprogress", { Status: { $in: ["Started", "Shipment"] } }],
   ])("keeps the %s status tab in its own server-side bucket", async (tab, expected) => {
     const { findMany } = installStrapi();
@@ -53,6 +61,140 @@ describe("bounded admin orders list", () => {
     await controller.query(createContext({ tab }));
 
     expect(findMany.mock.calls[0][0].where.$and).toContainEqual(expected);
+  });
+
+  it("counts every tab from the same current filters and keeps active reserves separate", async () => {
+    const { count, reserveCount } = installStrapi();
+    count
+      .mockResolvedValueOnce(12)
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(4)
+      .mockResolvedValueOnce(5)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(3);
+    const ctx = createContext({
+      search: "Ali",
+      shippingMethodCodes: ["post"],
+      filters: [{ field: "[Description]", operator: "$containsi", value: "vip" }],
+    });
+
+    await controller.counts(ctx);
+
+    expect(count).toHaveBeenCalledTimes(6);
+    const baseConditions = [
+      { Description: { $containsi: "vip" } },
+      {
+        $or: [
+          { ShippingMethodCode: { $in: ["post"] } },
+          {
+            $and: [
+              { ShippingMethodCode: { $null: true } },
+              { shipping: { Code: { $in: ["post"] } } },
+            ],
+          },
+        ],
+      },
+      {
+        $or: [
+          { contract: { external_id: { $containsi: "Ali" } } },
+          { user: { user_info: { FirstName: { $containsi: "Ali" } } } },
+          { user: { user_info: { LastName: { $containsi: "Ali" } } } },
+          { ShippingBarcode: { $containsi: "Ali" } },
+        ],
+      },
+    ];
+    for (const [index, call] of count.mock.calls.entries()) {
+      expect(call[0].where.$and).toEqual(expect.arrayContaining(baseConditions));
+      if (index === 0) expect(call[0].where.$and).toEqual(baseConditions);
+    }
+    expect(count.mock.calls[1][0].where.$and).toContainEqual({
+      Status: { $in: ["Paying"] },
+    });
+    expect(count.mock.calls[2][0].where.$and).toContainEqual({
+      Status: { $in: ["Started", "Shipment"] },
+    });
+    expect(count.mock.calls[3][0].where.$and).toContainEqual({
+      Status: { $in: ["Done"] },
+    });
+    expect(count.mock.calls[4][0].where.$and).toContainEqual({
+      Status: { $in: ["Returned", "Cancelled"] },
+    });
+    expect(count.mock.calls[5][0].where.$and).toContainEqual({ Type: { $eq: "Manual" } });
+    expect(count.mock.calls[3][0].where.$and).not.toContainEqual({
+      Type: { $ne: "Manual" },
+    });
+    expect(count.mock.calls[5][0].where.$and).not.toContainEqual({
+      Status: expect.anything(),
+    });
+    expect(reserveCount).toHaveBeenCalledWith({
+      where: {
+        State: { $eq: "Active" },
+        expiresAt: { $gt: expect.any(String) },
+      },
+    });
+    expect(ctx.body.data).toEqual({
+      counts: {
+        all: 12,
+        paying: 2,
+        inprogress: 4,
+        completed: 5,
+        cancelled: 1,
+        manual: 3,
+      },
+      activeReserveGroups: 7,
+    });
+    expect(ctx.set).toHaveBeenCalledWith("Cache-Control", "private, no-store");
+  });
+
+  it("rejects malformed count criteria before any aggregate query", async () => {
+    const { count, reserveCount } = installStrapi();
+    const ctx = createContext({
+      shippingMethodCodes: ["post", { code: "tipax" }],
+    });
+
+    await controller.counts(ctx);
+
+    expect(ctx.badRequest).toHaveBeenCalledWith(
+      "Each shipping method code must be a string",
+    );
+    expect(count).not.toHaveBeenCalled();
+    expect(reserveCount).not.toHaveBeenCalled();
+  });
+
+  it("rejects inherited object keys as order tabs before querying", async () => {
+    const { findMany, count } = installStrapi();
+    const ctx = createContext({ tab: "toString" });
+
+    await controller.query(ctx);
+
+    expect(ctx.badRequest).toHaveBeenCalledWith("Unsupported orders-list tab");
+    expect(findMany).not.toHaveBeenCalled();
+    expect(count).not.toHaveBeenCalled();
+  });
+
+  it("uses the counter's active and unexpired reserve population on the reserve board", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-09-12T10:00:00.000Z"));
+    try {
+      const { reserveFindMany, reserveCount } = installStrapi();
+      const ctx = createContext({ tab: "active" });
+
+      await controller.queryReserveGroups(ctx);
+
+      const where = {
+        $and: [
+          {
+            State: { $eq: "Active" },
+            expiresAt: { $gt: "2026-09-12T10:00:00.000Z" },
+          },
+        ],
+      };
+      expect(reserveFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where }),
+      );
+      expect(reserveCount).toHaveBeenCalledWith({ where });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("returns an explicit bounded projection and stable tab/sort query", async () => {
@@ -93,7 +235,7 @@ describe("bounded admin orders list", () => {
     expect(query.where.$and).toEqual(
       expect.arrayContaining([
         { id: { $gte: 7 } },
-        { Status: { $eq: "Done" } },
+        { Status: { $in: ["Done"] } },
         // A textual query fans out across the transaction id, customer name and
         // shipping barcode; numeric queries take the cheaper id-first branch.
         {
@@ -180,5 +322,64 @@ describe("bounded admin orders list", () => {
 
     expect(ctx.badRequest).toHaveBeenCalledWith("Unsupported orders-list filter field");
     expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("combines selected shipping methods with OR semantics", async () => {
+    const { findMany, count } = installStrapi();
+    const ctx = createContext({ shippingMethodCodes: ["post", "tipax", "post"] });
+
+    await controller.query(ctx);
+
+    const shippingCondition = {
+      $or: [
+        { ShippingMethodCode: { $in: ["post", "tipax"] } },
+        {
+          $and: [
+            { ShippingMethodCode: { $null: true } },
+            { shipping: { Code: { $in: ["post", "tipax"] } } },
+          ],
+        },
+      ],
+    };
+    expect(findMany.mock.calls[0][0].where.$and).toContainEqual(shippingCondition);
+    expect(count).toHaveBeenCalledWith({ where: { $and: [shippingCondition] } });
+  });
+
+  it("rejects malformed shipping-method filters before querying", async () => {
+    const { findMany } = installStrapi();
+    const ctx = createContext({ shippingMethodCodes: ["post", { code: "tipax" }] });
+
+    await controller.query(ctx);
+
+    expect(ctx.badRequest).toHaveBeenCalledWith(
+      "Each shipping method code must be a string",
+    );
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns bounded shipping-method checkbox options", async () => {
+    const { findMany } = installStrapi([
+      { id: 1, Title: "پست", Code: "post", SortOrder: 1 },
+      { id: 2, Title: "تیپاکس", Code: "tipax", SortOrder: 2 },
+      { id: 3, Title: "پست تکراری", Code: "post", SortOrder: 3 },
+      { id: 4, Title: "حضوری", Code: null, SortOrder: 4 },
+    ]);
+    const ctx = createContext();
+
+    await controller.shippingMethods(ctx);
+
+    expect(findMany).toHaveBeenCalledWith({
+      select: ["id", "Title", "Code", "SortOrder"],
+      orderBy: [{ SortOrder: "asc" }, { id: "asc" }],
+      limit: 100,
+    });
+    expect(ctx.body).toEqual({
+      data: [
+        { code: "post", title: "پست" },
+        { code: "tipax", title: "تیپاکس" },
+        { code: "4", title: "حضوری" },
+      ],
+    });
+    expect(ctx.set).toHaveBeenCalledWith("Cache-Control", "private, no-store");
   });
 });

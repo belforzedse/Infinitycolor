@@ -333,6 +333,15 @@ export async function proxy(request: NextRequest) {
     response.headers.set("Cache-Control", "no-store, max-age=0");
   }
 
+  // The storefront's own /auth/* pages carry the sign-in and callback flow. They
+  // are not in PRIVATE_ROUTE_PREFIXES because they are reachable while signed
+  // out, but a shared cache in front must never hold one: the callback sets the
+  // route hint, and a stored copy of a login page is a stored copy of somebody's
+  // half-finished session.
+  if (pathname === "/auth" || pathname.startsWith("/auth/")) {
+    response.headers.set("Cache-Control", "no-store, max-age=0");
+  }
+
   // Cache control for static assets
   // Note: /_next/static and /api/ are excluded by matcher, so cache-control for those paths is handled by Next.js
   if (pathname.startsWith("/images/") || pathname.startsWith("/fonts/")) {

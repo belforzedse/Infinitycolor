@@ -7,6 +7,11 @@ import {
   customerPhoneStorageVariants,
 } from "../../../utils/customerPhoneIdentity";
 import { ROLE_NAMES, fetchRoleByName } from "../../../utils/roles";
+import {
+  acquireOtpPhoneCooldown,
+  releaseOtpPhoneCooldown,
+  type OtpPhoneCooldownLease,
+} from "./otp-cooldown";
 
 export const OTP_INVALID_MESSAGE = "کد وارد شده نامعتبر یا منقضی شده است. دوباره تلاش کنید.";
 export const USER_NOT_FOUND_OR_PASSWORD_INCORRECT = "شماره همراه یا رمز عبور اشتباه است.";
@@ -29,6 +34,7 @@ export class CredentialFlowError extends Error {
     message: string,
     public readonly status: number,
     public readonly code: string,
+    public readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "CredentialFlowError";
@@ -77,44 +83,138 @@ export async function hasUserForPhone(phone: string): Promise<boolean> {
 
 export async function createOtpChallenge(ctx: any, phone: string): Promise<string> {
   const normalizedPhone = normalizeOtpPhone(phone);
-  const merchant = await findUserByPhone(normalizedPhone);
-  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
-  const challengeId = `${Date.now().toString(36)}.${crypto.randomBytes(24).toString("base64url")}`;
-  const redis = await RedisClient;
+  const suppliedRequestId =
+    typeof ctx?.get === "function" ? String(ctx.get("x-request-id") || "") : "";
+  const requestId =
+    /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(
+      suppliedRequestId,
+    )
+      ? suppliedRequestId
+      : crypto.randomUUID();
+  const totalStartedAt = Date.now();
+  let cooldown: OtpPhoneCooldownLease;
+  try {
+    const decision = await acquireOtpPhoneCooldown(normalizedPhone);
+    if (decision.allowed === false) {
+      throw new CredentialFlowError(
+        "درخواست‌های زیادی ارسال شده است. کمی بعد دوباره تلاش کنید.",
+        429,
+        "OTP_PHONE_COOLDOWN",
+        decision.retryAfterSeconds,
+      );
+    }
+    cooldown = decision.lease;
+  } catch (error) {
+    const failure =
+      error instanceof CredentialFlowError
+        ? error
+        : new CredentialFlowError(
+            "سرویس ارسال کد موقتاً در دسترس نیست. دوباره تلاش کنید.",
+            503,
+            "OTP_PHONE_COOLDOWN_UNAVAILABLE",
+          );
+    strapi.log.info("auth_operation_timing", {
+      operation: "otp_start",
+      requestId,
+      status: failure.status,
+      reasonCode: failure.code,
+      durationMs: Date.now() - totalStartedAt,
+    });
+    throw failure;
+  }
 
-  const stored = await redis.set(
-    challengeId,
-    JSON.stringify({
-      code,
-      merchant: merchant?.id,
-      phone: normalizedPhone,
-      IsVerified: merchant?.IsVerified,
-      attempts: 0,
-    } satisfies OtpChallenge),
-    { EX: 300, NX: true },
-  );
-  if (stored !== "OK") {
+  let challengeId: string | undefined;
+  let redis: Awaited<typeof RedisClient> | undefined;
+  try {
+    const lookupStartedAt = Date.now();
+    let merchant;
+    try {
+      merchant = await findUserByPhone(normalizedPhone);
+      strapi.log.info("auth_operation_timing", {
+        operation: "otp_phone_lookup",
+        requestId,
+        status: 200,
+        durationMs: Date.now() - lookupStartedAt,
+      });
+    } catch (error) {
+      strapi.log.info("auth_operation_timing", {
+        operation: "otp_phone_lookup",
+        requestId,
+        status: error instanceof CredentialFlowError ? error.status : 500,
+        reasonCode: error instanceof CredentialFlowError ? error.code : "OTP_LOOKUP_FAILED",
+        durationMs: Date.now() - lookupStartedAt,
+      });
+      throw error;
+    }
+
+    const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
+    challengeId = `${Date.now().toString(36)}.${crypto.randomBytes(24).toString("base64url")}`;
+    redis = await RedisClient;
+    const stored = await redis.set(
+      challengeId,
+      JSON.stringify({
+        code,
+        merchant: merchant?.id,
+        phone: normalizedPhone,
+        IsVerified: merchant?.IsVerified,
+        attempts: 0,
+      } satisfies OtpChallenge),
+      { EX: 300, NX: true },
+    );
+    if (stored !== "OK") {
+      throw new CredentialFlowError(
+        "ارسال کد تأیید ناموفق بود. دوباره تلاش کنید.",
+        503,
+        "OTP_STORE_FAILED",
+      );
+    }
+
+    const providerStartedAt = Date.now();
+    const smsStatus = await strapi.service("api::messaging.messaging").sendSMS(ctx, {
+      phone,
+      message: code,
+      isOTP: true,
+    });
+    strapi.log.info("auth_operation_timing", {
+      operation: "sms_provider",
+      requestId,
+      status: smsStatus === 200 ? 200 : 502,
+      ...(smsStatus === 200 ? {} : { reasonCode: "OTP_SEND_FAILED" }),
+      durationMs: Date.now() - providerStartedAt,
+    });
+    if (smsStatus !== 200) {
+      throw new CredentialFlowError(
+        "ارسال کد تأیید ناموفق بود. دوباره تلاش کنید.",
+        502,
+        "OTP_SEND_FAILED",
+      );
+    }
+    strapi.log.info("auth_operation_timing", {
+      operation: "otp_start",
+      requestId,
+      status: 200,
+      durationMs: Date.now() - totalStartedAt,
+    });
+    return challengeId;
+  } catch (error) {
+    if (challengeId && redis) {
+      await redis.del(challengeId).catch(() => undefined);
+    }
+    await releaseOtpPhoneCooldown(cooldown).catch(() => false);
+    strapi.log.info("auth_operation_timing", {
+      operation: "otp_start",
+      requestId,
+      status: error instanceof CredentialFlowError ? error.status : 500,
+      reasonCode: error instanceof CredentialFlowError ? error.code : "OTP_START_FAILED",
+      durationMs: Date.now() - totalStartedAt,
+    });
+    if (error instanceof CredentialFlowError) throw error;
     throw new CredentialFlowError(
       "ارسال کد تأیید ناموفق بود. دوباره تلاش کنید.",
       503,
-      "OTP_STORE_FAILED",
+      "OTP_START_FAILED",
     );
   }
-
-  const smsStatus = await strapi.service("api::messaging.messaging").sendSMS(ctx, {
-    phone,
-    message: code,
-    isOTP: true,
-  });
-  if (smsStatus !== 200) {
-    await redis.del(challengeId);
-    throw new CredentialFlowError(
-      "ارسال کد تأیید ناموفق بود. دوباره تلاش کنید.",
-      502,
-      "OTP_SEND_FAILED",
-    );
-  }
-  return challengeId;
 }
 
 const CONSUME_OTP_SCRIPT = `

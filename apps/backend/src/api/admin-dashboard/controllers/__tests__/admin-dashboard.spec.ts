@@ -19,11 +19,14 @@ function installStrapi({
   raw,
   findMany,
   role = ROLE_NAMES.SUPERADMIN,
+  reserveCount = 4,
 }: {
   raw: jest.Mock;
   findMany: jest.Mock;
   role?: string;
+  reserveCount?: number;
 }) {
+  const count = jest.fn().mockResolvedValue(reserveCount);
   (global as any).strapi = {
     db: { connection: { raw } },
     query: jest.fn((uid: string) =>
@@ -36,11 +39,12 @@ function installStrapi({
               role: { name: role },
             }),
           }
-        : { findMany },
+        : { findMany, count },
     ),
     contentType: jest.fn(() => ({})),
     log: { info: jest.fn() },
   };
+  return { count };
 }
 
 describe("bounded admin dashboard summary", () => {
@@ -74,6 +78,11 @@ describe("bounded admin dashboard summary", () => {
           done_orders_total: "1200",
           active_products_total: "2922",
           customer_accounts_total: "22966",
+          today_orders_total: "9",
+          today_paying_total: "1",
+          today_inprogress_total: "3",
+          today_completed_total: "4",
+          today_cancelled_total: "1",
         },
       ],
     });
@@ -93,12 +102,22 @@ describe("bounded admin dashboard summary", () => {
 
     await controller.query(ctx);
 
-    expect(raw.mock.calls[0][0]).toContain("customer_accounts_total");
+    expect(raw.mock.calls.some(([sql]) => String(sql).includes("customer_accounts_total"))).toBe(
+      true,
+    );
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({ limit: 3, orderBy: [{ createdAt: "desc" }, { id: "desc" }] }),
     );
     expect(ctx.set).toHaveBeenCalledWith("Cache-Control", "private, no-store");
     expect(ctx.body.data.metrics.customerAccountsTotal).toBe(22_966);
+    expect(ctx.body.data.todayOrderCounts).toEqual({
+      all: 9,
+      paying: 1,
+      inprogress: 3,
+      completed: 4,
+      cancelled: 1,
+    });
+    expect(ctx.body.data.activeReserveGroups).toBe(4);
     expect(ctx.body.data.latestOrdersAmount).toBe(500);
   });
 
@@ -158,7 +177,48 @@ describe("bounded admin dashboard summary", () => {
 
     await controller.query(ctx);
 
-    expect(raw.mock.calls[0][0]).not.toContain("FROM users");
+    expect(raw.mock.calls.every(([sql]) => !String(sql).includes("FROM users"))).toBe(true);
     expect(ctx.body.data.metrics.customerAccountsTotal).toBeNull();
+  });
+
+  it("does not query or return order aggregates for Seller 1", async () => {
+    const raw = jest.fn().mockResolvedValue({ rows: [{ active_products_total: "5" }] });
+    const findMany = jest.fn().mockResolvedValue([]);
+    const { count } = installStrapi({
+      raw,
+      findMany,
+      role: ROLE_NAMES.SELLER_1,
+    });
+    const ctx = createContext();
+
+    await controller.query(ctx);
+
+    expect(raw.mock.calls.every(([sql]) => !String(sql).includes("FROM orders"))).toBe(true);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(count).not.toHaveBeenCalled();
+    expect(ctx.body.data.metrics.ordersTotal).toBeNull();
+    expect(ctx.body.data.todayOrderCounts).toBeNull();
+    expect(ctx.body.data.activeReserveGroups).toBeNull();
+    expect(ctx.body.data.latestOrders).toEqual([]);
+  });
+
+  it("binds the current Tehran day as a half-open UTC range", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-09-12T10:00:00.000Z"));
+    try {
+      const raw = jest.fn().mockResolvedValue({ rows: [{}] });
+      installStrapi({ raw, findMany: jest.fn().mockResolvedValue([]) });
+
+      await controller.query(createContext());
+
+      const orderCall = raw.mock.calls.find(([sql]) => String(sql).includes("FROM orders o"));
+      expect(orderCall?.[1]?.slice(0, 2)).toEqual([
+        "2026-09-11T20:30:00.000Z",
+        "2026-09-12T20:30:00.000Z",
+      ]);
+      expect(String(orderCall?.[0])).toContain("o.date >= bounds.start_at");
+      expect(String(orderCall?.[0])).toContain("o.date < bounds.end_at");
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

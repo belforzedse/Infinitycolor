@@ -316,9 +316,32 @@ export function getNextImageQuality(quality?: number | null): number {
   }, NEXT_IMAGE_QUALITIES[0]);
 }
 
-function getNextImageWidth(width?: number | null): number {
+/**
+ * Snap a requested width up to the nearest configured breakpoint.
+ *
+ * Exported because the Arvan loader needs the same ladder: the edge caches one
+ * derivative per distinct `?width=` value, so letting arbitrary widths through
+ * would multiply the stored objects for no visual gain.
+ */
+export function getNextImageWidth(width?: number | null): number {
   const requested = typeof width === "number" && Number.isFinite(width) && width > 0 ? Math.ceil(width) : 1920;
   return NEXT_IMAGE_WIDTHS.find((candidate) => candidate >= requested) ?? NEXT_IMAGE_WIDTHS[NEXT_IMAGE_WIDTHS.length - 1];
+}
+
+/**
+ * True when this already-resolved image URL is served by the configured media
+ * CDN, which is the only place Arvan can resize. Anything else — a local public
+ * asset, a data URI, or uploads still served from the API origin because no CDN
+ * is configured — has to keep going through the Next optimizer.
+ */
+export function isMediaCdnImageUrl(src: string, options?: ImagePolicyOptions): boolean {
+  const cdn = getMediaCdnOrigin(options);
+  if (!cdn) return false;
+
+  const url = toUrl(src);
+  if (!url) return false;
+
+  return sameOrigin(url, cdn) && hasAllowedUploadPath(url);
 }
 
 export function buildOptimizedImageUrl(

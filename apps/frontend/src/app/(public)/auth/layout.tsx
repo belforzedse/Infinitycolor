@@ -2,7 +2,7 @@ import Image from "next/image";
 import { Suspense } from "react";
 import AuthIllustration from "@/components/Auth/Illustration";
 import SuspenseLoader from "@/components/ui/SuspenseLoader";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 
 // TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
 // See: https://nextjs.org/docs/app/guides/migrating-to-cache-components

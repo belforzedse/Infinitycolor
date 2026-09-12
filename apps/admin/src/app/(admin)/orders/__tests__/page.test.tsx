@@ -1,8 +1,15 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 let mockTableProps: any;
 let mockWrapperProps: any;
 let mockCapabilities = new Set<string>();
+const mockRefreshOrderCounts = jest.fn();
+let mockOrderCountsState: {
+  counts?: Record<string, number>;
+  activeReserveGroups?: number;
+  loading: boolean;
+  error?: string;
+};
 
 jest.mock("@/components/SuperAdmin/Table", () => ({
   refreshTable: {},
@@ -25,10 +32,17 @@ jest.mock("../table", () => ({
 }));
 jest.mock("@/services/super-admin/orders/list", () => ({
   listAdminOrders: jest.fn(),
+  listAdminShippingMethods: jest.fn(),
 }));
 jest.mock("@/services/super-admin/orders/adjustItems", () => ({
   changeOrderStatus: jest.fn(),
   cancelOrder: jest.fn(),
+}));
+jest.mock("@/hooks/useOrderStatusCounts", () => ({
+  useOrderStatusCounts: () => ({
+    ...mockOrderCountsState,
+    refresh: mockRefreshOrderCounts,
+  }),
 }));
 jest.mock("react-hot-toast", () => ({
   __esModule: true,
@@ -59,7 +73,10 @@ jest.mock("use-debounce", () => ({
 }));
 
 import OrdersPage from "../page";
-import { listAdminOrders } from "@/services/super-admin/orders/list";
+import {
+  listAdminOrders,
+  listAdminShippingMethods,
+} from "@/services/super-admin/orders/list";
 import { cancelOrder, changeOrderStatus } from "@/services/super-admin/orders/adjustItems";
 
 describe("orders page bounded data ownership", () => {
@@ -71,10 +88,27 @@ describe("orders page bounded data ownership", () => {
       "order.status.update",
       "order.manual.create",
     ]);
+    mockRefreshOrderCounts.mockClear();
+    mockOrderCountsState = {
+      counts: {
+        all: 12,
+        paying: 2,
+        inprogress: 4,
+        completed: 5,
+        cancelled: 1,
+        manual: 3,
+      },
+      activeReserveGroups: 2,
+      loading: false,
+      error: undefined,
+    };
     (listAdminOrders as jest.Mock).mockReset().mockResolvedValue({
       data: [],
       meta: { pagination: { page: 1, pageSize: 25, pageCount: 0, total: 0 } },
     });
+    (listAdminShippingMethods as jest.Mock)
+      .mockReset()
+      .mockImplementation(() => new Promise(() => undefined));
   });
 
   it("uses one POST-backed loader with controlled filters", async () => {
@@ -141,7 +175,7 @@ describe("orders page bounded data ownership", () => {
   it("loads pending-payment orders in their own tab", async () => {
     render(<OrdersPage />);
 
-    fireEvent.click(screen.getByRole("button", { name: "در انتظار پرداخت" }));
+    fireEvent.click(screen.getByRole("button", { name: /در انتظار پرداخت/ }));
     await mockTableProps.dataLoader({
       page: 1,
       pageSize: 25,
@@ -151,6 +185,64 @@ describe("orders page bounded data ownership", () => {
 
     expect(listAdminOrders).toHaveBeenLastCalledWith(
       expect.objectContaining({ tab: "paying" }),
+    );
+  });
+
+  it("shows Persian counters for every order tab and keeps active reserves separate", () => {
+    render(<OrdersPage />);
+
+    expect(screen.getByRole("button", { name: /همه ۱۲/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /در حال انجام ۴/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /سفارش‌های دستی ۳/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /رزروهای فعال ۲/ })).toHaveAttribute(
+      "href",
+      "/orders/reserve",
+    );
+  });
+
+  it("keeps the order table usable when the independent counter request fails", () => {
+    mockOrderCountsState = {
+      loading: false,
+      error: "شمارش سفارش‌ها موقتاً در دسترس نیست.",
+    };
+
+    render(<OrdersPage />);
+
+    expect(screen.getByTestId("orders-table")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "شمارش سفارش‌ها موقتاً در دسترس نیست.",
+    );
+    expect(screen.getByRole("button", { name: /همه —/ })).toBeInTheDocument();
+  });
+
+  it("combines checked shipping methods as one server-side filter", async () => {
+    (listAdminShippingMethods as jest.Mock).mockResolvedValue([
+      { code: "post", title: "پست" },
+      { code: "tipax", title: "تیپاکس" },
+      { code: "pickup", title: "حضوری" },
+    ]);
+    render(<OrdersPage />);
+
+    const post = await screen.findByRole("checkbox", { name: "پست" });
+    const tipax = screen.getByRole("checkbox", { name: "تیپاکس" });
+    fireEvent.click(post);
+    fireEvent.click(tipax);
+
+    await waitFor(() => expect(mockTableProps.isFiltered).toBe(true));
+    await mockTableProps.dataLoader({
+      page: 1,
+      pageSize: 25,
+      filters: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(listAdminOrders).toHaveBeenLastCalledWith(
+      expect.objectContaining({ shippingMethodCodes: ["post", "tipax"] }),
+    );
+
+    fireEvent.click(post);
+    await waitFor(() =>
+      expect(mockTableProps.dataLoaderKey).toContain('"shippingMethodCodes":["tipax"]'),
     );
   });
 
@@ -195,6 +287,7 @@ describe("orders page bounded data ownership", () => {
         "1 سفارش تغییر نکرد: در مهلت رزرو",
         expect.anything(),
       );
+      expect(mockRefreshOrderCounts).toHaveBeenCalledTimes(1);
     });
 
     it("changes nothing when every selected order is held", async () => {
@@ -254,6 +347,31 @@ describe("orders page bounded data ownership", () => {
       expect(changeOrderStatus).not.toHaveBeenCalled();
       expect(mockToast.success).toHaveBeenCalledWith("2 سفارش لغو شد.");
       expect(mockToast).toHaveBeenCalledWith("1 سفارش از قبل لغو شده بود.");
+      expect(mockRefreshOrderCounts).toHaveBeenCalledTimes(1);
+    });
+
+    it("refreshes counters when only some cancellation requests succeed", async () => {
+      mockCapabilities = new Set([
+        "order.read",
+        "order.status.update",
+        "order.cancel",
+      ]);
+      (cancelOrder as jest.Mock)
+        .mockReset()
+        .mockResolvedValueOnce({ success: true })
+        .mockRejectedValueOnce(new Error("failed"));
+      render(<OrdersPage />);
+
+      await mockTableProps.onBulkAction("cancel", [
+        row("1", false),
+        row("2", false),
+      ]);
+
+      expect(mockToast.success).toHaveBeenCalledWith("1 سفارش لغو شد.");
+      expect(mockToast.error).toHaveBeenCalledWith(
+        "1 سفارش لغو نشد. دوباره تلاش کنید.",
+      );
+      expect(mockRefreshOrderCounts).toHaveBeenCalledTimes(1);
     });
   });
 });

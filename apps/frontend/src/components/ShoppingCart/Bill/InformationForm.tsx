@@ -395,6 +395,8 @@ function ShoppingCartBillInformationForm({
               isLoading={loadingProvinces}
               error={errorProvinces || undefined}
               selectButtonClassName="!border-slate-200"
+              searchable
+              searchPlaceholder="جست‌وجوی استان"
             />
           )}
         />
@@ -418,6 +420,8 @@ function ShoppingCartBillInformationForm({
               isLoading={loadingCities}
               error={errorCities || undefined}
               selectButtonClassName="!border-slate-200"
+              searchable
+              searchPlaceholder="جست‌وجوی شهر"
             />
           )}
         />

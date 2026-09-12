@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useAtom } from "jotai";
-import { refreshTable } from "@/components/SuperAdmin/Table";
+import { refreshTable } from "@/atoms/refreshTable";
 //HELLO
 /**
  * Hook that refreshes data when account/user pages become visible after being in the background. :3

@@ -13,6 +13,7 @@ import { adminAdjustItemsHandler } from "./helpers/adminAdjustItems";
 import { adminCancelOrderHandler } from "./helpers/adminCancel";
 import { adminPaymentOperationHandler } from "./helpers/adminPaymentOperation";
 import { adminVoidBarcodeHandler } from "./helpers/adminVoidBarcode";
+import { adminUpdateAddressHandler } from "./helpers/adminUpdateAddress";
 import { decrementManualOrderStockHandler } from "./helpers/manualOrderStock";
 import { getActiveReserveHandler } from "./handlers/getActiveReserve";
 import { releaseReserveHandler } from "./handlers/releaseReserve";
@@ -253,6 +254,7 @@ export default factories.createCoreController(
           // comes from the group. Without this the admin detail screen would
           // offer fulfillment actions the server refuses (and vice versa).
           ...projectOrderReserve(order),
+          hasSharedReserveAddress: Boolean(order.reserve_shipment?.id),
           ...(operationalManager
             ? { external_id: undefined, external_source: undefined, reserveGroupId: undefined }
             : {}),
@@ -463,6 +465,10 @@ export default factories.createCoreController(
       });
     },
 
+    async adminUpdateAddress(ctx) {
+      return adminUpdateAddressHandler(strapi as any, ctx);
+    },
+
     async adminCancel(ctx) {
       return adminCancelOrderHandler(strapi as any, ctx);
     },
@@ -493,6 +499,7 @@ export default factories.createCoreController(
         const order = await strapi.db.query("api::order.order").findOne({
           where: { id, user: { id: userId } },
           populate: {
+            shipping: { fields: ["Code", "Title"] },
             reserve_shipment: { populate: { rootOrder: true } },
             contract: {
               populate: {
@@ -538,6 +545,10 @@ export default factories.createCoreController(
                 : "Unknown");
         const isPaid = paymentStatus === "Succeeded";
         const canRetry = ["Failed", "Cancelled", "Expired"].includes(paymentStatus);
+        const shippingMethodCode =
+          order.ShippingMethodCode || (order as any).shipping?.Code || null;
+        const shippingMethodTitle =
+          order.ShippingMethodTitle || (order as any).shipping?.Title || null;
 
         // Reserve facts are read from the group row, never from the order's frozen
         // columns, so the confirmation screen states the live deadline rather than
@@ -565,6 +576,8 @@ export default factories.createCoreController(
             paymentStatus,
             isPaid,
             paymentGateway: order.PaymentGateway || "Unknown",
+            shippingMethodCode,
+            shippingMethodTitle,
             transactionId,
             attemptId: attempt?.attemptId,
             amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,

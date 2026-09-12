@@ -76,7 +76,8 @@ const PRODUCT_REPORT_ACTIONS = [
 
 const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
   // Bounded admin catalog list (POST /admin/products-list/query). Same pattern as
-  // order.read → admin-order-list.query / queryReserveGroups / getReserveGroup;
+  // order.read → admin-order-list.query / counts / shippingMethods /
+  // queryReserveGroups / getReserveGroup;
   // without this, Seller 1+ pass the product.read capability policy but
   // Strapi U&P still 403s the route.
   "api::admin-product-list": { "admin-product-list": ["query"] },
@@ -214,7 +215,13 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
     // is missing from the grant, which is why Seller 2+ could open /orders
     // but not the reserve-groups board until these actions were listed here.
     "api::admin-order-list": {
-      "admin-order-list": ["query", "queryReserveGroups", "getReserveGroup"],
+      "admin-order-list": [
+        "query",
+        "counts",
+        "shippingMethods",
+        "queryReserveGroups",
+        "getReserveGroup",
+      ],
     },
     "api::order": { order: ["findOne"] },
   },
@@ -223,6 +230,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "order.status.update": { "api::order": { order: ["adminTransition"] } },
   "order.notes.update": { "api::order": { order: ["adminUpdateNotes"] } },
+  "order.address.update": { "api::order": { order: ["adminUpdateAddress"] } },
   "order.items.adjust": { "api::order": { order: ["adminAdjustItems"] } },
   "order.cancel": { "api::order": { order: ["adminCancel"] } },
   "order.manual.create": {

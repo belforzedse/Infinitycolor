@@ -11,7 +11,7 @@ import OrderItemsList from "./OrderItemsList";
 import SupportActions from "./SupportActions";
 import ReserveInfoCard from "./ReserveInfoCard";
 import toast from "react-hot-toast";
-import { StorefrontAccountShell } from "@/components/storefront";
+import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
 import { getOrderStatusMeta } from "@/utils/statusTranslations";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 

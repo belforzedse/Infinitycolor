@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, createStore } from "jotai";
 import ModelHiringModal from "../ModelHiringModal";
+import ModelHiringModalContent from "../ModelHiringModalContent";
 import { modelHiringModalOpenAtom } from "@/atoms/modelHiring";
 import { submitModelApplication } from "@/services/model-applications";
 
@@ -18,6 +19,16 @@ const submit = submitModelApplication as jest.MockedFunction<typeof submitModelA
 function renderModal() {
   const store = createStore();
   store.set(modelHiringModalOpenAtom, true);
+  return render(
+    <Provider store={store}>
+      <ModelHiringModalContent />
+    </Provider>,
+  );
+}
+
+function renderGate(open: boolean) {
+  const store = createStore();
+  store.set(modelHiringModalOpenAtom, open);
   return render(
     <Provider store={store}>
       <ModelHiringModal />
@@ -66,5 +77,15 @@ describe("ModelHiringModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "ارسال درخواست" }));
     await waitFor(() => expect(submit).toHaveBeenCalled());
     expect(await screen.findByText("درخواست شما ثبت شد.")).toBeInTheDocument();
+  });
+
+  it("renders nothing until the modal is opened", () => {
+    const { container } = renderGate(false);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("loads the form once the modal is opened", async () => {
+    renderGate(true);
+    expect(await screen.findByRole("button", { name: "ارسال درخواست" })).toBeInTheDocument();
   });
 });

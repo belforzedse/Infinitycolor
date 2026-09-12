@@ -35,5 +35,68 @@ export default [
       "react-hooks/static-components": "warn",
       "react-hooks/use-memo": "warn"
     }
-  }
+  },
+  {
+    // The `@repo/auth-core` package root re-exports `bridge-signature.js`,
+    // which imports `node:crypto`. Any client module that reaches the root
+    // makes Turbopack inject crypto-browserify + buffer + readable-stream
+    // (~420 KB raw, never executed) into the shared storefront chunk.
+    files: ["**/*.{js,jsx,mjs,ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@repo/auth-core",
+              message:
+                "Import a subpath instead (@repo/auth-core/iran-phone, /browser, /contracts, /redirects, ...). The package root re-exports bridge-signature, which imports node:crypto and drags crypto-browserify + buffer into client bundles.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Storefront code must not import super-admin modules: `@/components/
+    // SuperAdmin/Table` alone dragged the admin table, @tanstack/react-table and
+    // qs (~106 KB raw) into the shared client bundle of every storefront route.
+    // Shared state belongs in `src/atoms/` -- see src/atoms/refreshTable.ts.
+    //
+    // Scoped by exclusion rather than by an allowlist of storefront paths, so a
+    // new directory is guarded by default. The exceptions are the two admin
+    // trees themselves plus the files that are deliberately admin-adjacent: the
+    // print views, the admin product editor, the admin upsert-page configs and
+    // the admin sidebar.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      "src/components/SuperAdmin/**",
+      "src/app/(super-admin)/**",
+      "src/app/(print)/**",
+      "src/components/Product/add/**",
+      "src/config/**",
+      "src/constants/superAdminSidebar.tsx",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@repo/auth-core",
+              message:
+                "Import a subpath instead (@repo/auth-core/iran-phone, /browser, /contracts, /redirects, ...). The package root re-exports bridge-signature, which imports node:crypto and drags crypto-browserify + buffer into client bundles.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["**/components/SuperAdmin/**", "**/app/(super-admin)/**"],
+              message:
+                "Storefront code must not import super-admin modules. Move the shared value into src/atoms/ or src/lib/ instead.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];

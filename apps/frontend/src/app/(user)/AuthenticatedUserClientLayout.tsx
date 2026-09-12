@@ -8,7 +8,7 @@ import { useAccountFreshData } from "@/hooks/useAccountFreshData";
 import useUser from "@/hooks/useUser";
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 import AdaptiveQualityBoundary from "@/components/AdaptiveQuality/AdaptiveQualityBoundary";
 
 const CartDrawer = dynamic(() => import("@/components/ShoppingCart/Drawer"), { ssr: false });

@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { formatProductsToCardProps } from "@/services/product/product";
 import type { PLPProduct } from "@/components/PLP/types";
-import { StorefrontGrid } from "@/components/storefront";
+import { StorefrontGrid } from "@/components/storefront/StorefrontGrid";
 import { useAdaptiveQuality } from "@/lib/adaptive-quality";
 import { trackAnalyticsEvent } from "@/lib/analytics";
 

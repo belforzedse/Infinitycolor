@@ -1,5 +1,5 @@
 import React from "react";
-import { StorefrontGrid } from "@/components/storefront";
+import { StorefrontGrid } from "@/components/storefront/StorefrontGrid";
 import { SkeletonBlock, SkeletonMedia, SkeletonText } from "@repo/ui/skeleton";
 
 function DesktopProductResultsSkeleton() {

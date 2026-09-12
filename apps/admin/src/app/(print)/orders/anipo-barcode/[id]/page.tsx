@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import { apiClient } from "@/services";
 import AnipoBarcodeLabel from "@/components/SuperAdmin/Order/AnipoBarcodeLabel";
+import { unwrapEntity } from "@/utils/strapi";
 
 type Order = {
   id: string;
@@ -30,6 +31,8 @@ type Order = {
       data: {
         attributes: {
           FullAddress: string;
+          FullName?: string;
+          Phone?: string;
           shipping_city: {
             data: {
               attributes: {
@@ -71,7 +74,12 @@ export default function AnipoBarcodePrintPage() {
           `/orders/${id}?populate[0]=user&populate[1]=user.user_info&populate[2]=delivery_address.shipping_city.shipping_province&populate[3]=contract`,
         );
 
-        setOrder((res as any).data);
+        const normalized = unwrapEntity((res as any).data);
+        setOrder(
+          normalized
+            ? ({ id: String(normalized.id ?? id), attributes: normalized } as unknown as Order)
+            : null,
+        );
       } finally {
         setLoading(false);
       }
@@ -106,16 +114,18 @@ export default function AnipoBarcodePrintPage() {
   }
 
   // Prepare data for the label component
-  const userInfo = order.attributes.user?.data?.attributes;
+  const userInfo = unwrapEntity(order.attributes.user);
+  const userProfile = unwrapEntity(userInfo?.user_info);
+  const addressData = unwrapEntity(order.attributes.delivery_address);
   const fullName =
-    `${userInfo?.user_info?.data?.attributes?.FirstName || ""} ${userInfo?.user_info?.data?.attributes?.LastName || ""}`.trim();
+    addressData?.FullName?.trim() ||
+    `${userProfile?.FirstName || ""} ${userProfile?.LastName || ""}`.trim();
+  const cityData = unwrapEntity(addressData?.shipping_city);
+  const provinceData = unwrapEntity(cityData?.shipping_province);
+  const city = cityData?.Title || "گرگان";
+  const province = provinceData?.Title || "";
 
-  const addressData = order.attributes.delivery_address?.data?.attributes;
-  const city = addressData?.shipping_city?.data?.attributes?.Title || "گرگان";
-  const province =
-    addressData?.shipping_city?.data?.attributes?.shipping_province?.data?.attributes?.Title || "";
-
-  const amount = order.attributes.contract?.data?.attributes?.Amount || 0;
+  const amount = unwrapEntity(order.attributes.contract)?.Amount || 0;
   const orderDate = new Date(order.attributes.createdAt);
 
   // Format date and time in Persian
@@ -140,7 +150,7 @@ export default function AnipoBarcodePrintPage() {
     fare: `${amount.toLocaleString()} ریال`,
     barcodeNumber: order.attributes.ShippingBarcode,
     recipientName: fullName,
-    recipientPhone: userInfo?.Phone || "",
+    recipientPhone: addressData?.Phone || userInfo?.Phone || userInfo?.phone || "",
     recipientAddress: [addressData?.FullAddress, city, province].filter(Boolean).join(" - "),
   };
 

@@ -200,6 +200,8 @@ export default function SuperAdminOrderSidebar({
             attributes: {
               FullAddress: orderData.address || "",
               PostalCode: orderData.postalCode || "",
+              FullName: orderData.recipientName || orderData.userName || "",
+              Phone: orderData.recipientPhone || orderData.phoneNumber || "",
             },
           },
         },

@@ -1,5 +1,6 @@
 import type { Strapi } from "@strapi/strapi";
 import { scheduleHomeProductsRevalidation } from "../../../../utils/homepageRevalidation";
+import { scheduleAvailabilityTransitionPurge } from "../../../../utils/availabilityInvalidation";
 import { runRawSql } from "../../../../utils/transactionExecutor";
 
 /**
@@ -190,7 +191,7 @@ export const decrementStockAtomic = async (
       `UPDATE product_stocks
        SET count = count - ?
        WHERE id = ? AND count >= ?
-       RETURNING count`,
+       RETURNING count, reserved_count`,
       [quantity, stockId, quantity],
       trx
     );
@@ -232,6 +233,14 @@ export const decrementStockAtomic = async (
       { stockId, decrementBy: quantity },
       trx,
     );
+    const decrementAvailableAfter = Number(rows[0].count) - Number(rows[0].reserved_count || 0);
+    scheduleAvailabilityTransitionPurge(strapi, {
+      stockId,
+      availableBefore: decrementAvailableAfter + quantity,
+      availableAfter: decrementAvailableAfter,
+      reason: "stock-decrement",
+      trx,
+    });
     return { success: true, newCount: rows[0].count };
   } catch (error) {
     strapi.log.error("Failed to decrement stock atomically", {
@@ -268,7 +277,7 @@ export const reserveStockAtomic = async (
        SET reserved_count = COALESCE(reserved_count, 0) + ?
        WHERE id = ?
          AND (count - COALESCE(reserved_count, 0)) >= ?
-       RETURNING reserved_count`,
+       RETURNING count, reserved_count`,
       [quantity, stockId, quantity],
       trx
     );
@@ -291,6 +300,17 @@ export const reserveStockAtomic = async (
       { stockId, reserveBy: quantity },
       trx,
     );
+    // The UPDATE is the authority on what changed, so availability is derived
+    // from its own RETURNING row rather than re-read: a second SELECT could
+    // observe another transaction's reservation and misreport the crossing.
+    const availableAfter = Number(rows[0].count) - Number(rows[0].reserved_count);
+    scheduleAvailabilityTransitionPurge(strapi, {
+      stockId,
+      availableBefore: availableAfter + quantity,
+      availableAfter,
+      reason: "stock-reserve",
+      trx,
+    });
     return { success: true, newReservedCount: rows[0].reserved_count };
   } catch (error) {
     strapi.log.error("Failed to reserve stock atomically", {
@@ -330,7 +350,7 @@ export const releaseReservedStockAtomic = async (
        SET reserved_count = COALESCE(reserved_count, 0) - ?
        WHERE id = ?
          AND COALESCE(reserved_count, 0) >= ?
-       RETURNING reserved_count`,
+       RETURNING count, reserved_count`,
       [quantity, stockId, quantity],
       trx
     );
@@ -368,6 +388,16 @@ export const releaseReservedStockAtomic = async (
       { stockId, releaseBy: quantity },
       trx,
     );
+    // Releasing a reservation is the direction that puts a product BACK in
+    // stock, so this is the crossing that makes a `ناموجود` page wrong.
+    const releaseAvailableAfter = Number(rows[0].count) - Number(rows[0].reserved_count || 0);
+    scheduleAvailabilityTransitionPurge(strapi, {
+      stockId,
+      availableBefore: releaseAvailableAfter - quantity,
+      availableAfter: releaseAvailableAfter,
+      reason: "stock-reservation-release",
+      trx,
+    });
     return { success: true, newReservedCount: rows[0].reserved_count };
   } catch (error) {
     strapi.log.error("Failed to release reserved stock atomically", {
@@ -443,6 +473,9 @@ export const consumeReservedStockAtomic = async (
       };
     }
 
+    // No availability purge here on purpose: consuming a reservation lowers
+    // `count` and `reserved_count` by the same amount, so (count - reserved) is
+    // unchanged and the page already shows what it should.
     scheduleHomeProductsRevalidation(
       "stock-reservation-consume",
       { stockId, consumeBy: quantity },
@@ -481,7 +514,7 @@ export const restoreStockAtomic = async (
     }
     const result = await rawSql(
       strapi,
-      `UPDATE product_stocks SET count = count + ? WHERE id = ? RETURNING count`,
+      `UPDATE product_stocks SET count = count + ? WHERE id = ? RETURNING count, reserved_count`,
       [quantity, stockId],
       trx,
     );
@@ -492,6 +525,14 @@ export const restoreStockAtomic = async (
       { stockId, restoreBy: quantity },
       trx,
     );
+    const restoreAvailableAfter = Number(rows[0].count) - Number(rows[0].reserved_count || 0);
+    scheduleAvailabilityTransitionPurge(strapi, {
+      stockId,
+      availableBefore: restoreAvailableAfter - quantity,
+      availableAfter: restoreAvailableAfter,
+      reason: "stock-restore",
+      trx,
+    });
     return { success: true, newCount: rows[0].count };
   } catch (error) {
     return { success: false, error: (error as Error).message };

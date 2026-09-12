@@ -1,7 +1,12 @@
 import { getPatternCode, loadSmsConfig, type SmsConfig } from "./config";
 import { normalizeIranMobile } from "./phone";
 import { maskPhone, maskSecret } from "./redaction";
-import type { SmsNotificationType, SmsPatternParams, SmsSendResult, StrapiSmsLogger } from "./types";
+import type {
+  SmsNotificationType,
+  SmsPatternParams,
+  SmsSendResult,
+  StrapiSmsLogger,
+} from "./types";
 
 const LEGACY_OTP_API_URL = "https://api2.ippanel.com/api/v1/sms/pattern/normal/send";
 
@@ -246,7 +251,6 @@ export async function sendLegacyOtpSms(input: LegacyOtpSmsInput): Promise<SmsSen
       patternCode,
       messageId: result.messageId,
       providerCode: result.providerCode,
-      providerMessage: result.providerMessage,
     };
 
     if (ok) {
@@ -261,7 +265,10 @@ export async function sendLegacyOtpSms(input: LegacyOtpSmsInput): Promise<SmsSen
   } catch (error) {
     logger?.warn?.("[sms] IPPanel legacy OTP request failed", {
       recipient: maskPhone(recipient),
-      error: (error as Error)?.name === "AbortError" ? "timeout" : (error as Error)?.message,
+      reasonCode:
+        (error as Error)?.name === "AbortError"
+          ? "TIMEOUT"
+          : (error as Error)?.name || "REQUEST_FAILED",
     });
     return {
       ok: false,

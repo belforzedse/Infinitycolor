@@ -14,6 +14,14 @@ import {
 } from "../services/credential-flow";
 
 describe("shared Strapi credential flow", () => {
+  beforeEach(async () => {
+    const redis = await RedisClient;
+    (redis.set as jest.Mock).mockReset().mockResolvedValue("OK");
+    (redis.ttl as jest.Mock).mockReset().mockResolvedValue(120);
+    (redis.del as jest.Mock).mockReset().mockResolvedValue(1);
+    (redis.eval as jest.Mock).mockReset().mockResolvedValue(1);
+  });
+
   test.each(["09123456789", "+989123456789"])("accepts the frozen ASCII phone form %s", (phone) => {
     expect(isAcceptedPhone(phone)).toBe(true);
   });

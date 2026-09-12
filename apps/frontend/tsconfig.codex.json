@@ -4,7 +4,6 @@
     "next-env.d.ts",
     "src/components/PLP/List.tsx",
     "src/components/PLP/List/PLPDesktopList.tsx",
-    "src/components/PLP/List/PLPMobileList.tsx",
     "src/components/Product/Card.tsx",
     "src/components/Product/SmallCard.tsx",
     "src/hooks/usePLPProductLikes.ts",

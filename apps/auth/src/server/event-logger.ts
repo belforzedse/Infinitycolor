@@ -8,7 +8,16 @@ const ALLOWED_FIELDS = new Set([
   "durationMs",
   "subjectTag",
   "status",
+  "operation",
 ]);
+const REQUEST_ID_PATTERN =
+  /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+
+export function safeAuthRequestId(value: unknown): string {
+  return typeof value === "string" && REQUEST_ID_PATTERN.test(value)
+    ? value
+    : randomUUID();
+}
 
 export function keyedSubjectTag(value: string | number): string {
   const secret = process.env.AUTH_FLOW_SECRET?.trim();
@@ -29,8 +38,7 @@ export function authEvent(
 ): void {
   const record: Record<string, string | number | boolean> = {
     event,
-    requestId:
-      typeof fields.requestId === "string" ? fields.requestId : randomUUID(),
+    requestId: safeAuthRequestId(fields.requestId),
   };
   for (const [key, value] of Object.entries(fields)) {
     if (ALLOWED_FIELDS.has(key) && value !== undefined) record[key] = value;

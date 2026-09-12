@@ -73,6 +73,11 @@ ENV FRONTEND_REDIS_URL=${FRONTEND_REDIS_URL}
 ENV CENTRAL_AUTH_CUTOVER_ENABLED=${CENTRAL_AUTH_CUTOVER_ENABLED}
 ENV GITHUB_SHA=${GITHUB_SHA}
 ENV NEXT_PUBLIC_RELEASE_SHA=${GITHUB_SHA}
+# Same release identifier as production; see main.Dockerfile. Empty is fine and
+# means the feature stays off -- next.config omits the key entirely rather than
+# setting an empty one, which would emit valueless `?dpl=` on some asset URLs
+# and none on others, downloading every chunk twice.
+ENV NEXT_DEPLOYMENT_ID=${GITHUB_SHA}
 
 WORKDIR /repo/apps/frontend
 ENV NODE_ENV=production
@@ -98,7 +103,8 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
     FRONTEND_REDIS_URL=${FRONTEND_REDIS_URL} \
     NEXT_CACHE_ENVIRONMENT=${NEXT_PUBLIC_AUTH_ENVIRONMENT} \
     NEXT_CACHE_RELEASE=${GITHUB_SHA} \
-    CACHE_RELEASE_ID=${GITHUB_SHA}
+    CACHE_RELEASE_ID=${GITHUB_SHA} \
+    NEXT_DEPLOYMENT_ID=${GITHUB_SHA}
 
 COPY --from=builder /repo/apps/frontend/.next/standalone ./
 COPY --from=builder /repo/apps/frontend/public ./apps/frontend/public

@@ -228,6 +228,22 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
               mobileColSpan: 12,
               readOnly: true,
             },
+            {
+              name: "recipientName",
+              type: "copy-text",
+              label: "نام گیرنده",
+              colSpan: 6,
+              mobileColSpan: 12,
+              readOnly: true,
+            },
+            {
+              name: "recipientPhone",
+              type: "copy-text",
+              label: "شماره تماس گیرنده",
+              colSpan: 6,
+              mobileColSpan: 12,
+              readOnly: true,
+            },
           ],
         },
         {
@@ -235,7 +251,7 @@ export const config: UpsertPageConfigType<SuperAdminOrderDetail> = {
             {
               name: "phoneNumber",
               type: "copy-text",
-              label: "شماره تماس",
+              label: "شماره تماس مشتری",
               colSpan: 5,
               mobileColSpan: 12,
               readOnly: true,

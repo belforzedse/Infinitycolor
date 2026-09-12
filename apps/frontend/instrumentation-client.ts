@@ -1,5 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 
+import type * as SentryReplay from "./src/lib/sentry-replay";
+
 import { isReplayAllowedUrl, replaySampleRate } from "./src/lib/sentry-replay-privacy";
 
 const APP_INIT_MARK = "infinity:client-init";
@@ -16,79 +18,51 @@ const replayErrorSampleRate = replaySampleRate(
   1,
 );
 
-let replayIntegrationAdded = false;
-let replayRouteActive = false;
-let replayRecordingMode: "buffer" | "session" = "buffer";
-let replayStopPromise: Promise<void> = Promise.resolve();
+/**
+ * Replay (rrweb) is loaded on demand.
+ *
+ * Referencing `Sentry.replayIntegration` here would put rrweb in the chunk that
+ * every storefront route parses before hydration, for a feature that records
+ * nothing on most of them. `src/lib/sentry-replay.ts` owns the whole lifecycle
+ * and is imported dynamically, after first paint, and only for routes the
+ * privacy allowlist permits. Error and trace capture stay eager.
+ */
+let replayModule: Promise<typeof SentryReplay> | null = null;
 
-function currentReplayUrl(): string {
-  return typeof window === "undefined" ? "" : window.location.pathname;
+function scheduleReplayRoute(url: string): void {
+  if (!sentryDsn || typeof window === "undefined") {
+    return;
+  }
+
+  // Nothing has been recorded yet, so a denied route has nothing to stop and
+  // must not be the reason rrweb gets downloaded.
+  if (!replayModule && !isReplayAllowedUrl(url)) {
+    return;
+  }
+
+  replayModule ??= import("./src/lib/sentry-replay");
+  void replayModule.then((module) => module.updateReplayRoute(url)).catch(() => undefined);
 }
 
-function addReplayIntegration(): void {
-  if (replayIntegrationAdded) {
+function whenIdle(run: () => void): void {
+  if (typeof window === "undefined") {
     return;
   }
 
-  Sentry.addIntegration(
-    Sentry.replayIntegration({
-      maskAllText: true,
-      maskAllInputs: true,
-      blockAllMedia: true,
-      networkCaptureBodies: false,
-      networkDetailAllowUrls: [],
-      networkRequestHeaders: [],
-      networkResponseHeaders: [],
-      beforeErrorSampling: () => isReplayAllowedUrl(currentReplayUrl()),
-    }),
-  );
-  replayIntegrationAdded = true;
-}
-
-function updateReplayRoute(url: string): void {
-  if (!sentryDsn) {
-    return;
-  }
-
-  const allowed = isReplayAllowedUrl(url);
-
-  if (!allowed) {
-    replayRouteActive = false;
-    const replay = Sentry.getReplay();
-    replayRecordingMode = replay?.getRecordingMode() ?? replayRecordingMode;
-    replayStopPromise = replay?.stop().catch(() => undefined) ?? Promise.resolve();
-    return;
-  }
-
-  if (replayRouteActive) {
-    return;
-  }
-
-  if (!replayIntegrationAdded) {
-    addReplayIntegration();
-    const replay = Sentry.getReplay();
-    replayRecordingMode = replay?.getRecordingMode() ?? replayRecordingMode;
-    replayRouteActive = Boolean(replay);
-    return;
-  }
-
-  const replay = Sentry.getReplay();
-  if (!replay) {
-    return;
-  }
-
-  replayRouteActive = true;
-  void replayStopPromise.then(() => {
-    if (!replayRouteActive) {
-      return;
+  const idle = (
+    window as Window & {
+      requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
     }
+  ).requestIdleCallback;
 
-    if (replayRecordingMode === "session") {
-      replay.start();
-    } else {
-      replay.startBuffering();
-    }
-  });
+  if (typeof idle === "function") {
+    // A timeout keeps the wait bounded: a PLP can stay busy long enough that an
+    // unbounded idle callback would never run.
+    idle(run, { timeout: 5_000 });
+    return;
+  }
+
+  window.setTimeout(run, 1_500);
 }
 
 Sentry.init({
@@ -102,7 +76,7 @@ Sentry.init({
   replaysOnErrorSampleRate: replayErrorSampleRate,
 });
 
-updateReplayRoute(currentReplayUrl());
+whenIdle(() => scheduleReplayRoute(typeof window === "undefined" ? "" : window.location.pathname));
 
 try {
   performance.mark(APP_INIT_MARK);
@@ -114,7 +88,7 @@ export function onRouterTransitionStart(
   url: string,
   navigationType: "push" | "replace" | "traverse",
 ) {
-  updateReplayRoute(url);
+  scheduleReplayRoute(url);
 
   try {
     performance.mark(ROUTE_START_MARK, {

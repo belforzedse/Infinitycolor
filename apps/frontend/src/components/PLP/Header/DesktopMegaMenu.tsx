@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { ProductCategorySummary } from "@/services/product/categories";
-import { StorefrontContainer } from "@/components/storefront";
+import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 import { getCategoryPlpHref } from "@/utils/plpRoutes";
 
 type Props = {
