@@ -22,7 +22,6 @@ function usage() {
     "Usage: node scripts/friday-homepage.js --date YYYY-MM-DD [--date YYYY-MM-DD ...] [--apply] [--report-dir PATH]",
     "",
     "Reads currently published WooCommerce products added/published during any supplied Tehran calendar day.",
-    "Copies the complete selection into every standard homepage product row.",
     "Without --apply it prints the proposed homepage assignments and performs no writes.",
   ].join("\n");
 }
@@ -50,18 +49,11 @@ function requiredSetting(env, name) {
 
 function getHomepageConfig(env = process.env) {
   if (env === process.env) {
-    loadSecretFile(
-      env.FRIDAY_HOMEPAGE_SECRETS_FILE ||
-        env.WOOCOMMERCE_SYNC_SECRETS_FILE ||
-        env.MIGRATION_SECRETS_FILE,
-    );
+    loadSecretFile(env.FRIDAY_HOMEPAGE_SECRETS_FILE || env.WOOCOMMERCE_SYNC_SECRETS_FILE || env.MIGRATION_SECRETS_FILE);
   }
   return {
     source: {
-      sourceBaseUrl: String(env.WORDPRESS_SOURCE_URL || "https://infinitycolor.co").replace(
-        /\/$/,
-        "",
-      ),
+      sourceBaseUrl: String(env.WORDPRESS_SOURCE_URL || "https://infinitycolor.co").replace(/\/$/, ""),
       wpUsername: requiredSetting(env, "WP_USERNAME"),
       wpApplicationPassword: requiredSetting(env, "WP_APPLICATION_PASSWORD"),
       wooKey: requiredSetting(env, "WOOCOMMERCE_CONSUMER_KEY"),
@@ -112,8 +104,7 @@ function selectPublishedProducts(rows, window) {
     const createdMs = sourceInstant(product);
     if (!Number.isSafeInteger(id) || id <= 0) continue;
     if (product?.status !== "publish") continue;
-    if (!Number.isFinite(createdMs) || createdMs < window.startMs || createdMs >= window.endMs)
-      continue;
+    if (!Number.isFinite(createdMs) || createdMs < window.startMs || createdMs >= window.endMs) continue;
     const current = byId.get(id);
     if (!current || sourceInstant(current) < createdMs) byId.set(id, product);
   }
@@ -135,9 +126,7 @@ function buildProductMap(snapshotRows) {
     result.set(sourceId, targetId);
   }
   if (duplicates.length > 0) {
-    throw new Error(
-      `Ambiguous WooCommerce product mappings: ${[...new Set(duplicates)].join(",")}`,
-    );
+    throw new Error(`Ambiguous WooCommerce product mappings: ${[...new Set(duplicates)].join(",")}`);
   }
   return result;
 }
@@ -150,11 +139,12 @@ function distributeProducts(sourceProducts, targetBySourceId) {
     if (!targetId) missing.push(sourceId);
     return { sourceId, targetId, onSale: product.on_sale === true };
   });
-  if (missing.length > 0)
-    throw new Error(`Selected products missing from Strapi: ${missing.join(",")}`);
+  if (missing.length > 0) throw new Error(`Selected products missing from Strapi: ${missing.join(",")}`);
 
-  const targetIds = mapped.map((product) => product.targetId);
-  const assignments = Object.fromEntries(RAILS.map(({ section }) => [section, [...targetIds]]));
+  const assignments = Object.fromEntries(RAILS.map(({ section }) => [section, []]));
+  mapped.forEach((product, index) => {
+    assignments[RAILS[index % RAILS.length].section].push(product.targetId);
+  });
   return {
     mapped,
     assignments,
@@ -196,9 +186,7 @@ async function collectWindowProducts(source, window) {
 
 async function collectProductMappings(destination, sourceProducts) {
   const sourceIds = sourceProducts.map((product) => String(product.id));
-  const response = await destination.post("/settings/homepage-product-mappings", {
-    data: { sourceIds },
-  });
+  const response = await destination.post("/settings/homepage-product-mappings", { data: { sourceIds } });
   return Array.isArray(response.data?.data) ? response.data.data : [];
 }
 
@@ -217,8 +205,9 @@ function homepagePayload(distribution) {
 function customPayload(distribution, before) {
   return {
     homeCustomSectionEnabled: true,
-    homeCustomSectionTitle:
-      typeof before.homeCustomSectionTitle === "string" ? before.homeCustomSectionTitle : "",
+    homeCustomSectionTitle: typeof before.homeCustomSectionTitle === "string"
+      ? before.homeCustomSectionTitle
+      : "",
     homeCustomSectionAssignment: {
       mode: "manual",
       productIds: distribution.assignments.custom,
@@ -243,12 +232,8 @@ async function rollback(homepageClient, beforeHomepage, beforeCustom) {
 }
 
 async function applyAssignments(homepageClient, distribution) {
-  const beforeHomepage = attributesOf(
-    (await homepageClient.get("/settings/homepage-products")).data,
-  );
-  const beforeCustom = attributesOf(
-    (await homepageClient.get("/settings/homepage-custom-section")).data,
-  );
+  const beforeHomepage = attributesOf((await homepageClient.get("/settings/homepage-products")).data);
+  const beforeCustom = attributesOf((await homepageClient.get("/settings/homepage-custom-section")).data);
   const nextHomepage = homepagePayload(distribution);
   const nextCustom = customPayload(distribution, beforeCustom);
 
@@ -256,12 +241,8 @@ async function applyAssignments(homepageClient, distribution) {
     await homepageClient.put("/settings/homepage-products", { data: nextHomepage });
     await homepageClient.put("/settings/homepage-custom-section", { data: nextCustom });
 
-    const savedHomepage = attributesOf(
-      (await homepageClient.get("/settings/homepage-products")).data,
-    );
-    const savedCustom = attributesOf(
-      (await homepageClient.get("/settings/homepage-custom-section")).data,
-    );
+    const savedHomepage = attributesOf((await homepageClient.get("/settings/homepage-products")).data);
+    const savedCustom = attributesOf((await homepageClient.get("/settings/homepage-custom-section")).data);
     for (const [field, expected] of Object.entries(nextHomepage)) {
       const actual = savedHomepage[field];
       if (Array.isArray(expected) ? !sameIds(actual || [], expected) : actual !== expected) {
@@ -272,10 +253,7 @@ async function applyAssignments(homepageClient, distribution) {
       savedCustom.homeCustomSectionEnabled !== true ||
       savedCustom.homeCustomSectionTitle !== nextCustom.homeCustomSectionTitle ||
       savedCustom.homeCustomSectionAssignment?.mode !== "manual" ||
-      !sameIds(
-        savedCustom.homeCustomSectionAssignment?.productIds || [],
-        nextCustom.homeCustomSectionAssignment.productIds,
-      )
+      !sameIds(savedCustom.homeCustomSectionAssignment?.productIds || [], nextCustom.homeCustomSectionAssignment.productIds)
     ) {
       throw new Error("Homepage readback mismatch: custom");
     }
@@ -302,10 +280,7 @@ function writeReport(report, reportDir) {
   if (!reportDir) return;
   fs.mkdirSync(reportDir, { recursive: true, mode: 0o750 });
   const dateSlug = report.dates.join("_");
-  const target = path.join(
-    reportDir,
-    `friday-homepage-${dateSlug}-${report.startedAt.replace(/[:.]/g, "-")}.json`,
-  );
+  const target = path.join(reportDir, `friday-homepage-${dateSlug}-${report.startedAt.replace(/[:.]/g, "-")}.json`);
   fs.writeFileSync(target, serialized, { mode: 0o640 });
   report.reportFile = target;
 }
@@ -345,11 +320,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     mode: args.apply ? "apply" : "preview",
     dates: args.dates,
     timezone: "Asia/Tehran",
-    windowsUtc: windows.map((window) => ({
-      date: window.date,
-      start: window.startUtc,
-      end: window.endUtc,
-    })),
+    windowsUtc: windows.map((window) => ({ date: window.date, start: window.startUtc, end: window.endUtc })),
     startedAt,
     completedAt: null,
     sourceProductCount: sourceProducts.length,
@@ -377,9 +348,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 
 if (require.main === module) {
   main().catch((error) => {
-    process.stderr.write(
-      `${JSON.stringify({ ok: false, error: error.message, at: new Date().toISOString() })}\n`,
-    );
+    process.stderr.write(`${JSON.stringify({ ok: false, error: error.message, at: new Date().toISOString() })}\n`);
     process.exitCode = 1;
   });
 }
