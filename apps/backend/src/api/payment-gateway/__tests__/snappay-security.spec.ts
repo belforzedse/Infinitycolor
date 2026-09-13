@@ -14,6 +14,7 @@ import {
 } from "../services/snappay-state-machine";
 import {
   assertSnappayRuntimeConfig,
+  getSnappayReturnUrl,
   isSnappayReconciliationExhausted,
 } from "../services/snappay-orchestrator";
 
@@ -161,6 +162,14 @@ describe("SnappPay runtime configuration", () => {
     process.env.SNAPPAY_RETURN_URL = "http://storefront.test.invalid/api/snapp/return";
     expect(() => assertSnappayRuntimeConfig()).toThrow(
       "SNAPPAY_CONFIG_INVALID:SNAPPAY_RETURN_URL must use HTTPS",
+    );
+  });
+
+  it("supports the registered shared API callback URL and appends correlation", () => {
+    process.env.SNAPPAY_RETURN_URL = "https://api.infinitycolor.co/api/orders/payment-callback";
+
+    expect(getSnappayReturnUrl("abcdefghijklmnopqrstuv")).toBe(
+      "https://api.infinitycolor.co/api/orders/payment-callback?nonce=abcdefghijklmnopqrstuv",
     );
   });
 });

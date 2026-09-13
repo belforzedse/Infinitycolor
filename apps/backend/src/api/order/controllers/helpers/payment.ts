@@ -15,6 +15,7 @@ import {
   finalizeGatewaySettlement,
   GatewayLocalSettlementError,
 } from "./gatewaySettlement";
+import { snappayCallbackHandler } from "./snappayCallback";
 const getFrontendBaseUrl = () =>
   (process.env.FRONTEND_BASE_URL || process.env.FRONTEND_URL || "https://infinitycolor.co").replace(
     /\/$/,
@@ -230,6 +231,25 @@ export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
     b.ResNum ?? q.ResNum ?? b.resNum ?? q.resnum ?? q.ResNum ?? b.ResNum;
 
   try {
+    const hasOwn = (value: unknown, key: string): boolean =>
+      value !== null &&
+      typeof value === "object" &&
+      Object.prototype.hasOwnProperty.call(value, key);
+    const snappayAliasInput =
+      String((ctx.request as any).method || ctx.method || "").toUpperCase() === "POST" &&
+      hasOwn(q, "nonce") &&
+      hasOwn(b, "transactionId") &&
+      hasOwn(b, "state") &&
+      hasOwn(b, "amount");
+    if (snappayAliasInput) {
+      // The registered SnappPay return URL is the shared callback endpoint. A
+      // real SnappPay return is a POST with these documented lowercase fields
+      // plus the per-attempt nonce appended to returnURL by the orchestrator.
+      // Correlation, amount matching, and idempotency remain owned by the
+      // hardened callback handler; the legacy SnappPay service is never reached.
+      return snappayCallbackHandler(strapi, ctx);
+    }
+
     const legacySnappayInput =
       Boolean(transactionIdInput || paymentTokenInput) ||
       (["OK", "FAILED"].includes(String(state || "").toUpperCase()) &&

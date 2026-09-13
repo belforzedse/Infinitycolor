@@ -673,7 +673,7 @@ describe("verifyPaymentHandler", () => {
     );
   });
 
-  it("rejects legacy SnappPay input on the shared callback endpoint", async () => {
+  it("routes SnappPay input on the shared callback endpoint through the hardened handler", async () => {
     const { strapi, registerService } = createStrapiMock();
     const legacyService = {
       status: jest.fn(),
@@ -682,11 +682,64 @@ describe("verifyPaymentHandler", () => {
       revert: jest.fn(),
     };
     registerService("api::payment-gateway.snappay", legacyService);
+    const acceptCallback = jest.fn().mockResolvedValue({
+      accepted: true,
+      redirectUrl: "https://infinitycolor.co/payment/result?resultHint=processing",
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", { acceptCallback });
+    const ctx = createCtx({
+      request: {
+        method: "POST",
+        body: {
+          state: "OK",
+          transactionId: "ABC1234567",
+          amount: "1200000",
+          paymentToken: "must-not-be-accepted",
+          OrderId: "700",
+        },
+        query: { nonce: "abcdefghijklmnopqrstuv" },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(acceptCallback).toHaveBeenCalledWith({
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 1_200_000,
+      nonce: "abcdefghijklmnopqrstuv",
+    });
+    expect(acceptCallback.mock.calls[0][0]).not.toHaveProperty("paymentToken");
+    expect(acceptCallback.mock.calls[0][0]).not.toHaveProperty("OrderId");
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/result?resultHint=processing",
+    );
+    expect(ctx.status).toBe(303);
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+    expect(legacyService.status).not.toHaveBeenCalled();
+    expect(legacyService.verify).not.toHaveBeenCalled();
+    expect(legacyService.settle).not.toHaveBeenCalled();
+    expect(legacyService.revert).not.toHaveBeenCalled();
+    expect(decrementStockAtomic).not.toHaveBeenCalled();
+  });
+
+  it("keeps nonce-less legacy SnappPay input disabled on the shared callback endpoint", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const legacyService = {
+      status: jest.fn(),
+      verify: jest.fn(),
+      settle: jest.fn(),
+      revert: jest.fn(),
+    };
+    registerService("api::payment-gateway.snappay", legacyService);
+    const acceptCallback = jest.fn();
+    registerService("api::payment-gateway.snappay-orchestrator", { acceptCallback });
     const ctx = createCtx({
       request: {
         body: {
           state: "OK",
-          transactionId: "SN-LEGACY",
+          transactionId: "ABC1234567",
+          amount: "1200000",
           paymentToken: "must-not-be-accepted",
           OrderId: "700",
         },
@@ -695,19 +748,79 @@ describe("verifyPaymentHandler", () => {
 
     await verifyPaymentHandler(strapi as any, ctx);
 
-    expect(ctx.badRequest).toHaveBeenCalledWith(
-      "SnappPay callback endpoint has changed",
-      {
-        data: {
-          success: false,
-          errorCode: "SNAPPAY_LEGACY_CALLBACK_DISABLED",
-        },
+    expect(ctx.badRequest).toHaveBeenCalledWith("SnappPay callback endpoint has changed", {
+      data: {
+        success: false,
+        errorCode: "SNAPPAY_LEGACY_CALLBACK_DISABLED",
       },
-    );
+    });
+    expect(acceptCallback).not.toHaveBeenCalled();
     expect(legacyService.status).not.toHaveBeenCalled();
     expect(legacyService.verify).not.toHaveBeenCalled();
     expect(legacyService.settle).not.toHaveBeenCalled();
     expect(legacyService.revert).not.toHaveBeenCalled();
+    expect(decrementStockAtomic).not.toHaveBeenCalled();
+  });
+
+  it("does not route GET requests with SnappPay-shaped query data through the POST callback", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const acceptCallback = jest.fn();
+    registerService("api::payment-gateway.snappay-orchestrator", { acceptCallback });
+    const ctx = createCtx({
+      request: {
+        method: "GET",
+        body: {
+          state: "OK",
+          transactionId: "ABC1234567",
+          amount: "1200000",
+        },
+        query: { nonce: "abcdefghijklmnopqrstuv" },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(acceptCallback).not.toHaveBeenCalled();
+    expect(ctx.badRequest).toHaveBeenCalledWith("SnappPay callback endpoint has changed", {
+      data: {
+        success: false,
+        errorCode: "SNAPPAY_LEGACY_CALLBACK_DISABLED",
+      },
+    });
+  });
+
+  it("fails a malformed correlated SnappPay callback through the hardened handler", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const acceptCallback = jest.fn().mockResolvedValue({
+      accepted: false,
+      redirectUrl: "https://infinitycolor.co/payment/result?resultHint=invalid_callback",
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", { acceptCallback });
+    const ctx = createCtx({
+      request: {
+        method: "POST",
+        body: {
+          state: "UNKNOWN",
+          transactionId: "not-valid",
+          amount: "0",
+        },
+        query: { nonce: "bad" },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(acceptCallback).toHaveBeenCalledWith({
+      transactionId: "not-valid",
+      state: "UNKNOWN",
+      amount: 0,
+      nonce: "bad",
+    });
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/result?resultHint=invalid_callback",
+    );
+    expect(ctx.status).toBe(303);
+    expect(ctx.badRequest).not.toHaveBeenCalled();
     expect(decrementStockAtomic).not.toHaveBeenCalled();
   });
 
