@@ -1,179 +1,245 @@
 /**
- * Parse shortcodes from blog content
- * Supports formats like:
- * - [products:1,2,3] - Product IDs
- * - [products:slug1,slug2] - Product slugs
+ * Blocks embedded in blog content.
+ *
+ * Blog bodies are HTML with plain-text markers for the things that are not
+ * HTML — a product carousel and the shop's promotional section. The markers are
+ * the contract shared by the WordPress importer (which writes them), the admin
+ * editor (which inserts them) and this renderer (which turns them back into
+ * components):
+ *
+ *   [products:1,2,"slug-with-,comma"]
+ *   [promo:{"v":1,"title":"…","cta":{…}}]
+ *
+ * Two details matter more than they look. Indices are computed on the original
+ * string, because the renderer slices that string around each block — the
+ * previous parser matched on an entity-decoded copy and back-mapped with a ±50
+ * character search, so any post with a `&amp;` before its marker rendered
+ * `[products:…]` as literal text. And the scan is bracket-aware inside quotes,
+ * so a `]` inside a promo JSON string does not end the marker early.
  */
 
-export interface ParsedShortcode {
+export type ProductsBlock = {
   type: "products";
   identifiers: string[];
   originalMatch: string;
   startIndex: number;
   endIndex: number;
+};
+
+export type PromoBlock = {
+  type: "promo";
+  data: PromoData;
+  originalMatch: string;
+  startIndex: number;
+  endIndex: number;
+};
+
+export type BlogBlock = ProductsBlock | PromoBlock;
+
+/** Legacy name kept for the admin editor's preview. */
+export type ParsedShortcode = ProductsBlock;
+
+export type PromoLink = { label: string; href: string };
+
+export type PromoData = {
+  title: string;
+  body: string;
+  cta: PromoLink | null;
+  social: PromoLink | null;
+  image: { url: string; alt: string } | null;
+  variant: string | null;
+};
+
+const MAX_PROMO_TEXT = 400;
+const MAX_PROMO_LABEL = 120;
+
+/**
+ * Decode only the entities an editor or WordPress introduces around a marker.
+ * Applied to the matched substring, never to the document — the document's
+ * offsets have to stay usable for slicing.
+ */
+function decodeMarkerEntities(text: string): string {
+  return text
+    .replace(/&#0*91;/g, "[")
+    .replace(/&#0*93;/g, "]")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&");
 }
 
 /**
- * Extract all product shortcodes from HTML content
- * Supports quoted and unquoted identifiers:
- * - [products:1,2,3] - Product IDs
- * - [products:"slug1","slug2"] - Quoted slugs
- * - [products:"slug1",123,"slug2"] - Mixed quoted/unquoted
- * Also handles shortcodes wrapped in HTML tags like <p>[products:...]</p>
+ * Find the index just past the `]` that closes a marker opened at `openIndex`.
+ * Quoted sections are skipped so `]` inside a JSON string is ordinary text.
+ * Returns -1 when the marker is never closed.
  */
-export function parseProductShortcodes(html: string): ParsedShortcode[] {
-  const shortcodes: ParsedShortcode[] = [];
-
-  // First, decode HTML entities that might be in the content
-  // This handles cases where < and > are encoded as &lt; and &gt;
-  let decodedHtml = html
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
-
-  // Also handle cases where the shortcode might be HTML-encoded
-  // e.g., &amp;#91;products:...&amp;#93; (though this is unlikely)
-  decodedHtml = decodedHtml.replace(/&#91;/g, "[").replace(/&#93;/g, "]");
-
-  // Match [products:...] pattern, even when wrapped in HTML tags
-  // This regex will match shortcodes that might be inside <p>, <div>, etc.
-  // It captures the shortcode itself, ignoring surrounding HTML tags
-  // We use a more permissive pattern that matches across potential HTML boundaries
-  const regex = /\[products:([^\]]+)\]/g;
-  let match;
-  const matches: Array<{ match: RegExpExecArray; originalIndex: number }> = [];
-
-  // First, find all matches in the decoded HTML
-  while ((match = regex.exec(decodedHtml)) !== null) {
-    matches.push({ match, originalIndex: match.index });
-  }
-
-  // Now process each match and find its position in the original HTML
-  for (const { match: matchResult, originalIndex } of matches) {
-    const fullMatch = matchResult[0];
-    const content = matchResult[1].trim();
-
-    if (!content) {
+function findMarkerEnd(html: string, openIndex: number): number {
+  let quote: string | null = null;
+  let escaped = false;
+  for (let i = openIndex; i < html.length; i += 1) {
+    const char = html[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
       continue;
     }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    // An entity-encoded quote opens a quoted section just as a bare one does.
+    if (char === "&" && /^&(?:quot|apos|#0*39);/i.test(html.slice(i, i + 8))) {
+      const entity = /^&(?:quot|apos|#0*39);/i.exec(html.slice(i, i + 8))!;
+      const closing = html.indexOf(entity[0], i + entity[0].length);
+      if (closing === -1) return -1;
+      i = closing + entity[0].length - 1;
+      continue;
+    }
+    if (char === "]") return i + 1;
+    // WordPress and the editor both emit the brackets as entities sometimes.
+    const encodedClose = /^&#0*93;/.exec(html.slice(i, i + 8));
+    if (encodedClose) return i + encodedClose[0].length;
+    if (char === "<") return -1; // a marker never spans an HTML tag
+  }
+  return -1;
+}
 
-    // Parse identifiers, handling both quoted and unquoted
-    const identifiers: string[] = [];
-    let current = "";
-    let inQuotes = false;
-    let quoteChar = "";
-
-    for (let i = 0; i < content.length; i++) {
-      const char = content[i];
-
-      if ((char === '"' || char === "'") && (i === 0 || content[i - 1] !== "\\")) {
-        if (!inQuotes) {
-          // Start of quoted string
-          inQuotes = true;
-          quoteChar = char;
-        } else if (char === quoteChar) {
-          // End of quoted string
-          inQuotes = false;
-          if (current.trim()) {
-            identifiers.push(current.trim());
-            current = "";
-          }
-          quoteChar = "";
-        } else {
-          // Different quote character inside string, treat as regular char
-          current += char;
-        }
-      } else if (char === "," && !inQuotes) {
-        // Comma outside quotes - separator
-        if (current.trim()) {
-          identifiers.push(current.trim());
-          current = "";
-        }
+/** Split a product list on commas that are not inside quotes. */
+function splitIdentifiers(body: string): string[] {
+  const identifiers: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  let escaped = false;
+  for (const char of body) {
+    if (quote) {
+      if (escaped) {
+        current += char;
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
       } else {
-        // Regular character
         current += char;
       }
-    }
-
-    // Add remaining content
-    if (current.trim()) {
-      identifiers.push(current.trim());
-    }
-
-    // Remove quotes from identifiers if they were quoted
-    const cleanedIdentifiers = identifiers
-      .map((id) => {
-        // Remove surrounding quotes if present
-        const trimmed = id.trim();
-        if (
-          (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-          (trimmed.startsWith("'") && trimmed.endsWith("'"))
-        ) {
-          return trimmed.slice(1, -1);
-        }
-        return trimmed;
-      })
-      .filter((id) => id && id.length > 0); // Filter out empty identifiers
-
-    if (cleanedIdentifiers.length === 0) {
       continue;
     }
-
-    // Find the actual position in the original HTML string
-    // We need to account for HTML entities in the original string
-    let actualIndex = originalIndex;
-    let actualEndIndex = originalIndex + fullMatch.length;
-
-    // If the decoded HTML differs from original, find the actual position
-    // by searching for the shortcode in the original HTML
-    if (decodedHtml !== html) {
-      // Search for the shortcode pattern in the original HTML
-      // Try multiple strategies to find it
-      const searchPattern = fullMatch.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
-
-      // Try direct match first
-      let originalMatch = new RegExp(searchPattern.replace(/&/g, "&(?:amp;)?")).exec(html);
-
-      // If not found, try with HTML entity encoding
-      if (!originalMatch) {
-        const encodedPattern = fullMatch
-          .replace(/\[/g, "&#91;")
-          .replace(/\]/g, "&#93;")
-          .replace(/&/g, "&amp;");
-        originalMatch = new RegExp(encodedPattern.replace(/\[/g, "\\[").replace(/\]/g, "\\]")).exec(html);
-      }
-
-      // If still not found, try searching around the expected position
-      if (!originalMatch && originalIndex < html.length) {
-        const searchStart = Math.max(0, originalIndex - 50);
-        const searchEnd = Math.min(html.length, originalIndex + fullMatch.length + 50);
-        const searchSlice = html.slice(searchStart, searchEnd);
-        const localMatch = new RegExp(searchPattern).exec(searchSlice);
-        if (localMatch) {
-          actualIndex = searchStart + localMatch.index;
-          actualEndIndex = actualIndex + fullMatch.length;
-        }
-      } else if (originalMatch) {
-        actualIndex = originalMatch.index;
-        actualEndIndex = actualIndex + fullMatch.length;
-      }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
     }
-
-    shortcodes.push({
-      type: "products",
-      identifiers: cleanedIdentifiers,
-      originalMatch: fullMatch,
-      startIndex: actualIndex,
-      endIndex: actualEndIndex,
-    });
+    if (char === ",") {
+      identifiers.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
   }
+  identifiers.push(current);
+  return identifiers.map((value) => value.trim()).filter((value) => value.length > 0);
+}
 
-  return shortcodes;
+function boundedText(value: unknown, max: number): string {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
 /**
- * Replace shortcodes in HTML with placeholders
- * Returns the modified HTML and a map of placeholders to shortcode data
+ * A promo href must be a site-relative path or an http(s) URL. Anything else
+ * (`javascript:`, `data:`, a protocol-relative host) is dropped rather than
+ * rendered — the marker comes from imported content.
+ */
+function safeHref(value: unknown): string | null {
+  const href = boundedText(value, 2048);
+  if (!href) return null;
+  if (href.startsWith("//")) return null;
+  if (href.startsWith("/")) return href;
+  return /^https?:\/\//i.test(href) ? href : null;
+}
+
+function parsePromoLink(value: any): PromoLink | null {
+  const href = safeHref(value?.href);
+  const label = boundedText(value?.label, MAX_PROMO_LABEL);
+  return href && label ? { label, href } : null;
+}
+
+function parsePromoData(json: string): PromoData | null {
+  let raw: any;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const title = boundedText(raw.title, MAX_PROMO_LABEL);
+  const body = boundedText(raw.body, MAX_PROMO_TEXT);
+  if (!title && !body) return null;
+  const imageUrl = safeHref(raw.image?.url);
+  return {
+    title,
+    body,
+    cta: parsePromoLink(raw.cta),
+    social: parsePromoLink(raw.social),
+    image: imageUrl ? { url: imageUrl, alt: boundedText(raw.image?.alt, MAX_PROMO_LABEL) } : null,
+    variant: boundedText(raw.variant, 32) || null,
+  };
+}
+
+/**
+ * Every embedded block in document order, with indices into `html` itself.
+ * A marker that does not parse is left alone — it stays part of the HTML
+ * rather than disappearing from the article.
+ */
+export function parseBlogBlocks(html: string): BlogBlock[] {
+  if (!html || typeof html !== "string") return [];
+  const blocks: BlogBlock[] = [];
+  const opener = /\[(products|promo):|&#0*91;(products|promo):/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = opener.exec(html)) !== null) {
+    const startIndex = match.index;
+    const endIndex = findMarkerEnd(html, startIndex);
+    if (endIndex === -1) continue;
+    const originalMatch = html.slice(startIndex, endIndex);
+    const decoded = decodeMarkerEntities(originalMatch);
+    // `decoded` turns both bracket forms into real brackets, so the payload is
+    // always between the first ":" and the final "]".
+    const inner = decoded.slice(decoded.indexOf(":") + 1, decoded.lastIndexOf("]")).trim();
+    const kind = (match[1] || match[2]).toLowerCase();
+
+    if (kind === "products") {
+      const identifiers = splitIdentifiers(inner);
+      if (identifiers.length > 0) {
+        blocks.push({ type: "products", identifiers, originalMatch, startIndex, endIndex });
+      }
+    } else {
+      const data = parsePromoData(inner);
+      if (data) {
+        blocks.push({ type: "promo", data, originalMatch, startIndex, endIndex });
+      }
+    }
+    opener.lastIndex = endIndex;
+  }
+
+  return blocks;
+}
+
+/**
+ * Product carousels only. Kept for the admin editor, whose preview knows
+ * nothing about promotional sections.
+ */
+export function parseProductShortcodes(html: string): ParsedShortcode[] {
+  return parseBlogBlocks(html).filter(
+    (block): block is ProductsBlock => block.type === "products",
+  );
+}
+
+/**
+ * Replace blocks in HTML with placeholders
+ * Returns the modified HTML and a map of placeholders to block data
  */
 export function replaceShortcodesWithPlaceholders(
   html: string,
@@ -269,4 +335,3 @@ export function extractProductSlugsFromUrls(urls: string): string[] {
 
   return slugs;
 }
-

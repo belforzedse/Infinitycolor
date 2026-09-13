@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useAutoplaySlider } from "@/components/Hero/useAutoplaySlider";
 import { scrollIntoViewWithOffset } from "@/utils/scroll";
 import { faNum } from "@/utils/faNum";
 import {
@@ -43,8 +44,8 @@ function SlideImage({ slide, eager }: { slide: PlpHeroSlide; eager: boolean }) {
       <img
         src={slide.desktopSrc}
         alt={slide.alt}
-        width={5439}
-        height={1583}
+        width={5440}
+        height={1584}
         className="pointer-events-none block h-full w-full max-w-full object-cover"
         decoding="async"
         draggable={false}
@@ -66,10 +67,24 @@ export default function PLPHeroBanner({ initialTitle }: PLPHeroBannerProps) {
   const lastSlideIndex = PLP_HERO_SLIDES.length - 1;
   const label = initialTitle ? `بنر ${initialTitle}` : "بنر محصولات";
 
-  const goToSlide = useCallback((index: number) => {
-    const total = PLP_HERO_SLIDES.length;
-    setActiveIndex(((index % total) + total) % total);
-  }, []);
+  // The banner rotates on its own, and every manual path below goes through the
+  // hook so it restarts the interval instead of racing a tick that was already
+  // scheduled. Paused mid-drag, and idle entirely when there is one slide.
+  const { goToWrapped } = useAutoplaySlider({
+    slidesLength: PLP_HERO_SLIDES.length,
+    paused: isDragging,
+    controlledIndex: activeIndex,
+    onIndexChange: setActiveIndex,
+  });
+
+  // Wraps on purpose: `clampPlpHeroIndex` stops a *swipe* at either end, but the
+  // dots, the arrow keys and autoplay all cycle.
+  const goToSlide = useCallback(
+    (index: number) => {
+      goToWrapped(index);
+    },
+    [goToWrapped],
+  );
 
   const resetDrag = useCallback(() => {
     sessionRef.current = null;
@@ -167,7 +182,9 @@ export default function PLPHeroBanner({ initialTitle }: PLPHeroBannerProps) {
       if (swipeDelta !== 0) {
         didSwipeRef.current = true;
         const nextIndex = clampPlpHeroIndex(activeIndexRef.current + swipeDelta);
-        setActiveIndex(nextIndex);
+        // Through the hook, so the 4s window restarts from the swipe rather than
+        // advancing again a moment later.
+        goToWrapped(nextIndex);
       }
 
       if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
@@ -179,7 +196,7 @@ export default function PLPHeroBanner({ initialTitle }: PLPHeroBannerProps) {
       }
       resetDrag();
     },
-    [resetDrag],
+    [goToWrapped, resetDrag],
   );
 
   const handleBannerKeyDown = useCallback(

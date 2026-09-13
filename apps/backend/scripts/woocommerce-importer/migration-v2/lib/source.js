@@ -1,6 +1,7 @@
 "use strict";
 
 const { JsonHttp } = require("./http");
+const { createSourceGate } = require("./sourceGate");
 
 function basic(username, password) {
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
@@ -15,26 +16,41 @@ function rowsOf(body) {
 }
 
 class WordPressSource {
-  constructor(config) {
+  constructor(config, opts = {}) {
     const base = `${config.sourceBaseUrl}/wp-json`;
-    this.woo = new JsonHttp({
+    const wooHeaders = { Authorization: basic(config.wooKey, config.wooSecret) };
+    const wpHeaders = { Authorization: basic(config.wpUsername, config.wpApplicationPassword) };
+
+    // Ungated, short-timeout client used only for the gate's health probe.
+    // It must not carry the gate itself, or a probe would park on the hold it
+    // is supposed to be testing. `/products?per_page=1` is the same check
+    // `catalog/engine.js#preflight` makes, so it exercises Woo *and* its auth.
+    const probeClient = new JsonHttp({
       baseUrl: `${base}/wc/v3`,
-      headers: { Authorization: basic(config.wooKey, config.wooSecret) },
+      headers: wooHeaders,
       sourceReadOnly: true,
-      timeoutMs: 45_000,
+      retries: 0,
+      timeoutMs: 20_000,
     });
-    this.wp = new JsonHttp({
-      baseUrl: `${base}/wp/v2`,
-      headers: { Authorization: basic(config.wpUsername, config.wpApplicationPassword) },
-      sourceReadOnly: true,
-      timeoutMs: 45_000,
-    });
-    this.wallet = new JsonHttp({
-      baseUrl: `${base}/terawallet/v1`,
-      headers: { Authorization: basic(config.wpUsername, config.wpApplicationPassword) },
-      sourceReadOnly: true,
-      timeoutMs: 45_000,
-    });
+    // Opt-in, unlike the catalog engine. Seven other callers build a
+    // WordPressSource for short ad-hoc work (identity-audit, exception audit,
+    // cli.js, …); silently giving those a 60-minute hold would turn a dead
+    // source into what looks like a hung terminal. The sync service asks for it
+    // explicitly, because a campaign is the unattended case that needs it.
+    this.sourceGate = opts.sourceGate || (
+      opts.sourceHoldMaxMs == null
+        ? null
+        : createSourceGate({
+          logger: opts.logger,
+          probe: () => probeClient.get("/products", { per_page: 1 }),
+          maxHoldMs: opts.sourceHoldMaxMs,
+        })
+    );
+    const gated = { sourceReadOnly: true, timeoutMs: 45_000, sourceGate: this.sourceGate };
+
+    this.woo = new JsonHttp({ baseUrl: `${base}/wc/v3`, headers: wooHeaders, ...gated });
+    this.wp = new JsonHttp({ baseUrl: `${base}/wp/v2`, headers: wpHeaders, ...gated });
+    this.wallet = new JsonHttp({ baseUrl: `${base}/terawallet/v1`, headers: wpHeaders, ...gated });
   }
 
   async *pages(client, pathname, params = {}, pageSize = 100) {
@@ -200,6 +216,13 @@ class WordPressSource {
   }
   getOrder(id) { return this.woo.get(`/orders/${id}`).then((response) => response.data); }
   getPost(id) { return this.wp.get(`/posts/${id}`, { context: "edit" }).then((response) => response.data); }
+  /**
+   * The same post as the site renders it. `context=edit` returns the raw body
+   * and a `content.rendered` that expands the promotional shortcode but never
+   * the product carousel — only the view context runs that one, so the carousel
+   * is invisible to every importer that reads edit context alone.
+   */
+  getPostView(id) { return this.wp.get(`/posts/${id}`, { context: "view" }).then((response) => response.data); }
   getBlogCategory(id) { return this.wp.get(`/categories/${id}`, { context: "edit" }).then((response) => response.data); }
   getBlogTag(id) { return this.wp.get(`/tags/${id}`, { context: "edit" }).then((response) => response.data); }
   getBlogAuthor(id) { return this.wp.get(`/users/${id}`, { context: "edit" }).then((response) => response.data); }

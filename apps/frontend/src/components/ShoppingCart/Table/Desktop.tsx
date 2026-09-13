@@ -93,7 +93,9 @@ const ShoppingCartDesktopTable: React.FC<Props> = ({ cartItems, className }) => 
                       </span>
                     )}
                     <span
-                      className={hasDiscount ? "font-semibold text-infinity-primary" : "text-neutral-800"}
+                      className={
+                        hasDiscount ? "font-semibold text-infinity-primary" : "text-neutral-800"
+                      }
                     >
                       {formatPrice(item.price)}
                     </span>
@@ -101,7 +103,11 @@ const ShoppingCartDesktopTable: React.FC<Props> = ({ cartItems, className }) => 
                 </td>
 
                 <td className="px-3 py-3 align-top">
-                  <ShoppingCartQuantityControl itemId={item.id} quantity={item.quantity} />
+                  <ShoppingCartQuantityControl
+                    itemId={item.id}
+                    quantity={item.quantity}
+                    availableStock={item.availableStock}
+                  />
                 </td>
 
                 <td className="px-3 py-3 align-top">

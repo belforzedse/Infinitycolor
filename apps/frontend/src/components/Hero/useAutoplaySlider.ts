@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 
-const DEFAULT_INTERVAL_MS = 600000;
+const DEFAULT_INTERVAL_MS = 4000;
 const MIN_INTERVAL_MS = 3000;
 
 export interface UseAutoplaySliderOptions {
@@ -12,6 +12,8 @@ export interface UseAutoplaySliderOptions {
   autoplayInterval?: number;
   /** Per-slide eligibility for autoplay; when length matches slidesLength, only eligible slides advance */
   autoplayEligibility?: boolean[];
+  /** Suspends the timer without tearing it down, e.g. during a touch drag. */
+  paused?: boolean;
   /** Optional shared state keeps the active slide stable while implementations switch. */
   controlledIndex?: number;
   onIndexChange?: React.Dispatch<React.SetStateAction<number>>;
@@ -22,6 +24,8 @@ export interface UseAutoplaySliderReturn {
   setIndex: React.Dispatch<React.SetStateAction<number>>;
   /** Go to slide and bump playKey (for tablet/mobile pagination) */
   goTo: (i: number) => void;
+  /** Same, but wraps past either end. */
+  goToWrapped: (i: number) => void;
   next: () => void;
   prev: () => void;
   playKey: number;
@@ -35,6 +39,7 @@ export function useAutoplaySlider({
   slidesLength,
   autoplayInterval = DEFAULT_INTERVAL_MS,
   autoplayEligibility,
+  paused = false,
   controlledIndex,
   onIndexChange,
 }: UseAutoplaySliderOptions): UseAutoplaySliderReturn {
@@ -113,6 +118,8 @@ export function useAutoplaySlider({
 
   useEffect(() => {
     if (slidesLength <= 1 || !hasEligibleAutoplaySlides || !isPageVisible) return;
+    // A tick landing mid-gesture would fight the drag the user is performing.
+    if (paused) return;
     const id = setInterval(() => {
       setIndex((i) => findNextAutoplayIndex(i));
       setPlayKey((k) => k + 1);
@@ -125,6 +132,7 @@ export function useAutoplaySlider({
     findNextAutoplayIndex,
     playKey,
     isPageVisible,
+    paused,
     setIndex,
   ]);
 
@@ -150,5 +158,15 @@ export function useAutoplaySlider({
     [setIndex, slidesLength],
   );
 
-  return { index, setIndex, goTo, next, prev, playKey };
+  /** Like `goTo`, but wraps, so the last slide leads back to the first. */
+  const goToWrapped = useCallback(
+    (i: number) => {
+      if (slidesLength === 0) return;
+      setIndex(((i % slidesLength) + slidesLength) % slidesLength);
+      setPlayKey((k) => k + 1);
+    },
+    [setIndex, slidesLength],
+  );
+
+  return { index, setIndex, goTo, goToWrapped, next, prev, playKey };
 }

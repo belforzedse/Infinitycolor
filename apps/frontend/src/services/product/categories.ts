@@ -416,6 +416,51 @@ export async function getProductCategories(
 }
 
 /**
+ * Browser entrypoint for navbar data.
+ *
+ * The public Strapi endpoint has its own REST cache, but sending every visitor to
+ * that origin still makes the API connection/web workers part of navbar
+ * availability. This same-origin endpoint is backed by the storefront's shared
+ * Redis Cache Components handler, so normal traffic does not reach Strapi at all.
+ */
+export async function getCachedNavbarProductCategories(
+  options: Pick<FetchProductCategoriesOptions, "includeChildren" | "cache"> = {},
+): Promise<ProductCategorySummary[]> {
+  const params = new URLSearchParams();
+  params.set("includeChildren", options.includeChildren ? "1" : "0");
+  params.set("_skip_global_loader", "1");
+
+  try {
+    const response = await fetchWithTimeout(`/api/storefront/navigation?${params.toString()}`, {
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      cache: options.cache ?? "default",
+      timeoutMs: CHECKOUT_REQUEST_TIMEOUT_MS,
+    });
+
+    if (!response.ok) {
+      throw new CategoryFetchError(
+        `Cached navigation category request failed with status ${response.status}`,
+        response.status,
+      );
+    }
+
+    const json: unknown = await response.json();
+    if (!Array.isArray(json)) {
+      throw new CategoryFetchError("Cached navigation category response was not an array");
+    }
+
+    return json as ProductCategorySummary[];
+  } catch (error) {
+    throw error instanceof CategoryFetchError
+      ? error
+      : new CategoryFetchError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
  * Server-render variant that degrades to an empty list instead of failing the page.
  *
  * Server components render the whole route, so a transient backend blip must not 500 a
@@ -469,6 +514,13 @@ export async function getNavbarProductCategories(
     },
     cache: useCacheable ? "default" : (options.cache ?? "no-store"),
   };
+
+  // A cached storefront route normally shields this request. Keep the cold-cache
+  // path bounded too: if Strapi is saturated, one cache fill must not leave a
+  // Next.js worker waiting indefinitely.
+  if (isServerSide) {
+    requestInit.signal = AbortSignal.timeout(CHECKOUT_REQUEST_TIMEOUT_MS);
+  }
 
   if (isServerSide && typeof options.revalidate === "number") {
     requestInit.next = { revalidate: options.revalidate };

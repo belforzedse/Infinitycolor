@@ -270,7 +270,10 @@ class WooSyncService {
     this.config = config;
     this.pool = pool || new Pool({ ...config.postgres, max: 4, idleTimeoutMillis: 30_000 });
     this.state = new SyncStateStore(this.pool, { owner: config.instanceId, leaseSeconds: config.leaseSeconds });
-    this.source = source || new WordPressSource(config.source);
+    this.source = source || new WordPressSource(config.source, {
+      sourceHoldMaxMs: config.sourceHoldMaxMs,
+      logger: console,
+    });
     this.destination = destination || new Destination({ ...config.source, ...config.destination });
     this.stopping = false;
     this._catalogEngine = null;
@@ -607,6 +610,7 @@ class WooSyncService {
     const execute = async (token) => {
       let completed = 0;
       let failed = 0;
+      let excluded = 0;
       while (!this.stopping) {
         await this.state.assertLease(leaseName, token);
         const rows = await this.state.claimItems({ lane, sourceTypes, limit: 50, token });
@@ -661,6 +665,14 @@ class WooSyncService {
               completed += 1;
             } catch (error) {
               const errorCode = safeErrorCode(error);
+              // Terminal by decision (an emptied zero-total Woo order), not by
+              // failure: record it once and stop retrying it every hour.
+              if (error?.outcome === "excluded") {
+                await this.state.excludeItem(row.id, token, errorCode);
+                excluded += 1;
+                console.info("[WooSync] order excluded", { sourceIdHash: logId("order", row.source_id), errorCode });
+                return;
+              }
               await this.state.failItem(row.id, token, errorCode);
               failed += 1;
               console.warn("[WooSync] order failed", { sourceIdHash: logId("order", row.source_id), errorCode });
@@ -668,7 +680,7 @@ class WooSyncService {
           });
         }
       }
-      return { completed, failed };
+      return { completed, failed, excluded };
     };
     return parentToken ? execute(parentToken) : this.withLease(leaseName, execute);
   }
@@ -756,6 +768,9 @@ class WooSyncService {
   }
 
   async hourly() {
+    // One gate is shared by every job on this long-lived worker; clear a
+    // previous run's sticky exhaustion so this one can hold again.
+    this.source.sourceGate?.reset();
     return this.withLease("drain:hourly", async (token) => {
       const started = Date.now();
       const control = await this.state.control();
@@ -770,14 +785,15 @@ class WooSyncService {
         : { completed: 0, failed: 0 };
       const completed = Number(immediate.completed || 0) + Number(hourly.completed || 0);
       const failed = Number(immediate.failed || 0) + Number(hourly.failed || 0);
+      const excluded = Number(immediate.excluded || 0) + Number(hourly.excluded || 0);
       await this.state.metric({
         stage: "hourly",
         outcome: "completed",
         durationMs: Date.now() - started,
-        itemCount: completed + failed,
+        itemCount: completed + failed + excluded,
         detail: { changes, swept, identitiesSwept, immediate, hourly, source: this.source.metrics(), destination: this.destination.metrics() },
       });
-      return { completed, failed, changes, swept, identitiesSwept, immediate, hourly, mode: control.mode };
+      return { completed, failed, excluded, changes, swept, identitiesSwept, immediate, hourly, mode: control.mode };
     });
   }
 
@@ -942,6 +958,10 @@ class WooSyncService {
             throw error;
           }
         } catch (error) {
+          // A dead source is not a per-entity data problem: without this the
+          // gate's cap is decorative, because every remaining entity would open
+          // its own hold and the campaign would grind instead of failing.
+          if (error?.code === "SOURCE_UNAVAILABLE") throw error;
           failed += 1;
           console.warn("[WooSync] campaign user failed", {
             sourceIdHash: logId("customer", customer.id),
@@ -981,6 +1001,7 @@ class WooSyncService {
   } = {}) {
     let completed = 0;
     let failed = 0;
+    let excluded = 0;
     let softIssues = 0;
     const poolSize = concurrency ?? this.config.concurrency.entities;
     const pageConcurrency = this.config.sourcePageConcurrency;
@@ -1022,22 +1043,37 @@ class WooSyncService {
           completed += 1;
           if (result?.hasSoftIssues) softIssues += 1;
         } catch (error) {
-          failed += 1;
+          // A dead source is not a per-entity data problem: without this the
+          // gate's cap is decorative, because every remaining entity would open
+          // its own hold and the campaign would grind instead of failing.
+          if (error?.code === "SOURCE_UNAVAILABLE") throw error;
           const errorCode = safeErrorCode(error);
+          // An order the importer understands and deliberately does not import
+          // is terminal, so it stops counting as a campaign failure and stops
+          // being retried by every later campaign.
+          const isExcluded = error?.outcome === "excluded";
+          if (isExcluded) excluded += 1;
+          else failed += 1;
           await this.state.recordOrderOutcome({
             sourceId,
             revisionSha256,
             modifiedAt,
-            outcome: "failed",
+            outcome: isExcluded ? "excluded" : "failed",
             errorCode,
           }).catch(() => undefined);
-          console.warn("[WooSync] campaign order failed", {
-            sourceIdHash: logId("order", order.id), errorCode,
-          });
+          if (isExcluded) {
+            console.info("[WooSync] campaign order excluded", {
+              sourceIdHash: logId("order", order.id), errorCode,
+            });
+          } else {
+            console.warn("[WooSync] campaign order failed", {
+              sourceIdHash: logId("order", order.id), errorCode,
+            });
+          }
         }
       },
     );
-    return { completed, failed, softIssues, fetched: completed + failed };
+    return { completed, failed, excluded, softIssues, fetched: completed + failed + excluded };
   }
 
   /**
@@ -1048,6 +1084,9 @@ class WooSyncService {
    *   stages with one inventory pass, to fit a fixed maintenance window.
    */
   async friday(scheduledTimestamp = Date.now(), { variant: variantOption } = {}) {
+    // One gate is shared by every job on this long-lived worker; clear a
+    // previous run's sticky exhaustion so this one can hold again.
+    this.source.sourceGate?.reset();
     const variant = variantOption || this.config.campaignVariant || "full";
     return this.withLease("campaign:friday", async (token) => {
       await ensureActive(this.state);
@@ -1100,6 +1139,11 @@ class WooSyncService {
           ...this.config,
           concurrency: campaignConcurrency,
           sourcePageConcurrency: Math.max(this.config.sourcePageConcurrency, 8),
+          // One gate across every Woo-bound stage. In `cutover`, catalog-full and
+          // users/wallets run concurrently and orders follow — a source outage hits
+          // all of them at once, and they must share a single hold and probe loop
+          // rather than each spawning its own. See migration-v2/lib/sourceGate.js.
+          sourceGate: this.source.sourceGate,
         };
         const engineFactory = this.createCatalogEngine || createCatalogEngine;
         const runCatalogScope = async (scope, label = scope) => catalogReportSummary(
@@ -1226,12 +1270,17 @@ class WooSyncService {
         )
           ? "completed-with-exceptions"
           : "completed";
+        // A run that silently waited out a Woo outage looks identical to a slow
+        // one in `durationsMs` alone; record the hold so the difference is
+        // legible after the fact.
+        const sourceHold = this.source.sourceGate?.metrics || null;
         await this.state.campaignStep(campaignKey, token, "finalizing", {
           orders,
           durationsMs,
           throughput,
           variant,
           wallet: identities.wallet || null,
+          ...(sourceHold?.holds ? { sourceHold } : {}),
           ...(inventory?.stockGate ? { stockGate: inventory.stockGate } : {}),
         });
         await this.state.finishCampaign(campaignKey, token, status);
@@ -1248,7 +1297,15 @@ class WooSyncService {
           durationsMs, throughput,
         };
       } catch (error) {
-        await this.state.finishCampaign(campaignKey, token, "failed", safeErrorCode(error)).catch(() => undefined);
+        // Record the hold on the way out too. A campaign that waited on Woo and
+        // then failed is exactly the one you want this number for, and the
+        // finalizing path above never runs for it. `current_step` is left as it
+        // was, so the row still says which stage died.
+        const failedHold = this.source.sourceGate?.metrics;
+        await this.state.finishCampaign(
+          campaignKey, token, "failed", safeErrorCode(error),
+          failedHold?.holds ? { sourceHold: failedHold } : null,
+        ).catch(() => undefined);
         throw error;
       } finally {
         this.activeCampaign = null;

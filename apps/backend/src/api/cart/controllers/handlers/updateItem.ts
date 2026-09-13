@@ -25,15 +25,12 @@ export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
     });
 
     if (!cartItem) {
-      return ctx.forbidden(
-        "You do not have permission to update this cart item",
-        {
-          data: {
-            success: false,
-            error: "You do not have permission to update this cart item",
-          },
-        }
-      );
+      return ctx.forbidden("You do not have permission to update this cart item", {
+        data: {
+          success: false,
+          error: "You do not have permission to update this cart item",
+        },
+      });
     }
 
     const cartService = strapi.service("api::cart.cart");
@@ -54,14 +51,26 @@ export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
       : 0;
     if (available < count) {
       return ctx.badRequest("Not enough stock", {
-        data: { success: false, error: "Not enough stock" },
+        data: {
+          success: false,
+          error: "Not enough stock",
+          errorCode: "CART_STOCK_EXCEEDED",
+          availableStock: available,
+        },
       });
     }
 
     const result = await cartService.updateCartItem(cartItemId, count, userId);
     if (!result.success) {
       return ctx.badRequest(result.message, {
-        data: { success: false, error: result.message },
+        data: {
+          success: false,
+          error: result.message,
+          ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+          ...(typeof result.availableStock === "number"
+            ? { availableStock: result.availableStock }
+            : {}),
+        },
       });
     }
     return { data: result.data };

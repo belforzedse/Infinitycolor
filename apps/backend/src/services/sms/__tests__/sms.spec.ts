@@ -292,7 +292,10 @@ describe("sms service", () => {
   it("maps internal order statuses to customer-facing Persian SMS labels", () => {
     expect(formatOrderStatusForSms("Started")).toBe("پرداخت شده و در حال آماده‌سازی");
     expect(formatOrderStatusForSms("Shipment")).toBe("ارسال شده");
-    expect(formatOrderStatusForSms("Done")).toBe("تحویل شده");
+    // `Done` precedes `Shipment` in the fulfilment chain, so it reads as
+    // "completed", not "delivered" — otherwise the customer is told the order
+    // arrived before they are told it shipped.
+    expect(formatOrderStatusForSms("Done")).toBe("تکمیل شده");
     expect(formatOrderStatusForSms("Cancelled")).toBe("لغو شده");
   });
 

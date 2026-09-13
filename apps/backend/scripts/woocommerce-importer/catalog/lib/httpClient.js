@@ -7,6 +7,7 @@ const {
   computeBackoffDelay,
   parseRetryAfter,
   isRetryableError,
+  isTransportError,
 } = require("./backoff");
 
 // Reused across every request: without keep-alive, axios' default agents open
@@ -37,6 +38,12 @@ class HttpClient {
    * @param {number} [opts.baseDelay=1000]
    * @param {number} [opts.maxDelay=30000]
    * @param {(ms:number)=>Promise<void>} [opts.sleepFn]
+   * @param {{ holdUntilHealthy: Function }} [opts.sourceGate] Set on the Woo client
+   *   only — never the Strapi writer. When the retry budget is exhausted by a
+   *   transport failure, park on the gate until the source recovers instead of
+   *   throwing, then spend a fresh retry budget on the same request.
+   * @param {number} [opts.maxGateHolds=3] Cap on gate holds for one request, so a
+   *   flapping source cannot park a single call forever.
    */
   constructor(instance, opts = {}) {
     this.instance = instance;
@@ -45,7 +52,9 @@ class HttpClient {
     this.baseDelay = opts.baseDelay ?? 1000;
     this.maxDelay = opts.maxDelay ?? 30000;
     this.sleepFn = opts.sleepFn || sleep;
-    this.metrics = { requests: 0, attempts: 0, retries: 0, latencyMs: 0, failures: 0 };
+    this.sourceGate = opts.sourceGate || null;
+    this.maxGateHolds = opts.maxGateHolds ?? 3;
+    this.metrics = { requests: 0, attempts: 0, retries: 0, latencyMs: 0, failures: 0, gateHolds: 0 };
   }
 
   /**
@@ -53,8 +62,35 @@ class HttpClient {
    * @param {import('axios').AxiosRequestConfig} config
    */
   async request(config) {
-    let lastError;
     this.metrics.requests += 1;
+    let gateHolds = 0;
+    for (;;) {
+      try {
+        return await this.attemptWithRetries(config);
+      } catch (error) {
+        // Retries are exhausted. If the source (not the destination) simply is
+        // not answering, park on the gate rather than failing the run, then
+        // spend a fresh retry budget once it comes back.
+        if (this.sourceGate && gateHolds < this.maxGateHolds && isTransportError(error)) {
+          gateHolds += 1;
+          this.metrics.gateHolds += 1;
+          await this.sourceGate.holdUntilHealthy({
+            reason: `${config.method?.toUpperCase() || "GET"} ${config.url}: ${error.code || error.message}`,
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * One request plus its normal retry budget. Throws the last error when the
+   * budget is spent; `request` decides whether that is fatal or gate-worthy.
+   * @param {import('axios').AxiosRequestConfig} config
+   */
+  async attemptWithRetries(config) {
+    let lastError;
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
       const started = process.hrtime.bigint();
       this.metrics.attempts += 1;

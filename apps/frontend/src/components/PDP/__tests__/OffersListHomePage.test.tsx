@@ -41,6 +41,40 @@ function renderedProductIds(): string[] {
     .map((card) => card.getAttribute("data-product-id") || "");
 }
 
+/**
+ * Desktop paging now hides cards instead of unmounting them, so "which products
+ * does this page show" is a CSS question. jsdom applies no stylesheet, so this
+ * resolves the responsive display utilities the way the cascade would: the last
+ * declaration whose breakpoint is at or below the current tier wins.
+ */
+const TIERS = ["lg", "xl", "2xl", "3xl", "4xl"] as const;
+type Tier = (typeof TIERS)[number];
+
+function visibleAtTier(className: string, tier: Tier): boolean {
+  const ceiling = TIERS.indexOf(tier);
+  let visible = true;
+  for (const token of className.split(/\s+/)) {
+    const match = /^(lg|xl|2xl|3xl|4xl):(block|hidden)$/.exec(token);
+    if (!match) continue;
+    const index = TIERS.indexOf(match[1] as Tier);
+    if (index <= ceiling) visible = match[2] === "block";
+  }
+  return visible;
+}
+
+function desktopVisibleIds(tier: Tier): string[] {
+  return screen
+    .getAllByTestId("home-product-card")
+    .filter((card) =>
+      visibleAtTier(card.parentElement?.className || "", tier),
+    )
+    .map((card) => card.getAttribute("data-product-id") || "");
+}
+
+function railTrack(container: HTMLElement): HTMLElement {
+  return container.querySelector("[data-aq-home-product-list]") as HTMLElement;
+}
+
 describe("OffersListHomePage", () => {
   beforeEach(() => {
     setViewportWidth(1440);
@@ -83,10 +117,10 @@ describe("OffersListHomePage", () => {
     expect(
       screen.getAllByTestId("home-product-card")[0].closest("[data-aq-carousel]"),
     ).toHaveAttribute("data-aq-carousel-motion", "lightweight");
-    expect(renderedProductIds()).toEqual(["1", "2", "3", "4"]);
+    expect(desktopVisibleIds("xl")).toEqual(["1", "2", "3", "4"]);
 
     fireEvent.click(screen.getByRole("button", { name: "صفحه بعدی محصولات" }));
-    expect(renderedProductIds()).toEqual(["5", "6", "7", "8"]);
+    expect(desktopVisibleIds("xl")).toEqual(["5", "6", "7", "8"]);
 
     act(() => {
       setViewportWidth(2560);
@@ -94,13 +128,13 @@ describe("OffersListHomePage", () => {
     });
 
     await waitFor(() => {
-      expect(renderedProductIds()).toEqual(["1", "2", "3", "4", "5", "6"]);
+      expect(desktopVisibleIds("4xl")).toEqual(["1", "2", "3", "4", "5", "6"]);
     });
   });
 
-  it("renders two cards on narrow screens and keeps the rest reachable", () => {
+  it("keeps every product in one swipeable track on narrow screens", () => {
     setViewportWidth(390);
-    render(
+    const view = render(
       <OffersListHomePage
         icon={<span aria-hidden="true" />}
         title="محبوب ترین ها"
@@ -108,9 +142,24 @@ describe("OffersListHomePage", () => {
       />,
     );
 
-    expect(renderedProductIds()).toEqual(["1", "2"]);
-    fireEvent.click(screen.getByRole("button", { name: "صفحه بعدی محصولات" }));
-    expect(renderedProductIds()).toEqual(["3", "4"]);
+    // The regression this covers: the rail sliced to `productsPerPage`, so a
+    // phone had two cards, no overflow, and nothing to swipe.
+    expect(renderedProductIds()).toEqual([
+      "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
+    ]);
+
+    const track = railTrack(view.container);
+    expect(track.className).toContain("overflow-x-auto");
+    expect(track.className).toContain("snap-x");
+    expect(track.className).toContain("snap-mandatory");
+    // Desktop keeps the grid, so the scroll track is mobile-only.
+    expect(track.className).toContain("lg:grid");
+    expect(track.className).toContain("lg:overflow-visible");
+
+    const slide = screen.getAllByTestId("home-product-card")[0].parentElement!;
+    expect(slide.className).toContain("shrink-0");
+    expect(slide.className).toContain("snap-start");
+
     expect(screen.getByRole("link", { name: "مشاهده محصولات بیشتر" })).toHaveAttribute(
       "href",
       "/plp?sort=AverageRating:desc",
@@ -141,7 +190,7 @@ describe("OffersListHomePage", () => {
     expect(track).toHaveClass("duration-300", "scale-100", "opacity-100");
 
     fireEvent.click(screen.getByRole("button", { name: "صفحه بعدی محصولات" }));
-    expect(renderedProductIds()).toEqual(["1", "2", "3", "4"]);
+    expect(desktopVisibleIds("xl")).toEqual(["1", "2", "3", "4"]);
     expect(carousel).toHaveAttribute("data-aq-carousel-phase", "transitioning");
     expect(track).toHaveClass("scale-95", "opacity-0");
     expect(mockNoteEnhancementLoaded).toHaveBeenCalledWith("carousel-motion");
@@ -149,7 +198,7 @@ describe("OffersListHomePage", () => {
     act(() => {
       jest.advanceTimersByTime(150);
     });
-    expect(renderedProductIds()).toEqual(["5", "6", "7", "8"]);
+    expect(desktopVisibleIds("xl")).toEqual(["5", "6", "7", "8"]);
     expect(carousel).toHaveAttribute("data-aq-carousel-phase", "transitioning");
 
     act(() => {
@@ -174,7 +223,7 @@ describe("OffersListHomePage", () => {
       />,
     );
 
-    expect(renderedProductIds()).toEqual(["9", "10", "11", "12"]);
+    expect(desktopVisibleIds("xl")).toEqual(["9", "10", "11", "12"]);
     expect(carousel).toHaveAttribute("data-aq-carousel-motion", "lightweight");
     expect(carousel).toHaveAttribute("data-aq-carousel-phase", "idle");
     expect(jest.getTimerCount()).toBe(0);
@@ -209,7 +258,7 @@ describe("OffersListHomePage", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
 
-    expect(renderedProductIds()).toEqual(["5", "6", "7", "8"]);
+    expect(desktopVisibleIds("xl")).toEqual(["5", "6", "7", "8"]);
     expect(carousel).toHaveAttribute("data-aq-carousel-phase", "idle");
     expect(jest.getTimerCount()).toBe(baselineTimerCount);
 

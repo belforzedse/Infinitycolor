@@ -238,6 +238,12 @@ test("source revisions change only when watched order/product fields change", ()
   const product = { id: 1, date_modified_gmt: "2026-08-05T00:00:00", price: "10", stock_quantity: 2, variations: [3] };
   assert.equal(productRevision(product), productRevision({ ...product }));
   assert.notEqual(productRevision(product), productRevision({ ...product, stock_quantity: 3 }));
+  // A description-only edit in WooCommerce bumps date_modified_gmt, so the
+  // hourly lane re-imports the product even though no watched field changed.
+  assert.notEqual(
+    productRevision(product),
+    productRevision({ ...product, date_modified_gmt: "2026-08-06T00:00:00" }),
+  );
   const order = {
     id: 5,
     date_modified_gmt: "2026-08-05T00:00:00",
@@ -904,7 +910,7 @@ test("fullOrders preload resolves provisioned customers and the variation index 
 
   const result = await service.fullOrders({ concurrency: 2, preload: true });
 
-  assert.deepEqual(result, { completed: 1, failed: 0, softIssues: 0, fetched: 1 });
+  assert.deepEqual(result, { completed: 1, failed: 0, excluded: 0, softIssues: 0, fetched: 1 });
   assert.equal(indexBuilds, 1, "the variation index is enumerated once for the whole stage");
   assert.equal(seen[0].mappedCustomers.has("7"), true);
   assert.equal(seen[0].variationIndex.get("4").id, 10004);

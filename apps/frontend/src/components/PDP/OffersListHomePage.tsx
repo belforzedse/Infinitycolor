@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
-import { StorefrontGrid } from "@/components/storefront/StorefrontGrid";
+import {
+  ProductRailSlide,
+  ProductRailTrack,
+} from "@/components/storefront/ProductRailTrack";
 import { useAdaptiveCarouselTransition } from "@/hooks/useAdaptiveCarouselTransition";
 import { cn } from "@/lib/utils";
 import ArrowLeftIcon from "./Icons/ArrowLeftIcon";
@@ -61,12 +64,22 @@ function useProductsPerPage(): number {
   );
 }
 
-function initialResponsiveVisibility(index: number): string {
-  if (index < 2) return "";
-  if (index === 2) return "hidden lg:block";
-  if (index === 3) return "hidden xl:block";
-  if (index === 4) return "hidden 3xl:block";
-  return "hidden 4xl:block";
+/**
+ * Which cards the *desktop* grid shows on the first page.
+ *
+ * This is the SSR/CLS guard: `useSyncExternalStore` reports
+ * SERVER_PRODUCTS_PER_PAGE on the server, so the breakpoint has to come from CSS
+ * until hydration tells us the real viewport. It used to hide the overflow on
+ * every screen (`hidden lg:block`), which is precisely what left a phone with
+ * two cards and nothing to scroll — so every rule here is scoped to `lg` and up
+ * and mobile always renders the full track.
+ */
+function firstPageDesktopVisibility(index: number): string {
+  if (index <= 2) return "";
+  if (index === 3) return "lg:hidden xl:block";
+  if (index === 4) return "lg:hidden 3xl:block";
+  if (index === 5) return "lg:hidden 4xl:block";
+  return "lg:hidden";
 }
 
 export default function OffersListHomePage({
@@ -82,7 +95,6 @@ export default function OffersListHomePage({
   const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
   const safeCurrentPage = Math.min(currentPage, totalPages - 1);
   const startIndex = safeCurrentPage * productsPerPage;
-  const currentProducts = products.slice(startIndex, startIndex + productsPerPage);
 
   useEffect(() => {
     cancelTransition(false);
@@ -123,7 +135,9 @@ export default function OffersListHomePage({
 
         <div className="flex shrink-0 items-center gap-2">
           {totalPages > 1 ? (
-            <>
+            // Desktop-only: on mobile the rail is swiped, so arrows would be a
+            // second, redundant way to move through the same cards.
+            <div className="hidden shrink-0 items-center gap-2 lg:flex">
               <PDPHeroNavigationButtons
                 goToNextImage={() => transitionTo(Math.max(0, safeCurrentPage - 1))}
                 goToPreviousImage={() =>
@@ -135,14 +149,14 @@ export default function OffersListHomePage({
                 previousLabel="صفحه بعدی محصولات"
               />
               <div
-                className="hidden items-center gap-1 text-xs text-neutral-500 sm:flex"
+                className="flex items-center gap-1 text-xs text-neutral-500"
                 aria-live="polite"
               >
                 <span>{safeCurrentPage + 1}</span>
                 <span>/</span>
                 <span>{totalPages}</span>
               </div>
-            </>
+            </div>
           ) : null}
 
           <Link
@@ -166,26 +180,36 @@ export default function OffersListHomePage({
         )}
         data-aq-carousel-track
       >
-        <StorefrontGrid
-          variant="products"
+        <ProductRailTrack
+          desktopClassName="lg:grid-cols-3 xl:grid-cols-4 3xl:grid-cols-5 3xl:gap-5 4xl:grid-cols-6"
           data-aq-home-product-list
           data-products-per-page={productsPerPage}
         >
-          {currentProducts.map((product, index) => (
-            <div
-              key={product.id}
-              data-product-card-slide
-              className={cn(
-                "min-w-0",
-                initialResponsiveVisibility(index),
-                richTransition &&
-                  "aq-decorative-motion transform transition-all duration-200 ease-out hover:-translate-y-1 hover:scale-[1.02]",
-              )}
-            >
-              <ProductCard {...product} />
-            </div>
-          ))}
-        </StorefrontGrid>
+          {products.map((product, index) => {
+            // Every product stays in the DOM so the mobile track always has
+            // something to scroll; desktop paging hides the cards outside the
+            // current window instead of unmounting them.
+            const visibleOnDesktop =
+              index >= startIndex && index < startIndex + productsPerPage;
+            return (
+              <ProductRailSlide
+                key={product.id}
+                className={cn(
+                  "min-w-0",
+                  safeCurrentPage === 0
+                    ? firstPageDesktopVisibility(index)
+                    : visibleOnDesktop
+                      ? "lg:block"
+                      : "lg:hidden",
+                  richTransition &&
+                    "aq-decorative-motion transform transition-all duration-200 ease-out hover:-translate-y-1 hover:scale-[1.02]",
+                )}
+              >
+                <ProductCard {...product} />
+              </ProductRailSlide>
+            );
+          })}
+        </ProductRailTrack>
       </div>
 
       {!hideBottomViewMore && products.length > productsPerPage ? (

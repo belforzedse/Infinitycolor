@@ -22,6 +22,36 @@ describe("category editorial sanitizer", () => {
     expect(value.Content).not.toMatch(/script|onclick|onerror|style=|javascript:/i);
   });
 
+  it("is idempotent, so a stored row still hashes to what the importer wrote", () => {
+    // The importer decides "has an admin edited this row?" by re-sanitizing the
+    // stored fields and comparing the hash with the one it saved. If sanitizing
+    // already-sanitized content changed anything, every imported row would read
+    // as manually edited and source updates would never reach the storefront.
+    const sourceShaped = {
+      Title: "<h1>راهنمای خرید مانتو</h1>",
+      Paragraph: "  مقدمه‌ای کوتاه  ",
+      Content:
+        '<h1>انواع مانتو</h1>' +
+        '<p>مانتو&nbsp;کتان برای فصل&nbsp;گرم مناسب است.</p>' +
+        '<ul><li>کتان</li><li>جین<ul><li>روشن</li></ul></li></ul>' +
+        '<p><a href="/plp/category/manto-katan">مانتو کتان</a> و ' +
+        '<a href="https://infinitycolor.co/shop/shawl/">شال</a></p>' +
+        '<table><tr><td>سایز</td><td>۳۶</td></tr></table>' +
+        '<img src="https://cdn.example/a.jpg" alt="مانتو">' +
+        '<blockquote>نقل قول</blockquote><h2>نگهداری</h2><p>شست‌وشو با آب سرد</p>',
+      IsPublished: false,
+      IsRTL: true,
+    };
+    const once = sanitizeCategoryEditorial(sourceShaped, { allowTitleOnly: true });
+    const twice = sanitizeCategoryEditorial(
+      { ...once, IsPublished: false },
+      { allowTitleOnly: true },
+    );
+    expect(twice.Content).toBe(once.Content);
+    expect(twice.Title).toBe(once.Title);
+    expect(twice.Paragraph).toBe(once.Paragraph);
+  });
+
   it("requires a heading and meaningful published content", () => {
     expect(() => sanitizeCategoryEditorial({ Title: "", IsPublished: false })).toThrow(
       "EDITORIAL_TITLE_REQUIRED",

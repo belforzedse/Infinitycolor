@@ -51,6 +51,9 @@ test.describe("super-admin order management", () => {
       new RegExp(`/orders/edit/${order.orderId}$`),
     );
 
+    // Fulfilment order is «تکمیل شده» then «ارسال»; a fresh order is `Started`,
+    // so shipping it directly is refused. Walk the chain.
+    await updateOrderStatus(request, order.orderId, "Done");
     await updateOrderStatus(request, order.orderId, "Shipment");
 
     const response = await apiGet(request, "admin", `/orders/${order.orderId}`);

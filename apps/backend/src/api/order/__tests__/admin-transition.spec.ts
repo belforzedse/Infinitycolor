@@ -51,7 +51,7 @@ function createHarness(
   } as any;
   const ctx = {
     params: { id: "44" },
-    request: { body: { status: "Shipment" }, headers: {} },
+    request: { body: { status: "Done" }, headers: {} },
     state: { user: { id: 7 } },
     badRequest: jest.fn(),
     forbidden: jest.fn(),
@@ -64,26 +64,26 @@ function createHarness(
 describe("adminTransitionOrderHandler", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("allows the operational Started to Shipment transition and records it", async () => {
+  it("allows the operational Started to Done transition and records it", async () => {
     const { strapi, ctx, raw, orderLogCreate } = createHarness("Started");
 
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
     expect(raw).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE orders SET status = ?"),
-      ["Shipment", 44, "Started"],
+      ["Done", 44, "Started"],
     );
     expect(orderLogCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         order: 44,
         performed_by: 7,
-        Changes: { fromStatus: "Started", toStatus: "Shipment" },
+        Changes: { fromStatus: "Started", toStatus: "Done" },
       }),
     }));
     expect(mockedAudit).toHaveBeenCalledWith(
       strapi,
       44,
-      { Status: { from: "Started", to: "Shipment" } },
+      { Status: { from: "Started", to: "Done" } },
       7,
       null,
       null,
@@ -93,16 +93,33 @@ describe("adminTransitionOrderHandler", () => {
     expect(mockedNotify).toHaveBeenCalledWith(strapi, {
       orderId: 44,
       oldStatus: "Started",
-      newStatus: "Shipment",
+      newStatus: "Done",
     });
+    // `Done` means prepared, not delivered: it must not log a delivery or a
+    // shipment against the customer's activity feed.
+    expect(strapi.service().logOrderDelivered).not.toHaveBeenCalled();
+    expect(strapi.service().logOrderShipped).not.toHaveBeenCalled();
+    expect(result).toEqual({ data: { success: true, orderId: 44, status: "Done" } });
+  });
+
+  it("allows Done to Shipment and logs the shipment against the customer", async () => {
+    const { strapi, ctx, raw } = createHarness("Done");
+    ctx.request.body.status = "Shipment";
+
+    const result = await adminTransitionOrderHandler(strapi, ctx);
+
+    expect(raw).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE orders SET status = ?"),
+      ["Shipment", 44, "Done"],
+    );
     expect(strapi.service).toHaveBeenCalledWith("api::user-activity.user-activity");
     expect(strapi.service().logOrderShipped).toHaveBeenCalledWith(9, 44, undefined);
     expect(result).toEqual({ data: { success: true, orderId: 44, status: "Shipment" } });
   });
 
-  it("rejects skipping directly from Started to Done", async () => {
+  it("rejects skipping directly from Started to Shipment", async () => {
     const { strapi, ctx, raw } = createHarness("Started");
-    ctx.request.body.status = "Done";
+    ctx.request.body.status = "Shipment";
 
     const result = await adminTransitionOrderHandler(strapi, ctx);
 
@@ -112,8 +129,8 @@ describe("adminTransitionOrderHandler", () => {
         data: expect.objectContaining({
           errorCode: "INVALID_ORDER_TRANSITION",
           fromStatus: "Started",
-          requestedStatus: "Done",
-          allowedStatuses: ["Shipment"],
+          requestedStatus: "Shipment",
+          allowedStatuses: ["Done"],
         }),
       }),
     );
@@ -145,10 +162,10 @@ describe("adminTransitionOrderHandler", () => {
 
     expect(raw).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE orders SET status = ?"),
-      ["Shipment", 44, "Started"],
+      ["Done", 44, "Started"],
     );
     expect(result).toEqual({
-      data: { success: true, orderId: 44, status: "Shipment" },
+      data: { success: true, orderId: 44, status: "Done" },
     });
     expect(ctx.conflict).not.toHaveBeenCalled();
     expect(mockedAudit).toHaveBeenCalled();

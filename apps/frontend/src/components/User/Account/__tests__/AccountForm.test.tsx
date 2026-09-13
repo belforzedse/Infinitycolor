@@ -29,12 +29,6 @@ jest.mock("react-hot-toast", () => ({
   },
 }));
 
-const setBirthDate = (year: string, month: string, day: string) => {
-  fireEvent.change(screen.getByLabelText("سال تولد"), { target: { value: year } });
-  fireEvent.change(screen.getByLabelText("ماه تولد"), { target: { value: month } });
-  fireEvent.change(screen.getByLabelText("روز تولد"), { target: { value: day } });
-};
-
 const save = () => fireEvent.click(screen.getByRole("button", { name: /ذخیره تغییرات/ }));
 
 describe("AccountForm", () => {
@@ -59,83 +53,46 @@ describe("AccountForm", () => {
     expect(screen.getByLabelText("روز تولد")).toHaveValue("8");
   });
 
-  it("accepts Persian digits that a number input would have dropped", () => {
+  it("shows birthday as disabled instead of implying it can be edited", () => {
     render(<AccountForm />);
 
-    fireEvent.change(screen.getByLabelText("سال تولد"), { target: { value: "۱۳۸۸" } });
-    expect(screen.getByLabelText("سال تولد")).toHaveValue("1388");
+    const birthYear = screen.getByLabelText("سال تولد");
+    expect(birthYear).toBeDisabled();
+    expect(birthYear).toHaveClass("bg-neutral-100", "text-slate-400", "cursor-not-allowed");
+    expect(screen.getByLabelText("ماه تولد")).toBeDisabled();
+    expect(screen.getByLabelText("روز تولد")).toBeDisabled();
   });
 
-  it("refuses a day the Jalali month does not have instead of silently keeping the old date", async () => {
-    render(<AccountForm />);
-
-    // Aban has 30 days. This used to fall back to the stored value and still claim success.
-    setBirthDate("1388", "8", "31");
-    save();
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("این ماه ۳۰ روز دارد.");
-    expect(mockUpdateProfile).not.toHaveBeenCalled();
-    expect(mockToastSuccess).not.toHaveBeenCalled();
-  });
-
-  it("refuses a partially filled birth date", async () => {
-    render(<AccountForm />);
-
-    setBirthDate("1388", "", "");
-    save();
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("تاریخ تولد را کامل وارد کنید");
-    expect(mockUpdateProfile).not.toHaveBeenCalled();
-  });
-
-  it("saves a valid birth date and never submits fields the form does not render", async () => {
-    render(<AccountForm />);
-
-    setBirthDate("1388", "8", "30");
-    save();
-
-    await waitFor(() => expect(mockUpdateProfile).toHaveBeenCalledTimes(1));
-    const payload = mockUpdateProfile.mock.calls[0][0];
-    expect(payload.BirthDate).toBe("2009-11-21");
-    // The allowlist rejects the whole request on any unknown key, and the form renders
-    // neither of these.
-    expect(payload).not.toHaveProperty("NationalCode");
-    expect(payload).not.toHaveProperty("Phone");
-  });
-
-  it("clears the birth date when all three parts are emptied", async () => {
-    render(<AccountForm />);
-
-    setBirthDate("", "", "");
-    save();
-
-    await waitFor(() => expect(mockUpdateProfile).toHaveBeenCalledTimes(1));
-    expect(mockUpdateProfile.mock.calls[0][0].BirthDate).toBeNull();
-  });
-
-  it("round-trips the gender the user picks", async () => {
-    render(<AccountForm />);
-
-    fireEvent.click(screen.getByLabelText("زن"));
-    save();
-
-    await waitFor(() => expect(mockUpdateProfile).toHaveBeenCalledTimes(1));
-    expect(mockUpdateProfile.mock.calls[0][0].Sex).toBe("female");
-  });
-
-  it("omits the gender entirely when the user never answered", async () => {
-    render(<AccountForm />);
-
-    save();
-
-    await waitFor(() => expect(mockUpdateProfile).toHaveBeenCalledTimes(1));
-    expect(mockUpdateProfile.mock.calls[0][0]).not.toHaveProperty("Sex");
-  });
-
-  it("preselects the stored gender", () => {
+  it("shows gender as disabled instead of implying it can be edited", () => {
     mockUserData = { ...mockUserData, Sex: "male" };
     render(<AccountForm />);
 
-    expect(screen.getByLabelText("مرد")).toBeChecked();
+    const maleOption = screen.getByLabelText("مرد");
+    expect(screen.getByLabelText("زن")).toBeDisabled();
+    expect(maleOption).toBeDisabled();
+    expect(maleOption).toBeChecked();
+    expect(maleOption.closest("label")).toHaveClass(
+      "bg-neutral-100",
+      "text-slate-400",
+      "cursor-not-allowed",
+    );
+    expect(screen.queryByRole("button", { name: "پاک کردن" })).not.toBeInTheDocument();
+  });
+
+  it("saves only the fields that can be edited on this form", async () => {
+    mockUserData = { ...mockUserData, Sex: "female" };
+    render(<AccountForm />);
+
+    fireEvent.change(screen.getByLabelText("نام"), { target: { value: "سارا" } });
+    save();
+
+    await waitFor(() =>
+      expect(mockUpdateProfile).toHaveBeenCalledWith({
+        FirstName: "سارا",
+        LastName: "احمدی",
+      }),
+    );
+    expect(mockUpdateProfile.mock.calls[0][0]).not.toHaveProperty("BirthDate");
+    expect(mockUpdateProfile.mock.calls[0][0]).not.toHaveProperty("Sex");
   });
 });

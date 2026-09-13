@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  getNavbarProductCategories,
+  getCachedNavbarProductCategories,
   getProductCategories,
   type ProductCategorySummary,
 } from "@/services/product/categories";
@@ -83,7 +83,7 @@ export const useProductCategories = (options: UseProductCategoriesOptions = {}) 
           // unhandled.
           request = (
             navbarAssignedOnly
-              ? getNavbarProductCategories({ includeChildren })
+              ? getCachedNavbarProductCategories({ includeChildren })
               : getProductCategories({
                   parentOnly,
                   mainOnly,

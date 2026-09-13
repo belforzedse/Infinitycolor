@@ -62,7 +62,7 @@ const PLPDesktopSearch: React.FC<PLPDesktopSearchProps> = ({ className = "" }) =
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
   const POPULAR_QUERIES = useMemo(
-    () => ["کیف", "کفش", "کتونی", "شلوار", "پرفروش"],
+    () => ["کیف", "کفش", "کتونی", "شلوار", "پیراهن"],
     [],
   );
 

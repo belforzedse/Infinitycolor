@@ -24,9 +24,7 @@ function CartPriceValue({
 
   if (!hasDiscount) {
     return (
-      <span className="truncate text-sm font-medium text-neutral-800">
-        {faNum(amount)} تومان
-      </span>
+      <span className="truncate text-sm font-medium text-neutral-800">{faNum(amount)} تومان</span>
     );
   }
 
@@ -35,9 +33,7 @@ function CartPriceValue({
       <span className="truncate text-sm font-medium text-infinity-primary">
         {faNum(amount)} تومان
       </span>
-      <span className="text-xs text-neutral-400 line-through">
-        {faNum(originalAmount!)} تومان
-      </span>
+      <span className="text-xs text-neutral-400 line-through">{faNum(originalAmount!)} تومان</span>
     </div>
   );
 }
@@ -118,7 +114,11 @@ export default function ShoppingCartMobileProductCard({ cartItem }: Props) {
         </div>
 
         <div className="col-span-3 flex items-center gap-1 p-3">
-          <ShoppingCartQuantityControl quantity={cartItem.quantity} itemId={cartItem.id} />
+          <ShoppingCartQuantityControl
+            quantity={cartItem.quantity}
+            itemId={cartItem.id}
+            availableStock={cartItem.availableStock}
+          />
         </div>
       </div>
 

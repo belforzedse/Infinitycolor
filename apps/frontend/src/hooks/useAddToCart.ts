@@ -16,6 +16,7 @@ interface UseAddToCartProps {
   model?: string;
   variationId?: string;
   productSlug?: string;
+  availableStock?: number;
 }
 
 export default function useAddToCart({
@@ -31,6 +32,7 @@ export default function useAddToCart({
   model,
   variationId,
   productSlug,
+  availableStock,
 }: UseAddToCartProps) {
   const {
     addToCart: addToCartContext,
@@ -118,6 +120,7 @@ export default function useAddToCart({
         color,
         size,
         model,
+        availableStock,
       });
 
       // Open cart drawer

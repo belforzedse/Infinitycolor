@@ -106,3 +106,72 @@ describe("BlogCategoryBanner", () => {
     expect(link.tagName).toBe("A");
   });
 });
+
+describe("BlogCategoryBanner sizing", () => {
+  it("uses the image's own ratio so mobile is the desktop banner scaled down", () => {
+    render(
+      <BlogCategoryBanner
+        title="انواع استایل"
+        href="/blog?category=style"
+        backgroundImage="/uploads/style.jpg"
+        imageWidth={1600}
+        imageHeight={500}
+      />,
+    );
+
+    const banner = screen.getByRole("link", { name: "انواع استایل" });
+    expect(banner).toHaveStyle({ aspectRatio: "1600 / 500" });
+    // The fixed pixel heights are what made the phone crop differ from desktop.
+    expect(banner.className).not.toMatch(/h-\[\d+px\]/);
+  });
+
+  it("falls back to a fixed ratio when the CMS reported no dimensions", () => {
+    render(
+      <BlogCategoryBanner
+        title="لباس عروس"
+        href="/blog?category=bridal"
+        backgroundImage="/uploads/bridal.jpg"
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "لباس عروس" })).toHaveStyle({
+      aspectRatio: "16 / 9",
+    });
+  });
+
+  it("ignores unusable dimensions rather than producing a zero-height box", () => {
+    render(
+      <BlogCategoryBanner
+        title="نگهداری از پوشاک"
+        href="/blog?category=care"
+        backgroundImage="/uploads/care.jpg"
+        imageWidth={0}
+        imageHeight={0}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "نگهداری از پوشاک" })).toHaveStyle({
+      aspectRatio: "16 / 9",
+    });
+  });
+
+  it("scales the overlay with the box instead of stepping at a breakpoint", () => {
+    render(
+      <BlogCategoryBanner
+        title="انواع استایل"
+        subtitle="زیرنویس"
+        href="/blog?category=style"
+        backgroundImage="/uploads/style.jpg"
+        imageWidth={1600}
+        imageHeight={500}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "انواع استایل" })).toHaveStyle({
+      fontSize: "clamp(1.5rem, 4.8vw, 66px)",
+    });
+    expect(screen.getByText("زیرنویس")).toHaveStyle({
+      fontSize: "clamp(0.875rem, 2.2vw, 30px)",
+    });
+  });
+});

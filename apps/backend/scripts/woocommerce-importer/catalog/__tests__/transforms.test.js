@@ -53,6 +53,37 @@ test("mapProduct: falls back to short_description when description empty", () =>
   assert.match(data.Description, /شال نخی/);
 });
 
+test("mapProduct: an editing leftover in description never hides the real copy", () => {
+  const product = {
+    ...byId(products, 102),
+    description: "<p><del>my</del></p>",
+    short_description: "<p>شال نخی با طرح گلدار مناسب فصل بهار</p>",
+  };
+  const { data, descriptionResolution } = T.mapProduct(product);
+  assert.match(data.Description, /شال نخی/);
+  assert.doesNotMatch(data.Description, /del>/);
+  assert.deepEqual(
+    { source: descriptionResolution.source, reason: descriptionResolution.reason },
+    { source: "short_description", reason: "MAIN_TRIVIAL" },
+  );
+});
+
+test("mapProduct: editing only short_description changes what would be written", () => {
+  const before = T.mapProduct({ ...byId(products, 102), description: "", short_description: "<p>نسخه اول</p>" });
+  const after = T.mapProduct({ ...byId(products, 102), description: "", short_description: "<p>نسخه دوم</p>" });
+  assert.notEqual(before.data.Description, after.data.Description);
+});
+
+test("prepareRichtext collapses blank lines before horizontal whitespace", () => {
+  const { data } = T.mapProduct({
+    ...byId(products, 102),
+    description: "",
+    short_description: "<p>خط  اول</p>\n\n\n<p>خط   دوم</p>",
+  });
+  // Both rules are reachable: no double newline survives, and no run of spaces.
+  assert.equal(data.Description, "<p>خط اول</p>\n<p>خط دوم</p>");
+});
+
 test("mapProduct: resolves category relations and reports misses", () => {
   const resolveCategoryId = (id) => ({ 5: 50, 9: 90 })[id] || null;
   const { data, mainCategoryMissing, otherCategoryMisses } = T.mapProduct(byId(products, 101), {

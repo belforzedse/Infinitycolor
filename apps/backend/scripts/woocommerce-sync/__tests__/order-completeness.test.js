@@ -328,7 +328,7 @@ test("fullOrders records durable outcomes for success and failure", async () => 
   };
 
   const result = await service.fullOrders({ concurrency: 2 });
-  assert.deepEqual(result, { completed: 1, failed: 1, softIssues: 0, fetched: 2 });
+  assert.deepEqual(result, { completed: 1, failed: 1, excluded: 0, softIssues: 0, fetched: 2 });
   assert.equal(outcomes.length, 2);
   assert.equal(outcomes.find((row) => String(row.sourceId) === "1").outcome, "completed");
   assert.equal(outcomes.find((row) => String(row.sourceId) === "2").outcome, "failed");
@@ -473,4 +473,140 @@ test("ensureOrderReferencedVariations prefers a prebuilt index and writes new ro
   });
   assert.deepEqual(miss.ensured, ["4"]);
   assert.equal(missIndex.get("4").id, 4242, "a created variation must be written back into the snapshot");
+});
+
+/* ------------------------------------------------------------------ *
+ * Orphan lines and terminal exclusion
+ * ------------------------------------------------------------------ */
+
+test("lineRefs skips a line with no catalog reference instead of fetching product 0", () => {
+  const refs = lineRefs({
+    line_items: [
+      { id: 1, product_id: 9, variation_id: 44 },
+      { id: 2, product_id: 0, variation_id: 0 },
+    ],
+  });
+  assert.deepEqual(refs, [{ productSourceId: "9", variationSourceId: "44", lineId: "1" }]);
+  assert.deepEqual(refs.orphanLineIds, ["2"]);
+});
+
+test("ensureOrderReferencedVariations reports orphan lines and touches neither source nor repo for them", async () => {
+  const sourceCalls = [];
+  const result = await ensureOrderReferencedVariations({
+    source: {
+      async getProduct(id) { sourceCalls.push(id); throw new Error("must not be called"); },
+      async getProductVariations(id) { sourceCalls.push(id); throw new Error("must not be called"); },
+    },
+    repo: {
+      async findOneByExternalId() { throw new Error("must not be called"); },
+      async upsert() { throw new Error("must not be called"); },
+    },
+    catalogEngine: {},
+    order: { id: 7, line_items: [{ id: 2, product_id: 0, variation_id: 0 }] },
+    logger: { info() {}, warn() {} },
+  });
+  assert.deepEqual(sourceCalls, []);
+  assert.deepEqual(result.ensured, []);
+  assert.deepEqual(result.failed, []);
+  assert.deepEqual(result.orphanSkipped, ["2"]);
+});
+
+test("fullOrders records an emptied zero-total order as excluded, not failed", async () => {
+  const config = getSyncConfig(baseEnv());
+  const outcomes = [];
+  const service = new WooSyncService(config, {
+    pool: { end: async () => undefined },
+    source: {
+      async *orders() {
+        yield {
+          page: 1,
+          rows: [
+            { id: 1, date_modified_gmt: "2026-01-01T00:00:00", status: "completed", total: "1" },
+            { id: 2, date_modified_gmt: "2026-01-01T00:00:00", status: "completed", total: "0" },
+          ],
+        };
+      },
+    },
+    destination: {},
+  });
+  let destinationCalls = 0;
+  service.syncOrderRow = async (row) => {
+    if (String(row.source_id) === "2") {
+      throw Object.assign(new Error("ORDER_EMPTY_ZERO_TOTAL_EXCLUDED"), {
+        code: "ORDER_EMPTY_ZERO_TOTAL_EXCLUDED",
+        outcome: "excluded",
+      });
+    }
+    destinationCalls += 1;
+    return { mode: "created", hasSoftIssues: false };
+  };
+  service.state = {
+    async recordOrderOutcome(args) { outcomes.push(args); return { id: 1, status: args.outcome }; },
+  };
+
+  const result = await service.fullOrders({ concurrency: 2 });
+  assert.deepEqual(result, { completed: 1, failed: 0, excluded: 1, softIssues: 0, fetched: 2 });
+  assert.equal(destinationCalls, 1, "the excluded order reaches no destination write");
+  const excluded = outcomes.find((row) => String(row.sourceId) === "2");
+  assert.equal(excluded.outcome, "excluded");
+  assert.equal(excluded.errorCode, "ORDER_EMPTY_ZERO_TOTAL_EXCLUDED");
+});
+
+test("recordOrderOutcome treats excluded as terminal: no extra attempt, no retry backoff", async () => {
+  const calls = [];
+  const store = new SyncStateStore({
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [{ id: 4, status: "excluded", attempts: 1, last_error_code: params[5] }], rowCount: 1 };
+    },
+  }, { owner: "test" });
+
+  const row = await store.recordOrderOutcome({
+    sourceId: "1273484",
+    revisionSha256: "a".repeat(64),
+    outcome: "excluded",
+    errorCode: "ORDER_EMPTY_ZERO_TOTAL_EXCLUDED",
+  });
+  assert.equal(row.status, "excluded");
+  // Terminal outcomes share completed's bookkeeping so the row stops being due.
+  assert.match(calls[0].sql, /IN \('completed', 'excluded'\)/);
+  await assert.rejects(
+    () => store.recordOrderOutcome({ sourceId: "1", revisionSha256: "a".repeat(64), outcome: "nonsense" }),
+    /WOOCOMMERCE_SYNC_OUTCOME_INVALID/,
+  );
+});
+
+test("excludeItem is fenced and yields to a source edit that landed mid-attempt", async () => {
+  const calls = [];
+  const store = new SyncStateStore({
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [{ id: 9, status: "excluded" }], rowCount: 1 };
+    },
+  }, { owner: "test" });
+
+  await store.excludeItem(9, "token-1", "ORDER_EMPTY_ZERO_TOTAL_EXCLUDED");
+  assert.match(calls[0].sql, /claim_fencing_token = \$2/);
+  assert.match(calls[0].sql, /source_revision_sha256 <> claimed_revision_sha256 THEN 'pending'/);
+  assert.deepEqual(calls[0].params, [9, "token-1", "ORDER_EMPTY_ZERO_TOTAL_EXCLUDED"]);
+
+  const rejecting = new SyncStateStore({ query: async () => ({ rows: [], rowCount: 0 }) }, { owner: "test" });
+  await assert.rejects(() => rejecting.excludeItem(9, "stale", "X"), /fence rejected/);
+});
+
+test("an excluded order is neither imported nor missing", () => {
+  const destination = new Map([["10", { status: "Done", count: 1 }]]);
+  const report = compareOrderIds(
+    ["10", "11", "12"],
+    destination,
+    new Map(),
+    new Set(["12"]),
+  );
+  assert.equal(report.importedCount, 1);
+  assert.deepEqual(report.missing, ["11"]);
+  assert.deepEqual(report.excluded, ["12"]);
+  assert.equal(report.expectedSourceCount, 3);
+  // Without the excluded set the same order still reads as missing, which is
+  // exactly the noise the terminal status removes.
+  assert.deepEqual(compareOrderIds(["10", "11", "12"], destination).missing, ["11", "12"]);
 });

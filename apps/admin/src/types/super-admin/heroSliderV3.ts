@@ -1,6 +1,6 @@
 export const HERO_SLIDER_VERSION = 3 as const;
 export const HERO_SCHEDULE_TIMEZONE = "Asia/Tehran" as const;
-export const DEFAULT_AUTOPLAY_INTERVAL_MS = 600000;
+export const DEFAULT_AUTOPLAY_INTERVAL_MS = 4000;
 export const MIN_AUTOPLAY_INTERVAL_MS = 3000;
 export const MAX_AUTOPLAY_INTERVAL_MS = 3600000;
 export const MAX_HERO_SLIDES = 50;

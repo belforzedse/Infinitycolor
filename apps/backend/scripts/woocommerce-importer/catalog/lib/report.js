@@ -87,10 +87,38 @@ class ImportReport {
      * @type {{ examined:number, verifiedSkipped:number, staleNonZero:number } | null}
      */
     this.stockGate = null;
+    /**
+     * Where each product's body text came from. WooCommerce holds it in either
+     * `description` or `short_description` depending on who edited the product,
+     * so the distribution — and the rule that picked each one — is part of the
+     * run's evidence rather than something to reconstruct from the database.
+     * @type {{ bySource: Record<string, number>, byReason: Record<string, number> }}
+     */
+    this.descriptions = { bySource: {}, byReason: {} };
+    /**
+     * Why each category's editorial content was created, updated, left alone or
+     * skipped — `skipped` alone cannot distinguish "a person owns this row"
+     * from "the source is only a heading".
+     * @type {Record<string, number>}
+     */
+    this.categoryEditorialOutcomes = {};
     this.discovered = 0;
     this.processed = 0;
     /** @type {Array<{ entity:string, wcId:any, stage:string, error:string, sku?:string, strapiId?:any, sourceImageId?:any }>} */
     this.failures = [];
+  }
+
+  /** @param {string} disposition */
+  categoryEditorialOutcome(disposition, n = 1) {
+    const key = String(disposition || "skipped");
+    this.categoryEditorialOutcomes[key] = Number(this.categoryEditorialOutcomes[key] || 0) + n;
+  }
+
+  /** @param {{ source: string, reason: string }} resolution */
+  descriptionResolved(resolution) {
+    const { bySource, byReason } = this.descriptions;
+    bySource[resolution.source] = Number(bySource[resolution.source] || 0) + 1;
+    byReason[resolution.reason] = Number(byReason[resolution.reason] || 0) + 1;
   }
 
   count(entity, stat, n = 1) {
@@ -195,6 +223,8 @@ class ImportReport {
       categoryAudio: this.categoryAudio,
       categoryEditorial: this.categoryEditorial,
       stockGate: this.stockGate,
+      descriptions: this.descriptions,
+      categoryEditorialOutcomes: this.categoryEditorialOutcomes,
       failures: this.failures,
     };
   }
@@ -229,6 +259,19 @@ class ImportReport {
         `cat-editorial batch=${this.categoryEditorial.batchId} manifest=${this.categoryEditorial.manifestHash} ` +
           `source=${this.categoryEditorial.sourceCategoryCount} nonEmpty=${this.categoryEditorial.nonEmptyCategoryCount} ` +
           `audio=${this.categoryEditorial.audioCount} links=${this.categoryEditorial.rewrittenLinkCount}`,
+      );
+    }
+    const editorialOutcomes = Object.entries(this.categoryEditorialOutcomes);
+    if (editorialOutcomes.length > 0) {
+      this.logger.info(
+        `categoryEditorial ${editorialOutcomes.map(([reason, n]) => `${reason}=${n}`).join(" ")}`,
+      );
+    }
+    const descriptionSources = Object.entries(this.descriptions.bySource);
+    if (descriptionSources.length > 0) {
+      this.logger.info(
+        `descriptions ${descriptionSources.map(([source, n]) => `${source}=${n}`).join(" ")} ` +
+          `(${Object.entries(this.descriptions.byReason).map(([reason, n]) => `${reason}=${n}`).join(" ")})`,
       );
     }
     if (this.stockGate) {

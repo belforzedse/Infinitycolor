@@ -7,6 +7,10 @@ import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
 import ArrowLeftIcon from "@/components/PDP/Icons/ArrowLeftIcon";
 import OffIcon from "@/components/PDP/Icons/OffIcon";
 import PDPHeroNavigationButtons from "@/components/PDP/NavigationButtons";
+import {
+  ProductRailSlide,
+  ProductRailTrack,
+} from "@/components/storefront/ProductRailTrack";
 import { useAdaptiveCarouselTransition } from "@/hooks/useAdaptiveCarouselTransition";
 import { cn } from "@/lib/utils";
 
@@ -96,11 +100,6 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
             transform: translateY(0);
           }
         }
-
-        .smooth-scroll {
-          scroll-behavior: smooth;
-          transition: scroll-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
       `}</style>
 
       <div
@@ -143,14 +142,9 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
           </div>
         )}
 
-        <div
-          className="scrollbar-hide smooth-scroll flex snap-x snap-mandatory gap-1.5 overflow-x-auto lg:grid lg:snap-none lg:grid-cols-3 lg:items-center lg:gap-4 lg:overflow-visible xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6"
+        <ProductRailTrack
+          desktopClassName="lg:grid-cols-3 lg:items-center xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6"
           data-aq-carousel-track
-          style={{
-            WebkitOverflowScrolling: "touch",
-            scrollbarWidth: "none",
-            msOverflowStyle: "none",
-          }}
         >
           <div className="hidden h-full min-w-0 flex-col items-center justify-center gap-5 text-center lg:flex">
             <h2
@@ -184,11 +178,10 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
           {products.map((product, index) => {
             const visibleOnDesktop = index >= startIndex && index < startIndex + productsPerPage;
             return (
-              <div
+              <ProductRailSlide
                 key={product.id}
-                data-product-card-slide
                 className={cn(
-                  "aq-decorative-motion w-[calc(50%-0.1875rem)] shrink-0 snap-start transition-transform duration-200 ease-out lg:w-auto lg:min-w-0 lg:snap-none lg:hover:-translate-y-1 lg:hover:scale-[1.02]",
+                  "aq-decorative-motion transition-transform duration-200 ease-out lg:hover:-translate-y-1 lg:hover:scale-[1.02]",
                   visibleOnDesktop ? "lg:block" : "lg:hidden",
                   richTransition && "lg:transform lg:transition-all lg:duration-300 lg:ease-out",
                   richTransition &&
@@ -200,10 +193,10 @@ export default function DiscountedShowcase({ products }: DiscountedShowcaseProps
                 }}
               >
                 <ProductCard {...product} />
-              </div>
+              </ProductRailSlide>
             );
           })}
-        </div>
+        </ProductRailTrack>
       </div>
     </section>
   );

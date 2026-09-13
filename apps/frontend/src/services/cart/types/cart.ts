@@ -21,6 +21,8 @@ export interface CartItemResponse {
   id: number;
   Count: number;
   Sum: string | number;
+  /** Server-computed Count minus active reservations at cart-read time. */
+  availableStock?: number;
   createdAt?: string;
   updatedAt?: string;
   product_variation: {

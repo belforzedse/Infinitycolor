@@ -16,6 +16,7 @@ const { resolveSlug } = require("./slug");
 const { resolveColorMapping, DEFAULT_COLOR } = require("../../utils/colorMappings");
 const { wooSourceTimestamps } = require("../../utils/sourceTimestamps");
 const { resolvePublicationIntent } = require("./publication");
+const { resolveProductDescription } = require("./descriptionResolver");
 
 const EXTERNAL_SOURCE = "woocommerce";
 
@@ -54,15 +55,21 @@ function normalizeName(name) {
     .trim();
 }
 
-/** Light richtext cleanup (Strapi richtext accepts HTML; just normalize whitespace). */
+/**
+ * Light richtext cleanup (Strapi richtext accepts HTML; just normalize
+ * whitespace). Blank lines collapse first and only horizontal runs collapse
+ * afterwards — the previous order ran `\s+` first, which flattened every
+ * newline into a space and left the blank-line rule unreachable.
+ */
 function prepareRichtext(html) {
   if (!html || typeof html !== "string") {
     return "";
   }
   return html
     .trim()
-    .replace(/\s+/g, " ")
-    .replace(/\n\s*\n/g, "\n")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .replace(/[^\S\n]+/g, " ")
     .trim();
 }
 
@@ -108,10 +115,14 @@ function mapProduct(wcProduct, opts = {}) {
     statusMappings,
   });
 
+  // WooCommerce holds the body in either field depending on who edited the
+  // product; one resolver decides, and reports why, for every product.
+  const descriptionResolution = resolveProductDescription(wcProduct);
+
   const data = {
     Title: normalizeName(wcProduct.name),
     Slug: resolveSlug(wcProduct, "product"),
-    Description: prepareRichtext(wcProduct.description || wcProduct.short_description || ""),
+    Description: prepareRichtext(descriptionResolution.html),
     ProductType: wcProduct.type === "simple" ? "Simple" : "Variable",
     IsSimpleProduct: wcProduct.type === "simple",
     AverageRating: toNumber(wcProduct.average_rating) || null,
@@ -182,6 +193,7 @@ function mapProduct(wcProduct, opts = {}) {
     sizeGuideMatrix: extractSizeGuideMatrix(wcProduct),
     sourceTimestamps,
     publicationIntent,
+    descriptionResolution,
   };
 }
 

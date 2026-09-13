@@ -231,7 +231,10 @@ export default function Page() {
             ProductTitle: item.productName,
             ProductSKU: item.productCode,
             order: orderId,
-            product_variation: item.productVariationId || item.productId,
+            // 0 is not an id. A line with no catalog relation is stored as a
+            // snapshot (title, SKU, price, count) with a null relation — the
+            // same shape imported orders use for a product deleted after sale.
+            product_variation: item.productVariationId || item.productId || null,
             // Include variation detail relations for invoice printing
             product_color: item.productColorId || null,
             product_size: item.productSizeId || null,

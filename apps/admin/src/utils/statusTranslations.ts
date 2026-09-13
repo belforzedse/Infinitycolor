@@ -33,7 +33,9 @@ const ORDER_STATUS_MAP: Record<string, StatusMeta> = {
   shipped: { label: "ارسال شده", tone: "info" },
   delivery: { label: "در حال تحویل", tone: "info" },
   delivered: { label: "تحویل داده شده", tone: "success" },
-  done: { label: "تحویل داده شده", tone: "success" },
+  // `Done` precedes `Shipment`: it means the order is completed/prepared, not
+  // delivered. Shipping is the terminal step and keeps «ارسال شده».
+  done: { label: COMPLETED_LABEL, tone: "success" },
   completed: { label: COMPLETED_LABEL, tone: "success" },
   success: { label: COMPLETED_LABEL, tone: "success" },
   cancelled: { label: "لغو شده", tone: "danger" },
@@ -127,11 +129,14 @@ const getMeta = (
   return map[normalized] ?? { label: value, tone: "info" };
 };
 
+// Fulfilment is Started -> Done («تکمیل شده») -> Shipment («ارسال»), so the
+// terminal bucket is `shipment`, not `done`. `done` now falls through to
+// INPROGRESS, because a completed order still has to be shipped.
 const DELIVERED_KEYS = [
-  "done",
+  "shipment",
+  "shipped",
   "delivered",
-  "completed",
-  "success",
+  "ارسال شده",
   "تحویل داده شده",
 ];
 const CANCELLED_KEYS = [

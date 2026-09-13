@@ -21,7 +21,7 @@ const STATUS_TYPE: Record<string, SmsNotificationType> = {
 const STATUS_LABELS: Record<string, string> = {
   Started: "پرداخت شده و در حال آماده‌سازی",
   Shipment: "ارسال شده",
-  Done: "تحویل شده",
+  Done: "تکمیل شده",
   Cancelled: "لغو شده",
 };
 

@@ -222,6 +222,37 @@ class SyncStateStore {
     if (result.rowCount !== 1) throw Object.assign(new Error("Woo sync item fence rejected"), { code: "WOOCOMMERCE_SYNC_FENCE_REJECTED" });
   }
 
+  /**
+   * Terminal, non-retryable outcome for a claimed hourly item: the source row
+   * is understood and deliberately not imported (an emptied zero-total Woo
+   * order). `excluded` is never claimed again; a later WooCommerce edit changes
+   * the revision sha, `observe()` flips the row back to `pending`, and the item
+   * is re-evaluated from scratch. A source edit that landed *during* this
+   * attempt is caught here the same way `completeItem` catches it — the row
+   * goes back to `pending` rather than freezing on a stale reading.
+   */
+  async excludeItem(id, token, errorCode) {
+    const result = await this.pool.query(
+      `UPDATE woocommerce_sync_items
+          SET status = CASE
+                WHEN source_revision_sha256 <> claimed_revision_sha256 THEN 'pending'
+                ELSE 'excluded'
+              END,
+              lane = CASE
+                WHEN source_revision_sha256 <> claimed_revision_sha256 THEN 'hourly'
+                ELSE lane
+              END,
+              completed_at = now(), next_attempt_at = now(),
+              claim_fencing_token = NULL, claimed_revision_sha256 = NULL,
+              claim_until = NULL, last_error_code = $3
+        WHERE id = $1 AND claim_fencing_token = $2
+      RETURNING id, status`,
+      [id, token, String(errorCode || "UNKNOWN").slice(0, 128)],
+    );
+    if (result.rowCount !== 1) throw Object.assign(new Error("Woo sync item fence rejected"), { code: "WOOCOMMERCE_SYNC_FENCE_REJECTED" });
+    return result.rows[0];
+  }
+
   async failItem(id, token, errorCode) {
     const result = await this.pool.query(
       `UPDATE woocommerce_sync_items
@@ -250,7 +281,7 @@ class SyncStateStore {
     lane = "campaign",
   }) {
     if (!sha256Pattern.test(String(revisionSha256))) throw new Error("WOOCOMMERCE_SYNC_REVISION_INVALID");
-    if (!["completed", "failed", "quarantined"].includes(outcome)) {
+    if (!["completed", "failed", "quarantined", "excluded"].includes(outcome)) {
       throw new Error("WOOCOMMERCE_SYNC_OUTCOME_INVALID");
     }
     const result = await this.pool.query(
@@ -262,7 +293,7 @@ class SyncStateStore {
                1,
                now(),
                $6::varchar, now(), now(),
-               CASE WHEN $5::varchar = 'completed' THEN now() ELSE NULL END)
+               CASE WHEN $5::varchar IN ('completed', 'excluded') THEN now() ELSE NULL END)
        ON CONFLICT (source_type, source_id) DO UPDATE
          SET source_revision_sha256 = EXCLUDED.source_revision_sha256,
              source_modified_at = COALESCE(EXCLUDED.source_modified_at, woocommerce_sync_items.source_modified_at),
@@ -270,19 +301,19 @@ class SyncStateStore {
              lane = EXCLUDED.lane,
              status = EXCLUDED.status,
              attempts = CASE
-               WHEN EXCLUDED.status = 'completed' THEN woocommerce_sync_items.attempts
+               WHEN EXCLUDED.status IN ('completed', 'excluded') THEN woocommerce_sync_items.attempts
                ELSE woocommerce_sync_items.attempts + 1
              END,
              last_error_code = EXCLUDED.last_error_code,
              completed_at = CASE
-               WHEN EXCLUDED.status = 'completed' THEN now()
+               WHEN EXCLUDED.status IN ('completed', 'excluded') THEN now()
                ELSE woocommerce_sync_items.completed_at
              END,
              claim_fencing_token = NULL,
              claimed_revision_sha256 = NULL,
              claim_until = NULL,
              next_attempt_at = CASE
-               WHEN EXCLUDED.status = 'completed' THEN now()
+               WHEN EXCLUDED.status IN ('completed', 'excluded') THEN now()
                ELSE now() + interval '30 seconds'
              END
        RETURNING id, status, attempts, last_error_code`,
@@ -400,13 +431,20 @@ class SyncStateStore {
     return result.rows[0] || null;
   }
 
-  async finishCampaign(campaignKey, token, status, errorCode = null) {
+  /**
+   * @param {object} [metrics] Merged into the existing metrics. `current_step` is
+   *   deliberately left alone: on the failure path it is the record of *where*
+   *   the campaign died, so `campaignStep` (which overwrites it) must not be used
+   *   just to attach a last metric.
+   */
+  async finishCampaign(campaignKey, token, status, errorCode = null, metrics = null) {
     const result = await this.pool.query(
       `UPDATE woocommerce_sync_campaigns
-          SET status = $3, finished_at = now(), last_error_code = $4, updated_at = now()
+          SET status = $3, finished_at = now(), last_error_code = $4, updated_at = now(),
+              metrics = metrics || $5::jsonb
         WHERE campaign_key = $1 AND fencing_token = $2 AND status = 'running'
       RETURNING id`,
-      [campaignKey, token, status, errorCode],
+      [campaignKey, token, status, errorCode, JSON.stringify(metrics || {})],
     );
     if (result.rowCount !== 1) throw Object.assign(new Error("Woo sync campaign fence rejected"), { code: "WOOCOMMERCE_SYNC_FENCE_REJECTED" });
   }

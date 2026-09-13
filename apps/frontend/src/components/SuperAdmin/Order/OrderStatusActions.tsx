@@ -25,12 +25,13 @@ type PendingAction =
   | { kind: "cancel" }
   | null;
 
-// Quick status transitions offered as prominent buttons. Each targets a single
-// backend Status; the bucket labels match the storefront categories.
+// Quick status transitions offered as prominent buttons, listed in fulfilment
+// order: «تکمیل شده» first, then «ارسال». Each targets a single backend Status;
+// the bucket labels match the storefront categories.
 const STATUS_ACTIONS: { status: OrderLifecycleStatus; label: string; bucket: PersianOrderStatus }[] =
   [
-    { status: "Shipment", label: "تحویل به ارسال", bucket: PersianOrderStatus.INPROGRESS },
-    { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.DELIVERED },
+    { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.INPROGRESS },
+    { status: "Shipment", label: "تحویل به ارسال", bucket: PersianOrderStatus.DELIVERED },
   ];
 
 export default function OrderStatusActions({ order, onSuccess }: Props) {
@@ -143,9 +144,11 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
       <div className="flex flex-wrap gap-3">
         {STATUS_ACTIONS.map((action) => {
           const isCurrent = order.orderStatus === action.status;
+          // Fulfilment is Started -> Done -> Shipment, enforced by the backend's
+          // NEXT_STATUS; this gate only avoids offering a step that would be refused.
           const isAllowed =
-            (order.orderStatus === "Started" && action.status === "Shipment") ||
-            (order.orderStatus === "Shipment" && action.status === "Done");
+            (order.orderStatus === "Started" && action.status === "Done") ||
+            (order.orderStatus === "Done" && action.status === "Shipment");
           return (
             <button
               key={action.status}

@@ -33,6 +33,10 @@ const resolveCategoryBannerData = (category: BlogCategory) => ({
   title: trimmed(category.BannerTitle) || undefined,
   subtitle: trimmed(category.BannerSubtitle) || undefined,
   backgroundImage: category.FeaturedImage?.url ? resolveAssetUrl(category.FeaturedImage.url) : undefined,
+  // Lets the banner take the image's own ratio, so mobile is the desktop banner
+  // scaled down rather than a taller crop of it.
+  imageWidth: category.FeaturedImage?.width,
+  imageHeight: category.FeaturedImage?.height,
   textColor: trimmed(category.BannerTitleColor) || undefined,
   subtitleColor: trimmed(category.BannerSubtitleColor) || undefined,
   linkColor: trimmed(category.BannerLinkColor) || undefined,
@@ -203,6 +207,8 @@ export default async function BlogPage({
               subtitle={bannerData.subtitle}
               href={bannerData.href}
               backgroundImage={bannerData.backgroundImage}
+              imageWidth={bannerData.imageWidth}
+              imageHeight={bannerData.imageHeight}
               textColor={bannerData.textColor}
               subtitleColor={bannerData.subtitleColor}
               linkColor={bannerData.linkColor}
@@ -262,6 +268,8 @@ export default async function BlogPage({
                   subtitle={bannerData.subtitle}
                   href={bannerData.href}
                   backgroundImage={bannerData.backgroundImage}
+                  imageWidth={bannerData.imageWidth}
+                  imageHeight={bannerData.imageHeight}
                   textColor={bannerData.textColor}
                   subtitleColor={bannerData.subtitleColor}
                   linkColor={bannerData.linkColor}

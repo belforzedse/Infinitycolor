@@ -2,96 +2,71 @@
 
 import React from "react";
 import DOMPurify from "isomorphic-dompurify";
-import { parseProductShortcodes } from "@/utils/blogShortcodes";
+import { parseBlogBlocks, type BlogBlock } from "@/utils/blogShortcodes";
 import BlogProductCarousel from "./BlogProductCarousel";
+import BlogPromoSection from "./BlogPromoSection";
 
 interface BlogContentRendererProps {
   content: string;
 }
 
 /**
- * Renders blog content with shortcode support
- * Parses [products:...] shortcodes and replaces them with carousel components
+ * Renders a blog article: HTML with embedded blocks.
+ *
+ * The body is split at each block's indices and the pieces are sanitized
+ * individually, so a carousel or promotional section appears exactly where the
+ * author put it. Both branches carry the same `prose` classes — otherwise an
+ * article gained or lost its typography depending on whether it happened to
+ * embed anything.
  */
-const BlogContentRenderer: React.FC<BlogContentRendererProps> = ({ content }) => {
-  // Parse shortcodes from content
-  const shortcodes = parseProductShortcodes(content);
+const PROSE_CLASSES =
+  "prose prose-md prose-neutral max-w-none prose-headings:scroll-mt-28 prose-headings:font-bold prose-headings:text-neutral-900 prose-h1:text-4xl prose-h2:text-2xl prose-h3:text-xl prose-h4:text-md prose-p:text-neutral-700 prose-a:text-infinity-primary prose-a:no-underline hover:prose-a:underline prose-pre:bg-slate-900 prose-img:rounded-xl";
 
-  if (shortcodes.length === 0) {
-    // No shortcodes, render normally
+const BlogContentRenderer: React.FC<BlogContentRendererProps> = ({ content }) => {
+  const blocks = parseBlogBlocks(content);
+
+  if (blocks.length === 0) {
     return (
       <div
-        className="prose prose-md prose-neutral max-w-none prose-headings:scroll-mt-28 prose-headings:font-bold prose-headings:text-neutral-900 prose-h1:text-4xl prose-h2:text-2xl prose-h3:text-xl prose-h4:text-md prose-p:text-neutral-700 prose-a:text-infinity-primary prose-a:no-underline hover:prose-a:underline prose-pre:bg-slate-900 prose-img:rounded-xl"
-        dangerouslySetInnerHTML={{
-          __html: DOMPurify.sanitize(content),
-        }}
+        className={PROSE_CLASSES}
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content) }}
         dir="rtl"
       />
     );
   }
 
-  // Split content into segments (text and shortcodes)
-  const segments: Array<{ type: "html" | "shortcode"; content: string; shortcode?: any }> = [];
-  let lastIndex = 0;
-
-  // Sort shortcodes by position
-  const sortedShortcodes = [...shortcodes].sort((a, b) => a.startIndex - b.startIndex);
-
-  sortedShortcodes.forEach((shortcode) => {
-    // Add HTML segment before shortcode
-    if (shortcode.startIndex > lastIndex) {
-      const htmlSegment = content.slice(lastIndex, shortcode.startIndex);
-      if (htmlSegment.trim()) {
-        segments.push({ type: "html", content: htmlSegment });
-      }
+  const segments: Array<{ key: string; html?: string; block?: BlogBlock }> = [];
+  let cursor = 0;
+  blocks.forEach((block, index) => {
+    if (block.startIndex > cursor) {
+      const html = content.slice(cursor, block.startIndex);
+      if (html.trim()) segments.push({ key: `html-${index}`, html });
     }
-
-    // Add shortcode segment
-    segments.push({
-      type: "shortcode",
-      content: shortcode.originalMatch,
-      shortcode,
-    });
-
-    lastIndex = shortcode.endIndex;
+    segments.push({ key: `block-${index}`, block });
+    cursor = block.endIndex;
   });
-
-  // Add remaining HTML after last shortcode
-  if (lastIndex < content.length) {
-    const htmlSegment = content.slice(lastIndex);
-    if (htmlSegment.trim()) {
-      segments.push({ type: "html", content: htmlSegment });
-    }
-  }
-
-  // If no segments before first shortcode, add empty HTML segment
-  if (sortedShortcodes.length > 0 && sortedShortcodes[0].startIndex === 0) {
-    segments.unshift({ type: "html", content: "" });
+  if (cursor < content.length) {
+    const html = content.slice(cursor);
+    if (html.trim()) segments.push({ key: "html-end", html });
   }
 
   return (
-    <div
-      className="prose-lg prose-h4:text-md prose prose-neutral max-w-none prose-headings:scroll-mt-28 prose-headings:font-bold prose-headings:text-neutral-900 prose-h1:text-4xl prose-h2:text-2xl prose-h3:text-xl prose-p:text-neutral-700 prose-a:text-infinity-primary prose-a:no-underline hover:prose-a:underline prose-pre:bg-slate-900 prose-img:rounded-xl"
-      dir="rtl"
-    >
-      {segments.map((segment, index) => {
-        if (segment.type === "html") {
+    <div className={PROSE_CLASSES} dir="rtl">
+      {segments.map((segment) => {
+        if (segment.html !== undefined) {
           return (
             <div
-              key={`html-${index}`}
-              dangerouslySetInnerHTML={{
-                __html: DOMPurify.sanitize(segment.content),
-              }}
-            />
-          );
-        } else {
-          return (
-            <BlogProductCarousel
-              key={`shortcode-${index}`}
-              identifiers={segment.shortcode.identifiers}
+              key={segment.key}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(segment.html) }}
             />
           );
         }
+        const block = segment.block!;
+        return block.type === "products" ? (
+          <BlogProductCarousel key={segment.key} identifiers={block.identifiers} />
+        ) : (
+          <BlogPromoSection key={segment.key} data={block.data} />
+        );
       })}
     </div>
   );

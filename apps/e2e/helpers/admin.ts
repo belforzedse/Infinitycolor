@@ -219,6 +219,11 @@ export async function updateRuntimeVariationStock(
   await expectApiOk(response, `update stock ${stockId}`);
 }
 
+/**
+ * One step of the fulfilment chain, which runs Started -> Done («تکمیل شده») ->
+ * Shipment («ارسال»). Transitions that skip a step are refused with
+ * INVALID_ORDER_TRANSITION, so callers must walk it in order.
+ */
 export async function updateOrderStatus(
   request: APIRequestContext,
   orderId: number,

@@ -72,6 +72,10 @@ async function run(command, options) {
   }
 
   const publication = options.publication || null;
+  // A targeted repair names the WooCommerce ids it is allowed to touch. The
+  // same list narrows whichever loop the scope selects — products, categories
+  // or category editorial — so one flag covers every targeted run.
+  const onlyExternalIds = options.ids || null;
   const report = await engine.runSync({
     dryRun: command === "dry-run",
     scope: options.scope || (options.skipCategories ? "no-media" : "full"),
@@ -82,9 +86,26 @@ async function run(command, options) {
     runId: options.runId,
     publication,
     categoryEditorialManifest: options.manifest || null,
+    onlyExternalIds,
+    onlyCategoryExternalIds: onlyExternalIds,
   });
 
   process.exit(report.hasFailures() ? 1 : 0);
+}
+
+/**
+ * `--ids 1274678,1132012` → `["1274678", "1132012"]`. Every entry must be a
+ * WooCommerce id: a typo that silently widened a targeted repair into a full
+ * run would be far worse than an error.
+ */
+function parseIdList(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const ids = String(raw).split(",").map((value) => value.trim()).filter(Boolean);
+  if (ids.length === 0) throw new Error("--ids requires at least one WooCommerce id");
+  for (const id of ids) {
+    if (!/^\d+$/.test(id)) throw new Error(`--ids expects numeric WooCommerce ids; received "${id}"`);
+  }
+  return ids;
 }
 
 function runStoreForEnv(environment, options = {}) {
@@ -182,6 +203,7 @@ const CLI_OPTIONS = {
   limit: { type: "string" },
   "log-level": { type: "string" },
   scope: { type: "string", default: "full" },
+  ids: { type: "string" },
   "skip-media": { type: "boolean", default: false },
   "start-after-external-id": { type: "string" },
   "run-id": { type: "string" },
@@ -217,6 +239,7 @@ Commands:
 Options:
   --env <production|staging|local>  --tracking-dir <path>
   --scope <name>  --limit <n>  --log-level <level>
+  --ids <wcId,...>  Restrict the run to these WooCommerce ids (targeted repair)
   --skip-media  --start-after-external-id <id>  --run-id <id>
   --publication <now|draft|scheduled>
   --publication-date <YYYY-MM-DD> --publication-time <HH:mm> [--publication-timezone <IANA>]
@@ -255,6 +278,7 @@ function parseCliArgs(args) {
       limit: values.limit,
       logLevel: values["log-level"],
       scope: values.scope,
+      ids: parseIdList(values.ids),
       skipMedia: values["skip-media"],
       startAfterExternalId: values["start-after-external-id"],
       runId: values["run-id"],

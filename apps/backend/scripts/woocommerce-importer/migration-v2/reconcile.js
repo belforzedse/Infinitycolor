@@ -291,10 +291,19 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
         check(false, "ORDER_ITEM_NOT_FOUND");
         continue;
       }
-      const actualVariation = attrs(relationOne(actualItem.product_variation));
+      const actualVariationNode = relationOne(actualItem.product_variation);
+      const actualVariation = attrs(actualVariationNode);
       check(Number(actualItem.Count) === expectedItem.count, "ORDER_ITEM_QUANTITY_MISMATCH");
       check(String(actualItem.PerAmount) === expectedItem.unitPriceToman, "ORDER_ITEM_PRICE_MISMATCH");
-      check(String(actualVariation.external_id || "") === expectedItem.variationSourceId, "ORDER_ITEM_VARIATION_MISMATCH");
+      if (expectedItem.catalogReference === "orphan") {
+        // The source line has no catalog reference at all, so the imported row
+        // must carry the sale snapshot and no invented relation.
+        check(!actualVariationNode, "ORDER_ITEM_ORPHAN_HAS_CATALOG_RELATION");
+        check(String(actualItem.ProductTitle || "").length > 0, "ORDER_ITEM_TITLE_MISSING");
+        check(String(actualItem.ProductSKU || "") === expectedItem.sku, "ORDER_ITEM_SKU_MISMATCH");
+      } else {
+        check(String(actualVariation.external_id || "") === expectedItem.variationSourceId, "ORDER_ITEM_VARIATION_MISMATCH");
+      }
       checkSourceTimestamps(check, actualItem, orderTimestamps, "ORDER_ITEM");
     }
     if (expected.customerSourceId) {

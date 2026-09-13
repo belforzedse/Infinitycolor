@@ -253,10 +253,11 @@ function registerOrderLifecycle(strapi: Strapi) {
           const activityService = strapi.service("api::user-activity.user-activity") as any;
           const normalizedStatus = newStatus?.toLowerCase();
 
+          // `done` means the order is prepared, not delivered, so it no longer logs a
+          // delivery event; `shipment` is the terminal step. Mirrors the same change
+          // in api/order/controllers/helpers/adminTransition.ts.
           if (normalizedStatus === "shipment" && activityService?.logOrderShipped) {
             await activityService.logOrderShipped(orderUserId, result.id, trackingCode);
-          } else if (normalizedStatus === "done" && activityService?.logOrderDelivered) {
-            await activityService.logOrderDelivered(orderUserId, result.id);
           } else if (normalizedStatus === "cancelled" && activityService?.logOrderCancelled) {
             const reason = changes?.Description || changes?.Note || undefined;
             await activityService.logOrderCancelled(orderUserId, result.id, reason);

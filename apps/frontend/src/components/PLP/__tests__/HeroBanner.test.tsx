@@ -140,3 +140,84 @@ describe("PLPHeroBanner", () => {
     expect(screen.getByRole("tab", { name: "اسلاید ۱" })).toHaveAttribute("aria-selected", "true");
   });
 });
+
+describe("PLPHeroBanner autoplay", () => {
+  const selectedSlide = () =>
+    screen
+      .getAllByRole("tab")
+      .findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockedScroll.mockClear();
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+  });
+
+  it("advances every four seconds and wraps from the last slide to the first", () => {
+    render(<PLPHeroBanner />);
+    expect(selectedSlide()).toBe(0);
+
+    for (let step = 1; step < PLP_HERO_SLIDES.length; step += 1) {
+      act(() => {
+        jest.advanceTimersByTime(4000);
+      });
+      expect(selectedSlide()).toBe(step);
+    }
+
+    // The swipe path clamps at the end; autoplay and the dots wrap.
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    expect(selectedSlide()).toBe(0);
+  });
+
+  it("restarts the interval after a swipe instead of double-advancing", () => {
+    render(<PLPHeroBanner />);
+    const frame = screen.getByRole("button", { name: "مشاهده محصولات" });
+    Object.defineProperty(frame, "offsetWidth", { configurable: true, value: 400 });
+
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+    swipePointer(frame, { x: 280, y: 40 }, { x: 80, y: 42 });
+    expect(selectedSlide()).toBe(1);
+
+    act(() => {
+      jest.advanceTimersByTime(3999);
+    });
+    expect(selectedSlide()).toBe(1);
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(selectedSlide()).toBe(2);
+  });
+
+  it("restarts the interval after a dot click", () => {
+    render(<PLPHeroBanner />);
+
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "اسلاید ۳" }));
+    expect(selectedSlide()).toBe(2);
+
+    act(() => {
+      jest.advanceTimersByTime(3999);
+    });
+    expect(selectedSlide()).toBe(2);
+  });
+
+  it("clears its interval on unmount", () => {
+    const view = render(<PLPHeroBanner />);
+    const mounted = jest.getTimerCount();
+    expect(mounted).toBeGreaterThan(0);
+
+    view.unmount();
+    expect(jest.getTimerCount()).toBeLessThan(mounted);
+  });
+});

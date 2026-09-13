@@ -207,7 +207,17 @@ async function runOrders(
         ledger.count("orderItems", "inserted", Number(result.itemsCreated || 0));
         ledger.count("orderItems", "updated", Number(result.itemsUpdated || 0));
         ledger.count("orderItems", "skipped", Number(result.itemsDeleted || 0));
+        if (Number(result.itemsOrphaned || 0) > 0) {
+          ledger.count("orderItems", "orphaned", Number(result.itemsOrphaned));
+        }
       } catch (error) {
+        // A deliberately excluded order (emptied, zero total) is a decision the
+        // importer records, not a failure to retry.
+        if (error?.outcome === "excluded") {
+          ledger.count("orders", "excluded");
+          ledger.issue("orders", sourceId, error.code || "ORDER_EXCLUDED");
+          return;
+        }
         ledger.failure("orders", sourceId, error?.payload?.error || error.message);
       }
     });

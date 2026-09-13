@@ -374,7 +374,10 @@ async function scanOrders(source, destinationIndexes, userContext, catalogContex
           payload.customerSourceId &&
           !userContext.sampledUserIds.has(payload.customerSourceId)
         );
-        const productOutsideSample = Boolean(sampled && payload.items.some(
+        // Orphan lines reference no catalog entity, so they can never be
+        // outside the sample or ineligible — only catalog lines are checked.
+        const catalogItems = payload.items.filter((item) => item.catalogReference !== "orphan");
+        const productOutsideSample = Boolean(sampled && catalogItems.some(
           (item) => !catalogContext.sampledVariationIds.has(item.variationSourceId),
         ));
         if (customerOutsideSample || productOutsideSample) {
@@ -386,7 +389,7 @@ async function scanOrders(source, destinationIndexes, userContext, catalogContex
         if (payload.customerSourceId && !userContext.validUserIds.has(payload.customerSourceId)) {
           throw new Error("ORDER_CUSTOMER_NOT_ELIGIBLE");
         }
-        const ineligibleVariation = payload.items.find(
+        const ineligibleVariation = catalogItems.find(
           (item) => !catalogContext.eligibleVariationIds.has(item.variationSourceId),
         );
         if (ineligibleVariation) throw new Error("ORDER_ITEM_PRODUCT_SKIPPED_OR_MISSING");

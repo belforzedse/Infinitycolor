@@ -35,7 +35,7 @@ import {
 } from "@/types/super-admin/heroSliderV3";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
-const DEFAULT_AUTOPLAY_INTERVAL_MS = 600000;
+const DEFAULT_AUTOPLAY_INTERVAL_MS = 4000;
 
 /** Resolve Strapi upload paths (/uploads/...) to absolute API URL so slider images load. */
 function resolveCmsImageUrl(url: string | undefined): string {

@@ -10,10 +10,13 @@ import { faNum } from "@/utils/faNum";
 type Props = {
   itemId: string;
   quantity: number;
+  availableStock?: number;
 };
 
-function ShoppingCartQuantityControl({ itemId, quantity }: Props) {
+function ShoppingCartQuantityControl({ itemId, quantity, availableStock }: Props) {
   const { updateQuantity, removeFromCart, isLoading } = useCart();
+  const isAtStockLimit = typeof availableStock === "number" && quantity >= availableStock;
+  const isIncreaseDisabled = isLoading || isAtStockLimit;
 
   const handleQuantityChange = (id: string, change: number) => {
     if (isLoading) return;
@@ -35,9 +38,10 @@ function ShoppingCartQuantityControl({ itemId, quantity }: Props) {
         <button
           onClick={() => handleQuantityChange(itemId, 1)}
           data-testid="cart-quantity-increase"
-          aria-label="Increase cart item quantity"
-          disabled={isLoading}
-          aria-disabled={isLoading}
+          aria-label="افزایش تعداد کالا"
+          title={isAtStockLimit ? "موجودی بیشتری در دسترس نیست" : undefined}
+          disabled={isIncreaseDisabled}
+          aria-disabled={isIncreaseDisabled}
           className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 lg:h-8 lg:w-8"
         >
           <PlusIcon />
@@ -46,7 +50,7 @@ function ShoppingCartQuantityControl({ itemId, quantity }: Props) {
         <button
           onClick={() => handleQuantityChange(itemId, -1)}
           data-testid="cart-quantity-decrease"
-          aria-label="Decrease cart item quantity"
+          aria-label="کاهش تعداد کالا"
           disabled={isLoading}
           aria-disabled={isLoading}
           className="flex h-6 w-6 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 lg:h-8 lg:w-8"
@@ -57,7 +61,7 @@ function ShoppingCartQuantityControl({ itemId, quantity }: Props) {
       <button
         onClick={() => handleQuantityChange(itemId, 0)}
         data-testid="cart-item-remove"
-        aria-label="Remove cart item"
+        aria-label="حذف کالا از سبد خرید"
         disabled={isLoading}
         aria-disabled={isLoading}
         className="flex items-center justify-center text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"

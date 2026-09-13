@@ -7,6 +7,8 @@ const { buildConfig } = require("../catalog/config");
 const CatalogT = require("../catalog/lib/transforms");
 const Logger = require("../utils/Logger");
 const T = require("./lib/transforms");
+const { classifyOrderLine, ORDER_LINE_ORPHAN } = require("./lib/orderLines");
+const { transformBlogContent } = require("./lib/blogContent");
 const { wordpressSourceTimestamps } = require("../utils/sourceTimestamps");
 const { loadBlogDestinationIndexes } = require("./dry-run");
 
@@ -21,9 +23,12 @@ function firstCandidates(dryRun, kinds) {
 function rawOrderProductIds(order) {
   const ids = new Set();
   for (const line of Array.isArray(order?.line_items) ? order.line_items : []) {
-    const id = String(line?.product_id || "");
-    if (!/^\d+$/.test(id) || id === "0") throw new Error("ORDER_ITEM_PRODUCT_REFERENCE_INVALID");
-    ids.add(id);
+    const reference = classifyOrderLine(line);
+    // Orphan lines (product deleted after the sale) carry no catalog dependency
+    // for the pilot to inspect; the order transform keeps them as snapshots.
+    if (reference.kind === ORDER_LINE_ORPHAN) continue;
+    if (!reference.productSourceId) throw new Error("ORDER_ITEM_PRODUCT_REFERENCE_INVALID");
+    ids.add(reference.productSourceId);
   }
   return Array.from(ids);
 }
@@ -68,6 +73,14 @@ async function selectRelationAwarePilotOrders(source, options = {}) {
       scanned += 1;
       try {
         const payload = T.orderPayload(order);
+        // The pilot exists to rehearse the catalog relation end to end. An
+        // order with a line whose product WooCommerce no longer has cannot
+        // rehearse anything, so it is skipped by name rather than failing later
+        // under a misleading variation code. The full import still takes it.
+        if (Number(payload.orphanLineCount || 0) > 0) {
+          reject("ORDER_ITEM_CATALOG_REFERENCE_MISSING");
+          continue;
+        }
         const kind = payload.customerSourceId ? "registered" : "guest";
         const selectionKey = `${kind}:${payload.status}`;
         const addsRequiredKind = !selectedKinds.has(kind);
@@ -258,11 +271,54 @@ async function ensureBlogDependencies(source, destination, indexes, ledger, payl
   return { categoryId: categoryIds[0] || null, tagIds, authorId };
 }
 
-async function upsertPilotBlog(source, destination, indexes, ledger, sourceId) {
+/**
+ * Upload one promotional illustration per unique source URL, reusing what an
+ * earlier post already uploaded. Returns the destination-relative URL the
+ * marker embeds.
+ */
+function blogImageUploader(destination, ledger) {
+  return async (sourceUrl, alt) => {
+    ledger.summary.mappings ||= {};
+    ledger.summary.mappings.blogMedia ||= {};
+    const cache = ledger.summary.mappings.blogMedia;
+    const key = `url:${sourceUrl}`;
+    if (cache[key]) return cache[key];
+    try {
+      const uploaded = await destination.uploadBlogMedia(sourceUrl, `promo-${Date.now()}`);
+      if (!uploaded?.url) throw new Error("BLOG_MEDIA_URL_MISSING");
+      const value = { id: uploaded.id, url: uploaded.url, alt: String(alt || "") };
+      cache[key] = value;
+      ledger.count("blogMedia", "inserted");
+      ledger.summary.metrics.mediaBytes = Number(ledger.summary.metrics.mediaBytes || 0) + uploaded.bytes;
+      return value;
+    } catch {
+      return null;
+    }
+  };
+}
+
+async function upsertPilotBlog(source, destination, indexes, ledger, sourceId, options = {}) {
   ledger.count("blogPosts", "source");
   try {
     const sourcePost = await source.getPost(sourceId);
-    const payload = T.blogPostPayload(sourcePost);
+    // The product carousel only exists in the view-context rendering; without
+    // it the article imports with the carousel silently missing.
+    const viewPost = await source.getPostView(sourceId).catch(() => null);
+    const transformed = await transformBlogContent(
+      {
+        raw: sourcePost?.content?.raw || "",
+        renderedEdit: sourcePost?.content?.rendered || "",
+        renderedView: viewPost?.content?.rendered || "",
+      },
+      {
+        resolveCategoryRoute: options.resolveCategoryRoute || null,
+        uploadImage: blogImageUploader(destination, ledger),
+      },
+    );
+    for (const diagnostic of transformed.diagnostics) {
+      ledger.issue("blogPosts", sourceId, diagnostic);
+    }
+    const payload = T.blogPostPayload(sourcePost, { content: transformed.content });
     const relations = await ensureBlogDependencies(source, destination, indexes, ledger, payload);
     let featuredImageId = null;
     if (payload.featuredMediaId) {

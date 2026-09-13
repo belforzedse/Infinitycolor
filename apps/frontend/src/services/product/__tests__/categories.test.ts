@@ -2,6 +2,7 @@ import { API_BASE_URL, ENDPOINTS } from "@/constants/api";
 import fetchWithTimeout from "@/utils/fetchWithTimeout";
 import {
   CategoryFetchError,
+  getCachedNavbarProductCategories,
   getNavbarProductCategories,
   getProductCategories,
   getProductCategoriesForRender,
@@ -228,9 +229,7 @@ describe("getProductCategories", () => {
     const url = new URL(calledUrl as string);
 
     expect(`${url.origin}${url.pathname}`).toBe(`${API_BASE_URL}/navigation`);
-    expect(url.searchParams.get("populate[product_categories][populate][1]")).toBe(
-      "MegaMenuImage",
-    );
+    expect(url.searchParams.get("populate[product_categories][populate][1]")).toBe("MegaMenuImage");
     expect(url.searchParams.get("populate[product_categories][populate][3]")).toBe("children");
     expect(categories).toHaveLength(1);
     expect(categories[0]).toMatchObject({
@@ -239,6 +238,36 @@ describe("getProductCategories", () => {
       slug: "assigned",
       children: [expect.objectContaining({ id: 11, slug: "assigned-child" })],
     });
+  });
+
+  it("reads navbar categories through the same-origin shared cache", async () => {
+    mockedFetchWithTimeout.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          id: 10,
+          name: "Assigned",
+          slug: "assigned",
+          imageUrl: null,
+          imageAlt: "Assigned",
+          megaMenuImageUrl: null,
+          megaMenuImageAlt: "Assigned",
+          parentId: null,
+          isMainCategory: true,
+        },
+      ],
+    } as Response);
+
+    const categories = await getCachedNavbarProductCategories({ includeChildren: true });
+
+    expect(mockedFetchWithTimeout).toHaveBeenCalledTimes(1);
+    const [calledUrl, requestInit] = mockedFetchWithTimeout.mock.calls[0];
+    const url = new URL(String(calledUrl), "https://storefront.test");
+    expect(url.pathname).toBe("/api/storefront/navigation");
+    expect(url.searchParams.get("includeChildren")).toBe("1");
+    expect(url.searchParams.get("_skip_global_loader")).toBe("1");
+    expect(requestInit).toMatchObject({ cache: "default" });
+    expect(categories.map((category) => category.slug)).toEqual(["assigned"]);
   });
 
   it("keeps parentOnly behavior unchanged when mainOnly is false", async () => {
@@ -339,6 +368,16 @@ describe("category fetch failure is distinct from an empty catalog", () => {
     } as Response);
 
     await expect(getNavbarProductCategories()).rejects.toBeInstanceOf(CategoryFetchError);
+  });
+
+  it("does not turn a cached navbar endpoint failure into an empty menu", async () => {
+    mockedFetchWithTimeout.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+    } as Response);
+
+    await expect(getCachedNavbarProductCategories()).rejects.toBeInstanceOf(CategoryFetchError);
   });
 
   it("still resolves to [] for a navigation single type with no assigned categories", async () => {

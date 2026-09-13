@@ -132,8 +132,12 @@ export default function LiquidityReportPage() {
             title="مجموع نقدینگی"
             value={Number(data?.total || 0)}
             format="toman"
+            footer="خالص تراکنش‌های موفق پرداخت (برگشتی‌ها کسر شده) — نه فروش ناخالص سفارش‌های تکمیل‌شده"
           />
-          <AdminSection title="روند نقدینگی">
+          <AdminSection
+            title="روند نقدینگی"
+            description="بر پایه تاریخ تراکنش پرداخت است، نه تاریخ ثبت یا تکمیل سفارش."
+          >
             <LiquidityChart series={data?.series || []} />
           </AdminSection>
           <GatewayLiquiditySection rows={gatewayRows} error={gatewayError} />

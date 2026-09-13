@@ -114,6 +114,17 @@ async function assertAudioFile(
   return file;
 }
 
+/**
+ * The importer names every audio file it uploads after the hash of its bytes,
+ * so the hash a row was written with is recoverable from the relation without
+ * re-reading the file. A file that does not follow the pattern was attached by
+ * a person, which is exactly what the provenance check needs to notice.
+ */
+function importedAudioHash(file: any): string | null {
+  const match = /^wc-category-audio-([0-9a-f]{64})\.mp3$/.exec(String(file?.name || ""));
+  return match ? match[1] : null;
+}
+
 function normalizedCategory(row: any) {
   return relationValue(row?.product_category);
 }
@@ -231,33 +242,132 @@ export async function prepareCategoryEditorial(strapiInstance: any, body: any) {
 
     const existing = await strapiInstance.db.query(CONTENT_UID).findOne({
       where: { product_category: { id: categoryId } },
-      select: ["id", "IsPublished", "ImportBatchId", "ImportedSourceHash"],
+      select: [
+        "id",
+        "Title",
+        "Paragraph",
+        "Content",
+        "IsPublished",
+        "IsRTL",
+        "ImportSource",
+        "ImportBatchId",
+        "ImportedSourceHash",
+      ],
+      populate: { Audio: { select: ["id", "name", "mime", "url", "size"] } },
       transacting: trx,
     } as any);
+
+    // Only run on a path that is actually going to write: a row this importer
+    // does not own is left alone even when its audio upload is broken.
+    const assertIncomingIsWritable = async () => {
+      if (audio) await assertAudioFile(strapiInstance, audio, trx);
+      const computedHash = categoryEditorialSourceHash({
+        sourceId: expectedSourceId,
+        destinationSlug: String(category.Slug || ""),
+        title: sanitized.Title,
+        paragraph: sanitized.Paragraph,
+        content: sanitized.Content,
+        audioHash: audio?.sha256 ?? null,
+      });
+      if (computedHash !== expectedHash) {
+        throw new MigrationInputError("CATEGORY_EDITORIAL_SOURCE_HASH_MISMATCH", 409);
+      }
+    };
+
     if (existing) {
-      return {
-        mode: "skipped",
-        reason: "existing",
+      const describe = (reason: string) => ({
+        mode: "skipped" as const,
+        reason,
         id: Number(existing.id),
         isPublished: existing.IsPublished === true,
         importBatchId: existing.ImportBatchId ?? null,
         importedSourceHash: existing.ImportedSourceHash ?? null,
+      });
+      // Anything this importer did not write belongs to whoever did.
+      if (existing.ImportSource !== CATEGORY_EDITORIAL_IMPORT_SOURCE) {
+        return describe("manual");
+      }
+      // An audio file this importer did not upload is a person's work: the
+      // name carries the hash of the bytes the importer wrote, so anything that
+      // does not follow the pattern was attached by hand. Without this an
+      // update to a row imported without audio would silently detach it.
+      const existingAudio = normalizedAudio(existing);
+      if (existingAudio && !importedAudioHash(existingAudio)) {
+        return describe("manually-edited");
+      }
+      // What the row says now, hashed the same way the importer hashes source:
+      // if it no longer matches the hash the importer stored, a person has
+      // edited it since and their work is not overwritten by a source change.
+      const currentSanitized = sanitizeCategoryEditorial(
+        {
+          Title: existing.Title,
+          Paragraph: existing.Paragraph,
+          Content: existing.Content,
+          IsPublished: false,
+          IsRTL: existing.IsRTL,
+        },
+        { allowTitleOnly: true },
+      );
+      const currentHash = categoryEditorialSourceHash({
+        sourceId: expectedSourceId,
+        destinationSlug: String(category.Slug || ""),
+        title: currentSanitized.Title,
+        paragraph: currentSanitized.Paragraph,
+        content: currentSanitized.Content,
+        audioHash: importedAudioHash(existingAudio),
+      });
+      if (currentHash !== existing.ImportedSourceHash) {
+        return describe("manually-edited");
+      }
+      if (existing.ImportedSourceHash === expectedHash) {
+        // Content matches, but an unpublished row means an earlier batch
+        // prepared it and never finished (the batch id is derived from the
+        // batch's content, so a later run with a different plan set computes a
+        // different one and would otherwise orphan this row forever). Adopt it
+        // into the current batch — provenance bookkeeping only, no content and
+        // no publication change — so finalize can complete it.
+        if (existing.IsPublished !== true && existing.ImportBatchId !== expectedBatchId) {
+          await strapiInstance.db.query(CONTENT_UID).update({
+            where: { id: existing.id },
+            data: { ImportBatchId: expectedBatchId, ImportedAt: new Date().toISOString() },
+            transacting: trx,
+          } as any);
+          return { ...describe("unchanged"), importBatchId: expectedBatchId, adopted: true };
+        }
+        return describe("unchanged");
+      }
+
+      // Importer-owned, untouched since, and the source has moved on: update it
+      // in place. Publication state is the shop's decision, never the
+      // importer's, so it is carried over exactly as found.
+      await assertIncomingIsWritable();
+      await strapiInstance.db.query(CONTENT_UID).update({
+        where: { id: existing.id },
+        data: {
+          ...sanitized,
+          IsPublished: existing.IsPublished === true,
+          IsRTL: true,
+          Audio: audio ? audio.id : null,
+          ImportSource: CATEGORY_EDITORIAL_IMPORT_SOURCE,
+          ImportBatchId: expectedBatchId,
+          ImportedSourceHash: expectedHash,
+          ImportedAt: new Date().toISOString(),
+        },
+        transacting: trx,
+      } as any);
+      return {
+        mode: "updated",
+        id: Number(existing.id),
+        categoryId,
+        sourceId: expectedSourceId,
+        sourceHash: expectedHash,
+        isPublished: existing.IsPublished === true,
+        audioId: audio?.id ?? null,
+        audioHash: audio?.sha256 ?? null,
       };
     }
 
-    if (audio) await assertAudioFile(strapiInstance, audio, trx);
-    const computedHash = categoryEditorialSourceHash({
-      sourceId: expectedSourceId,
-      destinationSlug: String(category.Slug || ""),
-      title: sanitized.Title,
-      paragraph: sanitized.Paragraph,
-      content: sanitized.Content,
-      audioHash: audio?.sha256 ?? null,
-    });
-    if (computedHash !== expectedHash) {
-      throw new MigrationInputError("CATEGORY_EDITORIAL_SOURCE_HASH_MISMATCH", 409);
-    }
-
+    await assertIncomingIsWritable();
     const saved = await strapiInstance.db.query(CONTENT_UID).create({
       data: {
         ...sanitized,
@@ -401,32 +511,35 @@ export async function finalizeCategoryEditorial(strapiInstance: any, body: any) 
       slugs.push(String(category.Slug || ""));
     }
 
-    const published = rows.filter((row: any) => row.IsPublished === true).length;
-    if (published > 0 && published !== rows.length) {
-      throw new MigrationInputError("CATEGORY_EDITORIAL_BATCH_PUBLICATION_MIXED", 409);
-    }
-    if (published === rows.length) {
-      return { mode: "unchanged", published, slugs };
-    }
-    for (const row of rows) {
+    // A batch legitimately mixes new rows (created unpublished, published here)
+    // with updates to rows the shop already publishes. Only the unpublished
+    // ones are published; an update never changes publication state.
+    const unpublished = rows.filter((row: any) => row.IsPublished !== true);
+    for (const row of unpublished) {
       await strapiInstance.db.query(CONTENT_UID).update({
         where: { id: row.id },
         data: { IsPublished: true },
         transacting: trx,
       } as any);
     }
-    return { mode: "published", published: rows.length, slugs };
+    return {
+      mode: unpublished.length > 0 ? "published" : "refreshed",
+      published: unpublished.length,
+      alreadyPublished: rows.length - unpublished.length,
+      slugs,
+    };
   });
 
+  // Every slug in the batch is revalidated, whether its row was published now
+  // or updated in place: an updated row's copy changed even though its
+  // publication state did not, and a stale page would hide the change.
   let revalidationFailures = 0;
-  if (result.mode === "published") {
-    for (const slug of result.slugs) {
-      const revalidation = await triggerFrontendRevalidation(
-        { type: "category-editorial", slug },
-        "Category Editorial Import",
-      );
-      revalidationFailures += revalidation.failed;
-    }
+  for (const slug of result.slugs) {
+    const revalidation = await triggerFrontendRevalidation(
+      { type: "category-editorial", slug },
+      "Category Editorial Import",
+    );
+    revalidationFailures += revalidation.failed;
   }
   return { ...result, revalidationFailures };
 }

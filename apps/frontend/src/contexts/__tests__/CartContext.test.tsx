@@ -79,6 +79,10 @@ const mockCartService = jest.requireMock("@/services").CartService as {
   mergeGuestCart: jest.Mock;
 };
 const mockIsOnline = jest.requireMock("@/utils/offlineQueue").isOnline as jest.Mock;
+const mockNotify = jest.requireMock("@/utils/notify").default as {
+  success: jest.Mock;
+  error: jest.Mock;
+};
 
 const cartItem: CartItem = {
   id: "item-1",
@@ -106,12 +110,32 @@ function CartProbe() {
   );
 }
 
-const apiCart = (name: string, suffix: number) => ({
+function QuantityProbe() {
+  const { cartItems, updateQuantity } = useCart();
+  const item = cartItems[0];
+
+  return (
+    <div>
+      <span data-testid="quantity">{item?.quantity ?? 0}</span>
+      <span data-testid="available-stock">{item?.availableStock ?? "unknown"}</span>
+      <button
+        type="button"
+        disabled={!item}
+        onClick={() => item && updateQuantity(item.id, item.quantity + 1)}
+      >
+        increase
+      </button>
+    </div>
+  );
+}
+
+const apiCart = (name: string, suffix: number, availableStock?: number) => ({
   cart_items: [
     {
       id: 100 + suffix,
       Count: 1,
       Sum: 1000,
+      availableStock,
       product_variation: {
         id: 200 + suffix,
         Price: 1000,
@@ -125,6 +149,65 @@ const apiCart = (name: string, suffix: number) => ({
       },
     },
   ],
+});
+
+describe("CartProvider stock snapshots", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthStateListener = undefined;
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue("account-a");
+    mockedCentralAuth.subscribeToAuthState.mockReset().mockImplementation((listener) => {
+      mockAuthStateListener = listener;
+      return jest.fn();
+    });
+    mockIsOnline.mockReturnValue(true);
+    mockCartService.getUserCart.mockResolvedValue(apiCart("محصول تست", 1, 1));
+    mockCartService.checkCartStock.mockResolvedValue({ valid: true });
+    mockCartService.updateCartItem.mockResolvedValue({});
+    localStorage.clear();
+  });
+
+  it("blocks an increase at the server-provided limit with a specific message", async () => {
+    render(
+      <CartProvider>
+        <QuantityProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("available-stock")).toHaveTextContent("1"));
+    fireEvent.click(screen.getByRole("button", { name: "increase" }));
+
+    expect(mockCartService.updateCartItem).not.toHaveBeenCalled();
+    expect(mockNotify.error).toHaveBeenCalledWith("موجودی بیشتری از این کالا در دسترس نیست.");
+    expect(screen.getByTestId("quantity")).toHaveTextContent("1");
+  });
+
+  it("refreshes a stale snapshot and keeps the stock-specific message", async () => {
+    mockCartService.getUserCart
+      .mockReset()
+      .mockResolvedValueOnce(apiCart("محصول تست", 1, 2))
+      .mockResolvedValue(apiCart("محصول تست", 1, 1));
+    mockCartService.updateCartItem.mockRejectedValueOnce({
+      message: "Insufficient stock",
+      errorCode: "CART_STOCK_EXCEEDED",
+    });
+
+    render(
+      <CartProvider>
+        <QuantityProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("available-stock")).toHaveTextContent("2"));
+    fireEvent.click(screen.getByRole("button", { name: "increase" }));
+
+    await waitFor(() =>
+      expect(mockNotify.error).toHaveBeenCalledWith("موجودی بیشتری از این کالا در دسترس نیست."),
+    );
+    expect(mockCartService.updateCartItem).toHaveBeenCalledWith(101, 2);
+    await waitFor(() => expect(screen.getByTestId("available-stock")).toHaveTextContent("1"));
+    expect(screen.getByTestId("quantity")).toHaveTextContent("1");
+  });
 });
 
 function VariantCartProbe() {
@@ -384,4 +467,3 @@ describe("CartProvider guest cart handover", () => {
     expect(mockCartService.mergeGuestCart).not.toHaveBeenCalled();
   });
 });
-

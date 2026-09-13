@@ -70,7 +70,10 @@ type RefreshOptions = {
   now?: Date;
 };
 
-const ELIGIBLE_STATUSES = new Set(["Started", "Shipment"]);
+// A barcode is issued while the order is being prepared or once it is completed,
+// and stays pollable after it ships. Fulfilment is Started -> Done -> Shipment,
+// so `Done` sits between the other two and must be eligible as well.
+const ELIGIBLE_STATUSES = new Set(["Started", "Done", "Shipment"]);
 const POLLING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class AnipoWorkflowError extends Error {
@@ -258,7 +261,7 @@ function assertSubmissionEligibility(order: any): void {
     throw new AnipoWorkflowError(
       409,
       "ANIPO_INELIGIBLE_STATUS",
-      "صدور بارکد آنیپو فقط برای سفارش پرداخت‌شده در حال آماده‌سازی یا ارسال مجاز است",
+      "صدور بارکد آنیپو فقط برای سفارش پرداخت‌شده در حال آماده‌سازی، تکمیل شده یا ارسال مجاز است",
     );
   }
 }

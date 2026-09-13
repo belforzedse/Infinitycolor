@@ -8,7 +8,8 @@ enum OrderStatus {
 
 enum PersianOrderStatus {
   INPROGRESS = "در حال انجام",
-  DELIVERED = "تکمیل شده",
+  // Names the final fulfilment bucket, which is now «ارسال» rather than «تکمیل شده».
+  DELIVERED = "ارسال شده",
   CANCELLED = "لغو شده یا ناموفق",
   MANUAL = "سفارش‌های دستی",
 }

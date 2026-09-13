@@ -16,6 +16,7 @@ const T = require("./lib/transforms");
 const G = require("./lib/genericAttributes");
 const CE = require("./lib/categoryEditorial");
 const { sourceTimestampHeaders, wooSourceTimestamps } = require("../utils/sourceTimestamps");
+const { createSourceGate } = require("../migration-v2/lib/sourceGate");
 
 function normalizeRunLimit(limit) {
   return Number.isFinite(limit) ? limit : "all";
@@ -107,7 +108,12 @@ function productHasMedia(existing) {
 }
 
 function isRunControlError(error) {
-  return error?.code === "CATALOG_RUN_CANCELLED" || error?.code === "CATALOG_RUN_PAUSED";
+  return error?.code === "CATALOG_RUN_CANCELLED"
+    || error?.code === "CATALOG_RUN_PAUSED"
+    // The source gate gave up waiting for WooCommerce. Every per-entity catch
+    // below records a failure and moves on, which for a dead source would mean
+    // re-discovering it once per product for the rest of the run. Abort instead.
+    || error?.code === "SOURCE_UNAVAILABLE";
 }
 
 function isAbruptCrash(error) {
@@ -135,6 +141,43 @@ function sortCategoriesByHierarchy(categories) {
   return sorted;
 }
 
+/** @typedef {"create"|"update"|"unchanged"|"manual"|"title-only"} CategoryEditorialDisposition */
+
+/**
+ * What this run intends to do with one category's editorial content, decided
+ * from the destination snapshot alone. The server re-decides authoritatively
+ * inside its own transaction; this is what lets a dry run report the same
+ * classification without writing anything.
+ *
+ * @param {{ titleOnly?: boolean, sourceHash?: string|null, existingEditorial?: any }} plan
+ * @returns {CategoryEditorialDisposition}
+ */
+function categoryEditorialDisposition(plan) {
+  const existing = plan.existingEditorial;
+  const importerOwned = existing?.importSource === CE.IMPORT_SOURCE;
+  if (!existing) return plan.titleOnly ? "title-only" : "create";
+  if (!importerOwned) return "manual";
+  // An importer-owned row is kept in step with its source even when the source
+  // has shrunk to a bare heading — leaving it stale would be worse.
+  if (plan.sourceHash && existing.importedSourceHash === plan.sourceHash) return "unchanged";
+  return "update";
+}
+
+/**
+ * Map a disposition onto the report: the shared counters keep their meaning
+ * (`created` / `updated` / `unchanged` / `skipped`) and the precise reason is
+ * tallied alongside so "skipped" never hides three different decisions.
+ */
+function recordCategoryEditorialDisposition(report, disposition) {
+  const counter = {
+    create: "created",
+    update: "updated",
+    unchanged: "unchanged",
+  }[disposition] || "skipped";
+  report.count("categoryEditorial", counter);
+  report.categoryEditorialOutcome(disposition || "skipped");
+}
+
 class CatalogEngine {
   /**
    * @param {object} config
@@ -146,11 +189,26 @@ class CatalogEngine {
     this.logger = logger;
     this.options = options;
 
-    const wooHttp = new HttpClient(createWooAxios(config), {
+    // A campaign injects one gate so the catalog branch and the concurrent
+    // identity/order stages share a single hold and probe loop — a Woo outage
+    // knocks all of them down at the same moment. Standalone CLI runs get their
+    // own. Either way the probe uses the *raw* axios instance: routing it back
+    // through `wooHttp` would recurse into the gate that is asking.
+    const wooAxios = createWooAxios(config);
+    const sourceGate = config.sourceGate
+      || createSourceGate({
+        logger,
+        probe: () => wooAxios.request({ method: "get", url: "/products", params: { per_page: 1 } }),
+        maxHoldMs: config.catalog.sourceHoldMaxMs,
+      });
+
+    const wooHttp = new HttpClient(wooAxios, {
       logger,
       maxRetries: config.catalog.maxRetries,
       baseDelay: config.catalog.baseRetryDelay,
+      sourceGate,
     });
+    this.sourceGate = sourceGate;
     const strapiHttp = new HttpClient(createStrapiAxios(config), {
       logger,
       maxRetries: config.catalog.maxRetries,
@@ -201,14 +259,23 @@ class CatalogEngine {
       this.logger.info("✓ WooCommerce reachable");
     } catch (error) {
       const status = error.response?.status;
-      throw new Error(`WooCommerce connectivity failed${status ? ` (HTTP ${status})` : ""}: ${error.message}`);
+      // Carry a code: `safeErrorCode` in the sync service falls back to
+      // `error.name`, so a bare Error here recorded the 2026-09-13 campaign as
+      // the useless `last_error_code = 'ERROR'`.
+      throw Object.assign(
+        new Error(`WooCommerce connectivity failed${status ? ` (HTTP ${status})` : ""}: ${error.message}`),
+        { code: error.code === "SOURCE_UNAVAILABLE" ? "SOURCE_UNAVAILABLE" : "SOURCE_PREFLIGHT_FAILED" },
+      );
     }
     try {
       await this.repo.http.get("/product-categories", { params: { "pagination[pageSize]": 1 } });
       this.logger.info("✓ Strapi reachable");
     } catch (error) {
       const status = error.response?.status;
-      throw new Error(`Strapi connectivity failed${status ? ` (HTTP ${status})` : ""}: ${error.message}`);
+      throw Object.assign(
+        new Error(`Strapi connectivity failed${status ? ` (HTTP ${status})` : ""}: ${error.message}`),
+        { code: "DESTINATION_PREFLIGHT_FAILED" },
+      );
     }
     this.logger.success("WooCommerce and Strapi reachable");
   }
@@ -326,7 +393,16 @@ class CatalogEngine {
     }
     if (flags.categoryEditorial) {
       const allCategories = categorySource?.all || await this.woo.fetchAllCategories();
-      const selectedCategories = categorySource?.selected || allCategories;
+      // `--ids` on a category-editorial-only scope never runs syncCategories, so
+      // the narrowing is applied here too; without it a targeted editorial
+      // repair would quietly become a full-catalog batch.
+      const onlyCategoryExternalIds = opts.onlyCategoryExternalIds
+        ? new Set(Array.from(opts.onlyCategoryExternalIds, (value) => String(value)))
+        : null;
+      const selectedCategories = categorySource?.selected
+        || (onlyCategoryExternalIds
+          ? allCategories.filter((category) => onlyCategoryExternalIds.has(String(category.id)))
+          : allCategories);
       await this.syncCategoryEditorial(report, dryRun, allCategories, selectedCategories, {
         expectedManifest: categoryEditorialManifest,
         requireExpectedManifest:
@@ -589,15 +665,27 @@ class CatalogEngine {
     const routes = CE.categoryRouteMap(sourceCategories, destinationIndex);
     const plans = [];
 
+    const skippedPlans = [];
     for (const category of selectedCategories) {
       if (!CE.sourceHasDescription(category)) continue;
       try {
         const destination = destinationIndex.get(String(category.id));
         const plan = CE.transformCategoryEditorial(category, destination, routes);
-        if (plan) {
-          plan.existingEditorial = destination?.editorial || null;
-          plans.push(plan);
+        if (!plan) continue;
+        plan.existingEditorial = destination?.editorial || null;
+        // "manual" and "title-only" do not depend on the source hash, so they
+        // are settled before any audio is fetched. A source description that is
+        // only a heading would create a page with a title and nothing under it;
+        // it is skipped unless this importer already owns a row for that
+        // category, in which case the row is kept in step with the source
+        // rather than left stale.
+        const disposition = categoryEditorialDisposition(plan);
+        if (disposition === "title-only" || disposition === "manual") {
+          plan.disposition = disposition;
+          skippedPlans.push(plan);
+          continue;
         }
+        plans.push(plan);
       } catch (error) {
         report.fail("categoryEditorial", {
           wcId: category.id,
@@ -607,9 +695,14 @@ class CatalogEngine {
       }
     }
 
+    // One unreachable audio file fails its own category. It no longer aborts
+    // the batch, because 45 categories waiting on the 46th is not a safety
+    // property — the frozen manifest below is what keeps an apply honest.
+    const inspected = [];
     for (const plan of plans) {
       if (!plan.audioUrl) {
         plan.sourceHash = CE.categoryEditorialSourceHash(plan, null);
+        inspected.push(plan);
         continue;
       }
       report.categoryAudioCount("expected");
@@ -619,6 +712,7 @@ class CatalogEngine {
         plan.sourceHash = CE.categoryEditorialSourceHash(plan, inspection.sha256);
         report.categoryAudioCount("inspected");
         report.categoryAudioCount("bytes", inspection.bytes);
+        inspected.push(plan);
       } catch (error) {
         report.categoryAudioCount("failed");
         report.fail("categoryEditorial", {
@@ -628,8 +722,11 @@ class CatalogEngine {
         });
       }
     }
-
-    if (report.entities.categoryEditorial.failed > 0) return;
+    plans.length = 0;
+    plans.push(...inspected);
+    // Now that every source hash is known, "unchanged" can be told apart from
+    // "update" — the classification the dry run reports and the apply follows.
+    for (const plan of plans) plan.disposition = categoryEditorialDisposition(plan);
 
     const manifest = CE.buildCategoryEditorialManifest(sourceCategories, plans);
     const manifestDir = path.join(
@@ -659,18 +756,20 @@ class CatalogEngine {
     }
 
     if (dryRun) {
-      for (const plan of plans) {
-        report.count(
-          "categoryEditorial",
-          plan.existingEditorial ? "skipped" : "created",
-        );
+      for (const plan of [...plans, ...skippedPlans]) {
+        recordCategoryEditorialDisposition(report, plan.disposition);
         if (plan.audioUrl) report.categoryAudioCount("skipped");
       }
       return;
     }
+    for (const plan of skippedPlans) {
+      recordCategoryEditorialDisposition(report, plan.disposition);
+    }
 
-    const missingPlans = plans.filter((plan) => !plan.existingEditorial);
-    for (const plan of missingPlans) {
+    // Audio is uploaded for anything that will actually be written — a row
+    // being updated needs its (possibly new) audio just as a new row does.
+    const writablePlans = plans.filter((plan) => plan.disposition === "create" || plan.disposition === "update");
+    for (const plan of writablePlans) {
       if (!plan.audioInspection) continue;
       try {
         plan.audio = await this.media.syncInspectedAudio(
@@ -681,6 +780,7 @@ class CatalogEngine {
         report.categoryAudioCount(plan.audio.status === "uploaded" ? "uploaded" : "reused");
       } catch (error) {
         report.categoryAudioCount("failed");
+        plan.audioFailed = true;
         report.fail("categoryEditorial", {
           wcId: plan.sourceId,
           stage: "audio-upload",
@@ -688,34 +788,17 @@ class CatalogEngine {
         });
       }
     }
-    if (report.categoryAudio.failed > 0) return;
 
     const finalizeEntries = [];
     for (const plan of plans) {
       const existing = plan.existingEditorial;
-      if (existing) {
-        report.count("categoryEditorial", "skipped");
-        if (plan.audioUrl) report.categoryAudioCount("skipped");
-        if (
-          existing.importBatchId === manifest.batchId &&
-          existing.importedSourceHash === plan.sourceHash
-        ) {
-          finalizeEntries.push({
-            sourceId: plan.sourceId,
-            categoryId: plan.destinationCategoryId,
-            editorialId: Number(existing.id),
-            sourceHash: plan.sourceHash,
-            audio: plan.audioInspection
-              ? {
-                  id: Number(existing.audio?.id),
-                  sha256: plan.audioInspection.sha256,
-                }
-              : null,
-          });
-        }
-        continue;
-      }
-
+      // An audio upload that failed above already counted as a failure for this
+      // category; sending it now would write an editorial row without its file.
+      if (plan.audioFailed) continue;
+      // Every remaining plan goes to the server, which holds the category lock
+      // and is the only place the decision can be made without a race. A row
+      // that is already published and unchanged simply costs one call and is
+      // then left out of finalize, so a clean rerun writes nothing at all.
       try {
         const response = await this.repo.prepareCategoryEditorial({
           batchId: manifest.batchId,
@@ -732,16 +815,25 @@ class CatalogEngine {
             ? { id: plan.audio.id, sha256: plan.audio.sha256 }
             : null,
         });
+        // The server holds the category lock and re-decides authoritatively;
+        // the engine's own classification is only a plan, so the response is
+        // what gets reported.
         if (response?.mode === "prepared") {
-          report.count("categoryEditorial", "created");
+          recordCategoryEditorialDisposition(report, "create");
+        } else if (response?.mode === "updated") {
+          // An updated row may already be published; finalize still revalidates
+          // its page, because its copy changed even though its state did not.
+          recordCategoryEditorialDisposition(report, "update");
         } else if (
           response?.mode === "skipped" &&
-          response?.importBatchId === manifest.batchId &&
+          response?.reason === "unchanged" &&
           response?.importedSourceHash === plan.sourceHash
         ) {
-          report.count("categoryEditorial", "skipped");
+          recordCategoryEditorialDisposition(report, "unchanged");
+          // Nothing to publish and nothing to revalidate.
+          if (response?.isPublished === true) continue;
         } else if (response?.mode === "skipped") {
-          report.count("categoryEditorial", "skipped");
+          recordCategoryEditorialDisposition(report, response.reason || "skipped");
           continue;
         } else {
           throw new Error("CATEGORY_EDITORIAL_PREPARE_RESPONSE_INVALID");
@@ -751,9 +843,13 @@ class CatalogEngine {
           categoryId: plan.destinationCategoryId,
           editorialId: Number(response.id),
           sourceHash: plan.sourceHash,
+          // A row adopted from an interrupted batch keeps the audio that run
+          // already uploaded; only a row this run wrote has `plan.audio`.
           audio: plan.audio
             ? { id: plan.audio.id, sha256: plan.audio.sha256 }
-            : null,
+            : (plan.audioInspection && existing?.audio?.id
+              ? { id: Number(existing.audio.id), sha256: plan.audioInspection.sha256 }
+              : null),
         });
       } catch (error) {
         report.fail("categoryEditorial", {
@@ -764,7 +860,9 @@ class CatalogEngine {
       }
     }
 
-    if (report.entities.categoryEditorial.failed > 0 || finalizeEntries.length === 0) return;
+    // Per-category failures no longer hold back the categories that succeeded;
+    // finalize publishes exactly the rows this batch prepared or updated.
+    if (finalizeEntries.length === 0) return;
     try {
       const finalized = await this.repo.finalizeCategoryEditorial({
         batchId: manifest.batchId,
@@ -1022,8 +1120,15 @@ class CatalogEngine {
         statusMappings: this.statusMappings,
         publication: ctx.publication || this.options.publication || null,
       });
-      const { data, sizeGuideMatrix, sourceTimestamps } = mappedProduct;
+      const { data, sizeGuideMatrix, sourceTimestamps, descriptionResolution } = mappedProduct;
       publicationIntent = mappedProduct.publicationIntent;
+      // Which WooCommerce field the body came from, and why — the shop uses
+      // both inconsistently, so the distribution is worth reporting on every
+      // run rather than reconstructing from the database afterwards.
+      report.descriptionResolved(descriptionResolution);
+      this.logger.debug?.(
+        `📝 product ${wcProduct.id} description ← ${descriptionResolution.source} (${descriptionResolution.reason})`,
+      );
       if (dryRun) {
         const tagCounters = this.repo.inspectProductTags(wcProduct.tags);
         report.count("productTags", "created", tagCounters.created);
@@ -1723,6 +1828,7 @@ class CatalogEngine {
 
 module.exports = {
   CatalogEngine,
+  isRunControlError,
   sortCategoriesByHierarchy,
   productHasMedia,
   productHasCover,

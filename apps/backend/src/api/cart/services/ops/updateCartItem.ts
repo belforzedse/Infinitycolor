@@ -12,7 +12,7 @@ export const updateCartItemOp = async (
   strapi: Strapi,
   cartItemId: number,
   count: number,
-  ownerUserId: number
+  ownerUserId: number,
 ) => {
   if (!Number.isInteger(ownerUserId) || ownerUserId <= 0) {
     return { success: false, message: "Cart owner is required" };
@@ -42,9 +42,7 @@ export const updateCartItemOp = async (
 
   let available = 0;
   try {
-    available = variation?.product_stock
-      ? getAvailableStockCount(variation.product_stock)
-      : 0;
+    available = variation?.product_stock ? getAvailableStockCount(variation.product_stock) : 0;
   } catch (error) {
     strapi.log.error("Failed to get available stock count", {
       cartItemId,
@@ -54,17 +52,18 @@ export const updateCartItemOp = async (
   }
 
   if (!variation?.product_stock || available < count) {
-    return { success: false, message: "Insufficient stock" };
+    return {
+      success: false,
+      message: "Insufficient stock",
+      errorCode: "CART_STOCK_EXCEEDED",
+      availableStock: available,
+    };
   }
 
   const price = variation.Price || 0;
-  const updatedItem = await strapi.entityService.update(
-    "api::cart-item.cart-item",
-    cartItemId,
-    {
-      data: { Count: count, Sum: count * price },
-    }
-  );
+  const updatedItem = await strapi.entityService.update("api::cart-item.cart-item", cartItemId, {
+    data: { Count: count, Sum: count * price },
+  });
 
   return { success: true, data: updatedItem };
 };

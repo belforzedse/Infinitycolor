@@ -73,6 +73,12 @@ function buildConfig(envName) {
     perPage: Number.parseInt(process.env.IMPORT_BATCH_PRODUCTS || "100", 10),
     maxRetries: Number.parseInt(process.env.IMPORT_ERROR_MAX_RETRIES || "4", 10),
     baseRetryDelay: Number.parseInt(process.env.IMPORT_ERROR_RETRY_DELAY || "1000", 10),
+    // How long a run will hold, waiting for an unreachable WooCommerce to come
+    // back, before giving up with SOURCE_UNAVAILABLE. See migration-v2/lib/sourceGate.js.
+    sourceHoldMaxMs: Number.parseInt(
+      process.env.WOOCOMMERCE_SYNC_SOURCE_HOLD_MAX_MS || String(60 * 60 * 1000),
+      10,
+    ),
     trackingDirAbs: path.resolve(process.cwd(), envConfig.trackingDir),
     concurrency: {
       // Product *parents* stay serial by default: syncProductTags/resolveAttributeId

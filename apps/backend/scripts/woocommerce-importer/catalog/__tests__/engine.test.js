@@ -205,7 +205,13 @@ test("category-editorial validates, localizes audio, prepares drafts, and finali
       description:
         '<h1>راهنمای کیف</h1><p>مقدمه</p>[audio mp3="https://cdn.example.com/guide.mp3"][/audio]<p><a href="/shop/acc/">اکسسوری</a></p>',
     },
-    { id: 9, name: "اکسسوری", slug: "acc", parent: 5, description: "<h2>اکسسوری زنانه</h2>" },
+    {
+      id: 9,
+      name: "اکسسوری",
+      slug: "acc",
+      parent: 5,
+      description: "<h2>اکسسوری زنانه</h2><p>کیف و کمربند و شال</p>",
+    },
   ];
   engine.media.inspectAudioUrl = async () => ({
     buffer: Buffer.from("ID3fixture"),
@@ -235,6 +241,7 @@ test("category-editorial validates, localizes audio, prepares drafts, and finali
   const preparedBySource = new Map(
     engine._calls.editorialPrepares.map((entry, index) => [String(entry.sourceId), {
       id: 40001 + index,
+      importSource: "woocommerce-category-description",
       importBatchId: report.categoryEditorial.batchId,
       importedSourceHash: entry.sourceHash,
       isPublished: true,
@@ -248,11 +255,199 @@ test("category-editorial validates, localizes audio, prepares drafts, and finali
   engine.media.syncInspectedAudio = async () => {
     throw new Error("idempotent import must not upload audio");
   };
+  // The server owns the decision: an importer-owned row whose hash still
+  // matches, already published, is reported unchanged and written to by nobody.
+  engine.repo.prepareCategoryEditorial = async (payload) => {
+    engine._calls.editorialPrepares.push(payload);
+    return {
+      mode: "skipped",
+      reason: "unchanged",
+      id: preparedBySource.get(String(payload.sourceId)).id,
+      isPublished: true,
+      importBatchId: payload.batchId,
+      importedSourceHash: payload.sourceHash,
+    };
+  };
+  const preparesBefore = engine._calls.editorialPrepares.length;
   const second = await engine.runSync({ dryRun: false, scope: "category-editorial" });
-  assert.equal(second.entities.categoryEditorial.skipped, 2);
+  // A row this importer wrote and nobody has touched since is "unchanged", which
+  // is a different fact from "skipped" and is reported as one.
+  assert.equal(second.entities.categoryEditorial.unchanged, 2);
+  assert.equal(second.categoryEditorialOutcomes.unchanged, 2);
+  assert.equal(second.entities.categoryEditorial.created, 0);
   assert.equal(second.categoryAudio.uploaded, 0);
   assert.equal(second.categoryAudio.reused, 0);
   assert.equal(audioWrites, 1);
+  // A clean rerun writes nothing at all — not even a finalize that would bust
+  // the storefront cache for pages that did not change.
+  assert.equal(engine._calls.editorialFinalizes.length, 1);
+  assert.equal(engine._calls.editorialPrepares.length - preparesBefore, 2, "the server still decides");
+});
+
+test("category-editorial finishes a batch that was interrupted before finalize", async () => {
+  const engine = makeEngine();
+  engine.woo.fetchAllCategories = async () => [{
+    id: 5,
+    name: "کیف",
+    slug: "kif",
+    parent: 0,
+    description: "<h1>راهنمای کیف</h1><p>متن کیف</p>",
+  }];
+  // The row a previous run prepared: same content, never published, and
+  // stamped with that run's batch id rather than this run's.
+  engine.repo.fetchCategoryEditorialSnapshot = async () => [{
+    id: 10005,
+    title: "کیف",
+    slug: "kif",
+    externalId: "5",
+    externalSource: "woocommerce",
+    editorial: {
+      id: 40001,
+      importSource: "woocommerce-category-description",
+      importBatchId: "category-seo-aaaaaaaa",
+      importedSourceHash: null,
+      isPublished: false,
+      audio: null,
+    },
+  }];
+  engine.repo.prepareCategoryEditorial = async (payload) => {
+    engine._calls.editorialPrepares.push(payload);
+    // The server adopts the stranded row into this batch.
+    return {
+      mode: "skipped",
+      reason: "unchanged",
+      id: 40001,
+      isPublished: false,
+      importBatchId: payload.batchId,
+      importedSourceHash: payload.sourceHash,
+      adopted: true,
+    };
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "category-editorial" });
+  assert.equal(report.categoryEditorialOutcomes.unchanged, 1);
+  assert.equal(engine._calls.editorialFinalizes.length, 1, "the stranded row is finalized, not orphaned");
+  assert.equal(engine._calls.editorialFinalizes[0].entries[0].editorialId, 40001);
+});
+
+test("category-editorial propagates a source edit into the row it already owns", async () => {
+  const engine = makeEngine();
+  engine.woo.fetchAllCategories = async () => [{
+    id: 5,
+    name: "کیف",
+    slug: "kif",
+    parent: 0,
+    description: "<h1>راهنمای کیف</h1><p>متن تازه پس از ویرایش در ووکامرس</p>",
+  }];
+  engine.repo.fetchCategoryEditorialSnapshot = async () => [{
+    id: 10005,
+    title: "کیف",
+    slug: "kif",
+    externalId: "5",
+    externalSource: "woocommerce",
+    editorial: {
+      id: 40001,
+      importSource: "woocommerce-category-description",
+      importBatchId: "category-seo-00000000",
+      importedSourceHash: "b".repeat(64),
+      isPublished: true,
+      audio: null,
+    },
+  }];
+  engine.repo.prepareCategoryEditorial = async (payload) => {
+    engine._calls.editorialPrepares.push(payload);
+    return { mode: "updated", id: 40001, isPublished: true };
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "category-editorial" });
+  assert.equal(report.entities.categoryEditorial.updated, 1);
+  assert.equal(report.categoryEditorialOutcomes.update, 1);
+  assert.equal(engine._calls.editorialPrepares.length, 1);
+  assert.match(engine._calls.editorialPrepares[0].data.Content, /متن تازه/);
+  // The updated row is finalized with the rest of the batch.
+  assert.equal(engine._calls.editorialFinalizes.length, 1);
+  assert.equal(engine._calls.editorialFinalizes[0].entries[0].editorialId, 40001);
+});
+
+test("category-editorial leaves a row somebody else wrote alone and never fetches its audio", async () => {
+  const engine = makeEngine();
+  engine.woo.fetchAllCategories = async () => [{
+    id: 5,
+    name: "کیف",
+    slug: "kif",
+    parent: 0,
+    description: '<p>مقدمه</p>[audio mp3="https://cdn.example.com/guide.mp3"][/audio]',
+  }];
+  engine.repo.fetchCategoryEditorialSnapshot = async () => [{
+    id: 10005,
+    title: "کیف",
+    slug: "kif",
+    externalId: "5",
+    externalSource: "woocommerce",
+    editorial: { id: 40001, importSource: null, importBatchId: null, importedSourceHash: null, isPublished: true },
+  }];
+  engine.media.inspectAudioUrl = async () => {
+    throw new Error("a manual row must not cost a source fetch");
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "category-editorial" });
+  assert.equal(report.categoryEditorialOutcomes.manual, 1);
+  assert.equal(report.entities.categoryEditorial.skipped, 1);
+  assert.equal(engine._calls.editorialPrepares.length, 0);
+});
+
+test("category-editorial does not create a row from a source description that is only a heading", async () => {
+  const engine = makeEngine();
+  engine.woo.fetchAllCategories = async () => [
+    { id: 5, name: "کیف", slug: "kif", parent: 0, description: "<h2>کیف زنانه</h2>" },
+    { id: 9, name: "شال", slug: "shawl", parent: 0, description: "<h2>شال</h2><p>شال نخی و ابریشمی</p>" },
+  ];
+
+  const report = await engine.runSync({ dryRun: true, scope: "category-editorial" });
+  assert.equal(report.categoryEditorialOutcomes["title-only"], 1);
+  assert.equal(report.categoryEditorialOutcomes.create, 1);
+  assert.equal(report.entities.categoryEditorial.created, 1);
+});
+
+test("--ids narrows a category-editorial-only run to the named categories", async () => {
+  const engine = makeEngine();
+  engine.woo.fetchAllCategories = async () => [
+    { id: 5, name: "کیف", slug: "kif", parent: 0, description: "<p>مقدمه کیف</p>" },
+    { id: 9, name: "شال", slug: "shawl", parent: 0, description: "<p>شال نخی و ابریشمی</p>" },
+  ];
+
+  const report = await engine.runSync({
+    dryRun: false,
+    scope: "category-editorial",
+    onlyCategoryExternalIds: ["9"],
+  });
+  assert.equal(report.entities.categoryEditorial.created, 1);
+  assert.deepEqual(engine._calls.editorialPrepares.map((entry) => entry.sourceId), ["9"]);
+});
+
+test("category-editorial isolates one unreachable audio file from the rest of the batch", async () => {
+  const engine = makeEngine();
+  engine.woo.fetchAllCategories = async () => [
+    {
+      id: 5,
+      name: "کیف",
+      slug: "kif",
+      parent: 0,
+      description: '<p>مقدمه کیف</p>[audio mp3="https://cdn.example.com/broken.mp3"][/audio]',
+    },
+    { id: 9, name: "شال", slug: "shawl", parent: 0, description: "<p>شال نخی و ابریشمی</p>" },
+  ];
+  engine.media.inspectAudioUrl = async () => {
+    throw new Error("CATEGORY_EDITORIAL_AUDIO_UNREACHABLE");
+  };
+
+  const report = await engine.runSync({ dryRun: false, scope: "category-editorial" });
+  assert.equal(report.categoryAudio.failed, 1);
+  assert.equal(report.entities.categoryEditorial.failed, 1);
+  // The category that was fine is still imported and finalized.
+  assert.equal(report.entities.categoryEditorial.created, 1);
+  assert.deepEqual(engine._calls.editorialPrepares.map((entry) => entry.sourceId), ["9"]);
+  assert.equal(engine._calls.editorialFinalizes.length, 1);
 });
 
 test("category-editorial performs no destination writes when audio validation fails", async () => {

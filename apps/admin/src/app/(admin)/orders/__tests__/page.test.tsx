@@ -156,8 +156,8 @@ describe("orders page bounded data ownership", () => {
     // Started, so offering it could only ever produce a 409.
     expect(mockTableProps.bulkOptions.map((option: { id: string }) => option.id)).toEqual([
       "print",
-      "status-Shipment",
       "status-Done",
+      "status-Shipment",
     ]);
 
     unmount();
@@ -166,8 +166,8 @@ describe("orders page bounded data ownership", () => {
 
     expect(mockTableProps.bulkOptions.map((option: { id: string }) => option.id)).toEqual([
       "print",
-      "status-Shipment",
       "status-Done",
+      "status-Shipment",
       "cancel",
     ]);
   });
@@ -255,10 +255,10 @@ describe("orders page bounded data ownership", () => {
   });
 
   describe("bulk status changes with held reserve orders", () => {
-    // `Shipment` is the status a `Done` transition is actually reachable from.
-    // These fixtures used to say `Started`, which the backend's transition chain
-    // refuses — the case now covered by its own test below.
-    const row = (id: string, reserveIsHeld: boolean, Status = "Shipment") => ({
+    // Fulfilment is Started -> Done -> Shipment, so `Done` is the status a
+    // `Shipment` transition is reachable from, and the only one the 48h reserve
+    // hold can block.
+    const row = (id: string, reserveIsHeld: boolean, Status = "Done") => ({
       id,
       attributes: { Status, reserveIsHeld },
     });
@@ -273,16 +273,16 @@ describe("orders page bounded data ownership", () => {
     it("skips held orders and applies the change to the rest", async () => {
       render(<OrdersPage />);
 
-      await mockTableProps.onBulkAction("status-Done", [
+      await mockTableProps.onBulkAction("status-Shipment", [
         row("1", false),
         row("2", true),
         row("3", false),
       ]);
 
       expect(changeOrderStatus).toHaveBeenCalledTimes(2);
-      expect(changeOrderStatus).toHaveBeenCalledWith("1", "Done");
-      expect(changeOrderStatus).toHaveBeenCalledWith("3", "Done");
-      expect(changeOrderStatus).not.toHaveBeenCalledWith("2", "Done");
+      expect(changeOrderStatus).toHaveBeenCalledWith("1", "Shipment");
+      expect(changeOrderStatus).toHaveBeenCalledWith("3", "Shipment");
+      expect(changeOrderStatus).not.toHaveBeenCalledWith("2", "Shipment");
       expect(mockToast).toHaveBeenCalledWith(
         "1 سفارش تغییر نکرد: در مهلت رزرو",
         expect.anything(),
@@ -293,7 +293,7 @@ describe("orders page bounded data ownership", () => {
     it("changes nothing when every selected order is held", async () => {
       render(<OrdersPage />);
 
-      await mockTableProps.onBulkAction("status-Done", [row("1", true), row("2", true)]);
+      await mockTableProps.onBulkAction("status-Shipment", [row("1", true), row("2", true)]);
 
       expect(changeOrderStatus).not.toHaveBeenCalled();
       expect(mockToast.error).toHaveBeenCalledWith(
@@ -302,32 +302,49 @@ describe("orders page bounded data ownership", () => {
     });
 
     /**
-     * The reported defect: «تکمیل شده» applied to orders sitting in «در حال انجام»
-     * silently failed, because the backend only allows Started → Shipment → Done.
-     * Nothing is sent now, and the message names the status that IS reachable.
+     * «ارسال» applied to orders sitting in «در حال انجام» cannot succeed: the
+     * chain is Started → Done → Shipment, so an order must be completed first.
+     * Nothing is sent, and the message names the status that IS reachable.
      */
     it("refuses a transition that skips a step, naming the allowed one", async () => {
       render(<OrdersPage />);
 
-      await mockTableProps.onBulkAction("status-Done", [
+      await mockTableProps.onBulkAction("status-Shipment", [
         row("1", false, "Started"),
         row("2", false, "Started"),
       ]);
 
       expect(changeOrderStatus).not.toHaveBeenCalled();
       expect(mockToast.error).toHaveBeenCalledWith(
-        expect.stringContaining("ارسال شده"),
+        expect.stringContaining("تکمیل شده"),
       );
     });
 
     it("applies a transition that is the next step in the chain", async () => {
       render(<OrdersPage />);
 
-      await mockTableProps.onBulkAction("status-Shipment", [
+      await mockTableProps.onBulkAction("status-Done", [
         row("1", false, "Started"),
       ]);
 
-      expect(changeOrderStatus).toHaveBeenCalledWith("1", "Shipment");
+      expect(changeOrderStatus).toHaveBeenCalledWith("1", "Done");
+    });
+
+    /**
+     * The 48h reserve window blocks shipping only. Completing an order inside it
+     * is allowed, and the bulk pre-skip used to drop those rows for every status.
+     */
+    it("still completes a held order, because the reserve hold only blocks shipping", async () => {
+      render(<OrdersPage />);
+
+      await mockTableProps.onBulkAction("status-Done", [
+        row("1", true, "Started"),
+        row("2", false, "Started"),
+      ]);
+
+      expect(changeOrderStatus).toHaveBeenCalledTimes(2);
+      expect(changeOrderStatus).toHaveBeenCalledWith("1", "Done");
+      expect(changeOrderStatus).toHaveBeenCalledWith("2", "Done");
     });
 
     it("cancels held reserve orders through the cancel endpoint", async () => {

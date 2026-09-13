@@ -65,6 +65,14 @@ function installFatalHandlers(getService) {
   };
   process.on("unhandledRejection", (reason) => die("unhandled rejection", reason));
   process.on("uncaughtException", (error) => die("uncaught exception", error));
+  // The handbook's stop procedure (§10) is `kill -TERM <pid>`, and Node's default
+  // SIGTERM disposition is to terminate without running any of the above — so an
+  // operator following the documented steps left the row stuck at `running`, the
+  // exact invisible failure the rest of this function exists to prevent. The
+  // SIGTERM handlers in service.js cover only the long-running worker, not this
+  // one-shot path.
+  process.once("SIGTERM", (signal) => die(signal, new Error("operator sent SIGTERM")));
+  process.once("SIGINT", (signal) => die(signal, new Error("operator sent SIGINT")));
 }
 
 async function main() {

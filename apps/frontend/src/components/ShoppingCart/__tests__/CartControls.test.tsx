@@ -63,6 +63,34 @@ describe("cart mutation controls", () => {
     expect(screen.getByTestId("cart-item-remove")).toBeDisabled();
   });
 
+  it("disables only the increase controls when the stock snapshot is exhausted", () => {
+    useCartMock.mockReturnValue({
+      updateQuantity: jest.fn(),
+      removeFromCart: jest.fn(),
+      isLoading: false,
+    });
+    const stockLimitedItem = { ...cartItem, availableStock: cartItem.quantity };
+
+    const { unmount } = render(<CartDrawerItem item={stockLimitedItem} />);
+
+    expect(screen.getByRole("button", { name: "افزایش تعداد کالا" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "کاهش تعداد کالا" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "حذف کالا از سبد خرید" })).toBeEnabled();
+
+    unmount();
+    render(
+      <ShoppingCartQuantityControl
+        itemId={stockLimitedItem.id}
+        quantity={stockLimitedItem.quantity}
+        availableStock={stockLimitedItem.availableStock}
+      />,
+    );
+
+    expect(screen.getByTestId("cart-quantity-increase")).toBeDisabled();
+    expect(screen.getByTestId("cart-quantity-decrease")).toBeEnabled();
+    expect(screen.getByTestId("cart-item-remove")).toBeEnabled();
+  });
+
   it("keeps the drawer chrome fixed around one bounded scroll region", () => {
     const closeDrawer = jest.fn();
     useCartMock.mockReturnValue({

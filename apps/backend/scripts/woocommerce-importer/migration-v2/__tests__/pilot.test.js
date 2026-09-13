@@ -60,7 +60,9 @@ test("relation-aware pilot selection includes valid registered and guest orders 
     ["3", "guest"],
   ]);
   assert.deepEqual(result.productIds, ["10", "20"]);
-  assert.equal(result.rejected.ORDER_ITEM_PRODUCT_REFERENCE_INVALID, 1);
+  // The order whose product no longer exists is not pilot material, but it is
+  // named for what it is rather than rejected as a malformed reference.
+  assert.equal(result.rejected.ORDER_ITEM_CATALOG_REFERENCE_MISSING, 1);
 });
 
 test("pilot order preserves guest identity for canonical destination reconciliation", async () => {

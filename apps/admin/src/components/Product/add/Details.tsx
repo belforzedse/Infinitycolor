@@ -2,7 +2,10 @@
 
 import { Input } from "@/components/ui/Input";
 import { useAtom } from "jotai";
-import { editProductDataAtom, productDataAtom } from "@/atoms/super-admin/products";
+import {
+  editProductDataAtom,
+  productDataAtom,
+} from "@/atoms/super-admin/products";
 import RichTextEditor from "@/components/RichTextEditor";
 
 interface DetailsProps {
@@ -10,7 +13,9 @@ interface DetailsProps {
 }
 
 export default function ProductDetails({ isEditMode = false }: DetailsProps) {
-  const [productAtom, setProductAtom] = useAtom(isEditMode ? editProductDataAtom : productDataAtom);
+  const [productAtom, setProductAtom] = useAtom(
+    isEditMode ? editProductDataAtom : productDataAtom,
+  );
   const isSimpleProduct = productAtom.ProductType === "Simple";
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -18,20 +23,29 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
     if (name === "name") {
       setProductAtom({ ...(productAtom as any), Title: value });
     } else if (name === "weight") {
-      setProductAtom({ ...(productAtom as any), Weight: value ? Number(value) : 100 });
+      setProductAtom({
+        ...(productAtom as any),
+        Weight: value ? Number(value) : 100,
+      });
     } else if (name === "simpleIsPublished") {
       setProductAtom({ ...(productAtom as any), SimpleIsPublished: checked });
     } else if (name === "simpleSKU") {
       setProductAtom({ ...(productAtom as any), SimpleSKU: value });
     } else if (name === "simplePrice") {
-      setProductAtom({ ...(productAtom as any), SimplePrice: value ? Number(value) : 0 });
+      setProductAtom({
+        ...(productAtom as any),
+        SimplePrice: value ? Number(value) : 0,
+      });
     } else if (name === "simpleDiscountPrice") {
       setProductAtom({
         ...(productAtom as any),
         SimpleDiscountPrice: value ? Number(value) : null,
       });
     } else if (name === "simpleStock") {
-      setProductAtom({ ...(productAtom as any), SimpleStock: value ? Number(value) : 0 });
+      setProductAtom({
+        ...(productAtom as any),
+        SimpleStock: value ? Number(value) : 0,
+      });
     }
   };
 
@@ -68,6 +82,7 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
           name="weight"
           value={productAtom.Weight ?? 100}
           onChange={handleChange}
+          onFocus={(event) => event.currentTarget.select()}
           placeholder="وزن محصول به گرم"
           min="0"
           className="w-full text-right text-neutral-800 placeholder:text-gray-400"
@@ -129,7 +144,9 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
           </div>
 
           <div className="flex flex-col gap-2">
-            <label className="text-sm text-gray-700">قیمت تخفیف‌خورده (تومان)</label>
+            <label className="text-sm text-gray-700">
+              قیمت تخفیف‌خورده (تومان)
+            </label>
             <Input
               type="number"
               name="simpleDiscountPrice"

@@ -474,6 +474,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     let itemsCreated = 0;
     let itemsUpdated = 0;
     let itemsUnresolved = 0;
+    let itemsOrphaned = 0;
     const itemIssues: string[] = [];
     const retainedExternalIds = new Set<string>();
     for (const sourceItem of items) {
@@ -486,24 +487,41 @@ export async function upsertOrder(strapiInstance: any, body: any) {
         trx,
       );
       if (existingItems.length > 1) throw new MigrationInputError("ORDER_ITEM_SOURCE_ID_AMBIGUOUS", 409);
-      const variationSourceId = requiredId(sourceItem?.variationSourceId, "ORDER_ITEM_VARIATION_ID_INVALID");
-      const variationMatches = await findMany(
-        strapiInstance.db.query(VARIATION_UID),
-        { external_source: "woocommerce", external_id: variationSourceId },
-        trx,
-      );
+      // An orphan line is a historical sale whose WooCommerce product was
+      // deleted or archived after purchase. The importer marks it explicitly;
+      // it is stored as a snapshot with no catalog relation and never matched
+      // by guesswork. Only the explicit marker takes this path — a nonzero but
+      // unknown reference still goes through the lookup below.
+      const isOrphan = sourceItem?.catalogReference === "orphan";
       let variationId: number | null = null;
-      if (variationMatches.length === 1) {
-        variationId = Number(variationMatches[0].id);
+      let skuFallback: string;
+      if (isOrphan) {
+        if (sourceItem?.variationSourceId !== null && sourceItem?.variationSourceId !== undefined) {
+          throw new MigrationInputError("ORDER_ITEM_ORPHAN_HAS_CATALOG_REFERENCE");
+        }
+        itemsOrphaned += 1;
+        itemIssues.push(`ORDER_ITEM_CATALOG_REFERENCE_MISSING:${sourceItemId}`);
+        skuFallback = `WC-LINE-${sourceItemId}`;
       } else {
-        itemsUnresolved += 1;
-        itemIssues.push(`ORDER_ITEM_VARIATION_UNRESOLVED:${variationSourceId}`);
+        const variationSourceId = requiredId(sourceItem?.variationSourceId, "ORDER_ITEM_VARIATION_ID_INVALID");
+        const variationMatches = await findMany(
+          strapiInstance.db.query(VARIATION_UID),
+          { external_source: "woocommerce", external_id: variationSourceId },
+          trx,
+        );
+        if (variationMatches.length === 1) {
+          variationId = Number(variationMatches[0].id);
+        } else {
+          itemsUnresolved += 1;
+          itemIssues.push(`ORDER_ITEM_VARIATION_UNRESOLVED:${variationSourceId}`);
+        }
+        skuFallback = `WC-${variationSourceId}`;
       }
       const itemData = {
         Count: positiveCount(sourceItem?.count),
         PerAmount: exactNonNegativeInteger(sourceItem?.unitPriceToman, "ORDER_ITEM_PRICE_INVALID"),
         ProductTitle: optionalText(sourceItem?.title, 255) || "WooCommerce product",
-        ProductSKU: optionalText(sourceItem?.sku, 255) || `WC-${variationSourceId}`,
+        ProductSKU: optionalText(sourceItem?.sku, 255) || skuFallback,
         product_variation: variationId,
         order: order.id,
         external_source: "woocommerce",
@@ -540,6 +558,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       itemsUpdated,
       itemsDeleted,
       itemsUnresolved,
+      itemsOrphaned,
       userLinked: Boolean(linkedUser),
       identityMatchReason: identity.matchReason,
       identityIssues: identity.issues || [],

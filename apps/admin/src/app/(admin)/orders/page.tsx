@@ -43,19 +43,21 @@ const ORDER_TABS: { key: AdminOrderTab; label: string }[] = [
   { key: "paying", label: "در انتظار پرداخت" },
   { key: "inprogress", label: "در حال انجام" },
   { key: "completed", label: "تکمیل شده" },
+  { key: "shipped", label: "ارسال شده" },
   { key: "cancelled", label: "لغو شده یا ناموفق" },
   { key: "manual", label: "سفارش‌های دستی" },
 ];
 
-// Fulfilment transitions only. Cancel is a separate bulk action that hits
+// Fulfilment transitions only, in fulfilment order: «تکمیل شده» (Done) first,
+// then «ارسال شده» (Shipment). Cancel is a separate bulk action that hits
 // `/admin/cancel` (refund/restock) instead of the status-transition endpoint.
 //
 // «در حال انجام» (Started) used to be offered here and could never succeed:
 // nothing in the backend's transition chain leads *to* Started — an order gets
 // there by being paid for. Only the two reachable steps are listed.
 const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
-  { status: "Shipment", label: "ارسال شده" },
   { status: "Done", label: "تکمیل شده" },
+  { status: "Shipment", label: "ارسال شده" },
 ];
 
 export default function OrdersPage() {
@@ -233,6 +235,11 @@ export default function OrdersPage() {
           "status-",
           "",
         ) as OrderLifecycleStatus;
+        // translateOrderStatus("Done") renders «تحویل داده شده», which is not what
+        // the operator just clicked. Report back the menu's own wording.
+        const statusLabel =
+          BULK_STATUS_OPTIONS.find((option) => option.status === statusKey)?.label ??
+          translateOrderStatus(statusKey);
 
         // Two reasons an order in the selection cannot move, both known before
         // sending anything:
@@ -247,7 +254,10 @@ export default function OrdersPage() {
         const skipped: { row: Order; reason: string }[] = [];
         const eligible: Order[] = [];
         for (const row of selectedRows) {
-          if (row.attributes.reserveIsHeld) {
+          // The reserve window only blocks shipping, so it must not skip
+          // «تکمیل شده». Scoped to match the server, which refuses
+          // RESERVE_HOLD_ACTIVE for `Shipment` alone.
+          if (row.attributes.reserveIsHeld && statusKey === "Shipment") {
             skipped.push({ row, reason: "در مهلت رزرو" });
             continue;
           }
@@ -265,7 +275,7 @@ export default function OrdersPage() {
         if (eligible.length === 0) {
           const reasons = [...new Set(skipped.map((entry) => entry.reason))];
           toast.error(
-            `هیچ سفارشی قابل تغییر به «${translateOrderStatus(statusKey)}» نبود. ${reasons.join("؛ ")}`,
+            `هیچ سفارشی قابل تغییر به «${statusLabel}» نبود. ${reasons.join("؛ ")}`,
           );
           return;
         }
@@ -284,7 +294,7 @@ export default function OrdersPage() {
 
         if (succeeded > 0) {
           toast.success(
-            `${succeeded} سفارش به وضعیت «${translateOrderStatus(statusKey)}» منتقل شد.`,
+            `${succeeded} سفارش به وضعیت «${statusLabel}» منتقل شد.`,
           );
         }
         if (skipped.length > 0) {

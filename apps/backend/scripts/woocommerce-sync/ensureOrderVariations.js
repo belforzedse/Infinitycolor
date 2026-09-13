@@ -9,16 +9,35 @@
 
 const CatalogT = require("../woocommerce-importer/catalog/lib/transforms");
 const CatalogG = require("../woocommerce-importer/catalog/lib/genericAttributes");
+const { classifyOrderLine, ORDER_LINE_ORPHAN } = require("../woocommerce-importer/migration-v2/lib/orderLines");
 
+/**
+ * Catalog references worth preparing. Orphan lines (no product and no
+ * variation reference — a product deleted after the sale) are skipped
+ * explicitly: there is no product 0 to fetch and no parent to report missing.
+ * `lineRefs(order).orphanLineIds` lists what was skipped so the caller can
+ * count it without re-classifying.
+ */
 function lineRefs(order) {
   const lines = Array.isArray(order?.line_items) ? order.line_items : [];
-  return lines.map((line) => {
-    const productSourceId = String(line.product_id || "");
-    const variationSourceId = String(
-      Number(line.variation_id) > 0 ? line.variation_id : line.product_id,
-    );
-    return { productSourceId, variationSourceId, lineId: String(line.id || "") };
-  }).filter((ref) => /^\d+$/.test(ref.productSourceId) && /^\d+$/.test(ref.variationSourceId));
+  const refs = [];
+  const orphanLineIds = [];
+  for (const line of lines) {
+    const reference = classifyOrderLine(line);
+    const lineId = String(line.id || "");
+    if (reference.kind === ORDER_LINE_ORPHAN) {
+      orphanLineIds.push(lineId);
+      continue;
+    }
+    if (!reference.productSourceId) continue; // variation without a parent id: nothing to prepare
+    refs.push({
+      productSourceId: reference.productSourceId,
+      variationSourceId: reference.variationSourceId,
+      lineId,
+    });
+  }
+  Object.defineProperty(refs, "orphanLineIds", { value: orphanLineIds, enumerable: false });
+  return refs;
 }
 
 /**
@@ -34,7 +53,7 @@ function lineRefs(order) {
  *   across a full order run. A miss still falls back to findByExternalId,
  *   because the index is a snapshot and another worker may have created the
  *   row since; anything this function creates is written back into it.
- * @returns {Promise<{ ensured: string[], present: string[], failed: Array<{ variationSourceId: string, error: string }> }>}
+ * @returns {Promise<{ ensured: string[], present: string[], failed: Array<{ variationSourceId: string, error: string }>, orphanSkipped: string[] }>}
  */
 async function ensureOrderReferencedVariations({
   source,
@@ -48,8 +67,10 @@ async function ensureOrderReferencedVariations({
   const present = [];
   const failed = [];
   const seen = new Set();
+  const refs = lineRefs(order);
+  const orphanSkipped = refs.orphanLineIds || [];
 
-  for (const ref of lineRefs(order)) {
+  for (const ref of refs) {
     if (seen.has(ref.variationSourceId)) continue;
     seen.add(ref.variationSourceId);
     try {
@@ -167,7 +188,7 @@ async function ensureOrderReferencedVariations({
     }
   }
 
-  return { ensured, present, failed };
+  return { ensured, present, failed, orphanSkipped };
 }
 
 module.exports = {

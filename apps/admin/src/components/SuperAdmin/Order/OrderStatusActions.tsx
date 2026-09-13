@@ -13,7 +13,7 @@ import {
   type OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
 import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTranslations";
-import { describeOrderTransitionError } from "@/utils/orderTransition";
+import { canTransitionOrder, describeOrderTransitionError } from "@/utils/orderTransition";
 import { PersianOrderStatus } from "@/constants/enums";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
 
@@ -29,12 +29,13 @@ type PendingAction =
   | { kind: "cancel" }
   | null;
 
-// Quick status transitions offered as prominent buttons. Each targets a single
-// backend Status; the bucket labels match the storefront categories.
+// Quick status transitions offered as prominent buttons, listed in fulfilment
+// order: «تکمیل شده» first, then «ارسال». Each targets a single backend Status;
+// the bucket labels match the storefront categories.
 const STATUS_ACTIONS: { status: OrderLifecycleStatus; label: string; bucket: PersianOrderStatus }[] =
   [
-    { status: "Shipment", label: "تحویل به ارسال", bucket: PersianOrderStatus.INPROGRESS },
-    { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.DELIVERED },
+    { status: "Done", label: "تکمیل شده", bucket: PersianOrderStatus.INPROGRESS },
+    { status: "Shipment", label: "تحویل به ارسال", bucket: PersianOrderStatus.DELIVERED },
   ];
 
 export default function OrderStatusActions({
@@ -184,9 +185,9 @@ export default function OrderStatusActions({
       <div className="flex flex-wrap gap-3">
         {canChangeStatus && STATUS_ACTIONS.map((action) => {
           const isCurrent = order.orderStatus === action.status;
-          const isAllowed =
-            (order.orderStatus === "Started" && action.status === "Shipment") ||
-            (order.orderStatus === "Shipment" && action.status === "Done");
+          // One rule, shared with the bulk path and mirroring the backend, instead
+          // of a third hardcoded copy of the chain.
+          const isAllowed = !isCurrent && canTransitionOrder(order.orderStatus, action.status);
           const blockedByReserve = isReserveHeld && action.status === "Shipment";
           return (
             <button

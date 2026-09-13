@@ -110,7 +110,10 @@ class Destination {
     if (!response.ok || !Array.isArray(payload) || !payload[0]?.id) {
       throw new Error(`BLOG_MEDIA_UPLOAD_${response.status}`);
     }
-    return { id: Number(payload[0].id), bytes: bytes.byteLength };
+    // `url` is the provider-relative "/uploads/…" path. Callers that embed the
+    // file in content need it; it must never be turned back into an absolute
+    // host, which is how 19 posts ended up pointing at the migration container.
+    return { id: Number(payload[0].id), url: String(payload[0].url || ""), bytes: bytes.byteLength };
   }
 
   metrics() { return this.http.metrics; }

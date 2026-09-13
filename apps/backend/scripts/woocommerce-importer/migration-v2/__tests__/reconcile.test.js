@@ -203,3 +203,102 @@ test("order reconciliation accepts Strapi null relation wrappers and verifies co
     ledger.release();
   }
 });
+
+test("order reconciliation accepts an orphan line with no catalog relation and checks its snapshot", async () => {
+  const sourceOrder = {
+    id: 45,
+    customer_id: 50,
+    date_created_gmt: "2026-01-02T03:04:05",
+    status: "processing",
+    total: "1000",
+    shipping_total: "0",
+    payment_method: "zarinpal",
+    line_items: [{ id: 9, product_id: 0, variation_id: 0, quantity: 2, total: "1000", name: "کالای حذف‌شده" }],
+  };
+  const source = {
+    async getOrder() { return sourceOrder; },
+    metrics() { return {}; },
+  };
+  const orderItem = (overrides) => ({
+    attributes: {
+      createdAt: "2026-01-02T03:04:05.000Z",
+      updatedAt: "2026-01-02T03:04:05.000Z",
+      external_id: "line_item_9",
+      Count: 2,
+      PerAmount: "500",
+      ProductTitle: "کالای حذف‌شده",
+      ProductSKU: "WC-LINE-9",
+      product_variation: { data: null },
+      ...overrides,
+    },
+  });
+  const destinationWith = (item) => ({
+    async loadSnapshot() { return []; },
+    async getContent() {
+      return {
+        data: [{
+          attributes: {
+            createdAt: "2026-01-02T03:04:05.000Z",
+            updatedAt: "2026-01-02T03:04:05.000Z",
+            Status: "Started",
+            Date: "2026-01-02T03:04:05.000Z",
+            ShippingCost: 0,
+            PaymentGateway: "ZarinPal",
+            delivery_address: { data: null },
+            Description: null,
+            Note: null,
+            contract: { data: { attributes: {
+              Status: "Confirmed",
+              Type: "Cash",
+              TaxPercent: 0,
+              Amount: "1000",
+              createdAt: "2026-01-02T03:04:05.000Z",
+              updatedAt: "2026-01-02T03:04:05.000Z",
+            } } },
+            user: { data: { attributes: { external_source: "wordpress", external_id: "50" } } },
+            order_items: { data: [item] },
+          },
+        }],
+      };
+    },
+    metrics() { return {}; },
+  });
+  const run = async (item) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-reconcile-orphan-"));
+    const ledger = new RunLedger(stateDir, "reconcile", "reconcile-orphan").start();
+    try {
+      await runReconcile({
+        source,
+        destination: destinationWith(item),
+        ledger,
+        pilot: {
+          runId: "pilot",
+          pilotSelection: { productIds: [], userIds: [], walletIds: [], orders: [{ sourceId: "45" }] },
+        },
+        dryRun: { runId: "dry-run", candidates: { blogPosts: [] } },
+      });
+      return ledger.summary;
+    } finally {
+      ledger.release();
+    }
+  };
+
+  const clean = await run(orderItem());
+  assert.equal(clean.entities.orders.verified, 1);
+  assert.equal(clean.failures.length, 0);
+
+  // A relation invented for a line the source has no reference for is a defect,
+  // not a repair — reconciliation must say so.
+  const invented = await run(orderItem({ product_variation: { data: { attributes: { external_id: "4" } } } }));
+  assert.ok(
+    invented.failures.some((failure) => failure.code === "ORDER_ITEM_ORPHAN_HAS_CATALOG_RELATION"),
+    JSON.stringify(invented.failures),
+  );
+
+  // The snapshot is all that is left of the sale, so a wrong SKU is a mismatch.
+  const wrongSku = await run(orderItem({ ProductSKU: "WC-4" }));
+  assert.ok(
+    wrongSku.failures.some((failure) => failure.code === "ORDER_ITEM_SKU_MISMATCH"),
+    JSON.stringify(wrongSku.failures),
+  );
+});

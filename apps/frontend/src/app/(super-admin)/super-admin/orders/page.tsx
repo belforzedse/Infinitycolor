@@ -25,9 +25,10 @@ const ORDER_TABS: { key: string; label: string; filter: string }[] = [
     key: "inprogress",
     label: "در حال انجام",
     filter:
-      "&filters[Status][$in][0]=Paying&filters[Status][$in][1]=Started&filters[Status][$in][2]=Shipment",
+      "&filters[Status][$in][0]=Paying&filters[Status][$in][1]=Started",
   },
   { key: "completed", label: "تکمیل شده", filter: "&filters[Status][$eq]=Done" },
+  { key: "shipped", label: "ارسال شده", filter: "&filters[Status][$eq]=Shipment" },
   {
     key: "cancelled",
     label: "لغو شده یا ناموفق",
@@ -36,10 +37,11 @@ const ORDER_TABS: { key: string; label: string; filter: string }[] = [
   { key: "manual", label: "سفارش‌های دستی", filter: "&filters[Type][$eq]=Manual" },
 ];
 
-// Bulk status changes offered on the orders list, using the 4-bucket labels.
+// Bulk status changes offered on the orders list, in fulfilment order:
+// «تکمیل شده» (Done) then «ارسال شده» (Shipment).
 const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
-  { status: "Started", label: "در حال انجام" },
   { status: "Done", label: "تکمیل شده" },
+  { status: "Shipment", label: "ارسال شده" },
   { status: "Cancelled", label: "لغو شده یا ناموفق" },
 ];
 

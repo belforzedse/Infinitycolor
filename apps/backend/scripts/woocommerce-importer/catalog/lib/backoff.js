@@ -94,9 +94,30 @@ function isRetryableError(error) {
   return Boolean(error.request) || error.code === undefined;
 }
 
+/**
+ * Narrower than `isRetryableError`: is this failure evidence the *source is
+ * unreachable*, as opposed to reachable but unhappy?
+ *
+ * A 429 or a 5xx means Woo answered — retrying is right, but parking the whole
+ * run behind a connectivity gate is not. Only a request that never got an HTTP
+ * response, and failed with a network code we recognise, counts. A bare error
+ * with no code is excluded for the same reason `isRetryableNetworkError` in
+ * migration-v2 excludes it: far more likely a malformed URL from our own caller
+ * than a blip.
+ *
+ * @param {object} error axios-style error ({ code, response, request })
+ * @returns {boolean}
+ */
+function isTransportError(error) {
+  if (!error) return false;
+  if (error.response) return false;
+  return Boolean(error.code && RETRYABLE_NETWORK_CODES.has(error.code));
+}
+
 module.exports = {
   computeBackoffDelay,
   parseRetryAfter,
   isRetryableError,
+  isTransportError,
   RETRYABLE_NETWORK_CODES,
 };

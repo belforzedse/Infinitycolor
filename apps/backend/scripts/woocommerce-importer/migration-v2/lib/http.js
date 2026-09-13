@@ -57,22 +57,64 @@ function isRetryableNetworkError(error) {
   return false;
 }
 
+/**
+ * Narrower than `isRetryableNetworkError`: evidence the source is *unreachable*,
+ * not merely unhappy. A 429 or 5xx means Woo answered — retry it, but do not
+ * park the whole campaign behind a connectivity hold. An `AbortError` is our own
+ * timeout firing, which is exactly what a dead source looks like from here.
+ */
+function isSourceDownError(error) {
+  if (!error) return false;
+  if (typeof error.status === "number") return false;
+  return error.name === "AbortError" || isRetryableNetworkError(error);
+}
+
 class JsonHttp {
   // retries=6 with the capped backoff below is ~30s of budget. The 4 it used to
   // be gave ~7.5s, which is shorter than an ordinary DNS or upstream-restart
   // blip and is what made the campaign crash survivable-in-principle but not in
   // practice. Retrying writes is safe and intentional: the importer's writes are
   // idempotent upserts keyed on `external_id`.
-  constructor({ baseUrl, headers, sourceReadOnly = false, retries = 6, timeoutMs = 30_000 }) {
+  //
+  // `sourceGate`, when given, turns an exhausted retry budget against an
+  // unreachable source into a hold rather than a throw — see
+  // ./sourceGate.js. It is honoured only when `sourceReadOnly` is set: this
+  // class is shared by three source readers and the destination writer, and a
+  // Strapi outage must still fail fast instead of parking the campaign.
+  constructor({
+    baseUrl, headers, sourceReadOnly = false, retries = 6, timeoutMs = 30_000,
+    sourceGate = null, maxGateHolds = 3,
+  }) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.headers = { ...headers };
     this.sourceReadOnly = sourceReadOnly;
     this.retries = retries;
     this.timeoutMs = timeoutMs;
-    this.metrics = { requests: 0, retries: 0, totalMs: 0, slowestMs: 0, failures: 0 };
+    this.sourceGate = sourceReadOnly ? sourceGate : null;
+    this.maxGateHolds = maxGateHolds;
+    this.metrics = { requests: 0, retries: 0, totalMs: 0, slowestMs: 0, failures: 0, gateHolds: 0 };
   }
 
-  async request(method, pathname, { query, body, headers } = {}) {
+  async request(method, pathname, options = {}) {
+    let gateHolds = 0;
+    for (;;) {
+      try {
+        return await this.attemptWithRetries(method, pathname, options);
+      } catch (error) {
+        if (this.sourceGate && gateHolds < this.maxGateHolds && isSourceDownError(error)) {
+          gateHolds += 1;
+          this.metrics.gateHolds += 1;
+          await this.sourceGate.holdUntilHealthy({
+            reason: `${String(method).toUpperCase()} ${pathname}: ${error.cause?.code || error.name || error.message}`,
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
+  async attemptWithRetries(method, pathname, { query, body, headers } = {}) {
     const normalizedMethod = String(method).toUpperCase();
     if (this.sourceReadOnly && !["GET", "HEAD", "OPTIONS"].includes(normalizedMethod)) {
       throw new Error(`SOURCE_WRITE_BLOCKED:${normalizedMethod}`);
@@ -144,4 +186,4 @@ class JsonHttp {
   put(pathname, body, headers) { return this.request("PUT", pathname, { body, headers }); }
 }
 
-module.exports = { JsonHttp, isRetryableNetworkError, RETRYABLE_NETWORK_CODES };
+module.exports = { JsonHttp, isRetryableNetworkError, isSourceDownError, RETRYABLE_NETWORK_CODES };

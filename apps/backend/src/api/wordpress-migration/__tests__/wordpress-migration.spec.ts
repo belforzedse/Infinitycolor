@@ -505,6 +505,209 @@ describe("WordPress migration write service", () => {
     expect(itemQuery.create.mock.calls[1][0].data.product_variation).toBeNull();
   });
 
+  test("stores a line whose WooCommerce product was deleted as a snapshot with no catalog relation", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      create: jest.fn().mockResolvedValue({ id: 301 }),
+      delete: jest.fn(),
+    };
+    const variationQuery = { findMany: jest.fn().mockResolvedValue([{ id: 401 }]) };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid: string) => {
+          const queries: Record<string, any> = {
+            "api::order.order": orderQuery,
+            "api::contract.contract": contractQuery,
+            "api::order-item.order-item": itemQuery,
+            "api::product-variation.product-variation": variationQuery,
+            "api::shipping-province.shipping-province": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-city.shipping-city": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::local-user-address.local-user-address": { create: jest.fn() },
+          };
+          return queries[uid];
+        }),
+      },
+    };
+
+    const result = await upsertOrder(strapiMock, {
+      sourceId: "1269185",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "ZarinPal",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "2000",
+      shippingToman: "0",
+      items: [
+        {
+          sourceId: "1",
+          catalogReference: "catalog",
+          variationSourceId: "4",
+          count: 1,
+          unitPriceToman: "1000",
+          title: "still sold",
+          sku: "A",
+        },
+        {
+          sourceId: "2",
+          catalogReference: "orphan",
+          variationSourceId: null,
+          count: 1,
+          unitPriceToman: "1000",
+          title: "کالای حذف\u200cشده",
+          sku: "WC-LINE-2",
+        },
+      ],
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      mode: "created",
+      itemsCreated: 2,
+      itemsOrphaned: 1,
+      itemsUnresolved: 0,
+      itemIssues: ["ORDER_ITEM_CATALOG_REFERENCE_MISSING:2"],
+    }));
+    // The orphan line is a snapshot: full sale detail, no invented relation.
+    const orphanData = itemQuery.create.mock.calls[1][0].data;
+    expect(orphanData.product_variation).toBeNull();
+    expect(orphanData.ProductTitle).toBe("کالای حذف\u200cشده");
+    expect(orphanData.ProductSKU).toBe("WC-LINE-2");
+    expect(orphanData.PerAmount).toBe("1000");
+    expect(orphanData.Count).toBe(1);
+    // No catalog lookup is attempted for it — one call, for the catalog line.
+    expect(variationQuery.findMany).toHaveBeenCalledTimes(1);
+    // An imported order never moves stock.
+    expect(strapiMock.db.query).not.toHaveBeenCalledWith("api::product-stock.product-stock");
+  });
+
+  test("re-importing an order with an orphan line rewrites the same line and creates no duplicate", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 101 }]),
+      update: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 201 }]),
+      update: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn()
+        // The existing orphan line, then the stale-item sweep.
+        .mockResolvedValueOnce([{ id: 301, external_id: "line_item_2" }])
+        .mockResolvedValueOnce([{ id: 301, external_id: "line_item_2" }]),
+      update: jest.fn().mockResolvedValue({ id: 301 }),
+      create: jest.fn(),
+      delete: jest.fn(),
+    };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid: string) => {
+          const queries: Record<string, any> = {
+            "api::order.order": orderQuery,
+            "api::contract.contract": contractQuery,
+            "api::order-item.order-item": itemQuery,
+            "api::product-variation.product-variation": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-province.shipping-province": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-city.shipping-city": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::local-user-address.local-user-address": { create: jest.fn() },
+          };
+          return queries[uid];
+        }),
+      },
+    };
+
+    const payload = {
+      sourceId: "1269185",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "ZarinPal",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "1000",
+      shippingToman: "0",
+      items: [{
+        sourceId: "2",
+        catalogReference: "orphan",
+        variationSourceId: null,
+        count: 1,
+        unitPriceToman: "1000",
+        title: "کالای حذف\u200cشده",
+        sku: "WC-LINE-2",
+      }],
+    };
+
+    const result = await upsertOrder(strapiMock, payload);
+    expect(result).toEqual(expect.objectContaining({
+      mode: "updated",
+      itemsCreated: 0,
+      itemsUpdated: 1,
+      itemsDeleted: 0,
+      itemsOrphaned: 1,
+    }));
+    expect(itemQuery.create).not.toHaveBeenCalled();
+    expect(itemQuery.delete).not.toHaveBeenCalled();
+    expect(itemQuery.update.mock.calls[0][0].data.product_variation).toBeNull();
+    expect(itemQuery.update.mock.calls[0][0].data.PerAmount).toBe("1000");
+  });
+
+  test("rejects an orphan marker that still carries a catalog reference", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid: string) => {
+          const queries: Record<string, any> = {
+            "api::order.order": { findMany: jest.fn().mockResolvedValue([]), create: jest.fn().mockResolvedValue({ id: 101 }) },
+            "api::contract.contract": { findMany: jest.fn().mockResolvedValue([]), create: jest.fn().mockResolvedValue({ id: 201 }) },
+            "api::order-item.order-item": { findMany: jest.fn().mockResolvedValue([]), create: jest.fn(), delete: jest.fn() },
+            "api::product-variation.product-variation": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-province.shipping-province": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::shipping-city.shipping-city": { findMany: jest.fn().mockResolvedValue([]) },
+            "api::local-user-address.local-user-address": { create: jest.fn() },
+          };
+          return queries[uid];
+        }),
+      },
+    };
+
+    await expect(upsertOrder(strapiMock, {
+      sourceId: "1269185",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "ZarinPal",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "1000",
+      shippingToman: "0",
+      items: [{
+        sourceId: "2",
+        catalogReference: "orphan",
+        variationSourceId: "4",
+        count: 1,
+        unitPriceToman: "1000",
+        title: "inconsistent",
+        sku: "X",
+      }],
+    })).rejects.toThrow("ORDER_ITEM_ORPHAN_HAS_CATALOG_REFERENCE");
+  });
+
   test("keeps an unowned order when registered identity fails and billing phone is unusable", async () => {
     const orderQuery = {
       findMany: jest.fn().mockResolvedValue([]),

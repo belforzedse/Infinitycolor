@@ -107,6 +107,10 @@ export default function PDPHeroInfoAction({
     productId,
   });
 
+  // Snapshot used to cap cart controls. Cart mutations still verify current
+  // stock on the server in case inventory changes after this page was loaded.
+  const availableStock = currentVariation ? getAvailableStockCount(currentVariation) : 0;
+
   // Initialize add to cart hook
   const { quantity, setQuantity, isAdding, isInCart, isCartReady, addToCart } = useAddToCart({
     productId,
@@ -121,10 +125,8 @@ export default function PDPHeroInfoAction({
     model,
     variationId,
     productSlug,
+    availableStock,
   });
-
-  // Get available stock count for current variation
-  const availableStock = currentVariation ? getAvailableStockCount(currentVariation) : 0;
 
   // Validate if selected quantity is available
   /**

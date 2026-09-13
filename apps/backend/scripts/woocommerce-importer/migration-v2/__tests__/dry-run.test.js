@@ -140,11 +140,30 @@ test("bounded order sampling separates dependency exclusions from malformed rows
             date_created: "2026-01-01T00:00:00",
             total: "1",
             shipping_total: "0",
-            line_items: [{ id: 2, quantity: 1, product_id: 0, price: "1" }],
+            line_items: [{ id: 2, quantity: 1, product_id: 301, price: "1" }],
+          },
+          {
+            id: 12,
+            customer_id: 0,
+            date_created: "2026-01-01T00:00:00",
+            total: "1",
+            shipping_total: "0",
+            // A line with no id of its own is genuinely malformed.
+            line_items: [{ id: 0, quantity: 1, product_id: 302, price: "1" }],
+          },
+          {
+            id: 13,
+            customer_id: 0,
+            date_created: "2026-01-01T00:00:00",
+            total: "1",
+            shipping_total: "0",
+            // A sale whose product was deleted afterwards: no catalog
+            // dependency to sample, so neither excluded nor malformed.
+            line_items: [{ id: 4, quantity: 1, product_id: 0, variation_id: 0, total: "1" }],
           },
         ],
       };
-      yield { page: 2, rows: [{ id: 12 }] };
+      yield { page: 2, rows: [{ id: 14 }] };
     },
   };
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-order-sample-"));
@@ -163,19 +182,23 @@ test("bounded order sampling separates dependency exclusions from malformed rows
         phoneOwners: new Map(),
       },
       {
-        eligibleVariationIds: new Set(),
-        sampledVariationIds: new Set(),
+        // Order 10's product is inside the sample, so its exclusion can only be
+        // about the customer — that is what "separates" means here.
+        eligibleVariationIds: new Set(["300"]),
+        sampledVariationIds: new Set(["300"]),
         pilotVariationIds: new Set(),
       },
       ledger,
-      2,
+      4,
     );
-    assert.equal(ledger.summary.entities.orders.source, 2);
-    assert.equal(ledger.summary.entities.orders.skipped, 1);
+    assert.equal(ledger.summary.entities.orders.source, 4);
+    assert.equal(ledger.summary.entities.orders.skipped, 2);
     assert.equal(ledger.summary.entities.orders.failed, 1);
     assert.equal(ledger.summary.sample.exclusions.orderCustomerOutsideSample, 1);
     assert.equal(ledger.summary.sample.exclusions.orderProductOutsideSample, 1);
-    assert.equal(ledger.summary.failures[0].code, "ORDER_ITEM_PRODUCT_REFERENCE_INVALID");
+    assert.equal(ledger.summary.failures[0].code, "ORDER_ITEM_SOURCE_ID_INVALID");
+    // The order whose product is gone is still importable.
+    assert.equal(ledger.summary.entities.orders.eligible, 1);
   } finally {
     ledger.release();
   }

@@ -167,6 +167,11 @@ function getSyncConfig(env = process.env) {
       password: required(env, "DATABASE_PASSWORD"),
       ssl: env.DATABASE_SSL === "true" ? { rejectUnauthorized: env.DATABASE_SSL_REJECT_UNAUTHORIZED !== "false" } : false,
     },
+    // How long any Woo-bound stage will hold, waiting for an unreachable source
+    // to answer again, before the campaign gives up with SOURCE_UNAVAILABLE.
+    // A 2026-09-13 cutover died because a ~4 minute Woo outage exhausted the
+    // preflight retry budget outright. See migration-v2/lib/sourceGate.js.
+    sourceHoldMaxMs: Number(env.WOOCOMMERCE_SYNC_SOURCE_HOLD_MAX_MS || 60 * 60 * 1000),
     source: {
       sourceBaseUrl: String(env.WORDPRESS_SOURCE_URL || "https://infinitycolor.co").replace(/\/$/, ""),
       wpUsername: required(env, "WP_USERNAME"),

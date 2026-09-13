@@ -14,6 +14,9 @@ interface CartDrawerItemProps {
 
 export default function CartDrawerItem({ item }: CartDrawerItemProps) {
   const { updateQuantity, removeFromCart, isLoading } = useCart();
+  const isAtStockLimit =
+    typeof item.availableStock === "number" && item.quantity >= item.availableStock;
+  const isIncreaseDisabled = isLoading || isAtStockLimit;
 
   const handleIncrement = () => {
     if (isLoading) return;
@@ -57,13 +60,13 @@ export default function CartDrawerItem({ item }: CartDrawerItemProps) {
           {(item.color || item.size || item.model) && (
             <div className="mt-1 flex gap-2">
               {item.color && (
-                <span className="text-xs rounded-md bg-slate-50 px-2 py-1">{item.color}</span>
+                <span className="rounded-md bg-slate-50 px-2 py-1 text-xs">{item.color}</span>
               )}
               {item.size && (
-                <span className="text-xs rounded-md bg-slate-50 px-2 py-1">{item.size}</span>
+                <span className="rounded-md bg-slate-50 px-2 py-1 text-xs">{item.size}</span>
               )}
               {item.model && (
-                <span className="text-xs rounded-md bg-slate-50 px-2 py-1">{item.model}</span>
+                <span className="rounded-md bg-slate-50 px-2 py-1 text-xs">{item.model}</span>
               )}
             </div>
           )}
@@ -88,15 +91,16 @@ export default function CartDrawerItem({ item }: CartDrawerItemProps) {
         <div className="flex items-center gap-2">
           <button
             onClick={handleIncrement}
-            disabled={isLoading}
-            aria-disabled={isLoading}
+            disabled={isIncreaseDisabled}
+            aria-disabled={isIncreaseDisabled}
             aria-label="افزایش تعداد کالا"
+            title={isAtStockLimit ? "موجودی بیشتری در دسترس نیست" : undefined}
             className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-100 bg-white text-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <PlusIcon />
           </button>
 
-          <span className="text-sm w-6 text-center">{item.quantity}</span>
+          <span className="w-6 text-center text-sm">{item.quantity}</span>
 
           <button
             onClick={handleDecrement}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import HeroBannerSlider from "../HeroBannerSlider";
 import type { HeroSlideConfig } from "@/types/super-admin/heroSliderV3";
 import type { AdaptiveQualitySnapshot } from "@/lib/adaptive-quality";
@@ -122,5 +122,101 @@ describe("HeroBannerSlider adaptive gate", () => {
     expect(container.querySelector('a[href="/plp?hero=two"]')).toBeInTheDocument();
     await Promise.resolve();
     expect(container.querySelector('[data-aq-hero="enhanced"]')).not.toBeInTheDocument();
+  });
+});
+
+describe("HeroBannerSlider autoplay", () => {
+  const activeSlideHref = (container: HTMLElement) =>
+    container.querySelector("a[href^='/plp?hero=']")?.getAttribute("href");
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockHydrated = true;
+    mockQuality = {
+      enabled: true,
+      rendering: "standard",
+      media: "standard",
+      motion: "standard",
+      reducedTransparency: false,
+      reason: "default",
+      routeGeneration: 0,
+    };
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+  });
+
+  it("advances the standard hero every four seconds and loops past the last slide", () => {
+    const { container } = render(
+      <HeroBannerSlider slides={[slide("one"), slide("two"), slide("three")]} />,
+    );
+
+    expect(activeSlideHref(container)).toBe("/plp?hero=one");
+
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    expect(activeSlideHref(container)).toBe("/plp?hero=two");
+
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    expect(activeSlideHref(container)).toBe("/plp?hero=three");
+
+    // Looping back to the first slide, not stopping at the end.
+    act(() => {
+      jest.advanceTimersByTime(4000);
+    });
+    expect(activeSlideHref(container)).toBe("/plp?hero=one");
+  });
+
+  it("restarts the interval after a manual change instead of double-advancing", () => {
+    const { container } = render(
+      <HeroBannerSlider slides={[slide("one"), slide("two"), slide("three")]} />,
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Go to slide 3" }));
+    expect(activeSlideHref(container)).toBe("/plp?hero=three");
+
+    // The 1000ms left on the pre-click timer must not fire: were it still
+    // running, the slide would move again right after the click.
+    act(() => {
+      jest.advanceTimersByTime(3999);
+    });
+    expect(activeSlideHref(container)).toBe("/plp?hero=three");
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(activeSlideHref(container)).toBe("/plp?hero=one");
+  });
+
+  it("runs no autoplay timer for a single-slide hero", () => {
+    const single = render(<HeroBannerSlider slides={[slide("only")]} />);
+    const singleSlideTimers = jest.getTimerCount();
+    single.unmount();
+
+    const many = render(
+      <HeroBannerSlider slides={[slide("one"), slide("two")]} />,
+    );
+
+    // Measured as a difference rather than an absolute count: the environment
+    // keeps a timer of its own, and what matters is that a lone slide adds no
+    // interval on top of it.
+    expect(jest.getTimerCount()).toBe(singleSlideTimers + 1);
+    many.unmount();
+  });
+
+  it("clears its interval on unmount", () => {
+    const view = render(<HeroBannerSlider slides={[slide("one"), slide("two")]} />);
+
+    expect(jest.getTimerCount()).toBeGreaterThan(0);
+    view.unmount();
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

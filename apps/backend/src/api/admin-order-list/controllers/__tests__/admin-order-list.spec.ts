@@ -54,7 +54,9 @@ describe("bounded admin orders list", () => {
 
   it.each([
     ["paying", { Status: { $in: ["Paying"] } }],
-    ["inprogress", { Status: { $in: ["Started", "Shipment"] } }],
+    ["inprogress", { Status: { $in: ["Started"] } }],
+    ["completed", { Status: { $in: ["Done"] } }],
+    ["shipped", { Status: { $in: ["Shipment"] } }],
   ])("keeps the %s status tab in its own server-side bucket", async (tab, expected) => {
     const { findMany } = installStrapi();
 
@@ -70,6 +72,7 @@ describe("bounded admin orders list", () => {
       .mockResolvedValueOnce(2)
       .mockResolvedValueOnce(4)
       .mockResolvedValueOnce(5)
+      .mockResolvedValueOnce(6)
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(3);
     const ctx = createContext({
@@ -80,7 +83,7 @@ describe("bounded admin orders list", () => {
 
     await controller.counts(ctx);
 
-    expect(count).toHaveBeenCalledTimes(6);
+    expect(count).toHaveBeenCalledTimes(7);
     const baseConditions = [
       { Description: { $containsi: "vip" } },
       {
@@ -111,19 +114,22 @@ describe("bounded admin orders list", () => {
       Status: { $in: ["Paying"] },
     });
     expect(count.mock.calls[2][0].where.$and).toContainEqual({
-      Status: { $in: ["Started", "Shipment"] },
+      Status: { $in: ["Started"] },
     });
     expect(count.mock.calls[3][0].where.$and).toContainEqual({
       Status: { $in: ["Done"] },
     });
     expect(count.mock.calls[4][0].where.$and).toContainEqual({
+      Status: { $in: ["Shipment"] },
+    });
+    expect(count.mock.calls[5][0].where.$and).toContainEqual({
       Status: { $in: ["Returned", "Cancelled"] },
     });
-    expect(count.mock.calls[5][0].where.$and).toContainEqual({ Type: { $eq: "Manual" } });
+    expect(count.mock.calls[6][0].where.$and).toContainEqual({ Type: { $eq: "Manual" } });
     expect(count.mock.calls[3][0].where.$and).not.toContainEqual({
       Type: { $ne: "Manual" },
     });
-    expect(count.mock.calls[5][0].where.$and).not.toContainEqual({
+    expect(count.mock.calls[6][0].where.$and).not.toContainEqual({
       Status: expect.anything(),
     });
     expect(reserveCount).toHaveBeenCalledWith({
@@ -138,6 +144,7 @@ describe("bounded admin orders list", () => {
         paying: 2,
         inprogress: 4,
         completed: 5,
+        shipped: 6,
         cancelled: 1,
         manual: 3,
       },

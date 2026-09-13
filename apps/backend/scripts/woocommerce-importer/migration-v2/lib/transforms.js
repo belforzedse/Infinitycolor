@@ -1,6 +1,13 @@
 "use strict";
 
 const {
+  classifyOrderLine,
+  orphanLineSku,
+  ORDER_LINE_ORPHAN,
+  ORDER_LINE_CATALOG,
+} = require("./orderLines");
+
+const {
   wooSourceTimestamps,
   wordpressSourceTimestamps,
 } = require("../../utils/sourceTimestamps");
@@ -222,23 +229,54 @@ function orderPayload(order) {
   if (!/^\d+$/.test(sourceId) || sourceId === "0") throw new Error("ORDER_ID_INVALID");
   const date = new Date(order.date_created_gmt ? `${order.date_created_gmt}Z` : order.date_created);
   if (Number.isNaN(date.getTime())) throw new Error("ORDER_DATE_INVALID");
+  let orphanLineCount = 0;
   const items = (Array.isArray(order.line_items) ? order.line_items : []).map((line) => {
+    const lineId = String(line?.id ?? "");
+    if (!/^\d+$/.test(lineId) || lineId === "0") throw new Error("ORDER_ITEM_SOURCE_ID_INVALID");
     const count = Number(line.quantity);
     if (!Number.isSafeInteger(count) || count < 1) throw new Error("ORDER_ITEM_COUNT_INVALID");
-    const variationSourceId = String(Number(line.variation_id) > 0 ? line.variation_id : line.product_id);
-    if (!/^\d+$/.test(variationSourceId) || variationSourceId === "0") {
-      throw new Error("ORDER_ITEM_PRODUCT_REFERENCE_INVALID");
+    const reference = classifyOrderLine(line);
+    const unitPriceToman = lineUnitPriceToman(line, count);
+    const title = cleanText(line.name, 255) || "WooCommerce product";
+    if (reference.kind === ORDER_LINE_ORPHAN) {
+      // Historical sale whose product no longer exists in WooCommerce: keep the
+      // snapshot, never guess a catalog item. The destination stores it with a
+      // null catalog relation and a soft diagnostic.
+      orphanLineCount += 1;
+      return {
+        sourceId: lineId,
+        catalogReference: ORDER_LINE_ORPHAN,
+        variationSourceId: null,
+        count,
+        unitPriceToman,
+        title,
+        sku: cleanText(line.sku, 255) || orphanLineSku(lineId),
+      };
     }
+    const { variationSourceId } = reference;
     return {
-      sourceId: String(line.id),
+      sourceId: lineId,
+      catalogReference: ORDER_LINE_CATALOG,
       variationSourceId,
       count,
-      unitPriceToman: lineUnitPriceToman(line, count),
-      title: cleanText(line.name, 255) || "WooCommerce product",
+      unitPriceToman,
+      title,
       sku: cleanText(line.sku, 255) || `WC-${variationSourceId}`,
     };
   });
-  if (items.length === 0) throw new Error("ORDER_ITEMS_EMPTY");
+  if (items.length === 0) {
+    // A zero-line order with a zero total is an artifact (an emptied admin
+    // order), not a sale: exclude it terminally instead of retrying forever or
+    // fabricating an order. A zero-line order that still carries money is
+    // suspicious and fails closed under its own code.
+    if (wooMoneyToToman(order.total || 0) === "0") {
+      const excluded = new Error("ORDER_EMPTY_ZERO_TOTAL_EXCLUDED");
+      excluded.code = "ORDER_EMPTY_ZERO_TOTAL_EXCLUDED";
+      excluded.outcome = "excluded";
+      throw excluded;
+    }
+    throw new Error("ORDER_ITEMS_EMPTY_NONZERO_TOTAL");
+  }
   const shipping = Array.isArray(order.shipping_lines) ? order.shipping_lines[0] : null;
   const sourceTimestamps = wooSourceTimestamps(order);
   const gateway = paymentGateway(order.payment_method, order.payment_method_title);
@@ -274,6 +312,7 @@ function orderPayload(order) {
       sourceUpdatedAt: sourceTimestamps.updatedAt,
     } : {}),
     items,
+    orphanLineCount,
   };
 }
 
@@ -286,10 +325,20 @@ function seoValue(post, keys) {
   return "";
 }
 
-function blogPostPayload(post) {
+/**
+ * @param {object} post The post as `context=edit` returns it.
+ * @param {object} [options]
+ * @param {string} [options.content] Body already transformed by
+ *   `lib/blogContent.js` (carousels and promotional sections turned into the
+ *   storefront's markers). Omitted, the rendered body is stored as-is, which is
+ *   what every caller did before embedded blocks were understood.
+ */
+function blogPostPayload(post, options = {}) {
   const title = cleanText(rendered(post.title), 255);
   const slug = cleanText(post.slug, 150);
-  const content = rendered(post.content);
+  const content = typeof options.content === "string" && options.content.trim()
+    ? options.content
+    : rendered(post.content);
   if (!title || !slug || !content) throw new Error("BLOG_REQUIRED_FIELD_MISSING");
   const status = post.status === "publish" ? "Published" : post.status === "future" ? "Scheduled" : "Draft";
   const published = new Date(post.date_gmt ? `${post.date_gmt}Z` : post.date);

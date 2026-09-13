@@ -11,15 +11,20 @@
  * modules — re-importing the module would also re-import React and break its dispatcher.
  */
 import { renderHook, waitFor } from "@testing-library/react";
-import { getProductCategories } from "@/services/product/categories";
+import {
+  getCachedNavbarProductCategories,
+  getProductCategories,
+} from "@/services/product/categories";
 import { useProductCategories } from "../useProductCategories";
 
 jest.mock("@/services/product/categories", () => ({
+  getCachedNavbarProductCategories: jest.fn(),
   getProductCategories: jest.fn(),
   getNavbarProductCategories: jest.fn(),
 }));
 
 const mockedGetProductCategories = getProductCategories as jest.Mock;
+const mockedGetCachedNavbarProductCategories = getCachedNavbarProductCategories as jest.Mock;
 
 const category = (id: number, slug: string) => ({
   id,
@@ -124,6 +129,21 @@ describe("useProductCategories", () => {
     const { result } = renderHook(() => useProductCategories(options));
 
     expect(result.current.categories.map((c) => c.slug)).toEqual(["seed"]);
+    expect(mockedGetProductCategories).not.toHaveBeenCalled();
+  });
+
+  it("routes navbar reads through the shared storefront cache", async () => {
+    mockedGetCachedNavbarProductCategories.mockResolvedValue([category(12, "navbar")]);
+
+    const { result } = renderHook(() =>
+      useProductCategories({ navbarAssignedOnly: true, includeChildren: true }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.categories.map((item) => item.slug)).toEqual(["navbar"]);
+    expect(mockedGetCachedNavbarProductCategories).toHaveBeenCalledWith({
+      includeChildren: true,
+    });
     expect(mockedGetProductCategories).not.toHaveBeenCalled();
   });
 });

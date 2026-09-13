@@ -8,7 +8,7 @@ type QueuedRequest<T> = {
   id: string;
   executor: () => Promise<T>;
   resolve: (value: T) => void;
-  reject: (error: Error) => void;
+  reject: (error?: unknown) => void;
 };
 
 export class RequestQueue {
@@ -49,8 +49,10 @@ export class RequestQueue {
         const result = await request.executor();
         request.resolve(result);
       } catch (error) {
-        const err = error instanceof Error ? error : new Error(String(error));
-        request.reject(err);
+        // ApiClient rejects with a structured ApiError object. Preserve it so
+        // callers can distinguish stock, auth, and recovery failures instead
+        // of receiving the lossy string "[object Object]".
+        request.reject(error);
       }
     }
 

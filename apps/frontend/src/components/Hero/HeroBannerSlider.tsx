@@ -63,6 +63,8 @@ export default function HeroBannerSlider({
   return (
     <HeroStandardSlider
       slides={slides}
+      autoplayInterval={autoplayInterval}
+      autoplayEligibility={autoplayEligibility}
       activeIndex={activeIndex}
       onActiveIndexChange={setActiveIndex}
     />

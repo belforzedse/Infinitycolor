@@ -26,12 +26,12 @@ type CartItemRow = {
   product_variation: any;
 };
 
-const variationWithStock = (available: number) => ({
+const variationWithStock = (count: number, reservedCount = 0) => ({
   id: 900,
   Price: 1000,
   IsPublished: true,
   product: { id: 800, Title: "Test", SKU: "SKU-1", Status: "Active", removedAt: null },
-  product_stock: { id: 700, Count: available, reservedCount: 0 },
+  product_stock: { id: 700, Count: count, reservedCount },
 });
 
 function createCartWorld() {
@@ -88,18 +88,19 @@ function createCartWorld() {
       query: jest.fn((uid: string) => {
         if (uid === "api::cart-item.cart-item") {
           return {
-            findOne: jest.fn(async ({ where }: any) =>
-              items.find((item) => matches(item, where)) ?? null,
+            findOne: jest.fn(
+              async ({ where }: any) => items.find((item) => matches(item, where)) ?? null,
             ),
-            count: jest.fn(async ({ where }: any) =>
-              items.filter((item) => matches(item, where)).length,
+            count: jest.fn(
+              async ({ where }: any) => items.filter((item) => matches(item, where)).length,
             ),
           };
         }
         if (uid === "api::cart.cart") {
           return {
-            findOne: jest.fn(async ({ where }: any) =>
-              carts.find((cart) => Number(cart.user.id) === Number(where?.user)) ?? null,
+            findOne: jest.fn(
+              async ({ where }: any) =>
+                carts.find((cart) => Number(cart.user.id) === Number(where?.user)) ?? null,
             ),
           };
         }
@@ -196,6 +197,33 @@ describe("cart ownership", () => {
 
       expect(items.find((item) => item.id === 101)?.Count).toBe(4);
     });
+
+    it("returns a stable stock error with the latest available quantity", async () => {
+      const { strapi, updated } = createCartWorld();
+
+      await expect(updateCartItemOp(strapi, 101, 10, USER_A)).resolves.toEqual({
+        success: false,
+        message: "Insufficient stock",
+        errorCode: "CART_STOCK_EXCEEDED",
+        availableStock: 9,
+      });
+      expect(updated).toEqual([]);
+    });
+
+    it("exposes the stock error contract through the update endpoint", async () => {
+      const { strapi } = createCartWorld();
+      const ctx = actAs(USER_A, { request: { body: { cartItemId: 101, count: 10 } } });
+
+      await expect(updateItemHandler(strapi)(ctx)).rejects.toMatchObject({ status: 400 });
+      expect(ctx.badRequest).toHaveBeenCalledWith("Not enough stock", {
+        data: {
+          success: false,
+          error: "Not enough stock",
+          errorCode: "CART_STOCK_EXCEEDED",
+          availableStock: 9,
+        },
+      });
+    });
   });
 
   describe("explicit removal", () => {
@@ -259,6 +287,7 @@ describe("cart ownership", () => {
 
       expect(result.data.id).toBe(10);
       expect(result.data.cart_items.map((item: any) => item.id)).toEqual([101]);
+      expect(result.data.cart_items[0].availableStock).toBe(9);
     });
 
     it("rejects targeting another user via a client-supplied user id", async () => {

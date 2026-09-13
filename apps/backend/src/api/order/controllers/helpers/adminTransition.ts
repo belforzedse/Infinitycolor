@@ -5,9 +5,11 @@ import { requireCapability } from "../../../../utils/adminAuthorization";
 import { notifyOrderStatusSms } from "../../../../services/sms/notifications";
 import { isOrderHeldByReserve } from "../../../reserve-group/lib/reserve-group";
 
+// Fulfilment order is «تکمیل شده» then «ارسال»: an order is prepared/completed
+// first and handed to the courier second, so `Shipment` is the terminal step.
 const NEXT_STATUS: Record<string, string[]> = {
-  Started: ["Shipment"],
-  Shipment: ["Done"],
+  Started: ["Done"],
+  Done: ["Shipment"],
 };
 
 export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
@@ -94,14 +96,16 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
   if (Number.isFinite(customerId) && customerId > 0) {
     try {
       const activityService = strapi.service("api::user-activity.user-activity") as any;
+      // `Done` means the order is prepared, not delivered, so it no longer logs a
+      // delivery event. `Shipment` is the terminal step and keeps logOrderShipped;
+      // the order-log row written in the transaction above already records every
+      // transition, so `Done` needs no separate customer activity entry.
       if (nextStatus === "Shipment") {
         await activityService?.logOrderShipped?.(
           customerId,
           orderId,
           order.ShippingBarcode || undefined,
         );
-      } else if (nextStatus === "Done") {
-        await activityService?.logOrderDelivered?.(customerId, orderId);
       }
     } catch (error) {
       strapi.log.error("Failed to log customer order-transition activity", {

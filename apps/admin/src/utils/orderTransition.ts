@@ -6,21 +6,22 @@ import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
  * Order fulfilment is a strict chain, not a free choice of status.
  *
  * Mirrors `NEXT_STATUS` in
- * `apps/backend/src/api/order/controllers/helpers/adminTransition.ts:9-12`. The
+ * `apps/backend/src/api/order/controllers/helpers/adminTransition.ts`. The
  * server is authoritative — this copy exists so the admin can say *which*
  * statuses are reachable before sending a request that can only be refused, and
  * so a bulk action can skip the orders it would fail on rather than firing a
  * request per order and reporting one generic failure.
  *
- * Keep the two in sync. Nothing transitions *to* `Started`: an order arrives
- * there by being paid for, which is why offering it as a bulk action never
- * worked.
+ * Keep the two in sync. The order is «تکمیل شده» then «ارسال»: an order is
+ * prepared/completed first and handed to the courier second, so `Shipment` is
+ * the terminal step. Nothing transitions *to* `Started`: an order arrives there
+ * by being paid for, which is why offering it as a bulk action never worked.
  */
 export const ORDER_NEXT_STATUSES: Partial<
   Record<OrderLifecycleStatus, readonly OrderLifecycleStatus[]>
 > = {
-  Started: ["Shipment"],
-  Shipment: ["Done"],
+  Started: ["Done"],
+  Done: ["Shipment"],
 };
 
 export function canTransitionOrder(

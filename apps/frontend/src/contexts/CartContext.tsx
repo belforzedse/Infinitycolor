@@ -11,6 +11,7 @@ import { centralAuth, subscribeToAuthState } from "@/lib/central-auth";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
 import { isOnline } from "@/utils/offlineQueue";
 import { trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
+import { CART_STOCK_LIMIT_MESSAGE, isCartStockLimitError } from "@/utils/cartStock";
 
 export interface CartItem {
   id: string;
@@ -29,6 +30,8 @@ export interface CartItem {
   size?: string;
   model?: string;
   sku?: string;
+  /** Latest known server/PDP stock snapshot; mutations remain server-authoritative. */
+  availableStock?: number;
 }
 
 const cartLineMatches = (existing: CartItem, incoming: CartItem) => {
@@ -395,6 +398,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             size: variation.product_variation_size?.Title,
             model: variation.product_variation_model?.Title,
             sku: variation.SKU,
+            availableStock: parseNumericValue(item.availableStock),
           };
         })
         .filter((item) => item !== null);
@@ -519,6 +523,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             price: newItem.price,
             originalPrice: newItem.originalPrice ?? existingItem.originalPrice,
             discountPercentage: newItem.discountPercentage ?? existingItem.discountPercentage,
+            availableStock: newItem.availableStock ?? existingItem.availableStock,
           };
           itemWasAdded = true;
           return updatedItems;
@@ -556,10 +561,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         // Revert optimistic update on failure
         setCartItems(previousCartItems);
 
-        // Check for the specific "Not enough stock" error
-        if (error.message && error.message.includes("Not enough stock")) {
+        // Keep the cart synchronized when a snapshot lost a stock race.
+        if (isCartStockLimitError(error)) {
           hapticError();
-          notify.error("موجودی کالا به اندازه تعداد درخواستی شما نیست");
+          await fetchUserCart();
+          notify.error(CART_STOCK_LIMIT_MESSAGE);
         } else {
           hapticError();
           notify.error("افزودن کالا به سبد خرید با خطا مواجه شد");
@@ -581,6 +587,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             price: newItem.price,
             originalPrice: newItem.originalPrice ?? existingItem.originalPrice,
             discountPercentage: newItem.discountPercentage ?? existingItem.discountPercentage,
+            availableStock: newItem.availableStock ?? existingItem.availableStock,
           };
           return updatedItems;
         }
@@ -709,13 +716,18 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const item = cartItems.find((cartItem) => cartItem.id === id || cartItem.cartItemId === id);
+    if (!item) return;
+    if (typeof item.availableStock === "number" && quantity > item.availableStock) {
+      notify.error(CART_STOCK_LIMIT_MESSAGE);
+      return;
+    }
+
     if (isLoggedIn) {
       // Optimistic update: update quantity immediately
       const previousCartItems = cartItems;
 
       // Find cart item ID from our local state that matches the item ID
-      const item = cartItems.find((item) => item.id === id || item.cartItemId === id);
-      if (!item) return;
       if (!isOnline()) {
         notify.error("برای تغییر سبد حساب کاربری، اتصال اینترنت را برقرار کنید");
         return;
@@ -758,9 +770,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         // Revert optimistic update on failure
         setCartItems(previousCartItems);
 
-        // Check for the specific "Not enough stock" error
-        if (error.message && error.message.includes("Not enough stock")) {
-          notify.error("موجودی کالا به اندازه تعداد درخواستی شما نیست");
+        // Keep the cart synchronized when a snapshot lost a stock race.
+        if (isCartStockLimitError(error)) {
+          await fetchUserCart();
+          notify.error(CART_STOCK_LIMIT_MESSAGE);
         } else {
           notify.error("بروزرسانی سبد خرید با خطا مواجه شد");
         }
@@ -770,14 +783,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     } else {
       // Local storage implementation (no queue needed for guest users)
       setCartItems((prev) => prev.map((item) => (item.id === id ? { ...item, quantity } : item)));
-      const existing = cartItems.find((item) => item.id === id);
-      if (existing) {
+      if (item) {
         trackAnalyticsEvent({
           category: "ecommerce",
           action: "update_quantity",
           properties: {
-            product_id: existing.productId,
-            ...(existing.variationId ? { variant_id: existing.variationId } : {}),
+            product_id: item.productId,
+            ...(item.variationId ? { variant_id: item.variationId } : {}),
             quantity,
           },
         });

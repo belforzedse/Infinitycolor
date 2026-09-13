@@ -246,12 +246,43 @@ export function SuperAdminTable<TData, TValue>({
   );
 
   /**
-   * Runs a bulk action and, unlike before, waits for it.
+   * Keeps the selection to rows that actually exist in the current result set.
    *
-   * The returned promise used to be discarded, which is why there was no busy
-   * state, no way to surface a thrown error, and nothing to hang "clear the
-   * selection once it worked" off. The selection survives a failure on purpose,
-   * so the operator can retry without re-picking every row.
+   * Selection is scoped to what is on screen — `toggleAllRows` only ever selects
+   * the current page, and `executeBulkAction` resolves rows out of `tableData` —
+   * but the ids used to survive a page or filter change, so the header checkbox
+   * and the "N selected" badge could both describe rows nobody could see and no
+   * action would touch. Pruning here also covers the case that matters after a
+   * bulk action: rows whose new status drops them out of the active tab go away,
+   * while every surviving row stays checked.
+   *
+   * `runFetch` only assigns `tableData` on success, leaving the previous array in
+   * place while loading and on error, so there is no transient empty state to
+   * prune against. The size check keeps the Set identity stable when nothing was
+   * removed, so this cannot loop or churn on every refetch.
+   */
+  useEffect(() => {
+    if (!hasLoadedOnce || !tableData) return;
+    setSelectedIds((current) => {
+      if (current.size === 0) return current;
+      const visible = new Set(tableData.map((row) => resolveRowKey(row)));
+      const next = new Set<string>();
+      current.forEach((id) => {
+        if (visible.has(id)) next.add(id);
+      });
+      return next.size === current.size ? current : next;
+    });
+  }, [hasLoadedOnce, resolveRowKey, tableData]);
+
+  /**
+   * Runs a bulk action and waits for it.
+   *
+   * The selection is deliberately NOT cleared here. Clearing it meant an operator
+   * who wanted a second action on the same rows had to re-pick every one, and it
+   * fired even when the action failed outright or skipped every row — neither
+   * page handler rejects, they report through toasts and return normally. Rows
+   * that genuinely leave the result set are dropped by the prune effect below
+   * once the refreshed data arrives.
    */
   const executeBulkAction = useCallback(
     async (option: BulkActionOption, context?: BulkActionContext) => {
@@ -264,7 +295,6 @@ export function SuperAdminTable<TData, TValue>({
       setBulkBusy(true);
       try {
         await onBulkAction(option.id, rows, context);
-        setSelectedIds(new Set());
         setBulkAction("");
       } catch (error) {
         console.error("Bulk action failed:", error);

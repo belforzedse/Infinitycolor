@@ -12,6 +12,7 @@ export type AdminOrderTab =
   | "paying"
   | "inprogress"
   | "completed"
+  | "shipped"
   | "cancelled"
   | "manual";
 

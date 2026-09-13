@@ -48,14 +48,15 @@ export const syncSimpleProductVariation = async (
   productId: number,
   product: SimpleProductInput,
 ) => {
-  if (product.ProductType !== "Simple" && product.IsSimpleProduct !== true) return;
+  if (product.ProductType !== "Simple" && product.IsSimpleProduct !== true)
+    return;
 
   const variationPayload = {
-    product: productId,
     SKU: buildSimpleSku(productId, product.SimpleSKU),
     Price: normalizePrice(product.SimplePrice),
     DiscountPrice:
-      product.SimpleDiscountPrice === undefined || product.SimpleDiscountPrice === null
+      product.SimpleDiscountPrice === undefined ||
+      product.SimpleDiscountPrice === null
         ? null
         : normalizePrice(product.SimpleDiscountPrice),
     IsPublished: product.SimpleIsPublished !== false,
@@ -69,7 +70,7 @@ export const syncSimpleProductVariation = async (
     });
   } else {
     const variationResponse = await apiClient.post("/product-variations", {
-      data: variationPayload,
+      data: { ...variationPayload, product: productId },
     });
     variationId = readResponseId(variationResponse);
   }
@@ -80,7 +81,6 @@ export const syncSimpleProductVariation = async (
 
   const stockPayload = {
     Count: normalizeStock(product.SimpleStock),
-    product_variation: variationId,
   };
 
   if (product.SimpleStockId) {
@@ -89,7 +89,7 @@ export const syncSimpleProductVariation = async (
     });
   } else {
     await apiClient.post("/product-stocks", {
-      data: stockPayload,
+      data: { ...stockPayload, product_variation: variationId },
     });
   }
 
@@ -97,7 +97,9 @@ export const syncSimpleProductVariation = async (
     `/product-variations?filters[product][id][$eq]=${productId}&pagination[pageSize]=1000`,
     { cache: "no-store" },
   );
-  const variations = Array.isArray(variationsResponse?.data) ? variationsResponse.data : [];
+  const variations = Array.isArray(variationsResponse?.data)
+    ? variationsResponse.data
+    : [];
 
   await Promise.all(
     variations
