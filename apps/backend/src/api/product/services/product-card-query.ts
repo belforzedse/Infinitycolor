@@ -174,75 +174,6 @@ const VARIATION_RELATION_TABLE_MAP: Record<string, string> = {
   product_variation_model: "product_variation_models",
 };
 
-const PRODUCT_BOOST_KEYWORDS: readonly string[] = [
-  "G",
-  "G0020",
-  "W0069",
-  "W0043",
-  "W0039",
-  "W0096",
-  "W002",
-  "W0042",
-  "W0018",
-  "W0036",
-  "W009",
-  "W0010",
-  "W0035",
-  "G0015",
-  "G0018",
-  "W0030",
-  "G004",
-  "G005",
-  "G006",
-  "G003",
-  "G007",
-  "W0022",
-  "W0029",
-  "G0017",
-  "W0025",
-  "W0014",
-  "W0033",
-  "G0023",
-  "G0024",
-  "G0013",
-  "W0012",
-  "W0027",
-  "W008",
-  "W0024",
-  "W0031",
-  "W004",
-  "W0015",
-  "G002",
-  "W0076",
-  "W0087",
-  "W0089",
-  "G009",
-  "G0011",
-  "G0019",
-  "G0030",
-  "G0021",
-  "G008",
-  "G0022",
-  "G0035",
-  "G0031",
-  "G0036",
-  "W007",
-  "G001",
-  "W0058",
-  "G0014",
-  "G0029",
-  "G0039",
-  "G0038",
-  "W005",
-  "W0032",
-  "W0038",
-  "W0080",
-  "G0028",
-  "G00101",
-  "G0098",
-  "G0096",
-];
-
 const toArray = (value: unknown): unknown[] => {
   if (Array.isArray(value)) return value;
   if (typeof value === "string" && value.includes(",")) {
@@ -669,7 +600,6 @@ const applyAvailabilityAwareOrder = (
   query: any,
   strapi: any,
   sortKey: string | undefined,
-  hasDiscount: unknown,
 ) => {
   const ctx = getProductAvailabilityJoinContext(strapi);
   const availabilitySql = buildProductAvailabilityExistsSql(knex, ctx, "p");
@@ -678,15 +608,6 @@ const applyAvailabilityAwareOrder = (
   const normalized = sortKey?.trim() || "createdAt:desc";
   const [rawField, rawDirection] = normalized.split(":");
   const direction = rawDirection === "asc" ? "asc" : "desc";
-  const shouldBoostKeywords =
-    sortKey?.trim() === "createdAt:desc" || isEnabledCardParam(hasDiscount);
-
-  if (shouldBoostKeywords && PRODUCT_BOOST_KEYWORDS.length > 0) {
-    const clauses = PRODUCT_BOOST_KEYWORDS.map(() => "LOWER(p.title) LIKE LOWER(?)").join(" OR ");
-    const bindings = PRODUCT_BOOST_KEYWORDS.map((keyword) => `%${keyword}%`);
-    query.orderByRaw(`CASE WHEN (${clauses}) THEN 0 ELSE 1 END ASC`, bindings);
-  }
-
   if (rawField === "Price" || rawField === "price") {
     const priceSql = buildProductCardDisplayPriceSql(knex, strapi, "p");
     query.orderByRaw(`${priceSql.toQuery()} ${direction.toUpperCase()} NULLS LAST`);
@@ -723,7 +644,7 @@ export async function findOrderedProductIds(strapi: any, params: OrderedProductI
   };
 
   const idQuery = buildBaseQuery().select("p.id");
-  applyAvailabilityAwareOrder(knex, idQuery, strapi, sortKey, params.hasDiscount);
+  applyAvailabilityAwareOrder(knex, idQuery, strapi, sortKey);
   idQuery.limit(limit).offset(start);
 
   const countQuery = buildBaseQuery().countDistinct({ total: "p.id" }).first();
