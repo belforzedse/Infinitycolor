@@ -6,6 +6,7 @@ import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import HomepageProductPicker, {
   type ProductSummary,
 } from "@/components/SuperAdmin/Products/HomepageProductPicker";
+import { HOMEPAGE_RENDER_LIMIT } from "@/constants/homepage";
 import {
   getHomepageProductSettings,
   updateHomepageProductSettings,
@@ -176,6 +177,7 @@ export default function HomepageProductsPage() {
             productSummaries={newestSummariesForPicker}
             onProductsChange={setNewestIds}
             onProductAdded={(p) => setNewestSummaries((prev) => [...prev, p])}
+            renderLimit={HOMEPAGE_RENDER_LIMIT}
           />
           <HomepageProductPicker
             title="محبوب ترین ها"
@@ -183,6 +185,7 @@ export default function HomepageProductsPage() {
             productSummaries={favoriteSummariesForPicker}
             onProductsChange={setFavoriteIds}
             onProductAdded={(p) => setFavoriteSummaries((prev) => [...prev, p])}
+            renderLimit={HOMEPAGE_RENDER_LIMIT}
           />
           <HomepageProductPicker
             title="تخفیف‌های وسوسه انگیز"
@@ -190,6 +193,7 @@ export default function HomepageProductsPage() {
             productSummaries={discountedSummariesForPicker}
             onProductsChange={setDiscountedIds}
             onProductAdded={(p) => setDiscountedSummaries((prev) => [...prev, p])}
+            renderLimit={HOMEPAGE_RENDER_LIMIT}
           />
 
           <div className="space-y-3">
@@ -204,6 +208,7 @@ export default function HomepageProductsPage() {
               productSummaries={weeklyPicksSummariesForPicker}
               onProductsChange={setWeeklyPicksIds}
               onProductAdded={(p) => setWeeklyPicksSummaries((prev) => [...prev, p])}
+              renderLimit={HOMEPAGE_RENDER_LIMIT}
             />
           </div>
 
@@ -219,6 +224,7 @@ export default function HomepageProductsPage() {
               productSummaries={everyoneFollowsSummariesForPicker}
               onProductsChange={setEveryoneFollowsIds}
               onProductAdded={(p) => setEveryoneFollowsSummaries((prev) => [...prev, p])}
+              renderLimit={HOMEPAGE_RENDER_LIMIT}
             />
           </div>
         </div>

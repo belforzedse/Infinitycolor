@@ -17,7 +17,7 @@ jest.mock("next/cache", () => ({
   revalidateTag: (...args: unknown[]) => revalidateTag(...args),
 }));
 
-import { POST, buildPdpPath } from "../revalidate/route";
+import { POST, buildPdpPath, SELF_TARGETING_TYPES } from "../revalidate/route";
 import {
   HOME_PRODUCTS_TAG,
   PRODUCT_COLLECTION_TAG,
@@ -153,5 +153,97 @@ describe("sitemap freshness", () => {
   ])("invalidates the sitemap tag for %s", async (_label, body) => {
     await POST(request(body));
     expect(revalidateTag.mock.calls.map(([t]) => t)).toContain(SITEMAP_TAG);
+  });
+});
+
+/**
+ * The regression these guard against shipped because EVERY case above passes `path`
+ * alongside `type`. Strapi's homepage, settings, hero, blog-listing, FAQ and
+ * site-identity callers send `type` ALONE, and the request guard rejected them with
+ * `400 Missing 'path' or 'tag'` before their branch ever ran — so from 2026-06 until
+ * this fix none of those edits invalidated anything, in production, silently.
+ */
+describe("type-only payloads (what Strapi actually sends)", () => {
+  it.each([...SELF_TARGETING_TYPES].map((t) => [t] as const))(
+    "accepts { type: %s } with no path and no tag",
+    async (type) => {
+      const res = await POST(request({ type }));
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ revalidated: true });
+    },
+  );
+
+  it("invalidates the homepage for home-products", async () => {
+    await POST(request({ type: "home-products" }));
+    expect(revalidatePath.mock.calls.map(([p]) => p)).toContain("/");
+    expect(revalidateTag.mock.calls.map(([t]) => t)).toContain(HOME_PRODUCTS_TAG);
+  });
+
+  it("invalidates homepage, blog and sitemap for site-settings", async () => {
+    await POST(request({ type: "site-settings" }));
+    expect(revalidatePath.mock.calls.map(([p]) => p)).toEqual(
+      expect.arrayContaining(["/", "/blog", "/sitemap.xml"]),
+    );
+    expect(revalidateTag.mock.calls.map(([t]) => t)).toEqual(
+      expect.arrayContaining(["site-settings", SITEMAP_TAG]),
+    );
+  });
+
+  it("expires the hero-slider tag immediately", async () => {
+    await POST(request({ type: "hero-slider" }));
+    expect(revalidateTag).toHaveBeenCalledWith("hero-slider", { expire: 0 });
+  });
+
+  it("invalidates the blog listing and sitemap for blog-listing", async () => {
+    await POST(request({ type: "blog-listing" }));
+    expect(revalidatePath.mock.calls.map(([p]) => p)).toEqual(
+      expect.arrayContaining(["/blog", "/sitemap.xml"]),
+    );
+    expect(revalidateTag.mock.calls.map(([t]) => t)).toContain(SITEMAP_TAG);
+  });
+
+  it("invalidates the whole layout for site-identity", async () => {
+    await POST(request({ type: "site-identity" }));
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+    expect(revalidateTag.mock.calls.map(([t]) => t)).toContain("site-identity");
+  });
+
+  it("invalidates the faq page for faq", async () => {
+    await POST(request({ type: "faq" }));
+    expect(revalidatePath.mock.calls.map(([p]) => p)).toContain("/faq");
+    expect(revalidateTag.mock.calls.map(([t]) => t)).toContain("faq");
+  });
+
+  it("accepts the exact shape utils/homepageRevalidation.ts sends", async () => {
+    // The real caller spreads `reason` and `metadata` alongside `type`; extra keys
+    // must not change the outcome.
+    const res = await POST(
+      request({
+        type: "home-products",
+        reason: "homepage-products-update",
+        metadata: { section: "newest", ids: [4750] },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(revalidatePath.mock.calls.map(([p]) => p)).toContain("/");
+    expect(revalidateTag.mock.calls.map(([t]) => t)).toContain(HOME_PRODUCTS_TAG);
+  });
+
+  it("still rejects a body that names no target at all", async () => {
+    const res = await POST(request({ type: "something-nobody-handles" }));
+    expect(res.status).toBe(400);
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateTag).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an empty body", async () => {
+    const res = await POST(request({}));
+    expect(res.status).toBe(400);
+  });
+
+  it("still requires a slug for category-editorial", async () => {
+    const res = await POST(request({ type: "category-editorial" }));
+    expect(res.status).toBe(400);
   });
 });

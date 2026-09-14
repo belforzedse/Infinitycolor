@@ -19,6 +19,13 @@ interface HomepageProductPickerProps {
   onProductsChange: (ids: number[]) => void;
   onProductAdded?: (product: ProductSummary) => void;
   maxProducts?: number;
+  /**
+   * Position after which the storefront stops rendering. Display only — it marks the
+   * overflow rows instead of blocking them, because the backend silently slices the
+   * list and the picker's job is to say so. Distinct from `maxProducts`, which
+   * prevents adds and hides the search box entirely once reached.
+   */
+  renderLimit?: number;
 }
 
 type OrderItem = {
@@ -47,6 +54,7 @@ export default function HomepageProductPicker({
   onProductsChange,
   onProductAdded,
   maxProducts,
+  renderLimit,
 }: HomepageProductPickerProps) {
   const summaryMap = useMemo(() => {
     const m = new Map<number, ProductSummary>();
@@ -94,6 +102,11 @@ export default function HomepageProductPicker({
     onProductsChange(next);
   };
 
+  const hiddenCount =
+    renderLimit && selectedProductIds.length > renderLimit
+      ? selectedProductIds.length - renderLimit
+      : 0;
+
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-4">
       <div className="mb-3 flex items-center justify-between">
@@ -101,6 +114,7 @@ export default function HomepageProductPicker({
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
           {selectedProductIds.length}
           {maxProducts ? ` / ${maxProducts}` : ""} محصول
+          {hiddenCount > 0 ? ` — ${renderLimit} تا نمایش داده می‌شود` : ""}
         </span>
       </div>
 
@@ -116,6 +130,13 @@ export default function HomepageProductPicker({
         />
       )}
 
+      {hiddenCount > 0 ? (
+        <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm text-amber-700">
+          {hiddenCount} محصول پس از جایگاه {renderLimit} ذخیره شده ولی در سایت نمایش داده
+          نمی‌شود. برای نمایش، آن‌ها را بالاتر بیاورید.
+        </div>
+      ) : null}
+
       {selectedProductIds.length > 0 && (
         <div className="mt-4">
           <p className="mb-2 text-sm font-medium text-neutral-700">ترتیب نمایش (قابل تغییر)</p>
@@ -124,10 +145,16 @@ export default function HomepageProductPicker({
               const summary = summaryMap.get(id);
               const displayTitle = summary?.title ?? `محصول #${id}`;
               const imageUrl = summary?.image;
+              const notRendered = Boolean(renderLimit && index >= renderLimit);
               return (
                 <li
                   key={id}
-                  className="flex items-center gap-3 rounded-lg border border-neutral-100 bg-neutral-50/50 p-2"
+                  data-testid={notRendered ? "picker-row-not-rendered" : "picker-row"}
+                  className={`flex items-center gap-3 rounded-lg border p-2 ${
+                    notRendered
+                      ? "border-dashed border-amber-200 bg-amber-50/40 opacity-60"
+                      : "border-neutral-100 bg-neutral-50/50"
+                  }`}
                 >
                   <div className="flex flex-shrink-0 gap-1">
                     <Button
@@ -169,6 +196,11 @@ export default function HomepageProductPicker({
                   <span className="min-w-0 flex-1 truncate text-sm text-neutral-800">
                     {displayTitle}
                   </span>
+                  {notRendered ? (
+                    <span className="flex-shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
+                      نمایش داده نمی‌شود
+                    </span>
+                  ) : null}
                   <Button
                     type="button"
                     variant="outline"

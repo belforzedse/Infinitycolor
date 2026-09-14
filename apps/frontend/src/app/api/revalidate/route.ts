@@ -38,6 +38,28 @@ export function buildCategoryPath(rawSlug: string): string {
 }
 
 /**
+ * Types whose branch below names its own paths and tags, so a caller sends neither
+ * `path` nor `tag`.
+ *
+ * The guard has to know about these or it rejects them before their branch is ever
+ * reached. That is exactly what happened from 2026-06 onward: seven Strapi callers
+ * POST `type` alone and every one of them got
+ * `400 Missing 'path' or 'tag' in request body`, so no homepage, settings, hero,
+ * blog-listing, FAQ or site-identity edit invalidated anything. Product edits were
+ * unaffected only because they happen to pass `path`.
+ *
+ * Keep this in sync with the `type === "..."` branches in POST.
+ */
+export const SELF_TARGETING_TYPES = new Set([
+  "home-products",
+  "site-settings",
+  "hero-slider",
+  "blog-listing",
+  "site-identity",
+  "faq",
+]);
+
+/**
  * On-demand revalidation API route
  *
  * This endpoint allows Strapi to trigger Next.js cache revalidation
@@ -77,7 +99,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { path, type, tag, slug } = body;
 
-    if (!path && !tag && !(type === "category-editorial" && slug)) {
+    const isSelfTargeting = typeof type === "string" && SELF_TARGETING_TYPES.has(type);
+
+    if (!path && !tag && !isSelfTargeting && !(type === "category-editorial" && slug)) {
       return NextResponse.json(
         { error: "Missing 'path' or 'tag' in request body" },
         { status: 400 },

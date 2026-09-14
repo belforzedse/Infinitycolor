@@ -107,20 +107,44 @@ export type ProductSummary = {
   image?: string;
 };
 
+/** Strapi's `api.rest.maxLimit` (apps/backend/config/api.ts). A request for more
+ *  than this is silently truncated, so batch rather than ask for everything. */
+const PRODUCT_QUERY_MAX_LIMIT = 100;
+
 /**
  * Fetch minimal product data (id, title, image) by IDs for display in pickers.
  * Preserves order of requested ids in the result.
+ *
+ * Both the limit and the batching are load-bearing. Strapi's default pageSize is 25
+ * and it pages by id, so asking for 26 ids without a limit returns 25 and silently
+ * drops the HIGHEST one — the picker then draws that row as `محصول #<id>` with no
+ * thumbnail. Verified against production: 26 requested returned 25 (pageCount 2),
+ * missing exactly the largest id. Asking for more than `maxLimit` at once truncates
+ * the same way, which is why this batches instead of sending one big limit.
  */
 export async function getProductSummariesByIds(ids: number[]): Promise<ProductSummary[]> {
   if (ids.length === 0) return [];
-  const params = new URLSearchParams();
-  ids.forEach((id, i) => params.set(`filters[id][$in][${i}]`, String(id)));
-  params.set("populate[0]", "CoverImage");
-  params.set("fields[0]", "Title");
-  params.set("fields[1]", "id");
-  const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`;
-  const res = (await apiClient.get(endpoint, { cache: "no-store" })) as any;
-  const list = res?.data ?? [];
+
+  const batches: number[][] = [];
+  for (let i = 0; i < ids.length; i += PRODUCT_QUERY_MAX_LIMIT) {
+    batches.push(ids.slice(i, i + PRODUCT_QUERY_MAX_LIMIT));
+  }
+
+  const responses = await Promise.all(
+    batches.map((batch) => {
+      const params = new URLSearchParams();
+      batch.forEach((id, i) => params.set(`filters[id][$in][${i}]`, String(id)));
+      params.set("pagination[limit]", String(batch.length));
+      params.set("pagination[withCount]", "false");
+      params.set("populate[0]", "CoverImage");
+      params.set("fields[0]", "Title");
+      params.set("fields[1]", "id");
+      const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`;
+      return apiClient.get(endpoint, { cache: "no-store" }) as Promise<any>;
+    }),
+  );
+
+  const list = responses.flatMap((res: any) => res?.data ?? []);
   const idToIndex = new Map(ids.map((id, i) => [id, i]));
   const withOrder = list.map((raw: any) => {
     const id = raw.id;
