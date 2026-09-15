@@ -68,6 +68,31 @@ const mapUrlsToFileWithPreview = (urls: string[], placeholderName: string) =>
     uploadError: null,
   }));
 
+// Reconciles the locally-tracked items against the URLs the parent now
+// reports as uploaded. Items already known locally (matched by position
+// among "uploaded" entries) keep their existing preview — notably a fresh
+// item's own `blob:` preview — instead of being swapped to the resolved
+// CDN/server URL, which can 404 for a few seconds right after upload while
+// the CDN edge catches up. Items still "uploading"/"failed" are left alone
+// since the parent doesn't know about them yet.
+const reconcileWithLocalPreviews = (
+  prevItems: FileWithPreview[],
+  urls: string[],
+  placeholderName: string,
+): { next: FileWithPreview[]; stale: FileWithPreview[] } => {
+  const uploaded = prevItems.filter((item) => item.uploadStatus === "uploaded");
+  const pending = prevItems.filter((item) => item.uploadStatus !== "uploaded");
+
+  const reconciledUploaded = urls.map(
+    (url, index) => uploaded[index] ?? mapUrlsToFileWithPreview([url], placeholderName)[0],
+  );
+
+  const keptIds = new Set(reconciledUploaded.map((item) => item.id));
+  const stale = uploaded.filter((item) => !keptIds.has(item.id));
+
+  return { next: [...reconciledUploaded, ...pending], stale };
+};
+
 const resolveMediaRemovalIndex = (
   media: any[],
   filteredIndex: number,
@@ -111,9 +136,12 @@ export function useUpload({
     if (previousImageKeyRef.current === nextKey) return;
     previousImageKeyRef.current = nextKey;
 
-    cleanupObjectURLs(images);
-    setImages(mapUrlsToFileWithPreview(normalizedImages, "image"));
-  }, [initialImages, images, setImages]);
+    setImages((prevImages) => {
+      const { next, stale } = reconcileWithLocalPreviews(prevImages, normalizedImages, "image");
+      cleanupObjectURLs(stale);
+      return next;
+    });
+  }, [initialImages, setImages]);
 
   useEffect(() => {
     if (initialVideos === undefined) return;
@@ -123,9 +151,12 @@ export function useUpload({
     if (previousVideoKeyRef.current === nextKey) return;
     previousVideoKeyRef.current = nextKey;
 
-    cleanupObjectURLs(videos);
-    setVideos(mapUrlsToFileWithPreview(normalizedVideos, "video"));
-  }, [initialVideos, videos, setVideos]);
+    setVideos((prevVideos) => {
+      const { next, stale } = reconcileWithLocalPreviews(prevVideos, normalizedVideos, "video");
+      cleanupObjectURLs(stale);
+      return next;
+    });
+  }, [initialVideos, setVideos]);
 
   useEffect(() => {
     if (initialFiles === undefined) return;
@@ -135,9 +166,12 @@ export function useUpload({
     if (previousFileKeyRef.current === nextKey) return;
     previousFileKeyRef.current = nextKey;
 
-    cleanupObjectURLs(files);
-    setFiles(mapUrlsToFileWithPreview(normalizedFiles, "file"));
-  }, [initialFiles, files, setFiles]);
+    setFiles((prevFiles) => {
+      const { next, stale } = reconcileWithLocalPreviews(prevFiles, normalizedFiles, "file");
+      cleanupObjectURLs(stale);
+      return next;
+    });
+  }, [initialFiles, setFiles]);
 
   const getFileType = (file: File): "image" | "video" | "other" => {
     if (file.type.startsWith("image/")) return "image";
