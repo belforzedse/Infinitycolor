@@ -1168,7 +1168,9 @@ describe("role permission templates", () => {
     const controller = (typeKey: string, name: string) => storeManager[typeKey].controllers[name];
 
     expect(controller("api::product", "product").generateVariationCombinations.enabled).toBe(true);
-    expect(controller("api::product-variation", "product-variation").delete.enabled).toBe(false);
+    // Variation deletion is reversible in effect (scoped to one product) and is
+    // granted starting at Seller 1, so Store Manager inherits it too.
+    expect(controller("api::product-variation", "product-variation").delete.enabled).toBe(true);
     expect(controller("api::product-stock", "product-stock").create.enabled).toBe(true);
     expect(controller("api::product-stock", "product-stock").update.enabled).toBe(true);
     expect(controller("api::product-stock", "product-stock").delete.enabled).toBe(false);
@@ -1207,11 +1209,11 @@ describe("role permission templates", () => {
       expect(controller(typeKey, name).delete.enabled).toBe(false);
     }
 
-    // The only delete in this otherwise create/update-only catalog matrix. An
-    // assignment is a join row (product × attribute): removing one detaches an
-    // attribute from a single product and destroys no shared data, unlike the
-    // colour/size/model/term rows above, which other products reference. Sellers
-    // could attach a custom attribute but never detach it until this was granted.
+    // Assignment delete: a join row (product × attribute), so removing one
+    // detaches an attribute from a single product and destroys no shared data,
+    // unlike the colour/size/model/term rows above, which other products
+    // reference. Sellers could attach a custom attribute but never detach it
+    // until this was granted.
     expect(
       controller("api::product-attribute-assignment", "product-attribute-assignment").delete
         .enabled,
@@ -1303,6 +1305,7 @@ describe("role permission templates", () => {
     ]);
     expect(enabled("api::product-variation", "product-variation")).toEqual([
       "create",
+      "delete",
       "find",
       "findOne",
       "update",

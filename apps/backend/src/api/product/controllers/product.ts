@@ -26,6 +26,7 @@ import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-con
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
 import { resolveAdminActor } from "../../../utils/adminAuthorization";
+import { recordAdminAudit } from "../../../utils/adminAudit";
 import {
   executePublicationCommand,
   PublicationCommandError,
@@ -507,9 +508,43 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     }
 
     const normalizedDisplayAt = parsedDisplayAt.toISOString();
+
+    // `LastEditedByAdminAt` isn't in the lifecycle's tracked diff fields (it's deliberately
+    // excluded so real admin edits don't get re-stamped by this override), so afterUpdate
+    // never sees this write as a change and stays silent. Log it explicitly here instead —
+    // otherwise a curator backdating the "last edited" column to reorder the admin list
+    // leaves no trace that the value is a manual override rather than a genuine edit.
+    const existing = await strapi.entityService.findOne("api::product.product", productId, {
+      fields: ["LastEditedByAdminAt"],
+    });
+    if (!existing) {
+      return ctx.notFound("Product not found");
+    }
+
     const product = await strapi.entityService.update("api::product.product", productId, {
       data: { LastEditedByAdminAt: normalizedDisplayAt },
     });
+
+    const userId = Number((ctx.state as any)?.user?.id);
+    if (Number.isSafeInteger(userId) && userId > 0) {
+      await recordAdminAudit(strapi, {
+        resourceType: "Product",
+        resourceId: productId,
+        action: "Update",
+        title: "تاریخ نمایش محصول به صورت دستی تنظیم شد",
+        message: `تاریخ «آخرین ویرایش» محصول #${productId} برای چینش دستی فهرست تغییر کرد`,
+        messageEn: `Product #${productId} display date manually overridden for listing order`,
+        severity: "warning",
+        actor: { id: userId },
+        changes: {
+          LastEditedByAdminAt: {
+            from: (existing as any).LastEditedByAdminAt ?? null,
+            to: normalizedDisplayAt,
+          },
+        },
+        metadata: { productId, displayAt: normalizedDisplayAt },
+      });
+    }
 
     ctx.body = {
       data: {

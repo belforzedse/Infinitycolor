@@ -47,7 +47,11 @@ const INITIAL_MODAL_STATE: ModalState = {
 };
 
 export default function ProductColorsPage() {
-  const canDeleteColors = useCan("product.variation.delete");
+  // Colours are shared taxonomy (other products reference the same row), so
+  // deletion stays Superadmin-only, like tags/page.tsx. `product.variation.delete`
+  // now begins at Seller 1 for per-product variation rows and no longer implies
+  // authority over this shared list.
+  const canDeleteColors = useCan("product.delete");
   const [colors, setColors] = useState<ApiColor[]>([]);
   /** Server-reported total, so the footer count stops describing the page. */
   const [totalColors, setTotalColors] = useState(0);

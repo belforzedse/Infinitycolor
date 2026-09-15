@@ -174,6 +174,7 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
       "product.stock.update",
       "product.media.manage",
       "product.variation.manage",
+      "product.variation.delete",
       "product.size-guide.manage",
       // Reversible pair: a seller who removes a product by mistake can put it
       // back themselves. Permanent deletion remains Superadmin-only.

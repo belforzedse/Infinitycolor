@@ -474,6 +474,11 @@ export async function executePublicationCommand(
     const publicationRevision = Number(row.publication_revision || 0);
     let changed = false;
     let publishedVariationCount = 0;
+    // Publication commands write via raw knex to keep the transaction atomic, so the
+    // product's entityService lifecycle (and its LastEditedByAdminAt seed) never fires.
+    // Stamp it here directly whenever the command was actually issued by an admin, so a
+    // publish/unpublish/schedule click counts as an edit like any other admin action does.
+    const adminEditStamp = context.origin === "admin" ? { last_edited_by_admin_at: now } : {};
 
     if (command.action === "schedule") {
       if (status === "Active") {
@@ -507,6 +512,7 @@ export async function executePublicationCommand(
           scheduled_publish_next_retry_at: null,
           scheduled_publish_audit_context: durableAuditContext,
           updated_at: now,
+          ...adminEditStamp,
         });
         changed = true;
       }
@@ -523,6 +529,7 @@ export async function executePublicationCommand(
         scheduled_publish_next_retry_at: null,
         scheduled_publish_audit_context: durableAuditContext,
         updated_at: now,
+        ...adminEditStamp,
       });
       changed = true;
     } else if (command.action === "cancel") {
@@ -543,6 +550,7 @@ export async function executePublicationCommand(
           scheduled_publish_next_retry_at: null,
           scheduled_publish_audit_context: null,
           updated_at: now,
+          ...adminEditStamp,
         });
         changed = true;
       }
@@ -564,6 +572,7 @@ export async function executePublicationCommand(
           publication_effects_last_error: null,
           scheduled_publish_audit_context: null,
           updated_at: now,
+          ...adminEditStamp,
         });
         changed = true;
       }
@@ -591,6 +600,7 @@ export async function executePublicationCommand(
           publication_effects_last_error: null,
           scheduled_publish_audit_context: null,
           updated_at: now,
+          ...adminEditStamp,
         });
         changed = true;
       }
