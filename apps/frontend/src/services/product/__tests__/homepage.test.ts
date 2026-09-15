@@ -3,6 +3,7 @@ import { PRODUCT_BOOST_KEYWORDS } from "@/constants/productKeywords";
 import {
   getFeaturedCategoryProductsByRating,
   getBatchedHomepageSections,
+  pickBatchedHomepageSection,
   getGifPromoProducts,
   getGifPromoProductsForSlot,
   getHomepageSections,
@@ -40,7 +41,7 @@ describe("homepage service", () => {
       expect(`${batchUrl.origin}${batchUrl.pathname}`).toBe(`${API_BASE_URL}/products`);
       expect(batchUrl.searchParams.get("pagination[limit]")).toBe("36");
       expect(promoUrl.searchParams.get("hasDiscount")).toBe("true");
-      expect(promoUrl.searchParams.has("filters[product_variations][product_stock][Count][$gt]")).toBe(false);
+      expect(promoUrl.searchParams.has("availability")).toBe(false);
 
       expect(`${newUrl.origin}${newUrl.pathname}`).toBe(`${API_BASE_URL}/products`);
       // Single keyword uses filters[Title][$containsi]; multiple use filters[$or][n][Title][$containsi]
@@ -103,6 +104,70 @@ describe("homepage service", () => {
       expect(url.searchParams.has("_e2e")).toBe(true);
       expect(options).toEqual(expect.objectContaining({ cache: "no-store" }));
     });
+
+    // getHomeSectionProducts is a per-section fallback, so a rendered section proves
+    // nothing about the batch path — assert the "customTwo" id survives the mapping.
+    it("maps the customTwo section out of the batched payload", async () => {
+      process.env.HOME_BATCHED_SECTIONS_ENABLED = "true";
+      process.env.HOME_BATCHED_SECTION_ALLOWLIST = "customTwo";
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({
+          data: {
+            sections: [
+              {
+                id: "customTwo",
+                products: [
+                  {
+                    id: 41,
+                    attributes: {
+                      Title: "شومیز",
+                      Slug: "shomiz",
+                      Price: 250000,
+                      IsAvailable: true,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      });
+
+      const batched = await getBatchedHomepageSections();
+
+      expect(pickBatchedHomepageSection(batched, "customTwo")).toHaveLength(1);
+    });
+
+    it("maps the customThree section out of the batched payload", async () => {
+      process.env.HOME_BATCHED_SECTIONS_ENABLED = "true";
+      process.env.HOME_BATCHED_SECTION_ALLOWLIST = "customThree";
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({
+          data: {
+            sections: [
+              {
+                id: "customThree",
+                products: [
+                  {
+                    id: 42,
+                    attributes: {
+                      Title: "شلوار",
+                      Slug: "shalvar",
+                      Price: 320000,
+                      IsAvailable: true,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      });
+
+      const batched = await getBatchedHomepageSections();
+
+      expect(pickBatchedHomepageSection(batched, "customThree")).toHaveLength(1);
+    });
   });
 
   describe("getFeaturedCategoryProductsByRating", () => {
@@ -161,9 +226,9 @@ describe("homepage service", () => {
       expect(url.searchParams.get("filters[id][$in][3]")).toBe("1");
       expect(url.searchParams.get("filters[Status][$eq]")).toBe("Active");
       expect(url.searchParams.get("filters[removedAt][$null]")).toBe("true");
-      expect(url.searchParams.get("filters[product_variations][product_stock][Count][$gt]")).toBe(
-        "0",
-      );
+      // Availability is `Count - reservedCount`, which Strapi filters cannot
+      // express; the card query turns this param into the SQL predicate.
+      expect(url.searchParams.get("availability")).toBe("in-stock");
     });
 
     it("queries category mode with main category slug and limit 4", async () => {

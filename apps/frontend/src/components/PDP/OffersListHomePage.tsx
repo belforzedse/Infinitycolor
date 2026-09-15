@@ -3,10 +3,7 @@
 import Link from "next/link";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import ProductCard, { type ProductCardProps } from "@/components/Product/Card";
-import {
-  ProductRailSlide,
-  ProductRailTrack,
-} from "@/components/storefront/ProductRailTrack";
+import { ProductRailSlide, ProductRailTrack } from "@/components/storefront/ProductRailTrack";
 import { useAdaptiveCarouselTransition } from "@/hooks/useAdaptiveCarouselTransition";
 import { cn } from "@/lib/utils";
 import ArrowLeftIcon from "./Icons/ArrowLeftIcon";
@@ -16,7 +13,8 @@ type Props = {
   icon: React.ReactNode;
   title: string;
   products: ProductCardProps[];
-  hideBottomViewMore?: boolean;
+  /** Admin-configured «مشاهده همه» target. Omitted rails fall back to the title heuristic below. */
+  viewAllHref?: string;
 };
 
 const SERVER_PRODUCTS_PER_PAGE = 6;
@@ -82,12 +80,7 @@ function firstPageDesktopVisibility(index: number): string {
   return "lg:hidden";
 }
 
-export default function OffersListHomePage({
-  icon,
-  title,
-  products,
-  hideBottomViewMore = false,
-}: Props) {
+export default function OffersListHomePage({ icon, title, products, viewAllHref }: Props) {
   const productsPerPage = useProductsPerPage();
   const [currentPage, setCurrentPage] = useState(0);
   const { cancelTransition, isAnimating, richTransition, transitionTo } =
@@ -119,6 +112,8 @@ export default function OffersListHomePage({
     return "/plp";
   }
 
+  const viewAllTarget = viewAllHref || getPlpHref();
+
   return (
     <div
       className="flex min-w-0 flex-col gap-3"
@@ -148,10 +143,7 @@ export default function OffersListHomePage({
                 nextLabel="صفحه قبلی محصولات"
                 previousLabel="صفحه بعدی محصولات"
               />
-              <div
-                className="flex items-center gap-1 text-xs text-neutral-500"
-                aria-live="polite"
-              >
+              <div className="flex items-center gap-1 text-xs text-neutral-500" aria-live="polite">
                 <span>{safeCurrentPage + 1}</span>
                 <span>/</span>
                 <span>{totalPages}</span>
@@ -160,7 +152,7 @@ export default function OffersListHomePage({
           ) : null}
 
           <Link
-            href={getPlpHref()}
+            href={viewAllTarget}
             /* Measured at 127 KB of full-segment RSC per PDP view, competing with the
                hero image for bandwidth. These "view more" links sit below the rail,
                not on the primary path; the homepage hero CTAs keep their prefetch. */
@@ -189,8 +181,7 @@ export default function OffersListHomePage({
             // Every product stays in the DOM so the mobile track always has
             // something to scroll; desktop paging hides the cards outside the
             // current window instead of unmounting them.
-            const visibleOnDesktop =
-              index >= startIndex && index < startIndex + productsPerPage;
+            const visibleOnDesktop = index >= startIndex && index < startIndex + productsPerPage;
             return (
               <ProductRailSlide
                 key={product.id}
@@ -212,21 +203,19 @@ export default function OffersListHomePage({
         </ProductRailTrack>
       </div>
 
-      {!hideBottomViewMore && products.length > productsPerPage ? (
-        <div className="mt-4 flex items-center justify-center md:mt-6">
-          <Link
-            href={getPlpHref()}
-            /* Measured at 127 KB of full-segment RSC per PDP view, competing with the
+      <div className="mt-4 flex items-center justify-center md:hidden">
+        <Link
+          href={viewAllTarget}
+          /* Measured at 127 KB of full-segment RSC per PDP view, competing with the
                hero image for bandwidth. These "view more" links sit below the rail,
                not on the primary path; the homepage hero CTAs keep their prefetch. */
-            prefetch={false}
-            className="pressable text-foreground-primary flex items-center gap-1 rounded-full border border-infinity-primary-lighter/40 px-4 py-2 text-base underline-offset-4 transition-colors hover:bg-infinity-primary-lighter/20 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-          >
-            <span>مشاهده محصولات بیشتر</span>
-            <ArrowLeftIcon />
-          </Link>
-        </div>
-      ) : null}
+          prefetch={false}
+          className="pressable text-foreground-primary flex items-center gap-1 rounded-full border border-infinity-primary-lighter/40 px-4 py-2 text-base underline-offset-4 transition-colors hover:bg-infinity-primary-lighter/20 hover:text-infinity-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+        >
+          <span>مشاهده همه</span>
+          <ArrowLeftIcon />
+        </Link>
+      </div>
     </div>
   );
 }

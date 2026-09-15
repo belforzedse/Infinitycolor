@@ -13,14 +13,23 @@ const JOB_NAME = "expireStockReservations";
 
 /**
  * Hard ceiling on how long a single SnappPay attempt may keep deferring its stock
- * reservation. The reconciliation ladder in snappay-state-machine.ts totals ~40h,
- * so the default sits just past it: deferral must never outlive the recovery it
- * is waiting for. Beyond this the reservation is released even if the provider
- * state is still ambiguous — a paid-but-unreserved order is recoverable by an
- * operator, whereas stock held forever is not.
+ * reservation. Beyond this the reservation is released even if the provider
+ * state is still ambiguous — a paid-but-unreserved order is recoverable,
+ * whereas stock held for hours on a checkout nobody paid for is not. Recovery
+ * differs by path: a customer who returns hits the callback's reservation
+ * check and is reverted; a settle reached only through reconciliation throws
+ * SNAPPAY_LOCAL_STATE_CONFLICT after the provider has already settled and is
+ * parked for an operator, who must cancel it on SnappPay's side.
+ *
+ * SnappPay publishes no payment-page or PENDING lifetime, so this is a bound we
+ * chose, not one derived from the provider. 1.5h comfortably exceeds every
+ * documented Iranian IPG session (Saman is 20 minutes) while keeping an
+ * abandoned installment checkout from pinning inventory past lunchtime. The
+ * earlier 48h default was sized to outlast the reconciliation ladder, which
+ * traded stock availability for provider bookkeeping.
  */
 const SNAPPAY_DEFER_CEILING_HOURS = Number(
-  process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS || 48,
+  process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS || 1.5,
 );
 
 const incrementMetric = (

@@ -4,8 +4,52 @@
  */
 
 import type { PersianOrderStatus } from "@/constants/enums";
-import type { Order } from "@/services/order";
-import { getOrderStatusCategory } from "@/utils/statusTranslations";
+import type { Order, OrderItem } from "@/services/order";
+import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTranslations";
+
+/**
+ * Colour/size/model of a purchased line, for display.
+ *
+ * Reads the order-item snapshot first and only then falls back to the live
+ * variation. Two spellings are in play and mixing them up renders nothing:
+ * the snapshot columns on `order_items` are `product_color`/`product_size`,
+ * while the same relations on `product-variation` are `product_variation_color`
+ * /`product_variation_size`. Every storefront order view used to read
+ * `item.product_variation.product_size`, a path that exists on neither entity,
+ * so sizes were silently absent from order history.
+ */
+export function getOrderItemAttributes(item: OrderItem): {
+  color?: string;
+  size?: string;
+  model?: string;
+} {
+  const variation = item.product_variation;
+  const pick = (value?: string | null) => {
+    const text = String(value ?? "").trim();
+    return text.length > 0 ? text : undefined;
+  };
+
+  return {
+    color: pick(item.product_color?.Title) ?? pick(variation?.product_variation_color?.Title),
+    size: pick(item.product_size?.Title) ?? pick(variation?.product_variation_size?.Title),
+    model:
+      pick(item.product_variation_model?.Title) ??
+      pick(variation?.product_variation_model?.Title),
+  };
+}
+
+/**
+ * Renders the attributes as the `رنگ: … | سایز: …` line used across order views.
+ * Returns "" when the line has no attributes worth showing.
+ */
+export function formatOrderItemAttributes(item: OrderItem, separator = " | "): string {
+  const { color, size, model } = getOrderItemAttributes(item);
+  const parts: string[] = [];
+  if (color) parts.push(`رنگ: ${color}`);
+  if (size) parts.push(`سایز: ${size}`);
+  if (model) parts.push(`مدل: ${model}`);
+  return parts.join(separator);
+}
 
 export function formatOrderDate(dateString: string): string {
   return new Intl.DateTimeFormat("fa-IR", {
@@ -31,6 +75,9 @@ export function persistOrderSnapshot(order: Order): void {
   }
 }
 
+export const isAwaitingPayment = (status?: string | null): boolean =>
+  String(status ?? "").trim().toLowerCase() === "paying";
+
 export interface OrderDisplayRowProps {
   id: string;
   title: string;
@@ -38,6 +85,9 @@ export interface OrderDisplayRowProps {
   time: string;
   price: string;
   status: PersianOrderStatus;
+  /** Granular lifecycle label; `status` is only the tab bucket. */
+  statusLabel?: string;
+  awaitingPayment?: boolean;
   image: string;
   category: string;
   orderId?: number;
@@ -97,7 +147,12 @@ export function mapOrderToDisplayProps(
   const totalPrice =
     (order.order_items?.reduce((sum, item) => sum + item.Count * item.PerAmount, 0) ?? 0) +
     (order.ShippingCost ?? 0);
+  // The bucket drives tabs and icon tone only. Printing it as the status text
+  // called an unpaid (Paying) order «در حال انجام», because Paying has no bucket
+  // of its own and falls into in-progress.
   const status = getOrderStatusCategory(order.Status);
+  const statusLabel = translateOrderStatus(order.Status);
+  const awaitingPayment = isAwaitingPayment(order.Status);
 
   const reserveGroupOrderCount = context.getReserveGroupCount
     ? context.getReserveGroupCount(order)
@@ -112,6 +167,8 @@ export function mapOrderToDisplayProps(
     time: context.formatTime(order.createdAt),
     price: context.faNum(totalPrice),
     status,
+    statusLabel,
+    awaitingPayment,
     image,
     category,
     orderId: order.id,

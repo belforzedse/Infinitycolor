@@ -27,10 +27,13 @@ jest.mock("@/hooks/useAddToCart", () => ({
   }),
 }));
 
+let mockAvailableStock = 1;
+
 jest.mock("@/services/product/product", () => ({
   __esModule: true,
-  getAvailableStockCount: () => 1,
+  getAvailableStockCount: () => mockAvailableStock,
   hasStockForVariation: () => true,
+  LOW_STOCK_DISPLAY_THRESHOLD: 5,
 }));
 
 jest.mock("@/lib/analytics", () => ({
@@ -73,5 +76,45 @@ describe("PDPHeroInfoAction", () => {
     fireEvent.click(screen.getByTestId("share-icon").closest("button")!);
 
     await waitFor(() => expect(screen.getByTestId("share-modal-stub")).toBeInTheDocument());
+  });
+
+  describe("low-stock hint", () => {
+    // `availableStock` is only read off a selected variation, so the hint needs
+    // one; the value itself comes from the mocked getAvailableStockCount.
+    const renderWithStock = (available: number) => {
+      mockAvailableStock = available;
+      return render(
+        <PDPHeroInfoAction
+          productId="123"
+          name="Product"
+          category="Category"
+          price={1000}
+          image="/uploads/product.jpg"
+          hasStock
+          currentVariation={{ id: 1, attributes: {} } as never}
+        />,
+      );
+    };
+
+    afterEach(() => {
+      mockAvailableStock = 1;
+    });
+
+    it("tells the shopper how many are left at the cap", () => {
+      renderWithStock(5);
+      expect(screen.getByTestId("pdp-low-stock-hint")).toHaveTextContent("۵");
+    });
+
+    it("tells the shopper how many are left below the cap", () => {
+      renderWithStock(2);
+      expect(screen.getByTestId("pdp-low-stock-hint")).toHaveTextContent("۲");
+    });
+
+    // Above the cap the number is noise: the selector offers the same five
+    // options either way, so printing it would only invite a stale count.
+    it("stays quiet when stock is comfortably above the cap", () => {
+      renderWithStock(40);
+      expect(screen.queryByTestId("pdp-low-stock-hint")).not.toBeInTheDocument();
+    });
   });
 });

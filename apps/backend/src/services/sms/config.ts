@@ -3,6 +3,13 @@ import type { SmsNotificationType } from "./types";
 const DEFAULT_BASE_URL = "https://edge.ippanel.com/v1";
 const DEFAULT_PATTERN_ENDPOINT = "/api/send";
 const DEFAULT_TIMEOUT_MS = 4000;
+/**
+ * The registered IPPanel template for the staff «در حال انجام» alert. Pinned in
+ * code rather than left to the environment so the alert works on a fresh deploy;
+ * `IP_PANEL_PATTERN_STAFF_ORDER_STARTED` still overrides it. Pattern codes are
+ * not secrets here — the customer ones are committed in `.env.example`.
+ */
+const DEFAULT_STAFF_ORDER_STARTED_PATTERN = "yk33tn38qf9jsi7";
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
@@ -38,6 +45,12 @@ function readPatternCodes(env: NodeJS.ProcessEnv): Partial<Record<SmsNotificatio
     shipped: env.IP_PANEL_PATTERN_SHIPPED || env.IP_PANEL_PATTERN_CODE,
     delivered: env.IP_PANEL_PATTERN_DELIVERED || env.IP_PANEL_PATTERN_CODE,
     cancelled: env.IP_PANEL_PATTERN_CANCELLED || env.IP_PANEL_PATTERN_CODE,
+    // Falls back to the pinned staff template, never to `IP_PANEL_PATTERN_CODE`:
+    // this message is addressed to the team, so borrowing a customer-worded
+    // template would be worse than not sending. Read it through
+    // `getStaffPatternCode`, which does not consult `defaultPatternCode`.
+    staff_order_started:
+      env.IP_PANEL_PATTERN_STAFF_ORDER_STARTED || DEFAULT_STAFF_ORDER_STARTED_PATTERN,
   };
 }
 
@@ -60,4 +73,15 @@ export function loadSmsConfig(env: NodeJS.ProcessEnv = process.env): SmsConfig {
 
 export function getPatternCode(config: SmsConfig, type: SmsNotificationType): string | undefined {
   return config.patternCodes[type] || config.defaultPatternCode;
+}
+
+/**
+ * Pattern code for a staff-addressed template. Unlike `getPatternCode` this
+ * never falls back to `IP_PANEL_PATTERN_CODE`.
+ */
+export function getStaffPatternCode(
+  config: SmsConfig,
+  type: SmsNotificationType,
+): string | undefined {
+  return config.patternCodes[type];
 }

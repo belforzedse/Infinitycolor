@@ -429,6 +429,11 @@ const superAdminSidebar: SidebarItem[] = [
         label: "تنظیمات عمومی",
         href: "/settings/general",
       },
+      {
+        id: "settings-order-alerts",
+        label: "پیامک اطلاع‌رسانی سفارش",
+        href: "/settings/order-alerts",
+      },
     ],
   },
   // {

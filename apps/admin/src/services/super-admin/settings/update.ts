@@ -199,6 +199,33 @@ export async function updateSuperAdminSettings(
   if (settings.homeCustomSectionAssignment !== undefined) {
     data.homeCustomSectionAssignment = settings.homeCustomSectionAssignment;
   }
+  if (settings.homeCustomSectionTwoEnabled !== undefined) {
+    data.homeCustomSectionTwoEnabled = settings.homeCustomSectionTwoEnabled;
+  }
+  if (settings.homeCustomSectionTwoTitle !== undefined) {
+    data.homeCustomSectionTwoTitle = settings.homeCustomSectionTwoTitle;
+  }
+  if (settings.homeCustomSectionTwoAssignment !== undefined) {
+    data.homeCustomSectionTwoAssignment = settings.homeCustomSectionTwoAssignment;
+  }
+  if (settings.homeCustomSectionThreeEnabled !== undefined) {
+    data.homeCustomSectionThreeEnabled = settings.homeCustomSectionThreeEnabled;
+  }
+  if (settings.homeCustomSectionThreeTitle !== undefined) {
+    data.homeCustomSectionThreeTitle = settings.homeCustomSectionThreeTitle;
+  }
+  if (settings.homeCustomSectionThreeAssignment !== undefined) {
+    data.homeCustomSectionThreeAssignment = settings.homeCustomSectionThreeAssignment;
+  }
+  if (settings.homeCustomSectionViewAllHref !== undefined) {
+    data.homeCustomSectionViewAllHref = settings.homeCustomSectionViewAllHref;
+  }
+  if (settings.homeCustomSectionTwoViewAllHref !== undefined) {
+    data.homeCustomSectionTwoViewAllHref = settings.homeCustomSectionTwoViewAllHref;
+  }
+  if (settings.homeCustomSectionThreeViewAllHref !== undefined) {
+    data.homeCustomSectionThreeViewAllHref = settings.homeCustomSectionThreeViewAllHref;
+  }
   if (settings.homeWeeklyPicksEnabled !== undefined) {
     data.homeWeeklyPicksEnabled = settings.homeWeeklyPicksEnabled;
   }

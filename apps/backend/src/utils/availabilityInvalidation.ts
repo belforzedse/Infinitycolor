@@ -1,21 +1,26 @@
 import { enqueueEdgeCachePurge } from "../queue/edge-cache";
 import { buildProductPaths } from "./edgeCache";
+import { LOW_STOCK_DISPLAY_THRESHOLD } from "../api/cart/services/lib/stock";
 
 /**
- * Purge the shared caches when a variation crosses in or out of stock.
+ * Purge the shared caches when a stock move changes something a shopper sees.
  *
- * Stock moves on every add-to-cart, every reservation expiry and every
- * checkout, but the PDP only renders *availability* — `ناموجود`, a disabled
- * size, a discount that is hidden when out of stock. The exact number never
- * reaches the HTML; it appears only in a client-side toast that is recomputed
- * from a payload the cart API re-validates server-side. So a stale count cannot
- * oversell, and purging on every decrement would mean a purge per add-to-cart
- * for no visible difference.
+ * This used to fire only on the availability boolean crossing zero, reasoning
+ * that "the exact number never reaches the HTML". It does now: at or below
+ * `LOW_STOCK_DISPLAY_THRESHOLD` the PDP prints «تنها N عدد باقی مانده» and the
+ * quantity selector offers exactly N options, so a stale count is a visible
+ * lie. Nor does stock move on every add-to-cart — `reserveStockAtomic` has one
+ * call site, inside `finalizeCartToOrder` — so reservations move per checkout
+ * attempt, not per click, and purging on the displayed value is cheap.
  *
- * What does matter is the boolean crossing zero: a product that shows as
- * available but is not, or is available but still shows as sold out. That is
- * what this fires on, in both directions.
+ * Everything above the threshold collapses into one bucket, so a 40 → 39 move
+ * is silent while 6 → 5 (which newly renders a number) is not.
  */
+
+function displayedAvailability(value: number): number {
+  const safe = Number.isFinite(value) ? Math.max(0, value) : 0;
+  return Math.min(safe, LOW_STOCK_DISPLAY_THRESHOLD + 1);
+}
 
 function isAvailable(value: number): boolean {
   return Number.isFinite(value) && value > 0;
@@ -53,7 +58,12 @@ async function resolveProductForStock(
   return { slug, categorySlugs };
 }
 
-async function purgeForStock(strapi: any, stockId: number, reason: string): Promise<void> {
+async function purgeForStock(
+  strapi: any,
+  stockId: number,
+  reason: string,
+  availabilityCrossed: boolean,
+): Promise<void> {
   const product = await resolveProductForStock(strapi, stockId);
   if (!product) {
     strapi.log?.warn?.(
@@ -65,10 +75,18 @@ async function purgeForStock(strapi: any, stockId: number, reason: string): Prom
   await enqueueEdgeCachePurge(
     {
       kind: "availability",
-      paths: buildProductPaths({ slug: product.slug, categorySlugs: product.categorySlugs }),
+      paths: availabilityCrossed
+        ? buildProductPaths({ slug: product.slug, categorySlugs: product.categorySlugs })
+        : [`/pdp/${product.slug}`],
       reason,
+      origin: { productSlug: product.slug, availabilityCrossed },
     },
-    { dedupeKey: `availability:${product.slug}` },
+    // Scoped by what changed. A shared key would let a low-stock purge and a
+    // sold-out purge collide inside one dedupe bucket, and the narrower job
+    // would win — leaving every listing stale.
+    {
+      dedupeKey: `availability:${product.slug}:${availabilityCrossed ? "crossing" : "count"}`,
+    },
   );
 }
 
@@ -90,10 +108,14 @@ export function scheduleAvailabilityTransitionPurge(
 ): void {
   const { stockId, availableBefore, availableAfter, reason, trx } = params;
 
-  if (isAvailable(availableBefore) === isAvailable(availableAfter)) return;
+  if (displayedAvailability(availableBefore) === displayedAvailability(availableAfter)) return;
+
+  // Cards only change when the boolean flips; below the threshold it is just
+  // the PDP's number moving, and the listings can be left alone.
+  const availabilityCrossed = isAvailable(availableBefore) !== isAvailable(availableAfter);
 
   const run = () => {
-    void purgeForStock(strapi, stockId, reason).catch((error) => {
+    void purgeForStock(strapi, stockId, reason, availabilityCrossed).catch((error) => {
       strapi.log?.warn?.(`[availability] Failed to enqueue purge for stock ${stockId}`, error);
     });
   };

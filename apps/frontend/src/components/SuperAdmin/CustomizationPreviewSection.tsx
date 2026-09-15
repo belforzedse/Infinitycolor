@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Pencil, PanelLeftClose, PanelRight } from "lucide-react";
 import CustomizationEditorPanel from "./CustomizationEditorPanel";
+import { SITE_URL } from "@/config/site";
 
 export type EmptyStateConfig = {
   icon?: ReactNode;
@@ -35,6 +36,19 @@ function DefaultEmptyIcon() {
   );
 }
 
+/**
+ * Hostname drawn in the preview's fake address bar. Derived from `SITE_URL` rather
+ * than written out, so the apex cutover cannot leave a dead host on screen again --
+ * this read `new.infinitycolor.co` after that host stopped serving the storefront.
+ */
+const PREVIEW_HOST = (() => {
+  try {
+    return new URL(SITE_URL).host;
+  } catch {
+    return "infinitycolor.co";
+  }
+})();
+
 export function BrowserChrome({ children }: { children: ReactNode }) {
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -45,7 +59,7 @@ export function BrowserChrome({ children }: { children: ReactNode }) {
           <div className="h-2.5 w-2.5 rounded-full bg-slate-300" />
         </div>
         <div className="flex-1 rounded-md bg-white px-3 py-1.5 text-[11px] text-slate-400">
-          new.infinitycolor.co
+          {PREVIEW_HOST}
         </div>
       </div>
       <div className="min-h-[280px] max-h-[min(72vh,680px)] flex-1 overflow-auto bg-white p-4">

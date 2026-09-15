@@ -11,6 +11,9 @@ export {
   defaultReportEnd,
   isReportDateOnly,
   sanitizeReportRange,
+  LEGACY_SALES_DATA_CUTOFF,
+  LEGACY_SALES_DATA_NOTICE,
+  predatesLegacySalesCutoff,
 } from "./reportDates";
 
 export interface UseReportQueryStateOptions<K extends string> {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import imageLoader from "@/utils/imageLoader";
 import React from "react";
 import ShoppingCartQuantityControl from "../QuantityControl";
+import CartStockAdjustedBadge from "../CartStockAdjustedBadge";
 import classNames from "classnames";
 import type { CartItem } from "@/contexts/CartContext";
 import { faNum } from "@/utils/faNum";
@@ -103,11 +104,14 @@ const ShoppingCartDesktopTable: React.FC<Props> = ({ cartItems, className }) => 
                 </td>
 
                 <td className="px-3 py-3 align-top">
-                  <ShoppingCartQuantityControl
-                    itemId={item.id}
-                    quantity={item.quantity}
-                    availableStock={item.availableStock}
-                  />
+                  <div className="flex flex-col items-start">
+                    <ShoppingCartQuantityControl
+                      itemId={item.id}
+                      quantity={item.quantity}
+                      availableStock={item.availableStock}
+                    />
+                    <CartStockAdjustedBadge cartItemId={item.cartItemId} />
+                  </div>
                 </td>
 
                 <td className="px-3 py-3 align-top">

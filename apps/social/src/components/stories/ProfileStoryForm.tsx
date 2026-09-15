@@ -18,6 +18,7 @@ export type ProfileStoryFormValues = {
   mediaUrl?: string;
   thumbnailId?: number;
   thumbnailUrl?: string;
+  CtaUrl?: string | null;
 };
 
 type ProfileStoryFormProps = {
@@ -56,6 +57,7 @@ export function ProfileStoryForm({
   const [mediaUrl, setMediaUrl] = useState<string | undefined>(initialValues?.mediaUrl);
   const [thumbnailId, setThumbnailId] = useState<number | undefined>(initialValues?.thumbnailId);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | undefined>(initialValues?.thumbnailUrl);
+  const [ctaUrl, setCtaUrl] = useState(initialValues?.CtaUrl ?? "");
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
   const mediaInputRef = useRef<HTMLInputElement>(null);
@@ -107,6 +109,7 @@ export function ProfileStoryForm({
       SortOrder: sortOrder,
       Media: mediaId,
       Thumbnail: thumbnailId,
+      CtaUrl: ctaUrl.trim() || null,
     });
   }
 
@@ -140,9 +143,17 @@ export function ProfileStoryForm({
             {mediaUrl ? (
               <div className="relative inline-flex">
                 {mediaType === "video" ? (
-                  <video src={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)} controls className="h-56 rounded-xl" />
+                  <video
+                    src={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)}
+                    controls
+                    className="h-56 rounded-xl"
+                  />
                 ) : (
-                  <img src={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)} alt="" className="h-56 rounded-xl object-cover" />
+                  <img
+                    src={resolveMediaUrl(mediaUrl, initialValues?.updatedAt)}
+                    alt=""
+                    className="h-56 rounded-xl object-cover"
+                  />
                 )}
                 <button
                   type="button"
@@ -183,7 +194,11 @@ export function ProfileStoryForm({
             <label className="mb-3 block font-peyda text-sm font-medium text-zinc-700">تصویر جلد</label>
             {thumbnailUrl ? (
               <div className="relative inline-flex">
-                <img src={resolveMediaUrl(thumbnailUrl, initialValues?.updatedAt)} alt="" className="size-32 rounded-xl object-cover" />
+                <img
+                  src={resolveMediaUrl(thumbnailUrl, initialValues?.updatedAt)}
+                  alt=""
+                  className="size-32 rounded-xl object-cover"
+                />
                 <button
                   type="button"
                   onClick={() => {
@@ -218,13 +233,33 @@ export function ProfileStoryForm({
               }}
             />
           </section>
+
+          <section className="rounded-2xl bg-white p-5 shadow-[0_0_14.7px_rgba(0,0,0,0.04)]">
+            <label htmlFor="profile-story-cta-url" className="mb-2 block font-peyda text-sm font-medium text-zinc-700">
+              لینک دکمه «مشاهده لینک»
+            </label>
+            <input
+              id="profile-story-cta-url"
+              type="text"
+              inputMode="url"
+              dir="ltr"
+              value={ctaUrl}
+              onChange={(event) => setCtaUrl(event.target.value)}
+              placeholder="https://example.com یا /pdp/product"
+              className="w-full rounded-xl border border-zinc-200 px-4 py-2.5 text-left font-peyda text-sm outline-none focus:border-[#566D97]"
+            />
+          </section>
         </div>
 
         <aside className="flex flex-col gap-5">
           <section className="rounded-2xl bg-white p-5 shadow-[0_0_14.7px_rgba(0,0,0,0.04)]">
             <div className="mb-5 flex items-center justify-between gap-3">
               <span className="font-peyda text-sm font-medium text-zinc-700">وضعیت انتشار</span>
-              <button type="button" onClick={() => setIsActive((value) => !value)} className="inline-flex items-center gap-2 font-peyda text-sm">
+              <button
+                type="button"
+                onClick={() => setIsActive((value) => !value)}
+                className="inline-flex items-center gap-2 font-peyda text-sm"
+              >
                 {isActive ? (
                   <>
                     <ToggleRight className="size-6 text-emerald-500" aria-hidden />

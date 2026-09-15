@@ -493,6 +493,20 @@ test("full dry-run: counts creates, synthesizes simple variations, flags missing
   assert.deepEqual(report.failures.filter((f) => f.stage === "price").map((f) => f.wcId), [103]);
 });
 
+test("skipStock: the product loop still writes everything except stock", async () => {
+  // The products+variations+media path has never run with stock off — every
+  // stock-bearing scope had stock:true — so exercise it end to end, not just
+  // the flag resolution.
+  const engine = makeEngine();
+  const report = await engine.runSync({ dryRun: false, scope: "no-media", skipStock: true });
+  assert.equal(report.entities.categories.created, 2);
+  assert.equal(report.entities.products.created, 3);
+  assert.equal(report.entities.variations.created, 4);
+  const stocks = report.entities.stocks || {};
+  assert.equal(stocks.created || 0, 0, "no stock rows created");
+  assert.equal(stocks.updated || 0, 0, "no stock rows updated");
+});
+
 test("full sync: upserts categories + products + variations + stock, records mappings", async () => {
   const engine = makeEngine();
   const report = await engine.runSync({ dryRun: false, scope: "no-media" });
@@ -1285,4 +1299,118 @@ test("a bare stock row created earlier in the same run reads as unknown, not as 
   assert.equal(report.stockGate.verifiedSkipped, 0);
   assert.equal(report.stockGate.staleNonZero, 1);
   assert.equal(fetched, 1);
+});
+
+test("content-refresh updates variation relations but never Price/DiscountPrice", async () => {
+  const engine = makeEngine({ withExisting: true, products: [products[0]] });
+  const report = await engine.runSync({ scope: "content-refresh" });
+
+  const variationWrites = engine._calls.upserts.filter((c) => c.endpoint === "/product-variations");
+  assert.ok(variationWrites.length > 0, "expected variation writes");
+  for (const call of variationWrites) {
+    assert.equal("Price" in call.payload, false, `Price sent for ${call.externalId}`);
+    assert.equal("DiscountPrice" in call.payload, false, `DiscountPrice sent for ${call.externalId}`);
+    // The relation half of the record still goes out.
+    assert.ok(call.payload.product, `missing product relation for ${call.externalId}`);
+    assert.ok(call.payload.SKU, `missing SKU for ${call.externalId}`);
+  }
+  // No stock row is touched, and the price-only PUT path is not the one taken.
+  assert.equal(engine._calls.stockUpserts.length, 0);
+  assert.equal(engine._calls.puts.filter((c) => c.url.startsWith("/product-variations/")).length, 0);
+  assert.equal(report.hasFailures(), false);
+});
+
+test("content-refresh writes the product record and its gallery", async () => {
+  const engine = makeEngine({ withExisting: true, products: [products[0]] });
+  await engine.runSync({ scope: "content-refresh" });
+
+  const productWrites = engine._calls.upserts.filter((c) => c.endpoint === "/products");
+  assert.equal(productWrites.length, 1);
+  // Descriptions are the point of the scope; the rest of the record rides along.
+  assert.ok("Description" in productWrites[0].payload);
+  assert.ok(productWrites[0].payload.Title);
+});
+
+test("content-refresh never creates a product that was never imported", async () => {
+  const engine = makeEngine({ withExisting: false, products: [products[0]] });
+  const report = await engine.runSync({ scope: "content-refresh" });
+
+  // Without the hoisted onlyExisting guard this scope would create the product
+  // (and, with stock off, leave it visible with no stock row).
+  assert.equal(engine._calls.upserts.filter((c) => c.endpoint === "/products").length, 0);
+  assert.equal(engine._calls.upserts.filter((c) => c.endpoint === "/product-variations").length, 0);
+  assert.equal(report.entities.products.skipped, 1);
+});
+
+test("content-refresh skips a variation Strapi never imported rather than creating it", async () => {
+  const engine = makeEngine({ withExisting: true, products: [products[0]] });
+  const baseIndex = engine.repo.buildExternalIndex;
+  engine.repo.buildExternalIndex = async (endpoint, params) => {
+    const map = await baseIndex(endpoint, params);
+    if (endpoint === "/product-variations") map.delete("201");
+    return map;
+  };
+
+  const report = await engine.runSync({ scope: "content-refresh" });
+  const written = engine._calls.upserts
+    .filter((c) => c.endpoint === "/product-variations")
+    .map((c) => c.externalId);
+
+  // "no-price" only strips the money from rows that exist; it is `onlyExisting`
+  // that decides an absent row is skipped, not created at a price this scope
+  // has no business setting.
+  assert.equal(written.includes("201"), false);
+  assert.deepEqual(written.sort(), ["202", "203"]);
+  assert.equal(report.entities.variations.skipped, 1);
+});
+
+test("content-refresh demands the frozen editorial manifest on a production apply", async () => {
+  const engine = makeEngine({ withExisting: true, products: [products[0]] });
+  engine.options.environment = "production";
+  engine.woo.fetchAllCategories = async () => [
+    { id: 5, name: "کیف", slug: "kif", parent: 0, description: "<h2>کیف</h2><p>کیف چرم دست‌دوز</p>" },
+  ];
+
+  const report = await engine.runSync({ scope: "content-refresh" });
+
+  const manifestFailure = report.failures.find(
+    (f) => f.entity === "categoryEditorial" && f.stage === "manifest",
+  );
+  assert.ok(manifestFailure, "expected the manifest gate to fail the editorial phase");
+  assert.match(String(manifestFailure.error), /CATEGORY_EDITORIAL_EXPECTED_MANIFEST_REQUIRED/);
+  // The gate fails the editorial phase only; the rest of the scope still runs,
+  // and the non-zero exit comes from hasFailures().
+  assert.equal(engine._calls.editorialFinalizes.length, 0);
+  assert.ok(engine._calls.upserts.some((c) => c.endpoint === "/products"));
+  assert.equal(report.hasFailures(), true);
+});
+
+test("content-refresh reaches a product whose sibling variation has stock unmanaged", async () => {
+  // The stock-eligibility gate skips this product for any scope that writes
+  // stock. A content refresh writes none, so the product's description, gallery
+  // and relations must not be collateral damage of a stock setting.
+  const engine = makeEngine({ withExisting: true, products: [products[0]] });
+  engine.woo.fetchAllVariations = async (productId) =>
+    variations
+      .filter((variation) => variation.parent_id === productId)
+      .map((variation) => (variation.id === 202 ? { ...variation, manage_stock: false } : variation));
+
+  const report = await engine.runSync({ scope: "content-refresh" });
+
+  assert.equal(engine._calls.upserts.filter((c) => c.endpoint === "/products").length, 1);
+  assert.equal(report.entities.products.skipped ?? 0, 0);
+  assert.equal(engine._calls.stockUpserts.length, 0);
+});
+
+test("stock scopes still skip a product whose sibling variation has stock unmanaged", async () => {
+  const engine = makeEngine({ withExisting: true, products: [products[0]] });
+  engine.woo.fetchAllVariations = async (productId) =>
+    variations
+      .filter((variation) => variation.parent_id === productId)
+      .map((variation) => (variation.id === 202 ? { ...variation, manage_stock: false } : variation));
+
+  const report = await engine.runSync({ scope: "stock" });
+
+  assert.equal(engine._calls.stockUpserts.length, 0);
+  assert.equal(report.entities.products.skipped, 1);
 });

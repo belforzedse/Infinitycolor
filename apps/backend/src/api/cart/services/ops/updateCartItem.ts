@@ -51,7 +51,11 @@ export const updateCartItemOp = async (
     return { success: false, message: "Unable to verify stock" };
   }
 
-  if (!variation?.product_stock || available < count) {
+  // Increase-only gate: see the matching note in the updateItem handler. A
+  // decrease is always allowed, including when the line already exceeds the
+  // available count or the variation has no stock record at all.
+  const currentCount = Number(cartItem.Count) || 0;
+  if (count > currentCount && (!variation?.product_stock || available < count)) {
     return {
       success: false,
       message: "Insufficient stock",

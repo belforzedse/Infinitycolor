@@ -15,22 +15,27 @@ function createContext(body: Record<string, unknown> = {}) {
   };
 }
 
-function installStrapi(rows: any[] = []) {
+function installStrapi(rows: any[] = [], transactionRows: any[] = []) {
   const findMany = jest.fn().mockResolvedValue(rows);
   const count = jest.fn().mockResolvedValue(49_518);
   const reserveFindMany = jest.fn().mockResolvedValue([]);
   const reserveCount = jest.fn().mockResolvedValue(7);
+  const transactionFindMany = jest.fn().mockResolvedValue(transactionRows);
   const info = jest.fn();
   (global as any).strapi = {
-    query: jest.fn((uid: string) =>
-      uid === "api::reserve-group.reserve-group"
-        ? { findMany: reserveFindMany, count: reserveCount }
-        : { findMany, count },
-    ),
+    query: jest.fn((uid: string) => {
+      if (uid === "api::reserve-group.reserve-group") {
+        return { findMany: reserveFindMany, count: reserveCount };
+      }
+      if (uid === "api::contract-transaction.contract-transaction") {
+        return { findMany: transactionFindMany };
+      }
+      return { findMany, count };
+    }),
     contentType: jest.fn(() => ({})),
     log: { info },
   };
-  return { findMany, count, reserveFindMany, reserveCount, info };
+  return { findMany, count, reserveFindMany, reserveCount, transactionFindMany, info };
 }
 
 describe("bounded admin orders list", () => {
@@ -100,6 +105,7 @@ describe("bounded admin orders list", () => {
       {
         $or: [
           { contract: { external_id: { $containsi: "Ali" } } },
+          { external_id: { $eq: "Ali" } },
           { user: { user_info: { FirstName: { $containsi: "Ali" } } } },
           { user: { user_info: { LastName: { $containsi: "Ali" } } } },
           { ShippingBarcode: { $containsi: "Ali" } },
@@ -248,6 +254,7 @@ describe("bounded admin orders list", () => {
         {
           $or: [
             { contract: { external_id: { $containsi: "synthetic-transaction" } } },
+            { external_id: { $eq: "synthetic-transaction" } },
             { user: { user_info: { FirstName: { $containsi: "synthetic-transaction" } } } },
             { user: { user_info: { LastName: { $containsi: "synthetic-transaction" } } } },
             { ShippingBarcode: { $containsi: "synthetic-transaction" } },
@@ -301,22 +308,129 @@ describe("bounded admin orders list", () => {
     expect(sanitize.contentAPI.output.mock.calls.at(-1)).toHaveLength(2);
   });
 
-  it("resolves a numeric search against the order number without touching name columns", async () => {
-    const { findMany } = installStrapi();
+  it("matches a full customer name by splitting it across the two name columns", async () => {
+    const { findMany, count } = installStrapi();
+    // The table renders «FirstName LastName», so that is what an operator types.
+    // Neither column holds both halves, so the whole query has to be split.
+    const ctx = createContext({ search: "علی رضایی" });
+
+    await controller.query(ctx);
+
+    const splitCondition = {
+      $and: [
+        { user: { user_info: { FirstName: { $containsi: "علی" } } } },
+        { user: { user_info: { LastName: { $containsi: "رضایی" } } } },
+      ],
+    };
+    expect(findMany.mock.calls[0][0].where.$and[0].$or).toContainEqual(splitCondition);
+
+    // Tab badges run through the same criteria parser, so they count the same
+    // population the table shows.
+    await controller.counts(createContext({ search: "علی رضایی" }));
+    expect(count.mock.calls[0][0].where.$and[0].$or).toContainEqual(splitCondition);
+  });
+
+  it("splits a full owner name on the reserve board the same way", async () => {
+    const { reserveFindMany } = installStrapi();
+    const ctx = createContext({ search: "علی رضایی" });
+
+    await controller.queryReserveGroups(ctx);
+
+    expect(reserveFindMany.mock.calls[0][0].where.$and[0].$or).toContainEqual({
+      $and: [
+        { owner: { user_info: { FirstName: { $containsi: "علی" } } } },
+        { owner: { user_info: { LastName: { $containsi: "رضایی" } } } },
+      ],
+    });
+  });
+
+  it("resolves a numeric search against the order number without touching name or phone columns", async () => {
+    const { findMany, transactionFindMany } = installStrapi();
     const ctx = createContext({ search: "۱۲۳" });
 
     await controller.query(ctx);
 
+    // Too short to be a phone or a gateway reference, so neither the unindexed
+    // phone column nor the transaction rows are worth touching.
     expect(findMany.mock.calls[0][0].where.$and).toEqual([
       {
         $or: [
           { id: { $eq: 123 } },
           { contract: { external_id: { $containsi: "123" } } },
+          { external_id: { $eq: "123" } },
           { ShippingBarcode: { $containsi: "123" } },
-          { user: { phone: { $containsi: "123" } } },
         ],
       },
     ]);
+    expect(transactionFindMany).not.toHaveBeenCalled();
+  });
+
+  it("finds an unsettled gateway reference through the transaction rows", async () => {
+    // SnappPay only writes the id onto the contract at successful finalization,
+    // and ZarinPal keeps its authority on the transaction row, so a pending or
+    // failed payment is exactly the reference the contract columns never hold.
+    const { findMany, count, transactionFindMany } = installStrapi(
+      [],
+      [{ id: 9, contract: { id: 4, order: { id: 771 } } }],
+    );
+    const ctx = createContext({ search: "A1b2C3d4" });
+
+    await controller.query(ctx);
+
+    expect(transactionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          $or: [
+            { external_id: { $eq: "A1b2C3d4" } },
+            { TrackId: { $eq: "A1b2C3d4" } },
+            { GatewayRefId: { $eq: "A1b2C3d4" } },
+          ],
+        },
+        limit: 50,
+      }),
+    );
+    expect(findMany.mock.calls[0][0].where.$and[0].$or).toContainEqual({
+      id: { $in: [771] },
+    });
+
+    // One bounded lookup answers the page and all seven tab counts; the counts
+    // must not join the transaction rows seven more times.
+    transactionFindMany.mockClear();
+    count.mockClear();
+    await controller.counts(createContext({ search: "A1b2C3d4" }));
+    expect(transactionFindMany).toHaveBeenCalledTimes(1);
+    expect(count).toHaveBeenCalledTimes(7);
+    for (const call of count.mock.calls) {
+      expect(call[0].where.$and[0].$or).toContainEqual({ id: { $in: [771] } });
+    }
+  });
+
+  it("never probes the transaction rows for a name or a phone", async () => {
+    const { transactionFindMany } = installStrapi();
+
+    await controller.query(createContext({ search: "علی رضایی" }));
+    await controller.query(createContext({ search: "0912-338-1098" }));
+
+    expect(transactionFindMany).not.toHaveBeenCalled();
+  });
+
+  it("matches a phone in every shape it is stored and typed in", async () => {
+    const { findMany } = installStrapi();
+
+    await controller.query(createContext({ search: "09123381098" }));
+    const numericBranch = findMany.mock.calls[0][0].where.$and[0].$or;
+    // Stored as `+989…`, which never contained the typed `09…` form.
+    expect(numericBranch).toContainEqual({
+      user: { phone: { $in: ["+989123381098", "09123381098"] } },
+    });
+    expect(numericBranch).toContainEqual({ id: { $eq: 9123381098 } });
+
+    // Separators drop the query into the text branch, which had no phone
+    // condition at all and so could only ever return nothing.
+    await controller.query(createContext({ search: "0912-338-1098" }));
+    expect(findMany.mock.calls[1][0].where.$and[0].$or).toContainEqual({
+      user: { phone: { $in: ["+989123381098", "09123381098"] } },
+    });
   });
 
   it("rejects unknown filters before querying", async () => {

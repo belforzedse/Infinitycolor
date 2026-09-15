@@ -4,11 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Tabs from "@/components/Kits/Tabs";
 import { PersianOrderStatus } from "@/constants/enums";
-import { getOrderStatusCategory } from "@/utils/statusTranslations";
+import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTranslations";
 import { IMAGE_BASE_URL, PLACEHOLDER_IMAGE } from "@/utils/orderDisplayConstants";
 import {
   formatOrderDate,
   formatOrderTime,
+  isAwaitingPayment,
   mapOrderToDisplayProps,
   persistOrderSnapshot as persistOrderSnapshotHelper,
 } from "@/utils/orderDisplayHelpers";
@@ -32,6 +33,8 @@ type OrderRowProps = {
   time: string;
   price: string;
   status: PersianOrderStatus;
+  statusLabel?: string;
+  awaitingPayment?: boolean;
   image: string;
   category: string;
   orderId?: number;
@@ -189,6 +192,10 @@ export default function OrdersTabs() {
         : statuses.some((s) => s === PersianOrderStatus.DELIVERED)
           ? PersianOrderStatus.DELIVERED
           : PersianOrderStatus.CANCELLED;
+      // A window whose orders are all still unpaid must not read as in progress.
+      const awaitingPayment =
+        groupOrders.length > 0 && groupOrders.every((o) => isAwaitingPayment(o.Status));
+      const statusLabel = awaitingPayment ? translateOrderStatus("Paying") : status;
       const groupDetailHref = `/orders/reserve/${reserveGroupId}`;
       return {
         id: `reserve-${reserveGroupId}`,
@@ -197,6 +204,8 @@ export default function OrdersTabs() {
         time: first ? formatOrderTime(first.createdAt) : "",
         price: faNum(totalPrice),
         status,
+        statusLabel,
+        awaitingPayment,
         image,
         category: "سفارش رزروی",
         detailHref: groupDetailHref,

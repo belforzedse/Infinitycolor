@@ -110,6 +110,36 @@ export function daysOfCover(
   return Number((stock / perDay).toFixed(1));
 }
 
+/**
+ * First day the store's financial figures are authoritative: ۲۳ شهریور ۱۴۰۵
+ * (۲۲ شهریور itself is excluded).
+ * Orders and settlements before this were carried over from the previous
+ * site, so no money report may include them — not even implicitly through a
+ * default window or a previous-period comparison. Every report handler runs
+ * its resolved window through {@link clampToFinancialFloor} before querying.
+ *
+ * The boundary is Tehran midnight written with the same fixed offset the
+ * controller's `tehranBoundary` uses, so both sides agree to the millisecond.
+ */
+export const FINANCIAL_DATA_FLOOR_YMD = "2026-09-14";
+export const FINANCIAL_DATA_FLOOR = new Date(`${FINANCIAL_DATA_FLOOR_YMD}T00:00:00.000+03:30`);
+
+/**
+ * Clamp a resolved [start, end] window so nothing before the floor is queried.
+ * Must be the last step after any swap-normalization: a window wholly before
+ * the floor becomes the empty window [floor, floor − 1ms], which `BETWEEN`
+ * matches nothing against and `fillBucketSeries` renders as no buckets.
+ */
+export function clampToFinancialFloor(
+  window: { start: Date; end: Date },
+  floor: Date = FINANCIAL_DATA_FLOOR,
+): { start: Date; end: Date } {
+  const floorMs = floor.getTime();
+  const start = window.start.getTime() < floorMs ? new Date(floorMs) : window.start;
+  const end = window.end.getTime() < floorMs ? new Date(floorMs - 1) : window.end;
+  return { start, end };
+}
+
 /** Inclusive day-count of a [start, end] window (never less than 1). */
 export function windowDays(start: Date, end: Date): number {
   const ms = end.getTime() - start.getTime();
@@ -197,6 +227,12 @@ export const GATEWAY_LABELS_FA: Record<string, string> = {
   SnappPay: "اسنپ‌پی",
   SamanKish: "سامان",
   ZarinPal: "زرین‌پال",
+  // Non-gateway channels the WooCommerce importer distinguishes (see
+  // scripts/woocommerce-importer/migration-v2/lib/transforms.js).
+  Manual: "ثبت دستی",
+  OffGateway: "پرداخت خارج از درگاه",
+  CardToCard: "کارت به کارت",
+  Other: "سایر",
 };
 
 export function gatewayLabelFa(value: string | null | undefined): string {
@@ -392,6 +428,13 @@ export interface ResolvedJoins {
   addressToCity: string;
   /** shipping_cities sc -> shipping_provinces sp (LEFT). Empty string when unresolved. */
   cityToProvince: string;
+  /**
+   * Whether `contract_transactions.settlement_gateway` exists. The WooCommerce
+   * importer tags each settlement leg with the channel that carried the money
+   * (a split order has a Wallet leg and a gateway leg); when the column is
+   * missing every leg is attributed to `orders.payment_gateway`.
+   */
+  txSettlementGateway: boolean;
 }
 
 let cachedJoins: Promise<ResolvedJoins> | null = null;
@@ -766,6 +809,13 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       cityToProvince = "";
     }
 
+    let txSettlementGateway = false;
+    try {
+      txSettlementGateway = await hasColumn(knex, "contract_transactions", "settlement_gateway");
+    } catch {
+      txSettlementGateway = false;
+    }
+
     return {
       oiToOrder,
       oiToVariation,
@@ -782,6 +832,7 @@ export async function resolveJoins(knex: Knex): Promise<ResolvedJoins> {
       orderToAddress,
       addressToCity,
       cityToProvince,
+      txSettlementGateway,
     };
   })();
   return cachedJoins;
@@ -806,34 +857,116 @@ export function __resetJoinCache() {
  * Bindings: [start, end] on order date.
  */
 /**
- * The single order status that counts as a completed sale.
+ * Order statuses that count as a sale: the order is in fulfilment — accepted and
+ * being worked (`Started`, «در حال انجام»), prepared (`Done`) or shipped
+ * (`Shipment`, the terminal step AFTER `Done` in this lifecycle, so leaving it
+ * out would make revenue disappear the moment an order ships).
  *
- * BOTH paid-orders definitions gate on it. They used to disagree: `completed`
- * required it while `settled` required only a successful gateway transaction, so a
- * Cancelled order that had been paid before it was cancelled was reported as
- * revenue, and the two definitions described different order sets for the same
- * window. `settled` now means "completed AND gateway-settled" — a strict subset of
- * `completed` — so switching definitions can only ever narrow the set, never swap it
- * for a different one.
+ * `Started` IS a sale (decision D15, superseding D14). The gateway-success path
+ * advances an order `Paying -> Started` on settlement and stops there (`Done` is
+ * an admin-only transition), so under D14 a paid order contributed nothing to
+ * «فروش» until an operator touched it: the sales page read zero on days the shop
+ * had genuinely taken money, and every KPI lagged the fulfilment desk rather than
+ * the till. The store asked for the takings, so the gate follows the money into
+ * fulfilment and stops short only of the statuses where no sale stands —
+ * `Paying` (never settled), `Cancelled` and `Returned` (unwound).
+ *
+ * The D14 failure mode is not forgotten, it is relocated: «فروش» now answers
+ * "what did we take", and the day's unaccepted orders are visible as their own
+ * «شروع‌شده» row in the status breakdown, which is status-independent and always
+ * has been. An operator asking "what have we actually completed" reads that row,
+ * not the KPI card.
+ *
+ * Changing this set is a REPORTING DEFINITION CHANGE, not a bug fix: every money
+ * KPI, the liquidity and gateway pages and the behaviour dashboard's eligible
+ * -order count read it, and a change here silently restates history. Bump the
+ * `sales.eligibleOrders` definitionVersion in analytics/metrics/catalog.ts with it.
+ *
+ * BOTH paid-orders definitions gate on this set. They used to disagree:
+ * `completed` required a status while `settled` required only a successful
+ * gateway transaction, so a Cancelled order that had been paid before it was
+ * cancelled was reported as revenue. `settled` means "eligible status AND
+ * gateway-settled" — a strict subset of `completed` — so switching definitions can
+ * only ever narrow the set, never swap it for a different one.
+ *
+ * `ELIGIBLE_ORDER_STATUS` is the canonical completed status; fixtures create
+ * orders with it. The gate itself is `ELIGIBLE_ORDER_STATUSES`.
  */
 export const ELIGIBLE_ORDER_STATUS = "Done";
+export const ELIGIBLE_ORDER_STATUSES = ["Started", "Shipment", "Done"] as const;
+export const ELIGIBLE_STATUS_SQL = ELIGIBLE_ORDER_STATUSES.map((status) => `'${status}'`).join(", ");
+
+/**
+ * Order statuses that mean THE CUSTOMER PAID — a different question from "is this
+ * a sale", even when the two sets happen to list the same statuses.
+ *
+ * The behaviour dashboard's «سفارش پرداخت‌شده» answers "how many visits turned into
+ * a payment": conversion happens at the gateway, not at the fulfilment desk, so a
+ * paid order that no operator has processed yet still converted. It also carries no
+ * settlement gate — status alone decides membership.
+ *
+ * Kept as its own named constant even though D15 makes it equal to
+ * {@link ELIGIBLE_ORDER_STATUSES} by value: the two answer different questions and
+ * have diverged before (D14) and may again. Do not collapse them into one.
+ *
+ * NEVER use this for money. Every revenue figure gates on ELIGIBLE_ORDER_STATUSES,
+ * a subset of this set (currently equal, additionally narrowed by the settlement
+ * gate) — the two answer "sold" and "paid", and the page that shows each one says
+ * which it means.
+ */
+export const PAID_ORDER_STATUSES = ["Started", "Shipment", "Done"] as const;
+export const PAID_STATUS_SQL = PAID_ORDER_STATUSES.map((status) => `'${status}'`).join(", ");
 
 export type PaidOrdersDefinition = "settled" | "completed";
 
+/**
+ * Which date a report keys on.
+ *
+ * - `order`: the order's creation date (`orders.date`). Order and product pages
+ *   use it, and it is what WooCommerce's own order list shows.
+ * - `settlement`: the date the money arrived (`contract_transactions.date` of the
+ *   first successful non-return leg; the importer copies WooCommerce
+ *   `date_paid_gmt` onto it). Money pages — liquidity, the gateway breakdown —
+ *   use it, and it is what the Payzito ledger shows. An order created at 23:50
+ *   and paid at 00:10 sits in different days on the two clocks; that is
+ *   expected and both are right for their page.
+ */
+export type ReportClock = "order" | "settlement";
+
+const SETTLED_AT_EXPR =
+  "MIN(ct.date) FILTER (WHERE ct.status = 'Success' AND ct.type <> 'Return')";
+
+/**
+ * The canonical "paid orders" CTE. Produces one row per qualifying order with:
+ *   - order_date:   the clock timestamp (UTC) for windowing and trend bucketing —
+ *                   the creation date on the `order` clock, the settlement date
+ *                   (falling back to creation) on the `settlement` clock
+ *   - settled_at:   first successful non-return settlement (NULL when none)
+ *   - order_discount: order-level applied discount (Toman)
+ *   - settled_irr:  net successful settlement in IRR (Returns subtracted)
+ *   - refund_irr:   sum of successful Return transactions in IRR (>= 0)
+ * Bindings: [start, end] on the clock date.
+ */
 export function paidOrdersCte(
   joins: ResolvedJoins,
   definition: PaidOrdersDefinition = "settled",
+  clock: ReportClock = "order",
 ): string {
+  const statusGate = `o.status IN (${ELIGIBLE_STATUS_SQL})`;
   if (definition === "completed") {
-    // Same column contract, but membership is "the shop completed the order"
-    // rather than "the gateway settled it". Settlement columns are still
+    // Same column contract, but membership is "the shop is fulfilling the
+    // order" rather than "the gateway settled it". Settlement columns are still
     // summed where transactions exist, so revenue stays real where it is
     // known and reads 0 for orders that never had a gateway leg.
+    const window = clock === "settlement"
+      ? `HAVING COALESCE(${SETTLED_AT_EXPR}, o.date) BETWEEN ? AND ?`
+      : "";
     return `
       paid_orders AS (
         SELECT
           o.id AS order_id,
-          o.date AS order_date,
+          ${clock === "settlement" ? `COALESCE(${SETTLED_AT_EXPR}, o.date)` : "o.date"} AS order_date,
+          ${SETTLED_AT_EXPR} AS settled_at,
           COALESCE(o.applied_discount_amount, 0) AS order_discount,
           COALESCE(
             SUM(
@@ -852,9 +985,10 @@ export function paidOrdersCte(
         FROM orders o
         ${leftify(joins.orderToContract)}
         ${leftify(joins.contractToTx)}
-        WHERE o.status = '${ELIGIBLE_ORDER_STATUS}'
-          AND o.date BETWEEN ? AND ?
+        WHERE ${statusGate}
+          ${clock === "settlement" ? "" : "AND o.date BETWEEN ? AND ?"}
         GROUP BY o.id, o.date, o.applied_discount_amount
+        ${window}
       )
     `;
   }
@@ -862,7 +996,8 @@ export function paidOrdersCte(
     paid_orders AS (
       SELECT
         o.id AS order_id,
-        o.date AS order_date,
+        ${clock === "settlement" ? `COALESCE(${SETTLED_AT_EXPR}, o.date)` : "o.date"} AS order_date,
+        ${SETTLED_AT_EXPR} AS settled_at,
         COALESCE(o.applied_discount_amount, 0) AS order_discount,
         SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END)::numeric AS settled_irr,
         COALESCE(SUM(CASE WHEN ct.type = 'Return' THEN ct.amount ELSE 0 END), 0)::numeric AS refund_irr
@@ -870,8 +1005,8 @@ export function paidOrdersCte(
       ${joins.orderToContract}
       ${joins.contractToTx}
       WHERE ct.status = 'Success'
-        AND o.status = '${ELIGIBLE_ORDER_STATUS}'
-        AND o.date BETWEEN ? AND ?
+        AND ${statusGate}
+        AND ${clock === "settlement" ? "ct.date" : "o.date"} BETWEEN ? AND ?
       GROUP BY o.id, o.date, o.applied_discount_amount
       HAVING SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END) > 0
     )
@@ -887,12 +1022,14 @@ export function paidOrdersCte(
  * single bucket — which is the "chart shows one dot" symptom. When a window
  * holds no successful settlement at all, fall back to completed orders.
  * Callers must surface the returned definition; the two are not interchangeable.
+ * Windows on the same column as {@link paidOrdersCte} for the given clock.
  */
 export async function resolvePaidOrdersDefinition(
   knex: Knex,
   joins: ResolvedJoins,
   start: Date,
   end: Date,
+  clock: ReportClock = "order",
 ): Promise<PaidOrdersDefinition> {
   const res = await knex.raw(
     `SELECT EXISTS (
@@ -901,8 +1038,8 @@ export async function resolvePaidOrdersDefinition(
        ${joins.orderToContract}
        ${joins.contractToTx}
        WHERE ct.status = 'Success'
-         AND o.status = '${ELIGIBLE_ORDER_STATUS}'
-         AND o.date BETWEEN ? AND ?
+         AND o.status IN (${ELIGIBLE_STATUS_SQL})
+         AND ${clock === "settlement" ? "ct.date" : "o.date"} BETWEEN ? AND ?
      ) AS has_settlement`,
     [start, end],
   );
@@ -911,35 +1048,75 @@ export async function resolvePaidOrdersDefinition(
 }
 
 /**
- * Sales grouped by the order's own payment gateway, reusing the canonical
- * `paid_orders` definition. One row per gateway with the paid-order count, the net
- * successful settlement (IRR; divide by 10 for Toman), and the *total* order count
- * in range. Attributing each order to a single `orders.payment_gateway` value
- * guarantees no order is double-counted.
+ * The channel a settlement leg is attributed to. The importer tags each leg
+ * (`settlement_gateway`: a split order has a `Wallet` leg and a gateway leg;
+ * an order completed at the branch without an online payment carries
+ * `OffGateway`); a leg without a tag — every live checkout transaction —
+ * falls back to the order's own gateway.
+ */
+export function settlementGatewayExpr(joins: ResolvedJoins): string {
+  const fallback = "NULLIF(o.payment_gateway, '')";
+  return joins.txSettlementGateway
+    ? `COALESCE(NULLIF(ct.settlement_gateway, ''), ${fallback}, 'Unknown')`
+    : `COALESCE(${fallback}, 'Unknown')`;
+}
+
+/**
+ * Cash collected per gateway, reusing the canonical `paid_orders` definition.
  *
- * Rooted in `orders` with a LEFT JOIN, deliberately. This previously read
- * `FROM paid_orders po JOIN orders o`, which meant a gateway with orders but no
- * settled transaction produced **no row at all** — and `withShares` then computed
- * percentages over only the surviving rows, so they summed to a confident 100%
- * with the broken gateway simply absent. That is how a gateway that never wrote
- * `contract_transaction.Status='Success'` stayed invisible. A gateway with orders
- * now always appears, with `orders_count` 0 against a non-zero `total_orders_count`.
+ * One row per gateway with the number of paid orders that had a leg on it, the
+ * net successful settlement of those legs (IRR; divide by 10 for Toman), and the
+ * *total* order count whose `orders.payment_gateway` is that gateway. Attribution
+ * is per settlement leg, so a split payment lands under both `Wallet` and its
+ * gateway — which is what the cash view must show — and the sum of `orders_count`
+ * across rows can exceed the number of paid orders. `paid_orders_count` carries
+ * the distinct total for footers.
+ *
+ * Rooted in every order in range (FULL OUTER JOIN), deliberately. This
+ * previously read `FROM paid_orders po JOIN orders o`, which meant a gateway with
+ * orders but no settled transaction produced **no row at all** — and `withShares`
+ * then computed percentages over only the surviving rows, so they summed to a
+ * confident 100% with the broken gateway simply absent. A gateway with orders
+ * always appears, with `orders_count` 0 against a non-zero `total_orders_count`.
  *
  * Bindings: [start, end, start, end] — the embedded paid_orders CTE is declared
- * first, so its window binds before the outer order-date window.
+ * first, so its window binds before the all-orders window (always creation date).
  */
-export function gatewayBreakdownQuery(joins: ResolvedJoins): string {
+export function gatewayBreakdownQuery(
+  joins: ResolvedJoins,
+  definition: PaidOrdersDefinition = "settled",
+  clock: ReportClock = "order",
+): string {
   return `
-    WITH ${paidOrdersCte(joins)}
+    WITH ${paidOrdersCte(joins, definition, clock)},
+    legs AS (
+      SELECT
+        ${settlementGatewayExpr(joins)} AS gateway,
+        COUNT(DISTINCT po.order_id)::bigint AS orders_count,
+        SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END)::numeric AS settled_irr
+      FROM paid_orders po
+      JOIN orders o ON o.id = po.order_id
+      ${joins.orderToContract}
+      ${joins.contractToTx}
+      WHERE ct.status = 'Success'
+      GROUP BY 1
+    ),
+    all_orders AS (
+      SELECT
+        COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown') AS gateway,
+        COUNT(*)::bigint AS total_orders_count
+      FROM orders o
+      WHERE o.date BETWEEN ? AND ?
+      GROUP BY 1
+    )
     SELECT
-      COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown') AS gateway,
-      COUNT(po.order_id)::bigint AS orders_count,
-      COUNT(*)::bigint AS total_orders_count,
-      COALESCE(SUM(po.settled_irr), 0)::numeric AS settled_irr
-    FROM orders o
-    LEFT JOIN paid_orders po ON po.order_id = o.id
-    WHERE o.date BETWEEN ? AND ?
-    GROUP BY COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown')
+      COALESCE(l.gateway, a.gateway) AS gateway,
+      COALESCE(l.orders_count, 0)::bigint AS orders_count,
+      COALESCE(a.total_orders_count, 0)::bigint AS total_orders_count,
+      COALESCE(l.settled_irr, 0)::numeric AS settled_irr,
+      (SELECT COUNT(*) FROM paid_orders)::bigint AS paid_orders_count
+    FROM legs l
+    FULL OUTER JOIN all_orders a ON a.gateway = l.gateway
     ORDER BY settled_irr DESC
   `;
 }
@@ -990,22 +1167,62 @@ export function gatewaySettlementWarnings(
 /**
  * Shipping revenue grouped by shipping method, reusing the canonical `paid_orders`
  * definition. Uses the stored `orders.shipping_cost` (Toman) snapshot — NOT product
- * subtotal. Orders with no resolvable shipping method group under the `__UNKNOWN__`
- * sentinel (the controller maps it to "نامشخص"). Bindings: [start, end].
+ * subtotal.
+ *
+ * The method name is the order's own `shipping_method_title` snapshot first, and
+ * the `shippings` relation only as a fallback. Every order carries the snapshot
+ * (the storefront and the WooCommerce importer both write it); only storefront
+ * orders have the relation, so grouping by the relation alone filed every
+ * imported order under «نامشخص». Orders with neither group under the
+ * `__UNKNOWN__` sentinel (the controller maps it to "نامشخص"). Bindings: [start, end].
  */
-export function shippingBreakdownQuery(joins: ResolvedJoins): string {
-  const titleExpr = joins.orderToShipping ? "s.title" : "NULL::text";
+export function shippingBreakdownQuery(
+  joins: ResolvedJoins,
+  definition: PaidOrdersDefinition = "settled",
+  clock: ReportClock = "order",
+): string {
+  const relationTitle = joins.orderToShipping ? "NULLIF(s.title, '')" : "NULL::text";
+  const methodExpr = `COALESCE(NULLIF(o.shipping_method_title, ''), ${relationTitle}, '__UNKNOWN__')`;
   return `
-    WITH ${paidOrdersCte(joins)}
+    WITH ${paidOrdersCte(joins, definition, clock)}
     SELECT
-      COALESCE(NULLIF(${titleExpr}, ''), '__UNKNOWN__') AS method,
+      ${methodExpr} AS method,
       COUNT(*)::bigint AS orders_count,
       COALESCE(SUM(o.shipping_cost), 0)::bigint AS shipping_total
     FROM paid_orders po
     JOIN orders o ON o.id = po.order_id
     ${joins.orderToShipping}
-    GROUP BY COALESCE(NULLIF(${titleExpr}, ''), '__UNKNOWN__')
+    GROUP BY ${methodExpr}
     ORDER BY shipping_total DESC
+  `;
+}
+
+/**
+ * Total shipping fee across the same `paid_orders` set, as one scalar.
+ *
+ * This is the term that reconciles the money figures the admin shows: the
+ * gateway/liquidity pages report cash actually collected, which is merchandise
+ * PLUS shipping, while `sales.gross` sums order lines only (`per_amount * count`,
+ * see {@link itemizedCte}). It is also the term the sales overview ADDS to reach
+ * its store-wide «فروش ناخالص» (`sales.grossWithShipping`) and then subtracts
+ * again to reach the merchandise-only «فروش خالص» — decision D16. Finance pages
+ * need the scalar, not the per-method grouping of {@link shippingBreakdownQuery},
+ * to render that reconciliation — and they are gated on `report.finance.read`,
+ * so they cannot borrow the product report's endpoint to get it.
+ *
+ * `orders.shipping_cost` is stored in Toman, not IRR — do NOT pass this through
+ * `irrToToman`.
+ */
+export function shippingRevenueQuery(
+  joins: ResolvedJoins,
+  definition: PaidOrdersDefinition = "settled",
+  clock: ReportClock = "order",
+): string {
+  return `
+    WITH ${paidOrdersCte(joins, definition, clock)}
+    SELECT COALESCE(SUM(o.shipping_cost), 0)::bigint AS shipping_total
+    FROM paid_orders po
+    JOIN orders o ON o.id = po.order_id
   `;
 }
 
@@ -1225,6 +1442,18 @@ export function tzBucketExpr(column: string, grouping: Grouping): string {
   return `date_trunc('${grouping}', (${column} AT TIME ZONE 'UTC') AT TIME ZONE '${REPORT_TIMEZONE}')`;
 }
 
+/**
+ * {@link tzBucketExpr} rendered as a `YYYY-MM-DD` text key.
+ *
+ * `date_trunc` yields `timestamp without time zone`, which node-postgres parses
+ * into a JS `Date` in the *server's* local zone. Every bucket consumer keys on
+ * the Tehran calendar date, so the key is produced in SQL where the zone is
+ * known, and no JS-side parsing can shift it.
+ */
+export function tzBucketKeyExpr(column: string, grouping: Grouping): string {
+  return `to_char(${tzBucketExpr(column, grouping)}, 'YYYY-MM-DD')`;
+}
+
 const EMPTY_TREND_POINT: Omit<TrendPoint, "bucket"> = {
   gross: 0,
   net: 0,
@@ -1237,7 +1466,7 @@ const EMPTY_TREND_POINT: Omit<TrendPoint, "bucket"> = {
 /** Iran has no DST; this matches `REPORT_TZ_OFFSET` in the report controller. */
 const TEHRAN_NOON_OFFSET = "+03:30";
 
-function tehranYmd(date: Date): string {
+export function tehranYmd(date: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: REPORT_TIMEZONE,
     year: "numeric",
@@ -1246,7 +1475,26 @@ function tehranYmd(date: Date): string {
   }).format(date);
 }
 
-function bucketDateKey(raw: string): string {
+function localYmd(date: Date): string {
+  const y = String(date.getFullYear()).padStart(4, "0");
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Normalise a SQL bucket to its `YYYY-MM-DD` key.
+ *
+ * Buckets should arrive as text (see {@link tzBucketKeyExpr}). A `Date` is what
+ * node-postgres makes of a bare `timestamp` — parsed in the server's local zone
+ * — so it is read back in that same zone, which returns the wall-clock date the
+ * database emitted regardless of where the server runs. `String(date)` used to
+ * be matched against `^\d{4}-\d{2}-\d{2}` here, which never matches
+ * `"Mon Aug 03 2026 …"`, so no SQL row ever met its calendar key and every
+ * trend charted as a flat zero line.
+ */
+export function bucketDateKey(raw: string | Date): string {
+  if (raw instanceof Date) return localYmd(raw);
   const match = String(raw).match(/^(\d{4}-\d{2}-\d{2})/);
   return match ? match[1] : String(raw);
 }
@@ -1288,18 +1536,32 @@ export function fillTrendSeries(
   end: Date,
   grouping: Grouping,
 ): TrendPoint[] {
-  const byKey = new Map<string, TrendPoint>();
+  return fillBucketSeries(points, start, end, grouping, EMPTY_TREND_POINT);
+}
+
+/**
+ * Generic form of {@link fillTrendSeries}: any series keyed by `bucket`, filled
+ * with `empty` for the Tehran calendar buckets SQL did not return.
+ */
+export function fillBucketSeries<T extends { bucket: string | Date }>(
+  points: T[],
+  start: Date,
+  end: Date,
+  grouping: Grouping,
+  empty: Omit<T, "bucket">,
+): Array<Omit<T, "bucket"> & { bucket: string }> {
+  const byKey = new Map<string, T>();
   for (const point of points) {
     byKey.set(alignBucketKey(bucketDateKey(point.bucket), grouping), point);
   }
 
   const startKey = alignBucketKey(tehranYmd(start), grouping);
   const endKey = alignBucketKey(tehranYmd(end), grouping);
-  const filled: TrendPoint[] = [];
+  const filled: Array<Omit<T, "bucket"> & { bucket: string }> = [];
   let cursor = startKey;
   for (let i = 0; i < 4000 && cursor <= endKey; i += 1) {
     const existing = byKey.get(cursor);
-    filled.push(existing ? { ...existing, bucket: cursor } : { bucket: cursor, ...EMPTY_TREND_POINT });
+    filled.push(existing ? { ...existing, bucket: cursor } : { ...empty, bucket: cursor });
     cursor = nextBucketKey(cursor, grouping);
   }
   return filled;

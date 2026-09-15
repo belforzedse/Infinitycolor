@@ -1,6 +1,5 @@
+import { SITE_URL } from "@/config/site";
 import { safeJsonLd } from "@/utils/seo";
-
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
 
 interface OrganizationSchemaProps {
   /** Site/brand name. Falls back to the historical hardcoded value. */

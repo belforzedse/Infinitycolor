@@ -15,7 +15,7 @@ const FROZEN_STOREFRONT_ORIGINS: Record<
 > = {
   e2e: "http://localhost:2888",
   staging: "https://staging.infinitycolor.co",
-  production: "https://new.infinitycolor.co",
+  production: "https://infinitycolor.co",
 };
 
 const FROZEN_API_URLS: Record<Exclude<AdminEnvironment, "development">, string> = {

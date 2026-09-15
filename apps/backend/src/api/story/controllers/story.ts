@@ -5,6 +5,14 @@
 import { factories } from "@strapi/strapi";
 import { hasCapability } from "@repo/auth-core";
 import { requireCapability, resolveAdminActor } from "../../../utils/adminAuthorization";
+import { applyStoryCtaMutation, StoryCtaValidationError } from "../lib/story-cta";
+
+type StoryMutationData = {
+  Title?: string;
+  Slug?: string;
+  CtaLabel?: unknown;
+  CtaUrl?: unknown;
+};
 
 function slugify(input: string): string {
   return input
@@ -83,14 +91,17 @@ export default factories.createCoreController(
     },
 
     async create(ctx: any) {
-      const { user } = ctx.state;
-      if (user) {
-        if (!(await requireCapability(ctx, strapi, "content.stories.manage"))) return;
-      }
+      if (!(await requireCapability(ctx, strapi, "content.stories.manage"))) return;
 
-      const data = ctx.request?.body?.data as { Title?: string; Slug?: string } | undefined;
+      const data = ctx.request?.body?.data as StoryMutationData | undefined;
       if (!data?.Title?.trim()) {
         return ctx.badRequest("عنوان استوری الزامی است.");
+      }
+      try {
+        applyStoryCtaMutation(data);
+      } catch (error) {
+        if (error instanceof StoryCtaValidationError) return ctx.badRequest(error.message);
+        throw error;
       }
       if (!data.Slug) {
         data.Slug = await generateUniqueStorySlug(strapi, data.Title);
@@ -100,13 +111,17 @@ export default factories.createCoreController(
     },
 
     async update(ctx: any) {
-      const { user } = ctx.state;
-      if (user) {
-        if (!(await requireCapability(ctx, strapi, "content.stories.manage"))) return;
-      }
+      if (!(await requireCapability(ctx, strapi, "content.stories.manage"))) return;
 
       const storyId = Number(ctx.params?.id);
-      const data = ctx.request?.body?.data as { Title?: string; Slug?: string } | undefined;
+      const data = ctx.request?.body?.data as StoryMutationData | undefined;
+      if (!data) return ctx.badRequest("اطلاعات استوری الزامی است.");
+      try {
+        applyStoryCtaMutation(data);
+      } catch (error) {
+        if (error instanceof StoryCtaValidationError) return ctx.badRequest(error.message);
+        throw error;
+      }
       if (data && !data.Slug && data.Title?.trim()) {
         data.Slug = await generateUniqueStorySlug(strapi, data.Title, storyId);
       }
@@ -115,8 +130,6 @@ export default factories.createCoreController(
     },
 
     async delete(ctx: any) {
-      const { user } = ctx.state;
-      if (!user) return ctx.forbidden("شما مجاز به حذف استوری نیستید.");
       if (!(await requireCapability(ctx, strapi, "content.stories.manage"))) return;
       return await super.delete(ctx);
     },

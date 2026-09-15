@@ -49,6 +49,9 @@ const PERIOD_ROW = {
   orders_count: "3",
   discounts: "50000",
   refund_irr: "2400000", // -> 240,000 Toman
+  // Returned alongside gross, never folded into it: the product reports are
+  // per-product and a delivery fee belongs to no product (decision D16).
+  shipping: "40000",
 };
 const INV_ROW = {
   active_products: "12",
@@ -84,26 +87,31 @@ function rawRouter(sql: string) {
           orders_count: "4",
           total_orders_count: "5",
           settled_irr: "8000000",
+          paid_orders_count: "4",
         },
         {
           gateway: "Mellat",
           orders_count: "0",
           total_orders_count: "12",
           settled_irr: "0",
+          paid_orders_count: "4",
         },
       ],
     };
   }
+  if (sql.includes("AS has_settlement")) return { rows: [{ has_settlement: false }] };
+  // The period scalar query selects SUM(o.shipping_cost) too, so it must be
+  // matched on its own marker BEFORE the shipping-breakdown branch below.
+  if (sql.includes("SUM(line_gross) FROM itemized")) return { rows: [PERIOD_ROW] };
   if (sql.includes("SUM(o.shipping_cost)")) {
     return { rows: [{ method: "__UNKNOWN__", orders_count: "4", shipping_total: "40000" }] };
   }
   if (sql.includes("active_products")) return { rows: [INV_ROW] };
-  if (sql.includes("SUM(line_gross) FROM itemized")) return { rows: [PERIOD_ROW] };
   if (sql.includes("FULL OUTER JOIN orders_b")) {
     return {
       rows: [
         {
-          bucket: "2026-01-01",
+          bucket: "2026-09-15",
           gross: "500000",
           units: "2",
           orders_count: "1",
@@ -195,7 +203,10 @@ describe("product reporting endpoints", () => {
 
       expect(ctx.badRequest).not.toHaveBeenCalled();
       const { kpis, inventory } = ctx.body.data;
+      // Product-report gross stays merchandise-only: the 40,000 shipping fee the
+      // same query returns is NOT added here, only on the store-wide overview.
       expect(kpis.gross.current).toBe(1_000_000);
+      expect(kpis).not.toHaveProperty("shipping");
       expect(kpis.refunds.current).toBe(240_000); // 2,400,000 IRR / 10
       expect(kpis.net.current).toBe(710_000); // 1,000,000 - 50,000 - 240,000
       // current === previous (same mocked row) -> zero change
@@ -206,7 +217,7 @@ describe("product reporting endpoints", () => {
 
     it("trends fills every Tehran calendar day even when SQL returns one bucket", async () => {
       const controller = loadController();
-      const ctx = createCtx({ query: { start: "2026-01-01", end: "2026-01-07", grouping: "day" } });
+      const ctx = createCtx({ query: { start: "2026-09-15", end: "2026-09-21", grouping: "day" } });
       await controller.productTrends(ctx);
 
       expect(ctx.badRequest).not.toHaveBeenCalled();
@@ -214,31 +225,147 @@ describe("product reporting endpoints", () => {
       expect(ctx.body.data.timezone).toBe("Asia/Tehran");
       expect(ctx.body.data.ordersDefinition).toBe("completed");
       expect(ctx.body.data.series.map((point: { bucket: string }) => point.bucket)).toEqual([
-        "2026-01-01",
-        "2026-01-02",
-        "2026-01-03",
-        "2026-01-04",
-        "2026-01-05",
-        "2026-01-06",
-        "2026-01-07",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17",
+        "2026-09-18",
+        "2026-09-19",
+        "2026-09-20",
+        "2026-09-21",
       ]);
       expect(ctx.body.data.series[0].net).toBe(500_000);
       expect(ctx.body.data.series.slice(1).every((point: { net: number }) => point.net === 0)).toBe(
         true,
       );
+      // The bucket key is produced in SQL as text, never parsed from a Date.
+      const trendCall = (global as any).strapi.db.connection.raw.mock.calls.find(
+        ([sql]: [string]) => sql.includes("FULL OUTER JOIN orders_b"),
+      );
+      expect(trendCall[0]).toContain("to_char(date_trunc('day'");
     });
 
     it("resolves a date-only window across whole Tehran calendar days", async () => {
       const controller = loadController();
-      const ctx = createCtx({ query: { start: "2026-01-01", end: "2026-01-07" } });
+      const ctx = createCtx({ query: { start: "2026-09-15", end: "2026-09-21" } });
       await controller.productOverview(ctx);
 
       expect(ctx.badRequest).not.toHaveBeenCalled();
       // Buckets are computed in Asia/Tehran, so the window has to span local
       // midnight through local end-of-day. Reading these as UTC midnight put
-      // the end at 03:30 Tehran and dropped almost all of 2026-01-07.
-      expect(ctx.body.data.range.start.toISOString()).toBe("2025-12-31T20:30:00.000Z");
-      expect(ctx.body.data.range.end.toISOString()).toBe("2026-01-07T20:29:59.999Z");
+      // the end at 03:30 Tehran and dropped almost all of 2026-09-21.
+      expect(ctx.body.data.range.start.toISOString()).toBe("2026-09-14T20:30:00.000Z");
+      expect(ctx.body.data.range.end.toISOString()).toBe("2026-09-21T20:29:59.999Z");
+    });
+
+    describe("financial data floor (from ۲۳ شهریور ۱۴۰۵)", () => {
+      const FLOOR_ISO = "2026-09-13T20:30:00.000Z"; // 2026-09-14 00:00 Tehran
+      const FLOOR_MS = new Date(FLOOR_ISO).getTime();
+
+      function dateBindings() {
+        const calls = (global as any).strapi.db.connection.raw.mock.calls as Array<
+          [string, unknown[] | undefined]
+        >;
+        return calls.flatMap(([, bindings]) =>
+          (bindings ?? []).filter((value): value is Date => value instanceof Date),
+        );
+      }
+
+      it("is ۲۳ شهریور ۱۴۰۵ in Tehran, so ۲۲ شهریور itself is excluded", () => {
+        const PA = jest.requireActual("../../services/product-analytics");
+        expect(PA.FINANCIAL_DATA_FLOOR.toISOString()).toBe(FLOOR_ISO);
+        const parts = new Intl.DateTimeFormat("en-US-u-ca-persian", {
+          timeZone: "Asia/Tehran",
+          year: "numeric",
+          month: "numeric",
+          day: "numeric",
+        }).formatToParts(new Date(FLOOR_MS + 12 * 3_600_000));
+        const pick = (type: string) => parts.find((part) => part.type === type)?.value;
+        expect([pick("year"), pick("month"), pick("day")]).toEqual(["1405", "6", "23"]);
+      });
+
+      it("never binds a date before the floor on any product report, whatever the URL asks", async () => {
+        const controller = loadController();
+        const handlers = [
+          "productOverview",
+          "productBreakdown",
+          "productTrends",
+          "productPerformance",
+          "productInventory",
+          // productSales also goes through parseProductRange but resolves its
+          // own joins from information_schema, which this harness does not
+          // stub, so it bails before binding any dates.
+          "salesBreakdown",
+        ] as const;
+        for (const handler of handlers) {
+          const ctx = createCtx({
+            query: { start: "2025-01-01", end: "2026-12-31", dimension: "status" },
+          });
+          await controller[handler](ctx);
+          expect({ handler, badRequest: ctx.badRequest.mock.calls }).toEqual({
+            handler,
+            badRequest: [],
+          });
+        }
+        const bound = dateBindings();
+        expect(bound.length).toBeGreaterThan(0);
+        for (const value of bound) expect(value.getTime()).toBeGreaterThanOrEqual(FLOOR_MS);
+      });
+
+      it("cuts a straddling window at exactly the floor and reports the cut window", async () => {
+        const controller = loadController();
+        const ctx = createCtx({ query: { start: "2026-09-01", end: "2026-09-20" } });
+        await controller.productOverview(ctx);
+
+        expect(ctx.body.data.range.start.toISOString()).toBe(FLOOR_ISO);
+        expect(ctx.body.data.range.end.toISOString()).toBe("2026-09-20T20:29:59.999Z");
+        // The like-for-like comparison window is cut to nothing, not left to
+        // reach back before the floor. `previousPeriod` ends the prior window
+        // on the current start, so the cut window is the single instant at
+        // the floor.
+        expect(ctx.body.data.previous.start.toISOString()).toBe(FLOOR_ISO);
+        expect(ctx.body.data.previous.end.getTime()).toBe(FLOOR_MS);
+      });
+
+      it("applies the floor to the default window when no dates are sent", async () => {
+        const controller = loadController();
+        const ctx = createCtx({ query: {} });
+        await controller.productTrends(ctx);
+
+        expect(ctx.badRequest).not.toHaveBeenCalled();
+        for (const value of dateBindings()) {
+          expect(value.getTime()).toBeGreaterThanOrEqual(FLOOR_MS);
+        }
+      });
+
+      it("returns an empty series, not an error, for a window wholly before the floor", async () => {
+        const controller = loadController();
+        const ctx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31", grouping: "day" } });
+        await controller.productTrends(ctx);
+
+        expect(ctx.badRequest).not.toHaveBeenCalled();
+        expect(ctx.body.data.series).toEqual([]);
+        for (const value of dateBindings()) {
+          expect(value.getTime()).toBeGreaterThanOrEqual(FLOOR_MS - 1);
+        }
+      });
+
+      it("leaves the admin activity audit, which is not financial, unfloored", async () => {
+        const base = createStrapi("Superadmin");
+        const findMany = jest.fn().mockResolvedValue([]);
+        (global as any).strapi = {
+          ...base,
+          entityService: { findMany, count: jest.fn().mockResolvedValue(0) },
+        };
+        const controller = loadController();
+        const ctx = createCtx({ query: { start: "2026-01-01", end: "2026-01-31" } });
+        await controller.adminActivity(ctx);
+
+        expect(ctx.forbidden).not.toHaveBeenCalled();
+        expect(ctx.badRequest).not.toHaveBeenCalled();
+        const [, options] = findMany.mock.calls[0];
+        // January is well before the floor and must reach the audit query as-is.
+        expect(options.filters.createdAt.$gte).toBe("2025-12-31T20:30:00.000Z");
+      });
     });
 
     it("performance returns server pagination meta and serialized rows", async () => {
@@ -320,7 +447,7 @@ describe("product reporting endpoints", () => {
       ]);
     });
 
-    it("binds the order-date window for both the CTE and the outer query", async () => {
+    it("binds the window for both the CTE and the all-orders query", async () => {
       const controller = loadController();
       const ctx = createCtx({ query: range });
       await controller.productBreakdown(ctx);
@@ -330,6 +457,33 @@ describe("product reporting endpoints", () => {
       );
       expect(gatewayCall).toBeDefined();
       expect(gatewayCall[1]).toHaveLength(4);
+    });
+
+    it("keys on the settlement clock by default and reports the distinct paid-order count", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: range });
+      await controller.productBreakdown(ctx);
+
+      expect(ctx.body.data.clock).toBe("settlement");
+      expect(ctx.body.data.ordersDefinition).toBe("completed");
+      // 4 distinct paid orders, not the 4 + 0 per-gateway sum (a split payment
+      // would sit under two rows).
+      expect(ctx.body.data.totals.ordersCount).toBe(4);
+      const gatewayCall = (global as any).strapi.db.connection.raw.mock.calls.find(
+        ([sql]: [string]) => sql.includes("total_orders_count"),
+      );
+      expect(gatewayCall[0]).toContain("HAVING COALESCE(MIN(ct.date)");
+    });
+
+    it("switches to the creation clock on clock=order", async () => {
+      const controller = loadController();
+      const ctx = createCtx({ query: { ...range, clock: "order" } });
+      await controller.productBreakdown(ctx);
+      expect(ctx.body.data.clock).toBe("order");
+      const gatewayCall = (global as any).strapi.db.connection.raw.mock.calls.find(
+        ([sql]: [string]) => sql.includes("total_orders_count"),
+      );
+      expect(gatewayCall[0]).toContain("AND o.date BETWEEN ? AND ?");
     });
   });
 });

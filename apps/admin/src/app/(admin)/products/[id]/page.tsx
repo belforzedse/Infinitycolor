@@ -9,8 +9,8 @@ import Variables from "@/components/Product/add/Variables";
 import Sizes, { SizeGuideHandle } from "@/components/Product/add/Size";
 import PublishAllVariations from "@/components/Product/add/PublishAllVariations";
 import { getProduct } from "@/services/super-admin/product/get";
-import { editProductDataAtom } from "@/atoms/super-admin/products";
-import { useAtom } from "jotai";
+import { editProductDataAtom, resetEditProductDataAtom } from "@/atoms/super-admin/products";
+import { useAtom, useSetAtom } from "jotai";
 import { transformToProductData } from "@/utils/populatedProductData";
 import { updateProduct } from "@/services/super-admin/product/update";
 import { duplicateProduct } from "@/services/super-admin/product/duplicate";
@@ -30,6 +30,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   const resolvedParams = use(params);
   const { id } = resolvedParams;
   const [productData, setProductData] = useAtom(editProductDataAtom);
+  const resetProductData = useSetAtom(resetEditProductDataAtom);
   const router = useRouter();
   const canUpdate = useCan("product.update");
   const canDuplicate = useCan("product.duplicate");
@@ -48,6 +49,13 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   // Raw LastEditedByAdminAt used to seed the display-date picker (admin reorder control).
   const [displayDate, setDisplayDate] = useState<string | null>(null);
   const [variationsRefreshKey, setVariationsRefreshKey] = useState(0);
+  // `editProductDataAtom` is module-level and shared by every product page, so nothing
+  // may act on it until this product's own fetch has landed — otherwise a save writes
+  // the previously opened product (or an empty form) over this one. Tracking the id
+  // that was loaded (rather than a boolean flipped in an effect) makes this false on
+  // the very first render after `id` changes, before any effect has run.
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  const loaded = loadedId === id;
 
   const isDirty = () =>
     savedSnapshotRef.current !== null && JSON.stringify(productData) !== savedSnapshotRef.current;
@@ -73,26 +81,43 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   );
 
   useEffect(() => {
+    let cancelled = false;
+
+    // Clear the shared atom before awaiting anything: until this product's data lands,
+    // the form must not render (or save) whichever product was open before.
+    resetProductData();
+    savedSnapshotRef.current = null;
+    setDisplayDate(null);
+
     const fetchProduct = async () => {
       try {
         // Force fresh data fetch - no cache
         const result = await getProduct(id, getProductParams);
-        const loaded = transformToProductData(result.data.attributes);
-        setProductData(loaded);
+        if (cancelled) return;
+        const loadedProduct = transformToProductData(result.data.attributes);
+        setProductData(loadedProduct);
         setDisplayDate(
           (result.data.attributes as { LastEditedByAdminAt?: string | null }).LastEditedByAdminAt ??
             null,
         );
-        savedSnapshotRef.current = JSON.stringify(loaded);
+        savedSnapshotRef.current = JSON.stringify(loadedProduct);
+        setLoadedId(id);
       } catch (error: any) {
+        if (cancelled) return;
         if (process.env.NODE_ENV !== "production") {
           logger.error("error in fetching product", { error });
         }
+        // Leave `loadedId` behind: an empty form must never be savable over a real product.
+        toast.error("خطا در دریافت اطلاعات محصول");
       }
     };
 
     fetchProduct();
-  }, [id, setProductData, getProductParams]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, setProductData, resetProductData, getProductParams]);
 
   useEffect(() => {
     // Only fetch categories and tags once on mount to prevent infinite loops
@@ -114,6 +139,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   }, [productData]);
 
   const handleUpdateProduct = async (): Promise<boolean> => {
+    if (!loaded) return false;
     const loadingToast = toast.loading("در حال ذخیره...");
 
     try {
@@ -166,6 +192,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   };
 
   const handleBeforePublication = async (_action: ProductPublicationAction) => {
+    if (!loaded) return false;
     if (!isDirty()) return true;
     return handleUpdateProduct();
   };
@@ -245,8 +272,8 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
         onCancel={() => setShowDuplicateConfirm(false)}
       />
       <div className="order-2 flex flex-col gap-4 lg:order-1">
-        <IndexPhotoUploader isEditMode />
-        {(canPublish || canSchedule) && (
+        <IndexPhotoUploader isEditMode disabled={!loaded} />
+        {loaded && (canPublish || canSchedule) && (
           <ProductPublicationCard
             productId={id}
             status={productData.Status}
@@ -299,8 +326,9 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           </button>
           {canDuplicate && (
             <button
+              disabled={!loaded}
               onClick={() => setShowDuplicateConfirm(true)}
-              className="w-full rounded-xl border-2 border-blue-200 bg-blue-500/10 px-3 py-2 text-sm text-blue-500 hover:bg-blue-500/80 hover:text-white md:w-fit md:px-5"
+              className="w-full rounded-xl border-2 border-blue-200 bg-blue-500/10 px-3 py-2 text-sm text-blue-500 hover:bg-blue-500/80 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 md:w-fit md:px-5"
               data-testid="admin-product-detail-duplicate"
             >
               کپی محصول
@@ -308,8 +336,9 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
           )}
           {canUpdate && (
             <button
+              disabled={!loaded}
               onClick={() => void handleUpdateProduct()}
-              className="w-full rounded-xl border-2 border-infinity-primary-lighter/60 bg-infinity-primary/10 px-3 py-2 text-sm text-infinity-primary-darker hover:bg-infinity-primary/80 hover:text-white md:w-fit md:px-5"
+              className="w-full rounded-xl border-2 border-infinity-primary-lighter/60 bg-infinity-primary/10 px-3 py-2 text-sm text-infinity-primary-darker hover:bg-infinity-primary/80 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 md:w-fit md:px-5"
               data-testid="admin-product-save"
             >
               ذخیره تغییرات

@@ -8,6 +8,7 @@ import type { Order, OrderItem } from "@/services/order";
 import PaymentStatusButton from "./PaymentStatusButton";
 import Link from "next/link";
 import { getOrderStatusMeta, StatusTone, translateOrderStatus } from "@/utils/statusTranslations";
+import { formatOrderItemAttributes } from "@/utils/orderDisplayHelpers";
 
 interface OrderDetailsDrawerProps {
   order: Order | null;
@@ -55,21 +56,6 @@ const getItemTitle = (item: OrderItem) => {
   );
 };
 
-const getVariationDescription = (item: OrderItem) => {
-  const parts: string[] = [];
-  const { product_variation: variation } = item;
-  if (!variation) return "";
-
-  const color = variation.product_color?.Title;
-  const size = variation.product_size?.Title;
-  const model = variation.product_variation_model?.Title;
-
-  if (color) parts.push(`رنگ: ${color}`);
-  if (size) parts.push(`سایز: ${size}`);
-  if (model) parts.push(`مدل: ${model}`);
-
-  return parts.join(" | ");
-};
 
 const calculateTotals = (order: Order) => {
   const subtotal = order.order_items.reduce((sum, item) => {
@@ -170,8 +156,8 @@ export default function OrderDetailsDrawer({ order, isOpen, onClose }: OrderDeta
                               <span className="text-sm font-medium text-foreground-primary">
                                 {getItemTitle(item)}
                               </span>
-                              {getVariationDescription(item) ? (
-                                <span className="text-xs text-slate-500">{getVariationDescription(item)}</span>
+                              {formatOrderItemAttributes(item) ? (
+                                <span className="text-xs text-slate-500">{formatOrderItemAttributes(item)}</span>
                               ) : null}
                             </div>
                             <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">

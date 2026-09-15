@@ -12,6 +12,15 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush, replace: jest.fn(), refresh: jest.fn() }),
 }));
 
+jest.mock("react-hot-toast", () => ({
+  __esModule: true,
+  default: { error: jest.fn(), success: jest.fn() },
+}));
+
+const mockToast = (jest.requireMock("react-hot-toast") as {
+  default: { error: jest.Mock; success: jest.Mock };
+}).default;
+
 jest.mock("@/lib/central-auth", () => ({
   centralAuth: {
     tokenManager: {
@@ -534,6 +543,12 @@ describe("ShoppingCartBillForm auth gate", () => {
         screen.getByText("برای ثبت سفارش باید قوانین و مقررات سایت را بپذیرید"),
       ).toBeInTheDocument();
     });
+    // The inline box sits above the fold on a phone, so the rejection must also
+    // surface as a toast next to the button the shopper actually tapped.
+    expect(mockToast.error).toHaveBeenCalledWith(
+      "برای ثبت سفارش باید قوانین و مقررات سایت را بپذیرید",
+      { id: "checkout-error" },
+    );
     expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
     expect(CartService.finalizeCart).not.toHaveBeenCalled();
 
@@ -543,5 +558,46 @@ describe("ShoppingCartBillForm auth gate", () => {
     await waitFor(() => {
       expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("toasts a backend checkout failure instead of only rendering it inline", async () => {
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      // Must equal the shopper-visible total, or the quote-review guard fires
+      // first and we would be asserting on the wrong error path.
+      quoteHash: "sha256:failing-quote",
+      financialSummary: { total: 120_000 },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: false,
+      errorCode: "CART_EMPTY",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith("سبد خرید شما خالی است", {
+        id: "checkout-error",
+      });
+    });
+    // Inline surface is kept as well -- the toast is additive, not a replacement.
+    expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+      "سبد خرید شما خالی است",
+    );
   });
 });

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
+  getAvailableStockCount,
   getGenericAttributeSelectors,
   getVariationGenericSelection,
   type ProductDetail,
@@ -79,12 +80,13 @@ export default function QuickViewContent({
         const {
           Price,
           DiscountPrice,
-          product_stock,
           product_variation_color,
           product_variation_size,
         } = variation.attributes;
 
-        const stock = product_stock?.data?.attributes?.Count ?? 0;
+        // Available, not physical: units held by in-flight checkouts are not
+        // buyable, and a card that says موجود for them contradicts the PDP.
+        const stock = getAvailableStockCount(variation);
         const color = product_variation_color?.data?.attributes;
         const size = product_variation_size?.data?.attributes;
 

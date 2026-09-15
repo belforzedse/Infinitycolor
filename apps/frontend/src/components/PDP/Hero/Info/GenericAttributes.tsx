@@ -42,6 +42,11 @@ export default function GenericAttributes({
                   type="button"
                   disabled={disabled}
                   aria-pressed={selected}
+                  // The other pickers (Size/Color/Model) already spell the
+                  // disabled reason out loud; without this a screen reader gets
+                  // only "disabled" and no idea the option is out of stock.
+                  aria-label={disabled ? `${option.title} ناموجود` : option.title}
+                  title={disabled ? "ناموجود" : option.title}
                   onClick={() => onChange(String(selector.attributeId), option.id)}
                   className={[
                     "inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 py-2 text-sm transition",

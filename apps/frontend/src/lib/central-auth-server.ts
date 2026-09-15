@@ -17,7 +17,8 @@ function exactOrigin(name: string, value: string): string {
 }
 
 export function storefrontOrigin(): string {
-  return exactOrigin("NEXT_PUBLIC_SITE_URL", SITE_URL);
+  // SITE_URL is hardcoded for production builds; see config/site.ts.
+  return exactOrigin("SITE_URL", SITE_URL);
 }
 
 export function storefrontUrl(path: string): URL {

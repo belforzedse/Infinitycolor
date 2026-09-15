@@ -59,6 +59,54 @@ describe("product card serializer", () => {
     (mockStrapi as any).entityService = undefined;
   });
 
+  // The defect this guards: cards used to read raw `Count`, so a product whose
+  // whole stock was held by in-flight checkouts advertised as available on the
+  // homepage and then opened as ناموجود on the PDP.
+  it("reports a fully reserved product as unavailable", () => {
+    const card = service.serializeProductCard(
+      makeProduct({
+        product_variations: [
+          {
+            id: 1,
+            IsPublished: true,
+            Price: 100000,
+            product_stock: { Count: 3, reservedCount: 3 },
+            product_variation_color: { id: 1, Title: "Black", ColorCode: "#000000" },
+          },
+        ],
+      }),
+    );
+
+    expect(card.attributes.IsAvailable).toBe(false);
+    expect(card.attributes.InventoryCount).toBe(0);
+  });
+
+  it("counts only the units a shopper could actually buy", () => {
+    const card = service.serializeProductCard(
+      makeProduct({
+        product_variations: [
+          {
+            id: 1,
+            IsPublished: true,
+            Price: 100000,
+            product_stock: { Count: 5, reservedCount: 2 },
+            product_variation_color: { id: 1, Title: "Black", ColorCode: "#000000" },
+          },
+          {
+            id: 2,
+            IsPublished: true,
+            Price: 90000,
+            product_stock: { Count: 4, reservedCount: 4 },
+            product_variation_color: { id: 2, Title: "White", ColorCode: "#ffffff" },
+          },
+        ],
+      }),
+    );
+
+    expect(card.attributes.IsAvailable).toBe(true);
+    expect(card.attributes.InventoryCount).toBe(3);
+  });
+
   it("serializes full card sections without exposing variations", () => {
     const card = service.serializeProductCard(makeProduct());
 

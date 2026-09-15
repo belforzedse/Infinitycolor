@@ -283,7 +283,7 @@ describe("expiry jobs", () => {
       paymentAttemptQuery,
       snappayOrchestrator,
     } = createMockStrapi();
-    process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS = "48";
+    delete process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS;
     strapi.entityService.findMany.mockResolvedValue([{ id: 15 }]);
     paymentAttemptQuery.findOne.mockResolvedValue({
       id: 115,
@@ -291,8 +291,8 @@ describe("expiry jobs", () => {
       Status: "Redirected",
       nextAction: "await_callback",
       nextActionAt: null,
-      // 49h old — past the ceiling.
-      createdAt: new Date("2026-05-28T11:00:00.000Z"),
+      // 1h31m old — just past the 1.5h default ceiling.
+      createdAt: new Date("2026-05-30T10:29:00.000Z"),
     });
     orderQuery.findOne.mockResolvedValue({ id: 15, contract: { id: 57 } });
     strapi.db.transaction.mockImplementationOnce(async (callback: any) => {
@@ -313,7 +313,37 @@ describe("expiry jobs", () => {
     expect(snappayOrchestrator.reconcileOrder).not.toHaveBeenCalled();
     expect(strapi.log.error).toHaveBeenCalledWith(
       "Releasing stock reservation for an unresolved SnappPay payment",
-      expect.objectContaining({ reason: "defer_ceiling_exceeded" }),
+      expect.objectContaining({ reason: "defer_ceiling_exceeded", deferCeilingHours: 1.5 }),
+    );
+  });
+
+  it("still defers an unresolved SnappPay attempt that is inside the 1.5h ceiling", async () => {
+    const { strapi, orderQuery, paymentAttemptQuery, snappayOrchestrator } =
+      createMockStrapi();
+    delete process.env.SNAPPAY_RESERVATION_DEFER_MAX_HOURS;
+    strapi.entityService.findMany.mockResolvedValue([{ id: 17 }]);
+    paymentAttemptQuery.findOne.mockResolvedValue({
+      id: 117,
+      attemptId: "snappay-attempt-17",
+      Status: "Redirected",
+      nextAction: "await_callback",
+      nextActionAt: null,
+      // 1h29m old — inside the ceiling, so the reservation is pushed out again.
+      createdAt: new Date("2026-05-30T10:31:00.000Z"),
+    });
+    orderQuery.update.mockResolvedValue({ id: 17 });
+
+    const result = await runExpireStockReservationsTick(strapi, {
+      now: new Date("2026-05-30T12:00:00.000Z"),
+      graceSeconds: 0,
+    });
+
+    expect(result.stats.skipped).toBe(1);
+    expect(result.stats.processed).toBe(0);
+    expect(mockedReleaseOrderReservation).not.toHaveBeenCalled();
+    expect(snappayOrchestrator.reconcileOrder).toHaveBeenCalledWith(
+      17,
+      "reservation_expiry",
     );
   });
 

@@ -40,7 +40,7 @@ export const FOOTER_DATA: FooterData = {
       { title: "فروشگاه", url: "/plp" },
       { title: "سبد خرید", url: "/cart" },
       // { title: "ویدیوهای آموزشی", url: "https://new.infinitycolor.co/videos/" },
-      { title: "اینفینیتی مگ", url: "https://new.infinitycolor.co/blog/" },
+      { title: "اینفینیتی مگ", url: "https://infinitycolor.co/blog/" },
     ],
   },
   second: {

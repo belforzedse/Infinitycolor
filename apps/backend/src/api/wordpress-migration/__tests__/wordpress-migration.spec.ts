@@ -505,6 +505,129 @@ describe("WordPress migration write service", () => {
     expect(itemQuery.create.mock.calls[1][0].data.product_variation).toBeNull();
   });
 
+  test("writes one settlement leg per payment, in Rial, and removes legs WooCommerce no longer reports", async () => {
+    const trx = { raw: jest.fn().mockResolvedValue(undefined) };
+    const orderQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 101, user: null, delivery_address: null }]),
+      update: jest.fn().mockResolvedValue({ id: 101 }),
+    };
+    const contractQuery = {
+      findMany: jest.fn().mockResolvedValue([{ id: 201 }]),
+      update: jest.fn().mockResolvedValue({ id: 201 }),
+    };
+    const itemQuery = {
+      findMany: jest.fn().mockResolvedValueOnce([{ id: 301 }]).mockResolvedValueOnce([{ id: 301, external_id: "line_item_1" }]),
+      update: jest.fn().mockResolvedValue({ id: 301 }),
+      delete: jest.fn(),
+    };
+    const txQuery = {
+      // The backfill script's gateway leg exists; a stale return leg must go.
+      findMany: jest.fn().mockResolvedValue([
+        { id: 501, external_id: "transaction_1222924" },
+        { id: 502, external_id: "transaction_1222924_return" },
+      ]),
+      create: jest.fn().mockResolvedValue({ id: 503 }),
+      update: jest.fn().mockResolvedValue({ id: 501 }),
+      delete: jest.fn().mockResolvedValue({ id: 502 }),
+    };
+    const variationQuery = { findMany: jest.fn().mockResolvedValue([{ id: 401 }]) };
+    const strapiMock = {
+      db: {
+        transaction: jest.fn(async (callback) => callback({ trx })),
+        query: jest.fn((uid: string) => ({
+          "api::order.order": orderQuery,
+          "api::contract.contract": contractQuery,
+          "api::order-item.order-item": itemQuery,
+          "api::contract-transaction.contract-transaction": txQuery,
+          "api::product-variation.product-variation": variationQuery,
+          "api::shipping-province.shipping-province": { findMany: jest.fn().mockResolvedValue([]) },
+          "api::shipping-city.shipping-city": { findMany: jest.fn().mockResolvedValue([]) },
+          "api::local-user-address.local-user-address": { create: jest.fn() },
+        } as Record<string, any>)[uid]),
+      },
+    };
+
+    const result = await upsertOrder(strapiMock, {
+      sourceId: "1222924",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "SnappPay",
+      contractType: "Credit",
+      taxPercent: 0,
+      date: "2026-07-01T08:00:00Z",
+      totalToman: "813000",
+      salesValueToman: "12809000",
+      appliedDiscountToman: "0",
+      paidAt: "2026-07-01T20:45:00Z",
+      settlements: [
+        { leg: "gateway", channel: "SnappPay", amountToman: "813000", date: "2026-07-01T20:45:00Z" },
+        { leg: "wallet", channel: "Wallet", amountToman: "11996000", date: "2026-07-01T20:45:00Z" },
+      ],
+      items: [{ sourceId: "1", variationSourceId: "4", count: 1, unitPriceToman: "12694000", title: "کالا", sku: "A" }],
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      mode: "updated",
+      settlementsCreated: 1,
+      settlementsUpdated: 1,
+      settlementsDeleted: 1,
+    }));
+    // The contract carries the full sales value; the order the discount.
+    expect(contractQuery.update.mock.calls[0][0].data.Amount).toBe("12809000");
+    expect(orderQuery.update.mock.calls[0][0].data.AppliedDiscountAmount).toBe(0);
+    expect(orderQuery.update.mock.calls[0][0].data.PaymentGateway).toBe("SnappPay");
+    // Gateway leg updated in place under the backfill's id, in Rial, on the paid date.
+    expect(txQuery.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 501 },
+      data: expect.objectContaining({
+        Type: "Gateway",
+        Amount: "8130000",
+        DiscountAmount: "0",
+        Status: "Success",
+        SettlementGateway: "SnappPay",
+        Date: "2026-07-01T20:45:00.000Z",
+        SettledAt: "2026-07-01T20:45:00.000Z",
+        TrackId: "woo_1222924",
+        contract: 201,
+        external_source: "woocommerce",
+        external_id: "transaction_1222924",
+      }),
+    }));
+    expect(txQuery.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        Type: "Gateway",
+        Amount: "119960000",
+        SettlementGateway: "Wallet",
+        external_id: "transaction_1222924_wallet",
+      }),
+    }));
+    expect(txQuery.delete).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 502 } }));
+  });
+
+  test("rejects malformed settlement legs and unknown channels before writing", async () => {
+    const strapiMock = { db: { transaction: jest.fn() } };
+    const base = {
+      sourceId: "9",
+      status: "Done",
+      contractStatus: "Finished",
+      paymentGateway: "Manual",
+      contractType: "Cash",
+      taxPercent: 0,
+      date: "2026-01-01T00:00:00Z",
+      totalToman: "1000",
+      items: [{ sourceId: "1", variationSourceId: "4", count: 1, unitPriceToman: "1000" }],
+    };
+    await expect(upsertOrder(strapiMock, { ...base, settlements: [{ leg: "gateway", channel: "Payzito", amountToman: "1000", date: "2026-01-01T00:00:00Z" }] }))
+      .rejects.toMatchObject({ code: "ORDER_SETTLEMENT_CHANNEL_INVALID" });
+    await expect(upsertOrder(strapiMock, { ...base, settlements: [{ leg: "cash", channel: "Manual", amountToman: "1000", date: "2026-01-01T00:00:00Z" }] }))
+      .rejects.toMatchObject({ code: "ORDER_SETTLEMENT_LEG_INVALID" });
+    await expect(upsertOrder(strapiMock, { ...base, settlements: [{ leg: "gateway", channel: "Manual", amountToman: "0", date: "2026-01-01T00:00:00Z" }] }))
+      .rejects.toMatchObject({ code: "ORDER_SETTLEMENT_AMOUNT_INVALID" });
+    await expect(upsertOrder(strapiMock, { ...base, paymentGateway: "Payzito" }))
+      .rejects.toMatchObject({ code: "PAYMENT_GATEWAY_INVALID" });
+    expect(strapiMock.db.transaction).not.toHaveBeenCalled();
+  });
+
   test("stores a line whose WooCommerce product was deleted as a snapshot with no catalog relation", async () => {
     const trx = { raw: jest.fn().mockResolvedValue(undefined) };
     const orderQuery = {

@@ -13,6 +13,8 @@ import {
   notifyOrderStatusSms,
   notifyShipmentTrackingSms,
 } from "../../services/sms";
+import { enqueueStaffOrderStartedAlert } from "../../queue/staff-order-alert";
+import { resolveAuditActor } from "../../utils/audit";
 
 jest.mock("../../utils/audit", () => ({
   resolveAuditActor: jest.fn(() => ({
@@ -36,6 +38,10 @@ jest.mock("../../services/sms", () => ({
   notifyOrderCreatedSms: jest.fn().mockResolvedValue({ ok: true }),
   notifyOrderStatusSms: jest.fn().mockResolvedValue({ ok: true }),
   notifyShipmentTrackingSms: jest.fn().mockResolvedValue({ ok: true }),
+}));
+
+jest.mock("../../queue/staff-order-alert", () => ({
+  enqueueStaffOrderStartedAlert: jest.fn().mockResolvedValue(undefined),
 }));
 
 function createMockStrapi() {
@@ -418,5 +424,144 @@ describe("registerAppLifecycles", () => {
         action: "Adjust",
       })
     );
+  });
+  describe("staff «در حال انجام» alert", () => {
+    const runUpdate = async (oldStatus: string, newStatus: string, extra: any = {}) => {
+      const { strapi, subscribers } = createMockStrapi();
+      strapi.entityService.findOne
+        .mockResolvedValueOnce({ id: 70, Status: oldStatus, user: { id: 5 }, ...extra.before })
+        .mockResolvedValueOnce({ id: 70, Status: newStatus, user: { id: 5 }, ...extra.after });
+
+      registerAppLifecycles(strapi);
+      const subscriber = getSubscriber(subscribers, "api::order.order");
+      const event = { params: { where: { id: 70 } }, result: { id: 70 }, state: {} };
+
+      await subscriber.beforeUpdate(event);
+      await subscriber.afterUpdate(event);
+      return strapi;
+    };
+
+    it("enqueues exactly once when an order reaches Started", async () => {
+      await runUpdate("Paying", "Started");
+
+      expect(enqueueStaffOrderStartedAlert).toHaveBeenCalledTimes(1);
+      expect(enqueueStaffOrderStartedAlert).toHaveBeenCalledWith(70);
+    });
+
+    it.each([
+      ["Started", "Done"],
+      ["Done", "Shipment"],
+      ["Started", "Cancelled"],
+    ])("does not enqueue for %s -> %s", async (oldStatus, newStatus) => {
+      await runUpdate(oldStatus, newStatus);
+
+      expect(enqueueStaffOrderStartedAlert).not.toHaveBeenCalled();
+    });
+
+    it("does not enqueue when a non-status field changes on a Started order", async () => {
+      await runUpdate("Started", "Started", {
+        before: { ShippingCost: 100 },
+        after: { ShippingCost: 200 },
+      });
+
+      expect(enqueueStaffOrderStartedAlert).not.toHaveBeenCalled();
+    });
+
+    it("enqueues even when nothing resolves an order user", async () => {
+      // The customer notifier is nested under `orderUserId`; the staff alert must
+      // not be, since it is about the order rather than the customer.
+      (resolveAuditActor as jest.Mock).mockReturnValueOnce({
+        userId: null,
+        label: null,
+        ip: null,
+        userAgent: null,
+      });
+      const { strapi, subscribers } = createMockStrapi();
+      strapi.entityService.findOne
+        .mockResolvedValueOnce({ id: 71, Status: "Paying", user: null })
+        .mockResolvedValueOnce({ id: 71, Status: "Started", user: null });
+
+      registerAppLifecycles(strapi);
+      const subscriber = getSubscriber(subscribers, "api::order.order");
+      const event = { params: { where: { id: 71 } }, result: { id: 71 }, state: {} };
+
+      await subscriber.beforeUpdate(event);
+      await subscriber.afterUpdate(event);
+
+      expect(notifyOrderStatusSms).not.toHaveBeenCalled();
+      expect(enqueueStaffOrderStartedAlert).toHaveBeenCalledWith(71);
+    });
+
+    it("stays silent for a trusted WordPress migration write", async () => {
+      // The hourly Woo sync writes orders over HTTP to
+      // `/internal/migrations/wordpress-v2/orders/upsert`, so these DO reach the
+      // lifecycle. Only this guard keeps a legacy backfill from paging staff.
+      const previousToken = process.env.MIGRATION_CONTROL_TOKEN;
+      const controlToken = "t".repeat(48);
+      process.env.MIGRATION_CONTROL_TOKEN = controlToken;
+      (global as any).strapi = {
+        requestContext: {
+          get: () => ({
+            request: {
+              headers: {
+                "x-infinity-migration-mode": "wordpress-v2",
+                "x-infinity-migration-control": controlToken,
+              },
+            },
+          }),
+        },
+      };
+
+      try {
+        const { strapi, subscribers } = createMockStrapi();
+        strapi.entityService.findOne
+          .mockResolvedValueOnce({ id: 74, Status: "Paying", user: { id: 5 } })
+          .mockResolvedValueOnce({ id: 74, Status: "Started", user: { id: 5 } });
+
+        registerAppLifecycles(strapi);
+        const subscriber = getSubscriber(subscribers, "api::order.order");
+        const event = { params: { where: { id: 74 } }, result: { id: 74 }, state: {} };
+
+        await subscriber.beforeUpdate(event);
+        await subscriber.afterUpdate(event);
+        await subscriber.afterCreate({ result: { id: 74, Status: "Started" }, state: {} });
+
+        expect(enqueueStaffOrderStartedAlert).not.toHaveBeenCalled();
+      } finally {
+        if (previousToken === undefined) delete process.env.MIGRATION_CONTROL_TOKEN;
+        else process.env.MIGRATION_CONTROL_TOKEN = previousToken;
+        delete (global as any).strapi;
+      }
+    });
+
+    it("enqueues on create, because manual admin orders start in Started", async () => {
+      const { strapi, subscribers } = createMockStrapi();
+      strapi.entityService.findOne.mockResolvedValue({ id: 72, contract: { Amount: 1 } });
+
+      registerAppLifecycles(strapi);
+      const subscriber = getSubscriber(subscribers, "api::order.order");
+
+      await subscriber.afterCreate({
+        result: { id: 72, Status: "Started", user: 5 },
+        state: {},
+      });
+
+      expect(enqueueStaffOrderStartedAlert).toHaveBeenCalledWith(72);
+    });
+
+    it("does not enqueue on a normal checkout create, which starts as Paying", async () => {
+      const { strapi, subscribers } = createMockStrapi();
+      strapi.entityService.findOne.mockResolvedValue({ id: 73, contract: { Amount: 1 } });
+
+      registerAppLifecycles(strapi);
+      const subscriber = getSubscriber(subscribers, "api::order.order");
+
+      await subscriber.afterCreate({
+        result: { id: 73, Status: "Paying", user: 5 },
+        state: {},
+      });
+
+      expect(enqueueStaffOrderStartedAlert).not.toHaveBeenCalled();
+    });
   });
 });

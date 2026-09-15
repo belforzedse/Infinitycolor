@@ -132,11 +132,11 @@ export default function useAddToCart({
         error,
         "افزودن کالا به سبد خرید با خطا مواجه شد",
       );
-      if (error.message && error.message.includes("Not enough stock")) {
-        notify.error("موجودی کالا به اندازه تعداد درخواستی شما نیست");
-      } else {
-        notify.error(friendlyMessage);
-      }
+      // No stock branch here: `addToCart` is not awaited and CartContext
+      // swallows its own errors, so a stock rejection never reaches this catch.
+      // CartContext reports it with CART_STOCK_LIMIT_MESSAGE instead — one
+      // message for one condition.
+      notify.error(friendlyMessage);
     } finally {
       setIsAdding(false);
     }

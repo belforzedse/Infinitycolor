@@ -458,7 +458,7 @@ export async function getPLPHeroProducts(categorySlug?: string): Promise<Product
   const baseParams =
     `view=card&filters[Status][$eq]=Active&filters[removedAt][$null]=true&` +
     `filters[product_variations][Price][$gte]=1&` +
-    `filters[product_variations][product_stock][Count][$gt]=0&`;
+    `availability=in-stock&`;
   const categoryParam = categorySlug
     ? `&filters[product_main_category][Slug][$eq]=${encodeURIComponent(categorySlug)}`
     : "";

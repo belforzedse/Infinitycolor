@@ -1,14 +1,17 @@
 /**
- * Toman normalization for the legacy `/reports/liquidity` and
- * `/reports/gateway-liquidity` endpoints (decision D4,
- * docs/analytics/analytics-decisions.md).
+ * `/reports/liquidity` and `/reports/gateway-liquidity`.
  *
- * Both endpoints read `contract_transactions.amount`, which is stored in IRR, while
- * every other report endpoint (`/reports/products/*`) already returns Toman. This is
- * the named Phase 1 acceptance gate: for known IRR inputs, the endpoint must return
- * exactly `irr / 10`, with an explicit `currency: "Toman"` field, and nothing else
- * about the query (date basis, grouping, gateway attribution) may change.
+ * Both endpoints read the SAME `paid_orders` set every other money page uses
+ * (`productAnalytics.paidOrdersCte`) on the settlement clock, bucket in Tehran,
+ * and return Toman. They used to sum every successful `contract_transactions`
+ * row in the database (cancelled orders included), bucket by UTC day, and
+ * group by the `payment_gateways` row linked to each transaction — a table
+ * with duplicate rows, no Mellat row and 20k unlinked transactions — so the
+ * liquidity figure matched nothing else on the site and the gateway pie
+ * showed «نامشخص».
  */
+
+const resolveJoinsMock = jest.fn();
 
 jest.mock("../../services/umami", () => ({
   UMAMI_DEFINITION_VERSION: "umami-infinity-v1",
@@ -20,6 +23,23 @@ jest.mock("../../services/umami", () => ({
   getUmamiBehaviorReport: jest.fn(),
   getUmamiRealtimeReport: jest.fn(),
 }));
+
+jest.mock("../../services/product-analytics", () => {
+  const actual = jest.requireActual("../../services/product-analytics");
+  return { ...actual, resolveJoins: (...args: any[]) => resolveJoinsMock(...args) };
+});
+
+const STUB_JOINS = {
+  oiToOrder: "JOIN orders o ON true",
+  oiToVariation: { join: "", idExpr: "oi.product_variation_id" },
+  orderToContract: "JOIN contracts c ON true",
+  contractToTx: "JOIN contract_transactions ct ON true",
+  variationToProduct: "JOIN products p ON true",
+  variationToStock: "",
+  productToCategory: { join: "", titleExpr: "NULL::text" },
+  orderToShipping: "",
+  txSettlementGateway: true,
+};
 
 function loadController() {
   let controller: any;
@@ -53,72 +73,138 @@ function mockStrapi(rawImpl: (sql: string, bindings: any[]) => Promise<any>) {
   };
 }
 
-describe("liquidity/gateway-liquidity Toman normalization", () => {
+const GATEWAY_ROWS = [
+  { gateway: "SnappPay", orders_count: "3", total_orders_count: "4", settled_irr: "30000000", paid_orders_count: "4" },
+  { gateway: "Wallet", orders_count: "2", total_orders_count: "1", settled_irr: "5000000", paid_orders_count: "4" },
+  { gateway: "Mellat", orders_count: "0", total_orders_count: "2", settled_irr: "0", paid_orders_count: "4" },
+];
+
+function router(sql: string) {
+  if (sql.includes("AS has_settlement")) return { rows: [{ has_settlement: true }] };
+  // Already Toman on the order row, unlike every IRR settlement column here.
+  if (sql.includes("AS shipping_total")) return { rows: [{ shipping_total: "420000" }] };
+  if (sql.includes("paid_orders_count")) return { rows: GATEWAY_ROWS };
+  if (sql.includes("FROM paid_orders") && sql.includes("to_char(")) {
+    return {
+      rows: [
+        { bucket: "2026-09-15", total: "30000000", orders_count: "3" },
+        { bucket: "2026-09-16", total: "5000000", orders_count: "1" },
+      ],
+    };
+  }
+  return { rows: [] };
+}
+
+describe("liquidity / gateway-liquidity", () => {
+  beforeEach(() => {
+    resolveJoinsMock.mockResolvedValue(STUB_JOINS);
+  });
   afterEach(() => {
     delete (global as any).strapi;
   });
 
-  it("liquidity: converts the IRR total and series to Toman and stamps currency", async () => {
-    // Two settled IRR transactions net to 19,500,000 IRR = 1,950,000 Toman.
-    const seriesRow = { bucket: "2026-05-05T00:00:00.000Z", total: 19_500_000 };
-    const totalRow = { total: 19_500_000 };
-    mockStrapi(async (sql: string) => {
-      if (sql.includes("date_trunc(?, ct.date)")) return { rows: [seriesRow] };
-      if (sql.includes("SELECT COALESCE(SUM")) return { rows: [totalRow] };
-      return { rows: [] };
+  it("liquidity: reads paid orders on the settlement clock, buckets in Tehran and returns Toman", async () => {
+    const calls: Array<[string, any[]]> = [];
+    mockStrapi(async (sql, bindings) => {
+      calls.push([sql, bindings]);
+      return router(sql);
     });
 
     const controller = loadController();
-    const ctx = createCtx({
-      query: { start: "2026-05-01", end: "2026-05-31", interval: "day" },
-    });
+    const ctx = createCtx({ query: { start: "2026-09-14", end: "2026-09-16", interval: "day" } });
     await controller.liquidity(ctx);
 
     expect(ctx.badRequest).not.toHaveBeenCalled();
+    const series = calls.find(([sql]) => sql.includes("to_char("))!;
+    expect(series[0]).toContain("paid_orders AS (");
+    expect(series[0]).toContain("AND ct.date BETWEEN ? AND ?");
+    expect(series[0]).toContain("o.status IN ('Started', 'Shipment', 'Done')");
+    expect(series[0]).toContain("AT TIME ZONE 'Asia/Tehran'");
+    expect(series[0]).not.toContain("date_trunc(?");
+    expect(series[1]).toHaveLength(2);
+
     expect(ctx.body.data.currency).toBe("Toman");
-    expect(ctx.body.data.total).toBe(19_500_000 / 10);
-    expect(ctx.body.data.series).toEqual([{ bucket: seriesRow.bucket, total: 1_950_000 }]);
+    expect(ctx.body.data.clock).toBe("settlement");
+    expect(ctx.body.data.ordersDefinition).toBe("settled");
+    expect(ctx.body.data.total).toBe(3_500_000);
+    expect(ctx.body.data.ordersCount).toBe(4);
+    // Every Tehran calendar day in the window, zero-filled.
+    expect(ctx.body.data.series).toEqual([
+      { bucket: "2026-09-14", total: 0, orders: 0 },
+      { bucket: "2026-09-15", total: 3_000_000, orders: 3 },
+      { bucket: "2026-09-16", total: 500_000, orders: 1 },
+    ]);
   });
 
-  it("liquidity: negative net (returns exceeding gateway settlement) still divides cleanly by 10", async () => {
-    mockStrapi(async (sql: string) => {
-      if (sql.includes("date_trunc(?, ct.date)")) return { rows: [] };
-      if (sql.includes("SELECT COALESCE(SUM")) return { rows: [{ total: -5_000_000 }] };
-      return { rows: [] };
+  it("liquidity: honours clock=order", async () => {
+    const calls: string[] = [];
+    mockStrapi(async (sql) => {
+      calls.push(sql);
+      return router(sql);
     });
-
     const controller = loadController();
-    const ctx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31" } });
+    const ctx = createCtx({ query: { start: "2026-09-14", end: "2026-09-16", clock: "order" } });
     await controller.liquidity(ctx);
-
-    expect(ctx.body.data.total).toBe(-500_000);
-    expect(ctx.body.data.currency).toBe("Toman");
+    expect(ctx.body.data.clock).toBe("order");
+    expect(calls.find((sql) => sql.includes("to_char("))).toContain("AND o.date BETWEEN ? AND ?");
   });
 
-  it("gateway-liquidity: wraps rows under `rows`, converts each to Toman, keeps gateway attribution", async () => {
-    mockStrapi(async (sql: string) => {
-      if (sql.includes("information_schema.tables")) return { rows: [] }; // no link table -> direct FK path
-      if (sql.includes("SELECT pg.id AS gateway_id")) {
-        return {
-          rows: [
-            { gateway_id: 1, title: "Mellat", total: 30_000_000 },
-            { gateway_id: 2, title: "ZarinPal", total: 5_000_000 },
-          ],
-        };
-      }
-      return { rows: [] };
+  it("gateway-liquidity: runs the shared gateway breakdown and keeps the legacy row keys", async () => {
+    const calls: Array<[string, any[]]> = [];
+    mockStrapi(async (sql, bindings) => {
+      calls.push([sql, bindings]);
+      return router(sql);
     });
 
     const controller = loadController();
-    const ctx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31" } });
+    const ctx = createCtx({ query: { start: "2026-09-14", end: "2026-09-30" } });
     await controller.gatewayLiquidity(ctx);
 
     expect(ctx.badRequest).not.toHaveBeenCalled();
+    const breakdown = calls.find(([sql]) => sql.includes("paid_orders_count"))!;
+    expect(breakdown[0]).toContain("NULLIF(ct.settlement_gateway, '')");
+    expect(breakdown[0]).toContain("FULL OUTER JOIN all_orders");
+    expect(breakdown[0]).not.toContain("information_schema");
+    expect(breakdown[1]).toHaveLength(4);
+
     expect(ctx.body.data.currency).toBe("Toman");
+    expect(ctx.body.data.paidOrdersCount).toBe(4);
     expect(ctx.body.data.rows).toEqual([
-      { gatewayId: 1, gatewayTitle: "Mellat", total: 3_000_000 },
-      { gatewayId: 2, gatewayTitle: "ZarinPal", total: 500_000 },
+      expect.objectContaining({ gatewayId: null, gatewayTitle: "اسنپ‌پی", gateway: "SnappPay", total: 3_000_000, ordersCount: 3, sharePct: 85.71 }),
+      expect.objectContaining({ gatewayTitle: "کیف پول", gateway: "Wallet", total: 500_000, ordersCount: 2 }),
+      expect.objectContaining({ gatewayTitle: "ملت", gateway: "Mellat", total: 0, ordersCount: 0, totalOrdersCount: 2 }),
     ]);
+    expect(ctx.body.data.dataQualityWarnings).toEqual([
+      expect.objectContaining({ code: "GATEWAY_NO_SETTLED_ORDERS", gateway: "Mellat", ordersCount: 2 }),
+    ]);
+  });
+
+  it("gateway-liquidity: returns the shipping term that reconciles cash with «فروش ناخالص»", async () => {
+    const calls: Array<[string, any[]]> = [];
+    mockStrapi(async (sql, bindings) => {
+      calls.push([sql, bindings]);
+      return router(sql);
+    });
+
+    const controller = loadController();
+    const ctx = createCtx({ query: { start: "2026-09-14", end: "2026-09-30" } });
+    await controller.gatewayLiquidity(ctx);
+
+    const shipping = calls.find(([sql]) => sql.includes("AS shipping_total"))!;
+    // Same paid_orders set as the gateway rows, so the subtraction is exact.
+    expect(shipping[0]).toContain("paid_orders AS (");
+    expect(shipping[0]).toContain("AND ct.date BETWEEN ? AND ?");
+    expect(shipping[0]).toContain("JOIN orders o ON o.id = po.order_id");
+    expect(shipping[1]).toHaveLength(2);
+
+    // Toman passthrough: irrToToman would have made this 42,000.
+    expect(ctx.body.data.shippingRevenue).toBe(420_000);
+
+    const gatewaySum = ctx.body.data.rows.reduce(
+      (sum: number, row: { total: number }) => sum + row.total,
+      0,
+    );
+    expect(gatewaySum - ctx.body.data.shippingRevenue).toBe(3_080_000);
   });
 
   it("gateway-liquidity: requires the finance-report capability", async () => {
@@ -134,76 +220,18 @@ describe("liquidity/gateway-liquidity Toman normalization", () => {
     expect(ctx.forbidden).toHaveBeenCalledWith("You do not have permission to perform this action");
   });
 
-  it("gateway-liquidity: joins through the link table with LEFT JOIN, not INNER, so an unlinked successful transaction is kept", async () => {
-    // Regression test: this endpoint used to INNER JOIN through the link table,
-    // silently dropping any `contract_transactions` row with no `payment_gateway`
-    // relation set. That made `/sales/gateways` under-count relative to
-    // `/sales/liquidity`, which sums every successful transaction unconditionally.
-    let capturedQuery = "";
-    mockStrapi(async (sql: string) => {
-      if (sql.includes("information_schema.tables")) {
-        return { rows: [{ table_name: "contract_transactions_payment_gateway_links" }] };
-      }
-      if (sql.includes("information_schema.columns")) {
-        return {
-          rows: [{ column_name: "contract_transaction_id" }, { column_name: "payment_gateway_id" }],
-        };
-      }
-      if (sql.includes("SELECT pg.id AS gateway_id")) {
-        capturedQuery = sql;
-        return {
-          rows: [
-            { gateway_id: 1, title: "Mellat", total: 30_000_000 },
-            { gateway_id: null, title: "نامشخص", total: 5_000_000 },
-          ],
-        };
-      }
-      return { rows: [] };
-    });
-
+  it("gateway-liquidity reconciles with liquidity's total for an identical window", async () => {
+    mockStrapi(async (sql) => router(sql));
     const controller = loadController();
-    const ctx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31" } });
-    await controller.gatewayLiquidity(ctx);
+    const gatewayCtx = createCtx({ query: { start: "2026-09-14", end: "2026-09-16" } });
+    const liquidityCtx = createCtx({ query: { start: "2026-09-14", end: "2026-09-16" } });
+    await controller.gatewayLiquidity(gatewayCtx);
+    await controller.liquidity(liquidityCtx);
 
-    const normalized = capturedQuery.replace(/\s+/g, " ").trim();
-    expect(normalized).toContain(
-      "LEFT JOIN contract_transactions_payment_gateway_links l ON l.contract_transaction_id = ct.id " +
-        "LEFT JOIN payment_gateways pg ON pg.id = l.payment_gateway_id",
+    const gatewaySum = gatewayCtx.body.data.rows.reduce(
+      (sum: number, row: { total: number }) => sum + row.total,
+      0,
     );
-    expect(ctx.body.data.rows).toEqual([
-      { gatewayId: 1, gatewayTitle: "Mellat", total: 3_000_000 },
-      { gatewayId: null, gatewayTitle: "نامشخص", total: 500_000 },
-    ]);
-  });
-
-  it("gateway-liquidity reconciles with liquidity's total for an identical date range", async () => {
-    // Same WHERE predicate (`ct.status = 'Success' AND ct.date BETWEEN ? AND ?`),
-    // no join dropping rows: summing every gateway-liquidity row (including the
-    // unassigned bucket) must equal the unconditional liquidity total.
-    mockStrapi(async (sql: string) => {
-      if (sql.includes("information_schema.tables")) return { rows: [] };
-      if (sql.includes("SELECT pg.id AS gateway_id")) {
-        return {
-          rows: [
-            { gateway_id: 1, title: "Mellat", total: 30_000_000 },
-            { gateway_id: null, title: "نامشخص", total: 5_000_000 },
-          ],
-        };
-      }
-      if (sql.includes("SELECT COALESCE(SUM")) return { rows: [{ total: 35_000_000 }] };
-      if (sql.includes("date_trunc(?, ct.date)")) return { rows: [] };
-      return { rows: [] };
-    });
-
-    const controller = loadController();
-    const gatewayCtx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31" } });
-    const liquidityCtx = createCtx({ query: { start: "2026-05-01", end: "2026-05-31" } });
-    await Promise.all([
-      controller.gatewayLiquidity(gatewayCtx),
-      controller.liquidity(liquidityCtx),
-    ]);
-
-    const gatewaySum = gatewayCtx.body.data.rows.reduce((sum: number, r: any) => sum + r.total, 0);
     expect(gatewaySum).toBe(liquidityCtx.body.data.total);
   });
 });

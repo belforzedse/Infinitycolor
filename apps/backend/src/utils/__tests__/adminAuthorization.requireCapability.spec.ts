@@ -8,15 +8,18 @@ jest.mock("../migration-context", () => ({
   isTrustedWordPressMigrationRequest: () => mockTrusted(),
 }));
 
-import {
-  apiTokenAllowsCapability,
-  requireCapability,
-} from "../adminAuthorization";
+import { apiTokenAllowsCapability, requireCapability } from "../adminAuthorization";
 
 const EDITORIAL_ACTIONS = [
   "api::product-category-content.product-category-content.targets",
   "api::product-category-content.product-category-content.editable",
   "api::product-category-content.product-category-content.upsert",
+];
+
+const STORY_ACTIONS = [
+  "api::story.story.create",
+  "api::story.story.update",
+  "api::story.story.delete",
 ];
 
 function makeStrapi() {
@@ -96,6 +99,21 @@ describe("requireCapability API tokens and trusted importer", () => {
     const actor = await requireCapability(ctx, makeStrapi(), "content.categoryEditorial.manage");
     expect(actor).toBeNull();
     expect(ctx.forbidden).toHaveBeenCalled();
+  });
+
+  it("requires every story mutation action for a custom story-management token", () => {
+    expect(
+      apiTokenAllowsCapability(
+        { type: "custom", permissions: STORY_ACTIONS },
+        "content.stories.manage",
+      ),
+    ).toBe(true);
+    expect(
+      apiTokenAllowsCapability(
+        { type: "custom", permissions: STORY_ACTIONS.slice(0, 2) },
+        "content.stories.manage",
+      ),
+    ).toBe(false);
   });
 
   it("rejects a custom API token for capabilities with no token action map", async () => {

@@ -246,6 +246,52 @@ describe("orders page bounded data ownership", () => {
     );
   });
 
+  it("narrows the list to reserve orders with the reserve checkbox", async () => {
+    render(<OrdersPage />);
+
+    const reserveOnly = screen.getByRole("checkbox", {
+      name: "نمایش سفارش‌های رزروی",
+    });
+    expect(reserveOnly).not.toBeChecked();
+    expect(mockTableProps.isFiltered).toBe(false);
+
+    fireEvent.click(reserveOnly);
+
+    await waitFor(() => expect(mockTableProps.isFiltered).toBe(true));
+    expect(mockTableProps.dataLoaderKey).toContain('"reserveOnly":true');
+    // The toggle rides along with the request, never with the operator's
+    // advanced filters, so it must not surface as a removable chip.
+    expect(mockWrapperProps.filters).toEqual([]);
+
+    const ownFilter = { field: "[Description]", operator: "$containsi", value: "vip" };
+    await mockTableProps.dataLoader({
+      page: 1,
+      pageSize: 25,
+      filters: [ownFilter],
+      signal: new AbortController().signal,
+    });
+    expect(listAdminOrders).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        filters: [
+          ownFilter,
+          { field: "[reserve_shipment][id]", operator: "$notNull", value: "true" },
+        ],
+      }),
+    );
+
+    fireEvent.click(reserveOnly);
+    await waitFor(() => expect(mockTableProps.isFiltered).toBe(false));
+    await mockTableProps.dataLoader({
+      page: 1,
+      pageSize: 25,
+      filters: [ownFilter],
+      signal: new AbortController().signal,
+    });
+    expect(listAdminOrders).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filters: [ownFilter] }),
+    );
+  });
+
   it("keeps reserve shipments off the order-status tabs", () => {
     render(<OrdersPage />);
 

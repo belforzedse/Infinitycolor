@@ -82,6 +82,7 @@ function toPayload({
     title: story.Title,
     durationMs: Number.isFinite(story.DurationMs) && story.DurationMs > 0 ? story.DurationMs : 5000,
     text: kind === "text" ? story.Title || unavailableText : undefined,
+    ctaUrl: story.CtaUrl,
   };
 }
 
@@ -127,10 +128,16 @@ function reportStoryMediaIssue(issue: StoryMediaIssue): void {
   // Structured, low-volume, and free of query strings (which can carry signed tokens).
   // Sentry is picked up when the host app has installed it; otherwise this is a dev-only
   // console line, so production logs stay quiet.
-  const sentry = (globalThis as { Sentry?: { captureMessage?: (m: string, c?: unknown) => void } })
-    .Sentry;
+  const sentry = (
+    globalThis as {
+      Sentry?: { captureMessage?: (m: string, c?: unknown) => void };
+    }
+  ).Sentry;
   if (sentry?.captureMessage) {
-    sentry.captureMessage("story-media-failure", { level: "warning", extra: issue });
+    sentry.captureMessage("story-media-failure", {
+      level: "warning",
+      extra: issue,
+    });
     return;
   }
   // `process` is not declared in this package's lib set; read it defensively so the

@@ -28,7 +28,7 @@ export default function LoginForm({ onSubmit }: LoginFormProps) {
   const [formData, setFormData] = useState({
     phoneNumber,
     password: "",
-    rememberMe: false,
+    rememberMe: true,
   });
   const [isLoading, setIsLoading] = useState(false);
 

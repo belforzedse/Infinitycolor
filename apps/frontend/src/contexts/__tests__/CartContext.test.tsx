@@ -25,7 +25,9 @@ jest.mock("@/services", () => ({
     removeCartItem: jest.fn().mockResolvedValue({}),
     updateCartItem: jest.fn().mockResolvedValue({}),
     clearCart: jest.fn().mockResolvedValue({}),
-    mergeGuestCart: jest.fn().mockResolvedValue({ adjusted: [], rejected: [] }),
+    mergeGuestCart: jest
+      .fn()
+      .mockResolvedValue({ accepted: [], adjusted: [], rejected: [], replayed: false }),
   },
 }));
 
@@ -125,15 +127,22 @@ function QuantityProbe() {
       >
         increase
       </button>
+      <button
+        type="button"
+        disabled={!item}
+        onClick={() => item && updateQuantity(item.id, item.quantity - 1)}
+      >
+        decrease
+      </button>
     </div>
   );
 }
 
-const apiCart = (name: string, suffix: number, availableStock?: number) => ({
+const apiCart = (name: string, suffix: number, availableStock?: number, count = 1) => ({
   cart_items: [
     {
       id: 100 + suffix,
-      Count: 1,
+      Count: count,
       Sum: 1000,
       availableStock,
       product_variation: {
@@ -207,6 +216,30 @@ describe("CartProvider stock snapshots", () => {
     expect(mockCartService.updateCartItem).toHaveBeenCalledWith(101, 2);
     await waitFor(() => expect(screen.getByTestId("available-stock")).toHaveTextContent("1"));
     expect(screen.getByTestId("quantity")).toHaveTextContent("1");
+  });
+
+  /**
+   * The stock snapshot can fall below what the line already holds — stock moved,
+   * or a reservation (the shopper's own abandoned checkout included) lowered it.
+   * The gate is for increases only; blocking the decrease too would leave the
+   * shopper unable to shrink the quantity that is over the limit.
+   */
+  it("lets the shopper decrease a line that already exceeds the stock snapshot", async () => {
+    mockCartService.getUserCart.mockReset().mockResolvedValue(apiCart("محصول تست", 1, 1, 3));
+
+    render(
+      <CartProvider>
+        <QuantityProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("quantity")).toHaveTextContent("3"));
+    expect(screen.getByTestId("available-stock")).toHaveTextContent("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "decrease" }));
+
+    await waitFor(() => expect(mockCartService.updateCartItem).toHaveBeenCalledWith(101, 2));
+    expect(mockNotify.error).not.toHaveBeenCalled();
   });
 });
 
@@ -363,6 +396,28 @@ describe("CartProvider identity and storage hardening", () => {
     await waitFor(() => expect(localStorage.getItem("cart")).toBe("[]"));
   });
 
+  it("keeps the valid guest lines when one stored line is malformed", async () => {
+    // JSON.stringify turns a NaN price into null, so a single variation with an
+    // unparsable Price used to wipe the whole cart on the next read.
+    localStorage.setItem(
+      "cart",
+      JSON.stringify([cartItem, { ...cartItem, id: "item-2", price: null }]),
+    );
+
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("cart-count")).toHaveTextContent("1"));
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem("cart") || "[]");
+      expect(stored).toHaveLength(1);
+      expect(stored[0].id).toBe("item-1");
+    });
+  });
+
   it("never persists an authenticated cart into the following guest session", async () => {
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("account-a");
     mockCartService.getUserCart.mockResolvedValue(apiCart("سبد حساب الف", 1));
@@ -419,7 +474,12 @@ describe("CartProvider guest cart handover", () => {
     mockIsOnline.mockReturnValue(true);
     mockCartService.getUserCart.mockResolvedValue({ cart_items: [] });
     mockCartService.checkCartStock.mockResolvedValue({ valid: true });
-    mockCartService.mergeGuestCart.mockResolvedValue({ adjusted: [], rejected: [] });
+    mockCartService.mergeGuestCart.mockResolvedValue({
+      accepted: [{ productVariationId: 42, quantity: 1, appliedQuantity: 1 }],
+      adjusted: [],
+      rejected: [],
+      replayed: false,
+    });
     localStorage.clear();
   });
 
@@ -452,6 +512,52 @@ describe("CartProvider guest cart handover", () => {
 
     await waitFor(() => expect(screen.getByTestId("cart-count")).toHaveTextContent("0"));
     expect(mockCartService.mergeGuestCart).not.toHaveBeenCalled();
+  });
+
+  it("names the reason when every guest line was unavailable instead of calling it a sync", async () => {
+    // An all-rejected merge leaves the account cart empty. Reporting that as
+    // "synced with current stock" is what makes an empty cart look like a bug.
+    localStorage.setItem("cart", JSON.stringify([{ ...cartItem, variationId: "42" }]));
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("account-a");
+    mockCartService.mergeGuestCart.mockResolvedValue({
+      accepted: [],
+      adjusted: [],
+      rejected: [{ productVariationId: 42, quantity: 1, reason: "INSUFFICIENT_STOCK" }],
+      replayed: false,
+    });
+
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(mockNotify.error).toHaveBeenCalled());
+    expect(mockNotify.error.mock.calls[0][0]).toContain("موجود نبود");
+    expect(mockNotify.success).not.toHaveBeenCalled();
+  });
+
+  it("announces an all-rejected result even when the server replays it", async () => {
+    // A replay only arrives after a lost response told the shopper their items
+    // were preserved. Clearing the guest cart silently here would contradict
+    // that message and leave exactly the empty cart this path is meant to explain.
+    localStorage.setItem("cart", JSON.stringify([{ ...cartItem, variationId: "42" }]));
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValue("account-a");
+    mockCartService.mergeGuestCart.mockResolvedValue({
+      accepted: [],
+      adjusted: [],
+      rejected: [{ productVariationId: 42, quantity: 1, reason: "INSUFFICIENT_STOCK" }],
+      replayed: true,
+    });
+
+    render(
+      <CartProvider>
+        <CartProbe />
+      </CartProvider>,
+    );
+
+    await waitFor(() => expect(mockNotify.error).toHaveBeenCalled());
+    expect(mockNotify.error.mock.calls[0][0]).toContain("موجود نبود");
   });
 
   it("leaves the guest cart in place for a signed-out shopper", async () => {

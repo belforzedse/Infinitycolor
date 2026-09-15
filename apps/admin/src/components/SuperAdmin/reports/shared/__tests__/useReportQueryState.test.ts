@@ -19,10 +19,31 @@ import {
   jalaliBirthDateToGregorianDate,
 } from "@/utils/birthDate";
 import {
+  LEGACY_SALES_DATA_CUTOFF,
   jalaliPartsInTehran,
+  predatesLegacySalesCutoff,
   previousJalaliMonthRange,
   thisJalaliMonthRange,
 } from "../reportDates";
+
+describe("legacy sales data cutoff", () => {
+  it("is ۲۳ شهریور ۱۴۰۵ in Tehran, so ۲۲ شهریور itself is hidden", () => {
+    const noonTehran = new Date(`${LEGACY_SALES_DATA_CUTOFF}T12:00:00+03:30`);
+    expect(jalaliPartsInTehran(noonTehran)).toEqual({ year: 1405, month: 6, day: 23 });
+  });
+
+  it("flags only start dates before the cutoff", () => {
+    expect(predatesLegacySalesCutoff("2026-09-12")).toBe(true);
+    expect(predatesLegacySalesCutoff("2026-09-13")).toBe(true);
+    expect(predatesLegacySalesCutoff(LEGACY_SALES_DATA_CUTOFF)).toBe(false);
+    expect(predatesLegacySalesCutoff("2026-10-01")).toBe(false);
+  });
+
+  it("never lets the default window open before the cutoff", () => {
+    expect(defaultReportStart() >= LEGACY_SALES_DATA_CUTOFF).toBe(true);
+    expect(defaultReportStart(3650)).toBe(LEGACY_SALES_DATA_CUTOFF);
+  });
+});
 
 describe("toDateOnly / parseDateOnly", () => {
   it("round-trips a local date without shifting days", () => {
@@ -121,9 +142,10 @@ describe("sanitizeReportRange", () => {
     // start/end are plain nuqs strings, so a hand-edited or truncated URL can put
     // anything here. Sending it on used to mean either silently-wrong numbers
     // (sales endpoints substituted today) or an error banner (behavior endpoints).
-    expect(sanitizeReportRange("banana", "2026-08-22")).toEqual({
+    // The end sits after the cutoff-clamped default start, so no swap happens.
+    expect(sanitizeReportRange("banana", "2999-12-31")).toEqual({
       start: defaultReportStart(),
-      end: "2026-08-22",
+      end: "2999-12-31",
     });
     expect(sanitizeReportRange("2026-07-23", "")).toEqual({
       start: "2026-07-23",

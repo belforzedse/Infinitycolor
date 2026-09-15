@@ -9,8 +9,13 @@ import { useState, useEffect } from "react";
 import Select from "@/components/Kits/Form/Select";
 import useProductLike from "@/hooks/useProductLike";
 import useAddToCart from "@/hooks/useAddToCart";
-import { hasStockForVariation, getAvailableStockCount } from "@/services/product/product";
-import toast from "react-hot-toast";
+import {
+  hasStockForVariation,
+  getAvailableStockCount,
+  LOW_STOCK_DISPLAY_THRESHOLD,
+} from "@/services/product/product";
+import { faNum } from "@/utils/faNum";
+import notify from "@/utils/notify";
 import logger from "@/utils/logger";
 import { useScrollToComments } from "./useScrollToComments";
 import { trackAnalyticsEvent } from "@/lib/analytics";
@@ -23,14 +28,6 @@ function loadShareModule() {
   shareModulePromise ??= import("@/components/Product/ShareModal");
   return shareModulePromise;
 }
-
-const options = [
-  { id: 1, name: "۱ عدد" },
-  { id: 2, name: "۲ عدد" },
-  { id: 3, name: "۳ عدد" },
-  { id: 4, name: "۴ عدد" },
-  { id: 5, name: "۵ عدد" },
-];
 
 /**
  * Props for the PDPHeroInfoAction component
@@ -168,7 +165,7 @@ export default function PDPHeroInfoAction({
       if (process.env.NODE_ENV !== "production") {
         logger.info("❌ Stock validation failed");
       }
-      toast.error(`موجودی کافی نیست. موجودی فعلی: ${availableStock} عدد`);
+      notify.error(`موجودی کافی نیست. موجودی فعلی: ${availableStock} عدد`);
       return;
     }
 
@@ -233,7 +230,7 @@ export default function PDPHeroInfoAction({
 
     // Validate the new quantity against available stock
     if (!validateQuantity(newQuantity)) {
-      toast.error(`موجودی کافی نیست. موجودی فعلی: ${availableStock} عدد`);
+      notify.error(`موجودی کافی نیست. موجودی فعلی: ${availableStock} عدد`);
       return;
     }
 
@@ -250,25 +247,28 @@ export default function PDPHeroInfoAction({
       });
     } catch (err) {
       logger.error("Failed to toggle like", { productId, name, error: err });
-      toast.error("خطا در به‌روزرسانی علاقه‌مندی");
+      notify.error("خطا در به‌روزرسانی علاقه‌مندی");
     }
   };
 
-  // Generate options based on available stock (limit to max 5 or available stock)
   /**
-   * Generates quantity options based on available stock
-   * Limits maximum options to 5 or available stock, whichever is lower
-   * @returns {Array<{id: number, name: string}>} Array of quantity options
+   * Quantity choices, capped at the lower of the per-order limit and what is
+   * actually available (physical stock minus live reservations). Returns an
+   * empty list at zero rather than falling back to a static 1..5: the selector
+   * is not rendered in the out-of-stock branch, and a stale fallback there
+   * would silently offer quantities that cannot be bought.
    */
   const generateQuantityOptions = () => {
-    const maxOptions = Math.min(5, availableStock);
+    const maxOptions = Math.min(LOW_STOCK_DISPLAY_THRESHOLD, availableStock);
     return Array.from({ length: maxOptions }, (_, i) => ({
       id: i + 1,
-      name: `${i + 1} عدد`,
+      name: `${faNum(i + 1)} عدد`,
     }));
   };
 
-  const dynamicOptions = availableStock > 0 ? generateQuantityOptions() : options;
+  const dynamicOptions = availableStock > 0 ? generateQuantityOptions() : [];
+  const showLowStockHint =
+    hasStock && availableStock > 0 && availableStock <= LOW_STOCK_DISPLAY_THRESHOLD;
 
   // Find the current option based on quantity
   const currentOption = dynamicOptions.find((opt) => opt.id === quantity) || null;
@@ -318,45 +318,61 @@ export default function PDPHeroInfoAction({
         </button>
       </div>
 
-      <div className="flex w-full flex-1 gap-3">
-        {!hasStock ? (
-          <Button
-            className="flex h-[46px] flex-1 cursor-not-allowed items-center justify-center rounded-xl bg-gray-400 py-0 text-base text-white"
-            text="ناموجود"
-            disabled={true}
-          />
-        ) : (
-          <>
+      <div className="flex w-full flex-1 flex-col gap-1.5">
+        <div className="flex w-full gap-3">
+          {!hasStock ? (
             <Button
-              className={`flex h-[46px] flex-1 items-center justify-center rounded-xl py-0 text-base ${
-                isInCart
-                  ? "border-2 border-infinity-primary bg-infinity-primary-lighter/20 !text-infinity-primary hover:border-infinity-primary hover:bg-infinity-primary-lighter/30"
-                  : "bg-actions-primary !text-gray-100"
-              } ${isAdding || isCartActionPending ? "cursor-wait opacity-50" : ""}`}
-              text={isInCart ? "در سبد خرید (مشاهده)" : "افزودن به سبد خرید"}
-              // `outline` keeps .btn-primary's hover fill from repainting the
-              // in-cart button navy, which would hide the now-navy icon.
-              variant={isInCart ? "outline" : "primary"}
-              testId="pdp-add-to-cart"
-              leftIcon={<BasketIcon />}
-              disabled={isCartActionPending}
-              onClick={
-                isAdding || isCartActionPending
-                  ? undefined
-                  : () => {
-                      handleAddToCart(quantity || 1);
-                    }
-              }
+              className="flex h-[46px] flex-1 cursor-not-allowed items-center justify-center rounded-xl bg-gray-400 py-0 text-base text-white"
+              text="ناموجود"
+              disabled={true}
             />
-            <Select
-              className="w-[126px]"
-              selectButtonClassName="h-[46px] py-0"
-              options={dynamicOptions}
-              value={currentOption}
-              onChange={handleQuantityChange}
-              placeholder="تعداد"
-            />
-          </>
+          ) : (
+            <>
+              <Button
+                className={`flex h-[46px] flex-1 items-center justify-center rounded-xl py-0 text-base ${
+                  isInCart
+                    ? "border-2 border-infinity-primary bg-infinity-primary-lighter/20 !text-infinity-primary hover:border-infinity-primary hover:bg-infinity-primary-lighter/30"
+                    : "bg-actions-primary !text-gray-100"
+                } ${isAdding || isCartActionPending ? "cursor-wait opacity-50" : ""}`}
+                text={isInCart ? "در سبد خرید (مشاهده)" : "افزودن به سبد خرید"}
+                // `outline` keeps .btn-primary's hover fill from repainting the
+                // in-cart button navy, which would hide the now-navy icon.
+                variant={isInCart ? "outline" : "primary"}
+                testId="pdp-add-to-cart"
+                leftIcon={<BasketIcon />}
+                disabled={isCartActionPending}
+                onClick={
+                  isAdding || isCartActionPending
+                    ? undefined
+                    : () => {
+                        handleAddToCart(quantity || 1);
+                      }
+                }
+              />
+              <Select
+                className="w-[126px]"
+                selectButtonClassName="h-[46px] py-0"
+                options={dynamicOptions}
+                value={currentOption}
+                onChange={handleQuantityChange}
+                placeholder="تعداد"
+              />
+            </>
+          )}
+        </div>
+        {/*
+          Availability is `Count - reservedCount`, so a shopper used to learn the
+          real number only from the rejection toast after overshooting. Say it up
+          front instead, but only near the cap — above it the number is noise.
+        */}
+        {showLowStockHint && (
+          <p
+            className="text-xs text-neutral-500"
+            data-testid="pdp-low-stock-hint"
+            aria-live="polite"
+          >
+            {`تنها ${faNum(availableStock)} عدد باقی مانده`}
+          </p>
         )}
       </div>
 

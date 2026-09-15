@@ -1,0 +1,24 @@
+{
+  "kind": "singleType",
+  "collectionName": "order_alert_settings",
+  "info": {
+    "singularName": "order-alert-setting",
+    "pluralName": "order-alert-settings",
+    "displayName": "Order Alert Settings",
+    "description": "Staff phone numbers notified when an order enters «در حال انجام»."
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "enabled": {
+      "type": "boolean",
+      "default": true
+    },
+    "recipients": {
+      "type": "json",
+      "default": []
+    }
+  }
+}

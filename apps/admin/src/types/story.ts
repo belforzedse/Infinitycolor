@@ -49,7 +49,7 @@ export interface Story {
   EndAt?: string;
   DurationMs: number;
   CtaLabel?: string;
-  CtaUrl?: string;
+  CtaUrl?: string | null;
   Overlays?: StoryOverlay[];
   createdAt: string;
   updatedAt: string;
@@ -81,7 +81,7 @@ export interface CreateStoryData {
   EndAt?: string;
   DurationMs?: number;
   CtaLabel?: string;
-  CtaUrl?: string;
+  CtaUrl?: string | null;
   Overlays?: StoryOverlay[];
 }
 

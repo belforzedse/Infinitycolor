@@ -54,6 +54,7 @@ export interface ProductLike {
       product_stock?: {
         id: number;
         Count: number;
+        reservedCount?: number;
       };
     }>;
   };

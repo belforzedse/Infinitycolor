@@ -66,11 +66,27 @@ describe("bounded admin products list", () => {
     expect(query.limit).toBe(25);
     expect(query.select).not.toContain("Description");
     expect(query.select).not.toContain("CleaningTips");
-    expect(query.where.$and).toContainEqual({ Title: { $containsi: "Synthetic" } });
+    expect(query.where.$and).toContainEqual({ $or: [{ Title: { $containsi: "Synthetic" } }] });
     expect(ctx.set).toHaveBeenCalledWith("Cache-Control", "private, no-store");
     expect(ctx.body.meta.recycleCount).toBe(4);
     expect(ctx.body.meta.pagination.total).toBe(3_004);
     expect(JSON.stringify(ctx.body)).not.toContain("must-not-leak");
+  });
+
+  it("finds a product code typed without the space the title stores", async () => {
+    const { findMany } = installStrapi();
+    const ctx = createContext({
+      page: 1,
+      pageSize: 25,
+      sort: "last-edited",
+      search: "W00288",
+    });
+
+    await controller.query(ctx);
+
+    expect(findMany.mock.calls[0][0].where.$and).toContainEqual({
+      $or: [{ Title: { $containsi: "W00288" } }, { Title: { $containsi: "W 00288" } }],
+    });
   });
 
   it("rejects unknown filters before fetching products", async () => {

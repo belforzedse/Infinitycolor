@@ -201,7 +201,7 @@
     },
     "PaymentGateway": {
       "type": "enumeration",
-      "enum": ["Unknown", "Wallet", "Mellat", "SnappPay", "SamanKish", "ZarinPal"],
+      "enum": ["Unknown", "Wallet", "Mellat", "SnappPay", "SamanKish", "ZarinPal", "Manual", "CardToCard", "Other"],
       "default": "Unknown"
     },
     "isReserveOrder": {

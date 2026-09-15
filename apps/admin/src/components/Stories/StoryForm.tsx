@@ -17,6 +17,7 @@ export interface StoryFormValues {
   mediaUrl?: string;
   thumbnailId?: number;
   thumbnailUrl?: string;
+  CtaUrl?: string | null;
 }
 
 interface StoryFormProps {
@@ -37,6 +38,7 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
 
   const [thumbnailId, setThumbnailId] = useState<number | undefined>(initialValues?.thumbnailId);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | undefined>(initialValues?.thumbnailUrl);
+  const [ctaUrl, setCtaUrl] = useState(initialValues?.CtaUrl ?? "");
 
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [uploadingThumb, setUploadingThumb] = useState(false);
@@ -77,8 +79,14 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) { toast.error("عنوان الزامی است."); return; }
-    if (!mediaId) { toast.error("آپلود رسانه الزامی است."); return; }
+    if (!title.trim()) {
+      toast.error("عنوان الزامی است.");
+      return;
+    }
+    if (!mediaId) {
+      toast.error("آپلود رسانه الزامی است.");
+      return;
+    }
 
     await onSubmit({
       Title: title.trim(),
@@ -87,6 +95,7 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
       SortOrder: sortOrder,
       Media: mediaId,
       Thumbnail: thumbnailId ?? null,
+      CtaUrl: ctaUrl.trim() || null,
     });
   };
 
@@ -104,10 +113,8 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
 
   return (
     <form onSubmit={handleSubmit} dir="rtl" className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-
       {/* ── Main column ───────────────────────── */}
       <div className="space-y-5 lg:col-span-2">
-
         {/* Title */}
         <div className="rounded-2xl bg-white p-5 shadow-sm">
           <label className="mb-2 block text-sm font-medium text-slate-700">
@@ -132,11 +139,7 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
           {mediaUrl ? (
             <div className="relative inline-block">
               {mediaType === "video" ? (
-                <video
-                  src={fullUrl(mediaUrl, initialValues?.updatedAt)}
-                  className="h-48 w-auto rounded-xl"
-                  controls
-                />
+                <video src={fullUrl(mediaUrl, initialValues?.updatedAt)} className="h-48 w-auto rounded-xl" controls />
               ) : (
                 <img
                   src={fullUrl(mediaUrl, initialValues?.updatedAt)}
@@ -146,7 +149,10 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
               )}
               <button
                 type="button"
-                onClick={() => { setMediaId(undefined); setMediaUrl(undefined); }}
+                onClick={() => {
+                  setMediaId(undefined);
+                  setMediaUrl(undefined);
+                }}
                 className="absolute -right-2 -top-2 rounded-full bg-red-500 p-1 text-white shadow hover:bg-red-600"
               >
                 <X className="h-3 w-3" />
@@ -160,9 +166,7 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
               className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 py-10 text-slate-400 transition-colors hover:border-infinity-primary-lighter hover:text-infinity-primary-light"
             >
               <Upload className="h-8 w-8" />
-              <span className="text-sm">
-                {uploadingMedia ? "در حال آپلود..." : "کلیک کنید یا فایل را اینجا بکشید"}
-              </span>
+              <span className="text-sm">{uploadingMedia ? "در حال آپلود..." : "کلیک کنید یا فایل را اینجا بکشید"}</span>
               <span className="text-xs text-slate-300">تصویر یا ویدیو</span>
             </button>
           )}
@@ -171,7 +175,10 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
             type="file"
             accept="image/*,video/*"
             className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleMediaUpload(f); }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleMediaUpload(f);
+            }}
           />
         </div>
 
@@ -189,7 +196,10 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
               />
               <button
                 type="button"
-                onClick={() => { setThumbnailId(undefined); setThumbnailUrl(undefined); }}
+                onClick={() => {
+                  setThumbnailId(undefined);
+                  setThumbnailUrl(undefined);
+                }}
                 className="absolute -right-2 -top-2 rounded-full bg-red-500 p-1 text-white shadow"
               >
                 <X className="h-3 w-3" />
@@ -211,27 +221,47 @@ export default function StoryForm({ initialValues, onSubmit, isLoading, submitLa
             type="file"
             accept="image/*"
             className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleThumbnailUpload(f); }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleThumbnailUpload(f);
+            }}
+          />
+        </div>
+
+        <div className="rounded-2xl bg-white p-5 shadow-sm">
+          <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="story-cta-url">
+            لینک دکمه «مشاهده لینک»
+          </label>
+          <input
+            id="story-cta-url"
+            type="text"
+            inputMode="url"
+            dir="ltr"
+            value={ctaUrl}
+            onChange={(event) => setCtaUrl(event.target.value)}
+            placeholder="https://example.com یا /pdp/product"
+            className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-left text-sm focus:border-infinity-primary-light focus:outline-none focus:ring-1 focus:ring-infinity-primary-light"
           />
         </div>
       </div>
 
       {/* ── Sidebar ───────────────────────────── */}
       <div className="space-y-5">
-
         {/* Publish + save */}
         <div className="rounded-2xl bg-white p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-slate-700">وضعیت انتشار</span>
-            <button
-              type="button"
-              onClick={() => setIsActive((v) => !v)}
-              className="flex items-center gap-2 text-sm"
-            >
+            <button type="button" onClick={() => setIsActive((v) => !v)} className="flex items-center gap-2 text-sm">
               {isActive ? (
-                <><ToggleRight className="h-6 w-6 text-green-500" /><span className="text-green-600 font-medium">منتشر شده</span></>
+                <>
+                  <ToggleRight className="h-6 w-6 text-green-500" />
+                  <span className="text-green-600 font-medium">منتشر شده</span>
+                </>
               ) : (
-                <><ToggleLeft className="h-6 w-6 text-slate-400" /><span className="text-slate-500">پیش‌نویس</span></>
+                <>
+                  <ToggleLeft className="h-6 w-6 text-slate-400" />
+                  <span className="text-slate-500">پیش‌نویس</span>
+                </>
               )}
             </button>
           </div>

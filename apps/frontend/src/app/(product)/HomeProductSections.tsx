@@ -18,7 +18,11 @@ import {
   pickBatchedHomepageSection,
   type HomepageProductSectionId,
 } from "@/services/product/homepage";
-import type { SuperAdminSettings } from "@/types/super-admin/settings";
+import { getCategoryPlpHref } from "@/utils/plpRoutes";
+import type {
+  HomeGifPromoAssignment,
+  SuperAdminSettings,
+} from "@/types/super-admin/settings";
 import type { ProductCardProps } from "@/components/Product/Card";
 
 const NEWEST_BACKGROUND_ELLIPSES = [
@@ -41,18 +45,35 @@ function shouldUseProductServerShell(sectionId: HomepageProductSectionId): boole
   return process.env.HOME_PRODUCT_SERVER_SHELL_SECTION?.trim() === sectionId;
 }
 
+/**
+ * Custom sections always pass an explicit target, so they never fall through to
+ * the rail's own title-substring heuristic — a section titled «تخفیف ویژه» would
+ * otherwise land on the discount PLP.
+ */
+function customSectionViewAllHref(
+  assignment: HomeGifPromoAssignment,
+  configuredHref: string,
+): string {
+  if (configuredHref) return configuredHref;
+  if (assignment.mode === "category") {
+    const slug = assignment.categorySlug?.trim();
+    if (slug) return getCategoryPlpHref(slug);
+  }
+  return "/plp";
+}
+
 function HomeOffersList({
   sectionId,
   icon,
   title,
   products,
-  hideBottomViewMore,
+  viewAllHref,
 }: {
   sectionId: HomepageProductSectionId;
   icon: React.ReactNode;
   title: string;
   products: ProductCardProps[];
-  hideBottomViewMore?: boolean;
+  viewAllHref?: string;
 }) {
   if (sectionId === "discounted") {
     return <DiscountedShowcase products={products} />;
@@ -62,14 +83,7 @@ function HomeOffersList({
     ? OffersListHomePageServerShell
     : OffersListHomePage;
 
-  return (
-    <Component
-      hideBottomViewMore={hideBottomViewMore}
-      icon={icon}
-      title={title}
-      products={products}
-    />
-  );
+  return <Component icon={icon} title={title} products={products} viewAllHref={viewAllHref} />;
 }
 
 function ProductCardsSkeleton({ count = 8 }: { count?: number }) {
@@ -212,7 +226,6 @@ async function NewestSection({
               ) : (
                 <HomeOffersList
                   sectionId="newest"
-                  hideBottomViewMore
                   icon={<NewIcon />}
                   title="جدیدترین ها"
                   products={newProducts}
@@ -339,6 +352,72 @@ async function CustomSection({
           icon={<NewIcon />}
           title={homepageSettings.homeCustomSectionTitle || "بخش ویژه"}
           products={customSectionProducts}
+          viewAllHref={customSectionViewAllHref(
+            homepageSettings.homeCustomSectionAssignment,
+            homepageSettings.homeCustomSectionViewAllHref,
+          )}
+        />
+      </Reveal>
+    </section>
+  );
+}
+
+async function CustomSectionTwo({
+  homepageSettings,
+  batchedSectionsPromise,
+}: {
+  homepageSettings: SuperAdminSettings;
+  batchedSectionsPromise: BatchedHomepageSectionsPromise;
+}) {
+  const batchedSections = await batchedSectionsPromise;
+  const customSectionTwoProducts =
+    pickBatchedHomepageSection(batchedSections, "customTwo") ??
+    (await getHomeSectionProducts(homepageSettings.homeCustomSectionTwoAssignment));
+  if (customSectionTwoProducts.length === 0) return null;
+
+  return (
+    <section>
+      <Reveal variant="fade-up" duration={700}>
+        <HomeOffersList
+          sectionId="customTwo"
+          icon={<NewIcon />}
+          title={homepageSettings.homeCustomSectionTwoTitle || "بخش ویژه"}
+          products={customSectionTwoProducts}
+          viewAllHref={customSectionViewAllHref(
+            homepageSettings.homeCustomSectionTwoAssignment,
+            homepageSettings.homeCustomSectionTwoViewAllHref,
+          )}
+        />
+      </Reveal>
+    </section>
+  );
+}
+
+async function CustomSectionThree({
+  homepageSettings,
+  batchedSectionsPromise,
+}: {
+  homepageSettings: SuperAdminSettings;
+  batchedSectionsPromise: BatchedHomepageSectionsPromise;
+}) {
+  const batchedSections = await batchedSectionsPromise;
+  const customSectionThreeProducts =
+    pickBatchedHomepageSection(batchedSections, "customThree") ??
+    (await getHomeSectionProducts(homepageSettings.homeCustomSectionThreeAssignment));
+  if (customSectionThreeProducts.length === 0) return null;
+
+  return (
+    <section>
+      <Reveal variant="fade-up" duration={700}>
+        <HomeOffersList
+          sectionId="customThree"
+          icon={<NewIcon />}
+          title={homepageSettings.homeCustomSectionThreeTitle || "بخش ویژه"}
+          products={customSectionThreeProducts}
+          viewAllHref={customSectionViewAllHref(
+            homepageSettings.homeCustomSectionThreeAssignment,
+            homepageSettings.homeCustomSectionThreeViewAllHref,
+          )}
         />
       </Reveal>
     </section>
@@ -431,6 +510,15 @@ export default function HomeProductSections({
         />
       </Suspense>
 
+      {homepageSettings?.homeCustomSectionTwoEnabled && (
+        <Suspense fallback={<ProductRailSectionSkeleton />}>
+          <CustomSectionTwo
+            homepageSettings={homepageSettings}
+            batchedSectionsPromise={batchedSectionsPromise}
+          />
+        </Suspense>
+      )}
+
       <Suspense fallback={<ProductRailSectionSkeleton />}>
         <DiscountedSection
           getSections={getHomepageSectionsFallback}
@@ -473,6 +561,15 @@ export default function HomeProductSections({
             />
           </Suspense>
         )}
+
+      {homepageSettings?.homeCustomSectionThreeEnabled && (
+        <Suspense fallback={<ProductRailSectionSkeleton />}>
+          <CustomSectionThree
+            homepageSettings={homepageSettings}
+            batchedSectionsPromise={batchedSectionsPromise}
+          />
+        </Suspense>
+      )}
 
       {homepageSettings?.homeEveryoneFollowsEnabled &&
         homepageSettings.homeEveryoneFollowsProductIds.length > 0 && (

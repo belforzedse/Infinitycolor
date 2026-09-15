@@ -28,11 +28,11 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 describe("scheduleAvailabilityTransitionPurge", () => {
   beforeEach(() => enqueueEdgeCachePurge.mockClear());
 
-  // The whole point: stock moves constantly, availability rarely.
+  // Crossing zero changes the product *cards* too, so listings go with the PDP.
   it.each([
     ["a sale that empties the last unit", 1, 0],
     ["a restock from zero", 0, 3],
-  ])("purges on %s", async (_label, availableBefore, availableAfter) => {
+  ])("purges listings on %s", async (_label, availableBefore, availableAfter) => {
     scheduleAvailabilityTransitionPurge(makeStrapi(PRODUCT) as any, {
       stockId: 7,
       availableBefore,
@@ -42,14 +42,41 @@ describe("scheduleAvailabilityTransitionPurge", () => {
     await flush();
 
     expect(enqueueEdgeCachePurge).toHaveBeenCalledTimes(1);
-    const [data] = enqueueEdgeCachePurge.mock.calls[0];
+    const [data, options] = enqueueEdgeCachePurge.mock.calls[0];
     expect(data.kind).toBe("availability");
     expect(data.paths).toEqual(expect.arrayContaining(["/pdp/shirt", "/plp/category/tops"]));
+    expect(data.origin).toEqual({ productSlug: "shirt", availabilityCrossed: true });
+    expect(options.dedupeKey).toBe("availability:shirt:crossing");
   });
 
+  // At or below the threshold the PDP prints the number and caps the quantity
+  // selector at it, so the displayed value moved even though nothing sold out.
   it.each([
     ["5 -> 4", 5, 4],
     ["4 -> 5", 4, 5],
+    ["6 -> 5, the first move that renders a number", 6, 5],
+  ])("purges the PDP alone for %s", async (_label, before, after) => {
+    scheduleAvailabilityTransitionPurge(makeStrapi(PRODUCT) as any, {
+      stockId: 7,
+      availableBefore: before,
+      availableAfter: after,
+      reason: "test",
+    });
+    await flush();
+
+    expect(enqueueEdgeCachePurge).toHaveBeenCalledTimes(1);
+    const [data, options] = enqueueEdgeCachePurge.mock.calls[0];
+    expect(data.paths).toEqual(["/pdp/shirt"]);
+    expect(data.paths).not.toEqual(expect.arrayContaining(["/plp/category/tops"]));
+    expect(data.origin).toEqual({ productSlug: "shirt", availabilityCrossed: false });
+    // A distinct key from the crossing scope, so the two cannot collide inside
+    // one dedupe bucket and silently drop the wider purge.
+    expect(options.dedupeKey).toBe("availability:shirt:count");
+  });
+
+  it.each([
+    ["40 -> 39, both far above the threshold", 40, 39],
+    ["7 -> 6, still one short of being rendered", 7, 6],
     ["0 -> 0", 0, 0],
   ])("does not purge for %s, which changes no rendered state", async (_label, before, after) => {
     scheduleAvailabilityTransitionPurge(makeStrapi(PRODUCT) as any, {

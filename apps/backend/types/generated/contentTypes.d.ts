@@ -755,6 +755,20 @@ export interface ApiContractTransactionContractTransaction extends Schema.Collec
     >;
     RevertedAt: Attribute.DateTime;
     SettledAt: Attribute.DateTime;
+    SettlementGateway: Attribute.Enumeration<
+      [
+        "Unknown",
+        "Wallet",
+        "Mellat",
+        "SnappPay",
+        "SamanKish",
+        "ZarinPal",
+        "Manual",
+        "OffGateway",
+        "CardToCard",
+        "Other",
+      ]
+    >;
     Status: Attribute.Enumeration<["Pending", "Success", "Failed"]>;
     Step: Attribute.Integer &
       Attribute.Required &
@@ -1834,6 +1848,37 @@ export interface ApiNotificationNotification extends Schema.CollectionType {
   };
 }
 
+export interface ApiOrderAlertSettingOrderAlertSetting extends Schema.SingleType {
+  collectionName: "order_alert_settings";
+  info: {
+    description: "Staff phone numbers notified when an order enters \u00AB\u062F\u0631 \u062D\u0627\u0644 \u0627\u0646\u062C\u0627\u0645\u00BB.";
+    displayName: "Order Alert Settings";
+    pluralName: "order-alert-settings";
+    singularName: "order-alert-setting";
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Attribute.DateTime;
+    createdBy: Attribute.Relation<
+      "api::order-alert-setting.order-alert-setting",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+    enabled: Attribute.Boolean & Attribute.DefaultTo<true>;
+    recipients: Attribute.JSON & Attribute.DefaultTo<[]>;
+    updatedAt: Attribute.DateTime;
+    updatedBy: Attribute.Relation<
+      "api::order-alert-setting.order-alert-setting",
+      "oneToOne",
+      "admin::user"
+    > &
+      Attribute.Private;
+  };
+}
+
 export interface ApiOrderItemOrderItem extends Schema.CollectionType {
   collectionName: "order_items";
   info: {
@@ -2023,7 +2068,17 @@ export interface ApiOrderOrder extends Schema.CollectionType {
     Note: Attribute.Text;
     order_items: Attribute.Relation<"api::order.order", "oneToMany", "api::order-item.order-item">;
     PaymentGateway: Attribute.Enumeration<
-      ["Unknown", "Wallet", "Mellat", "SnappPay", "SamanKish", "ZarinPal"]
+      [
+        "Unknown",
+        "Wallet",
+        "Mellat",
+        "SnappPay",
+        "SamanKish",
+        "ZarinPal",
+        "Manual",
+        "CardToCard",
+        "Other",
+      ]
     > &
       Attribute.DefaultTo<"Unknown">;
     ReservationStatus: Attribute.Enumeration<["Reserved", "Released", "Consumed", "Expired"]> &
@@ -3715,10 +3770,28 @@ export interface ApiSettingsSettings extends Schema.SingleType {
         productIds: [];
       }>;
     homeCustomSectionEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
+    homeCustomSectionThreeAssignment: Attribute.JSON &
+      Attribute.DefaultTo<{
+        mode: "manual";
+        productIds: [];
+      }>;
+    homeCustomSectionThreeEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
+    homeCustomSectionThreeTitle: Attribute.String & Attribute.DefaultTo<"">;
+    homeCustomSectionThreeViewAllHref: Attribute.String & Attribute.DefaultTo<"">;
     homeCustomSectionTitle: Attribute.String & Attribute.DefaultTo<"">;
+    homeCustomSectionTwoAssignment: Attribute.JSON &
+      Attribute.DefaultTo<{
+        mode: "manual";
+        productIds: [];
+      }>;
+    homeCustomSectionTwoEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
+    homeCustomSectionTwoTitle: Attribute.String & Attribute.DefaultTo<"">;
+    homeCustomSectionTwoViewAllHref: Attribute.String & Attribute.DefaultTo<"">;
+    homeCustomSectionViewAllHref: Attribute.String & Attribute.DefaultTo<"">;
     homeDiscountedProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     homeEveryoneFollowsEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
     homeEveryoneFollowsProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
+    homeFavoriteProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     homeFeaturedCategoryBannerBackgroundColor: Attribute.String & Attribute.DefaultTo<"#f1f5f9">;
     homeFeaturedCategoryBannerImage: Attribute.Text & Attribute.DefaultTo<"">;
     homeFeaturedCategoryBannerImageFit: Attribute.Enumeration<["cover", "contain"]> &
@@ -3750,7 +3823,6 @@ export interface ApiSettingsSettings extends Schema.SingleType {
     homeHeroSliderDraft: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeHeroSliderMeta: Attribute.JSON & Attribute.DefaultTo<{}>;
     homeHeroSliderPublished: Attribute.JSON & Attribute.DefaultTo<{}>;
-    homeFavoriteProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     homeNewestProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
     homeWeeklyPicksEnabled: Attribute.Boolean & Attribute.DefaultTo<false>;
     homeWeeklyPicksProductIds: Attribute.JSON & Attribute.DefaultTo<[]>;
@@ -4557,6 +4629,7 @@ declare module "@strapi/types" {
       "api::model-application.model-application": ApiModelApplicationModelApplication;
       "api::navigation.navigation": ApiNavigationNavigation;
       "api::notification.notification": ApiNotificationNotification;
+      "api::order-alert-setting.order-alert-setting": ApiOrderAlertSettingOrderAlertSetting;
       "api::order-item.order-item": ApiOrderItemOrderItem;
       "api::order-log.order-log": ApiOrderLogOrderLog;
       "api::order.order": ApiOrderOrder;

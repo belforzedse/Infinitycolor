@@ -23,6 +23,7 @@ jest.mock("zaman", () => ({
 }));
 
 let mockPathname = "/sales";
+let mockStart = "2026-01-01";
 let mockAdminRole: string | null = null;
 let mockCapabilities: string[] = [];
 const setRangeMock = jest.fn();
@@ -39,26 +40,37 @@ jest.mock("@/hooks/useCurrentUser", () => ({
   }),
 }));
 
-jest.mock("@/components/SuperAdmin/reports/shared/useReportQueryState", () => ({
-  useReportQueryState: () => ({
-    start: "2026-01-01",
-    end: "2026-01-31",
-    setRange: setRangeMock,
-  }),
-  toDateOnly: (date: Date) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-      date.getDate(),
-    ).padStart(2, "0")}`,
-  parseDateOnly: (value: string) => new Date(`${value}T00:00:00`),
-}));
+jest.mock("@/components/SuperAdmin/reports/shared/useReportQueryState", () => {
+  const dates = jest.requireActual(
+    "@/components/SuperAdmin/reports/shared/reportDates",
+  );
+  return {
+    useReportQueryState: () => ({
+      start: mockStart,
+      end: "2026-12-31",
+      setRange: setRangeMock,
+    }),
+    toDateOnly: dates.toDateOnly,
+    parseDateOnly: dates.parseDateOnly,
+    LEGACY_SALES_DATA_CUTOFF: dates.LEGACY_SALES_DATA_CUTOFF,
+    LEGACY_SALES_DATA_NOTICE: dates.LEGACY_SALES_DATA_NOTICE,
+    predatesLegacySalesCutoff: dates.predatesLegacySalesCutoff,
+  };
+});
 
 import SalesLayout from "../layout";
-import { thisJalaliMonthRange, toDateOnly } from "@/components/SuperAdmin/reports/shared/reportDates";
+import {
+  LEGACY_SALES_DATA_CUTOFF,
+  LEGACY_SALES_DATA_NOTICE,
+  thisJalaliMonthRange,
+  toDateOnly,
+} from "@/components/SuperAdmin/reports/shared/reportDates";
 
 describe("Sales workspace layout", () => {
   beforeEach(() => {
     setRangeMock.mockReset();
     mockPathname = "/sales";
+    mockStart = LEGACY_SALES_DATA_CUTOFF;
     mockAdminRole = null;
     mockCapabilities = [];
   });
@@ -153,6 +165,69 @@ describe("Sales workspace layout", () => {
         mockPathname = pathname;
         const { unmount } = render(<SalesLayout>{null}</SalesLayout>);
         expect(screen.getAllByText("این ماه")).toHaveLength(1);
+        unmount();
+      }
+    });
+
+    it("replaces the report with the legacy-site notice for a start on or before ۲۲ شهریور", () => {
+      mockAdminRole = "superadmin";
+      mockStart = "2026-09-13";
+      render(
+        <SalesLayout>
+          <div>report body</div>
+        </SalesLayout>,
+      );
+
+      expect(screen.getByText(LEGACY_SALES_DATA_NOTICE)).toBeInTheDocument();
+      expect(screen.queryByText("report body")).not.toBeInTheDocument();
+      // The picker stays so the operator can move the period forward.
+      expect(screen.getByText("این ماه")).toBeInTheDocument();
+    });
+
+    it("offers a one-click jump to the cutoff that keeps the chosen end date", () => {
+      mockAdminRole = "superadmin";
+      mockStart = "2026-08-01";
+      render(<SalesLayout>{null}</SalesLayout>);
+
+      fireEvent.click(screen.getByText("نمایش از ۲۳ شهریور به بعد"));
+
+      expect(setRangeMock).toHaveBeenCalledWith({
+        start: LEGACY_SALES_DATA_CUTOFF,
+        end: "2026-12-31",
+      });
+    });
+
+    it("shows the report when the period starts on or after the cutoff", () => {
+      mockAdminRole = "superadmin";
+      for (const start of [LEGACY_SALES_DATA_CUTOFF, "2026-10-01"]) {
+        mockStart = start;
+        const { unmount } = render(
+          <SalesLayout>
+            <div>report body</div>
+          </SalesLayout>,
+        );
+        expect(screen.getByText("report body")).toBeInTheDocument();
+        expect(
+          screen.queryByText(LEGACY_SALES_DATA_NOTICE),
+        ).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+
+    it("never shows the legacy notice on pages the period does not scope", () => {
+      mockAdminRole = "superadmin";
+      mockStart = "2026-01-01";
+      for (const pathname of ["/sales/traffic", "/sales/activity"]) {
+        mockPathname = pathname;
+        const { unmount } = render(
+          <SalesLayout>
+            <div>report body</div>
+          </SalesLayout>,
+        );
+        expect(screen.getByText("report body")).toBeInTheDocument();
+        expect(
+          screen.queryByText(LEGACY_SALES_DATA_NOTICE),
+        ).not.toBeInTheDocument();
         unmount();
       }
     });

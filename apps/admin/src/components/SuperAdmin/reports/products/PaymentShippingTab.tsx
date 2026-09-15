@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 import { faNum } from "@/utils/faNum";
 import { priceFormatter } from "@/utils/price";
-import PaymentGatewayBadge from "@/components/PaymentGateway/PaymentGatewayBadge";
-import { resolvePaymentGateway } from "@/utils/paymentGateways";
 import {
   getProductBreakdown,
   type ProductBreakdown,
 } from "@/services/super-admin/reports/products";
+import GatewayBreakdownTable from "@/components/SuperAdmin/reports/shared/GatewayBreakdownTable";
+import MetricFormula from "@/components/SuperAdmin/reports/shared/MetricFormula";
 import ReportNotes from "./ReportNotes";
 
 export default function PaymentShippingTab({ start, end }: { start: string; end: string }) {
@@ -48,53 +48,16 @@ export default function PaymentShippingTab({ start, end }: { start: string; end:
     <div className="space-y-6" dir="rtl">
       {/* Sales by payment gateway */}
       <BreakdownCard
-        title="فروش بر اساس درگاه پرداخت"
-        subtitle="مبلغ تسویه‌شده هر درگاه (خالص از مرجوعی، شامل هزینه ارسال)"
+        title="دریافتی بر اساس درگاه پرداخت"
+        subtitle="مبلغ دریافتی هر درگاه بر پایه تاریخ پرداخت (خالص از مرجوعی، شامل هزینه ارسال)"
         loading={loading}
         isEmpty={!loading && (data?.gateways.length ?? 0) === 0}
       >
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-neutral-100 text-right text-xs text-neutral-500">
-              <th className="py-2 font-medium">درگاه</th>
-              <th className="py-2 text-left font-medium">تعداد سفارش</th>
-              <th className="py-2 text-left font-medium">مبلغ</th>
-              <th className="py-2 text-left font-medium">سهم</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.gateways.map((g) => (
-              <tr key={g.gateway} className="border-b border-neutral-50 last:border-0">
-                <td className="py-2.5 font-medium text-neutral-800">
-                  {resolvePaymentGateway(g.gateway) ? (
-                    <PaymentGatewayBadge gateway={g.gateway} />
-                  ) : (
-                    g.label
-                  )}
-                </td>
-                <td className="py-2.5 text-left text-neutral-600">{faNum(g.ordersCount)}</td>
-                <td className="py-2.5 text-left text-neutral-800">
-                  {priceFormatter(g.total, " تومان")}
-                </td>
-                <td className="py-2.5 text-left text-neutral-600">
-                  {g.sharePct === null ? "—" : `${faNum(g.sharePct)}٪`}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-          {!loading && (data?.gateways.length ?? 0) > 0 && (
-            <tfoot>
-              <tr className="border-t border-neutral-200 text-xs font-semibold text-neutral-700">
-                <td className="py-2.5">مجموع</td>
-                <td className="py-2.5 text-left">{faNum(data?.totals.ordersCount ?? 0)}</td>
-                <td className="py-2.5 text-left">
-                  {priceFormatter(data?.totals.gatewaySales ?? 0, " تومان")}
-                </td>
-                <td className="py-2.5" />
-              </tr>
-            </tfoot>
-          )}
-        </table>
+        <GatewayBreakdownTable
+          rows={data?.gateways ?? []}
+          totalSales={data?.totals.gatewaySales ?? 0}
+          ordersCount={data?.totals.ordersCount ?? 0}
+        />
       </BreakdownCard>
 
       {/* Shipping revenue by shipping method */}
@@ -136,6 +99,28 @@ export default function PaymentShippingTab({ start, end }: { start: string; end:
           )}
         </table>
       </BreakdownCard>
+
+      {/*
+        Same gate as the finance page's copy of this identity: a window with no
+        settled cash (the "completed" fallback) has `gatewaySales` at 0 while
+        shipping can be non-zero, and subtracting would show negative goods sold.
+      */}
+      {!loading &&
+        data &&
+        data.totals.gatewaySales > 0 &&
+        data.totals.shippingRevenue <= data.totals.gatewaySales && (
+          <MetricFormula
+            terms={[
+              { label: "دریافتی درگاه‌ها", value: data.totals.gatewaySales },
+              { label: "درآمد ارسال", value: data.totals.shippingRevenue, op: "−" },
+            ]}
+            result={{
+              label: "فروش کالا (بدون ارسال)",
+              value: data.totals.gatewaySales - data.totals.shippingRevenue,
+            }}
+            note="جدول بالا پول واقعی دریافتی است و هزینه ارسال را هم در بر می‌گیرد؛ «فروش ناخالص» در نمای کلی فروش هم هزینه ارسال را دارد، اما پیش از کسر تخفیف و بر پایه تاریخ ثبت سفارش نه تاریخ پرداخت. «فروش ناخالص» همین گزارش محصولات فقط اقلام است."
+          />
+        )}
 
       {!loading && data && (
         <ReportNotes

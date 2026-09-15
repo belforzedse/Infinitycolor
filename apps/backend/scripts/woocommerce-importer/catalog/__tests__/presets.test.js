@@ -2,7 +2,31 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { resolveScope, resolvePreset, needsProductLoop, PRESETS, SCOPES } = require("../lib/presets");
+const {
+  resolveScope, resolvePreset, needsProductLoop, writesVariationAttributes, PRESETS, SCOPES,
+} = require("../lib/presets");
+
+test("resolveScope: skipStock suppresses stock on every catalog scope", () => {
+  for (const scope of ["full", "full-sync", "no-media", "product-no-media", "inventory-instock"]) {
+    assert.equal(resolveScope(scope, { skipStock: true }).stock, false, scope);
+    assert.equal(resolveScope(scope).stock, true, scope);
+  }
+  // Everything else the scope covers still runs.
+  const full = resolveScope("full", { skipStock: true });
+  assert.equal(full.products, true);
+  assert.equal(full.variations, true);
+  assert.equal(full.media, true);
+  assert.equal(full.categories, true);
+});
+
+test("resolveScope: skipStock drops the out-of-stock gate", () => {
+  assert.equal(resolveScope("inventory-instock").stockGate, "instock-or-verify");
+  assert.equal(resolveScope("inventory-instock", { skipStock: true }).stockGate, undefined);
+});
+
+test("resolveScope: skipStock on the stock-only scope is rejected", () => {
+  assert.throws(() => resolveScope("stock", { skipStock: true }), /writes nothing with skipStock/);
+});
 
 test("resolveScope: full enables everything (media unless skipped)", () => {
   assert.deepEqual(resolveScope("full"), {
@@ -142,4 +166,32 @@ test("resolvePreset: verify preset is read-only", () => {
 
 test("resolvePreset: unknown id throws", () => {
   assert.throws(() => resolvePreset("xxx"), /Unknown preset/);
+});
+
+test("resolveScope: content-refresh writes content, never price or stock", () => {
+  assert.deepEqual(resolveScope("content-refresh"), {
+    categories: true, categoryEditorial: true, products: true, variations: true, stock: false, media: true,
+    onlyExisting: true, variationFields: "no-price",
+  });
+  assert.ok(SCOPES.includes("content-refresh"));
+});
+
+test("resolveScope: content-refresh drops media with skipMedia and ignores skipStock", () => {
+  assert.equal(resolveScope("content-refresh", { skipMedia: true }).media, false);
+  // It never writes stock to begin with, so --skip-stock is a harmless no-op
+  // rather than the "this run writes nothing" error the stock scope raises.
+  assert.equal(resolveScope("content-refresh", { skipStock: true }).stock, false);
+});
+
+test("writesVariationAttributes: true for the record-writing modes only", () => {
+  assert.equal(writesVariationAttributes(resolveScope("full")), true);
+  assert.equal(writesVariationAttributes(resolveScope("content-refresh")), true);
+  assert.equal(writesVariationAttributes(resolveScope("price")), false);
+  assert.equal(writesVariationAttributes(resolveScope("inventory-instock")), false);
+  assert.equal(writesVariationAttributes(resolveScope("stock")), false);
+  assert.equal(writesVariationAttributes(resolveScope("media")), false);
+});
+
+test("content-refresh needs the product loop", () => {
+  assert.equal(needsProductLoop(resolveScope("content-refresh")), true);
 });

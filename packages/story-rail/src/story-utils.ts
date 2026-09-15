@@ -18,6 +18,35 @@ export function hasUsableMediaUrl(url?: string): url is string {
   return typeof url === "string" && url.trim().length > 0;
 }
 
+/** Defense in depth for legacy rows that may predate backend CTA validation. */
+export function getSafeStoryCtaUrl(value?: string | null): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const candidate = value.trim();
+  if (!candidate || candidate.length > 500 || /[\u0000-\u001F\u007F\\]/.test(candidate)) {
+    return undefined;
+  }
+
+  if (candidate.startsWith("/")) {
+    if (candidate.startsWith("//")) return undefined;
+    try {
+      const parsed = new URL(candidate, "https://storefront.invalid");
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+      return undefined;
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export function isSupportedImageUrl(url: string): boolean {
   return /\.(avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i.test(url);
 }
@@ -66,7 +95,10 @@ export function getStoryRailPreview(
   }
 
   if (story.MediaType === "image" && isImageStory(story)) {
-    return { mode: "image", url: resolveMediaUrl(getPreviewImageUrl(story.Media) ?? mediaUrl) };
+    return {
+      mode: "image",
+      url: resolveMediaUrl(getPreviewImageUrl(story.Media) ?? mediaUrl),
+    };
   }
 
   return { mode: "empty" };

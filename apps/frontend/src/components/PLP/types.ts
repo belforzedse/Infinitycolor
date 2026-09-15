@@ -58,6 +58,7 @@ export interface PLPProduct {
             data?: {
               attributes?: {
                 Count?: number;
+                reservedCount?: number;
               };
             } | null;
           };

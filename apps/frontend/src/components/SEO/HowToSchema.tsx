@@ -1,3 +1,4 @@
+import { SITE_URL } from "@/config/site";
 import { safeJsonLd } from "@/utils/seo";
 
 interface HowToStep {
@@ -29,7 +30,6 @@ export function HowToSchema({
     return null;
   }
 
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
 
   const schema: Record<string, any> = {
     "@context": "https://schema.org",

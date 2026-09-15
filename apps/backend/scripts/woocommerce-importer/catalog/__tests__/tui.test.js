@@ -72,10 +72,10 @@ test("buildCustomRunOpts normalizes boolean inputs", () => {
   const { buildCustomRunOpts } = require("../tui");
   assert.deepEqual(
     buildCustomRunOpts({ scope: "media", dryRun: true, skipMedia: false, limit: undefined }),
-    { scope: "media", dryRun: true, skipMedia: false, limit: Infinity },
+    { scope: "media", dryRun: true, skipMedia: false, skipStock: false, limit: Infinity },
   );
   assert.deepEqual(
-    buildCustomRunOpts({ scope: "media", dryRun: "false", skipMedia: "1", limit: null }),
-    { scope: "media", dryRun: false, skipMedia: true, limit: Infinity },
+    buildCustomRunOpts({ scope: "media", dryRun: "false", skipMedia: "1", skipStock: "y", limit: null }),
+    { scope: "media", dryRun: false, skipMedia: true, skipStock: true, limit: Infinity },
   );
 });

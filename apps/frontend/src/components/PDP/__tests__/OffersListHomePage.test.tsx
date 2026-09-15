@@ -65,14 +65,20 @@ function visibleAtTier(className: string, tier: Tier): boolean {
 function desktopVisibleIds(tier: Tier): string[] {
   return screen
     .getAllByTestId("home-product-card")
-    .filter((card) =>
-      visibleAtTier(card.parentElement?.className || "", tier),
-    )
+    .filter((card) => visibleAtTier(card.parentElement?.className || "", tier))
     .map((card) => card.getAttribute("data-product-id") || "");
 }
 
 function railTrack(container: HTMLElement): HTMLElement {
   return container.querySelector("[data-aq-home-product-list]") as HTMLElement;
+}
+
+function mobileViewAllLink(): HTMLElement {
+  const link = screen
+    .getAllByRole("link", { name: "مشاهده همه" })
+    .find((candidate) => candidate.parentElement?.classList.contains("md:hidden"));
+  if (!link) throw new Error("Mobile view-all link not found");
+  return link;
 }
 
 describe("OffersListHomePage", () => {
@@ -145,7 +151,18 @@ describe("OffersListHomePage", () => {
     // The regression this covers: the rail sliced to `productsPerPage`, so a
     // phone had two cards, no overflow, and nothing to swipe.
     expect(renderedProductIds()).toEqual([
-      "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12",
     ]);
 
     const track = railTrack(view.container);
@@ -160,10 +177,55 @@ describe("OffersListHomePage", () => {
     expect(slide.className).toContain("shrink-0");
     expect(slide.className).toContain("snap-start");
 
-    expect(screen.getByRole("link", { name: "مشاهده محصولات بیشتر" })).toHaveAttribute(
-      "href",
-      "/plp?sort=AverageRating:desc",
+    expect(mobileViewAllLink()).toHaveAttribute("href", "/plp?sort=AverageRating:desc");
+  });
+
+  it("always gives a product rail a mobile view-all destination", () => {
+    setViewportWidth(390);
+    render(
+      <OffersListHomePage
+        icon={<span aria-hidden="true" />}
+        title="جدیدترین ها"
+        products={products.slice(0, 1)}
+      />,
     );
+
+    expect(mobileViewAllLink()).toHaveAttribute("href", "/plp?sort=createdAt:desc");
+  });
+
+  // Custom homepage sections carry an admin-configured target; without it the rail
+  // would fall back to the title heuristic and a section named «تخفیف ویژه» would
+  // silently link to the discount PLP.
+  it("prefers an explicit viewAllHref over the title heuristic on both links", () => {
+    setViewportWidth(390);
+    render(
+      <OffersListHomePage
+        icon={<span aria-hidden="true" />}
+        title="تخفیف ویژه"
+        products={products}
+        viewAllHref="/plp/category/manto"
+      />,
+    );
+
+    const links = screen.getAllByRole("link", { name: "مشاهده همه" });
+    expect(links.length).toBeGreaterThan(1);
+    for (const link of links) {
+      expect(link).toHaveAttribute("href", "/plp/category/manto");
+    }
+    expect(mobileViewAllLink()).toHaveAttribute("href", "/plp/category/manto");
+  });
+
+  it("keeps the title heuristic when no viewAllHref is given", () => {
+    setViewportWidth(390);
+    render(
+      <OffersListHomePage
+        icon={<span aria-hidden="true" />}
+        title="تخفیف ویژه"
+        products={products}
+      />,
+    );
+
+    expect(mobileViewAllLink()).toHaveAttribute("href", "/plp?hasDiscount=true");
   });
 
   it("restores the legacy fade/scale page switch only for Enhanced", () => {

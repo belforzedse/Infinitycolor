@@ -18,11 +18,8 @@ import {
   type MediaFailureKind,
   type PlaybackState,
 } from "./playback-machine";
-import {
-  describeMediaUrl,
-  useStoryPlaybackStore,
-  type StoryPlaybackStore,
-} from "./playback-store";
+import { describeMediaUrl, useStoryPlaybackStore, type StoryPlaybackStore } from "./playback-store";
+import { getSafeStoryCtaUrl } from "../story-utils";
 
 /** Payload we attach to each package story item; the package passes it through untouched. */
 export interface StoryMediaPayload {
@@ -33,6 +30,7 @@ export interface StoryMediaPayload {
   title: string;
   durationMs: number;
   text?: string;
+  ctaUrl?: string | null;
 }
 
 /** Props the patched package hands a custom renderer (see patches/README.md, edit E3). */
@@ -169,10 +167,8 @@ function StoryMedia({
   next,
 }: StoryMediaProps): React.ReactElement {
   const generation = useMemo(() => nextGeneration(), []);
-  const [state, dispatch] = useReducer(
-    playbackReducer,
-    null,
-    () => initialPlaybackState(generation, payload.durationMs),
+  const [state, dispatch] = useReducer(playbackReducer, null, () =>
+    initialPlaybackState(generation, payload.durationMs),
   );
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -271,7 +267,11 @@ function StoryMedia({
       // surface it as an error the user can retry or navigate past.
       video.pause();
       if (payload.poster) {
-        dispatch({ type: "fallback", generation, durationMs: payload.durationMs });
+        dispatch({
+          type: "fallback",
+          generation,
+          durationMs: payload.durationMs,
+        });
       } else {
         dispatch({ type: "failed", generation, failure: "decode-unsupported" });
       }
@@ -306,7 +306,11 @@ function StoryMedia({
           return;
         }
         if (name === "NotSupportedError") {
-          dispatch({ type: "failed", generation, failure: "decode-unsupported" });
+          dispatch({
+            type: "failed",
+            generation,
+            failure: "decode-unsupported",
+          });
           report("decode-unsupported", video.error?.code ?? null);
           return;
         }
@@ -316,7 +320,11 @@ function StoryMedia({
     };
 
     const onLoadedMetadata = () => {
-      dispatch({ type: "metadata", generation, durationMs: video.duration * 1000 });
+      dispatch({
+        type: "metadata",
+        generation,
+        durationMs: video.duration * 1000,
+      });
     };
     const onReady = () => {
       dispatch({ type: "ready", generation });
@@ -336,7 +344,11 @@ function StoryMedia({
       const failure = classifyMediaError(video);
       if (failure === "abort") return;
       if (failure === "decode-unsupported" && payload.poster) {
-        dispatch({ type: "fallback", generation, durationMs: payload.durationMs });
+        dispatch({
+          type: "fallback",
+          generation,
+          durationMs: payload.durationMs,
+        });
       } else {
         dispatch({ type: "failed", generation, failure });
       }
@@ -475,7 +487,8 @@ function StoryMedia({
   }, [store, isActive, item.id, state.phase]);
 
   // ── Spinner only for perceptible stalls ──────────────────────────────────────
-  const stalled = state.phase === "loading" || state.phase === "buffering" || state.phase === "idle";
+  const stalled =
+    state.phase === "loading" || state.phase === "buffering" || state.phase === "idle";
   useEffect(() => {
     if (!stalled || !isActive) {
       setShowSpinner(false);
@@ -533,6 +546,8 @@ function StoryMedia({
 
   const posterUrl = payload.kind === "video" ? payload.poster : undefined;
   const showPoster = Boolean(posterUrl) && (state.phase === "fallback" || !state.hasPresented);
+  const ctaUrl = getSafeStoryCtaUrl(payload.ctaUrl);
+  const opensNewTab = Boolean(ctaUrl && /^https?:\/\//i.test(ctaUrl));
 
   return (
     <div
@@ -587,6 +602,25 @@ function StoryMedia({
         />
       ) : null}
 
+      {ctaUrl && state.phase !== "error" ? (
+        <a
+          href={ctaUrl}
+          target={opensNewTab ? "_blank" : undefined}
+          rel={opensNewTab ? "noopener noreferrer" : undefined}
+          onClick={stopTap}
+          onPointerDown={stopTap}
+          onPointerUp={stopTap}
+          onMouseDown={stopTap}
+          onMouseUp={stopTap}
+          onTouchStart={stopTap}
+          onTouchEnd={stopTap}
+          data-testid="story-cta"
+          className="absolute bottom-6 left-1/2 z-20 inline-flex min-h-11 min-w-40 max-w-[calc(100%_-_7rem)] -translate-x-1/2 items-center justify-center rounded-full bg-white px-6 py-2.5 text-center font-peyda text-sm font-semibold text-[#424242] shadow-lg transition-colors hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+        >
+          مشاهده لینک
+        </a>
+      ) : null}
+
       {isVideo && isActive && state.phase !== "error" ? (
         <button
           type="button"
@@ -599,7 +633,7 @@ function StoryMedia({
           onTouchEnd={stopTap}
           aria-label={audioEnabled ? "قطع صدا" : "پخش صدا"}
           aria-pressed={audioEnabled}
-          className="absolute bottom-6 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+          className={`absolute right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${ctaUrl ? "bottom-20" : "bottom-6"}`}
         >
           <SpeakerIcon muted={!audioEnabled} />
         </button>

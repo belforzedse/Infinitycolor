@@ -97,6 +97,21 @@
       "target": "api::payment-gateway.payment-gateway",
       "inversedBy": "contract_transactions"
     },
+    "SettlementGateway": {
+      "type": "enumeration",
+      "enum": [
+        "Unknown",
+        "Wallet",
+        "Mellat",
+        "SnappPay",
+        "SamanKish",
+        "ZarinPal",
+        "Manual",
+        "OffGateway",
+        "CardToCard",
+        "Other"
+      ]
+    },
     "Date": {
       "type": "datetime"
     },

@@ -8,21 +8,31 @@ import {
  * Name alternatives used by the admin users list. Customer search reuses these
  * so a multi-word query such as «سید محمد حسینی» still hits FirstName+LastName
  * splits, without copying the rest of the users-list endpoint.
+ *
+ * `via` names the relation that owns `user_info` when the clauses are built for
+ * another content type — `"user"` on an order, `"owner"` on a reserve group.
+ * Omitted, the clauses stay rooted at the user itself, exactly as before.
  */
 export function personNameSearchAlternatives(
   search: string,
+  via?: string,
 ): Array<Record<string, unknown>> {
+  const clause = (field: "FirstName" | "LastName", value: string) => {
+    const condition = { user_info: { [field]: { $containsi: value } } };
+    return via ? { [via]: condition } : condition;
+  };
+
   const words = search.split(/\s+/).filter(Boolean);
   const alternatives: Array<Record<string, unknown>> = [
-    { user_info: { FirstName: { $containsi: search } } },
-    { user_info: { LastName: { $containsi: search } } },
+    clause("FirstName", search),
+    clause("LastName", search),
   ];
 
   if (words.length > 1) {
     alternatives.push({
       $and: [
-        { user_info: { FirstName: { $containsi: words[0] } } },
-        { user_info: { LastName: { $containsi: words.slice(1).join(" ") } } },
+        clause("FirstName", words[0]),
+        clause("LastName", words.slice(1).join(" ")),
       ],
     });
   }
@@ -30,8 +40,8 @@ export function personNameSearchAlternatives(
   if (words.length > 2) {
     alternatives.push({
       $and: [
-        { user_info: { FirstName: { $containsi: words.slice(0, -1).join(" ") } } },
-        { user_info: { LastName: { $containsi: words[words.length - 1] } } },
+        clause("FirstName", words.slice(0, -1).join(" ")),
+        clause("LastName", words[words.length - 1]),
       ],
     });
   }
@@ -40,16 +50,8 @@ export function personNameSearchAlternatives(
     const midpoint = Math.ceil(words.length / 2);
     alternatives.push({
       $and: [
-        {
-          user_info: {
-            FirstName: { $containsi: words.slice(0, midpoint).join(" ") },
-          },
-        },
-        {
-          user_info: {
-            LastName: { $containsi: words.slice(midpoint).join(" ") },
-          },
-        },
+        clause("FirstName", words.slice(0, midpoint).join(" ")),
+        clause("LastName", words.slice(midpoint).join(" ")),
       ],
     });
   }
@@ -76,17 +78,23 @@ function uniqueWhereClauses(
  * operators paste Persian digits, dashes, and leading zeros. Exact `$in` on the
  * two canonical stored shapes misses the rest; `$containsi` on the national
  * part hits every common layout.
+ *
+ * `via` names the relation that owns `phone`, as on `personNameSearchAlternatives`.
  */
 export function customerPhoneSearchAlternatives(
   query: string,
+  via?: string,
 ): Array<Record<string, unknown>> {
-  const clauses: Array<Record<string, unknown>> = [{ phone: { $containsi: query } }];
+  const clause = (condition: Record<string, unknown>) =>
+    via ? { [via]: { phone: condition } } : { phone: condition };
+
+  const clauses: Array<Record<string, unknown>> = [clause({ $containsi: query })];
   const digits = normalizeCustomerPhoneDigits(query);
   if (!digits) return uniqueWhereClauses(clauses);
 
   const canonical = canonicalCustomerPhone(digits);
   if (canonical) {
-    clauses.push({ phone: { $in: customerPhoneStorageVariants(canonical) } });
+    clauses.push(clause({ $in: customerPhoneStorageVariants(canonical) }));
   }
 
   const nationalPart = digits.replace(/^\+?98/, "").replace(/^0+/, "");
@@ -98,7 +106,7 @@ export function customerPhoneSearchAlternatives(
     `98${nationalPart}`,
     `+98${nationalPart}`,
   ]) {
-    clauses.push({ phone: { $containsi: variant } });
+    clauses.push(clause({ $containsi: variant }));
   }
 
   return uniqueWhereClauses(clauses);

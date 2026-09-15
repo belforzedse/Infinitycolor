@@ -196,7 +196,10 @@ export function PasswordLoginForm({
 }) {
   const { phone, flowReady, setPhone, go } = useAuthFlow();
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
+  // Default ON. The server treats an explicit `false` as "do not remember":
+  // it shortens the session to 24h and downgrades the cookie to a browser-session
+  // cookie, which is what shoppers were reporting as being logged out constantly.
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const {
@@ -351,7 +354,10 @@ function OtpForm({
 }) {
   const { phone, flowReady, go } = useAuthFlow();
   const [code, setCode] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
+  // Default ON. The server treats an explicit `false` as "do not remember":
+  // it shortens the session to 24h and downgrades the cookie to a browser-session
+  // cookie, which is what shoppers were reporting as being logged out constantly.
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const { timeLeft, active, restart } = useOtpCountdown();

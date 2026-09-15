@@ -16,6 +16,7 @@ export const COMMERCE_MAINTENANCE_JOBS = {
   anipoBarcodeReconcile: "anipoBarcodes.reconcile",
   anipoRecipientSyncOne: "anipoRecipients.syncOne",
   edgeCachePurge: "edgeCache.purge",
+  staffOrderAlert: "staffAlerts.orderStarted",
 } as const;
 
 export const ANALYTICS_MAINTENANCE_JOBS = {
@@ -91,6 +92,31 @@ export type EdgeCachePurgeJobData = {
   kind: string;
   paths: string[];
   reason?: string;
+  /**
+   * Origin caches to clear before the edge is refreshed. Without this the L2
+   * refresh re-renders from a still-stale Strapi response and warms the edge
+   * straight back up with it.
+   */
+  origin?: {
+    /** Product slug whose Next cache tags should be revalidated. */
+    productSlug?: string;
+    /**
+     * True when availability crossed in or out of stock, so product *cards*
+     * changed too and every listing has to be invalidated. False when only the
+     * low-stock number moved, which shows on the PDP alone.
+     */
+    availabilityCrossed?: boolean;
+  };
+};
+
+/**
+ * Tell the staff recipient list that an order reached «در حال انجام». Carried on
+ * the queue because the enqueue happens inside the payment settlement
+ * transaction: the fan-out must not hold that transaction open, and the worker
+ * re-reads the order after commit so a rollback cannot produce a false alert.
+ */
+export type StaffOrderAlertJobData = {
+  orderId: number;
 };
 
 export type MaintenanceJobData =
@@ -99,6 +125,7 @@ export type MaintenanceJobData =
   | ScheduledProductPublicationJobData
   | AnipoRecipientSyncJobData
   | EdgeCachePurgeJobData
+  | StaffOrderAlertJobData
   | {
       operationId: number;
       retryCount: number;

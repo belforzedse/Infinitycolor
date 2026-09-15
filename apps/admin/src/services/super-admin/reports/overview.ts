@@ -9,12 +9,24 @@ export interface OverviewResponse {
   currency: "Toman";
   definitionVersion: string;
   sales: {
+    /** Merchandise lines PLUS the delivery fee — store-wide only (decision D16). */
     gross: Delta;
+    /** Merchandise only: gross − shipping − discounts − refunds. */
     net: Delta;
     units: Delta;
     orders: Delta;
     discounts: Delta;
     refunds: Delta;
+    /**
+     * The delivery fees already inside `gross`, so the page can take them back
+     * out to reach `net`.
+     *
+     * Optional because admin and API ship as separate images here: against an API
+     * older than this field there is no shipping term AND `gross` is still
+     * line-only, so the page must fall back to the three-term identity rather
+     * than read `undefined.current`.
+     */
+    shipping?: Delta;
   };
   analyticsDelivery: {
     status: "healthy" | "pending" | "attention";

@@ -31,8 +31,32 @@ export function parseDateOnly(value: string): Date {
   return new Date(y, m - 1, d);
 }
 
+/**
+ * First day the new store's sales data is authoritative: ۲۳ شهریور ۱۴۰۵.
+ * Orders on ۲۲ شهریور and earlier were placed on the previous site, so a
+ * sales report asked for such a period must send the operator there instead
+ * of showing partial numbers. Kept as `yyyy-mm-dd` so it compares as a plain string against the
+ * sanitized `start`/`end` URL values.
+ */
+export const LEGACY_SALES_DATA_CUTOFF = "2026-09-14";
+
+export const LEGACY_SALES_DATA_NOTICE =
+  "لطفا برای دیدن دیتا 22 شهریور و قبل از آن از سایت قبلی استفاده کنید";
+
+/** True when a sanitized `yyyy-mm-dd` start date falls before the cutoff. */
+export function predatesLegacySalesCutoff(start: string): boolean {
+  return start < LEGACY_SALES_DATA_CUTOFF;
+}
+
+/**
+ * Default report window: the last `days` days, but never reaching back before
+ * {@link LEGACY_SALES_DATA_CUTOFF}. Without the clamp a bare `/sales` URL would
+ * open on the legacy notice for a month after the cutoff without anyone having
+ * chosen a date.
+ */
 export function defaultReportStart(days = 30): string {
-  return toDateOnly(new Date(Date.now() - days * DAY_MS));
+  const start = toDateOnly(new Date(Date.now() - days * DAY_MS));
+  return start < LEGACY_SALES_DATA_CUTOFF ? LEGACY_SALES_DATA_CUTOFF : start;
 }
 
 export function defaultReportEnd(): string {

@@ -3,6 +3,7 @@ import {
   buildProductAvailabilityExistsSql,
   getProductAvailabilityJoinContext,
 } from "../../../utils/productAvailability";
+import { expandSearchTermVariants } from "../../../utils/searchTermVariants";
 
 export const PRODUCT_CARD_FIELDS = [
   "id",
@@ -325,9 +326,19 @@ const addScalarCondition = (query: any, qualifiedColumn: string, condition: unkn
         case "$lte":
           query.where(qualifiedColumn, "<=", value);
           break;
-        case "$containsi":
-          query.whereRaw("LOWER(??) LIKE LOWER(?)", [qualifiedColumn, `%${String(value)}%`]);
+        case "$containsi": {
+          // Product codes live inside the title with a space the shopper never
+          // types ("W 00288" vs "W00288"), so match every spelling of the term.
+          const raw = String(value);
+          const variants = expandSearchTermVariants(raw);
+          const patterns = variants.length > 0 ? variants : [raw];
+          query.where(function containsiGroup(this: any) {
+            for (const pattern of patterns) {
+              this.orWhereRaw("LOWER(??) LIKE LOWER(?)", [qualifiedColumn, `%${pattern}%`]);
+            }
+          });
           break;
+        }
         case "$contains":
           query.where(qualifiedColumn, "like", `%${String(value)}%`);
           break;
@@ -585,13 +596,16 @@ const applyDiscountOnlyFilter = (knex: any, query: any, strapi: any, hasDiscount
 };
 
 const applySearchFilter = (query: any, q: unknown) => {
-  if (typeof q !== "string" || q.trim() === "") return;
-  const term = `%${q.trim()}%`;
+  const variants = expandSearchTermVariants(q);
+  if (variants.length === 0) return;
   query.where(function searchGroup(this: any) {
-    this.whereRaw("LOWER(??) LIKE LOWER(?)", ["p.title", term]).orWhereRaw(
-      "LOWER(??) LIKE LOWER(?)",
-      ["p.description", term],
-    );
+    for (const variant of variants) {
+      const term = `%${variant}%`;
+      this.orWhereRaw("LOWER(??) LIKE LOWER(?)", ["p.title", term]).orWhereRaw(
+        "LOWER(??) LIKE LOWER(?)",
+        ["p.description", term],
+      );
+    }
   });
 };
 

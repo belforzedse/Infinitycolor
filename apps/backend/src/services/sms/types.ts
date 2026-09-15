@@ -4,7 +4,8 @@ export type SmsNotificationType =
   | "order_status_updated"
   | "shipped"
   | "delivered"
-  | "cancelled";
+  | "cancelled"
+  | "staff_order_started";
 
 export type SmsPatternParams = Record<string, string | number | boolean | null | undefined>;
 

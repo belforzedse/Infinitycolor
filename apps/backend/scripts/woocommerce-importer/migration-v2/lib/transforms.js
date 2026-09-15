@@ -61,6 +61,18 @@ function wooMoneyToRial(value) {
 }
 
 /**
+ * Fee lines are the only WooCommerce money that is legitimately negative (the
+ * wallet leg of a split payment, the SnappPay payment-method discount). Order
+ * totals and line prices stay on the strict parser above.
+ */
+function signedWooMoneyToToman(value) {
+  const raw = toEnglishDigits(value).trim();
+  const negative = raw.startsWith("-");
+  const magnitude = BigInt(wooMoneyToToman(negative ? raw.slice(1) : raw));
+  return (negative ? -magnitude : magnitude).toString();
+}
+
+/**
  * TeraWallet often returns IEEE floats (e.g. 690818999.9999999). Wallet balances
  * are stored as integer Rial = round(toman) * 10. Order line money must stay exact —
  * do not use this for order totals/prices.
@@ -132,7 +144,17 @@ function customerPayload(customer) {
   const phone = canonicalPhone(customer?.username)
     || canonicalPhone(customer?.billing?.phone)
     || canonicalPhone(customer?.shipping?.phone);
-  if (!phone) throw new Error("USER_PHONE_INVALID");
+  if (!phone) {
+    // Terminal by decision, not by failure: the phone is the login identity and
+    // a WooCommerce account without one (most 2024 bulk registrations) cannot
+    // become a user. `outcome: "excluded"` lets the sync record it once instead
+    // of retrying it eight times per campaign; a later WooCommerce edit changes
+    // the revision and the account is re-evaluated.
+    throw Object.assign(new Error("USER_PHONE_INVALID"), {
+      code: "USER_PHONE_INVALID",
+      outcome: "excluded",
+    });
+  }
   const sourceTimestamps = wooSourceTimestamps(customer);
   return {
     sourceId: String(customer.id),
@@ -191,14 +213,111 @@ const contractStatus = {
   failed: "Failed",
 };
 
-function paymentGateway(value, title = "") {
-  const key = `${value || ""} ${title || ""}`.toLowerCase();
+const ONLINE_GATEWAYS = new Set(["Mellat", "SamanKish", "SnappPay", "ZarinPal"]);
+
+/**
+ * Map a WooCommerce payment method to the order's gateway enum.
+ *
+ * Empty methods used to collapse to «نامشخص» with the meaning hidden: they are
+ * orders an operator created in the WooCommerce admin (`created_via: "admin"`),
+ * so those become `Manual`. Card-to-card (`shetab`, `bacs`) and any other
+ * offline method get their own labels instead of the catch-all.
+ */
+function paymentGateway(value, title = "", context = {}) {
+  const method = String(value || "").trim().toLowerCase();
+  const key = `${method} ${title || ""}`.toLowerCase().trim();
+  if (!key) return context.createdVia === "admin" ? "Manual" : "Unknown";
   if (key.includes("wallet") || key.includes("کیف پول")) return "Wallet";
   if (key.includes("snapp") || key.includes("اسنپ")) return "SnappPay";
   if (key.includes("mellat") || key.includes("behpardakht") || key.includes("ملت")) return "Mellat";
   if (key.includes("saman") || key.includes("sep") || key.includes("سامان")) return "SamanKish";
   if (key.includes("zarin") || key.includes("زرین")) return "ZarinPal";
-  return "Unknown";
+  if (key.includes("shetab") || key.includes("bacs") || key.includes("کارت به کارت")) return "CardToCard";
+  return "Other";
+}
+
+const WALLET_FEE = /کیف\s*پول|wallet/i;
+const SNAPPPAY_FEE = /اسنپ|snapp/i;
+
+/**
+ * Classify WooCommerce `fee_lines`.
+ *
+ * WooCommerce's `total` is only what the gateway charged. Two plugins express
+ * the rest as negative fee lines: TeraWallet's partial payment («با کیف پول» /
+ * «از طریق کیف پول») is the wallet leg of a split payment, and the SnappPay
+ * plugin's «تخفیف پرداخت با اسنپ‌پی» is a payment-method discount the customer
+ * really did not pay. Any other negative fee is treated as a discount; a
+ * positive fee is a surcharge the customer paid.
+ *
+ * Coupon discounts (`discount_total`) are deliberately NOT returned here: line
+ * prices are taken from `line_items[].total`, which WooCommerce already reports
+ * net of coupons, so counting them again would subtract them twice.
+ */
+function classifyFeeLines(order) {
+  const totals = { walletLeg: 0n, paymentMethodDiscount: 0n, otherDiscount: 0n, surcharge: 0n };
+  for (const fee of Array.isArray(order?.fee_lines) ? order.fee_lines : []) {
+    const amount = BigInt(signedWooMoneyToToman(fee?.total ?? 0));
+    if (amount === 0n) continue;
+    const name = String(fee?.name || "");
+    if (amount > 0n) totals.surcharge += amount;
+    else if (WALLET_FEE.test(name)) totals.walletLeg += -amount;
+    else if (SNAPPPAY_FEE.test(name)) totals.paymentMethodDiscount += -amount;
+    else totals.otherDiscount += -amount;
+  }
+  return Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, value.toString()]));
+}
+
+const PAID_WOO_STATUSES = new Set(["processing", "completed", "refunded"]);
+
+/**
+ * One settlement leg per payment that actually moved money, so the reports can
+ * show cash per channel (a split order sits under both Wallet and its gateway)
+ * and key money pages on the payment date rather than the order date.
+ *
+ * - `gateway` leg: WooCommerce `total` — the amount the gateway (or the wallet,
+ *   on a wallet-only order) charged. A Payzito-plugin method (`pa_*`) with no
+ *   `transaction_id` on a paid order was settled outside the gateway (the
+ *   Gorgan branch takes card payments and completes the order by hand), so the
+ *   leg is tagged `OffGateway` rather than credited to the gateway. Only the
+ *   Payzito plugin writes `transaction_id` at all: the earlier SnappPay plugin
+ *   (`WC_Gateway_SnappPay`, until 2026-05-20) never did, so its orders carry no
+ *   reference and are credited to SnappPay as they were paid.
+ * - `wallet` leg: the negative wallet fee line.
+ * - `return` leg: on a refunded order, the refund total (falling back to the
+ *   full sales value; the store has never issued a partial refund).
+ *
+ * Only processing / completed / refunded orders have legs: WooCommerce keeps
+ * `date_paid` on an order that was paid and then cancelled, and that money is
+ * not revenue.
+ */
+function settlementLegs(order, { gateway, totalToman, walletLegToman, salesValueToman, paidAt, hasGatewayReference }) {
+  if (!PAID_WOO_STATUSES.has(String(order?.status || ""))) return [];
+  const legs = [];
+  if (BigInt(totalToman) > 0n) {
+    let channel = gateway;
+    const payzitoMethod = /^pa_/i.test(String(order?.payment_method || "").trim());
+    if (ONLINE_GATEWAYS.has(gateway) && payzitoMethod && !hasGatewayReference) channel = "OffGateway";
+    legs.push({ leg: "gateway", channel, amountToman: totalToman, date: paidAt });
+  }
+  if (BigInt(walletLegToman) > 0n) {
+    legs.push({ leg: "wallet", channel: "Wallet", amountToman: walletLegToman, date: paidAt });
+  }
+  if (order.status === "refunded") {
+    let refunded = 0n;
+    for (const refund of Array.isArray(order.refunds) ? order.refunds : []) {
+      try {
+        const amount = BigInt(signedWooMoneyToToman(refund?.total ?? 0));
+        refunded += amount < 0n ? -amount : amount;
+      } catch {
+        // A malformed refund total falls back to the whole sales value below.
+      }
+    }
+    const amountToman = (refunded > 0n ? refunded : BigInt(salesValueToman)).toString();
+    if (BigInt(amountToman) > 0n) {
+      legs.push({ leg: "return", channel: gateway, amountToman, date: paidAt });
+    }
+  }
+  return legs;
 }
 
 /**
@@ -279,8 +398,22 @@ function orderPayload(order) {
   }
   const shipping = Array.isArray(order.shipping_lines) ? order.shipping_lines[0] : null;
   const sourceTimestamps = wooSourceTimestamps(order);
-  const gateway = paymentGateway(order.payment_method, order.payment_method_title);
+  const createdVia = cleanText(order.created_via, 64) || null;
+  const gateway = paymentGateway(order.payment_method, order.payment_method_title, { createdVia });
   const totalTaxToman = wooMoneyToToman(order.total_tax || 0);
+  const totalToman = wooMoneyToToman(order.total || 0);
+  const fees = classifyFeeLines(order);
+  // Full sales value: what the customer owed across every leg. WooCommerce's
+  // `total` is the gateway leg only (order 1222924: lines 12,694,000 + shipping
+  // 115,000 − wallet fee 11,996,000 = total 813,000).
+  const salesValueToman = (BigInt(totalToman) + BigInt(fees.walletLeg)).toString();
+  const appliedDiscountToman = (BigInt(fees.paymentMethodDiscount) + BigInt(fees.otherDiscount)).toString();
+  const paidDate = order.date_paid_gmt
+    ? new Date(`${order.date_paid_gmt}Z`)
+    : order.date_paid ? new Date(order.date_paid) : null;
+  const paidAt = paidDate && !Number.isNaN(paidDate.getTime()) ? paidDate.toISOString() : date.toISOString();
+  // The gateway reference itself must not leave WooCommerce; only whether one exists.
+  const hasGatewayReference = Boolean(cleanText(order.transaction_id, 255));
   const registeredCustomer = Number(order.customer_id) > 0;
   const billingIdentity = {
     phone: canonicalPhone(order?.billing?.phone),
@@ -300,7 +433,20 @@ function orderPayload(order) {
     date: date.toISOString(),
     status: orderStatus[order.status] || "Paying",
     contractStatus: contractStatus[order.status] || "Not Ready",
-    totalToman: wooMoneyToToman(order.total || 0),
+    totalToman,
+    salesValueToman,
+    appliedDiscountToman,
+    paidAt,
+    createdVia,
+    hasGatewayReference,
+    settlements: settlementLegs(order, {
+      gateway,
+      totalToman,
+      walletLegToman: fees.walletLeg,
+      salesValueToman,
+      paidAt,
+      hasGatewayReference,
+    }),
     shippingToman: wooMoneyToToman(order.shipping_total || 0),
     shippingMethodCode: cleanText(shipping?.method_id, 255) || null,
     shippingMethodTitle: cleanText(shipping?.method_title, 255) || null,
@@ -368,6 +514,9 @@ module.exports = {
   decimalToInteger,
   wooMoneyToToman,
   wooMoneyToRial,
+  signedWooMoneyToToman,
+  classifyFeeLines,
+  paymentGateway,
   wooWalletBalanceToRial,
   lineUnitPriceToman,
   customerPayload,

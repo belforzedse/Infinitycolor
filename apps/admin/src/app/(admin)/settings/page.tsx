@@ -2,7 +2,7 @@
 
 import ContentWrapper from "@/components/SuperAdmin/Layout/ContentWrapper";
 import Link from "next/link";
-import { FiSettings } from "react-icons/fi";
+import { FiMessageSquare, FiSettings } from "react-icons/fi";
 
 const quickTiles = [
   {
@@ -11,6 +11,13 @@ const quickTiles = [
     href: "/settings/general",
     icon: <FiSettings className="h-5 w-5" />,
     tone: "from-emerald-50 to-slate-50",
+  },
+  {
+    title: "پیامک اطلاع‌رسانی سفارش",
+    description: "شماره‌هایی که با رسیدن سفارش به «در حال انجام» پیامک می‌گیرند.",
+    href: "/settings/order-alerts",
+    icon: <FiMessageSquare className="h-5 w-5" />,
+    tone: "from-sky-50 to-slate-50",
   },
 ];
 

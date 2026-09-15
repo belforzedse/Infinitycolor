@@ -49,10 +49,24 @@ export const resolvePaymentGateway = (value?: string | null): PaymentGatewayMeta
   return null;
 };
 
+/**
+ * Channels that are not gateways but still carry money, as the WooCommerce
+ * importer records them (`orders.PaymentGateway` /
+ * `contract_transactions.SettlementGateway`). Label-only: no icon.
+ */
+export const NON_GATEWAY_CHANNEL_LABELS: Record<string, string> = {
+  unknown: "نامشخص",
+  manual: "ثبت دستی",
+  offgateway: "پرداخت خارج از درگاه",
+  cardtocard: "کارت به کارت",
+  other: "سایر",
+};
+
 /** Persian label for a gateway, falling back to the raw value (or «نامشخص») when unknown. */
 export const getPaymentGatewayLabel = (value?: string | null): string => {
   const meta = resolvePaymentGateway(value);
   if (meta) return meta.label;
   const raw = (value ?? "").toString().trim();
-  return raw || "نامشخص";
+  const channel = NON_GATEWAY_CHANNEL_LABELS[raw.toLowerCase().replace(/[\s_-]+/g, "")];
+  return channel || raw || "نامشخص";
 };

@@ -309,6 +309,9 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "system.settings.manage": {
     "api::settings": { settings: ["find", "update"] },
+    // Same reason as `order.read` above: the capability policy alone is not
+    // enough, U&P still 403s a handler that is missing from the grant.
+    "api::order-alert-setting": { "order-alert-setting": ["get", "update"] },
   },
   "system.customization.manage": {
     "api::settings": {

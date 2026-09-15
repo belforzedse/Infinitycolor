@@ -11,6 +11,7 @@ interface ImagePreviewProps {
   mimeType?: string;
   uploadStatus?: UploadStatus;
   uploadError?: string | null;
+  disabled?: boolean;
 }
 
 const IndexPhotoUploaderImagePreview: React.FC<ImagePreviewProps> = ({
@@ -20,6 +21,7 @@ const IndexPhotoUploaderImagePreview: React.FC<ImagePreviewProps> = ({
   mimeType,
   uploadStatus,
   uploadError,
+  disabled = false,
 }) => {
   const isVideo =
     mimeType?.startsWith("video/") || imagePreview?.match(/\.(mp4|webm|ogg|mov)$/i) !== null;
@@ -28,7 +30,9 @@ const IndexPhotoUploaderImagePreview: React.FC<ImagePreviewProps> = ({
     <div className="relative">
       <button
         type="button"
-        className="flex aspect-video h-32 w-40 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl bg-slate-100 transition-colors hover:bg-gray-100"
+        disabled={disabled}
+        data-testid="index-photo-upload"
+        className="flex aspect-video h-32 w-40 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl bg-slate-100 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
         onClick={onUploadButtonClick}
       >
         {imagePreview ? (

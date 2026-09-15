@@ -11,7 +11,18 @@ export async function getHomepageCustomSectionSettings(): Promise<SuperAdminSett
 export async function updateHomepageCustomSectionSettings(
   settings: Pick<
     SuperAdminSettings,
-    "homeCustomSectionEnabled" | "homeCustomSectionTitle" | "homeCustomSectionAssignment"
+    | "homeCustomSectionEnabled"
+    | "homeCustomSectionTitle"
+    | "homeCustomSectionAssignment"
+    | "homeCustomSectionTwoEnabled"
+    | "homeCustomSectionTwoTitle"
+    | "homeCustomSectionTwoAssignment"
+    | "homeCustomSectionThreeEnabled"
+    | "homeCustomSectionThreeTitle"
+    | "homeCustomSectionThreeAssignment"
+    | "homeCustomSectionViewAllHref"
+    | "homeCustomSectionTwoViewAllHref"
+    | "homeCustomSectionThreeViewAllHref"
   >,
 ): Promise<SuperAdminSettings> {
   const response = await apiClient.put("/settings/homepage-custom-section", { data: settings });

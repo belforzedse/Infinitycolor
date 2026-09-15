@@ -147,11 +147,31 @@ function walletRevision(row) {
   });
 }
 
+/**
+ * A stable, bounded code for `woocommerce_sync_items.last_error_code`.
+ *
+ * Preference: an explicit `code`, the destination's `payload.error`, a
+ * SCREAMING_SNAKE message, then `<Name>:<message>`. The last form is what a
+ * transport or HTTP failure produces (`TYPEERROR:FETCH_FAILED`,
+ * `ERROR:REQUEST_FAILED_WITH_STATUS_CODE_502`). It used to collapse to the bare
+ * `Error.name`, so thousands of quarantined rows read `ERROR` / `TYPEERROR` and
+ * nobody could tell an outage from a data problem. The catalog engine records
+ * its failures as plain message strings; those used to become `UNKNOWN`.
+ */
 function safeErrorCode(error) {
-  const message = String(error?.message || "");
+  const asString = typeof error === "string" ? error : null;
+  const message = asString ?? String(error?.message || "");
   const screamingMessage = /^[A-Z][A-Z0-9_.:-]*$/.test(message) ? message : null;
+  const messageSlug = message
+    .replace(/https?:\/\/\S+/g, "URL")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 96);
+  const named = asString
+    ? messageSlug || null
+    : messageSlug ? `${error?.name || "ERROR"}:${messageSlug}` : (error?.name || null);
   const raw = String(
-    error?.code || error?.payload?.error || screamingMessage || error?.name || "UNKNOWN",
+    (!asString && (error?.code || error?.payload?.error)) || screamingMessage || named || "UNKNOWN",
   ).toUpperCase();
   return raw.replace(/[^A-Z0-9_.:-]/g, "_").slice(0, 128);
 }
@@ -649,6 +669,14 @@ class WooSyncService {
               completed += 1;
             } catch (error) {
               const errorCode = safeErrorCode(error);
+              // Terminal by decision (an account with no phone), not by failure:
+              // record it once and stop retrying it every hour.
+              if (error?.outcome === "excluded") {
+                await this.state.excludeItem(row.id, token, errorCode);
+                excluded += 1;
+                console.info(`[WooSync] ${entity} excluded`, { sourceIdHash: logId(entity, row.source_id), errorCode });
+                return;
+              }
               await this.state.failItem(row.id, token, errorCode);
               failed += 1;
               console.warn(`[WooSync] ${entity} failed`, {
@@ -915,6 +943,7 @@ class WooSyncService {
     let users = 0;
     let wallets = 0;
     let failed = 0;
+    let excluded = 0;
     let fallbacks = 0;
     let missing = 0;
     const poolSize = concurrency ?? this.config.concurrency.entities;
@@ -962,6 +991,13 @@ class WooSyncService {
           // gate's cap is decorative, because every remaining entity would open
           // its own hold and the campaign would grind instead of failing.
           if (error?.code === "SOURCE_UNAVAILABLE") throw error;
+          // An account with no phone is excluded by decision (see
+          // transforms.customerPayload); it is not a failure and, at ~120k of
+          // 188k accounts, logging each one would drown the real failures.
+          if (error?.outcome === "excluded") {
+            excluded += 1;
+            return;
+          }
           failed += 1;
           console.warn("[WooSync] campaign user failed", {
             sourceIdHash: logId("customer", customer.id),
@@ -970,10 +1006,14 @@ class WooSyncService {
         }
       },
     );
+    if (excluded > 0) {
+      console.info("[WooSync] campaign users excluded", { excluded, errorCode: "USER_PHONE_INVALID" });
+    }
     return {
       users,
       wallets,
       failed,
+      excluded,
       wallet: {
         listed: preload.listed,
         unique: walletBalances.size,

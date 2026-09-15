@@ -26,6 +26,7 @@ interface StorySpec {
   file: string;
   cover?: string;
   durationMs?: number;
+  ctaUrl?: string;
 }
 
 function buildStories(specs: StorySpec[]) {
@@ -40,9 +41,16 @@ function buildStories(specs: StorySpec[]) {
       mime: spec.kind === "video" ? "video/mp4" : "image/webp",
     },
     ...(spec.cover
-      ? { Thumbnail: { id: 2000 + spec.id, url: mediaUrl(spec.cover), mime: "image/webp" } }
+      ? {
+          Thumbnail: {
+            id: 2000 + spec.id,
+            url: mediaUrl(spec.cover),
+            mime: "image/webp",
+          },
+        }
       : {}),
     DurationMs: spec.durationMs ?? 2000,
+    ...(spec.ctaUrl ? { CtaUrl: spec.ctaUrl } : {}),
     updatedAt: new Date(Date.UTC(2026, 0, 100 - index)).toISOString(),
   }));
 }
@@ -82,7 +90,12 @@ async function tapPrevious(page: Page) {
   await page.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.6);
 }
 
-const IMAGE_A: StorySpec = { id: 1, title: "aaa", kind: "image", file: STORY_FIXTURES.image };
+const IMAGE_A: StorySpec = {
+  id: 1,
+  title: "aaa",
+  kind: "image",
+  file: STORY_FIXTURES.image,
+};
 const VIDEO_B: StorySpec = {
   id: 2,
   title: "bbb",
@@ -90,7 +103,12 @@ const VIDEO_B: StorySpec = {
   file: STORY_FIXTURES.video,
   cover: STORY_FIXTURES.image,
 };
-const IMAGE_C: StorySpec = { id: 3, title: "ccc", kind: "image", file: STORY_FIXTURES.image };
+const IMAGE_C: StorySpec = {
+  id: 3,
+  title: "ccc",
+  kind: "image",
+  file: STORY_FIXTURES.image,
+};
 
 test.describe("Stories viewer", () => {
   test("plays a mixed image → video → image sequence and advances itself", async ({ page }) => {
@@ -100,7 +118,9 @@ test.describe("Stories viewer", () => {
     await expect(surface(page)).toHaveAttribute("data-phase", "playing");
     // The image story runs on its configured duration and hands over on its own.
     await expect(page.locator("video")).toHaveCount(1, { timeout: 15_000 });
-    await expect(surface(page)).toHaveAttribute("data-phase", "playing", { timeout: 15_000 });
+    await expect(surface(page)).toHaveAttribute("data-phase", "playing", {
+      timeout: 15_000,
+    });
     // …and the video hands over to the last image. The view for the incoming story is
     // reported once the cube transition settles, so poll rather than sampling mid-flight.
     await expect(page.locator("video")).toHaveCount(0, { timeout: 20_000 });
@@ -126,6 +146,42 @@ test.describe("Stories viewer", () => {
     expect(views.filter((id: number) => id === 2)).toHaveLength(1);
   });
 
+  test("shows the fixed CTA at the bottom and opens its safe destination", async ({ page }) => {
+    await page.context().route("https://external.test/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<title>Destination</title>",
+      }),
+    );
+    await openHarness(page, [
+      {
+        ...IMAGE_A,
+        durationMs: 10_000,
+        ctaUrl: "https://external.test/collection",
+      },
+      IMAGE_C,
+    ]);
+    await openViewer(page, "aaa");
+
+    const cta = page.getByRole("link", { name: "مشاهده لینک" });
+    await expect(cta).toBeVisible();
+    const [surfaceBox, ctaBox] = await Promise.all([
+      surface(page).boundingBox(),
+      cta.boundingBox(),
+    ]);
+    expect(surfaceBox).not.toBeNull();
+    expect(ctaBox).not.toBeNull();
+    expect(ctaBox!.y).toBeGreaterThan(surfaceBox!.y + surfaceBox!.height * 0.7);
+
+    const popupPromise = page.waitForEvent("popup");
+    await cta.click();
+    const popup = await popupPromise;
+    await expect(popup).toHaveURL("https://external.test/collection");
+    await expect(surface(page)).toBeVisible();
+    expect(await page.evaluate(() => window.__storyViews)).toEqual([1]);
+  });
+
   test("does not start progress until the media is ready to present", async ({ page }) => {
     const media = await openHarness(page, [VIDEO_B, IMAGE_C]);
     media.behaviour.set(STORY_FIXTURES.video, { kind: "slow", delayMs: 3000 });
@@ -137,7 +193,9 @@ test.describe("Stories viewer", () => {
     expect(await progress(page)).toBe(0);
     expect(await phase(page)).not.toBe("playing");
 
-    await expect(surface(page)).toHaveAttribute("data-phase", "playing", { timeout: 15_000 });
+    await expect(surface(page)).toHaveAttribute("data-phase", "playing", {
+      timeout: 15_000,
+    });
   });
 
   test("a stalled response neither skips the story nor spins forever", async ({ page }) => {
@@ -150,22 +208,22 @@ test.describe("Stories viewer", () => {
     // Still on the same story, with the cover visible rather than a blank screen.
     expect(await progress(page)).toBe(0);
     await expect(page.locator("video")).toHaveCount(1);
-    await expect(page.locator(`img[src="${mediaUrl(STORY_FIXTURES.image)}"]`).first()).toBeVisible();
+    await expect(
+      page.locator(`img[src="${mediaUrl(STORY_FIXTURES.image)}"]`).first(),
+    ).toBeVisible();
     // Navigation still works — the viewer is never a trap.
     await tapNext(page);
     await expect(page.locator("video")).toHaveCount(0);
   });
 
-
   test("broken media shows a retryable error and still allows navigation", async ({ page }) => {
-    const media = await openHarness(page, [
-      { ...VIDEO_B, cover: undefined },
-      IMAGE_C,
-    ]);
+    const media = await openHarness(page, [{ ...VIDEO_B, cover: undefined }, IMAGE_C]);
     media.behaviour.set(STORY_FIXTURES.video, { kind: "status", status: 404 });
 
     await openViewer(page, "bbb");
-    await expect(page.getByTestId("story-media-error")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("story-media-error")).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(page.getByTestId("story-media-spinner")).toHaveCount(0);
 
     // It must not auto-skip, and it must not block the user either.
@@ -180,10 +238,14 @@ test.describe("Stories viewer", () => {
     media.behaviour.set(STORY_FIXTURES.video, { kind: "status", status: 500 });
 
     await openViewer(page, "bbb");
-    await expect(page.getByTestId("story-media-error")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("story-media-error")).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
-  test("rapid tapping never leaves more than one player or skips past the end", async ({ page }) => {
+  test("rapid tapping never leaves more than one player or skips past the end", async ({
+    page,
+  }) => {
     await openHarness(page, [IMAGE_A, VIDEO_B, IMAGE_C]);
     await openViewer(page, "aaa");
 
@@ -202,7 +264,9 @@ test.describe("Stories viewer", () => {
   test("only the active story holds a player, and closing stops playback", async ({ page }) => {
     await openHarness(page, [VIDEO_B, IMAGE_C]);
     await openViewer(page, "bbb");
-    await expect(surface(page)).toHaveAttribute("data-phase", "playing", { timeout: 15_000 });
+    await expect(surface(page)).toHaveAttribute("data-phase", "playing", {
+      timeout: 15_000,
+    });
 
     expect(await page.locator("video").count()).toBe(1);
     const paused = await page.evaluate(() => document.querySelector("video")!.paused);
@@ -211,15 +275,15 @@ test.describe("Stories viewer", () => {
     await page.locator(".story-viewer-close").click();
     await expect(page.locator("video")).toHaveCount(0);
     // Body scroll must be released; upstream's uncleared timeout left it locked.
-    await expect
-      .poll(() => page.evaluate(() => document.body.style.overflow))
-      .toBe("");
+    await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("");
   });
 
   test("reopening starts from a clean state", async ({ page }) => {
     await openHarness(page, [VIDEO_B, IMAGE_C]);
     await openViewer(page, "bbb");
-    await expect(surface(page)).toHaveAttribute("data-phase", "playing", { timeout: 15_000 });
+    await expect(surface(page)).toHaveAttribute("data-phase", "playing", {
+      timeout: 15_000,
+    });
     await page.waitForTimeout(800);
     expect(await progress(page)).toBeGreaterThan(0);
 
@@ -234,10 +298,15 @@ test.describe("Stories viewer", () => {
   test("a hidden tab pauses playback without completing the story", async ({ page }) => {
     await openHarness(page, [VIDEO_B, IMAGE_C]);
     await openViewer(page, "bbb");
-    await expect(surface(page)).toHaveAttribute("data-phase", "playing", { timeout: 15_000 });
+    await expect(surface(page)).toHaveAttribute("data-phase", "playing", {
+      timeout: 15_000,
+    });
 
     await page.evaluate(() => {
-      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      Object.defineProperty(document, "visibilityState", {
+        value: "hidden",
+        configurable: true,
+      });
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await expect(surface(page)).toHaveAttribute("data-held", "true");
@@ -257,7 +326,13 @@ test.describe("Stories viewer", () => {
     // that *can* decode it must simply play it. Either way the viewer must show something
     // and move on; a silent black frame is the one unacceptable outcome.
     await openHarness(page, [
-      { id: 9, title: "hevc", kind: "video", file: STORY_FIXTURES.hevcVideo, cover: STORY_FIXTURES.image },
+      {
+        id: 9,
+        title: "hevc",
+        kind: "video",
+        file: STORY_FIXTURES.hevcVideo,
+        cover: STORY_FIXTURES.image,
+      },
       IMAGE_C,
     ]);
     await openViewer(page, "hevc");

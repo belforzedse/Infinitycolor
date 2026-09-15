@@ -8,9 +8,11 @@ import {
   MEDIA_JOBS,
   SNAPPAY_PAYMENT_JOBS,
   WALLET_TOPUP_PAYMENT_JOBS,
+  type EdgeCachePurgeJobData,
   type MaintenanceJobData,
   type MaintenanceJobName,
 } from "./contracts";
+import { clearProductOriginCaches } from "../utils/productOriginCache";
 
 export async function processMaintenanceJob(
   strapi: Strapi,
@@ -59,12 +61,24 @@ export async function processMaintenanceJob(
       );
       return processAnipoRecipientSync(strapi, orderId, expectedRevision);
     }
+    case COMMERCE_MAINTENANCE_JOBS.staffOrderAlert: {
+      const { orderId } = job.data as { orderId: number };
+      const { notifyStaffOrderStartedSms } = await import(
+        "../services/sms/staff-alerts"
+      );
+      return notifyStaffOrderStartedSms(strapi as any, { orderId });
+    }
     case COMMERCE_MAINTENANCE_JOBS.edgeCachePurge: {
-      const { kind, paths, reason } = job.data as {
-        kind: string;
-        paths: string[];
-        reason?: string;
-      };
+      const { kind, paths, reason, origin } = job.data as EdgeCachePurgeJobData;
+      // Origin first, edge second. `invalidatePaths` warms the L2 by re-rendering
+      // the storefront, so clearing Strapi's caches afterwards would just bake the
+      // stale response back into nginx and Arvan.
+      if (origin?.productSlug) {
+        await clearProductOriginCaches(strapi, origin.productSlug, {
+          availabilityCrossed: Boolean(origin.availabilityCrossed),
+          logPrefix: `edge-cache:${kind}`,
+        });
+      }
       const { invalidatePaths } = await import("../utils/edgeCache");
       return invalidatePaths(paths, { logPrefix: `edge-cache:${kind}${reason ? `:${reason}` : ""}` });
     }

@@ -8,9 +8,13 @@
  *
  * `getEligibleOrderStats` is NEW code for NEW consumers (Phase 3/4 endpoints and the
  * rollup below) — it is deliberately NOT wired into the existing
- * `/reports/traffic/dashboard` endpoint, which still uses the legacy
- * `orders.status='Done'` definition. See metrics/catalog.ts `sales.eligibleOrders`
- * limitations for why that inconsistency is documented rather than silently fixed.
+ * `/reports/traffic/dashboard` endpoint, whose `getOrderStats` counts orders by
+ * `PAID_ORDER_STATUSES` alone (no settlement gate) because «سفارش پرداخت‌شده» asks
+ * "did a visit turn into a payment", not "did we sell it" — see D14/D15. Since D15
+ * the two status lists match, so the remaining difference is the settlement gate; the
+ * constants stay separate because the questions are. See metrics/catalog.ts
+ * `sales.eligibleOrders` limitations for why that difference is documented rather
+ * than silently fixed.
  */
 
 import * as PA from "../../services/product-analytics";

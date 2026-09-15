@@ -277,7 +277,8 @@ async function reconcileOrders(source, destination, dryRun, pilot, ledger) {
     check(contract.Status === expected.contractStatus, "ORDER_CONTRACT_STATUS_MISMATCH");
     check(contract.Type === expected.contractType, "ORDER_CONTRACT_TYPE_MISMATCH");
     check(Number(contract.TaxPercent) === expected.taxPercent, "ORDER_CONTRACT_TAX_MISMATCH");
-    check(String(contract.Amount) === expected.totalToman, "ORDER_TOTAL_MISMATCH");
+    // The contract carries the full sales value (WooCommerce total + wallet leg).
+    check(String(contract.Amount) === (expected.salesValueToman ?? expected.totalToman), "ORDER_TOTAL_MISMATCH");
     check(actualItems.length === expected.items.length, "ORDER_ITEM_COUNT_MISMATCH");
     const orderTimestamps = expected.sourceCreatedAt ? {
       createdAt: expected.sourceCreatedAt,

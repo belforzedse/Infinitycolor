@@ -23,6 +23,15 @@ export interface Stock {
 export const PRODUCT_STOCK_POPULATE_FIELDS = ["Count", "reservedCount"] as const;
 
 /**
+ * Mirrors `LOW_STOCK_DISPLAY_THRESHOLD` in the storefront
+ * (`apps/frontend/src/services/product/product.ts`): the PDP caps the quantity
+ * selector at this number and, at or below it, prints the exact count. Keeping
+ * the two in step is what lets cache invalidation decide whether a stock move
+ * changed anything a shopper can actually see.
+ */
+export const LOW_STOCK_DISPLAY_THRESHOLD = 5;
+
+/**
  * Normalized Stock interface with guaranteed numeric properties
  * Use this type after validating/normalizing Stock objects
  */

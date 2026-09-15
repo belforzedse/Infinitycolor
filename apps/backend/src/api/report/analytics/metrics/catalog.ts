@@ -51,28 +51,33 @@ export interface MetricDefinition {
 const ELIGIBLE_ORDER_NOTE =
   "An order is 'eligible' when it has net-positive successful settlement: " +
   "SUM(contract_transactions.amount, Return rows negated) over Status='Success' rows " +
-  "for the order's contract is > 0. This is orders.status-independent by design — " +
-  "orders.Status is an operational/fulfillment field, not a settlement field, and the " +
-  "payment-success path never advances it to 'Done' (that is an admin-only transition). " +
+  "for the order's contract is > 0, AND the order is in fulfilment (orders.Status). " +
+  "Eligibility was status-independent in @1, on the reasoning that Status is an " +
+  "operational field and the payment-success path never advances it past 'Started'. " +
+  "@2 rejected that: an order paid and then cancelled was revenue (see D12 Defect B). " +
+  "@4 additionally excluded 'Started'; @5 put it back — an accepted, settled order is a " +
+  "sale, and the status breakdown, not the gate, distinguishes completed from in-progress " +
+  "(see D14 and D15). " +
   "This is the SAME definition already used by every /reports/products/* endpoint " +
   "(product-analytics.ts paidOrdersCte), verified against scripts/seed-report-fixtures.js.";
 
 export const METRIC_CATALOG: Record<string, MetricDefinition> = {
   "sales.eligibleOrders": {
     id: "sales.eligibleOrders",
-    definitionVersion: "sales.eligibleOrders@2",
+    definitionVersion: "sales.eligibleOrders@5",
     businessName: "سفارش‌های واجد شرایط",
     formula:
-      "COUNT(orders) WHERE orders.Status='Done' AND SUM(CASE WHEN contract_transactions.type='Return' " +
+      "COUNT(orders) WHERE orders.Status IN ('Started','Shipment','Done') AND SUM(CASE WHEN contract_transactions.type='Return' " +
       "THEN -amount ELSE amount END) OVER contract_transactions.status='Success' rows > 0, grouped by order",
     grain: "one row per eligible order",
     source: "commerce",
     sourceTables: ["orders", "contracts", "contract_transactions"],
-    includedStatuses: "orders.Status='Done' only, additionally gated on settlement",
+    includedStatuses: "orders.Status IN ('Started','Shipment','Done'), additionally gated on settlement",
     excludedStatuses:
-      "any status other than 'Done' — including an order that was paid and then Cancelled; " +
+      "Paying, Cancelled, Returned — including an order that was paid and then Cancelled; " +
       "orders with no Status='Success' transaction; orders net-refunded to <= 0",
-    dateBasis: "orders.Date",
+    dateBasis:
+      "orders.Date on order/product pages; contract_transactions.date (first successful non-Return leg) on money pages (clock=settlement) — decision D13",
     refundTreatment: "Type='Return' transactions subtracted from settlement before the >0 test",
     discountTreatment:
       "not applied at this grain (order-level AppliedDiscountAmount reduces sales.net, not eligibility)",
@@ -87,8 +92,20 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
         "an order paid and later Cancelled was counted as revenue, and the 'settled' and 'completed' " +
         "definitions described different order populations for the same window. This also resolves the " +
         "divergence with /reports/traffic/dashboard, which always used Status='Done'; the two now agree.",
-      "Consequence of @2: an order that has been paid but not yet advanced to 'Done' by an operator " +
-        "(e.g. Status='Started') contributes no revenue until it is completed.",
+      "@3 widened the gate to Started/Shipment/Done (decision D13). Started is WooCommerce 'processing': " +
+        "paid and being fulfilled; excluding it hid 346 September orders. Paying/Cancelled/Returned stay out.",
+      "@4 narrowed it again to Shipment/Done: a sale is an order the SHOP has completed. The " +
+        "gateway-success path advances an order to Started and stops (Done is admin-only), so under @3 " +
+        "«فروش» reported takings for orders nobody had accepted — on 2026-09-14 it showed 17 orders / " +
+        "۴۴,۳۵۰,۰۰۰ تومان on a day with no completed order. The @3 motivation (346 hidden September " +
+        "WooCommerce 'processing' orders) is spent: those days are all before FINANCIAL_DATA_FLOOR and " +
+        "no money report can reach them.",
+      "@5 (decision D15) re-widened the gate to Started/Shipment/Done, restoring @3's population. " +
+        "Started («در حال انجام») is a settled order in fulfilment; under @4 «فروش» reported nothing " +
+        "for it until an operator advanced it to Done, so the KPI row lagged the till by the " +
+        "fulfilment desk and read zero on days the shop had taken money. Paying/Cancelled/Returned " +
+        "stay out. The @4 concern — telling completed from merely-accepted — is answered by the " +
+        "status breakdown's «شروع‌شده» row, which is status-independent and shows it directly.",
     ],
     status: "implemented",
     implementation: "src/api/report/analytics/sources/commerce.ts#getEligibleOrderStats",
@@ -157,15 +174,80 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     refundTreatment: "gross is pre-refund; see sales.net for the refund-adjusted figure",
     discountTreatment: "gross is pre-discount; see sales.net",
     taxTreatment: "excludes shipping tax; there is no product/line tax field in this data model",
-    shippingTreatment: "excludes shipping cost (product-line revenue only)",
+    shippingTreatment:
+      "excludes shipping cost (product-line revenue only). The STORE-WIDE «فروش ناخالص» on " +
+      "/reports/overview is sales.grossWithShipping, which adds it; this metric still backs every " +
+      "per-product, per-category and per-status figure, where a delivery fee belongs to no row",
     currency: "Toman",
     timezone: "Asia/Tehran",
     missingDataBehavior: "0, never null",
     limitations: [
       "order_items has no line-total column; this is always PerAmount x Count, computed, not stored",
+      "shares its Persian business name with sales.grossWithShipping; the two differ by exactly " +
+        "sales.shipping for the same window (decision D16)",
     ],
     status: "implemented",
     implementation: "src/api/report/services/product-analytics.ts#itemizedCte,aggCte",
+  },
+
+  "sales.shipping": {
+    id: "sales.shipping",
+    definitionVersion: "sales.shipping@1",
+    businessName: "هزینه ارسال",
+    formula: "SUM(orders.shipping_cost) over eligible orders",
+    grain: "one row per eligible order (or per day when aggregated)",
+    source: "commerce",
+    sourceTables: ["orders", "contracts", "contract_transactions"],
+    includedStatuses: "eligible orders only (see sales.eligibleOrders)",
+    excludedStatuses: "n/a",
+    dateBasis: "orders.Date on /reports/overview; the settlement clock on the liquidity pages",
+    refundTreatment:
+      "not adjusted — a refund of the delivery fee is not tracked separately (see sales.refunds)",
+    discountTreatment:
+      "the stored snapshot is what the customer was charged; a free-shipping promotion is already 0 here",
+    taxTreatment:
+      "orders.ShippingTax is carrier-side metadata for the Anipo barcode, not a customer charge, and is NOT added",
+    shippingTreatment: "this IS the shipping figure",
+    currency: "Toman",
+    timezone: "Asia/Tehran",
+    missingDataBehavior: "0, never null",
+    limitations: [
+      "orders.shipping_cost is stored in Toman, NOT IRR — it must never be passed through irrToToman",
+      "an order-level snapshot: a multi-parcel order still carries one figure",
+    ],
+    status: "implemented",
+    implementation:
+      "src/api/report/services/product-analytics.ts#shippingRevenueQuery; src/api/report/controllers/report.ts#computeProductPeriod",
+  },
+
+  "sales.grossWithShipping": {
+    id: "sales.grossWithShipping",
+    definitionVersion: "sales.grossWithShipping@1",
+    businessName: "فروش ناخالص (نمای کلی فروش)",
+    formula: "sales.gross + sales.shipping",
+    grain: "one row per eligible order (or per day when aggregated)",
+    source: "commerce",
+    sourceTables: ["order_items", "orders", "contracts", "contract_transactions"],
+    includedStatuses: "eligible orders only (see sales.eligibleOrders)",
+    excludedStatuses: "line items and shipping of non-eligible orders",
+    dateBasis: "orders.Date",
+    refundTreatment: "pre-refund; see sales.net for the refund-adjusted figure",
+    discountTreatment: "pre-discount; see sales.net",
+    taxTreatment: "n/a — tax is disabled store-wide (cart computeTotals always returns 0)",
+    shippingTreatment:
+      "INCLUDED. This is the whole amount the order was written for; it equals the order total before " +
+      "the discount is taken off (subtotal + shipping_cost)",
+    currency: "Toman",
+    timezone: "Asia/Tehran",
+    missingDataBehavior: "0, never null",
+    limitations: [
+      "store-wide only. Shipping is an order-level charge, so it cannot be attributed to a product, " +
+        "category or line; every breakdown keeps sales.gross",
+      "sales.net does NOT include shipping, so this is not net's pre-deduction base: the overview's " +
+        "identity is grossWithShipping - shipping - discounts - refunds = net (decision D16)",
+    ],
+    status: "implemented",
+    implementation: "src/api/report/controllers/report.ts#overview",
   },
 
   "sales.discounts": {
@@ -223,7 +305,7 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
 
   "sales.net": {
     id: "sales.net",
-    definitionVersion: "sales.net@2",
+    definitionVersion: "sales.net@5",
     businessName: "فروش خالص",
     formula: "sales.gross - sales.discounts - sales.refunds",
     grain: "one row per eligible order (or per day when aggregated)",
@@ -235,13 +317,17 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
     refundTreatment: "subtracted",
     discountTreatment: "subtracted",
     taxTreatment: "excludes shipping tax (no product tax exists)",
-    shippingTreatment: "excludes shipping cost",
+    shippingTreatment:
+      "excludes shipping cost — on EVERY page, including /reports/overview, whose gross " +
+      "(sales.grossWithShipping) does include it. Net is merchandise (decision D16)",
     currency: "Toman",
     timezone: "Asia/Tehran",
     missingDataBehavior: "0, never null",
     limitations: [
       "this is NET SALES, never labelled profit/margin — no cost data exists (decision D1)",
       "per-line net is a pro-rated estimate when discount/refund is allocated to individual products",
+      "@4: population follows sales.eligibleOrders@4 (Shipment/Done); no formula change",
+      "@5: population follows sales.eligibleOrders@5 (Started/Shipment/Done); no formula change",
     ],
     status: "implemented",
     implementation: "src/api/report/analytics/sources/commerce.ts#getDailySalesTotals",
@@ -300,29 +386,29 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
 
   "liquidity.settled": {
     id: "liquidity.settled",
-    definitionVersion: "liquidity.settled@1",
+    definitionVersion: "liquidity.settled@2",
     businessName: "نقدینگی تسویه‌شده",
     formula:
-      "SUM(contract_transactions.amount, Return rows negated) WHERE status='Success', divided by 10 for Toman",
-    grain: "one row per bucket (day/week/month) by settlement date",
+      "SUM(paid_orders.settled_irr) over sales.eligibleOrders on the settlement clock, per Tehran bucket, divided by 10 for Toman",
+    grain: "one row per Tehran calendar bucket (day/week/month) by settlement date, zero-filled",
     source: "commerce",
-    sourceTables: ["contract_transactions"],
-    includedStatuses: "Status='Success' only",
-    excludedStatuses: "Pending/Failed",
+    sourceTables: ["orders", "contracts", "contract_transactions"],
+    includedStatuses: "eligible orders only (sales.eligibleOrders@5)",
+    excludedStatuses: "Paying/Cancelled/Returned orders and Pending/Failed transactions",
     dateBasis:
-      "contract_transactions.date (settlement date, NOT orders.Date — this is a cash-movement view, distinct from sales.* which is an order-date sales view)",
+      "contract_transactions.date of the first successful non-Return leg (settlement date, NOT orders.Date); clock=order switches to orders.Date",
     refundTreatment: "Return rows subtracted",
     discountTreatment: "n/a (transaction amount is already net of discount at settlement)",
     taxTreatment: "n/a",
     shippingTreatment:
       "included in the settled amount (shipping is charged through the same gateway transaction)",
     currency: "Toman",
-    timezone:
-      "n/a (bucketed on the raw transaction date, not Tehran-shifted — pre-existing behavior, unchanged by this work)",
-    missingDataBehavior: "0, never null",
+    timezone: "Asia/Tehran (bucket keys rendered in SQL as YYYY-MM-DD)",
+    missingDataBehavior: "0, never null; missing buckets are filled with zero",
     limitations: [
       "corrected from IRR to Toman as of decision D4 — see docs/analytics/analytics-decisions.md",
-      "not the same population as sales.eligibleOrders: this counts settlement events by their own date, not orders grouped by order date",
+      "@2 (decision D13): same population as sales.eligibleOrders, keyed on the settlement date. @1 summed every successful transaction in the database (cancelled orders included) by UTC day.",
+      "a Return leg dated outside the window is not subtracted in that window (cash-movement view)",
     ],
     status: "implemented",
     implementation: "src/api/report/controllers/report.ts#liquidity",
@@ -330,25 +416,30 @@ export const METRIC_CATALOG: Record<string, MetricDefinition> = {
 
   "liquidity.byGateway": {
     id: "liquidity.byGateway",
-    definitionVersion: "liquidity.byGateway@1",
+    definitionVersion: "liquidity.byGateway@2",
     businessName: "نقدینگی به تفکیک درگاه",
     formula:
-      "SUM(contract_transactions.amount, Return rows negated) WHERE status='Success', grouped by payment_gateways.title, divided by 10 for Toman",
-    grain: "one row per payment gateway",
+      "SUM(contract_transactions.amount, Return rows negated) over the successful legs of sales.eligibleOrders, grouped by COALESCE(contract_transactions.settlement_gateway, orders.payment_gateway), divided by 10 for Toman",
+    grain: "one row per settlement channel; a split payment (wallet + gateway) contributes to two rows",
     source: "commerce",
-    sourceTables: ["contract_transactions", "payment_gateways"],
-    includedStatuses: "Status='Success' only",
-    excludedStatuses: "Pending/Failed",
-    dateBasis: "contract_transactions.date",
+    sourceTables: ["orders", "contracts", "contract_transactions"],
+    includedStatuses: "eligible orders only (sales.eligibleOrders@5)",
+    excludedStatuses: "Paying/Cancelled/Returned orders and Pending/Failed transactions",
+    dateBasis: "settlement date by default (clock=settlement); all-orders counts always by orders.Date",
     refundTreatment: "Return rows subtracted",
     discountTreatment: "n/a",
     taxTreatment: "n/a",
     shippingTreatment: "included",
     currency: "Toman",
-    timezone: "n/a",
+    timezone: "Asia/Tehran",
     missingDataBehavior:
-      "0, never null; a gateway with no settled transactions in range does not appear as a row (unlike products/breakdown's gateway table, which explicitly zero-fills — this endpoint was not changed beyond the currency fix)",
-    limitations: ["corrected from IRR to Toman as of decision D4"],
+      "0, never null; a gateway with orders but no settled transaction appears with ordersCount 0 and a data-quality warning",
+    limitations: [
+      "corrected from IRR to Toman as of decision D4",
+      "@2 (decision D13): identical to products/breakdown's gateway table (same query, gated on report.finance.read). @1 grouped by the payment_gateways row linked to each transaction — duplicate rows, no Mellat row, 20k unlinked transactions — which is why the pie showed «نامشخص».",
+      "per-row order counts do not sum to paidOrdersCount: a split payment sits under two channels",
+      "legs are attributed by settlement_gateway only for rows the WooCommerce importer wrote; live checkout transactions fall back to orders.payment_gateway",
+    ],
     status: "implemented",
     implementation: "src/api/report/controllers/report.ts#gatewayLiquidity",
   },

@@ -27,7 +27,10 @@ describe("LoginForm component", () => {
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/auth"));
   });
 
-  it("calls onSubmit with form data", async () => {
+  // «مرا به خاطر بسپار» defaults ON: the auth server reads an explicit `false`
+  // as "do not remember", shortening the session to 24h and downgrading the
+  // cookie to a browser-session cookie.
+  it("calls onSubmit with form data, remembering the session by default", async () => {
     mockUseCheck.mockReturnValue({ phoneNumber: "09123456789" });
     const onSubmit = jest.fn().mockResolvedValue(undefined);
     const { container } = render(<LoginForm onSubmit={onSubmit} />);
@@ -38,7 +41,7 @@ describe("LoginForm component", () => {
       expect(onSubmit).toHaveBeenCalledWith({
         phoneNumber: "09123456789",
         password: "",
-        rememberMe: false,
+        rememberMe: true,
       }),
     );
   });

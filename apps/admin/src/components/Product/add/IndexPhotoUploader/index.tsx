@@ -9,12 +9,15 @@ interface IndexPhotoUploaderProps {
   onImageUpload?: (file: File) => void;
   onImageDelete?: () => void;
   isEditMode?: boolean;
+  /** Blocks interaction while the owning product is still loading. */
+  disabled?: boolean;
 }
 
 const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
   onImageUpload,
   onImageDelete,
   isEditMode = false,
+  disabled = false,
 }) => {
   const {
     imagePreview,
@@ -27,7 +30,7 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
     uploadError,
     previewMimeType,
   } =
-    useIndexImageUpload({ onImageUpload, onImageDelete, isEditMode });
+    useIndexImageUpload({ onImageUpload, onImageDelete, isEditMode, disabled });
 
   return (
     <div className="flex flex-col items-center gap-2 rounded-xl bg-white py-5">
@@ -40,8 +43,12 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
         uploadStatus={uploadStatus}
         uploadError={uploadError}
         mimeType={previewMimeType}
+        disabled={disabled}
         onRetry={retryUpload}
-        onUploadButtonClick={() => fileInputRef.current?.click()}
+        onUploadButtonClick={() => {
+          if (disabled) return;
+          fileInputRef.current?.click();
+        }}
       />
 
       <input
@@ -49,17 +56,24 @@ const IndexPhotoUploader: React.FC<IndexPhotoUploaderProps> = ({
         ref={fileInputRef}
         className="hidden"
         accept="image/*,video/*"
+        disabled={disabled}
         onChange={handleImageUpload}
       />
 
       <IndexPhotoUploaderActionButtons
+        disabled={disabled}
         onPreviewClick={handlePreviewClick}
         onDeleteClick={handleDelete}
-        onEditClick={() => fileInputRef.current?.click()}
+        onEditClick={() => {
+          if (disabled) return;
+          fileInputRef.current?.click();
+        }}
       />
 
       <span className="text-xs mt-3 text-neutral-400">
-        اینجا تصویر یا ویدیوی اصلی محصول را بارگذاری کنید.
+        {disabled
+          ? "در حال دریافت اطلاعات محصول…"
+          : "اینجا تصویر یا ویدیوی اصلی محصول را بارگذاری کنید."}
       </span>
     </div>
   );

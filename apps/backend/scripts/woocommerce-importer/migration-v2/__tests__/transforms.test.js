@@ -135,6 +135,13 @@ test("customer payload preserves Woo creation and modification timestamps", () =
   assert.equal(payload.sourceUpdatedAt, "2024-05-06T07:08:09.000Z");
 });
 
+test("a customer with no usable phone is excluded by decision, with a stable code", () => {
+  assert.throws(
+    () => T.customerPayload({ id: 5, username: "noreply", billing: { phone: "" }, shipping: {} }),
+    (error) => error.message === "USER_PHONE_INVALID" && error.code === "USER_PHONE_INVALID" && error.outcome === "excluded",
+  );
+});
+
 test("order payload keeps the approved delivery snapshot and excludes notes and payment identifiers", () => {
   const payload = T.orderPayload({
     id: 44,

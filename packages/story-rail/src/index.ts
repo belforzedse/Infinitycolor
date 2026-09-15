@@ -7,6 +7,7 @@ export type { StoryMediaIssue, StoryPlaybackStore } from "./media/playback-store
 export {
   getStoryRailPreview,
   getStorySortTimestamp,
+  getSafeStoryCtaUrl,
   hasUsableMediaUrl,
   isImageStory,
   isSupportedImageUrl,

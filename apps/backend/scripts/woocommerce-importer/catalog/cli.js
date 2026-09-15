@@ -80,6 +80,7 @@ async function run(command, options) {
     dryRun: command === "dry-run",
     scope: options.scope || (options.skipCategories ? "no-media" : "full"),
     skipMedia: Boolean(options.skipMedia),
+    skipStock: Boolean(options.skipStock),
     limit: options.limit ? Number(options.limit) : Infinity,
     startAfterExternalId: options.startAfterExternalId,
     runStore,
@@ -205,6 +206,7 @@ const CLI_OPTIONS = {
   scope: { type: "string", default: "full" },
   ids: { type: "string" },
   "skip-media": { type: "boolean", default: false },
+  "skip-stock": { type: "boolean", default: false },
   "start-after-external-id": { type: "string" },
   "run-id": { type: "string" },
   "tracking-dir": { type: "string" },
@@ -241,6 +243,7 @@ Options:
   --scope <name>  --limit <n>  --log-level <level>
   --ids <wcId,...>  Restrict the run to these WooCommerce ids (targeted repair)
   --skip-media  --start-after-external-id <id>  --run-id <id>
+  --skip-stock  Update everything the scope covers except product-stocks
   --publication <now|draft|scheduled>
   --publication-date <YYYY-MM-DD> --publication-time <HH:mm> [--publication-timezone <IANA>]
   --publication-at <ISO-8601 with offset/Z>  --require-media <true|false>
@@ -262,6 +265,11 @@ function parseCliArgs(args) {
   if (!COMMANDS_WITH_RUN_ID.has(command) && runId) throw new Error(`Unexpected run id for ${command}: ${runId}`);
 
   const values = parsed.values;
+  // Reject here rather than in resolveScope: the engine creates the run record
+  // before it resolves the scope, so a later throw would leave a phantom run.
+  if (values["skip-stock"] && values.scope === "stock") {
+    throw new Error("--skip-stock cannot be combined with --scope stock; that run would write nothing.");
+  }
   const publication = parsePublicationOptions({
     mode: values.publication,
     date: values["publication-date"],
@@ -280,6 +288,7 @@ function parseCliArgs(args) {
       scope: values.scope,
       ids: parseIdList(values.ids),
       skipMedia: values["skip-media"],
+      skipStock: values["skip-stock"],
       startAfterExternalId: values["start-after-external-id"],
       runId: values["run-id"],
       trackingDir: values["tracking-dir"],

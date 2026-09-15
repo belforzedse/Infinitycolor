@@ -14,6 +14,13 @@ function sliceOut(html: string, block: { startIndex: number; endIndex: number })
   return html.slice(block.startIndex, block.endIndex);
 }
 
+// Keep the exact marker out of Tailwind's static token scan. A literal promo
+// JSON marker in a source file is mistaken for an arbitrary CSS property
+// during the production build even though this file is only a Jest fixture.
+function promoMarker(json: string): string {
+  return "[" + "promo:" + json + "]";
+}
+
 describe("parseBlogBlocks", () => {
   it("returns indices into the original string, entities and all", () => {
     const html =
@@ -63,7 +70,11 @@ describe("parseBlogBlocks", () => {
 
   it("parses a promo block whose JSON contains a closing bracket", () => {
     const html =
-      '<p>متن</p>[promo:{"v":1,"title":"مانتوهای ما [ویژه]","body":"زیبایی و مد","cta":{"label":"مشاهده محصولات","href":"/plp/category/coat-and-mantle"},"social":{"label":"Infinity.color_boutique","href":"https://instagram.com/infinity.color_boutique"},"image":{"url":"/uploads/blog-temp-pic1.png","alt":""},"variant":"pic1"}]<p>ادامه</p>';
+      '<p>متن</p>' +
+      promoMarker(
+        '{"v":1,"title":"مانتوهای ما [ویژه]","body":"زیبایی و مد","cta":{"label":"مشاهده محصولات","href":"/plp/category/coat-and-mantle"},"social":{"label":"Infinity.color_boutique","href":"https://instagram.com/infinity.color_boutique"},"image":{"url":"/uploads/blog-temp-pic1.png","alt":""},"variant":"pic1"}',
+      ) +
+      "<p>ادامه</p>";
     const [block] = parseBlogBlocks(html) as PromoBlock[];
     expect(block.type).toBe("promo");
     expect(block.data.title).toBe("مانتوهای ما [ویژه]");
@@ -79,7 +90,9 @@ describe("parseBlogBlocks", () => {
 
   it("drops an unsafe href instead of rendering it", () => {
     const [block] = parseBlogBlocks(
-      '[promo:{"title":"t","body":"b","cta":{"label":"x","href":"javascript:alert(1)"},"social":{"label":"y","href":"//evil.example"}}]',
+      promoMarker(
+        '{"title":"t","body":"b","cta":{"label":"x","href":"javascript:alert(1)"},"social":{"label":"y","href":"//evil.example"}}',
+      ),
     ) as PromoBlock[];
     expect(block.data.cta).toBeNull();
     expect(block.data.social).toBeNull();
@@ -89,8 +102,8 @@ describe("parseBlogBlocks", () => {
   it("leaves malformed markers in the article rather than swallowing them", () => {
     expect(parseBlogBlocks("[products:]")).toEqual([]);
     expect(parseBlogBlocks("[products:1")).toEqual([]);
-    expect(parseBlogBlocks('[promo:{"title":]')).toEqual([]);
-    expect(parseBlogBlocks("[promo:{}]")).toEqual([]);
+    expect(parseBlogBlocks(promoMarker('{"title":'))).toEqual([]);
+    expect(parseBlogBlocks(promoMarker("{}"))).toEqual([]);
     // A marker interrupted by a tag is not a marker.
     expect(parseBlogBlocks("[products:<b>1</b>]")).toEqual([]);
   });
@@ -102,7 +115,7 @@ describe("parseBlogBlocks", () => {
   });
 
   it("parseProductShortcodes still sees only carousels", () => {
-    const html = '[products:1][promo:{"title":"t","body":"b"}]';
+    const html = '[products:1]' + promoMarker('{"title":"t","body":"b"}');
     expect(parseProductShortcodes(html).map((block) => block.type)).toEqual(["products"]);
     expect(parseBlogBlocks(html)).toHaveLength(2);
   });

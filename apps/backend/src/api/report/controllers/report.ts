@@ -501,6 +501,16 @@ async function applyAdminActivityResourceSearch(filters: any, ctx: any) {
   filters.$and = [...(filters.$and || []), { $or: resourceFilters }];
 }
 
+const PA = productAnalytics;
+
+/**
+ * Visit-to-payment counts for the behaviour dashboard. Gates on
+ * {@link productAnalytics.PAID_ORDER_STATUSES} — «سفارش پرداخت‌شده» means the money
+ * landed, so status alone decides membership and no settlement gate applies. Money
+ * figures use ELIGIBLE_ORDER_STATUSES, the same status list since D15 but additionally
+ * gated on net-positive settlement; these two are deliberately different questions and
+ * neither page shows the other's number.
+ */
 async function getOrderStats(start: Date, end: Date) {
   const knex = strapi.db.connection;
 
@@ -509,7 +519,7 @@ async function getOrderStats(start: Date, end: Date) {
     const primaryRes = await knex.raw(
       `SELECT
          COUNT(*)::bigint AS total_orders,
-         COUNT(*) FILTER (WHERE o.status = 'Done')::bigint AS paid_orders
+         COUNT(*) FILTER (WHERE o.status IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders
        FROM orders o
        WHERE o.date BETWEEN ? AND ?`,
       [start, end],
@@ -524,7 +534,7 @@ async function getOrderStats(start: Date, end: Date) {
     const fallbackRes = await knex.raw(
       `SELECT
          COUNT(*)::bigint AS total_orders,
-         COUNT(*) FILTER (WHERE o."Status" = 'Done')::bigint AS paid_orders
+         COUNT(*) FILTER (WHERE o."Status" IN (${PA.PAID_STATUS_SQL}))::bigint AS paid_orders
        FROM orders o
        WHERE o."Date" BETWEEN ? AND ?`,
       [start, end],
@@ -551,8 +561,12 @@ async function getRevenueToman(start: Date, end: Date) {
 }
 
 async function getBehaviorCommerce(range: { startDate: string; endDate: string }) {
-  const start = parseDate(range.startDate, 30, "start");
-  const end = parseDate(range.endDate, 0, "end");
+  // Revenue and paid-order counts are money figures, so the comparison window
+  // the conversion report asks for is floored like every other report.
+  const { start, end } = PA.clampToFinancialFloor({
+    start: parseDate(range.startDate, 30, "start"),
+    end: parseDate(range.endDate, 0, "end"),
+  });
   const [orderStats, revenueToman] = await Promise.all([
     getOrderStats(start, end),
     getRevenueToman(start, end),
@@ -570,21 +584,66 @@ async function getBehaviorCommerce(range: { startDate: string; endDate: string }
 // Product reporting helpers (shared by the new /reports/products/* endpoints).
 // ---------------------------------------------------------------------------
 
-const PA = productAnalytics;
-
-/** Parse and validate a [start, end] window from the query string. */
+/**
+ * Parse and validate a [start, end] window from the query string, then clamp
+ * it to the financial data floor (see `PA.FINANCIAL_DATA_FLOOR`). The clamp is
+ * last so a reversed window is repaired before it is cut, never re-reversed.
+ */
 function parseProductRange(ctx: any): { start: Date; end: Date } {
   const start = parseDate(ctx.query.start as string);
   const end = parseDate(ctx.query.end as string, 0, "end");
   if (start.getTime() > end.getTime()) {
-    return { start: end, end: start };
+    return PA.clampToFinancialFloor({ start: end, end: start });
   }
-  return { start, end };
+  return PA.clampToFinancialFloor({ start, end });
 }
 
 const rowsOf = (res: any): any[] => res?.rows || res?.[0] || [];
 
-/** Run the period scalar query and shape it into Toman-denominated KPI values. */
+/**
+ * `YYYY-MM-DD` Tehran dates of a queried window for the response body. An
+ * empty window (everything requested fell before the floor) reads as
+ * `end < start`, which is the honest shape: nothing was queried.
+ */
+function effectiveRange(start: Date, end: Date): { start: string; end: string } {
+  return { start: PA.tehranYmd(start), end: PA.tehranYmd(end) };
+}
+
+/**
+ * Which date a money page keys on. Money pages default to the settlement
+ * clock (when the cash arrived, as the Payzito ledger counts it); `clock=order`
+ * switches to the creation date so a figure can be compared with the order
+ * list. See `ReportClock` in the analytics service.
+ */
+function parseClock(value: unknown, fallback: productAnalytics.ReportClock): productAnalytics.ReportClock {
+  return value === "order" || value === "settlement" ? value : fallback;
+}
+
+/** Shape one gateway breakdown row (IRR -> Toman) for the API. */
+function gatewayRowsFrom(res: any) {
+  const rows = rowsOf(res);
+  const base = rows.map((r: any) => ({
+    gateway: String(r.gateway || "Unknown"),
+    label: PA.gatewayLabelFa(r.gateway),
+    ordersCount: Number(r.orders_count || 0),
+    totalOrdersCount: Number(r.total_orders_count || 0),
+    total: Math.round(PA.irrToToman(Number(r.settled_irr || 0))),
+  }));
+  return {
+    gateways: PA.withShares(base, "total"),
+    dataQualityWarnings: PA.gatewaySettlementWarnings(base),
+    paidOrdersCount: Number(rows[0]?.paid_orders_count || 0),
+  };
+}
+
+/**
+ * Run the period scalar query and shape it into Toman-denominated KPI values.
+ *
+ * `gross` here is merchandise only — `sales.gross`, the product-line figure every
+ * product report is built on. `shipping` is returned ALONGSIDE it, never folded
+ * in: a delivery fee belongs to the order, not to any product, so only a
+ * store-wide caller (`overview`) may add the two (see `sales.grossWithShipping`).
+ */
 async function computeProductPeriod(
   knex: any,
   joins: productAnalytics.ResolvedJoins,
@@ -598,7 +657,12 @@ async function computeProductPeriod(
       COALESCE((SELECT SUM(cnt) FROM itemized), 0)::bigint AS units,
       (SELECT COUNT(*) FROM paid_orders)::bigint AS orders_count,
       COALESCE((SELECT SUM(order_discount) FROM paid_orders), 0)::numeric AS discounts,
-      COALESCE((SELECT SUM(refund_irr) FROM paid_orders), 0)::numeric AS refund_irr
+      COALESCE((SELECT SUM(refund_irr) FROM paid_orders), 0)::numeric AS refund_irr,
+      COALESCE((
+        SELECT SUM(o.shipping_cost)
+        FROM paid_orders po
+        JOIN orders o ON o.id = po.order_id
+      ), 0)::numeric AS shipping
   `;
   const res = await knex.raw(sql, [start, end]);
   const row = rowsOf(res)[0] || {};
@@ -607,6 +671,8 @@ async function computeProductPeriod(
   const orders = Number(row.orders_count) || 0;
   const discounts = Number(row.discounts) || 0;
   const refunds = PA.irrToToman(Number(row.refund_irr) || 0);
+  // `orders.shipping_cost` is stored in Toman already — never irrToToman it.
+  const shipping = Number(row.shipping) || 0;
   const net = gross - discounts - refunds;
   return {
     gross,
@@ -614,6 +680,7 @@ async function computeProductPeriod(
     orders,
     discounts,
     refunds,
+    shipping,
     net,
     avgPrice: units > 0 ? gross / units : 0,
     aov: orders > 0 ? gross / orders : 0,
@@ -642,58 +709,60 @@ async function attachCoverImages(rows: productAnalytics.ProductPerformanceRow[])
 }
 
 const reportController = {
+  /**
+   * «نقدینگی»: cash collected per Tehran calendar bucket.
+   *
+   * Reads the SAME `paid_orders` set every other money page uses, keyed on the
+   * settlement clock, so its total equals the gateway breakdown for the same
+   * window and its series is the payment-clock view of the trends tab.
+   * It previously summed every successful transaction in the database
+   * (cancelled orders included) and bucketed by UTC day, so a 7-day Tehran
+   * window returned 8 buckets and a figure nothing else on the site showed.
+   */
   async liquidity(ctx) {
     try {
       const user = await ensureCapability(ctx, "report.finance.read");
       if (!user) return;
 
-      const start = parseDate(ctx.query.start as string);
-      const end = parseDate(ctx.query.end as string, 0, "end");
+      const { start, end } = parseProductRange(ctx);
       const interval = (ctx.query.interval as Interval) || "day";
-
       const allowed: Interval[] = ["day", "week", "month"];
-      const bucket = allowed.includes(interval) ? interval : "day";
+      const bucket: productAnalytics.Grouping = allowed.includes(interval) ? interval : "day";
+      const clock = parseClock(ctx.query.clock, "settlement");
 
       const knex = strapi.db.connection;
+      const joins = await PA.resolveJoins(knex);
+      const ordersDefinition = await PA.resolvePaidOrdersDefinition(knex, joins, start, end, clock);
 
-      const seriesQuery = `
-        SELECT date_trunc(?, ct.date) AS bucket,
-               SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END) AS total
-        FROM contract_transactions ct
-        WHERE ct.status = 'Success' AND ct.date BETWEEN ? AND ?
+      const sql = `
+        WITH ${PA.paidOrdersCte(joins, ordersDefinition, clock)}
+        SELECT ${PA.tzBucketKeyExpr("order_date", bucket)} AS bucket,
+               SUM(settled_irr)::numeric AS total,
+               COUNT(*)::bigint AS orders_count
+        FROM paid_orders
         GROUP BY 1
         ORDER BY 1
       `;
+      const res = await knex.raw(sql, [start, end]);
+      const points = rowsOf(res).map((r: any) => ({
+        bucket: r.bucket,
+        total: Math.round(PA.irrToToman(Number(r.total || 0))),
+        orders: Number(r.orders_count || 0),
+      }));
+      const series = PA.fillBucketSeries(points, start, end, bucket, { total: 0, orders: 0 });
 
-      const totalQuery = `
-        SELECT COALESCE(SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END), 0) AS total
-        FROM contract_transactions ct
-        WHERE ct.status = 'Success' AND ct.date BETWEEN ? AND ?
-      `;
-
-      const [seriesRes, totalRes] = await Promise.all([
-        knex.raw(seriesQuery, [bucket, start, end]),
-        knex.raw(totalQuery, [start, end]),
-      ]);
-
-      const seriesRows = seriesRes.rows || seriesRes[0];
-      const totalRow = (totalRes.rows || totalRes[0])[0];
-
-      // Settlement amounts are stored in IRR (contract_transactions.amount); every
-      // other report already returns Toman, so this endpoint previously returned a
-      // figure 10x too large next to them. See docs/analytics/analytics-decisions.md
-      // decision D4 — legacy IRR endpoints are normalized to Toman.
       ctx.body = {
         data: {
           interval: bucket,
           start,
           end,
           currency: "Toman",
-          total: Math.round(PA.irrToToman(Number(totalRow?.total || 0))),
-          series: (seriesRows || []).map((r: any) => ({
-            bucket: r.bucket,
-            total: Math.round(PA.irrToToman(Number(r.total || 0))),
-          })),
+          timezone: PA.REPORT_TIMEZONE,
+          clock,
+          ordersDefinition,
+          total: points.reduce((sum, p) => sum + p.total, 0),
+          ordersCount: points.reduce((sum, p) => sum + p.orders, 0),
+          series,
         },
       };
     } catch (error) {
@@ -706,8 +775,7 @@ const reportController = {
       const user = await ensureCapability(ctx, "report.product.read");
       if (!user) return;
 
-      const start = parseDate(ctx.query.start as string);
-      const end = parseDate(ctx.query.end as string, 0, "end");
+      const { start, end } = parseProductRange(ctx);
 
       const knex = strapi.db.connection;
 
@@ -1040,76 +1108,58 @@ const reportController = {
     }
   },
 
+  /**
+   * Cash per gateway for the finance workspace. Same query as the products
+   * payments tab (`productBreakdown`), so the two can never disagree; kept as
+   * its own endpoint because it is gated on `report.finance.read`, not
+   * `report.product.read`. It previously grouped by the `payment_gateways` row
+   * linked to each transaction — a table with duplicate rows, no Mellat row and
+   * 20k unlinked transactions — which is why the pie showed «نامشخص».
+   *
+   * Also returns `shippingRevenue` over the same `paid_orders` set. The gateway
+   * total is cash collected, i.e. merchandise + shipping AFTER discount, on the
+   * payment date; the overview's «فروش ناخالص» also carries shipping but is
+   * pre-discount and on the order date (decision D16). Without this term the
+   * finance page cannot show the merchandise half on its own, and it cannot read
+   * the product report's endpoint for it (different capability).
+   */
   async gatewayLiquidity(ctx) {
     try {
       const user = await ensureCapability(ctx, "report.finance.read");
       if (!user) return;
 
-      const start = parseDate(ctx.query.start as string);
-      const end = parseDate(ctx.query.end as string, 0, "end");
-
+      const { start, end } = parseProductRange(ctx);
+      const clock = parseClock(ctx.query.clock, "settlement");
       const knex = strapi.db.connection;
+      const joins = await PA.resolveJoins(knex);
+      const ordersDefinition = await PA.resolvePaidOrdersDefinition(knex, joins, start, end, clock);
+      const [res, shippingRes] = await Promise.all([
+        knex.raw(PA.gatewayBreakdownQuery(joins, ordersDefinition, clock), [
+          start,
+          end,
+          start,
+          end,
+        ]),
+        knex.raw(PA.shippingRevenueQuery(joins, ordersDefinition, clock), [start, end]),
+      ]);
+      const { gateways, dataQualityWarnings, paidOrdersCount } = gatewayRowsFrom(res);
+      // Already Toman on the order row; irrToToman would divide it a second time.
+      const shippingRevenue = Number(rowsOf(shippingRes)[0]?.shipping_total || 0);
 
-      // Join contract_transactions to payment_gateways via link table if present
-      let txGatewayJoin = `LEFT JOIN payment_gateways pg ON ct.payment_gateway_id = pg.id`;
-      const txGwLinkRes = await knex.raw(
-        `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_name LIKE '%contract%transaction%payment%gateway%links%'`,
-      );
-      const txGwLinks = txGwLinkRes.rows || txGwLinkRes[0] || [];
-      if (Array.isArray(txGwLinks) && txGwLinks.length > 0) {
-        const link = String(txGwLinks[0].table_name);
-        const colsRes = await knex.raw(
-          `SELECT column_name FROM information_schema.columns WHERE table_name = ?`,
-          [link],
-        );
-        const cols = (colsRes.rows || colsRes[0] || []).map((r: any) => String(r.column_name));
-        const contractTxFk =
-          cols.find((c: string) => c === "contract_transaction_id") ||
-          cols.find((c: string) => c.endsWith("contract_transaction_id")) ||
-          cols.find((c: string) => c.startsWith("contract_transaction") && c.endsWith("_id")) ||
-          "contract_transaction_id";
-        const gatewayFk =
-          cols.find((c: string) => c === "payment_gateway_id") ||
-          cols.find((c: string) => c.endsWith("payment_gateway_id")) ||
-          cols.find((c: string) => c.startsWith("payment_gateway") && c.endsWith("_id")) ||
-          "payment_gateway_id";
-
-        // LEFT JOIN, not INNER: a successful transaction with no linked gateway
-        // must still be counted, or this total silently falls out of step with
-        // `liquidity` above, which sums every `ct.status = 'Success'` row with no
-        // join at all. Bucket the unlinked rows under a stable "unassigned" key
-        // instead of dropping them (see `/sales/gateways` vs `/sales/liquidity`
-        // reconciliation test).
-        txGatewayJoin = `
-          LEFT JOIN ${link} l ON l.${contractTxFk} = ct.id
-          LEFT JOIN payment_gateways pg ON pg.id = l.${gatewayFk}
-        `;
-      }
-
-      const query = `
-        SELECT pg.id AS gateway_id,
-               COALESCE(pg.title, 'نامشخص') AS title,
-               SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END)::bigint AS total
-        FROM contract_transactions ct
-        ${txGatewayJoin}
-        WHERE ct.status = 'Success' AND ct.date BETWEEN ? AND ?
-        GROUP BY pg.id, pg.title
-        ORDER BY total DESC
-      `;
-
-      const res = await knex.raw(query, [start, end]);
-      const rows = res.rows || res[0];
-
-      // Same IRR->Toman normalization as `liquidity` above (decision D4).
       ctx.body = {
         data: {
           currency: "Toman",
-          rows: rows.map((r: any) => ({
-            gatewayId: r.gateway_id,
-            gatewayTitle: r.title,
-            total: Math.round(PA.irrToToman(Number(r.total || 0))),
+          range: { start, end },
+          clock,
+          ordersDefinition,
+          paidOrdersCount,
+          shippingRevenue,
+          rows: gateways.map((g) => ({
+            gatewayId: null,
+            gatewayTitle: g.label,
+            ...g,
           })),
+          dataQualityWarnings,
         },
       };
     } catch (error) {
@@ -1507,7 +1557,8 @@ const reportController = {
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
-      const prev = PA.previousPeriod(start, end);
+      // The like-for-like window may reach back past the floor; cut it too.
+      const prev = PA.clampToFinancialFloor(PA.previousPeriod(start, end));
       const threshold = PA.DEFAULT_LOW_STOCK_THRESHOLD;
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
@@ -1575,25 +1626,18 @@ const reportController = {
       if (!user) return;
 
       const { start, end } = parseProductRange(ctx);
+      const clock = parseClock(ctx.query.clock, "settlement");
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
+      const ordersDefinition = await PA.resolvePaidOrdersDefinition(knex, joins, start, end, clock);
 
       const [gatewayRes, shippingRes] = await Promise.all([
-        knex.raw(PA.gatewayBreakdownQuery(joins), [start, end, start, end]),
-        knex.raw(PA.shippingBreakdownQuery(joins), [start, end]),
+        knex.raw(PA.gatewayBreakdownQuery(joins, ordersDefinition, clock), [start, end, start, end]),
+        knex.raw(PA.shippingBreakdownQuery(joins, ordersDefinition, clock), [start, end]),
       ]);
 
-      // Sales by payment gateway (settlement is IRR -> Toman; attach share of total).
-      const gatewayRows = rowsOf(gatewayRes);
-      const gatewayBase = gatewayRows.map((r: any) => ({
-        gateway: String(r.gateway || "Unknown"),
-        label: PA.gatewayLabelFa(r.gateway),
-        ordersCount: Number(r.orders_count || 0),
-        totalOrdersCount: Number(r.total_orders_count || 0),
-        total: Math.round(PA.irrToToman(Number(r.settled_irr || 0))),
-      }));
-      const gateways = PA.withShares(gatewayBase, "total");
-      const dataQualityWarnings = PA.gatewaySettlementWarnings(gatewayBase);
+      // Cash per gateway (settlement is IRR -> Toman; attach share of total).
+      const { gateways, dataQualityWarnings, paidOrdersCount } = gatewayRowsFrom(gatewayRes);
 
       // Shipping revenue by method (shipping_cost already stored in Toman).
       const shippingMethods = rowsOf(shippingRes).map((r: any) => {
@@ -1607,19 +1651,23 @@ const reportController = {
 
       const gatewaySales = gateways.reduce((sum, g) => sum + g.total, 0);
       const shippingRevenue = shippingMethods.reduce((sum, s) => sum + s.total, 0);
-      const ordersCount = gateways.reduce((sum, g) => sum + g.ordersCount, 0);
+      // Distinct paid orders: a split payment sits under two gateway rows, so
+      // summing the per-row counts would exceed the number of orders.
+      const ordersCount = paidOrdersCount;
 
       ctx.body = {
         data: {
           range: { start, end },
           currency: "Toman",
+          clock,
+          ordersDefinition,
           totals: { gatewaySales, shippingRevenue, ordersCount },
           gateways,
           shippingMethods,
           dataQualityWarnings,
           notes: {
             gatewaySales:
-              "مبلغ تسویه‌شده هر درگاه بر مبنای «سفارش‌های پرداخت‌شده، خالص از مرجوعی» است و شامل هزینه ارسال نیز می‌شود.",
+              "مبلغ دریافتی هر درگاه بر مبنای «سفارش‌های پرداخت‌شده، خالص از مرجوعی» و تاریخ پرداخت است و شامل هزینه ارسال نیز می‌شود؛ سفارش‌های ترکیبی (کیف پول + درگاه) زیر هر دو کانال دیده می‌شوند.",
             shippingRevenue:
               "درآمد ارسال بر مبنای هزینه ارسال ثبت‌شده روی سفارش است (نه فروش محصول).",
           },
@@ -1640,8 +1688,8 @@ const reportController = {
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
 
-      const bucketItems = PA.tzBucketExpr("order_date", grouping);
-      const bucketOrders = PA.tzBucketExpr("order_date", grouping);
+      const bucketItems = PA.tzBucketKeyExpr("order_date", grouping);
+      const bucketOrders = PA.tzBucketKeyExpr("order_date", grouping);
       const ordersDefinition = await PA.resolvePaidOrdersDefinition(knex, joins, start, end);
 
       const sql = `
@@ -1961,7 +2009,7 @@ const reportController = {
       });
 
       // Product-level daily/weekly trend.
-      const bucket = PA.tzBucketExpr("order_date", grouping);
+      const bucket = PA.tzBucketKeyExpr("order_date", grouping);
       const trendSql = `
         WITH ${PA.paidOrdersCte(joins)}, ${PA.itemizedCte(joins)}
         SELECT ${bucket} AS bucket,
@@ -2267,6 +2315,12 @@ const reportController = {
    * the SAME `computeProductPeriod`/`paidOrdersCte` every product report already
    * uses — no product filter applied, so this is the whole store). Behavioral
    * reporting remains separately capability-gated and can never delay Finance.
+   *
+   * This endpoint's «فروش ناخالص» is `sales.grossWithShipping` — merchandise plus
+   * the delivery fee — because store-wide it is the amount the orders were written
+   * for. The product reports keep the line-only `sales.gross`, so for the same
+   * window their «فروش ناخالص» reads lower here by exactly `sales.shipping`
+   * (decision D16). «فروش خالص» is merchandise-only in BOTH.
    */
   async overview(ctx) {
     try {
@@ -2278,30 +2332,60 @@ const reportController = {
         (ctx.query.end as string) || (ctx.query.endDate as string),
       );
       const prevRange = previousRange(range);
-      const start = parseDate(range.startDate, 30, "start");
-      const end = parseDate(range.endDate, 0, "end");
-      const prevStart = parseDate(prevRange.startDate, 30, "start");
-      const prevEnd = parseDate(prevRange.endDate, 0, "end");
+      const { start, end } = PA.clampToFinancialFloor({
+        start: parseDate(range.startDate, 30, "start"),
+        end: parseDate(range.endDate, 0, "end"),
+      });
+      const { start: prevStart, end: prevEnd } = PA.clampToFinancialFloor({
+        start: parseDate(prevRange.startDate, 30, "start"),
+        end: parseDate(prevRange.endDate, 0, "end"),
+      });
 
       const knex = strapi.db.connection;
       const joins = await PA.resolveJoins(knex);
 
-      const [current, previous, analyticsDelivery] = await Promise.all([
+      const [currentPeriod, previousPeriod, analyticsDelivery] = await Promise.all([
         computeProductPeriod(knex, joins, start, end),
         computeProductPeriod(knex, joins, prevStart, prevEnd),
         getAnalyticsDeliveryHealth(knex),
       ]);
+
+      // Store-wide «فروش ناخالص» is what the orders were written for: merchandise
+      // lines PLUS the delivery fee. `orders.shipping_cost` is the only other money
+      // the customer is charged — tax is disabled store-wide (cart computeTotals) and
+      // ShippingTax/ShippingPostPrice are carrier-side metadata, not charges.
+      // «فروش خالص» stays merchandise-only, so shipping leaves again as a subtracted
+      // term of this page's identity rather than flowing into net. Both periods are
+      // composed BEFORE periodDelta so the comparison is like-for-like.
+      // `avgPrice`/`aov` are dropped rather than recomputed: this page shows
+      // neither, and keeping merchandise-only averages next to a shipping-inclusive
+      // gross is exactly the trap this endpoint exists to avoid.
+      const withShipping = ({
+        avgPrice: _avgPrice,
+        aov: _aov,
+        ...period
+      }: Awaited<ReturnType<typeof computeProductPeriod>>) => ({
+        ...period,
+        gross: period.gross + period.shipping,
+      });
+      const current = withShipping(currentPeriod);
+      const previous = withShipping(previousPeriod);
 
       const kpi = (key: keyof typeof current) =>
         PA.periodDelta((current as any)[key], (previous as any)[key]);
 
       ctx.body = {
         data: {
-          range: { start: range.startDate, end: range.endDate },
-          previous: { start: prevRange.startDate, end: prevRange.endDate },
+          // Echo the window that was actually queried, not the one requested,
+          // so a client can see where the floor cut it.
+          range: effectiveRange(start, end),
+          previous: effectiveRange(prevStart, prevEnd),
           timezone: PA.REPORT_TIMEZONE,
           currency: "Toman",
-          definitionVersion: METRIC_CATALOG["sales.net"].definitionVersion,
+          // The headline figure of THIS page is the shipping-inclusive gross, so it
+          // is that metric's version that a consumer must key on. `sales.net` is
+          // unchanged and still versions the breakdown endpoint.
+          definitionVersion: METRIC_CATALOG["sales.grossWithShipping"].definitionVersion,
           sales: {
             gross: kpi("gross"),
             net: kpi("net"),
@@ -2309,6 +2393,7 @@ const reportController = {
             orders: kpi("orders"),
             discounts: kpi("discounts"),
             refunds: kpi("refunds"),
+            shipping: kpi("shipping"),
           },
           analyticsDelivery,
         },

@@ -345,6 +345,57 @@
       },
       "description": "Product assignment for the custom editorial section (manual IDs or category slug)."
     },
+    "homeCustomSectionTwoEnabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show the second custom editorial section before the discounted («تخفیف‌های وسوسه انگیز») section."
+    },
+    "homeCustomSectionTwoTitle": {
+      "type": "string",
+      "default": "",
+      "description": "Display title for the second custom editorial section."
+    },
+    "homeCustomSectionTwoAssignment": {
+      "type": "json",
+      "default": {
+        "mode": "manual",
+        "productIds": []
+      },
+      "description": "Product assignment for the second custom editorial section (manual IDs or category slug)."
+    },
+    "homeCustomSectionThreeEnabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show the third custom editorial section after the «منتخب‌های این هفته» section."
+    },
+    "homeCustomSectionThreeTitle": {
+      "type": "string",
+      "default": "",
+      "description": "Display title for the third custom editorial section."
+    },
+    "homeCustomSectionThreeAssignment": {
+      "type": "json",
+      "default": {
+        "mode": "manual",
+        "productIds": []
+      },
+      "description": "Product assignment for the third custom editorial section (manual IDs or category slug)."
+    },
+    "homeCustomSectionViewAllHref": {
+      "type": "string",
+      "default": "",
+      "description": "Internal «مشاهده همه» path for the custom editorial section; empty falls back to the category PLP or /plp."
+    },
+    "homeCustomSectionTwoViewAllHref": {
+      "type": "string",
+      "default": "",
+      "description": "Internal «مشاهده همه» path for the second custom editorial section; empty falls back to the category PLP or /plp."
+    },
+    "homeCustomSectionThreeViewAllHref": {
+      "type": "string",
+      "default": "",
+      "description": "Internal «مشاهده همه» path for the third custom editorial section; empty falls back to the category PLP or /plp."
+    },
     "homeWeeklyPicksEnabled": {
       "type": "boolean",
       "default": false,

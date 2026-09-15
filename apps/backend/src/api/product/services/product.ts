@@ -9,6 +9,12 @@ import {
   PRODUCT_CARD_FIELDS,
   PRODUCT_CARD_POPULATE,
 } from "./product-card-query";
+import { expandSearchTermVariants } from "../../../utils/searchTermVariants";
+import {
+  isPurchasableVariation as isPurchasableVariationInput,
+  type VariationAvailabilityInput,
+} from "../../../utils/productAvailability";
+import { getAvailableStockCount } from "../../cart/services/lib/stock";
 
 const CARD_COLOR_CODE_LIMIT = 8;
 const HOMEPAGE_CARD_LIMIT = 20;
@@ -18,11 +24,13 @@ const HOMEPAGE_BATCH_LIMIT = 36;
 const HOMEPAGE_SECTION_IDS = [
   "newest",
   "favorites",
+  "customTwo",
   "discounted",
   "gifPromoSlot1",
   "gifPromoSlot2",
   "custom",
   "weeklyPicks",
+  "customThree",
   "everyoneFollows",
 ] as const;
 
@@ -147,14 +155,22 @@ const uniqueOrderedIds = (groups: Array<number[] | undefined>): number[] => {
   return ids;
 };
 
-const baseHomepageProductFilters = (requireAvailable = true) => ({
+/**
+ * Availability is `Count - reservedCount`, which Strapi's filter syntax cannot
+ * express, so these filters carry only the non-stock clauses. Sections that
+ * require purchasable stock pass `availability: HOMEPAGE_IN_STOCK` to
+ * `findOrderedProductIds`, which applies the SQL predicate
+ * (`buildProductAvailabilityExistsSql`) instead.
+ */
+const baseHomepageProductFilters = () => ({
   Status: { $eq: "Active" },
   removedAt: { $null: true },
   product_variations: {
     Price: { $gte: 1 },
-    ...(requireAvailable ? { product_stock: { Count: { $gt: 0 } } } : {}),
   },
 });
+
+const HOMEPAGE_IN_STOCK = "in-stock" as const;
 
 const buildHomepageTitleFilter = () => {
   return {
@@ -184,11 +200,24 @@ const getProductVariations = (product: any): any[] => {
   return relationArray(attrs.product_variations || product?.product_variations);
 };
 
-const getStockCount = (variation: any): number => {
+/**
+ * Strapi hands variations back here as `{ attributes: {...} }` with relations
+ * wrapped in `{ data }`, while the shared availability helpers take a flat
+ * shape. Adapt rather than re-deriving the formula: `Count - reservedCount`
+ * must have exactly one implementation, or cards and the PDP drift apart again.
+ */
+const toAvailabilityInput = (variation: any): VariationAvailabilityInput => {
   const attrs = attrsOf(variation);
-  const stock = relationData(attrs.product_stock);
-  return toNumber(attrsOf(stock).Count);
+  return {
+    IsPublished: attrs.IsPublished,
+    Price: attrs.Price,
+    product_stock: attrsOf(relationData(attrs.product_stock)),
+  };
 };
+
+/** Units a shopper can actually buy: physical count minus live reservations. */
+const getAvailableCount = (variation: any): number =>
+  getAvailableStockCount(toAvailabilityInput(variation).product_stock ?? undefined);
 
 const getGeneralDiscountAmount = (variation: any): number => {
   const attrs = attrsOf(variation);
@@ -232,10 +261,8 @@ const getVariationPricing = (variation: any) => {
   return { price, discountPrice: undefined, discount: undefined, finalPrice: price };
 };
 
-const isPurchasableVariation = (variation: any): boolean => {
-  const attrs = attrsOf(variation);
-  return attrs.IsPublished === true && toNumber(attrs.Price) > 0 && getStockCount(variation) > 0;
-};
+const isPurchasableVariation = (variation: any): boolean =>
+  isPurchasableVariationInput(toAvailabilityInput(variation));
 
 const isPublishedPricedVariation = (variation: any): boolean => {
   const attrs = attrsOf(variation);
@@ -351,7 +378,7 @@ export default factories.createCoreService(
         }
 
         if (isPurchasableVariation(variation)) {
-          inventoryCount += getStockCount(variation);
+          inventoryCount += getAvailableCount(variation);
         }
       }
 
@@ -420,6 +447,7 @@ export default factories.createCoreService(
           ...baseHomepageProductFilters(),
           product_main_category: { Slug: { $eq: assignment.categorySlug } },
         },
+        availability: HOMEPAGE_IN_STOCK,
         sort: ["createdAt:desc"],
         pagination: { limit, withCount: false },
       });
@@ -462,6 +490,8 @@ export default factories.createCoreService(
       const gifPromoSlot1Assignment = normalizeAssignment(settings.homeGifPromoSlot1Assignment);
       const gifPromoSlot2Assignment = normalizeAssignment(settings.homeGifPromoSlot2Assignment);
       const customAssignment = normalizeAssignment(settings.homeCustomSectionAssignment);
+      const customTwoAssignment = normalizeAssignment(settings.homeCustomSectionTwoAssignment);
+      const customThreeAssignment = normalizeAssignment(settings.homeCustomSectionThreeAssignment);
       const weeklyPicksAssignment = normalizeAssignment({
         mode: "manual",
         productIds: settings.homeWeeklyPicksProductIds,
@@ -473,6 +503,7 @@ export default factories.createCoreService(
 
       const batchPromise = findOrderedProductIds(strapi, {
         filters: baseHomepageProductFilters(),
+        availability: HOMEPAGE_IN_STOCK,
         pagination: { limit: HOMEPAGE_BATCH_LIMIT, withCount: false },
       });
       const newestPromise =
@@ -483,6 +514,7 @@ export default factories.createCoreService(
                 ...baseHomepageProductFilters(),
                 ...buildHomepageTitleFilter(),
               },
+              availability: HOMEPAGE_IN_STOCK,
               sort: ["createdAt:desc"],
               pagination: { limit: HOMEPAGE_CARD_LIMIT, withCount: false },
             }).then(({ ids }) => ({ ids, source: "algorithm" as const }));
@@ -493,7 +525,7 @@ export default factories.createCoreService(
               source: "manual" as const,
             })
           : findOrderedProductIds(strapi, {
-              filters: baseHomepageProductFilters(false),
+              filters: baseHomepageProductFilters(),
               hasDiscount: true,
               pagination: { limit: HOMEPAGE_CARD_LIMIT, withCount: false },
             }).then(({ ids }) => ({ ids, source: "algorithm" as const }));
@@ -508,6 +540,14 @@ export default factories.createCoreService(
       const customPromise =
         settings.homeCustomSectionEnabled
           ? this.findHomepageSectionIdsForAssignment(customAssignment, HOMEPAGE_CARD_LIMIT)
+          : Promise.resolve({ ids: [] as number[], source: "disabled" as const });
+      const customTwoPromise =
+        settings.homeCustomSectionTwoEnabled
+          ? this.findHomepageSectionIdsForAssignment(customTwoAssignment, HOMEPAGE_CARD_LIMIT)
+          : Promise.resolve({ ids: [] as number[], source: "disabled" as const });
+      const customThreePromise =
+        settings.homeCustomSectionThreeEnabled
+          ? this.findHomepageSectionIdsForAssignment(customThreeAssignment, HOMEPAGE_CARD_LIMIT)
           : Promise.resolve({ ids: [] as number[], source: "disabled" as const });
       const weeklyPicksPromise =
         settings.homeWeeklyPicksEnabled
@@ -525,7 +565,9 @@ export default factories.createCoreService(
         gifPromoSlot1,
         gifPromoSlot2,
         custom,
+        customTwo,
         weeklyPicks,
+        customThree,
         everyoneFollows,
       ] = await Promise.all([
         batchPromise,
@@ -534,7 +576,9 @@ export default factories.createCoreService(
         gifPromoSlot1Promise,
         gifPromoSlot2Promise,
         customPromise,
+        customTwoPromise,
         weeklyPicksPromise,
+        customThreePromise,
         everyoneFollowsPromise,
       ]);
 
@@ -546,10 +590,12 @@ export default factories.createCoreService(
         gifPromoSlot1.ids,
         gifPromoSlot2.ids,
         custom.ids,
+        customTwo.ids,
         weeklyPicks.ids,
+        customThree.ids,
         everyoneFollows.ids,
       ]);
-      const entities = await this.findProductCardEntitiesByIds(allIds, baseHomepageProductFilters(false));
+      const entities = await this.findProductCardEntitiesByIds(allIds, baseHomepageProductFilters());
       const cards = this.serializeProductCards(entities);
       const cardsById = new Map(cards.map((card: any) => [Number(card.id), card]));
       const byIds = (ids: number[], limit: number, requireAvailable = false) =>
@@ -589,6 +635,12 @@ export default factories.createCoreService(
               favoriteManualIds.length > 0 ? "manual" : "algorithm",
             ),
             sectionPayload(
+              "customTwo",
+              byIds(customTwo.ids, HOMEPAGE_CARD_LIMIT, customTwo.source === "manual"),
+              HOMEPAGE_CARD_LIMIT,
+              customTwo.source,
+            ),
+            sectionPayload(
               "discounted",
               discounted,
               HOMEPAGE_CARD_LIMIT,
@@ -617,6 +669,12 @@ export default factories.createCoreService(
               byIds(weeklyPicks.ids, HOMEPAGE_CARD_LIMIT, true),
               HOMEPAGE_CARD_LIMIT,
               weeklyPicks.source,
+            ),
+            sectionPayload(
+              "customThree",
+              byIds(customThree.ids, HOMEPAGE_CARD_LIMIT, customThree.source === "manual"),
+              HOMEPAGE_CARD_LIMIT,
+              customThree.source,
             ),
             sectionPayload(
               "everyoneFollows",
@@ -648,12 +706,22 @@ export default factories.createCoreService(
       // Create a search filter for product name, description, etc.
       // Exclude trashed products (removedAt should be null)
       // Only include Active products for non-admin users (exclude draft/InActive products)
+      // Product codes are stored in the title with a space the shopper never
+      // types ("W 00288" vs "W00288"), so match every spelling of the term.
+      const searchVariants = expandSearchTermVariants(query);
+      if (searchVariants.length === 0) {
+        return {
+          results: [],
+          pagination: { page: parseInt(page.toString()), pageSize: limit, pageCount: 0, total: 0 },
+        };
+      }
+
       const filterConditions: any[] = [
         {
-          $or: [
-            { Title: { $containsi: query } },
-            { Description: { $containsi: query } },
-          ],
+          $or: searchVariants.flatMap((variant) => [
+            { Title: { $containsi: variant } },
+            { Description: { $containsi: variant } },
+          ]),
         },
         { removedAt: { $null: true } },
       ];

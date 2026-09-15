@@ -16,11 +16,13 @@ const PRODUCT_CARD_VIEW = "view=card";
 export type HomepageProductSectionId =
   | "newest"
   | "favorites"
+  | "customTwo"
   | "discounted"
   | "gifPromoSlot1"
   | "gifPromoSlot2"
   | "custom"
   | "weeklyPicks"
+  | "customThree"
   | "everyoneFollows";
 
 export type BatchedHomepageSections = Partial<Record<HomepageProductSectionId, ProductCardProps[]>>;
@@ -28,11 +30,13 @@ export type BatchedHomepageSections = Partial<Record<HomepageProductSectionId, P
 const HOMEPAGE_SECTION_IDS: HomepageProductSectionId[] = [
   "newest",
   "favorites",
+  "customTwo",
   "discounted",
   "gifPromoSlot1",
   "gifPromoSlot2",
   "custom",
   "weeklyPicks",
+  "customThree",
   "everyoneFollows",
 ];
 
@@ -158,7 +162,7 @@ export const getProductsByIds = async (ids: number[], requireAvailable = true): 
     `filters[Status][$eq]=Active&` +
     `filters[removedAt][$null]=true&` +
     `filters[product_variations][Price][$gte]=1&` +
-    (requireAvailable ? `filters[product_variations][product_stock][Count][$gt]=0&` : "") +
+    (requireAvailable ? `availability=in-stock&` : "") +
     `pagination[limit]=${Math.max(ids.length, 20)}&` +
     `pagination[withCount]=false`;
   try {
@@ -197,7 +201,7 @@ export const getGifPromoProductsForSlot = async (
   params.append("filters[removedAt][$null]", "true");
   params.append("filters[product_main_category][Slug][$eq]", categorySlug);
   params.append("filters[product_variations][Price][$gte]", "1");
-  params.append("filters[product_variations][product_stock][Count][$gt]", "0");
+  params.append("availability", "in-stock");
   params.append("sort[0]", "createdAt:desc");
   params.append("pagination[limit]", "4");
   params.append("pagination[withCount]", "false");
@@ -233,7 +237,7 @@ export const getHomeSectionProducts = async (
   params.append("filters[removedAt][$null]", "true");
   params.append("filters[product_main_category][Slug][$eq]", categorySlug);
   params.append("filters[product_variations][Price][$gte]", "1");
-  params.append("filters[product_variations][product_stock][Count][$gt]", "0");
+  params.append("availability", "in-stock");
   params.append("sort[0]", "createdAt:desc");
   params.append("pagination[limit]", "20");
   params.append("pagination[withCount]", "false");
@@ -288,7 +292,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     `${ENDPOINTS.PRODUCT.PRODUCT}?${PRODUCT_CARD_VIEW}&filters[Status][$eq]=Active&` +
     `filters[removedAt][$null]=true&` +
     `filters[product_variations][Price][$gte]=1&` +
-    `filters[product_variations][product_stock][Count][$gt]=0&` +
+    `availability=in-stock&` +
     `pagination[limit]=36&` +
     `pagination[withCount]=false`;
 
@@ -298,7 +302,7 @@ export const getHomepageSections = async (settingsOverride?: Awaited<ReturnType<
     `filters[removedAt][$null]=true&` +
     (titleFilter ? `${titleFilter}&` : "") +
     `filters[product_variations][Price][$gte]=1&` +
-    `filters[product_variations][product_stock][Count][$gt]=0&` +
+    `availability=in-stock&` +
     `sort[0]=createdAt:desc&` +
     `pagination[limit]=20&` +
     `pagination[withCount]=false`;
@@ -429,7 +433,7 @@ export const getFeaturedCategoryProductsByRating = async (
   params.append("filters[removedAt][$null]", "true");
   params.append("filters[product_main_category][Slug][$eq]", normalizedSlug);
   params.append("filters[product_variations][Price][$gte]", "1");
-  params.append("filters[product_variations][product_stock][Count][$gt]", "0");
+  params.append("availability", "in-stock");
   params.append("sort[0]", "AverageRating:desc");
   params.append("pagination[limit]", String(limit));
   params.append("pagination[withCount]", "false");
@@ -499,7 +503,7 @@ export const getNewProducts = async (): Promise<ProductCardProps[]> => {
     `${ENDPOINTS.PRODUCT.PRODUCT}?${PRODUCT_CARD_VIEW}&filters[Status][$eq]=Active&` +
     `filters[removedAt][$null]=true&` +
     `filters[product_variations][Price][$gte]=1&` +
-    `filters[product_variations][product_stock][Count][$gt]=0&` +
+    `availability=in-stock&` +
     `sort[0]=createdAt:desc&` +
     `pagination[limit]=20&` +
     `pagination[withCount]=false`;
@@ -530,7 +534,7 @@ export const getFavoriteProducts = async (): Promise<ProductCardProps[]> => {
     `${ENDPOINTS.PRODUCT.PRODUCT}?${PRODUCT_CARD_VIEW}&filters[Status][$eq]=Active&` +
     `filters[removedAt][$null]=true&` +
     `filters[product_variations][Price][$gte]=1&` +
-    `filters[product_variations][product_stock][Count][$gt]=0&` +
+    `availability=in-stock&` +
     `sort[0]=AverageRating:desc&` +
     `pagination[limit]=20&` +
     `pagination[withCount]=false`;
@@ -565,7 +569,7 @@ export const getRandomProducts = async (
       `filters[removedAt][$null]=true&` +
       // Hide zero-price variations
       `filters[product_variations][Price][$gte]=1&` +
-      `filters[product_variations][product_stock][Count][$gt]=0&` +
+      `availability=in-stock&` +
       `pagination[limit]=${poolSize}&` +
       `pagination[withCount]=false`;
 

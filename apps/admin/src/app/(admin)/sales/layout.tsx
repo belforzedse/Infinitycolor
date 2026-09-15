@@ -7,6 +7,9 @@ import {
   useReportQueryState,
   toDateOnly,
   parseDateOnly,
+  LEGACY_SALES_DATA_CUTOFF,
+  LEGACY_SALES_DATA_NOTICE,
+  predatesLegacySalesCutoff,
 } from "@/components/SuperAdmin/reports/shared/useReportQueryState";
 import { getSalesNavForCapabilities } from "@/constants/salesNav";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
@@ -49,6 +52,9 @@ export default function SalesLayout({
   const showDateRange = DATE_SCOPED_ROUTES.includes(
     pathname.replace(/\/$/, ""),
   );
+  // Sales data before the cutoff lives on the previous site. Gating here, where
+  // the period is owned, means no subpage fetches a partial pre-cutoff range.
+  const showLegacyNotice = showDateRange && predatesLegacySalesCutoff(start);
 
   return (
     <div className="w-full" dir="rtl">
@@ -81,7 +87,30 @@ export default function SalesLayout({
         </AdminCard>
       )}
 
-      <div className="mt-4 lg:mt-6">{children}</div>
+      {showLegacyNotice ? (
+        <div
+          role="status"
+          className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800 lg:mt-6"
+        >
+          <p className="font-medium">{LEGACY_SALES_DATA_NOTICE}</p>
+          <button
+            type="button"
+            onClick={() =>
+              setRange({
+                start: LEGACY_SALES_DATA_CUTOFF,
+                // A period that ended before the cutoff would otherwise be
+                // swapped back onto the notice by sanitizeReportRange.
+                end: end < LEGACY_SALES_DATA_CUTOFF ? toDateOnly(new Date()) : end,
+              })
+            }
+            className="mt-3 rounded-full border border-amber-300 bg-white px-3 py-1 text-xs text-amber-800 transition hover:border-infinity-primary hover:text-infinity-primary"
+          >
+            نمایش از ۲۳ شهریور به بعد
+          </button>
+        </div>
+      ) : (
+        <div className="mt-4 lg:mt-6">{children}</div>
+      )}
     </div>
   );
 }

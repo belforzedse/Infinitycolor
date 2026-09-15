@@ -14,6 +14,21 @@ import {
   notifyOrderStatusSms,
   notifyShipmentTrackingSms,
 } from "../services/sms";
+import { enqueueStaffOrderStartedAlert } from "../queue/staff-order-alert";
+
+/** «در حال انجام» — the status the staff recipient list is alerted on. */
+const STAFF_ALERT_STATUS = "Started";
+
+function queueStaffOrderAlert(strapi: Strapi, orderId: unknown) {
+  const id = Number(orderId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  void enqueueStaffOrderStartedAlert(id).catch((error) => {
+    strapi.log.error("Failed to queue staff order alert", {
+      orderId: id,
+      error: (error as Error)?.message || error,
+    });
+  });
+}
 
 type AuditAction = "Create" | "Update" | "Delete";
 
@@ -125,6 +140,13 @@ function registerOrderLifecycle(strapi: Strapi) {
         });
       });
 
+      // Checkout always creates orders as `Paying`, but a manual admin order is
+      // posted straight into `Started` (the add-order form defaults to it), so
+      // that transition never passes through `afterUpdate`.
+      if (result.Status === STAFF_ALERT_STATUS) {
+        queueStaffOrderAlert(strapi, result.id);
+      }
+
       if (actor.userId && actor.label) {
         await logAdminEvent(strapi as any, {
           category: "Action",
@@ -230,6 +252,13 @@ function registerOrderLifecycle(strapi: Strapi) {
           : (current as any)?.ShippingBarcode
           ? String((current as any).ShippingBarcode)
           : undefined;
+
+      // Deliberately outside the `orderUserId` branch below: the staff list is
+      // notified about the order, not about the customer, so an order with no
+      // linked user must still raise the alert.
+      if (oldStatus !== newStatus && newStatus === STAFF_ALERT_STATUS) {
+        queueStaffOrderAlert(strapi, result.id);
+      }
 
       if (oldStatus !== newStatus && newStatus && orderUserId) {
         await logOrderEvent(strapi as any, {

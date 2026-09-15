@@ -36,13 +36,33 @@ export type OrderPaymentStatusResponse = SharedOrderPaymentStatusResponse;
 /**
  * Interface for user's order list
  */
+interface OrderItemAttributeRef {
+  id: number;
+  Title: string;
+}
+
 export interface OrderItem {
   id: number;
   Count: number;
   PerAmount: number;
   ProductTitle: string;
   ProductSKU: string;
-  product_variation: {
+  /**
+   * Checkout-time snapshot of the chosen variation, written by
+   * `cart/services/lib/order.ts` from the variation's `product_variation_*`
+   * relations. This is the authoritative record of what the customer bought --
+   * prefer it over the live variation, which can be re-pointed or unpublished
+   * after the order is placed.
+   */
+  product_color?: OrderItemAttributeRef | null;
+  product_size?: OrderItemAttributeRef | null;
+  product_variation_model?: OrderItemAttributeRef | null;
+  /**
+   * The live variation. Its attribute relations are named `product_variation_*`
+   * (NOT `product_*` -- that spelling belongs to the order-item snapshot above,
+   * and reading it here silently yields `undefined`).
+   */
+  product_variation?: {
     id: number;
     product: {
       id: number;
@@ -51,19 +71,10 @@ export interface OrderItem {
         url: string;
       };
     } | null;
-    product_color?: {
-      id: number;
-      Title: string;
-    };
-    product_size?: {
-      id: number;
-      Title: string;
-    };
-    product_variation_model?: {
-      id: number;
-      Title: string;
-    };
-  };
+    product_variation_color?: OrderItemAttributeRef | null;
+    product_variation_size?: OrderItemAttributeRef | null;
+    product_variation_model?: OrderItemAttributeRef | null;
+  } | null;
 }
 
 /** Response from POST /orders/:id/anipo-barcode (Anipo adminpnx v1). */
@@ -322,19 +333,24 @@ export const getMyOrders = async (
           | undefined;
         const coverImage = product?.cover_image ?? product?.CoverImage;
         const imageUrl = coverImage?.url;
+        // Keep an absent variation absent. Spreading a null/undefined relation
+        // used to fabricate an id-less `product_variation: {}`, which reads as
+        // "there is a variation" to every consumer downstream.
         return {
           ...item,
-          product_variation: {
-            ...item.product_variation,
-            product: item.product_variation?.product
-              ? {
-                  ...item.product_variation.product,
-                  cover_image: imageUrl
-                    ? { url: getFullImageUrl(imageUrl) }
-                    : undefined,
-                }
-              : null,
-          },
+          product_variation: item.product_variation
+            ? {
+                ...item.product_variation,
+                product: item.product_variation.product
+                  ? {
+                      ...item.product_variation.product,
+                      cover_image: imageUrl
+                        ? { url: getFullImageUrl(imageUrl) }
+                        : undefined,
+                    }
+                  : null,
+              }
+            : null,
         };
       }),
     }));

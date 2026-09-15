@@ -6,7 +6,7 @@ import { runRawSql } from "../../../utils/transactionExecutor";
  * The 48h combined-shipping hold.
  *
  * This is NOT the stock reservation system (`ReservationStatus`/`ReservedUntil`,
- * see docs/stock-reservation.md). That one holds inventory for ~15 minutes while a
+ * see docs/stock-reservation.md). That one holds inventory for ~30 minutes while a
  * shopper pays. This one holds *fulfillment* of already-paid orders for 48 hours so
  * later purchases can ride along in the same parcel and pay shipping once.
  *

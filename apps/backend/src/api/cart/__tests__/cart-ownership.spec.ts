@@ -224,6 +224,53 @@ describe("cart ownership", () => {
         },
       });
     });
+
+    /**
+     * A line can sit above its available count without the shopper doing
+     * anything wrong: stock moved, or a reservation (their own abandoned
+     * checkout included) lowered availability. The stock gate must then still
+     * let them shrink the line, or the cart is stuck at a quantity that is
+     * itself the thing being rejected.
+     */
+    it("allows a decrease while the line still exceeds available stock", async () => {
+      const { strapi, items } = createCartWorld();
+      const line = items.find((item) => item.id === 101)!;
+      line.Count = 5;
+      line.product_variation = variationWithStock(5, 4); // available = 1
+      const ctx = actAs(USER_A, { request: { body: { cartItemId: 101, count: 4 } } });
+
+      await updateItemHandler(strapi)(ctx);
+
+      expect(ctx.badRequest).not.toHaveBeenCalled();
+      expect(items.find((item) => item.id === 101)?.Count).toBe(4);
+    });
+
+    it("allows a decrease through the op even with no stock record at all", async () => {
+      const { strapi, items, updated } = createCartWorld();
+      const line = items.find((item) => item.id === 101)!;
+      line.Count = 3;
+      line.product_variation = { ...variationWithStock(0), product_stock: null };
+
+      await expect(updateCartItemOp(strapi, 101, 2, USER_A)).resolves.toMatchObject({
+        success: true,
+      });
+      expect(updated).toEqual([{ id: 101, data: { Count: 2, Sum: 2000 } }]);
+    });
+
+    it("still rejects an increase on a line that already exceeds available stock", async () => {
+      const { strapi, updated, items } = createCartWorld();
+      const line = items.find((item) => item.id === 101)!;
+      line.Count = 5;
+      line.product_variation = variationWithStock(5, 4); // available = 1
+
+      await expect(updateCartItemOp(strapi, 101, 6, USER_A)).resolves.toEqual({
+        success: false,
+        message: "Insufficient stock",
+        errorCode: "CART_STOCK_EXCEEDED",
+        availableStock: 1,
+      });
+      expect(updated).toEqual([]);
+    });
   });
 
   describe("explicit removal", () => {

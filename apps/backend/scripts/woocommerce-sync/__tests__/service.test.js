@@ -363,6 +363,50 @@ test("hourly polls changes and drains active immediate and no-media lanes in ord
   assert.equal(metrics[0].itemCount, 4);
 });
 
+test("hourly drain excludes a phoneless customer once instead of failing it", async () => {
+  const config = getSyncConfig(baseEnv());
+  const pool = { end: async () => undefined };
+  const service = new WooSyncService(config, { pool, source: {}, destination: {} });
+  const outcomes = [];
+  let claims = 0;
+  service.state = {
+    control: async () => ({ mode: "active", reconciliation_run_id: "accepted", reconciliation_sha256: "a".repeat(64) }),
+    assertLease: async () => undefined,
+    claimItems: async () => {
+      claims += 1;
+      return claims === 1
+        ? [
+          { id: 1, source_type: "customer", source_id: 7 },
+          { id: 2, source_type: "customer", source_id: 8 },
+          { id: 3, source_type: "customer", source_id: 9 },
+        ]
+        : [];
+    },
+    completeItem: async (id) => outcomes.push(["completed", id]),
+    failItem: async (id, _token, code) => outcomes.push(["failed", id, code]),
+    excludeItem: async (id, _token, code) => outcomes.push(["excluded", id, code]),
+  };
+  service.source = {
+    getCustomer: async (id) => (
+      Number(id) === 7
+        ? { id: 7, username: "09121234567", billing: {}, shipping: {} }
+        : Number(id) === 8
+          ? { id: 8, username: "noreply", billing: {}, shipping: {} }
+          : Promise.reject(new TypeError("fetch failed"))
+    ),
+  };
+  service.destination = { upsertUser: async () => ({ mode: "created" }) };
+
+  const result = await service.drain("hourly", "hourly-fence");
+
+  assert.deepEqual({ completed: result.completed, failed: result.failed, excluded: result.excluded }, { completed: 1, failed: 1, excluded: 1 });
+  assert.deepEqual(outcomes.sort((a, b) => a[1] - b[1]), [
+    ["completed", 1],
+    ["excluded", 2, "USER_PHONE_INVALID"],
+    ["failed", 3, "TYPEERROR:FETCH_FAILED"],
+  ]);
+});
+
 test("hourly product drain uses full-sync preserve media scope", async () => {
   const config = getSyncConfig(baseEnv());
   const pool = { end: async () => undefined };
@@ -601,7 +645,19 @@ test("safeErrorCode prefers SCREAMING_SNAKE error.message over Error.name", () =
   assert.equal(safeErrorCode(new Error("USER_PHONE_INVALID")), "USER_PHONE_INVALID");
   assert.equal(safeErrorCode({ code: "USER_PHONE_SOURCE_CONFLICT" }), "USER_PHONE_SOURCE_CONFLICT");
   assert.equal(safeErrorCode({ payload: { error: "HTTP_404" } }), "HTTP_404");
-  assert.equal(safeErrorCode(new Error("something went wrong")), "ERROR");
+  // A free-text message keeps its meaning instead of collapsing to the name:
+  // 1,975 quarantined customers read a bare `ERROR` and nobody could say why.
+  assert.equal(safeErrorCode(new Error("something went wrong")), "ERROR:SOMETHING_WENT_WRONG");
+  assert.equal(safeErrorCode(new TypeError("fetch failed")), "TYPEERROR:FETCH_FAILED");
+  assert.equal(
+    safeErrorCode(new Error("Request failed with status code 502 at https://x.example/api")),
+    "ERROR:REQUEST_FAILED_WITH_STATUS_CODE_502_AT_URL",
+  );
+  // The catalog engine records failures as plain strings; they used to be UNKNOWN.
+  assert.equal(safeErrorCode("variation attribute term not found: pa_color"), "VARIATION_ATTRIBUTE_TERM_NOT_FOUND_PA_COLOR");
+  assert.equal(safeErrorCode(""), "UNKNOWN");
+  assert.equal(safeErrorCode(new Error("")), "ERROR");
+  assert.ok(safeErrorCode(new Error("x".repeat(500))).length <= 128);
 });
 
 test("fridayScheduledTimestamp prefers repeatable job id fire time over creation timestamp", () => {
@@ -664,7 +720,9 @@ test("fullUsersAndWallets skips phoneless customers and continues", async () => 
   const result = await service.fullUsersAndWallets();
   assert.equal(result.users, 1);
   assert.equal(result.wallets, 0);
-  assert.equal(result.failed, 1);
+  // A phoneless account is excluded by decision, not counted as a failure.
+  assert.equal(result.failed, 0);
+  assert.equal(result.excluded, 1);
   assert.equal(upserted.length, 1);
   assert.equal(upserted[0].sourceId, "1");
   assert.equal(upserted[0].phone, "+989121234567");

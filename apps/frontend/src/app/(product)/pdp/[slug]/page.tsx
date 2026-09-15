@@ -21,7 +21,7 @@ import {
 } from "@/constants/cacheTags";
 import { fetchWithTimeout } from "@repo/api";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
-import { SITE_NAME } from "@/config/site";
+import { SITE_NAME, SITE_URL } from "@/config/site";
 import logger from "@/utils/logger";
 import { ProductSchema } from "@/components/SEO/ProductSchema";
 import { BreadcrumbSchema } from "@/components/SEO/BreadcrumbSchema";
@@ -510,7 +510,6 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
 
   const decodedSlug = decodeProductSlug(slug);
   const isNumericId = /^\d+$/.test(decodedSlug);
@@ -855,7 +854,6 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
     },
   ];
 
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
   const productUrl = `${SITE_URL}/pdp/${slug}`;
   const averageRating = productData.attributes.AverageRating || 0;
   const reviewCount = productData.attributes.RatingCount || 0;

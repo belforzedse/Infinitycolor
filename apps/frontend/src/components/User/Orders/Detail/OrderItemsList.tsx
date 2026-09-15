@@ -2,24 +2,13 @@ import Image from "next/image";
 import type { Order, OrderItem } from "@/services/order";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { faNum } from "@/utils/faNum";
+import { formatOrderItemAttributes } from "@/utils/orderDisplayHelpers";
 
 const getItemImage = (item: OrderItem) => {
   const product = item.product_variation?.product as any;
   const directUrl = product?.cover_image?.url || product?.CoverImage?.url;
   if (!directUrl) return "";
   return resolveAssetUrl(directUrl);
-};
-
-const getVariationSummary = (item: OrderItem) => {
-  const parts: string[] = [];
-  const variation = item.product_variation;
-  if (!variation) return "";
-
-  if (variation.product_color?.Title) parts.push(`رنگ: ${variation.product_color.Title}`);
-  if (variation.product_size?.Title) parts.push(`سایز: ${variation.product_size.Title}`);
-  if (variation.product_variation_model?.Title) parts.push(`مدل: ${variation.product_variation_model.Title}`);
-
-  return parts.join(" | ");
 };
 
 interface OrderItemsListProps {
@@ -33,7 +22,7 @@ export default function OrderItemsList({ order }: OrderItemsListProps) {
       <div className="flex flex-col divide-y divide-slate-100">
         {order.order_items.map((item) => {
           const image = getItemImage(item);
-          const variations = getVariationSummary(item);
+          const variations = formatOrderItemAttributes(item);
           const total = Number(item.Count || 0) * Number(item.PerAmount || 0);
 
           return (

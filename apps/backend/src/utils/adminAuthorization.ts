@@ -23,6 +23,11 @@ export type AdminActor = {
  * tokens and trusted WordPress migration requests skip this table.
  */
 export const CAPABILITY_API_TOKEN_ACTIONS: Partial<Record<AdminCapability, readonly string[]>> = {
+  "content.stories.manage": [
+    "api::story.story.create",
+    "api::story.story.update",
+    "api::story.story.delete",
+  ],
   "content.categoryEditorial.manage": [
     "api::product-category-content.product-category-content.targets",
     "api::product-category-content.product-category-content.editable",
@@ -43,7 +48,10 @@ type ApiTokenCredentials = {
   permissions?: unknown;
 };
 
-export async function resolveAdminActor(strapi: Strapi, tokenUser: any): Promise<AdminActor | null> {
+export async function resolveAdminActor(
+  strapi: Strapi,
+  tokenUser: any,
+): Promise<AdminActor | null> {
   const userId = Number(tokenUser?.id);
   if (!Number.isSafeInteger(userId) || userId <= 0) return null;
 
@@ -77,7 +85,8 @@ export function apiTokenCredentials(ctx: any): ApiTokenCredentials | null {
   const credentials = ctx?.state?.auth?.credentials;
   if (!credentials || typeof credentials !== "object") return null;
   const type = String((credentials as ApiTokenCredentials).type || "").toLowerCase();
-  const isApiTokenStrategy = strategyName(ctx) === "api-token" || strategyName(ctx).includes("api-token");
+  const isApiTokenStrategy =
+    strategyName(ctx) === "api-token" || strategyName(ctx).includes("api-token");
   if (!isApiTokenStrategy && type !== "full-access" && type !== "custom" && type !== "read-only") {
     return null;
   }
@@ -90,7 +99,11 @@ function tokenPermissionActions(token: ApiTokenCredentials): Set<string> {
   return new Set(
     raw.flatMap((entry) => {
       if (typeof entry === "string" && entry) return [entry];
-      if (entry && typeof entry === "object" && typeof (entry as { action?: string }).action === "string") {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        typeof (entry as { action?: string }).action === "string"
+      ) {
         return [(entry as { action: string }).action];
       }
       return [];

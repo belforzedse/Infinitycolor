@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import Reveal from "@/components/Reveal";
+import ArrowLeftIcon from "@/components/PDP/Icons/ArrowLeftIcon";
 import ChevronLeftIcon from "@/components/PDP/Icons/ChevronLeftIcon";
 import ChevronRightIcon from "@/components/PDP/Icons/ChevronRightIcon";
 import CategoryCard from "@/components/Categories/CategoryCard";
@@ -9,6 +11,7 @@ import type { ProductCategorySummary } from "@/services/product/categories";
 
 interface CategoryCarouselProps {
   categories: ProductCategorySummary[];
+  viewAllHref?: string;
 }
 
 type RtlScrollType = "default" | "negative" | "reverse";
@@ -90,7 +93,7 @@ const scrollToNormalized = (el: HTMLElement, value: number, behavior: ScrollBeha
   el.scrollTo({ left: scrollLeft, behavior });
 };
 
-export default function CategoryCarousel({ categories }: CategoryCarouselProps) {
+export default function CategoryCarousel({ categories, viewAllHref }: CategoryCarouselProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -179,6 +182,20 @@ export default function CategoryCarousel({ categories }: CategoryCarouselProps) 
 
   return (
     <div className="relative">
+      {viewAllHref ? (
+        <div className="mb-3 flex items-center justify-between gap-4">
+          <h2 className="text-foreground-primary font-peyda text-2xl md:text-3xl">دسته‌بندی‌ها</h2>
+          <Link
+            href={viewAllHref}
+            prefetch={false}
+            className="flex shrink-0 items-center gap-1 text-sm text-infinity-primary underline-offset-4 transition-colors hover:text-infinity-primary-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          >
+            <span>مشاهده همه</span>
+            <ArrowLeftIcon />
+          </Link>
+        </div>
+      ) : null}
+
       <div
         ref={scrollRef}
         className="scrollbar-hide grid snap-x snap-mandatory auto-cols-[124px] grid-flow-col items-stretch gap-2 overflow-x-auto scroll-smooth pb-4 lg:auto-cols-[calc((100%_-_60px)_/_6)] lg:gap-3"

@@ -8,7 +8,8 @@ included statuses, and known limitations. Implementation lives in
 
 ## Sale definition (the base population)
 
-An order counts as a **sale** when it has **net-positive successful settlement**.
+An order counts as a **sale** when it has **net-positive successful settlement**
+**and** is in fulfilment (`ELIGIBLE_ORDER_STATUSES`, decision D15).
 
 ```
 paid_orders =
@@ -16,6 +17,7 @@ paid_orders =
   JOIN contracts c
   JOIN contract_transactions ct
   WHERE ct.status = 'Success'
+    AND o.status IN ('Started', 'Shipment', 'Done')   -- the eligible-status gate
   GROUP BY order
   settled_irr = SUM(CASE WHEN ct.type = 'Return' THEN -ct.amount ELSE ct.amount END)
   HAVING settled_irr > 0          -- excludes fully-refunded / cancelled
@@ -25,11 +27,17 @@ paid_orders =
 Consequences:
 
 - Orders with no successful transaction are **excluded**. In practice that means
-  `Paying` orders — but note the CTE filters on `ct.status`, **not** on
-  `orders.status`, so an order left at `Paying` _after_ a successful charge (see
+  `Paying` orders.
+- The status gate is the second half of the definition and both halves must hold.
+  An order left at `Paying` _after_ a successful charge (see
   `handleStockDecrementFailure`, which deliberately does this when stock cannot be
-  decremented) **is still counted**. The exclusion follows from "no Success row",
-  not from the order status.
+  decremented) is **not** counted: it has a `Success` row but no eligible status.
+  Before decision D12 the CTE filtered on `ct.status` alone and such an order was
+  counted; that is no longer true.
+- `Started` («در حال انجام») **is** eligible (D15): it is where the gateway-success
+  path leaves a settled order, `Done` being an admin-only transition. Use the sales
+  status breakdown to tell accepted-but-unfinished from completed — the gate does
+  not draw that line.
 - Fully-refunded / `Cancelled` orders net to `<= 0` and are **excluded** — provided
   the refund is recorded as a `Return` transaction for the full paid amount. A
   refund written short leaves a positive residue and the order stays counted

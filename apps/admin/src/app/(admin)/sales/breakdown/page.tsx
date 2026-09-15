@@ -329,6 +329,17 @@ export default function SalesBreakdownReportPage() {
             </div>
           )}
 
+          {/*
+            Same column label as «نمای کلی فروش», deliberately a different figure:
+            shipping is an order-level charge and belongs to no status, category,
+            customer, coupon or province, so it is never in this table (D16).
+          */}
+          <p className="mb-4 rounded-lg bg-neutral-50 px-4 py-3 text-xs leading-5 text-neutral-600">
+            «فروش ناخالص» این جدول فقط اقلام سفارش است و هزینه ارسال در آن نیست، چون هزینه ارسال به
+            سفارش تعلق دارد نه به دسته یا محصول. در «نمای کلی فروش» هزینه ارسال به فروش ناخالص افزوده
+            شده است، پس آن رقم به همان اندازه بزرگ‌تر است.
+          </p>
+
           {isTree && (
             <p className="mb-4 rounded-lg bg-neutral-50 px-4 py-3 text-xs leading-5 text-neutral-600">
               دسته‌های اصلی نمایش داده شده‌اند و عدد هر دسته شامل زیرمجموعه‌های آن هم هست. برای دیدن

@@ -14,6 +14,13 @@ jest.mock("../BlogPromoSection", () => ({
   default: ({ data }: any) => <div data-testid="promo">{data.title}</div>,
 }));
 
+// Tailwind scans test sources and treats a literal promo marker as an
+// arbitrary CSS property. Construct it at runtime while keeping the fixture's
+// value identical to the content emitted by the importer.
+function promoMarker(json: string): string {
+  return "[" + "promo:" + json + "]";
+}
+
 describe("BlogContentRenderer", () => {
   it("renders a carousel in place instead of leaving the marker as text", () => {
     const { container } = render(
@@ -39,7 +46,11 @@ describe("BlogContentRenderer", () => {
     render(
       <BlogContentRenderer
         content={
-          '<p>قبل</p>[promo:{"title":"مانتوهای ما","body":"متن","cta":{"label":"مشاهده","href":"/plp/category/coat-and-mantle"}}]<p>بعد</p>'
+          '<p>قبل</p>' +
+          promoMarker(
+            '{"title":"مانتوهای ما","body":"متن","cta":{"label":"مشاهده","href":"/plp/category/coat-and-mantle"}}',
+          ) +
+          "<p>بعد</p>"
         }
       />,
     );
@@ -52,7 +63,9 @@ describe("BlogContentRenderer", () => {
     const { container } = render(
       <BlogContentRenderer
         content={
-          '<p>a</p>[products:1]<p>b</p>[promo:{"title":"p","body":"q"}]<p>c</p>[products:2]'
+          '<p>a</p>[products:1]<p>b</p>' +
+          promoMarker('{"title":"p","body":"q"}') +
+          '<p>c</p>[products:2]'
         }
       />,
     );

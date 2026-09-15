@@ -30,6 +30,18 @@ export type HomeGifPromoAssignment =
 
 const normalizeString = (value: unknown): string => (typeof value === "string" ? value : "");
 
+/**
+ * Admin-authored links that become a storefront `<Link href>`. The API already
+ * rejects anything but a same-origin path; this is the second gate, so a value
+ * that reached the column another way still cannot become an off-site redirect.
+ */
+export const normalizeInternalHref = (value: unknown): string => {
+  const href = normalizeString(value).trim();
+  if (!href || !href.startsWith("/") || href.startsWith("//")) return "";
+  if (/[\s\\]/.test(href)) return "";
+  return [...href].some((ch) => ch.charCodeAt(0) < 0x20) ? "" : href;
+};
+
 const normalizeNumber = (value: unknown, fallback: number): number => {
   const numeric = typeof value === "number" ? value : Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -199,6 +211,15 @@ export type SuperAdminSettings = {
   homeCustomSectionEnabled: boolean;
   homeCustomSectionTitle: string;
   homeCustomSectionAssignment: HomeGifPromoAssignment;
+  homeCustomSectionTwoEnabled: boolean;
+  homeCustomSectionTwoTitle: string;
+  homeCustomSectionTwoAssignment: HomeGifPromoAssignment;
+  homeCustomSectionThreeEnabled: boolean;
+  homeCustomSectionThreeTitle: string;
+  homeCustomSectionThreeAssignment: HomeGifPromoAssignment;
+  homeCustomSectionViewAllHref: string;
+  homeCustomSectionTwoViewAllHref: string;
+  homeCustomSectionThreeViewAllHref: string;
   homeWeeklyPicksEnabled: boolean;
   homeWeeklyPicksProductIds: number[];
   homeEveryoneFollowsEnabled: boolean;
@@ -284,6 +305,15 @@ export const defaultSettings = (): SuperAdminSettings => ({
   homeCustomSectionEnabled: false,
   homeCustomSectionTitle: "",
   homeCustomSectionAssignment: { mode: "manual", productIds: [], categorySlug: "" },
+  homeCustomSectionTwoEnabled: false,
+  homeCustomSectionTwoTitle: "",
+  homeCustomSectionTwoAssignment: { mode: "manual", productIds: [], categorySlug: "" },
+  homeCustomSectionThreeEnabled: false,
+  homeCustomSectionThreeTitle: "",
+  homeCustomSectionThreeAssignment: { mode: "manual", productIds: [], categorySlug: "" },
+  homeCustomSectionViewAllHref: "",
+  homeCustomSectionTwoViewAllHref: "",
+  homeCustomSectionThreeViewAllHref: "",
   homeWeeklyPicksEnabled: false,
   homeWeeklyPicksProductIds: [],
   homeEveryoneFollowsEnabled: false,
@@ -394,6 +424,21 @@ export const normalizeSuperAdminSettings = (
   homeCustomSectionTitle: normalizeString(data?.homeCustomSectionTitle),
   homeCustomSectionAssignment: normalizeHomeProductSectionAssignment(
     data?.homeCustomSectionAssignment,
+  ),
+  homeCustomSectionTwoEnabled: Boolean(data?.homeCustomSectionTwoEnabled),
+  homeCustomSectionTwoTitle: normalizeString(data?.homeCustomSectionTwoTitle),
+  homeCustomSectionTwoAssignment: normalizeHomeProductSectionAssignment(
+    data?.homeCustomSectionTwoAssignment,
+  ),
+  homeCustomSectionThreeEnabled: Boolean(data?.homeCustomSectionThreeEnabled),
+  homeCustomSectionThreeTitle: normalizeString(data?.homeCustomSectionThreeTitle),
+  homeCustomSectionThreeAssignment: normalizeHomeProductSectionAssignment(
+    data?.homeCustomSectionThreeAssignment,
+  ),
+  homeCustomSectionViewAllHref: normalizeInternalHref(data?.homeCustomSectionViewAllHref),
+  homeCustomSectionTwoViewAllHref: normalizeInternalHref(data?.homeCustomSectionTwoViewAllHref),
+  homeCustomSectionThreeViewAllHref: normalizeInternalHref(
+    data?.homeCustomSectionThreeViewAllHref,
   ),
   homeWeeklyPicksEnabled: Boolean(data?.homeWeeklyPicksEnabled),
   homeWeeklyPicksProductIds: normalizeHomepageProductIds(data?.homeWeeklyPicksProductIds),

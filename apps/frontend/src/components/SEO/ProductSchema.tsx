@@ -1,4 +1,5 @@
-import { ProductDetail } from "@/services/product/product";
+import { SITE_URL } from "@/config/site";
+import { getAvailableStockCount, ProductDetail } from "@/services/product/product";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { safeJsonLd } from "@/utils/seo";
 
@@ -40,13 +41,6 @@ const getPriceMultiplier = (): number => {
   return parsed > 0 ? parsed : 10;
 };
 
-const getAvailableStock = (variation: any): number => {
-  const stock = variation?.attributes?.product_stock?.data?.attributes;
-  const count = toNumber(stock?.Count);
-  const reserved = toNumber(stock?.reservedCount ?? stock?.ReservedCount ?? stock?.reserved_count);
-  return Math.max(0, count - reserved);
-};
-
 const isPublishedPricedVariation = (variation: any): boolean =>
   variation?.attributes?.IsPublished === true && toNumber(variation?.attributes?.Price) > 0;
 
@@ -75,9 +69,10 @@ export function ProductSchema({ product, slug }: ProductSchemaProps) {
   const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
   const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
   const currentPrice = minPrice || maxPrice || 0;
-  const hasStock = publishedPricedVariations.some((variation: any) => getAvailableStock(variation) > 0);
+  const hasStock = publishedPricedVariations.some(
+    (variation: any) => getAvailableStockCount(variation) > 0,
+  );
 
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
 
   const schema: Record<string, any> = {
     "@context": "https://schema.org/",

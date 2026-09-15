@@ -334,21 +334,51 @@ class SyncStateStore {
    * Used by reconcile --apply and post-catalog repair — quarantine is not terminal.
    */
   async requeueOrders({ statuses = ["quarantined", "failed"], errorCodes = null, limit = 5000 } = {}) {
-    const params = [statuses, limit];
+    return this.requeueItems({ sourceTypes: ["order"], statuses, errorCodes, limit });
+  }
+
+  /**
+   * Requeue rows of any source type for another attempt. `errorCodePrefixes`
+   * matches `last_error_code` by prefix (`TYPEERROR`, `ERROR:`), which is how
+   * transport failures from a source outage are told apart from data problems
+   * once `safeErrorCode` keeps the message. Quarantine is not terminal;
+   * `excluded` rows are deliberately not eligible — a source edit reopens them.
+   */
+  async requeueItems({
+    sourceTypes = ["order"],
+    statuses = ["quarantined", "failed"],
+    errorCodes = null,
+    errorCodePrefixes = null,
+    sourceIds = null,
+    limit = 5000,
+  } = {}) {
+    const params = [sourceTypes, statuses, limit];
     let errorFilter = "";
+    if (Array.isArray(sourceIds) && sourceIds.length > 0) {
+      // Targeted re-import: the named rows (usually `completed`) go back on the
+      // hourly lane and are re-upserted from WooCommerce, which rewrites the
+      // order, its lines and its settlement legs in place.
+      params.push(sourceIds.map((id) => String(id)));
+      errorFilter += ` AND source_id::text = ANY($${params.length}::text[])`;
+    }
     if (Array.isArray(errorCodes) && errorCodes.length > 0) {
-      errorFilter = " AND last_error_code = ANY($3::text[])";
       params.push(errorCodes);
+      errorFilter += ` AND last_error_code = ANY($${params.length}::text[])`;
+    }
+    if (Array.isArray(errorCodePrefixes) && errorCodePrefixes.length > 0) {
+      params.push(errorCodePrefixes.map((prefix) => `${String(prefix).replace(/[\\%_]/g, "\\$&")}%`));
+      errorFilter += ` AND last_error_code LIKE ANY($${params.length}::text[])`;
     }
     const result = await this.pool.query(
       `WITH due AS (
          SELECT id
            FROM woocommerce_sync_items
-          WHERE source_type = 'order'
-            AND status = ANY($1::text[])
+          WHERE source_type = ANY($1::text[])
+            AND status = ANY($2::text[])
+            AND status <> 'excluded'
             ${errorFilter}
           ORDER BY id
-          LIMIT $2
+          LIMIT $3
           FOR UPDATE SKIP LOCKED
        )
        UPDATE woocommerce_sync_items AS item

@@ -75,7 +75,7 @@ function parseOptionalPositiveIntegerInput(value, label) {
   return parsed;
 }
 
-function buildCustomRunOpts({ scope, dryRun, skipMedia, limit, startAfterExternalId, publication }) {
+function buildCustomRunOpts({ scope, dryRun, skipMedia, skipStock, limit, startAfterExternalId, publication }) {
   const resolvedScope = String(scope || "").trim();
   if (!SCOPES.includes(resolvedScope)) {
     throw new Error(`Invalid scope: ${scope}. Use one of: ${SCOPES.join(", ")}`);
@@ -84,6 +84,7 @@ function buildCustomRunOpts({ scope, dryRun, skipMedia, limit, startAfterExterna
     scope: resolvedScope,
     dryRun: parseBooleanInput(dryRun, true),
     skipMedia: parseBooleanInput(skipMedia, false),
+    skipStock: parseBooleanInput(skipStock, false),
     limit: parseLimitInput(limit),
   };
   const parsedStartAfter = parseOptionalPositiveIntegerInput(startAfterExternalId, "Start-after external id");
@@ -316,6 +317,7 @@ async function runCustomCatalog(rl, runtime) {
   const scope = await prompt(rl, "Scope: ");
   const dryRun = await prompt(rl, "Dry run? (y/n, default: y): ");
   const skipMedia = await prompt(rl, "Skip media? (y/n, default: n): ");
+  const skipStock = await prompt(rl, "Skip stock? (y/n, default: n): ");
   const limit = await prompt(rl, "Limit products (blank = all): ");
   const startAfterExternalId = await prompt(rl, "Start after Woo external_id/id (blank = beginning): ");
   let publication = null;
@@ -330,6 +332,7 @@ async function runCustomCatalog(rl, runtime) {
     scope,
     dryRun,
     skipMedia,
+    skipStock,
     limit,
     startAfterExternalId,
     publication,

@@ -46,10 +46,15 @@ export const updateItemHandler = (strapi: Strapi) => async (ctx: any) => {
       return { data: { message: "Cart item removed successfully" } };
     }
 
+    // Stock only gates an increase. A line can already hold more than is
+    // available (stock moved, or a reservation lowered it); rejecting the
+    // decrease too would leave the shopper unable to shrink the very quantity
+    // that is over the limit, and lowering it can never oversell.
+    const currentCount = Number(cartItem.Count) || 0;
     const available = cartItem.product_variation?.product_stock
       ? getAvailableStockCount(cartItem.product_variation.product_stock)
       : 0;
-    if (available < count) {
+    if (count > currentCount && available < count) {
       return ctx.badRequest("Not enough stock", {
         data: {
           success: false,

@@ -11,12 +11,19 @@ const { MediaMappingStore } = require("./lib/mediaMappingStore");
 const MediaSync = require("./lib/media");
 const { mapPoolOrdered, mapPoolAsync } = require("./lib/concurrency");
 const { ImportReport } = require("./lib/report");
-const { resolveScope, needsProductLoop } = require("./lib/presets");
+const { resolveScope, needsProductLoop, writesVariationAttributes } = require("./lib/presets");
 const T = require("./lib/transforms");
 const G = require("./lib/genericAttributes");
 const CE = require("./lib/categoryEditorial");
 const { sourceTimestampHeaders, wooSourceTimestamps } = require("../utils/sourceTimestamps");
 const { createSourceGate } = require("../migration-v2/lib/sourceGate");
+
+// Opt-in: create variations that have no price in WooCommerce at Price 0 and
+// unpublished instead of failing the product. Off by default so a published
+// product can never gain a free, purchasable variation by accident.
+const ALLOW_MISSING_PRICE = ["1", "true", "yes"].includes(
+  String(process.env.CATALOG_ALLOW_MISSING_PRICE || "").toLowerCase(),
+);
 
 function normalizeRunLimit(limit) {
   return Number.isFinite(limit) ? limit : "all";
@@ -48,6 +55,9 @@ function stableStringify(value) {
 function fingerprint(value) {
   return crypto.createHash("sha256").update(stableStringify(value)).digest("hex");
 }
+
+/** Scopes whose production apply must be pinned to a reviewed manifest. */
+const MANIFEST_GATED_SCOPES = new Set(["category-editorial", "content-refresh"]);
 
 function readExpectedCategoryEditorialManifest(value) {
   if (!value) return null;
@@ -285,6 +295,7 @@ class CatalogEngine {
    * @param {boolean} [opts.dryRun=false]
    * @param {string}  [opts.scope="full"]   full | no-media | categories | stock | price | media
    * @param {boolean} [opts.skipMedia=false]
+   * @param {boolean} [opts.skipStock=false] leave product-stocks untouched
    * @param {number}  [opts.limit=Infinity]
    */
   async runSync(opts = {}) {
@@ -293,6 +304,7 @@ class CatalogEngine {
     const categoryLimit = opts.categoryLimit ?? Infinity;
     let scope = opts.scope || "full";
     let skipMedia = Boolean(opts.skipMedia);
+    let skipStock = Boolean(opts.skipStock);
     let categoryEditorialManifest = opts.categoryEditorialManifest || null;
     let startAfterExternalId = parseOptionalPositiveInt(opts.startAfterExternalId);
     const publication = opts.publication || null;
@@ -309,6 +321,7 @@ class CatalogEngine {
       dryRun = Boolean(run.options?.dryRun);
       scope = run.options?.scope || scope;
       skipMedia = Boolean(run.options?.skipMedia);
+      skipStock = Boolean(run.options?.skipStock);
       categoryEditorialManifest = run.options?.categoryEditorialManifest || null;
       limit = parseRunLimit(run.options?.limit);
       startAfterExternalId = parseOptionalPositiveInt(run.options?.startAfterExternalId);
@@ -322,6 +335,7 @@ class CatalogEngine {
           dryRun,
           scope,
           skipMedia,
+          skipStock,
           limit: normalizeRunLimit(limit),
           startAfterExternalId,
           categoryEditorialManifest,
@@ -329,7 +343,7 @@ class CatalogEngine {
       });
     }
 
-    const flags = resolveScope(scope, { skipMedia });
+    const flags = resolveScope(scope, { skipMedia, skipStock });
 
     const report = new ImportReport({
       command: dryRun ? `dry-run:${scope}` : `sync:${scope}`,
@@ -373,7 +387,7 @@ class CatalogEngine {
       await this.preflight();
 
     // Attribute cache only matters when we write variations with attributes.
-    if (flags.variations && flags.variationFields === "all") {
+    if (writesVariationAttributes(flags)) {
       await this.repo.preloadAttributes();
       await this.repo.preloadGenericAttributes();
     }
@@ -405,9 +419,13 @@ class CatalogEngine {
           : allCategories);
       await this.syncCategoryEditorial(report, dryRun, allCategories, selectedCategories, {
         expectedManifest: categoryEditorialManifest,
+        // Scopes that name category editorial as a reason to run must pass the
+        // frozen manifest back before they may apply it to production. `full`
+        // is deliberately outside this set: there the editorial phase is a
+        // by-product of a whole-catalog pass, not the point of the run.
         requireExpectedManifest:
           !dryRun &&
-          scope === "category-editorial" &&
+          MANIFEST_GATED_SCOPES.has(scope) &&
           (this.options.environment || "production") === "production",
       });
     }
@@ -895,10 +913,9 @@ class CatalogEngine {
       productIndex: await this.repo.buildExternalIndex("/products", productIndexParams),
       variationIndex: await this.repo.buildExternalIndex("/product-variations"),
       stockIndex: await this.repo.buildExternalIndex("/product-stocks"),
-      globalAttributeRegistry:
-        flags.variations && flags.variationFields === "all"
-          ? await this.woo.fetchGlobalAttributeRegistry()
-          : new Map(),
+      globalAttributeRegistry: writesVariationAttributes(flags)
+        ? await this.woo.fetchGlobalAttributeRegistry()
+        : new Map(),
       observer: options.observer || null,
       crashHooks: options.crashHooks || null,
     };
@@ -991,7 +1008,7 @@ class CatalogEngine {
     const configured = Math.max(1, Number(this.config.catalog.concurrency?.products) || 1);
     if (configured <= 1) return 1;
     const touchesSharedCaches =
-      flags.products || flags.media || flags.variationFields === "all" || flags.categoryEditorial;
+      flags.products || flags.media || writesVariationAttributes(flags) || flags.categoryEditorial;
     if (touchesSharedCaches) {
       this.logger.info(
         `Product concurrency ${configured} requested but this scope writes products/tags/attributes/media ` +
@@ -1087,7 +1104,13 @@ class CatalogEngine {
 
     const wcVariations = isSimple ? [] : await this.woo.fetchAllVariations(wcProduct.id);
     const stockEligibility = T.evaluateProductStockEligibility(wcProduct, wcVariations);
-    if (!stockEligibility.eligible) {
+    // Every ineligible reason is a stock-configuration one (unmanaged simple
+    // product, unmanaged sibling variation, no live variations), and the payload
+    // it carries is a list of variations whose stock must not be written. It is
+    // therefore a guard on the stock phase, not on the product: with stock off,
+    // skipping here would cost a content-refresh/price/media run the product's
+    // description, gallery and relations over a setting none of them touch.
+    if (flags.stock && !stockEligibility.eligible) {
       ctx.observer?.onProduct?.({ wcProduct, wcVariations, stockEligibility });
       report.count("products", "skipped");
       if (runContext && !childrenOnly) {
@@ -1109,6 +1132,23 @@ class CatalogEngine {
     let productStrapiId = existing?.id || this.mapping.getStrapiId("products", wcProduct.id) || previousProduct?.strapiId;
     let productFingerprint = null;
     let publicationIntent = null;
+
+    // stock/price/media scopes: skip products that were never imported. This has
+    // to precede the product write, not follow it — content-refresh both writes
+    // products and declines to create them, and the check is identical for the
+    // scopes that never write products at all.
+    if (flags.onlyExisting && !productStrapiId) {
+      report.count("products", "skipped");
+      if (runContext && !childrenOnly) {
+        runContext.store.completeItem(
+          runContext.runId,
+          itemKey,
+          { status: "skipped", reason: "missing-existing-product" },
+          runContext.lockToken,
+        );
+      }
+      return;
+    }
 
     // Product record write (only in scopes that touch products).
     if (flags.products && !childrenOnly) {
@@ -1180,22 +1220,10 @@ class CatalogEngine {
           this.logger.warn(`⚠️ size guide ${wcProduct.id} (${wcProduct.name}): ${error.message}`);
         }
       }
-    } else if (flags.onlyExisting && !productStrapiId) {
-      // stock/price/media scopes: skip products that were never imported.
-      report.count("products", "skipped");
-      if (runContext && !childrenOnly) {
-        runContext.store.completeItem(
-          runContext.runId,
-          itemKey,
-          { status: "skipped", reason: "missing-existing-product" },
-          runContext.lockToken,
-        );
-      }
-      return;
     }
 
     let attributeContext = { plan: attributePlan, resolvedDimensions: null };
-    if (flags.variations && flags.variationFields === "all") {
+    if (writesVariationAttributes(flags)) {
       if (dryRun) {
         const counters = this.repo.inspectProductAttributePlan(attributePlan);
         report.count("attributes", "created", counters.created);
@@ -1564,7 +1592,7 @@ class CatalogEngine {
     if (dryRun) {
       if (flags.variations) {
         const pricing = T.computeVariationPricing(wcVariation, parentProduct, this.multiplier);
-        if (pricing.priceMissing && !existing) {
+        if (pricing.priceMissing && !existing && !ALLOW_MISSING_PRICE) {
           report.fail("variations", { wcId: wcVariation.id, stage: "price", error: "no price in WooCommerce" });
           if (runContext) {
             runContext.store.failItem(runContext.runId, itemKey, {
@@ -1631,16 +1659,32 @@ class CatalogEngine {
           preserveMissingPrice: Boolean(existing),
         });
         if (priceMissing && !existing) {
-          report.fail("variations", { wcId: wcVariation.id, stage: "price", error: "no price in WooCommerce" });
-          if (runContext) {
-            runContext.store.failItem(runContext.runId, itemKey, {
-              entity: "variations",
-              wcId: wcVariation.id,
-              stage: "price",
-              error: "no price in WooCommerce",
-            }, runContext.lockToken);
+          if (!ALLOW_MISSING_PRICE) {
+            report.fail("variations", { wcId: wcVariation.id, stage: "price", error: "no price in WooCommerce" });
+            if (runContext) {
+              runContext.store.failItem(runContext.runId, itemKey, {
+                entity: "variations",
+                wcId: wcVariation.id,
+                stage: "price",
+                error: "no price in WooCommerce",
+              }, runContext.lockToken);
+            }
+            return;
           }
-          return;
+          // CATALOG_ALLOW_MISSING_PRICE=1: WooCommerce drafts often carry stock but no
+          // price yet. Create the row at Price 0 but never as purchasable — it stays
+          // unpublished until a later run sees a real price (updates preserve it).
+          data.Price = 0;
+          data.IsPublished = false;
+          this.logger.warn(`⚠️ variation ${wcVariation.id} has no price in WooCommerce; creating at 0, unpublished`);
+        }
+        if (flags.variationFields === "no-price" && existing) {
+          // A content refresh rewrites the relation half of the row and leaves
+          // the money alone: the shop edits prices outside WooCommerce, so
+          // re-sending Woo's would silently revert that. Dropped before the
+          // fingerprint so the run's record matches what was actually sent.
+          delete data.Price;
+          delete data.DiscountPrice;
         }
         await this.attachAttributes(wcVariation, data, attributeContext);
         variationFingerprint = fingerprint(data);

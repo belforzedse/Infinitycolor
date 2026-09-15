@@ -60,6 +60,16 @@ const BULK_STATUS_OPTIONS: { status: OrderLifecycleStatus; label: string }[] = [
   { status: "Shipment", label: "ارسال شده" },
 ];
 
+// The «نمایش سفارش‌های رزروی» checkbox is a one-click form of the advanced
+// «سفارش رزروی» filter: same server-side condition (the reserve group relation
+// is present), sent alongside the operator's own advanced filters rather than
+// stored with them, so it never shows up as a removable filter chip.
+const RESERVE_ONLY_FILTER: AdvancedFilterItem = {
+  field: "[reserve_shipment][id]",
+  operator: "$notNull",
+  value: "true",
+};
+
 export default function OrdersPage() {
   const canCreateManualOrder = useCan("order.manual.create");
   // Bulk actions call the exact same per-order operations, so they must use
@@ -79,6 +89,7 @@ export default function OrdersPage() {
     useState<string[]>([]);
   const [shippingMethodsLoading, setShippingMethodsLoading] = useState(true);
   const [shippingMethodsFailed, setShippingMethodsFailed] = useState(false);
+  const [reserveOnly, setReserveOnly] = useState(false);
   const [, setPage] = useQueryState("page", { defaultValue: "1" });
   useLegacyFilterQueryCleanup();
 
@@ -115,6 +126,12 @@ export default function OrdersPage() {
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  // Tab badges must count the same population the table shows, so the reserve
+  // toggle is folded into the counts request exactly as it is into the list.
+  const countFilters = useMemo(
+    () => (reserveOnly ? [...advancedFilters, RESERVE_ONLY_FILTER] : advancedFilters),
+    [advancedFilters, reserveOnly],
+  );
   const {
     counts: statusCounts,
     activeReserveGroups,
@@ -122,7 +139,7 @@ export default function OrdersPage() {
     error: countsError,
     refresh: refreshOrderCounts,
   } = useOrderStatusCounts({
-    filters: advancedFilters,
+    filters: countFilters,
     search: debouncedSearchQuery,
     shippingMethodCodes: selectedShippingMethodCodes,
   });
@@ -350,14 +367,22 @@ export default function OrdersPage() {
       listAdminOrders({
         page,
         pageSize,
-        filters,
+        filters: reserveOnly ? [...filters, RESERVE_ONLY_FILTER] : filters,
         signal,
         tab: activeTab,
         sort,
         search: debouncedSearchQuery,
         shippingMethodCodes: selectedShippingMethodCodes,
       }),
-    [activeTab, debouncedSearchQuery, selectedShippingMethodCodes, sort],
+    [activeTab, debouncedSearchQuery, reserveOnly, selectedShippingMethodCodes, sort],
+  );
+
+  const handleReserveOnlyChange = useCallback(
+    (next: boolean) => {
+      setReserveOnly(next);
+      void setPage("1");
+    },
+    [setPage],
   );
 
   const handleFiltersChange = useCallback(
@@ -497,6 +522,23 @@ export default function OrdersPage() {
           )}
         </div>
       </div>
+      <div className="mb-3">
+        <label
+          className={`inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors ${
+            reserveOnly
+              ? "border-infinity-primary bg-infinity-primary-lighter/30 text-infinity-primary"
+              : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300"
+          }`}
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-300 accent-infinity-primary"
+            checked={reserveOnly}
+            onChange={(event) => handleReserveOnlyChange(event.target.checked)}
+          />
+          <span>نمایش سفارش‌های رزروی</span>
+        </label>
+      </div>
       <ShippingMethodFilters
         methods={shippingMethods}
         selectedCodes={selectedShippingMethodCodes}
@@ -527,17 +569,20 @@ export default function OrdersPage() {
           sort,
           search: debouncedSearchQuery,
           shippingMethodCodes: selectedShippingMethodCodes,
+          reserveOnly,
         })}
         refreshOnVisibility={false}
         isFiltered={
           Boolean(debouncedSearchQuery) ||
           advancedFilters.length > 0 ||
-          selectedShippingMethodCodes.length > 0
+          selectedShippingMethodCodes.length > 0 ||
+          reserveOnly
         }
         onClearFilters={() => {
           setSearchQuery("");
           setDebouncedSearchQuery("");
           setSelectedShippingMethodCodes([]);
+          setReserveOnly(false);
           handleFiltersChange([]);
         }}
         // `selectionProps` must be threaded through: without it the mobile rows

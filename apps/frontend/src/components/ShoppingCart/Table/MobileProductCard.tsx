@@ -4,6 +4,7 @@ import type React from "react";
 import Image from "next/image";
 import imageLoader from "@/utils/imageLoader";
 import ShoppingCartQuantityControl from "../QuantityControl";
+import CartStockAdjustedBadge from "../CartStockAdjustedBadge";
 import type { CartItem } from "@/contexts/CartContext";
 import { faNum } from "@/utils/faNum";
 import { resolveCartItemImage } from "../cartItemImage";
@@ -113,12 +114,13 @@ export default function ShoppingCartMobileProductCard({ cartItem }: Props) {
           <span className="text-xs text-neutral-500">تعداد</span>
         </div>
 
-        <div className="col-span-3 flex items-center gap-1 p-3">
+        <div className="col-span-3 flex flex-col items-start gap-1 p-3">
           <ShoppingCartQuantityControl
             quantity={cartItem.quantity}
             itemId={cartItem.id}
             availableStock={cartItem.availableStock}
           />
+          <CartStockAdjustedBadge cartItemId={cartItem.cartItemId} />
         </div>
       </div>
 

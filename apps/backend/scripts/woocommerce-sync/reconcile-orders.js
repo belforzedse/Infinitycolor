@@ -241,11 +241,15 @@ function summarizeSourceOrder(order) {
     lineCount: lines.length,
     orphanLineCount,
     totalToman: null,
+    // WooCommerce `total` plus the wallet leg of a split payment — what the
+    // importer stores as the contract amount (see transforms.classifyFeeLines).
+    salesValueToman: null,
     shippingToman: null,
     moneyIssue: null,
   };
   try {
     summary.totalToman = T.wooMoneyToToman(order?.total ?? "0");
+    summary.salesValueToman = (BigInt(summary.totalToman) + BigInt(T.classifyFeeLines(order).walletLeg)).toString();
   } catch (error) {
     summary.moneyIssue = `ORDER_TOTAL_UNPARSEABLE:${safeErrorCode(error)}`;
   }
@@ -600,6 +604,7 @@ async function runDryRun({ source, pool, options }) {
   const emptyNonzero = summaries.filter((entry) => entry.isEmptyNonzeroTotal);
   const moneyIssues = summaries.filter((entry) => entry.moneyIssue);
   const totals = summaries.filter((entry) => entry.totalToman !== null).map((entry) => entry.totalToman);
+  const salesValues = summaries.filter((entry) => entry.salesValueToman !== null).map((entry) => entry.salesValueToman);
   const shipping = summaries.filter((entry) => entry.shippingToman !== null).map((entry) => entry.shippingToman);
 
   report.mode = "dry-run";
@@ -635,6 +640,10 @@ async function runDryRun({ source, pool, options }) {
   report.money = {
     ...money,
     sourceGrossToman: sumIntegerStrings(totals),
+    // Compare `importedContractToman` with this, not with sourceGrossToman:
+    // the contract carries the full sales value, WooCommerce `total` only the
+    // gateway leg.
+    sourceSalesValueToman: sumIntegerStrings(salesValues),
     sourceShippingToman: sumIntegerStrings(shipping),
   };
   report.samples = {

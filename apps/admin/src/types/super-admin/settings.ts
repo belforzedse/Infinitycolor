@@ -199,6 +199,15 @@ export type SuperAdminSettings = {
   homeCustomSectionEnabled: boolean;
   homeCustomSectionTitle: string;
   homeCustomSectionAssignment: HomeGifPromoAssignment;
+  homeCustomSectionTwoEnabled: boolean;
+  homeCustomSectionTwoTitle: string;
+  homeCustomSectionTwoAssignment: HomeGifPromoAssignment;
+  homeCustomSectionThreeEnabled: boolean;
+  homeCustomSectionThreeTitle: string;
+  homeCustomSectionThreeAssignment: HomeGifPromoAssignment;
+  homeCustomSectionViewAllHref: string;
+  homeCustomSectionTwoViewAllHref: string;
+  homeCustomSectionThreeViewAllHref: string;
   homeWeeklyPicksEnabled: boolean;
   homeWeeklyPicksProductIds: number[];
   homeEveryoneFollowsEnabled: boolean;
@@ -284,6 +293,15 @@ export const defaultSettings = (): SuperAdminSettings => ({
   homeCustomSectionEnabled: false,
   homeCustomSectionTitle: "",
   homeCustomSectionAssignment: { mode: "manual", productIds: [], categorySlug: "" },
+  homeCustomSectionTwoEnabled: false,
+  homeCustomSectionTwoTitle: "",
+  homeCustomSectionTwoAssignment: { mode: "manual", productIds: [], categorySlug: "" },
+  homeCustomSectionThreeEnabled: false,
+  homeCustomSectionThreeTitle: "",
+  homeCustomSectionThreeAssignment: { mode: "manual", productIds: [], categorySlug: "" },
+  homeCustomSectionViewAllHref: "",
+  homeCustomSectionTwoViewAllHref: "",
+  homeCustomSectionThreeViewAllHref: "",
   homeWeeklyPicksEnabled: false,
   homeWeeklyPicksProductIds: [],
   homeEveryoneFollowsEnabled: false,
@@ -395,6 +413,19 @@ export const normalizeSuperAdminSettings = (
   homeCustomSectionAssignment: normalizeHomeProductSectionAssignment(
     data?.homeCustomSectionAssignment,
   ),
+  homeCustomSectionTwoEnabled: Boolean(data?.homeCustomSectionTwoEnabled),
+  homeCustomSectionTwoTitle: normalizeString(data?.homeCustomSectionTwoTitle),
+  homeCustomSectionTwoAssignment: normalizeHomeProductSectionAssignment(
+    data?.homeCustomSectionTwoAssignment,
+  ),
+  homeCustomSectionThreeEnabled: Boolean(data?.homeCustomSectionThreeEnabled),
+  homeCustomSectionThreeTitle: normalizeString(data?.homeCustomSectionThreeTitle),
+  homeCustomSectionThreeAssignment: normalizeHomeProductSectionAssignment(
+    data?.homeCustomSectionThreeAssignment,
+  ),
+  homeCustomSectionViewAllHref: normalizeString(data?.homeCustomSectionViewAllHref),
+  homeCustomSectionTwoViewAllHref: normalizeString(data?.homeCustomSectionTwoViewAllHref),
+  homeCustomSectionThreeViewAllHref: normalizeString(data?.homeCustomSectionThreeViewAllHref),
   homeWeeklyPicksEnabled: Boolean(data?.homeWeeklyPicksEnabled),
   homeWeeklyPicksProductIds: normalizeHomepageProductIds(data?.homeWeeklyPicksProductIds),
   homeEveryoneFollowsEnabled: Boolean(data?.homeEveryoneFollowsEnabled),

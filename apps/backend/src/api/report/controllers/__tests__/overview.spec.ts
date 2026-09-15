@@ -24,12 +24,12 @@ jest.mock("../../services/umami", () => ({
   getUmamiBehaviorReport: jest.fn(),
   getUmamiRealtimeReport: jest.fn(),
   normalizeRange: jest.fn((start?: string, end?: string) => ({
-    startDate: start || "2026-01-01",
-    endDate: end || "2026-01-31",
+    startDate: start || "2026-09-14",
+    endDate: end || "2026-09-30",
   })),
   previousRange: jest.fn((range: { startDate: string; endDate: string }) => ({
-    startDate: "2025-12-01",
-    endDate: "2025-12-31",
+    startDate: "2026-08-14",
+    endDate: "2026-09-12",
   })),
 }));
 
@@ -50,11 +50,12 @@ const STUB_JOINS = {
 };
 
 const PERIOD_ROW = {
-  gross: "1000000",
+  gross: "1000000", // merchandise lines only
   units: "4",
   orders_count: "3",
   discounts: "50000",
   refund_irr: "2400000", // -> 240,000 Toman
+  shipping: "120000", // orders.shipping_cost, already Toman
 };
 
 const DELIVERY_ROW = {
@@ -109,19 +110,65 @@ describe("report.overview", () => {
     roleIsAllowedMock.mockReturnValue(true);
   });
 
-  it("computes store-wide sales KPIs (IRR->Toman, net = gross - discounts - refunds)", async () => {
+  it("computes store-wide sales KPIs (IRR->Toman, gross includes shipping, net does not)", async () => {
     const controller = loadController();
-    const ctx = createCtx({ query: { start: "2026-01-01", end: "2026-01-31" } });
+    const ctx = createCtx({ query: { start: "2026-09-14", end: "2026-09-30" } });
 
     await controller.overview(ctx);
 
     expect(ctx.badRequest).not.toHaveBeenCalled();
     const { sales } = ctx.body.data;
-    expect(sales.gross.current).toBe(1_000_000);
+    // Store-wide gross is what the orders were written for: 1,000,000 of lines
+    // plus the 120,000 delivery fee (decision D16).
+    expect(sales.shipping.current).toBe(120_000);
+    expect(sales.gross.current).toBe(1_120_000);
     expect(sales.refunds.current).toBe(240_000);
+    // ...but net stays merchandise: gross - shipping - discounts - refunds.
     expect(sales.net.current).toBe(710_000);
+    expect(
+      sales.gross.current -
+        sales.shipping.current -
+        sales.discounts.current -
+        sales.refunds.current,
+    ).toBe(sales.net.current);
     // current and previous read the same mocked row -> zero change
     expect(sales.gross.change).toBe(0);
+  });
+
+  it("keeps shipping out of the per-product gross it shares with the product reports", async () => {
+    const controller = loadController();
+    const ctx = createCtx({ query: { start: "2026-09-14", end: "2026-09-30" } });
+
+    await controller.overview(ctx);
+
+    // The one SQL statement must read orders.shipping_cost off paid_orders, never
+    // through irrToToman (the column is stored in Toman).
+    const raw = (global as any).strapi.db.connection.raw as jest.Mock;
+    const periodSql = raw.mock.calls
+      .map(([sql]: [string]) => sql)
+      .find((sql: string) => sql.includes("SUM(line_gross) FROM itemized"));
+    expect(periodSql).toContain("SUM(o.shipping_cost)");
+    expect(periodSql).toContain("JOIN orders o ON o.id = po.order_id");
+  });
+
+  it("floors both the current and the previous window at ۲۳ شهریور ۱۴۰۵", async () => {
+    const controller = loadController();
+    const ctx = createCtx({ query: { start: "2026-09-01", end: "2026-09-30" } });
+
+    await controller.overview(ctx);
+
+    const floorMs = new Date("2026-09-13T20:30:00.000Z").getTime();
+    const raw = (global as any).strapi.db.connection.raw as jest.Mock;
+    const bound = raw.mock.calls.flatMap(([, bindings]: [string, unknown[] | undefined]) =>
+      (bindings ?? []).filter((value): value is Date => value instanceof Date),
+    );
+    expect(bound.length).toBeGreaterThan(0);
+    for (const value of bound) expect(value.getTime()).toBeGreaterThanOrEqual(floorMs - 1);
+    // The requested window is cut at the floor; the mocked previous window
+    // (2026-08-14..2026-09-12) lies wholly before it and is echoed as the
+    // empty window, end before start.
+    expect(ctx.body.data.range).toEqual({ start: "2026-09-14", end: "2026-09-30" });
+    expect(ctx.body.data.previous).toEqual({ start: "2026-09-14", end: "2026-09-13" });
   });
 
   it("keeps behavioral reporting in its purpose-specific workspace", async () => {

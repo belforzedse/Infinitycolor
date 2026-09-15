@@ -51,14 +51,17 @@ function makeResponse(overrides: Partial<any> = {}) {
     previous: { start: "2025-12-01", end: "2025-12-31" },
     timezone: "Asia/Tehran",
     currency: "Toman",
-    definitionVersion: "sales.net@1",
+    definitionVersion: "sales.grossWithShipping@1",
     sales: {
-      gross: makeDelta(1_000_000, 800_000),
+      // Gross carries the delivery fee; net does not (decision D16):
+      // 1,120,000 − 120,000 − 50,000 − 50,000 = 900,000.
+      gross: makeDelta(1_120_000, 800_000),
       net: makeDelta(900_000, 700_000),
       units: makeDelta(10, 8),
       orders: makeDelta(5, 4),
       discounts: makeDelta(50_000, 40_000),
       refunds: makeDelta(50_000, 60_000),
+      shipping: makeDelta(120_000, 100_000),
     },
     analyticsDelivery: {
       status: "healthy",
@@ -88,7 +91,57 @@ describe("OverviewReportPage", () => {
         end: "2026-01-31",
       }),
     );
-    await screen.findByText("فروش ناخالص");
+    // «فروش ناخالص» now appears twice: the KPI heading and the reconciliation
+    // formula's term label. Pin this one to the heading.
+    await screen.findByRole("heading", { name: "فروش ناخالص", level: 3 });
+  });
+
+  it("hands the delivery fee back before reaching the merchandise-only فروش خالص", async () => {
+    getOverviewMock.mockResolvedValue(makeResponse());
+    render(<OverviewReportPage />);
+
+    // gross 1,120,000 − shipping 120,000 − discounts 50,000 − refunds 50,000 = net 900,000.
+    const formula = (await screen.findAllByText("فروش ناخالص"))
+      .map((el) => el.closest("div.rounded-xl"))
+      .find(Boolean) as HTMLElement;
+    expect(formula).toBeTruthy();
+    expect(formula).toHaveTextContent("۱٬۱۲۰٬۰۰۰ تومان");
+    expect(formula).toHaveTextContent("۱۲۰٬۰۰۰ تومان");
+    expect(formula).toHaveTextContent("۹۰۰٬۰۰۰ تومان");
+    // Shipping is a subtracted term, not a hidden caveat: the reader must see it leave.
+    expect(formula).toHaveTextContent(/هزینه ارسال/);
+    expect(formula).toHaveTextContent(/«فروش خالص» فقط فروش کالاست/);
+    // The cross-page relationship is approximate; it must never read as equality.
+    expect(formula).toHaveTextContent(/تقریباً/);
+  });
+
+  it("shows the shipping total as its own KPI so the gross can be taken apart", async () => {
+    getOverviewMock.mockResolvedValue(makeResponse());
+    render(<OverviewReportPage />);
+
+    await screen.findByRole("heading", { name: "هزینه ارسال", level: 3 });
+  });
+
+  it("falls back to the three-term identity against an API older than the shipping field", async () => {
+    // Admin and API ship as separate images: an older API sends no `shipping`
+    // AND its gross is still line-only, so the page must drop the term rather
+    // than read `undefined.current` and white-screen.
+    const response = makeResponse();
+    delete response.sales.shipping;
+    response.sales.gross = makeDelta(1_000_000, 800_000);
+    getOverviewMock.mockResolvedValue(response);
+    render(<OverviewReportPage />);
+
+    const formula = (await screen.findAllByText("فروش ناخالص"))
+      .map((el) => el.closest("div.rounded-xl"))
+      .find(Boolean) as HTMLElement;
+    // 1,000,000 − 50,000 − 50,000 = 900,000, the pre-D16 arithmetic.
+    expect(formula).toHaveTextContent("۱٬۰۰۰٬۰۰۰ تومان");
+    expect(formula).toHaveTextContent("۹۰۰٬۰۰۰ تومان");
+    expect(formula).toHaveTextContent(/هیچ‌کدام از این ارقام هزینه ارسال را در بر نمی‌گیرند/);
+    expect(
+      screen.queryByRole("heading", { name: "هزینه ارسال", level: 3 }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the durable commerce delivery health", async () => {

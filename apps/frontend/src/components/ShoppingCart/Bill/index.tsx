@@ -12,10 +12,6 @@ import ReserveShipping from "./ReserveShipping";
 import ReserveFulfillmentChoice, {
   type ActiveReserveSummary,
 } from "./ReserveFulfillmentChoice";
-import StockAdjustmentDialog, {
-  type StockAdjustedRow,
-  type StockRemovedRow,
-} from "./StockAdjustmentDialog";
 import { CheckoutProgress } from "../CheckoutProgress";
 import { orderIdAtom, orderNumberAtom, submitOrderStepAtom } from "@/atoms/Order";
 import { useAtom, useAtomValue } from "jotai";
@@ -34,11 +30,14 @@ import { faNum } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateErrorMessage } from "@/lib/errorTranslations";
 
-// Reserve ("ارسال رزروی" / 48h) ships enabled and can be killed from the
-// environment without a deploy, mirroring the backend's
-// `ENABLE_RESERVE_ORDER_EXPIRY_JOB`. While disabled we never fetch an active
-// reserve, never render the reserve UI, and never attach reserve data on submit,
-// so checkout always proceeds as a normal (non-reserve) order.
+// Reserve ("ارسال رزروی" / 48h) ships enabled and is soft-locked by building
+// with NEXT_PUBLIC_INFINITY_RESERVE_CHECKOUT_ENABLED="false" (a NEXT_PUBLIC_
+// value is inlined at build time, so flipping it means a frontend rebuild, not
+// a runtime env change). While disabled we never fetch an active reserve, never
+// render the reserve UI, and never attach reserve data on submit, so checkout
+// always proceeds as a normal (non-reserve) order. This is UI-only: the backend
+// endpoints stay open, and the backend's `ENABLE_RESERVE_ORDER_EXPIRY_JOB` must
+// stay on so groups opened before the lock still close on schedule.
 const RESERVE_FEATURE_ENABLED =
   process.env.NEXT_PUBLIC_INFINITY_RESERVE_CHECKOUT_ENABLED !== "false";
 
@@ -138,12 +137,6 @@ function ShoppingCartBillForm({}: Props) {
   const discountPreviewSeqRef = React.useRef(0);
   const lastSnappEligibilityKeyRef = React.useRef<string | null>(null);
   const snappEligibilitySeqRef = React.useRef(0);
-  // Holds checkout stock changes awaiting the shopper's acknowledgement (C1).
-  const [stockAdjustment, setStockAdjustment] = useState<{
-    adjusted: StockAdjustedRow[];
-    removed: StockRemovedRow[];
-    data: FormData;
-  } | null>(null);
   const [_submitOrderStep, setSubmitOrderStep] = useAtom(submitOrderStepAtom);
   const [_, setOrderId] = useAtom(orderIdAtom);
   const [__, setOrderNumber] = useAtom(orderNumberAtom);
@@ -252,7 +245,7 @@ function ShoppingCartBillForm({}: Props) {
   // fallback to normal shipping is explained rather than silently applied.
   const [reserveWindowClosed, setReserveWindowClosed] = useState(false);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
-  const { totalPrice, totalItems, clearCart, cartItems, openDrawer, refreshCart } = useCart();
+  const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice } = useCart();
   const selectableGateways = useMemo(
     () => availableGateways.filter((gw) => gw !== "snappay" || snappEligible),
     [availableGateways, snappEligible],
@@ -548,6 +541,20 @@ function ShoppingCartBillForm({}: Props) {
     });
   };
 
+  /**
+   * The notice renders above the checkout form, so a shopper who tapped "pay"
+   * at the bottom of a long page would otherwise see the button simply go idle.
+   * Deferred a frame because the element only exists after the state commit.
+   */
+  const scrollStockNoticeIntoView = () => {
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("cart-stock-notice")
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
   // Resolve a human product name for a stock-change entry. Prefer the backend
   // title, then the (still-current) cart snapshot, then a generic fallback —
   // the backend `message` is English so it is never shown to the user.
@@ -576,7 +583,17 @@ function ShoppingCartBillForm({}: Props) {
     setReviewedServerQuote(null);
   }, []);
 
-  const submitOrder = async (data: FormData, skipStockCheck: boolean) => {
+  // Checkout errors used to be inline-only. On a phone the error box sits above
+  // the fold while the pay button is at the bottom, so a rejected submit looked
+  // like the button had simply done nothing -- which is exactly how shoppers
+  // reported it. Toast it as well so the failure is visible where they tapped.
+  // A fixed id means repeated taps replace the toast instead of stacking.
+  const failPayment = React.useCallback((message: string) => {
+    setError(message);
+    toast.error(message, { id: "checkout-error" });
+  }, []);
+
+  const submitOrder = async (data: FormData) => {
     setError(null);
 
     const selectedAddressId = data.address?.id ? Number(data.address.id) : undefined;
@@ -587,62 +604,62 @@ function ShoppingCartBillForm({}: Props) {
     // An open window must never attach by default: the shopper picks combined or
     // separate fulfillment explicitly.
     if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null) {
-      setError("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
+      failPayment("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
       return;
     }
 
     if (!isMergeMode) {
       if (!selectedAddressId && !inlineAddressFieldsFilled) {
-        setError("لطفاً یک آدرس ذخیره شده را انتخاب یا آدرس جدید وارد کنید");
+        failPayment("لطفاً یک آدرس ذخیره شده را انتخاب یا آدرس جدید وارد کنید");
         return;
       }
       if (!data.shippingMethod) {
-        setError("لطفاً روش ارسال را انتخاب کنید");
+        failPayment("لطفاً روش ارسال را انتخاب کنید");
         return;
       }
     }
 
     if (!data.phoneNumber || data.phoneNumber.trim() === "") {
-      setError("لطفاً شماره تماس خود را وارد کنید");
+      failPayment("لطفاً شماره تماس خود را وارد کنید");
       return;
     }
 
     // Validate phone number format (basic check)
     const cleanPhone = data.phoneNumber.replace(/\D/g, "");
     if (cleanPhone.length < 10) {
-      setError("شماره تماس وارد شده معتبر نیست");
+      failPayment("شماره تماس وارد شده معتبر نیست");
       return;
     }
 
     if (!isMergeMode && !selectedAddressId) {
       if (!watchProvince || !watchCity) {
-        setError("لطفاً استان و شهر را انتخاب کنید");
+        failPayment("لطفاً استان و شهر را انتخاب کنید");
         return;
       }
       const postal = (watchPostalCode || "").replace(/\D/g, "");
       if (postal.length !== 10) {
-        setError("کد پستی باید ۱۰ رقم باشد");
+        failPayment("کد پستی باید ۱۰ رقم باشد");
         return;
       }
       if (!watchFullAddress || watchFullAddress.trim().length < 5) {
-        setError("لطفاً آدرس دقیق را وارد کنید");
+        failPayment("لطفاً آدرس دقیق را وارد کنید");
         return;
       }
     }
 
     // Validate total price is positive
     if (totalPrice <= 0) {
-      setError("مبلغ سفارش باید بیشتر از صفر باشد");
+      failPayment("مبلغ سفارش باید بیشتر از صفر باشد");
       return;
     }
 
     if (selectableGateways.length === 0 || !selectableGateways.includes(gateway)) {
-      setError("درگاه پرداخت انتخاب شده در دسترس نیست");
+      failPayment("درگاه پرداخت انتخاب شده در دسترس نیست");
       return;
     }
 
     if (!data.acceptTerms) {
-      setError(TERMS_ACCEPTANCE_ERROR);
+      failPayment(TERMS_ACCEPTANCE_ERROR);
       return;
     }
 
@@ -662,31 +679,30 @@ function ShoppingCartBillForm({}: Props) {
         properties: { gateway, quantity: totalItems },
       });
 
-      if (!skipStockCheck) {
-        const stockValid = await CartService.checkCartStock();
+      // Always re-checked: the shopper's previous attempt may itself be what
+      // corrected the cart, and nothing is allowed to pay past this guard.
+      const stockValid = await CartService.checkCartStock();
 
-        if (!stockValid.valid) {
-          if (stockValid.cartIsEmpty) {
-            setError("سبد خرید شما خالی است");
-            return;
-          }
+      if (!stockValid.valid) {
+        if (stockValid.cartIsEmpty) {
+          failPayment("سبد خرید شما خالی است");
+          return;
+        }
 
-          const adjusted: StockAdjustedRow[] = (stockValid.itemsAdjusted ?? []).map((it) => ({
-            name: resolveStockItemName(it),
-            requested: it.requested,
-            newQuantity: it.newQuantity,
-          }));
-          const removed: StockRemovedRow[] = (stockValid.itemsRemoved ?? []).map((it) => ({
-            name: resolveStockItemName(it),
-          }));
+        const adjustedCartItemIds = (stockValid.itemsAdjusted ?? []).map((it) =>
+          String(it.cartItemId),
+        );
+        const removedNames = (stockValid.itemsRemoved ?? []).map((it) => resolveStockItemName(it));
 
-          if (adjusted.length || removed.length) {
-            // Reconcile the on-page totals with the server-corrected cart, then
-            // pause and require the shopper to acknowledge the changes (C1).
-            await refreshCart();
-            setStockAdjustment({ adjusted, removed, data });
-            return;
-          }
+        if (adjustedCartItemIds.length || removedNames.length) {
+          // Reconcile the on-page totals with the server-corrected cart and say
+          // so inline. This one submit is cancelled rather than paying a total
+          // the shopper never saw, but there is no dialog to dismiss: their next
+          // tap pays the amount now on screen.
+          await refreshCart();
+          setStockNotice({ adjustedCartItemIds, removedNames });
+          scrollStockNoticeIntoView();
+          return;
         }
       }
 
@@ -735,7 +751,7 @@ function ShoppingCartBillForm({}: Props) {
 
       if (quoteTotal !== shopperVisibleTotal && !quoteWasReviewed) {
         setReviewedServerQuote({ quoteHash: quote.quoteHash, total: quoteTotal });
-        setError(
+        failPayment(
           `مبلغ نهایی توسط فروشگاه به ${quoteTotal.toLocaleString("fa-IR")} تومان به‌روزرسانی شد. لطفاً مبلغ را بررسی و دوباره ثبت سفارش را انتخاب کنید.`,
         );
         return;
@@ -858,7 +874,7 @@ function ShoppingCartBillForm({}: Props) {
           console.error("Error details:", errorDetails);
         }
 
-        setError(displayError);
+        failPayment(displayError);
         return;
       }
 
@@ -1020,27 +1036,14 @@ function ShoppingCartBillForm({}: Props) {
         displayError = getUserFacingErrorMessage(err, "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.");
       }
 
-      setError(displayError);
+      failPayment(displayError);
     } finally {
       submitInProgressRef.current = false;
       setIsSubmitting(false);
     }
   };
 
-  const onSubmit = (data: FormData) => submitOrder(data, false);
-
-  const handleStockConfirm = () => {
-    if (!stockAdjustment) return;
-    const { data } = stockAdjustment;
-    setStockAdjustment(null);
-    // Cart already reconciled with the server; skip the re-check and finalize.
-    void submitOrder(data, true);
-  };
-
-  const handleStockCancel = () => {
-    setStockAdjustment(null);
-    openDrawer();
-  };
+  const onSubmit = (data: FormData) => submitOrder(data);
 
   const requiredAmountIrr = totalToman * 10;
   const submitOrderStep = useAtomValue(submitOrderStepAtom);
@@ -1108,15 +1111,6 @@ function ShoppingCartBillForm({}: Props) {
         </div>
       )}
 
-      <StockAdjustmentDialog
-        isOpen={!!stockAdjustment}
-        adjusted={stockAdjustment?.adjusted ?? []}
-        removed={stockAdjustment?.removed ?? []}
-        onConfirm={handleStockConfirm}
-        onCancel={handleStockCancel}
-        isSubmitting={isSubmitting}
-      />
-
       {RESERVE_FEATURE_ENABLED && activeReserve && (
         <ReserveFulfillmentChoice
           reserve={activeReserve}
@@ -1169,10 +1163,7 @@ function ShoppingCartBillForm({}: Props) {
                 )}
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-neutral-600">هزینه ارسال</dt>
-                  <dd
-                    data-testid="reserve-merge-shipping"
-                    className="font-medium text-emerald-700"
-                  >
+                  <dd data-testid="reserve-merge-shipping" className="font-medium text-emerald-700">
                     ۰ تومان
                   </dd>
                 </div>

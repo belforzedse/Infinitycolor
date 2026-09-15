@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { SITE_URL } from "@/config/site";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 
 /**
@@ -90,7 +91,7 @@ export interface SEOConfig {
 
 const defaultSEOConfig: SEOConfig = {
   siteName: "فروشگاه اینفینیتی",
-  siteUrl: process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co",
+  siteUrl: SITE_URL,
   defaultImage: "/images/og-default.jpg",
   twitterHandle: "@infinitycolor",
 };

@@ -11,6 +11,7 @@ import {
   rejectAdminListRequest,
   type AdminFilterDefinition,
 } from "../../../utils/admin-list-query";
+import { expandSearchTermVariants } from "../../../utils/searchTermVariants";
 
 const MAX_CUSTOM_SORT_PRODUCTS = 50_000;
 
@@ -238,7 +239,13 @@ export default {
       { removedAt: removed ? { $notNull: true } : { $null: true } },
       ...filters,
     ];
-    if (search) conditions.push({ Title: { $containsi: search } });
+    // "W00288" must find the product whose title stores the code as "W 00288".
+    const searchVariants = expandSearchTermVariants(search);
+    if (searchVariants.length > 0) {
+      conditions.push({
+        $or: searchVariants.map((variant) => ({ Title: { $containsi: variant } })),
+      });
+    }
     const where = { $and: conditions };
     const productQuery = strapi.query("api::product.product");
     const recycleCountPromise = productQuery.count({

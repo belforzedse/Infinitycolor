@@ -8,7 +8,7 @@
  * components):
  *
  *   [products:1,2,"slug-with-,comma"]
- *   [promo:{"v":1,"title":"…","cta":{…}}]
+ *   A promo marker wraps `promo:{"v":1,"title":"…","cta":{…}}` in square brackets.
  *
  * Two details matter more than they look. Indices are computed on the original
  * string, because the renderer slices that string around each block — the

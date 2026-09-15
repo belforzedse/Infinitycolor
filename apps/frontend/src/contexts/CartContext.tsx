@@ -11,7 +11,11 @@ import { centralAuth, subscribeToAuthState } from "@/lib/central-auth";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
 import { isOnline } from "@/utils/offlineQueue";
 import { trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
-import { CART_STOCK_LIMIT_MESSAGE, isCartStockLimitError } from "@/utils/cartStock";
+import {
+  CART_STOCK_LIMIT_MESSAGE,
+  isCartStockLimitError,
+  type CartStockNoticeState,
+} from "@/utils/cartStock";
 
 export interface CartItem {
   id: string;
@@ -64,11 +68,22 @@ const readGuestCart = (): CartItem[] => {
     const raw = localStorage.getItem("cart");
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || !parsed.every(isStoredCartItem)) {
+    if (!Array.isArray(parsed)) {
       localStorage.removeItem("cart");
       return [];
     }
-    return parsed;
+    // Drop only the lines that fail validation. A single malformed entry — a
+    // NaN price serializes to null, so one variation with an unparsable Price
+    // is enough — must not take the rest of the cart with it.
+    const items = parsed.filter(isStoredCartItem);
+    if (items.length !== parsed.length) {
+      try {
+        localStorage.setItem("cart", JSON.stringify(items));
+      } catch {
+        // A failed rewrite must not cost us the lines we just recovered.
+      }
+    }
+    return items;
   } catch {
     try {
       localStorage.removeItem("cart");
@@ -99,6 +114,14 @@ interface CartContextType {
   /** Re-fetch the cart from the server (no-op for guest carts). */
   refreshCart: () => Promise<void>;
   migrateLocalCartToApi: () => Promise<void>;
+  /**
+   * Set when the server corrected the cart on its own (stock moved underneath
+   * it). Rendered as one inline banner rather than a blocking dialog, so the
+   * shopper is told what changed without checkout being interrupted.
+   */
+  stockNotice: CartStockNoticeState | null;
+  setStockNotice: (notice: CartStockNoticeState | null) => void;
+  dismissStockNotice: () => void;
 }
 
 const CartContext = createContext<CartContextType | null>(null);
@@ -116,6 +139,10 @@ export const useOptionalCart = () => useContext(CartContext);
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  // Server-side cart corrections awaiting the shopper's eyes. Held here rather
+  // than in the checkout form so the cart list and the bill can show the same
+  // notice, and so it survives the step change between them.
+  const [stockNotice, setStockNotice] = useState<CartStockNoticeState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isCartReady, setIsCartReady] = useState(false);
   const [initializedMode, setInitializedMode] = useState<"guest" | "account" | null>(null);
@@ -433,16 +460,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const migrateLocalCartToApi = async () => {
     if (typeof window === "undefined") return;
 
-    const storedCart = localStorage.getItem("cart");
-    if (!storedCart) return;
-
-    let localCartItems: CartItem[] = [];
-    try {
-      localCartItems = JSON.parse(storedCart);
-    } catch (error) {
-      console.warn("Unable to parse local cart during migration:", error);
-    }
-
+    // Read through the same validator the guest view uses, so the merge sees
+    // exactly the lines the shopper was shown rather than raw storage.
+    const localCartItems = readGuestCart();
     if (!localCartItems.length) return;
 
     try {
@@ -462,7 +482,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const mergeItems = Array.from(deduped.values())
         .filter((item) => item.variationId && Number.isInteger(Number(item.variationId)))
         .map((item) => ({ productVariationId: Number(item.variationId), quantity: item.quantity }));
-      if (!mergeItems.length) return;
+      if (!mergeItems.length) {
+        // Nothing is mergeable without a variation id, and the stored cart
+        // stays put, so this would otherwise retry silently on every init.
+        console.warn("Guest cart has no variation ids to merge; leaving it in local storage.");
+        return;
+      }
       let mergeId = localStorage.getItem("guestCartMergeId");
       if (!mergeId) {
         mergeId =
@@ -471,10 +496,21 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem("guestCartMergeId", mergeId);
       }
       const result = await CartService.mergeGuestCart(mergeId, mergeItems);
+      const adjusted = result.adjusted ?? [];
+      const rejected = result.rejected ?? [];
+      const landed = (result.accepted ?? []).length + adjusted.length;
       localStorage.removeItem("cart");
       localStorage.removeItem("guestCartMergeId");
-      if (result.adjusted.length || result.rejected.length) {
-        const affected = result.adjusted.length + result.rejected.length;
+      // Always report, replay included: a replay only reaches us after a lost
+      // response told the shopper their items were preserved, so staying quiet
+      // here would empty the cart right after promising the opposite.
+      if (!landed && rejected.length) {
+        // Every line was unavailable, so the account cart is still empty.
+        // Saying the cart "was synced" here reads as the site losing the
+        // cart; name the reason instead.
+        notify.error(`${rejected.length} کالای سبد مهمان موجود نبود و به سبد شما اضافه نشد`);
+      } else if (adjusted.length || rejected.length) {
+        const affected = adjusted.length + rejected.length;
         notify.error(`موجودی ${affected} مورد از سبد تغییر کرده بود؛ سبد با موجودی فعلی هماهنگ شد`);
       } else {
         notify.success("سبد خرید مهمان به حساب شما منتقل شد");
@@ -500,6 +536,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   };
 
   const addToCart = async (newItem: CartItem) => {
+    // The shopper is editing the cart, so a banner about an earlier server-side
+    // correction is stale; drop it rather than leaving it to be re-read.
+    setStockNotice(null);
     if (isLoggedIn) {
       if (!isOnline()) {
         notify.error("برای تغییر سبد حساب کاربری، اتصال اینترنت را برقرار کنید");
@@ -636,6 +675,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   };
 
   const removeFromCart = async (id: string) => {
+    // The shopper is editing the cart, so a banner about an earlier server-side
+    // correction is stale; drop it rather than leaving it to be re-read.
+    setStockNotice(null);
     if (isLoggedIn) {
       // Optimistic update: remove item from cart immediately
       const previousCartItems = cartItems;
@@ -711,6 +753,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateQuantity = async (id: string, quantity: number) => {
+    // The shopper is editing the cart, so a banner about an earlier server-side
+    // correction is stale; drop it rather than leaving it to be re-read.
+    setStockNotice(null);
     if (quantity <= 0) {
       removeFromCart(id);
       return;
@@ -718,7 +763,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     const item = cartItems.find((cartItem) => cartItem.id === id || cartItem.cartItemId === id);
     if (!item) return;
-    if (typeof item.availableStock === "number" && quantity > item.availableStock) {
+    // Only an increase can outrun stock. A line can already sit above its
+    // available count (stock moved, or a reservation lowered it), and blocking
+    // the decrease there would strand the shopper with a quantity they cannot
+    // reduce — while lowering it strictly reduces the oversell.
+    const isIncrease = quantity > item.quantity;
+    if (isIncrease && typeof item.availableStock === "number" && quantity > item.availableStock) {
       notify.error(CART_STOCK_LIMIT_MESSAGE);
       return;
     }
@@ -873,6 +923,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (isLoggedIn) await fetchUserCart();
     },
     migrateLocalCartToApi,
+    stockNotice,
+    setStockNotice,
+    dismissStockNotice: () => setStockNotice(null),
   };
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

@@ -739,12 +739,18 @@ export default factories.createCoreController(
               populate: {
                 product_variation: {
                   populate: {
-                    product_color: true,
-                    product_size: true,
+                    product_variation_color: true,
+                    product_variation_size: true,
                     product_variation_model: true,
                     product: { populate: ["CoverImage"] },
                   },
                 },
+                // The order line's own snapshot of the chosen variation, frozen at
+                // checkout. Read this first: the variation may later be re-pointed or
+                // unpublished, and only these columns say what the customer bought.
+                product_color: true,
+                product_size: true,
+                product_variation_model: true,
               },
             },
             shipping: true,

@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { SITE_URL } from "@/config/site";
 import { ENDPOINTS, getStrapiServerUrl } from "@/constants/api";
 import { SITEMAP_TAG } from "@/constants/cacheTags";
 import logger from "@/utils/logger";
@@ -9,7 +10,7 @@ import {
   type PdpEligibleProduct,
 } from "@/services/product/catalog";
 
-const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
+const BASE_URL = SITE_URL;
 
 interface BlogPost {
   id: number;

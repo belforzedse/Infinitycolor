@@ -335,6 +335,42 @@ test("fullOrders records durable outcomes for success and failure", async () => 
   assert.equal(outcomes.find((row) => String(row.sourceId) === "2").errorCode, "ORDER_ITEMS_EMPTY");
 });
 
+test("requeueItems targets other source types by error-code prefix and never excluded rows", async () => {
+  const calls = [];
+  const pool = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [{ id: 5, source_id: 30198, last_error_code: "TYPEERROR:FETCH_FAILED" }] };
+    },
+  };
+  const store = new SyncStateStore(pool, { owner: "t", leaseSeconds: 60 });
+  const rows = await store.requeueItems({
+    sourceTypes: ["customer", "wallet"],
+    statuses: ["quarantined"],
+    errorCodePrefixes: ["TYPEERROR", "ERROR:"],
+    limit: 10,
+  });
+  assert.equal(rows.length, 1);
+  assert.match(calls[0].sql, /source_type = ANY\(\$1::text\[\]\)/);
+  assert.match(calls[0].sql, /status <> 'excluded'/);
+  assert.match(calls[0].sql, /last_error_code LIKE ANY\(\$4::text\[\]\)/);
+  assert.deepEqual(calls[0].params, [["customer", "wallet"], ["quarantined"], 10, ["TYPEERROR%", "ERROR:%"]]);
+});
+
+test("requeueItems can name specific orders for a targeted re-import", async () => {
+  const calls = [];
+  const pool = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [{ id: 1, source_id: 1221621, last_error_code: null }] };
+    },
+  };
+  const store = new SyncStateStore(pool, { owner: "t", leaseSeconds: 60 });
+  await store.requeueItems({ sourceTypes: ["order"], statuses: ["completed"], sourceIds: [1221621, "1221604"], limit: 2 });
+  assert.match(calls[0].sql, /source_id::text = ANY\(\$4::text\[\]\)/);
+  assert.deepEqual(calls[0].params, [["order"], ["completed"], 2, ["1221621", "1221604"]]);
+});
+
 test("requeueOrders SQL marks quarantined rows pending", async () => {
   const calls = [];
   const store = new SyncStateStore({
@@ -348,7 +384,8 @@ test("requeueOrders SQL marks quarantined rows pending", async () => {
   assert.equal(rows.length, 1);
   assert.match(calls[0].sql, /status = 'pending'/);
   assert.match(calls[0].sql, /FOR UPDATE SKIP LOCKED/);
-  assert.deepEqual(calls[0].params[0], ["quarantined"]);
+  // Delegates to requeueItems: source types first, then statuses, then limit.
+  assert.deepEqual(calls[0].params, [["order"], ["quarantined"], 10]);
 });
 
 const campaignOrder = {

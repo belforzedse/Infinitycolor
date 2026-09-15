@@ -24,6 +24,7 @@ export interface StoryRailStory {
   Media?: StoryRailMediaAsset;
   Thumbnail?: StoryRailMediaAsset;
   DurationMs: number;
+  CtaUrl?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }

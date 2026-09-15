@@ -23,6 +23,7 @@ describe("StoryForm", () => {
           MediaType: "image",
           mediaId: 7,
           mediaUrl: "/uploads/a.webp",
+          CtaUrl: "/pdp/old-product",
         }}
         onSubmit={onSubmit}
         isLoading={false}
@@ -40,7 +41,38 @@ describe("StoryForm", () => {
         SortOrder: 0,
         Media: 7,
         Thumbnail: null,
+        CtaUrl: "/pdp/old-product",
       });
+    });
+  });
+
+  it("submits a cleared CTA as null so Strapi removes the destination", async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+
+    render(
+      <StoryForm
+        initialValues={{
+          Title: "عنوان",
+          IsActive: true,
+          SortOrder: 2,
+          MediaType: "image",
+          mediaId: 7,
+          mediaUrl: "/uploads/a.webp",
+          CtaUrl: "/pdp/old-product",
+        }}
+        onSubmit={onSubmit}
+        isLoading={false}
+        submitLabel="ذخیره تغییرات"
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("لینک دکمه «مشاهده لینک»"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "ذخیره تغییرات" }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ CtaUrl: null }));
     });
   });
 });

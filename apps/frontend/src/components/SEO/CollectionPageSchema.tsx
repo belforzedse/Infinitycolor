@@ -1,3 +1,4 @@
+import { SITE_URL } from "@/config/site";
 import { safeJsonLd } from "@/utils/seo";
 
 interface ProductItem {
@@ -28,7 +29,6 @@ export function CollectionPageSchema({
     return null;
   }
 
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://new.infinitycolor.co";
 
   const schema = {
     "@context": "https://schema.org",

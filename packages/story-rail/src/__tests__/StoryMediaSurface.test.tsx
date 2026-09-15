@@ -44,7 +44,11 @@ function renderSurface(
 
   const rerenderWith = (
     nextPayload: StoryMediaPayload,
-    nextOptions: { isActive?: boolean; isPaused?: boolean; itemId?: string } = {},
+    nextOptions: {
+      isActive?: boolean;
+      isPaused?: boolean;
+      itemId?: string;
+    } = {},
   ) =>
     view.rerender(
       <StoryPlaybackContext.Provider value={store}>
@@ -54,7 +58,10 @@ function renderSurface(
           next={next}
           prev={noop}
           setDuration={noop}
-          item={{ id: nextOptions.itemId ?? options.itemId ?? "item-1", metadata: nextPayload }}
+          item={{
+            id: nextOptions.itemId ?? options.itemId ?? "item-1",
+            metadata: nextPayload,
+          }}
           isActive={nextOptions.isActive ?? true}
           isPaused={nextOptions.isPaused ?? false}
         />
@@ -73,7 +80,12 @@ async function reachPlaying(
   { durationSeconds = 5 }: { durationSeconds?: number } = {},
 ) {
   await act(async () => {
-    media.set({ readyState: 4, duration: durationSeconds, videoWidth: 1080, videoHeight: 1920 });
+    media.set({
+      readyState: 4,
+      duration: durationSeconds,
+      videoWidth: 1080,
+      videoHeight: 1920,
+    });
     media.emit("loadedmetadata");
     media.emit("canplay");
     await media.resolvePlay();
@@ -107,7 +119,12 @@ describe("StoryMediaSurface — video", () => {
     const media = controlMedia(video()!);
 
     await act(async () => {
-      media.set({ readyState: 4, duration: 10, videoWidth: 1080, videoHeight: 1920 });
+      media.set({
+        readyState: 4,
+        duration: 10,
+        videoWidth: 1080,
+        videoHeight: 1920,
+      });
       media.emit("loadedmetadata");
       media.emit("canplay");
       await media.resolvePlay();
@@ -237,7 +254,12 @@ describe("StoryMediaSurface — autoplay", () => {
     const media = controlMedia(video()!);
 
     await act(async () => {
-      media.set({ readyState: 4, duration: 5, videoWidth: 1080, videoHeight: 1920 });
+      media.set({
+        readyState: 4,
+        duration: 5,
+        videoWidth: 1080,
+        videoHeight: 1920,
+      });
       media.emit("canplay");
     });
     // Already muted, so there is no fallback left to try.
@@ -263,6 +285,51 @@ describe("StoryMediaSurface — autoplay", () => {
   });
 });
 
+describe("StoryMediaSurface — CTA", () => {
+  it("renders the fixed Persian CTA for a safe storefront-relative destination", () => {
+    renderSurface(
+      payloadFor({
+        kind: "image",
+        src: "https://cdn.test/uploads/story.webp",
+        ctaUrl: "/pdp/example?color=blue",
+      }),
+    );
+
+    const link = screen.getByRole("link", { name: "مشاهده لینک" });
+    expect(link).toHaveAttribute("href", "/pdp/example?color=blue");
+    expect(link).not.toHaveAttribute("target");
+  });
+
+  it("opens a safe absolute CTA in a separate tab", () => {
+    renderSurface(
+      payloadFor({
+        kind: "image",
+        src: "https://cdn.test/uploads/story.webp",
+        ctaUrl: "https://example.com/collection",
+      }),
+    );
+
+    const link = screen.getByRole("link", { name: "مشاهده لینک" });
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it.each(["javascript:alert(1)", "//evil.example/path", "/\\evil.example/path"])(
+    "does not render an unsafe CTA destination %s",
+    (ctaUrl) => {
+      renderSurface(
+        payloadFor({
+          kind: "image",
+          src: "https://cdn.test/uploads/story.webp",
+          ctaUrl,
+        }),
+      );
+
+      expect(screen.queryByTestId("story-cta")).not.toBeInTheDocument();
+    },
+  );
+});
+
 describe("StoryMediaSurface — undecodable and broken media", () => {
   it("falls back to the cover image when the video track decodes no frames", async () => {
     // Production's HEVC-in-.mov: Chromium reports readyState 4, fires `playing` and
@@ -271,7 +338,13 @@ describe("StoryMediaSurface — undecodable and broken media", () => {
     const media = controlMedia(video()!);
 
     await act(async () => {
-      media.set({ readyState: 4, duration: 10, videoWidth: 0, videoHeight: 0, totalVideoFrames: 0 });
+      media.set({
+        readyState: 4,
+        duration: 10,
+        videoWidth: 0,
+        videoHeight: 0,
+        totalVideoFrames: 0,
+      });
       media.emit("loadedmetadata");
       media.emit("canplay");
       await media.resolvePlay();
@@ -306,7 +379,13 @@ describe("StoryMediaSurface — undecodable and broken media", () => {
     const media = controlMedia(video()!);
 
     await act(async () => {
-      media.set({ readyState: 4, duration: 10, videoWidth: 0, videoHeight: 0, totalVideoFrames: 0 });
+      media.set({
+        readyState: 4,
+        duration: 10,
+        videoWidth: 0,
+        videoHeight: 0,
+        totalVideoFrames: 0,
+      });
       media.emit("canplay");
       await media.resolvePlay();
     });
@@ -357,7 +436,10 @@ describe("StoryMediaSurface — undecodable and broken media", () => {
           setDuration={noop}
           item={{
             id: "item-1",
-            metadata: payloadFor({ src: "https://cdn.test/uploads/a.mp4?token=SECRET", poster: undefined }),
+            metadata: payloadFor({
+              src: "https://cdn.test/uploads/a.mp4?token=SECRET",
+              poster: undefined,
+            }),
           }}
           isActive
           isPaused={false}
@@ -385,12 +467,19 @@ describe("StoryMediaSurface — undecodable and broken media", () => {
 
 describe("StoryMediaSurface — lifecycle", () => {
   it("ignores events and a settling play() promise from the story just left", async () => {
-    const { video, next, progress, rerenderWith } = renderSurface(payloadFor(), { itemId: "item-1" });
+    const { video, next, progress, rerenderWith } = renderSurface(payloadFor(), {
+      itemId: "item-1",
+    });
     const first = video()!;
     const firstMedia = controlMedia(first);
 
     await act(async () => {
-      firstMedia.set({ readyState: 4, duration: 10, videoWidth: 1080, videoHeight: 1920 });
+      firstMedia.set({
+        readyState: 4,
+        duration: 10,
+        videoWidth: 1080,
+        videoHeight: 1920,
+      });
       firstMedia.emit("canplay");
     });
 
@@ -419,7 +508,9 @@ describe("StoryMediaSurface — lifecycle", () => {
   });
 
   it("pauses and mutes the outgoing video when the story changes", async () => {
-    const { video, rerenderWith } = renderSurface(payloadFor(), { itemId: "item-1" });
+    const { video, rerenderWith } = renderSurface(payloadFor(), {
+      itemId: "item-1",
+    });
     const first = video()!;
     const firstMedia = controlMedia(first);
     await reachPlaying(firstMedia);
@@ -462,7 +553,10 @@ describe("StoryMediaSurface — lifecycle", () => {
 
     const pausesBefore = media.state().pauseCalls;
     await act(async () => {
-      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      Object.defineProperty(document, "visibilityState", {
+        value: "hidden",
+        configurable: true,
+      });
       document.dispatchEvent(new Event("visibilitychange"));
     });
 
@@ -472,7 +566,10 @@ describe("StoryMediaSurface — lifecycle", () => {
     expect(progress()).toBeCloseTo(0.1, 2);
 
     await act(async () => {
-      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      Object.defineProperty(document, "visibilityState", {
+        value: "visible",
+        configurable: true,
+      });
       document.dispatchEvent(new Event("visibilitychange"));
     });
     expect(media.state().paused).toBe(false);
@@ -489,7 +586,12 @@ describe("StoryMediaSurface — lifecycle", () => {
 describe("StoryMediaSurface — images and text", () => {
   it("runs an image story on its configured duration and advances once", async () => {
     const { next, progress, view } = renderSurface(
-      payloadFor({ kind: "image", src: "https://cdn.test/uploads/a.webp", poster: undefined, durationMs: 4000 }),
+      payloadFor({
+        kind: "image",
+        src: "https://cdn.test/uploads/a.webp",
+        poster: undefined,
+        durationMs: 4000,
+      }),
     );
     expect(view.container.querySelector("video")).toBeNull();
 
@@ -511,7 +613,12 @@ describe("StoryMediaSurface — images and text", () => {
 
   it("keeps an image story frozen until it has actually loaded", async () => {
     const { progress, next } = renderSurface(
-      payloadFor({ kind: "image", src: "https://cdn.test/uploads/a.webp", poster: undefined, durationMs: 2000 }),
+      payloadFor({
+        kind: "image",
+        src: "https://cdn.test/uploads/a.webp",
+        poster: undefined,
+        durationMs: 2000,
+      }),
     );
     await flushProgress(5000);
     expect(progress()).toBe(0);
@@ -520,7 +627,13 @@ describe("StoryMediaSurface — images and text", () => {
 
   it("renders the unavailable text card without any media element", async () => {
     const { view, next } = renderSurface(
-      payloadFor({ kind: "text", src: "", poster: undefined, text: "Story unavailable", durationMs: 2000 }),
+      payloadFor({
+        kind: "text",
+        src: "",
+        poster: undefined,
+        text: "Story unavailable",
+        durationMs: 2000,
+      }),
     );
     expect(view.container.querySelector("video")).toBeNull();
     expect(screen.getByText("Story unavailable")).toBeInTheDocument();

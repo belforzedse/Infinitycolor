@@ -9,6 +9,7 @@ import OrderService from "@/services/order";
 import PaymentStatusButton from "./PaymentStatusButton";
 import { faNum } from "@/utils/faNum";
 import { translateOrderStatus } from "@/utils/statusTranslations";
+import { getOrderItemAttributes } from "@/utils/orderDisplayHelpers";
 
 interface OrderListProps {
   className?: string;
@@ -55,8 +56,9 @@ export default function OrderList({ className = "" }: OrderListProps) {
 
   const renderOrderItems = (items: OrderItem[]) => {
     return items.map((item) => {
-      const product = item.product_variation.product;
+      const product = item.product_variation?.product;
       const coverUrl = product?.cover_image?.url;
+      const { color, size, model } = getOrderItemAttributes(item);
 
       return (
         <div key={item.id} className="flex items-center border-b border-gray-100 py-2 last:border-0">
@@ -79,15 +81,9 @@ export default function OrderList({ className = "" }: OrderListProps) {
           <div className="mr-3 flex-grow">
             <h4 className="text-sm font-medium">{item.ProductTitle}</h4>
             <div className="text-xs mt-1 flex flex-wrap gap-x-3 text-gray-600">
-              {item.product_variation.product_color && (
-                <span>رنگ: {item.product_variation.product_color.Title}</span>
-              )}
-              {item.product_variation.product_size && (
-                <span>سایز: {item.product_variation.product_size.Title}</span>
-              )}
-              {item.product_variation.product_variation_model && (
-                <span>مدل: {item.product_variation.product_variation_model.Title}</span>
-              )}
+              {color && <span>رنگ: {color}</span>}
+              {size && <span>سایز: {size}</span>}
+              {model && <span>مدل: {model}</span>}
             </div>
           </div>
           <div className="flex flex-col items-end text-left">

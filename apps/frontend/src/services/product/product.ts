@@ -1006,6 +1006,15 @@ export const getProductModels = (product: ProductDetail) => {
   return Array.from(models.values());
 };
 
+/**
+ * Most units a shopper may put in the cart in one go, and the ceiling below
+ * which the PDP tells them how many are left. One constant drives both the
+ * quantity dropdown and the «تنها N عدد باقی مانده» hint so they cannot
+ * disagree, and the backend mirrors it in `cart/services/lib/stock.ts` to
+ * decide when a stock move changes anything a shopper can see.
+ */
+export const LOW_STOCK_DISPLAY_THRESHOLD = 5;
+
 // Helper function to get the available stock count for a variation
 export const getAvailableStockCount = (
   variation: ProductDetail["attributes"]["product_variations"]["data"][0],
@@ -1173,7 +1182,7 @@ export const getRelatedProductsByMainCategory = async (
     return [];
   }
 
-  const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}?view=card&filters[product_main_category][id][$eq]=${categoryId}&filters[id][$ne]=${productId}&filters[Status][$eq]=Active&filters[removedAt][$null]=true&filters[product_variations][Price][$gte]=1&filters[product_variations][product_stock][Count][$gt]=0&pagination[limit]=${limit}`;
+  const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}?view=card&filters[product_main_category][id][$eq]=${categoryId}&filters[id][$ne]=${productId}&filters[Status][$eq]=Active&filters[removedAt][$null]=true&filters[product_variations][Price][$gte]=1&availability=in-stock&pagination[limit]=${limit}`;
 
   try {
     const response = await fetch(
@@ -1213,7 +1222,7 @@ export const getRelatedProductsByOtherCategories = async (
       .map((id, index) => `filters[product_other_categories][id][$in][${index}]=${id}`)
       .join("&");
 
-    const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}?view=card&${categoryFilters}&filters[id][$ne]=${productId}&filters[Status][$eq]=Active&filters[removedAt][$null]=true&filters[product_variations][Price][$gte]=1&filters[product_variations][product_stock][Count][$gt]=0&pagination[limit]=${limit}`;
+    const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}?view=card&${categoryFilters}&filters[id][$ne]=${productId}&filters[Status][$eq]=Active&filters[removedAt][$null]=true&filters[product_variations][Price][$gte]=1&availability=in-stock&pagination[limit]=${limit}`;
 
     const response = await fetch(
       `${getProductCardFetchBaseUrl()}${endpoint}`,

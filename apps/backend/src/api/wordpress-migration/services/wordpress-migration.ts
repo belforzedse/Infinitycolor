@@ -18,6 +18,7 @@ const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 const ORDER_UID = "api::order.order";
 const ORDER_ITEM_UID = "api::order-item.order-item";
 const CONTRACT_UID = "api::contract.contract";
+const CONTRACT_TRANSACTION_UID = "api::contract-transaction.contract-transaction";
 const VARIATION_UID = "api::product-variation.product-variation";
 const ADDRESS_UID = "api::local-user-address.local-user-address";
 const PROVINCE_UID = "api::shipping-province.shipping-province";
@@ -25,7 +26,12 @@ const CITY_UID = "api::shipping-city.shipping-city";
 
 const ORDER_STATUSES = new Set(["Paying", "Started", "Shipment", "Done", "Returned", "Cancelled"]);
 const CONTRACT_STATUSES = new Set(["Not Ready", "Confirmed", "Finished", "Failed", "Cancelled"]);
-const PAYMENT_GATEWAYS = new Set(["Unknown", "Wallet", "Mellat", "SnappPay", "SamanKish", "ZarinPal"]);
+const PAYMENT_GATEWAYS = new Set([
+  "Unknown", "Wallet", "Mellat", "SnappPay", "SamanKish", "ZarinPal", "Manual", "CardToCard", "Other",
+]);
+/** Channels a settlement leg can carry; `OffGateway` exists only on legs. */
+const SETTLEMENT_CHANNELS = new Set([...PAYMENT_GATEWAYS, "OffGateway"]);
+const SETTLEMENT_LEGS = new Set(["gateway", "wallet", "return"]);
 const CONTRACT_TYPES = new Set(["Cash", "Credit"]);
 
 const SNAPSHOT_ENTITIES: Record<string, { uid: string; select: string[] }> = {
@@ -171,6 +177,112 @@ function positiveCount(value: unknown): number {
   const count = Number(value);
   if (!Number.isSafeInteger(count) || count < 1) throw new MigrationInputError("ORDER_ITEM_COUNT_INVALID");
   return count;
+}
+
+type SettlementLeg = {
+  leg: "gateway" | "wallet" | "return";
+  channel: string;
+  amountToman: string;
+  date: string;
+};
+
+/**
+ * Validate the settlement legs the importer derived from WooCommerce. Legs are
+ * keyed by kind (one per kind) so the rows they become are stable across
+ * re-imports: `transaction_<id>` for the gateway leg (the same id the
+ * backfill script used, so its rows are updated in place), `_wallet` and
+ * `_return` for the others.
+ */
+function validatedSettlements(body: any): SettlementLeg[] | null {
+  if (body?.settlements === undefined || body?.settlements === null) return null;
+  if (!Array.isArray(body.settlements)) throw new MigrationInputError("ORDER_SETTLEMENTS_INVALID");
+  const seen = new Set<string>();
+  return body.settlements.map((raw: any) => {
+    const leg = String(raw?.leg || "");
+    const channel = String(raw?.channel || "");
+    if (!SETTLEMENT_LEGS.has(leg) || seen.has(leg)) throw new MigrationInputError("ORDER_SETTLEMENT_LEG_INVALID");
+    if (!SETTLEMENT_CHANNELS.has(channel)) throw new MigrationInputError("ORDER_SETTLEMENT_CHANNEL_INVALID");
+    seen.add(leg);
+    const amountToman = exactNonNegativeInteger(raw?.amountToman, "ORDER_SETTLEMENT_AMOUNT_INVALID");
+    if (amountToman === "0") throw new MigrationInputError("ORDER_SETTLEMENT_AMOUNT_INVALID");
+    return { leg, channel, amountToman, date: validatedDate(raw?.date) } as SettlementLeg;
+  });
+}
+
+function settlementExternalId(sourceId: string, leg: SettlementLeg["leg"]): string {
+  return leg === "gateway" ? `transaction_${sourceId}` : `transaction_${sourceId}_${leg}`;
+}
+
+/**
+ * Bring the contract's WooCommerce-owned transactions in line with `legs`.
+ *
+ * Amounts are stored in Rial (every live writer persists `total * 10`; see
+ * `computePaidAmountToman`). Both money legs are `Type: "Gateway"` so the admin
+ * refund sizing, which only counts Gateway rows, sees the whole payment. Only
+ * rows this importer owns (`external_source = 'woocommerce'`, one of the three
+ * ids) are ever touched; a manual or system transaction on the same contract is
+ * left alone.
+ */
+async function reconcileSettlements(
+  strapiInstance: any,
+  sourceId: string,
+  contractId: number,
+  legs: SettlementLeg[],
+  appliedDiscountToman: string,
+  trx: any,
+) {
+  const txQuery = strapiInstance.db.query(CONTRACT_TRANSACTION_UID);
+  const ownedIds = (["gateway", "wallet", "return"] as const).map((leg) => settlementExternalId(sourceId, leg));
+  const existing: any[] = await txQuery.findMany({
+    where: { external_source: "woocommerce", external_id: { $in: ownedIds } },
+    select: ["id", "external_id"],
+    limit: 10,
+    transacting: trx,
+  } as any);
+  const byExternalId = new Map<string, any>();
+  for (const row of existing) {
+    const key = String(row.external_id || "");
+    if (byExternalId.has(key)) throw new MigrationInputError("ORDER_SETTLEMENT_AMBIGUOUS", 409);
+    byExternalId.set(key, row);
+  }
+
+  let created = 0;
+  let updated = 0;
+  let deleted = 0;
+  const retained = new Set<string>();
+  for (const leg of legs) {
+    const externalId = settlementExternalId(sourceId, leg.leg);
+    retained.add(externalId);
+    const isReturn = leg.leg === "return";
+    const data = {
+      Type: isReturn ? "Return" : "Gateway",
+      Amount: (BigInt(leg.amountToman) * BigInt(10)).toString(),
+      DiscountAmount: leg.leg === "gateway" ? (BigInt(appliedDiscountToman) * BigInt(10)).toString() : "0",
+      Step: isReturn ? 2 : 1,
+      Status: "Success",
+      TrackId: leg.leg === "gateway" ? `woo_${sourceId}` : `woo_${sourceId}_${leg.leg}`,
+      SettlementGateway: leg.channel,
+      Date: leg.date,
+      SettledAt: leg.date,
+      contract: contractId,
+      external_source: "woocommerce",
+      external_id: externalId,
+    };
+    const current = byExternalId.get(externalId);
+    if (current) {
+      await txQuery.update({ where: { id: current.id }, data, transacting: trx } as any);
+      updated += 1;
+    } else {
+      await txQuery.create({ data, transacting: trx } as any);
+      created += 1;
+    }
+  }
+  for (const [externalId, row] of byExternalId) {
+    if (retained.has(externalId)) continue;
+    await txQuery.delete({ where: { id: row.id }, transacting: trx } as any);
+    deleted += 1;
+  }
+  return { created, updated, deleted };
 }
 
 function normalizePersianTitle(value: unknown): string {
@@ -374,6 +486,14 @@ export async function upsertOrder(strapiInstance: any, body: any) {
   }
   const date = validatedDate(body?.date);
   const totalToman = exactNonNegativeInteger(body?.totalToman, "ORDER_TOTAL_INVALID");
+  // Full sales value across every payment leg; WooCommerce `total` is only the
+  // gateway leg on a split payment. Older importers send just `totalToman`.
+  const salesValueToman = body?.salesValueToman === undefined
+    ? totalToman
+    : exactNonNegativeInteger(body?.salesValueToman, "ORDER_SALES_VALUE_INVALID");
+  const appliedDiscountToman = exactNonNegativeInteger(body?.appliedDiscountToman ?? "0", "ORDER_DISCOUNT_INVALID");
+  if (!Number.isSafeInteger(Number(appliedDiscountToman))) throw new MigrationInputError("ORDER_DISCOUNT_UNSAFE_INTEGER");
+  const settlements = validatedSettlements(body);
   const shippingToman = Number(exactNonNegativeInteger(body?.shippingToman ?? "0", "ORDER_SHIPPING_INVALID"));
   if (!Number.isSafeInteger(shippingToman)) throw new MigrationInputError("ORDER_SHIPPING_UNSAFE_INTEGER");
   const items = Array.isArray(body?.items) ? body.items : [];
@@ -437,6 +557,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       ShippingMethodCode: optionalText(body?.shippingMethodCode, 255) || null,
       ShippingMethodTitle: optionalText(body?.shippingMethodTitle, 255) || null,
       PaymentGateway: paymentGateway,
+      AppliedDiscountAmount: Number(appliedDiscountToman),
       user: linkedUser?.id || null,
       Description: null,
       Note: null,
@@ -458,7 +579,7 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     const contractData = {
       Type: contractType,
       Status: contractStatus,
-      Amount: totalToman,
+      Amount: salesValueToman,
       TaxPercent: taxPercent,
       Date: date,
       local_user: linkedUser?.id || null,
@@ -469,6 +590,13 @@ export async function upsertOrder(strapiInstance: any, body: any) {
     const contract = contracts[0]
       ? await contractQuery.update({ where: { id: contracts[0].id }, data: contractData, transacting: trx } as any)
       : await contractQuery.create({ data: contractData, transacting: trx } as any);
+
+    // Settlement legs: absent in the payload means an older importer, which
+    // leaves whatever the backfill script wrote untouched; an array (even
+    // empty) is authoritative for the rows this importer owns.
+    const settlementResult = settlements
+      ? await reconcileSettlements(strapiInstance, sourceId, Number(contract.id), settlements, appliedDiscountToman, trx)
+      : { created: 0, updated: 0, deleted: 0 };
 
     const itemQuery = strapiInstance.db.query(ORDER_ITEM_UID);
     let itemsCreated = 0;
@@ -559,6 +687,9 @@ export async function upsertOrder(strapiInstance: any, body: any) {
       itemsDeleted,
       itemsUnresolved,
       itemsOrphaned,
+      settlementsCreated: settlementResult.created,
+      settlementsUpdated: settlementResult.updated,
+      settlementsDeleted: settlementResult.deleted,
       userLinked: Boolean(linkedUser),
       identityMatchReason: identity.matchReason,
       identityIssues: identity.issues || [],

@@ -24,6 +24,15 @@ import {
   categoryMembershipCte,
   categoryFilterSql,
   ELIGIBLE_ORDER_STATUS,
+  ELIGIBLE_ORDER_STATUSES,
+  ELIGIBLE_STATUS_SQL,
+  PAID_ORDER_STATUSES,
+  PAID_STATUS_SQL,
+  resolvePaidOrdersDefinition,
+  settlementGatewayExpr,
+  tzBucketKeyExpr,
+  bucketDateKey,
+  fillBucketSeries,
   PERFORMANCE_SORT_COLUMNS,
   MAX_PAGE_SIZE,
   type ResolvedJoins,
@@ -340,28 +349,46 @@ describe("product-analytics pure helpers", () => {
       orderToShipping: "LEFT JOIN shippings s ON s.id = o.shipping_id",
     } as unknown as ResolvedJoins;
 
-    it("gateway query reuses the paid_orders definition and groups by gateway", () => {
+    it("gateway query reuses the paid_orders definition and attributes cash per settlement leg", () => {
       const sql = gatewayBreakdownQuery(joins);
       expect(sql).toContain("paid_orders");
-      expect(sql).toContain("payment_gateway");
       expect(sql).toMatch(/GROUP BY/i);
-      // attributes settlement per order (no double counting across gateways)
-      expect(sql).toContain("SUM(po.settled_irr)");
+      // Cash is summed per transaction leg, not per order: a split payment
+      // (wallet + gateway) must show under both channels.
+      expect(sql).toMatch(/SUM\(CASE WHEN ct\.type = 'Return' THEN -ct\.amount ELSE ct\.amount END\)/);
+      expect(sql).toContain("COUNT(DISTINCT po.order_id)");
+      // Without the settlement_gateway column every leg is the order's gateway.
+      expect(sql).toContain("COALESCE(NULLIF(o.payment_gateway, ''), 'Unknown')");
+      expect(sql).not.toContain("settlement_gateway");
+      // The distinct paid-order count rides along for footers.
+      expect(sql).toContain("(SELECT COUNT(*) FROM paid_orders)::bigint AS paid_orders_count");
     });
 
-    it("gateway query is rooted in orders so an unsettled gateway still gets a row", () => {
+    it("gateway query groups by the leg's own channel when the column exists", () => {
+      const sql = gatewayBreakdownQuery({ ...joins, txSettlementGateway: true } as ResolvedJoins);
+      expect(sql).toContain(
+        "COALESCE(NULLIF(ct.settlement_gateway, ''), NULLIF(o.payment_gateway, ''), 'Unknown')",
+      );
+      expect(settlementGatewayExpr({ txSettlementGateway: false } as ResolvedJoins)).not.toContain("ct.");
+    });
+
+    it("gateway query keeps every order in range so an unsettled gateway still gets a row", () => {
       // Regression: this used to be `FROM paid_orders po JOIN orders o`, which
       // dropped any gateway with zero settled transactions from the result
       // entirely — and withShares then made the survivors sum to 100%.
       const sql = gatewayBreakdownQuery(joins);
-      expect(sql).toMatch(/FROM\s+orders o/i);
-      expect(sql).toMatch(/LEFT JOIN paid_orders po ON po\.order_id = o\.id/i);
-      expect(sql).not.toMatch(/FROM\s+paid_orders po\s+JOIN\s+orders/i);
+      expect(sql).toMatch(/FULL OUTER JOIN all_orders a ON a\.gateway = l\.gateway/i);
       // Counts must be distinguishable: paid orders vs all orders in range.
-      expect(sql).toContain("COUNT(po.order_id)");
+      expect(sql).toContain("COALESCE(l.orders_count, 0)::bigint AS orders_count");
       expect(sql).toContain("COUNT(*)::bigint AS total_orders_count");
-      // Outer date window in addition to the CTE's.
+      // All-orders window (creation date) in addition to the CTE's.
       expect(sql).toMatch(/WHERE o\.date BETWEEN \? AND \?/i);
+      expect(sql.match(/BETWEEN \? AND \?/g)).toHaveLength(2);
+    });
+
+    it("gateway query windows the CTE on the settlement date when asked", () => {
+      const sql = gatewayBreakdownQuery(joins, "settled", "settlement");
+      expect(sql).toContain("AND ct.date BETWEEN ? AND ?");
       expect(sql.match(/BETWEEN \? AND \?/g)).toHaveLength(2);
     });
 
@@ -369,8 +396,16 @@ describe("product-analytics pure helpers", () => {
       const sql = shippingBreakdownQuery(joins);
       expect(sql).toContain("paid_orders");
       expect(sql).toContain("SUM(o.shipping_cost)");
-      expect(sql).toContain("s.title");
       expect(sql).toContain("__UNKNOWN__");
+    });
+
+    it("shipping query names the method from the order's own snapshot before the relation", () => {
+      // Regression: grouping by `shippings.title` alone filed every imported
+      // order (which has the snapshot but no relation) under «نامشخص».
+      const sql = shippingBreakdownQuery(joins);
+      expect(sql).toContain(
+        "COALESCE(NULLIF(o.shipping_method_title, ''), NULLIF(s.title, ''), '__UNKNOWN__')",
+      );
     });
 
     it("shipping query degrades gracefully when the shipping relation is unresolved", () => {
@@ -389,15 +424,87 @@ describe("product-analytics pure helpers", () => {
       contractToTx: "JOIN contract_transactions ct ON ct.contract_id = c.id",
     } as unknown as ResolvedJoins;
 
-    it("gates BOTH definitions on the completed-order status", () => {
+    it("counts fulfilment statuses (Started, Shipment, Done) and nothing else", () => {
+      // D15: a settled order the shop has accepted is a sale. `Started`
+      // («در حال انجام») is where the gateway-success path leaves an order, and
+      // excluding it made «فروش» lag the till by the fulfilment desk.
+      // Paying / Cancelled / Returned stay out — no sale stands there.
+      expect([...ELIGIBLE_ORDER_STATUSES]).toEqual(["Started", "Shipment", "Done"]);
+      expect(ELIGIBLE_ORDER_STATUSES).toContain(ELIGIBLE_ORDER_STATUS);
+      expect(ELIGIBLE_ORDER_STATUSES).toContain("Started");
+      expect(ELIGIBLE_ORDER_STATUSES).not.toContain("Paying");
+      expect(ELIGIBLE_ORDER_STATUSES).not.toContain("Cancelled");
+      expect(ELIGIBLE_ORDER_STATUSES).not.toContain("Returned");
+      expect(ELIGIBLE_STATUS_SQL).toBe("'Started', 'Shipment', 'Done'");
+    });
+
+    it("keeps 'paid' as its own named set for the conversion card", () => {
+      // «سفارش پرداخت‌شده» asks whether a visit turned into a payment; that happens
+      // at the gateway, not at the fulfilment desk. D15 makes the two status lists
+      // equal by value, but they answer different questions and have diverged before
+      // (D14), so they stay separate constants. Money never reads this one, and the
+      // sale gate stays a subset of it.
+      expect([...PAID_ORDER_STATUSES]).toEqual(["Started", "Shipment", "Done"]);
+      expect(PAID_STATUS_SQL).toBe("'Started', 'Shipment', 'Done'");
+      for (const status of ELIGIBLE_ORDER_STATUSES) {
+        expect(PAID_ORDER_STATUSES).toContain(status);
+      }
+      // The sale gate reads its OWN constant, never the conversion one.
+      expect(paidOrdersCte(joins, "settled")).toContain(`o.status IN (${ELIGIBLE_STATUS_SQL})`);
+    });
+
+    it("keeps Shipment in: it is the step AFTER Done, not a pre-sale state", () => {
+      // Regression guard for the obvious over-correction. Shipping a completed
+      // order must not remove its revenue from the day it was sold.
+      expect(ELIGIBLE_ORDER_STATUSES).toContain("Shipment");
+      expect(paidOrdersCte(joins, "settled")).toContain("'Shipment'");
+    });
+
+    it("gates BOTH definitions on the same status set", () => {
       // Regression: `settled` used to require only a successful gateway transaction.
       // An order that was paid and then cancelled therefore counted as revenue, and
       // the two definitions described different order populations for one window.
       for (const definition of ["settled", "completed"] as const) {
         expect(paidOrdersCte(joins, definition)).toContain(
-          `o.status = '${ELIGIBLE_ORDER_STATUS}'`,
+          `o.status IN (${ELIGIBLE_STATUS_SQL})`,
         );
       }
+    });
+
+    it("windows on the creation date by default and on the settlement date on the settlement clock", () => {
+      expect(paidOrdersCte(joins, "settled", "order")).toContain("AND o.date BETWEEN ? AND ?");
+      expect(paidOrdersCte(joins, "settled", "order")).toContain("o.date AS order_date");
+
+      const settlement = paidOrdersCte(joins, "settled", "settlement");
+      expect(settlement).toContain("AND ct.date BETWEEN ? AND ?");
+      expect(settlement).not.toContain("o.date BETWEEN");
+      // The exposed clock date follows the window, so trend buckets do too.
+      expect(settlement).toContain(
+        "COALESCE(MIN(ct.date) FILTER (WHERE ct.status = 'Success' AND ct.type <> 'Return'), o.date) AS order_date",
+      );
+      // Still exactly two bindings.
+      expect(settlement.match(/\?/g)).toHaveLength(2);
+
+      const completed = paidOrdersCte(joins, "completed", "settlement");
+      expect(completed).toMatch(/HAVING COALESCE\(MIN\(ct\.date\)/);
+      expect(completed.match(/\?/g)).toHaveLength(2);
+    });
+
+    it("resolves the definition on the same clock column as the CTE", async () => {
+      const calls: Array<[string, any[]]> = [];
+      const knex = {
+        raw: jest.fn(async (sql: string, bindings: any[]) => {
+          calls.push([sql, bindings]);
+          return { rows: [{ has_settlement: true }] };
+        }),
+      } as any;
+      const start = new Date("2026-01-01T00:00:00Z");
+      const end = new Date("2026-01-02T00:00:00Z");
+      await expect(resolvePaidOrdersDefinition(knex, joins, start, end)).resolves.toBe("settled");
+      expect(calls[0][0]).toContain("AND o.date BETWEEN ? AND ?");
+      await resolvePaidOrdersDefinition(knex, joins, start, end, "settlement");
+      expect(calls[1][0]).toContain("AND ct.date BETWEEN ? AND ?");
+      expect(calls[1][0]).toContain(`o.status IN (${ELIGIBLE_STATUS_SQL})`);
     });
 
     it("makes 'settled' a strict subset of 'completed'", () => {
@@ -472,7 +579,56 @@ describe("product-analytics pure helpers", () => {
     });
   });
 
+  describe("bucket keys", () => {
+    it("renders the Tehran bucket as a YYYY-MM-DD text key in SQL", () => {
+      const sql = tzBucketKeyExpr("order_date", "day");
+      expect(sql).toBe(
+        "to_char(date_trunc('day', (order_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Tehran'), 'YYYY-MM-DD')",
+      );
+    });
+
+    it("reads a Date bucket back in the zone node-postgres parsed it in", () => {
+      // Regression: `date_trunc` returns a bare timestamp, which node-postgres
+      // turns into a Date; String(date) never matched /^\d{4}-\d{2}-\d{2}/,
+      // so every trend charted as a flat zero line.
+      expect(bucketDateKey("2026-08-03T00:00:00.000Z")).toBe("2026-08-03");
+      expect(bucketDateKey("2026-08-03")).toBe("2026-08-03");
+      expect(bucketDateKey(new Date(2026, 7, 3, 0, 0, 0))).toBe("2026-08-03");
+    });
+  });
+
   describe("fillTrendSeries", () => {
+    it("matches a Date bucket to its calendar day instead of zeroing it", () => {
+      const start = new Date("2026-08-02T20:30:00.000Z");
+      const end = new Date("2026-08-04T20:29:59.999Z");
+      const filled = fillTrendSeries(
+        [{ bucket: new Date(2026, 7, 3) as unknown as string, gross: 7, net: 7, units: 1, orders: 1, discounts: 0, refunds: 0 }],
+        start,
+        end,
+        "day",
+      );
+      expect(filled.map((p) => [p.bucket, p.net])).toEqual([
+        ["2026-08-03", 7],
+        ["2026-08-04", 0],
+      ]);
+    });
+
+    it("fills any bucketed series with the supplied empty point", () => {
+      const start = new Date("2026-01-01T20:30:00.000Z");
+      const end = new Date("2026-01-03T20:29:59.999Z");
+      const filled = fillBucketSeries(
+        [{ bucket: "2026-01-03", total: 5, orders: 1 }],
+        start,
+        end,
+        "day",
+        { total: 0, orders: 0 },
+      );
+      expect(filled).toEqual([
+        { bucket: "2026-01-02", total: 0, orders: 0 },
+        { bucket: "2026-01-03", total: 5, orders: 1 },
+      ]);
+    });
+
     it("keeps a 7-day Tehran window at 7 buckets when SQL returns one day", () => {
       const start = new Date("2025-12-31T20:30:00.000Z");
       const end = new Date("2026-01-07T20:29:59.999Z");

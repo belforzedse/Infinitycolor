@@ -146,6 +146,20 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Navigations are intercepted for exactly one reason: serving `offline.html`
+  // to an INSTALLED PWA that is genuinely offline. For an ordinary browser tab
+  // `pwaModeClients` is empty, so there is nothing this worker can add to a
+  // navigation -- and everything to lose. Mediating it meant a transport-level
+  // failure (a blocking extension, a reset connection, flaky DNS) was answered
+  // with a synthetic 503 reading "Page not available", which the browser treats
+  // as a *successful* response: no native error page naming the real cause, no
+  // reload affordance, no automatic recovery. Handing navigations back to the
+  // browser is what makes the real error visible to the visitor and to a bug
+  // report.
+  if (isNavigationRequest(request) && pwaModeClients.size === 0) {
+    return;
+  }
+
   // Handle other requests with network-first strategy + offline fallback
   event.respondWith(handleGenericRequest(request));
 });
@@ -443,14 +457,24 @@ async function handleGenericRequest(request) {
       }
     }
 
-    // For non-navigation requests or when not offline, return appropriate error
+    // Only a PWA navigation still reaches here (see the guard in the fetch
+    // listener), and only when `offline.html` was not available to serve.
+    // Re-throw rather than synthesising a 503: a rejected `respondWith` gives
+    // the browser its own error page, which carries a Reload affordance and
+    // retries normally, instead of a dead plain-text body the browser believes
+    // succeeded. The page itself is generic (`ERR_FAILED`) -- the specific
+    // cause survives only in the console line below, which is why it logs the
+    // error name and message verbatim.
+    //
+    // A 4xx/5xx from the origin never reaches this branch -- `fetch` rejects
+    // only below HTTP -- so this cannot mask a server-rendered error page.
     if (isNavigationRequest(request)) {
-      // For navigation requests that failed but aren't offline, return error page
-      return new Response("Page not available", {
-        status: 503,
-        statusText: "Service Unavailable",
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
+      console.error(
+        "[SW] Navigation fetch failed; deferring to the browser error page:",
+        request.url,
+        error && (error.name || error.message) ? `${error.name}: ${error.message}` : error,
+      );
+      throw error;
     }
 
     // For API or other requests, return JSON error

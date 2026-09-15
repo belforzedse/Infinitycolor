@@ -13,6 +13,7 @@ import {
   normalizeStoredHeroSliderPayload,
   sanitizeHeroSliderPayload,
 } from "../services/hero-slider-schema";
+import { sanitizeCustomSectionHref } from "../services/custom-section-href";
 
 /** Sanitized payload is valid JSON; cast for Strapi JSON fields which expect Attribute.JsonValue. */
 function toStrapiJson<T>(v: T): Attribute.JsonValue {
@@ -95,12 +96,47 @@ function sanitizeWooSourceIds(value: unknown): string[] | null {
 }
 
 const GIF_PROMO_FIELDS = ["homeGifPromoSlot1Assignment", "homeGifPromoSlot2Assignment"] as const;
-const CUSTOM_SECTION_ASSIGNMENT_FIELDS = ["homeCustomSectionAssignment"] as const;
-const CUSTOM_SECTION_FIELDS = [
-  "homeCustomSectionEnabled",
-  "homeCustomSectionTitle",
-  ...CUSTOM_SECTION_ASSIGNMENT_FIELDS,
+const CUSTOM_SECTION_ASSIGNMENT_FIELDS = [
+  "homeCustomSectionAssignment",
+  "homeCustomSectionTwoAssignment",
+  "homeCustomSectionThreeAssignment",
 ] as const;
+const CUSTOM_SECTION_ENABLED_FIELDS = [
+  "homeCustomSectionEnabled",
+  "homeCustomSectionTwoEnabled",
+  "homeCustomSectionThreeEnabled",
+] as const;
+const CUSTOM_SECTION_TITLE_FIELDS = [
+  "homeCustomSectionTitle",
+  "homeCustomSectionTwoTitle",
+  "homeCustomSectionThreeTitle",
+] as const;
+const CUSTOM_SECTION_LINK_FIELDS = [
+  "homeCustomSectionViewAllHref",
+  "homeCustomSectionTwoViewAllHref",
+  "homeCustomSectionThreeViewAllHref",
+] as const;
+const CUSTOM_SECTION_FIELDS = [
+  ...CUSTOM_SECTION_ENABLED_FIELDS,
+  ...CUSTOM_SECTION_TITLE_FIELDS,
+  ...CUSTOM_SECTION_ASSIGNMENT_FIELDS,
+  ...CUSTOM_SECTION_LINK_FIELDS,
+] as const;
+
+/** Flat booleans/strings for every custom section, matching the assignment projection helper. */
+function projectCustomSectionSettings(settings: any) {
+  return {
+    ...Object.fromEntries(
+      CUSTOM_SECTION_ENABLED_FIELDS.map((field) => [field, Boolean(settings?.[field])]),
+    ),
+    ...Object.fromEntries(
+      [...CUSTOM_SECTION_TITLE_FIELDS, ...CUSTOM_SECTION_LINK_FIELDS].map((field) => [
+        field,
+        typeof settings?.[field] === "string" ? settings[field] : "",
+      ]),
+    ),
+  };
+}
 
 function lenientProductIds(value: unknown): number[] {
   if (!Array.isArray(value)) return [];
@@ -481,11 +517,7 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       data: {
         id: settingsEntity.id,
         attributes: {
-          homeCustomSectionEnabled: Boolean(settingsEntity.homeCustomSectionEnabled),
-          homeCustomSectionTitle:
-            typeof settingsEntity.homeCustomSectionTitle === "string"
-              ? settingsEntity.homeCustomSectionTitle
-              : "",
+          ...projectCustomSectionSettings(settingsEntity),
           ...projectAssignmentFieldSettings(settingsEntity, CUSTOM_SECTION_ASSIGNMENT_FIELDS),
         },
       },
@@ -505,19 +537,29 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       });
     }
     const data: Record<string, unknown> = {};
-    if (Object.prototype.hasOwnProperty.call(payload, "homeCustomSectionEnabled")) {
-      const value = payload.homeCustomSectionEnabled;
+    for (const field of CUSTOM_SECTION_ENABLED_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      const value = payload[field];
       if (typeof value !== "boolean") {
-        return ctx.badRequest("homeCustomSectionEnabled must be a boolean");
+        return ctx.badRequest(`${field} must be a boolean`);
       }
-      data.homeCustomSectionEnabled = value;
+      data[field] = value;
     }
-    if (Object.prototype.hasOwnProperty.call(payload, "homeCustomSectionTitle")) {
-      const value = payload.homeCustomSectionTitle;
+    for (const field of CUSTOM_SECTION_TITLE_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      const value = payload[field];
       if (typeof value !== "string") {
-        return ctx.badRequest("homeCustomSectionTitle must be a string");
+        return ctx.badRequest(`${field} must be a string`);
       }
-      data.homeCustomSectionTitle = value.trim();
+      data[field] = value.trim();
+    }
+    for (const field of CUSTOM_SECTION_LINK_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
+      const href = sanitizeCustomSectionHref(payload[field]);
+      if (href === null) {
+        return ctx.badRequest(`${field} must be an internal path starting with /`);
+      }
+      data[field] = href;
     }
     for (const field of CUSTOM_SECTION_ASSIGNMENT_FIELDS) {
       if (!Object.prototype.hasOwnProperty.call(payload, field)) continue;
@@ -556,9 +598,7 @@ export default factories.createCoreController(SETTINGS_UID, ({ strapi }) => ({
       data: {
         id: updated.id,
         attributes: {
-          homeCustomSectionEnabled: Boolean(updated.homeCustomSectionEnabled),
-          homeCustomSectionTitle:
-            typeof updated.homeCustomSectionTitle === "string" ? updated.homeCustomSectionTitle : "",
+          ...projectCustomSectionSettings(updated),
           ...projectAssignmentFieldSettings(updated, CUSTOM_SECTION_ASSIGNMENT_FIELDS),
         },
       },

@@ -1,4 +1,4 @@
-const baseUrl = (process.argv[2] || process.env.SECURITY_HEADER_BASE_URL || "https://new.infinitycolor.co").replace(/\/$/, "");
+const baseUrl = (process.argv[2] || process.env.SECURITY_HEADER_BASE_URL || "https://infinitycolor.co").replace(/\/$/, "");
 const payload = "</script><img src=x onerror=alert(1)>";
 
 const requiredHeaders = new Map([

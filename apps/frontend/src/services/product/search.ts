@@ -80,6 +80,7 @@ export interface ProductSearchItem {
               id: number;
               attributes: {
                 Count: number;
+                reservedCount?: number;
               };
             } | null;
           };
@@ -131,6 +132,7 @@ export interface ProductSearchItem {
     product_stock: {
       id: number;
       Count: number;
+      reservedCount?: number;
     };
   }[] | {
     data: Array<{

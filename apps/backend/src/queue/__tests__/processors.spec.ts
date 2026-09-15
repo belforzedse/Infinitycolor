@@ -33,6 +33,9 @@ jest.mock("../../api/order/services/anipoRecipientSync", () => ({
   processAnipoRecipientSync: jest.fn(),
   runAnipoRecipientSyncReconciliation: jest.fn(),
 }));
+jest.mock("../../services/sms/staff-alerts", () => ({
+  notifyStaffOrderStartedSms: jest.fn(),
+}));
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
 import { runExpireStockReservationsTick } from "../../jobs/expireStockReservations";
@@ -203,6 +206,19 @@ describe("queue processors", () => {
       data: { orderId: 42, expectedRevision: 3 },
     } as any);
     expect(mockedProcessAnipoRecipientSync).toHaveBeenCalledWith(strapi, 42, 3);
+  });
+
+  it("dispatches the staff order alert to the SMS sender", async () => {
+    const strapi = createMockStrapi();
+    const { notifyStaffOrderStartedSms } = await import("../../services/sms/staff-alerts");
+    (notifyStaffOrderStartedSms as jest.Mock).mockResolvedValue({ ok: true, sent: 2 });
+
+    await processMaintenanceJob(strapi, {
+      name: COMMERCE_MAINTENANCE_JOBS.staffOrderAlert,
+      data: { orderId: 501 },
+    } as any);
+
+    expect(notifyStaffOrderStartedSms).toHaveBeenCalledWith(strapi, { orderId: 501 });
   });
 
   it("dispatches view-counter flush jobs to the product-view service", async () => {

@@ -18,6 +18,8 @@ interface Props {
   time: string;
   price: string;
   status: PersianOrderStatus;
+  statusLabel?: string;
+  awaitingPayment?: boolean;
   title: string;
   orderId?: number;
   shippingBarcode?: string;
@@ -41,6 +43,8 @@ export default function OrderRow({
   time,
   price,
   status,
+  statusLabel,
+  awaitingPayment,
   title,
   orderId,
   shippingBarcode,
@@ -96,13 +100,20 @@ export default function OrderRow({
             className={clsx(
               "flex h-6 w-6 items-center justify-center rounded-full",
               status === PersianOrderStatus.CANCELLED && "bg-red-500",
-              status === PersianOrderStatus.INPROGRESS && "bg-yellow-500",
+              status === PersianOrderStatus.INPROGRESS && !awaitingPayment && "bg-yellow-500",
+              status === PersianOrderStatus.INPROGRESS && awaitingPayment && "bg-orange-500",
               status === PersianOrderStatus.DELIVERED && "bg-green-500",
             )}
           >
-            {status === PersianOrderStatus.CANCELLED ? <CancelIcon /> : <TickIcon />}
+            {status === PersianOrderStatus.CANCELLED ? (
+              <CancelIcon />
+            ) : awaitingPayment ? (
+              <Clock className="h-3.5 w-3.5 text-white" aria-label="در انتظار پرداخت" />
+            ) : (
+              <TickIcon />
+            )}
           </div>
-          <span className="text-sm text-gray-700">{status}</span>
+          <span className="text-sm text-gray-700">{statusLabel ?? status}</span>
         </div>
       </td>
       <td className="w-fit py-3 text-left">

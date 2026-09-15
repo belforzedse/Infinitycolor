@@ -15,6 +15,10 @@ import {
   UID as RESERVE_GROUP_UID,
 } from "../../reserve-group/lib/reserve-group";
 import {
+  customerPhoneSearchAlternatives,
+  personNameSearchAlternatives,
+} from "../../../utils/personIdentitySearch";
+import {
   activeReserveGroupsWhere,
   ORDER_TAB_KEYS,
   orderWhereForTab,
@@ -94,7 +98,10 @@ type OrderListCriteria = {
   shippingMethodCodes: string[];
 };
 
-function parseOrderListCriteria(ctx: any, body: Record<string, unknown>): OrderListCriteria | null {
+async function parseOrderListCriteria(
+  ctx: any,
+  body: Record<string, unknown>,
+): Promise<OrderListCriteria | null> {
   const search = String(body.search ?? "").trim();
   if (search.length > MAX_ADMIN_SEARCH_LENGTH) {
     rejectAdminListRequest(ctx, "search must contain at most 80 characters");
@@ -120,7 +127,11 @@ function parseOrderListCriteria(ctx: any, body: Record<string, unknown>): OrderL
       ],
     });
   }
-  if (search) conditions.push(buildOrderSearchCondition(search));
+  if (search) {
+    conditions.push(
+      buildOrderSearchCondition(search, await resolveOrdersByPaymentReference(search)),
+    );
+  }
 
   return { conditions, filters, search, shippingMethodCodes };
 }
@@ -216,15 +227,33 @@ function normalizeDigits(value: string): string {
  * unindexed name/phone columns. Only genuinely textual queries fan out to the
  * relation `$containsi` predicates.
  */
-function buildOrderSearchCondition(search: string): Record<string, unknown> {
+function buildOrderSearchCondition(
+  search: string,
+  paymentReferenceOrderIds: number[],
+): Record<string, unknown> {
   const normalized = normalizeDigits(search).replace(/^#/, "").trim();
+  // Resolved against the transaction rows up front, so neither the list nor the
+  // seven count queries have to join them.
+  const referenceConditions: Record<string, unknown>[] =
+    paymentReferenceOrderIds.length > 0
+      ? [{ id: { $in: paymentReferenceOrderIds } }]
+      : [];
 
   if (ASCII_DIGITS.test(normalized)) {
     const asId = Number(normalized);
     const numericConditions: Record<string, unknown>[] = [
       { contract: { external_id: { $containsi: normalized } } },
+      // The order's own reference: the settled gateway id, and for migrated rows
+      // the legacy WooCommerce order number an operator still quotes.
+      { external_id: { $eq: normalized } },
       { ShippingBarcode: { $containsi: normalized } },
-      { user: { phone: { $containsi: normalized } } },
+      // Phones persist in four shapes, so `09…` never matched a stored `+989…`.
+      // Gated on length: an order number must not drag the unindexed phone
+      // column into the cheap numeric path.
+      ...(isPhoneShaped(normalized)
+        ? customerPhoneSearchAlternatives(normalized, "user")
+        : []),
+      ...referenceConditions,
     ];
     // Guard against precision loss on absurdly long digit strings.
     if (Number.isSafeInteger(asId)) {
@@ -233,14 +262,88 @@ function buildOrderSearchCondition(search: string): Record<string, unknown> {
     return { $or: numericConditions };
   }
 
+  // A phone pasted with separators or a leading `+98` is not all-digits, so it
+  // used to reach the text branch and match nothing at all.
+  const phoneConditions = isPhoneShaped(normalized)
+    ? customerPhoneSearchAlternatives(normalized, "user")
+    : [];
+
   return {
     $or: [
       { contract: { external_id: { $containsi: search } } },
-      { user: { user_info: { FirstName: { $containsi: search } } } },
-      { user: { user_info: { LastName: { $containsi: search } } } },
+      { external_id: { $eq: search } },
+      // The list renders «FirstName LastName» as one string, so that is what an
+      // operator types — and matching each column against the whole query found
+      // nothing, because neither column ever holds both halves. The users list
+      // already solved this; reuse its splits instead of a second dialect.
+      ...personNameSearchAlternatives(search, "user"),
       { ShippingBarcode: { $containsi: search } },
+      ...phoneConditions,
+      ...referenceConditions,
     ],
   };
+}
+
+/**
+ * Digits plus the separators operators paste. The bounds are what keeps the
+ * unindexed phone column out of unrelated lookups: below seven digits it is an
+ * order number, above thirteen — every Iranian layout from `9…` to `+98…` fits
+ * inside that — it is a postal barcode.
+ */
+const PHONE_SEPARATORS = /[\s()+\-.]/g;
+const MIN_PHONE_DIGITS = 7;
+const MAX_PHONE_DIGITS = 13;
+
+function isPhoneShaped(value: string): boolean {
+  const digits = value.replace(PHONE_SEPARATORS, "");
+  return (
+    ASCII_DIGITS.test(digits) &&
+    digits.length >= MIN_PHONE_DIGITS &&
+    digits.length <= MAX_PHONE_DIGITS
+  );
+}
+
+/**
+ * Payment references, resolved to order ids in one query.
+ *
+ * The settled gateway id reaches `contracts.external_id`, but only on success:
+ * SnappPay writes it at finalization and the cancel path does not, and ZarinPal
+ * stores its authority on the transaction row at checkout. So the orders an
+ * operator actually looks up by reference — pending, stuck, failed — were the
+ * ones the list could not find.
+ *
+ * Kept off the list query on purpose. Matching the transaction columns inline
+ * would join them into the page query *and* into each of the seven tab counts;
+ * resolving ids once costs a single bounded equality lookup that all eight
+ * reuse. A reference is pasted whole, so equality is the right operator anyway,
+ * and the shape gate — one unbroken alphanumeric token — keeps names and
+ * separator-formatted phones from probing at all.
+ */
+const PAYMENT_REFERENCE = /^[A-Za-z0-9]{4,64}$/;
+const MAX_PAYMENT_REFERENCE_MATCHES = 50;
+
+async function resolveOrdersByPaymentReference(search: string): Promise<number[]> {
+  if (!PAYMENT_REFERENCE.test(search)) return [];
+
+  const rows = await strapi.query("api::contract-transaction.contract-transaction").findMany({
+    where: {
+      $or: [
+        { external_id: { $eq: search } },
+        { TrackId: { $eq: search } },
+        { GatewayRefId: { $eq: search } },
+      ],
+    },
+    select: ["id"],
+    populate: { contract: { select: ["id"], populate: { order: { select: ["id"] } } } },
+    limit: MAX_PAYMENT_REFERENCE_MATCHES,
+  });
+
+  const ids = new Set<number>();
+  for (const row of (rows as any[]) || []) {
+    const orderId = Number(row?.contract?.order?.id);
+    if (Number.isSafeInteger(orderId) && orderId > 0) ids.add(orderId);
+  }
+  return [...ids];
 }
 
 
@@ -284,9 +387,9 @@ function buildReserveGroupSearchCondition(search: string): Record<string, unknow
   const normalized = normalizeDigits(search);
   if (ASCII_DIGITS.test(normalized)) {
     const asId = Number(normalized);
-    const conditions: Record<string, unknown>[] = [
-      { owner: { phone: { $containsi: normalized } } },
-    ];
+    const conditions: Record<string, unknown>[] = isPhoneShaped(normalized)
+      ? customerPhoneSearchAlternatives(normalized, "owner")
+      : [{ owner: { phone: { $containsi: normalized } } }];
     if (Number.isSafeInteger(asId)) {
       conditions.unshift({ rootOrder: { id: { $eq: asId } } });
     }
@@ -296,8 +399,9 @@ function buildReserveGroupSearchCondition(search: string): Record<string, unknow
     $or: [
       { groupKey: { $containsi: search } },
       { ShippingBarcode: { $containsi: search } },
-      { owner: { user_info: { FirstName: { $containsi: search } } } },
-      { owner: { user_info: { LastName: { $containsi: search } } } },
+      // Same full-name split as the orders list; the board shows owner names the
+      // same way and had the same defect.
+      ...personNameSearchAlternatives(search, "owner"),
     ],
   };
 }
@@ -390,7 +494,7 @@ export default {
     if (!SORTS[sort]) {
       return rejectAdminListRequest(ctx, "Unsupported orders-list sort");
     }
-    const criteria = parseOrderListCriteria(ctx, body);
+    const criteria = await parseOrderListCriteria(ctx, body);
     if (!criteria) return;
     const where = orderWhereForTab(criteria.conditions, tab as OrderTabKey);
     const orderQuery = strapi.query("api::order.order");
@@ -474,7 +578,7 @@ export default {
       return rejectAdminListRequest(ctx, "Request body must be an object");
     }
 
-    const criteria = parseOrderListCriteria(ctx, body);
+    const criteria = await parseOrderListCriteria(ctx, body);
     if (!criteria) return;
 
     const orderQuery = strapi.query("api::order.order");
