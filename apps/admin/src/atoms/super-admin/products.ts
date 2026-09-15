@@ -5,6 +5,7 @@ import { atom } from "jotai";
 
 const createEmptyProductData = (): ProductData => ({
   Title: "",
+  Slug: "",
   CoverImage: null,
   Description: "",
   Status: "InActive",
@@ -25,6 +26,7 @@ const createEmptyProductData = (): ProductData => ({
 
 const createEmptyEditProductData = (): EditProductData => ({
   Title: "",
+  Slug: "",
   CoverImage: null,
   Description: "",
   Status: "InActive",

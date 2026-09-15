@@ -22,6 +22,8 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
     const { name, value, checked } = e.target;
     if (name === "name") {
       setProductAtom({ ...(productAtom as any), Title: value });
+    } else if (name === "slug") {
+      setProductAtom({ ...(productAtom as any), Slug: value });
     } else if (name === "weight") {
       setProductAtom({
         ...(productAtom as any),
@@ -72,6 +74,19 @@ export default function ProductDetails({ isEditMode = false }: DetailsProps) {
           onChange={handleChange}
           placeholder="نام محصول"
           className="w-full text-right text-neutral-800 placeholder:text-gray-400"
+        />
+      </div>
+
+      <div className="flex flex-col gap-3 lg:gap-4">
+        <label className="text-base text-gray-700">اسلاگ (نامک) محصول</label>
+        <Input
+          type="text"
+          name="slug"
+          dir="ltr"
+          value={productAtom.Slug ?? ""}
+          onChange={handleChange}
+          placeholder="در صورت خالی بودن خودکار ساخته می‌شود"
+          className="w-full text-left text-neutral-800 placeholder:text-gray-400"
         />
       </div>
 

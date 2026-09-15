@@ -62,6 +62,7 @@ export interface GenericRelationArray<T> {
 
 export interface ProductDataResponse {
   Title: string;
+  Slug?: string | null;
   Description: string;
   Status: string;
   scheduledPublishAt?: string | null;

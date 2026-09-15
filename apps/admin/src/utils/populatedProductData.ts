@@ -119,6 +119,7 @@ export function transformToProductData(strapiProduct: ProductDataResponse): Edit
 
   return {
     Title: strapiProduct.Title,
+    Slug: strapiProduct.Slug ?? "",
     CoverImage: coverImageUrl,
     Description: strapiProduct.Description,
     Status:

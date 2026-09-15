@@ -4,6 +4,7 @@ import type { TagResponseType } from "@/services/super-admin/product/tag/get";
 
 export interface ProductData {
   Title: string;
+  Slug?: string;
   CoverImage: CoverImageField | null;
   Description: string;
   Status: "Active" | "InActive" | "Scheduled";
@@ -23,6 +24,7 @@ export interface ProductData {
 }
 export interface EditProductData {
   Title: string;
+  Slug?: string;
   CoverImage: CoverImageField | null;
   Description: string;
   Status: "Active" | "InActive" | "Scheduled";

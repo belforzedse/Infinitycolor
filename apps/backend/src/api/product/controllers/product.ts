@@ -25,6 +25,8 @@ import { generateVariationCombinations } from "../services/variation-combination
 import { isTrustedWordPressMigrationRequest } from "../../../utils/migration-context";
 import { enforceOperationalDataFields } from "../../../utils/operationalCommerce";
 import { buildProductSlugCandidates } from "../../../utils/productSlugCandidates";
+import { validateProductSlug } from "../../../utils/productSlug";
+import { generateUnicodeSlug } from "../../../utils/unicodeSlug";
 import { resolveAdminActor } from "../../../utils/adminAuthorization";
 import { recordAdminAudit } from "../../../utils/adminAudit";
 import {
@@ -96,6 +98,45 @@ function rejectPublicationFields(ctx: any): boolean {
     },
   };
   return true;
+}
+
+/**
+ * When an admin submits a `Slug` explicitly (rather than leaving it to be
+ * auto-generated from the Title), sanitize it through the same pipeline as
+ * generated slugs and reject it if it collides with a reserved route or
+ * another product. Passing an empty/whitespace value removes the field from
+ * the payload instead of writing an empty string, since `beforeUpdate` only
+ * auto-generates a replacement when `data.Slug` is entirely absent.
+ */
+async function rejectInvalidManualSlug(ctx: any, strapi: any): Promise<boolean> {
+  const data = ctx.request?.body?.data;
+  if (!data || typeof data !== "object" || !("Slug" in data)) return false;
+
+  const rawSlug = data.Slug;
+  if (rawSlug === null || rawSlug === undefined || typeof rawSlug !== "string") {
+    delete data.Slug;
+    return false;
+  }
+
+  const normalizedSlug = generateUnicodeSlug(rawSlug, "product-slug");
+  if (!rawSlug.trim()) {
+    delete data.Slug;
+    return false;
+  }
+
+  const productId = Number(ctx.params?.id);
+  const { isValid, error } = await validateProductSlug(
+    strapi,
+    normalizedSlug,
+    Number.isFinite(productId) ? productId : undefined,
+  );
+  if (!isValid) {
+    ctx.badRequest(error || "Invalid slug");
+    return true;
+  }
+
+  data.Slug = normalizedSlug;
+  return false;
 }
 
 function discardLegacyDraftStatusOnCreate(ctx: any): void {
@@ -558,6 +599,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
     discardLegacyDraftStatusOnCreate(ctx);
     if (rejectPublicationFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
+    if (await rejectInvalidManualSlug(ctx, strapi)) return;
     ctx.request.body = ctx.request.body || {};
     ctx.request.body.data = { ...(ctx.request.body.data || {}), Status: "InActive" };
     return super.create(ctx);
@@ -566,6 +608,7 @@ export default factories.createCoreController("api::product.product", ({ strapi 
   async update(ctx) {
     if (rejectPublicationFields(ctx)) return;
     if (!(await enforceOperationalDataFields(ctx, strapi, OPERATIONAL_PRODUCT_FIELDS))) return;
+    if (await rejectInvalidManualSlug(ctx, strapi)) return;
     return super.update(ctx);
   },
 
