@@ -227,6 +227,9 @@
     "LastEditedByAdminAt": {
       "type": "datetime"
     },
+    "PublishedAt": {
+      "type": "datetime"
+    },
     "external_id": {
       "type": "string",
       "unique": false

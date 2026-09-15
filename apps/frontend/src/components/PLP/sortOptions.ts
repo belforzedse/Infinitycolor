@@ -1,6 +1,6 @@
 export const SORT_OPTIONS = [
-  { value: "createdAt:desc", label: "جدیدترین" },
-  { value: "createdAt:asc", label: "قدیمی‌ترین" },
+  { value: "LastEditedByAdminAt:desc", label: "جدیدترین" },
+  { value: "LastEditedByAdminAt:asc", label: "قدیمی‌ترین" },
   { value: "price:asc", label: "قیمت: کم به زیاد" },
   { value: "price:desc", label: "قیمت: زیاد به کم" },
   { value: "Title:asc", label: "عنوان: الف تا ی" },

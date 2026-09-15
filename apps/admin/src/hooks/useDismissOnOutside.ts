@@ -15,15 +15,23 @@ export function useDismissOnOutside(
   ref: RefObject<HTMLElement | null>,
   isOpen: boolean,
   onDismiss: () => void,
+  /**
+   * A second "inside" region, e.g. a panel portaled to document.body so it can
+   * escape an ancestor's overflow clipping — it's no longer a DOM descendant
+   * of `ref`, so without this a click inside it reads as "outside" and closes
+   * the panel before its own option handler fires.
+   */
+  extraRef?: RefObject<HTMLElement | null>,
 ): void {
   useEffect(() => {
     if (!isOpen) return;
 
     const onPointerDown = (event: MouseEvent | TouchEvent) => {
       const target = event.target as Node | null;
-      if (target && ref.current && !ref.current.contains(target)) {
-        onDismiss();
-      }
+      if (!target) return;
+      if (ref.current?.contains(target)) return;
+      if (extraRef?.current?.contains(target)) return;
+      onDismiss();
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -39,7 +47,7 @@ export function useDismissOnOutside(
       document.removeEventListener("touchstart", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [ref, isOpen, onDismiss]);
+  }, [ref, isOpen, onDismiss, extraRef]);
 }
 
 export default useDismissOnOutside;

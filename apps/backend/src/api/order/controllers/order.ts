@@ -190,6 +190,13 @@ export default factories.createCoreController(
                     product_variation_color: true,
                     product_variation_size: true,
                     product_variation_model: true,
+                    // Falls back for a variation whose only dimension is a generic
+                    // (non-color/size) attribute, e.g. a "pattern"/"design" term —
+                    // otherwise the invoice prints the bare product title with no
+                    // variant info at all.
+                    selected_attribute_terms: {
+                      populate: { product_attribute: true },
+                    },
                   },
                 },
                 product_color: true,
@@ -674,6 +681,11 @@ export default factories.createCoreController(
                     product_variation_color: true,
                     product_variation_size: true,
                     product_variation_model: true,
+                    // Falls back for a variation whose only dimension is a generic
+                    // (non-color/size) attribute, e.g. a "pattern"/"design" term.
+                    selected_attribute_terms: {
+                      populate: { product_attribute: true },
+                    },
                     product: { populate: ["CoverImage"] },
                   },
                 },
@@ -742,6 +754,11 @@ export default factories.createCoreController(
                     product_variation_color: true,
                     product_variation_size: true,
                     product_variation_model: true,
+                    // Falls back for a variation whose only dimension is a generic
+                    // (non-color/size) attribute, e.g. a "pattern"/"design" term.
+                    selected_attribute_terms: {
+                      populate: { product_attribute: true },
+                    },
                     product: { populate: ["CoverImage"] },
                   },
                 },

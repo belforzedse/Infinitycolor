@@ -190,7 +190,7 @@ describe("OffersListHomePage", () => {
       />,
     );
 
-    expect(mobileViewAllLink()).toHaveAttribute("href", "/plp?sort=createdAt:desc");
+    expect(mobileViewAllLink()).toHaveAttribute("href", "/plp?sort=LastEditedByAdminAt:desc");
   });
 
   // Custom homepage sections carry an admin-configured target; without it the rail

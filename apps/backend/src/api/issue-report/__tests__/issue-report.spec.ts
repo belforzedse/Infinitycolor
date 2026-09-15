@@ -106,6 +106,53 @@ describe("issue report payload validation", () => {
   });
 });
 
+it("captures a valid order reference and drops an invalid one", () => {
+  const withOrder = validateCreateIssueReportPayload({
+    ...valid,
+    context: { ...valid.context, order: { orderId: 111805, extra: "discard" } },
+  }).context;
+  expect(withOrder?.order).toEqual({ orderId: 111805 });
+
+  for (const orderId of [-5, 0, 1.5, "not-a-number", null]) {
+    const context = validateCreateIssueReportPayload({
+      ...valid,
+      context: { ...valid.context, order: { orderId } },
+    }).context;
+    expect(context?.order).toBeUndefined();
+  }
+});
+
+it("captures a bounded cart snapshot and discards malformed lines", () => {
+  const cart = [
+    { name: "وست گلدوزی تدی N 0035", sku: "WC-1297070-1297075", quantity: 1, price: 2149000 },
+    { name: "بدون قیمت", sku: "X", quantity: 1, price: -1 },
+    { name: "", sku: "Y", quantity: 1, price: 1000 },
+    { name: "بدون تعداد", sku: "Z", quantity: 0, price: 1000 },
+    ...Array.from({ length: 25 }, (_, index) => ({
+      name: `کالا ${index}`,
+      sku: `SKU-${index}`,
+      quantity: 1,
+      price: 1000,
+    })),
+  ];
+  const context = validateCreateIssueReportPayload({
+    ...valid,
+    context: { ...valid.context, cart },
+  }).context;
+  expect(context?.cart?.[0]).toEqual({
+    name: "وست گلدوزی تدی N 0035",
+    sku: "WC-1297070-1297075",
+    quantity: 1,
+    price: 2149000,
+  });
+  expect(context?.cart).toHaveLength(20);
+
+  expect(
+    validateCreateIssueReportPayload({ ...valid, context: { ...valid.context, cart: [] } }).context
+      ?.cart,
+  ).toBeUndefined();
+});
+
 it("bounds optional device hints and preserves the legacy context shape", () => {
   const context = validateCreateIssueReportPayload({ ...valid, context: { ...valid.context, androidHints: { model: "Pixel 9 Pro", platformVersion: "16.0.0", serial: "discard" } } }).context;
   expect(context?.androidHints).toEqual({ model: "Pixel 9 Pro", platformVersion: "16.0.0" });

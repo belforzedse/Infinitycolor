@@ -51,6 +51,17 @@ export type CreateIssueReportInput = {
   context: IssueReportClientContext | null;
 };
 
+export type IssueReportOrderContext = {
+  orderId: number;
+};
+
+export type IssueReportCartItem = {
+  name: string;
+  sku: string | null;
+  quantity: number;
+  price: number;
+};
+
 export type IssueReportClientContext = {
   clientTime: string | null;
   timeZone: string | null;
@@ -60,6 +71,12 @@ export type IssueReportClientContext = {
   online: boolean | null;
   connectionType: string | null;
   androidHints?: { model: string | null; platformVersion: string | null };
+  /** The order the reporter was looking at (e.g. /payment/result), so admins
+   * don't have to guess which of a customer's orders a report is about. */
+  order?: IssueReportOrderContext;
+  /** Best-effort snapshot of the cart at submit time; falls back for reports
+   * filed before checkout, or when the order lookup above 401s client-side. */
+  cart?: IssueReportCartItem[];
 };
 
 export type IssueReportQuery = {
@@ -129,6 +146,31 @@ function dimension(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100_000 ? Math.round(parsed) : null;
 }
 
+function orderContext(value: unknown): IssueReportOrderContext | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const orderId = Number((value as Record<string, unknown>).orderId);
+  return Number.isSafeInteger(orderId) && orderId > 0 ? { orderId } : undefined;
+}
+
+const MAX_CART_ITEMS = 20;
+
+function cartContext(value: unknown): IssueReportCartItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: IssueReportCartItem[] = [];
+  for (const raw of value) {
+    if (items.length >= MAX_CART_ITEMS) break;
+    if (!raw || typeof raw !== "object") continue;
+    const record = raw as Record<string, unknown>;
+    const name = optionalShortText(record.name, 120);
+    const quantity = Number(record.quantity);
+    const price = Number(record.price);
+    if (!name || !Number.isSafeInteger(quantity) || quantity <= 0) continue;
+    if (!Number.isFinite(price) || price < 0) continue;
+    items.push({ name, sku: optionalShortText(record.sku, 64), quantity, price });
+  }
+  return items.length > 0 ? items : undefined;
+}
+
 function clientContext(value: unknown): IssueReportClientContext | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = value as Record<string, any>;
@@ -143,8 +185,12 @@ function clientContext(value: unknown): IssueReportClientContext | null {
   const model = optionalShortText(hints?.model, 120)?.replace(/[\u0000-\u001f\u007f]/g, "") || null;
   const version = optionalShortText(hints?.platformVersion, 32);
   const platformVersion = version && /^\d{1,3}(?:\.\d{1,4}){0,3}$/.test(version) ? version : null;
+  const order = orderContext(raw.order);
+  const cart = cartContext(raw.cart);
   return {
     ...(model || platformVersion ? { androidHints: { model, platformVersion } } : {}),
+    ...(order ? { order } : {}),
+    ...(cart ? { cart } : {}),
     clientTime: parsedTime && !Number.isNaN(parsedTime.getTime()) ? parsedTime.toISOString() : null,
     timeZone: optionalShortText(raw.timeZone, 80),
     language: optionalShortText(raw.language, 32),
@@ -287,6 +333,63 @@ function mapDetail(row: any) {
     description: row.description,
     clientContext: mapClientContext(row.client_context),
     userAgent: row.user_agent ?? null,
+  };
+}
+
+export type IssueReportOrderSnapshot = {
+  id: number;
+  status: string | null;
+  paymentGateway: string | null;
+  date: string | null;
+  items: {
+    id: number;
+    productTitle: string;
+    productSku: string;
+    count: number;
+    perAmount: number;
+  }[];
+  /** null when neither side has a known user (e.g. a guest report or an
+   * order with no linked account) rather than a claim that they match. */
+  reporterMatchesOrder: boolean | null;
+};
+
+/**
+ * Best-effort admin-only enrichment: the reporter told us which order they
+ * were looking at (see `IssueReportOrderContext`), so pull its items directly
+ * instead of leaving an admin to guess among the customer's order history.
+ * Never throws -- a missing/garbage orderId just means no snapshot.
+ */
+async function loadOrderSnapshot(
+  strapi: Strapi,
+  orderId: number,
+  reporterUserId: number | null,
+): Promise<IssueReportOrderSnapshot | null> {
+  const knex = strapi.db.connection as any;
+  const order = await knex("orders")
+    .where({ id: orderId })
+    .first(["id", "status", "payment_gateway", "date"]);
+  if (!order) return null;
+  const items = await knex("order_items_order_links as oiol")
+    .join("order_items as oi", "oi.id", "oiol.order_item_id")
+    .where("oiol.order_id", orderId)
+    .orderBy("oi.id", "asc")
+    .select(["oi.id", "oi.product_title", "oi.product_sku", "oi.count", "oi.per_amount"]);
+  const link = await knex("orders_user_links").where({ order_id: orderId }).first("user_id");
+  const orderUserId = link?.user_id == null ? null : Number(link.user_id);
+  return {
+    id: Number(order.id),
+    status: order.status ?? null,
+    paymentGateway: order.payment_gateway ?? null,
+    date: order.date ? new Date(order.date).toISOString() : null,
+    items: items.map((row: any) => ({
+      id: Number(row.id),
+      productTitle: row.product_title,
+      productSku: row.product_sku,
+      count: Number(row.count),
+      perAmount: Number(row.per_amount),
+    })),
+    reporterMatchesOrder:
+      reporterUserId != null && orderUserId != null ? reporterUserId === orderUserId : null,
   };
 }
 
@@ -519,7 +622,17 @@ export async function findIssueReport(strapi: Strapi, reportId: string) {
       "created_at",
       "updated_at",
     ]);
-  return row ? mapDetail(row) : null;
+  if (!row) return null;
+  const detail = mapDetail(row);
+  const orderId = detail.clientContext?.order?.orderId;
+  if (!orderId) return detail;
+  try {
+    const order = await loadOrderSnapshot(strapi, orderId, detail.reporterUserId);
+    return order ? { ...detail, order } : detail;
+  } catch {
+    // Enrichment is best-effort; the report itself must still load.
+    return detail;
+  }
 }
 
 export async function updateIssueReportStatus(

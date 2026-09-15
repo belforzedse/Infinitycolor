@@ -166,6 +166,54 @@ describe("normalizeOrderForInvoice", () => {
     });
   });
 
+  it("falls back to the variation's generic attribute term when it has no color/size/model", () => {
+    const result = normalizeOrderForInvoice({
+      id: 78,
+      order_items: [
+        {
+          id: 20,
+          Count: 1,
+          PerAmount: 889000,
+          ProductTitle: "شال موهر صابونی S 00864",
+          ProductSKU: "WC-1135306-1135313",
+          product_variation: {
+            id: 10988,
+            selected_attribute_terms: [{ id: 162, Title: "کد ۴" }],
+          },
+        },
+      ],
+    });
+
+    expect(result?.attributes.order_items.data[0].attributes).toMatchObject({
+      product_color: undefined,
+      product_size: undefined,
+      product_variation_model: undefined,
+      genericAttributeLabel: "کد ۴",
+    });
+  });
+
+  it("prefers a real color/size over the generic attribute fallback when both exist", () => {
+    const result = normalizeOrderForInvoice({
+      id: 79,
+      order_items: [
+        {
+          id: 21,
+          Count: 1,
+          PerAmount: 100000,
+          ProductTitle: "پیراهن",
+          ProductSKU: "SKU-79",
+          product_variation: {
+            id: 30414,
+            product_variation_color: { id: 338, Title: "شکلاتی" },
+            selected_attribute_terms: [{ id: 999, Title: "کد ۴" }],
+          },
+        },
+      ],
+    });
+
+    expect(result?.attributes.order_items.data[0].attributes.genericAttributeLabel).toBeUndefined();
+  });
+
   it.each([
     {
       gateway: "ZarinPal",

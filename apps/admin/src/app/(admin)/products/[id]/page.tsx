@@ -9,6 +9,7 @@ import Variables from "@/components/Product/add/Variables";
 import Sizes, { SizeGuideHandle } from "@/components/Product/add/Size";
 import PublishAllVariations from "@/components/Product/add/PublishAllVariations";
 import { getProduct } from "@/services/super-admin/product/get";
+import { apiClient } from "@/services";
 import { editProductDataAtom, resetEditProductDataAtom } from "@/atoms/super-admin/products";
 import { useAtom, useSetAtom } from "jotai";
 import { transformToProductData } from "@/utils/populatedProductData";
@@ -49,6 +50,7 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
   // Raw LastEditedByAdminAt used to seed the display-date picker (admin reorder control).
   const [displayDate, setDisplayDate] = useState<string | null>(null);
   const [variationsRefreshKey, setVariationsRefreshKey] = useState(0);
+  const [previewLoading, setPreviewLoading] = useState(false);
   // `editProductDataAtom` is module-level and shared by every product page, so nothing
   // may act on it until this product's own fetch has landed — otherwise a save writes
   // the previously opened product (or an empty form) over this one. Tracking the id
@@ -233,6 +235,46 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
 
   const isSimpleProduct = productData.ProductType === "Simple";
 
+  const handlePreview = async () => {
+    if (!loaded || previewLoading) return;
+    setPreviewLoading(true);
+
+    try {
+      const overlay: Record<string, unknown> = {
+        Title: productData.Title,
+        Description: productData.Description,
+        Status: productData.Status,
+        coverImageId: productData.CoverImage?.data?.id ?? null,
+        mediaIds: productData.Media.map((item) => item.id),
+        fileIds: productData.Files.map((item) => item.id),
+        mainCategoryId: productData.product_main_category?.id ?? null,
+        otherCategoryIds: productData.product_other_categories.map((category) => category.id),
+        tagIds: productData.product_tags.map((tag) => tag.id),
+      };
+
+      if (isSimpleProduct && productData.SimpleVariationId) {
+        overlay.simpleVariationId = productData.SimpleVariationId;
+        overlay.simplePrice = productData.SimplePrice;
+        overlay.simpleDiscountPrice = productData.SimpleDiscountPrice ?? null;
+        overlay.simpleStock = productData.SimpleStock;
+      }
+
+      const response = await apiClient.post(`/products/${id}/preview-draft`, { data: overlay });
+      // Admin and storefront are separate origins with no rewrite between them
+      // (see api/product/controllers/product.ts createPreviewDraft), so the
+      // backend — not window.location.origin — decides the storefront URL.
+      const url = (response.data as { url?: string })?.url;
+      if (!url) throw new Error("Preview URL missing from response");
+
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      console.error("Error creating product preview:", error);
+      toast.error("خطا در ایجاد پیش‌نمایش محصول");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const tabs: TabItem[] = [
     {
       key: "1",
@@ -323,6 +365,14 @@ export default function EditProductsPage({ params }: { params: Promise<{ id: str
             data-testid="admin-product-cancel"
           >
             بیخیال شدن
+          </button>
+          <button
+            disabled={!loaded || previewLoading}
+            onClick={() => void handlePreview()}
+            className="w-full rounded-xl border-2 border-slate-200 bg-slate-500/10 px-3 py-2 text-sm text-slate-600 hover:bg-slate-500/80 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 md:w-fit md:px-5"
+            data-testid="admin-product-preview"
+          >
+            {previewLoading ? "در حال آماده‌سازی..." : "پیش‌نمایش"}
           </button>
           {canDuplicate && (
             <button

@@ -2,10 +2,18 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import IssueReportWidget from "../IssueReportWidget";
+import { currentOrderContextAtom } from "@/atoms/issueReportContext";
 import { submitIssueReport } from "@/services/issue-reports";
 
+const mockUseAtomValue = jest.fn((_atom: unknown) => null as unknown);
+const mockUseCart = jest.fn(() => ({ cartItems: [] as unknown[] }));
+
 jest.mock("next/navigation", () => ({ usePathname: () => "/products/example" }));
-jest.mock("jotai", () => ({ ...jest.requireActual("jotai"), useAtomValue: () => null }));
+jest.mock("jotai", () => ({
+  ...jest.requireActual("jotai"),
+  useAtomValue: (atom: unknown) => mockUseAtomValue(atom),
+}));
+jest.mock("@/contexts/CartContext", () => ({ useCart: () => mockUseCart() }));
 jest.mock("@/services/issue-reports", () => ({ submitIssueReport: jest.fn() }));
 jest.mock("@headlessui/react", () => ({
   Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
@@ -37,6 +45,8 @@ describe("IssueReportWidget", () => {
       createdAt: "2026-09-08T12:00:00.000Z",
       replayed: false,
     });
+    mockUseAtomValue.mockReset().mockReturnValue(null);
+    mockUseCart.mockReset().mockReturnValue({ cartItems: [] });
     Object.defineProperty(globalThis.crypto, "randomUUID", {
       configurable: true,
       value: jest.fn(() => "c7150e5a-8dbb-4a73-9742-8c33ee3a61b7"),
@@ -143,6 +153,39 @@ describe("IssueReportWidget", () => {
       replayed: false,
     });
     expect(await screen.findByText("گزارش شما ثبت شد.")).toBeInTheDocument();
+  });
+
+  it("includes the current order and cart snapshot when known", async () => {
+    mockUseAtomValue.mockImplementation((atom) =>
+      atom === currentOrderContextAtom ? { orderId: 111805 } : null,
+    );
+    mockUseCart.mockReturnValue({
+      cartItems: [
+        {
+          id: "1",
+          slug: "teddy-vest",
+          productId: "1",
+          name: "وست گلدوزی تدی N 0035",
+          category: "clothing",
+          price: 2149000,
+          quantity: 1,
+          image: "",
+          sku: "WC-1297070-1297075",
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<IssueReportWidget />);
+    await user.click(screen.getByRole("button", { name: "گزارش مشکل" }));
+    await fillRequiredFields(user);
+    await user.click(screen.getByRole("button", { name: "ارسال گزارش" }));
+
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(submit.mock.calls[0][0].context).toMatchObject({
+      order: { orderId: 111805 },
+      cart: [{ name: "وست گلدوزی تدی N 0035", sku: "WC-1297070-1297075", quantity: 1, price: 2149000 }],
+    });
   });
 
   it("blocks an invalid number before making a request", async () => {

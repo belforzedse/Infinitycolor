@@ -312,6 +312,21 @@ describe("canonical product publication service", () => {
     expect(strapi.__entityCreate).toHaveBeenCalledTimes(1);
   });
 
+  it("stamps published_at once on first publish-now and keeps it stable across an unpublish/republish cycle", async () => {
+    const strapi = makeStrapi([productRow({ published_at: null })]);
+
+    await executePublicationCommand(strapi, 1, { action: "publish-now" }, { origin: "admin", now });
+    const firstPublishedAt = strapi.__row(1).published_at;
+    expect(firstPublishedAt).toEqual(now);
+
+    const later = new Date(now.getTime() + 60_000);
+    await executePublicationCommand(strapi, 1, { action: "unpublish" }, { origin: "admin", now: later });
+    const evenLater = new Date(later.getTime() + 60_000);
+    await executePublicationCommand(strapi, 1, { action: "publish-now" }, { origin: "admin", now: evenLater });
+
+    expect(strapi.__row(1).published_at).toEqual(firstPublishedAt);
+  });
+
   it("publishes the product's unpublished variations along with it", async () => {
     const strapi = makeStrapi([productRow()], {
       variations: [
@@ -548,6 +563,56 @@ describe("canonical product publication service", () => {
       "product-publication-cascade",
       expect.objectContaining({ productId: 1, publishedVariationCount: 1 }),
     );
+  });
+
+  it("stamps published_at and last_edited_by_admin_at when the scheduler publishes an admin-created schedule", async () => {
+    const strapi = makeStrapi([
+      productRow({
+        status: "Scheduled",
+        scheduled_publish_at: firstAt,
+        scheduled_publish_timezone: "Asia/Tehran",
+        scheduled_publish_revision: 1,
+        last_edited_by_admin_at: "2026-08-01T00:00:00.000Z",
+        published_at: null,
+      }),
+    ]);
+    const firedAt = new Date("2026-08-08T12:01:00.000Z");
+
+    await publishScheduledProduct(strapi, {
+      productId: 1,
+      scheduleRevision: 1,
+      expectedPublishAt: firstAt,
+      now: firedAt,
+    });
+
+    expect(strapi.__row(1).published_at).toEqual(firedAt);
+    expect(strapi.__row(1).last_edited_by_admin_at).toEqual(firedAt);
+  });
+
+  it("does not treat an importer-scheduled fire as an admin edit", async () => {
+    const strapi = makeStrapi(
+      [productRow({
+        status: "Scheduled",
+        scheduled_publish_at: firstAt,
+        scheduled_publish_timezone: "Asia/Tehran",
+        scheduled_publish_revision: 1,
+        scheduled_publish_audit_context: { schemaVersion: 1, origin: "import" } as any,
+        last_edited_by_admin_at: "2026-08-01T00:00:00.000Z",
+        published_at: null,
+      })],
+      { variations: [{ id: 10, is_published: false }] },
+    );
+    const firedAt = new Date("2026-08-08T12:01:00.000Z");
+
+    await publishScheduledProduct(strapi, {
+      productId: 1,
+      scheduleRevision: 1,
+      expectedPublishAt: firstAt,
+      now: firedAt,
+    });
+
+    expect(strapi.__row(1).published_at).toEqual(firedAt);
+    expect(strapi.__row(1).last_edited_by_admin_at).toBe("2026-08-01T00:00:00.000Z");
   });
 
   it("skips the cascade when the scheduler fires an importer-created schedule", async () => {

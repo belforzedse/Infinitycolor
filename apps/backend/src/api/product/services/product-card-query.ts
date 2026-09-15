@@ -131,6 +131,7 @@ const PRODUCT_COLUMN_MAP: Record<string, string> = {
   updatedAt: "updated_at",
   removedAt: "removed_at",
   LastEditedByAdminAt: "last_edited_by_admin_at",
+  PublishedAt: "published_at",
 };
 
 const CATEGORY_COLUMN_MAP: Record<string, string> = {
@@ -609,7 +610,7 @@ const applySearchFilter = (query: any, q: unknown) => {
   });
 };
 
-const applyAvailabilityAwareOrder = (
+export const applyAvailabilityAwareOrder = (
   knex: any,
   query: any,
   strapi: any,
@@ -619,7 +620,10 @@ const applyAvailabilityAwareOrder = (
   const availabilitySql = buildProductAvailabilityExistsSql(knex, ctx, "p");
   query.orderByRaw(`${availabilitySql.toQuery()} DESC`);
 
-  const normalized = sortKey?.trim() || "createdAt:desc";
+  // "Newest" is driven by admin activity (edits, publish/unpublish, or the manual display-date
+  // override), falling back to the first real go-live moment, and finally to raw creation order
+  // for legacy/migrated rows that predate both stamps.
+  const normalized = sortKey?.trim() || "LastEditedByAdminAt:desc";
   const [rawField, rawDirection] = normalized.split(":");
   const direction = rawDirection === "asc" ? "asc" : "desc";
   if (rawField === "Price" || rawField === "price") {
@@ -628,16 +632,17 @@ const applyAvailabilityAwareOrder = (
   } else if (rawField === "AverageRating") {
     query.orderByRaw(buildRatingOrderClause(normalized)!);
   } else if (rawField === "LastEditedByAdminAt") {
-    // Dedicated "last edited by admin" sort: products never edited by an admin have a NULL
-    // timestamp and must sort last, falling back to creation order.
-    query.orderByRaw(`p.last_edited_by_admin_at ${direction.toUpperCase()} NULLS LAST`);
-    query.orderBy("p.created_at", "desc");
+    query.orderByRaw(
+      `COALESCE(p.last_edited_by_admin_at, p.published_at, p.created_at) ${direction.toUpperCase()}`,
+    );
   } else {
     const column = PRODUCT_COLUMN_MAP[rawField || "createdAt"] || PRODUCT_COLUMN_MAP.createdAt;
     query.orderBy(`p.${column}`, direction);
   }
 
-  query.orderBy("p.id", "asc");
+  // Tie-break in the same direction as the primary sort, so rows sharing an identical value
+  // (bulk imports, migrations) don't reverse within a tied group under a descending sort.
+  query.orderBy("p.id", direction);
 };
 
 export async function findOrderedProductIds(strapi: any, params: OrderedProductIdQueryParams = {}) {

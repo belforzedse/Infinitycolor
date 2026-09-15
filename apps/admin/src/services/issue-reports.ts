@@ -13,6 +13,26 @@ export type IssueReportClientContext = {
   online: boolean | null;
   connectionType: string | null;
   androidHints?: { model: string | null; platformVersion: string | null };
+  /** The order the reporter was looking at, per the storefront widget. */
+  order?: { orderId: number };
+  /** Best-effort cart snapshot the storefront captured at submit time. */
+  cart?: { name: string; sku: string | null; quantity: number; price: number }[];
+};
+
+export type IssueReportOrderSnapshot = {
+  id: number;
+  status: string | null;
+  paymentGateway: string | null;
+  date: string | null;
+  items: {
+    id: number;
+    productTitle: string;
+    productSku: string;
+    count: number;
+    perAmount: number;
+  }[];
+  /** null when neither side has a resolvable user; true/false otherwise. */
+  reporterMatchesOrder: boolean | null;
 };
 
 export type IssueReportSummary = {
@@ -32,6 +52,10 @@ export type IssueReportDetail = IssueReportSummary & {
   description: string;
   clientContext: IssueReportClientContext | null;
   userAgent: string | null;
+  /** Server-enriched: only present when the reporter's client_context named
+   * an orderId AND that order still exists. Best-effort, so its absence
+   * doesn't mean the reporter didn't reference an order. */
+  order?: IssueReportOrderSnapshot;
 };
 
 export type IssueReportFilters = {

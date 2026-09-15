@@ -107,7 +107,7 @@ export default function OffersListHomePage({ icon, title, products, viewAllHref 
 
   function getPlpHref(): string {
     if (title.includes("تخفیف")) return "/plp?hasDiscount=true";
-    if (title.includes("جدید")) return "/plp?sort=createdAt:desc";
+    if (title.includes("جدید")) return "/plp?sort=LastEditedByAdminAt:desc";
     if (title.includes("محبوب")) return "/plp?sort=AverageRating:desc";
     return "/plp";
   }

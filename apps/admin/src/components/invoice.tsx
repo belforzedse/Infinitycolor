@@ -28,6 +28,7 @@ type InvoiceItem = {
     product_color?: Relation<{ Title?: string }>;
     product_size?: Relation<{ Title?: string }>;
     product_variation_model?: Relation<{ Title?: string }>;
+    genericAttributeLabel?: string;
   };
 };
 
@@ -151,8 +152,12 @@ const productLabel = (item: InvoiceItem) => {
     .map(textValue)
     .filter(Boolean)
     .join("، ");
+  // Falls back to the variation's generic attribute (e.g. a "pattern"/"design"
+  // term) when it has none of color/size/model — otherwise those variations
+  // print with no variant info at all.
+  const variantLabel = variation || textValue(attributes.genericAttributeLabel);
   const title = textValue(attributes.ProductTitle) || "—";
-  return `${title}${variation ? `، ${variation}` : ""}`;
+  return `${title}${variantLabel ? `، ${variantLabel}` : ""}`;
 };
 
 function CustomerField({

@@ -12,7 +12,25 @@ import { collectAndroidHints } from "./deviceHints";
 import styles from "./IssueReportWidget.module.css";
 
 import { currentUserAtom } from "@/lib/atoms/auth";
+import { currentOrderContextAtom } from "@/atoms/issueReportContext";
+import { useCart } from "@/contexts/CartContext";
 import { submitIssueReport, type IssueReportClientContext } from "@/services/issue-reports";
+
+const MAX_CART_ITEMS = 20;
+
+/** `currentOrderContextAtom` is unset before the page that owns it mounts
+ * (or after a hard reload lands directly in the dialog). `pendingOrderId`
+ * survives a gateway redirect specifically so the payment-result page can
+ * recover from it too, so it's a reasonable last-resort order pointer here. */
+function pendingOrderIdFallback(): number | null {
+  try {
+    const raw = window.localStorage.getItem("pendingOrderId");
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 type Fields = {
   number: string;
@@ -78,6 +96,8 @@ export default function IssueReportDialog({
 }) {
   const pathname = usePathname();
   const user = useAtomValue(currentUserAtom);
+  const orderContext = useAtomValue(currentOrderContextAtom);
+  const { cartItems } = useCart();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [pendingContext, setPendingContext] = useState<IssueReportClientContext | null>(null);
@@ -106,7 +126,19 @@ export default function IssueReportDialog({
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmitError(null);
-    const context = pendingContext || { ...collectContext(), ...(await collectAndroidHints()) };
+    const orderId = orderContext?.orderId ?? pendingOrderIdFallback();
+    const cart = cartItems.slice(0, MAX_CART_ITEMS).map((item) => ({
+      name: item.name,
+      sku: item.sku ?? null,
+      quantity: item.quantity,
+      price: item.price,
+    }));
+    const context = pendingContext || {
+      ...collectContext(),
+      ...(await collectAndroidHints()),
+      ...(orderId ? { order: { orderId } } : {}),
+      ...(cart.length > 0 ? { cart } : {}),
+    };
     const activeSubmissionId = submissionId || crypto.randomUUID();
     if (!pendingContext) setPendingContext(context);
     if (!submissionId) setSubmissionId(() => activeSubmissionId);

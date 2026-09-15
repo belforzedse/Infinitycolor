@@ -22,6 +22,7 @@ export function getOrderItemAttributes(item: OrderItem): {
   color?: string;
   size?: string;
   model?: string;
+  genericAttribute?: string;
 } {
   const variation = item.product_variation;
   const pick = (value?: string | null) => {
@@ -29,13 +30,23 @@ export function getOrderItemAttributes(item: OrderItem): {
     return text.length > 0 ? text : undefined;
   };
 
-  return {
-    color: pick(item.product_color?.Title) ?? pick(variation?.product_variation_color?.Title),
-    size: pick(item.product_size?.Title) ?? pick(variation?.product_variation_size?.Title),
-    model:
-      pick(item.product_variation_model?.Title) ??
-      pick(variation?.product_variation_model?.Title),
-  };
+  const color = pick(item.product_color?.Title) ?? pick(variation?.product_variation_color?.Title);
+  const size = pick(item.product_size?.Title) ?? pick(variation?.product_variation_size?.Title);
+  const model =
+    pick(item.product_variation_model?.Title) ??
+    pick(variation?.product_variation_model?.Title);
+  // A variation whose sole dimension is a generic (non-color/size) attribute,
+  // e.g. a "pattern"/"design" term, has none of the three above -- without this
+  // fallback it renders with no variant info at all.
+  const genericAttribute =
+    !color && !size && !model
+      ? (variation?.selected_attribute_terms ?? [])
+          .map((term) => pick(term?.Title))
+          .filter((title): title is string => Boolean(title))
+          .join("، ") || undefined
+      : undefined;
+
+  return { color, size, model, genericAttribute };
 }
 
 /**
@@ -43,11 +54,12 @@ export function getOrderItemAttributes(item: OrderItem): {
  * Returns "" when the line has no attributes worth showing.
  */
 export function formatOrderItemAttributes(item: OrderItem, separator = " | "): string {
-  const { color, size, model } = getOrderItemAttributes(item);
+  const { color, size, model, genericAttribute } = getOrderItemAttributes(item);
   const parts: string[] = [];
   if (color) parts.push(`رنگ: ${color}`);
   if (size) parts.push(`سایز: ${size}`);
   if (model) parts.push(`مدل: ${model}`);
+  if (genericAttribute) parts.push(genericAttribute);
   return parts.join(separator);
 }
 

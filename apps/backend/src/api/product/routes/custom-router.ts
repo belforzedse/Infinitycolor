@@ -64,6 +64,28 @@ export default {
       },
     },
     {
+      method: "POST",
+      path: "/products/:id/preview-draft",
+      handler: "product.createPreviewDraft",
+      config: {
+        auth: { scope: [] },
+        policies: [capabilityPolicy("product.read")],
+        middlewares: [],
+      },
+    },
+    {
+      method: "GET",
+      path: "/products/preview-draft/:token",
+      handler: "product.resolvePreviewDraft",
+      config: {
+        // The token is the credential (30-minute TTL, 24 random bytes) — the
+        // same public-but-bearer-gated shape as /products/by-slug/:slug.
+        auth: false,
+        policies: [],
+        middlewares: [],
+      },
+    },
+    {
       method: "GET",
       path: "/products/searchwise-feed",
       handler: "product.searchwiseFeed",

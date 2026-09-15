@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSetAtom } from "jotai";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle2, CircleAlert, CircleX, Clock3, Truck } from "lucide-react";
 import { OrderService } from "@/services";
-import type { OrderPaymentStatusResponse } from "@/services/order";
+import type { Order, OrderPaymentStatusResponse } from "@/services/order";
+import OrderItemsList from "@/components/User/Orders/Detail/OrderItemsList";
 import ReserveOutcomeNotice from "@/components/User/Orders/ReserveOutcomeNotice";
 import { StorefrontContainer } from "@/components/storefront/StorefrontContainer";
 import { useCart } from "@/contexts/CartContext";
+import { currentOrderContextAtom } from "@/atoms/issueReportContext";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
 import { translateOrderStatus } from "@/utils/statusTranslations";
 
@@ -63,10 +66,25 @@ export default function PaymentResultPageClient() {
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Best-effort: the order's line items are a separate, session-authenticated
+  // call from the payment-status one above, so a failure here (e.g. the
+  // storefront session-restore 401 right after a gateway redirect) must not
+  // block the payment status itself from rendering.
+  const [orderDetail, setOrderDetail] = useState<Order | null>(null);
+  const setCurrentOrderContext = useSetAtom(currentOrderContextAtom);
 
   useEffect(() => {
     clearCartRef.current = clearCart;
   }, [clearCart]);
+
+  // Set as early as possible -- before the status fetch below, which is
+  // exactly the call that can 401 on a broken session -- so a report filed
+  // from this page still points at the right order.
+  useEffect(() => {
+    if (!Number.isInteger(orderId) || orderId <= 0) return;
+    setCurrentOrderContext({ orderId });
+    return () => setCurrentOrderContext(null);
+  }, [orderId, setCurrentOrderContext]);
 
   const load = useCallback(
     async (reconcile = false) => {
@@ -112,6 +130,21 @@ export default function PaymentResultPageClient() {
     }
     void load(false);
   }, [load, orderId, router]);
+
+  useEffect(() => {
+    if (!Number.isInteger(orderId) || orderId <= 0) return;
+    let cancelled = false;
+    OrderService.getOrderDetail(orderId)
+      .then((detail) => {
+        if (!cancelled) setOrderDetail(detail);
+      })
+      .catch(() => {
+        // Silent: the status section above already covers the failure case.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId]);
 
   useEffect(() => {
     if (!result?.paymentStatus || TERMINAL.has(result.paymentStatus)) return;
@@ -251,6 +284,10 @@ export default function PaymentResultPageClient() {
                   </div>
                 )}
               </dl>
+            )}
+
+            {orderDetail && orderDetail.order_items?.length > 0 && (
+              <OrderItemsList order={orderDetail} />
             )}
 
             {result?.isPaid && (

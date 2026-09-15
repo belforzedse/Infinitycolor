@@ -9,6 +9,10 @@ export type IssueReportClientContext = {
   online: boolean;
   connectionType: string | null;
   androidHints?: { model: string | null; platformVersion: string | null };
+  /** The order the reporter was looking at, if any. */
+  order?: { orderId: number };
+  /** Best-effort cart snapshot at submit time (capped server-side to 20 lines). */
+  cart?: { name: string; sku: string | null; quantity: number; price: number }[];
 };
 
 export type SubmitIssueReportInput = {

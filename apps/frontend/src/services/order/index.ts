@@ -74,6 +74,11 @@ export interface OrderItem {
     product_variation_color?: OrderItemAttributeRef | null;
     product_variation_size?: OrderItemAttributeRef | null;
     product_variation_model?: OrderItemAttributeRef | null;
+    /**
+     * A variation's non-color/size dimension (e.g. a "pattern"/"design" term).
+     * Only meaningful when none of the color/size/model relations above are set.
+     */
+    selected_attribute_terms?: { Title?: string }[] | null;
   } | null;
 }
 

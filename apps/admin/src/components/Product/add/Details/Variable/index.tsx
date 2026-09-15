@@ -36,6 +36,8 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
   const [currentVariation, setCurrentVariation] = useState<ProductVariableDisplay | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkForm, setBulkForm] = useState(BULK_FORM_DEFAULT);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
@@ -374,6 +376,79 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
     }
   };
 
+  const confirmBulkDelete = async () => {
+    if (!selectedRows.length) return;
+
+    if (!canDeleteVariations) {
+      toast.error("شما مجوز حذف تنوع محصول را ندارید");
+      setBulkDeleteConfirmOpen(false);
+      return;
+    }
+
+    setIsBulkDeleting(true);
+    const deletedIds: number[] = [];
+    const reservedStockLabels: string[] = [];
+    let otherFailureCount = 0;
+
+    try {
+      for (const variationId of selectedRows) {
+        try {
+          // Same transactional delete as the single-row action: removes the
+          // linked stock row too, and blocks while inventory is reserved.
+          await apiClient.delete(`/product-variations/${variationId}`);
+          deletedIds.push(variationId);
+        } catch (error: any) {
+          // A relation-cleanup 400 after a successful delete is the same
+          // acceptable quirk confirmDelete() tolerates for single deletes.
+          if (error?.status === 400 && error?.error?.message?.includes("relation")) {
+            deletedIds.push(variationId);
+            continue;
+          }
+
+          if (error?.status === 409) {
+            const variation = variables.find((v) => v.id === variationId);
+            reservedStockLabels.push(variation?.variable || `#${variationId}`);
+          } else {
+            otherFailureCount++;
+          }
+          console.error(`Error deleting variation ${variationId}:`, error);
+        }
+      }
+
+      if (deletedIds.length > 0) {
+        setVariables((prev) => prev.filter((v) => !deletedIds.includes(v.id)));
+        setSelectedRows((prev) => prev.filter((id) => !deletedIds.includes(id)));
+      }
+
+      const failedCount = reservedStockLabels.length + otherFailureCount;
+
+      if (failedCount === 0) {
+        toast.success(`${deletedIds.length} تنوع محصول با موفقیت حذف شد`);
+        setBulkDeleteConfirmOpen(false);
+      } else if (deletedIds.length > 0) {
+        const reasonParts: string[] = [];
+        if (reservedStockLabels.length > 0) {
+          reasonParts.push(
+            `${reservedStockLabels.length} مورد به دلیل موجودی رزرو شده حذف نشد: ${reservedStockLabels.join("، ")}`,
+          );
+        }
+        if (otherFailureCount > 0) {
+          reasonParts.push(`${otherFailureCount} مورد با خطا مواجه شد`);
+        }
+        toast.error(`${deletedIds.length} مورد حذف شد؛ ${reasonParts.join(" و ")}`);
+        setBulkDeleteConfirmOpen(false);
+      } else {
+        toast.error(
+          reservedStockLabels.length > 0
+            ? `هیچ موردی حذف نشد؛ همه به دلیل موجودی رزرو شده حذف نشدند: ${reservedStockLabels.join("، ")}`
+            : "حذف گروهی با خطا مواجه شد",
+        );
+      }
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   const isValidAction = (
     priceValue: number | undefined,
     discountValue: number | null | undefined,
@@ -484,6 +559,15 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
             >
               ویرایش گروهی
             </button>
+            {canDeleteVariations && (
+              <button
+                onClick={() => setBulkDeleteConfirmOpen(true)}
+                disabled={selectedRows.length === 0}
+                className="rounded-lg bg-red-600 px-4 py-2 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                حذف گروهی
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -805,6 +889,18 @@ const ProductVariables: React.FC<ProductVariablesProps> = ({ productId, refreshK
           setDeleteConfirmOpen(false);
           setDeleteId(null);
         }}
+      />
+
+      <ConfirmDialog
+        isOpen={bulkDeleteConfirmOpen}
+        title={`حذف ${selectedRows.length} تنوع محصول`}
+        description="آیا از حذف تنوع‌های انتخاب شده اطمینان دارید؟ این عمل قابل بازگشت نیست. تنوع‌هایی که موجودی رزرو شده دارند حذف نخواهند شد."
+        confirmText={isBulkDeleting ? "در حال حذف..." : "حذف"}
+        cancelText="انصراف"
+        variant="danger"
+        confirmDisabled={isBulkDeleting}
+        onConfirm={confirmBulkDelete}
+        onCancel={() => setBulkDeleteConfirmOpen(false)}
       />
     </div>
   );

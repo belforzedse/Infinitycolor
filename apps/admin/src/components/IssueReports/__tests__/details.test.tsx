@@ -232,6 +232,55 @@ it("handles Safari's frozen iOS version without claiming exact OS detection", ()
   ).toBe("iOS 26.0.1");
 });
 
+it("shows the enriched order snapshot with a mismatch warning", async () => {
+  get.mockResolvedValue({
+    ...report,
+    clientContext: { ...report.clientContext, order: { orderId: 111805 } } as never,
+    order: {
+      id: 111805,
+      status: "Started",
+      paymentGateway: "SnappPay",
+      date: "2026-09-15T09:18:42.464Z",
+      items: [
+        { id: 158117, productTitle: "وست گلدوزی تدی N 0035", productSku: "WC-1297070-1297075", count: 1, perAmount: 2149000 },
+      ],
+      reporterMatchesOrder: false,
+    },
+  });
+
+  render(<ReportDetails reportId="report-one" onClose={jest.fn()} onChanged={jest.fn()} />);
+
+  expect(await screen.findByRole("link", { name: "سفارش #111805" })).toHaveAttribute(
+    "href",
+    "/orders/edit/111805",
+  );
+  expect(screen.getByText("وست گلدوزی تدی N 0035")).toBeVisible();
+  expect(
+    screen.getByText("این سفارش به حساب کاربری گزارش‌دهنده تعلق ندارد."),
+  ).toBeVisible();
+});
+
+it("falls back to the cart snapshot when no order was found", async () => {
+  get.mockResolvedValue({
+    ...report,
+    clientContext: {
+      ...report.clientContext,
+      cart: [{ name: "شلوار جین بگ N 0015", sku: "WC-1293833-1293841", quantity: 1, price: 3699000 }],
+    } as never,
+  });
+
+  render(<ReportDetails reportId="report-one" onClose={jest.fn()} onChanged={jest.fn()} />);
+
+  expect(await screen.findByText("شلوار جین بگ N 0015")).toBeVisible();
+  expect(screen.queryByRole("link", { name: /سفارش #/ })).not.toBeInTheDocument();
+});
+
+it("hides the purchase section when there is neither an order nor a cart snapshot", async () => {
+  render(<ReportDetails reportId="report-one" onClose={jest.fn()} onChanged={jest.fn()} />);
+  await screen.findByText(report.issueName);
+  expect(screen.queryByText("خرید")).not.toBeInTheDocument();
+});
+
 it("uses reported Android hints and hides reduced Android placeholders", () => {
   const ua =
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36";

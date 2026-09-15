@@ -36,6 +36,12 @@ import {
   enqueueScheduledProductPublication,
   removeScheduledProductPublication,
 } from "../../../queue/product-publication-queue";
+import {
+  createProductPreviewDraft,
+  readProductPreviewDraft,
+  sanitizeProductPreviewOverlay,
+  type ProductPreviewOverlay,
+} from "../services/product-preview-draft";
 
 const OPERATIONAL_PRODUCT_FIELDS = [
   "Title",
@@ -306,6 +312,108 @@ async function loadProductById(
   return (foundProducts as unknown[])[0] || null;
 }
 
+/**
+ * Splices an admin's unsaved form edits onto a live product fetched via
+ * `loadProductById`, in place.
+ *
+ * `entityService.findMany`/`findOne` return the pre-serialization shape —
+ * flat fields and flat relations (see `updateDisplayDate` above reading
+ * `existing.LastEditedByAdminAt` directly off a findOne result, with no
+ * `.attributes`). Strapi's own content-API response pipeline wraps this into
+ * `{ data: { attributes } }` on the way out over HTTP, the same as it does
+ * for the untouched fields on this same object — so every write here must
+ * also be flat, never `{ data }`, or it gets double-wrapped and the frontend
+ * (whose `normalizeRelation` passes an already-`.data`-shaped value through
+ * untouched) renders `data.attributes === undefined`.
+ *
+ * Still reads defensively via `attrs ?? product`/`.attributes ?? entity`,
+ * matching this codebase's own `attrsOf`/`relationData` idiom
+ * (api/product/services/product.ts), in case a future Strapi/config change
+ * ever hands this a wrapped shape instead.
+ *
+ * Product-level relation fields not covered by the admin form (reviews,
+ * FAQs, size helper, attribute assignments) are left as the live DB fetched
+ * them — the overlay only ever contains what `EditProductData` can edit.
+ */
+async function applyPreviewOverlay(
+  strapi: any,
+  product: any,
+  overlay: ProductPreviewOverlay,
+): Promise<void> {
+  const attrs = product?.attributes ?? product;
+  if (!attrs) return;
+
+  if (overlay.Title !== undefined) attrs.Title = overlay.Title;
+  if (overlay.Description !== undefined) attrs.Description = overlay.Description;
+  if (overlay.Status !== undefined) attrs.Status = overlay.Status;
+
+  if (overlay.coverImageId !== undefined) {
+    attrs.CoverImage = overlay.coverImageId
+      ? await strapi.entityService.findOne("plugin::upload.file", overlay.coverImageId)
+      : null;
+  }
+
+  if (overlay.mediaIds !== undefined) {
+    attrs.Media = await Promise.all(
+      overlay.mediaIds.map((id) => strapi.entityService.findOne("plugin::upload.file", id)),
+    );
+  }
+
+  if (overlay.fileIds !== undefined) {
+    attrs.Files = await Promise.all(
+      overlay.fileIds.map((id) => strapi.entityService.findOne("plugin::upload.file", id)),
+    );
+  }
+
+  if (overlay.mainCategoryId !== undefined) {
+    attrs.product_main_category = overlay.mainCategoryId
+      ? await strapi.entityService.findOne(
+          "api::product-category.product-category",
+          overlay.mainCategoryId,
+        )
+      : null;
+  }
+
+  if (overlay.otherCategoryIds !== undefined) {
+    attrs.product_other_categories = await Promise.all(
+      overlay.otherCategoryIds.map((id) =>
+        strapi.entityService.findOne("api::product-category.product-category", id),
+      ),
+    );
+  }
+
+  if (overlay.tagIds !== undefined) {
+    attrs.product_tags = await Promise.all(
+      overlay.tagIds.map((id) => strapi.entityService.findOne("api::product-tag.product-tag", id)),
+    );
+  }
+
+  if (
+    overlay.simpleVariationId &&
+    (overlay.simplePrice !== undefined ||
+      overlay.simpleDiscountPrice !== undefined ||
+      overlay.simpleStock !== undefined)
+  ) {
+    const variationList = Array.isArray(attrs.product_variations)
+      ? attrs.product_variations
+      : (attrs.product_variations?.data ?? []);
+    const variation = variationList.find((v: any) => v.id === overlay.simpleVariationId);
+    const variationAttrs = variation?.attributes ?? variation;
+
+    if (variationAttrs) {
+      if (overlay.simplePrice !== undefined) variationAttrs.Price = overlay.simplePrice;
+      if (overlay.simpleDiscountPrice !== undefined) {
+        variationAttrs.DiscountPrice = overlay.simpleDiscountPrice;
+      }
+      if (overlay.simpleStock !== undefined) {
+        const stock = variationAttrs.product_stock?.data ?? variationAttrs.product_stock;
+        const stockAttrs = stock?.attributes ?? stock;
+        if (stockAttrs) stockAttrs.Count = overlay.simpleStock;
+      }
+    }
+  }
+}
+
 async function findProductBySlugInternal(
   strapi: any,
   inboundSlug: string,
@@ -552,6 +660,66 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         LastEditedByAdminAt: normalizedDisplayAt,
       },
     };
+  },
+
+  /**
+   * Stashes an admin's in-progress (unsaved) edit as an ephemeral overlay and
+   * returns a bearer token for it. Never touches the live product row — see
+   * services/product-preview-draft.ts.
+   */
+  async createPreviewDraft(ctx) {
+    const productId = Number(ctx.params?.id);
+    if (!Number.isSafeInteger(productId) || productId <= 0) {
+      ctx.status = 400;
+      ctx.body = {
+        error: { code: "INVALID_PRODUCT_ID", message: "A valid product ID is required" },
+      };
+      return;
+    }
+
+    const overlay = sanitizeProductPreviewOverlay(ctx.request?.body?.data);
+    const userId = Number(ctx.state?.user?.id);
+
+    const token = await createProductPreviewDraft(
+      productId,
+      overlay,
+      Number.isSafeInteger(userId) && userId > 0 ? userId : undefined,
+    );
+
+    // The admin app and storefront are separate origins (admin.infinitycolor.co
+    // vs. infinitycolor.co, per config/middlewares.ts) with no rewrite between
+    // them, so the admin can't build this link itself from window.location.
+    const frontendOrigin = (
+      process.env.FRONTEND_BASE_URL ||
+      process.env.FRONTEND_URL ||
+      "https://infinitycolor.co"
+    ).replace(/\/$/, "");
+
+    ctx.body = { data: { token, url: `${frontendOrigin}/pdp/preview/${token}` } };
+  },
+
+  /**
+   * Public by design — the token itself is the credential, the same bearer
+   * pattern used for OTP/credential challenges elsewhere in this backend.
+   * Always renders as if viewed by an admin (bypasses the Active-only gate),
+   * since a preview link only ever exists because an admin created it.
+   */
+  async resolvePreviewDraft(ctx) {
+    const token = String(ctx.params?.token || "");
+    const draft = await readProductPreviewDraft(token);
+    if (!draft) {
+      return ctx.notFound("Preview expired or not found");
+    }
+
+    const product = await loadProductById(strapi, draft.productId, true, PRODUCT_POPULATE);
+    if (!product) {
+      return ctx.notFound("Product not found");
+    }
+
+    await applyPreviewOverlay(strapi, product, draft.overlay);
+
+    ctx.set("Cache-Control", "no-store");
+    ctx.body = { data: product };
   },
 
   async publication(ctx) {

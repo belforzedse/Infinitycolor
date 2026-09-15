@@ -17,6 +17,7 @@ import {
   Smartphone,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { storefrontOrigin } from "@/config/admin-env";
 import {
@@ -25,6 +26,8 @@ import {
   type IssueReportDetail,
   type IssueReportStatus,
 } from "@/services/issue-reports";
+import { faNum } from "@/utils/faNum";
+import { translateOrderStatus, translatePaymentGateway } from "@/utils/statusTranslations";
 import { describeDevice } from "./device";
 import { STATUS } from "./shared";
 
@@ -389,6 +392,80 @@ function ReportContent({
           </Row>
         </dl>
       </section>
+      {(report.order || (context?.cart && context.cart.length > 0)) && (
+        <section>
+          <h3 className="mb-2 font-bold text-slate-900">خرید</h3>
+          {report.order ? (
+            <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Link
+                  href={`/orders/edit/${report.order.id}`}
+                  className="font-semibold text-blue-700 hover:underline"
+                >
+                  سفارش #{report.order.id}
+                </Link>
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span>{translateOrderStatus(report.order.status)}</span>
+                  {report.order.paymentGateway && (
+                    <>
+                      <span>·</span>
+                      <span>{translatePaymentGateway(report.order.paymentGateway)}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+              {report.order.reporterMatchesOrder === false && (
+                <p
+                  role="alert"
+                  className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                >
+                  این سفارش به حساب کاربری گزارش‌دهنده تعلق ندارد.
+                </p>
+              )}
+              <ul className="divide-y divide-slate-100">
+                {report.order.items.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex items-center justify-between gap-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-slate-900">
+                        {item.productTitle}
+                      </p>
+                      <p className="text-xs text-slate-500" dir="ltr">
+                        {item.productSku}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-left text-xs text-slate-600">
+                      <p>{faNum(item.count)} عدد</p>
+                      <p>{faNum(item.perAmount)} تومان</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 p-4">
+              <p className="mb-2 text-xs text-slate-500">
+                سفارش مرتبط یافت نشد؛ کالاهای سبد خرید در زمان ارسال گزارش:
+              </p>
+              <ul className="divide-y divide-slate-100">
+                {context?.cart?.map((item, index) => (
+                  <li
+                    key={`${item.name}-${index}`}
+                    className="flex items-center justify-between gap-3 py-2 text-sm"
+                  >
+                    <span className="min-w-0 truncate">{item.name}</span>
+                    <span className="shrink-0 text-xs text-slate-600">
+                      {faNum(item.quantity)} × {faNum(item.price)} تومان
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
       <details className="group rounded-2xl border border-slate-200">
         <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 font-bold text-slate-900 [&::-webkit-details-marker]:hidden">
           جزئیات فنی

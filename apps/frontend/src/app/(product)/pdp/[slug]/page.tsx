@@ -38,6 +38,7 @@ import {
   canonicalProductSlug,
   shouldRedirectToCanonicalSlug,
 } from "@/utils/productSlug";
+import { normalizeProductDetail } from "../normalizeProductDetail";
 
 // TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
 // See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
@@ -85,125 +86,6 @@ const stripHtml = (value: unknown) =>
 
 const truncate = (value: string, maxLength: number) =>
   value.length > maxLength ? value.slice(0, maxLength).trim() : value;
-
-const normalizeRelation = (rel: any, isVariation = false): any => {
-  if (!rel) return null;
-
-  if (rel.data) return rel;
-
-  if (Array.isArray(rel)) {
-    return {
-      data: rel.map((item: any) => {
-        if (item.attributes) {
-          if (isVariation) {
-            const {
-              product_stock,
-              product_variation_color,
-              product_variation_size,
-              product_variation_model,
-              ...rest
-            } = item.attributes;
-
-            return {
-              ...item,
-              attributes: {
-                ...rest,
-                product_stock: normalizeRelation(product_stock),
-                product_variation_color: normalizeRelation(product_variation_color),
-                product_variation_size: normalizeRelation(product_variation_size),
-                product_variation_model: normalizeRelation(product_variation_model),
-              },
-            };
-          }
-
-          return item;
-        }
-
-        const {
-          id,
-          product_stock,
-          product_variation_color,
-          product_variation_size,
-          product_variation_model,
-          ...rest
-        } = item;
-        const normalized: any = { id, attributes: rest };
-
-        if (isVariation) {
-          normalized.attributes.product_stock = normalizeRelation(product_stock);
-          normalized.attributes.product_variation_color =
-            normalizeRelation(product_variation_color);
-          normalized.attributes.product_variation_size = normalizeRelation(product_variation_size);
-          normalized.attributes.product_variation_model =
-            normalizeRelation(product_variation_model);
-        }
-
-        return normalized;
-      }),
-    };
-  }
-
-  if (rel.id !== undefined) {
-    const { id, ...rest } = rel;
-    return {
-      data: { id, attributes: rest },
-    };
-  }
-
-  return null;
-};
-
-const normalizeProductDetail = (rawProduct: any): ProductDetail | null => {
-  if (!rawProduct) return null;
-
-  if (rawProduct.attributes) {
-    return {
-      ...rawProduct,
-      attributes: {
-        ...rawProduct.attributes,
-        product_main_category: normalizeRelation(rawProduct.attributes.product_main_category),
-        product_other_categories: normalizeRelation(rawProduct.attributes.product_other_categories),
-        product_variations: normalizeRelation(rawProduct.attributes.product_variations, true),
-        product_reviews: normalizeRelation(rawProduct.attributes.product_reviews),
-        product_tags: normalizeRelation(rawProduct.attributes.product_tags),
-        CoverImage: normalizeRelation(rawProduct.attributes.CoverImage),
-        Media: normalizeRelation(rawProduct.attributes.Media),
-        Files: normalizeRelation(rawProduct.attributes.Files),
-        product_size_helper: normalizeRelation(rawProduct.attributes.product_size_helper),
-      },
-    };
-  }
-
-  const {
-    id,
-    product_main_category,
-    product_other_categories,
-    product_variations,
-    product_reviews,
-    product_tags,
-    CoverImage,
-    Media,
-    Files,
-    product_size_helper,
-    ...rest
-  } = rawProduct;
-
-  return {
-    id,
-    attributes: {
-      ...rest,
-      product_main_category: normalizeRelation(product_main_category),
-      product_other_categories: normalizeRelation(product_other_categories),
-      product_variations: normalizeRelation(product_variations, true),
-      product_reviews: normalizeRelation(product_reviews),
-      product_tags: normalizeRelation(product_tags),
-      CoverImage: normalizeRelation(CoverImage),
-      Media: normalizeRelation(Media),
-      Files: normalizeRelation(Files),
-      product_size_helper: normalizeRelation(product_size_helper),
-    },
-  } as ProductDetail;
-};
 
 const isActiveProduct = (product: ProductDetail | null) =>
   product?.attributes?.Status === "Active" && !product?.attributes?.removedAt;

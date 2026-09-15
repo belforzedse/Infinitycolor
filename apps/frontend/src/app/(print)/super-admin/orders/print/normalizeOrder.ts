@@ -265,6 +265,12 @@ const normalizeOrderItems = (items: unknown) => {
         const color = unwrapEntity(entity.product_color ?? pv?.product_variation_color);
         const size = unwrapEntity(entity.product_size ?? pv?.product_variation_size);
         const model = unwrapEntity(entity.product_variation_model ?? pv?.product_variation_model);
+        // Order items only ever snapshot color/size/model. A variation whose sole
+        // dimension is a generic attribute (e.g. "pattern") has none of those, so
+        // without this the invoice silently drops the only variant info it has.
+        const genericTerms = unwrapCollection(pv?.selected_attribute_terms)
+          .map((term: unknown) => unwrapEntity(term)?.Title)
+          .filter((title: unknown): title is string => Boolean(title));
         return {
           id: String(entity.id ?? ""),
           attributes: {
@@ -295,6 +301,9 @@ const normalizeOrderItems = (items: unknown) => {
                     attributes: model,
                   },
                 }
+              : undefined,
+            genericAttributeLabel: !color && !size && !model && genericTerms.length
+              ? genericTerms.join("، ")
               : undefined,
           },
         };

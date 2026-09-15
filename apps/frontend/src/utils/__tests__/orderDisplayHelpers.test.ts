@@ -134,4 +134,39 @@ describe("getOrderItemAttributes", () => {
   it("returns an empty line for an item with no attributes at all", () => {
     expect(formatOrderItemAttributes(makeItem())).toBe("");
   });
+
+  // Regression: a variation whose only dimension is a generic (non-color/size)
+  // attribute -- e.g. a "pattern"/"design" term -- has none of
+  // color/size/model, so every order view rendered it as if it had no variant
+  // at all even though the customer picked one.
+  it("falls back to the variation's generic attribute term when it has no color/size/model", () => {
+    const item = makeItem({
+      product_variation: {
+        id: 9,
+        product: null,
+        selected_attribute_terms: [{ Title: "کد ۴" }],
+      },
+    });
+
+    expect(getOrderItemAttributes(item)).toEqual({
+      color: undefined,
+      size: undefined,
+      model: undefined,
+      genericAttribute: "کد ۴",
+    });
+    expect(formatOrderItemAttributes(item)).toBe("کد ۴");
+  });
+
+  it("prefers a real color/size over the generic attribute fallback when both exist", () => {
+    const item = makeItem({
+      product_variation: {
+        id: 9,
+        product: null,
+        product_variation_color: { id: 3, Title: "مشکی" },
+        selected_attribute_terms: [{ Title: "کد ۴" }],
+      },
+    });
+
+    expect(getOrderItemAttributes(item).genericAttribute).toBeUndefined();
+  });
 });

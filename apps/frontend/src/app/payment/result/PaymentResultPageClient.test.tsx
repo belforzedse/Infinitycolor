@@ -24,6 +24,7 @@ jest.mock("@/services", () => ({
   OrderService: {
     getOrderPaymentStatus: jest.fn(),
     reconcileOrderPayment: jest.fn(),
+    getOrderDetail: jest.fn(),
   },
 }));
 jest.mock("@/contexts/CartContext", () => ({
@@ -35,6 +36,7 @@ jest.mock("@/components/storefront/StorefrontContainer", () => ({
 
 const getStatus = OrderService.getOrderPaymentStatus as jest.Mock;
 const reconcile = OrderService.reconcileOrderPayment as jest.Mock;
+const getDetail = OrderService.getOrderDetail as jest.Mock;
 
 const response = (overrides: Record<string, unknown>) => ({
   success: true,
@@ -55,6 +57,57 @@ describe("PaymentResultPageClient", () => {
     legacyOrderId = null;
     jest.clearAllMocks();
     localStorage.clear();
+    // Best-effort by default: most tests only care about the payment-status
+    // section, and a rejected item fetch must not break them.
+    getDetail.mockRejectedValue(new Error("no session"));
+  });
+
+  it("shows what the customer bought once the order detail loads", async () => {
+    getStatus.mockResolvedValue(response({
+      status: "Started",
+      paymentStatus: "Succeeded",
+      isPaid: true,
+    }));
+    getDetail.mockResolvedValue({
+      id: 42,
+      Status: "Started",
+      Date: "2026-09-15T09:18:42.464Z",
+      Type: "Automatic",
+      ShippingCost: 0,
+      createdAt: "2026-09-15T09:18:42.464Z",
+      updatedAt: "2026-09-15T09:18:42.464Z",
+      order_items: [
+        {
+          id: 158117,
+          Count: 1,
+          PerAmount: 2149000,
+          ProductTitle: "وست گلدوزی تدی N 0035",
+          ProductSKU: "WC-1297070-1297075",
+        },
+      ],
+    });
+
+    render(<PaymentResultPageClient />);
+
+    expect(await screen.findByText("وست گلدوزی تدی N 0035")).toBeVisible();
+    expect(
+      screen.getByText(`جمع: ${(2149000).toLocaleString("fa-IR")} تومان`),
+    ).toBeVisible();
+    expect(getDetail).toHaveBeenCalledWith(42);
+  });
+
+  it("keeps showing payment status when the order-detail fetch fails", async () => {
+    getStatus.mockResolvedValue(response({
+      status: "Started",
+      paymentStatus: "Succeeded",
+      isPaid: true,
+    }));
+    getDetail.mockRejectedValue(new Error("session restore 401"));
+
+    render(<PaymentResultPageClient />);
+
+    expect(await screen.findByText("پرداخت با موفقیت ثبت شد")).toBeVisible();
+    expect(screen.queryByText("اقلام سفارش")).not.toBeInTheDocument();
   });
 
   it("clears checkout state only after the authoritative order status is paid", async () => {

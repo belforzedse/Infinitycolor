@@ -88,6 +88,7 @@ type ProductRow = {
   publication_revision: number | null;
   publication_effects_completed_revision: number | null;
   publication_effects_last_error: string | null;
+  published_at: string | Date | null;
 };
 
 const productTable = (trx: any) => trx("products");
@@ -600,6 +601,9 @@ export async function executePublicationCommand(
           publication_effects_last_error: null,
           scheduled_publish_audit_context: null,
           updated_at: now,
+          // First real go-live moment, kept stable across later unpublish/republish cycles;
+          // PLP "newest" falls back to this when LastEditedByAdminAt is unset.
+          published_at: row.published_at ?? now,
           ...adminEditStamp,
         });
         changed = true;
@@ -759,7 +763,8 @@ export async function publishScheduledProduct(
       return { outcome: "permanent-failure" as const, code: failureCode, result: resultFromRow(blocked, true) };
     }
 
-    const publishedVariationCount = scheduledByImporter(row, input.auditContext)
+    const isImporterScheduled = scheduledByImporter(row, input.auditContext);
+    const publishedVariationCount = isImporterScheduled
       ? 0
       : await publishProductVariations(strapi, trx, input.productId, now);
     const nextPublicationRevision = Number(row.publication_revision || 0) + 1;
@@ -777,6 +782,13 @@ export async function publishScheduledProduct(
       publication_effects_last_error: null,
       scheduled_publish_audit_context: null,
       updated_at: now,
+      // Same first-go-live stamp as the manual publish-now path; this is the
+      // scheduler's own transition, which never goes through publish-now.
+      published_at: row.published_at ?? now,
+      // The scheduler is landing an admin's deferred publish instruction, so treat the
+      // fire time like any other admin edit for "newest" ordering (skip for importer
+      // schedules, which aren't an admin action).
+      ...(isImporterScheduled ? {} : { last_edited_by_admin_at: now }),
     });
     const published = (await productTable(trx).where({ id: input.productId }).first()) as ProductRow;
     await writeScheduledPublicationAudit(strapi, row, "success", {

@@ -8,13 +8,18 @@ const mockEnqueue = jest.fn();
 const mockRemove = jest.fn();
 const mockCoreCreate = jest.fn();
 const mockUpdateProduct = jest.fn();
+const mockFindProduct = jest.fn();
+const mockRecordAdminAudit = jest.fn();
 let mockAdminUser: any;
 
 mockStrapi.query = jest.fn((uid: string) => {
   if (uid !== "plugin::users-permissions.user") throw new Error(`Unexpected query: ${uid}`);
   return { findOne: jest.fn().mockImplementation(async () => mockAdminUser) };
 });
-mockStrapi.entityService = { update: (...args: unknown[]) => mockUpdateProduct(...args) };
+mockStrapi.entityService = {
+  update: (...args: unknown[]) => mockUpdateProduct(...args),
+  findOne: (...args: unknown[]) => mockFindProduct(...args),
+};
 
 jest.mock("@strapi/strapi", () => ({
   factories: {
@@ -56,6 +61,10 @@ jest.mock("../../../utils/responseCache", () => ({
   isCacheDebugHeaderEnabled: jest.fn(() => false),
   shouldBypassEndpointCache: jest.fn(() => true),
   withCache: jest.fn(async (_options: unknown, loader: () => Promise<unknown>) => loader()),
+}));
+
+jest.mock("../../../utils/adminAudit", () => ({
+  recordAdminAudit: (...args: unknown[]) => mockRecordAdminAudit(...args),
 }));
 
 import productController from "../controllers/product";
@@ -101,6 +110,8 @@ describe("product publication controller contract", () => {
     mockRemove.mockResolvedValue(true);
     mockCoreCreate.mockResolvedValue({ data: { id: 12 } });
     mockUpdateProduct.mockResolvedValue({ id: 12 });
+    mockFindProduct.mockResolvedValue({ id: 12, LastEditedByAdminAt: null });
+    mockRecordAdminAudit.mockResolvedValue(true);
   });
 
   it("accepts the legacy default draft status during product creation", async () => {
