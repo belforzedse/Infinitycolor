@@ -123,7 +123,13 @@ const useIndexImageUpload = ({
         },
       }));
       lastFileRef.current = null;
-      setPendingPreview(null);
+      // Deliberately NOT clearing the pending preview here: `savedPreview` now
+      // resolves to a freshly-uploaded CDN/server URL that can 404 for a few
+      // seconds right after upload while the CDN edge catches up, and
+      // `imagePreview` would flash broken. The local blob/data-URL preview
+      // already renders correctly, so keep it as the source of truth for the
+      // rest of this session; it's replaced by `savedPreview` on next mount
+      // (product switch, page reload) once the CDN has had time to catch up.
       onImageUpload?.(file);
       setUploadError(null);
       const isVideo = file.type.startsWith("video/");

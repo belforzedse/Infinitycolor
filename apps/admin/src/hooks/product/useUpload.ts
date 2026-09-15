@@ -12,6 +12,7 @@ import type { FileType } from "@/components/Product/add/FileUploader/types";
 import type { UploadStatus } from "@/components/Product/add/UploadStatusBadge";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { generateStableId } from "@/utils/stableId";
+import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import {
   hasTypedMediaMime,
   reorderArrayWithGuards,
@@ -38,6 +39,9 @@ export interface FileWithPreview {
   preview: string;
   uploadStatus: UploadStatus;
   uploadError?: string | null;
+  /** The resolved URL this item was (or will be) reported as by the parent, used to
+   * match it back up in `reconcileWithLocalPreviews` regardless of array position. */
+  remoteUrl?: string;
 }
 
 interface UseUploadProps {
@@ -64,17 +68,20 @@ const mapUrlsToFileWithPreview = (urls: string[], placeholderName: string) =>
     id: generateStableId(`${placeholderName}-`),
     file: new File([], `${placeholderName}-${index}`),
     preview: url,
+    remoteUrl: url,
     uploadStatus: "uploaded" as const,
     uploadError: null,
   }));
 
 // Reconciles the locally-tracked items against the URLs the parent now
-// reports as uploaded. Items already known locally (matched by position
-// among "uploaded" entries) keep their existing preview — notably a fresh
-// item's own `blob:` preview — instead of being swapped to the resolved
-// CDN/server URL, which can 404 for a few seconds right after upload while
-// the CDN edge catches up. Items still "uploading"/"failed" are left alone
-// since the parent doesn't know about them yet.
+// reports as uploaded. Items already known locally are matched by their
+// resolved `remoteUrl` (not array position, which breaks across reorders and
+// across the atoms' module-level state surviving a navigation to a different
+// product) and keep their existing preview — notably a fresh item's own
+// `blob:` preview — instead of being swapped to the resolved CDN/server URL,
+// which can 404 for a few seconds right after upload while the CDN edge
+// catches up. Items still "uploading"/"failed" are left alone since the
+// parent doesn't know about them yet.
 const reconcileWithLocalPreviews = (
   prevItems: FileWithPreview[],
   urls: string[],
@@ -82,9 +89,12 @@ const reconcileWithLocalPreviews = (
 ): { next: FileWithPreview[]; stale: FileWithPreview[] } => {
   const uploaded = prevItems.filter((item) => item.uploadStatus === "uploaded");
   const pending = prevItems.filter((item) => item.uploadStatus !== "uploaded");
+  const uploadedByUrl = new Map(
+    uploaded.filter((item) => item.remoteUrl).map((item) => [item.remoteUrl as string, item]),
+  );
 
   const reconciledUploaded = urls.map(
-    (url, index) => uploaded[index] ?? mapUrlsToFileWithPreview([url], placeholderName)[0],
+    (url) => uploadedByUrl.get(url) ?? mapUrlsToFileWithPreview([url], placeholderName)[0],
   );
 
   const keptIds = new Set(reconciledUploaded.map((item) => item.id));
@@ -210,7 +220,7 @@ export function useUpload({
   const updateItemById = (
     type: FileType,
     id: string,
-    patch: Partial<Pick<FileWithPreview, "uploadStatus" | "uploadError">>,
+    patch: Partial<Pick<FileWithPreview, "uploadStatus" | "uploadError" | "remoteUrl">>,
   ) => {
     const updater = (items: FileWithPreview[]) =>
       items.map((item) => (item.id === id ? { ...item, ...patch } : item));
@@ -303,6 +313,7 @@ export function useUpload({
     updateItemById(targetType, item.id, {
       uploadStatus: "uploaded",
       uploadError: null,
+      remoteUrl: resolveAssetUrl(response[0].url),
     });
   };
 
