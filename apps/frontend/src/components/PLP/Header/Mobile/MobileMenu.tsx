@@ -12,7 +12,7 @@ import { buildMobileCategoryGroups } from "@/utils/categoryGroups";
 import { useCart } from "@/contexts/CartContext";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
 import { API_BASE_URL } from "@/constants/api";
-import { OPPSI_HEADER_ITEM } from "@/constants/categories";
+import { MOBILE_TOP_LEVEL_CATEGORY_SLUGS, OPPSI_HEADER_ITEM } from "@/constants/categories";
 import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
@@ -126,7 +126,20 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
     [navbarCategories],
   );
 
-  const mobileCategoryGroups = useMemo(() => buildMobileCategoryGroups(categories), [categories]);
+  const { topLevelCategories, groupableCategories } = useMemo(() => {
+    const topLevelSlugs = new Set(MOBILE_TOP_LEVEL_CATEGORY_SLUGS);
+    const topLevel: ProductCategorySummary[] = [];
+    const groupable: ProductCategorySummary[] = [];
+    for (const category of categories) {
+      (topLevelSlugs.has(category.slug) ? topLevel : groupable).push(category);
+    }
+    return { topLevelCategories: topLevel, groupableCategories: groupable };
+  }, [categories]);
+
+  const mobileCategoryGroups = useMemo(
+    () => buildMobileCategoryGroups(groupableCategories),
+    [groupableCategories],
+  );
 
   const menuItems: MobileNavItem[] = useMemo(
     () => [
@@ -137,6 +150,13 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
         label: group.label,
         type: "category-group" as const,
         categories: group.categories,
+      })),
+      ...topLevelCategories.map((category) => ({
+        key: `category-${category.id}`,
+        label: category.name,
+        href: getCategoryPlpHref(category.slug),
+        type: "category" as const,
+        category,
       })),
       {
         key: OPPSI_HEADER_ITEM.key,
@@ -151,7 +171,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
       },
       { key: "blog", label: "مقالات", href: "/blog" },
     ],
-    [mobileCategoryGroups],
+    [mobileCategoryGroups, topLevelCategories],
   );
 
   useEffect(() => {

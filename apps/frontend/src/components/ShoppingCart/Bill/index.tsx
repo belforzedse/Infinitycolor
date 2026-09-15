@@ -425,8 +425,21 @@ function ShoppingCartBillForm({}: Props) {
   // Check SnappPay as soon as authenticated checkout data can load, then refresh
   // whenever an input to the payable checkout state changes. The backend accepts
   // the current payable amount even before a delivery method has been selected.
+  //
+  // A transient failure (network blip, momentary auth refresh, etc.) used to
+  // leave SnappPay silently disqualified until the shopper happened to touch
+  // the cart/discount/shipping/address -- the only things that change
+  // `eligibilityKey` and trigger a re-check. A stale cart left untouched just
+  // sat disqualified forever with no visible error. Retrying with backoff
+  // here means the check self-heals on its own instead of depending on the
+  // shopper stumbling into a state change.
   useEffect(() => {
-    const run = async () => {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const MAX_RETRIES = 4;
+
+    const run = async (attempt: number) => {
+      if (cancelled) return;
       let requestSeq = 0;
 
       try {
@@ -456,7 +469,7 @@ function ShoppingCartBillForm({}: Props) {
           setSnappDescription(undefined);
           return;
         }
-        if (lastSnappEligibilityKeyRef.current === eligibilityKey) {
+        if (attempt === 0 && lastSnappEligibilityKeyRef.current === eligibilityKey) {
           return;
         }
 
@@ -465,21 +478,31 @@ function ShoppingCartBillForm({}: Props) {
         const res = await CartService.getSnappEligible({
           amount: totalToman,
         });
-        if (snappEligibilitySeqRef.current !== requestSeq) return;
+        if (cancelled || snappEligibilitySeqRef.current !== requestSeq) return;
         lastSnappEligibilityKeyRef.current = eligibilityKey;
         setSnappEligible(!!res.eligible);
         setSnappTitle(res.title);
         setSnappDescription(res.description);
       } catch {
+        if (cancelled) return;
         if (requestSeq > 0 && snappEligibilitySeqRef.current !== requestSeq) return;
 
         lastSnappEligibilityKeyRef.current = null;
         setSnappEligible(undefined);
         setSnappTitle(undefined);
         setSnappDescription(undefined);
+
+        if (attempt < MAX_RETRIES) {
+          const delayMs = 2000 * Math.pow(2, attempt);
+          retryTimer = setTimeout(() => run(attempt + 1), delayMs);
+        }
       }
     };
-    run();
+    run(0);
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [
     addressContextKey,
     canLoadProtectedCheckoutData,

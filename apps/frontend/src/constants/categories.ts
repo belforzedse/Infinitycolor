@@ -52,3 +52,12 @@ export const HEADER_EXTRA_CATEGORIES = [
     megaMenuImageHeight: 1024,
   },
 ] as const;
+
+/**
+ * Category slugs rendered as their own standalone row in the mobile menu instead
+ * of being bucketed into a MOBILE_CATEGORY_GROUPS accordion. Use for a real CMS
+ * category that doesn't fit any existing group's keywords and needs the same
+ * flat, top-level visibility it already has on desktop (where every
+ * Navigation-assigned category is its own nav item).
+ */
+export const MOBILE_TOP_LEVEL_CATEGORY_SLUGS: readonly string[] = ["کیف"];
