@@ -1,3 +1,11 @@
+const mockRecordAdminAudit = jest.fn();
+const mockMarkProductEditedByAdmin = jest.fn();
+
+jest.mock("../../../../../utils/adminAudit", () => ({
+  recordAdminAudit: (...args: unknown[]) => mockRecordAdminAudit(...args),
+  markProductEditedByAdmin: (...args: unknown[]) => mockMarkProductEditedByAdmin(...args),
+}));
+
 import productLifecycles from "../lifecycles";
 
 describe("product lifecycles - PDP cache invalidation", () => {
@@ -21,6 +29,8 @@ describe("product lifecycles - PDP cache invalidation", () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    mockRecordAdminAudit.mockReset();
+    mockMarkProductEditedByAdmin.mockReset();
   });
 
   afterAll(() => {
@@ -135,6 +145,65 @@ describe("product lifecycles - PDP cache invalidation", () => {
       } as any);
 
       expect(revalidatedSlugs()).toEqual([]);
+    });
+
+    it("stamps LastEditedByAdminAt when only CoverImage changes (previously a silent gap)", async () => {
+      mockRecordAdminAudit.mockResolvedValue(true);
+      (global as any).strapi.entityService.findOne = jest.fn().mockResolvedValue({
+        Title: "My product",
+        Slug: "my-product",
+        Status: "InActive",
+        CoverImage: { id: 9 },
+      });
+
+      await productLifecycles.afterUpdate({
+        params: { data: { CoverImage: 9 } },
+        result: { id: 1, Slug: "my-product", Status: "InActive" },
+        state: {
+          previousProduct: {
+            Title: "My product",
+            Slug: "my-product",
+            Status: "InActive",
+            CoverImage: { id: 4 },
+          },
+        },
+      } as any);
+
+      // The lifecycle must actually ask for CoverImage — a diff can't see a field it never fetched.
+      expect((global as any).strapi.entityService.findOne).toHaveBeenCalledWith(
+        "api::product.product",
+        1,
+        expect.objectContaining({
+          populate: expect.objectContaining({ CoverImage: expect.anything() }),
+        }),
+      );
+      expect(mockRecordAdminAudit).toHaveBeenCalled();
+      expect(mockMarkProductEditedByAdmin).toHaveBeenCalledWith(expect.anything(), 1);
+    });
+
+    it("does not stamp when CoverImage is re-sent unchanged (no false positives)", async () => {
+      (global as any).strapi.entityService.findOne = jest.fn().mockResolvedValue({
+        Title: "My product",
+        Slug: "my-product",
+        Status: "InActive",
+        CoverImage: { id: 4 },
+      });
+
+      await productLifecycles.afterUpdate({
+        params: { data: { CoverImage: 4 } },
+        result: { id: 1, Slug: "my-product", Status: "InActive" },
+        state: {
+          previousProduct: {
+            Title: "My product",
+            Slug: "my-product",
+            Status: "InActive",
+            CoverImage: { id: 4 },
+          },
+        },
+      } as any);
+
+      expect(mockRecordAdminAudit).not.toHaveBeenCalled();
+      expect(mockMarkProductEditedByAdmin).not.toHaveBeenCalled();
     });
 
     it("still skips entirely for counter-only updates (existing behavior preserved)", async () => {

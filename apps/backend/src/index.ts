@@ -81,7 +81,12 @@ const PRODUCT_READ_GRANTS: Record<string, ControllerActions> = {
   // without this, Seller 1+ pass the product.read capability policy but
   // Strapi U&P still 403s the route.
   "api::admin-product-list": { "admin-product-list": ["query"] },
-  "api::product": { product: [...READ_ACTIONS, "search"] },
+  // createPreviewDraft never touches the live product row (it's an ephemeral
+  // overlay token) and is already gated by capabilityPolicy("product.read") on
+  // the route — same U&P-grant omission pattern as admin-product-list above:
+  // every non-superadmin role 403'd at Strapi's RBAC layer despite passing
+  // the capability policy, so only superadmin could preview products.
+  "api::product": { product: [...READ_ACTIONS, "search", "createPreviewDraft"] },
   "api::product-faq": { "product-faq": READ_ACTIONS },
   "api::product-size-helper": { "product-size-helper": READ_ACTIONS },
   "api::product-tag": { "product-tag": READ_ACTIONS },

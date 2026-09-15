@@ -120,8 +120,14 @@ export function getClientIp(ctx: Context | null | undefined): string | null {
   return clean(ctx.request?.ip);
 }
 
-/** Extract the request User-Agent (deduped across call sites). */
+// Several audit log tables (contract_logs.user_agent, admin_activities.user_agent, …) store
+// this in a `varchar(255)` column. An oversized/malformed header (seen in prod on 2026-09-14,
+// repeatedly failing checkout with CONTRACT_CREATION_FAILED) must not reach the insert unclipped.
+const MAX_USER_AGENT_LENGTH = 255;
+
+/** Extract the request User-Agent (deduped across call sites), clipped to fit varchar(255) audit columns. */
 export function getUserAgent(ctx: Context | null | undefined): string | null {
   if (!ctx) return null;
-  return header(ctx, "user-agent");
+  const value = header(ctx, "user-agent");
+  return value ? value.slice(0, MAX_USER_AGENT_LENGTH) : null;
 }

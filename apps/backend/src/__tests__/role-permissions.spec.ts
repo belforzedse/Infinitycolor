@@ -86,6 +86,7 @@ function createActionTree() {
           create: action(),
           update: action(),
           search: action(),
+          createPreviewDraft: action(),
           publication: action(),
           updateDisplayDate: action(),
           generateVariationCombinations: action(),
@@ -759,7 +760,10 @@ describe("role permission templates", () => {
     const gated: Array<{ capabilities: string[]; actions: string[] }> = [
       {
         capabilities: ["product.read"],
-        actions: ["api::admin-product-list.admin-product-list.query"],
+        actions: [
+          "api::admin-product-list.admin-product-list.query",
+          "api::product.product.createPreviewDraft",
+        ],
       },
       {
         capabilities: ["content.categoryEditorial.manage"],
@@ -1287,6 +1291,7 @@ describe("role permission templates", () => {
     // Superadmin-only.
     expect(enabled("api::product", "product")).toEqual([
       "create",
+      "createPreviewDraft",
       "find",
       "findOne",
       "generateVariationCombinations",

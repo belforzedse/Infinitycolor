@@ -27,6 +27,42 @@ function isCounterOnlyProductUpdate(data: Record<string, unknown> | undefined): 
   return fields.every((field) => PRODUCT_COUNTER_ONLY_FIELDS.has(field));
 }
 
+// Mirrors OPERATIONAL_PRODUCT_FIELDS (controllers/product.ts) — every field an admin can
+// actually write via `PUT /products/:id`. The before/after diff used to only cover a handful
+// of these (Title/Slug/Status/Description/CleaningTips/ReturnConditions/removedAt + main
+// category/tags), so a save that only touched e.g. CoverImage or Media produced an empty diff:
+// no product-log entry, no admin-audit entry, and no LastEditedByAdminAt stamp. beforeUpdate
+// and afterUpdate must fetch byte-identical shapes or the diff sees phantom changes.
+const PRODUCT_DIFF_SNAPSHOT_SPEC = {
+  fields: [
+    "Title",
+    "Slug",
+    "Status",
+    "Description",
+    "CleaningTips",
+    "ReturnConditions",
+    "removedAt",
+    "Weight",
+    "ProductType",
+    "IsSimpleProduct",
+  ] as const,
+  populate: {
+    product_main_category: true,
+    product_tags: true,
+    // Relation-only fields: populated by id so the diff tracks the attached set/order
+    // (an edit) without picking up unrelated metadata drift on the related records.
+    CoverImage: { fields: ["id"] },
+    Media: { fields: ["id"] },
+    Files: { fields: ["id"] },
+    product_other_categories: { fields: ["id"] },
+    product_faqs: { fields: ["id"] },
+    discounts: { fields: ["id"] },
+    product_attribute_assignments: { fields: ["id"] },
+    owned_product_attributes: { fields: ["id"] },
+    product_size_helper: { fields: ["id"] },
+  },
+} as const;
+
 /**
  * Invalidate the storefront caches that depend on a single product.
  *
@@ -165,20 +201,9 @@ export default {
     const previous = await strapi.entityService.findOne(
       "api::product.product",
       id,
-      {
-        // NOTE: AverageRating/RatingCount are intentionally excluded — they are recomputed by
-        // customer reviews (a non-admin event) and must never count as an admin edit.
-        fields: [
-          "Title",
-          "Slug",
-          "Status",
-          "Description",
-          "CleaningTips",
-          "ReturnConditions",
-          "removedAt",
-        ],
-        populate: { product_main_category: true, product_tags: true },
-      }
+      // NOTE: AverageRating/RatingCount are intentionally excluded — they are recomputed by
+      // customer reviews (a non-admin event) and must never count as an admin edit.
+      PRODUCT_DIFF_SNAPSHOT_SPEC as any,
     );
 
     // Auto-generate slug if product doesn't have one and has a title
@@ -211,20 +236,9 @@ export default {
     const current = await strapi.entityService.findOne(
       "api::product.product",
       result.id,
-      {
-        // NOTE: AverageRating/RatingCount are intentionally excluded — they are recomputed by
-        // customer reviews (a non-admin event) and must never count as an admin edit.
-        fields: [
-          "Title",
-          "Slug",
-          "Status",
-          "Description",
-          "CleaningTips",
-          "ReturnConditions",
-          "removedAt",
-        ],
-        populate: { product_main_category: true, product_tags: true },
-      }
+      // NOTE: AverageRating/RatingCount are intentionally excluded — they are recomputed by
+      // customer reviews (a non-admin event) and must never count as an admin edit.
+      PRODUCT_DIFF_SNAPSHOT_SPEC as any,
     );
 
     const changes = diffChanges(previous, current);

@@ -77,6 +77,13 @@ describe("getUserAgent", () => {
     expect(getUserAgent(ctxWith({}))).toBeNull();
     expect(getUserAgent(null)).toBeNull();
   });
+
+  it("clips oversized headers to fit varchar(255) audit columns", () => {
+    const oversized = "A".repeat(400);
+    const result = getUserAgent(ctxWith({ "user-agent": oversized }));
+    expect(result).toHaveLength(255);
+    expect(result).toBe(oversized.slice(0, 255));
+  });
 });
 
 describe("isPrivateIp", () => {
