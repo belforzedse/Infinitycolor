@@ -211,7 +211,7 @@ async function CategorySection() {
 
   return (
     <section>
-      <CategoryCarousel categories={parentCategories} viewAllHref="/categories" />
+      <CategoryCarousel categories={parentCategories} showTitle />
     </section>
   );
 }

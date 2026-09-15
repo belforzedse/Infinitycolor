@@ -49,4 +49,11 @@ describe("CategoryCarousel", () => {
 
     expect(screen.queryByRole("link", { name: "مشاهده همه" })).not.toBeInTheDocument();
   });
+
+  it("shows the title without a view-all link when only showTitle is set", () => {
+    render(<CategoryCarousel categories={categories} showTitle />);
+
+    expect(screen.getByRole("heading", { name: "دسته‌بندی‌ها" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "مشاهده همه" })).not.toBeInTheDocument();
+  });
 });
