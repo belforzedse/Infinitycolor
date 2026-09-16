@@ -14,12 +14,15 @@ import { getAuthEnv } from "./env";
 import { authEvent, keyedSubjectTag, safeAuthRequestId } from "./event-logger";
 import {
   clearFlowState,
+  flowCookieIsHostPrefixed,
+  inspectRequestFlowState,
   purposeFromHeaders,
   readFlowState,
   resolveFlowReturnTarget,
   returnTargetFromHeaders,
   writeFlowState,
 } from "./flow-state";
+import { reportAuthDiagnostic, type AuthStep } from "./diagnostics";
 import { IdentityRepository } from "./identity-repository";
 import { ReturnGrantRepository } from "./return-grants";
 import { StrapiBridgeClient, StrapiBridgeError } from "./bridge-client";
@@ -131,6 +134,35 @@ function assertTrustedRequest(ctx: {
 }
 
 type FlowCookieContext = Parameters<typeof readFlowState>[0];
+
+/**
+ * Read the flow cookie and, when it is missing or unusable, say so to Sentry.
+ *
+ * A shopper who reaches the OTP step without flow state gets bounced back to the
+ * phone screen, which is indistinguishable — from the outside — from a browser
+ * silently refusing to store the `__Host-` prefixed cookie. Recording the
+ * rejection alongside the browser family separates "never stored" from "expired"
+ * from "wrong key".
+ */
+function requireFlowState(
+  ctx: FlowCookieContext & { headers?: Headers },
+  step: AuthStep,
+  requestId?: string,
+) {
+  const { state, rejection } = inspectRequestFlowState(ctx);
+  if (!state) {
+    reportAuthDiagnostic({
+      step,
+      reasonCode: "FLOW_STATE_MISSING",
+      level: "warning",
+      requestId,
+      headers: ctx.headers ?? null,
+      flowRejection: rejection,
+      hostPrefixedCookie: flowCookieIsHostPrefixed(),
+    });
+  }
+  return state;
+}
 
 interface OtpStartContext extends FlowCookieContext {
   body: {
@@ -347,7 +379,7 @@ export function infinityCredentialsPlugin(
         },
         async (ctx) => {
           assertTrustedRequest(ctx);
-          const flow = readFlowState(ctx);
+          const flow = requireFlowState(ctx, "otp_verify");
           if (!flow?.challengeId || !flow.phone || flow.purpose === "reset") {
             throw new APIError("BAD_REQUEST", {
               message:
@@ -467,7 +499,7 @@ export function infinityCredentialsPlugin(
         },
         async (ctx) => {
           assertTrustedRequest(ctx);
-          const flow = readFlowState(ctx);
+          const flow = requireFlowState(ctx, "password_reset");
           if (!flow?.challengeId || flow.purpose !== "reset") {
             throw new APIError("BAD_REQUEST", {
               message:
@@ -562,7 +594,7 @@ export function infinityCredentialsPlugin(
         },
         async (ctx) => {
           assertTrustedRequest(ctx);
-          const flow = readFlowState(ctx);
+          const flow = requireFlowState(ctx, "register_info");
           const sessionState = ctx.context.session;
           if (!flow || !sessionState) throw new APIError("UNAUTHORIZED");
           const token = await getJwtToken(ctx, options.jwtOptions);
@@ -699,7 +731,7 @@ export function infinityCredentialsPlugin(
           const startedAt = Date.now();
           try {
             assertTrustedRequest(ctx);
-            const flow = readFlowState(ctx);
+            const flow = requireFlowState(ctx, "return_grant", requestId);
             const sessionState = ctx.context.session;
             if (!flow || flow.purpose === "reset" || !sessionState) {
               throw new APIError("UNAUTHORIZED");

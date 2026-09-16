@@ -15,7 +15,9 @@ import ReserveFulfillmentChoice, {
 import { CheckoutProgress } from "../CheckoutProgress";
 import { orderIdAtom, orderNumberAtom, submitOrderStepAtom } from "@/atoms/Order";
 import { useAtom, useAtomValue } from "jotai";
+import * as Sentry from "@sentry/nextjs";
 import { SubmitOrderStep } from "@/types/Order";
+import { currentBrowserFamily } from "@/lib/browser-family";
 import { useRouter } from "next/navigation";
 import type { ShippingAddressContext, ShippingOption } from "@/services/shipping";
 import { CartService, OrderService } from "@/services";
@@ -564,11 +566,28 @@ function ShoppingCartBillForm({}: Props) {
   };
 
   const trackCheckoutError = (errorCode?: string) => {
-    void errorCode;
+    // Analytics stays dimensionless per the storefront telemetry contract, so the
+    // code goes to Sentry instead — without it every failed checkout looks alike
+    // and the generic Persian banner cannot be traced back to a cause.
     trackAnalyticsEvent({
       category: "checkout",
       action: "error",
     });
+    try {
+      Sentry.captureMessage(`checkout.error:${errorCode || "UNSPECIFIED"}`, {
+        level: "error",
+        tags: {
+          area: "checkout",
+          stage: "storefront",
+          reasonCode: errorCode || "UNSPECIFIED",
+          browser: currentBrowserFamily(),
+          gateway: gateway || "none",
+        },
+        extra: { hasDiscountCode: Boolean(discountCode) },
+      });
+    } catch {
+      // Reporting must never block the shopper's retry.
+    }
   };
 
   /**
