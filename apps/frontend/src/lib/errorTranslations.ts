@@ -42,6 +42,11 @@ export const ERROR_MESSAGE_MAP: Record<string, string> = {
   "too many requests": "تعداد درخواست‌ها بیش از حد است. لطفاً چند لحظه بعد دوباره تلاش کنید.",
 
   // Cart / order / checkout
+  // The finalize endpoint answers these two in English and without an errorCode,
+  // so without an entry here they fall through to the generic banner.
+  "stock issues prevent order creation":
+    "موجودی برخی از کالاهای سبد خرید تغییر کرد. سبد خرید به‌روزرسانی شد؛ لطفاً مبلغ را بررسی و دوباره ثبت سفارش کنید.",
+  "cannot create order from empty cart": "سبد خرید شما خالی است.",
   "cart is empty": "سبد خرید شما خالی است.",
   "cart empty": "سبد خرید شما خالی است.",
   "invalid item": "برخی از کالاهای سبد خرید معتبر نیستند. لطفاً سبد خرید خود را بررسی کنید.",

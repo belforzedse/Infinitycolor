@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import type { Strapi } from "@strapi/strapi";
 import { consumeOrderReservation } from "../../../../utils/stockReservations";
 import { cancelOrderAndRelease } from "../../../cart/controllers/handlers/gateway-helpers";
@@ -40,6 +41,29 @@ const buildPaymentResultRedirectUrl = (
       if (value === undefined || value === null || value === "") return;
       url.searchParams.set(key, String(value));
     });
+  }
+  // Every gateway's failure path funnels through here, so one report at this
+  // chokepoint covers all of them without chasing each branch. `issue` is the
+  // serious one: the money moved but local settlement did not finish.
+  if (type !== "success") {
+    try {
+      Sentry.captureMessage(`payment.result:${type}`, {
+        level: type === "issue" ? "error" : "warning",
+        tags: {
+          area: "payment",
+          stage: "callback",
+          resultHint: type,
+          reasonCode: String(params?.code ?? type),
+        },
+        extra: {
+          orderId: params?.orderId ?? null,
+          // Never the provider's transaction id itself — only whether we had one.
+          hasTransactionId: Boolean(params?.transactionId),
+        },
+      });
+    } catch {
+      // A failed report must not break the customer's redirect back to the site.
+    }
   }
   return url.toString();
 };
@@ -197,7 +221,29 @@ async function clearCartAfterPayment(strapi: Strapi, orderId?: number, gateway?:
   await consumeCheckoutCartLinesSafely(strapi, orderId, { gateway });
 }
 
+/**
+ * An escaping throw means the shopper's browser lands on a 500 coming back from
+ * the gateway, after their card has already been charged. That is the worst
+ * outcome checkout has, so it is always reported before being rethrown.
+ */
 export async function verifyPaymentHandler(strapi: Strapi, ctx: any) {
+  try {
+    return await runVerifyPaymentHandler(strapi, ctx);
+  } catch (error) {
+    try {
+      Sentry.captureException(error, {
+        level: "fatal",
+        tags: { area: "payment", stage: "callback", reasonCode: "CALLBACK_UNCAUGHT" },
+        extra: { method: String((ctx?.request as any)?.method || ctx?.method || "") },
+      });
+    } catch {
+      // Swallow: the original failure is what matters.
+    }
+    throw error;
+  }
+}
+
+async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
   // Mellat returns: ResCode, SaleOrderId, SaleReferenceId, RefId, OrderId
   const { ResCode, SaleOrderId, SaleReferenceId, RefId, OrderId } = (ctx.request as any).body || {};
 

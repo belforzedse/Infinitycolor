@@ -154,6 +154,23 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     const stockCheck = await this.checkCartStock(userId);
 
     if (!stockCheck.valid) {
+      // Returned without an errorCode and with an English message, so the
+      // storefront cannot map it and falls back to the generic banner. Reported
+      // here because it never reaches the catch block below, which means it is
+      // otherwise invisible in both Sentry and the order-log table.
+      try {
+        Sentry.captureMessage("checkout.stock_changed_before_payment", {
+          level: "warning",
+          tags: { area: "checkout", stage: "stockCheck", errorCode: "STOCK_CHANGED", gateway: gateway || "none" },
+          extra: {
+            userId,
+            removedCount: stockCheck.itemsRemoved?.length || 0,
+            adjustedCount: stockCheck.itemsAdjusted?.length || 0,
+          },
+        });
+      } catch (reportError) {
+        strapi.log.error("Failed to report checkout stock change", reportError);
+      }
       return {
         success: false,
         message: "Stock issues prevent order creation",
@@ -682,22 +699,6 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       let userMessage = "خطا در ثبت سفارش";
       let details = {};
 
-      // An unmapped failure here is infrastructure, not a shopper mistake: it
-      // aborts order creation for every payment method and still renders as the
-      // generic Persian banner. A missing `orders.analytics_correlation_id`
-      // silently killed checkout for four weeks this way, so report it.
-      if (!errorMessage.includes(":")) {
-        try {
-          Sentry.captureException(error, {
-            tags: { area: "checkout", stage: "finalizeCartToOrder", errorCode: "UNKNOWN_ERROR" },
-            extra: redactSensitive({ userId, cartId: cart?.id, gateway, errorMessage }),
-          });
-        } catch (reportError) {
-          // Reporting must never turn the shopper's 400 into a 500.
-          strapi.log.error("Failed to report unmapped checkout failure", reportError);
-        }
-      }
-
       // Extract error code if present (format: "ERROR_CODE: message")
       if (errorMessage.includes(":")) {
         const parts = errorMessage.split(":");
@@ -758,6 +759,39 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           default:
             userMessage = "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید";
         }
+      }
+
+      // Every failed checkout is reported, not just the unmapped ones: a shopper
+      // who cannot pay is the same loss whichever branch above produced the
+      // banner. Severity separates the two kinds — a mapped code is a condition
+      // we understand (stock moved, coupon exhausted), while an unmapped one is
+      // infrastructure. A missing `orders.analytics_correlation_id` column
+      // silently killed checkout for four weeks as the latter.
+      const mapped = errorCode !== "UNKNOWN_ERROR";
+      try {
+        Sentry.captureException(error, {
+          level: mapped ? "warning" : "error",
+          tags: {
+            area: "checkout",
+            stage: "finalizeCartToOrder",
+            errorCode,
+            gateway: gateway || "none",
+            mapped: String(mapped),
+          },
+          extra: redactSensitive({
+            userId,
+            cartId: cart?.id,
+            itemCount: cart?.cart_items?.length || 0,
+            gateway,
+            errorMessage,
+            shippingId: shippingData?.shippingId,
+            hasDiscountCode: Boolean(shippingData?.discountCode),
+            isReserveOrder: Boolean(shippingData?.reserveShipping || shippingData?.reserveOrderData),
+          }),
+        });
+      } catch (reportError) {
+        // Reporting must never turn the shopper's 400 into a 500.
+        strapi.log.error("Failed to report checkout failure", reportError);
       }
 
       // Log to order-log if we have a userId for tracking

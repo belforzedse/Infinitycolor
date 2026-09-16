@@ -25,17 +25,23 @@ function reportUnexpectedAuthError(
   error: unknown,
   ctx: { logger: { error: (message: string, ...args: unknown[]) => void } },
 ): void {
-  if (isAPIError(error)) {
+  const apiError = isAPIError(error);
+  if (apiError) {
     ctx.logger.error(String(error.status), error);
-    if (error.status !== "INTERNAL_SERVER_ERROR") return;
   } else {
     ctx.logger.error(error instanceof Error ? error.name : "", error);
   }
   // bridgeApiError sets `.cause` to the real failure; report that instead of the sanitized wrapper.
-  const cause =
-    isAPIError(error) && error.cause !== undefined ? error.cause : error;
+  const cause = apiError && error.cause !== undefined ? error.cause : error;
+  // Everything reaches Sentry, because a shopper who cannot log in does not care
+  // whether we classified the failure as expected. Severity keeps the signal
+  // usable: a mistyped OTP is routine, a 500 or a dead bridge is not.
+  const status = apiError ? String(error.status) : "UNCAUGHT";
   Sentry.captureException(cause, {
+    level: status === "INTERNAL_SERVER_ERROR" || !apiError ? "error" : "info",
     tags: {
+      area: "auth",
+      status,
       reasonCode:
         cause instanceof StrapiBridgeError
           ? cause.reasonCode

@@ -65,13 +65,33 @@ export function sealFlowState(
   );
 }
 
-export function unsealFlowState(
+/**
+ * Why a sealed flow cookie was refused. Every one of these used to collapse into a
+ * bare `null`, which made the Samsung Internet redirect loop undiagnosable: a cookie
+ * the browser never stored and a cookie that sat idle past its 10 minutes looked
+ * identical from the server.
+ */
+export type FlowStateRejection =
+  | "absent"
+  | "oversized"
+  | "truncated"
+  | "undecryptable"
+  | "expired"
+  | "malformed";
+
+export interface FlowStateInspection {
+  state: AuthFlowState | null;
+  rejection: FlowStateRejection | null;
+}
+
+export function inspectFlowState(
   value: string | null | undefined,
-): AuthFlowState | null {
-  if (!value || value.length > 4_096) return null;
+): FlowStateInspection {
+  if (!value) return { state: null, rejection: "absent" };
+  if (value.length > 4_096) return { state: null, rejection: "oversized" };
   try {
     const raw = Buffer.from(value, "base64url");
-    if (raw.length < 29) return null;
+    if (raw.length < 29) return { state: null, rejection: "truncated" };
     const decipher = createDecipheriv(
       "aes-256-gcm",
       encryptionKey(),
@@ -86,22 +106,41 @@ export function unsealFlowState(
     const state = JSON.parse(
       plaintext.toString("utf8"),
     ) as Partial<AuthFlowState>;
-    if (
-      state.version !== 1 ||
-      typeof state.expiresAt !== "number" ||
-      state.expiresAt <= Math.floor(Date.now() / 1_000) ||
-      typeof state.returnTo !== "string"
-    ) {
-      return null;
+    if (state.version !== 1 || typeof state.returnTo !== "string") {
+      return { state: null, rejection: "malformed" };
     }
-    return state as AuthFlowState;
+    if (typeof state.expiresAt !== "number") {
+      return { state: null, rejection: "malformed" };
+    }
+    if (state.expiresAt <= Math.floor(Date.now() / 1_000)) {
+      return { state: null, rejection: "expired" };
+    }
+    return { state: state as AuthFlowState, rejection: null };
   } catch {
-    return null;
+    return { state: null, rejection: "undecryptable" };
   }
+}
+
+export function unsealFlowState(
+  value: string | null | undefined,
+): AuthFlowState | null {
+  return inspectFlowState(value).state;
 }
 
 export function readFlowState(ctx: CookieContext): AuthFlowState | null {
   return unsealFlowState(ctx.getCookie(flowCookieName()));
+}
+
+/** `readFlowState` plus the reason it came back empty, for telemetry. */
+export function inspectRequestFlowState(
+  ctx: CookieContext,
+): FlowStateInspection {
+  return inspectFlowState(ctx.getCookie(flowCookieName()));
+}
+
+/** Exposed so telemetry can say whether the browser is refusing a `__Host-` cookie. */
+export function flowCookieIsHostPrefixed(): boolean {
+  return flowCookieName().startsWith("__Host-");
 }
 
 export function writeFlowState(

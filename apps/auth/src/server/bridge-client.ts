@@ -7,6 +7,7 @@ import type {
 } from "@repo/auth-core/contracts";
 import { getAuthEnv } from "./env";
 import { authEvent, safeAuthRequestId } from "./event-logger";
+import { reportAuthDiagnostic } from "./diagnostics";
 
 function bridgeReasonCode(value: unknown): string {
   return typeof value === "string" && /^[A-Z0-9_:-]{1,80}$/.test(value)
@@ -92,14 +93,26 @@ export class StrapiBridgeClient {
       return body;
     } catch (error) {
       if (error instanceof StrapiBridgeError) throw error;
+      const reasonCode =
+        error instanceof Error && error.name === "AbortError"
+          ? "TIMEOUT"
+          : "NETWORK_ERROR";
+      const durationMs = Date.now() - startedAt;
       authEvent("bridge_failure", {
         operation,
         requestId,
-        reasonCode:
-          error instanceof Error && error.name === "AbortError"
-            ? "TIMEOUT"
-            : "NETWORK_ERROR",
-        durationMs: Date.now() - startedAt,
+        reasonCode,
+        durationMs,
+      });
+      // Strapi being unreachable means nobody on the site can request or confirm a
+      // code, so this is an outage rather than a per-shopper failure.
+      reportAuthDiagnostic({
+        step: "session_exchange",
+        reasonCode: `${operation}:${reasonCode}`,
+        requestId,
+        durationMs,
+        status: 503,
+        error,
       });
       throw new StrapiBridgeError(
         "ارتباط با سرویس احراز هویت ناموفق بود. دوباره تلاش کنید.",
