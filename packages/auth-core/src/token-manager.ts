@@ -93,12 +93,26 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
 
   const acquire = async (): Promise<string | null> => {
     const acquisitionGeneration = generation;
-    const response = await fetchImpl(`${authOrigin}/api/auth/token`, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-      headers: { accept: "application/json" },
-    });
+    // Plain `fetch` has no timeout: a hung/slow token endpoint (an idle tab
+    // resuming, a flaky network) used to leave every caller of `getToken` --
+    // including `ApiClient.request`, which only starts its own abort timer
+    // *after* headers (and therefore this call) resolve -- awaiting forever
+    // with no visible error. The button submitting the form just never
+    // updates again. Bound it the same way `updateRouteHint` above does.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    let response: Response;
+    try {
+      response = await fetchImpl(`${authOrigin}/api/auth/token`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (response.status === 401) return null;
     if (!response.ok)
       throw new Error(
