@@ -54,6 +54,14 @@ export const auth = betterAuth({
   database: pool,
   trustedOrigins: [...env.trustedApplicationOrigins],
   onAPIError: { onError: reportUnexpectedAuthError },
+  // TEMPORARY. Re-enable once the edge forwards a client IP again.
+  // The CDN/gateway currently drops the header `ipAddressHeaders` reads, so Better Auth
+  // logs "could not determine a client IP" and puts every visitor in one shared bucket.
+  // That bucket lives in each replica's memory, so with six replicas a shopper's login
+  // succeeded or failed depending on which one the balancer picked. OTP abuse stays
+  // covered meanwhile by the per-phone cooldown (otp-cooldown.ts) and the 5-attempt
+  // challenge lock, neither of which depends on the IP; password login is uncovered.
+  rateLimit: { enabled: false },
   emailAndPassword: { enabled: false },
   user: {
     modelName: "users",
