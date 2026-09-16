@@ -738,6 +738,10 @@ function ShoppingCartBillForm({}: Props) {
               FullAddress: (watchFullAddress || "").trim(),
               Description: data.addressDescription?.trim() || undefined,
               save: watchSaveAddress,
+              // Recipient info the shopper may have overridden (e.g. ordering on
+              // someone else's behalf) — kept separate from the account's own name.
+              FullName: (data.fullName || "").trim() || undefined,
+              Phone: cleanPhone || undefined,
             };
 
       const finalizeData: Record<string, unknown> = isMergeMode

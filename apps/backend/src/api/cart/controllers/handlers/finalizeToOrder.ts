@@ -203,7 +203,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
 
     // Handle inline address creation when provided (skip when merging)
     if (!reserveOrderData && !resolvedAddressId && addressPayload) {
-      const { shipping_city, PostalCode, FullAddress, Description, save } = addressPayload;
+      const { shipping_city, PostalCode, FullAddress, Description, save, FullName, Phone } =
+        addressPayload;
 
       if (!shipping_city || !PostalCode || !FullAddress) {
         return ctx.badRequest("آدرس تحویل الزامی است", {
@@ -249,6 +250,12 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         PostalCode: String(PostalCode),
         FullAddress: String(FullAddress),
         Description: Description || undefined,
+        // The recipient can differ from the account placing the order (e.g. staff
+        // ordering on a customer's behalf), so this is stored separately from
+        // `user`, which stays the authenticated account. Empty/whitespace-only
+        // values fall back to the account's own name/phone at render time.
+        FullName: String(FullName || "").trim().slice(0, 255) || undefined,
+        Phone: String(Phone || mobile || "").trim().slice(0, 32) || undefined,
         IsTemporary: !save,
         user: user.id,
       };
