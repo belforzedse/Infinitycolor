@@ -42,6 +42,47 @@ function isSafariIOS(): boolean {
   return isIOS && isSafari;
 }
 
+/**
+ * Embedded browsers can expose `window.localStorage` as null or as an object
+ * whose methods throw. The install prompt is optional UI, so storage must never
+ * be allowed to break the page when that happens.
+ */
+export function getSafeLocalStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const storage = window.localStorage;
+    if (
+      !storage ||
+      typeof storage.getItem !== "function" ||
+      typeof storage.setItem !== "function"
+    ) {
+      return null;
+    }
+    return storage;
+  } catch {
+    return null;
+  }
+}
+
+function readStorageValue(storage: Storage | null, key: string): string | null {
+  if (!storage) return null;
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorageValue(storage: Storage | null, key: string, value: string): void {
+  if (!storage) return;
+  try {
+    storage.setItem(key, value);
+  } catch {
+    // Persistence is a convenience; installation and dismissal still work.
+  }
+}
+
 export type PWAInstallPromptCardProps = {
   isIOS: boolean;
   onInstall: () => void;
@@ -167,13 +208,14 @@ export default function PWAInstallPrompt() {
       return;
     }
 
-    const wasInstalled = localStorage.getItem("pwa-installed");
+    const storage = getSafeLocalStorage();
+    const wasInstalled = readStorageValue(storage, "pwa-installed");
     if (wasInstalled === "true") {
       setIsInstalled(true);
       return;
     }
 
-    const wasDismissed = localStorage.getItem("pwa-prompt-dismissed-permanently");
+    const wasDismissed = readStorageValue(storage, "pwa-prompt-dismissed-permanently");
     if (wasDismissed === "true") {
       return;
     }
@@ -204,7 +246,7 @@ export default function PWAInstallPrompt() {
     const handleAppInstalled = () => {
       setIsInstalled(true);
       setShowPrompt(false);
-      localStorage.setItem("pwa-installed", "true");
+      writeStorageValue(getSafeLocalStorage(), "pwa-installed", "true");
     };
 
     window.addEventListener("appinstalled", handleAppInstalled);
@@ -217,7 +259,7 @@ export default function PWAInstallPrompt() {
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) {
-      localStorage.setItem("pwa-prompt-dismissed-permanently", "true");
+      writeStorageValue(getSafeLocalStorage(), "pwa-prompt-dismissed-permanently", "true");
       setShowPrompt(false);
       return;
     }
@@ -227,12 +269,12 @@ export default function PWAInstallPrompt() {
       const { outcome } = await deferredPrompt.userChoice;
 
       if (outcome === "accepted") {
-        localStorage.setItem("pwa-installed", "true");
+        writeStorageValue(getSafeLocalStorage(), "pwa-installed", "true");
       } else {
-        localStorage.setItem("pwa-prompt-dismissed-permanently", "true");
+        writeStorageValue(getSafeLocalStorage(), "pwa-prompt-dismissed-permanently", "true");
       }
     } catch {
-      localStorage.setItem("pwa-prompt-dismissed-permanently", "true");
+      writeStorageValue(getSafeLocalStorage(), "pwa-prompt-dismissed-permanently", "true");
     } finally {
       setDeferredPrompt(null);
       setShowPrompt(false);
@@ -240,7 +282,7 @@ export default function PWAInstallPrompt() {
   };
 
   const handleDismiss = () => {
-    localStorage.setItem("pwa-prompt-dismissed-permanently", "true");
+    writeStorageValue(getSafeLocalStorage(), "pwa-prompt-dismissed-permanently", "true");
     setShowPrompt(false);
   };
 
@@ -249,6 +291,10 @@ export default function PWAInstallPrompt() {
   }
 
   return (
-    <PWAInstallPromptCard isIOS={isIOS} onInstall={() => void handleInstallClick()} onDismiss={handleDismiss} />
+    <PWAInstallPromptCard
+      isIOS={isIOS}
+      onInstall={() => void handleInstallClick()}
+      onDismiss={handleDismiss}
+    />
   );
 }

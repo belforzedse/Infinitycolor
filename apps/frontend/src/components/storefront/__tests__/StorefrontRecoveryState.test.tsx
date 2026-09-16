@@ -60,4 +60,32 @@ describe("StorefrontRecoveryState", () => {
     expect(setTag).toHaveBeenCalledWith("next_error_digest", "digest-123");
     expect(captureException).toHaveBeenCalledWith(error);
   });
+
+  it("silently retries once on a transient RSC stream closure, then reports and displays it if it recurs immediately", () => {
+    process.env.NEXT_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
+    const retry = jest.fn();
+    const error = new Error("Connection closed.");
+    const props = {
+      surface: "catalog" as const,
+      title: "خطا",
+      message: "دوباره تلاش کنید",
+      error,
+      onRetry: retry,
+    };
+
+    const first = render(<StorefrontRecoveryState {...props} />);
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(captureException).not.toHaveBeenCalled();
+    expect(first.container).toBeEmptyDOMElement();
+    first.unmount();
+
+    // The error boundary remounts a fresh instance of this component on
+    // every occurrence, so only the module-scoped retry-window guard (not
+    // component state) can tell an immediate recurrence apart from a fresh
+    // one minutes later.
+    render(<StorefrontRecoveryState {...props} />);
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name: "خطا" })).toBeInTheDocument();
+    expect(captureException).toHaveBeenCalledWith(error);
+  });
 });

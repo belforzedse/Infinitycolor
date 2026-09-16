@@ -1,9 +1,9 @@
 /**
- * A failure inside `finalizeCartToOrder` whose message carries no "CODE:" prefix
- * is infrastructure, not a shopper mistake — it aborts order creation for the
- * gateway and the wallet alike, and still renders as the generic Persian
- * banner. A missing `orders.analytics_correlation_id` column killed checkout
- * this way for four weeks without raising anything.
+ * Every failure inside `finalizeCartToOrder` is reported to Sentry, mapped or not —
+ * a shopper who cannot pay is the same loss either way. Severity is what separates
+ * them: a mapped code is a condition we understand (stock moved, coupon exhausted),
+ * an unmapped one is infrastructure. A missing `orders.analytics_correlation_id`
+ * column killed checkout as the latter for four weeks without raising anything.
  */
 import * as Sentry from "@sentry/node";
 
@@ -92,7 +92,7 @@ describe("finalizeCartToOrder — unmapped failures", () => {
     );
   });
 
-  it("does not report failures that already carry a mapped error code", async () => {
+  it("also reports failures that carry a mapped error code, at a lower severity", async () => {
     const { service } = buildService(() =>
       Promise.reject(new Error("STOCK_RESERVATION_FAILED: reserve_failed")),
     );
@@ -100,7 +100,17 @@ describe("finalizeCartToOrder — unmapped failures", () => {
     const result = await finalize(service);
 
     expect(result).toMatchObject({ success: false, errorCode: "STOCK_RESERVATION_FAILED" });
-    expect(Sentry.captureException).not.toHaveBeenCalled();
+    expect(Sentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        level: "warning",
+        tags: expect.objectContaining({
+          area: "checkout",
+          errorCode: "STOCK_RESERVATION_FAILED",
+          mapped: "true",
+        }),
+      }),
+    );
   });
 
   it("never lets a reporting failure escalate the shopper's 400 into a 500", async () => {
@@ -114,7 +124,7 @@ describe("finalizeCartToOrder — unmapped failures", () => {
       errorCode: "UNKNOWN_ERROR",
     });
     expect(strapi.log.error).toHaveBeenCalledWith(
-      "Failed to report unmapped checkout failure",
+      "Failed to report checkout failure",
       expect.any(Error),
     );
   });

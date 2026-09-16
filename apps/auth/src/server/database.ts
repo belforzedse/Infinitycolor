@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import * as Sentry from "@sentry/nextjs";
 import { getAuthEnv } from "./env";
 
 declare global {
@@ -23,6 +24,7 @@ export function getAuthPool(): Pool {
     console.error(
       JSON.stringify({ event: "auth_database_pool_error", reasonCode }),
     );
+    Sentry.captureException(error, { tags: { reasonCode } });
   });
   if (env.nodeEnv !== "production") globalThis.__infinityAuthPool = pool;
   return pool;

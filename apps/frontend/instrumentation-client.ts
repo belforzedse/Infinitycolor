@@ -82,6 +82,10 @@ Sentry.init({
     // Same story for iOS in-app browsers probing a `webkit.messageHandlers`
     // bridge this app never installs.
     /window\.webkit\.messageHandlers/,
+    // Android/Instagram injects navigation and keyboard telemetry through a
+    // Java bridge. Its callbacks can outlive the WebView object and are not
+    // application failures.
+    /Error invoking (?:enableDidUserTypeOnKeyboardLogging|postMessage): Java (?:object is gone|bridge method invocation error)/,
     // `new.infinitycolor.co` only 301s to the apex post-cutover; stale
     // service-worker registrations from before the cutover keep failing to
     // update there until each browser gives up and unregisters them.
@@ -91,6 +95,9 @@ Sentry.init({
     // path calls `observer.takeRecords()`, which some WebKit builds throw on.
     // Framework-internal, not something app code calls or can guard.
     /takeRecords is not a function/,
+    // Sentry's Web Vitals integration asks for the visibility-state entry on
+    // very old WebKit builds where Performance#getEntriesByType is absent.
+    /globalThis\.performance\.getEntriesByType.*visibility-state/,
   ],
 });
 

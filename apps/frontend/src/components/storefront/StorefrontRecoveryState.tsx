@@ -2,7 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 
 type StorefrontRecoveryStateProps = {
@@ -16,6 +16,24 @@ type StorefrontRecoveryStateProps = {
   secondaryLabel?: string;
 };
 
+// Mobile Safari drops the in-flight RSC stream when a tab is backgrounded or
+// a navigation is interrupted mid-fetch; React's Flight client surfaces the
+// half-read payload as this exact message. It is a network blip, not an app
+// error, so one silent re-fetch happens before it is reported or shown.
+const TRANSIENT_STREAM_CLOSED_MESSAGE = "Connection closed.";
+// Blocks a tight fail-loop (retry -> same stream cut -> retry -> ...) without
+// permanently spending the one auto-retry for the rest of a long-lived SPA
+// session, where Safari can background/cut the connection again minutes later.
+const TRANSIENT_RETRY_WINDOW_MS = 30_000;
+
+// Module-scoped so the window holds across the fresh component instance each
+// error-boundary retry mounts; it naturally expires on its own.
+let lastTransientAutoRetryAt = 0;
+
+function isTransientStreamClosedError(error?: Error): boolean {
+  return error?.message === TRANSIENT_STREAM_CLOSED_MESSAGE;
+}
+
 export default function StorefrontRecoveryState({
   title,
   message,
@@ -27,19 +45,36 @@ export default function StorefrontRecoveryState({
   secondaryLabel = "بازگشت به فروشگاه",
 }: StorefrontRecoveryStateProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const [autoRetrying] = useState(
+    () =>
+      Boolean(onRetry) &&
+      isTransientStreamClosedError(error) &&
+      Date.now() - lastTransientAutoRetryAt > TRANSIENT_RETRY_WINDOW_MS,
+  );
 
   useEffect(() => {
-    headingRef.current?.focus();
-  }, []);
+    if (!autoRetrying) headingRef.current?.focus();
+  }, [autoRetrying]);
 
   useEffect(() => {
+    if (!autoRetrying) return;
+    lastTransientAutoRetryAt = Date.now();
+    onRetry?.();
+  }, [autoRetrying, onRetry]);
+
+  useEffect(() => {
+    if (autoRetrying) return;
     if (!error || !process.env.NEXT_PUBLIC_SENTRY_DSN) return;
     Sentry.withScope((scope) => {
       scope.setTag("recovery_surface", surface);
       if (error.digest) scope.setTag("next_error_digest", error.digest);
       Sentry.captureException(error);
     });
-  }, [error, surface]);
+  }, [autoRetrying, error, surface]);
+
+  if (autoRetrying) {
+    return null;
+  }
 
   return (
     <main

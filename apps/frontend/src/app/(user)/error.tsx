@@ -4,10 +4,11 @@ import StorefrontRecoveryState from "@/components/storefront/StorefrontRecoveryS
 
 export default function UserError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
+  retry: () => void;
 }) {
   return (
     <StorefrontRecoveryState
@@ -15,7 +16,7 @@ export default function UserError({
       title="دریافت اطلاعات حساب کامل نشد"
       message="هیچ تغییری در حساب شما ثبت نشده است. دوباره تلاش کنید."
       error={error}
-      onRetry={reset}
+      onRetry={retry}
       secondaryHref="/account"
       secondaryLabel="بازگشت به حساب کاربری"
     />

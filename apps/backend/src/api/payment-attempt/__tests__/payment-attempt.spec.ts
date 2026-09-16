@@ -37,6 +37,24 @@ describe("payment attempt initiation", () => {
     }));
   });
 
+  it("never leaks an internal reconciliation label as the shopper-facing errorCode", () => {
+    // A replay caught mid-reconciliation carries an internal failureCode
+    // (SNAPPAY_RECONCILIATION_PENDING) that the storefront's error-code switch
+    // has no case for -- it fell through to the generic banner instead of the
+    // already-mapped PAYMENT_IN_PROGRESS message. See checkout.error Sentry issue.
+    expect(paymentAttemptResponse({
+      attemptId: "attempt-17",
+      Status: "Unknown",
+      failureCode: "SNAPPAY_RECONCILIATION_PENDING",
+      failureMessage: "Automatic reconciliation exhausted: ...",
+    })).toEqual(expect.objectContaining({
+      success: false,
+      paymentStatus: "Unknown",
+      errorCode: "PAYMENT_IN_PROGRESS",
+      message: "پرداخت قبلی هنوز در حال بررسی است",
+    }));
+  });
+
   it("replays the provider redirect only after initiation completed", () => {
     expect(paymentAttemptResponse({
       attemptId: "attempt-17",

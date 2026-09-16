@@ -10,7 +10,8 @@
     "migrate:apply": "node scripts/apply-migration.mjs",
     "check-types": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/*.test.ts",
+    "check:bundle-syntax": "node scripts/check-bundle-syntax.mjs"
   },
   "dependencies": {
     "@repo/auth-core": "workspace:*",
@@ -27,6 +28,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "acorn": "8.16.0",
     "@types/node": "20.17.30",
     "@types/pg": "8.15.5",
     "@types/react": "19.2.14",
@@ -37,5 +39,20 @@
     "tailwindcss": "3.4.17",
     "tsx": "4.21.0",
     "typescript": "7.0.2"
-  }
+  },
+  "_browserslist_note": "Mirrors apps/frontend. Without this, Next/Turbopack uses its own modern default and emits a class static initialization block (Chromium 94 / Samsung Internet 17) into the eagerly-loaded app-router chunk. Samsung Internet 16 (Chromium 92) then fails to PARSE that chunk, hydration never runs, and the login form falls back to a native GET submit (`/auth?phone=...`) that never reaches Better Auth. Keep this list in sync with the storefront so the login page never has a narrower floor than the shop it guards.",
+  "browserslist": [
+    "chrome >= 87",
+    "edge >= 88",
+    "firefox >= 78",
+    "safari >= 14",
+    "ios_saf >= 14",
+    "and_chr >= 87",
+    "and_ff >= 79",
+    "samsung >= 12",
+    "opera >= 73",
+    "not dead",
+    "not IE 11",
+    "not op_mini all"
+  ]
 }

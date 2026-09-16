@@ -4,10 +4,11 @@ import StorefrontRecoveryState from "@/components/storefront/StorefrontRecoveryS
 
 export default function ProductError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
+  retry: () => void;
 }) {
   return (
     <StorefrontRecoveryState
@@ -15,7 +16,7 @@ export default function ProductError({
       title="دریافت اطلاعات فروشگاه انجام نشد"
       message="سبد خرید شما حفظ شده است. اتصال را بررسی کنید و دوباره تلاش کنید."
       error={error}
-      onRetry={reset}
+      onRetry={retry}
     />
   );
 }

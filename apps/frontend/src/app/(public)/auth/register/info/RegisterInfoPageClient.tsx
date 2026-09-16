@@ -13,12 +13,6 @@ import toast from "react-hot-toast";
 import AuthReturnButton from "@/components/Auth/ReturnButton";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { currentUserAtom, userErrorAtom, userLoadingAtom } from "@/lib/atoms/auth";
-import {
-  BIRTH_DATE_PLACEHOLDERS,
-  jalaliBirthDateToGregorianDate,
-  jalaliMonthLength,
-  normalizeBirthDatePart,
-} from "@/utils/birthDate";
 import { safeInternalRedirect } from "@/utils/authRedirect";
 import { trackAnalyticsEvent } from "@/lib/analytics";
 
@@ -26,9 +20,6 @@ interface FormData {
   firstName: string;
   lastName: string;
   phoneNumber: string;
-  birthYear: string;
-  birthMonth: string;
-  birthDay: string;
   password: string;
   confirmPassword: string;
 }
@@ -37,7 +28,6 @@ export default function RegisterInfoPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
-  const [birthDateError, setBirthDateError] = useState<string | null>(null);
   const [, setUserData] = useAtom(currentUserAtom);
   const [, setUserLoading] = useAtom(userLoadingAtom);
   const [, setUserError] = useAtom(userErrorAtom);
@@ -45,9 +35,6 @@ export default function RegisterInfoPage() {
     firstName: "",
     lastName: "",
     phoneNumber: "",
-    birthYear: "",
-    birthMonth: "",
-    birthDay: "",
     password: "",
     confirmPassword: "",
   });
@@ -73,45 +60,14 @@ export default function RegisterInfoPage() {
     return `+${trimmed}`;
   };
 
-  const formatBirthDate = (year: string, month: string, day: string): string => {
-    return jalaliBirthDateToGregorianDate(year, month, day) || "";
-  };
-
-  /**
-   * The birth date is optional here, but a partial or impossible one must not be dropped
-   * silently: it used to be coerced to "" and posted as if the shopper had left it blank.
-   */
-  const validateBirthDate = (): boolean => {
-    const { birthYear, birthMonth, birthDay } = formData;
-    const filledParts = [birthYear, birthMonth, birthDay].filter(Boolean).length;
-    if (filledParts === 0) {
-      setBirthDateError(null);
-      return true;
-    }
-    if (filledParts < 3) {
-      setBirthDateError("تاریخ تولد را کامل وارد کنید: سال، ماه و روز.");
-      return false;
-    }
-    if (!jalaliBirthDateToGregorianDate(birthYear, birthMonth, birthDay)) {
-      const monthLength = jalaliMonthLength(birthYear, birthMonth);
-      setBirthDateError(
-        monthLength > 0 && Number(birthDay) > monthLength
-          ? `این ماه ${monthLength} روز دارد.`
-          : "تاریخ تولد وارد شده معتبر نیست.",
-      );
-      return false;
-    }
-    setBirthDateError(null);
-    return true;
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateBirthDate()) return;
     setIsLoading(true);
     try {
       const normalizedPhone = normalizePhone(formData.phoneNumber);
-      const birthDate = formatBirthDate(formData.birthYear, formData.birthMonth, formData.birthDay);
+      // Field removed from the form; backend treats it as optional, but we still
+      // send a value since the storage column exists. Not a user-provided date.
+      const birthDate = new Date().toISOString().slice(0, 10);
       const res = await AuthService.register({
         firstName: formData.firstName,
         lastName: formData.lastName,
@@ -157,16 +113,6 @@ export default function RegisterInfoPage() {
     }));
   };
 
-  const handleBirthPartChange =
-    (field: "birthYear" | "birthMonth" | "birthDay", maxLength: number) =>
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      setBirthDateError(null);
-      setFormData((prev) => ({
-        ...prev,
-        [field]: normalizeBirthDatePart(e.target.value, maxLength),
-      }));
-    };
-
   return (
     <div className="space-y-8" dir="rtl">
       <AuthTitle subtitle="لطفاً اطلاعات خود را تکمیل نمایید">ایجاد حساب کاربری</AuthTitle>
@@ -198,52 +144,6 @@ export default function RegisterInfoPage() {
               placeholder="نام خانوادگی"
             />
           </div>
-        </div>
-
-        <div>
-          <Text variant="label" className="mb-2 md:mb-2.5">
-            تاریخ تولد
-          </Text>
-          {/* `type="text"` with a numeric keypad rather than `type="number"`: browsers
-              reject Persian digits in a number field, so the value silently read back
-              empty for anyone typing ۱۳۷۰. */}
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <AuthInput
-                type="text"
-                inputMode="numeric"
-                value={formData.birthYear}
-                onChange={handleBirthPartChange("birthYear", 4)}
-                placeholder={BIRTH_DATE_PLACEHOLDERS.year}
-                aria-label="سال تولد"
-              />
-            </div>
-            <div className="flex-1">
-              <AuthInput
-                type="text"
-                inputMode="numeric"
-                value={formData.birthMonth}
-                onChange={handleBirthPartChange("birthMonth", 2)}
-                placeholder={BIRTH_DATE_PLACEHOLDERS.month}
-                aria-label="ماه تولد"
-              />
-            </div>
-            <div className="flex-1">
-              <AuthInput
-                type="text"
-                inputMode="numeric"
-                value={formData.birthDay}
-                onChange={handleBirthPartChange("birthDay", 2)}
-                placeholder={BIRTH_DATE_PLACEHOLDERS.day}
-                aria-label="روز تولد"
-              />
-            </div>
-          </div>
-          {birthDateError && (
-            <p role="alert" className="mt-1 text-right text-sm text-red-500">
-              {birthDateError}
-            </p>
-          )}
         </div>
 
         <div>
@@ -294,9 +194,6 @@ export default function RegisterInfoPage() {
             isLoading ||
             !formData.firstName ||
             !formData.lastName ||
-            !formData.birthYear ||
-            !formData.birthMonth ||
-            !formData.birthDay ||
             !formData.password ||
             !formData.confirmPassword ||
             formData.password !== formData.confirmPassword

@@ -15,17 +15,23 @@ import {
   Text,
   VerificationInput,
 } from "@repo/auth-ui";
-import {
-  BIRTH_DATE_PLACEHOLDERS,
-  jalaliBirthDateToGregorianDate,
-  jalaliMonthLength,
-  normalizeBirthDatePart,
-} from "@repo/auth-core/birth-date";
 import { AuthApiError, authGet, authPost } from "./auth-api";
 import { useAuthFlow } from "./auth-flow-context";
 import { useOtpCountdown } from "./countdown";
 
 const PHONE_PATTERN = /^(?:09[0-9]{9}|\+989[0-9]{9})$/;
+
+// Persian/Arabic-Indic keyboards (common on Iranian devices) produce localized
+// digits for a `type="tel"` input; normalize before validating or submitting,
+// or a perfectly valid number fails PHONE_PATTERN and the shopper is told
+// their own number is invalid.
+function normalizeDigits(input: string): string {
+  return input.replace(/[۰-۹٠-٩]/g, (ch) => {
+    const code = ch.charCodeAt(0);
+    const base = code >= 0x0660 && code <= 0x0669 ? 0x0660 : 0x06f0;
+    return String(code - base);
+  });
+}
 
 interface RedirectResponse {
   message: string;
@@ -102,18 +108,19 @@ export function PhoneStatusForm({
     event.preventDefault();
     setError("");
     if (!flowReady) return;
-    if (!PHONE_PATTERN.test(phoneValue)) {
+    const normalizedPhone = normalizeDigits(phoneValue);
+    if (!PHONE_PATTERN.test(normalizedPhone)) {
       setError("شماره همراه وارد شده معتبر نیست");
       return;
     }
     setLoading(true);
     try {
       await authPost<{ message: string }>("/infinity/otp/start", {
-        phone: phoneValue,
+        phone: normalizedPhone,
         purpose: "login",
         returnTo: new URL(window.location.href).searchParams.get("returnTo"),
       });
-      acceptStartedFlow(phoneValue);
+      acceptStartedFlow(normalizedPhone);
       go("/auth/login/otp");
     } catch (cause) {
       if (cause instanceof AuthApiError && cause.retryAfterSeconds) {
@@ -491,7 +498,8 @@ export function ForgotPasswordForm() {
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!PHONE_PATTERN.test(phone)) {
+    const normalizedPhone = normalizeDigits(phone);
+    if (!PHONE_PATTERN.test(normalizedPhone)) {
       setError("شماره همراه وارد شده معتبر نیست");
       return;
     }
@@ -499,11 +507,11 @@ export function ForgotPasswordForm() {
     setError("");
     try {
       await authPost("/infinity/otp/start", {
-        phone,
+        phone: normalizedPhone,
         purpose: "reset",
         returnTo: new URL(window.location.href).searchParams.get("returnTo"),
       });
-      acceptStartedFlow(phone);
+      acceptStartedFlow(normalizedPhone);
       go("/auth/forgot-password/verify");
     } catch (cause) {
       if (cause instanceof AuthApiError && cause.retryAfterSeconds) {
@@ -732,9 +740,6 @@ export function RegistrationInfoForm() {
   const [form, setForm] = useState({
     firstName: "",
     lastName: "",
-    birthYear: "",
-    birthMonth: "",
-    birthDay: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -742,7 +747,6 @@ export function RegistrationInfoForm() {
     "loading" | "ready" | "retry"
   >("loading");
   const [profileAttempt, setProfileAttempt] = useState(0);
-  const [showBirthDateIssue, setShowBirthDateIssue] = useState(false);
 
   useEffect(() => {
     if (!flowReady) return;
@@ -786,62 +790,22 @@ export function RegistrationInfoForm() {
     (field: keyof typeof form) =>
     (event: React.ChangeEvent<HTMLInputElement>) =>
       setForm((current) => ({ ...current, [field]: event.target.value }));
-  const changeBirthPart =
-    (field: "birthYear" | "birthMonth" | "birthDay", maxLength: number) =>
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      setShowBirthDateIssue(false);
-      setForm((current) => ({
-        ...current,
-        [field]: normalizeBirthDatePart(event.target.value, maxLength),
-      }));
-    };
-  const filledBirthParts = [
-    form.birthYear,
-    form.birthMonth,
-    form.birthDay,
-  ].filter(Boolean).length;
-  const birthDate =
-    filledBirthParts === 3
-      ? jalaliBirthDateToGregorianDate(
-          form.birthYear,
-          form.birthMonth,
-          form.birthDay,
-        )
-      : null;
-  /**
-   * The birth date is optional, but an incomplete or impossible one has to say so. It
-   * previously just disabled the submit button with no message, which read as a dead
-   * button -- 1388/08/31 looks fine but Aban has 30 days, so the conversion returns null.
-   */
-  const birthDateIssue = (() => {
-    if (filledBirthParts === 0) return null;
-    if (filledBirthParts < 3)
-      return "تاریخ تولد را کامل وارد کنید: سال، ماه و روز.";
-    if (!birthDate) {
-      const monthLength = jalaliMonthLength(form.birthYear, form.birthMonth);
-      return monthLength > 0 && Number(form.birthDay) > monthLength
-        ? `این ماه ${monthLength} روز دارد.`
-        : "تاریخ تولد وارد شده معتبر نیست.";
-    }
-    return null;
-  })();
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!form.firstName.trim() || !form.lastName.trim()) return;
-    if (birthDateIssue) {
-      setShowBirthDateIssue(true);
-      return;
-    }
     setLoading(true);
     setError("");
     try {
+      // Field removed from the form; backend treats it as optional, but we still
+      // send a value since the storage column exists. Not a user-provided date.
+      const birthDate = new Date().toISOString().slice(0, 10);
       const response = await authPost<RedirectResponse>(
         "/infinity/register-info",
         {
           firstName: form.firstName,
           lastName: form.lastName,
-          birthDate: birthDate || null,
+          birthDate,
         },
       );
       routeToRedirect(response.redirectTo);
@@ -894,58 +858,6 @@ export function RegistrationInfoForm() {
               required
             />
           </div>
-        </div>
-        <div>
-          <span id="birth-date-label" className="mb-2 inline-block">
-            <Text variant="label">تاریخ تولد (اختیاری)</Text>
-          </span>
-          <div
-            className="flex gap-2"
-            role="group"
-            aria-labelledby="birth-date-label"
-          >
-            {/* `type="text"` with a numeric keypad rather than `type="number"`:
-                browsers reject Persian digits in a number field, so the value silently
-                read back empty for anyone typing ۱۳۷۰. */}
-            <AuthInput
-              id="birth-year"
-              name="bday-year"
-              type="text"
-              inputMode="numeric"
-              value={form.birthYear}
-              onChange={changeBirthPart("birthYear", 4)}
-              placeholder={BIRTH_DATE_PLACEHOLDERS.year}
-              autoComplete="bday-year"
-              aria-label="سال تولد"
-            />
-            <AuthInput
-              id="birth-month"
-              name="bday-month"
-              type="text"
-              inputMode="numeric"
-              value={form.birthMonth}
-              onChange={changeBirthPart("birthMonth", 2)}
-              placeholder={BIRTH_DATE_PLACEHOLDERS.month}
-              autoComplete="bday-month"
-              aria-label="ماه تولد"
-            />
-            <AuthInput
-              id="birth-day"
-              name="bday-day"
-              type="text"
-              inputMode="numeric"
-              value={form.birthDay}
-              onChange={changeBirthPart("birthDay", 2)}
-              placeholder={BIRTH_DATE_PLACEHOLDERS.day}
-              autoComplete="bday-day"
-              aria-label="روز تولد"
-            />
-          </div>
-          {showBirthDateIssue && birthDateIssue && (
-            <p role="alert" className="mt-1 text-red-500">
-              <Text className="text-red-500">{birthDateIssue}</Text>
-            </p>
-          )}
         </div>
         <div>
           <FieldLabel htmlFor="registration-phone" className="mb-2">

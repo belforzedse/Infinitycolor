@@ -4,10 +4,11 @@ import StorefrontRecoveryState from "@/components/storefront/StorefrontRecoveryS
 
 export default function PLPError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
+  retry: () => void;
 }) {
   return (
     <StorefrontRecoveryState
@@ -15,7 +16,7 @@ export default function PLPError({
       title="دریافت محصولات انجام نشد"
       message="اتصال برقرار نشد. دوباره تلاش کنید."
       error={error}
-      onRetry={reset}
+      onRetry={retry}
     />
   );
 }

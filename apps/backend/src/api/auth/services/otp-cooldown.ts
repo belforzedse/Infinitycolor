@@ -30,19 +30,48 @@ export function otpPhoneCooldownKey(canonicalPhone: string): string {
   return `auth:otp-phone-cooldown:${digest}`;
 }
 
+// node-redis queues commands while disconnected instead of rejecting them, so a
+// Redis blip leaves this hanging well past callers' own timeouts (observed:
+// auth's 5s bridge abort firing with zero response, because this call was still
+// waiting on the offline queue). Bounding it lets the caller's existing
+// OTP_PHONE_COOLDOWN_UNAVAILABLE fallback actually run instead of blocking.
+const REDIS_CALL_TIMEOUT_MS = 1500;
+
+function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`OTP_COOLDOWN_REDIS_TIMEOUT:${label}`)),
+      REDIS_CALL_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function acquireOtpPhoneCooldown(
   canonicalPhone: string,
 ): Promise<OtpPhoneCooldownDecision> {
   const redis = await RedisClient;
   const key = otpPhoneCooldownKey(canonicalPhone);
   const owner = randomBytes(24).toString("base64url");
-  const stored = await redis.set(key, owner, {
-    EX: OTP_PHONE_COOLDOWN_SECONDS,
-    NX: true,
-  });
+  const stored = await withTimeout(
+    redis.set(key, owner, {
+      EX: OTP_PHONE_COOLDOWN_SECONDS,
+      NX: true,
+    }),
+    "set",
+  );
   if (stored === "OK") return { allowed: true, lease: { key, owner } };
 
-  const ttl = await redis.ttl(key);
+  const ttl = await withTimeout(redis.ttl(key), "ttl");
   return {
     allowed: false,
     retryAfterSeconds: Math.max(
@@ -56,12 +85,14 @@ export async function acquireOtpPhoneCooldown(
 }
 
 export async function releaseOtpPhoneCooldown(lease: OtpPhoneCooldownLease): Promise<boolean> {
-  const result = await (
-    await RedisClient
-  ).eval(RELEASE_COOLDOWN_SCRIPT, {
-    keys: [lease.key],
-    arguments: [lease.owner],
-  });
+  const redis = await RedisClient;
+  const result = await withTimeout(
+    redis.eval(RELEASE_COOLDOWN_SCRIPT, {
+      keys: [lease.key],
+      arguments: [lease.owner],
+    }),
+    "release",
+  );
   return Number(result) === 1;
 }
 

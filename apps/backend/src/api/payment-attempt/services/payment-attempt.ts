@@ -54,9 +54,13 @@ export const paymentAttemptResponse = (attempt: any) => {
     redirectUrl: attempt?.redirectUrl || "",
     refId: attempt?.providerReference || "",
     requestId: attempt?.providerReference || attempt?.attemptId,
-    errorCode: attempt?.failureCode || (inProgress ? "PAYMENT_IN_PROGRESS" : undefined),
-    message:
-      attempt?.failureMessage || (inProgress ? "پرداخت قبلی هنوز در حال بررسی است" : undefined),
+    // While a replay is still in progress, the attempt's `failureCode` can hold an
+    // internal reconciliation label (e.g. "SNAPPAY_RECONCILIATION_PENDING") that the
+    // storefront's error-code switch has never heard of, so it fell through to the
+    // generic "خطا در ثبت سفارش" banner instead of the mapped "still checking" copy.
+    // PAYMENT_IN_PROGRESS is the stable public contract for every in-progress status.
+    errorCode: inProgress ? "PAYMENT_IN_PROGRESS" : attempt?.failureCode,
+    message: inProgress ? "پرداخت قبلی هنوز در حال بررسی است" : attempt?.failureMessage,
     financialSummary: attempt?.quoteSnapshot?.financialSummary,
   };
 };

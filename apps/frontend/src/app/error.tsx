@@ -4,10 +4,11 @@ import StorefrontRecoveryState from "@/components/storefront/StorefrontRecoveryS
 
 export default function RootError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
+  retry: () => void;
 }) {
   return (
     <StorefrontRecoveryState
@@ -15,7 +16,7 @@ export default function RootError({
       title="بارگذاری این بخش کامل نشد"
       message="اطلاعات شما حفظ شده است. دوباره تلاش کنید یا به فروشگاه برگردید."
       error={error}
-      onRetry={reset}
+      onRetry={retry}
     />
   );
 }

@@ -102,6 +102,7 @@ export default function PaymentResultPageClient() {
         setResult(next);
         if (next.isPaid) {
           window.localStorage.removeItem("pendingCheckoutAttemptId");
+          window.localStorage.removeItem("pendingCheckoutQuoteHash");
           window.localStorage.removeItem("pendingPaymentAttemptId");
           window.localStorage.removeItem("pendingOrderId");
           window.localStorage.removeItem("pendingRefId");

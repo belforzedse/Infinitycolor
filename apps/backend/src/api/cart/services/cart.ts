@@ -33,6 +33,21 @@ import {
 } from "../../payment-gateway/services/snappay-security";
 import { redactSensitive } from "../../../utils/redactSensitive";
 
+// A dead attempt (customer backed out of the gateway, or it expired) must never be
+// replayed as if it were still live -- the browser can still hold its id in
+// localStorage long after the gateway/orchestrator marked it terminal, and the
+// customer's next tap must start a fresh attempt instead of being handed the same
+// failure forever. "Unknown" belongs here too: the SnappPay orchestrator parks an
+// attempt there when its own status() call comes back ambiguous (provider code
+// 1007, the common shape for a customer who backed out -- see
+// snappay-orchestrator.ts) pending an async reconciliation sweep. That is a
+// sensible "don't touch it yet" state for the callback/reconcile path, but wrong
+// at checkout: the customer is standing on the page asking to pay right now, and
+// making them wait on a background sweep for an attempt they already abandoned is
+// how "tap پرداخت" stopped doing anything visible on the third try. See
+// __tests__/finalize-attempt-replay.spec.ts.
+const TERMINAL_PAYMENT_ATTEMPT_STATUSES = new Set(["Failed", "Cancelled", "Expired", "Unknown"]);
+
 export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   async getUserCart(userId: number) {
     return getOrCreateUserCart(strapi as any, userId);
@@ -131,7 +146,11 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
 
       const replay = await findPaymentAttempt(strapi as any, userId, attemptId);
       if (replay) {
-        if (String(replay.quoteHash) !== expectedQuoteHash || String(replay.Gateway) !== gateway) {
+        if (
+          TERMINAL_PAYMENT_ATTEMPT_STATUSES.has(String(replay.Status || "")) ||
+          String(replay.quoteHash) !== expectedQuoteHash ||
+          String(replay.Gateway) !== gateway
+        ) {
           return {
             success: false,
             status: 409,
@@ -227,6 +246,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           const replay = await findPaymentAttempt(strapi as any, userId, attemptId, trx);
           if (replay) {
             if (
+              TERMINAL_PAYMENT_ATTEMPT_STATUSES.has(String(replay.Status || "")) ||
               String(replay.quoteHash) !== expectedQuoteHash ||
               String(replay.Gateway) !== gateway
             ) {
@@ -661,6 +681,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         const replay = await findPaymentAttempt(strapi as any, userId, attemptId).catch(() => null);
         if (
           replay &&
+          !TERMINAL_PAYMENT_ATTEMPT_STATUSES.has(String(replay.Status || "")) &&
           String(replay.quoteHash) === expectedQuoteHash &&
           String(replay.Gateway) === gateway
         ) {

@@ -187,20 +187,48 @@ const fetchPdpProduct = async (
  * shorter than the 30s fetch revalidate it supersedes: strictly fresher than
  * before, while still collapsing a stampede into one render per URL per 5s.
  */
+class PdpLookupUnavailableError extends Error {
+  details: NonNullable<ProductLookupResult["errorDetails"]>;
+  constructor(details: NonNullable<ProductLookupResult["errorDetails"]>) {
+    super(details.message || "Product lookup temporarily unavailable");
+    this.details = details;
+  }
+}
+
 async function getRemoteCachedPdpProduct(
   decodedSlug: string,
 ): Promise<ProductLookupResult> {
   "use cache: remote";
   cacheLife("storefrontLive");
   cacheTag(PRODUCT_TAG, productSlugTag(decodedSlug));
-  return fetchPdpProduct(decodedSlug, PDP_REVALIDATE_SECONDS);
+  const lookup = await fetchPdpProduct(decodedSlug, PDP_REVALIDATE_SECONDS);
+
+  // A transient infra fault (timeout, 5xx, malformed payload) must throw
+  // rather than return here. Next only writes a "use cache" entry when the
+  // function *returns* — a throw propagates without being persisted. Returning
+  // this outcome instead once wrote a single Strapi blip into the shared Redis
+  // cache, so every visitor to this URL, across every replica, replayed the
+  // same "product unavailable" throw (and the page body's crash) for the full
+  // `storefrontLive` cache life instead of the next request simply retrying.
+  if (lookup.errorDetails?.failure === "unavailable") {
+    throw new PdpLookupUnavailableError(lookup.errorDetails);
+  }
+
+  return lookup;
 }
 
 // React `cache` on top so `generateMetadata` and the page body share one
 // result within a single request rather than each consulting the remote cache.
-const getCachedPdpProduct = cache((decodedSlug: string) =>
-  getRemoteCachedPdpProduct(decodedSlug),
-);
+const getCachedPdpProduct = cache(async (decodedSlug: string): Promise<ProductLookupResult> => {
+  try {
+    return await getRemoteCachedPdpProduct(decodedSlug);
+  } catch (error) {
+    if (error instanceof PdpLookupUnavailableError) {
+      return { product: null, errorDetails: error.details };
+    }
+    throw error;
+  }
+});
 
 /**
  * Related rails are identical for every visitor, so one render per 5s serves

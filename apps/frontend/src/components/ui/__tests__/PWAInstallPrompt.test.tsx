@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PWAInstallPromptCard } from "../PWAInstallPrompt";
+import { getSafeLocalStorage, PWAInstallPromptCard } from "../PWAInstallPrompt";
 
 describe("PWAInstallPromptCard", () => {
   it("renders a compact card that stays on short screens", () => {
@@ -22,5 +22,39 @@ describe("PWAInstallPromptCard", () => {
 
     await user.click(screen.getByRole("button", { name: "متوجه شدم" }));
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PWA install storage guards", () => {
+  it("treats a null embedded-browser localStorage as unavailable", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: null,
+    });
+
+    expect(getSafeLocalStorage()).toBeNull();
+
+    if (descriptor) {
+      Object.defineProperty(window, "localStorage", descriptor);
+    }
+  });
+
+  it("treats storage access exceptions as unavailable", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get: () => {
+        throw new DOMException("Storage is blocked", "SecurityError");
+      },
+    });
+
+    expect(getSafeLocalStorage()).toBeNull();
+
+    if (descriptor) {
+      Object.defineProperty(window, "localStorage", descriptor);
+    }
   });
 });

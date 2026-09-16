@@ -123,15 +123,25 @@ const buildDiscountPreviewKey = ({
 }) => `${String(code || "").trim()}:${shippingId || "none"}:${addressContextKey}:${cartSignature}`;
 
 const getOrCreateCheckoutAttemptId = (quoteHash: string) => {
-  const existingAttempt = window.localStorage.getItem("pendingCheckoutAttemptId");
-  const existingQuote = window.localStorage.getItem("pendingCheckoutQuoteHash");
-  if (existingAttempt && existingQuote === quoteHash) return existingAttempt;
-
   const attemptId =
     globalThis.crypto?.randomUUID?.() ||
     `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  window.localStorage.setItem("pendingCheckoutAttemptId", attemptId);
-  window.localStorage.setItem("pendingCheckoutQuoteHash", quoteHash);
+
+  // Private browsing / hardened browser modes can throw on any localStorage
+  // access (Sentry has recorded this). Falling through to a fresh attempt id is
+  // strictly safer than letting the exception escape into the submit handler's
+  // catch block, which would surface the generic "خطا در ثبت سفارش" banner for a
+  // storage quirk that has nothing to do with the order itself.
+  try {
+    const existingAttempt = window.localStorage.getItem("pendingCheckoutAttemptId");
+    const existingQuote = window.localStorage.getItem("pendingCheckoutQuoteHash");
+    if (existingAttempt && existingQuote === quoteHash) return existingAttempt;
+
+    window.localStorage.setItem("pendingCheckoutAttemptId", attemptId);
+    window.localStorage.setItem("pendingCheckoutQuoteHash", quoteHash);
+  } catch {
+    // Storage unavailable -- proceed with the freshly generated attemptId below.
+  }
   return attemptId;
 };
 

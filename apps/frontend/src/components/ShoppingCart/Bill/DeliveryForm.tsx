@@ -4,7 +4,6 @@ import ChevronLeftIcon from "@/components/Product/Icons/ChevronLeftIcon";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom } from "jotai";
 import { submitOrderStepAtom } from "@/atoms/Order";
-import DisclosureItem from "@/components/Kits/Disclosure";
 import ShoppingCartBillDeliveryOptions from "./DeliveryOptions";
 import { useCart } from "@/contexts/CartContext";
 import type { ShippingAddressContext, ShippingOption } from "@/services/shipping";
@@ -165,24 +164,24 @@ function ShoppingCartBillDeliveryForm({
         </div>
       </div>
 
-      <DisclosureItem
-        title={<span className="text-xl text-neutral-800">حمل و نقل</span>}
-        className="border-b border-slate-200 pb-5"
-      >
-        {loading ? (
-          <div className="flex justify-center p-4">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
-          </div>
-        ) : error ? (
-          <div className="p-2 text-red-500">{error}</div>
-        ) : (
-          <ShoppingCartBillDeliveryOptions
-            shippingMethods={shippingMethods}
-            control={control}
-            disabled={!hasAddressContext}
-          />
-        )}
-      </DisclosureItem>
+      <div className="border-b border-slate-200 pb-5">
+        <span className="text-xl text-neutral-800">حمل و نقل</span>
+        <div className="mt-2">
+          {loading ? (
+            <div className="flex justify-center p-4">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-infinity-primary"></div>
+            </div>
+          ) : error ? (
+            <div className="p-2 text-red-500">{error}</div>
+          ) : (
+            <ShoppingCartBillDeliveryOptions
+              shippingMethods={shippingMethods}
+              control={control}
+              disabled={!hasAddressContext}
+            />
+          )}
+        </div>
+      </div>
 
       {/* <DisclosureItem
         title={
