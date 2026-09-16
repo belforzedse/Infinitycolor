@@ -21,7 +21,11 @@ import { currentBrowserFamily } from "@/lib/browser-family";
 import { useRouter } from "next/navigation";
 import type { ShippingAddressContext, ShippingOption } from "@/services/shipping";
 import { CartService, OrderService } from "@/services";
-import type { CheckoutGatewayCode, ReserveDeliveryAddress } from "@/services/cart/types/cart";
+import type {
+  CartStockCheckResponse,
+  CheckoutGatewayCode,
+  ReserveDeliveryAddress,
+} from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
 import WalletService from "@/services/wallet";
 import { useCart } from "@/contexts/CartContext";
@@ -843,6 +847,28 @@ function ShoppingCartBillForm({}: Props) {
         const errorMessage = (cartResponse as any).message || cartResponse.message;
         const errorDetails = (cartResponse as any).details;
 
+        // Stock moved between the guard above and the server's own re-check, so the
+        // server corrected the cart and refused the order. It answers without an
+        // errorCode and in English, which the translator cannot map — that is how
+        // this became the generic "try again" banner. Show the same inline notice
+        // the pre-flight guard uses instead, naming what actually changed.
+        const lateStock = cartResponse as unknown as Pick<
+          CartStockCheckResponse,
+          "itemsAdjusted" | "itemsRemoved"
+        >;
+        const lateAdjusted = lateStock.itemsAdjusted ?? [];
+        const lateRemoved = lateStock.itemsRemoved ?? [];
+        if (lateAdjusted.length || lateRemoved.length) {
+          trackCheckoutError("STOCK_CHANGED");
+          await refreshCart();
+          setStockNotice({
+            adjustedCartItemIds: lateAdjusted.map((it) => String(it.cartItemId)),
+            removedNames: lateRemoved.map((it) => resolveStockItemName(it)),
+          });
+          scrollStockNoticeIntoView();
+          return;
+        }
+
         // Map error codes to user-friendly messages
         let displayError = "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.";
 
@@ -916,6 +942,38 @@ function ShoppingCartBillForm({}: Props) {
               void loadActiveReserve();
               displayError =
                 "شما یک سفارش رزروی فعال دارید. این سفارش را به همان بسته اضافه کنید یا آن را جداگانه ثبت کنید.";
+              break;
+            // The codes below reach the storefront but had no case, so each one
+            // rendered as the generic banner and told the shopper nothing they
+            // could act on.
+            case "STOCK_RESERVATION_FAILED":
+              displayError =
+                "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید.";
+              break;
+            case "DISCOUNT_USAGE_EXHAUSTED":
+              displayError =
+                "ظرفیت استفاده از این کد تخفیف تکمیل شده است. کد را بردارید یا کد دیگری وارد کنید.";
+              break;
+            case "CHECKOUT_QUOTE_CHANGED":
+              displayError =
+                "قیمت یا موجودی سبد خرید تغییر کرد. لطفاً مبلغ نهایی را بررسی و دوباره ثبت سفارش کنید.";
+              break;
+            case "CHECKOUT_ATTEMPT_CONFLICT":
+            case "CHECKOUT_ATTEMPT_REQUIRED":
+            case "CHECKOUT_QUOTE_REQUIRED":
+              // The stored attempt id belongs to an older basket. Dropping it lets
+              // the next tap start a clean attempt instead of failing the same way.
+              localStorage.removeItem("pendingCheckoutAttemptId");
+              localStorage.removeItem("pendingCheckoutQuoteHash");
+              displayError = "سفارش شما تازه‌سازی شد. لطفاً یک بار دیگر ثبت سفارش را بزنید.";
+              break;
+            case "PAYMENT_GATEWAY_DISABLED":
+            case "SNAPPAY_GATEWAY_RECORD_MISSING":
+              displayError =
+                "درگاه پرداخت انتخاب‌شده در دسترس نیست. لطفاً درگاه دیگری را انتخاب کنید.";
+              break;
+            case "INVALID_RESERVATION":
+              displayError = "رزرو موجودی انجام نشد. لطفاً دوباره تلاش کنید.";
               break;
             default:
               // Use backend message translated to Persian (never show raw)
@@ -1099,6 +1157,14 @@ function ShoppingCartBillForm({}: Props) {
             case "CHECKOUT_QUOTE_FAILED":
               displayError =
                 "محاسبه مبلغ نهایی سفارش ممکن نشد. لطفاً روش ارسال و آدرس را بررسی کرده و دوباره تلاش کنید.";
+              break;
+            case "STOCK_RESERVATION_FAILED":
+              displayError =
+                "موجودی برخی از کالاها همین حالا تمام شد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید.";
+              break;
+            case "DISCOUNT_USAGE_EXHAUSTED":
+              displayError =
+                "ظرفیت استفاده از این کد تخفیف تکمیل شده است. کد را بردارید یا کد دیگری وارد کنید.";
               break;
             default:
               if (errorMessage && typeof errorMessage === "string") {
