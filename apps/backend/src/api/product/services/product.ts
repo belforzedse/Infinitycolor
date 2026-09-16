@@ -6,6 +6,8 @@ import { factories } from "@strapi/strapi";
 import {
   findOrderedProductIds,
   FindProductCardsParams,
+  isEnabledCardParam,
+  parseQuerySortKey,
   PRODUCT_CARD_FIELDS,
   PRODUCT_CARD_POPULATE,
 } from "./product-card-query";
@@ -20,6 +22,14 @@ const CARD_COLOR_CODE_LIMIT = 8;
 const HOMEPAGE_CARD_LIMIT = 20;
 const HOMEPAGE_GIF_PROMO_LIMIT = 4;
 const HOMEPAGE_BATCH_LIMIT = 36;
+
+// Storefront "View all" sections whose curated order comes from the same settings
+// fields the homepage rails already use. See findProductCards/isCanonicalCuratedView.
+export const CURATED_SECTION_SETTINGS_FIELD: Record<string, string> = {
+  newest: "homeNewestProductIds",
+  popular: "homeFavoriteProductIds",
+  discount: "homeDiscountedProductIds",
+};
 
 const HOMEPAGE_SECTION_IDS = [
   "newest",
@@ -194,6 +204,39 @@ const relationArray = (relation: any): any[] => {
 };
 
 const attrsOf = (entity: any): any => entity?.attributes || entity || {};
+
+/**
+ * Sanity-checks the client's `curated` hint against the request's own top-level
+ * sort/hasDiscount/availability/price params -- mirroring resolveExcludeDiscountFlag's
+ * trust model in product-card-query.ts: the client names which canonical "View all" view
+ * this is, the server rejects the obvious contradictions. It does not re-parse the
+ * `filters` tree for an added category/search/size/color: plp.ts's buildPLPProductsQuery
+ * only ever emits the hint when none of those are present, and curation only affects
+ * display order, so a hand-crafted request that lies about its own filters is a cosmetic
+ * edge case, not a security concern.
+ */
+export const isCanonicalCuratedView = (
+  section: string,
+  params: FindProductCardsParams,
+): boolean => {
+  if (params.availability) return false;
+  const price = params.price;
+  if (price && typeof price === "object" && (price.min !== undefined || price.max !== undefined)) {
+    return false;
+  }
+
+  // Strapi's qs parses `sort[0]=X` (what plp.ts actually sends) into `sort: ["X"]`, not a
+  // plain string -- parseQuerySortKey already handles both shapes for findOrderedProductIds,
+  // so reuse it here instead of a naive `typeof === "string"` check, which would silently
+  // never match the array form and disable curation for every real "View all" request.
+  const sortKey = parseQuerySortKey(params.sort);
+  const hasDiscount = isEnabledCardParam(params.hasDiscount);
+
+  if (section === "discount") return hasDiscount && !sortKey;
+  if (section === "popular") return !hasDiscount && sortKey === "AverageRating:desc";
+  if (section === "newest") return !hasDiscount && sortKey === "LastEditedByAdminAt:desc";
+  return false;
+};
 
 const getProductVariations = (product: any): any[] => {
   const attrs = attrsOf(product);
@@ -462,7 +505,21 @@ export default factories.createCoreService(
      * fetched by id then re-ordered to match the SQL-computed order.
      */
     async findProductCards(params: FindProductCardsParams = {}) {
-      const { ids, pagination } = await findOrderedProductIds(strapi, params);
+      let effectiveParams = params;
+      const section = typeof params.curated === "string" ? params.curated : undefined;
+      const settingsField = section ? CURATED_SECTION_SETTINGS_FIELD[section] : undefined;
+
+      if (settingsField && isCanonicalCuratedView(section!, params)) {
+        const settingsEntity = await strapi.db.query("api::settings.settings").findOne();
+        const settings = attrsOf(settingsEntity);
+        const curatedProductIds = normalizeIds(settings[settingsField]);
+
+        if (curatedProductIds.length > 0) {
+          effectiveParams = { ...params, curatedProductIds };
+        }
+      }
+
+      const { ids, pagination } = await findOrderedProductIds(strapi, effectiveParams);
       const order = new Map<number, number>(ids.map((id: number, index: number) => [id, index]));
 
       if (ids.length === 0) {

@@ -14,6 +14,7 @@ jest.mock("@/lib/central-auth", () => ({
 
 const mockedCentralAuth = jest.requireMock("@/lib/central-auth") as {
   clearCentralAuthForLogout: jest.Mock;
+  centralAuth: { tokenManager: { getToken: jest.Mock } };
 };
 
 // Mock Next.js router
@@ -44,17 +45,33 @@ describe("Auth utilities", () => {
     localStorageMock.removeItem.mockClear();
     localStorageMock.getItem.mockClear();
     mockedCentralAuth.clearCentralAuthForLogout.mockReset();
+    mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset();
     global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 204 });
   });
 
   describe("handleAuthErrors", () => {
-    it("clears in-memory central auth state on a 401 error", () => {
+    it("clears in-memory central auth state on a 401 error when a token refresh also fails", async () => {
+      mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValueOnce(null);
       const error = { status: 401, message: "Unauthorized" };
 
-      handleAuthErrors(error);
+      await handleAuthErrors(error);
 
       expect(mockedCentralAuth.clearCentralAuthForLogout).toHaveBeenCalledTimes(1);
       expect(localStorageMock.removeItem).not.toHaveBeenCalledWith("accessToken");
+    });
+
+    it("does not clear auth state on a 401 when a silent token refresh succeeds", async () => {
+      mockedCentralAuth.centralAuth.tokenManager.getToken.mockResolvedValueOnce(
+        "fresh-token",
+      );
+      const error = { status: 401, message: "Unauthorized" };
+
+      await handleAuthErrors(error);
+
+      expect(mockedCentralAuth.centralAuth.tokenManager.getToken).toHaveBeenCalledWith({
+        forceRefresh: true,
+      });
+      expect(mockedCentralAuth.clearCentralAuthForLogout).not.toHaveBeenCalled();
     });
 
     it("redirects non-admin users to account on 403 error", () => {

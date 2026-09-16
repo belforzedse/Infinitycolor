@@ -133,7 +133,7 @@ describe("orders page bounded data ownership", () => {
         page: 1,
         pageSize: 25,
         tab: "all",
-        sort: "last-edited",
+        sort: "newest",
         signal: controller.signal,
       }),
     );

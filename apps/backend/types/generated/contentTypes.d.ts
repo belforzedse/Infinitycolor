@@ -3579,6 +3579,7 @@ export interface ApiProductProduct extends Schema.CollectionType {
         number
       > &
       Attribute.DefaultTo<0>;
+    PublishedAt: Attribute.DateTime;
     RatingCount: Attribute.Integer;
     removedAt: Attribute.DateTime;
     ReturnConditions: Attribute.Text;
@@ -3724,6 +3725,7 @@ export interface ApiSettingsSettings extends Schema.SingleType {
     createdBy: Attribute.Relation<"api::settings.settings", "oneToOne", "admin::user"> &
       Attribute.Private;
     filterPublicProductsByTitle: Attribute.Boolean & Attribute.DefaultTo<false>;
+    hideDiscountedOnDefaultNewestPlp: Attribute.Boolean & Attribute.DefaultTo<false>;
     homeBannerOneBackgroundColor: Attribute.String & Attribute.DefaultTo<"#f1f5f9">;
     homeBannerOneButtonColor: Attribute.String & Attribute.DefaultTo<"">;
     homeBannerOneButtonHref: Attribute.Text & Attribute.DefaultTo<"">;

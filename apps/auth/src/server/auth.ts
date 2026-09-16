@@ -1,8 +1,10 @@
 import { betterAuth } from "better-auth";
+import { isAPIError } from "better-auth/api";
 import { jwt } from "better-auth/plugins";
+import * as Sentry from "@sentry/nextjs";
 import { getAuthPool } from "./database";
 import { getAuthEnv } from "./env";
-import { StrapiBridgeClient } from "./bridge-client";
+import { StrapiBridgeClient, StrapiBridgeError } from "./bridge-client";
 import { IdentityRepository } from "./identity-repository";
 import { ReturnGrantRepository } from "./return-grants";
 import {
@@ -18,6 +20,32 @@ const identities = new IdentityRepository(pool);
 const grants = new ReturnGrantRepository(pool);
 const jwtOptions = createInfinityJwtOptions(identities);
 
+// Setting onAPIError.onError replaces Better Auth's default error logging, so this restores it before also reporting to Sentry (INTERNAL_SERVER_ERROR / non-APIError only — OTP_INVALID and the like are normal traffic).
+function reportUnexpectedAuthError(
+  error: unknown,
+  ctx: { logger: { error: (message: string, ...args: unknown[]) => void } },
+): void {
+  if (isAPIError(error)) {
+    ctx.logger.error(String(error.status), error);
+    if (error.status !== "INTERNAL_SERVER_ERROR") return;
+  } else {
+    ctx.logger.error(error instanceof Error ? error.name : "", error);
+  }
+  // bridgeApiError sets `.cause` to the real failure; report that instead of the sanitized wrapper.
+  const cause =
+    isAPIError(error) && error.cause !== undefined ? error.cause : error;
+  Sentry.captureException(cause, {
+    tags: {
+      reasonCode:
+        cause instanceof StrapiBridgeError
+          ? cause.reasonCode
+          : cause instanceof Error
+            ? cause.name
+            : "AUTH_FAILED",
+    },
+  });
+}
+
 export const auth = betterAuth({
   appName: "Infinity Color Auth",
   baseURL: env.betterAuthUrl,
@@ -25,6 +53,7 @@ export const auth = betterAuth({
   secret: env.betterAuthSecret,
   database: pool,
   trustedOrigins: [...env.trustedApplicationOrigins],
+  onAPIError: { onError: reportUnexpectedAuthError },
   emailAndPassword: { enabled: false },
   user: {
     modelName: "users",

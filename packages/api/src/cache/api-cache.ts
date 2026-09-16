@@ -182,9 +182,12 @@ export class ApiCache {
   setPending(key: string, promise: Promise<unknown>): void {
     this.pendingRequests.set(key, promise);
 
-    promise.finally(() => {
-      this.pendingRequests.delete(key);
-    });
+    // `.finally()` returns a new promise that adopts a rejection from `promise`.
+    // That derived promise is never awaited by a caller, so a failed request
+    // (already handled wherever `promise` itself is awaited) would otherwise
+    // surface a second, unhandled rejection here.
+    const cleanup = () => this.pendingRequests.delete(key);
+    promise.then(cleanup, cleanup);
   }
 
   getPending<T>(key: string): Promise<T> | null {

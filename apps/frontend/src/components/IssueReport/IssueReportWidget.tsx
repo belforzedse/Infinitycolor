@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import styles from "./IssueReportWidget.module.css";
 import { categoryOverlayOpenAtom } from "@/atoms/storefrontOverlay";
+import { generateUuidV4 } from "@/utils/uuid";
 
 /**
  * The dialog carries react-hook-form, the Headless UI dialog stack, the phone
@@ -42,7 +43,7 @@ export default function IssueReportWidget() {
         onClick={() => {
           setHasOpened(true);
           setSent(false);
-          setSubmissionId((current) => current || crypto.randomUUID());
+          setSubmissionId((current) => current || generateUuidV4());
           setOpen(true);
         }}
         className={`${styles.trigger} fixed bottom-[calc(env(safe-area-inset-bottom)+7.5rem)] left-3 z-[80] inline-flex min-h-11 items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-xl hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-infinity-primary focus-visible:ring-offset-2 lg:bottom-6 lg:left-6`}

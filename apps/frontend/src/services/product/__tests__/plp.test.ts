@@ -87,6 +87,145 @@ describe("PLP query helpers", () => {
     expect(colorTitles).not.toEqual(expect.arrayContaining(["سرمه ای"]));
   });
 
+  it("hints excludeDiscount only for the exact unfiltered default-sort PLP view", () => {
+    const defaultView = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "LastEditedByAdminAt:desc",
+    });
+    expect(defaultView.get("excludeDiscount")).toBe("true");
+
+    // Pagination beyond page 1 is still the same base view.
+    const secondPage = buildPLPProductsQuery({
+      page: 2,
+      available: false,
+      sort: "LastEditedByAdminAt:desc",
+    });
+    expect(secondPage.get("excludeDiscount")).toBe("true");
+  });
+
+  it("withholds the excludeDiscount hint once any filter, category, or other sort applies", () => {
+    const noSort = buildPLPProductsQuery({ page: 1, available: false });
+    expect(noSort.has("excludeDiscount")).toBe(false);
+
+    const otherSort = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "price:asc",
+    });
+    expect(otherSort.has("excludeDiscount")).toBe(false);
+
+    const withCategory = buildPLPProductsQuery(
+      { page: 1, available: false, sort: "LastEditedByAdminAt:desc" },
+      ["manto"],
+    );
+    expect(withCategory.has("excludeDiscount")).toBe(false);
+
+    const withHasDiscount = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "LastEditedByAdminAt:desc",
+      hasDiscount: true,
+    });
+    expect(withHasDiscount.has("excludeDiscount")).toBe(false);
+
+    const withSearch = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "LastEditedByAdminAt:desc",
+      search: "scarf",
+    });
+    expect(withSearch.has("excludeDiscount")).toBe(false);
+
+    const withPrice = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "LastEditedByAdminAt:desc",
+      minPrice: "1000",
+    });
+    expect(withPrice.has("excludeDiscount")).toBe(false);
+  });
+
+  it("hints the curated section for each canonical View all URL", () => {
+    const newest = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "LastEditedByAdminAt:desc",
+    });
+    expect(newest.get("curated")).toBe("newest");
+
+    const popular = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "AverageRating:desc",
+    });
+    expect(popular.get("curated")).toBe("popular");
+
+    const discount = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      hasDiscount: true,
+    });
+    expect(discount.get("curated")).toBe("discount");
+
+    // Pagination beyond page 1 stays on the same curated view.
+    const secondPage = buildPLPProductsQuery({
+      page: 2,
+      available: false,
+      hasDiscount: true,
+    });
+    expect(secondPage.get("curated")).toBe("discount");
+  });
+
+  it("withholds the curated hint once any filter, category, or other sort applies", () => {
+    const bare = buildPLPProductsQuery({ page: 1, available: false });
+    expect(bare.has("curated")).toBe(false);
+
+    const otherSort = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "price:asc",
+    });
+    expect(otherSort.has("curated")).toBe(false);
+
+    const withCategory = buildPLPProductsQuery(
+      { page: 1, available: false, sort: "LastEditedByAdminAt:desc" },
+      ["manto"],
+    );
+    expect(withCategory.has("curated")).toBe(false);
+
+    const discountWithSort = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      hasDiscount: true,
+      sort: "Price:asc",
+    });
+    expect(discountWithSort.has("curated")).toBe(false);
+
+    const popularWithHasDiscount = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "AverageRating:desc",
+      hasDiscount: true,
+    });
+    expect(popularWithHasDiscount.has("curated")).toBe(false);
+
+    const withSearch = buildPLPProductsQuery({
+      page: 1,
+      available: false,
+      sort: "LastEditedByAdminAt:desc",
+      search: "scarf",
+    });
+    expect(withSearch.has("curated")).toBe(false);
+
+    const withAvailable = buildPLPProductsQuery({
+      page: 1,
+      available: true,
+      sort: "LastEditedByAdminAt:desc",
+    });
+    expect(withAvailable.has("curated")).toBe(false);
+  });
+
   it("does not emit unsupported product filters", () => {
     const params = buildPLPProductsQuery({
       page: 1,

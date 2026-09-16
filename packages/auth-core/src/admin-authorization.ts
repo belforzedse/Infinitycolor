@@ -200,6 +200,8 @@ export const ADMIN_ROLE_DEFINITIONS: Readonly<
       "order.notes.update",
       "order.address.update",
       "order.cancel",
+      "order.shipping.manage",
+      "order.print",
       "content.stories.manage",
     ],
   },

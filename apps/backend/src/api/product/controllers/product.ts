@@ -970,6 +970,8 @@ export default factories.createCoreController("api::product.product", ({ strapi 
         availability: restQuery.availability,
         price: restQuery.price,
         hasDiscount: restQuery.hasDiscount,
+        excludeDiscount: restQuery.excludeDiscount,
+        curated: restQuery.curated,
         requireCoverImage: restQuery.requireCoverImage,
         pagination: restQuery.pagination,
       });

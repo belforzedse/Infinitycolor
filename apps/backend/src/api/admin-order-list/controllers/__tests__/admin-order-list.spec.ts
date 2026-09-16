@@ -423,12 +423,20 @@ describe("bounded admin orders list", () => {
     expect(numericBranch).toContainEqual({
       user: { phone: { $in: ["+989123381098", "09123381098"] } },
     });
-    expect(numericBranch).toContainEqual({ id: { $eq: 9123381098 } });
+    // A phone is never an order id: `orders.id` is a Postgres int4, so probing it
+    // with 9123381098 made the whole list 500 with "integer out of range" — which
+    // is precisely how support lost the ability to look up an affected order.
+    expect(numericBranch).not.toContainEqual({ id: { $eq: 9123381098 } });
+    // An id that does fit is still matched.
+    await controller.query(createContext({ search: "112147" }));
+    expect(findMany.mock.calls[1][0].where.$and[0].$or).toContainEqual({
+      id: { $eq: 112147 },
+    });
 
     // Separators drop the query into the text branch, which had no phone
     // condition at all and so could only ever return nothing.
     await controller.query(createContext({ search: "0912-338-1098" }));
-    expect(findMany.mock.calls[1][0].where.$and[0].$or).toContainEqual({
+    expect(findMany.mock.calls[2][0].where.$and[0].$or).toContainEqual({
       user: { phone: { $in: ["+989123381098", "09123381098"] } },
     });
   });

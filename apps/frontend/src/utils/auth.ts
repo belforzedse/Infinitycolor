@@ -12,6 +12,58 @@ import { clearUserStorage } from "@/utils/userStorage";
 let pendingAuthRedirect: string | null = null;
 
 /**
+ * A single 401 on an otherwise-live session is usually the ~60s bridge JWT
+ * going stale between mint and use (e.g. a checkout form left open), not an
+ * actual logout -- the underlying Better Auth session is still good. Try one
+ * silent refresh before tearing down local state and redirecting to login.
+ * This never replays the request that got the 401 (mutations are never
+ * auto-retried, see apps/auth/src/security-contract.test.ts); it only
+ * decides whether the user is still authenticated so a stale-token blip
+ * doesn't wipe an in-progress form for a session that is actually fine.
+ */
+async function handleUnauthorized(error: any, isJest: unknown): Promise<void> {
+  const refreshed = await centralAuth.tokenManager
+    .getToken({ forceRefresh: true })
+    .catch(() => null);
+
+  if (refreshed) {
+    if (!isJest) {
+      const notification = addErrorNotification(
+        401,
+        "نشست شما به‌روزرسانی شد. لطفاً دوباره تلاش کنید.",
+      );
+      jotaiStore.set(errorNotificationsAtom, (prev) => [...prev, notification]);
+    }
+    return;
+  }
+
+  clearAccessToken();
+  clearUserStorage();
+  jotaiStore.set(currentUserAtom, null);
+
+  const requestedPath = safeInternalRedirect(
+    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+  );
+  if (requestedPath && isAuthRequiredRoute(window.location.pathname)) {
+    const target = centralLoginUrl(requestedPath);
+    if (pendingAuthRedirect !== target) {
+      pendingAuthRedirect = target;
+      window.location.replace(target);
+    }
+    return;
+  }
+
+  // Public routes remain usable; offer login without forcing navigation.
+  if (!isJest) {
+    const notification = addErrorNotification(
+      401,
+      getUserFacingErrorMessage(error, "برای دیدن این بخش باید وارد حساب خود شوید."),
+    );
+    jotaiStore.set(errorNotificationsAtom, (prev) => [...prev, notification]);
+  }
+}
+
+/**
  * Handles authentication errors (401, 403) gracefully
  * Shows user-friendly notifications instead of hard redirects
  *
@@ -19,7 +71,10 @@ let pendingAuthRedirect: string | null = null;
  * 403 (Forbidden): Shows notification explaining permission denied
  * isAdminCheck: Shows notification instead of redirecting
  */
-export const handleAuthErrors = (error?: any, isAdminCheck?: boolean): void => {
+export const handleAuthErrors = (
+  error?: any,
+  isAdminCheck?: boolean,
+): void | Promise<void> => {
   // TODO: Replace `any` with a specific error type for stricter checking
   const isUnauthorized = error?.status === HTTP_STATUS.UNAUTHORIZED;
   const isForbidden = error?.status === HTTP_STATUS.FORBIDDEN;
@@ -35,34 +90,10 @@ export const handleAuthErrors = (error?: any, isAdminCheck?: boolean): void => {
     return;
   }
 
-  // 401: User not authenticated
+  // 401: User not authenticated. Callers treat this as fire-and-forget (its
+  // return type is void), but it is a real Promise so tests can await it.
   if (isUnauthorized) {
-    // Clear auth state immediately
-    clearAccessToken();
-    clearUserStorage();
-    jotaiStore.set(currentUserAtom, null);
-
-    const requestedPath = safeInternalRedirect(
-      `${window.location.pathname}${window.location.search}${window.location.hash}`,
-    );
-    if (requestedPath && isAuthRequiredRoute(window.location.pathname)) {
-      const target = centralLoginUrl(requestedPath);
-      if (pendingAuthRedirect !== target) {
-        pendingAuthRedirect = target;
-        window.location.replace(target);
-      }
-      return;
-    }
-
-    // Public routes remain usable; offer login without forcing navigation.
-    if (!isJest) {
-      const notification = addErrorNotification(
-        401,
-        getUserFacingErrorMessage(error, "برای دیدن این بخش باید وارد حساب خود شوید."),
-      );
-      jotaiStore.set(errorNotificationsAtom, (prev) => [...prev, notification]);
-    }
-    return;
+    return handleUnauthorized(error, isJest);
   }
 
   // 403: User forbidden/permission denied

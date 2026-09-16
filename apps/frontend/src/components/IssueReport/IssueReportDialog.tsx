@@ -15,6 +15,7 @@ import { currentUserAtom } from "@/lib/atoms/auth";
 import { currentOrderContextAtom } from "@/atoms/issueReportContext";
 import { useCart } from "@/contexts/CartContext";
 import { submitIssueReport, type IssueReportClientContext } from "@/services/issue-reports";
+import { generateUuidV4 } from "@/utils/uuid";
 
 const MAX_CART_ITEMS = 20;
 
@@ -117,7 +118,7 @@ export default function IssueReportDialog({
 
   const markEdited = () => {
     if (failed) {
-      setSubmissionId(() => crypto.randomUUID());
+      setSubmissionId(() => generateUuidV4());
       setPendingContext(null);
       setFailed(false);
     }
@@ -139,7 +140,7 @@ export default function IssueReportDialog({
       ...(orderId ? { order: { orderId } } : {}),
       ...(cart.length > 0 ? { cart } : {}),
     };
-    const activeSubmissionId = submissionId || crypto.randomUUID();
+    const activeSubmissionId = submissionId || generateUuidV4();
     if (!pendingContext) setPendingContext(context);
     if (!submissionId) setSubmissionId(() => activeSubmissionId);
     try {

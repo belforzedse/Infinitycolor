@@ -262,14 +262,32 @@ const normalizeOrderItems = (items: unknown) => {
         if (!entity) return null;
         const pv = unwrapEntity(entity.product_variation);
         const product = unwrapEntity(pv?.product);
-        const color = unwrapEntity(entity.product_color ?? pv?.product_variation_color);
-        const size = unwrapEntity(entity.product_size ?? pv?.product_variation_size);
-        const model = unwrapEntity(entity.product_variation_model ?? pv?.product_variation_model);
-        // Order items only ever snapshot color/size/model. A variation whose sole
-        // dimension is a generic attribute (e.g. "pattern") has none of those, so
-        // without this the invoice silently drops the only variant info it has.
-        const genericTerms = unwrapCollection(pv?.selected_attribute_terms)
-          .map((term: unknown) => unwrapEntity(term)?.Title)
+        const attributeTerms = unwrapCollection(pv?.selected_attribute_terms)
+          .map((term: unknown) => unwrapEntity(term))
+          .filter(Boolean);
+        const findAttributeTerm = (matches: (attr: any) => boolean) =>
+          attributeTerms.find((term: any) => matches(unwrapEntity(term?.product_attribute)));
+        // A variation's real color/size/model can live only as a "generic" catalog
+        // attribute (LegacyProjection "None") instead of the legacy relations below
+        // — e.g. a WooCommerce custom color taxonomy — so an empty legacy relation
+        // doesn't mean the dimension is actually missing.
+        const genericColorTerm = findAttributeTerm(
+          (attr) => attr?.Type === "Color" || attr?.LegacyProjection === "Color",
+        );
+        const genericSizeTerm = findAttributeTerm((attr) => attr?.LegacyProjection === "Size");
+        const genericModelTerm = findAttributeTerm((attr) => attr?.LegacyProjection === "Model");
+        const color =
+          unwrapEntity(entity.product_color ?? pv?.product_variation_color) ?? genericColorTerm;
+        const size =
+          unwrapEntity(entity.product_size ?? pv?.product_variation_size) ?? genericSizeTerm;
+        const model =
+          unwrapEntity(entity.product_variation_model ?? pv?.product_variation_model) ??
+          genericModelTerm;
+        // Last resort: a variation whose sole dimension is a truly generic attribute
+        // (e.g. "pattern") has none of the above, so without this the invoice would
+        // silently drop the only variant info it has.
+        const genericTerms = attributeTerms
+          .map((term: any) => term?.Title)
           .filter((title: unknown): title is string => Boolean(title));
         return {
           id: String(entity.id ?? ""),

@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { RedisClient } from "../../..";
 
-export const OTP_PHONE_COOLDOWN_SECONDS = 120;
+export const OTP_PHONE_COOLDOWN_SECONDS = 30;
 
 const RELEASE_COOLDOWN_SCRIPT = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then

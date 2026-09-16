@@ -46,6 +46,9 @@ export const checkCartStockOp = async (strapi: Strapi, userId: number) => {
       removals.push({
         cartItemId: item.id,
         productVariationId: item.product_variation?.id,
+        // Carried so the storefront can name a line it can no longer see; the
+        // other removal branches already do this and this one silently did not.
+        productTitle: product?.Title,
         message:
           "Product stock information not available, item removed from cart",
       });
@@ -58,6 +61,7 @@ export const checkCartStockOp = async (strapi: Strapi, userId: number) => {
       removals.push({
         cartItemId: item.id,
         productVariationId: item.product_variation.id,
+        productTitle: product?.Title,
         requested,
         available: 0,
         message: "Product is out of stock, item removed from cart",

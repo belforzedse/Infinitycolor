@@ -10,6 +10,13 @@ export type ProductSummary = {
   id: number;
   title: string;
   image?: string;
+  /** False when the product would not appear on the public storefront right now
+   *  (inactive, unpublished, no priced variation) even though it's still curated.
+   *  Undefined = not checked yet (e.g. a just-added row). */
+  isEligible?: boolean;
+  /** Whether the product currently has an active discount. Only checked against
+   *  when `sectionKind="discount"`. */
+  isDiscounted?: boolean;
 };
 
 interface HomepageProductPickerProps {
@@ -20,12 +27,19 @@ interface HomepageProductPickerProps {
   onProductAdded?: (product: ProductSummary) => void;
   maxProducts?: number;
   /**
-   * Position after which the storefront stops rendering. Display only — it marks the
-   * overflow rows instead of blocking them, because the backend silently slices the
-   * list and the picker's job is to say so. Distinct from `maxProducts`, which
-   * prevents adds and hides the search box entirely once reached.
+   * Position after which the homepage rail stops rendering this list (it's sliced,
+   * not filled). Display only — items past it are still saved in this exact order and
+   * still appear, in order, on the section's full "مشاهده همه" storefront listing;
+   * this only marks that the homepage carousel itself won't show them.
    */
   renderLimit?: number;
+  /**
+   * Which storefront section this list curates, when it's one of the three that also
+   * drive a full "View all" page (see product-card-query.ts's curated ordering). Only
+   * used to decide which eligibility badge to show -- e.g. "no longer discounted" only
+   * makes sense for `"discount"`.
+   */
+  sectionKind?: "newest" | "popular" | "discount";
 }
 
 type OrderItem = {
@@ -55,6 +69,7 @@ export default function HomepageProductPicker({
   onProductAdded,
   maxProducts,
   renderLimit,
+  sectionKind,
 }: HomepageProductPickerProps) {
   const summaryMap = useMemo(() => {
     const m = new Map<number, ProductSummary>();
@@ -102,6 +117,22 @@ export default function HomepageProductPicker({
     onProductsChange(next);
   };
 
+  const moveToTop = (index: number) => {
+    if (index <= 0) return;
+    const next = [...selectedProductIds];
+    const [item] = next.splice(index, 1);
+    next.unshift(item);
+    onProductsChange(next);
+  };
+
+  const moveToBottom = (index: number) => {
+    if (index >= selectedProductIds.length - 1) return;
+    const next = [...selectedProductIds];
+    const [item] = next.splice(index, 1);
+    next.push(item);
+    onProductsChange(next);
+  };
+
   const hiddenCount =
     renderLimit && selectedProductIds.length > renderLimit
       ? selectedProductIds.length - renderLimit
@@ -132,8 +163,8 @@ export default function HomepageProductPicker({
 
       {hiddenCount > 0 ? (
         <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-sm text-amber-700">
-          {hiddenCount} محصول پس از جایگاه {renderLimit} ذخیره شده ولی در سایت نمایش داده
-          نمی‌شود. برای نمایش، آن‌ها را بالاتر بیاورید.
+          {hiddenCount} محصول پس از جایگاه {renderLimit} در قسمت اسلایدر صفحه اصلی نمایش داده
+          نمی‌شود، اما در صفحه «مشاهده همه» با همین ترتیب دیده می‌شود.
         </div>
       ) : null}
 
@@ -146,6 +177,11 @@ export default function HomepageProductPicker({
               const displayTitle = summary?.title ?? `محصول #${id}`;
               const imageUrl = summary?.image;
               const notRendered = Boolean(renderLimit && index >= renderLimit);
+              const isInactive = summary?.isEligible === false;
+              const isStaleDiscount =
+                sectionKind === "discount" &&
+                summary?.isEligible !== false &&
+                summary?.isDiscounted === false;
               return (
                 <li
                   key={id}
@@ -157,6 +193,18 @@ export default function HomepageProductPicker({
                   }`}
                 >
                   <div className="flex flex-shrink-0 gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => moveToTop(index)}
+                      disabled={index === 0}
+                      aria-label="انتقال به بالاترین جایگاه"
+                      title="انتقال به بالاترین جایگاه"
+                    >
+                      ⇈
+                    </Button>
                     <Button
                       type="button"
                       variant="outline"
@@ -179,6 +227,18 @@ export default function HomepageProductPicker({
                     >
                       ↓
                     </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => moveToBottom(index)}
+                      disabled={index === selectedProductIds.length - 1}
+                      aria-label="انتقال به پایین‌ترین جایگاه"
+                      title="انتقال به پایین‌ترین جایگاه"
+                    >
+                      ⇊
+                    </Button>
                   </div>
                   {imageUrl ? (
                     <div className="relative h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-neutral-200">
@@ -196,9 +256,24 @@ export default function HomepageProductPicker({
                   <span className="min-w-0 flex-1 truncate text-sm text-neutral-800">
                     {displayTitle}
                   </span>
-                  {notRendered ? (
+                  {isInactive ? (
+                    <span
+                      className="flex-shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[11px] text-red-700"
+                      title="این محصول غیرفعال، منتشرنشده یا بدون موجودی قیمت‌گذاری‌شده است و در سایت نمایش داده نمی‌شود."
+                    >
+                      غیرفعال / منتشرنشده
+                    </span>
+                  ) : isStaleDiscount ? (
+                    <span
+                      className="flex-shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700"
+                      title="این محصول دیگر تخفیف فعالی ندارد و در بخش «تخفیف‌های ویژه» نمایش داده نمی‌شود."
+                    >
+                      بدون تخفیف
+                    </span>
+                  ) : null}
+                  {!isInactive && notRendered ? (
                     <span className="flex-shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
-                      نمایش داده نمی‌شود
+                      فقط در «مشاهده همه»
                     </span>
                   ) : null}
                   <Button

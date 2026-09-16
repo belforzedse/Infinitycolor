@@ -122,7 +122,7 @@ export default function OrdersPage() {
   );
 
   const [sort, setSort] = useState<"last-edited" | "newest" | "oldest">(
-    "last-edited",
+    "newest",
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");

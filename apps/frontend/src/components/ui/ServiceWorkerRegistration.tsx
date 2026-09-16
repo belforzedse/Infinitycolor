@@ -67,7 +67,11 @@ export default function ServiceWorkerRegistration() {
 
       // Check for updates periodically
       const updateInterval = setInterval(() => {
-        registration.update();
+        // The registration can be torn down mid-flight (navigation, another
+        // tab unregistering it), which rejects this with things like
+        // Chromium's "InvalidStateError: newestWorker is null". Best-effort
+        // only; nothing here is actionable client-side.
+        registration.update().catch(() => undefined);
       }, 60000); // Check every minute
 
       // Handle service worker updates

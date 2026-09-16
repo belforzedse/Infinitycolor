@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AuthService } from "@/services";
 import { atom, useAtom } from "jotai";
+import { normalizeDigits } from "@/utils/faNum";
 
 interface UseCheckPhoneNumberReturn {
   isLoading: boolean;
@@ -26,21 +27,26 @@ export function useCheckPhoneNumber(): UseCheckPhoneNumberReturn {
       setIsLoading(true);
       setError(null);
 
+      // Persian/Arabic-Indic keyboards (common on Iranian devices) produce
+      // localized digits for a `type="tel"` input; normalize before validating.
+      const normalizedPhoneNumber = normalizeDigits(phoneNumber);
+
       // Accept both formats:
       // - 09XXXXXXXXX (11 digits starting with 0)
       // - +989XXXXXXXXX (international format with +98)
       const isValidPhone =
-        /^09\d{9}$/.test(phoneNumber) || /^\+989\d{9}$/.test(phoneNumber);
+        /^09\d{9}$/.test(normalizedPhoneNumber) ||
+        /^\+989\d{9}$/.test(normalizedPhoneNumber);
 
       if (!isValidPhone) {
         setError("شماره تلفن نامعتبر است");
         return;
       }
 
-      const response = await AuthService.checkUserExists(phoneNumber);
+      const response = await AuthService.checkUserExists(normalizedPhoneNumber);
 
       // Navigate based on the result
-      setPhoneNumber(phoneNumber);
+      setPhoneNumber(normalizedPhoneNumber);
 
       // Preserve redirect parameter from query string
       const redirectParam = searchParams.get("redirect");

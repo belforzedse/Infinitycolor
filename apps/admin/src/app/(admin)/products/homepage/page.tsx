@@ -166,34 +166,39 @@ export default function HomepageProductsPage() {
     <ContentWrapper title="محصولات صفحه اصلی">
       <div className="space-y-6 p-4">
         <p className="rounded-lg border border-blue-100 bg-blue-50/50 p-3 text-sm text-blue-800">
-          اگر برای هر بخش محصولی انتخاب نشود، در صفحه اصلی محصولات به صورت خودکار (جدیدترین یا دارای
-          تخفیف) نمایش داده می‌شوند.
+          اگر برای هر بخش محصولی انتخاب نشود، محصولات به صورت خودکار (جدیدترین، محبوب‌ترین یا
+          دارای تخفیف) نمایش داده می‌شوند. برای «جدیدترین ها»، «محبوب ترین ها» و «تخفیف‌های وسوسه
+          انگیز»، محصولات انتخاب‌شده هم در اسلایدر صفحه اصلی و هم در ابتدای صفحه «مشاهده همه» با
+          همین ترتیب نمایش داده می‌شوند؛ باقی محصولات صفحه پس از آن‌ها با ترتیب معمول ظاهر می‌شوند.
         </p>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <HomepageProductPicker
-            title="جدیدترین ها"
+            title="جدیدترین ها — صفحه اصلی و مشاهده همه"
             selectedProductIds={newestIds}
             productSummaries={newestSummariesForPicker}
             onProductsChange={setNewestIds}
             onProductAdded={(p) => setNewestSummaries((prev) => [...prev, p])}
             renderLimit={HOMEPAGE_RENDER_LIMIT}
+            sectionKind="newest"
           />
           <HomepageProductPicker
-            title="محبوب ترین ها"
+            title="محبوب ترین ها — صفحه اصلی و مشاهده همه"
             selectedProductIds={favoriteIds}
             productSummaries={favoriteSummariesForPicker}
             onProductsChange={setFavoriteIds}
             onProductAdded={(p) => setFavoriteSummaries((prev) => [...prev, p])}
             renderLimit={HOMEPAGE_RENDER_LIMIT}
+            sectionKind="popular"
           />
           <HomepageProductPicker
-            title="تخفیف‌های وسوسه انگیز"
+            title="تخفیف‌های وسوسه انگیز — صفحه اصلی و مشاهده همه"
             selectedProductIds={discountedIds}
             productSummaries={discountedSummariesForPicker}
             onProductsChange={setDiscountedIds}
             onProductAdded={(p) => setDiscountedSummaries((prev) => [...prev, p])}
             renderLimit={HOMEPAGE_RENDER_LIMIT}
+            sectionKind="discount"
           />
 
           <div className="space-y-3">

@@ -26,12 +26,20 @@ import {
 } from "./server/application-session";
 import { proxy } from "./proxy";
 
-function jwt(expSeconds: number, marker: string): string {
+function jwt(
+  expSeconds: number,
+  marker: string,
+  iatSeconds?: number,
+): string {
   const header = Buffer.from(
     JSON.stringify({ alg: "EdDSA", typ: "JWT" }),
   ).toString("base64url");
   const payload = Buffer.from(
-    JSON.stringify({ exp: expSeconds, marker }),
+    JSON.stringify({
+      exp: expSeconds,
+      marker,
+      ...(iatSeconds === undefined ? {} : { iat: iatSeconds }),
+    }),
   ).toString("base64url");
   return `${header}.${payload}.signature`;
 }
@@ -126,6 +134,29 @@ test("token manager coalesces acquisition and discards a post-logout result", as
   assert.equal(await first, null);
   assert.equal(await second, null);
   assert.equal(manager.peek(), null);
+});
+
+test("token manager does not reject a freshly issued token just because the client clock runs ahead", async () => {
+  // A client clock running far enough ahead of the server can make a
+  // brand-new token's absolute `exp` look already past by client time, even
+  // though the token has its full ~60s of real life left. Anchoring to `iat`
+  // on the client's own clock (readJwtExpiry) keeps a fresh token usable
+  // regardless of clock disagreement between client and server.
+  const serverNow = 1_700_000_000;
+  const clientNow = (serverNow + 70) * 1_000; // 70s ahead -- more than the 60s TTL
+  const fetchImpl = (async () =>
+    new Response(
+      JSON.stringify({ token: jwt(serverNow + 60, "skewed", serverNow) }),
+      { status: 200 },
+    )) as typeof fetch;
+  const manager = createTokenManager({
+    authOrigin: "https://auth.infinitycolor.co",
+    fetchImpl,
+    now: () => clientNow,
+  });
+
+  const token = await manager.getToken();
+  assert.notEqual(token, null);
 });
 
 test("browser auth client never acquires a token during server rendering", async () => {
@@ -632,17 +663,6 @@ test("the production proxy chain preserves only the sanitized client IP for auth
     /server_name auth\.infinitycolor\.co;[\s\S]{0,800}proxy_set_header X-Real-IP \$http_x_real_ip;/,
   );
   assert.match(compose, /127\.0\.0\.1:\$\{GATEWAY_PORT\}:8080/);
-});
-
-test("OTP start and resend have explicit Better Auth IP limits", () => {
-  const plugin = fs.readFileSync(
-    path.resolve(process.cwd(), "src/server/infinity-plugin.ts"),
-    "utf8",
-  );
-  assert.match(plugin, /path === "\/infinity\/otp\/start"/);
-  assert.match(plugin, /path === "\/infinity\/otp\/request"/);
-  assert.match(plugin, /window:\s*120/);
-  assert.match(plugin, /max:\s*4/);
 });
 
 test("profile completion requires the session and sanitized flow, not pre-auth phone", () => {

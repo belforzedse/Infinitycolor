@@ -179,13 +179,17 @@ describe("type-only payloads (what Strapi actually sends)", () => {
     expect(revalidateTag.mock.calls.map(([t]) => t)).toContain(HOME_PRODUCTS_TAG);
   });
 
-  it("invalidates homepage, blog and sitemap for site-settings", async () => {
+  it("invalidates homepage, blog, PLP and sitemap for site-settings", async () => {
+    // site-settings covers the curated Newest/Popular/Discount id lists too (see
+    // product.ts's findProductCards), which now drive "/plp" as well as the homepage
+    // rail -- so this blanket sweep has to reach the PLP cache tags or a curation edit
+    // sits stale until the outer "storefrontLive" cache-components window expires.
     await POST(request({ type: "site-settings" }));
     expect(revalidatePath.mock.calls.map(([p]) => p)).toEqual(
-      expect.arrayContaining(["/", "/blog", "/sitemap.xml"]),
+      expect.arrayContaining(["/", "/blog", "/plp", "/sitemap.xml"]),
     );
     expect(revalidateTag.mock.calls.map(([t]) => t)).toEqual(
-      expect.arrayContaining(["site-settings", SITEMAP_TAG]),
+      expect.arrayContaining(["site-settings", PRODUCT_TAG, PRODUCT_COLLECTION_TAG, SITEMAP_TAG]),
     );
   });
 

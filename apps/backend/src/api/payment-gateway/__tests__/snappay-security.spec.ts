@@ -70,6 +70,57 @@ describe("SnappPay recovery policy", () => {
     expect(decideSnappayRecovery({ providerCode: 1051 })).toBe("FAIL_CONFIGURATION");
   });
 
+  it("keeps reconciling when the provider code came from a failed status read", () => {
+    // Production ran with a `status` endpoint that returned 404/1007 on every
+    // call. Treating that as definitive parked the attempt and the expiry sweep
+    // then cancelled the order and released its stock — on payments we had no
+    // way to observe. An unobserved code describes the lookup, not the payment.
+    expect(decideSnappayRecovery({ providerCode: 1007, statusObserved: false })).toBe(
+      "RECONCILE",
+    );
+    expect(decideSnappayRecovery({ providerCode: 1048, statusObserved: false })).toBe(
+      "RECONCILE",
+    );
+    // A configuration failure is about our own request, so it stays definitive.
+    expect(decideSnappayRecovery({ providerCode: 1051, statusObserved: false })).toBe(
+      "FAIL_CONFIGURATION",
+    );
+  });
+
+  it("verifies a validated OK callback instead of waiting on an unreadable status", () => {
+    // /status cannot resolve a token before verify() has been called on it at
+    // least once, so a callback-confirmed payment would otherwise loop in
+    // RECONCILE forever and eventually get auto-cancelled by the expiry sweep.
+    expect(
+      decideSnappayRecovery({
+        providerStatus: undefined,
+        providerCode: 1007,
+        statusObserved: false,
+        callbackState: "OK",
+      }),
+    ).toBe("VERIFY");
+
+    // Without a validated OK callback, an unreadable status still just reconciles.
+    expect(
+      decideSnappayRecovery({
+        providerStatus: undefined,
+        providerCode: 1007,
+        statusObserved: false,
+      }),
+    ).toBe("RECONCILE");
+
+    // A FAILED callback has its own path (PENDING+FAILED -> REVERT); an unreadable
+    // status alongside it must not be reinterpreted as a reason to verify.
+    expect(
+      decideSnappayRecovery({
+        providerStatus: undefined,
+        providerCode: 1007,
+        statusObserved: false,
+        callbackState: "FAILED",
+      }),
+    ).toBe("RECONCILE");
+  });
+
   describe("abandoned REGISTERED tokens", () => {
     const abandonAfterMs = 30 * 60 * 1000;
 

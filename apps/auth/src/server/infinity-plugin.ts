@@ -63,33 +63,40 @@ function auditFailureCode(error: unknown): string {
 
 function bridgeApiError(error: unknown): APIError {
   if (error instanceof APIError) return error;
-  if (error instanceof StrapiBridgeError) {
-    if (error.status === 429) {
-      return new APIError(
-        "TOO_MANY_REQUESTS",
-        { message: error.message },
-        error.retryAfterSeconds
-          ? { "Retry-After": String(error.retryAfterSeconds) }
-          : undefined,
-      );
+  const wrapped = ((): APIError => {
+    if (error instanceof StrapiBridgeError) {
+      if (error.status === 429) {
+        return new APIError(
+          "TOO_MANY_REQUESTS",
+          { message: error.message },
+          error.retryAfterSeconds
+            ? { "Retry-After": String(error.retryAfterSeconds) }
+            : undefined,
+        );
+      }
+      if (error.status === 401 || error.status === 403) {
+        return new APIError("UNAUTHORIZED", { message: error.message });
+      }
+      if (error.status === 502) {
+        return new APIError("BAD_GATEWAY", { message: error.message });
+      }
+      if (error.status === 503) {
+        return new APIError("SERVICE_UNAVAILABLE", { message: error.message });
+      }
+      if (error.status >= 500) {
+        return new APIError("INTERNAL_SERVER_ERROR", {
+          message: error.message,
+        });
+      }
+      return new APIError("BAD_REQUEST", { message: error.message });
     }
-    if (error.status === 401 || error.status === 403) {
-      return new APIError("UNAUTHORIZED", { message: error.message });
-    }
-    if (error.status === 502) {
-      return new APIError("BAD_GATEWAY", { message: error.message });
-    }
-    if (error.status === 503) {
-      return new APIError("SERVICE_UNAVAILABLE", { message: error.message });
-    }
-    if (error.status >= 500) {
-      return new APIError("INTERNAL_SERVER_ERROR", { message: error.message });
-    }
-    return new APIError("BAD_REQUEST", { message: error.message });
-  }
-  return new APIError("INTERNAL_SERVER_ERROR", {
-    message: "احراز هویت ناموفق بود. دوباره تلاش کنید.",
-  });
+    return new APIError("INTERNAL_SERVER_ERROR", {
+      message: "احراز هویت ناموفق بود. دوباره تلاش کنید.",
+    });
+  })();
+  // The client only ever sees `wrapped`'s sanitized message; auth.ts's onAPIError hook reads `.cause` to report the real error to Sentry.
+  wrapped.cause = error;
+  return wrapped;
 }
 
 function authErrorStatus(error: unknown): number {
@@ -237,9 +244,11 @@ export function infinityCredentialsPlugin(
           .deleteSession(session.token)
           .catch(() => undefined);
         deleteSessionCookie(ctx);
-        throw new APIError("INTERNAL_SERVER_ERROR", {
+        const failure = new APIError("INTERNAL_SERVER_ERROR", {
           message: "ثبت رویداد امنیتی ورود ناموفق بود. دوباره تلاش کنید.",
         });
+        failure.cause = error;
+        throw failure;
       }
       kickAuthAuditDelivery(options.pool);
     }
@@ -258,14 +267,6 @@ export function infinityCredentialsPlugin(
   return {
     id: "infinity-credentials",
     version: "1.0.0",
-    rateLimit: [
-      {
-        pathMatcher: (path) =>
-          path === "/infinity/otp/start" || path === "/infinity/otp/request",
-        window: 120,
-        max: 4,
-      },
-    ],
     endpoints: {
       infinityPhoneStatus: createAuthEndpoint(
         "/infinity/phone-status",

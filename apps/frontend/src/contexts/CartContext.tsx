@@ -186,6 +186,35 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setIsDrawerOpen(false);
   }, [pathname]);
 
+  /**
+   * Surface a cart the server corrected on its own.
+   *
+   * `checkCartStock` is destructive — it deletes lines that currently read
+   * available <= 0 and truncates lines that no longer fit — and availability is
+   * `Count - reservedCount`, so another shopper's unpaid checkout hold is enough
+   * to trigger it. The shopper has to be told, or their cart silently shrinks.
+   *
+   * Removed lines are named where the backend gave us a title; adjusted lines are
+   * marked in place by `cartItemId`, so the notice only has to explain why.
+   */
+  const applyStockCorrectionNotice = React.useCallback(
+    (result: {
+      valid?: boolean;
+      itemsAdjusted?: Array<{ cartItemId: number }>;
+      itemsRemoved?: Array<{ productTitle?: string }>;
+    }) => {
+      const adjustedCartItemIds = (result?.itemsAdjusted ?? []).map((item) =>
+        String(item.cartItemId),
+      );
+      const removedNames = (result?.itemsRemoved ?? []).map(
+        (item) => item.productTitle || "این کالا",
+      );
+      if (adjustedCartItemIds.length === 0 && removedNames.length === 0) return;
+      setStockNotice({ adjustedCartItemIds, removedNames });
+    },
+    [],
+  );
+
   // Initialize cart based on authentication status (client-only)
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -215,9 +244,20 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
                 // It is a no-op when there is no guest cart, and idempotent through
                 // `guestCartMergeId` when the legacy pages call it too.
                 await migrateLocalCartToApi();
-                await CartService.checkCartStock().catch((error) => {
-                  console.error("Failed to check cart stock:", error);
-                });
+                // This call is destructive server-side: it deletes cart lines
+                // whose variation currently reads available <= 0 and rewrites the
+                // quantity on lines that no longer fit. Discarding its result
+                // meant items vanished from the shopper's cart with no message of
+                // any kind — the checkout page reported the same corrections, but
+                // this path, which runs on every login, said nothing.
+                await CartService.checkCartStock()
+                  .then((result) => {
+                    if (generation !== cartInitGenerationRef.current) return;
+                    applyStockCorrectionNotice(result);
+                  })
+                  .catch((error) => {
+                    console.error("Failed to check cart stock:", error);
+                  });
                 await fetchUserCart(() => generation === cartInitGenerationRef.current);
               })(),
               new Promise<never>((_, reject) =>
@@ -874,6 +914,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
         // If cart was modified (items adjusted or removed), refresh the local cart
         if (!data.valid) {
+          applyStockCorrectionNotice(data);
           await fetchUserCart();
         }
 

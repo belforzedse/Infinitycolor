@@ -43,7 +43,10 @@ function contentSecurityPolicy(nonce: string): string {
   );
   const image = sourceOrigin(process.env.NEXT_PUBLIC_IMAGE_BASE_URL);
   const media = sourceOrigin(process.env.NEXT_PUBLIC_MEDIA_CDN_URL);
-  const sentry = sourceOrigin(process.env.NEXT_PUBLIC_SENTRY_TUNNEL_ORIGIN);
+  // The Sentry SDK sends events directly to the DSN's host (no tunnel route is
+  // configured), so connect-src must allow that origin, not a tunnel var that
+  // nothing ever sets -- see instrumentation-client.ts's Sentry.init.
+  const sentry = sourceOrigin(process.env.NEXT_PUBLIC_SENTRY_DSN);
   const umami = sourceOrigin(process.env.NEXT_PUBLIC_ADMIN_UMAMI_URL);
   const developmentScript =
     process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";

@@ -26,7 +26,7 @@ import { useCart } from "@/contexts/CartContext";
 import { currentUserAtom, userLoadingAtom } from "@/lib/atoms/auth";
 import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 import { getAnalyticsCorrelationId, trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
-import { faNum } from "@/utils/faNum";
+import { faNum, normalizeDigits } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateErrorMessage } from "@/lib/errorTranslations";
 
@@ -246,8 +246,15 @@ function ShoppingCartBillForm({}: Props) {
   const [reserveWindowClosed, setReserveWindowClosed] = useState(false);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
   const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice } = useCart();
+  // `snappEligible` is tri-state, and this must read `undefined` the same way
+  // PaymentGateway's `showSnappay` does (`!== false`). It used to reject it as
+  // falsy while the card was still rendered and selected, so a submit during any
+  // re-check — or after a transient eligibility failure, which resets the value
+  // to undefined — hit the "gateway not available" guard and failed with a banner
+  // the shopper never saw. Unknown means unknown: the quote re-checks eligibility
+  // server-side and now reports SNAPPAY_INELIGIBLE with a specific message.
   const selectableGateways = useMemo(
-    () => availableGateways.filter((gw) => gw !== "snappay" || snappEligible),
+    () => availableGateways.filter((gw) => gw !== "snappay" || snappEligible !== false),
     [availableGateways, snappEligible],
   );
 
@@ -614,6 +621,18 @@ function ShoppingCartBillForm({}: Props) {
   const failPayment = React.useCallback((message: string) => {
     setError(message);
     toast.error(message, { id: "checkout-error" });
+    // The banner renders at the top of a long form while «پرداخت» sits at the
+    // bottom, and the toast carries a fixed id so a repeat of the same error
+    // updates the existing toast instead of showing a new one. Without this the
+    // shopper taps پرداخت and sees nothing change at all.
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      const banner = document.getElementById("checkout-form-error");
+      // jsdom (and older Safari) do not implement scrollIntoView; the banner is
+      // still rendered and announced, so never let this break the error path.
+      if (typeof banner?.scrollIntoView !== "function") return;
+      banner.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   }, []);
 
   const submitOrder = async (data: FormData) => {
@@ -647,8 +666,10 @@ function ShoppingCartBillForm({}: Props) {
       return;
     }
 
-    // Validate phone number format (basic check)
-    const cleanPhone = data.phoneNumber.replace(/\D/g, "");
+    // Validate phone number format (basic check). Persian/Arabic-Indic digits
+    // (common on Iranian keyboards) must be normalized before the ASCII-only
+    // \D strip, or they're stripped as "non-digits" and the field reads empty.
+    const cleanPhone = normalizeDigits(data.phoneNumber).replace(/\D/g, "");
     if (cleanPhone.length < 10) {
       failPayment("شماره تماس وارد شده معتبر نیست");
       return;
@@ -659,7 +680,7 @@ function ShoppingCartBillForm({}: Props) {
         failPayment("لطفاً استان و شهر را انتخاب کنید");
         return;
       }
-      const postal = (watchPostalCode || "").replace(/\D/g, "");
+      const postal = normalizeDigits(watchPostalCode || "").replace(/\D/g, "");
       if (postal.length !== 10) {
         failPayment("کد پستی باید ۱۰ رقم باشد");
         return;
@@ -734,7 +755,7 @@ function ShoppingCartBillForm({}: Props) {
           ? undefined
           : {
               shipping_city: Number(watchCity?.id),
-              PostalCode: (watchPostalCode || "").replace(/\D/g, ""),
+              PostalCode: normalizeDigits(watchPostalCode || "").replace(/\D/g, ""),
               FullAddress: (watchFullAddress || "").trim(),
               Description: data.addressDescription?.trim() || undefined,
               save: watchSaveAddress,
@@ -749,7 +770,7 @@ function ShoppingCartBillForm({}: Props) {
             reserveGroupId: activeReserve?.reserveGroupId,
             callbackURL: "/orders/payment-callback",
             gateway,
-            mobile: data.phoneNumber?.replace(/\D/g, ""),
+            mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
             discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
             note: data.notes || undefined,
           }
@@ -760,7 +781,7 @@ function ShoppingCartBillForm({}: Props) {
             addressId: selectedAddressId,
             addressPayload,
             gateway,
-            mobile: data.phoneNumber?.replace(/\D/g, ""),
+            mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
             discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
             reserveShipping: reserveShipping || undefined,
           };
@@ -1042,6 +1063,24 @@ function ShoppingCartBillForm({}: Props) {
             case "ADDRESS_VALIDATION_FAILED":
               displayError = "خطا در بررسی آدرس";
               break;
+            // SnappPay decides eligibility from the payable amount, so this is a
+            // cart problem the shopper can act on — not something to retry. Left
+            // unmapped it fell through to `default`, where an untranslatable
+            // "SNAPPAY_INELIGIBLE:<code>" produced the generic
+            // «خطا در ثبت سفارش» and told the shopper nothing.
+            case "SNAPPAY_INELIGIBLE":
+              setSnappEligible(false);
+              displayError =
+                "پرداخت اقساطی اسنپ‌پی برای مبلغ این سفارش امکان‌پذیر نیست. لطفاً درگاه دیگری را انتخاب کنید یا مبلغ سبد خرید را تغییر دهید.";
+              break;
+            case "SNAPPAY_UNAVAILABLE":
+              displayError =
+                "پرداخت اقساطی اسنپ‌پی موقتاً در دسترس نیست. لطفاً درگاه دیگری را انتخاب کنید.";
+              break;
+            case "CHECKOUT_QUOTE_FAILED":
+              displayError =
+                "محاسبه مبلغ نهایی سفارش ممکن نشد. لطفاً روش ارسال و آدرس را بررسی کرده و دوباره تلاش کنید.";
+              break;
             default:
               if (errorMessage && typeof errorMessage === "string") {
                 displayError = translateErrorMessage(
@@ -1119,6 +1158,7 @@ function ShoppingCartBillForm({}: Props) {
       /> */}
       {error && (
         <div
+          id="checkout-form-error"
           className="flex flex-col gap-2 rounded-lg bg-red-50 p-3 text-red-600 sm:flex-row sm:items-center sm:justify-between"
           role="alert"
           data-testid="checkout-form-error"

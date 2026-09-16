@@ -44,17 +44,33 @@ function decodeBase64(value: string): string {
   return nodeBuffer.from(value, "base64").toString("utf8");
 }
 
-function readJwtExpiry(token: string): number | null {
+/**
+ * Anchors the token's remaining lifetime to this client's own clock (via
+ * `iat`) instead of trusting the server's absolute `exp` outright. The API
+ * enforces `exp` with zero tolerance (see `validatePinnedClaims` in
+ * `better-auth-jwt.ts`), so a client clock running even 10-15s fast/slow can
+ * otherwise cache a token as "fresh" past the moment the server considers it
+ * expired. Falls back to trusting `exp` directly when `iat` is absent.
+ */
+function readJwtExpiry(token: string, nowMs: number): number | null {
   const payloadPart = token.split(".")[1];
   if (!payloadPart) return null;
   try {
     const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
     const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
     const json = decodeBase64(padded);
-    const payload = JSON.parse(json) as { exp?: unknown };
-    return typeof payload.exp === "number" && Number.isFinite(payload.exp)
-      ? payload.exp * 1_000
-      : null;
+    const payload = JSON.parse(json) as { exp?: unknown; iat?: unknown };
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) {
+      return null;
+    }
+    if (
+      typeof payload.iat === "number" &&
+      Number.isFinite(payload.iat) &&
+      payload.iat <= payload.exp
+    ) {
+      return nowMs + (payload.exp - payload.iat) * 1_000;
+    }
+    return payload.exp * 1_000;
   } catch {
     return null;
   }
@@ -68,7 +84,7 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
   const fetchImpl: typeof fetch =
     options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
   const authOrigin = new URL(options.authOrigin).origin;
-  const refreshSkewMs = (options.refreshSkewSeconds ?? 10) * 1_000;
+  const refreshSkewMs = (options.refreshSkewSeconds ?? 20) * 1_000;
   const now = options.now ?? Date.now;
   const isAvailable = options.isAvailable ?? (() => true);
   let cached: CachedToken | null = null;
@@ -96,7 +112,7 @@ export function createTokenManager(options: TokenManagerOptions): TokenManager {
     ) {
       throw new Error("Central auth returned an invalid token response");
     }
-    const expiry = readJwtExpiry(payload.token);
+    const expiry = readJwtExpiry(payload.token, now());
     if (!expiry || expiry <= now())
       throw new Error("Central auth returned an expired token");
 

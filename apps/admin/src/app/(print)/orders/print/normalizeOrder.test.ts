@@ -192,6 +192,43 @@ describe("normalizeOrderForInvoice", () => {
     });
   });
 
+  it("falls back per-dimension to a generic color attribute term when only color is missing", () => {
+    const result = normalizeOrderForInvoice({
+      id: 80,
+      order_items: [
+        {
+          id: 22,
+          Count: 1,
+          PerAmount: 1199000,
+          ProductTitle: "شومیز کراپ جلو گره ۱۱۸۲ G",
+          ProductSKU: "WC-1290555-1290591",
+          product_variation: {
+            id: 30140,
+            product_variation_size: { id: 2, Title: "M" },
+            selected_attribute_terms: [
+              {
+                id: 770,
+                Title: "کرم",
+                product_attribute: {
+                  id: 32,
+                  Title: "رنگ",
+                  Type: "Color",
+                  LegacyProjection: "None",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result?.attributes.order_items.data[0].attributes).toMatchObject({
+      product_color: { data: { attributes: { Title: "کرم" } } },
+      product_size: { data: { attributes: { Title: "M" } } },
+      genericAttributeLabel: undefined,
+    });
+  });
+
   it("prefers a real color/size over the generic attribute fallback when both exist", () => {
     const result = normalizeOrderForInvoice({
       id: 79,

@@ -2119,6 +2119,8 @@ export async function processSnappayOperation(
       callbackState,
       providerStatus,
       providerCode: statusResult.diagnostic.providerCode || operation.providerCode,
+      // A code from a failed status read describes the lookup, not the payment.
+      statusObserved: statusResult.successful === true,
       attemptAgeMs: attemptCreatedAt !== null ? Date.now() - attemptCreatedAt : null,
     });
     await executeRecoveryAction(strapi, operation, bundle, token, action);

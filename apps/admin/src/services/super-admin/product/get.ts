@@ -106,6 +106,18 @@ export type ProductSummary = {
   id: number;
   title: string;
   image?: string;
+  /** False when the product is InActive/Scheduled, soft-deleted, has no published
+   *  priced variation, or has no cover image -- i.e. it would not appear on the
+   *  public storefront even though it's still curated (mirrors the base
+   *  Status/removedAt/variation/requireCoverImage predicate every "View all"
+   *  listing enforces). Undefined = not checked (e.g. a just-added row, before
+   *  the next reload). */
+  isEligible?: boolean;
+  /** Whether any variation currently has an active per-variation DiscountPrice.
+   *  Only meaningful for the Discounts curation list. Does not detect a discount
+   *  applied only via the separate general_discounts relation -- see the comment
+   *  in getProductSummariesByIds. */
+  isDiscounted?: boolean;
 };
 
 /** Strapi's `api.rest.maxLimit` (apps/backend/config/api.ts). A request for more
@@ -137,9 +149,24 @@ export async function getProductSummariesByIds(ids: number[]): Promise<ProductSu
       batch.forEach((id, i) => params.set(`filters[id][$in][${i}]`, String(id)));
       params.set("pagination[limit]", String(batch.length));
       params.set("pagination[withCount]", "false");
-      params.set("populate[0]", "CoverImage");
+      // Object-key populate throughout (`populate[CoverImage]=true`), not the array-index
+      // form (`populate[0]=CoverImage`) -- mixing the two under the same `populate[...]`
+      // tree confuses Strapi's qs normalizer and can silently drop keys.
+      //
+      // Deliberately NOT requesting product_variations.general_discounts here: verified
+      // live against this endpoint (with and without a fields restriction, even with a
+      // bare `populate=*`) that it never comes back, for any caller -- the internal
+      // entityService populate the storefront query engine uses works, but this REST
+      // list route does not surface it. Rather than chase that further, the discount
+      // badge below only trusts DiscountPrice, which does come through reliably.
+      params.set("populate[CoverImage]", "true");
+      params.set("populate[product_variations][fields][0]", "IsPublished");
+      params.set("populate[product_variations][fields][1]", "Price");
+      params.set("populate[product_variations][fields][2]", "DiscountPrice");
       params.set("fields[0]", "Title");
       params.set("fields[1]", "id");
+      params.set("fields[2]", "Status");
+      params.set("fields[3]", "removedAt");
       const endpoint = `${ENDPOINTS.PRODUCT.PRODUCT}?${params.toString()}`;
       return apiClient.get(endpoint, { cache: "no-store" }) as Promise<any>;
     }),
@@ -157,10 +184,45 @@ export async function getProductSummariesByIds(ids: number[]): Promise<ProductSu
       const url = cover.data.attributes.url;
       image = resolveAssetUrl(url) || undefined;
     }
-    return { id, title, image, order: idToIndex.get(id) ?? 0 };
+
+    // A restricted (non-superadmin) admin user has this request's populate/fields
+    // replaced server-side with a fixed shell populate (see product.ts controller's
+    // find()), which still includes product_variations with its default scalar
+    // fields, so eligibility and the DiscountPrice check below stay reliable for
+    // every admin role.
+    const variationsData = attrs.product_variations?.data;
+    const variations = (Array.isArray(variationsData) ? variationsData : []) as any[];
+    const hasPublishedPricedVariation = variations.some((v) => {
+      const vAttrs = v?.attributes ?? v ?? {};
+      return Boolean(vAttrs.IsPublished) && Number(vAttrs.Price ?? 0) > 0;
+    });
+    const isEligible =
+      attrs.Status === "Active" &&
+      !attrs.removedAt &&
+      hasPublishedPricedVariation &&
+      Boolean(cover?.data);
+    // Per-variation DiscountPrice only -- general-discount-only price cuts (a discount
+    // applied via the separate general_discounts relation, with no DiscountPrice set on
+    // the variation itself) won't be reflected here; see the populate comment above.
+    // The public storefront query is unaffected, since it reads discounts straight from
+    // the database rather than through this admin listing endpoint.
+    const isDiscounted = variations.some((v) => {
+      const vAttrs = v?.attributes ?? v ?? {};
+      const price = Number(vAttrs.Price ?? 0);
+      const discountPrice = Number(vAttrs.DiscountPrice ?? 0);
+      return discountPrice > 0 && discountPrice < price;
+    });
+
+    return { id, title, image, isEligible, isDiscounted, order: idToIndex.get(id) ?? 0 };
   });
   withOrder.sort((a: any, b: any) => a.order - b.order);
-  return withOrder.map(({ id, title, image }: any) => ({ id, title, image }));
+  return withOrder.map(({ id, title, image, isEligible, isDiscounted }: any) => ({
+    id,
+    title,
+    image,
+    isEligible,
+    isDiscounted,
+  }));
 }
 
 export async function getGifPromoPreviewProducts(

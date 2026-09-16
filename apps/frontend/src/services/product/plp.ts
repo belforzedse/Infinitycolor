@@ -250,6 +250,47 @@ export function buildPLPProductsQuery(
     queryParams.append("sort[0]", query.sort);
   }
 
+  // True once every ancillary filter is untouched -- no category, search, price,
+  // availability, or size/color narrowing. Shared by the excludeDiscount hint below and
+  // by the curated-section hint: both only apply to a section's exact unfiltered "View
+  // all" URL, and drop out the moment a shopper filters or re-sorts the collection page.
+  const hasOnlyBaseFilters =
+    categorySlugs.length === 0 &&
+    !query.search &&
+    !query.available &&
+    !query.minPrice &&
+    !query.maxPrice &&
+    !(query.size && query.size.length > 0) &&
+    !(query.color && query.color.length > 0);
+
+  // Hint for a hidden, admin-only setting (site_settings.hideDiscountedOnDefaultNewestPlp,
+  // toggled via Strapi/DB only -- there's no UI for it). Only sent for the exact unfiltered
+  // default-sort PLP view -- the backend still decides whether to actually honor it.
+  const isDefaultNewestUnfilteredView =
+    hasOnlyBaseFilters && !query.hasDiscount && query.sort === "LastEditedByAdminAt:desc";
+  if (isDefaultNewestUnfilteredView) {
+    queryParams.append("excludeDiscount", "true");
+  }
+
+  // Hint naming which curated storefront section (see site_settings' homeNewestProductIds /
+  // homeFavoriteProductIds / homeDiscountedProductIds) this exact "View all" URL maps to, if
+  // any. Mirrors the three canonical hrefs built in OffersListHomePage/DiscountedShowcase --
+  // the backend independently re-validates the hint against the actual query before honoring
+  // it, so a stale or spoofed value just falls back to the plain algorithmic query.
+  let curatedSection: "newest" | "popular" | "discount" | undefined;
+  if (hasOnlyBaseFilters) {
+    if (query.hasDiscount && !query.sort) {
+      curatedSection = "discount";
+    } else if (!query.hasDiscount && query.sort === "AverageRating:desc") {
+      curatedSection = "popular";
+    } else if (!query.hasDiscount && query.sort === "LastEditedByAdminAt:desc") {
+      curatedSection = "newest";
+    }
+  }
+  if (curatedSection) {
+    queryParams.append("curated", curatedSection);
+  }
+
   return queryParams;
 }
 

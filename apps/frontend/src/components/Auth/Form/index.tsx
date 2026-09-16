@@ -40,7 +40,6 @@ export default function AuthForm() {
               placeholder="09122032114"
               error={error}
               inputMode="numeric"
-              pattern="[0-9]*"
               required
               aria-required="true"
               aria-describedby={error ? "phone-error" : undefined}

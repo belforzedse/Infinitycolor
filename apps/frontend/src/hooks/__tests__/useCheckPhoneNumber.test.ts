@@ -70,6 +70,22 @@ describe("useCheckPhoneNumber", () => {
     expect(AuthService.checkUserExists).toHaveBeenNthCalledWith(2, "+989123456789");
   });
 
+  it("normalizes Persian and Arabic-Indic digits before validating", async () => {
+    (AuthService.checkUserExists as jest.Mock).mockResolvedValue({ hasUser: true });
+
+    const { result } = renderUseCheckPhoneNumber();
+
+    await act(async () => {
+      // Persian digits (iOS keyboard) and Arabic-Indic digits, mixed with ASCII.
+      await result.current.checkPhoneNumber("۰۹۱۲۳۴۵۶۷۸۹");
+      await result.current.checkPhoneNumber("+98٩١٢٣٤٥٦٧٨٩");
+    });
+
+    expect(AuthService.checkUserExists).toHaveBeenNthCalledWith(1, "09123456789");
+    expect(AuthService.checkUserExists).toHaveBeenNthCalledWith(2, "+989123456789");
+    expect(result.current.error).toBeNull();
+  });
+
   it("navigates to login and stores the phone when the user exists", async () => {
     (AuthService.checkUserExists as jest.Mock).mockResolvedValue({ hasUser: true });
 

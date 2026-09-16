@@ -207,6 +207,8 @@ function projectOrder(order: any) {
 
 /** Digits only, after normalising Persian/Arabic numerals to ASCII. */
 const ASCII_DIGITS = /^[0-9]+$/;
+/** Upper bound of a Postgres `integer` column, which is what `orders.id` is. */
+const PG_INT4_MAX = 2147483647;
 
 function normalizeDigits(value: string): string {
   return value
@@ -255,8 +257,11 @@ function buildOrderSearchCondition(
         : []),
       ...referenceConditions,
     ];
-    // Guard against precision loss on absurdly long digit strings.
-    if (Number.isSafeInteger(asId)) {
+    // `orders.id` is a Postgres int4, so the bound is 2147483647 — NOT
+    // Number.isSafeInteger (2^53). A phone like 9123381098 is a perfectly safe JS
+    // integer, so the old guard let it through and Postgres raised
+    // "integer out of range", 500-ing the whole order list for any phone search.
+    if (Number.isSafeInteger(asId) && asId >= 0 && asId <= PG_INT4_MAX) {
       numericConditions.unshift({ id: { $eq: asId } });
     }
     return { $or: numericConditions };

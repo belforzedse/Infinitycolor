@@ -118,8 +118,9 @@ services:
     command: >-
       redis-server
       --appendonly yes
+      --auto-aof-rewrite-min-size 256mb
       --maxmemory 64gb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
       ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
     env_file:
       - ${DB_ENV_FILE:-db.env}
@@ -145,6 +146,7 @@ services:
       redis-server
       --appendonly yes
       --appendfsync everysec
+      --auto-aof-rewrite-min-size 256mb
       --maxmemory-policy noeviction
       ${QUEUE_REDIS_PASSWORD:+--requirepass $QUEUE_REDIS_PASSWORD}
     env_file:

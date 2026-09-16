@@ -15,6 +15,7 @@ import {
   MODEL_APPLICATION_PHOTO_ACCEPT,
   submitModelApplication,
 } from "@/services/model-applications";
+import { generateUuidV4 } from "@/utils/uuid";
 
 type Fields = {
   fullName: string;
@@ -150,7 +151,7 @@ export default function ModelHiringModalContent() {
     if (firstPhotoError !== true || secondPhotoError !== true) return;
 
     setSubmitError(null);
-    const activeSubmissionId = submissionId || crypto.randomUUID();
+    const activeSubmissionId = submissionId || generateUuidV4();
     if (!submissionId) setSubmissionId(activeSubmissionId);
     const formData = new FormData();
     formData.append("submissionId", activeSubmissionId);

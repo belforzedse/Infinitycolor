@@ -50,6 +50,18 @@ export type FindProductCardsParams = {
     max?: unknown;
   };
   hasDiscount?: unknown;
+  // Client-requested hint that this is the exact unfiltered default-sort PLP view. Only
+  // honored when the `hideDiscountedOnDefaultNewestPlp` site setting is also enabled --
+  // see resolveExcludeDiscountFlag -- so the actual on/off control stays admin-side.
+  excludeDiscount?: unknown;
+  // Client-requested hint naming a curated storefront section ("newest" | "popular" |
+  // "discount"). Resolved and validated by product.ts's findProductCards -- which turns
+  // it into curatedProductIds below -- before it ever reaches this module.
+  curated?: unknown;
+  // Resolved, ordered product ids manually curated for the current section. When
+  // non-empty, these are surfaced first in this exact order (stably partitioned by
+  // stock, see applyAvailabilityAwareOrder) ahead of the normal algorithmic ordering.
+  curatedProductIds?: number[];
   requireCoverImage?: unknown;
   pagination?: {
     page?: number | string;
@@ -564,13 +576,11 @@ const applyRequireCoverImageFilter = (query: any, requireCoverImage: unknown) =>
   });
 };
 
-const applyDiscountOnlyFilter = (knex: any, query: any, strapi: any, hasDiscount: unknown) => {
-  if (!isEnabledCardParam(hasDiscount)) return;
-
+const buildDiscountedVariationExistsPredicate = (knex: any, strapi: any) => {
   const ctx = getProductAvailabilityJoinContext(strapi);
   const discountJoin = getGeneralDiscountVariationJoinInfo(strapi);
 
-  query.whereExists(function discountExists(this: any) {
+  return function discountExists(this: any) {
     this.select(knex.raw("1"))
       .from("product_variations as pv")
       .innerJoin(
@@ -593,7 +603,39 @@ const applyDiscountOnlyFilter = (knex: any, query: any, strapi: any, hasDiscount
             .whereNull("gd.removed_at");
         });
       });
-  });
+  };
+};
+
+const applyDiscountOnlyFilter = (knex: any, query: any, strapi: any, hasDiscount: unknown) => {
+  if (!isEnabledCardParam(hasDiscount)) return;
+  query.whereExists(buildDiscountedVariationExistsPredicate(knex, strapi));
+};
+
+// Inverse of applyDiscountOnlyFilter. Only takes effect when the caller has already
+// resolved `excludeDiscount` against the `hideDiscountedOnDefaultNewestPlp` site setting
+// (see resolveExcludeDiscountFlag) -- this function itself trusts whatever it's handed.
+//
+// `hideDiscountedOnDefaultNewestPlp` is a display preference for the *algorithmic* feed,
+// not a hard eligibility rule -- so a manually curated pick that happens to be discounted
+// is exempted: an admin's explicit choice to feature it wins over the automatic toggle.
+export const applyExcludeDiscountFilter = (
+  knex: any,
+  query: any,
+  strapi: any,
+  excludeDiscount: unknown,
+  curatedProductIds?: number[],
+) => {
+  if (!isEnabledCardParam(excludeDiscount)) return;
+  const predicate = buildDiscountedVariationExistsPredicate(knex, strapi);
+
+  if (curatedProductIds && curatedProductIds.length > 0) {
+    query.where(function excludeDiscountWithCuratedBypass(this: any) {
+      this.whereNotExists(predicate).orWhereIn("p.id", curatedProductIds);
+    });
+    return;
+  }
+
+  query.whereNotExists(predicate);
 };
 
 const applySearchFilter = (query: any, q: unknown) => {
@@ -615,10 +657,35 @@ export const applyAvailabilityAwareOrder = (
   query: any,
   strapi: any,
   sortKey: string | undefined,
+  curatedProductIds?: number[],
 ) => {
   const ctx = getProductAvailabilityJoinContext(strapi);
   const availabilitySql = buildProductAvailabilityExistsSql(knex, ctx, "p");
-  query.orderByRaw(`${availabilitySql.toQuery()} DESC`);
+
+  if (curatedProductIds && curatedProductIds.length > 0) {
+    // Curated picks always precede the algorithmic fallback, in their exact admin
+    // order -- stably partitioned by stock (in-stock curated, then out-of-stock
+    // curated) so one unavailable pick can't outrank the rest of the curated list,
+    // while the curated block as a whole still always precedes the fallback block.
+    // `array_position` needs a real Postgres array; string_to_array(?, ',')::integer[]
+    // is this codebase's existing pattern for passing an id list into a raw query
+    // (see rankedStockIds in admin-product-list), safer than binding a JS array directly.
+    const curatedIdsCsv = curatedProductIds.join(",");
+    query.orderByRaw(
+      `CASE
+         WHEN p.id = ANY(string_to_array(?, ',')::integer[]) AND ${availabilitySql.toQuery()} THEN 0
+         WHEN p.id = ANY(string_to_array(?, ',')::integer[]) THEN 1
+         WHEN ${availabilitySql.toQuery()} THEN 2
+         ELSE 3
+       END`,
+      [curatedIdsCsv, curatedIdsCsv],
+    );
+    query.orderByRaw(`array_position(string_to_array(?, ',')::integer[], p.id) ASC NULLS LAST`, [
+      curatedIdsCsv,
+    ]);
+  } else {
+    query.orderByRaw(`${availabilitySql.toQuery()} DESC`);
+  }
 
   // "Newest" is driven by admin activity (edits, publish/unpublish, or the manual display-date
   // override), falling back to the first real go-live moment, and finally to raw creation order
@@ -645,11 +712,28 @@ export const applyAvailabilityAwareOrder = (
   query.orderBy("p.id", direction);
 };
 
+// The client only hints that exclusion may apply; whether it actually does is decided
+// here, off the `hideDiscountedOnDefaultNewestPlp` site setting, so the effective on/off
+// switch stays admin-side (Strapi content manager / DB) rather than client-controllable.
+// The settings lookup only runs when the hint is present, to avoid an extra query on
+// every ordinary product-card request.
+async function resolveExcludeDiscountFlag(strapi: any, requested: unknown): Promise<boolean> {
+  if (!isEnabledCardParam(requested)) return false;
+  const settingsEntity = await strapi.db.query("api::settings.settings").findOne();
+  const settings = settingsEntity?.attributes || settingsEntity || {};
+  return Boolean(settings.hideDiscountedOnDefaultNewestPlp);
+}
+
 export async function findOrderedProductIds(strapi: any, params: OrderedProductIdQueryParams = {}) {
   const knex = strapi.db.connection;
   const { limit, page, start, withCount } = parseFindProductCardsPagination(params.pagination);
   const filters = params.filters || {};
   const sortKey = parseQuerySortKey(params.sort);
+  const excludeDiscount = await resolveExcludeDiscountFlag(strapi, params.excludeDiscount);
+  const curatedProductIds =
+    Array.isArray(params.curatedProductIds) && params.curatedProductIds.length > 0
+      ? params.curatedProductIds
+      : undefined;
 
   const buildBaseQuery = () => {
     const query = knex("products as p").whereNull("p.removed_at");
@@ -658,12 +742,13 @@ export async function findOrderedProductIds(strapi: any, params: OrderedProductI
     applyAvailabilityOnlyFilter(knex, query, strapi, params.availability);
     applyDisplayPriceFilter(knex, query, strapi, params.price);
     applyDiscountOnlyFilter(knex, query, strapi, params.hasDiscount);
+    applyExcludeDiscountFilter(knex, query, strapi, excludeDiscount, curatedProductIds);
     applyRequireCoverImageFilter(query, params.requireCoverImage);
     return query;
   };
 
   const idQuery = buildBaseQuery().select("p.id");
-  applyAvailabilityAwareOrder(knex, idQuery, strapi, sortKey);
+  applyAvailabilityAwareOrder(knex, idQuery, strapi, sortKey, curatedProductIds);
   idQuery.limit(limit).offset(start);
 
   const countQuery = buildBaseQuery().countDistinct({ total: "p.id" }).first();

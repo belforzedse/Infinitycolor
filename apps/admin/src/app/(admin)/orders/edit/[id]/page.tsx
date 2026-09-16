@@ -255,6 +255,23 @@ export default function EditOrderPage() {
           const color = unwrapEntity(item?.product_color);
           const size = unwrapEntity(item?.product_size);
           const model = unwrapEntity((item as any)?.product_variation_model);
+
+          // A variation's color/size/model can live only as a "generic" catalog
+          // attribute (LegacyProjection: "None") instead of the legacy relations
+          // above — e.g. a WooCommerce custom color taxonomy. Fall back to it per
+          // dimension so an empty legacy relation doesn't hide data that exists.
+          const attributeTerms = unwrapCollection(
+            (productVariation as any)?.selected_attribute_terms,
+          )
+            .map((term: any) => unwrapEntity(term))
+            .filter(Boolean);
+          const findAttributeTerm = (matches: (attr: any) => boolean) =>
+            attributeTerms.find((term: any) => matches(unwrapEntity(term?.product_attribute)));
+          const genericColor = findAttributeTerm(
+            (attr) => attr?.Type === "Color" || attr?.LegacyProjection === "Color",
+          );
+          const genericSize = findAttributeTerm((attr) => attr?.LegacyProjection === "Size");
+          const genericModel = findAttributeTerm((attr) => attr?.LegacyProjection === "Model");
           const thumbnailUrl =
             coverImage?.formats?.thumbnail?.url ??
             coverImage?.url ??
@@ -273,9 +290,9 @@ export default function EditOrderPage() {
             productCode: item?.ProductSKU ?? productVariation?.SKU ?? "",
             price: Number(item?.PerAmount ?? productVariation?.Price ?? 0),
             quantity: Number(item?.Count ?? 0),
-            color: color?.Title || variationColor?.Title,
-            size: size?.Title || variationSize?.Title,
-            model: model?.Title || variationModel?.Title,
+            color: color?.Title || variationColor?.Title || genericColor?.Title,
+            size: size?.Title || variationSize?.Title || genericSize?.Title,
+            model: model?.Title || variationModel?.Title || genericModel?.Title,
             image: imageUrl,
           };
         });

@@ -14,7 +14,7 @@ describe("OTP delivery abuse controls", () => {
     process.env.APP_KEYS = "test-app-key-for-otp-cooldown";
     redis = await RedisClient;
     redis.set.mockReset().mockResolvedValue("OK");
-    redis.ttl.mockReset().mockResolvedValue(120);
+    redis.ttl.mockReset().mockResolvedValue(30);
     redis.del.mockReset().mockResolvedValue(1);
     redis.eval.mockReset().mockResolvedValue(1);
     (global as any).strapi.log.info.mockReset();
@@ -35,10 +35,10 @@ describe("OTP delivery abuse controls", () => {
 
   test("returns a bounded retry duration when the phone lease already exists", async () => {
     redis.set.mockResolvedValueOnce(null);
-    redis.ttl.mockResolvedValueOnce(37);
+    redis.ttl.mockResolvedValueOnce(17);
     await expect(acquireOtpPhoneCooldown("+989123456789")).resolves.toEqual({
       allowed: false,
-      retryAfterSeconds: 37,
+      retryAfterSeconds: 17,
     });
   });
 
@@ -83,7 +83,7 @@ describe("OTP delivery abuse controls", () => {
       cooldownHeld = true;
       return "OK";
     });
-    redis.ttl.mockResolvedValue(120);
+    redis.ttl.mockResolvedValue(30);
     const findMany = jest.fn().mockResolvedValue([]);
     const sendSMS = jest.fn().mockResolvedValue(200);
     (global as any).strapi.query = jest.fn(() => ({ findMany }));
@@ -97,7 +97,7 @@ describe("OTP delivery abuse controls", () => {
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const rejected = results.find((result) => result.status === "rejected");
     expect(rejected).toMatchObject({
-      reason: { status: 429, code: "OTP_PHONE_COOLDOWN", retryAfterSeconds: 120 },
+      reason: { status: 429, code: "OTP_PHONE_COOLDOWN", retryAfterSeconds: 30 },
     });
     expect(findMany).toHaveBeenCalledTimes(1);
     expect(sendSMS).toHaveBeenCalledTimes(1);

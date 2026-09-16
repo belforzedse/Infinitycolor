@@ -67,8 +67,15 @@ function projectHomepageProductSettings(settings: any) {
   );
 }
 
+// Newest/Favorite/Discounted arrays now also drive the full "View all" storefront
+// listing (see product.ts's findProductCards), not just the 20-item homepage rail, so
+// they're no longer implicitly bounded by a display cap. This ceiling matches
+// product-card-query.ts's own pagination `limit` cap (100), so the curated-eligibility
+// pass there never has to reason about an unbounded list.
+const HOMEPAGE_PRODUCT_ID_CAP = 100;
+
 function sanitizeHomepageProductIds(value: unknown): number[] | null {
-  if (!Array.isArray(value)) return null;
+  if (!Array.isArray(value) || value.length > HOMEPAGE_PRODUCT_ID_CAP) return null;
   const result: number[] = [];
   const seen = new Set<number>();
   for (const item of value) {

@@ -1,4 +1,5 @@
 import { ApiClient } from "@repo/api/client";
+import { ApiCache } from "@repo/api/cache";
 
 const response = (status: number, payload: unknown) => ({
   ok: status >= 200 && status < 300,
@@ -116,5 +117,36 @@ describe("ApiClient product error contract", () => {
       data: { id: 42 },
     });
     expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not raise an unhandled rejection when a cached GET fails (Sentry: Object captured as promise rejection)", async () => {
+    global.fetch = jest.fn().mockResolvedValue(response(404, {
+      message: "Wallet not found for this user",
+    })) as jest.Mock;
+
+    const cache = new ApiCache({
+      buildVersion: "test",
+      cacheConfigs: [{ pattern: /./, config: { maxAge: 60_000, staleWhileRevalidate: 0 } }],
+      noCachePatterns: [],
+    });
+
+    const client = new ApiClient({
+      baseUrl: "https://api.example.test/api",
+      apiCache: cache,
+      retryConfig: { maxRetries: 0, baseDelay: 1, maxDelay: 1, retryableStatusCodes: [] },
+    });
+
+    const onUnhandledRejection = jest.fn();
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    await expect(client.get("/local-user-wallet/me")).rejects.toEqual(
+      expect.objectContaining({ status: 404, message: "Wallet not found for this user" }),
+    );
+
+    // Let the internal setPending cleanup chain settle on the task queue.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    process.off("unhandledRejection", onUnhandledRejection);
+    expect(onUnhandledRejection).not.toHaveBeenCalled();
   });
 });

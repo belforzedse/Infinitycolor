@@ -74,6 +74,24 @@ Sentry.init({
   // prevents even a short sensitive-route capture during initialization.
   replaysSessionSampleRate: replaySessionSampleRate,
   replaysOnErrorSampleRate: replayErrorSampleRate,
+  ignoreErrors: [
+    // Android WebView's JavascriptInterface bridge can be garbage-collected
+    // mid-call inside an in-app browser wrapper; this fires from the host
+    // app's own injected bridge, not from any code in this repo.
+    "Error invoking postMessage: Java object is gone",
+    // Same story for iOS in-app browsers probing a `webkit.messageHandlers`
+    // bridge this app never installs.
+    /window\.webkit\.messageHandlers/,
+    // `new.infinitycolor.co` only 301s to the apex post-cutover; stale
+    // service-worker registrations from before the cutover keep failing to
+    // update there until each browser gives up and unregisters them.
+    /Failed to update a ServiceWorker for scope \('https:\/\/new\.infinitycolor\.co\//,
+    // Safari/WebKit quirk inside Next's vendored `web-vitals` package
+    // (node_modules/next/dist/compiled/web-vitals): its flush-before-unload
+    // path calls `observer.takeRecords()`, which some WebKit builds throw on.
+    // Framework-internal, not something app code calls or can guard.
+    /takeRecords is not a function/,
+  ],
 });
 
 whenIdle(() => scheduleReplayRoute(typeof window === "undefined" ? "" : window.location.pathname));

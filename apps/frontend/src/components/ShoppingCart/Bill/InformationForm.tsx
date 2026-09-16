@@ -17,6 +17,7 @@ import AddAddress from "@/components/User/Address/AddAddress";
 import { getProvinces, getCities } from "@/services/location";
 import type { Province, City } from "@/services/location";
 import { currentUserAtom } from "@/lib/atoms/auth";
+import { normalizeDigits } from "@/utils/faNum";
 
 interface Props {
   register: UseFormRegister<FormData>;
@@ -55,9 +56,10 @@ function ShoppingCartBillInformationForm({
   const [lastProvinceId, setLastProvinceId] = useState<number | null>(null);
   const lastHydratedAddressIdRef = React.useRef<number | null>(null);
   const autoSelectedAddressRef = React.useRef(false);
+  const [hasResolvedInitialAddresses, setHasResolvedInitialAddresses] = useState(false);
 
   useEffect(() => {
-    const fetchAddresses = async () => {
+    const fetchAddresses = async (isInitial = false) => {
       try {
         setLoading(true);
         setError(null);
@@ -70,11 +72,12 @@ function ShoppingCartBillInformationForm({
         setError(message);
       } finally {
         setLoading(false);
+        if (isInitial) setHasResolvedInitialAddresses(true);
       }
     };
 
     // Fetch addresses on mount
-    fetchAddresses();
+    fetchAddresses(true);
 
     // Refetch addresses when page becomes visible (user returns from another tab/page)
     const handleVisibilityChange = () => {
@@ -228,6 +231,18 @@ function ShoppingCartBillInformationForm({
     setValue("address", addressOptions[0]);
   }, [addressOptions, selectedAddress, loading, hideAddressFields, dirtyFields, setValue]);
 
+  // Once the shopper is confirmed to have zero saved addresses, drop the dropdown/modal
+  // and let the always-present inline fields be the only way to enter an address.
+  const hasNoSavedAddresses =
+    hasResolvedInitialAddresses && !error && addressOptions.length === 0;
+
+  // `saveAddress` may be stuck at `false` from a previous hydration (see the address-select
+  // effect below), e.g. the shopper's one saved address got deleted between visits. Force it
+  // back to `true` whenever there's nothing to select, so the inline address is always saved.
+  useEffect(() => {
+    if (hasNoSavedAddresses) setValue("saveAddress", true);
+  }, [hasNoSavedAddresses, setValue]);
+
   const provinceOptions: Option[] = useMemo(
     () =>
       provinces.map((province) => ({
@@ -334,11 +349,18 @@ function ShoppingCartBillInformationForm({
             </button>
           </div>
           <Input
-            {...register("phoneNumber")}
+            {...register("phoneNumber", {
+              onChange: (e) => {
+                // Persian/Arabic-Indic keyboards (common on Iranian devices) can
+                // type localized digits into a numeric field; normalize them so
+                // the value validates instead of silently failing at submit.
+                const next = normalizeDigits(e.target.value).slice(0, 11);
+                setValue("phoneNumber", next);
+              },
+            })}
             name="phoneNumber"
             placeholder="شماره همراه فعال"
             error={errors.phoneNumber?.message?.toString()}
-            pattern="^[0-9]{11}$"
             disabled={!isEditingPhone}
             maxLength={11}
             inputMode="numeric"
@@ -347,6 +369,15 @@ function ShoppingCartBillInformationForm({
       </div>
       {!hideAddressFields && (
         <>
+      {hasNoSavedAddresses ? (
+        <div>
+          <label className="text-sm font-medium text-gray-700">آدرس تحویل</label>
+          <p className="text-xs text-neutral-500">
+            آدرسی ثبت نشده؛ آدرس خود را در فیلدهای زیر وارد کنید — به‌صورت خودکار برای خریدهای
+            بعدی ذخیره می‌شود.
+          </p>
+        </div>
+      ) : (
       <div className="relative" data-testid="checkout-address-select">
         <Controller
           name="address"
@@ -374,6 +405,7 @@ function ShoppingCartBillInformationForm({
           <CirculePlusIcon className="h-5 w-5" />
         </button>
       </div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Controller
@@ -431,7 +463,7 @@ function ShoppingCartBillInformationForm({
         <Input
           {...register("postalCode", {
             onChange: (e) => {
-              const next = e.target.value.replace(/\D/g, "").slice(0, 10);
+              const next = normalizeDigits(e.target.value).replace(/\D/g, "").slice(0, 10);
               setValue("postalCode", next);
             },
           })}
@@ -442,17 +474,23 @@ function ShoppingCartBillInformationForm({
           inputMode="numeric"
         />
 
-        <div className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2">
-          <input
-            type="checkbox"
-            id="saveAddress"
-            className="h-4 w-4 accent-infinity-primary"
-            {...register("saveAddress")}
-          />
-          <label htmlFor="saveAddress" className="text-sm text-neutral-700">
-            ذخیره این آدرس برای خریدهای بعدی
-          </label>
-        </div>
+        {hasNoSavedAddresses ? (
+          <p className="self-center text-xs text-neutral-500">
+            این آدرس برای خریدهای بعدی ذخیره می‌شود
+          </p>
+        ) : (
+          <div className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2">
+            <input
+              type="checkbox"
+              id="saveAddress"
+              className="h-4 w-4 accent-infinity-primary"
+              {...register("saveAddress")}
+            />
+            <label htmlFor="saveAddress" className="text-sm text-neutral-700">
+              ذخیره این آدرس برای خریدهای بعدی
+            </label>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-3">
@@ -481,12 +519,14 @@ function ShoppingCartBillInformationForm({
       )}
 
       {/* Add Address Modal */}
-      <AddAddress
-        isOpen={isAddAddressModalOpen}
-        onOpenChange={setIsAddAddressModalOpen}
-        showButton={false}
-        onAddressAdded={handleAddressAdded}
-      />
+      {!hasNoSavedAddresses && (
+        <AddAddress
+          isOpen={isAddAddressModalOpen}
+          onOpenChange={setIsAddAddressModalOpen}
+          showButton={false}
+          onAddressAdded={handleAddressAdded}
+        />
+      )}
 
       <div className="w-full">
         <label className="text-base mb-1 block text-right text-foreground-primary lg:text-lg lg:mb-2">

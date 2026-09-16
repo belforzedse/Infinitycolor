@@ -206,17 +206,25 @@ export async function POST(request: NextRequest) {
     }
 
     if (type === "site-settings") {
+      // Site settings include the curated Newest/Popular/Discount id lists, which now
+      // also drive the "/plp" View all listing (not just the homepage rail) -- so this
+      // blanket sweep, already fired for every settings save regardless of which field
+      // changed, also has to reach the PLP cache tags or a curation edit would sit stale
+      // for the outer "storefrontLive" cache-components window (~30s).
       revalidatePath("/");
       revalidatePath("/blog");
+      revalidatePath("/plp");
       revalidatePath("/sitemap.xml");
       revalidateTag("site-settings", "max");
+      revalidateTag(PRODUCT_TAG, "max");
+      revalidateTag(PRODUCT_COLLECTION_TAG, "max");
       revalidateTag(SITEMAP_TAG, "max");
 
       return NextResponse.json({
         revalidated: true,
         now: Date.now(),
-        paths: ["/", "/blog", "/sitemap.xml"],
-        tags: ["site-settings", SITEMAP_TAG],
+        paths: ["/", "/blog", "/plp", "/sitemap.xml"],
+        tags: ["site-settings", PRODUCT_TAG, PRODUCT_COLLECTION_TAG, SITEMAP_TAG],
       });
     }
 

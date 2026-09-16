@@ -3,7 +3,7 @@
  * every manual section to HOMEPAGE_CARD_LIMIT (20), so six of them were saved and
  * never rendered, with nothing in the UI saying so.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import HomepageProductPicker from "../HomepageProductPicker";
 
 jest.mock("@/components/SuperAdmin/Order/ProductSearch", () => ({
@@ -38,7 +38,7 @@ describe("HomepageProductPicker render limit", () => {
 
     expect(screen.getAllByTestId("picker-row-not-rendered")).toHaveLength(6);
     expect(screen.getAllByTestId("picker-row")).toHaveLength(20);
-    expect(screen.getAllByText("نمایش داده نمی‌شود")).toHaveLength(6);
+    expect(screen.getAllByText("فقط در «مشاهده همه»")).toHaveLength(6);
   });
 
   it("marks nothing when the list fits inside the limit", () => {
@@ -60,5 +60,73 @@ describe("HomepageProductPicker render limit", () => {
     renderPicker(26, 20);
 
     expect(screen.getByTestId("product-search")).toBeInTheDocument();
+  });
+});
+
+describe("HomepageProductPicker eligibility badges", () => {
+  it("flags an inactive/unpublished curated pick without hiding it", () => {
+    render(
+      <HomepageProductPicker
+        title="جدیدترین ها"
+        selectedProductIds={[1, 2]}
+        productSummaries={[
+          { id: 1, title: "product-1", isEligible: true },
+          { id: 2, title: "product-2", isEligible: false },
+        ]}
+        onProductsChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("غیرفعال / منتشرنشده")).toBeInTheDocument();
+    expect(screen.getAllByTestId("picker-row")).toHaveLength(2);
+  });
+
+  it("flags a curated pick that lost its discount only for the discount section", () => {
+    render(
+      <HomepageProductPicker
+        title="تخفیف‌های وسوسه انگیز"
+        selectedProductIds={[1]}
+        productSummaries={[{ id: 1, title: "product-1", isEligible: true, isDiscounted: false }]}
+        onProductsChange={() => {}}
+        sectionKind="discount"
+      />,
+    );
+
+    expect(screen.getByText("بدون تخفیف")).toBeInTheDocument();
+  });
+
+  it("does not flag a missing discount for a non-discount section", () => {
+    render(
+      <HomepageProductPicker
+        title="جدیدترین ها"
+        selectedProductIds={[1]}
+        productSummaries={[{ id: 1, title: "product-1", isEligible: true, isDiscounted: false }]}
+        onProductsChange={() => {}}
+        sectionKind="newest"
+      />,
+    );
+
+    expect(screen.queryByText("بدون تخفیف")).not.toBeInTheDocument();
+  });
+});
+
+describe("HomepageProductPicker reordering", () => {
+  it("moves an item to the top or bottom in one step", () => {
+    const ids = [1, 2, 3, 4];
+    const onProductsChange = jest.fn();
+    render(
+      <HomepageProductPicker
+        title="جدیدترین ها"
+        selectedProductIds={ids}
+        productSummaries={summaries(ids)}
+        onProductsChange={onProductsChange}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByLabelText("انتقال به بالاترین جایگاه")[2]);
+    expect(onProductsChange).toHaveBeenLastCalledWith([3, 1, 2, 4]);
+
+    fireEvent.click(screen.getAllByLabelText("انتقال به پایین‌ترین جایگاه")[0]);
+    expect(onProductsChange).toHaveBeenLastCalledWith([2, 3, 4, 1]);
   });
 });

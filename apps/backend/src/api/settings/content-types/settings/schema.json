@@ -264,17 +264,17 @@
     "homeNewestProductIds": {
       "type": "json",
       "default": [],
-      "description": "Curated product IDs for the 'جدیدترین ها' section on the homepage. Empty array = algorithmic fallback."
+      "description": "Curated product IDs for the 'جدیدترین ها' section, in priority order. Drives both the homepage rail (first 20) and the full '/plp' View all listing (curated items first, then the algorithmic fallback). Empty array = fully algorithmic. Capped at 100 ids."
     },
     "homeFavoriteProductIds": {
       "type": "json",
       "default": [],
-      "description": "Curated product IDs for the 'محبوب ترین ها' section on the homepage. Empty array = algorithmic fallback."
+      "description": "Curated product IDs for the 'محبوب ترین ها' section, in priority order. Drives both the homepage rail (first 20) and the full '/plp' View all listing (curated items first, then the algorithmic fallback). Empty array = fully algorithmic. Capped at 100 ids."
     },
     "homeDiscountedProductIds": {
       "type": "json",
       "default": [],
-      "description": "Curated product IDs for the 'تخفیف‌های وسوسه انگیز' section on the homepage. Empty array = algorithmic fallback."
+      "description": "Curated product IDs for the 'تخفیف‌های وسوسه انگیز' section, in priority order. Drives both the homepage rail (first 20) and the full '/plp' View all listing (curated items first, then the algorithmic fallback). A curated pick that no longer has an active discount is excluded from the public listing. Empty array = fully algorithmic. Capped at 100 ids."
     },
     "siteGifEnabled": {
       "type": "boolean",
@@ -415,6 +415,11 @@
       "type": "json",
       "default": [],
       "description": "Curated product IDs for the «همه دنبالشَن» homepage section."
+    },
+    "hideDiscountedOnDefaultNewestPlp": {
+      "type": "boolean",
+      "default": false,
+      "description": "Hidden operational toggle, not surfaced in any admin UI (edit via Strapi content manager or direct DB write only). When enabled, discounted products are excluded from the public PLP at the exact unfiltered default-sort URL (/plp with sort=LastEditedByAdminAt:desc and no other filters applied)."
     }
   }
 }

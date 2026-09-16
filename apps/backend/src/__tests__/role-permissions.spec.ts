@@ -831,6 +831,14 @@ describe("role permission templates", () => {
         actions: ["api::order.order.adminCancel"],
       },
       {
+        capabilities: ["order.shipping.manage"],
+        actions: [
+          "api::order.order.generateAnipoBarcode",
+          "api::order.order.checkAnipoBarcode",
+          "api::order.order.adminVoidBarcode",
+        ],
+      },
+      {
         capabilities: ["order.financial.read"],
         actions: ["api::order.order.adminPaymentOperation"],
       },
@@ -1331,8 +1339,11 @@ describe("role permission templates", () => {
       "adminTransition",
       "adminUpdateAddress",
       "adminUpdateNotes",
+      "adminVoidBarcode",
+      "checkAnipoBarcode",
       "checkPaymentStatus",
       "findOne",
+      "generateAnipoBarcode",
       "getActiveReserve",
       "getMyOrderDetail",
       "getMyOrders",

@@ -244,9 +244,9 @@ describe("expiry jobs", () => {
       createdAt: new Date("2026-05-30T11:00:00.000Z"),
     });
     orderQuery.findOne.mockResolvedValue({ id: 14, contract: { id: 56 } });
+    const trxRaw = jest.fn().mockResolvedValue({ rows: [{ id: 14 }] });
     strapi.db.transaction.mockImplementationOnce(async (callback: any) => {
-      const trx = { raw: jest.fn().mockResolvedValue({ rows: [{ id: 14 }] }) };
-      return callback({ trx });
+      return callback({ trx: { raw: trxRaw } });
     });
     contractQuery.update.mockResolvedValue({ id: 56 });
     orderLogQuery.create.mockResolvedValue({ id: 2 });
@@ -272,9 +272,24 @@ describe("expiry jobs", () => {
       "Releasing stock reservation for an unresolved SnappPay payment",
       expect.objectContaining({ reason: "parked_for_manual_review" }),
     );
+    // The attempt is parked because the provider was unreadable, not because the
+    // payment is known to have failed, so the order must survive: cancelling here
+    // is what loses orders the customer already paid for.
+    const cancelledOrder = trxRaw.mock.calls.some(([sql]: [string]) =>
+      /UPDATE orders[\s\S]*Cancelled/i.test(String(sql)),
+    );
+    expect(cancelledOrder).toBe(false);
+    expect(contractQuery.update).not.toHaveBeenCalled();
+    expect(orderLogQuery.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          Description: expect.stringContaining("operator review"),
+        }),
+      }),
+    );
   });
 
-  it("releases the reservation once an unresolved SnappPay attempt outlives the defer ceiling", async () => {
+  it("releases the reservation but does not cancel the order once an unresolved SnappPay attempt outlives the defer ceiling", async () => {
     const {
       strapi,
       orderQuery,
@@ -295,9 +310,9 @@ describe("expiry jobs", () => {
       createdAt: new Date("2026-05-30T10:29:00.000Z"),
     });
     orderQuery.findOne.mockResolvedValue({ id: 15, contract: { id: 57 } });
+    const trxRaw = jest.fn().mockResolvedValue({ rows: [{ id: 15 }] });
     strapi.db.transaction.mockImplementationOnce(async (callback: any) => {
-      const trx = { raw: jest.fn().mockResolvedValue({ rows: [{ id: 15 }] }) };
-      return callback({ trx });
+      return callback({ trx: { raw: trxRaw } });
     });
     contractQuery.update.mockResolvedValue({ id: 57 });
     orderLogQuery.create.mockResolvedValue({ id: 3 });
@@ -314,6 +329,22 @@ describe("expiry jobs", () => {
     expect(strapi.log.error).toHaveBeenCalledWith(
       "Releasing stock reservation for an unresolved SnappPay payment",
       expect.objectContaining({ reason: "defer_ceiling_exceeded", deferCeilingHours: 1.5 }),
+    );
+    // Production evidence: every attempt that outlived the ceiling carried a
+    // `status` 404/1007 that SnappPay's own panel still showed "در حال پردازش"
+    // for — outliving the ceiling is not proof the payment failed, so this must
+    // not cancel the order either, same as the parked-for-review case above.
+    const cancelledOrder = trxRaw.mock.calls.some(([sql]: [string]) =>
+      /UPDATE orders[\s\S]*Cancelled/i.test(String(sql)),
+    );
+    expect(cancelledOrder).toBe(false);
+    expect(contractQuery.update).not.toHaveBeenCalled();
+    expect(orderLogQuery.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          Description: expect.stringContaining("operator review"),
+        }),
+      }),
     );
   });
 

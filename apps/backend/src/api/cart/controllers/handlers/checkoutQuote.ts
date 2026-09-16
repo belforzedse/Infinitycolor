@@ -73,9 +73,23 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
       reserveGroupId,
     });
     if (selectedGateway === "snappay") {
-      await strapi
-        .service("api::payment-gateway.snappay-orchestrator")
-        .checkEligibility(Math.round(quote.financialSummary.total * 10));
+      try {
+        await strapi
+          .service("api::payment-gateway.snappay-orchestrator")
+          .checkEligibility(Math.round(quote.financialSummary.total * 10));
+      } catch (snappayError: any) {
+        // SnappPay's own timeouts/rejections are a provider-availability problem,
+        // not a defect in this cart's quote. Reported on its own recognizable code
+        // so the shopper is told to pick another gateway instead of hitting the
+        // generic quote-failed fallback for a total/shipping/discount problem that
+        // never happened here.
+        strapi.log.warn("SnappPay eligibility check failed during checkout quote", {
+          reasonCode: String(snappayError?.message || "").split(":")[0] || "UNKNOWN",
+        });
+        return ctx.badRequest("پرداخت اقساطی اسنپ‌پی موقتاً در دسترس نیست.", {
+          data: { success: false, errorCode: "SNAPPAY_UNAVAILABLE" },
+        });
+      }
     }
     ctx.body = { data: { success: true, ...quote } };
   } catch (error: any) {

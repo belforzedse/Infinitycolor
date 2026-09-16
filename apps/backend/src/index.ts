@@ -1666,6 +1666,7 @@ export default {
               homeNewestProductIds: [],
               homeFavoriteProductIds: [],
               homeDiscountedProductIds: [],
+              hideDiscountedOnDefaultNewestPlp: false,
             },
           });
           strapi.log.info("✓ Created default settings entry");
