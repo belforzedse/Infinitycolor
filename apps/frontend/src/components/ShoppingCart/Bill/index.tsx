@@ -164,6 +164,26 @@ function ShoppingCartBillForm({}: Props) {
   const [isAuthTokenReady, setIsAuthTokenReady] = useState(false);
   const canLoadProtectedCheckoutData = isAuthTokenReady && Boolean(currentUser || hasAccessToken);
 
+  // A gateway redirect (SnappPay/SamanKish/ZarinPal) sets `window.location.href` and
+  // this component is never unmounted for it -- the tab simply navigates away mid
+  // "submitting" state. If the browser restores this exact page from bfcache on
+  // back-navigation (iOS Safari does this routinely for cross-origin history nav),
+  // React state is frozen at whatever it was the instant navigation began, not
+  // whatever `finally` in submitOrder normally leaves it at. `pageshow` with
+  // `persisted: true` is the one reliable signal that happened, so unconditionally
+  // clear the in-flight guard here rather than trusting it survived the round trip
+  // -- a customer stuck on a frozen "already submitting" ref sees پرداخت do nothing.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      submitInProgressRef.current = false;
+      setIsSubmitting(false);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
+
   // Check authentication on mount - redirect to login if not authenticated.
   // Wait for global auth loading to finish so we don't redirect while user is still being fetched
   // (avoids loop when returning from auth with valid token).
@@ -740,9 +760,14 @@ function ShoppingCartBillForm({}: Props) {
       return;
     }
 
-    // Prevent duplicate submissions while one is in flight
+    // Prevent duplicate submissions while one is in flight. This must never be a
+    // silent no-op -- if it trips, tapping پرداخت has to visibly explain why
+    // nothing moved instead of looking broken (the pageshow handler above is the
+    // primary defense against this guard getting stuck; this is the fallback if
+    // it still does).
     if (submitInProgressRef.current) {
       console.warn("Submit already in progress, ignoring duplicate submission");
+      toast("در حال پردازش سفارش قبلی هستیم. لطفاً چند لحظه صبر کنید.", { id: "checkout-error" });
       return;
     }
 
