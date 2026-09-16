@@ -15,6 +15,23 @@ export default function ServiceWorkerRegistration() {
     }
 
     let cleanup: (() => void) | undefined;
+    let reloading = false;
+    // A controller already present at mount means an earlier visit already
+    // installed and activated a worker for this browsing session. sw.js calls
+    // skipWaiting() unconditionally on install and clients.claim() on activate,
+    // so a deploy can swap the controlling worker for an already-open tab with
+    // no user action -- but nothing re-executes this tab's already-loaded
+    // JavaScript. The checkout submit handler (and everything else already in
+    // memory) keeps running the closure it was created with, now paired with a
+    // service worker that has moved on to a different generation of caching
+    // rules. Without a reload here that mismatch is invisible and permanent
+    // until the customer closes and reopens the tab themselves -- which is how
+    // "tap پرداخت, button disables for a second, nothing else happens" reached
+    // production while an incognito tab (no service worker at all) worked fine.
+    // Skip the very first controllerchange (no prior controller = first-ever
+    // install taking over this tab, not a mid-session swap) so a first-time
+    // visitor never gets an unexpected reload.
+    const hadControllerAtMount = Boolean(navigator.serviceWorker.controller);
 
     registerServiceWorker().then((cleanupFn) => {
       cleanup = cleanupFn;
@@ -23,8 +40,11 @@ export default function ServiceWorkerRegistration() {
     // Listen for service worker updates
     const handleControllerChange = () => {
       console.log("[SW] Service worker controller changed");
+      if (!hadControllerAtMount || reloading) return;
+      reloading = true;
+      window.location.reload();
     };
-    
+
     if (navigator.serviceWorker) {
       navigator.serviceWorker.addEventListener("controllerchange", handleControllerChange);
     }
