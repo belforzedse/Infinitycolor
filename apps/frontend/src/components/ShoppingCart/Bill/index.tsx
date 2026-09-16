@@ -789,6 +789,21 @@ function ShoppingCartBillForm({}: Props) {
       let checkoutAttemptId: string | undefined;
       let cartResponse;
       const quote = await CartService.getCheckoutQuote(finalizeData as any);
+
+      // The quote now succeeds even when SnappPay's eligibility check fails, so
+      // one slow gateway no longer takes the whole checkout down. The shopper
+      // keeps their computed totals and is asked to pick another gateway.
+      if ((quote as any).gatewayAvailable === false) {
+        trackCheckoutError(String((quote as any).gatewayErrorCode || "SNAPPAY_UNAVAILABLE"));
+        failPayment(
+          String(
+            (quote as any).gatewayNotice ||
+              "پرداخت اقساطی اسنپ‌پی موقتاً در دسترس نیست. لطفاً روش پرداخت دیگری انتخاب کنید.",
+          ),
+        );
+        return;
+      }
+
       const quoteTotal = Number(quote.financialSummary?.total || 0);
       const shopperVisibleTotal = isMergeMode
         ? Math.max(0, Math.round(totalPrice - discountToman))

@@ -72,26 +72,40 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
       gateway: selectedGateway,
       reserveGroupId,
     });
+    // SnappPay's own timeouts/rejections are a provider-availability problem, not
+    // a defect in this cart's quote. Failing the whole request here meant one slow
+    // gateway took down checkout for whoever happened to pick it — the quote,
+    // totals, shipping and discount are all already computed and correct.
+    //
+    // Return them, and report the gateway as unavailable alongside, so the shopper
+    // keeps their checkout and can switch gateway without recomputing anything.
+    let snappayUnavailable: string | null = null;
     if (selectedGateway === "snappay") {
       try {
         await strapi
           .service("api::payment-gateway.snappay-orchestrator")
           .checkEligibility(Math.round(quote.financialSummary.total * 10));
       } catch (snappayError: any) {
-        // SnappPay's own timeouts/rejections are a provider-availability problem,
-        // not a defect in this cart's quote. Reported on its own recognizable code
-        // so the shopper is told to pick another gateway instead of hitting the
-        // generic quote-failed fallback for a total/shipping/discount problem that
-        // never happened here.
+        snappayUnavailable =
+          String(snappayError?.message || "").split(":")[0] || "SNAPPAY_UNAVAILABLE";
         strapi.log.warn("SnappPay eligibility check failed during checkout quote", {
-          reasonCode: String(snappayError?.message || "").split(":")[0] || "UNKNOWN",
-        });
-        return ctx.badRequest("پرداخت اقساطی اسنپ‌پی موقتاً در دسترس نیست.", {
-          data: { success: false, errorCode: "SNAPPAY_UNAVAILABLE" },
+          reasonCode: snappayUnavailable,
         });
       }
     }
-    ctx.body = { data: { success: true, ...quote } };
+    ctx.body = {
+      data: {
+        success: true,
+        ...quote,
+        ...(snappayUnavailable
+          ? {
+              gatewayAvailable: false,
+              gatewayNotice: "پرداخت اقساطی اسنپ‌پی موقتاً در دسترس نیست.",
+              gatewayErrorCode: "SNAPPAY_UNAVAILABLE",
+            }
+          : {}),
+      },
+    };
   } catch (error: any) {
     const [errorCode] = String(error?.message || "CHECKOUT_QUOTE_FAILED").split(":");
     return ctx.badRequest("امکان محاسبه مبلغ نهایی سفارش وجود ندارد", {

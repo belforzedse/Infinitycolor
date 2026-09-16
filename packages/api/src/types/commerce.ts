@@ -92,6 +92,14 @@ export interface CheckoutQuoteResponse {
   success: boolean;
   quoteHash: string;
   financialSummary: FinancialSummary;
+  /**
+   * Set when the quote itself succeeded but the selected gateway is not usable
+   * right now (e.g. SnappPay eligibility timed out). The totals are still valid;
+   * the shopper is expected to pick another gateway rather than re-quote.
+   */
+  gatewayAvailable?: boolean;
+  gatewayNotice?: string;
+  gatewayErrorCode?: string;
 }
 
 export interface FinalizeCartRequest extends CheckoutQuoteRequest {

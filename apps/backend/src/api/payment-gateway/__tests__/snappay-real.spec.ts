@@ -94,8 +94,10 @@ describe('SnappPay Service - Real Implementation', () => {
 
       expect(result.successful).toBe(false);
       expect(result.errorData?.message).toBe('SnappPay request failed');
+      // The message carries a serialized copy because Strapi's logger discards
+      // the metadata object — see logResult() in snappay.ts.
       expect(mockStrapi.log.warn).toHaveBeenCalledWith(
-        'SnappPay provider call failed',
+        expect.stringContaining('SnappPay provider call failed'),
         expect.objectContaining({
           endpoint: 'eligible',
           httpStatus: 403,

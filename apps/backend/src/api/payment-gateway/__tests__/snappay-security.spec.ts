@@ -70,55 +70,47 @@ describe("SnappPay recovery policy", () => {
     expect(decideSnappayRecovery({ providerCode: 1051 })).toBe("FAIL_CONFIGURATION");
   });
 
-  it("keeps reconciling when the provider code came from a failed status read", () => {
-    // Production ran with a `status` endpoint that returned 404/1007 on every
-    // call. Treating that as definitive parked the attempt and the expiry sweep
-    // then cancelled the order and released its stock — on payments we had no
-    // way to observe. An unobserved code describes the lookup, not the payment.
-    expect(decideSnappayRecovery({ providerCode: 1007, statusObserved: false })).toBe(
-      "RECONCILE",
-    );
-    expect(decideSnappayRecovery({ providerCode: 1048, statusObserved: false })).toBe(
-      "RECONCILE",
-    );
-    // A configuration failure is about our own request, so it stays definitive.
-    expect(decideSnappayRecovery({ providerCode: 1051, statusObserved: false })).toBe(
-      "FAIL_CONFIGURATION",
-    );
+  it("treats 1007/1048 as definitive regardless of how the status call ended", () => {
+    // `providerCode` is only ever populated from a parsed SnappPay error
+    // envelope — a timeout or transport failure leaves it undefined — so a code
+    // here always means the provider answered. 1007 NOT_FOUND on `status` is
+    // SnappPay reporting a token that never reached the bank gateway for the
+    // first installment, i.e. an abandoned checkout, and manual review is the
+    // action its own error workbook prescribes.
+    //
+    // Production 2026-09-16 settled this: status() returns HTTP 200 for 64% of
+    // attempts (275 SETTLE, 83 REVERT, 3 PENDING), so the endpoint is not broken,
+    // and 93% of the 404/1007 population never sent a callback at all.
+    expect(decideSnappayRecovery({ providerCode: 1007 })).toBe("MANUAL_REVIEW");
+    expect(decideSnappayRecovery({ providerCode: 1048 })).toBe("MANUAL_REVIEW");
+    expect(decideSnappayRecovery({ providerCode: 1051 })).toBe("FAIL_CONFIGURATION");
+
+    // A FAILED callback alongside an unresolvable token is still abandonment.
+    expect(
+      decideSnappayRecovery({ providerCode: 1007, callbackState: "FAILED" }),
+    ).toBe("MANUAL_REVIEW");
   });
 
-  it("verifies a validated OK callback instead of waiting on an unreadable status", () => {
-    // /status cannot resolve a token before verify() has been called on it at
-    // least once, so a callback-confirmed payment would otherwise loop in
-    // RECONCILE forever and eventually get auto-cancelled by the expiry sweep.
+  it("rescues a validated OK callback whose token the provider cannot resolve", () => {
+    // The customer's browser came back saying the payment succeeded while
+    // SnappPay cannot find the token — a direct contradiction that only `verify`
+    // settles. This is the ~1-in-276 genuinely-paid-but-parked case and it must
+    // outrank the 1007 branch above.
     expect(
       decideSnappayRecovery({
         providerStatus: undefined,
         providerCode: 1007,
-        statusObserved: false,
         callbackState: "OK",
       }),
     ).toBe("VERIFY");
 
-    // Without a validated OK callback, an unreadable status still just reconciles.
+    // Same rescue when the status call produced no code at all (timeout).
     expect(
-      decideSnappayRecovery({
-        providerStatus: undefined,
-        providerCode: 1007,
-        statusObserved: false,
-      }),
-    ).toBe("RECONCILE");
+      decideSnappayRecovery({ providerStatus: undefined, callbackState: "OK" }),
+    ).toBe("VERIFY");
 
-    // A FAILED callback has its own path (PENDING+FAILED -> REVERT); an unreadable
-    // status alongside it must not be reinterpreted as a reason to verify.
-    expect(
-      decideSnappayRecovery({
-        providerStatus: undefined,
-        providerCode: 1007,
-        statusObserved: false,
-        callbackState: "FAILED",
-      }),
-    ).toBe("RECONCILE");
+    // Without a code and without a callback there is nothing to act on yet.
+    expect(decideSnappayRecovery({ providerStatus: undefined })).toBe("RECONCILE");
   });
 
   describe("abandoned REGISTERED tokens", () => {

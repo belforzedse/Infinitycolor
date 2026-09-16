@@ -209,9 +209,11 @@ function operationObservation<T>(
 async function loadAttemptBundle(
   strapi: Strapi,
   where: Record<string, unknown>,
+  options: { orderBy?: Record<string, unknown> } = {},
 ): Promise<AttemptBundle | null> {
   const attempt: any = await strapi.db.query(ATTEMPT_UID).findOne({
     where,
+    ...(options.orderBy ? { orderBy: options.orderBy } : {}),
     populate: {
       order: {
         populate: {
@@ -1038,10 +1040,14 @@ export async function requestSnappayReconciliation(
   orderId: number,
   reason = "manual",
 ): Promise<any | null> {
-  const bundle = await loadAttemptBundle(strapi, {
-    Gateway: "snappay",
-    order: { id: orderId },
-  });
+  // An order the customer retried has several SnappPay attempts. Without an
+  // explicit order this picked an arbitrary one, so a retry could reconcile a
+  // dead attempt and its dead token while the live one sat untouched.
+  const bundle = await loadAttemptBundle(
+    strapi,
+    { Gateway: "snappay", order: { id: orderId } },
+    { orderBy: { createdAt: "desc" } },
+  );
   if (!bundle) return null;
   if (["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(bundle.attempt.Status))) {
     return bundle.attempt;
@@ -2118,9 +2124,11 @@ export async function processSnappayOperation(
     const action = decideSnappayRecovery({
       callbackState,
       providerStatus,
-      providerCode: statusResult.diagnostic.providerCode || operation.providerCode,
-      // A code from a failed status read describes the lookup, not the payment.
-      statusObserved: statusResult.successful === true,
+      // Only the code from the status read just performed. Falling back to
+      // `operation.providerCode` let a code left behind by an earlier call (a
+      // token request, say) decide the recovery action for a status read that
+      // never produced one.
+      providerCode: statusResult.diagnostic.providerCode,
       attemptAgeMs: attemptCreatedAt !== null ? Date.now() - attemptCreatedAt : null,
     });
     await executeRecoveryAction(strapi, operation, bundle, token, action);

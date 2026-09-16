@@ -64,32 +64,28 @@ describe("checkoutQuoteHandler — SnappPay eligibility failure", () => {
     });
   });
 
-  it("returns SNAPPAY_UNAVAILABLE and keeps the quote-failed message scoped to SnappPay, not the whole cart", async () => {
+  it("returns the quote with SnappPay flagged unavailable instead of failing the whole request", async () => {
     const checkEligibility = jest.fn().mockRejectedValue(new Error("SNAPPAY_INELIGIBLE:UNAVAILABLE"));
     const strapi = createStrapiMock(checkEligibility);
     const ctx = createCtx({
       shipping: 7,
       addressId: 9,
       gateway: "snappay",
+    }) as any;
+
+    await checkoutQuoteHandler(strapi as any)(ctx);
+
+    // One slow gateway must not take down a checkout whose totals are already
+    // computed and correct -- the shopper keeps the quote and switches gateway.
+    expect(ctx.badRequest).not.toHaveBeenCalled();
+    expect(ctx.body).toMatchObject({
+      data: {
+        success: true,
+        quoteHash: "quote-hash",
+        gatewayAvailable: false,
+        gatewayErrorCode: "SNAPPAY_UNAVAILABLE",
+      },
     });
-
-    await checkoutQuoteHandler(strapi as any)(ctx as any);
-
-    expect(ctx.badRequest).toHaveBeenCalledTimes(1);
-    expect(ctx.badRequest).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        data: expect.objectContaining({
-          success: false,
-          errorCode: "SNAPPAY_UNAVAILABLE",
-        }),
-      }),
-    );
-    // Not the generic quote-failed fallback -- this is a SnappPay-specific signal.
-    expect(ctx.badRequest).not.toHaveBeenCalledWith(
-      "امکان محاسبه مبلغ نهایی سفارش وجود ندارد",
-      expect.anything(),
-    );
   });
 
   it("still succeeds the quote when SnappPay eligibility passes", async () => {
@@ -104,6 +100,7 @@ describe("checkoutQuoteHandler — SnappPay eligibility failure", () => {
     await checkoutQuoteHandler(strapi as any)(ctx);
 
     expect(ctx.body).toMatchObject({ data: { success: true } });
+    expect(ctx.body.data.gatewayAvailable).toBeUndefined();
     expect(ctx.badRequest).not.toHaveBeenCalled();
   });
 });

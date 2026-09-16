@@ -278,18 +278,21 @@ describe("expiry jobs", () => {
     const cancelledOrder = trxRaw.mock.calls.some(([sql]: [string]) =>
       /UPDATE orders[\s\S]*Cancelled/i.test(String(sql)),
     );
-    expect(cancelledOrder).toBe(false);
-    expect(contractQuery.update).not.toHaveBeenCalled();
+    // A parked SnappPay attempt is an abandoned checkout: 1007 NOT_FOUND means
+    // the token never reached the bank gateway, so no money was taken and the
+    // order must cancel and free its stock. Leaving it `Paying`/`Expired` for an
+    // operator created a review queue with nothing to adjudicate.
+    expect(cancelledOrder).toBe(true);
     expect(orderLogQuery.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          Description: expect.stringContaining("operator review"),
+          Description: expect.stringContaining("cancelled automatically"),
         }),
       }),
     );
   });
 
-  it("releases the reservation but does not cancel the order once an unresolved SnappPay attempt outlives the defer ceiling", async () => {
+  it("releases the reservation and cancels the order once an unresolved SnappPay attempt outlives the defer ceiling", async () => {
     const {
       strapi,
       orderQuery,
@@ -330,19 +333,18 @@ describe("expiry jobs", () => {
       "Releasing stock reservation for an unresolved SnappPay payment",
       expect.objectContaining({ reason: "defer_ceiling_exceeded", deferCeilingHours: 1.5 }),
     );
-    // Production evidence: every attempt that outlived the ceiling carried a
-    // `status` 404/1007 that SnappPay's own panel still showed "در حال پردازش"
-    // for — outliving the ceiling is not proof the payment failed, so this must
-    // not cancel the order either, same as the parked-for-review case above.
+    // Production 2026-09-16: status() returns HTTP 200 for 64% of attempts, so a
+    // 404/1007 is not a broken endpoint — it is SnappPay reporting a token that
+    // never reached the bank gateway. 93% of parked attempts never sent a
+    // callback. These are abandoned checkouts, so cancel and free the stock.
     const cancelledOrder = trxRaw.mock.calls.some(([sql]: [string]) =>
       /UPDATE orders[\s\S]*Cancelled/i.test(String(sql)),
     );
-    expect(cancelledOrder).toBe(false);
-    expect(contractQuery.update).not.toHaveBeenCalled();
+    expect(cancelledOrder).toBe(true);
     expect(orderLogQuery.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          Description: expect.stringContaining("operator review"),
+          Description: expect.stringContaining("cancelled automatically"),
         }),
       }),
     );

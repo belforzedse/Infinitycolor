@@ -261,10 +261,17 @@ function logResult<T>(
     timedOut: result.diagnostic.timedOut,
     transportError: result.diagnostic.transportError,
   };
+  // Strapi's logger prints the message and silently discards this second
+  // argument, so every field above was invisible in production. Two SnappPay
+  // investigations had to reconstruct per-call behaviour from
+  // `contract_transactions.last_provider_code`, which is overwritten on every
+  // call, and both reached the wrong conclusion. Serialize into the message so
+  // the per-call record actually exists.
+  const summary = JSON.stringify(details);
   if (result.successful) {
-    strapi.log.info("SnappPay provider call completed", details);
+    strapi.log.info(`SnappPay provider call completed ${summary}`, details);
   } else {
-    strapi.log.warn("SnappPay provider call failed", details);
+    strapi.log.warn(`SnappPay provider call failed ${summary}`, details);
   }
   const metrics = (strapi as any).metrics;
   const metricName = `snappay_provider_${result.diagnostic.endpoint}_${

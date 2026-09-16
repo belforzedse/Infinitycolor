@@ -197,38 +197,20 @@ async function expireStockReservationsBatch(
           return;
         }
 
-        // Reaching this line means the attempt was either parked for review or
-        // outlived the defer ceiling — in both cases we still do not know the
-        // payment actually failed. On production the ceiling case is the common
-        // one: a `status` call returning 404/1007 no longer counts as definitive
-        // (see snappay-state-machine.ts's `statusObserved` gate), so an attempt
-        // SnappPay is still processing rides the defer loop for
-        // SNAPPAY_DEFER_CEILING_HOURS and used to fall straight into the
-        // unconditional cancel below the moment that clock ran out — cancelling
-        // orders SnappPay's own panel still showed "در حال پردازش" for. The stock
-        // is released above (inventory cannot be held indefinitely), but the
-        // order must NOT be cancelled: if the customer did pay, cancelling here is
-        // what loses their order. Leave it `Paying` with `ReservationStatus =
-        // 'Expired'` — a state this job's own filter (`Reserved`) will not pick up
-        // again, so there is no loop — and let an operator adjudicate it.
-        if (activeSnappayAttempt) {
-          incrementMetric(strapi, "snappay.reservation.released_pending_operator");
-          stage = "order_log";
-          await strapi.db.query("api::order-log.order-log").create({
-            data: {
-              order: orderId,
-              Action: "Update",
-              Description: parkedForReview
-                ? "Reservation released; SnappPay state unreadable, order left open for operator review"
-                : "Reservation released; SnappPay payment still unresolved after defer ceiling, order left open for operator review",
-              Changes: { ReservationStatus: "Expired", Status: "Paying" },
-            },
-            transacting: trx,
-          } as any);
-          processed += 1;
-          return;
-        }
-
+        // Reaching this line means the attempt was parked for review or outlived
+        // the defer ceiling. Both are abandonment: 1007 NOT_FOUND on `status` is
+        // SnappPay reporting a token that never reached the bank gateway for the
+        // first installment, so no money was taken. Verified on production
+        // 2026-09-16 — 93% of parked attempts never sent a callback, and 276 OK
+        // callbacks produced 275 settled orders, so the paid-but-parked case is
+        // ~1-in-276 and is handled upstream by the OK-callback VERIFY branch in
+        // snappay-state-machine.ts.
+        //
+        // An earlier revision skipped the cancel here and left the order `Paying`
+        // with `ReservationStatus = 'Expired'` for an operator. Nothing re-queues
+        // that state (this job filters on `Reserved`), so it accumulated roughly
+        // 63 abandoned checkouts a day into a review queue with nothing to
+        // adjudicate. Cancelling is the correct outcome.
         const orderCancelResult = await trx.raw(
           `UPDATE orders
            SET status = 'Cancelled'
