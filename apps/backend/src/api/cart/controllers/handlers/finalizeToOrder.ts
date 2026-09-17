@@ -17,6 +17,8 @@ import {
   paymentAttemptResponse,
   updatePaymentAttempt,
 } from "../../../payment-attempt/services/payment-attempt";
+import { generateSnappayCallbackNonce, isValidSnappayCallbackNonce } from "../../../payment-gateway/services/snappay-security";
+import { snappayProviderPaymentIsUnresolved } from "../../../payment-gateway/services/snappay-generation";
 import { settleOrderWithWallet } from "./wallet-settlement";
 import { consumeCheckoutCartLinesSafely } from "../../services/lib/order-cart-cleanup";
 import {
@@ -441,32 +443,40 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       });
     }
 
-    if (result.replayed && String(paymentAttempt.Status || "") !== "Created") {
+    const attemptStatus = String(paymentAttempt.Status || "");
+    const snappayLiveReplay =
+      selectedGateway === "snappay" &&
+      (["Created", "Pending", "Redirected", "Unknown"].includes(attemptStatus) ||
+        snappayProviderPaymentIsUnresolved(paymentAttempt));
+    if (result.replayed && attemptStatus !== "Created" && !snappayLiveReplay) {
       return { data: paymentAttemptResponse(paymentAttempt) };
     }
 
     let snappayCallbackNonce = String(result.snappayCallbackNonce || "");
     if (result.replayed && selectedGateway === "snappay" && !snappayCallbackNonce) {
       snappayCallbackNonce = String(paymentAttempt.callbackNonce || "");
-      if (!snappayCallbackNonce) {
-        await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
-          Status: "Unknown",
-          failureCode: "SNAPPAY_CALLBACK_NONCE_UNRECOVERABLE",
-          failureMessage: "SnappPay callback correlation secret could not be recovered",
-          nextAction: "manual_review",
-        }).catch(() => undefined);
-        ctx.status = 202;
-        return {
-          data: {
-            success: false,
-            message: "شروع پرداخت نیازمند بررسی است",
-            errorCode: "PAYMENT_UNKNOWN",
-            orderId: order.id,
-            contractId: contract.id,
-            attemptId: normalizedAttemptId,
-            paymentStatus: "Unknown",
-          },
-        };
+      if (!isValidSnappayCallbackNonce(snappayCallbackNonce)) {
+        if (attemptStatus === "Created") {
+          await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
+            Status: "Unknown",
+            failureCode: "SNAPPAY_CALLBACK_NONCE_UNRECOVERABLE",
+            failureMessage: "SnappPay callback correlation secret could not be recovered",
+            nextAction: "manual_review",
+          }).catch(() => undefined);
+          ctx.status = 202;
+          return {
+            data: {
+              success: false,
+              message: "شروع پرداخت نیازمند بررسی است",
+              errorCode: "PAYMENT_UNKNOWN",
+              orderId: order.id,
+              contractId: contract.id,
+              attemptId: normalizedAttemptId,
+              paymentStatus: "Unknown",
+            },
+          };
+        }
+        snappayCallbackNonce = generateSnappayCallbackNonce();
       }
     }
 
@@ -523,11 +533,18 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           Number(user.id),
           normalizedAttemptId,
         );
-        return {
-          data: paymentAttemptResponse(currentAttempt || paymentAttempt),
-        };
+        const currentStatus = String(currentAttempt?.Status || paymentAttempt.Status || "");
+        const snappayCanResume =
+          selectedGateway === "snappay" &&
+          (["Created", "Pending", "Redirected", "Unknown"].includes(currentStatus) ||
+            snappayProviderPaymentIsUnresolved(currentAttempt || paymentAttempt));
+        if (!snappayCanResume) {
+          return {
+            data: paymentAttemptResponse(currentAttempt || paymentAttempt),
+          };
+        }
       }
-      paymentAttempt.Status = "Pending";
+      paymentAttempt.Status = claimed ? "Pending" : paymentAttempt.Status;
     }
 
     // Wallet settlement is one database transaction: debit, ledgers, stock,
@@ -807,10 +824,15 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       userId: user?.id,
       requestBody: redactSensitive(ctx.request.body),
     });
+    const prefixedCode = String(error?.message || "").match(/^([A-Z][A-Z0-9_]+)(?::|$)/)?.[1];
     if (error?.status) {
       // Convert structured errors to ctx.badRequest() format per payment error guideline
       const errorCode =
-        error?.payload?.data?.errorCode || error.errorCode || error.code || "PAYMENT_ERROR";
+        error?.payload?.data?.errorCode ||
+        error.errorCode ||
+        error.code ||
+        prefixedCode ||
+        "PAYMENT_ERROR";
       const message =
         error?.payload?.data?.message || error.message || error.error || "خطا در پردازش درخواست";
       return ctx.badRequest(message, {
@@ -826,6 +848,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     return ctx.badRequest(error.message, {
       data: {
         success: false,
+        errorCode: prefixedCode || "PAYMENT_ERROR",
         error: error.message,
         timestamp: new Date().toISOString(),
         userId: user?.id,

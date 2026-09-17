@@ -10,8 +10,26 @@ import {
   type SnappayTokenRequest,
   type SnappayUpdateRequest,
 } from "./snappay";
+import { claimPaymentAttemptForSnappayInitiation } from "../../payment-attempt/services/claim-payment-attempt";
+import {
+  buildSnappayPendingDispatch,
+  isConsecutiveSnappayGeneration,
+  nextSnappayGenerationSeq,
+  rememberedSnappayNonceHashes,
+  rememberedSnappayTransactionIds,
+  seedSnappayGenerationFromLegacyAttempt,
+  snappayHasInFlightDispatch,
+  snappayProviderGenerationIsTerminal,
+  snappayProviderPaymentIsUnresolved,
+  statusMatchesActiveSnappayGeneration,
+  withIssuedSnappayToken,
+  withSnappayPendingDispatch,
+  withSnappayTerminalEvidence,
+} from "./snappay-generation";
 import {
   displaySnappayFingerprint,
+  generateSnappayCallbackNonce,
+  generateSnappayTransactionId,
   hashSnappayCallbackNonce,
   isValidSnappayCallbackNonce,
   isValidSnappayTransactionId,
@@ -41,6 +59,32 @@ const OPERATION_UID = "api::payment-operation.payment-operation" as const;
 const ORDER_UID = "api::order.order" as const;
 const CONTRACT_UID = "api::contract.contract" as const;
 const OPERATION_LEASE_MS = 5 * 60 * 1000;
+/** First reconciler delay after a token is issued. Not a token-replacement window. */
+export const SNAPPAY_RESUME_REDIRECT_MAX_AGE_MS = 2 * 60 * 1000;
+
+const SNAPPAY_INITIATION_MESSAGES: Record<string, string> = {
+  CHECKOUT_ATTEMPT_CONFLICT: "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.",
+  PAYMENT_IN_PROGRESS: "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+  PAYMENT_UNKNOWN:
+    "نتیجه شروع پرداخت هنوز مشخص نیست. برای جلوگیری از پرداخت تکراری، وضعیت سفارش را بررسی کنید.",
+  SNAPPAY_INVALID_MOBILE:
+    "شماره موبایل ثبت‌شده برای پرداخت اقساطی معتبر نیست. لطفاً شماره را در حساب کاربری بررسی کنید و دوباره تلاش کنید.",
+  SNAPPAY_AMOUNT_MISMATCH: "مبلغ سفارش با درگاه همخوانی ندارد. لطفاً دوباره تلاش کنید.",
+  SNAPPAY_CART_INVALID: "سبد خرید برای اسنپ‌پی نامعتبر است. لطفاً سبد را بررسی و دوباره تلاش کنید.",
+  SNAPPAY_TOKEN_DUPLICATE:
+    "پرداخت قبلی هنوز در حال بررسی است. برای جلوگیری از پرداخت تکراری، وضعیت سفارش را بررسی کنید.",
+};
+
+type InitiateSnappayResult = {
+  success: boolean;
+  status: "Redirected" | "Failed" | "Unknown";
+  orderId: number;
+  contractId: number;
+  transactionId: string;
+  redirectUrl?: string;
+  errorCode?: string;
+  message?: string;
+};
 
 type OperationType =
   | "VERIFY"
@@ -147,6 +191,9 @@ export function extractSnappayPaymentTokenFromRedirectUrl(value: unknown): strin
 }
 
 async function resolveSnappayPaymentToken(strapi: Strapi, bundle: AttemptBundle): Promise<string> {
+  if (snappayHasInFlightDispatch(bundle.attempt.providerResponse)) {
+    return "";
+  }
   const stored = String(bundle.transaction.TrackId || "").trim();
   if (stored) return stored;
 
@@ -181,13 +228,95 @@ async function resolveSnappayPaymentToken(strapi: Strapi, bundle: AttemptBundle)
 }
 
 function isAmbiguousResult<T>(result: SnappayCallResult<T>): boolean {
+  // Transport failure, timeout, and 5xx are unreadable — those must never
+  // mint a second token. Parsed 1007/1009/1048 are readable investigation
+  // outcomes, not proof the payment is unpaid.
   return (
     result.diagnostic.timedOut === true ||
     result.diagnostic.transportError === true ||
-    Number(result.diagnostic.httpStatus || 0) >= 500 ||
-    result.diagnostic.providerCode === 1007 ||
-    result.diagnostic.providerCode === 1009 ||
-    result.diagnostic.providerCode === 1048
+    Number(result.diagnostic.httpStatus || 0) >= 500
+  );
+}
+
+function readTokenAttemptSeq(bundle: AttemptBundle): number {
+  const raw = Number(bundle.attempt?.providerResponse?.tokenAttemptSeq || 0);
+  return Number.isInteger(raw) && raw > 0 ? raw : 0;
+}
+
+function mergeAttemptProviderResponse(
+  bundle: AttemptBundle,
+  result: SnappayCallResult<any>,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const previous =
+    bundle.attempt?.providerResponse && typeof bundle.attempt.providerResponse === "object"
+      ? bundle.attempt.providerResponse
+      : {};
+  return {
+    ...previous,
+    ...providerSummary(result),
+    ...extra,
+  };
+}
+
+function initiationMessage(code: string, fallback?: string): string {
+  return SNAPPAY_INITIATION_MESSAGES[code] || fallback || SNAPPAY_INITIATION_MESSAGES.PAYMENT_UNKNOWN;
+}
+
+function redirectedInitiation(
+  bundle: AttemptBundle,
+  redirectUrl: string,
+  transactionId?: string,
+): InitiateSnappayResult {
+  return {
+    success: true,
+    status: "Redirected",
+    orderId: Number(bundle.order.id),
+    contractId: Number(bundle.contract.id),
+    transactionId: String(transactionId || bundle.attempt.providerReference || ""),
+    redirectUrl,
+  };
+}
+
+function failedInitiation(
+  bundle: AttemptBundle,
+  errorCode: string,
+  status: "Failed" | "Unknown" = "Failed",
+  message?: string,
+): InitiateSnappayResult {
+  return {
+    success: false,
+    status,
+    orderId: Number(bundle.order.id),
+    contractId: Number(bundle.contract.id),
+    transactionId: String(bundle.attempt.providerReference || ""),
+    errorCode,
+    message: initiationMessage(errorCode, message),
+  };
+}
+
+function isInvestigationStatusCode(code: number): boolean {
+  return code === 1007 || code === 1048;
+}
+
+function hasValidatedOkCallback(bundle: AttemptBundle): boolean {
+  return (
+    String(bundle.attempt.providerStatus || "") === "CALLBACK_OK" ||
+    String(bundle.attempt.nextAction || "") === "verify"
+  );
+}
+
+function hasFailedCallback(bundle: AttemptBundle): boolean {
+  return (
+    String(bundle.attempt.providerStatus || "") === "CALLBACK_FAILED" ||
+    String(bundle.attempt.nextAction || "") === "reconcile_failed_callback"
+  );
+}
+
+function orderCanReceiveReplacementGeneration(bundle: AttemptBundle): boolean {
+  return (
+    String(bundle.order.Status || "") === "Paying" &&
+    String(bundle.order.ReservationStatus || "") === "Reserved"
   );
 }
 
@@ -245,13 +374,19 @@ async function loadAttemptBundle(
   const transactions = Array.isArray(contract?.contract_transactions)
     ? contract.contract_transactions
     : [];
-  const transaction = [...transactions]
+  const snappayTransactions = [...transactions]
     .reverse()
-    .find(
-      (candidate: any) =>
-        isSnappayGatewayValue(candidate?.external_source) &&
-        String(candidate?.external_id || "") === String(attempt.providerReference || ""),
+    .filter((candidate: { external_source?: unknown; external_id?: unknown }) =>
+      isSnappayGatewayValue(candidate?.external_source),
     );
+  const rememberedIds = new Set([
+    String(attempt.providerReference || ""),
+    ...rememberedSnappayTransactionIds(attempt),
+  ]);
+  const transaction =
+    snappayTransactions.find((candidate) =>
+      rememberedIds.has(String(candidate?.external_id || "")),
+    ) || snappayTransactions[0];
   if (!order || !contract || !transaction) return null;
   return { attempt, order, contract, transaction };
 }
@@ -260,10 +395,29 @@ async function findAttemptByTransactionId(
   strapi: Strapi,
   transactionId: string,
 ): Promise<AttemptBundle | null> {
-  return loadAttemptBundle(strapi, {
+  const byReference = await loadAttemptBundle(strapi, {
     Gateway: "snappay",
     providerReference: transactionId,
   });
+  if (byReference) return byReference;
+
+  const raw = await strapi.db.connection?.raw?.(
+    `SELECT id FROM payment_attempts
+     WHERE gateway = 'snappay'
+       AND (
+         provider_reference = ?
+         OR provider_response->>'pendingTransactionId' = ?
+         OR provider_response->'pendingDispatch'->>'transactionId' = ?
+         OR provider_response->'generation'->>'transactionId' = ?
+         OR provider_response->'previousGeneration'->>'transactionId' = ?
+       )
+     ORDER BY id DESC
+     LIMIT 1`,
+    [transactionId, transactionId, transactionId, transactionId, transactionId],
+  );
+  const id = Number(raw?.rows?.[0]?.id);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return loadAttemptBundle(strapi, { id, Gateway: "snappay" });
 }
 
 async function resolveCustomerMobile(
@@ -477,6 +631,11 @@ async function updateProviderObservation(
   providerStatus?: SnappayProviderStatus,
 ): Promise<void> {
   const now = new Date();
+  const extra =
+    providerStatus === "REVERT" || providerStatus === "CANCEL"
+      ? withSnappayTerminalEvidence(bundle.attempt.providerResponse, providerStatus)
+      : {};
+  const providerResponse = mergeAttemptProviderResponse(bundle, result, extra);
   await Promise.all([
     strapi.db.query(TX_UID).update({
       where: { id: bundle.transaction.id },
@@ -492,13 +651,14 @@ async function updateProviderObservation(
       where: { id: bundle.attempt.id },
       data: {
         ...(providerStatus ? { providerStatus } : {}),
-        providerResponse: providerSummary(result),
+        providerResponse,
         lastReconciledAt: now,
       },
     } as any),
   ]);
   bundle.transaction.GatewayStatus = providerStatus || bundle.transaction.GatewayStatus;
   bundle.attempt.providerStatus = providerStatus || bundle.attempt.providerStatus;
+  bundle.attempt.providerResponse = providerResponse;
 }
 
 async function failInitiation(
@@ -543,6 +703,7 @@ async function failInitiation(
         failureMessage: message.slice(0, 500),
         nextAction: null,
         nextActionAt: null,
+        leaseUntil: null,
         resolvedAt: now,
       },
       transacting: trx,
@@ -556,6 +717,7 @@ async function markAttemptUnknown(
   code: string,
   message: string,
   nextActionAt?: Date,
+  nextAction = "manual_review",
 ): Promise<void> {
   await strapi.db.transaction(async ({ trx }) => {
     await strapi.db.query(ATTEMPT_UID).update({
@@ -565,8 +727,9 @@ async function markAttemptUnknown(
         providerStatus: "UNKNOWN",
         failureCode: code,
         failureMessage: message.slice(0, 500),
-        nextAction: "manual_review",
+        nextAction,
         nextActionAt: nextActionAt || null,
+        leaseUntil: null,
         lastReconciledAt: new Date(),
       },
       transacting: trx,
@@ -636,6 +799,485 @@ export async function checkSnappayEligibility(strapi: Strapi, amountIrr: number)
   }
 }
 
+async function enqueueImmediateReconciliation(strapi: Strapi, bundle: AttemptBundle) {
+  const key = `reconcile:${bundle.attempt.id}`;
+  const existing: any = await strapi.db.query(OPERATION_UID).findOne({
+    where: { idempotencyKey: key },
+  } as any);
+  if (existing?.Status === "Succeeded" || existing?.Status === "Processing") {
+    return existing;
+  }
+  const nextRunAt = new Date();
+  const operation = existing
+    ? await strapi.db.query(OPERATION_UID).update({
+        where: { id: existing.id },
+        data: {
+          Status: "Queued",
+          nextRunAt,
+          leaseUntil: null,
+        },
+      } as any)
+    : await strapi.db.query(OPERATION_UID).create({
+        data: {
+          idempotencyKey: key,
+          OperationType: "RECONCILE",
+          Status: "Queued",
+          retryCount: 0,
+          nextRunAt,
+          metadata: { reason: "checkout_status_fulfill" },
+          attemptKey: bundle.attempt.id,
+          payment_attempt: bundle.attempt.id,
+          order: bundle.order.id,
+          contract_transaction: bundle.transaction.id,
+        },
+      } as any);
+  await enqueueSnappayOperation(Number(operation.id), Number(operation.retryCount || 0), 0);
+  return operation;
+}
+
+async function persistIssuedToken(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  result: SnappayCallResult<{ paymentToken: string; paymentPageUrl: string }>,
+  transactionId: string,
+  callbackNonce: string,
+  tokenAttemptSeq: number,
+): Promise<void> {
+  const paymentToken = String(result.response?.paymentToken || "");
+  const tokenHash = snappayTokenFingerprint(paymentToken);
+  const fingerprint = displaySnappayFingerprint(tokenHash);
+  const now = new Date();
+  const callbackNonceHash = hashSnappayCallbackNonce(callbackNonce);
+  const providerResponse = mergeAttemptProviderResponse(
+    bundle,
+    result,
+    withIssuedSnappayToken(bundle.attempt.providerResponse, {
+      seq: tokenAttemptSeq,
+      transactionId,
+      callbackNonceHash,
+      paymentTokenFingerprint: fingerprint,
+      paymentToken,
+    }),
+  );
+  await strapi.db.transaction(async ({ trx }) => {
+    await trx.raw("SELECT id FROM contract_transactions WHERE id = ? FOR UPDATE", [
+      bundle.transaction.id,
+    ]);
+    await strapi.db.query(TX_UID).update({
+      where: { id: bundle.transaction.id },
+      data: {
+        // Current generation only. Previous tokens stay on previousGeneration.
+        TrackId: paymentToken,
+        external_id: transactionId,
+        GatewayStatus: "PENDING",
+        GatewayResponse: {
+          ...providerSummary(result),
+          tokenFingerprint: fingerprint,
+        },
+        LastHttpStatus: result.diagnostic.httpStatus,
+        LastProviderCode: result.diagnostic.providerCode,
+      },
+      transacting: trx,
+    } as any);
+    await strapi.db.query(CONTRACT_UID).update({
+      where: { id: bundle.contract.id },
+      data: { external_id: transactionId },
+      transacting: trx,
+    } as any);
+    await strapi.db.query(ATTEMPT_UID).update({
+      where: { id: bundle.attempt.id },
+      data: {
+        Status: "Redirected",
+        providerStatus: "PENDING",
+        providerReference: transactionId,
+        redirectUrl: result.response?.paymentPageUrl,
+        redirectedAt: now,
+        nextAction: "await_callback",
+        nextActionAt: null,
+        leaseUntil: null,
+        failureCode: null,
+        failureMessage: null,
+        callbackNonce,
+        callbackNonceHash,
+        providerResponse,
+      },
+      transacting: trx,
+    } as any);
+  });
+  bundle.attempt.providerReference = transactionId;
+  bundle.attempt.redirectUrl = result.response?.paymentPageUrl;
+  bundle.attempt.providerResponse = providerResponse;
+  bundle.attempt.callbackNonceHash = callbackNonceHash;
+  bundle.transaction.TrackId = paymentToken;
+  bundle.transaction.external_id = transactionId;
+  await recordTokenOperation(strapi, bundle, "Succeeded", result);
+  await createOrReuseOperation(strapi, bundle, {
+    type: "RECONCILE",
+    idempotencyKey: `reconcile:${bundle.attempt.id}`,
+    delayMs: SNAPPAY_RESUME_REDIRECT_MAX_AGE_MS,
+  });
+}
+
+async function persistPendingSnappayDispatch(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  input: {
+    seq: number;
+    transactionId: string;
+    callbackNonce: string;
+  },
+): Promise<void> {
+  const callbackNonceHash = hashSnappayCallbackNonce(input.callbackNonce);
+  const seeded = seedSnappayGenerationFromLegacyAttempt({
+    providerResponse: bundle.attempt.providerResponse,
+    transactionId: bundle.attempt.providerReference,
+    callbackNonceHash: bundle.attempt.callbackNonceHash,
+    paymentToken: bundle.transaction.TrackId,
+    redirectedAt: bundle.attempt.redirectedAt,
+    providerStatus: bundle.attempt.providerStatus,
+  });
+  const pending = buildSnappayPendingDispatch({
+    seq: input.seq,
+    transactionId: input.transactionId,
+    callbackNonceHash,
+  });
+  const providerResponse = withSnappayPendingDispatch(seeded, pending);
+  await strapi.db.query(ATTEMPT_UID).update({
+    where: { id: bundle.attempt.id },
+    data: {
+      providerReference: input.transactionId,
+      callbackNonce: input.callbackNonce,
+      callbackNonceHash,
+      providerResponse,
+    },
+  } as any);
+  bundle.attempt.providerReference = input.transactionId;
+  bundle.attempt.callbackNonce = input.callbackNonce;
+  bundle.attempt.callbackNonceHash = callbackNonceHash;
+  bundle.attempt.providerResponse = providerResponse;
+}
+
+async function requestSnappayToken(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  input: { callbackNonce: string; mobile?: string; retarget: boolean },
+): Promise<InitiateSnappayResult> {
+  if (snappayHasInFlightDispatch(bundle.attempt.providerResponse)) {
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_TOKEN_UNRESOLVED",
+      "A previous SnappPay token request has no stored payment token",
+      undefined,
+      "reconcile",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  const previousSeq = readTokenAttemptSeq(bundle);
+  if (input.retarget) {
+    if (!snappayProviderGenerationIsTerminal(bundle.attempt)) {
+      await markAttemptUnknown(
+        strapi,
+        bundle,
+        "SNAPPAY_RETARGET_NOT_TERMINAL",
+        "Refusing a replacement token while the earlier SnappPay generation is unresolved",
+        undefined,
+        "reconcile",
+      );
+      return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+    }
+    if (!orderCanReceiveReplacementGeneration(bundle)) {
+      await markAttemptUnknown(
+        strapi,
+        bundle,
+        "SNAPPAY_RETARGET_ORDER_UNUSABLE",
+        "The checkout order cannot receive another SnappPay generation",
+        undefined,
+        "reconcile",
+      );
+      return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+    }
+  } else if (previousSeq > 0) {
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_TOKEN_UNRESOLVED",
+      "A previous SnappPay token request has no stored payment token",
+      undefined,
+      "reconcile",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  const nextSeq = nextSnappayGenerationSeq(previousSeq);
+  if (!isConsecutiveSnappayGeneration(previousSeq, nextSeq)) {
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_GENERATION_SKIP",
+      "Refusing to skip a SnappPay payment generation",
+      undefined,
+      "manual_review",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  const transactionId = input.retarget
+    ? generateSnappayTransactionId()
+    : String(bundle.attempt.providerReference || "");
+  const callbackNonce = input.retarget ? generateSnappayCallbackNonce() : input.callbackNonce;
+  if (!isValidSnappayTransactionId(transactionId)) {
+    await failInitiation(
+      strapi,
+      bundle,
+      "SNAPPAY_TRANSACTION_ID_INVALID",
+      "SnappPay transaction id is invalid",
+    );
+    return failedInitiation(bundle, "SNAPPAY_TRANSACTION_ID_INVALID");
+  }
+
+  const previousReference = bundle.attempt.providerReference;
+  bundle.attempt.providerReference = transactionId;
+  let payload: SnappayTokenRequest;
+  try {
+    payload = await buildTokenPayload(strapi, bundle, input.mobile, callbackNonce);
+  } catch (error: unknown) {
+    bundle.attempt.providerReference = previousReference;
+    const code = String((error as Error)?.message || "SNAPPAY_PAYLOAD_INVALID").split(":")[0];
+    await failInitiation(strapi, bundle, code, "SnappPay request data is invalid");
+    return failedInitiation(bundle, code);
+  }
+
+  try {
+    await persistPendingSnappayDispatch(strapi, bundle, {
+      seq: nextSeq,
+      transactionId,
+      callbackNonce,
+    });
+  } catch (error: unknown) {
+    bundle.attempt.providerReference = previousReference;
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_TOKEN_UNRESOLVED",
+      "Could not persist the SnappPay token candidate before calling the provider",
+      undefined,
+      "reconcile",
+    );
+    strapi.log.error("SnappPay pending dispatch persist failed", {
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order.id,
+      error: String((error as Error)?.message || error).slice(0, 300),
+    });
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  const result = await createSnappayAdapter(strapi).requestPaymentToken(payload);
+  if (!result.successful || !result.response?.paymentToken || !result.response?.paymentPageUrl) {
+    const providerCode = Number(result.diagnostic.providerCode || 0);
+    if (providerCode === 1009) {
+      await recordTokenOperation(strapi, bundle, "Unknown", result);
+      const storedToken = await resolveSnappayPaymentToken(strapi, bundle);
+      if (storedToken) {
+        return observeExistingSnappayToken(strapi, bundle, storedToken, {
+          allowRetarget: false,
+          mobile: input.mobile,
+          callbackNonce,
+        });
+      }
+      await markAttemptUnknown(
+        strapi,
+        bundle,
+        "SNAPPAY_TOKEN_1009",
+        "SnappPay reported a duplicate transaction without a stored token for this generation",
+        undefined,
+        "reconcile",
+      );
+      return failedInitiation(bundle, "SNAPPAY_TOKEN_DUPLICATE", "Unknown");
+    }
+    const code = `SNAPPAY_TOKEN_${providerCode || result.diagnostic.httpStatus || "FAILED"}`;
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      code,
+      result.errorData?.message || "SnappPay token request result is unresolved",
+      undefined,
+      "reconcile",
+    );
+    await recordTokenOperation(strapi, bundle, isAmbiguousResult(result) ? "Unknown" : "Failed", result);
+    strapi.log.error("SnappPay token initiation did not return a usable token", {
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order.id,
+      transactionId,
+      ...providerSummary(result),
+    });
+    return failedInitiation(bundle, isAmbiguousResult(result) ? "PAYMENT_UNKNOWN" : code, "Unknown");
+  }
+
+  await persistIssuedToken(strapi, bundle, result, transactionId, callbackNonce, nextSeq);
+  return redirectedInitiation(bundle, String(result.response.paymentPageUrl), transactionId);
+}
+
+async function observeExistingSnappayToken(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  paymentToken: string,
+  options: { allowRetarget: boolean; mobile?: string; callbackNonce: string },
+): Promise<InitiateSnappayResult> {
+  const adapter = createSnappayAdapter(strapi);
+  const statusResult = await adapter.status(paymentToken);
+  const providerStatus = normalizeSnappayProviderStatus(statusResult.response?.status);
+  const code = Number(statusResult.diagnostic.providerCode || 0);
+  await updateProviderObservation(strapi, bundle, statusResult, providerStatus);
+
+  if (isAmbiguousResult(statusResult)) {
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_STATUS_UNREADABLE",
+      "SnappPay status is not readable; refusing a second token",
+      undefined,
+      "reconcile",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  if (statusResult.successful) {
+    const identity = statusMatchesActiveSnappayGeneration(bundle.attempt, {
+      transactionId: statusResult.response?.transactionId,
+      amount: statusResult.response?.amount,
+    });
+    if (!identity.ok) {
+      await markAttemptUnknown(
+        strapi,
+        bundle,
+        identity.reason === "amount" ? "SNAPPAY_STATUS_AMOUNT_MISMATCH" : "SNAPPAY_STATUS_TX_MISMATCH",
+        "SnappPay status does not match the active payment generation",
+        undefined,
+        "manual_review",
+      );
+      return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+    }
+  }
+
+  if (providerStatus === "SETTLE" || providerStatus === "VERIFY") {
+    await enqueueImmediateReconciliation(strapi, bundle);
+    return redirectedInitiation(
+      bundle,
+      paymentResultUrl(Number(bundle.order.id), "processing"),
+      String(bundle.attempt.providerReference || ""),
+    );
+  }
+
+  if (hasValidatedOkCallback(bundle) && isInvestigationStatusCode(code)) {
+    await enqueueImmediateReconciliation(strapi, bundle);
+    return redirectedInitiation(
+      bundle,
+      paymentResultUrl(Number(bundle.order.id), "processing"),
+      String(bundle.attempt.providerReference || ""),
+    );
+  }
+
+  if (code === 1048) {
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_VENTURE_MISMATCH",
+      "SnappPay reported a merchant mismatch for this payment token",
+      undefined,
+      "manual_review",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  if (code === 1007) {
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_STATUS_NOT_FOUND",
+      "SnappPay could not resolve this payment token; refusing a replacement token",
+      undefined,
+      "manual_review",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  if (providerStatus === "PENDING") {
+    if (hasValidatedOkCallback(bundle)) {
+      await enqueueImmediateReconciliation(strapi, bundle);
+      return redirectedInitiation(
+        bundle,
+        paymentResultUrl(Number(bundle.order.id), "processing"),
+        String(bundle.attempt.providerReference || ""),
+      );
+    }
+    const resumeUrl = String(bundle.attempt.redirectUrl || "");
+    if (resumeUrl) {
+      await strapi.db.query(ATTEMPT_UID).update({
+        where: { id: bundle.attempt.id },
+        data: { leaseUntil: null },
+      } as any);
+      return redirectedInitiation(bundle, resumeUrl);
+    }
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_PENDING_WITHOUT_REDIRECT",
+      "SnappPay payment is pending without a resume URL",
+      undefined,
+      "reconcile",
+    );
+    await enqueueImmediateReconciliation(strapi, bundle);
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  if (providerStatus === "REGISTERED") {
+    if (hasFailedCallback(bundle)) {
+      await enqueueImmediateReconciliation(strapi, bundle);
+      return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+    }
+    const resumeUrl = String(bundle.attempt.redirectUrl || "");
+    if (resumeUrl) {
+      await strapi.db.query(ATTEMPT_UID).update({
+        where: { id: bundle.attempt.id },
+        data: { leaseUntil: null },
+      } as any);
+      return redirectedInitiation(bundle, resumeUrl);
+    }
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_REGISTERED_WITHOUT_REDIRECT",
+      "SnappPay payment is registered without a resume URL",
+      undefined,
+      "reconcile",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  if (providerStatus === "REVERT" || providerStatus === "CANCEL") {
+    if (!options.allowRetarget) {
+      return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+    }
+    return requestSnappayToken(strapi, bundle, {
+      callbackNonce: options.callbackNonce,
+      mobile: options.mobile,
+      retarget: true,
+    });
+  }
+
+  await markAttemptUnknown(
+    strapi,
+    bundle,
+    "SNAPPAY_STATUS_UNREADABLE",
+    "SnappPay status is not authoritative",
+    undefined,
+    "reconcile",
+  );
+  return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+}
+
 export async function initiateSnappayPayment(
   strapi: Strapi,
   input: {
@@ -643,16 +1285,7 @@ export async function initiateSnappayPayment(
     callbackNonce: string;
     mobile?: string;
   },
-): Promise<{
-  success: boolean;
-  status: "Redirected" | "Failed" | "Unknown";
-  orderId: number;
-  contractId: number;
-  transactionId: string;
-  redirectUrl?: string;
-  errorCode?: string;
-  message?: string;
-}> {
+): Promise<InitiateSnappayResult> {
   if (!isSnappayHardenedInitiationEnabled()) {
     throw new Error("SNAPPAY_HARDENED_INITIATION_DISABLED");
   }
@@ -662,139 +1295,63 @@ export async function initiateSnappayPayment(
     Gateway: "snappay",
   });
   if (!bundle) throw new Error("SNAPPAY_ATTEMPT_NOT_FOUND");
-  const transactionId = String(bundle.attempt.providerReference || "");
-  if (!isValidSnappayTransactionId(transactionId)) {
-    throw new Error("SNAPPAY_TRANSACTION_ID_INVALID");
+  const status = String(bundle.attempt.Status || "");
+  if (status === "Succeeded") {
+    return redirectedInitiation(
+      bundle,
+      paymentResultUrl(Number(bundle.order.id), "success"),
+    );
   }
+  if (
+    ["Failed", "Cancelled", "Expired"].includes(status) &&
+    !snappayProviderPaymentIsUnresolved(bundle.attempt, bundle.transaction.TrackId)
+  ) {
+    return failedInitiation(bundle, "CHECKOUT_ATTEMPT_CONFLICT");
+  }
+
+  const claimed = await claimPaymentAttemptForSnappayInitiation(strapi, Number(bundle.attempt.id));
+  if (!claimed) {
+    return failedInitiation(bundle, "PAYMENT_IN_PROGRESS", "Unknown");
+  }
+
+  if (snappayHasInFlightDispatch(bundle.attempt.providerResponse)) {
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_TOKEN_UNRESOLVED",
+      "A previous SnappPay token request has no stored payment token",
+      undefined,
+      "reconcile",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  const paymentToken = await resolveSnappayPaymentToken(strapi, bundle);
+  if (paymentToken) {
+    return observeExistingSnappayToken(strapi, bundle, paymentToken, {
+      allowRetarget: true,
+      mobile: input.mobile,
+      callbackNonce: input.callbackNonce,
+    });
+  }
+
   if (!matchesSnappayCallbackNonce(input.callbackNonce, bundle.attempt.callbackNonceHash)) {
-    throw new Error("SNAPPAY_CALLBACK_NONCE_MISMATCH");
-  }
-  if (bundle.attempt.Status === "Redirected" && bundle.attempt.redirectUrl) {
-    return {
-      success: true,
-      status: "Redirected",
-      orderId: Number(bundle.order.id),
-      contractId: Number(bundle.contract.id),
-      transactionId,
-      redirectUrl: bundle.attempt.redirectUrl,
-    };
-  }
-  if (bundle.attempt.Status !== "Pending") {
-    return {
-      success: false,
-      status: bundle.attempt.Status === "Failed" ? "Failed" : "Unknown",
-      orderId: Number(bundle.order.id),
-      contractId: Number(bundle.contract.id),
-      transactionId,
-      errorCode: "PAYMENT_IN_PROGRESS",
-      message: "SnappPay initiation is already being processed",
-    };
-  }
-
-  let payload: SnappayTokenRequest;
-  try {
-    payload = await buildTokenPayload(strapi, bundle, input.mobile, input.callbackNonce);
-  } catch (error: any) {
-    await failInitiation(
+    await markAttemptUnknown(
       strapi,
       bundle,
-      String(error?.message || "SNAPPAY_PAYLOAD_INVALID").split(":")[0],
-      "SnappPay request data is invalid",
+      "SNAPPAY_CALLBACK_NONCE_MISMATCH",
+      "SnappPay callback correlation secret did not match",
+      undefined,
+      "manual_review",
     );
-    throw error;
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
   }
 
-  const result = await createSnappayAdapter(strapi).requestPaymentToken(payload);
-  if (!result.successful || !result.response?.paymentToken || !result.response?.paymentPageUrl) {
-    const code = `SNAPPAY_TOKEN_${
-      result.diagnostic.providerCode || result.diagnostic.httpStatus || "FAILED"
-    }`;
-    if (isAmbiguousResult(result)) {
-      await markAttemptUnknown(strapi, bundle, code, "SnappPay token request result is ambiguous");
-      await recordTokenOperation(strapi, bundle, "Unknown", result);
-      strapi.log.error("SnappPay token initiation requires manual review", {
-        attemptId: bundle.attempt.attemptId,
-        orderId: bundle.order.id,
-        transactionId,
-        ...providerSummary(result),
-      });
-      return {
-        success: false,
-        status: "Unknown",
-        orderId: Number(bundle.order.id),
-        contractId: Number(bundle.contract.id),
-        transactionId,
-        errorCode: "PAYMENT_UNKNOWN",
-        message: "نتیجه شروع پرداخت هنوز مشخص نیست",
-      };
-    }
-    await failInitiation(
-      strapi,
-      bundle,
-      code,
-      result.errorData?.message || "SnappPay token request failed",
-    );
-    await recordTokenOperation(strapi, bundle, "Failed", result);
-    return {
-      success: false,
-      status: "Failed",
-      orderId: Number(bundle.order.id),
-      contractId: Number(bundle.contract.id),
-      transactionId,
-      errorCode: code,
-      message: "شروع پرداخت اسنپ‌پی انجام نشد",
-    };
-  }
-
-  const paymentToken = String(result.response.paymentToken);
-  const tokenHash = snappayTokenFingerprint(paymentToken);
-  const now = new Date();
-  await strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM contract_transactions WHERE id = ? FOR UPDATE", [
-      bundle.transaction.id,
-    ]);
-    await strapi.db.query(TX_UID).update({
-      where: { id: bundle.transaction.id },
-      data: {
-        // The provider token is stored as-is. It is not exposed to customers:
-        // order.ts strips TrackId from every SnappPay order response.
-        TrackId: paymentToken,
-        GatewayStatus: "PENDING",
-        GatewayResponse: {
-          ...providerSummary(result),
-          tokenFingerprint: displaySnappayFingerprint(tokenHash),
-        },
-        LastHttpStatus: result.diagnostic.httpStatus,
-        LastProviderCode: result.diagnostic.providerCode,
-      },
-      transacting: trx,
-    } as any);
-    await strapi.db.query(ATTEMPT_UID).update({
-      where: { id: bundle.attempt.id },
-      data: {
-        Status: "Redirected",
-        providerStatus: "PENDING",
-        redirectUrl: result.response.paymentPageUrl,
-        redirectedAt: now,
-        nextAction: "await_callback",
-        nextActionAt: null,
-        providerResponse: {
-          ...providerSummary(result),
-          tokenFingerprint: displaySnappayFingerprint(tokenHash),
-        },
-      },
-      transacting: trx,
-    } as any);
+  return requestSnappayToken(strapi, bundle, {
+    callbackNonce: input.callbackNonce,
+    mobile: input.mobile,
+    retarget: false,
   });
-  await recordTokenOperation(strapi, bundle, "Succeeded", result);
-  return {
-    success: true,
-    status: "Redirected",
-    orderId: Number(bundle.order.id),
-    contractId: Number(bundle.contract.id),
-    transactionId,
-    redirectUrl: result.response.paymentPageUrl,
-  };
 }
 
 async function createOrReuseOperation(
@@ -984,9 +1541,13 @@ export async function acceptSnappayCallback(
     };
   }
   const bundle = await findAttemptByTransactionId(strapi, transactionId);
-  const nonceMatches =
-    isValidSnappayCallbackNonce(nonce) &&
-    matchesSnappayCallbackNonce(nonce, bundle?.attempt?.callbackNonceHash);
+  const nonceMatches = Boolean(
+    bundle &&
+      isValidSnappayCallbackNonce(nonce) &&
+      rememberedSnappayNonceHashes(bundle.attempt).some((hash) =>
+        matchesSnappayCallbackNonce(nonce, hash),
+      ),
+  );
   if (!bundle || !nonceMatches || Number(bundle.attempt.Amount) !== Number(input.amount)) {
     strapi.log.warn("Rejected uncorrelated SnappPay callback", {
       transactionId,
@@ -1000,7 +1561,14 @@ export async function acceptSnappayCallback(
     };
   }
   const orderId = Number(bundle.order.id);
-  if (["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(bundle.attempt.Status))) {
+  const locallyTerminal = ["Succeeded", "Cancelled", "Failed", "Expired"].includes(
+    String(bundle.attempt.Status),
+  );
+  if (
+    locallyTerminal &&
+    (String(bundle.attempt.Status) === "Succeeded" ||
+      !snappayProviderPaymentIsUnresolved(bundle.attempt, bundle.transaction.TrackId))
+  ) {
     return {
       accepted: true,
       orderId,
@@ -1086,16 +1654,26 @@ export function isSnappayAttemptParkedForReview(attempt: any): boolean {
 
 function assertOperatorBundle(
   bundle: AttemptBundle,
-  options: { allowParkedForReview?: boolean } = {},
+  options: {
+    allowParkedForReview?: boolean;
+    /** Cancel may run after auto-shipment; update/adjust stay pre-fulfilment. */
+    allowFulfilledOrderStatuses?: boolean;
+  } = {},
 ): void {
-  if (bundle.order.ShippingBarcode) {
+  // Item update still requires the barcode to be voided first. Cancel clears the
+  // local barcode when the provider confirms, so a barcode must not block it.
+  if (!options.allowFulfilledOrderStatuses && bundle.order.ShippingBarcode) {
     throw new Error("SNAPPAY_OPERATOR_STATE_INVALID");
   }
 
+  const orderStatus = String(bundle.order.Status || "");
+  const allowedOrderStatuses = options.allowFulfilledOrderStatuses
+    ? ["Started", "Done", "Shipment"]
+    : ["Started"];
   const settled =
     bundle.attempt.Status === "Succeeded" &&
     bundle.attempt.providerStatus === "SETTLE" &&
-    bundle.order.Status === "Started";
+    allowedOrderStatuses.includes(orderStatus);
   if (settled) return;
 
   // Recovery path: automatic reconciliation exhausted itself and parked the
@@ -1123,8 +1701,12 @@ export async function queueSnappayAdminCancel(
   });
   if (!bundle) throw new Error("SNAPPAY_ATTEMPT_NOT_FOUND");
   // Cancel is the operator's recovery tool, so it must also work on an attempt
-  // that automatic reconciliation parked for manual review.
-  assertOperatorBundle(bundle, { allowParkedForReview: true });
+  // that automatic reconciliation parked for manual review, and on orders that
+  // have already been marked Done / Shipment (often with a local Anipo barcode).
+  assertOperatorBundle(bundle, {
+    allowParkedForReview: true,
+    allowFulfilledOrderStatuses: true,
+  });
   const reason = assertOperatorReason(input.reason);
   const digest = stableDigest({
     orderId: input.orderId,
@@ -1682,12 +2264,13 @@ async function performVerify(strapi: Strapi, operation: any, bundle: AttemptBund
   }
   const code = verifyResult.diagnostic.providerCode || statusResult.diagnostic.providerCode;
   if (code === 1007 || code === 1048) {
-    return markManualReview(
+    return markActionManualReview(
       strapi,
       operation,
       bundle,
-      `SNAPPAY_VERIFY_${code}`,
-      "SnappPay verification cannot be reconciled automatically",
+      code === 1048 ? "SNAPPAY_VENTURE_MISMATCH" : "SNAPPAY_STATUS_NOT_FOUND",
+      "SnappPay verification could not resolve this payment token",
+      operationObservation(verifyResult, status),
     );
   }
   return scheduleOperationRetry(
@@ -1724,13 +2307,14 @@ async function performRevert(strapi: Strapi, operation: any, bundle: AttemptBund
   if (status === "VERIFY") {
     return performSettle(strapi, operation, bundle, token, true);
   }
-  if (status === "REGISTERED") {
+  const revertCode = Number(revertResult.diagnostic.providerCode || statusResult.diagnostic.providerCode || 0);
+  if (status === "REGISTERED" || revertCode === 1011) {
     return scheduleOperationRetry(
       strapi,
       operation,
       bundle,
       30 * 60 * 1000,
-      "SnappPay revert is still registered",
+      "SnappPay revert is still registered; waiting 30 minutes before retrying",
     );
   }
   if (Number(operation.retryCount || 0) < 1) {
@@ -1914,6 +2498,18 @@ async function executeRecoveryAction(
     case "FINALIZE_LOCAL":
       return finalizeAndComplete(strapi, operation, bundle);
     case "CANCEL_LOCAL": {
+      const fresh = await loadAttemptBundle(strapi, { id: bundle.attempt.id });
+      if (fresh) {
+        if (["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(fresh.attempt.Status))) {
+          await markOperationSucceeded(strapi, operation.id, fresh.attempt.providerStatus);
+          return;
+        }
+        const freshToken = await resolveSnappayPaymentToken(strapi, fresh);
+        if (freshToken && freshToken !== token) {
+          await markOperationSucceeded(strapi, operation.id, fresh.attempt.providerStatus);
+          return;
+        }
+      }
       const status = normalizeSnappayProviderStatus(
         bundle.transaction.GatewayStatus || bundle.attempt.providerStatus,
       );
@@ -2131,6 +2727,23 @@ export async function processSnappayOperation(
       providerCode: statusResult.diagnostic.providerCode,
       attemptAgeMs: attemptCreatedAt !== null ? Date.now() - attemptCreatedAt : null,
     });
+    if (action === "MANUAL_REVIEW") {
+      const code = Number(statusResult.diagnostic.providerCode || 0);
+      const reviewCode =
+        code === 1048
+          ? "SNAPPAY_VENTURE_MISMATCH"
+          : code === 1007
+            ? "SNAPPAY_STATUS_NOT_FOUND"
+            : "SNAPPAY_MANUAL_REVIEW";
+      await markManualReview(
+        strapi,
+        operation,
+        bundle,
+        reviewCode,
+        "SnappPay provider state requires investigation, not a replacement payment",
+      );
+      return { status: "completed", operationId, providerStatus, action };
+    }
     await executeRecoveryAction(strapi, operation, bundle, token, action);
     return { status: "completed", operationId, providerStatus, action };
   } catch (error: any) {

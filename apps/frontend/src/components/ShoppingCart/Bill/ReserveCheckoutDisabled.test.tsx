@@ -30,6 +30,9 @@ jest.mock("@/contexts/CartContext", () => ({
     clearCart: jest.fn(),
     openDrawer: jest.fn(),
     refreshCart: jest.fn(),
+    setStockNotice: jest.fn(),
+    stockNotice: null,
+    dismissStockNotice: jest.fn(),
   }),
 }));
 

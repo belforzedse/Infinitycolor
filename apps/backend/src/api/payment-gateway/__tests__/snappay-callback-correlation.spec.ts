@@ -19,6 +19,8 @@ function createHarness(input?: {
   amount?: number;
   callbackNonceHash?: string | null;
   legacy?: boolean;
+  providerReference?: string;
+  providerResponse?: Record<string, unknown>;
 }) {
   const attempt = {
     id: 11,
@@ -26,8 +28,9 @@ function createHarness(input?: {
     Status: "Redirected",
     Gateway: "snappay",
     Amount: input?.amount ?? 1_200_000,
-    providerReference: "ABC1234567",
+    providerReference: input?.providerReference ?? "ABC1234567",
     callbackNonceHash: input?.callbackNonceHash,
+    providerResponse: input?.providerResponse || {},
     quoteSnapshot: input?.legacy ? { legacy: true } : {},
     order: { id: 22, user: { id: 5 }, order_items: [] },
     contract: {
@@ -36,7 +39,7 @@ function createHarness(input?: {
         {
           id: 44,
           external_source: "SnappPay",
-          external_id: "ABC1234567",
+          external_id: input?.providerReference ?? "ABC1234567",
         },
       ],
     },
@@ -49,7 +52,15 @@ function createHarness(input?: {
   }));
   const queries: Record<string, any> = {
     "api::payment-attempt.payment-attempt": {
-      findOne: jest.fn().mockResolvedValue(attempt),
+      findOne: jest.fn().mockImplementation(async ({ where }: { where?: Record<string, unknown> }) => {
+        if (where?.providerReference && where.providerReference !== attempt.providerReference) {
+          return null;
+        }
+        if (where?.id && Number(where.id) !== attempt.id) {
+          return null;
+        }
+        return attempt;
+      }),
       update: attemptUpdate,
     },
     "api::payment-operation.payment-operation": {
@@ -59,7 +70,12 @@ function createHarness(input?: {
     },
   };
   const strapi = {
-    db: { query: jest.fn((uid: string) => queries[uid]) },
+    db: {
+      query: jest.fn((uid: string) => queries[uid]),
+      connection: {
+        raw: jest.fn().mockResolvedValue({ rows: [{ id: 11 }] }),
+      },
+    },
     log: {
       warn: jest.fn(),
       error: jest.fn(),
@@ -156,5 +172,32 @@ describe("acceptSnappayCallback correlation", () => {
     expect(attemptUpdate).not.toHaveBeenCalled();
     expect(operationCreate).not.toHaveBeenCalled();
     expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+
+  it("accepts a late callback for a previous generation transaction id", async () => {
+    const previousNonce = generateSnappayCallbackNonce();
+    const currentNonce = generateSnappayCallbackNonce();
+    const { strapi, attemptUpdate } = createHarness({
+      providerReference: "NEWNEWNEW1",
+      callbackNonceHash: hashSnappayCallbackNonce(currentNonce),
+      providerResponse: {
+        previousGeneration: {
+          seq: 1,
+          transactionId: "ABC1234567",
+          dispatchedAt: new Date().toISOString(),
+          callbackNonceHash: hashSnappayCallbackNonce(previousNonce),
+        },
+      },
+    });
+
+    const result = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 1_200_000,
+      nonce: previousNonce,
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(attemptUpdate).toHaveBeenCalled();
   });
 });

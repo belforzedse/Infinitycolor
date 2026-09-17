@@ -198,19 +198,9 @@ async function expireStockReservationsBatch(
         }
 
         // Reaching this line means the attempt was parked for review or outlived
-        // the defer ceiling. Both are abandonment: 1007 NOT_FOUND on `status` is
-        // SnappPay reporting a token that never reached the bank gateway for the
-        // first installment, so no money was taken. Verified on production
-        // 2026-09-16 — 93% of parked attempts never sent a callback, and 276 OK
-        // callbacks produced 275 settled orders, so the paid-but-parked case is
-        // ~1-in-276 and is handled upstream by the OK-callback VERIFY branch in
-        // snappay-state-machine.ts.
-        //
-        // An earlier revision skipped the cancel here and left the order `Paying`
-        // with `ReservationStatus = 'Expired'` for an operator. Nothing re-queues
-        // that state (this job filters on `Reserved`), so it accumulated roughly
-        // 63 abandoned checkouts a day into a review queue with nothing to
-        // adjudicate. Cancelling is the correct outcome.
+        // the defer ceiling. Local cancel frees stock; it does not prove the
+        // provider payment is terminal. Checkout must still refuse a second token
+        // until GET /status shows a documented terminal state.
         const orderCancelResult = await trx.raw(
           `UPDATE orders
            SET status = 'Cancelled'

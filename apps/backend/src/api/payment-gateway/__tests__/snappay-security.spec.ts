@@ -70,22 +70,13 @@ describe("SnappPay recovery policy", () => {
     expect(decideSnappayRecovery({ providerCode: 1051 })).toBe("FAIL_CONFIGURATION");
   });
 
-  it("treats 1007/1048 as definitive regardless of how the status call ended", () => {
-    // `providerCode` is only ever populated from a parsed SnappPay error
-    // envelope — a timeout or transport failure leaves it undefined — so a code
-    // here always means the provider answered. 1007 NOT_FOUND on `status` is
-    // SnappPay reporting a token that never reached the bank gateway for the
-    // first installment, i.e. an abandoned checkout, and manual review is the
-    // action its own error workbook prescribes.
-    //
-    // Production 2026-09-16 settled this: status() returns HTTP 200 for 64% of
-    // attempts (275 SETTLE, 83 REVERT, 3 PENDING), so the endpoint is not broken,
-    // and 93% of the 404/1007 population never sent a callback at all.
+  it("treats 1007/1048 as investigation, not local cancel or replacement", () => {
+    // Workbook Action rows 34–35: wrong paymentToken / other merchant. Contact
+    // support. These codes are not "unpaid, mint another token".
     expect(decideSnappayRecovery({ providerCode: 1007 })).toBe("MANUAL_REVIEW");
     expect(decideSnappayRecovery({ providerCode: 1048 })).toBe("MANUAL_REVIEW");
     expect(decideSnappayRecovery({ providerCode: 1051 })).toBe("FAIL_CONFIGURATION");
 
-    // A FAILED callback alongside an unresolvable token is still abandonment.
     expect(
       decideSnappayRecovery({ providerCode: 1007, callbackState: "FAILED" }),
     ).toBe("MANUAL_REVIEW");
@@ -126,16 +117,14 @@ describe("SnappPay recovery policy", () => {
       ).toBe("RECONCILE");
     });
 
-    it("reverts an unpaid token once the checkout is abandoned", () => {
-      // No money was ever taken for a REGISTERED token, so there is nothing for a
-      // human to adjudicate — reverting releases the stock without manual review.
+    it("keeps reconciling a REGISTERED token even after the old abandonment window", () => {
       expect(
         decideSnappayRecovery({
           providerStatus: "REGISTERED",
           attemptAgeMs: 31 * 60 * 1000,
           abandonAfterMs,
         }),
-      ).toBe("REVERT");
+      ).toBe("RECONCILE");
     });
 
     it("still reconciles an unreadable provider state regardless of age", () => {

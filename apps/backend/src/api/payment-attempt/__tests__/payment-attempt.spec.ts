@@ -1,5 +1,6 @@
 import {
   claimPaymentAttemptForInitiation,
+  claimPaymentAttemptForSnappayInitiation,
   paymentAttemptResponse,
   reconcileOrderPaymentAttempt,
 } from "../services/payment-attempt";
@@ -22,6 +23,17 @@ describe("payment attempt initiation", () => {
     } as any;
 
     await expect(claimPaymentAttemptForInitiation(strapi, 17)).resolves.toBe(false);
+  });
+
+  it("leases a live SnappPay attempt so two tabs cannot mint a second token", async () => {
+    const raw = jest.fn().mockResolvedValue({ rows: [{ id: 17 }] });
+    const strapi = { db: { connection: { raw } } } as any;
+
+    await expect(claimPaymentAttemptForSnappayInitiation(strapi, 17)).resolves.toBe(true);
+    expect(raw).toHaveBeenCalledWith(
+      expect.stringContaining("status IN ('Created', 'Pending', 'Redirected', 'Unknown', 'Failed', 'Cancelled', 'Expired')"),
+      expect.arrayContaining([17]),
+    );
   });
 
   it("does not present an in-progress attempt as a completed checkout", () => {

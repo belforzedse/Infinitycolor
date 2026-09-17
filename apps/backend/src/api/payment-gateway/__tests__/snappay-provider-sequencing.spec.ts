@@ -163,17 +163,32 @@ describe("SnappPay provider call sequencing", () => {
     expect(mockedFinalize).toHaveBeenCalledTimes(1);
   });
 
-  it("reverts an abandoned REGISTERED token without settling it", async () => {
+  it("does not revert a REGISTERED token merely because it is older than the reservation window", async () => {
     const { calls } = createAdapter({ status: async () => envelope("REGISTERED") });
     const { strapi, attempt } = createHarness();
-    // Older than the abandonment window: the customer never came back.
     attempt.createdAt = new Date(Date.now() - 90 * 60 * 1000);
 
     await processSnappayOperation(strapi, 88);
 
-    expect(calls).toContain("revert");
-    expect(calls).not.toContain("settle");
-    expect(mockedCancelLocal).toHaveBeenCalled();
+    expect(calls).toEqual(["status"]);
+    expect(calls).not.toContain("revert");
+    expect(mockedCancelLocal).not.toHaveBeenCalled();
+  });
+
+  it("parks a parsed 1007 for investigation without cancelling locally", async () => {
+    const { calls } = createAdapter({
+      status: async () => ({
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1007 },
+      }),
+    });
+    const { strapi } = createHarness();
+
+    await processSnappayOperation(strapi, 88);
+
+    expect(calls).toEqual(["status"]);
+    expect(mockedCancelLocal).not.toHaveBeenCalled();
+    expect(mockedFinalize).not.toHaveBeenCalled();
   });
 
   it("re-checks provider status after an ambiguous settle and does not settle twice", async () => {
@@ -194,6 +209,30 @@ describe("SnappPay provider call sequencing", () => {
     expect(settleCalls).toBeLessThanOrEqual(1);
     expect(calls.filter((c) => c === "settle").length).toBeLessThanOrEqual(1);
     expect(mockedFinalize).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers revert while the provider still reports REGISTERED after 1011", async () => {
+    const { calls } = createAdapter({
+      status: async () => envelope("REGISTERED"),
+      revert: async () => ({
+        successful: false,
+        diagnostic: { endpoint: "revert", httpStatus: 400, providerCode: 1011 },
+      }),
+    });
+    const { strapi, queries } = createHarness({ metadata: { callbackState: "FAILED" } });
+
+    await processSnappayOperation(strapi, 88);
+
+    expect(calls[0]).toBe("status");
+    expect(calls).toContain("revert");
+    expect(mockedCancelLocal).not.toHaveBeenCalled();
+    expect(queries["api::payment-operation.payment-operation"].update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          Status: "Queued",
+        }),
+      }),
+    );
   });
 
   it("cancels locally when the provider reports a terminal REVERT", async () => {

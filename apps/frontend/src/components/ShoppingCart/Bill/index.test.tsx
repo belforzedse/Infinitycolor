@@ -17,9 +17,16 @@ jest.mock("react-hot-toast", () => ({
   default: { error: jest.fn(), success: jest.fn() },
 }));
 
+jest.mock("@sentry/nextjs", () => ({
+  captureMessage: jest.fn(),
+}));
+
 const mockToast = (jest.requireMock("react-hot-toast") as {
   default: { error: jest.Mock; success: jest.Mock };
 }).default;
+const captureCheckoutMessage = (
+  jest.requireMock("@sentry/nextjs") as { captureMessage: jest.Mock }
+).captureMessage;
 
 jest.mock("@/lib/central-auth", () => ({
   centralAuth: {
@@ -48,12 +55,29 @@ let mockCartState = {
   ],
 };
 
+let mockStockNotice: {
+  adjustedCartItemIds: string[];
+  removedNames: string[];
+} | null = null;
+
+const mockRefreshCart = jest.fn().mockResolvedValue(undefined);
+const mockSetStockNotice = jest.fn(
+  (notice: { adjustedCartItemIds: string[]; removedNames: string[] } | null) => {
+    mockStockNotice = notice;
+  },
+);
+
 jest.mock("@/contexts/CartContext", () => ({
   useCart: () => ({
     ...mockCartState,
     clearCart: jest.fn(),
     openDrawer: jest.fn(),
-    refreshCart: jest.fn(),
+    refreshCart: mockRefreshCart,
+    setStockNotice: mockSetStockNotice,
+    stockNotice: mockStockNotice,
+    dismissStockNotice: jest.fn(() => {
+      mockStockNotice = null;
+    }),
   }),
 }));
 
@@ -181,6 +205,7 @@ describe("ShoppingCartBillForm auth gate", () => {
   beforeEach(() => {
     localStorage.clear();
     window.history.pushState({}, "", "/checkout");
+    mockStockNotice = null;
     mockCartState = {
       totalPrice: 100_000,
       totalItems: 1,
@@ -195,10 +220,12 @@ describe("ShoppingCartBillForm auth gate", () => {
       ],
     };
     jest.clearAllMocks();
+    mockRefreshCart.mockResolvedValue(undefined);
     mockPush.mockReset();
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["samankish"]);
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: false });
+    (CartService.checkCartStock as jest.Mock).mockResolvedValue({ valid: true });
     (CartService.applyDiscount as jest.Mock).mockResolvedValue({
       success: true,
       discount: 10_000,
@@ -390,11 +417,13 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(screen.getByTestId("checkout-payment-gateway-count")).toHaveTextContent("0");
     });
 
+    (CartService.checkCartStock as jest.Mock).mockClear();
     fireEvent.click(screen.getByTestId("checkout-submit"));
 
     await waitFor(() => {
       expect(CartService.finalizeCart).not.toHaveBeenCalled();
     });
+    // Submit is blocked before the stock guard (no selectable gateway).
     expect(CartService.checkCartStock).not.toHaveBeenCalled();
   });
 
@@ -599,5 +628,233 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
       "سبد خرید شما خالی است",
     );
+  });
+
+  async function submitCheckoutWithError(errorCode: string) {
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:failing-quote",
+      financialSummary: { total: 120_000 },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: false,
+      errorCode,
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+  }
+
+  it("does not send expected in-progress checkout codes to Sentry as errors", async () => {
+    await submitCheckoutWithError("PAYMENT_IN_PROGRESS");
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith(
+        "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+        { id: "checkout-error" },
+      );
+    });
+    expect(captureCheckoutMessage).not.toHaveBeenCalled();
+  });
+
+  it("shows cancelled-order copy that does not tell the shopper to pay again", async () => {
+    await submitCheckoutWithError("ORDER_CANCELLED");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "این سفارش لغو شده است. از پرداخت دوباره خودداری کنید و وضعیت سفارش را در حساب کاربری بررسی کنید.",
+      );
+    });
+    expect(captureCheckoutMessage).not.toHaveBeenCalled();
+    expect(screen.getByTestId("checkout-form-error").textContent).not.toMatch(/دوباره تلاش/);
+  });
+
+  it("still reports unexpected checkout failures to Sentry", async () => {
+    await submitCheckoutWithError("WALLET_DEBIT_FAILED");
+
+    await waitFor(() => {
+      expect(captureCheckoutMessage).toHaveBeenCalledWith(
+        "checkout.error:WALLET_DEBIT_FAILED",
+        expect.objectContaining({ level: "error" }),
+      );
+    });
+  });
+
+  it("maps an invalid SnappPay mobile to Persian copy and clears the stored attempt", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "stale-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("SNAPPAY_INVALID_MOBILE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "شماره موبایل ثبت‌شده برای پرداخت اقساطی معتبر نیست",
+      );
+    });
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBeNull();
+  });
+
+  it("keeps the stored attempt id when SnappPay status is still unreadable", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("PAYMENT_UNKNOWN");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "نتیجه شروع پرداخت هنوز مشخص نیست",
+      );
+    });
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+  });
+
+  it("keeps the stored attempt id when a SnappPay token request fails after dispatch", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("SNAPPAY_TOKEN_500");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "شروع پرداخت اسنپ‌پی انجام نشد",
+      );
+    });
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+  });
+
+  it("keeps the stored attempt id when SnappPay is parked for review", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("SNAPPAY_MANUAL_REVIEW");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "پرداخت اسنپ‌پی در حال بررسی دستی است",
+      );
+    });
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+  });
+
+  it("clears a conflicting checkout attempt so the next tap can start a new one", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "dead-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("CHECKOUT_ATTEMPT_CONFLICT");
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBeNull();
+    });
+  });
+
+  it("announces a reserved/OOS stock correction instead of silently idle پرداخت", async () => {
+    const noticeText =
+      "موجودی برخی اقلام تغییر کرد و سبد خرید شما به‌روز شد. رنگ قرمز ناموجود شد و از سبد حذف شد.";
+    (CartService.checkCartStock as jest.Mock).mockResolvedValue({
+      valid: false,
+      cartIsEmpty: false,
+      itemsRemoved: [
+        {
+          cartItemId: 10,
+          productVariationId: 100,
+          productTitle: "رنگ قرمز",
+          message: "Product is out of stock, item removed from cart",
+        },
+      ],
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+
+    // Mount already reconciled; clear so we only assert the submit path.
+    (CartService.checkCartStock as jest.Mock).mockClear();
+    (CartService.getCheckoutQuote as jest.Mock).mockClear();
+    (CartService.finalizeCart as jest.Mock).mockClear();
+    mockToast.error.mockClear();
+    mockSetStockNotice.mockClear();
+
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith(noticeText, { id: "checkout-error" });
+    });
+    expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("رنگ قرمز");
+    expect(screen.getByTestId("cart-stock-notice")).toHaveTextContent("رنگ قرمز");
+    expect(mockSetStockNotice).toHaveBeenCalledWith({
+      adjustedCartItemIds: [],
+      removedNames: ["رنگ قرمز"],
+    });
+    expect(mockRefreshCart).toHaveBeenCalled();
+    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
+  });
+
+  it("shows empty-cart copy when stock correction removes every line", async () => {
+    (CartService.checkCartStock as jest.Mock).mockResolvedValue({
+      valid: false,
+      cartIsEmpty: true,
+      itemsRemoved: [
+        {
+          cartItemId: 10,
+          productVariationId: 100,
+          productTitle: "رنگ قرمز",
+          message: "Product is out of stock, item removed from cart",
+        },
+      ],
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+
+    (CartService.checkCartStock as jest.Mock).mockClear();
+    (CartService.getCheckoutQuote as jest.Mock).mockClear();
+    mockToast.error.mockClear();
+
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith("سبد خرید شما خالی است", {
+        id: "checkout-error",
+      });
+    });
+    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,11 @@ import {
 import { consumeCheckoutCartLines } from "../../cart/services/lib/order-cart-cleanup";
 import { enqueuePurchaseForOrder, enqueueRefundForReturn } from "../../report/analytics/outbox";
 import { confirmReservePaymentForOrder } from "../../reserve-group/lib/reserve-group";
+import {
+  captureAnipoCancelSnapshot,
+  notifyAnipoParcelCancelled,
+  type AnipoCancelSnapshot,
+} from "../../order/controllers/helpers/notifyAnipoParcelCancelled";
 
 type FinalizationIds = {
   attemptId: number;
@@ -241,7 +246,8 @@ export async function applySnappayCancellation(
   providerStatus: "REVERT" | "CANCEL",
   reason: string,
 ): Promise<{ replayed: boolean }> {
-  return strapi.db.transaction(async ({ trx }) => {
+  let anipoCancelSnapshot: AnipoCancelSnapshot | null = null;
+  const result = await strapi.db.transaction(async ({ trx }) => {
     await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [ids.attemptId]);
     await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [ids.orderId]);
 
@@ -266,7 +272,9 @@ export async function applySnappayCancellation(
       ...(trx ? { transacting: trx } : {}),
     } as any);
     if (!order) throw new Error("SNAPPAY_ORDER_NOT_FOUND");
-    if (["Shipment", "Done", "Returned"].includes(String(order.Status))) {
+    // Post-settle SnappPay cancel is valid through Done/Shipment. Returned orders
+    // stay on the return path; Cancelled is handled by the replay check above.
+    if (String(order.Status) === "Returned") {
       throw new Error("SNAPPAY_FULFILLMENT_ALREADY_STARTED");
     }
 
@@ -283,9 +291,19 @@ export async function applySnappayCancellation(
     }
 
     const now = new Date();
+    anipoCancelSnapshot = captureAnipoCancelSnapshot(order);
+    const orderUpdate: Record<string, unknown> = { Status: "Cancelled" };
+    // Local Anipo void in-txn; provider «لغو شده» runs after commit.
+    if (order.ShippingBarcode) {
+      orderUpdate.ShippingBarcode = null;
+      orderUpdate.AnipoBarcodeState = "Voided";
+      orderUpdate.AnipoLastCheckedAt = now;
+      orderUpdate.AnipoLastMessage =
+        "SnappPay cancellation confirmed; local barcode cleared";
+    }
     await strapi.db.query("api::order.order").update({
       where: { id: ids.orderId },
-      data: { Status: "Cancelled" },
+      data: orderUpdate,
       ...(trx ? { transacting: trx } : {}),
     } as any);
 
@@ -348,6 +366,11 @@ export async function applySnappayCancellation(
     } as any);
     return { replayed: false };
   });
+
+  if (!result.replayed && anipoCancelSnapshot) {
+    await notifyAnipoParcelCancelled(strapi, ids.orderId, anipoCancelSnapshot);
+  }
+  return result;
 }
 
 export async function runSnappaySideEffects(

@@ -29,16 +29,10 @@ export const SNAPPAY_RECONCILIATION_DELAYS_MS = [
 ] as const;
 
 /**
- * How long a `REGISTERED` (issued but never paid) token is treated as a payment
- * the customer might still complete.
- *
- * Past this the checkout is abandoned: the provider never took money, so there is
- * nothing ambiguous to adjudicate and no reason to involve a human. We revert the
- * unpaid token and release the stock instead of polling for ~40h and then parking
- * the attempt for manual review.
- *
- * Defaults to the stock-reservation TTL, because once the reservation has lapsed
- * the customer's checkout is over by definition.
+ * Historical REGISTERED polling bound. Token age is not proof the provider
+ * payment is unpaid; workers now keep reconciling REGISTERED until the schedule
+ * exhausts or a FAILED callback authorizes revert. Kept so existing env/docs
+ * references continue to resolve.
  */
 export const SNAPPAY_ABANDON_AFTER_MS = Number(
   process.env.SNAPPAY_ABANDON_AFTER_MINUTES ||
@@ -73,9 +67,9 @@ export function decideSnappayRecovery(input: {
    * answered.
    */
   providerCode?: number | null;
-  /** Age of the payment attempt. Enables abandonment detection when supplied. */
+  /** Age of the payment attempt. Kept for callers; age is not a terminal signal. */
   attemptAgeMs?: number | null;
-  /** Override for {@link SNAPPAY_ABANDON_AFTER_MS}; mainly for tests. */
+  /** Unused override retained so existing test call sites keep compiling. */
   abandonAfterMs?: number;
 }): SnappayRecoveryAction {
   const status = normalizeSnappayProviderStatus(input.providerStatus);
@@ -85,37 +79,17 @@ export function decideSnappayRecovery(input: {
 
   // A validated OK callback outranks an unresolvable status read. The customer's
   // browser came back saying the payment succeeded while SnappPay cannot find the
-  // token — a contradiction that only `verify` can resolve, since it is the call
-  // that actually confirms the payment rather than merely reporting on it.
-  //
-  // This terminates either way: `performVerify` settles on success, and on a
-  // failed verify it re-reads status and routes 1007/1048 to `markManualReview`
-  // rather than back to RECONCILE, so there is no status→verify→status loop.
-  // A NOT_FOUND from verify simply confirms the abandonment.
-  //
-  // This is the rescue path for the genuinely-paid-but-unresolvable case —
-  // ~1-in-276 on production — and it must sit ahead of the 1007 branch below.
+  // token — a contradiction that only `verify` can resolve (workbook Action row
+  // for verify 1000 PENDING, Fa.txt verify). 1007/1048 without OK are not
+  // unpaid; they are investigation outcomes (Action rows 34–35).
   if (input.callbackState === "OK" && (code === 1007 || code === 1048)) {
     return "VERIFY";
   }
 
-  // 1007 NOT_FOUND ("the payment token sent is wrong") and 1048
-  // PAYMENT_VENTURE_MISMATCHED are definitive, and manual review is the action
-  // SnappPay's own error workbook prescribes for both
-  // (docs/snappay/Rest API Documents/SnappPay Error Codes - full version.xlsx).
-  //
-  // 1007 on `status` is what an abandoned checkout looks like: the sibling
-  // `update` row defines the same condition as "this payment token never reached
-  // the bank payment gateway for the first installment". Verified on production
-  // 2026-09-16 — status() returns HTTP 200 for 64% of attempts (275 SETTLE, 83
-  // REVERT, 3 PENDING), and 93% of the 404/1007 population never sent a callback
-  // at all. No money was taken for these; cancelling them and releasing their
-  // stock is the correct outcome, not a lost order.
+  // 1007 NOT_FOUND = wrong paymentToken. 1048 PAYMENT_VENTURE_MISMATCHED = token
+  // belongs to another merchant. Neither authorizes local cancel, stock release,
+  // or a replacement token.
   if (code === 1007 || code === 1048) return "MANUAL_REVIEW";
-
-  const abandonAfterMs = Number(input.abandonAfterMs ?? SNAPPAY_ABANDON_AFTER_MS);
-  const age = Number(input.attemptAgeMs ?? NaN);
-  const abandoned = Number.isFinite(age) && age > abandonAfterMs;
 
   switch (status) {
     case "SETTLE":
@@ -128,21 +102,17 @@ export function decideSnappayRecovery(input: {
     case "CANCEL":
       return "CANCEL_LOCAL";
     case "PENDING":
+      // PENDING is not unpaid. FAILED callback still needs revert (Fa.txt).
+      // Otherwise recover through verify (Action row for verify 1000).
       return input.callbackState === "FAILED" ? "REVERT" : "VERIFY";
     case "REGISTERED":
-      // The provider never took money for a REGISTERED token. A FAILED callback
-      // says so explicitly; an attempt older than the abandonment window says so
-      // by omission — the customer redirected and never came back. Both revert.
-      return input.callbackState === "FAILED" || abandoned ? "REVERT" : "RECONCILE";
+      // Age is not proof the customer will not pay. Revert only after an
+      // explicit FAILED callback. Exhausted reconcile parks for review.
+      return input.callbackState === "FAILED" ? "REVERT" : "RECONCILE";
     default:
       // UNKNOWN covers "we could not read the provider at all" (a timed-out or
-      // unparseable status call), which is genuine ambiguity — no provider code
-      // was returned, so the branches above did not fire. Never auto-cancel a
-      // payment whose state we cannot observe; keep reconciling.
-      //
-      // A validated OK callback still means the provider told us the payment
-      // succeeded, so go straight to VERIFY rather than polling a status we
-      // cannot read.
+      // unparseable status call). Never auto-cancel a payment whose state we
+      // cannot observe; keep reconciling.
       if (input.callbackState === "OK") return "VERIFY";
       return "RECONCILE";
   }

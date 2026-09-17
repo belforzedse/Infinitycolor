@@ -10,10 +10,14 @@ import { runRawSql } from "../../../../utils/transactionExecutor";
  */
 export interface Stock {
   Count?: number | string;
+  /** DB / knex lowercase column alias for Count. */
+  count?: number | string;
   /** Strapi schema field name (DB column: reserved_count). */
   reservedCount?: number | string;
   /** Legacy / normalized alias accepted for backward compatibility. */
   ReservedCount?: number | string;
+  /** DB / knex snake_case column alias for reservedCount. */
+  reserved_count?: number | string;
 }
 
 /**
@@ -115,8 +119,12 @@ export const validateAndNormalizeStock = (
     };
   };
 
-  // Validate and normalize Count
-  const countValidation = normalizeNumericValue(stockObj.Count, "Count");
+  // Prefer schema names, then DB/knex lowercase aliases. Cart loads via
+  // strapi.db.query can surface either shape; Searchwise already did both.
+  const countValidation = normalizeNumericValue(
+    stockObj.Count ?? stockObj.count,
+    "Count",
+  );
   if (!countValidation.isValid) {
     return {
       isValid: false,
@@ -124,12 +132,10 @@ export const validateAndNormalizeStock = (
     };
   }
 
-  // Validate and normalize ReservedCount.
-  // Strapi returns the schema attribute `reservedCount`; older/normalized
-  // shapes use `ReservedCount`. Accept either to stay backward compatible.
+  // Schema `reservedCount`, legacy `ReservedCount`, or DB `reserved_count`.
   const reservedCountValidation = normalizeNumericValue(
-    stockObj.ReservedCount ?? stockObj.reservedCount,
-    "ReservedCount"
+    stockObj.ReservedCount ?? stockObj.reservedCount ?? stockObj.reserved_count,
+    "ReservedCount",
   );
   if (!reservedCountValidation.isValid) {
     return {

@@ -59,7 +59,7 @@ const finalize = (service: any, gateway = "snappay") =>
 describe("finalizeCartToOrder — replaying a checkout attempt", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it.each(["Cancelled", "Failed", "Expired", "Unknown"])(
+  it.each(["Cancelled", "Failed", "Expired"])(
     "refuses to replay a %s attempt as a conflict instead of handing back its dead state",
     async (status) => {
       findPaymentAttempt.mockResolvedValueOnce({
@@ -76,6 +76,22 @@ describe("finalizeCartToOrder — replaying a checkout attempt", () => {
       expect(result).toMatchObject({ success: false, status: 409, errorCode: "CHECKOUT_ATTEMPT_CONFLICT" });
     },
   );
+
+  it("replays an Unknown attempt so initiate can ask SnappPay before minting a second token", async () => {
+    findPaymentAttempt.mockResolvedValueOnce({
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+      Gateway: "snappay",
+      Status: "Unknown",
+      order: { id: 91 },
+      contract: { id: 55 },
+    });
+    const service = buildService();
+
+    const result = await finalize(service);
+
+    expect(result).toMatchObject({ success: true, replayed: true });
+  });
 
   it("still replays a live Redirected attempt so a duplicate order is never created", async () => {
     findPaymentAttempt.mockResolvedValueOnce({
@@ -94,12 +110,14 @@ describe("finalizeCartToOrder — replaying a checkout attempt", () => {
     expect(result).toMatchObject({ success: true, replayed: true });
   });
 
-  it("still replays a Pending attempt claimed by a concurrent initiation", async () => {
+  it("still replays a locally Cancelled SnappPay attempt when the provider generation is unresolved", async () => {
     findPaymentAttempt.mockResolvedValueOnce({
       attemptId: "attempt-1",
       quoteHash: QUOTE_HASH,
       Gateway: "snappay",
-      Status: "Pending",
+      Status: "Cancelled",
+      providerStatus: "PENDING",
+      providerResponse: { tokenAttemptSeq: 1, tokenFingerprint: "fp" },
       order: { id: 91 },
       contract: { id: 55 },
     });

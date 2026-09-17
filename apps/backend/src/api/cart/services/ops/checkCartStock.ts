@@ -84,9 +84,13 @@ export const checkCartStockOp = async (strapi: Strapi, userId: number) => {
     .getUserCart(userId);
   const cartIsEmpty =
     !updatedCart.cart_items || updatedCart.cart_items.length === 0;
+  // Starting empty is valid (nothing to correct). Empty *after* removals is not:
+  // the shopper must be told the cart changed rather than falling through to
+  // a generic quote/CART_EMPTY failure on the next step.
+  const hadCorrections = removals.length > 0 || adjustments.length > 0;
   return {
     success: true,
-    valid: cartIsEmpty || (removals.length === 0 && adjustments.length === 0),
+    valid: !hadCorrections,
     cartIsEmpty,
     itemsRemoved: removals.length > 0 ? removals : undefined,
     itemsAdjusted: adjustments.length > 0 ? adjustments : undefined,

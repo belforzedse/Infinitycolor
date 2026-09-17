@@ -157,7 +157,74 @@ describe("SnappPay admin provider operations", () => {
 
     expect(ctx.badRequest).toHaveBeenCalledWith(
       "Cancellation reason is required",
-      { data: { error: "SNAPPAY_OPERATOR_REASON_REQUIRED" } },
+      {
+        data: {
+          error: "SNAPPAY_OPERATOR_REASON_REQUIRED",
+          errorCode: "SNAPPAY_OPERATOR_REASON_REQUIRED",
+        },
+      },
+    );
+    expect(mockedCancel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Done", null],
+    ["Shipment", "ANIPO-111944"],
+  ] as const)(
+    "queues cancellation for a %s SnappPay order even with barcode %s",
+    async (status, barcode) => {
+      const { strapi, ctx, transaction } = createHarness({
+        reason: "محصول زدگی داشت مشتری منصرف شد",
+      });
+      const orderFind = strapi.db.query("api::order.order").findOne as jest.Mock;
+      const base = await orderFind();
+      orderFind.mockResolvedValue({
+        ...base,
+        Status: status,
+        ShippingBarcode: barcode,
+      });
+
+      const result = await adminCancelOrderHandler(strapi, ctx);
+
+      expect(ctx.badRequest).not.toHaveBeenCalled();
+      expect(ctx.conflict).not.toHaveBeenCalled();
+      expect(mockedCancel).toHaveBeenCalledWith(strapi, {
+        orderId: 41,
+        reason: "محصول زدگی داشت مشتری منصرف شد",
+        actorId: 7,
+        requestKey: "operator-click-1",
+      });
+      expect(result).toEqual({
+        data: {
+          success: true,
+          status: "queued",
+          operationId: 101,
+          operationStatus: "Queued",
+        },
+      });
+      expect(transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses cancellation once the order is Returned", async () => {
+    const { strapi, ctx } = createHarness({
+      reason: "Customer requested cancellation",
+    });
+    const orderFind = strapi.db.query("api::order.order").findOne as jest.Mock;
+    const base = await orderFind();
+    orderFind.mockResolvedValue({ ...base, Status: "Returned" });
+
+    await adminCancelOrderHandler(strapi, ctx);
+
+    expect(ctx.badRequest).toHaveBeenCalledWith(
+      "Order status does not allow cancellation",
+      {
+        data: {
+          error: "invalid_status",
+          errorCode: "ORDER_CANCEL_INVALID_STATUS",
+          fromStatus: "Returned",
+        },
+      },
     );
     expect(mockedCancel).not.toHaveBeenCalled();
   });
@@ -174,7 +241,12 @@ describe("SnappPay admin provider operations", () => {
 
     expect(ctx.conflict).toHaveBeenCalledWith(
       "SnappPay order state changed",
-      { data: { error: "SNAPPAY_OPERATOR_OPERATION_ACTIVE" } },
+      {
+        data: {
+          error: "SNAPPAY_OPERATOR_OPERATION_ACTIVE",
+          errorCode: "SNAPPAY_OPERATOR_OPERATION_ACTIVE",
+        },
+      },
     );
   });
 

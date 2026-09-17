@@ -921,6 +921,71 @@ describe("finalizeToOrderHandler", () => {
     );
   });
 
+  it("asks SnappPay status via initiate instead of replaying a Redirected URL", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    const callbackNonce = "abcdefghijklmnopqrstuv";
+    const initiate = jest.fn().mockResolvedValue({
+      success: true,
+      status: "Redirected",
+      redirectUrl: "https://snapp.test/status-first",
+      transactionId: "NEW1234567",
+    });
+    registerService("api::cart.cart", {
+      finalizeCartToOrder: jest.fn().mockResolvedValue({
+        success: true,
+        replayed: true,
+        order: { id: 61 },
+        contract: { id: 71, Amount: 200_000 },
+        financialSummary: { payable: 200_000 },
+        paymentAttempt: {
+          id: 1061,
+          attemptId: "checkout-attempt",
+          Status: "Redirected",
+          callbackNonce,
+          redirectUrl: "https://snapp.test/stale",
+        },
+      }),
+    });
+    registerService("api::payment-gateway.snappay-orchestrator", {
+      initiate,
+    });
+    mockEntityFindOne(strapi, {
+      "api::shipping.shipping": () => ({ id: 5 }),
+      "api::local-user-address.local-user-address": () => ({
+        id: 6,
+        shipping_city: {},
+        user: { id: 1 },
+      }),
+    });
+    mockedClaimPaymentAttempt.mockResolvedValueOnce(false);
+
+    const response = await finalizeToOrderHandler(strapi)(
+      createCtx({
+        request: {
+          body: {
+            shipping: 5,
+            addressId: 6,
+            gateway: "snappay",
+          },
+        },
+      }),
+    );
+
+    expect(initiate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentAttemptId: 1061,
+        callbackNonce,
+      }),
+    );
+    expect(response.data).toEqual(
+      expect.objectContaining({
+        success: true,
+        redirectUrl: "https://snapp.test/status-first",
+        paymentStatus: "Redirected",
+      }),
+    );
+  });
+
   it("fails closed when an uninitiated SnappPay replay nonce cannot be decrypted", async () => {
     const { strapi, registerService } = createStrapiMock();
     const initiate = jest.fn();

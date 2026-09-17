@@ -31,22 +31,48 @@ import {
   generateSnappayTransactionId,
   hashSnappayCallbackNonce,
 } from "../../payment-gateway/services/snappay-security";
+import { snappayProviderPaymentIsUnresolved } from "../../payment-gateway/services/snappay-generation";
 import { redactSensitive } from "../../../utils/redactSensitive";
 
 // A dead attempt (customer backed out of the gateway, or it expired) must never be
 // replayed as if it were still live -- the browser can still hold its id in
 // localStorage long after the gateway/orchestrator marked it terminal, and the
 // customer's next tap must start a fresh attempt instead of being handed the same
-// failure forever. "Unknown" belongs here too: the SnappPay orchestrator parks an
-// attempt there when its own status() call comes back ambiguous (provider code
-// 1007, the common shape for a customer who backed out -- see
-// snappay-orchestrator.ts) pending an async reconciliation sweep. That is a
-// sensible "don't touch it yet" state for the callback/reconcile path, but wrong
-// at checkout: the customer is standing on the page asking to pay right now, and
-// making them wait on a background sweep for an attempt they already abandoned is
-// how "tap پرداخت" stopped doing anything visible on the third try. See
-// __tests__/finalize-attempt-replay.spec.ts.
-const TERMINAL_PAYMENT_ATTEMPT_STATUSES = new Set(["Failed", "Cancelled", "Expired", "Unknown"]);
+// failure forever. "Unknown" is not terminal: that is the unreadable-status hold
+// where checkout must reuse the same attempt so initiate can GET /status before
+// any second token. A local Failed/Cancelled/Expired SnappPay row is also not
+// terminal while a provider generation may still be live.
+const TERMINAL_PAYMENT_ATTEMPT_STATUSES = new Set(["Failed", "Cancelled", "Expired"]);
+
+function isSnappayReplay(replay: { Gateway?: unknown }): boolean {
+  return String(replay.Gateway || "").toLowerCase() === "snappay";
+}
+
+function existingAttemptBlocksReplacement(
+  replay: {
+    Status?: unknown;
+    quoteHash?: unknown;
+    Gateway?: unknown;
+    providerStatus?: unknown;
+    providerResponse?: unknown;
+    providerReference?: unknown;
+  },
+  gateway: string,
+  expectedQuoteHash: string,
+): "replay" | "conflict" | "in_progress" {
+  if (isSnappayReplay(replay) && snappayProviderPaymentIsUnresolved(replay)) {
+    if (gateway !== "snappay") return "in_progress";
+    return "replay";
+  }
+  if (
+    TERMINAL_PAYMENT_ATTEMPT_STATUSES.has(String(replay.Status || "")) ||
+    String(replay.quoteHash) !== expectedQuoteHash ||
+    String(replay.Gateway) !== gateway
+  ) {
+    return "conflict";
+  }
+  return "replay";
+}
 
 export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   async getUserCart(userId: number) {
@@ -146,11 +172,16 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
 
       const replay = await findPaymentAttempt(strapi as any, userId, attemptId);
       if (replay) {
-        if (
-          TERMINAL_PAYMENT_ATTEMPT_STATUSES.has(String(replay.Status || "")) ||
-          String(replay.quoteHash) !== expectedQuoteHash ||
-          String(replay.Gateway) !== gateway
-        ) {
+        const decision = existingAttemptBlocksReplacement(replay, gateway, expectedQuoteHash);
+        if (decision === "in_progress") {
+          return {
+            success: false,
+            status: 409,
+            errorCode: "PAYMENT_IN_PROGRESS",
+            message: "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+          };
+        }
+        if (decision === "conflict") {
           return {
             success: false,
             status: 409,
@@ -245,11 +276,11 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         if (managesPaymentAttempt) {
           const replay = await findPaymentAttempt(strapi as any, userId, attemptId, trx);
           if (replay) {
-            if (
-              TERMINAL_PAYMENT_ATTEMPT_STATUSES.has(String(replay.Status || "")) ||
-              String(replay.quoteHash) !== expectedQuoteHash ||
-              String(replay.Gateway) !== gateway
-            ) {
+            const decision = existingAttemptBlocksReplacement(replay, gateway, expectedQuoteHash);
+            if (decision === "in_progress") {
+              throw new Error("PAYMENT_IN_PROGRESS: Unresolved SnappPay payment is still live");
+            }
+            if (decision === "conflict") {
               throw new Error(
                 "CHECKOUT_ATTEMPT_CONFLICT: Attempt id was already used for another quote",
               );
@@ -679,12 +710,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     } catch (error: any) {
       if (managesPaymentAttempt) {
         const replay = await findPaymentAttempt(strapi as any, userId, attemptId).catch(() => null);
-        if (
-          replay &&
-          !TERMINAL_PAYMENT_ATTEMPT_STATUSES.has(String(replay.Status || "")) &&
-          String(replay.quoteHash) === expectedQuoteHash &&
-          String(replay.Gateway) === gateway
-        ) {
+        if (replay && existingAttemptBlocksReplacement(replay, gateway, expectedQuoteHash) === "replay") {
           return {
             success: true,
             replayed: true,
@@ -776,6 +802,10 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           case "DISCOUNT_USAGE_EXHAUSTED":
             userMessage = "ظرفیت استفاده از این کد تخفیف تکمیل شده است";
             details = { detail: errorDetail };
+            break;
+          case "PAYMENT_IN_PROGRESS":
+            userMessage =
+              "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
             break;
           default:
             userMessage = "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید";

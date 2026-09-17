@@ -92,11 +92,13 @@ type TokenResponse = {
 type SimpleResponse = {
   transactionId?: string;
   status?: string;
+  amount?: number;
 };
 
 type ProviderEnvelope<T> = {
   successful: boolean;
   response?: T;
+  amount?: number;
   errorData?: {
     errorCode?: number | string;
     message?: string;
@@ -191,6 +193,16 @@ function safeMessage(value: unknown, fallback: string): string {
   return text ? text.slice(0, 500) : fallback;
 }
 
+function mergeStatusAmount<T>(data: ProviderEnvelope<T>): T | undefined {
+  if (data?.successful !== true || data.response === undefined) return data?.response;
+  const envelopeAmount = Number(data.amount);
+  if (!Number.isFinite(envelopeAmount)) return data.response;
+  if (typeof data.response === "object" && data.response !== null) {
+    return { ...data.response, amount: envelopeAmount } as T;
+  }
+  return data.response;
+}
+
 function normalizeEnvelope<T>(
   endpoint: SnappayEndpoint,
   data: ProviderEnvelope<T>,
@@ -199,7 +211,7 @@ function normalizeEnvelope<T>(
   const code = providerCode(data?.errorData?.errorCode);
   return {
     successful: data?.successful === true,
-    response: data?.successful === true ? data.response : undefined,
+    response: data?.successful === true ? mergeStatusAmount(data) : undefined,
     errorData:
       data?.successful === true
         ? undefined

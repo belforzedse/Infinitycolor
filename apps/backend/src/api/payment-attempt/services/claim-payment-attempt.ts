@@ -17,6 +17,30 @@ export async function claimPaymentAttemptForInitiation(strapi: Strapi, id: numbe
 }
 
 /**
+ * Serializes SnappPay `status` / `token` work on a live attempt so two tabs
+ * cannot mint two BNPL plans. Losing callers must return PAYMENT_IN_PROGRESS
+ * and must not call `token`.
+ */
+export const SNAPPAY_INITIATION_LEASE_MS = 45_000;
+
+export async function claimPaymentAttemptForSnappayInitiation(strapi: Strapi, id: number) {
+  const now = new Date();
+  const leaseUntil = new Date(now.getTime() + SNAPPAY_INITIATION_LEASE_MS);
+  const result = await strapi.db.connection.raw(
+    `UPDATE payment_attempts
+       SET lease_until = ?,
+           lease_version = COALESCE(lease_version, 0) + 1,
+           updated_at = ?
+     WHERE id = ?
+       AND status IN ('Created', 'Pending', 'Redirected', 'Unknown', 'Failed', 'Cancelled', 'Expired')
+       AND (lease_until IS NULL OR lease_until < ?)
+     RETURNING id`,
+    [leaseUntil, now, id, now],
+  );
+  return Array.isArray(result?.rows) && result.rows.length === 1;
+}
+
+/**
  * Atomically grants exactly one caller permission to finalize (settle or
  * fail) this attempt. The guarded WHERE clause is itself the concurrency
  * control: concurrent callers racing this UPDATE serialize on Postgres's

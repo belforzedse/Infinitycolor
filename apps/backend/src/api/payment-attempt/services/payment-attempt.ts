@@ -4,6 +4,8 @@ import type { PaymentAttemptStatus } from "@repo/api/commerce";
 export {
   claimPaymentAttemptForInitiation,
   claimPaymentAttemptForSettlement,
+  claimPaymentAttemptForSnappayInitiation,
+  SNAPPAY_INITIATION_LEASE_MS,
 } from "./claim-payment-attempt";
 export {
   findOrderPaymentAttempt,

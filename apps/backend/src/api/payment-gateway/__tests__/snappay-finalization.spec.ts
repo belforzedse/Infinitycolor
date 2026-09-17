@@ -3,6 +3,26 @@ import {
   applySnappayAdminUpdate,
   finalizeSnappaySettlement,
 } from "../services/snappay-finalization";
+import { notifyAnipoParcelCancelled } from "../../order/controllers/helpers/notifyAnipoParcelCancelled";
+
+jest.mock("../../order/controllers/helpers/notifyAnipoParcelCancelled", () => {
+  const actual = jest.requireActual(
+    "../../order/controllers/helpers/notifyAnipoParcelCancelled",
+  );
+  return {
+    ...actual,
+    notifyAnipoParcelCancelled: jest.fn().mockResolvedValue(undefined),
+  };
+});
+
+jest.mock("../../cart/services/lib/discount-claim", () => ({
+  hasDiscountClaim: jest.fn().mockResolvedValue(false),
+  releaseOrderDiscountClaim: jest.fn().mockResolvedValue({ released: false }),
+}));
+
+const notifyAnipoMock = notifyAnipoParcelCancelled as jest.MockedFunction<
+  typeof notifyAnipoParcelCancelled
+>;
 
 function createHarness() {
   const updates: Record<string, jest.Mock> = {};
@@ -76,6 +96,11 @@ const ids = {
 };
 
 describe("SnappPay admin update finalization", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    notifyAnipoMock.mockResolvedValue(undefined);
+  });
+
   it("retains the provider token after settlement for later cancel/update calls", async () => {
     const { strapi, rows, updates } = createHarness();
     rows["api::payment-attempt.payment-attempt"].Status = "Pending";
@@ -119,6 +144,98 @@ describe("SnappPay admin update finalization", () => {
       expect(transactionUpdate).not.toHaveProperty("TrackId");
     },
   );
+
+  it.each(["Done", "Shipment"] as const)(
+    "cancels a %s order, restocks consumed inventory, and clears the local barcode",
+    async (status) => {
+      const { strapi, rows, updates, trx } = createHarness();
+      rows["api::order.order"].Status = status;
+      rows["api::order.order"].ShippingBarcode = "ANIPO-SHIPPED";
+      rows["api::order.order"].AnipoBarcodeState = "Issued";
+      rows["api::order.order"].ReservationStatus = "Consumed";
+
+      await applySnappayCancellation(
+        strapi,
+        ids,
+        "CANCEL",
+        "Operator cancellation after fulfilment",
+      );
+
+      expect(trx.raw).toHaveBeenCalledWith(
+        expect.stringContaining("UPDATE product_stocks"),
+        [2, 91],
+      );
+      const orderUpdates = updates["api::order.order"].mock.calls.map(
+        (call) => call[0].data,
+      );
+      expect(orderUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            ReservationStatus: "Released",
+            ReservedUntil: null,
+          }),
+          expect.objectContaining({
+            Status: "Cancelled",
+            ShippingBarcode: null,
+            AnipoBarcodeState: "Voided",
+          }),
+        ]),
+      );
+      expect(notifyAnipoMock).toHaveBeenCalledWith(
+        strapi,
+        22,
+        expect.objectContaining({
+          shippingBarcode: "ANIPO-SHIPPED",
+          anipoBarcodeState: "Issued",
+        }),
+      );
+    },
+  );
+
+  it("notifies Anipo after a confirmed cancel commits", async () => {
+    const { strapi, rows } = createHarness();
+    rows["api::order.order"].ReservationStatus = "Released";
+    rows["api::order.order"].ShippingBarcode = "ANIPO-1";
+    rows["api::order.order"].AnipoBarcodeState = "Issued";
+
+    await expect(
+      applySnappayCancellation(strapi, ids, "CANCEL", "Operator cancellation"),
+    ).resolves.toEqual({ replayed: false });
+
+    expect(notifyAnipoMock).toHaveBeenCalledWith(
+      strapi,
+      22,
+      expect.objectContaining({ shippingBarcode: "ANIPO-1" }),
+    );
+  });
+
+  it("does not notify Anipo on cancel replay", async () => {
+    const { strapi, rows } = createHarness();
+    rows["api::payment-attempt.payment-attempt"].Status = "Cancelled";
+    rows["api::payment-attempt.payment-attempt"].providerStatus = "CANCEL";
+
+    await expect(
+      applySnappayCancellation(strapi, ids, "CANCEL", "replay"),
+    ).resolves.toEqual({ replayed: true });
+
+    expect(notifyAnipoMock).not.toHaveBeenCalled();
+  });
+
+  it("still refuses cancellation after the order is Returned", async () => {
+    const { strapi, rows, updates } = createHarness();
+    rows["api::order.order"].Status = "Returned";
+
+    await expect(
+      applySnappayCancellation(
+        strapi,
+        ids,
+        "CANCEL",
+        "Too late",
+      ),
+    ).rejects.toThrow("SNAPPAY_FULFILLMENT_ALREADY_STARTED");
+
+    expect(updates["api::order.order"]).not.toHaveBeenCalled();
+  });
 
   it("rejects forged stock deltas before mutating local state", async () => {
     const { strapi, updates, deletes } = createHarness();

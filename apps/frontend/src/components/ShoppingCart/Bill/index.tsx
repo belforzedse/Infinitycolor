@@ -12,6 +12,7 @@ import ReserveShipping from "./ReserveShipping";
 import ReserveFulfillmentChoice, {
   type ActiveReserveSummary,
 } from "./ReserveFulfillmentChoice";
+import CartStockNotice from "../CartStockNotice";
 import { CheckoutProgress } from "../CheckoutProgress";
 import { orderIdAtom, orderNumberAtom, submitOrderStepAtom } from "@/atoms/Order";
 import { useAtom, useAtomValue } from "jotai";
@@ -35,6 +36,43 @@ import { getAnalyticsCorrelationId, trackFunnelStep, trackAnalyticsEvent } from 
 import { faNum, normalizeDigits } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { translateErrorMessage } from "@/lib/errorTranslations";
+import { buildCartStockNoticeText } from "@/utils/cartStock";
+
+const EXPECTED_CHECKOUT_SENTRY_CODES = new Set([
+  "PAYMENT_IN_PROGRESS",
+  "PAYMENT_UNKNOWN",
+  "CHECKOUT_ATTEMPT_CONFLICT",
+  "SNAPPAY_RECONCILIATION_PENDING",
+  "SNAPPAY_MANUAL_REVIEW",
+  "SNAPPAY_TOKEN_DUPLICATE",
+  "ORDER_CANCELLED",
+]);
+
+const SNAPPAY_MANUAL_REVIEW_COPY =
+  "پرداخت اسنپ‌پی در حال بررسی دستی است. لطفاً وضعیت سفارش را کمی بعد بررسی کنید و دوباره پرداخت نکنید.";
+const SNAPPAY_RECONCILIATION_PENDING_COPY =
+  "پرداخت اسنپ‌پی هنوز در حال تطبیق است. لطفاً وضعیت سفارش را بررسی کنید و دوباره پرداخت نکنید.";
+const ORDER_CANCELLED_COPY =
+  "این سفارش لغو شده است. از پرداخت دوباره خودداری کنید و وضعیت سفارش را در حساب کاربری بررسی کنید.";
+
+function leftoverCheckoutCopy(errorCode: string): string | undefined {
+  switch (errorCode) {
+    case "SNAPPAY_MANUAL_REVIEW":
+      return SNAPPAY_MANUAL_REVIEW_COPY;
+    case "SNAPPAY_RECONCILIATION_PENDING":
+      return SNAPPAY_RECONCILIATION_PENDING_COPY;
+    case "ORDER_CANCELLED":
+      return ORDER_CANCELLED_COPY;
+    default:
+      return undefined;
+  }
+}
+
+function clearStaleCheckoutAttempt() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem("pendingCheckoutAttemptId");
+  window.localStorage.removeItem("pendingCheckoutQuoteHash");
+}
 
 // Reserve ("ارسال رزروی" / 48h) ships enabled and is soft-locked by building
 // with NEXT_PUBLIC_INFINITY_RESERVE_CHECKOUT_ENABLED="false" (a NEXT_PUBLIC_
@@ -145,6 +183,65 @@ const getOrCreateCheckoutAttemptId = (quoteHash: string) => {
   return attemptId;
 };
 
+const checkoutErrorPresentation = (
+  errorCode: string,
+): { displayError: string; clearAttempt: boolean } | null => {
+  switch (errorCode) {
+    case "PAYMENT_IN_PROGRESS":
+      return {
+        displayError:
+          "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+        clearAttempt: false,
+      };
+    case "PAYMENT_UNKNOWN":
+      return {
+        displayError:
+          "نتیجه شروع پرداخت هنوز مشخص نیست. برای جلوگیری از پرداخت تکراری، وضعیت سفارش را بررسی کنید.",
+        clearAttempt: false,
+      };
+    case "SNAPPAY_INVALID_MOBILE":
+      return {
+        displayError:
+          "شماره موبایل ثبت‌شده برای پرداخت اقساطی معتبر نیست. لطفاً شماره را در حساب کاربری بررسی کنید و دوباره تلاش کنید.",
+        clearAttempt: true,
+      };
+    case "SNAPPAY_AMOUNT_MISMATCH":
+      return {
+        displayError: "مبلغ سفارش با درگاه همخوانی ندارد. لطفاً سبد خرید را بررسی و دوباره تلاش کنید.",
+        clearAttempt: true,
+      };
+    case "SNAPPAY_CART_INVALID":
+      return {
+        displayError: "سبد خرید برای اسنپ‌پی نامعتبر است. لطفاً سبد را بررسی و دوباره تلاش کنید.",
+        clearAttempt: true,
+      };
+    case "SNAPPAY_TOKEN_DUPLICATE":
+      return {
+        displayError:
+          "پرداخت قبلی هنوز در حال بررسی است. برای جلوگیری از پرداخت تکراری، وضعیت سفارش را بررسی کنید.",
+        clearAttempt: false,
+      };
+    case "SNAPPAY_MANUAL_REVIEW":
+      return {
+        displayError: SNAPPAY_MANUAL_REVIEW_COPY,
+        clearAttempt: false,
+      };
+    case "SNAPPAY_RECONCILIATION_PENDING":
+      return {
+        displayError: SNAPPAY_RECONCILIATION_PENDING_COPY,
+        clearAttempt: false,
+      };
+    default:
+      if (errorCode.startsWith("SNAPPAY_TOKEN_")) {
+        return {
+          displayError: "شروع پرداخت اسنپ‌پی انجام نشد. لطفاً دوباره تلاش کنید.",
+          clearAttempt: false,
+        };
+      }
+      return null;
+  }
+};
+
 function ShoppingCartBillForm({}: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +270,7 @@ function ShoppingCartBillForm({}: Props) {
   // `persisted: true` is the one reliable signal that happened, so unconditionally
   // clear the in-flight guard here rather than trusting it survived the round trip
   // -- a customer stuck on a frozen "already submitting" ref sees پرداخت do nothing.
+  // Stock re-check on restore is registered later (needs cart helpers).
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onPageShow = (event: PageTransitionEvent) => {
@@ -607,6 +705,9 @@ function ShoppingCartBillForm({}: Props) {
       category: "checkout",
       action: "error",
     });
+    if (errorCode && EXPECTED_CHECKOUT_SENTRY_CODES.has(errorCode)) {
+      return;
+    }
     try {
       Sentry.captureMessage(`checkout.error:${errorCode || "UNSPECIFIED"}`, {
         level: "error",
@@ -632,27 +733,35 @@ function ShoppingCartBillForm({}: Props) {
   const scrollStockNoticeIntoView = () => {
     if (typeof window === "undefined") return;
     window.requestAnimationFrame(() => {
-      document
-        .getElementById("cart-stock-notice")
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const notice = document.getElementById("cart-stock-notice");
+      // jsdom (and older Safari) do not implement scrollIntoView.
+      if (typeof notice?.scrollIntoView !== "function") return;
+      notice.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   };
 
   // Resolve a human product name for a stock-change entry. Prefer the backend
   // title, then the (still-current) cart snapshot, then a generic fallback —
   // the backend `message` is English so it is never shown to the user.
-  const resolveStockItemName = (it: {
-    cartItemId: number;
-    productVariationId: number;
-    productTitle?: string;
-  }): string => {
-    if (it.productTitle) return it.productTitle;
-    const byCartItem = cartItems.find((ci) => ci.cartItemId === String(it.cartItemId));
-    if (byCartItem?.name) return byCartItem.name;
-    const byVariation = cartItems.find((ci) => ci.variationId === String(it.productVariationId));
-    if (byVariation?.name) return byVariation.name;
-    return "این کالا";
-  };
+  const resolveStockItemName = React.useCallback(
+    (it: {
+      cartItemId: number;
+      productVariationId?: number;
+      productTitle?: string;
+    }): string => {
+      if (it.productTitle) return it.productTitle;
+      const byCartItem = cartItems.find((ci) => ci.cartItemId === String(it.cartItemId));
+      if (byCartItem?.name) return byCartItem.name;
+      if (it.productVariationId != null) {
+        const byVariation = cartItems.find(
+          (ci) => ci.variationId === String(it.productVariationId),
+        );
+        if (byVariation?.name) return byVariation.name;
+      }
+      return "این کالا";
+    },
+    [cartItems],
+  );
 
   /**
    * The reserve window ended while the shopper was on this page (countdown hit
@@ -687,6 +796,79 @@ function ShoppingCartBillForm({}: Props) {
       banner.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   }, []);
+
+  /**
+   * Apply a server stock correction to the checkout UI. On submit we also toast
+   * via failPayment so پرداخت never looks idle; on mount/pageshow we only show
+   * the amber notice (no toast spam just for landing on the page).
+   */
+  const applyCheckoutStockCorrection = React.useCallback(
+    async (
+      stockResult: Pick<
+        CartStockCheckResponse,
+        "cartIsEmpty" | "itemsAdjusted" | "itemsRemoved"
+      >,
+      options: { announce: boolean },
+    ): Promise<boolean> => {
+      const adjustedCartItemIds = (stockResult.itemsAdjusted ?? []).map((it) =>
+        String(it.cartItemId),
+      );
+      const removedNames = (stockResult.itemsRemoved ?? []).map((it) =>
+        resolveStockItemName(it),
+      );
+      const hadNamedChanges = adjustedCartItemIds.length > 0 || removedNames.length > 0;
+
+      if (!hadNamedChanges && !stockResult.cartIsEmpty) {
+        return false;
+      }
+
+      await refreshCart();
+      if (hadNamedChanges) {
+        setStockNotice({ adjustedCartItemIds, removedNames });
+        scrollStockNoticeIntoView();
+      }
+
+      if (options.announce) {
+        if (stockResult.cartIsEmpty) {
+          failPayment("سبد خرید شما خالی است");
+        } else if (hadNamedChanges) {
+          failPayment(buildCartStockNoticeText({ adjustedCartItemIds, removedNames }));
+        } else {
+          failPayment("موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.");
+        }
+      }
+      return true;
+    },
+    [failPayment, refreshCart, resolveStockItemName, setStockNotice],
+  );
+
+  const reconcileCheckoutStock = React.useCallback(async () => {
+    if (!canLoadProtectedCheckoutData) return;
+    try {
+      const stockResult = await CartService.checkCartStock();
+      if (!stockResult.valid) {
+        await applyCheckoutStockCorrection(stockResult, { announce: false });
+      }
+    } catch {
+      // A failed stock poll must not block checkout; submit still re-checks.
+    }
+  }, [applyCheckoutStockCorrection, canLoadProtectedCheckoutData]);
+
+  // Drop lines held by an earlier unpaid reservation as soon as checkout loads,
+  // and again when bfcache restores the page after a gateway back-nav.
+  useEffect(() => {
+    void reconcileCheckoutStock();
+  }, [reconcileCheckoutStock]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      void reconcileCheckoutStock();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [reconcileCheckoutStock]);
 
   const submitOrder = async (data: FormData) => {
     setError(null);
@@ -786,26 +968,10 @@ function ShoppingCartBillForm({}: Props) {
       const stockValid = await CartService.checkCartStock();
 
       if (!stockValid.valid) {
-        if (stockValid.cartIsEmpty) {
-          failPayment("سبد خرید شما خالی است");
-          return;
-        }
-
-        const adjustedCartItemIds = (stockValid.itemsAdjusted ?? []).map((it) =>
-          String(it.cartItemId),
-        );
-        const removedNames = (stockValid.itemsRemoved ?? []).map((it) => resolveStockItemName(it));
-
-        if (adjustedCartItemIds.length || removedNames.length) {
-          // Reconcile the on-page totals with the server-corrected cart and say
-          // so inline. This one submit is cancelled rather than paying a total
-          // the shopper never saw, but there is no dialog to dismiss: their next
-          // tap pays the amount now on screen.
-          await refreshCart();
-          setStockNotice({ adjustedCartItemIds, removedNames });
-          scrollStockNoticeIntoView();
-          return;
-        }
+        const applied = await applyCheckoutStockCorrection(stockValid, { announce: true });
+        if (applied) return;
+        failPayment("موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.");
+        return;
       }
 
       const addressPayload =
@@ -904,19 +1070,14 @@ function ShoppingCartBillForm({}: Props) {
         // the pre-flight guard uses instead, naming what actually changed.
         const lateStock = cartResponse as unknown as Pick<
           CartStockCheckResponse,
-          "itemsAdjusted" | "itemsRemoved"
+          "itemsAdjusted" | "itemsRemoved" | "cartIsEmpty"
         >;
         const lateAdjusted = lateStock.itemsAdjusted ?? [];
         const lateRemoved = lateStock.itemsRemoved ?? [];
-        if (lateAdjusted.length || lateRemoved.length) {
+        if (lateAdjusted.length || lateRemoved.length || lateStock.cartIsEmpty) {
           trackCheckoutError("STOCK_CHANGED");
-          await refreshCart();
-          setStockNotice({
-            adjustedCartItemIds: lateAdjusted.map((it) => String(it.cartItemId)),
-            removedNames: lateRemoved.map((it) => resolveStockItemName(it)),
-          });
-          scrollStockNoticeIntoView();
-          return;
+          const applied = await applyCheckoutStockCorrection(lateStock, { announce: true });
+          if (applied) return;
         }
 
         // Map error codes to user-friendly messages
@@ -924,15 +1085,15 @@ function ShoppingCartBillForm({}: Props) {
 
         if (errorCode) {
           trackCheckoutError(String(errorCode));
-          switch (errorCode) {
-            case "PAYMENT_IN_PROGRESS":
-              displayError =
-                "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
-              break;
-            case "PAYMENT_UNKNOWN":
-              displayError =
-                "نتیجه شروع پرداخت هنوز مشخص نیست. برای جلوگیری از پرداخت تکراری، وضعیت سفارش را بررسی کنید.";
-              break;
+          const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
+          if (mappedCheckoutError) {
+            displayError = mappedCheckoutError.displayError;
+            if (mappedCheckoutError.clearAttempt) {
+              localStorage.removeItem("pendingCheckoutAttemptId");
+              localStorage.removeItem("pendingCheckoutQuoteHash");
+            }
+          } else {
+            switch (errorCode) {
             case "PAYMENT_INITIATION_FAILED":
             case "WALLET_DEBIT_FAILED":
               displayError = "شروع پرداخت کامل نشد. می‌توانید دوباره تلاش کنید.";
@@ -1025,6 +1186,14 @@ function ShoppingCartBillForm({}: Props) {
             case "INVALID_RESERVATION":
               displayError = "رزرو موجودی انجام نشد. لطفاً دوباره تلاش کنید.";
               break;
+            case "SNAPPAY_MANUAL_REVIEW":
+            case "SNAPPAY_RECONCILIATION_PENDING":
+            case "ORDER_CANCELLED": {
+              const leftover = leftoverCheckoutCopy(String(errorCode));
+              if (leftover) displayError = leftover;
+              clearStaleCheckoutAttempt();
+              break;
+            }
             default:
               // Use backend message translated to Persian (never show raw)
               if (errorMessage && typeof errorMessage === "string") {
@@ -1033,6 +1202,7 @@ function ShoppingCartBillForm({}: Props) {
                   "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.",
                 );
               }
+          }
           }
         } else if (errorMessage && typeof errorMessage === "string") {
           trackCheckoutError("BACKEND_MESSAGE");
@@ -1136,7 +1306,15 @@ function ShoppingCartBillForm({}: Props) {
 
         if (errorCode) {
           trackCheckoutError(String(errorCode));
-          switch (errorCode) {
+          const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
+          if (mappedCheckoutError) {
+            displayError = mappedCheckoutError.displayError;
+            if (mappedCheckoutError.clearAttempt) {
+              window.localStorage.removeItem("pendingCheckoutAttemptId");
+              window.localStorage.removeItem("pendingCheckoutQuoteHash");
+            }
+          } else {
+            switch (errorCode) {
             case "CHECKOUT_QUOTE_CHANGED": {
               const nextTotal = Number(responseData.quote?.financialSummary?.total || 0);
               if (nextTotal > 0 && responseData.quote?.quoteHash) {
@@ -1158,10 +1336,6 @@ function ShoppingCartBillForm({}: Props) {
                 "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.";
               window.localStorage.removeItem("pendingCheckoutAttemptId");
               window.localStorage.removeItem("pendingCheckoutQuoteHash");
-              break;
-            case "PAYMENT_IN_PROGRESS":
-              displayError =
-                "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
               break;
             case "PAYMENT_INITIATION_FAILED":
             case "WALLET_DEBIT_FAILED":
@@ -1216,6 +1390,14 @@ function ShoppingCartBillForm({}: Props) {
               displayError =
                 "ظرفیت استفاده از این کد تخفیف تکمیل شده است. کد را بردارید یا کد دیگری وارد کنید.";
               break;
+            case "SNAPPAY_MANUAL_REVIEW":
+            case "SNAPPAY_RECONCILIATION_PENDING":
+            case "ORDER_CANCELLED": {
+              const leftover = leftoverCheckoutCopy(String(errorCode));
+              if (leftover) displayError = leftover;
+              clearStaleCheckoutAttempt();
+              break;
+            }
             default:
               if (errorMessage && typeof errorMessage === "string") {
                 displayError = translateErrorMessage(
@@ -1223,6 +1405,7 @@ function ShoppingCartBillForm({}: Props) {
                   "خطا در ثبت سفارش. لطفاً مجددا تلاش کنید.",
                 );
               }
+            }
           }
         } else if (errorMessage && typeof errorMessage === "string") {
           trackCheckoutError("BACKEND_MESSAGE");
@@ -1291,6 +1474,7 @@ function ShoppingCartBillForm({}: Props) {
         currentStep={submitOrderStep}
         steps={["Information", "Delivery", "Payment"]}
       /> */}
+      <CartStockNotice />
       {error && (
         <div
           id="checkout-form-error"
