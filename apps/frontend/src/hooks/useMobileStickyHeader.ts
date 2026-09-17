@@ -20,17 +20,19 @@ export function useMobileStickyHeader({
   useEffect(() => {
     const handleScroll = () => {
       const currentY = window.scrollY;
-      setScrolled(currentY > scrolledScrollY);
+      const nextScrolled = currentY > scrolledScrollY;
+      setScrolled((prev) => (prev === nextScrolled ? prev : nextScrolled));
 
       if (window.innerWidth >= breakpointPx) {
         lastScrollY.current = currentY;
-        setShowHeader(true);
+        setShowHeader((prev) => (prev === true ? prev : true));
         return;
       }
 
       const isScrollingUp = currentY <= lastScrollY.current;
       const nearTop = currentY < nearTopScrollY;
-      setShowHeader(isScrollingUp || nearTop);
+      const nextShowHeader = isScrollingUp || nearTop;
+      setShowHeader((prev) => (prev === nextShowHeader ? prev : nextShowHeader));
       lastScrollY.current = Math.max(0, currentY);
     };
 

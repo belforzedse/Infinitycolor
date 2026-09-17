@@ -1,9 +1,15 @@
 const mockRecordAdminAudit = jest.fn();
 const mockMarkProductEditedByAdmin = jest.fn();
+const mockEnqueueProductVideoNormalization = jest.fn();
 
 jest.mock("../../../../../utils/adminAudit", () => ({
   recordAdminAudit: (...args: unknown[]) => mockRecordAdminAudit(...args),
   markProductEditedByAdmin: (...args: unknown[]) => mockMarkProductEditedByAdmin(...args),
+}));
+
+jest.mock("../../../../../queue/media", () => ({
+  enqueueProductVideoNormalization: (...args: unknown[]) =>
+    mockEnqueueProductVideoNormalization(...args),
 }));
 
 import productLifecycles from "../lifecycles";
@@ -31,6 +37,8 @@ describe("product lifecycles - PDP cache invalidation", () => {
     jest.clearAllMocks();
     mockRecordAdminAudit.mockReset();
     mockMarkProductEditedByAdmin.mockReset();
+    mockEnqueueProductVideoNormalization.mockReset();
+    mockEnqueueProductVideoNormalization.mockResolvedValue(undefined);
   });
 
   afterAll(() => {
@@ -43,6 +51,29 @@ describe("product lifecycles - PDP cache invalidation", () => {
       .map(([, init]) => JSON.parse((init as RequestInit).body as string))
       .filter((body) => body.type === "product")
       .map((body) => body.path);
+
+  describe("afterCreate", () => {
+    it("queues video normalization for a new product with a QuickTime clip", async () => {
+      (global as any).strapi.entityService.findOne = jest.fn().mockResolvedValue({
+        id: 4624,
+        Media: [
+          {
+            id: 120001,
+            mime: "video/quicktime",
+            ext: ".MOV",
+            url: "/uploads/IMG_8997_e5aba22d0e.MOV",
+          },
+        ],
+      });
+
+      await productLifecycles.afterCreate({
+        result: { id: 4624, Title: "ست راحتی تدی", Slug: "fantasy-sleeping-set-n002", Status: "InActive" },
+        params: { data: {} },
+      } as any);
+
+      expect(mockEnqueueProductVideoNormalization).toHaveBeenCalledWith(4624, 120001);
+    });
+  });
 
   describe("afterUpdate", () => {
     it("still revalidates the slug when a product becomes Active (existing behavior)", async () => {
@@ -179,6 +210,39 @@ describe("product lifecycles - PDP cache invalidation", () => {
       );
       expect(mockRecordAdminAudit).toHaveBeenCalled();
       expect(mockMarkProductEditedByAdmin).toHaveBeenCalledWith(expect.anything(), 1);
+    });
+
+    it("queues gallery video normalization when Media includes a QuickTime clip", async () => {
+      (global as any).strapi.entityService.findOne = jest.fn().mockResolvedValue({
+        Title: "ست راحتی تدی",
+        Slug: "fantasy-sleeping-set-n002",
+        Status: "Active",
+        CoverImage: { id: 4 },
+        Media: [
+          {
+            id: 120001,
+            mime: "video/quicktime",
+            ext: ".MOV",
+            url: "/uploads/IMG_8997_e5aba22d0e.MOV",
+          },
+        ],
+      });
+
+      await productLifecycles.afterUpdate({
+        params: { data: { Media: [120001] } },
+        result: { id: 4624, Slug: "fantasy-sleeping-set-n002", Status: "Active" },
+        state: {
+          previousProduct: {
+            Title: "ست راحتی تدی",
+            Slug: "fantasy-sleeping-set-n002",
+            Status: "Active",
+            CoverImage: { id: 4 },
+            Media: [],
+          },
+        },
+      } as any);
+
+      expect(mockEnqueueProductVideoNormalization).toHaveBeenCalledWith(4624, 120001);
     });
 
     it("does not stamp when CoverImage is re-sent unchanged (no false positives)", async () => {

@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 import { blogService, BlogComment } from "@/services/blog/blog.service";
 import { resolveBlogCommentUserDisplayName } from "@/utils/blogCommentAuthorName";
+import { formatFaDate } from "@/utils/faNum";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 interface BlogCommentsProps {
@@ -114,7 +115,7 @@ const BlogComments: React.FC<BlogCommentsProps> = ({ postId, comments: initialCo
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-neutral-500">
                   <Calendar className="h-3.5 w-3.5" />
-                  {new Date(comment.Date || comment.createdAt).toLocaleDateString("fa-IR")}
+                  {formatFaDate(comment.Date || comment.createdAt)}
                 </div>
               </div>
             </div>

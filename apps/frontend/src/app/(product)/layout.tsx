@@ -34,17 +34,19 @@ export default function ProductLayout({ children }: { children: React.ReactNode 
   React.useEffect(() => {
     const handleScroll = () => {
       const currentY = window.scrollY;
-      setScrolled(currentY > 8);
+      const nextScrolled = currentY > 8;
+      setScrolled((prev) => (prev === nextScrolled ? prev : nextScrolled));
 
       if (window.innerWidth >= 1024) {
         lastScrollY.current = currentY;
-        setShowHeader(true);
+        setShowHeader((prev) => (prev === true ? prev : true));
         return;
       }
 
       const isScrollingUp = currentY <= lastScrollY.current;
       const nearTop = currentY < 80;
-      setShowHeader(isScrollingUp || nearTop);
+      const nextShowHeader = isScrollingUp || nearTop;
+      setShowHeader((prev) => (prev === nextShowHeader ? prev : nextShowHeader));
       lastScrollY.current = Math.max(0, currentY);
     };
 

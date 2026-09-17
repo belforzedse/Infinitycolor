@@ -45,7 +45,12 @@ export default factories.createCoreController(
         });
 
         if (!wallet) {
-          return ctx.notFound("Wallet not found for this user");
+          return ctx.send({
+            success: true,
+            data: {
+              balance: 0,
+            },
+          });
         }
 
         return ctx.send({

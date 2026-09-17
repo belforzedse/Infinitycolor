@@ -37,6 +37,7 @@ export type DashboardTodayOrderCounts = {
   paying: number;
   inprogress: number;
   completed: number;
+  shipped: number;
   cancelled: number;
 };
 

@@ -8,6 +8,12 @@ import { useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "r
 import { useDrag } from "@use-gesture/react";
 import { hapticNavigation } from "@/utils/haptics";
 import { noteEnhancementLoaded, useAdaptiveQuality } from "@/lib/adaptive-quality";
+import {
+  hasDecodableVideoTrack,
+  isUnsupportedMediaError,
+  VIDEO_DECODE_PROBE_ATTEMPTS,
+  VIDEO_DECODE_PROBE_MS,
+} from "./video-decode";
 
 type Props = {
   type: "video" | "image";
@@ -48,6 +54,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [videoRequested, setVideoRequested] = useState(false);
   const [videoInView, setVideoInView] = useState(false);
+  const [videoUndecodable, setVideoUndecodable] = useState(false);
   const allowsZoom = type !== "video";
   const shouldAttachVideoSource = videoRequested || (quality.media !== "economy" && videoInView);
 
@@ -224,6 +231,52 @@ export default function PDPHeroGallerySingleImage(props: Props) {
   }, [videoRequested]);
 
   useEffect(() => {
+    setVideoUndecodable(false);
+    setIsVideoPlaying(false);
+  }, [src]);
+
+  useEffect(() => {
+    if (type !== "video" || videoUndecodable || !shouldAttachVideoSource) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    let cancelled = false;
+    let probeTimer: number | undefined;
+    let decodeChecks = 0;
+
+    const verifyDecodable = () => {
+      if (cancelled) return;
+      if (hasDecodableVideoTrack(video)) return;
+      // currentTime moving with zero frames is the Chromium HEVC signature.
+      // A clip that has not advanced yet is still buffering.
+      if (video.currentTime < 0.2) {
+        probeTimer = window.setTimeout(verifyDecodable, VIDEO_DECODE_PROBE_MS);
+        return;
+      }
+      decodeChecks += 1;
+      if (decodeChecks < VIDEO_DECODE_PROBE_ATTEMPTS) {
+        probeTimer = window.setTimeout(verifyDecodable, VIDEO_DECODE_PROBE_MS);
+        return;
+      }
+      video.pause();
+      setIsVideoPlaying(false);
+      setVideoUndecodable(true);
+    };
+
+    const onPlaying = () => {
+      window.clearTimeout(probeTimer);
+      probeTimer = window.setTimeout(verifyDecodable, VIDEO_DECODE_PROBE_MS);
+    };
+
+    video.addEventListener("playing", onPlaying);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(probeTimer);
+      video.removeEventListener("playing", onPlaying);
+    };
+  }, [shouldAttachVideoSource, src, type, videoUndecodable]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") {
         e.preventDefault();
@@ -348,87 +401,117 @@ export default function PDPHeroGallerySingleImage(props: Props) {
         {...bind()}
       >
         {type === "video" ? (
-          <>
-            {/* Luxury loading overlay with shimmer effect */}
-            {isLoading && thumb && (
-              <div className="absolute inset-0 z-0 overflow-hidden rounded-3xl">
+          videoUndecodable ? (
+            <div
+              className="relative h-full w-full overflow-hidden rounded-3xl"
+              data-testid="pdp-video-undecodable"
+            >
+              {thumb ? (
                 <Image
                   src={thumb}
                   alt={alt || "Video thumbnail"}
                   fill
-                  className={`object-contain ${
-                    quality.motion === "minimal"
-                      ? "transition-none"
-                      : "transition-opacity duration-500"
-                  }`}
+                  className="object-contain"
                   loader={imageLoader}
                 />
-                <div
-                  className={`absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-black/10 ${
-                    quality.motion === "minimal" ? "" : "animate-pulse"
-                  }`}
-                />
+              ) : (
+                <div className="h-full w-full bg-gray-100" />
+              )}
+              <div className="absolute inset-x-0 bottom-16 z-10 flex justify-center px-6">
+                <p className="rounded-full bg-black/70 px-4 py-2 text-center font-peyda text-sm text-white">
+                  این ویدیو در این مرورگر پخش نمی‌شود.
+                </p>
               </div>
-            )}
+            </div>
+          ) : (
+            <>
+              {/* Luxury loading overlay with shimmer effect */}
+              {isLoading && thumb && (
+                <div className="absolute inset-0 z-0 overflow-hidden rounded-3xl">
+                  <Image
+                    src={thumb}
+                    alt={alt || "Video thumbnail"}
+                    fill
+                    className={`object-contain ${
+                      quality.motion === "minimal"
+                        ? "transition-none"
+                        : "transition-opacity duration-500"
+                    }`}
+                    loader={imageLoader}
+                  />
+                  <div
+                    className={`absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-black/10 ${
+                      quality.motion === "minimal" ? "" : "animate-pulse"
+                    }`}
+                  />
+                </div>
+              )}
 
-            {/* Video player with luxury styling */}
-            <div className="group/video-container relative h-full w-full overflow-hidden rounded-3xl">
-              <video
-                ref={videoRef}
-                className={`h-full w-full object-contain ${
-                  isLoading ? "opacity-0" : "opacity-100"
-                }`}
-                src={shouldAttachVideoSource ? src : undefined}
-                controls
-                loop
-                playsInline
-                preload={
-                  shouldAttachVideoSource && quality.media !== "economy" ? "metadata" : "none"
-                }
-                onLoadedData={() => setIsLoading(false)}
-                onCanPlay={() => setIsLoading(false)}
-                onError={() => setIsLoading(false)}
-                onPlay={() => {
-                  setVideoRequested(true);
-                  setIsVideoPlaying(true);
-                }}
-                onPause={() => setIsVideoPlaying(false)}
-                poster={thumb || undefined}
-              />
-
-              {/* Luxury play overlay - functional play button */}
-              {!isVideoPlaying && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!shouldAttachVideoSource) {
-                      setVideoRequested(true);
-                    } else {
-                      noteEnhancementLoaded("optional-video");
-                      void videoRef.current?.play();
+              {/* Video player with luxury styling */}
+              <div className="group/video-container relative h-full w-full overflow-hidden rounded-3xl">
+                <video
+                  ref={videoRef}
+                  className={`h-full w-full object-contain ${
+                    isLoading ? "opacity-0" : "opacity-100"
+                  }`}
+                  src={shouldAttachVideoSource ? src : undefined}
+                  controls
+                  loop
+                  playsInline
+                  preload={
+                    shouldAttachVideoSource && quality.media !== "economy" ? "metadata" : "none"
+                  }
+                  onLoadedData={() => setIsLoading(false)}
+                  onCanPlay={() => setIsLoading(false)}
+                  onError={() => {
+                    setIsLoading(false);
+                    if (videoRef.current && isUnsupportedMediaError(videoRef.current)) {
+                      setIsVideoPlaying(false);
+                      setVideoUndecodable(true);
                     }
                   }}
-                  className={`pointer-events-auto absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300 ${
-                    quality.media === "economy"
-                      ? "opacity-100"
-                      : "opacity-0 group-hover/video-container:opacity-100 focus-visible:opacity-100"
-                  }`}
-                  aria-label="Play video"
-                >
-                  <div className="group/video-play flex items-center justify-center">
-                    <div className="absolute h-20 w-20 rounded-full bg-white/95 shadow-2xl ring-4 ring-infinity-primary-lighter/30 backdrop-blur-md transition-all duration-300 group-hover/video-play:scale-110 group-hover/video-play:bg-white group-hover/video-play:ring-infinity-primary-light/50" />
-                    <svg
-                      className="relative left-1 h-10 w-10 text-infinity-primary transition-transform duration-300 group-hover/video-play:scale-110"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  </div>
-                </button>
-              )}
-            </div>
-          </>
+                  onPlay={() => {
+                    setVideoRequested(true);
+                    setIsVideoPlaying(true);
+                  }}
+                  onPause={() => setIsVideoPlaying(false)}
+                  poster={thumb || undefined}
+                />
+
+                {/* Luxury play overlay - functional play button */}
+                {!isVideoPlaying && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!shouldAttachVideoSource) {
+                        setVideoRequested(true);
+                      } else {
+                        noteEnhancementLoaded("optional-video");
+                        void videoRef.current?.play();
+                      }
+                    }}
+                    className={`pointer-events-auto absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300 ${
+                      quality.media === "economy"
+                        ? "opacity-100"
+                        : "opacity-0 group-hover/video-container:opacity-100 focus-visible:opacity-100"
+                    }`}
+                    aria-label="Play video"
+                  >
+                    <div className="group/video-play flex items-center justify-center">
+                      <div className="absolute h-20 w-20 rounded-full bg-white/95 shadow-2xl ring-4 ring-infinity-primary-lighter/30 backdrop-blur-md transition-all duration-300 group-hover/video-play:scale-110 group-hover/video-play:bg-white group-hover/video-play:ring-infinity-primary-light/50" />
+                      <svg
+                        className="relative left-1 h-10 w-10 text-infinity-primary transition-transform duration-300 group-hover/video-play:scale-110"
+                        fill="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    </div>
+                  </button>
+                )}
+              </div>
+            </>
+          )
         ) : (
           <div className="absolute inset-0">
             <div
@@ -525,7 +608,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
         )}
 
         {/* Luxury loading shimmer effect for videos */}
-        {isLoading && thumb && type === "video" ? (
+        {isLoading && thumb && type === "video" && !videoUndecodable ? (
           <div
             className={`absolute inset-0 z-0 ${
               quality.rendering === "safe" ? "" : "scale-110 blur-2xl"
@@ -541,7 +624,7 @@ export default function PDPHeroGallerySingleImage(props: Props) {
           />
         ) : null}
 
-        {isLoading && !thumb && type === "video" ? (
+        {isLoading && !thumb && type === "video" && !videoUndecodable ? (
           <div className="absolute inset-0 z-0 overflow-hidden rounded-3xl">
             <div
               className={`h-full w-full bg-gradient-to-br from-gray-100 via-infinity-primary-lighter/30 to-gray-100 ${

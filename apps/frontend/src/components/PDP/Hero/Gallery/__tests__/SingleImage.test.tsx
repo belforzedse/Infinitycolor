@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import SingleImage from "../SingleImage";
 import type { AdaptiveQualitySnapshot } from "@/lib/adaptive-quality";
 
@@ -50,6 +50,7 @@ const navigationProps = {
 
 describe("PDP gallery active medium", () => {
   const originalPlay = HTMLMediaElement.prototype.play;
+  const originalPause = HTMLMediaElement.prototype.pause;
 
   beforeEach(() => {
     mockNoteEnhancementLoaded.mockClear();
@@ -63,10 +64,14 @@ describe("PDP gallery active medium", () => {
       routeGeneration: 0,
     };
     HTMLMediaElement.prototype.play = jest.fn().mockResolvedValue(undefined);
+    // jsdom throws "Not implemented" for pause(); the decode-fallback path calls it.
+    HTMLMediaElement.prototype.pause = jest.fn();
   });
 
   afterEach(() => {
     HTMLMediaElement.prototype.play = originalPlay;
+    HTMLMediaElement.prototype.pause = originalPause;
+    jest.useRealTimers();
   });
 
   it("keeps image zoom available and uses a static low-cost placeholder", () => {
@@ -125,5 +130,63 @@ describe("PDP gallery active medium", () => {
       />,
     );
     expect(video).toHaveAttribute("src", "/media/product.mp4");
+  });
+
+  it("falls back to the poster when the clip plays with no decoded frames", async () => {
+    jest.useFakeTimers();
+    const { container } = render(
+      <SingleImage
+        type="video"
+        src="/uploads/IMG_8997_e5aba22d0e.MOV"
+        thumb="/media/product-poster.jpg"
+        alt="ویدیوی محصول"
+        {...navigationProps}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    const video = container.querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(video, "videoWidth", { configurable: true, get: () => 0 });
+    Object.defineProperty(video, "videoHeight", { configurable: true, get: () => 0 });
+    Object.defineProperty(video, "currentTime", { configurable: true, get: () => 1 });
+    video.getVideoPlaybackQuality = () =>
+      ({
+        totalVideoFrames: 0,
+        droppedVideoFrames: 0,
+        corruptedVideoFrames: 0,
+        creationTime: 0,
+      }) as VideoPlaybackQuality;
+
+    fireEvent.playing(video);
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    expect(screen.getByTestId("pdp-video-undecodable")).toBeInTheDocument();
+    expect(screen.getByText("این ویدیو در این مرورگر پخش نمی‌شود.")).toBeInTheDocument();
+    expect(container.querySelector("video")).not.toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it("falls back when the browser reports the source as unsupported", () => {
+    const { container } = render(
+      <SingleImage
+        type="video"
+        src="/uploads/IMG_8997_e5aba22d0e.MOV"
+        thumb="/media/product-poster.jpg"
+        alt="ویدیوی محصول"
+        {...navigationProps}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    const video = container.querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(video, "error", {
+      configurable: true,
+      get: () => ({ code: 4, message: "MEDIA_ERR_SRC_NOT_SUPPORTED" }),
+    });
+    fireEvent.error(video);
+
+    expect(screen.getByTestId("pdp-video-undecodable")).toBeInTheDocument();
+    expect(screen.getByText("این ویدیو در این مرورگر پخش نمی‌شود.")).toBeInTheDocument();
   });
 });

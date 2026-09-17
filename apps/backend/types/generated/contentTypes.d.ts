@@ -1165,7 +1165,7 @@ export interface ApiIssueReportIssueReport extends Schema.CollectionType {
     issueName: Attribute.String &
       Attribute.Required &
       Attribute.SetMinMaxLength<{
-        maxLength: 120;
+        maxLength: 500;
       }>;
     locale: Attribute.String &
       Attribute.SetMinMaxLength<{
@@ -1187,7 +1187,7 @@ export interface ApiIssueReportIssueReport extends Schema.CollectionType {
       }>;
     sourcePath: Attribute.String &
       Attribute.SetMinMaxLength<{
-        maxLength: 512;
+        maxLength: 2048;
       }>;
     status: Attribute.Enumeration<["new", "in_review", "resolved"]> &
       Attribute.Required &
@@ -1199,7 +1199,7 @@ export interface ApiIssueReportIssueReport extends Schema.CollectionType {
     userAgent: Attribute.String &
       Attribute.Private &
       Attribute.SetMinMaxLength<{
-        maxLength: 512;
+        maxLength: 4096;
       }>;
     version: Attribute.Integer &
       Attribute.Required &

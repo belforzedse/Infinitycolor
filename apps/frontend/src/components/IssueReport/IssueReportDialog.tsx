@@ -233,10 +233,10 @@ export default function IssueReportDialog({
                 <input
                   {...register("issueName", {
                     required: "عنوان را وارد کنید.",
-                    maxLength: { value: 120, message: "عنوان باید کوتاه‌تر باشد." },
+                    maxLength: { value: 500, message: "عنوان باید کوتاه‌تر باشد." },
                     onChange: markEdited,
                   })}
-                  maxLength={120}
+                  maxLength={500}
                   className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-slate-900 outline-none transition focus:border-infinity-primary focus:ring-2 focus:ring-infinity-primary/20 motion-reduce:transition-none"
                   aria-invalid={Boolean(errors.issueName)}
                 />
@@ -252,11 +252,11 @@ export default function IssueReportDialog({
                 <textarea
                   {...register("description", {
                     required: "توضیحات را وارد کنید.",
-                    maxLength: { value: 4000, message: "توضیحات باید کوتاه‌تر باشد." },
+                    maxLength: { value: 8000, message: "توضیحات باید کوتاه‌تر باشد." },
                     onChange: markEdited,
                   })}
                   rows={5}
-                  maxLength={4000}
+                  maxLength={8000}
                   className="w-full resize-y rounded-xl border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none transition focus:border-infinity-primary focus:ring-2 focus:ring-infinity-primary/20 motion-reduce:transition-none"
                   aria-invalid={Boolean(errors.description)}
                 />

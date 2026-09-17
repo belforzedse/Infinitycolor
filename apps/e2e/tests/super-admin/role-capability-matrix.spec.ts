@@ -495,6 +495,7 @@ for (const role of STAFF_ROLES) {
             paying: expect.any(Number),
             inprogress: expect.any(Number),
             completed: expect.any(Number),
+            shipped: expect.any(Number),
             cancelled: expect.any(Number),
           }),
         );
@@ -518,6 +519,11 @@ for (const role of STAFF_ROLES) {
             data: {
               counts: expect.objectContaining({
                 all: expect.any(Number),
+                paying: expect.any(Number),
+                inprogress: expect.any(Number),
+                completed: expect.any(Number),
+                shipped: expect.any(Number),
+                cancelled: expect.any(Number),
                 manual: expect.any(Number),
               }),
               activeReserveGroups: expect.any(Number),

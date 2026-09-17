@@ -44,6 +44,7 @@ describe("admin dashboard loading", () => {
         paying: 2,
         inprogress: 4,
         completed: 5,
+        shipped: 3,
         cancelled: 1,
       },
       activeReserveGroups: 3,
@@ -66,6 +67,7 @@ describe("admin dashboard loading", () => {
 
     expect(screen.getByRole("heading", { name: "سفارش‌های امروز" })).toBeInTheDocument();
     expect(screen.getByText("کل سفارش‌های امروز")).toBeInTheDocument();
+    expect(screen.getByText("ارسال شده")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /رزروهای فعال ۳/ })).toHaveAttribute(
       "href",
       "/orders/reserve",
@@ -73,7 +75,7 @@ describe("admin dashboard loading", () => {
   });
 
   it.each(["seller2", "store_manager"])(
-    "shows aggregate cards for %s through order.read",
+    "shows aggregate cards including ارسال شده for %s through order.read",
     (role) => {
       mockAdminRole = role;
       mockCapabilities = ["order.read"];
@@ -83,6 +85,7 @@ describe("admin dashboard loading", () => {
       expect(
         screen.getByRole("heading", { name: "سفارش‌های امروز" }),
       ).toBeInTheDocument();
+      expect(screen.getByText("ارسال شده")).toBeInTheDocument();
       expect(mockUseDashboardMetrics).toHaveBeenCalledWith({
         enabled: true,
         includeUserMetric: false,
@@ -96,6 +99,7 @@ describe("admin dashboard loading", () => {
     render(<SuperAdminPage />);
 
     expect(screen.queryByRole("heading", { name: "سفارش‌های امروز" })).not.toBeInTheDocument();
+    expect(screen.queryByText("ارسال شده")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /رزروهای فعال/ })).not.toBeInTheDocument();
     expect(mockUseDashboardMetrics).toHaveBeenCalledWith({
       enabled: true,

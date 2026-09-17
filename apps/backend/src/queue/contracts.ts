@@ -37,12 +37,19 @@ export const WALLET_TOPUP_PAYMENT_JOBS = {
 export const MEDIA_JOBS = {
   /** Transcode a story's video to web-safe progressive MP4 (see services/media). */
   normalizeStoryVideo: "media.normalizeStoryVideo",
+  /** Transcode one product gallery/cover video to web-safe progressive MP4. */
+  normalizeProductVideo: "media.normalizeProductVideo",
 } as const;
 
 export type MediaJobName = (typeof MEDIA_JOBS)[keyof typeof MEDIA_JOBS];
 
 export type NormalizeStoryVideoJobData = {
   storyId: number;
+};
+
+export type NormalizeProductVideoJobData = {
+  productId: number;
+  fileId: number;
 };
 
 export const MAINTENANCE_SCHEDULERS = {
@@ -122,6 +129,7 @@ export type StaffOrderAlertJobData = {
 export type MaintenanceJobData =
   | Record<string, never>
   | NormalizeStoryVideoJobData
+  | NormalizeProductVideoJobData
   | ScheduledProductPublicationJobData
   | AnipoRecipientSyncJobData
   | EdgeCachePurgeJobData

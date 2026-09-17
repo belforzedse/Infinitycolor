@@ -10,6 +10,8 @@ jest.mock("@sentry/nextjs", () => ({
     callback({ setTag }),
 }));
 
+const TRANSIENT_RETRY_OFFSET_MS = 31_000;
+
 describe("StorefrontRecoveryState", () => {
   const originalDsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
@@ -88,4 +90,36 @@ describe("StorefrontRecoveryState", () => {
     expect(screen.getByRole("heading", { name: "خطا" })).toBeInTheDocument();
     expect(captureException).toHaveBeenCalledWith(error);
   });
+
+  it.each([
+    ["Load failed", 1],
+    ["Failed to fetch", 2],
+  ] as const)(
+    "silently retries once on Safari/Chromium %s, then reports if it recurs immediately",
+    (message, windowOffset) => {
+      process.env.NEXT_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
+      jest.spyOn(Date, "now").mockReturnValue(Date.now() + windowOffset * TRANSIENT_RETRY_OFFSET_MS);
+      const retry = jest.fn();
+      const error = new Error(message);
+      const props = {
+        surface: "product" as const,
+        title: "خطا",
+        message: "دوباره تلاش کنید",
+        error,
+        onRetry: retry,
+      };
+
+      const first = render(<StorefrontRecoveryState {...props} />);
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(captureException).not.toHaveBeenCalled();
+      expect(first.container).toBeEmptyDOMElement();
+      first.unmount();
+
+      render(<StorefrontRecoveryState {...props} />);
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("heading", { name: "خطا" })).toBeInTheDocument();
+      expect(captureException).toHaveBeenCalledWith(error);
+      jest.restoreAllMocks();
+    },
+  );
 });

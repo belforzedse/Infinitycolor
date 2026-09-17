@@ -8,6 +8,7 @@ import { generateUniqueProductSlug } from "../../../../utils/productSlug";
 import { scheduleHomeProductsRevalidation } from "../../../../utils/homepageRevalidation";
 import { isTrustedWordPressMigrationRequest } from "../../../../utils/migration-context";
 import { triggerFrontendRevalidation } from "../../../../utils/revalidate";
+import { collectVideoUploads } from "../../../../services/media/normalize-upload-video";
 
 type AuditAction = "Create" | "Update" | "Delete";
 const PRODUCT_COUNTER_ONLY_FIELDS = new Set(["SeenCount"]);
@@ -73,6 +74,36 @@ const PRODUCT_DIFF_SNAPSHOT_SPEC = {
  */
 async function triggerProductRevalidation(slug: string) {
   await triggerFrontendRevalidation({ path: slug, type: "product" }, "Product Lifecycle");
+}
+
+/**
+ * Queue web-safe transcodes for any HEVC/QuickTime gallery clips. Uploads are
+ * accepted as-is (phone recordings, WooCommerce import); Chromium without
+ * platform HEVC plays audio over a blank frame and reports no error.
+ *
+ * Best-effort: a product save must still succeed if Redis is down. Per-file
+ * job ids so attaching a new clip after an earlier job finished still queues.
+ */
+async function enqueueProductVideoNormalization(productId: number) {
+  try {
+    const product = await strapi.entityService.findOne("api::product.product", productId, {
+      fields: ["id"],
+      populate: { CoverImage: true, Media: true },
+    });
+    const files = collectVideoUploads(product ?? {});
+    if (files.length === 0) return;
+
+    const { enqueueProductVideoNormalization: enqueue } = await import(
+      "../../../../queue/media"
+    );
+    for (const file of files) {
+      await enqueue(productId, file.id);
+    }
+  } catch (error) {
+    strapi.log.warn(
+      `[product] could not queue video normalization for ${productId}: ${(error as Error).message}`,
+    );
+  }
 }
 
 /**
@@ -144,6 +175,7 @@ export default {
   async afterCreate(event) {
     const { result } = event;
     if (!result?.id) return;
+    await enqueueProductVideoNormalization(result.id);
     if (isTrustedWordPressMigrationRequest()) return;
     const actor = resolveAuditActor(event as any);
 
@@ -226,8 +258,11 @@ export default {
   async afterUpdate(event) {
     const { result, state } = event as any;
     if (!result?.id) return;
-    if (state?.migrationWrite || isTrustedWordPressMigrationRequest()) return;
     if (state?.counterOnlyUpdate || isCounterOnlyProductUpdate((event as any)?.params?.data)) {
+      return;
+    }
+    if (state?.migrationWrite || isTrustedWordPressMigrationRequest()) {
+      await enqueueProductVideoNormalization(result.id);
       return;
     }
     const actor = resolveAuditActor(event as any);
@@ -334,6 +369,10 @@ export default {
       status: currentStatus,
       changedFields,
     });
+
+    if (changes.CoverImage || changes.Media) {
+      await enqueueProductVideoNormalization(result.id);
+    }
   },
 
   async beforeDelete(event) {

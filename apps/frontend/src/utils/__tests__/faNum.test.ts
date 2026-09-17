@@ -1,4 +1,4 @@
-import { faNum, normalizeDigits } from "../faNum";
+import { faNum, formatFaDate, normalizeDigits } from "../faNum";
 
 describe("Farsi Number utilities", () => {
   describe("normalizeDigits", () => {
@@ -70,6 +70,75 @@ describe("Farsi Number utilities", () => {
     it("preserves original input when conversion fails", () => {
       const complexInput = { invalid: "object" };
       expect(faNum(complexInput as any)).toBe("[object Object]");
+    });
+
+    it("emits Persian digits even when the ICU default would use latn", () => {
+      const original = Number.prototype.toLocaleString;
+      Number.prototype.toLocaleString = function toLocaleString() {
+        return "1,234";
+      };
+      try {
+        expect(faNum(1234)).toBe("۱,۲۳۴");
+      } finally {
+        Number.prototype.toLocaleString = original;
+      }
+    });
+  });
+
+  describe("formatFaDate", () => {
+    it("formats the same ISO instant identically under UTC and Tehran process TZ", () => {
+      const iso = "2026-03-20T21:30:00.000Z";
+      const previousTz = process.env.TZ;
+      try {
+        process.env.TZ = "UTC";
+        const utcHost = formatFaDate(iso);
+        process.env.TZ = "Asia/Tehran";
+        const tehranHost = formatFaDate(iso);
+        expect(utcHost).toBe(tehranHost);
+        expect(utcHost.length).toBeGreaterThan(0);
+        expect(utcHost).not.toMatch(/[0-9]/);
+      } finally {
+        if (previousTz === undefined) {
+          delete process.env.TZ;
+        } else {
+          process.env.TZ = previousTz;
+        }
+      }
+    });
+
+    it("returns empty string for missing or invalid input", () => {
+      expect(formatFaDate(null)).toBe("");
+      expect(formatFaDate(undefined)).toBe("");
+      expect(formatFaDate("not-a-date")).toBe("");
+    });
+
+    it("accepts long-form date options without dropping the Tehran zone", () => {
+      const formatted = formatFaDate("2026-03-20T21:30:00.000Z", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+      expect(formatted.length).toBeGreaterThan(0);
+      expect(formatted).not.toMatch(/[0-9]/);
+    });
+
+    it("SSR and client hosts emit the same price and date strings", () => {
+      const iso = "2026-03-20T21:30:00.000Z";
+      const previousTz = process.env.TZ;
+      try {
+        process.env.TZ = "UTC";
+        const ssr = `${faNum(1234)}|${formatFaDate(iso)}`;
+        process.env.TZ = "America/New_York";
+        const client = `${faNum(1234)}|${formatFaDate(iso)}`;
+        expect(client).toBe(ssr);
+        expect(ssr).toBe("۱٬۲۳۴|" + formatFaDate(iso));
+      } finally {
+        if (previousTz === undefined) {
+          delete process.env.TZ;
+        } else {
+          process.env.TZ = previousTz;
+        }
+      }
     });
   });
 });

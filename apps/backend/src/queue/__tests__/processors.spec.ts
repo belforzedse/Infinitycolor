@@ -36,6 +36,12 @@ jest.mock("../../api/order/services/anipoRecipientSync", () => ({
 jest.mock("../../services/sms/staff-alerts", () => ({
   notifyStaffOrderStartedSms: jest.fn(),
 }));
+jest.mock("../../services/media/normalize-product-video", () => ({
+  normalizeProductVideoFile: jest.fn(),
+}));
+jest.mock("../../utils/productOriginCache", () => ({
+  clearProductOriginCaches: jest.fn(),
+}));
 
 import { runExpireReserveOrdersTick } from "../../jobs/expireReserveOrders";
 import { runExpireStockReservationsTick } from "../../jobs/expireStockReservations";
@@ -46,9 +52,13 @@ import {
 import {
   ANALYTICS_MAINTENANCE_JOBS,
   COMMERCE_MAINTENANCE_JOBS,
+  MEDIA_JOBS,
   SNAPPAY_PAYMENT_JOBS,
 } from "../contracts";
 import { processMaintenanceJob } from "../processors";
+import { normalizeProductVideoFile } from "../../services/media/normalize-product-video";
+import { clearProductOriginCaches } from "../../utils/productOriginCache";
+import { FfmpegUnavailableError } from "../../services/media/video-normalization";
 import {
   processSnappayOperation,
   sweepSnappayOperations,
@@ -98,6 +108,12 @@ const mockedRunAnipoRecipientSyncReconciliation =
   runAnipoRecipientSyncReconciliation as jest.MockedFunction<
     typeof runAnipoRecipientSyncReconciliation
   >;
+const mockedNormalizeProductVideoFile = normalizeProductVideoFile as jest.MockedFunction<
+  typeof normalizeProductVideoFile
+>;
+const mockedClearProductOriginCaches = clearProductOriginCaches as jest.MockedFunction<
+  typeof clearProductOriginCaches
+>;
 
 function createMockStrapi() {
   const viewService = {
@@ -111,6 +127,7 @@ function createMockStrapi() {
       error: jest.fn(),
     },
     service: jest.fn(() => viewService),
+    dirs: { static: { public: "/app/public" } },
   } as any;
 }
 
@@ -293,6 +310,62 @@ describe("queue processors", () => {
       } as any),
     ).rejects.toThrow("Invalid SnappPay operation id");
     expect(mockedProcessSnappayOperation).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a product gallery clip and clears the PDP origin caches", async () => {
+    const strapi = createMockStrapi();
+    mockedNormalizeProductVideoFile.mockResolvedValue({
+      productId: 4624,
+      slug: "fantasy-sleeping-set-n002",
+      status: "normalized",
+      files: [{ fileId: 120001, status: "normalized" }],
+    } as any);
+
+    await processMaintenanceJob(strapi, {
+      name: MEDIA_JOBS.normalizeProductVideo,
+      data: { productId: 4624, fileId: 120001 },
+    } as any);
+
+    expect(mockedNormalizeProductVideoFile).toHaveBeenCalledWith(4624, 120001, {
+      strapi,
+      uploadsDir: "/app/public/uploads",
+    });
+    expect(mockedClearProductOriginCaches).toHaveBeenCalledWith(
+      strapi,
+      "fantasy-sleeping-set-n002",
+      { availabilityCrossed: false, logPrefix: "product-video-normalize" },
+    );
+  });
+
+  it("does not revalidate when the gallery clip was already web-safe", async () => {
+    const strapi = createMockStrapi();
+    mockedNormalizeProductVideoFile.mockResolvedValue({
+      productId: 1,
+      slug: "already-safe",
+      status: "skipped",
+      files: [{ fileId: 9, status: "skipped" }],
+    } as any);
+
+    await processMaintenanceJob(strapi, {
+      name: MEDIA_JOBS.normalizeProductVideo,
+      data: { productId: 1, fileId: 9 },
+    } as any);
+
+    expect(mockedClearProductOriginCaches).not.toHaveBeenCalled();
+  });
+
+  it("fails permanently when ffmpeg is missing rather than retrying the transcode", async () => {
+    const strapi = createMockStrapi();
+    mockedNormalizeProductVideoFile.mockRejectedValue(new FfmpegUnavailableError("ffmpeg"));
+
+    await expect(
+      processMaintenanceJob(strapi, {
+        name: MEDIA_JOBS.normalizeProductVideo,
+        data: { productId: 1, fileId: 9 },
+      } as any),
+    ).rejects.toThrow("ffmpeg is not available");
+    expect(strapi.log.error).toHaveBeenCalled();
+    expect(mockedClearProductOriginCaches).not.toHaveBeenCalled();
   });
 
   it("fails unknown job names without retrying forever", async () => {

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import { verifyPaymentHandler } from "../../order/controllers/helpers/payment";
 import { decrementStockAtomic } from "../../cart/services/lib/stock";
 import { consumeOrderReservation } from "../../../utils/stockReservations";
@@ -30,6 +31,11 @@ jest.mock("../../order/controllers/helpers/zarinpalSettlement", () => {
     ZarinPalSettlementError: MockZarinPalSettlementError,
   };
 });
+
+jest.mock("@sentry/node", () => ({
+  captureMessage: jest.fn(),
+  captureException: jest.fn(),
+}));
 
 const mockedSettleZarinPalPayment = settleZarinPalPayment as jest.MockedFunction<
   typeof settleZarinPalPayment
@@ -195,6 +201,66 @@ describe("verifyPaymentHandler", () => {
     );
     expect(ctx.redirect).toHaveBeenCalledWith(
       "https://infinitycolor.co/payment/result?resultHint=cancelled&orderId=100&reason=user-cancelled",
+    );
+    expect(Sentry.captureMessage).toHaveBeenCalledWith(
+      "payment.result:cancelled",
+      expect.objectContaining({
+        tags: expect.objectContaining({ area: "payment", stage: "callback" }),
+      }),
+    );
+  });
+
+  it("ignores an empty GET payment-callback without a Mellat failure or Sentry warning", async () => {
+    const { strapi } = createStrapiMock();
+    const ctx = createCtx({
+      request: {
+        method: "GET",
+        body: {},
+        query: {},
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(strapi.entityService.update).not.toHaveBeenCalled();
+    expect(strapi.entityService.findOne).not.toHaveBeenCalled();
+    expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    expect(ctx.redirect).toHaveBeenCalledWith(
+      "https://infinitycolor.co/payment/result?resultHint=failure&code=uncorrelated_callback",
+    );
+  });
+
+  it("still correlates a Mellat POST that has RefId even when ResCode is omitted", async () => {
+    const { strapi, getDbQuery } = createStrapiMock();
+    mockMellatAttempt(getDbQuery, { id: 55, order: { id: 100 } });
+    (strapi.entityService.findOne as jest.Mock).mockResolvedValue({
+      id: 100,
+      Status: "Paying",
+      user: { id: 9 },
+      contract: { id: 75, Status: "Pending" },
+    });
+    strapi.db.connection.raw.mockResolvedValue({ rows: [{ id: 55 }] });
+
+    const ctx = createCtx({
+      request: {
+        method: "POST",
+        body: {
+          RefId: "XYZ",
+          OrderId: "100",
+        },
+      },
+    });
+
+    await verifyPaymentHandler(strapi as any, ctx);
+
+    expect(strapi.entityService.update).toHaveBeenCalledWith("api::order.order", 100, {
+      data: { Status: "Cancelled" },
+    });
+    expect(Sentry.captureMessage).toHaveBeenCalledWith(
+      "payment.result:failure",
+      expect.objectContaining({
+        extra: expect.objectContaining({ orderId: 100 }),
+      }),
     );
   });
 

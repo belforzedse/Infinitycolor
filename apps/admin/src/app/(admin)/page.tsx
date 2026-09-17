@@ -28,6 +28,7 @@ const TODAY_ORDER_CARDS = [
   { key: "paying", label: "در انتظار پرداخت" },
   { key: "inprogress", label: "در حال انجام" },
   { key: "completed", label: "تکمیل‌شده" },
+  { key: "shipped", label: "ارسال شده" },
   { key: "cancelled", label: "لغو یا مرجوع" },
 ] as const;
 
@@ -145,7 +146,7 @@ export default function SuperAdminPage() {
           >
             سفارش‌های امروز
           </h2>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             {TODAY_ORDER_CARDS.map((card) => (
               <article
                 key={card.key}

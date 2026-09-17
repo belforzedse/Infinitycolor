@@ -21,10 +21,17 @@ RUN /usr/local/bin/fallback-apk.sh ffmpeg \
 RUN cd /app \
   && node_modules/.bin/tsc \
        src/services/media/video-normalization.ts \
+       src/services/media/normalize-upload-video.ts \
        src/services/media/normalize-story-video.ts \
+       src/services/media/normalize-product-video.ts \
        scripts/media/normalize-story-videos.ts \
+       scripts/media/normalize-product-videos.ts \
        --outDir dist --rootDir . --module commonjs --moduleResolution node \
        --target es2022 --esModuleInterop --skipLibCheck \
   && node dist/scripts/media/normalize-story-videos.js --help >/dev/null 2>&1 || true \
+  && node dist/scripts/media/normalize-product-videos.js --help >/dev/null 2>&1 || true \
   && test -f dist/scripts/media/normalize-story-videos.js \
-  && test -f dist/src/services/media/normalize-story-video.js
+  && test -f dist/scripts/media/normalize-product-videos.js \
+  && test -f dist/src/services/media/normalize-upload-video.js \
+  && test -f dist/src/services/media/normalize-story-video.js \
+  && test -f dist/src/services/media/normalize-product-video.js

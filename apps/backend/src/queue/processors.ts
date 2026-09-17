@@ -117,6 +117,33 @@ export async function processMaintenanceJob(
         throw error;
       }
     }
+    case MEDIA_JOBS.normalizeProductVideo: {
+      const { productId, fileId } = job.data as { productId: number; fileId: number };
+      const { normalizeProductVideoFile } = await import(
+        "../services/media/normalize-product-video"
+      );
+      const { FfmpegUnavailableError } = await import("../services/media/video-normalization");
+      const path = await import("node:path");
+      try {
+        const result = await normalizeProductVideoFile(productId, fileId, {
+          strapi,
+          uploadsDir: path.join(strapi.dirs.static.public, "uploads"),
+        });
+        if (result.status === "normalized" && result.slug) {
+          await clearProductOriginCaches(strapi, result.slug, {
+            availabilityCrossed: false,
+            logPrefix: "product-video-normalize",
+          });
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof FfmpegUnavailableError) {
+          strapi.log.error(`[media] ${error.message}`);
+          throw new UnrecoverableError(error.message);
+        }
+        throw error;
+      }
+    }
     case SNAPPAY_PAYMENT_JOBS.operation: {
       const operationId = Number((job as any)?.data?.operationId);
       if (!Number.isInteger(operationId) || operationId <= 0) {

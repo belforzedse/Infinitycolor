@@ -220,6 +220,17 @@ describe("issue reports on isolated PostgreSQL", () => {
     expect(audit).toBeTruthy();
   });
 
+  it("persists Instagram-length user agents and titles over 255 characters", async () => {
+    const userAgent = `Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) Instagram ${"x".repeat(400)}`;
+    const issueName = "مرجوعی لباس ".repeat(20).trim();
+    expect(userAgent.length).toBeGreaterThan(255);
+    expect(issueName.length).toBeGreaterThan(120);
+    const created = await createIssueReport(strapi, input({ issueName }), { userAgent });
+    const detail = await findIssueReport(strapi, created.reportId);
+    expect(detail?.userAgent).toBe(userAgent);
+    expect(detail?.issueName).toBe(issueName);
+  });
+
   it("uses the intended indexes for high-volume inbox access patterns", async () => {
     await strapi.db.connection.transaction(async (trx: any) => {
       await trx.raw("SET LOCAL enable_seqscan = off");

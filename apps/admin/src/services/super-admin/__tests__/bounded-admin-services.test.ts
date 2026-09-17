@@ -42,6 +42,7 @@ describe("bounded admin read services", () => {
         paying: 0,
         inprogress: 0,
         completed: 1,
+        shipped: 0,
         cancelled: 0,
       },
       activeReserveGroups: 0,

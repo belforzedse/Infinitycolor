@@ -30,6 +30,9 @@ export const ERROR_MESSAGE_MAP: Record<string, string> = {
   "missing field": "اطلاعات کافی ارسال نشده است. لطفاً تمام فیلدهای الزامی را پر کنید.",
   "invalid request": "درخواست نامعتبر است. لطفاً دوباره تلاش کنید.",
   "invalid color code": "کد رنگ نامعتبر است. لطفاً کد رنگ صحیح را وارد کنید.",
+  "order status does not allow cancellation":
+    "لغو این سفارش در وضعیت فعلی مجاز نیست. سفارش‌های مرجوع‌شده را از مسیر مرجوعی پیگیری کنید.",
+  "cancellation reason is required": "برای لغو سفارش اسنپ‌پی دلیل لغو را وارد کنید.",
 
   // Authorization errors (unauthorized above in OTP section)
   "forbidden": "شما مجاز به انجام این عمل نیستید.",

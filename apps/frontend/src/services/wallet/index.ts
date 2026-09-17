@@ -11,7 +11,7 @@ export interface ChargeIntentResponse {
 export interface WalletMeResponse {
   success: boolean;
   data?: {
-    id: number;
+    id?: number | null;
     balance: number; // IRR
     lastTransactionDate?: string;
     description?: string;

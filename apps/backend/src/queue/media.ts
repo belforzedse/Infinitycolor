@@ -58,6 +58,19 @@ export async function enqueueStoryVideoNormalization(
   );
 }
 
+export async function enqueueProductVideoNormalization(
+  productId: number,
+  fileId: number,
+  settings: QueueSettings = getQueueSettings(),
+): Promise<void> {
+  await getMediaQueue(settings).add(
+    MEDIA_JOBS.normalizeProductVideo,
+    { productId, fileId },
+    // Per-file so attaching a new clip after the first job completed still queues.
+    { jobId: `normalize-product-video:${fileId}` },
+  );
+}
+
 /** Closes cached queue connections. For worker shutdown and tests. */
 export async function closeMediaQueues(): Promise<void> {
   const queues = [...queueCache.values()];

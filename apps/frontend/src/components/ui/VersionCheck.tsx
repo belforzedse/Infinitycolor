@@ -3,12 +3,44 @@
 import { useEffect, useState } from "react";
 import { BUILD_VERSION } from "@/constants/build";
 import { X, RefreshCw } from "lucide-react";
+import {
+  VERSION_RELOAD_STORAGE_KEY,
+  buildCacheBustingReloadUrl,
+  parseVersionReloadAttempt,
+  shouldHideStaleBanner,
+  stripCacheBustingReloadParam,
+} from "./version-check";
 
 interface BuildVersionData {
   BUILD_VERSION: string;
   timestamp: number;
   commitHash: string | null;
   generatedAt: string;
+}
+
+function readReloadAttempt(): ReturnType<typeof parseVersionReloadAttempt> {
+  if (typeof window === "undefined") return null;
+  try {
+    return parseVersionReloadAttempt(sessionStorage.getItem(VERSION_RELOAD_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function writeReloadAttempt(version: string): void {
+  try {
+    sessionStorage.setItem(VERSION_RELOAD_STORAGE_KEY, JSON.stringify({ version, at: Date.now() }));
+  } catch {
+    // Persistence is optional; the navigation still cache-busts.
+  }
+}
+
+function clearReloadAttempt(): void {
+  try {
+    sessionStorage.removeItem(VERSION_RELOAD_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
 /**
@@ -22,6 +54,7 @@ export default function VersionCheck() {
   const [isOutdated, setIsOutdated] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const checkVersion = async () => {
     // Skip check in development mode
@@ -50,8 +83,25 @@ export default function VersionCheck() {
 
       setLatestVersion(serverVersion);
 
+      if (serverVersion && serverVersion === BUILD_VERSION) {
+        clearReloadAttempt();
+        if (typeof window !== "undefined") {
+          const cleaned = stripCacheBustingReloadParam(window.location.href);
+          const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+          if (cleaned !== current) {
+            window.history.replaceState(null, "", cleaned);
+          }
+        }
+        setIsOutdated(false);
+        return;
+      }
+
       // Compare versions - if they don't match, the app is outdated
       if (serverVersion && serverVersion !== BUILD_VERSION) {
+        if (shouldHideStaleBanner(serverVersion, readReloadAttempt(), Date.now())) {
+          setIsOutdated(false);
+          return;
+        }
         setIsOutdated(true);
         setIsDismissed(false); // Reset dismissal when new version is detected
       } else {
@@ -91,16 +141,27 @@ export default function VersionCheck() {
 
   useEffect(() => {
     const handleUpdateAvailable = () => {
-      setLatestVersion((current) => current || "service-worker");
-      setIsDismissed(false);
-      setIsOutdated(true);
+      setLatestVersion((current) => {
+        const next = current || "service-worker";
+        if (shouldHideStaleBanner(next, readReloadAttempt(), Date.now())) {
+          return current;
+        }
+        setIsDismissed(false);
+        setIsOutdated(true);
+        return next;
+      });
     };
     window.addEventListener("infinity:app-update-available", handleUpdateAvailable);
-    return () =>
-      window.removeEventListener("infinity:app-update-available", handleUpdateAvailable);
+    return () => window.removeEventListener("infinity:app-update-available", handleUpdateAvailable);
   }, []);
 
   const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+
+    const targetVersion = latestVersion || String(Date.now());
+    writeReloadAttempt(targetVersion);
+
     // Clear all caches and reload
     if (typeof window !== "undefined" && "caches" in window) {
       const names = await caches.keys().catch(() => []);
@@ -123,7 +184,12 @@ export default function VersionCheck() {
         registration.waiting?.postMessage({ type: "SKIP_WAITING" });
       });
     }
-    window.location.reload();
+
+    // A plain reload re-requests the same URL. Shared caches in front of the
+    // origin are allowed to keep HTML for minutes (`s-maxage` + SWR), so that
+    // reload would land on the same stale document the banner is complaining
+    // about. A unique query string is a miss at L1 and, on `/` and `/plp`, at L2.
+    window.location.replace(buildCacheBustingReloadUrl(window.location.href, targetVersion));
   };
 
   const handleDismiss = () => {
@@ -162,6 +228,7 @@ export default function VersionCheck() {
       className="fixed bottom-0 left-0 right-0 z-[9998] bg-[linear-gradient(180deg,#566D97_0%,#98BDFF_100%)] text-white shadow-lg"
       role="alert"
       aria-live="polite"
+      data-testid="version-check"
     >
       <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-4">
@@ -177,7 +244,8 @@ export default function VersionCheck() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleRefresh}
-              className="rounded-lg bg-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white/50"
+              disabled={isRefreshing}
+              className="rounded-lg bg-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white/50 disabled:opacity-70"
             >
               به‌روزرسانی
             </button>

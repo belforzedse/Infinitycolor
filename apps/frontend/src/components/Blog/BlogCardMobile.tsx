@@ -8,6 +8,7 @@ import imageLoader from "@/utils/imageLoader";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import type { BlogCardPost } from "@/services/blog/blog.service";
 import { resolveBlogAuthorDisplayName } from "@/utils/blogAuthorName";
+import { formatFaDate } from "@/utils/faNum";
 
 interface BlogCardMobileProps {
   post: BlogCardPost;
@@ -30,7 +31,7 @@ const BlogCardMobile: React.FC<BlogCardMobileProps> = ({
   };
 
   const imageUrl = getImageUrl();
-  const publishedDate = new Date(post.PublishedAt || post.createdAt).toLocaleDateString("fa-IR");
+  const publishedDate = formatFaDate(post.PublishedAt || post.createdAt);
   const categoryName = post.blog_category?.Name || "اینفینیتی";
   const excerpt = post.Excerpt || post.ShortContent;
 

@@ -18,9 +18,15 @@ type StorefrontRecoveryStateProps = {
 
 // Mobile Safari drops the in-flight RSC stream when a tab is backgrounded or
 // a navigation is interrupted mid-fetch; React's Flight client surfaces the
-// half-read payload as this exact message. It is a network blip, not an app
-// error, so one silent re-fetch happens before it is reported or shown.
-const TRANSIENT_STREAM_CLOSED_MESSAGE = "Connection closed.";
+// half-read payload as "Connection closed." Safari fetch failures use the
+// exact TypeError message "Load failed"; Chromium uses "Failed to fetch".
+// Those are network blips, not app errors, so one silent re-fetch happens
+// before the recovery UI is shown or Sentry is notified.
+const TRANSIENT_NETWORK_MESSAGES = new Set([
+  "Connection closed.",
+  "Load failed",
+  "Failed to fetch",
+]);
 // Blocks a tight fail-loop (retry -> same stream cut -> retry -> ...) without
 // permanently spending the one auto-retry for the rest of a long-lived SPA
 // session, where Safari can background/cut the connection again minutes later.
@@ -30,8 +36,8 @@ const TRANSIENT_RETRY_WINDOW_MS = 30_000;
 // error-boundary retry mounts; it naturally expires on its own.
 let lastTransientAutoRetryAt = 0;
 
-function isTransientStreamClosedError(error?: Error): boolean {
-  return error?.message === TRANSIENT_STREAM_CLOSED_MESSAGE;
+function isTransientNetworkError(error?: Error): boolean {
+  return Boolean(error?.message && TRANSIENT_NETWORK_MESSAGES.has(error.message));
 }
 
 export default function StorefrontRecoveryState({
@@ -48,7 +54,7 @@ export default function StorefrontRecoveryState({
   const [autoRetrying] = useState(
     () =>
       Boolean(onRetry) &&
-      isTransientStreamClosedError(error) &&
+      isTransientNetworkError(error) &&
       Date.now() - lastTransientAutoRetryAt > TRANSIENT_RETRY_WINDOW_MS,
   );
 

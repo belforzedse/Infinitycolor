@@ -19,19 +19,8 @@ describe("service worker privacy boundary", () => {
       },
     };
 
-    const evaluate = new Function(
-      "self",
-      "caches",
-      "indexedDB",
-      "importScripts",
-      source,
-    );
-    evaluate(
-      worker,
-      { keys: jest.fn().mockResolvedValue([]) },
-      undefined,
-      jest.fn(),
-    );
+    const evaluate = new Function("self", "caches", "indexedDB", "importScripts", source);
+    evaluate(worker, { keys: jest.fn().mockResolvedValue([]) }, undefined, jest.fn());
     warnSpy.mockRestore();
     logSpy.mockRestore();
 
@@ -46,6 +35,9 @@ describe("service worker privacy boundary", () => {
       "/orders/42",
       "/wallet",
       "/super-admin/orders",
+      "/build-version.json",
+      "/sw-version.js",
+      "/sw.js",
     ]) {
       const respondWith = jest.fn();
       fetchHandler?.({

@@ -6,6 +6,7 @@ import React from "react";
 
 const SHOW_THRESHOLD = 400;
 const HIDE_THRESHOLD = 360;
+const PROGRESS_EPSILON = 0.01;
 
 export default function ScrollToTop() {
   const covered = useAtomValue(categoryOverlayOpenAtom);
@@ -19,13 +20,10 @@ export default function ScrollToTop() {
   React.useEffect(() => {
     const recalcBottom = () => {
       const isMobile = window.matchMedia("(max-width: 1023px)").matches;
-      if (isMobile) {
-        const nav = document.querySelector<HTMLElement>("nav[data-bottom-nav]");
-        const navH = nav ? nav.offsetHeight : 0;
-        setBtnBottom(navH + 20); // nav height + margin
-      } else {
-        setBtnBottom(48); // desktop spacing
-      }
+      const nextBottom = isMobile
+        ? (document.querySelector<HTMLElement>("nav[data-bottom-nav]")?.offsetHeight ?? 0) + 20
+        : 48;
+      setBtnBottom((prev) => (prev === nextBottom ? prev : nextBottom));
     };
 
     const updateScrollState = () => {
@@ -40,10 +38,10 @@ export default function ScrollToTop() {
         nextVisible = false;
       }
 
-      if (Math.abs(nextProgress - lastProgress.current) >= 0.0001) {
+      if (Math.abs(nextProgress - lastProgress.current) >= PROGRESS_EPSILON) {
         setProgress(nextProgress);
+        lastProgress.current = nextProgress;
       }
-      lastProgress.current = nextProgress;
       if (nextVisible !== lastVisible.current) {
         setVisible(nextVisible);
       }

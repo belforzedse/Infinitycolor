@@ -238,7 +238,7 @@ describe('Wallet Operations - Real Implementation', () => {
       expect(ctx.unauthorized).toHaveBeenCalledWith('Authentication required');
     });
 
-    it('should return not found if wallet does not exist', async () => {
+    it('should return a zero balance without creating a row if wallet does not exist', async () => {
       const walletQuery = mockStrapi.db.query('api::local-user-wallet.local-user-wallet');
       walletQuery.findOne.mockResolvedValue(null);
 
@@ -248,7 +248,14 @@ describe('Wallet Operations - Real Implementation', () => {
 
       await walletController.getCurrentUserWallet(ctx);
 
-      expect(ctx.notFound).toHaveBeenCalledWith('Wallet not found for this user');
+      expect(ctx.notFound).not.toHaveBeenCalled();
+      expect(ctx.send).toHaveBeenCalledWith({
+        success: true,
+        data: {
+          balance: 0,
+        },
+      });
+      expect(ctx.send.mock.calls[0][0].data).not.toHaveProperty("id");
     });
   });
 

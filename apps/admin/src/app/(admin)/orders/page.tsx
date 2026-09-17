@@ -211,12 +211,23 @@ export default function OrdersPage() {
         const alreadyCancelled = selectedRows.filter(
           (row) => row.attributes.Status === "Cancelled",
         );
+        const returned = selectedRows.filter(
+          (row) => row.attributes.Status === "Returned",
+        );
         const eligible = selectedRows.filter(
-          (row) => row.attributes.Status !== "Cancelled",
+          (row) =>
+            row.attributes.Status !== "Cancelled" &&
+            row.attributes.Status !== "Returned",
         );
 
         if (eligible.length === 0) {
-          toast.error("همه سفارش‌های انتخاب‌شده قبلاً لغو شده‌اند.");
+          if (returned.length > 0 && alreadyCancelled.length === 0) {
+            toast.error(
+              "سفارش‌های مرجوع‌شده قابل لغو نیستند؛ از مسیر مرجوعی پیگیری کنید.",
+            );
+          } else {
+            toast.error("همه سفارش‌های انتخاب‌شده قبلاً لغو شده‌اند.");
+          }
           return;
         }
 
@@ -235,6 +246,11 @@ export default function OrdersPage() {
           }
           if (alreadyCancelled.length > 0) {
             toast(`${alreadyCancelled.length} سفارش از قبل لغو شده بود.`);
+          }
+          if (returned.length > 0) {
+            toast(
+              `${returned.length} سفارش مرجوع‌شده نادیده گرفته شد.`,
+            );
           }
           if (failed > 0) {
             toast.error(`${failed} سفارش لغو نشد. دوباره تلاش کنید.`);

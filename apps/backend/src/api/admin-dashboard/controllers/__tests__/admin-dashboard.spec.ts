@@ -82,6 +82,7 @@ describe("bounded admin dashboard summary", () => {
           today_paying_total: "1",
           today_inprogress_total: "3",
           today_completed_total: "4",
+          today_shipped_total: "2",
           today_cancelled_total: "1",
         },
       ],
@@ -115,6 +116,7 @@ describe("bounded admin dashboard summary", () => {
       paying: 1,
       inprogress: 3,
       completed: 4,
+      shipped: 2,
       cancelled: 1,
     });
     expect(ctx.body.data.activeReserveGroups).toBe(4);
@@ -194,12 +196,16 @@ describe("bounded admin dashboard summary", () => {
     await controller.query(ctx);
 
     expect(raw.mock.calls.every(([sql]) => !String(sql).includes("FROM orders"))).toBe(true);
+    expect(raw.mock.calls.every(([sql]) => !String(sql).includes("today_shipped_total"))).toBe(
+      true,
+    );
     expect(findMany).not.toHaveBeenCalled();
     expect(count).not.toHaveBeenCalled();
     expect(ctx.body.data.metrics.ordersTotal).toBeNull();
     expect(ctx.body.data.todayOrderCounts).toBeNull();
     expect(ctx.body.data.activeReserveGroups).toBeNull();
     expect(ctx.body.data.latestOrders).toEqual([]);
+    expect(ctx.body.data.authorizedModules.orders).toBe(false);
   });
 
   it("binds the current Tehran day as a half-open UTC range", async () => {

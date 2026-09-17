@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { blogService, BlogPost, BlogCategory, BlogTag } from "@/services/blog/blog.service";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
+import { formatFaDate } from "@/utils/faNum";
 
 interface BlogListProps {
   posts?: BlogPost[];
@@ -259,7 +260,7 @@ const BlogList: React.FC<BlogListProps> = ({
                       <div className="flex items-center gap-1">
                         <Calendar className="h-3.5 w-3.5" />
                         <span>
-                          {new Date(post.PublishedAt || post.createdAt).toLocaleDateString("fa-IR")}
+                          {formatFaDate(post.PublishedAt || post.createdAt)}
                         </span>
                       </div>
                     </div>

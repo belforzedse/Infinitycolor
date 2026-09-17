@@ -16,6 +16,7 @@ import {
 import { BlogPost } from "@/services/blog/blog.service";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import { resolveBlogAuthorDisplayName } from "@/utils/blogAuthorName";
+import { formatFaDate } from "@/utils/faNum";
 import BlogContentRenderer from "./BlogContentRenderer";
 
 interface BlogPostDetailProps {
@@ -135,7 +136,7 @@ const BlogPostDetail: React.FC<BlogPostDetailProps> = ({ post, contentHtml }) =>
             <div className="flex items-center gap-1.5">
               <Calendar className="h-4 w-4" />
               <span>
-                {new Date(post.PublishedAt || post.createdAt).toLocaleDateString("fa-IR", {
+                {formatFaDate(post.PublishedAt || post.createdAt, {
                   year: "numeric",
                   month: "long",
                   day: "numeric",
@@ -189,7 +190,7 @@ const BlogPostDetail: React.FC<BlogPostDetailProps> = ({ post, contentHtml }) =>
         {post.updatedAt !== post.createdAt && (
           <div className="mt-6 border-t border-slate-100 pt-6 text-sm text-neutral-500">
             آخرین بروزرسانی:{" "}
-            {new Date(post.updatedAt).toLocaleDateString("fa-IR", {
+            {formatFaDate(post.updatedAt, {
               year: "numeric",
               month: "long",
               day: "numeric",

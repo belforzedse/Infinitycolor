@@ -17,6 +17,20 @@ import {
   closeGroupIfAbandoned,
   resolveRetainedReserveShipping,
 } from "../../../reserve-group/lib/reserve-group";
+import {
+  captureAnipoCancelSnapshot,
+  notifyAnipoParcelCancelled,
+  type AnipoCancelSnapshot,
+} from "./notifyAnipoParcelCancelled";
+
+/**
+ * Cancel is allowed through fulfilment (including auto-advanced `Shipment`), but
+ * not after a return is recorded. `Returned` stays on the return/refund path.
+ */
+const CANCELLABLE_ORDER_STATUSES = ["Paying", "Started", "Done", "Shipment"] as const;
+
+/** Paid statuses whose stock was already consumed and must be restored on cancel. */
+const PAID_RESTOCK_STATUSES = new Set(["Started", "Done", "Shipment"]);
 
 export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
   const { id } = ctx.params;
@@ -62,16 +76,16 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       return ctx.notFound("Order not found");
     }
 
-    // Preconditions
-    if (!["Paying", "Started"].includes(order.Status)) {
+    // Preconditions. Auto-shipment often leaves a local Anipo barcode on
+    // `Shipment`; cancel clears it in-transaction, then best-effort notifies
+    // Anipo with PUT /orders/{id}/status «لغو شده» after commit.
+    if (!CANCELLABLE_ORDER_STATUSES.includes(order.Status as (typeof CANCELLABLE_ORDER_STATUSES)[number])) {
       return ctx.badRequest("Order status does not allow cancellation", {
-        data: { error: "invalid_status" },
-      });
-    }
-
-    if (order.ShippingBarcode) {
-      return ctx.conflict("Shipping barcode exists; void it first", {
-        data: { error: "barcode_exists" },
+        data: {
+          error: "invalid_status",
+          errorCode: "ORDER_CANCEL_INVALID_STATUS",
+          fromStatus: order.Status,
+        },
       });
     }
 
@@ -86,7 +100,10 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       const normalizedReason = String(reason || "").trim();
       if (normalizedReason.length < 3) {
         return ctx.badRequest("Cancellation reason is required", {
-          data: { error: "SNAPPAY_OPERATOR_REASON_REQUIRED" },
+          data: {
+            error: "SNAPPAY_OPERATOR_REASON_REQUIRED",
+            errorCode: "SNAPPAY_OPERATOR_REASON_REQUIRED",
+          },
         });
       }
       const operation: any = await queueSnappayAdminCancel(strapi, {
@@ -110,6 +127,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
     const preflightUpdatedAt = new Date(order.updatedAt).getTime();
     let refundTransactionId: number | null = null;
     let committedRefundToman = 0;
+    let anipoCancelSnapshot: AnipoCancelSnapshot | null = null;
     const result = await strapi.db.transaction(async ({ trx }) => {
       await lockOrderForAdminMutation(trx, orderIdNum);
       const currentOrder: any = await strapi.db.query("api::order.order").findOne({
@@ -127,8 +145,9 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       } as any);
       if (
         !currentOrder ||
-        !["Paying", "Started"].includes(String(currentOrder.Status)) ||
-        currentOrder.ShippingBarcode ||
+        !CANCELLABLE_ORDER_STATUSES.includes(
+          String(currentOrder.Status) as (typeof CANCELLABLE_ORDER_STATUSES)[number],
+        ) ||
         !Number.isFinite(preflightUpdatedAt) ||
         new Date(currentOrder.updatedAt).getTime() !== preflightUpdatedAt
       ) {
@@ -168,7 +187,7 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
         if (stockId) {
           const qty = Number(item.Count || 0);
           if (!Number.isInteger(qty) || qty <= 0) continue;
-          if (currentOrder.Status === "Started") {
+          if (PAID_RESTOCK_STATUSES.has(String(currentOrder.Status))) {
             await restoreStockWithMandatoryAudit(strapi, {
               stockId: Number(stockId),
               quantity: qty,
@@ -207,15 +226,24 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       // This path releases reserved stock directly instead of going through
       // releaseOrderReservation, so it has to hand the coupon usage back itself.
       // Only the `Paying` branch can actually release: the helper refuses once the
-      // order has reached a settled status, and cancelling a `Started` order means the
+      // order has reached a settled status, and cancelling a paid order means the
       // customer did pay, so its usage stays consumed. Runs before the status write
       // regardless, so the guard reads the pre-cancellation status.
       await releaseOrderDiscountClaim(strapi as any, orderIdNum, trx);
 
-      // Update order and contract
+      // Update order and contract. Clear any local Anipo barcode so a later
+      // operator does not see a shipped label on a cancelled order. Provider
+      // «لغو شده» runs after commit via notifyAnipoParcelCancelled.
+      anipoCancelSnapshot = captureAnipoCancelSnapshot(currentOrder);
       const orderUpdateData: Record<string, unknown> = { Status: "Cancelled" };
       if (reservationReleased) {
         orderUpdateData.ReservationStatus = "Released";
+      }
+      if (currentOrder.ShippingBarcode) {
+        orderUpdateData.ShippingBarcode = null;
+        orderUpdateData.AnipoBarcodeState = "Voided";
+        orderUpdateData.AnipoLastCheckedAt = new Date();
+        orderUpdateData.AnipoLastMessage = "Admin cancelled order; local barcode cleared";
       }
       await strapi.db.query("api::order.order").update({
         where: { id: orderIdNum },
@@ -292,6 +320,12 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       }).catch(() => {});
     }
 
+    // Best-effort Anipo cancel after local cancel is durable. Failure is logged
+    // + Sentry only — never fails this response.
+    if (anipoCancelSnapshot) {
+      await notifyAnipoParcelCancelled(strapi, orderIdNum, anipoCancelSnapshot);
+    }
+
     // If cancelling this order left the combined-shipping group with nothing paid
     // in it, close the group so it stops occupying the customer's single
     // consolidation slot. A group that still has paid members survives its root's
@@ -328,11 +362,11 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
         message === "SNAPPAY_OPERATOR_OPERATION_ACTIVE"
       ) {
         return ctx.conflict("SnappPay order state changed", {
-          data: { error: message },
+          data: { error: message, errorCode: message },
         });
       }
       return ctx.badGateway("SnappPay synchronization failed", {
-        data: { error: message },
+        data: { error: message, errorCode: message },
       });
     }
     return ctx.internalServerError("Failed to cancel order", {

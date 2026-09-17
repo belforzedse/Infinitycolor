@@ -124,6 +124,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // The release probe and the worker's own version assignment must always hit
+  // the network. Cache-first `.js` handling would otherwise pin `sw-version.js`,
+  // and a generic network-first intercept of `build-version.json` can still
+  // replay a cached copy when the origin is briefly unreachable during a roll.
+  if (
+    url.pathname === "/build-version.json" ||
+    url.pathname === "/sw-version.js" ||
+    url.pathname === "/sw.js"
+  ) {
+    return;
+  }
+
   // Sensitive data and authorization-aware routes must never be intercepted,
   // cached, replayed, or replaced with synthetic service-worker responses.
   if (request.headers.has("Authorization") || isSensitivePath(url.pathname)) {

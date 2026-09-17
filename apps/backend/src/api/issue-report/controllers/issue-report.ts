@@ -14,6 +14,7 @@ import {
   queryIssueReports,
   updateIssueReportStatus,
   validateCreateIssueReportPayload,
+  ISSUE_REPORT_USER_AGENT_MAX,
   type IssueReportQuery,
   type IssueReportStatus,
 } from "../services/issue-report";
@@ -65,6 +66,14 @@ function issueError(ctx: any, error: unknown, operation: string) {
     typeof error === "object" && error && "code" in error
       ? String((error as { code?: unknown }).code || "")
       : "";
+  const pgDetail =
+    typeof error === "object" && error && "detail" in error
+      ? String((error as { detail?: unknown }).detail || "")
+      : "";
+  const pgColumn =
+    typeof error === "object" && error && "column" in error
+      ? String((error as { column?: unknown }).column || "")
+      : "";
   const internalCode = error instanceof Error ? error.message : "";
   const temporarilyUnavailable =
     databaseCode.startsWith("08") ||
@@ -73,6 +82,34 @@ function issueError(ctx: any, error: unknown, operation: string) {
     ) ||
     internalCode.startsWith("ISSUE_REPORT_RATE_") ||
     internalCode === "ISSUE_REPORT_SOURCE_UNAVAILABLE";
+  if (databaseCode === "22001") {
+    if (operation === "create") incrementMetric("issue_reports_validation_failed_total");
+    Sentry.captureException(new Error(`Issue report ${operation} failed: 22001`), {
+      tags: { operation, databaseCode: "22001" },
+      extra: {
+        pgColumn: pgColumn || undefined,
+        pgDetail: pgDetail ? pgDetail.slice(0, 200) : undefined,
+      },
+    });
+    strapi.log.error("Issue report operation failed", {
+      operation,
+      reasonCode: "22001",
+    });
+    ctx.status = 400;
+    ctx.body = {
+      error: {
+        status: 400,
+        name: "ValidationError",
+        message: "متن واردشده بیش از حد طولانی است.",
+        details: {
+          data: {
+            errorCode: "ISSUE_REPORT_TOO_LONG",
+          },
+        },
+      },
+    };
+    return;
+  }
   if (operation === "create") incrementMetric("issue_reports_persistence_failed_total");
   Sentry.captureException(
     new Error(`Issue report ${operation} failed: ${databaseCode || "UNEXPECTED"}`),
@@ -173,7 +210,7 @@ export default {
       const result = await createIssueReport(strapi, input, {
         reporterUserId: Number.isSafeInteger(userId) && userId > 0 ? userId : null,
         requestId: request?.requestId || ctx.state?.requestId || null,
-        userAgent: String(ctx.get("user-agent") || "").slice(0, 512) || null,
+        userAgent: String(ctx.get("user-agent") || "").slice(0, ISSUE_REPORT_USER_AGENT_MAX) || null,
       });
       ctx.status = result.replayed ? 200 : 201;
       ctx.set("Cache-Control", "no-store");

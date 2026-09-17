@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import toast from "react-hot-toast";
 import type { SuperAdminOrderDetail } from "@/types/super-admin/order";
 import ConfirmDialog from "@/components/Kits/ConfirmDialog";
@@ -11,7 +11,7 @@ import {
   waitForPaymentOperation,
   type OrderLifecycleStatus,
 } from "@/services/super-admin/orders/adjustItems";
-import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTranslations";
+import { translateOrderStatus } from "@/utils/statusTranslations";
 import { PersianOrderStatus } from "@/constants/enums";
 import { resolvePaymentGateway } from "@/utils/paymentGateways";
 
@@ -39,13 +39,11 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
   const [loading, setLoading] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
 
-  const currentBucket = useMemo(
-    () => getOrderStatusCategory(order.orderStatus),
-    [order.orderStatus],
-  );
   const isSnappPayOrder =
     resolvePaymentGateway(order.paymentGateway)?.key === "snappay";
-  const isCancelled = currentBucket === PersianOrderStatus.CANCELLED;
+  const isReturned = order.orderStatus === "Returned";
+  const isCancelled = order.orderStatus === "Cancelled";
+  const cancelDisabled = isCancelled || isReturned;
 
   const runAction = async () => {
     if (!pending || loading) return;
@@ -165,10 +163,16 @@ export default function OrderStatusActions({ order, onSuccess }: Props) {
 
         <button
           type="button"
-          disabled={loading || isCancelled}
+          disabled={loading || cancelDisabled}
           onClick={() => setPending({ kind: "cancel" })}
           className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-          title={isCancelled ? "این سفارش قبلاً لغو شده است" : undefined}
+          title={
+            isCancelled
+              ? "این سفارش قبلاً لغو شده است"
+              : isReturned
+                ? "سفارش مرجوع‌شده را از مسیر مرجوعی پیگیری کنید"
+                : undefined
+          }
         >
           لغو سفارش
         </button>

@@ -36,6 +36,10 @@ test.describe("storefront smoke", () => {
     const image = seededCard.locator("img").first();
     await expectImageLoaded(image);
 
+    const textHydration = runtime.errors.filter((error) =>
+      /Text content does not match|Hydration failed|Minified React error #418/i.test(error),
+    );
+    expect(textHydration).toEqual([]);
     runtime.assertClean();
   });
 

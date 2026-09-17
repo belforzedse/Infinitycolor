@@ -73,6 +73,7 @@ function orderCountsQuery(knex: any, now = new Date()) {
        COUNT(*) FILTER (WHERE ${today} AND o.status IN (${placeholders(ORDER_STATUS_BUCKETS.paying)}))::bigint AS today_paying_total,
        COUNT(*) FILTER (WHERE ${today} AND o.status IN (${placeholders(ORDER_STATUS_BUCKETS.inprogress)}))::bigint AS today_inprogress_total,
        COUNT(*) FILTER (WHERE ${today} AND o.status IN (${placeholders(ORDER_STATUS_BUCKETS.completed)}))::bigint AS today_completed_total,
+       COUNT(*) FILTER (WHERE ${today} AND o.status IN (${placeholders(ORDER_STATUS_BUCKETS.shipped)}))::bigint AS today_shipped_total,
        COUNT(*) FILTER (WHERE ${today} AND o.status IN (${placeholders(ORDER_STATUS_BUCKETS.cancelled)}))::bigint AS today_cancelled_total
      FROM orders o
      CROSS JOIN bounds`,
@@ -83,6 +84,7 @@ function orderCountsQuery(knex: any, now = new Date()) {
       ...ORDER_STATUS_BUCKETS.paying,
       ...ORDER_STATUS_BUCKETS.inprogress,
       ...ORDER_STATUS_BUCKETS.completed,
+      ...ORDER_STATUS_BUCKETS.shipped,
       ...ORDER_STATUS_BUCKETS.cancelled,
     ],
   );
@@ -176,6 +178,7 @@ export default {
               paying: Number(orderCounts.today_paying_total) || 0,
               inprogress: Number(orderCounts.today_inprogress_total) || 0,
               completed: Number(orderCounts.today_completed_total) || 0,
+              shipped: Number(orderCounts.today_shipped_total) || 0,
               cancelled: Number(orderCounts.today_cancelled_total) || 0,
             }
           : null,

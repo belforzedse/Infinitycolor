@@ -46,23 +46,29 @@ const buildPaymentResultRedirectUrl = (
   // chokepoint covers all of them without chasing each branch. `issue` is the
   // serious one: the money moved but local settlement did not finish.
   if (type !== "success") {
-    try {
-      Sentry.captureMessage(`payment.result:${type}`, {
-        level: type === "issue" ? "error" : "warning",
-        tags: {
-          area: "payment",
-          stage: "callback",
-          resultHint: type,
-          reasonCode: String(params?.code ?? type),
-        },
-        extra: {
-          orderId: params?.orderId ?? null,
-          // Never the provider's transaction id itself — only whether we had one.
-          hasTransactionId: Boolean(params?.transactionId),
-        },
-      });
-    } catch {
-      // A failed report must not break the customer's redirect back to the site.
+    const hasOrder = params?.orderId != null && params.orderId !== "";
+    const hasTransaction = Boolean(params?.transactionId);
+    // Empty/prefetch GETs and other uncorrelated junk have nothing to attach
+    // to an order. Reporting them as payment.result:failure drowns real declines.
+    if (hasOrder || hasTransaction) {
+      try {
+        Sentry.captureMessage(`payment.result:${type}`, {
+          level: type === "issue" ? "error" : "warning",
+          tags: {
+            area: "payment",
+            stage: "callback",
+            resultHint: type,
+            reasonCode: String(params?.code ?? type),
+          },
+          extra: {
+            orderId: params?.orderId ?? null,
+            // Never the provider's transaction id itself — only whether we had one.
+            hasTransactionId: hasTransaction,
+          },
+        });
+      } catch {
+        // A failed report must not break the customer's redirect back to the site.
+      }
     }
   }
   return url.toString();
@@ -317,6 +323,32 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
       hasSamanReference: Boolean(samanRefNumInput || samanResNumInput),
       hasZarinpalAuthority: Boolean(zarinpalAuthorityInput),
     });
+
+    const present = (value: unknown) => value !== undefined && value !== null && String(value).trim() !== "";
+    const hasMellatBodyField =
+      present(ResCode) ||
+      present(SaleReferenceId) ||
+      present(RefId) ||
+      present(OrderId) ||
+      present(SaleOrderId);
+    const hasProviderIdentifyingFields = Boolean(
+      hasMellatBodyField ||
+        zarinpalAuthorityInput !== undefined ||
+        samanStateInput !== undefined ||
+        samanStatusInput !== undefined ||
+        samanRefNumInput !== undefined ||
+        samanResNumInput !== undefined,
+    );
+    if (!hasProviderIdentifyingFields) {
+      strapi.log.info("Payment callback had no provider identifying fields; ignoring", {
+        method: String((ctx.request as any).method || ctx.method || ""),
+      });
+      return ctx.redirect(
+        buildPaymentResultRedirectUrl("failure", {
+          code: "uncorrelated_callback",
+        }),
+      );
+    }
 
     const isZarinPalFlow = !ResCode && zarinpalAuthorityInput !== undefined;
 

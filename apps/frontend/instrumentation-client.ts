@@ -98,6 +98,11 @@ Sentry.init({
     // Sentry's Web Vitals integration asks for the visibility-state entry on
     // very old WebKit builds where Performance#getEntriesByType is absent.
     /globalThis\.performance\.getEntriesByType.*visibility-state/,
+    // Android WebView / Instagram inject `getParams` into an eval frame
+    // (`<anonymous>:1:1`). There is no storefront symbol by that name.
+    /getParams is not defined/,
+    // Safari injected-range helper, same anonymous eval pattern, not app code.
+    /EmptyRanges/,
   ],
 });
 

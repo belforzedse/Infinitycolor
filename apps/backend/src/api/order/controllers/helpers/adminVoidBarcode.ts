@@ -29,6 +29,7 @@ export async function adminVoidBarcodeHandler(strapi: Strapi, ctx: any) {
       });
     }
 
+    // Local re-issue prep only — do not PUT Anipo «لغو شده» here (that runs on order cancel).
     await strapi.db.transaction(async ({ trx }) => {
       await strapi.db.query("api::order.order").update({
         where: { id },

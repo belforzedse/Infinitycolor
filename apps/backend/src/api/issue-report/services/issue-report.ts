@@ -27,6 +27,19 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const STATUSES = ["new", "in_review", "resolved"] as const;
 const PHONEISH_PATTERN = /^[+\d۰-۹٠-٩\s().-]+$/;
 
+export const ISSUE_REPORT_ISSUE_NAME_MAX = 500;
+export const ISSUE_REPORT_DESCRIPTION_MAX = 8_000;
+export const ISSUE_REPORT_SOURCE_PATH_MAX = 2_048;
+export const ISSUE_REPORT_USER_AGENT_MAX = 4_096;
+
+export function clipIssueReportVarchar(
+  value: string | null | undefined,
+  schemaMax: number,
+): string | null {
+  if (value == null || value === "") return null;
+  return value.slice(0, schemaMax);
+}
+
 export type IssueReportStatus = (typeof STATUSES)[number];
 
 export class IssueReportError extends Error {
@@ -119,7 +132,7 @@ function sourcePath(value: unknown): string | null {
   if (value == null || value === "") return null;
   if (
     typeof value !== "string" ||
-    value.length > 512 ||
+    value.length > ISSUE_REPORT_SOURCE_PATH_MAX ||
     !value.startsWith("/") ||
     value.startsWith("//") ||
     value.includes("\\") ||
@@ -256,8 +269,8 @@ export function validateCreateIssueReportPayload(body: unknown): CreateIssueRepo
   return {
     submissionId,
     contactNumber,
-    issueName: text(record.issueName, "issueName", 120),
-    description: text(record.description, "description", 4_000),
+    issueName: text(record.issueName, "issueName", ISSUE_REPORT_ISSUE_NAME_MAX),
+    description: text(record.description, "description", ISSUE_REPORT_DESCRIPTION_MAX),
     sourcePath: sourcePath(record.sourcePath),
     locale,
     context: clientContext(record.context),
@@ -425,10 +438,10 @@ export async function createIssueReport(
           issue_name: input.issueName,
           description: input.description,
           reporter_user_id: metadata.reporterUserId || null,
-          source_path: input.sourcePath,
+          source_path: clipIssueReportVarchar(input.sourcePath, ISSUE_REPORT_SOURCE_PATH_MAX),
           locale: input.locale,
           client_context: input.context,
-          user_agent: metadata.userAgent?.slice(0, 512) || null,
+          user_agent: clipIssueReportVarchar(metadata.userAgent, ISSUE_REPORT_USER_AGENT_MAX),
           request_id: metadata.requestId?.slice(0, 64) || null,
           submission_id: input.submissionId,
           payload_hash: hash,

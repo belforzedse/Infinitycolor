@@ -119,6 +119,46 @@ describe("issue report create controller", () => {
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards Instagram-length user agents instead of clipping them to 255", async () => {
+    const userAgent = `Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) Instagram ${"x".repeat(400)}`;
+    expect(userAgent.length).toBeGreaterThan(255);
+    const ctx = createCtx({
+      get: jest.fn((name: string) => (name === "user-agent" ? userAgent : "")),
+    });
+
+    await controller.create(ctx);
+
+    expect(ctx.status).toBe(201);
+    expect(mockCreateIssueReport).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ userAgent }),
+    );
+  });
+
+  it("maps Postgres 22001 to a client validation error without leaking submitted content", async () => {
+    mockCreateIssueReport.mockRejectedValue({
+      code: "22001",
+      detail: payload.description,
+      column: "user_agent",
+    });
+    const ctx = createCtx();
+
+    await controller.create(ctx);
+
+    expect(ctx.status).toBe(400);
+    expect(ctx.body.error.details.data.errorCode).toBe("ISSUE_REPORT_TOO_LONG");
+    expect(ctx.body.error.message).toBe("متن واردشده بیش از حد طولانی است.");
+    expect(JSON.stringify(ctx.body)).not.toContain(payload.description);
+    expect(mockCaptureException).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Issue report create failed: 22001" }),
+      expect.objectContaining({
+        tags: { operation: "create", databaseCode: "22001" },
+        extra: expect.objectContaining({ pgColumn: "user_agent" }),
+      }),
+    );
+  });
+
   it("rejects non-JSON input before applying the rate limiter", async () => {
     const ctx = createCtx({ is: jest.fn(() => false) });
 

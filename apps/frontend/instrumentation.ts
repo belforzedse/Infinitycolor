@@ -20,5 +20,10 @@ export const onRequestError: CaptureRequestError = async (...args) => {
   }
 
   const Sentry = await import("@sentry/nextjs");
-  return Sentry.captureRequestError(...args);
+  const { applyCatalogRscSentryScope } = await import("./src/lib/sentry-catalog-rsc");
+  const [error, , errorContext] = args;
+  return Sentry.withScope((scope) => {
+    applyCatalogRscSentryScope(scope, error, errorContext);
+    return Sentry.captureRequestError(...args);
+  });
 };

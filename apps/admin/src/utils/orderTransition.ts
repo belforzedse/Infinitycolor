@@ -57,6 +57,7 @@ type TransitionErrorPayload = {
   fromStatus?: string;
   requestedStatus?: string;
   allowedStatuses?: string[];
+  error?: string;
 };
 
 /**
@@ -69,8 +70,15 @@ type TransitionErrorPayload = {
  * network failure.
  */
 export function describeOrderTransitionError(error: unknown): string {
-  const apiError = error as { errorCode?: string; data?: TransitionErrorPayload };
+  const apiError = error as {
+    errorCode?: string;
+    data?: TransitionErrorPayload;
+    message?: string;
+  };
   const payload = apiError?.data;
+  const errorCode =
+    apiError?.errorCode ||
+    (typeof payload?.error === "string" ? payload.error : undefined);
 
   if (apiError?.errorCode === "INVALID_ORDER_TRANSITION") {
     const fromLabel = payload?.fromStatus
@@ -91,6 +99,43 @@ export function describeOrderTransitionError(error: unknown): string {
 
   if (apiError?.errorCode === "RESERVE_HOLD_ACTIVE") {
     return "سفارش در مهلت رزرو ۴۸ ساعته است و هنوز قابل ارسال نیست.";
+  }
+
+  if (
+    errorCode === "ORDER_CANCEL_INVALID_STATUS" ||
+    errorCode === "invalid_status"
+  ) {
+    const fromLabel = payload?.fromStatus
+      ? translateOrderStatus(payload.fromStatus as OrderLifecycleStatus)
+      : null;
+    if (fromLabel) {
+      return `لغو از وضعیت «${fromLabel}» مجاز نیست. سفارش‌های مرجوع‌شده را از مسیر مرجوعی پیگیری کنید.`;
+    }
+    return "لغو این سفارش در وضعیت فعلی مجاز نیست. سفارش‌های مرجوع‌شده را از مسیر مرجوعی پیگیری کنید.";
+  }
+
+  if (errorCode === "SNAPPAY_OPERATOR_REASON_REQUIRED") {
+    return "برای لغو سفارش اسنپ‌پی دلیل لغو را وارد کنید.";
+  }
+
+  if (errorCode === "SNAPPAY_OPERATOR_STATE_INVALID") {
+    return "وضعیت پرداخت اسنپ‌پی برای لغو مناسب نیست. وضعیت سفارش و پرداخت را بررسی کنید.";
+  }
+
+  if (errorCode === "SNAPPAY_OPERATOR_OPERATION_ACTIVE") {
+    return "یک عملیات قبلی روی این سفارش اسنپ‌پی هنوز در حال انجام است؛ درخواست را تکرار نکنید.";
+  }
+
+  if (errorCode === "SNAPPAY_ATTEMPT_NOT_FOUND") {
+    return "تراکنش اسنپ‌پی این سفارش پیدا نشد؛ موضوع را دستی بررسی کنید.";
+  }
+
+  if (
+    typeof errorCode === "string" &&
+    errorCode.startsWith("SNAPPAY_") &&
+    /CANCEL|STATUS|UPDATE|SETTLE|VERIFY/.test(errorCode)
+  ) {
+    return "هم‌زمان‌سازی با اسنپ‌پی انجام نشد. نتیجه را دستی بررسی کنید و درخواست را تکرار نکنید.";
   }
 
   return getUserFacingErrorMessage(error, "تغییر وضعیت سفارش انجام نشد");

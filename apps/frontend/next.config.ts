@@ -79,14 +79,35 @@ const nextConfig = {
   ...(DEPLOYMENT_ID ? { deploymentId: DEPLOYMENT_ID } : {}),
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
-  transpilePackages: ["@repo/api", "@repo/brand", "@repo/fonts", "@repo/social-posts", "@repo/story-rail"],
+  transpilePackages: [
+    "@repo/api",
+    "@repo/brand",
+    "@repo/fonts",
+    "@repo/social-posts",
+    "@repo/story-rail",
+  ],
   reactStrictMode: true,
   poweredByHeader: false,
   async headers() {
+    const versionProbeHeaders = [
+      { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+    ];
     return [
       {
         source: "/(.*)",
         headers: getSecurityHeaders(),
+      },
+      {
+        source: "/build-version.json",
+        headers: versionProbeHeaders,
+      },
+      {
+        source: "/sw.js",
+        headers: versionProbeHeaders,
+      },
+      {
+        source: "/sw-version.js",
+        headers: versionProbeHeaders,
       },
     ];
   },
@@ -148,8 +169,7 @@ const nextConfig = {
   experimental: {
     useOffline: true,
     turbopackRustReactCompiler: process.env.NODE_ENV !== "test",
-    exposeTestingApiInProductionBuild:
-      process.env.NEXT_INSTANT_TESTS === "true",
+    exposeTestingApiInProductionBuild: process.env.NEXT_INSTANT_TESTS === "true",
     optimizePackageImports: ["@heroicons/react", "lucide-react", "react-icons", "framer-motion"],
     scrollRestoration: true,
     optimizeCss: true,
@@ -159,9 +179,7 @@ const nextConfig = {
   compress: false,
   // Custom cache handler: Redis + LRU fallback (cache-handler.mjs). Shared cache across instances for production load.
   cacheHandler:
-    process.env.NODE_ENV === "production"
-      ? require.resolve("./cache-handler.mjs")
-      : undefined,
+    process.env.NODE_ENV === "production" ? require.resolve("./cache-handler.mjs") : undefined,
   // Force all replicas through the shared handler. A per-process L1 cache makes
   // invalidation inconsistent and can leave the Redis handler unused.
   cacheMaxMemorySize: 0,

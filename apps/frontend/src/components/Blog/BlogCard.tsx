@@ -7,6 +7,7 @@ import BlurImage from "@/components/ui/BlurImage";
 import imageLoader from "@/utils/imageLoader";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import type { BlogCardPost } from "@/services/blog/blog.service";
+import { formatFaDate } from "@/utils/faNum";
 
 interface BlogCardProps {
   post: BlogCardPost;
@@ -67,7 +68,7 @@ const BlogCard: React.FC<BlogCardProps> = ({
           <span className="inline-flex shrink-0 items-center gap-1">
             <Calendar className="h-4 w-4 text-neutral-400" aria-hidden />
             <span className="text-xs leading-[1.74] text-neutral-400">
-              {new Date(post.PublishedAt || post.createdAt).toLocaleDateString("fa-IR")}
+              {formatFaDate(post.PublishedAt || post.createdAt)}
             </span>
           </span>
         </div>
