@@ -51,17 +51,27 @@ describe("MobileMenu", () => {
         category(2, "جوراب", "socks"),
         category(3, "انواع کفش", "shoes"),
         category(4, "دامن", "skirt"),
-        category(5, "شال", "shawls-and-scarves"),
-        category(6, "شلوار", "pants"),
-        category(7, "شومیز", "paperback-and-tonic"),
-        category(8, "مانتو", "coat-and-mantle", [
-          category(9, "مانتو کتی", "coat-blazer"),
+        category(5, "شال", "shawls-and-scarves", [
+          category(50, "شال نخی", "cotton-shawl"),
+          category(51, "کلاه", "کلاه"),
         ]),
+        category(6, "شلوار", "pants", [category(61, "شلوار جین", "jeans")]),
+        category(7, "شومیز", "paperback-and-tonic"),
+        category(8, "مانتو", "coat-and-mantle", [category(9, "مانتو کتی", "coat-blazer")]),
         category(10, "راحتی", "house-dress"),
-        category(11, "لباس زیر", "under-wear"),
+        category(11, "لباس زیر", "under-wear", [
+          category(111, "نیم تنه کبریتی", "match-bust"),
+          category(112, "لگ", "لگ"),
+        ]),
         category(12, "لباس مردانه", "لباس-مردانه"),
         category(13, "لباس‌های زمستانه", "winter"),
-        category(14, "کیف", "bags"),
+        category(14, "کیف", "کیف"),
+        category(15, "پلیور", "پلیور-و-بافت"),
+        category(16, "هودی", "hoodie-and-dores"),
+        category(17, "پالتو", "coat"),
+        category(18, "بامبر", "بامبر"),
+        category(19, "شلوارک", "شوارک"),
+        category(20, "دورس", "دورس"),
       ],
       isLoading: false,
     });
@@ -71,45 +81,61 @@ describe("MobileMenu", () => {
     jest.clearAllMocks();
   });
 
-  it("fetches assigned navbar categories with children for the mobile menu", async () => {
+  it("fetches parent categories with children for the mobile menu", async () => {
     render(<MobileMenu isOpen onClose={jest.fn()} />);
 
-    await screen.findByRole("button", { name: "بالاتنه" });
+    await screen.findByRole("button", { name: "بالا تنه" });
 
     expect(mockedUseProductCategories).toHaveBeenCalledWith({
-      navbarAssignedOnly: true,
+      parentOnly: true,
       includeChildren: true,
       enabled: true,
     });
   });
 
-  it("groups mobile navbar categories and preserves nested category expansion", async () => {
+  it("groups mobile categories in the merchandising tree and preserves nested expansion", async () => {
     render(<MobileMenu isOpen onClose={jest.fn()} />);
 
-    const upperBodyButton = await screen.findByRole("button", { name: "بالاتنه" });
+    const upperBodyButton = await screen.findByRole("button", { name: "بالا تنه" });
     const upperBodyGroup = screen.getByTestId("category-group-upper-body");
 
-    expect(screen.getByRole("button", { name: "پایین‌تنه" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "کفش و اکسسوری" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "سایر لباس‌ها" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "پایین تنه" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "لباس ورزشی" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "کفش" })).toHaveAttribute("href", "/plp/category/shoes");
+    expect(screen.getByRole("button", { name: "شال" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "کلاه" })).toHaveAttribute(
+      "href",
+      `/plp/category/${encodeURIComponent("کلاه")}`,
+    );
+    expect(screen.queryByRole("button", { name: "کفش و اکسسوری" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "سایر لباس‌ها" })).not.toBeInTheDocument();
 
     fireEvent.click(upperBodyButton);
 
     expect(upperBodyButton).toHaveAttribute("aria-expanded", "true");
+    expect(within(upperBodyGroup).getByRole("link", { name: "پلیور" })).toHaveAttribute(
+      "href",
+      `/plp/category/${encodeURIComponent("پلیور-و-بافت")}`,
+    );
     expect(within(upperBodyGroup).getByRole("link", { name: "پیراهن" })).toHaveAttribute(
       "href",
       "/plp/category/shirt",
     );
-    expect(within(upperBodyGroup).getByRole("link", { name: "شومیز" })).toHaveAttribute(
+    expect(within(upperBodyGroup).getByRole("link", { name: "شومیز و تونیک" })).toHaveAttribute(
       "href",
       "/plp/category/paperback-and-tonic",
     );
 
-    const coatButton = within(upperBodyGroup).getByRole("button", { name: "مانتو" });
+    const coatButton = within(upperBodyGroup).getByRole("button", { name: "پالتو و مانتو" });
     fireEvent.click(coatButton);
 
     expect(coatButton).toHaveAttribute("aria-expanded", "true");
-    expect(within(upperBodyGroup).getByRole("link", { name: "مشاهده همه مانتو‌ها" })).toHaveAttribute(
+    expect(within(upperBodyGroup).queryByRole("link", { name: /مشاهده همه/ })).not.toBeInTheDocument();
+    expect(within(upperBodyGroup).getByRole("link", { name: "پالتو" })).toHaveAttribute(
+      "href",
+      "/plp/category/coat",
+    );
+    expect(within(upperBodyGroup).getByRole("link", { name: "مانتو" })).toHaveAttribute(
       "href",
       "/plp/category/coat-and-mantle",
     );
@@ -119,14 +145,10 @@ describe("MobileMenu", () => {
     );
   });
 
-  it("adds کمربند as a top-level accessories category", async () => {
+  it("adds کمربند as a standalone mobile category", async () => {
     render(<MobileMenu isOpen onClose={jest.fn()} />);
 
-    const accessoriesButton = await screen.findByRole("button", { name: "کفش و اکسسوری" });
-    fireEvent.click(accessoriesButton);
-
-    const accessoriesGroup = screen.getByTestId("category-group-shoes-accessories");
-    expect(within(accessoriesGroup).getByRole("link", { name: "کمربند" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "کمربند" })).toHaveAttribute(
       "href",
       "/plp/category/womens-belt",
     );
@@ -139,21 +161,14 @@ describe("MobileMenu", () => {
     expect(oppsiLink).toHaveAttribute("href", "/plp?search=Oppsi");
   });
 
-  it("places unmatched navbar categories in the fallback mobile group", async () => {
+  it("keeps کیف as an extra top-level category and hides unmatched clothing", async () => {
     render(<MobileMenu isOpen onClose={jest.fn()} />);
 
-    const otherButton = await screen.findByRole("button", { name: "سایر لباس‌ها" });
-    fireEvent.click(otherButton);
-
-    const otherGroup = screen.getByTestId("category-group-other-clothing");
-    expect(within(otherGroup).getByRole("link", { name: "راحتی" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "کیف" })).toHaveAttribute(
       "href",
-      "/plp/category/house-dress",
+      `/plp/category/${encodeURIComponent("کیف")}`,
     );
-    expect(within(otherGroup).getByRole("link", { name: "کیف" })).toHaveAttribute(
-      "href",
-      "/plp/category/bags",
-    );
+    expect(screen.queryByRole("link", { name: "راحتی" })).not.toBeInTheDocument();
   });
 
   it("labels discounts as تخفیف‌ها and does not show model hiring", async () => {
@@ -185,7 +200,7 @@ describe("MobileMenu", () => {
       ]);
 
       render(<MobileMenu isOpen onClose={jest.fn()} />);
-      await screen.findByRole("button", { name: "بالاتنه" });
+      await screen.findByRole("button", { name: "بالا تنه" });
 
       const input = screen.getByLabelText("جستجوی محصولات");
       fireEvent.change(input, { target: { value: "کیف" } });
@@ -210,7 +225,7 @@ describe("MobileMenu", () => {
       ]);
 
       render(<MobileMenu isOpen onClose={jest.fn()} />);
-      await screen.findByRole("button", { name: "بالاتنه" });
+      await screen.findByRole("button", { name: "بالا تنه" });
 
       const input = screen.getByLabelText("جستجوی محصولات");
       fireEvent.change(input, { target: { value: "کیف" } });
@@ -218,7 +233,7 @@ describe("MobileMenu", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "پاک کردن جستجو" }));
 
-      expect(await screen.findByRole("button", { name: "بالاتنه" })).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "بالا تنه" })).toBeInTheDocument();
       expect(screen.queryByRole("option")).not.toBeInTheDocument();
     });
 
@@ -226,7 +241,7 @@ describe("MobileMenu", () => {
       mockSearchResponse([]);
 
       render(<MobileMenu isOpen onClose={jest.fn()} />);
-      await screen.findByRole("button", { name: "بالاتنه" });
+      await screen.findByRole("button", { name: "بالا تنه" });
 
       const input = screen.getByLabelText("جستجوی محصولات");
       fireEvent.change(input, { target: { value: "qqq" } });
@@ -238,7 +253,7 @@ describe("MobileMenu", () => {
       jest.useFakeTimers();
 
       render(<MobileMenu isOpen focusSearchOnOpen onClose={jest.fn()} />);
-      await screen.findByRole("button", { name: "بالاتنه" });
+      await screen.findByRole("button", { name: "بالا تنه" });
 
       const input = screen.getByLabelText("جستجوی محصولات");
       expect(input).not.toHaveFocus();
@@ -259,7 +274,7 @@ describe("MobileMenu", () => {
   it("opens again after a nav link closed it", async () => {
     const onClose = jest.fn();
     const { rerender } = render(<MobileMenu isOpen onClose={onClose} />);
-    await screen.findByRole("button", { name: "بالاتنه" });
+    await screen.findByRole("button", { name: "بالا تنه" });
 
     const panel = document.querySelector(".storefront-mobile-menu-panel");
     expect(panel).not.toBeNull();
@@ -270,7 +285,7 @@ describe("MobileMenu", () => {
     expect(document.querySelector(".storefront-mobile-menu-panel")).toBeNull();
 
     rerender(<MobileMenu isOpen onClose={onClose} />);
-    await screen.findByRole("button", { name: "بالاتنه" });
+    await screen.findByRole("button", { name: "بالا تنه" });
 
     expect(document.querySelector(".storefront-mobile-menu-panel")).not.toBeNull();
   });

@@ -63,7 +63,7 @@ describe("StorefrontRecoveryState", () => {
     expect(captureException).toHaveBeenCalledWith(error);
   });
 
-  it("silently retries once on a transient RSC stream closure, then reports and displays it if it recurs immediately", () => {
+  it("silently retries once on a transient RSC stream closure, then displays it if it recurs immediately", () => {
     process.env.NEXT_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
     const retry = jest.fn();
     const error = new Error("Connection closed.");
@@ -88,14 +88,15 @@ describe("StorefrontRecoveryState", () => {
     render(<StorefrontRecoveryState {...props} />);
     expect(retry).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("heading", { name: "خطا" })).toBeInTheDocument();
-    expect(captureException).toHaveBeenCalledWith(error);
+    expect(captureException).not.toHaveBeenCalled();
   });
 
   it.each([
     ["Load failed", 1],
     ["Failed to fetch", 2],
+    ["network error", 3],
   ] as const)(
-    "silently retries once on Safari/Chromium %s, then reports if it recurs immediately",
+    "silently retries once on %s, then displays it if it recurs immediately",
     (message, windowOffset) => {
       process.env.NEXT_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
       jest.spyOn(Date, "now").mockReturnValue(Date.now() + windowOffset * TRANSIENT_RETRY_OFFSET_MS);
@@ -118,7 +119,7 @@ describe("StorefrontRecoveryState", () => {
       render(<StorefrontRecoveryState {...props} />);
       expect(retry).toHaveBeenCalledTimes(1);
       expect(screen.getByRole("heading", { name: "خطا" })).toBeInTheDocument();
-      expect(captureException).toHaveBeenCalledWith(error);
+      expect(captureException).not.toHaveBeenCalled();
       jest.restoreAllMocks();
     },
   );

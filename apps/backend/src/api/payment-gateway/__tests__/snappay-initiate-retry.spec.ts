@@ -95,11 +95,30 @@ function createHarness(attemptOverrides: Record<string, unknown> = {}) {
   }
 
   const queries: Record<string, any> = {};
+  const rawImpl = async (sql: string) => {
+    if (/lease_version = COALESCE/.test(sql)) {
+      return { rows: [{ id: 11, lease_version: 1 }] };
+    }
+    if (/pendingDispatch/.test(sql) && /UPDATE payment_attempts/.test(sql)) {
+      return {
+        rows: [
+          {
+            id: 11,
+            provider_response: {
+              tokenAttemptSeq: 1,
+              generation: { seq: 1, transactionId: EXISTING_TRANSACTION_ID },
+            },
+          },
+        ],
+      };
+    }
+    return { rows: [{ id: 11, retry_count: 0, status: "Queued" }] };
+  };
   const strapi = {
     db: {
-      connection: { raw: jest.fn().mockResolvedValue({ rows: [{ id: 11 }] }) },
+      connection: { raw: jest.fn(rawImpl) },
       transaction: jest.fn(async (fn: (args: { trx: { raw: jest.Mock } }) => unknown) =>
-        fn({ trx: { raw: jest.fn().mockResolvedValue({ rows: [] }) } }),
+        fn({ trx: { raw: jest.fn(rawImpl) } }),
       ),
       query: jest.fn((uid: string) => {
         queries[uid] ||= {
@@ -203,7 +222,7 @@ describe("SnappPay checkout initiate retry", () => {
     expect(result.redirectUrl).toContain(EXISTING_TOKEN);
   });
 
-  it("does not mint a replacement token for parsed 1007 without an OK callback", async () => {
+  it("returns the stored payment page for parsed 404/1007 without minting", async () => {
     const revert = jest.fn();
     const requestPaymentToken = jest.fn();
     mockedAdapter.mockReturnValue({
@@ -214,8 +233,21 @@ describe("SnappPay checkout initiate retry", () => {
       revert,
       requestPaymentToken,
     } as any);
-    const { strapi } = createHarness({
-      redirectedAt: new Date(Date.now() - 10 * 60 * 1000),
+    const { strapi, queries } = createHarness({
+      providerResponse: {
+        tokenFingerprint: displaySnappayFingerprint(snappayTokenFingerprint(EXISTING_TOKEN)),
+        tokenAttemptSeq: 1,
+        generation: {
+          seq: 1,
+          transactionId: EXISTING_TRANSACTION_ID,
+          dispatchedAt: new Date().toISOString(),
+          callbackNonceHash: hashSnappayCallbackNonce(CALLBACK_NONCE),
+          paymentTokenFingerprint: displaySnappayFingerprint(
+            snappayTokenFingerprint(EXISTING_TOKEN),
+          ),
+          paymentToken: EXISTING_TOKEN,
+        },
+      },
     });
 
     const result = await initiate(strapi);
@@ -224,9 +256,15 @@ describe("SnappPay checkout initiate retry", () => {
     expect(requestPaymentToken).not.toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({
-        success: false,
-        status: "Unknown",
-        errorCode: "PAYMENT_UNKNOWN",
+        success: true,
+        status: "Redirected",
+        redirectUrl: `https://pay.snapp.test/start?paymentToken=${EXISTING_TOKEN}`,
+        transactionId: EXISTING_TRANSACTION_ID,
+      }),
+    );
+    expect(queries["api::payment-attempt.payment-attempt"].update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ leaseUntil: null }),
       }),
     );
   });
@@ -247,6 +285,29 @@ describe("SnappPay checkout initiate retry", () => {
 
     expect(requestPaymentToken).not.toHaveBeenCalled();
     expect(result.errorCode).toBe("PAYMENT_UNKNOWN");
+  });
+
+  it("does not treat an OK callback plus 1048 as verify rescue or stored-page resume", async () => {
+    const requestPaymentToken = jest.fn();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1048 },
+      }),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi } = createHarness({
+      providerStatus: "CALLBACK_OK",
+      nextAction: "verify",
+    });
+
+    const result = await initiate(strapi);
+
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("PAYMENT_UNKNOWN");
+    expect(result.redirectUrl).toBeUndefined();
   });
 
   it("recovers OK-callback plus 1007 through verify instead of a new token", async () => {
@@ -520,6 +581,94 @@ describe("SnappPay checkout initiate retry", () => {
     );
   });
 
+  it("resumes the live payment page even when the mint lease is held", async () => {
+    const requestPaymentToken = jest.fn();
+    const status = jest.fn().mockResolvedValue(providerResult({ response: { status: "PENDING" } }));
+    mockedAdapter.mockReturnValue({ status, requestPaymentToken, revert: jest.fn() } as any);
+    const { strapi, queries } = createHarness();
+    // Another tab still holds the exclusive mint lease.
+    strapi.db.connection.raw.mockResolvedValue({ rows: [] });
+
+    const result = await initiate(strapi);
+
+    expect(status).toHaveBeenCalledWith(EXISTING_TOKEN);
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        status: "Redirected",
+        redirectUrl: `https://pay.snapp.test/start?paymentToken=${EXISTING_TOKEN}`,
+        transactionId: EXISTING_TRANSACTION_ID,
+      }),
+    );
+    expect(queries["api::order.order"].update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 22, ReservationStatus: "Reserved" }),
+        data: expect.objectContaining({ ReservedUntil: expect.any(Date) }),
+      }),
+    );
+    // Observing request must not clear another request's active mint lease.
+    expect(queries["api::payment-attempt.payment-attempt"].update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ leaseUntil: null }),
+      }),
+    );
+  });
+
+  it("does not observe a previous generation token while a replacement mint is unresolved", async () => {
+    const requestPaymentToken = jest.fn();
+    const status = jest.fn();
+    mockedAdapter.mockReturnValue({ status, requestPaymentToken, revert: jest.fn() } as any);
+    const { strapi } = createHarness({
+      Status: "Pending",
+      redirectUrl: `https://pay.snapp.test/start?paymentToken=${EXISTING_TOKEN}`,
+      providerReference: "NEWTX12345",
+      providerStatus: "REVERT",
+      providerResponse: {
+        tokenAttemptSeq: 2,
+        previousGeneration: {
+          seq: 1,
+          transactionId: EXISTING_TRANSACTION_ID,
+          paymentToken: EXISTING_TOKEN,
+        },
+        pendingDispatch: {
+          seq: 2,
+          transactionId: "NEWTX12345",
+          dispatchedAt: new Date().toISOString(),
+          callbackNonceHash: hashSnappayCallbackNonce(CALLBACK_NONCE),
+        },
+      },
+    });
+
+    const result = await initiate(strapi);
+
+    expect(status).not.toHaveBeenCalled();
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result.errorCode).toBe("PAYMENT_UNKNOWN");
+  });
+
+  it("does not mint when there is no token and the initiation lease is held", async () => {
+    const requestPaymentToken = jest.fn();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn(),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi, transaction } = createHarness({
+      Status: "Pending",
+      redirectUrl: "",
+      redirectedAt: null,
+      providerResponse: { tokenAttemptSeq: 0 },
+    });
+    transaction.TrackId = "";
+    strapi.db.connection.raw.mockResolvedValue({ rows: [] });
+
+    const result = await initiate(strapi);
+
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result.errorCode).toBe("PAYMENT_IN_PROGRESS");
+  });
+
   it("does not mint a second token when two tabs race the initiation lease", async () => {
     const requestPaymentToken = jest.fn();
     mockedAdapter.mockReturnValue({
@@ -527,12 +676,185 @@ describe("SnappPay checkout initiate retry", () => {
       requestPaymentToken,
       revert: jest.fn(),
     } as any);
-    const { strapi } = createHarness();
+    const { strapi, transaction } = createHarness({
+      Status: "Pending",
+      redirectUrl: "",
+      redirectedAt: null,
+      providerResponse: { tokenAttemptSeq: 0 },
+    });
+    transaction.TrackId = "";
     strapi.db.connection.raw.mockResolvedValue({ rows: [] });
 
     const result = await initiate(strapi);
 
     expect(requestPaymentToken).not.toHaveBeenCalled();
     expect(result.errorCode).toBe("PAYMENT_IN_PROGRESS");
+  });
+
+  it("resumes a metadata-wiped legacy row when TrackId and URL still match", async () => {
+    const requestPaymentToken = jest.fn();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1007 },
+      }),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi, queries } = createHarness({
+      Status: "Unknown",
+      nextAction: "manual_review",
+      providerResponse: { requestId: "ABC1234567", refId: "ABC1234567" },
+    });
+
+    const result = await initiate(strapi);
+
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        status: "Redirected",
+        redirectUrl: `https://pay.snapp.test/start?paymentToken=${EXISTING_TOKEN}`,
+      }),
+    );
+    expect(queries["api::payment-attempt.payment-attempt"].update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerResponse: expect.objectContaining({ generation: expect.anything() }),
+        }),
+      }),
+    );
+  });
+
+  it("does not resume a wiped row when the stored URL token does not match TrackId", async () => {
+    const requestPaymentToken = jest.fn();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1007 },
+      }),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi } = createHarness({
+      Status: "Unknown",
+      redirectUrl: "https://pay.snapp.test/start?paymentToken=other-token",
+      providerResponse: { requestId: "ABC1234567", refId: "ABC1234567" },
+    });
+
+    const result = await initiate(strapi);
+
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        errorCode: "PAYMENT_UNKNOWN",
+      }),
+    );
+  });
+
+  it("does not treat URL recovery alone as proven identity after metadata wipe", async () => {
+    const requestPaymentToken = jest.fn();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1007 },
+      }),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi, transaction } = createHarness({
+      Status: "Unknown",
+      providerResponse: { requestId: "ABC1234567", refId: "ABC1234567" },
+    });
+    transaction.TrackId = "";
+
+    const result = await initiate(strapi);
+
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result.errorCode).toBe("PAYMENT_UNKNOWN");
+  });
+
+  it("returns the stored payment page after the worker parked a current-generation 1007", async () => {
+    const requestPaymentToken = jest.fn();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1007 },
+      }),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi } = createHarness({
+      Status: "Unknown",
+      nextAction: "manual_review",
+      failureCode: "SNAPPAY_STATUS_NOT_FOUND",
+      providerResponse: {
+        tokenFingerprint: displaySnappayFingerprint(snappayTokenFingerprint(EXISTING_TOKEN)),
+        tokenAttemptSeq: 1,
+        generation: {
+          seq: 1,
+          transactionId: EXISTING_TRANSACTION_ID,
+          dispatchedAt: new Date().toISOString(),
+          callbackNonceHash: hashSnappayCallbackNonce(CALLBACK_NONCE),
+          paymentTokenFingerprint: displaySnappayFingerprint(
+            snappayTokenFingerprint(EXISTING_TOKEN),
+          ),
+          paymentToken: EXISTING_TOKEN,
+        },
+      },
+    });
+
+    const result = await initiate(strapi);
+
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        redirectUrl: `https://pay.snapp.test/start?paymentToken=${EXISTING_TOKEN}`,
+      }),
+    );
+  });
+
+  it("does not install an issued token when pending dispatch ownership no longer matches", async () => {
+    const requestPaymentToken = jest.fn().mockResolvedValue({
+      successful: true,
+      response: {
+        paymentToken: "new-token",
+        paymentPageUrl: "https://pay.snapp.test/new",
+      },
+      diagnostic: { endpoint: "token", httpStatus: 200 },
+    });
+    mockedAdapter.mockReturnValue({
+      status: jest.fn(),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi, transaction, queries } = createHarness({
+      Status: "Pending",
+      redirectUrl: "",
+      redirectedAt: null,
+      providerResponse: { tokenAttemptSeq: 0 },
+    });
+    transaction.TrackId = "";
+    strapi.db.transaction = jest.fn(async (fn: (args: { trx: { raw: jest.Mock } }) => unknown) =>
+      fn({ trx: { raw: jest.fn().mockResolvedValue({ rows: [] }) } }),
+    );
+
+    const result = await initiate(strapi);
+
+    expect(requestPaymentToken).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("PAYMENT_UNKNOWN");
+    const tokenOp = queries["api::payment-operation.payment-operation"].create.mock.calls.find(
+      (call: [{ data?: { OperationType?: string; Status?: string } }]) =>
+        call[0]?.data?.OperationType === "TOKEN",
+    );
+    expect(tokenOp?.[0]?.data).toEqual(
+      expect.objectContaining({
+        OperationType: "TOKEN",
+        Status: "Unknown",
+      }),
+    );
   });
 });

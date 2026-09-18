@@ -5,12 +5,19 @@ import { useEffect, useRef } from "react";
 
 export default function GlobalError({
   error,
+  retry,
   reset,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  /** Next 16.3+: re-fetches and re-renders Server Component children. */
+  retry?: () => void;
+  /** Older runtimes only cleared client error state without re-fetching. */
+  reset?: () => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // Prefer retry so a root-layout Server Component failure actually re-fetches
+  // (reset alone leaves PRODUCT_DATA_UNAVAILABLE-class errors stuck).
+  const recover = retry ?? reset;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -70,21 +77,23 @@ export default function GlobalError({
                 gap: "12px",
               }}
             >
-              <button
-                type="button"
-                onClick={reset}
-                style={{
-                  minHeight: "44px",
-                  border: 0,
-                  borderRadius: "12px",
-                  padding: "10px 20px",
-                  background: "#3d4c6e",
-                  color: "#ffffff",
-                  cursor: "pointer",
-                }}
-              >
-                تلاش دوباره
-              </button>
+              {recover ? (
+                <button
+                  type="button"
+                  onClick={recover}
+                  style={{
+                    minHeight: "44px",
+                    border: 0,
+                    borderRadius: "12px",
+                    padding: "10px 20px",
+                    background: "#3d4c6e",
+                    color: "#ffffff",
+                    cursor: "pointer",
+                  }}
+                >
+                  تلاش دوباره
+                </button>
+              ) : null}
               <a
                 href="/"
                 style={{

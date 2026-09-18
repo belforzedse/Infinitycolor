@@ -21,6 +21,14 @@ describe("catalog RSC Sentry fingerprints", () => {
     expect(
       catalogRscFingerprint(new Error("PRODUCT_DATA_UNAVAILABLE"), { routePath: "/pdp/slug" }),
     ).toEqual(["catalog-rsc", "pdp", "PRODUCT_DATA_UNAVAILABLE"]);
+
+    const named = new Error("PRODUCT_DATA_UNAVAILABLE");
+    named.name = "PdpProductUnavailableError";
+    expect(catalogRscFingerprint(named, { routePath: "/pdp/slug" })).toEqual([
+      "catalog-rsc",
+      "pdp",
+      "PRODUCT_DATA_UNAVAILABLE",
+    ]);
   });
 
   it("does not fingerprint unrelated server errors even on catalog routes", () => {
@@ -68,6 +76,14 @@ describe("catalog RSC Sentry fingerprints", () => {
       {},
     );
     expect(pdpEvent.fingerprint).toEqual(["catalog-rsc", "pdp", "PRODUCT_DATA_UNAVAILABLE"]);
+
+    const namedPdpEvent = applyCatalogRscEvent(
+      {
+        exception: { values: [{ type: "PdpProductUnavailableError", value: "[Filtered]" }] },
+      },
+      {},
+    );
+    expect(namedPdpEvent.fingerprint).toEqual(["catalog-rsc", "pdp", "PRODUCT_DATA_UNAVAILABLE"]);
   });
 
   it("preserves ErrorEvent discriminants so beforeSend can return the same event", () => {

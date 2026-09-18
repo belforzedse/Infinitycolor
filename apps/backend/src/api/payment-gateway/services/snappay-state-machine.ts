@@ -77,19 +77,23 @@ export function decideSnappayRecovery(input: {
 
   if (code === 1051) return "FAIL_CONFIGURATION";
 
-  // A validated OK callback outranks an unresolvable status read. The customer's
-  // browser came back saying the payment succeeded while SnappPay cannot find the
-  // token — a contradiction that only `verify` can resolve (workbook Action row
-  // for verify 1000 PENDING, Fa.txt verify). 1007/1048 without OK are not
-  // unpaid; they are investigation outcomes (Action rows 34–35).
-  if (input.callbackState === "OK" && (code === 1007 || code === 1048)) {
+  // Workbook status/verify 1048 PAYMENT_VENTURE_MISMATCHED: the token does not
+  // belong to this merchant. That is not a missing-token verify rescue, a
+  // stored-page reopen, or permission to mint a replacement.
+  if (code === 1048) return "MANUAL_REVIEW";
+
+  // A validated OK callback outranks status 1007 NOT_FOUND. The customer's
+  // browser came back saying the payment succeeded while SnappPay cannot find
+  // the token — a contradiction that only `verify` can resolve (workbook Action
+  // row for verify 1000 PENDING, Fa.txt verify). 1007 without OK is
+  // investigation, not unpaid.
+  if (input.callbackState === "OK" && code === 1007) {
     return "VERIFY";
   }
 
-  // 1007 NOT_FOUND = wrong paymentToken. 1048 PAYMENT_VENTURE_MISMATCHED = token
-  // belongs to another merchant. Neither authorizes local cancel, stock release,
-  // or a replacement token.
-  if (code === 1007 || code === 1048) return "MANUAL_REVIEW";
+  // 1007 NOT_FOUND on status is not proof the payment is unpaid and does not
+  // authorize local cancel, stock release, or a replacement token.
+  if (code === 1007) return "MANUAL_REVIEW";
 
   switch (status) {
     case "SETTLE":

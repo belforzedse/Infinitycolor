@@ -740,11 +740,12 @@ describe("finalizeToOrderHandler", () => {
       }),
     });
     mockedClaimPaymentAttempt.mockResolvedValueOnce(false);
-    mockedFindPaymentAttempt.mockResolvedValueOnce({
+    mockedFindPaymentAttempt.mockResolvedValue({
       id: 1092,
       attemptId: "checkout-attempt",
       Status: "Pending",
-    } as any);
+      Gateway: "mellat",
+    } as never);
     const ctx = createCtx({
       request: { body: { shipping: 3, addressId: 9, gateway: "mellat" } },
     });
@@ -845,6 +846,7 @@ describe("finalizeToOrderHandler", () => {
       }),
     );
     expect(successLog?.[1]).not.toHaveProperty("redirectUrl");
+    expect(mockedUpdatePaymentAttempt).not.toHaveBeenCalled();
     const auditLog = (strapi.entityService.create as jest.Mock).mock.calls.find(
       ([uid, payload]) =>
         uid === "api::order-log.order-log" &&

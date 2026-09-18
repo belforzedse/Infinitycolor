@@ -667,10 +667,21 @@ describe("role permission templates", () => {
     expect(enabled(publicRole, "api::issue-report", "issue-report")).toEqual(["create"]);
     expect(enabled(publicRole, "api::model-application", "model-application")).toEqual(["create"]);
     expect(enabled(publicRole, "plugin::upload", "content-api")).toEqual([]);
+    expect(enabled(publicRole, "api::cart", "cart")).not.toContain("checkStock");
+    expect(enabled(publicRole, "api::cart", "cart")).not.toContain("find");
     // Customers still drive their own cart through the scoped cart controller.
+    // checkStock is destructive self-service (drop/adjust the caller's lines) and
+    // must never be public or confused with report.carts.read (`cart.find`).
     expect(enabled(customer, "api::cart", "cart")).toEqual(
-      expect.arrayContaining(["getMyCart", "addItem", "updateItem", "removeItem"]),
+      expect.arrayContaining([
+        "getMyCart",
+        "addItem",
+        "updateItem",
+        "removeItem",
+        "checkStock",
+      ]),
     );
+    expect(enabled(customer, "api::cart", "cart")).not.toContain("find");
   });
 
   it("lets customers file moderated comments without reaching review core writes", () => {
@@ -1158,7 +1169,10 @@ describe("role permission templates", () => {
     );
 
     expect(founder["api::cart"].controllers.cart.getMyCart.enabled).toBe(true);
+    expect(founder["api::cart"].controllers.cart.checkStock.enabled).toBe(true);
     expect(founder["api::cart"].controllers.cart.finalizeToOrder.enabled).toBe(true);
+    // Cart reports are a separate capability (`report.carts.read` → find).
+    expect(founder["api::cart"].controllers.cart.find.enabled).toBe(true);
     expect(
       founder["api::commerce-maintenance"].controllers["commerce-maintenance"].purge.enabled,
     ).toBe(false);
@@ -1238,6 +1252,12 @@ describe("role permission templates", () => {
     expect(controller("api::shipping", "shipping").delete.enabled).toBe(false);
     expect(controller("api::shipping-province", "shipping-province").update.enabled).toBe(false);
     expect(controller("api::shipping-city", "shipping-city").create.enabled).toBe(false);
+
+    const cart = controller("api::cart", "cart");
+    expect(cart.checkStock.enabled).toBe(true);
+    expect(cart.getMyCart.enabled).toBe(true);
+    // Store managers shop with their own cart; they do not get the carts report.
+    expect(cart.find.enabled).toBe(false);
 
     const order = controller("api::order", "order");
     expect(order.find.enabled).toBe(false);

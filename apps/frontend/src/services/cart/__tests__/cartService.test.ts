@@ -152,6 +152,39 @@ describe("CartService", () => {
       expect(result).toEqual(mockStockResponse);
     });
 
+    it("forwards the identified checkout attempt on stock check", async () => {
+      mockGet.mockResolvedValueOnce({ data: { valid: true } });
+
+      await CartService.checkCartStock("attempt-111459");
+
+      expect(mockGet).toHaveBeenCalledWith(
+        "/carts/check-stock?attemptId=attempt-111459",
+      );
+    });
+
+    it("returns a retryable lookup failure without throwing when check-stock is 503", async () => {
+      mockGet.mockRejectedValueOnce({
+        status: 503,
+        errorCode: "RESERVATION_LOOKUP_FAILED",
+        message: "وضعیت رزرو موجودی این سفارش الان مشخص نیست. لطفاً چند لحظه بعد دوباره تلاش کنید.",
+        data: {
+          success: false,
+          valid: false,
+          errorCode: "RESERVATION_LOOKUP_FAILED",
+          reservationOutcome: "unavailable",
+        },
+      });
+
+      const result = await CartService.checkCartStock("attempt-111459");
+
+      expect(result).toMatchObject({
+        success: false,
+        valid: false,
+        errorCode: "RESERVATION_LOOKUP_FAILED",
+        reservationOutcome: "unavailable",
+      });
+    });
+
     it("handles out of stock items", async () => {
       const mockStockResponse = {
         allItemsInStock: false,

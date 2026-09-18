@@ -290,4 +290,63 @@ describe("SnappPay operation processing guards", () => {
       ),
     ).toBe("");
   });
+
+  it("parks 1007 as investigation instead of minting or cancelling", async () => {
+    const { strapi, operationQuery, attemptQuery } = createHarness();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 404, providerCode: 1007 },
+      }),
+    } as any);
+
+    const result = await processSnappayOperation(strapi, 88);
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        action: "MANUAL_REVIEW",
+      }),
+    );
+    expect(operationQuery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 88 },
+        data: expect.objectContaining({
+          Status: "Unknown",
+          nextRunAt: null,
+        }),
+      }),
+    );
+    expect(attemptQuery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          Status: "Unknown",
+          nextAction: "manual_review",
+          failureCode: "SNAPPAY_STATUS_NOT_FOUND",
+        }),
+      }),
+    );
+    expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+
+  it("parks 1048 as merchant mismatch even when a callback asked for verify", async () => {
+    const { strapi, operationQuery } = createHarness({
+      metadata: { callbackState: "OK" },
+    });
+    mockedAdapter.mockReturnValue({
+      status: jest.fn().mockResolvedValue({
+        successful: false,
+        diagnostic: { endpoint: "status", httpStatus: 400, providerCode: 1048 },
+      }),
+    } as any);
+
+    const result = await processSnappayOperation(strapi, 88);
+
+    expect(result).toEqual(expect.objectContaining({ action: "MANUAL_REVIEW" }));
+    expect(operationQuery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ Status: "Unknown", nextRunAt: null }),
+      }),
+    );
+  });
 });

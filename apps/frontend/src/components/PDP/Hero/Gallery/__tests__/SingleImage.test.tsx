@@ -189,4 +189,44 @@ describe("PDP gallery active medium", () => {
     expect(screen.getByTestId("pdp-video-undecodable")).toBeInTheDocument();
     expect(screen.getByText("این ویدیو در این مرورگر پخش نمی‌شود.")).toBeInTheDocument();
   });
+
+  it("swallows a rejected overlay play() so Safari does not emit an unhandled rejection", async () => {
+    // Always reject: the attach effect's play() is already .catch()'d; the
+    // second click hits the overlay branch that previously left the rejection
+    // unhandled (FRONTEND-22 on Mobile Safari).
+    HTMLMediaElement.prototype.play = jest.fn().mockRejectedValue(undefined);
+
+    const { container } = render(
+      <SingleImage
+        type="video"
+        src="/media/product.mp4"
+        thumb="/media/product-poster.jpg"
+        alt="ویدیوی محصول"
+        {...navigationProps}
+      />,
+    );
+
+    const onUnhandledRejection = jest.fn();
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    // Economy: first click only attaches the source and sets videoRequested.
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() =>
+      expect(container.querySelector("video")).toHaveAttribute("src", "/media/product.mp4"),
+    );
+
+    // Source is attached and autoplay was rejected, so the overlay remains.
+    // This click exercises the already-attached play() path.
+    fireEvent.click(screen.getByRole("button", { name: "Play video" }));
+    await waitFor(() =>
+      expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2),
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onUnhandledRejection).not.toHaveBeenCalled();
+    process.off("unhandledRejection", onUnhandledRejection);
+  });
 });

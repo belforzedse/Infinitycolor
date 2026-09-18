@@ -301,6 +301,7 @@ export function withIssuedSnappayToken(
     ...rest,
     tokenAttemptSeq: input.seq,
     pendingTransactionId: null,
+    tokenFingerprint: input.paymentTokenFingerprint,
     generation,
     ...(state.previousGeneration ? { previousGeneration: state.previousGeneration } : {}),
   };
@@ -341,6 +342,182 @@ export function statusMatchesActiveSnappayGeneration(
   if (Number.isFinite(statusAmount) && statusAmount > 0 && Number.isFinite(attemptAmount)) {
     if (statusAmount !== attemptAmount) {
       return { ok: false, reason: "amount" };
+    }
+  }
+  return { ok: true };
+}
+
+export const SNAPPAY_GENERATION_IDENTITY_KEYS = [
+  "generation",
+  "previousGeneration",
+  "pendingDispatch",
+  "pendingTransactionId",
+  "tokenAttemptSeq",
+  "tokenFingerprint",
+] as const;
+
+/**
+ * Stored fingerprints may be the full SHA-256 or the 12-character display
+ * prefix used in logs. Either form is identity evidence; mixed forms still match
+ * when one is a prefix of the other.
+ */
+export function snappayFingerprintsAlign(stored: unknown, computed: unknown): boolean {
+  const left = asNonEmpty(stored);
+  const right = asNonEmpty(computed);
+  if (!left || !right) return true;
+  return left === right || left.startsWith(right) || right.startsWith(left);
+}
+
+export function snappayObservationPatch(
+  result: {
+    successful?: boolean;
+    diagnostic?: {
+      endpoint?: unknown;
+      httpStatus?: unknown;
+      providerCode?: unknown;
+      timedOut?: unknown;
+      transportError?: unknown;
+    };
+  },
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {
+    endpoint: result.diagnostic?.endpoint,
+    successful: result.successful === true,
+    httpStatus: result.diagnostic?.httpStatus,
+    providerCode: result.diagnostic?.providerCode,
+    timedOut: result.diagnostic?.timedOut === true,
+    transportError: result.diagnostic?.transportError === true,
+    ...extra,
+  };
+  for (const key of SNAPPAY_GENERATION_IDENTITY_KEYS) {
+    delete patch[key];
+  }
+  return patch;
+}
+
+export function snappayCallbackTargetsPreviousGeneration(
+  attempt: { providerReference?: unknown; providerResponse?: unknown },
+  transactionId: string,
+): boolean {
+  const state = readSnappayGenerationState(attempt.providerResponse);
+  const tx = asNonEmpty(transactionId);
+  if (!tx || !state.previousGeneration) return false;
+  if (state.generation?.transactionId === tx) return false;
+  if (asNonEmpty(attempt.providerReference) === tx && state.generation) return false;
+  return state.previousGeneration.transactionId === tx;
+}
+
+function tomanToRial(value: unknown): number {
+  const toman = Number(value);
+  return Number.isFinite(toman) ? Math.round(toman * 10) : NaN;
+}
+
+/**
+ * Identity + eligibility for reopening a stored paymentPageUrl after parsed
+ * status 404/1007. Missing generation JSON is not permission by itself; a
+ * matching current TrackId and exact stored URL can support a legacy resume
+ * when no competing dispatch exists.
+ */
+export function snappayStoredPaymentPageResume(
+  input: {
+    paymentToken: string;
+    urlToken: string;
+    /** Durable TrackId. URL recovery alone is not legacy identity proof. */
+    storedTrackId?: unknown;
+    redirectUrl: unknown;
+    orderStatus: unknown;
+    reservationStatus: unknown;
+    attemptStatus: unknown;
+    attemptAmount: unknown;
+    contractAmountToman?: unknown;
+    quoteTotalToman?: unknown;
+    providerReference?: unknown;
+    providerResponse?: unknown;
+    tokenFingerprint?: string;
+    hasValidatedCallback: boolean;
+  },
+): { ok: boolean; reason?: string } {
+  if (input.hasValidatedCallback) return { ok: false, reason: "callback-recovery" };
+  const attemptStatus = String(input.attemptStatus || "");
+  if (["Succeeded", "Cancelled", "Expired"].includes(attemptStatus)) {
+    return { ok: false, reason: "attempt-not-payable" };
+  }
+  if (String(input.orderStatus || "") !== "Paying") {
+    return { ok: false, reason: "order-not-payable" };
+  }
+  if (String(input.reservationStatus || "") !== "Reserved") {
+    return { ok: false, reason: "reservation-not-payable" };
+  }
+  if (snappayHasInFlightDispatch(input.providerResponse)) {
+    return { ok: false, reason: "in-flight-dispatch" };
+  }
+  const paymentToken = asNonEmpty(input.paymentToken);
+  const urlToken = asNonEmpty(input.urlToken);
+  if (!paymentToken || !urlToken || paymentToken !== urlToken) {
+    return { ok: false, reason: "token-url-mismatch" };
+  }
+  const redirectUrl = asNonEmpty(input.redirectUrl);
+  if (!redirectUrl || !/^https:\/\//i.test(redirectUrl)) {
+    return { ok: false, reason: "redirect-url-invalid" };
+  }
+  const attemptAmount = Number(input.attemptAmount);
+  if (!Number.isFinite(attemptAmount) || attemptAmount <= 0) {
+    return { ok: false, reason: "amount-mismatch" };
+  }
+  const quoteRial = tomanToRial(input.quoteTotalToman);
+  if (Number.isFinite(quoteRial) && quoteRial > 0 && quoteRial !== attemptAmount) {
+    return { ok: false, reason: "amount-mismatch" };
+  }
+  const contractRial = tomanToRial(input.contractAmountToman);
+  if (Number.isFinite(contractRial) && contractRial > 0 && contractRial !== attemptAmount) {
+    return { ok: false, reason: "amount-mismatch" };
+  }
+
+  const fingerprint = asNonEmpty(input.tokenFingerprint);
+  const state = readSnappayGenerationState(input.providerResponse);
+  const previousToken = asNonEmpty(state.previousGeneration?.paymentToken);
+  if (previousToken && previousToken === paymentToken && state.generation) {
+    const currentToken = asNonEmpty(state.generation.paymentToken);
+    if (currentToken && currentToken !== paymentToken) {
+      return { ok: false, reason: "previous-generation" };
+    }
+  }
+  if (
+    state.previousGeneration?.transactionId &&
+    asNonEmpty(input.providerReference) === state.previousGeneration.transactionId &&
+    state.generation &&
+    state.generation.transactionId !== state.previousGeneration.transactionId
+  ) {
+    return { ok: false, reason: "previous-generation" };
+  }
+
+  const record = asRecord(input.providerResponse) || {};
+  const topFingerprint = asNonEmpty(record.tokenFingerprint);
+  const generationFingerprint = asNonEmpty(state.generation?.paymentTokenFingerprint);
+  if (fingerprint) {
+    if (topFingerprint && !snappayFingerprintsAlign(topFingerprint, fingerprint)) {
+      return { ok: false, reason: "fingerprint-mismatch" };
+    }
+    if (generationFingerprint && !snappayFingerprintsAlign(generationFingerprint, fingerprint)) {
+      return { ok: false, reason: "fingerprint-mismatch" };
+    }
+  }
+  if (state.generation) {
+    if (state.generation.paymentToken && state.generation.paymentToken !== paymentToken) {
+      return { ok: false, reason: "generation-token-mismatch" };
+    }
+    if (state.tokenAttemptSeq && state.generation.seq !== state.tokenAttemptSeq) {
+      return { ok: false, reason: "seq-mismatch" };
+    }
+    const currentTx = asNonEmpty(input.providerReference);
+    if (currentTx && state.generation.transactionId !== currentTx) {
+      return { ok: false, reason: "transaction-mismatch" };
+    }
+  } else {
+    const storedTrackId = asNonEmpty(input.storedTrackId);
+    if (!storedTrackId || storedTrackId !== paymentToken || storedTrackId !== urlToken) {
+      return { ok: false, reason: "identity-unproven" };
     }
   }
   return { ok: true };

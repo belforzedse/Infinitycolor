@@ -50,7 +50,7 @@ describe("PLPListFilterCategory", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "انتخاب دسته بندی" }));
 
-    const upperBodyButton = screen.getByRole("button", { name: "بالاتنه" });
+    const upperBodyButton = screen.getByRole("button", { name: "بالا تنه" });
     const parentButton = screen.getByRole("button", { name: "لباس رسمی" });
     const otherButton = screen.getByRole("button", { name: "سایر" });
 
@@ -100,7 +100,7 @@ describe("PLPListFilterCategory", () => {
 
     const listbox = screen.getByRole("listbox", { name: "دسته بندی محصولات" });
     expect(within(listbox).getByRole("option", { name: /مانتو کتی/ })).toBeInTheDocument();
-    expect(within(listbox).getByText("بالاتنه / مانتو")).toBeInTheDocument();
+    expect(within(listbox).getByText("بالا تنه / مانتو")).toBeInTheDocument();
   });
 
   it("displays a selected child category in the trigger", () => {

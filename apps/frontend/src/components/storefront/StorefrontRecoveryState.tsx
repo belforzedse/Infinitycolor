@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
+import { TRANSIENT_NETWORK_MESSAGES } from "@/lib/storefront-sentry-tags";
 
 type StorefrontRecoveryStateProps = {
   title: string;
@@ -19,14 +20,14 @@ type StorefrontRecoveryStateProps = {
 // Mobile Safari drops the in-flight RSC stream when a tab is backgrounded or
 // a navigation is interrupted mid-fetch; React's Flight client surfaces the
 // half-read payload as "Connection closed." Safari fetch failures use the
-// exact TypeError message "Load failed"; Chromium uses "Failed to fetch".
-// Those are network blips, not app errors, so one silent re-fetch happens
-// before the recovery UI is shown or Sentry is notified.
-const TRANSIENT_NETWORK_MESSAGES = new Set([
-  "Connection closed.",
-  "Load failed",
-  "Failed to fetch",
-]);
+// exact TypeError message "Load failed"; Chromium uses "Failed to fetch" or
+// "network error". Those are network blips, not app errors, so one silent
+// re-fetch happens before the recovery UI is shown. They are never sent to
+// Sentry from this boundary — even after the retry window — because they are
+// not defects. The global handler may still see them; beforeSend tags those
+// as transport_cut=rsc (Next 16.3.2; cacheComponents notFound Flight holes
+// were addressed upstream in #92231/#94037 — residual events are usually
+// tab/proxy cuts, not a version gap we bump for in this pass).
 // Blocks a tight fail-loop (retry -> same stream cut -> retry -> ...) without
 // permanently spending the one auto-retry for the rest of a long-lived SPA
 // session, where Safari can background/cut the connection again minutes later.
@@ -37,7 +38,9 @@ const TRANSIENT_RETRY_WINDOW_MS = 30_000;
 let lastTransientAutoRetryAt = 0;
 
 function isTransientNetworkError(error?: Error): boolean {
-  return Boolean(error?.message && TRANSIENT_NETWORK_MESSAGES.has(error.message));
+  if (!error) return false;
+  if (error.name === "AbortError" || error.name === "NetworkError") return true;
+  return Boolean(error.message && TRANSIENT_NETWORK_MESSAGES.has(error.message));
 }
 
 export default function StorefrontRecoveryState({
@@ -71,6 +74,10 @@ export default function StorefrontRecoveryState({
   useEffect(() => {
     if (autoRetrying) return;
     if (!error || !process.env.NEXT_PUBLIC_SENTRY_DSN) return;
+    // Known transport cuts are recovered in-UI. Reporting them as errors after
+    // the one silent retry filled Sentry with Connection closed / network error
+    // groups that are not application defects.
+    if (isTransientNetworkError(error)) return;
     Sentry.withScope((scope) => {
       scope.setTag("recovery_surface", surface);
       if (error.digest) scope.setTag("next_error_digest", error.digest);

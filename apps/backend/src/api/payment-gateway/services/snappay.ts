@@ -7,6 +7,10 @@
 
 import axios, { AxiosError, AxiosInstance } from "axios";
 import type { Strapi } from "@strapi/strapi";
+import {
+  displaySnappayFingerprint,
+  snappayTokenFingerprint,
+} from "./snappay-security";
 
 export type SnappayErrorData = {
   errorCode?: number;
@@ -261,9 +265,30 @@ function normalizeTransportError<T>(
   };
 }
 
+function redactedTokenIdentity(paymentToken: string) {
+  const token = String(paymentToken || "");
+  try {
+    return {
+      tokenFingerprint: displaySnappayFingerprint(snappayTokenFingerprint(token)),
+      tokenLength: token.length,
+    };
+  } catch {
+    return { tokenLength: token.length };
+  }
+}
+
+function providerHost(): string {
+  try {
+    return new URL(getSnappayConfig().baseUrl).host;
+  } catch {
+    return "";
+  }
+}
+
 function logResult<T>(
   strapi: Strapi,
   result: SnappayCallResult<T>,
+  extra: Record<string, unknown> = {},
 ): void {
   const details = {
     endpoint: result.diagnostic.endpoint,
@@ -272,6 +297,8 @@ function logResult<T>(
     providerCode: result.diagnostic.providerCode,
     timedOut: result.diagnostic.timedOut,
     transportError: result.diagnostic.transportError,
+    providerHost: providerHost(),
+    ...extra,
   };
   // Strapi's logger prints the message and silently discards this second
   // argument, so every field above was invisible in production. Two SnappPay
@@ -401,11 +428,43 @@ export function createSnappayAdapter(strapi: Strapi) {
     },
 
     async requestPaymentToken(payload: SnappayTokenRequest) {
-      return post<TokenResponse>(
+      const result = await post<TokenResponse>(
         "token",
         "/api/online/payment/v1/token",
         exactTokenRequest(payload),
       );
+      const paymentToken = String(result.response?.paymentToken || "");
+      if (paymentToken) {
+        const body = redactedTokenIdentity(paymentToken);
+        let pageUrlTokenLength = 0;
+        let pageUrlFingerprint = "";
+        try {
+          const pageUrl = new URL(String(result.response?.paymentPageUrl || ""));
+          const pageToken = String(pageUrl.searchParams.get("paymentToken") || "");
+          pageUrlTokenLength = pageToken.length;
+          if (pageToken) {
+            pageUrlFingerprint = redactedTokenIdentity(pageToken).tokenFingerprint || "";
+          }
+        } catch {
+          pageUrlTokenLength = 0;
+        }
+        strapi.log.info(
+          `SnappPay token issuance identity ${JSON.stringify({
+            endpoint: "token",
+            providerHost: providerHost(),
+            bodyTokenLength: body.tokenLength,
+            bodyTokenFingerprint: body.tokenFingerprint,
+            pageUrlTokenLength,
+            pageUrlTokenFingerprint: pageUrlFingerprint,
+            fingerprintsMatch: Boolean(
+              body.tokenFingerprint &&
+                pageUrlFingerprint &&
+                body.tokenFingerprint === pageUrlFingerprint,
+            ),
+          })}`,
+        );
+      }
+      return result;
     },
 
     async verify(paymentToken: string) {
@@ -442,6 +501,14 @@ export function createSnappayAdapter(strapi: Strapi) {
     },
 
     async status(paymentToken: string) {
+      const identity = redactedTokenIdentity(paymentToken);
+      strapi.log.info(
+        `SnappPay status input ${JSON.stringify({
+          endpoint: "status",
+          providerHost: providerHost(),
+          ...identity,
+        })}`,
+      );
       return callProvider<SimpleResponse>(
         strapi,
         "status",

@@ -65,11 +65,17 @@ export function makeFactories(strapi: any) {
    * ignore entirely.
    */
   async function createProduct(
-    opts: { title?: string; mainCategoryId?: number; otherCategoryIds?: number[] } = {},
+    opts: {
+      title?: string;
+      mainCategoryId?: number;
+      otherCategoryIds?: number[];
+      status?: "Active" | "InActive" | "Scheduled";
+    } = {},
   ) {
     const row = await q("api::product.product").create({
       data: {
         Title: opts.title ?? uniq(),
+        ...(opts.status ? { Status: opts.status } : {}),
         ...(opts.mainCategoryId ? { product_main_category: opts.mainCategoryId } : {}),
         ...(opts.otherCategoryIds?.length
           ? { product_other_categories: opts.otherCategoryIds }
@@ -269,7 +275,13 @@ export function makeFactories(strapi: any) {
     return { ...row, provinceId };
   }
 
-  async function createAddress(opts: { userId: number; cityId?: number; postalCode?: string }) {
+  async function createAddress(opts: {
+    userId: number;
+    cityId?: number;
+    postalCode?: string;
+    fullName?: string;
+    phone?: string;
+  }) {
     const cityId = opts.cityId ?? (await createShippingCity()).id;
     const row = await q("api::local-user-address.local-user-address").create({
       data: {
@@ -277,6 +289,8 @@ export function makeFactories(strapi: any) {
         shipping_city: cityId,
         PostalCode: opts.postalCode ?? uniq(),
         FullAddress: `${TEST_PREFIX}address`,
+        ...(opts.fullName ? { FullName: opts.fullName } : {}),
+        ...(opts.phone ? { Phone: opts.phone } : {}),
       },
     });
     track("api::local-user-address.local-user-address", row.id);
@@ -663,6 +677,11 @@ export function makeFactories(strapi: any) {
     getCart,
     getCartItem,
     getCartItems,
+    remember: (uid: string, id: number) => {
+      if (!id) return;
+      track(uid, id);
+      if (uid === "api::order.order") createdOrderIds.push(id);
+    },
     cleanup,
   };
 }

@@ -29,9 +29,42 @@ interface AvailableGatewaysResponse {
   }>;
 }
 
-export const checkCartStock = async (): Promise<CartStockCheckResponse> => {
-  const response = await apiClient.get<CartStockCheckResponse>("/carts/check-stock");
-  return unwrap<CartStockCheckResponse>(response);
+type ReservationLookupFailedError = {
+  errorCode?: string;
+  message?: string;
+  data?: CartStockCheckResponse;
+};
+
+const isReservationLookupFailed = (error: unknown): error is ReservationLookupFailedError => {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as ReservationLookupFailedError;
+  return (
+    candidate.errorCode === "RESERVATION_LOOKUP_FAILED" ||
+    candidate.data?.errorCode === "RESERVATION_LOOKUP_FAILED"
+  );
+};
+
+export const checkCartStock = async (
+  attemptId?: string,
+): Promise<CartStockCheckResponse> => {
+  const normalizedAttemptId = String(attemptId || "").trim();
+  const query = normalizedAttemptId
+    ? `?attemptId=${encodeURIComponent(normalizedAttemptId)}`
+    : "";
+  try {
+    const response = await apiClient.get<CartStockCheckResponse>(`/carts/check-stock${query}`);
+    return unwrap<CartStockCheckResponse>(response);
+  } catch (error: unknown) {
+    if (!isReservationLookupFailed(error)) throw error;
+    return {
+      success: false,
+      valid: false,
+      errorCode: "RESERVATION_LOOKUP_FAILED",
+      message: error.data?.message || error.message,
+      reservationOutcome: "unavailable",
+      cart: error.data?.cart,
+    };
+  }
 };
 
 export const getCheckoutQuote = async (

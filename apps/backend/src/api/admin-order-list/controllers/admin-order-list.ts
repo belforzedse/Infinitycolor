@@ -136,6 +136,15 @@ async function parseOrderListCriteria(
   return { conditions, filters, search, shippingMethodCodes };
 }
 
+function recipientNameFromAddress(
+  address: { FullName?: unknown } | null | undefined,
+): string | null {
+  const raw = address?.FullName;
+  if (typeof raw !== "string") return null;
+  const name = raw.trim();
+  return name || null;
+}
+
 function projectOrder(order: any) {
   const user = order.user;
   const userInfo = user?.user_info;
@@ -149,6 +158,8 @@ function projectOrder(order: any) {
       Date: order.Date ?? null,
       ShippingMethodCode: order.ShippingMethodCode ?? null,
       ShippingBarcode: order.ShippingBarcode ?? null,
+      // Fulfilment identity: the name on the parcel, not the account profile.
+      recipientName: recipientNameFromAddress(order.delivery_address),
       ShippingWeight: order.ShippingWeight ?? null,
       ShippingBoxSizeId: order.ShippingBoxSizeId ?? null,
       AnipoBarcodeState: order.AnipoBarcodeState ?? null,
@@ -209,6 +220,27 @@ function projectOrder(order: any) {
 const ASCII_DIGITS = /^[0-9]+$/;
 /** Upper bound of a Postgres `integer` column, which is what `orders.id` is. */
 const PG_INT4_MAX = 2147483647;
+/**
+ * Equality binds against `varchar(n)` are Postgres 22001 when the value is
+ * longer than n — even on SELECT. The admin search cap is 80 characters;
+ * stored references (Woo numbers, gateway ids) fit in 64. Anything longer
+ * is a name/barcode and must use `$containsi` (ILIKE), which coerces to text.
+ */
+const VARCHAR_EQ_MAX = 64;
+/** `local_user_addresses.full_name` / schema `FullName` maxLength. */
+const RECIPIENT_NAME_VARCHAR_MAX = 255;
+
+function canEqualityMatchVarchar(value: string, maxLength = VARCHAR_EQ_MAX): boolean {
+  return value.length > 0 && value.length <= maxLength && !/\s/.test(value);
+}
+
+function recipientNameContains(search: string): Record<string, unknown> {
+  return {
+    delivery_address: {
+      FullName: { $containsi: search.slice(0, RECIPIENT_NAME_VARCHAR_MAX) },
+    },
+  };
+}
 
 function normalizeDigits(value: string): string {
   return value
@@ -246,8 +278,11 @@ function buildOrderSearchCondition(
     const numericConditions: Record<string, unknown>[] = [
       { contract: { external_id: { $containsi: normalized } } },
       // The order's own reference: the settled gateway id, and for migrated rows
-      // the legacy WooCommerce order number an operator still quotes.
-      { external_id: { $eq: normalized } },
+      // the legacy WooCommerce order number an operator still quotes. `$eq`
+      // only when the bind fits a varchar column — a longer paste is 22001.
+      ...(canEqualityMatchVarchar(normalized)
+        ? [{ external_id: { $eq: normalized } }]
+        : []),
       { ShippingBarcode: { $containsi: normalized } },
       // Phones persist in four shapes, so `09…` never matched a stored `+989…`.
       // Gated on length: an order number must not drag the unindexed phone
@@ -276,12 +311,18 @@ function buildOrderSearchCondition(
   return {
     $or: [
       { contract: { external_id: { $containsi: search } } },
-      { external_id: { $eq: search } },
-      // The list renders «FirstName LastName» as one string, so that is what an
-      // operator types — and matching each column against the whole query found
-      // nothing, because neither column ever holds both halves. The users list
-      // already solved this; reuse its splits instead of a second dialect.
+      // Names have spaces; gateway/Woo ids do not. Equality on a name would
+      // never hit `external_id` and can 22001 if that varchar is narrower
+      // than the typed name.
+      ...(canEqualityMatchVarchar(search)
+        ? [{ external_id: { $eq: search } }]
+        : []),
+      // Account names still split across FirstName/LastName. The list itself
+      // shows delivery_address.FullName, which is one varchar, so ILIKE
+      // (`$containsi`) is the operator that both matches and stays inside
+      // the column width. Never `$eq` this field.
       ...personNameSearchAlternatives(search, "user"),
+      recipientNameContains(search),
       { ShippingBarcode: { $containsi: search } },
       ...phoneConditions,
       ...referenceConditions,
@@ -407,6 +448,7 @@ function buildReserveGroupSearchCondition(search: string): Record<string, unknow
       // Same full-name split as the orders list; the board shows owner names the
       // same way and had the same defect.
       ...personNameSearchAlternatives(search, "owner"),
+      recipientNameContains(search),
     ],
   };
 }
@@ -536,6 +578,7 @@ export default {
               user_info: { select: ["id", "FirstName", "LastName"] },
             },
           },
+          delivery_address: { select: ["id", "FullName"] },
           contract: {
             select: ["id", "Type", "Status", "Amount", "TaxPercent", "Date"],
           },

@@ -14,12 +14,13 @@ import {
 } from "@/components/admin";
 import type { AnipoBarcodeState } from "@/types/super-admin/order";
 /**
- * Buyer identity for an order row.
+ * Identity shown on an order row.
  *
- * Orders can legitimately have no person attached — manual orders created by
- * staff, and historical imports. We label those honestly rather than inventing
- * a customer, and fall back to the phone number when a name is missing but the
- * account exists.
+ * The list is a fulfilment surface, so the primary name is the shipping
+ * recipient (`delivery_address.FullName`), not the account profile. Account
+ * name is only a fallback when the address has no recipient — manual orders
+ * and older rows. Orders with nobody attached at all are labelled honestly,
+ * and a missing name still falls back to the phone.
  */
 export function getOrderBuyer(order: Order): {
   name: string | null;
@@ -28,7 +29,9 @@ export function getOrderBuyer(order: Order): {
 } {
   const user = order?.attributes?.user?.data?.attributes;
   const info = user?.user_info?.data?.attributes;
-  const name = `${info?.FirstName || ""} ${info?.LastName || ""}`.trim();
+  const shippingName = order?.attributes?.recipientName?.trim() || "";
+  const accountName = `${info?.FirstName || ""} ${info?.LastName || ""}`.trim();
+  const name = shippingName || accountName;
   const phone = user?.Phone?.trim() || null;
   const isManual = !order?.attributes?.contract?.data?.attributes?.Amount;
 
@@ -56,6 +59,8 @@ export type Order = {
     Date: string;
     ShippingMethodCode?: string;
     ShippingBarcode?: string;
+    /** Shipping recipient. Preferred over the account profile on this list. */
+    recipientName?: string | null;
     ShippingWeight?: number;
     ShippingBoxSizeId?: number;
     AnipoBarcodeState?: AnipoBarcodeState;
@@ -302,7 +307,7 @@ type Props = {
 /**
  * Compact-width orders list.
  *
- * The buyer is the title because that is how operators talk about an order;
+ * The shipping recipient is the title because that is the name on the parcel;
  * the order number stays immediately available and copyable underneath, since
  * it is what they quote to customers and search by. This replaces a single
  * unwrapped flex row that crammed phone | date | edited | status | barcode

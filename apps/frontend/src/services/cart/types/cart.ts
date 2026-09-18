@@ -110,6 +110,10 @@ export interface CartStockCheckResponse {
   }>;
   cart?: CartResponse;
   message?: string;
+  errorCode?: string;
+  /** Present when check-stock was asked to consider a specific checkout hold. */
+  reservationOutcome?: "held" | "expired" | "released" | "ineligible" | "unavailable";
+  heldOrderId?: number;
 }
 
 export interface AddItemRequest {

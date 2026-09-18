@@ -29,6 +29,16 @@ jest.mock("../../payment-attempt/services/payment-attempt", () => ({
   createPaymentAttempt: jest.fn(),
   findPaymentAttempt: jest.fn(),
 }));
+jest.mock("../services/lib/checkout-hold", () => {
+  const actual = jest.requireActual("../services/lib/checkout-hold");
+  return {
+    ...actual,
+    resolveEligibleCheckoutHold: jest.fn().mockResolvedValue({
+      status: "held",
+      hold: { attemptId: "attempt-1", orderId: 91, quantitiesByStockId: new Map() },
+    }),
+  };
+});
 jest.mock("../../payment-gateway/services/snappay-security", () => ({
   generateSnappayCallbackNonce: jest.fn(),
   generateSnappayTransactionId: jest.fn(),
@@ -36,6 +46,7 @@ jest.mock("../../payment-gateway/services/snappay-security", () => ({
 }));
 
 const { findPaymentAttempt } = require("../../payment-attempt/services/payment-attempt");
+const { resolveEligibleCheckoutHold } = require("../services/lib/checkout-hold");
 const createCartService = require("../services/cart").default;
 
 const QUOTE_HASH = "quote-hash";
@@ -57,7 +68,13 @@ const finalize = (service: any, gateway = "snappay") =>
   });
 
 describe("finalizeCartToOrder — replaying a checkout attempt", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resolveEligibleCheckoutHold.mockResolvedValue({
+      status: "held",
+      hold: { attemptId: "attempt-1", orderId: 91, quantitiesByStockId: new Map() },
+    });
+  });
 
   it.each(["Cancelled", "Failed", "Expired"])(
     "refuses to replay a %s attempt as a conflict instead of handing back its dead state",
@@ -126,5 +143,106 @@ describe("finalizeCartToOrder — replaying a checkout attempt", () => {
     const result = await finalize(service);
 
     expect(result).toMatchObject({ success: true, replayed: true });
+  });
+
+  it("returns PAYMENT_IN_PROGRESS with the live order when a different gateway is requested", async () => {
+    findPaymentAttempt.mockResolvedValueOnce({
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+      Gateway: "snappay",
+      Status: "Redirected",
+      providerResponse: { tokenAttemptSeq: 1, tokenFingerprint: "fp" },
+      order: { id: 91 },
+      contract: { id: 55 },
+    });
+    const service = buildService();
+
+    const result = await service.finalizeCartToOrder(23, {
+      gateway: "mellat",
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      status: 409,
+      errorCode: "PAYMENT_IN_PROGRESS",
+      orderId: 91,
+    });
+  });
+
+  it("refuses to replay a live attempt at a different payable quote", async () => {
+    findPaymentAttempt.mockResolvedValueOnce({
+      attemptId: "attempt-1",
+      quoteHash: "original-hash",
+      Gateway: "snappay",
+      Status: "Redirected",
+      order: { id: 91 },
+      contract: { id: 55 },
+    });
+    const service = buildService();
+
+    const result = await service.finalizeCartToOrder(23, {
+      gateway: "snappay",
+      attemptId: "attempt-1",
+      quoteHash: "discounted-hash",
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      status: 409,
+      errorCode: "CHECKOUT_ATTEMPT_CONFLICT",
+    });
+  });
+
+  it("returns RESERVATION_EXPIRED instead of minting a replacement after the hold is gone", async () => {
+    resolveEligibleCheckoutHold.mockResolvedValue({ status: "expired" });
+    findPaymentAttempt.mockResolvedValueOnce({
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+      Gateway: "mellat",
+      Status: "Created",
+      order: { id: 91 },
+      contract: { id: 55 },
+    });
+    const service = buildService();
+
+    const result = await service.finalizeCartToOrder(23, {
+      gateway: "mellat",
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      status: 409,
+      errorCode: "RESERVATION_EXPIRED",
+    });
+  });
+
+  it("defers identified continuation when the reservation cannot be read", async () => {
+    resolveEligibleCheckoutHold.mockRejectedValue(new Error("temporary query failure"));
+    findPaymentAttempt.mockResolvedValueOnce({
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+      Gateway: "mellat",
+      Status: "Created",
+      order: { id: 91 },
+      contract: { id: 55 },
+    });
+    const service = buildService();
+
+    const result = await service.finalizeCartToOrder(23, {
+      gateway: "mellat",
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      status: 503,
+      errorCode: "RESERVATION_LOOKUP_FAILED",
+    });
+    expect(result.errorCode).not.toBe("RESERVATION_EXPIRED");
   });
 });

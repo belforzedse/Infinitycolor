@@ -10,8 +10,10 @@
 import { updateItemHandler } from "../controllers/handlers/updateItem";
 import { removeItemHandler } from "../controllers/handlers/removeItem";
 import { getMyCartHandler } from "../controllers/handlers/getMyCart";
+import { checkStockHandler } from "../controllers/handlers/checkStock";
 import { updateCartItemOp } from "../services/ops/updateCartItem";
 import { removeCartItemOp } from "../services/ops/removeCartItem";
+import { checkCartStockOp } from "../services/ops/checkCartStock";
 import { createCtx } from "../../../__tests__/helpers/test-utils";
 
 const USER_A = 1;
@@ -104,6 +106,9 @@ function createCartWorld() {
             ),
           };
         }
+        if (uid === "api::payment-attempt.payment-attempt") {
+          return { findOne: jest.fn().mockResolvedValue(null) };
+        }
         throw new Error(`unexpected query uid: ${uid}`);
       }),
     },
@@ -114,6 +119,8 @@ function createCartWorld() {
           removeCartItemOp(strapi, cartItemId, ownerUserId),
         updateCartItem: (cartItemId: number, count: number, ownerUserId: number) =>
           updateCartItemOp(strapi, cartItemId, count, ownerUserId),
+        checkCartStock: (ownerUserId: number, options?: { attemptId?: string }) =>
+          checkCartStockOp(strapi, ownerUserId, options),
         getUserCart: async (userId: number) => {
           const cart = carts.find((row) => row.user.id === Number(userId));
           return { ...cart, cart_items: items.filter((item) => item.cart.id === cart?.id) };
@@ -351,6 +358,66 @@ describe("cart ownership", () => {
         }),
       );
       expect(strapi.service).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("stock check mutations stay on the caller's cart", () => {
+    it("drops only the authenticated user's reserved last unit", async () => {
+      const { strapi, items, deleted } = createCartWorld();
+      items[0].product_variation = variationWithStock(1, 1);
+      items[1].product_variation = variationWithStock(1, 1);
+
+      const result = await checkCartStockOp(strapi, USER_A);
+
+      expect(result.valid).toBe(false);
+      expect(deleted).toEqual([101]);
+      expect(items.some((item) => item.id === 101)).toBe(false);
+      expect(items.some((item) => item.id === 202)).toBe(true);
+    });
+
+    it("does not mutate another user's line even when asked to", async () => {
+      const { strapi, items, deleted, updated } = createCartWorld();
+      items[1].product_variation = variationWithStock(1, 1);
+
+      await expect(removeCartItemOp(strapi, 202, USER_A)).resolves.toEqual({
+        success: false,
+        message: "Cart item not found",
+      });
+      const result = await checkCartStockOp(strapi, USER_A);
+
+      expect(result.valid).toBe(true);
+      expect(deleted).toEqual([]);
+      expect(updated).toEqual([]);
+      expect(items.some((item) => item.id === 202)).toBe(true);
+    });
+
+    it("rejects targeting another user via check-stock", async () => {
+      const { strapi, deleted } = createCartWorld();
+      const ctx = actAs(USER_A, { query: { targetUserId: USER_B } });
+
+      await expect(checkStockHandler(strapi)(ctx)).resolves.toBeUndefined();
+      expect(ctx.forbidden).toHaveBeenCalledWith(
+        "You do not have permission to target another user",
+        expect.objectContaining({
+          data: expect.objectContaining({ error: "TARGET_USER_FORBIDDEN" }),
+        }),
+      );
+      expect(deleted).toEqual([]);
+    });
+
+    it("lets a store manager correct only their own cart", async () => {
+      const { strapi, items, deleted } = createCartWorld();
+      items[0].product_variation = variationWithStock(1, 1);
+      items[1].product_variation = variationWithStock(1, 1);
+      const ctx = actAs(USER_A, {
+        state: { user: { id: USER_A, role: { name: "Store Manager" } } },
+      });
+
+      const result = await checkStockHandler(strapi)(ctx);
+
+      expect(result.data.valid).toBe(false);
+      expect(deleted).toEqual([101]);
+      expect(items.some((item) => item.id === 202)).toBe(true);
     });
   });
 });

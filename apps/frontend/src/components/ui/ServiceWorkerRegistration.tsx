@@ -1,6 +1,31 @@
 "use client";
 
 import { useEffect } from "react";
+import {
+  isServiceWorkerRedirectHostname,
+  serviceWorkerHost,
+} from "./service-worker-host";
+
+/**
+ * Spec: update() rejects InvalidStateError when newestWorker is null (no
+ * installing, waiting, or active worker). Skip the call rather than letting
+ * Safari surface an unhandled rejection from its own update path.
+ */
+function hasNewestWorker(registration: ServiceWorkerRegistration): boolean {
+  return Boolean(registration.active || registration.waiting || registration.installing);
+}
+
+async function safeUpdate(registration: ServiceWorkerRegistration): Promise<void> {
+  if (!hasNewestWorker(registration)) return;
+  // Registration can be torn down mid-flight (navigation, another tab
+  // unregistering). Best-effort only.
+  await registration.update().catch(() => undefined);
+}
+
+async function unregisterAllWorkers(): Promise<void> {
+  const registrations = await navigator.serviceWorker.getRegistrations().catch(() => []);
+  await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+}
 
 /**
  * Service Worker Registration Component
@@ -11,6 +36,14 @@ export default function ServiceWorkerRegistration() {
     // Only register service worker in browser environment
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
       console.log("[SW] Service workers not supported in this browser");
+      return;
+    }
+
+    // Cutover hosts: clear stale workers and never register. SW script fetch
+    // through a 301 is disallowed by the platform.
+    if (isServiceWorkerRedirectHostname(serviceWorkerHost.getHostname())) {
+      console.log("[SW] Redirect hostname — unregistering leftover workers");
+      void unregisterAllWorkers();
       return;
     }
 
@@ -85,14 +118,28 @@ export default function ServiceWorkerRegistration() {
       // Send PWA mode status to service worker (returns cleanup function)
       const pwaCleanup = sendPWAModeStatus(registration);
 
-      // Check for updates periodically
+      // Prefer visibility-driven checks so background Safari tabs are not the
+      // ones polling update() into newestWorker-is-null. A long-lived visible
+      // tab still gets a slow periodic check.
+      const requestUpdate = () => {
+        void (async () => {
+          const live = await navigator.serviceWorker.getRegistration().catch(() => undefined);
+          if (!live) return;
+          await safeUpdate(live);
+        })();
+      };
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === "visible") {
+          requestUpdate();
+        }
+      };
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+
       const updateInterval = setInterval(() => {
-        // The registration can be torn down mid-flight (navigation, another
-        // tab unregistering it), which rejects this with things like
-        // Chromium's "InvalidStateError: newestWorker is null". Best-effort
-        // only; nothing here is actionable client-side.
-        registration.update().catch(() => undefined);
-      }, 60000); // Check every minute
+        if (document.visibilityState !== "visible") return;
+        requestUpdate();
+      }, 60_000);
 
       // Handle service worker updates
       const handleUpdateFound = () => {
@@ -108,15 +155,16 @@ export default function ServiceWorkerRegistration() {
             notifyUpdateAvailable();
           }
         };
-        
+
         worker.addEventListener("statechange", handleStateChange);
       };
-      
+
       registration.addEventListener("updatefound", handleUpdateFound);
 
       // Return cleanup function
       return () => {
         clearInterval(updateInterval);
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
         registration.removeEventListener("updatefound", handleUpdateFound);
         if (pwaCleanup) {
           pwaCleanup();
@@ -133,7 +181,7 @@ export default function ServiceWorkerRegistration() {
       // Check if user is in PWA mode (standalone display mode)
       const isPWA =
         window.matchMedia("(display-mode: standalone)").matches ||
-        (window.navigator as any).standalone === true ||
+        (window.navigator as Navigator & { standalone?: boolean }).standalone === true ||
         document.referrer.includes("android-app://");
 
       const sendMessage = (worker: ServiceWorker | null) => {
@@ -164,9 +212,9 @@ export default function ServiceWorkerRegistration() {
       }
 
       // Also listen for when service worker becomes ready
-      navigator.serviceWorker.ready.then((registration) => {
-        if (registration.active) {
-          sendMessage(registration.active);
+      navigator.serviceWorker.ready.then((readyRegistration) => {
+        if (readyRegistration.active) {
+          sendMessage(readyRegistration.active);
         }
       });
 
@@ -174,14 +222,14 @@ export default function ServiceWorkerRegistration() {
       if (window.matchMedia) {
         const mediaQuery = window.matchMedia("(display-mode: standalone)");
         const handleChange = () => {
-          navigator.serviceWorker.ready.then((registration) => {
-            if (registration.active) {
-              const isPWA =
+          navigator.serviceWorker.ready.then((readyRegistration) => {
+            if (readyRegistration.active) {
+              const nextIsPWA =
                 window.matchMedia("(display-mode: standalone)").matches ||
-                (window.navigator as any).standalone === true;
-              registration.active.postMessage({
+                (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+              readyRegistration.active.postMessage({
                 type: "PWA_MODE",
-                isPWA: isPWA,
+                isPWA: nextIsPWA,
               });
             }
           });
@@ -193,19 +241,17 @@ export default function ServiceWorkerRegistration() {
           // Fallback for older browsers
           mediaQuery.addListener(handleChange);
         }
-        
+
         // Return cleanup function to remove listener
         return () => {
-          if (mediaQuery) {
-            if (mediaQuery.removeEventListener) {
-              mediaQuery.removeEventListener("change", handleChange);
-            } else if (mediaQuery.removeListener) {
-              mediaQuery.removeListener(handleChange);
-            }
+          if (mediaQuery.removeEventListener) {
+            mediaQuery.removeEventListener("change", handleChange);
+          } else if (mediaQuery.removeListener) {
+            mediaQuery.removeListener(handleChange);
           }
         };
       }
-      
+
       return undefined;
     } catch (error) {
       console.error("[SW] Failed to send PWA mode status:", error);

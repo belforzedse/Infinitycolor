@@ -4,21 +4,14 @@ import { getClientIp, getUserAgent } from "../../../../utils/getClientIp";
 import { requireCapability } from "../../../../utils/adminAuthorization";
 import { notifyOrderStatusSms } from "../../../../services/sms/notifications";
 import { isOrderHeldByReserve } from "../../../reserve-group/lib/reserve-group";
-import { submitAnipoBarcode } from "../../services/anipoBarcodeWorkflow";
 
 // Fulfilment order is «تکمیل شده» then «ارسال»: an order is prepared/completed
 // first and handed to the courier second, so `Shipment` is the terminal step.
+// Each hop is a separate admin action -- marking `Done` must not auto-advance.
 const NEXT_STATUS: Record<string, string[]> = {
   Started: ["Done"],
   Done: ["Shipment"],
 };
-
-// Reaching `Done` now hands the order straight to the courier: no second
-// admin click for "تحویل به ارسال" and no per-order barcode dialog. Every
-// automatically-shipped parcel is declared at this fixed weight/box size
-// rather than the per-order computation `resolveAnipoPackage` otherwise uses.
-const AUTO_SHIPMENT_ANIPO_WEIGHT_G = 500;
-const AUTO_SHIPMENT_ANIPO_BOX_SIZE_ID = 3;
 
 type TransitionActor = {
   id: number;
@@ -112,51 +105,6 @@ async function notifyOrderTransitioned(
   });
 }
 
-/**
- * Chains `Done` straight into `Shipment` and requests an Anipo label with the
- * fixed default parcel, mirroring what an admin would otherwise do by hand
- * (click "تحویل به ارسال", then submit the barcode dialog). Best-effort: a
- * reserve hold leaves the order at `Done`, and a failed Anipo request leaves
- * it at `Shipment` with the barcode still pending (the existing reconciliation
- * job and manual dialog both remain available to retry it) -- neither failure
- * should undo the `Done` transition that already succeeded.
- */
-async function autoAdvanceDoneOrderToShipment(
-  strapi: Strapi,
-  orderId: number,
-  actor: TransitionActor,
-  customerId: number | undefined,
-  shippingBarcode?: string | null,
-): Promise<"Done" | "Shipment"> {
-  try {
-    const { held } = await isOrderHeldByReserve(strapi, orderId);
-    if (held) return "Done";
-
-    await applyOrderStatusTransition(strapi, orderId, "Done", "Shipment", actor);
-    await notifyOrderTransitioned(strapi, orderId, customerId, "Done", "Shipment", shippingBarcode);
-  } catch (error) {
-    strapi.log.error("Automatic Done -> Shipment transition failed", {
-      orderId,
-      error: (error as Error)?.message || error,
-    });
-    return "Done";
-  }
-
-  try {
-    await submitAnipoBarcode(strapi, orderId, {
-      weight: AUTO_SHIPMENT_ANIPO_WEIGHT_G,
-      boxSizeId: AUTO_SHIPMENT_ANIPO_BOX_SIZE_ID,
-      actor,
-    });
-  } catch (error) {
-    strapi.log.error("Automatic Anipo request after Done -> Shipment failed", {
-      orderId,
-      error: (error as Error)?.message || error,
-    });
-  }
-  return "Shipment";
-}
-
 export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
   const orderId = Number(ctx.params?.id);
   const nextStatus = String(ctx.request?.body?.status || "").trim();
@@ -225,16 +173,5 @@ export async function adminTransitionOrderHandler(strapi: Strapi, ctx: any) {
     order.ShippingBarcode,
   );
 
-  let finalStatus: string = nextStatus;
-  if (nextStatus === "Done") {
-    finalStatus = await autoAdvanceDoneOrderToShipment(
-      strapi,
-      orderId,
-      actorInfo,
-      customerId,
-      order.ShippingBarcode,
-    );
-  }
-
-  return { data: { success: true, orderId, status: finalStatus } };
+  return { data: { success: true, orderId, status: nextStatus } };
 }

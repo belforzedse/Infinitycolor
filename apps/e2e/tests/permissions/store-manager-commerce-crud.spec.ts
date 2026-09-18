@@ -339,11 +339,18 @@ test.describe("Store manager operational commerce CRUD", () => {
         request,
         "store-manager",
         `/orders/${order.orderId}/admin/transition`,
-        {
-          status: "Shipment",
-        },
+        { status: "Done" },
       ),
-      "Store manager controlled order transition",
+      "Store manager controlled order completion",
+    );
+    await expectApiOk(
+      await apiPost(
+        request,
+        "store-manager",
+        `/orders/${order.orderId}/admin/transition`,
+        { status: "Shipment" },
+      ),
+      "Store manager controlled order shipment",
     );
 
     await expectApiForbidden(

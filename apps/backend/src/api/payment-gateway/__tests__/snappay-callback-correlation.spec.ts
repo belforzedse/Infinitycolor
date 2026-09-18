@@ -21,6 +21,15 @@ function createHarness(input?: {
   legacy?: boolean;
   providerReference?: string;
   providerResponse?: Record<string, unknown>;
+  providerStatus?: string;
+  nextAction?: string;
+  existingOperation?: {
+    id: number;
+    Status: string;
+    retryCount: number;
+    nextRunAt: Date | null;
+    OperationType?: string;
+  };
 }) {
   const attempt = {
     id: 11,
@@ -30,6 +39,8 @@ function createHarness(input?: {
     Amount: input?.amount ?? 1_200_000,
     providerReference: input?.providerReference ?? "ABC1234567",
     callbackNonceHash: input?.callbackNonceHash,
+    providerStatus: input?.providerStatus,
+    nextAction: input?.nextAction,
     providerResponse: input?.providerResponse || {},
     quoteSnapshot: input?.legacy ? { legacy: true } : {},
     order: { id: 22, user: { id: 5 }, order_items: [] },
@@ -44,6 +55,7 @@ function createHarness(input?: {
       ],
     },
   };
+  const existing = input?.existingOperation;
   const attemptUpdate = jest.fn().mockResolvedValue(attempt);
   const operationCreate = jest.fn().mockImplementation(({ data }) => ({
     id: 55,
@@ -64,17 +76,31 @@ function createHarness(input?: {
       update: attemptUpdate,
     },
     "api::payment-operation.payment-operation": {
-      findOne: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockResolvedValue(existing || null),
       create: operationCreate,
       update: jest.fn(),
     },
   };
+  const raw = jest.fn(async (sql: string) => {
+    if (sql.includes("previousGeneration")) {
+      return { rows: [{ id: 11 }] };
+    }
+    if (sql.includes("status = 'Unknown'") && sql.includes("next_run_at IS NULL")) {
+      return existing?.Status === "Unknown" && existing.nextRunAt == null
+        ? { rows: [{ id: existing.id, retry_count: existing.retryCount }] }
+        : { rows: [] };
+    }
+    if (sql.includes("status IN ('Queued', 'Processing')")) {
+      return existing?.Status === "Queued" || existing?.Status === "Processing"
+        ? { rows: [{ id: existing.id, status: existing.Status }] }
+        : { rows: [] };
+    }
+    return { rows: [{ id: 11 }] };
+  });
   const strapi = {
     db: {
       query: jest.fn((uid: string) => queries[uid]),
-      connection: {
-        raw: jest.fn().mockResolvedValue({ rows: [{ id: 11 }] }),
-      },
+      connection: { raw },
     },
     log: {
       warn: jest.fn(),
@@ -82,7 +108,7 @@ function createHarness(input?: {
       info: jest.fn(),
     },
   } as any;
-  return { strapi, attemptUpdate, operationCreate };
+  return { strapi, attemptUpdate, operationCreate, raw };
 }
 
 describe("acceptSnappayCallback correlation", () => {
@@ -109,7 +135,7 @@ describe("acceptSnappayCallback correlation", () => {
     );
     expect(attemptUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 11 },
+        where: { id: 11, Status: { $ne: "Succeeded" } },
         data: expect.objectContaining({
           Status: "Pending",
           providerStatus: "CALLBACK_OK",
@@ -177,10 +203,16 @@ describe("acceptSnappayCallback correlation", () => {
   it("accepts a late callback for a previous generation transaction id", async () => {
     const previousNonce = generateSnappayCallbackNonce();
     const currentNonce = generateSnappayCallbackNonce();
-    const { strapi, attemptUpdate } = createHarness({
+    const { strapi, attemptUpdate, operationCreate, raw } = createHarness({
       providerReference: "NEWNEWNEW1",
       callbackNonceHash: hashSnappayCallbackNonce(currentNonce),
       providerResponse: {
+        generation: {
+          seq: 2,
+          transactionId: "NEWNEWNEW1",
+          dispatchedAt: new Date().toISOString(),
+          callbackNonceHash: hashSnappayCallbackNonce(currentNonce),
+        },
         previousGeneration: {
           seq: 1,
           transactionId: "ABC1234567",
@@ -198,6 +230,88 @@ describe("acceptSnappayCallback correlation", () => {
     });
 
     expect(result.accepted).toBe(true);
-    expect(attemptUpdate).toHaveBeenCalled();
+    expect(attemptUpdate).not.toHaveBeenCalled();
+    expect(raw.mock.calls.some(([sql]: [string]) => sql.includes("previousGeneration"))).toBe(
+      true,
+    );
+    expect(operationCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          idempotencyKey: "reconcile:11:previous:1",
+          metadata: expect.objectContaining({ previousGeneration: true }),
+        }),
+      }),
+    );
+  });
+
+  it("requeues a parked reconcile after a validated callback without creating a second operation", async () => {
+    const nonce = generateSnappayCallbackNonce();
+    const { strapi, operationCreate } = createHarness({
+      callbackNonceHash: hashSnappayCallbackNonce(nonce),
+      existingOperation: {
+        id: 55,
+        Status: "Unknown",
+        retryCount: 2,
+        nextRunAt: null,
+        OperationType: "RECONCILE",
+      },
+    });
+
+    const result = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 1_200_000,
+      nonce,
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(operationCreate).not.toHaveBeenCalled();
+    expect(mockedEnqueue).toHaveBeenCalledWith(55, 2, 0);
+  });
+
+  it("does not reset a running reconcile or enqueue a competing job", async () => {
+    const nonce = generateSnappayCallbackNonce();
+    const { strapi, operationCreate } = createHarness({
+      callbackNonceHash: hashSnappayCallbackNonce(nonce),
+      existingOperation: {
+        id: 55,
+        Status: "Processing",
+        retryCount: 1,
+        nextRunAt: new Date(),
+        OperationType: "RECONCILE",
+      },
+    });
+
+    const result = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 1_200_000,
+      nonce,
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(operationCreate).not.toHaveBeenCalled();
+    expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+
+  it("ignores a failed callback once successful payment evidence is established", async () => {
+    const nonce = generateSnappayCallbackNonce();
+    const { strapi, attemptUpdate, operationCreate } = createHarness({
+      callbackNonceHash: hashSnappayCallbackNonce(nonce),
+      providerStatus: "CALLBACK_OK",
+      nextAction: "verify",
+    });
+
+    const result = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "FAILED",
+      amount: 1_200_000,
+      nonce,
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(attemptUpdate).not.toHaveBeenCalled();
+    expect(operationCreate).not.toHaveBeenCalled();
+    expect(mockedEnqueue).not.toHaveBeenCalled();
   });
 });

@@ -227,6 +227,17 @@ export const getOrderStatus = async (
   }
 };
 
+export type OrderPaymentRequestOptions = {
+  signal?: AbortSignal;
+  /** Skip the storefront global loading overlay (background polls / silent reconcile). */
+  skipGlobalLoader?: boolean;
+};
+
+const paymentRequestHeaders = (
+  options?: OrderPaymentRequestOptions,
+): Record<string, string> | undefined =>
+  options?.skipGlobalLoader ? { "x-skip-global-loader": "1" } : undefined;
+
 /**
  * Check the payment status of an order
  * @param orderId The order ID
@@ -234,18 +245,22 @@ export const getOrderStatus = async (
  */
 export const getOrderPaymentStatus = async (
   orderId: number,
-  signal?: AbortSignal,
+  signalOrOptions?: AbortSignal | OrderPaymentRequestOptions,
 ): Promise<OrderPaymentStatusResponse> => {
   try {
-    const response = signal
-      ? await apiClient.get<OrderPaymentStatusResponse>(
-          `/orders/${orderId}/payment-status`,
-          { signal, suppressAuthRedirect: true },
-        )
-      : await apiClient.get<OrderPaymentStatusResponse>(
-          `/orders/${orderId}/payment-status`,
-          { suppressAuthRedirect: true },
-        );
+    const options: OrderPaymentRequestOptions =
+      signalOrOptions instanceof AbortSignal
+        ? { signal: signalOrOptions }
+        : signalOrOptions ?? {};
+    const headers = paymentRequestHeaders(options);
+    const response = await apiClient.get<OrderPaymentStatusResponse>(
+      `/orders/${orderId}/payment-status`,
+      {
+        ...(options.signal ? { signal: options.signal } : {}),
+        suppressAuthRedirect: true,
+        ...(headers ? { headers } : {}),
+      },
+    );
     return response.data;
   } catch (error: any) {
     console.error("Error checking order payment status:", error);
@@ -255,10 +270,13 @@ export const getOrderPaymentStatus = async (
 
 export const reconcileOrderPayment = async (
   orderId: number,
+  options?: OrderPaymentRequestOptions,
 ): Promise<OrderPaymentStatusResponse> => {
+  const headers = paymentRequestHeaders(options);
   const response = await apiClient.post<OrderPaymentStatusResponse>(
     `/orders/${orderId}/payment-reconcile`,
     {},
+    headers ? { headers } : undefined,
   );
   return response.data;
 };
@@ -381,9 +399,16 @@ export const getMyOrders = async (
   }
 };
 
-export const getOrderDetail = async (orderId: number): Promise<Order> => {
+export const getOrderDetail = async (
+  orderId: number,
+  options?: OrderPaymentRequestOptions,
+): Promise<Order> => {
   try {
-    const response = await apiClient.get<Order>(`/orders/my-orders/${orderId}`);
+    const headers = paymentRequestHeaders(options);
+    const response = await apiClient.get<Order>(
+      `/orders/my-orders/${orderId}`,
+      headers ? { headers } : undefined,
+    );
     if (!response?.data) {
       throw new Error("سفارش یافت نشد");
     }

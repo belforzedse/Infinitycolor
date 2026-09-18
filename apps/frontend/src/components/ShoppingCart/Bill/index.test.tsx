@@ -499,6 +499,104 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(localStorage.getItem("pendingCheckoutQuoteHash")).toBe("sha256:snappay-quote");
   });
 
+  it("follows a SnappPay finalize redirectUrl (resume response shape) instead of the result page", async () => {
+    const paymentPageUrl = "https://pay.snapp.test/start?paymentToken=resume-token";
+
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:snappay-resume-quote",
+      financialSummary: {
+        subtotal: 100_000,
+        discount: 0,
+        tax: 0,
+        shipping: 20_000,
+        total: 120_000,
+      },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: true,
+      orderId: 91,
+      attemptId: "attempt-resume",
+      redirectUrl: paymentPageUrl,
+      paymentStatus: "Redirected",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
+        "data-snapp-eligible",
+        "true",
+      );
+    });
+    fireEvent.click(screen.getByTestId("select-snappay"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    // jsdom cannot assign window.location.href (non-configurable); the storefront
+    // still takes the gateway-redirect branch — toast + pending ids, not /payment/result.
+    await waitFor(() => {
+      expect(mockToast.success).toHaveBeenCalledWith("در حال انتقال به درگاه پرداخت...");
+    });
+    expect(CartService.finalizeCart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gateway: "snappay",
+        quoteHash: "sha256:snappay-resume-quote",
+        attemptId: expect.any(String),
+      }),
+    );
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(localStorage.getItem("pendingOrderId")).toBe("91");
+    expect(localStorage.getItem("pendingPaymentAttemptId")).toBe("attempt-resume");
+    expect(localStorage.getItem("pendingCheckoutAttemptId")).toBeTruthy();
+  });
+
+  it("on bfcache restore only unsticks پرداخت and does not auto-redirect to SnappPay", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("checkout-submit")).toBeVisible());
+    (CartService.finalizeCart as jest.Mock).mockClear();
+    (CartService.checkCartStock as jest.Mock).mockClear();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("pageshow"));
+      // Persisted bfcache restore is what unsticks the submit guard.
+      const persisted = new Event("pageshow") as PageTransitionEvent;
+      Object.defineProperty(persisted, "persisted", { value: true });
+      window.dispatchEvent(persisted);
+    });
+
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+    // Stock recheck on restore is intentional; auto-redirect is not.
+    await waitFor(() => {
+      expect(CartService.checkCartStock).toHaveBeenCalled();
+    });
+  });
+
   it("routes an immediately paid wallet order to the canonical result page", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet"]);
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
@@ -630,7 +728,10 @@ describe("ShoppingCartBillForm auth gate", () => {
     );
   });
 
-  async function submitCheckoutWithError(errorCode: string) {
+  async function submitCheckoutWithError(
+    errorCode: string,
+    extras: Record<string, unknown> = {},
+  ) {
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:failing-quote",
       financialSummary: { total: 120_000 },
@@ -638,6 +739,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     (CartService.finalizeCart as jest.Mock).mockResolvedValue({
       success: false,
       errorCode,
+      ...extras,
     });
 
     const store = createStore();
@@ -665,6 +767,18 @@ describe("ShoppingCartBillForm auth gate", () => {
     await waitFor(() => {
       expect(mockToast.error).toHaveBeenCalledWith(
         "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+        { id: "checkout-error" },
+      );
+    });
+    expect(captureCheckoutMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not send SnapPay manual-review leftovers to Sentry as errors", async () => {
+    await submitCheckoutWithError("SNAPPAY_MANUAL_REVIEW");
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith(
+        "پرداخت اسنپ‌پی در حال بررسی دستی است. لطفاً وضعیت سفارش را کمی بعد بررسی کنید و دوباره پرداخت نکنید.",
         { id: "checkout-error" },
       );
     });
@@ -718,6 +832,76 @@ describe("ShoppingCartBillForm auth gate", () => {
       );
     });
     expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("opens the payment result page when unknown SnapPay start includes an order id", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("PAYMENT_UNKNOWN", { orderId: 91 });
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=91");
+    });
+    expect(mockToast.success).toHaveBeenCalledWith("در حال بررسی نتیجه پرداخت...", {
+      id: "checkout-error",
+    });
+    expect(screen.queryByTestId("checkout-form-error")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("pendingOrderId")).toBe("91");
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+    expect(window.localStorage.getItem("pendingPaymentAttemptId")).toBeTruthy();
+  });
+
+  it("retries checkout from تلاش دوباره instead of only dismissing the banner", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("PAYMENT_UNKNOWN");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-error-retry")).toBeVisible();
+    });
+    expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId("checkout-error-retry"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("opens the payment result page when an in-progress SnapPay 409 names the order", async () => {
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:failing-quote",
+      financialSummary: { total: 120_000 },
+    });
+    (CartService.finalizeCart as jest.Mock).mockRejectedValue({
+      status: 409,
+      errorCode: "PAYMENT_IN_PROGRESS",
+      data: { errorCode: "PAYMENT_IN_PROGRESS", orderId: 111459 },
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=111459");
+    });
+    expect(screen.queryByTestId("checkout-form-error")).not.toBeInTheDocument();
   });
 
   it("keeps the stored attempt id when a SnappPay token request fails after dispatch", async () => {
@@ -856,5 +1040,222 @@ describe("ShoppingCartBillForm auth gate", () => {
     });
     expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
     expect(CartService.finalizeCart).not.toHaveBeenCalled();
+  });
+
+  it("does not re-check stock when the cart snapshot identity changes after a correction", async () => {
+    (CartService.checkCartStock as jest.Mock).mockResolvedValue({
+      valid: false,
+      cartIsEmpty: false,
+      itemsRemoved: [
+        {
+          cartItemId: 10,
+          productVariationId: 100,
+          productTitle: "رنگ قرمز",
+          message: "Product is out of stock, item removed from cart",
+        },
+      ],
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    const { rerender } = render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    await waitFor(() => {
+      expect(CartService.checkCartStock).toHaveBeenCalled();
+    });
+
+    const callsAfterMount = (CartService.checkCartStock as jest.Mock).mock.calls.length;
+    expect(mockRefreshCart).toHaveBeenCalledWith({ silent: true });
+
+    mockCartState = {
+      ...mockCartState,
+      cartItems: mockCartState.cartItems.map((item) => ({ ...item })),
+    };
+
+    rerender(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    expect(CartService.checkCartStock).toHaveBeenCalledTimes(callsAfterMount);
+  });
+
+  it("passes the stored attempt id into checkout stock checks", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-111459");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:original");
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(CartService.checkCartStock).toHaveBeenCalledWith("attempt-111459");
+    });
+  });
+
+  it("continues an identified unpaid order when the mutable cart is empty", async () => {
+    mockCartState = {
+      totalPrice: 0,
+      totalItems: 0,
+      cartItems: [],
+    };
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-111459");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:original");
+    window.localStorage.setItem("pendingCheckoutOrderId", "111459");
+    window.localStorage.setItem("pendingCheckoutGateway", "snappay");
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: true,
+      orderId: 111459,
+      attemptId: "attempt-111459",
+      redirectUrl: "https://pay.snapp.test/start",
+      paymentStatus: "Redirected",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-continuation-notice")).toBeVisible();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("checkout-form-error")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gateway: "snappay",
+          attemptId: "attempt-111459",
+          quoteHash: "sha256:original",
+        }),
+      );
+    });
+    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+  });
+
+  it("does not offer a resume path for a leftover unpaid order on a new basket", async () => {
+    window.localStorage.setItem("continuableCheckoutAttemptId", "attempt-111459");
+    window.localStorage.setItem("continuableCheckoutQuoteHash", "sha256:coat");
+    window.localStorage.setItem("continuableCheckoutOrderId", "111459");
+    window.localStorage.setItem("continuableCheckoutGateway", "snappay");
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("اطلاعات صورت حساب")).toBeVisible();
+    });
+    expect(screen.queryByTestId("checkout-distinct-continuation")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("checkout-continue-previous")).not.toBeInTheDocument();
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
+  });
+
+  it("maps an expired reservation without sending it to Sentry", async () => {
+    await submitCheckoutWithError("RESERVATION_EXPIRED");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "مهلت رزرو موجودی این سفارش تمام شده است",
+      );
+    });
+    expect(captureCheckoutMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the stored attempt when reservation lookup fails instead of treating stock as gone", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:failing-quote");
+    await submitCheckoutWithError("RESERVATION_LOOKUP_FAILED");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "وضعیت رزرو موجودی این سفارش الان مشخص نیست",
+      );
+    });
+    expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("دوباره تلاش کنید");
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+    expect(captureCheckoutMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not strip cart lines or finalize when check-stock cannot read the reservation", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "live-attempt");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:original");
+    (CartService.checkCartStock as jest.Mock).mockResolvedValue({
+      success: false,
+      valid: false,
+      errorCode: "RESERVATION_LOOKUP_FAILED",
+      reservationOutcome: "unavailable",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+
+    (CartService.checkCartStock as jest.Mock).mockClear();
+    (CartService.getCheckoutQuote as jest.Mock).mockClear();
+    (CartService.finalizeCart as jest.Mock).mockClear();
+    mockToast.error.mockClear();
+    mockSetStockNotice.mockClear();
+
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "وضعیت رزرو موجودی این سفارش الان مشخص نیست",
+      );
+    });
+    expect(mockSetStockNotice).not.toHaveBeenCalled();
+    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
   });
 });

@@ -8,12 +8,15 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useProductCategories } from "@/hooks/useProductCategories";
 import { getCategoryPlpHref, isActiveNavHref } from "@/utils/plpRoutes";
 import type { ProductCategorySummary } from "@/services/product/categories";
-import { buildMobileCategoryGroups } from "@/utils/categoryGroups";
 import { useCart } from "@/contexts/CartContext";
 import { useCartShellReady } from "@/hooks/useCartShellReady";
 import { API_BASE_URL } from "@/constants/api";
-import { MOBILE_TOP_LEVEL_CATEGORY_SLUGS, OPPSI_HEADER_ITEM } from "@/constants/categories";
+import { OPPSI_HEADER_ITEM } from "@/constants/categories";
 import { withHeaderExtraCategories } from "@/utils/headerExtraCategories";
+import {
+  buildMobileMenuTaxonomy,
+  isSyntheticMobileMenuCategory,
+} from "@/utils/mobileMenuTaxonomy";
 import resolveAssetUrl from "@/utils/resolveAssetUrl";
 import SearchSuggestionCard from "@/components/Search/SearchSuggestionCard";
 import OrderTrackingIcon from "@/components/PLP/Icons/OrderTrackingIcon";
@@ -116,48 +119,38 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
   const { totalItems, openDrawer } = useCart();
   const isCartShellReady = useCartShellReady();
   const visibleTotalItems = isCartShellReady ? totalItems : 0;
-  const { categories: navbarCategories, isLoading: loading } = useProductCategories({
-    navbarAssignedOnly: true,
+  const { categories: catalogCategories, isLoading: loading } = useProductCategories({
+    parentOnly: true,
     includeChildren: true,
     enabled: isOpen,
   });
   const categories = useMemo(
-    () => withHeaderExtraCategories(navbarCategories),
-    [navbarCategories],
+    () => withHeaderExtraCategories(catalogCategories),
+    [catalogCategories],
   );
 
-  const { topLevelCategories, groupableCategories } = useMemo(() => {
-    const topLevelSlugs = new Set(MOBILE_TOP_LEVEL_CATEGORY_SLUGS);
-    const topLevel: ProductCategorySummary[] = [];
-    const groupable: ProductCategorySummary[] = [];
-    for (const category of categories) {
-      (topLevelSlugs.has(category.slug) ? topLevel : groupable).push(category);
-    }
-    return { topLevelCategories: topLevel, groupableCategories: groupable };
-  }, [categories]);
-
-  const mobileCategoryGroups = useMemo(
-    () => buildMobileCategoryGroups(groupableCategories),
-    [groupableCategories],
-  );
+  const taxonomyItems = useMemo(() => buildMobileMenuTaxonomy(categories), [categories]);
 
   const menuItems: MobileNavItem[] = useMemo(
     () => [
       { key: "home", label: "خانه", href: "/" },
       { key: "shop", label: "فروشگاه", href: "/plp" },
-      ...mobileCategoryGroups.map((group) => ({
-        key: `category-group-${group.key}`,
-        label: group.label,
-        type: "category-group" as const,
-        categories: group.categories,
-      })),
-      ...topLevelCategories.map((category) => ({
-        key: `category-${category.id}`,
-        label: category.name,
-        href: getCategoryPlpHref(category.slug),
-        type: "category" as const,
-        category,
-      })),
+      ...taxonomyItems.map((item) =>
+        item.type === "group"
+          ? {
+              key: `category-group-${item.key}`,
+              label: item.label,
+              type: "category-group" as const,
+              categories: item.categories,
+            }
+          : {
+              key: `category-${item.key}-${item.category.id}`,
+              label: item.category.name,
+              href: getCategoryPlpHref(item.category.slug),
+              type: "category" as const,
+              category: item.category,
+            },
+      ),
       {
         key: OPPSI_HEADER_ITEM.key,
         label: OPPSI_HEADER_ITEM.label,
@@ -171,7 +164,7 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
       },
       { key: "blog", label: "مقالات", href: "/blog" },
     ],
-    [mobileCategoryGroups, topLevelCategories],
+    [taxonomyItems],
   );
 
   useEffect(() => {
@@ -431,18 +424,20 @@ export default function MobileMenu({ isOpen, onClose, focusSearchOnOpen = false 
           data-state={isExpanded ? "open" : "closed"}
         >
           <div className="storefront-mobile-category-panel-inner min-h-0 overflow-hidden">
-            <Link
-              href={item.href}
-              prefetch={false}
-              onClick={onClose}
-              aria-current={isActiveHref(item.href) ? "page" : undefined}
-              className={[
-                "block border-t border-stone-100 bg-infinity-primary-lighter/20 px-3 py-3 text-right text-sm font-semibold text-infinity-primary-dark transition-colors hover:bg-infinity-primary-lighter/35 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-infinity-primary",
-                isActiveHref(item.href) ? "text-infinity-primary" : "",
-              ].join(" ")}
-            >
-              <span className="block truncate">{getViewAllCategoryLabel(item.label)}</span>
-            </Link>
+            {!isSyntheticMobileMenuCategory(item.category) && (
+              <Link
+                href={item.href}
+                prefetch={false}
+                onClick={onClose}
+                aria-current={isActiveHref(item.href) ? "page" : undefined}
+                className={[
+                  "block border-t border-stone-100 bg-infinity-primary-lighter/20 px-3 py-3 text-right text-sm font-semibold text-infinity-primary-dark transition-colors hover:bg-infinity-primary-lighter/35 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-infinity-primary",
+                  isActiveHref(item.href) ? "text-infinity-primary" : "",
+                ].join(" ")}
+              >
+                <span className="block truncate">{getViewAllCategoryLabel(item.label)}</span>
+              </Link>
+            )}
             {children.map((child) => (
               <Link
                 key={child.id}

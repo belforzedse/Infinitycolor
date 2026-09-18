@@ -26,14 +26,24 @@ describe("payment attempt initiation", () => {
   });
 
   it("leases a live SnappPay attempt so two tabs cannot mint a second token", async () => {
-    const raw = jest.fn().mockResolvedValue({ rows: [{ id: 17 }] });
+    const raw = jest.fn().mockResolvedValue({ rows: [{ id: 17, lease_version: 3 }] });
     const strapi = { db: { connection: { raw } } } as any;
 
-    await expect(claimPaymentAttemptForSnappayInitiation(strapi, 17)).resolves.toBe(true);
+    await expect(claimPaymentAttemptForSnappayInitiation(strapi, 17)).resolves.toEqual({
+      leaseVersion: 3,
+    });
     expect(raw).toHaveBeenCalledWith(
       expect.stringContaining("status IN ('Created', 'Pending', 'Redirected', 'Unknown', 'Failed', 'Cancelled', 'Expired')"),
       expect.arrayContaining([17]),
     );
+  });
+
+  it("does not treat a mint lease without a returned version as acquired", async () => {
+    const strapi = {
+      db: { connection: { raw: jest.fn().mockResolvedValue({ rows: [{ id: 17 }] }) } },
+    } as any;
+
+    await expect(claimPaymentAttemptForSnappayInitiation(strapi, 17)).resolves.toBeNull();
   });
 
   it("does not present an in-progress attempt as a completed checkout", () => {

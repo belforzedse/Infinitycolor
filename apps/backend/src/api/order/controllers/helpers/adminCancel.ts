@@ -24,7 +24,7 @@ import {
 } from "./notifyAnipoParcelCancelled";
 
 /**
- * Cancel is allowed through fulfilment (including auto-advanced `Shipment`), but
+ * Cancel is allowed through fulfilment (including `Shipment`), but
  * not after a return is recorded. `Returned` stays on the return/refund path.
  */
 const CANCELLABLE_ORDER_STATUSES = ["Paying", "Started", "Done", "Shipment"] as const;

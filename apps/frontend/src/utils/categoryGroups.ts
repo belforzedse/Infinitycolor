@@ -26,30 +26,37 @@ export type MobileCategoryGroup<T extends CategoryFilterOption = CategoryFilterO
     categories: T[];
   };
 
+/** Keyword buckets used by the PLP category filter. The mobile hamburger uses `buildMobileMenuTaxonomy`. */
 export const MOBILE_CATEGORY_GROUPS: readonly CategoryGroupDefinition[] = [
   {
     key: "upper-body",
-    label: "بالاتنه",
-    terms: ["مانتو", "coat-and-mantle", "شومیز", "paperback-and-tonic", "پیراهن", "shirt"],
+    label: "بالا تنه",
+    terms: [
+      "مانتو",
+      "coat-and-mantle",
+      "شومیز",
+      "paperback-and-tonic",
+      "پیراهن",
+      "shirt",
+      "پلیور",
+      "پلیور-و-بافت",
+      "هودی",
+      "hoodie-and-dores",
+      "دورس",
+      "بامبر",
+      "jacket-and-puffer",
+      "پالتو",
+    ],
   },
   {
     key: "lower-body",
-    label: "پایین‌تنه",
-    terms: ["شلوار", "pants", "دامن", "skirt"],
+    label: "پایین تنه",
+    terms: ["شلوار", "pants", "دامن", "skirt", "شلوارک", "شوارک"],
   },
   {
-    key: "shoes-accessories",
-    label: "کفش و اکسسوری",
-    terms: [
-      "انواع کفش",
-      "کفش",
-      "shoes",
-      "شال",
-      "shawls-and-scarves",
-      "جوراب",
-      "socks",
-      "womens-belt",
-    ],
+    key: "underwear",
+    label: "لباس زیر",
+    terms: ["لباس زیر", "under-wear"],
   },
   {
     key: "mens-clothing",
@@ -59,15 +66,7 @@ export const MOBILE_CATEGORY_GROUPS: readonly CategoryGroupDefinition[] = [
   {
     key: "other-clothing",
     label: "سایر لباس‌ها",
-    terms: [
-      "لباس‌های زمستانه",
-      "لباس زمستانه",
-      "winter",
-      "لباس زیر",
-      "under-wear",
-      "راحتی",
-      "house-dress",
-    ],
+    terms: ["لباس‌های زمستانه", "لباس زمستانه", "winter", "راحتی", "house-dress"],
   },
 ];
 

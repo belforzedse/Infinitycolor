@@ -136,4 +136,48 @@ describe("finalizeToOrder handler - inline billing address", () => {
       }),
     );
   });
+
+  it("resumes an identified checkout without re-validating shipping or address", async () => {
+    const { strapi, registerService, registerQuery } = createStrapiMock();
+    enableSnappayGateway(strapi);
+    const finalizeCartToOrder = jest.fn(async () => ({
+      success: false,
+      message: "stop-after-resume-lookup",
+    }));
+    registerService("api::cart.cart", { finalizeCartToOrder });
+    registerQuery("api::payment-attempt.payment-attempt", {
+      findOne: jest.fn().mockResolvedValue({
+        attemptId: "attempt-111459",
+        quoteHash: "sha256:original",
+        Gateway: "snappay",
+        Status: "Redirected",
+        order: { id: 111459 },
+      }),
+      update: jest.fn(),
+    });
+
+    const handler = finalizeToOrderHandler(strapi as any);
+    const ctx = createCtx({
+      request: {
+        body: {
+          gateway: "snappay",
+          attemptId: "attempt-111459",
+        },
+      },
+      state: { user: { id: 1 } },
+    });
+
+    await expect(handler(ctx)).rejects.toMatchObject({ status: 400 });
+
+    expect(finalizeCartToOrder).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        gateway: "snappay",
+        attemptId: "attempt-111459",
+        quoteHash: "sha256:original",
+      }),
+    );
+    expect(finalizeCartToOrder.mock.calls[0][1].shippingId).toBeUndefined();
+    expect(finalizeCartToOrder.mock.calls[0][1].addressId).toBeUndefined();
+  });
 });

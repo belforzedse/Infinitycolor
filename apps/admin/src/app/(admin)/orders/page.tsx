@@ -507,7 +507,7 @@ export default function OrdersPage() {
           <div className="relative w-full sm:w-80">
             <input
               type="text"
-              placeholder="شماره سفارش، نام مشتری، تلفن، کد رهگیری..."
+              placeholder="شماره سفارش، نام گیرنده، تلفن، کد رهگیری..."
               className="h-10 w-full rounded-lg border border-neutral-300 px-3 py-1 pr-8 text-sm"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}

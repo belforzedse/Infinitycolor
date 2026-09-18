@@ -15,17 +15,26 @@ import {
   buildSnappayPendingDispatch,
   isConsecutiveSnappayGeneration,
   nextSnappayGenerationSeq,
+  readSnappayGenerationState,
   rememberedSnappayNonceHashes,
   rememberedSnappayTransactionIds,
   seedSnappayGenerationFromLegacyAttempt,
+  snappayCallbackTargetsPreviousGeneration,
   snappayHasInFlightDispatch,
+  snappayObservationPatch,
   snappayProviderGenerationIsTerminal,
   snappayProviderPaymentIsUnresolved,
+  snappayStoredPaymentPageResume,
   statusMatchesActiveSnappayGeneration,
   withIssuedSnappayToken,
   withSnappayPendingDispatch,
-  withSnappayTerminalEvidence,
 } from "./snappay-generation";
+import {
+  mergePreviousGenerationCallback,
+  mergeSnappayAttemptObservation,
+  promoteIssuedSnappayGeneration,
+  requeueParkedSnappayReconcile,
+} from "../../payment-attempt/services/snappay-attempt-writes";
 import {
   displaySnappayFingerprint,
   generateSnappayCallbackNonce,
@@ -190,7 +199,22 @@ export function extractSnappayPaymentTokenFromRedirectUrl(value: unknown): strin
   return token;
 }
 
+async function resolveSnappayPaymentTokenForOperation(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  operation: { metadata?: Record<string, unknown> },
+): Promise<string> {
+  const metaTx = String(operation.metadata?.transactionId || "").trim();
+  const state = readSnappayGenerationState(bundle.attempt.providerResponse);
+  if (metaTx && state.previousGeneration?.transactionId === metaTx) {
+    return String(state.previousGeneration.paymentToken || "").trim();
+  }
+  return resolveSnappayPaymentToken(strapi, bundle);
+}
+
 async function resolveSnappayPaymentToken(strapi: Strapi, bundle: AttemptBundle): Promise<string> {
+  // Current generation only. An in-flight pendingDispatch means a replacement
+  // mint is unresolved — do not observe TrackId from a prior generation.
   if (snappayHasInFlightDispatch(bundle.attempt.providerResponse)) {
     return "";
   }
@@ -293,10 +317,6 @@ function failedInitiation(
     errorCode,
     message: initiationMessage(errorCode, message),
   };
-}
-
-function isInvestigationStatusCode(code: number): boolean {
-  return code === 1007 || code === 1048;
 }
 
 function hasValidatedOkCallback(bundle: AttemptBundle): boolean {
@@ -630,35 +650,62 @@ async function updateProviderObservation(
   result: SnappayCallResult<any>,
   providerStatus?: SnappayProviderStatus,
 ): Promise<void> {
-  const now = new Date();
-  const extra =
-    providerStatus === "REVERT" || providerStatus === "CANCEL"
-      ? withSnappayTerminalEvidence(bundle.attempt.providerResponse, providerStatus)
+  const patch = snappayObservationPatch(result);
+  const state = readSnappayGenerationState(bundle.attempt.providerResponse);
+  const generationSeq = state.generation?.seq || state.tokenAttemptSeq || 0;
+  const generationTransactionId = String(
+    state.generation?.transactionId || bundle.attempt.providerReference || "",
+  );
+  const existingProviderStatus = String(bundle.attempt.providerStatus || "");
+  const writeProviderStatus =
+    existingProviderStatus.startsWith("CALLBACK_") &&
+    (!providerStatus || providerStatus === "UNKNOWN")
+      ? undefined
+      : providerStatus;
+  const generationTerminalEvidence =
+    (providerStatus === "REVERT" || providerStatus === "CANCEL") && state.generation
+      ? providerStatus
+      : undefined;
+  const written = await mergeSnappayAttemptObservation(strapi, {
+    attemptId: Number(bundle.attempt.id),
+    transactionId: Number(bundle.transaction.id),
+    patch,
+    ...(writeProviderStatus ? { providerStatus: writeProviderStatus } : {}),
+    generationSeq,
+    generationTransactionId,
+    httpStatus: result.diagnostic.httpStatus,
+    providerCode: result.diagnostic.providerCode,
+    ...(generationTerminalEvidence ? { generationTerminalEvidence } : {}),
+  });
+  if (!written) {
+    strapi.log.warn("Refused stale SnappPay observation write", {
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order.id,
+      generationSeq,
+      transactionId: generationTransactionId,
+    });
+    return;
+  }
+  const previous =
+    bundle.attempt?.providerResponse && typeof bundle.attempt.providerResponse === "object"
+      ? bundle.attempt.providerResponse
       : {};
-  const providerResponse = mergeAttemptProviderResponse(bundle, result, extra);
-  await Promise.all([
-    strapi.db.query(TX_UID).update({
-      where: { id: bundle.transaction.id },
-      data: {
-        ...(providerStatus ? { GatewayStatus: providerStatus } : {}),
-        LastHttpStatus: result.diagnostic.httpStatus,
-        LastProviderCode: result.diagnostic.providerCode,
-        LastReconciledAt: now,
-        GatewayResponse: providerSummary(result),
-      },
-    } as any),
-    strapi.db.query(ATTEMPT_UID).update({
-      where: { id: bundle.attempt.id },
-      data: {
-        ...(providerStatus ? { providerStatus } : {}),
-        providerResponse,
-        lastReconciledAt: now,
-      },
-    } as any),
-  ]);
-  bundle.transaction.GatewayStatus = providerStatus || bundle.transaction.GatewayStatus;
-  bundle.attempt.providerStatus = providerStatus || bundle.attempt.providerStatus;
-  bundle.attempt.providerResponse = providerResponse;
+  const nextGeneration =
+    generationTerminalEvidence && state.generation
+      ? { ...state.generation, terminalEvidence: generationTerminalEvidence }
+      : state.generation;
+  bundle.attempt.providerResponse = {
+    ...previous,
+    ...patch,
+    ...(nextGeneration ? { generation: nextGeneration } : {}),
+    ...(state.previousGeneration ? { previousGeneration: state.previousGeneration } : {}),
+    ...(state.pendingDispatch ? { pendingDispatch: state.pendingDispatch } : {}),
+    ...(state.tokenAttemptSeq ? { tokenAttemptSeq: state.tokenAttemptSeq } : {}),
+  };
+  if (writeProviderStatus) {
+    bundle.transaction.GatewayStatus = writeProviderStatus;
+    bundle.attempt.providerStatus = writeProviderStatus;
+  }
 }
 
 async function failInitiation(
@@ -759,6 +806,7 @@ async function recordTokenOperation(
   bundle: AttemptBundle,
   status: "Succeeded" | "Failed" | "Unknown",
   result: SnappayCallResult<any>,
+  extra: Record<string, unknown> = {},
 ): Promise<void> {
   const key = `token:${bundle.attempt.id}`;
   const existing: any = await strapi.db.query(OPERATION_UID).findOne({
@@ -771,7 +819,10 @@ async function recordTokenOperation(
     httpStatus: result.diagnostic.httpStatus,
     providerCode: result.diagnostic.providerCode,
     retryCount: 0,
-    metadata: providerSummary(result),
+    metadata: {
+      ...providerSummary(result),
+      ...extra,
+    },
     attemptKey: bundle.attempt.id,
     payment_attempt: bundle.attempt.id,
     order: bundle.order.id,
@@ -842,12 +893,27 @@ async function persistIssuedToken(
   transactionId: string,
   callbackNonce: string,
   tokenAttemptSeq: number,
-): Promise<void> {
+  leaseVersion: number,
+): Promise<boolean> {
   const paymentToken = String(result.response?.paymentToken || "");
+  const paymentPageUrl = String(result.response?.paymentPageUrl || "");
   const tokenHash = snappayTokenFingerprint(paymentToken);
   const fingerprint = displaySnappayFingerprint(tokenHash);
-  const now = new Date();
   const callbackNonceHash = hashSnappayCallbackNonce(callbackNonce);
+  const pending = readSnappayGenerationState(bundle.attempt.providerResponse).pendingDispatch;
+  if (
+    !pending ||
+    pending.seq !== tokenAttemptSeq ||
+    pending.transactionId !== transactionId ||
+    pending.callbackNonceHash !== callbackNonceHash
+  ) {
+    strapi.log.error("SnappPay issued token did not match the pending dispatch", {
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order.id,
+      seq: tokenAttemptSeq,
+    });
+    return false;
+  }
   const providerResponse = mergeAttemptProviderResponse(
     bundle,
     result,
@@ -859,63 +925,70 @@ async function persistIssuedToken(
       paymentToken,
     }),
   );
-  await strapi.db.transaction(async ({ trx }) => {
-    await trx.raw("SELECT id FROM contract_transactions WHERE id = ? FOR UPDATE", [
-      bundle.transaction.id,
+  strapi.log.info(
+    `SnappPay persisted token identity ${JSON.stringify({
+      attemptId: bundle.attempt.attemptId,
+      orderId: bundle.order.id,
+      seq: tokenAttemptSeq,
+      tokenFingerprint: fingerprint,
+      tokenLength: paymentToken.length,
+      pageUrlLength: paymentPageUrl.length,
+    })}`,
+  );
+  const installed = await strapi.db.transaction(async ({ trx }) => {
+    await trx.raw("SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE", [
+      bundle.attempt.id,
     ]);
-    await strapi.db.query(TX_UID).update({
-      where: { id: bundle.transaction.id },
-      data: {
-        // Current generation only. Previous tokens stay on previousGeneration.
-        TrackId: paymentToken,
-        external_id: transactionId,
-        GatewayStatus: "PENDING",
-        GatewayResponse: {
-          ...providerSummary(result),
-          tokenFingerprint: fingerprint,
-        },
-        LastHttpStatus: result.diagnostic.httpStatus,
-        LastProviderCode: result.diagnostic.providerCode,
+    return promoteIssuedSnappayGeneration(strapi, {
+      attemptId: Number(bundle.attempt.id),
+      transactionId: Number(bundle.transaction.id),
+      contractId: Number(bundle.contract.id),
+      leaseVersion,
+      pendingSeq: pending.seq,
+      pendingTransactionId: pending.transactionId,
+      pendingCallbackNonceHash: pending.callbackNonceHash,
+      paymentToken,
+      paymentPageUrl,
+      callbackNonce,
+      callbackNonceHash,
+      providerResponse,
+      gatewayResponse: {
+        ...providerSummary(result),
+        tokenFingerprint: fingerprint,
       },
-      transacting: trx,
-    } as any);
-    await strapi.db.query(CONTRACT_UID).update({
-      where: { id: bundle.contract.id },
-      data: { external_id: transactionId },
-      transacting: trx,
-    } as any);
-    await strapi.db.query(ATTEMPT_UID).update({
-      where: { id: bundle.attempt.id },
-      data: {
-        Status: "Redirected",
-        providerStatus: "PENDING",
-        providerReference: transactionId,
-        redirectUrl: result.response?.paymentPageUrl,
-        redirectedAt: now,
-        nextAction: "await_callback",
-        nextActionAt: null,
-        leaseUntil: null,
-        failureCode: null,
-        failureMessage: null,
-        callbackNonce,
-        callbackNonceHash,
-        providerResponse,
-      },
-      transacting: trx,
-    } as any);
+      httpStatus: result.diagnostic.httpStatus,
+      providerCode: result.diagnostic.providerCode,
+      trx,
+    });
   });
+  if (!installed) {
+    await recordTokenOperation(strapi, bundle, "Unknown", result, {
+      transactionId,
+      tokenFingerprint: fingerprint,
+      seq: tokenAttemptSeq,
+      ownership: "pending_dispatch_mismatch",
+    });
+    return false;
+  }
+  bundle.attempt.Status = "Redirected";
+  bundle.attempt.providerStatus = "PENDING";
   bundle.attempt.providerReference = transactionId;
-  bundle.attempt.redirectUrl = result.response?.paymentPageUrl;
+  bundle.attempt.redirectUrl = paymentPageUrl;
   bundle.attempt.providerResponse = providerResponse;
   bundle.attempt.callbackNonceHash = callbackNonceHash;
   bundle.transaction.TrackId = paymentToken;
   bundle.transaction.external_id = transactionId;
-  await recordTokenOperation(strapi, bundle, "Succeeded", result);
+  await recordTokenOperation(strapi, bundle, "Succeeded", result, {
+    transactionId,
+    tokenFingerprint: fingerprint,
+    seq: tokenAttemptSeq,
+  });
   await createOrReuseOperation(strapi, bundle, {
     type: "RECONCILE",
     idempotencyKey: `reconcile:${bundle.attempt.id}`,
     delayMs: SNAPPAY_RESUME_REDIRECT_MAX_AGE_MS,
   });
+  return true;
 }
 
 async function persistPendingSnappayDispatch(
@@ -957,11 +1030,64 @@ async function persistPendingSnappayDispatch(
   bundle.attempt.providerResponse = providerResponse;
 }
 
+async function refreshReservedUntilOnResume(strapi: Strapi, bundle: AttemptBundle): Promise<void> {
+  if (String(bundle.order?.ReservationStatus || "") !== "Reserved") return;
+  const reservationTtlMinutes = Number(process.env.STOCK_RESERVATION_TTL_MINUTES || 30);
+  const reservationTtlMs = Number.isFinite(reservationTtlMinutes)
+    ? Math.max(1, reservationTtlMinutes) * 60 * 1000
+    : 30 * 60 * 1000;
+  const reservedUntil = new Date(Date.now() + reservationTtlMs);
+  await strapi.db.query(ORDER_UID).update({
+    where: {
+      id: bundle.order.id,
+      ReservationStatus: "Reserved",
+    },
+    data: { ReservedUntil: reservedUntil },
+  } as any);
+  bundle.order.ReservedUntil = reservedUntil;
+}
+
+async function clearSnappayInitiationLease(strapi: Strapi, bundle: AttemptBundle): Promise<void> {
+  await strapi.db.query(ATTEMPT_UID).update({
+    where: { id: bundle.attempt.id },
+    data: { leaseUntil: null },
+  } as any);
+}
+
+async function resumeExistingPaymentPage(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  resumeUrl: string,
+  options: { refreshReservation?: boolean } = {},
+): Promise<InitiateSnappayResult> {
+  // Observe/resume must not clear leaseUntil. Another request may hold the
+  // exclusive mint lease (POST /token / retarget); only that holder — or
+  // terminal fail/unknown paths after a claim — may release it.
+  if (options.refreshReservation !== false) {
+    await refreshReservedUntilOnResume(strapi, bundle).catch((error: unknown) => {
+      strapi.log.warn("Failed to refresh stock reservation on SnappPay resume", {
+        attemptId: bundle.attempt.attemptId,
+        orderId: bundle.order.id,
+        error: String((error as Error)?.message || error).slice(0, 300),
+      });
+    });
+  }
+  return redirectedInitiation(bundle, resumeUrl);
+}
+
 async function requestSnappayToken(
   strapi: Strapi,
   bundle: AttemptBundle,
   input: { callbackNonce: string; mobile?: string; retarget: boolean },
 ): Promise<InitiateSnappayResult> {
+  // Exclusive lease only around mint / retarget. Observe of an existing token
+  // never enters here, so a back-button retry can GET /status while another
+  // caller still holds the lease from a prior token request.
+  const claimed = await claimPaymentAttemptForSnappayInitiation(strapi, Number(bundle.attempt.id));
+  if (!claimed) {
+    return failedInitiation(bundle, "PAYMENT_IN_PROGRESS", "Unknown");
+  }
+
   if (snappayHasInFlightDispatch(bundle.attempt.providerResponse)) {
     await markAttemptUnknown(
       strapi,
@@ -1078,13 +1204,20 @@ async function requestSnappayToken(
     const providerCode = Number(result.diagnostic.providerCode || 0);
     if (providerCode === 1009) {
       await recordTokenOperation(strapi, bundle, "Unknown", result);
+      const storedTrackId = String(bundle.transaction.TrackId || "").trim();
       const storedToken = await resolveSnappayPaymentToken(strapi, bundle);
       if (storedToken) {
-        return observeExistingSnappayToken(strapi, bundle, storedToken, {
+        // We hold the mint lease from this requestSnappayToken claim. Observe
+        // intentionally does not clear leases (another tab may be minting), so
+        // release ours after the status/resume path returns.
+        const observed = await observeExistingSnappayToken(strapi, bundle, storedToken, {
           allowRetarget: false,
           mobile: input.mobile,
           callbackNonce,
+          storedTrackId,
         });
+        await clearSnappayInitiationLease(strapi, bundle);
+        return observed;
       }
       await markAttemptUnknown(
         strapi,
@@ -1115,7 +1248,46 @@ async function requestSnappayToken(
     return failedInitiation(bundle, isAmbiguousResult(result) ? "PAYMENT_UNKNOWN" : code, "Unknown");
   }
 
-  await persistIssuedToken(strapi, bundle, result, transactionId, callbackNonce, nextSeq);
+  const installed = await persistIssuedToken(
+    strapi,
+    bundle,
+    result,
+    transactionId,
+    callbackNonce,
+    nextSeq,
+    claimed.leaseVersion,
+  );
+  if (!installed) {
+    const fresh = await loadAttemptBundle(strapi, { id: bundle.attempt.id });
+    const storedToken = fresh ? await resolveSnappayPaymentToken(strapi, fresh) : "";
+    const issuedFingerprint = displaySnappayFingerprint(
+      snappayTokenFingerprint(String(result.response.paymentToken || "")),
+    );
+    const storedFingerprint = storedToken
+      ? displaySnappayFingerprint(snappayTokenFingerprint(storedToken))
+      : "";
+    if (
+      fresh &&
+      storedToken &&
+      storedFingerprint === issuedFingerprint &&
+      String(fresh.attempt.redirectUrl || "")
+    ) {
+      return redirectedInitiation(
+        fresh,
+        String(fresh.attempt.redirectUrl),
+        String(fresh.attempt.providerReference || transactionId),
+      );
+    }
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_TOKEN_OWNERSHIP_LOST",
+      "The issued SnappPay token could not be installed on this generation",
+      undefined,
+      "reconcile",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
   return redirectedInitiation(bundle, String(result.response.paymentPageUrl), transactionId);
 }
 
@@ -1123,7 +1295,12 @@ async function observeExistingSnappayToken(
   strapi: Strapi,
   bundle: AttemptBundle,
   paymentToken: string,
-  options: { allowRetarget: boolean; mobile?: string; callbackNonce: string },
+  options: {
+    allowRetarget: boolean;
+    mobile?: string;
+    callbackNonce: string;
+    storedTrackId?: string;
+  },
 ): Promise<InitiateSnappayResult> {
   const adapter = createSnappayAdapter(strapi);
   const statusResult = await adapter.status(paymentToken);
@@ -1170,7 +1347,7 @@ async function observeExistingSnappayToken(
     );
   }
 
-  if (hasValidatedOkCallback(bundle) && isInvestigationStatusCode(code)) {
+  if (code === 1007 && hasValidatedOkCallback(bundle)) {
     await enqueueImmediateReconciliation(strapi, bundle);
     return redirectedInitiation(
       bundle,
@@ -1185,6 +1362,44 @@ async function observeExistingSnappayToken(
       bundle,
       "SNAPPAY_VENTURE_MISMATCH",
       "SnappPay reported a merchant mismatch for this payment token",
+      undefined,
+      "manual_review",
+    );
+    return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
+  }
+
+  if (code === 1007 && Number(statusResult.diagnostic.httpStatus) === 404) {
+    const resumeUrl = String(bundle.attempt.redirectUrl || "");
+    const urlToken = extractSnappayPaymentTokenFromRedirectUrl(resumeUrl);
+    const tokenFingerprint = paymentToken
+      ? displaySnappayFingerprint(snappayTokenFingerprint(paymentToken))
+      : "";
+    const resume = snappayStoredPaymentPageResume({
+      paymentToken,
+      urlToken,
+      storedTrackId: options.storedTrackId ?? "",
+      redirectUrl: resumeUrl,
+      orderStatus: bundle.order.Status,
+      reservationStatus: bundle.order.ReservationStatus,
+      attemptStatus: bundle.attempt.Status,
+      attemptAmount: bundle.attempt.Amount,
+      contractAmountToman: bundle.contract.Amount,
+      quoteTotalToman: bundle.attempt.quoteSnapshot?.financialSummary?.total,
+      providerReference: bundle.attempt.providerReference,
+      providerResponse: bundle.attempt.providerResponse,
+      tokenFingerprint,
+      hasValidatedCallback: hasValidatedOkCallback(bundle) || hasFailedCallback(bundle),
+    });
+    if (resume.ok) {
+      return resumeExistingPaymentPage(strapi, bundle, resumeUrl, {
+        refreshReservation: false,
+      });
+    }
+    await markAttemptUnknown(
+      strapi,
+      bundle,
+      "SNAPPAY_STATUS_NOT_FOUND",
+      "SnappPay could not resolve this payment token; refusing a replacement token",
       undefined,
       "manual_review",
     );
@@ -1214,11 +1429,7 @@ async function observeExistingSnappayToken(
     }
     const resumeUrl = String(bundle.attempt.redirectUrl || "");
     if (resumeUrl) {
-      await strapi.db.query(ATTEMPT_UID).update({
-        where: { id: bundle.attempt.id },
-        data: { leaseUntil: null },
-      } as any);
-      return redirectedInitiation(bundle, resumeUrl);
+      return resumeExistingPaymentPage(strapi, bundle, resumeUrl);
     }
     await markAttemptUnknown(
       strapi,
@@ -1239,11 +1450,7 @@ async function observeExistingSnappayToken(
     }
     const resumeUrl = String(bundle.attempt.redirectUrl || "");
     if (resumeUrl) {
-      await strapi.db.query(ATTEMPT_UID).update({
-        where: { id: bundle.attempt.id },
-        data: { leaseUntil: null },
-      } as any);
-      return redirectedInitiation(bundle, resumeUrl);
+      return resumeExistingPaymentPage(strapi, bundle, resumeUrl);
     }
     await markAttemptUnknown(
       strapi,
@@ -1309,9 +1516,18 @@ export async function initiateSnappayPayment(
     return failedInitiation(bundle, "CHECKOUT_ATTEMPT_CONFLICT");
   }
 
-  const claimed = await claimPaymentAttemptForSnappayInitiation(strapi, Number(bundle.attempt.id));
-  if (!claimed) {
-    return failedInitiation(bundle, "PAYMENT_IN_PROGRESS", "Unknown");
+  // Prefer observe/resume when a payment token already exists. That path must
+  // not take the mint lease — a shopper who left SnappPay and taps پرداخت again
+  // within 45s otherwise gets PAYMENT_IN_PROGRESS and never reaches GET /status.
+  const storedTrackId = String(bundle.transaction.TrackId || "").trim();
+  const paymentToken = await resolveSnappayPaymentToken(strapi, bundle);
+  if (paymentToken) {
+    return observeExistingSnappayToken(strapi, bundle, paymentToken, {
+      allowRetarget: true,
+      mobile: input.mobile,
+      callbackNonce: input.callbackNonce,
+      storedTrackId,
+    });
   }
 
   if (snappayHasInFlightDispatch(bundle.attempt.providerResponse)) {
@@ -1326,15 +1542,6 @@ export async function initiateSnappayPayment(
     return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
   }
 
-  const paymentToken = await resolveSnappayPaymentToken(strapi, bundle);
-  if (paymentToken) {
-    return observeExistingSnappayToken(strapi, bundle, paymentToken, {
-      allowRetarget: true,
-      mobile: input.mobile,
-      callbackNonce: input.callbackNonce,
-    });
-  }
-
   if (!matchesSnappayCallbackNonce(input.callbackNonce, bundle.attempt.callbackNonceHash)) {
     await markAttemptUnknown(
       strapi,
@@ -1347,6 +1554,8 @@ export async function initiateSnappayPayment(
     return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
   }
 
+  // First mint (and retarget after REVERT/CANCEL) claims the exclusive lease
+  // inside requestSnappayToken so two tabs cannot open two BNPL plans.
   return requestSnappayToken(strapi, bundle, {
     callbackNonce: input.callbackNonce,
     mobile: input.mobile,
@@ -1473,14 +1682,16 @@ async function createOrReuseOperation(
     }
   }
   if (!shouldEnqueue) return operation;
-  await strapi.db.query(ATTEMPT_UID).update({
-    where: { id: bundle.attempt.id },
-    data: {
-      Status: bundle.attempt.Status === "Redirected" ? "Pending" : bundle.attempt.Status,
-      nextAction: input.type.toLowerCase(),
-      nextActionAt: nextRunAt,
-    },
-  } as any);
+  if (input.metadata?.previousGeneration !== true) {
+    await strapi.db.query(ATTEMPT_UID).update({
+      where: { id: bundle.attempt.id },
+      data: {
+        Status: bundle.attempt.Status === "Redirected" ? "Pending" : bundle.attempt.Status,
+        nextAction: input.type.toLowerCase(),
+        nextActionAt: nextRunAt,
+      },
+    } as any);
+  }
   try {
     await enqueueSnappayOperation(
       Number(operation.id),
@@ -1514,6 +1725,39 @@ async function createOrReuseOperation(
     });
   }
   return operation;
+}
+
+async function enqueueCallbackReconcile(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const key = `reconcile:${bundle.attempt.id}`;
+  const existing: any = await strapi.db.query(OPERATION_UID).findOne({
+    where: { idempotencyKey: key },
+  } as any);
+  if (!existing) {
+    await createOrReuseOperation(strapi, bundle, {
+      type: "RECONCILE",
+      idempotencyKey: key,
+      metadata,
+    });
+    return;
+  }
+  if (existing.Status === "Succeeded") return;
+  const outcome = await requeueParkedSnappayReconcile(strapi, {
+    operationId: Number(existing.id),
+    attemptId: Number(bundle.attempt.id),
+    metadata,
+    nextRunAt: new Date(),
+  });
+  if (outcome === "requeued") {
+    await enqueueSnappayOperation(
+      Number(existing.id),
+      Number(existing.retryCount || 0),
+      0,
+    );
+  }
 }
 
 export async function acceptSnappayCallback(
@@ -1561,23 +1805,97 @@ export async function acceptSnappayCallback(
     };
   }
   const orderId = Number(bundle.order.id);
-  const locallyTerminal = ["Succeeded", "Cancelled", "Failed", "Expired"].includes(
-    String(bundle.attempt.Status),
-  );
-  if (
-    locallyTerminal &&
-    (String(bundle.attempt.Status) === "Succeeded" ||
-      !snappayProviderPaymentIsUnresolved(bundle.attempt, bundle.transaction.TrackId))
-  ) {
+  const establishedSuccess =
+    String(bundle.attempt.Status) === "Succeeded" ||
+    ["SETTLE", "VERIFY"].includes(String(bundle.attempt.providerStatus || ""));
+  if (establishedSuccess) {
     return {
       accepted: true,
       orderId,
       redirectUrl: paymentResultUrl(orderId, "recorded"),
     };
   }
+  const locallyTerminal = ["Succeeded", "Cancelled", "Failed", "Expired"].includes(
+    String(bundle.attempt.Status),
+  );
+  if (locallyTerminal && !snappayProviderPaymentIsUnresolved(bundle.attempt, bundle.transaction.TrackId)) {
+    return {
+      accepted: true,
+      orderId,
+      redirectUrl: paymentResultUrl(orderId, "recorded"),
+    };
+  }
+  if (
+    state === "FAILED" &&
+    (String(bundle.attempt.providerStatus || "") === "CALLBACK_OK" ||
+      String(bundle.attempt.nextAction || "") === "verify")
+  ) {
+    strapi.log.warn("Ignored failed SnappPay callback over established success evidence", {
+      attemptId: bundle.attempt.attemptId,
+      orderId,
+    });
+    return {
+      accepted: true,
+      orderId,
+      redirectUrl: paymentResultUrl(orderId, "processing"),
+    };
+  }
+
+  const generationState = readSnappayGenerationState(bundle.attempt.providerResponse);
+  if (snappayCallbackTargetsPreviousGeneration(bundle.attempt, transactionId)) {
+    const previous = generationState.previousGeneration;
+    const previousNonce = previous?.callbackNonceHash;
+    if (!previousNonce || !matchesSnappayCallbackNonce(nonce, previousNonce)) {
+      return {
+        accepted: false,
+        redirectUrl: paymentResultUrl(undefined, "invalid_callback"),
+        errorCode: "SNAPPAY_CALLBACK_MISMATCH",
+      };
+    }
+    await mergePreviousGenerationCallback(strapi, {
+      attemptId: Number(bundle.attempt.id),
+      previousTransactionId: transactionId,
+      patch: {
+        callbackState: state,
+        callbackReceivedAt: new Date().toISOString(),
+      },
+    });
+    await createOrReuseOperation(strapi, bundle, {
+      type: "RECONCILE",
+      idempotencyKey: `reconcile:${bundle.attempt.id}:previous:${previous?.seq || 0}`,
+      metadata: {
+        callbackState: state,
+        callbackReceivedAt: new Date().toISOString(),
+        transactionId,
+        generationSeq: previous?.seq,
+        previousGeneration: true,
+      },
+    });
+    return {
+      accepted: true,
+      orderId,
+      redirectUrl: paymentResultUrl(orderId, "processing"),
+    };
+  }
+
+  const currentNonceHashes = [
+    String(bundle.attempt.callbackNonceHash || ""),
+    String(generationState.generation?.callbackNonceHash || ""),
+    String(generationState.pendingDispatch?.callbackNonceHash || ""),
+  ].filter(Boolean);
+  const currentNonceMatches = currentNonceHashes.some((hash) =>
+    matchesSnappayCallbackNonce(nonce, hash),
+  );
+  if (!currentNonceMatches) {
+    return {
+      accepted: false,
+      redirectUrl: paymentResultUrl(undefined, "invalid_callback"),
+      errorCode: "SNAPPAY_CALLBACK_MISMATCH",
+    };
+  }
 
   await strapi.db.query(ATTEMPT_UID).update({
-    where: { id: bundle.attempt.id },
+    where: { id: bundle.attempt.id, Status: { $ne: "Succeeded" } },
     data: {
       Status: "Pending",
       providerStatus: `CALLBACK_${state}`,
@@ -1588,13 +1906,13 @@ export async function acceptSnappayCallback(
     },
   } as any);
   bundle.attempt.Status = "Pending";
-  await createOrReuseOperation(strapi, bundle, {
-    type: "RECONCILE",
-    idempotencyKey: `reconcile:${bundle.attempt.id}`,
-    metadata: {
-      callbackState: state,
-      callbackReceivedAt: new Date().toISOString(),
-    },
+  bundle.attempt.providerStatus = `CALLBACK_${state}`;
+  bundle.attempt.nextAction = state === "OK" ? "verify" : "reconcile_failed_callback";
+  await enqueueCallbackReconcile(strapi, bundle, {
+    callbackState: state,
+    callbackReceivedAt: new Date().toISOString(),
+    transactionId,
+    generationSeq: generationState.generation?.seq || generationState.tokenAttemptSeq || 1,
   });
   return {
     accepted: true,
@@ -2584,7 +2902,7 @@ export async function processSnappayOperation(
       return { status: "completed", replayed: true };
     }
 
-    const token = await resolveSnappayPaymentToken(strapi, bundle);
+    const token = await resolveSnappayPaymentTokenForOperation(strapi, bundle, operation);
     if (!token) {
       if (operatorAction) {
         await markOperatorOperation(

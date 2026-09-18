@@ -78,6 +78,19 @@ describe("OrderService", () => {
       });
       expect(result).toEqual(mockResponse.data);
     });
+
+    it("forwards the skip-global-loader header for quiet polls", async () => {
+      (apiClient.get as jest.Mock).mockResolvedValue({
+        data: { success: true, orderId: 123, isPaid: false },
+      });
+
+      await getOrderPaymentStatus(123, { skipGlobalLoader: true });
+
+      expect(apiClient.get).toHaveBeenCalledWith("/orders/123/payment-status", {
+        suppressAuthRedirect: true,
+        headers: { "x-skip-global-loader": "1" },
+      });
+    });
   });
 
   describe("getMyOrders", () => {

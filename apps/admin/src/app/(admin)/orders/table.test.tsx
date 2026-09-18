@@ -1,5 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MobileTable, type Order } from "./table";
+import type { CellContext } from "@tanstack/react-table";
+import {
+  columns,
+  getOrderBuyerLabel,
+  MobileTable,
+  type Order,
+} from "./table";
 
 const mockPush = jest.fn();
 
@@ -25,6 +31,7 @@ const order = {
     Date: "2026-09-09T08:15:00.000Z",
     ShippingMethodCode: "anipo",
     ShippingBarcode: "123456789012345678901234567890",
+    recipientName: "آناهیتا سادات موسوی نیشابوری با نام خانوادگی بسیار طولانی",
     createdAt: "2026-09-09T08:15:00.000Z",
     updatedAt: "2026-09-09T08:45:00.000Z",
     user: {
@@ -41,8 +48,8 @@ const order = {
             data: {
               id: 84,
               attributes: {
-                FirstName: "آناهیتا",
-                LastName: "سادات موسوی نیشابوری با نام خانوادگی بسیار طولانی",
+                FirstName: "حساب",
+                LastName: "کاربری",
                 createdAt: "2026-01-01T00:00:00.000Z",
                 updatedAt: "2026-09-09T08:45:00.000Z",
                 NationalCode: "0012345678",
@@ -72,6 +79,49 @@ const order = {
   },
 } satisfies Order;
 
+function withRecipientName(recipientName: string | null): Order {
+  return {
+    ...order,
+    attributes: { ...order.attributes, recipientName },
+  };
+}
+
+function renderCustomerColumn(row: Order) {
+  const column = columns.find((item) => item.header === "مشتری");
+  if (!column || typeof column.cell !== "function") {
+    throw new Error("missing customer column");
+  }
+  return render(
+    <>
+      {column.cell({
+        row: { original: row },
+      } as CellContext<Order, unknown>)}
+    </>,
+  );
+}
+
+describe("order list identity", () => {
+  it("prefers the shipping recipient over the account profile", () => {
+    expect(getOrderBuyerLabel(order)).toEqual({
+      label: "آناهیتا سادات موسوی نیشابوری با نام خانوادگی بسیار طولانی",
+      isPlaceholder: false,
+    });
+  });
+
+  it("falls back to the account name when the address has no recipient", () => {
+    expect(getOrderBuyerLabel(withRecipientName(null)).label).toBe("حساب کاربری");
+    expect(getOrderBuyerLabel(withRecipientName("   ")).label).toBe("حساب کاربری");
+  });
+
+  it("renders the shipping recipient in the desktop customer column", () => {
+    renderCustomerColumn(order);
+    expect(
+      screen.getByText("آناهیتا سادات موسوی نیشابوری با نام خانوادگی بسیار طولانی"),
+    ).toBeVisible();
+    expect(screen.queryByText("حساب کاربری")).not.toBeInTheDocument();
+  });
+});
+
 describe("mobile order cards", () => {
   beforeEach(() => {
     mockPush.mockClear();
@@ -90,6 +140,7 @@ describe("mobile order cards", () => {
     expect(screen.getByText("+989123456789")).toBeVisible();
     expect(screen.getByText(/123456789012345678901234567890/)).toBeVisible();
     expect(screen.getByText(/۹۸۷٬۶۵۴٬۳۲۱/)).toBeVisible();
+    expect(screen.queryByText("حساب کاربری")).not.toBeInTheDocument();
   });
 
   it("opens the order from the card while nested selection and actions remain independent", () => {

@@ -3,6 +3,11 @@ import * as Sentry from "@sentry/nextjs";
 import type * as SentryReplay from "./src/lib/sentry-replay";
 
 import { isReplayAllowedUrl, replaySampleRate } from "./src/lib/sentry-replay-privacy";
+import {
+  dropExpectedCheckoutSentryEvent,
+  EXPECTED_CHECKOUT_SENTRY_IGNORE,
+} from "./src/lib/expected-checkout-sentry";
+import { tagStorefrontSentryEvent } from "./src/lib/storefront-sentry-tags";
 
 const APP_INIT_MARK = "infinity:client-init";
 const ROUTE_START_MARK = "infinity:route-transition-start";
@@ -75,21 +80,6 @@ Sentry.init({
   replaysSessionSampleRate: replaySessionSampleRate,
   replaysOnErrorSampleRate: replayErrorSampleRate,
   ignoreErrors: [
-    // Android WebView's JavascriptInterface bridge can be garbage-collected
-    // mid-call inside an in-app browser wrapper; this fires from the host
-    // app's own injected bridge, not from any code in this repo.
-    "Error invoking postMessage: Java object is gone",
-    // Same story for iOS in-app browsers probing a `webkit.messageHandlers`
-    // bridge this app never installs.
-    /window\.webkit\.messageHandlers/,
-    // Android/Instagram injects navigation and keyboard telemetry through a
-    // Java bridge. Its callbacks can outlive the WebView object and are not
-    // application failures.
-    /Error invoking (?:enableDidUserTypeOnKeyboardLogging|postMessage): Java (?:object is gone|bridge method invocation error)/,
-    // `new.infinitycolor.co` only 301s to the apex post-cutover; stale
-    // service-worker registrations from before the cutover keep failing to
-    // update there until each browser gives up and unregisters them.
-    /Failed to update a ServiceWorker for scope \('https:\/\/new\.infinitycolor\.co\//,
     // Safari/WebKit quirk inside Next's vendored `web-vitals` package
     // (node_modules/next/dist/compiled/web-vitals): its flush-before-unload
     // path calls `observer.takeRecords()`, which some WebKit builds throw on.
@@ -98,12 +88,22 @@ Sentry.init({
     // Sentry's Web Vitals integration asks for the visibility-state entry on
     // very old WebKit builds where Performance#getEntriesByType is absent.
     /globalThis\.performance\.getEntriesByType.*visibility-state/,
-    // Android WebView / Instagram inject `getParams` into an eval frame
-    // (`<anonymous>:1:1`). There is no storefront symbol by that name.
-    /getParams is not defined/,
     // Safari injected-range helper, same anonymous eval pattern, not app code.
     /EmptyRanges/,
+    // Safari aborts in-flight fetches when the shopper leaves the page.
+    /AbortError: The operation was aborted/,
+    /^The operation was aborted\.?$/,
+    // Expected checkout leftovers. Also dropped in beforeSend so a stale
+    // checkout chunk cannot keep reporting them after a frontend cutover.
+    EXPECTED_CHECKOUT_SENTRY_IGNORE,
   ],
+  beforeSend(event) {
+    // Host injects (Instagram/FB WebView, crawler telemetry) and Flight
+    // transport cuts stay visible; tagStorefrontSentryEvent only tags.
+    // WebView/Java-bridge strings are intentionally NOT in ignoreErrors.
+    const tagged = tagStorefrontSentryEvent(event);
+    return dropExpectedCheckoutSentryEvent(tagged);
+  },
 });
 
 whenIdle(() => scheduleReplayRoute(typeof window === "undefined" ? "" : window.location.pathname));

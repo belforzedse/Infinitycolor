@@ -17,13 +17,18 @@ export async function claimPaymentAttemptForInitiation(strapi: Strapi, id: numbe
 }
 
 /**
- * Serializes SnappPay `status` / `token` work on a live attempt so two tabs
- * cannot mint two BNPL plans. Losing callers must return PAYMENT_IN_PROGRESS
- * and must not call `token`.
+ * Serializes SnappPay `POST /token` (first mint or retarget) on a live attempt
+ * so two tabs cannot mint two BNPL plans. Observe / resume of an existing
+ * payment token does not need this lease — `GET /status` is idempotent and
+ * must not clear another request's active mint lease on resume.
+ * Losing callers must return PAYMENT_IN_PROGRESS and must not call `token`.
  */
 export const SNAPPAY_INITIATION_LEASE_MS = 45_000;
 
-export async function claimPaymentAttemptForSnappayInitiation(strapi: Strapi, id: number) {
+export async function claimPaymentAttemptForSnappayInitiation(
+  strapi: Strapi,
+  id: number,
+): Promise<{ leaseVersion: number } | null> {
   const now = new Date();
   const leaseUntil = new Date(now.getTime() + SNAPPAY_INITIATION_LEASE_MS);
   const result = await strapi.db.connection.raw(
@@ -34,10 +39,13 @@ export async function claimPaymentAttemptForSnappayInitiation(strapi: Strapi, id
      WHERE id = ?
        AND status IN ('Created', 'Pending', 'Redirected', 'Unknown', 'Failed', 'Cancelled', 'Expired')
        AND (lease_until IS NULL OR lease_until < ?)
-     RETURNING id`,
+     RETURNING id, lease_version`,
     [leaseUntil, now, id, now],
   );
-  return Array.isArray(result?.rows) && result.rows.length === 1;
+  const row = Array.isArray(result?.rows) ? result.rows[0] : undefined;
+  const leaseVersion = Number(row?.lease_version);
+  if (!row || !Number.isInteger(leaseVersion) || leaseVersion < 1) return null;
+  return { leaseVersion };
 }
 
 /**

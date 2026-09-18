@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import PaymentResultPageClient from "./PaymentResultPageClient";
 import { OrderService } from "@/services";
 
@@ -62,6 +62,10 @@ describe("PaymentResultPageClient", () => {
     getDetail.mockRejectedValue(new Error("no session"));
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("shows what the customer bought once the order detail loads", async () => {
     getStatus.mockResolvedValue(response({
       status: "Started",
@@ -93,7 +97,7 @@ describe("PaymentResultPageClient", () => {
     expect(
       screen.getByText(`جمع: ${(2149000).toLocaleString("fa-IR")} تومان`),
     ).toBeVisible();
-    expect(getDetail).toHaveBeenCalledWith(42);
+    expect(getDetail).toHaveBeenCalledWith(42, { skipGlobalLoader: true });
   });
 
   it("keeps showing payment status when the order-detail fetch fails", async () => {
@@ -247,7 +251,9 @@ describe("PaymentResultPageClient", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "بررسی دوباره نتیجه" }));
 
-    await waitFor(() => expect(reconcile).toHaveBeenCalledWith(42));
+    await waitFor(() =>
+      expect(reconcile).toHaveBeenCalledWith(42, { skipGlobalLoader: true }),
+    );
     expect(await screen.findByText("پرداخت با موفقیت ثبت شد")).toBeVisible();
     await waitFor(() => expect(clearCart).toHaveBeenCalledTimes(1));
   });
@@ -274,6 +280,119 @@ describe("PaymentResultPageClient", () => {
     render(<PaymentResultPageClient />);
 
     expect(await screen.findByText("پرداخت با موفقیت ثبت شد")).toBeVisible();
-    expect(getStatus).toHaveBeenCalledWith(51);
+    expect(getStatus).toHaveBeenCalledWith(51, undefined);
+  });
+
+  it("keeps the checking card mounted while quietly polling a pending SnappPay payment", async () => {
+    jest.useFakeTimers();
+    const pending = response({
+      paymentStatus: "Pending",
+      paymentGateway: "SnappPay",
+      status: "Paying",
+      transactionId: "SNYPZQPHIA",
+    });
+    getStatus.mockResolvedValue(pending);
+    reconcile.mockResolvedValue(pending);
+
+    render(<PaymentResultPageClient />);
+
+    expect(await screen.findByTestId("payment-result")).toBeVisible();
+    expect(screen.getByText("در حال بررسی نتیجه پرداخت")).toBeVisible();
+    expect(screen.getByText("در انتظار پرداخت")).toBeVisible();
+
+    const statusCallsAfterPaint = getStatus.mock.calls.length;
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2500);
+    });
+    await waitFor(() => expect(getStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterPaint));
+
+    expect(screen.getByTestId("payment-result")).toBeVisible();
+    expect(screen.getByText("در حال بررسی نتیجه پرداخت")).toBeVisible();
+    expect(screen.queryByText("در حال دریافت نتیجه پرداخت")).not.toBeInTheDocument();
+    expect(getStatus).toHaveBeenCalledWith(42, { skipGlobalLoader: true });
+  });
+
+  it("caps quiet polls so a stuck Pending status does not loop forever", async () => {
+    jest.useFakeTimers();
+    const pending = response({
+      paymentStatus: "Pending",
+      paymentGateway: "SnappPay",
+      status: "Paying",
+    });
+    getStatus.mockResolvedValue(pending);
+    reconcile.mockResolvedValue(pending);
+
+    render(<PaymentResultPageClient />);
+    expect(await screen.findByTestId("payment-result")).toBeVisible();
+
+    // 20 polls × 2.5s = 50s, plus a little headroom past the last tick.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(55_000);
+    });
+    await waitFor(() => {
+      // initial GET + up to 20 quiet polls
+      expect(getStatus.mock.calls.length).toBeLessThanOrEqual(21);
+      expect(getStatus.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    const callsAfterCap = getStatus.mock.calls.length;
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    expect(getStatus.mock.calls.length).toBe(callsAfterCap);
+  });
+
+  it("kicks SnappPay reconcile once, then keeps reading status quietly", async () => {
+    jest.useFakeTimers();
+    const pending = response({
+      paymentStatus: "Pending",
+      paymentGateway: "SnappPay",
+      status: "Paying",
+    });
+    const paid = response({
+      status: "Started",
+      paymentStatus: "Succeeded",
+      isPaid: true,
+      paymentGateway: "SnappPay",
+      nextAction: "view_order",
+    });
+    getStatus.mockResolvedValue(pending);
+    reconcile.mockResolvedValue(pending);
+
+    render(<PaymentResultPageClient />);
+    expect(await screen.findByTestId("payment-result")).toBeVisible();
+
+    await waitFor(() =>
+      expect(reconcile).toHaveBeenCalledWith(42, { skipGlobalLoader: true }),
+    );
+    expect(reconcile).toHaveBeenCalledTimes(1);
+
+    getStatus.mockResolvedValue(paid);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2500);
+    });
+    expect(await screen.findByText("پرداخت با موفقیت ثبت شد")).toBeVisible();
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a 429 from auto-reconcile without clearing the checking card", async () => {
+    const pending = response({
+      paymentStatus: "Pending",
+      paymentGateway: "SnappPay",
+      status: "Paying",
+      transactionId: "SNYPZQPHIA",
+    });
+    getStatus.mockResolvedValue(pending);
+    reconcile.mockRejectedValue({ status: 429, message: "Too Many Requests" });
+
+    render(<PaymentResultPageClient />);
+
+    expect(await screen.findByTestId("payment-result")).toBeVisible();
+    await waitFor(() => expect(reconcile).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("در حال بررسی نتیجه پرداخت")).toBeVisible();
+    expect(screen.getByText("SNYPZQPHIA")).toBeVisible();
+    expect(
+      screen.queryByText("نتیجه پرداخت قابل دریافت نیست. اتصال خود را بررسی و دوباره تلاش کنید."),
+    ).not.toBeInTheDocument();
   });
 });

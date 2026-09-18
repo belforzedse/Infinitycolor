@@ -16,6 +16,10 @@ import { resolvePaymentGateway } from "@/utils/paymentGateways";
 import { translateOrderStatus } from "@/utils/statusTranslations";
 
 const TERMINAL = new Set(["Succeeded", "Failed", "Cancelled", "Expired"]);
+/** Quiet poll interval while settlement is in flight. */
+const POLL_INTERVAL_MS = 2500;
+/** ~50s window (20 × 2.5s) once the interval is stable and no longer resets. */
+const MAX_POLL_CHECKS = 20;
 
 const normalizeShippingMethod = (value?: string | null) =>
   (value ?? "")
@@ -51,11 +55,37 @@ const getPreparationMessage = (
   return "زمان آماده‌سازی سفارش بر اساس روش ارسال ثبت‌شده تعیین می‌شود.";
 };
 
+const isRateLimited = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "status" in error &&
+  Number((error as { status: unknown }).status) === 429;
+
+const needsSnappayReconcileKick = (status: OrderPaymentStatusResponse): boolean => {
+  if (!status.paymentStatus || TERMINAL.has(status.paymentStatus)) return false;
+  return resolvePaymentGateway(status.paymentGateway)?.key === "snappay";
+};
+
+const applyPaidSideEffects = async (
+  next: OrderPaymentStatusResponse,
+  clearCart: () => Promise<unknown>,
+) => {
+  if (!next.isPaid) return;
+  window.localStorage.removeItem("pendingCheckoutAttemptId");
+  window.localStorage.removeItem("pendingCheckoutQuoteHash");
+  window.localStorage.removeItem("pendingPaymentAttemptId");
+  window.localStorage.removeItem("pendingOrderId");
+  window.localStorage.removeItem("pendingRefId");
+  await clearCart().catch(() => undefined);
+};
+
 export default function PaymentResultPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { clearCart } = useCart();
   const clearCartRef = useRef(clearCart);
+  const hasResultRef = useRef(false);
+  const snappayReconcileKickedRef = useRef(false);
   const orderIdParam =
     searchParams.get("orderId") ||
     searchParams.get("ResNum") ||
@@ -77,6 +107,10 @@ export default function PaymentResultPageClient() {
     clearCartRef.current = clearCart;
   }, [clearCart]);
 
+  useEffect(() => {
+    hasResultRef.current = result !== null;
+  }, [result]);
+
   // Set as early as possible -- before the status fetch below, which is
   // exactly the call that can 401 on a broken session -- so a report filed
   // from this page still points at the right order.
@@ -87,28 +121,43 @@ export default function PaymentResultPageClient() {
   }, [orderId, setCurrentOrderContext]);
 
   const load = useCallback(
-    async (reconcile = false) => {
+    async (
+      mode: "initial" | "poll" | "reconcile" = "initial",
+    ) => {
       if (!Number.isInteger(orderId) || orderId <= 0) return;
+      const isReconcile = mode === "reconcile";
+      const isPoll = mode === "poll";
+      const skipGlobalLoader = isPoll || isReconcile;
       try {
-        if (reconcile) {
+        if (isReconcile) {
           setChecking(true);
-        } else {
+        } else if (!isPoll && !hasResultRef.current) {
+          // Full-page spinner only on the first paint — never on quiet polls.
           setLoading(true);
         }
-        setError(null);
-        const next = reconcile
-          ? await OrderService.reconcileOrderPayment(orderId)
-          : await OrderService.getOrderPaymentStatus(orderId);
-        setResult(next);
-        if (next.isPaid) {
-          window.localStorage.removeItem("pendingCheckoutAttemptId");
-          window.localStorage.removeItem("pendingCheckoutQuoteHash");
-          window.localStorage.removeItem("pendingPaymentAttemptId");
-          window.localStorage.removeItem("pendingOrderId");
-          window.localStorage.removeItem("pendingRefId");
-          await clearCartRef.current().catch(() => undefined);
+        if (!isPoll) {
+          setError(null);
         }
-      } catch {
+        const next = isReconcile
+          ? await OrderService.reconcileOrderPayment(
+              orderId,
+              skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
+            )
+          : await OrderService.getOrderPaymentStatus(
+              orderId,
+              skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
+            );
+        setResult(next);
+        await applyPaidSideEffects(next, () => clearCartRef.current());
+      } catch (err) {
+        if (isReconcile && isRateLimited(err)) {
+          // Throttle is expected under retry; keep the last good card.
+          return;
+        }
+        if (isPoll && hasResultRef.current) {
+          // Quiet poll failure must not blank the checking UI or trip the spinner.
+          return;
+        }
         setError("نتیجه پرداخت قابل دریافت نیست. اتصال خود را بررسی و دوباره تلاش کنید.");
       } finally {
         setLoading(false);
@@ -117,6 +166,10 @@ export default function PaymentResultPageClient() {
     },
     [orderId],
   );
+
+  useEffect(() => {
+    snappayReconcileKickedRef.current = false;
+  }, [orderId]);
 
   useEffect(() => {
     if (!Number.isInteger(orderId) || orderId <= 0) {
@@ -129,13 +182,13 @@ export default function PaymentResultPageClient() {
       }
       return;
     }
-    void load(false);
+    void load("initial");
   }, [load, orderId, router]);
 
   useEffect(() => {
     if (!Number.isInteger(orderId) || orderId <= 0) return;
     let cancelled = false;
-    OrderService.getOrderDetail(orderId)
+    OrderService.getOrderDetail(orderId, { skipGlobalLoader: true })
       .then((detail) => {
         if (!cancelled) setOrderDetail(detail);
       })
@@ -147,19 +200,60 @@ export default function PaymentResultPageClient() {
     };
   }, [orderId]);
 
+  // One-shot SnappPay reconcile: GET payment-status is read-only for SnappPay,
+  // so kick the existing POST once while the attempt is still non-terminal.
   useEffect(() => {
-    if (!result?.paymentStatus || TERMINAL.has(result.paymentStatus)) return;
+    if (!result || !needsSnappayReconcileKick(result)) return;
+    if (snappayReconcileKickedRef.current) return;
+    snappayReconcileKickedRef.current = true;
+    void (async () => {
+      try {
+        const next = await OrderService.reconcileOrderPayment(orderId, {
+          skipGlobalLoader: true,
+        });
+        setResult(next);
+        await applyPaidSideEffects(next, () => clearCartRef.current());
+      } catch (err) {
+        if (isRateLimited(err)) return;
+        // Leave the checking card; quiet GETs and the manual button remain.
+      }
+    })();
+  }, [orderId, result?.paymentStatus, result?.paymentGateway, result?.nextAction]);
+
+  // Quiet poll while non-terminal. Depend on paymentStatus (string), not the
+  // whole result object, so setResult(same Pending) does not reset the counter.
+  const paymentStatus = result?.paymentStatus;
+  useEffect(() => {
+    if (!paymentStatus || TERMINAL.has(paymentStatus)) return;
     let checks = 0;
-    const timer = window.setInterval(() => {
+    let cancelled = false;
+
+    const tick = () => {
+      if (cancelled) return;
+      if (typeof document !== "undefined" && document.hidden) return;
       checks += 1;
-      if (checks > 5) {
+      if (checks > MAX_POLL_CHECKS) {
         window.clearInterval(timer);
         return;
       }
-      void load(false);
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [load, result]);
+      void load("poll");
+    };
+
+    const timer = window.setInterval(tick, POLL_INTERVAL_MS);
+
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        void load("poll");
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [load, paymentStatus]);
 
   const presentation = useMemo(() => {
     switch (result?.paymentStatus) {
@@ -354,7 +448,7 @@ export default function PaymentResultPageClient() {
                 <button
                   className="w-full rounded-xl bg-infinity-primary px-5 py-3 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60 sm:w-auto"
                   disabled={checking}
-                  onClick={() => void load(true)}
+                  onClick={() => void load("reconcile")}
                 >
                   {checking ? "در حال بررسی…" : "بررسی دوباره نتیجه"}
                 </button>

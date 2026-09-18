@@ -17,6 +17,10 @@ import {
   paymentAttemptResponse,
   updatePaymentAttempt,
 } from "../../../payment-attempt/services/payment-attempt";
+import {
+  checkoutAttemptOrderId,
+  existingAttemptBlocksReplacement,
+} from "../../services/lib/checkout-resume";
 import { generateSnappayCallbackNonce, isValidSnappayCallbackNonce } from "../../../payment-gateway/services/snappay-security";
 import { snappayProviderPaymentIsUnresolved } from "../../../payment-gateway/services/snappay-generation";
 import { settleOrderWithWallet } from "./wallet-settlement";
@@ -81,6 +85,41 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       }
     }
 
+    // Resolve the identified checkout before any cart/shipping mutation so a
+    // racing stock-check cannot destroy the continuation path. Ownership is the
+    // authenticated user plus this attempt id — never a client-supplied order id.
+    const existingAttempt = normalizedAttemptId
+      ? await findPaymentAttempt(strapi, Number(user.id), normalizedAttemptId)
+      : null;
+    const resumeDecision = existingAttempt
+      ? existingAttemptBlocksReplacement(existingAttempt, selectedGateway, normalizedQuoteHash)
+      : null;
+    if (resumeDecision === "in_progress") {
+      const orderId = checkoutAttemptOrderId(existingAttempt);
+      return ctx.conflict(
+        "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+        {
+          data: {
+            success: false,
+            errorCode: "PAYMENT_IN_PROGRESS",
+            message:
+              "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+            ...(orderId ? { orderId } : {}),
+          },
+        },
+      );
+    }
+    if (resumeDecision === "conflict") {
+      return ctx.conflict("شناسه پرداخت قبلاً برای پیش‌فاکتور دیگری استفاده شده است", {
+        data: {
+          success: false,
+          errorCode: "CHECKOUT_ATTEMPT_CONFLICT",
+          message: "شناسه پرداخت قبلاً برای پیش‌فاکتور دیگری استفاده شده است",
+        },
+      });
+    }
+    const resumeExistingCheckout = resumeDecision === "replay";
+
     let resolvedAddressId = addressId;
     let resolvedShippingId = shipping;
     let resolvedShippingCost = 0;
@@ -92,6 +131,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       isMerge: true;
     } | null = null;
 
+    if (!resumeExistingCheckout) {
     // Attaching to an existing reserve shipment. The group row -- not the parent
     // order -- owns the destination and the shipping method, so the child simply
     // inherits it. Eligibility is re-checked here, server-side, against the group's
@@ -363,6 +403,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         });
       }
     }
+    }
 
     if (managesPaymentAttempt) {
       if (!normalizedAttemptId || normalizedAttemptId.length > 128) {
@@ -370,14 +411,23 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           data: { success: false, errorCode: "CHECKOUT_ATTEMPT_REQUIRED" },
         });
       }
-      if (!normalizedQuoteHash) {
+      if (!resumeExistingCheckout && !normalizedQuoteHash) {
         return ctx.badRequest("پیش‌فاکتور پرداخت الزامی است", {
           data: { success: false, errorCode: "CHECKOUT_QUOTE_REQUIRED" },
         });
       }
     }
 
-    const shippingData: Record<string, unknown> = {
+    const resumeQuoteHash =
+      normalizedQuoteHash || String(existingAttempt?.quoteHash || "").trim();
+
+    const shippingData: Record<string, unknown> = resumeExistingCheckout
+      ? {
+          gateway: selectedGateway,
+          attemptId: normalizedAttemptId,
+          quoteHash: resumeQuoteHash,
+        }
+      : {
       shippingId: resolvedShippingId,
       shippingCost: resolvedShippingCost,
       shippingMethodCode: shippingSnapshot.code,
@@ -407,13 +457,25 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     const result = await cartService.finalizeCartToOrder(user.id, shippingData);
 
     if (!result.success) {
+      if (result.status === 503 || result.errorCode === "RESERVATION_LOOKUP_FAILED") {
+        ctx.status = 503;
+        return {
+          data: {
+            success: false,
+            errorCode: result.errorCode,
+            message: result.message,
+          },
+        };
+      }
       if (result.status === 409) {
+        const orderId = Number(result.orderId);
         return ctx.conflict(result.message, {
           data: {
             success: false,
             errorCode: result.errorCode,
             message: result.message,
             quote: result.quote,
+            ...(Number.isInteger(orderId) && orderId > 0 ? { orderId } : {}),
           },
         });
       }
@@ -764,16 +826,18 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     });
 
     if (managesPaymentAttempt && paymentAttempt?.id) {
-      await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
-        Status: "Redirected",
-        providerReference: String(paymentResult.refId || paymentResult.requestId || ""),
-        redirectUrl: paymentResult.redirectUrl,
-        providerResponse: {
-          requestId: paymentResult.requestId,
-          refId: paymentResult.refId,
-        },
-        redirectedAt: new Date(),
-      });
+      if (selectedGateway !== "snappay") {
+        await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
+          Status: "Redirected",
+          providerReference: String(paymentResult.refId || paymentResult.requestId || ""),
+          redirectUrl: paymentResult.redirectUrl,
+          providerResponse: {
+            requestId: paymentResult.requestId,
+            refId: paymentResult.refId,
+          },
+          redirectedAt: new Date(),
+        });
+      }
     }
 
     try {

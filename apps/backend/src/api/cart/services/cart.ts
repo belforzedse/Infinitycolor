@@ -20,59 +20,24 @@ import {
 import { addCartItemOp } from "./ops/addCartItem";
 import { updateCartItemOp } from "./ops/updateCartItem";
 import { removeCartItemOp } from "./ops/removeCartItem";
-import { checkCartStockOp } from "./ops/checkCartStock";
+import { checkCartStockOp, type CheckCartStockOptions } from "./ops/checkCartStock";
 import { createCheckoutQuote, type CheckoutQuote } from "./lib/checkout-quote";
 import {
   createPaymentAttempt,
   findPaymentAttempt,
 } from "../../payment-attempt/services/payment-attempt";
 import {
+  checkoutAttemptOrderId,
+  gateCheckoutResume,
+  RESERVATION_EXPIRED_RESULT,
+  RESERVATION_LOOKUP_FAILED_RESULT,
+} from "./lib/checkout-resume";
+import {
   generateSnappayCallbackNonce,
   generateSnappayTransactionId,
   hashSnappayCallbackNonce,
 } from "../../payment-gateway/services/snappay-security";
-import { snappayProviderPaymentIsUnresolved } from "../../payment-gateway/services/snappay-generation";
 import { redactSensitive } from "../../../utils/redactSensitive";
-
-// A dead attempt (customer backed out of the gateway, or it expired) must never be
-// replayed as if it were still live -- the browser can still hold its id in
-// localStorage long after the gateway/orchestrator marked it terminal, and the
-// customer's next tap must start a fresh attempt instead of being handed the same
-// failure forever. "Unknown" is not terminal: that is the unreadable-status hold
-// where checkout must reuse the same attempt so initiate can GET /status before
-// any second token. A local Failed/Cancelled/Expired SnappPay row is also not
-// terminal while a provider generation may still be live.
-const TERMINAL_PAYMENT_ATTEMPT_STATUSES = new Set(["Failed", "Cancelled", "Expired"]);
-
-function isSnappayReplay(replay: { Gateway?: unknown }): boolean {
-  return String(replay.Gateway || "").toLowerCase() === "snappay";
-}
-
-function existingAttemptBlocksReplacement(
-  replay: {
-    Status?: unknown;
-    quoteHash?: unknown;
-    Gateway?: unknown;
-    providerStatus?: unknown;
-    providerResponse?: unknown;
-    providerReference?: unknown;
-  },
-  gateway: string,
-  expectedQuoteHash: string,
-): "replay" | "conflict" | "in_progress" {
-  if (isSnappayReplay(replay) && snappayProviderPaymentIsUnresolved(replay)) {
-    if (gateway !== "snappay") return "in_progress";
-    return "replay";
-  }
-  if (
-    TERMINAL_PAYMENT_ATTEMPT_STATUSES.has(String(replay.Status || "")) ||
-    String(replay.quoteHash) !== expectedQuoteHash ||
-    String(replay.Gateway) !== gateway
-  ) {
-    return "conflict";
-  }
-  return "replay";
-}
 
 export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   async getUserCart(userId: number) {
@@ -140,8 +105,8 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     return { success: true };
   },
 
-  async checkCartStock(userId: number) {
-    return checkCartStockOp(strapi as any, userId);
+  async checkCartStock(userId: number, options?: CheckCartStockOptions) {
+    return checkCartStockOp(strapi as any, userId, options);
   },
 
   async finalizeCartToOrder(userId: number, shippingData: any) {
@@ -161,24 +126,24 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           message: "Checkout attempt id is required",
         };
       }
-      if (!expectedQuoteHash) {
-        return {
-          success: false,
-          status: 400,
-          errorCode: "CHECKOUT_QUOTE_REQUIRED",
-          message: "Checkout quote is required",
-        };
-      }
 
       const replay = await findPaymentAttempt(strapi as any, userId, attemptId);
       if (replay) {
-        const decision = existingAttemptBlocksReplacement(replay, gateway, expectedQuoteHash);
+        const decision = await gateCheckoutResume(
+          strapi as any,
+          userId,
+          { ...replay, attemptId },
+          gateway,
+          expectedQuoteHash,
+        );
         if (decision === "in_progress") {
+          const orderId = checkoutAttemptOrderId(replay);
           return {
             success: false,
             status: 409,
             errorCode: "PAYMENT_IN_PROGRESS",
             message: "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.",
+            ...(orderId ? { orderId } : {}),
           };
         }
         if (decision === "conflict") {
@@ -189,6 +154,12 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             message: "شناسه پرداخت قبلاً برای پیش‌فاکتور دیگری استفاده شده است",
           };
         }
+        if (decision === "expired") {
+          return { ...RESERVATION_EXPIRED_RESULT };
+        }
+        if (decision === "unavailable") {
+          return { ...RESERVATION_LOOKUP_FAILED_RESULT };
+        }
         return {
           success: true,
           replayed: true,
@@ -196,6 +167,15 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           contract: replay.contract,
           paymentAttempt: replay,
           financialSummary: replay.quoteSnapshot?.financialSummary,
+        };
+      }
+
+      if (!expectedQuoteHash) {
+        return {
+          success: false,
+          status: 400,
+          errorCode: "CHECKOUT_QUOTE_REQUIRED",
+          message: "Checkout quote is required",
         };
       }
     }
@@ -276,7 +256,13 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         if (managesPaymentAttempt) {
           const replay = await findPaymentAttempt(strapi as any, userId, attemptId, trx);
           if (replay) {
-            const decision = existingAttemptBlocksReplacement(replay, gateway, expectedQuoteHash);
+            const decision = await gateCheckoutResume(
+              strapi as any,
+              userId,
+              { ...replay, attemptId },
+              gateway,
+              expectedQuoteHash,
+            );
             if (decision === "in_progress") {
               throw new Error("PAYMENT_IN_PROGRESS: Unresolved SnappPay payment is still live");
             }
@@ -284,6 +270,12 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
               throw new Error(
                 "CHECKOUT_ATTEMPT_CONFLICT: Attempt id was already used for another quote",
               );
+            }
+            if (decision === "expired") {
+              throw new Error("RESERVATION_EXPIRED: Reservation is no longer held");
+            }
+            if (decision === "unavailable") {
+              throw new Error("RESERVATION_LOOKUP_FAILED: Reservation could not be read");
             }
             return {
               success: true,
@@ -710,7 +702,16 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     } catch (error: any) {
       if (managesPaymentAttempt) {
         const replay = await findPaymentAttempt(strapi as any, userId, attemptId).catch(() => null);
-        if (replay && existingAttemptBlocksReplacement(replay, gateway, expectedQuoteHash) === "replay") {
+        if (
+          replay &&
+          (await gateCheckoutResume(
+            strapi as any,
+            userId,
+            { ...replay, attemptId },
+            gateway,
+            expectedQuoteHash,
+          )) === "replay"
+        ) {
           return {
             success: true,
             replayed: true,
@@ -807,6 +808,15 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             userMessage =
               "پرداخت قبلی هنوز در حال بررسی است. لطفاً چند لحظه بعد وضعیت سفارش را بررسی کنید.";
             break;
+          case "RESERVATION_EXPIRED":
+            userMessage = RESERVATION_EXPIRED_RESULT.message;
+            break;
+          case "RESERVATION_LOOKUP_FAILED":
+            userMessage = RESERVATION_LOOKUP_FAILED_RESULT.message;
+            break;
+          case "CHECKOUT_ATTEMPT_CONFLICT":
+            userMessage = "شناسه پرداخت قبلاً برای پیش‌فاکتور دیگری استفاده شده است";
+            break;
           default:
             userMessage = "خطا در ثبت سفارش. لطفاً مجدداً تلاش کنید";
         }
@@ -873,6 +883,13 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         errorCode,
         details,
         timestamp: new Date().toISOString(),
+        ...(errorCode === "RESERVATION_LOOKUP_FAILED"
+          ? { status: 503 }
+          : errorCode === "RESERVATION_EXPIRED" ||
+              errorCode === "PAYMENT_IN_PROGRESS" ||
+              errorCode === "CHECKOUT_ATTEMPT_CONFLICT"
+            ? { status: 409 }
+            : {}),
       };
     }
   },

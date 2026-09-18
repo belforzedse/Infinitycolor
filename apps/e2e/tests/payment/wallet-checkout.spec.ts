@@ -14,6 +14,7 @@ import {
 } from "../../helpers/api";
 import { fillCheckoutWithWallet } from "../../helpers/checkout";
 import { E2E_PAYMENT_VARIATION_SKU, E2E_PRODUCT_TITLE } from "../../fixtures/storefront";
+import { updateOrderStatus } from "../../helpers/admin";
 import { prepareStorefrontPage } from "../../helpers/page";
 
 type WalletPurchase = {
@@ -93,13 +94,9 @@ test.describe("real wallet payment lifecycle", () => {
     const adminOrder = await apiGet(request, "admin", `/orders/${purchase.orderId}`);
     await expectApiOk(adminOrder, `admin read order ${purchase.orderId}`);
 
-    const transition = await apiPost(
-      request,
-      "admin",
-      `/orders/${purchase.orderId}/admin/transition`,
-      { status: "Shipment" },
-    );
-    await expectApiOk(transition, `ship order ${purchase.orderId}`);
+    // Fulfilment is Started -> Done -> Shipment; skipping to Shipment is refused.
+    await updateOrderStatus(request, purchase.orderId, "Done");
+    await updateOrderStatus(request, purchase.orderId, "Shipment");
 
     const persisted = await getCustomerOrderDetail(request, purchase.orderId);
     expect(persisted).toMatchObject({ id: purchase.orderId, Status: "Shipment" });

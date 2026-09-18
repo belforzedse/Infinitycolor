@@ -103,7 +103,7 @@ const isMissingProduct = (lookup: ProductLookupResult) => {
   return false;
 };
 
-const fetchPdpProduct = async (
+const fetchPdpProductOnce = async (
   decodedSlug: string,
   revalidateSeconds: number,
 ): Promise<ProductLookupResult> => {
@@ -175,6 +175,22 @@ const fetchPdpProduct = async (
 };
 
 /**
+ * One retry on infra faults (timeout / non-404 / empty payload) before the
+ * page throws into the recovery boundary. A genuine 404 / missing product is
+ * returned immediately — never retried into a soft-404 storm.
+ */
+const fetchPdpProduct = async (
+  decodedSlug: string,
+  revalidateSeconds: number,
+): Promise<ProductLookupResult> => {
+  const first = await fetchPdpProductOnce(decodedSlug, revalidateSeconds);
+  if (first.errorDetails?.failure !== "unavailable") {
+    return first;
+  }
+  return fetchPdpProductOnce(decodedSlug, revalidateSeconds);
+};
+
+/**
  * Shared across replicas, not just across one render.
  *
  * The fetch below was already cached (`next.revalidate`), which is why Strapi
@@ -191,7 +207,20 @@ class PdpLookupUnavailableError extends Error {
   details: NonNullable<ProductLookupResult["errorDetails"]>;
   constructor(details: NonNullable<ProductLookupResult["errorDetails"]>) {
     super(details.message || "Product lookup temporarily unavailable");
+    this.name = "PdpLookupUnavailableError";
     this.details = details;
+  }
+}
+
+/**
+ * Thrown from the page body after lookup exhausted its one retry. Named so
+ * server `onRequestError` can fingerprint PDP timeouts separately from the
+ * redacted client "Server Components render" wrapper (FRONTEND-E).
+ */
+export class PdpProductUnavailableError extends Error {
+  constructor() {
+    super("PRODUCT_DATA_UNAVAILABLE");
+    this.name = "PdpProductUnavailableError";
   }
 }
 
@@ -720,7 +749,7 @@ export default async function PDP({ params }: { params: Promise<{ slug: string }
       notFound();
     }
 
-    throw new Error("PRODUCT_DATA_UNAVAILABLE");
+    throw new PdpProductUnavailableError();
   }
 
   // SEO: prior slug forms (percent-encoded imports, renamed slugs) permanently

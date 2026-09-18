@@ -82,6 +82,23 @@ describe("SnappPay recovery policy", () => {
     ).toBe("MANUAL_REVIEW");
   });
 
+  it("never treats 1048 as verify rescue, with or without an OK callback", () => {
+    expect(
+      decideSnappayRecovery({
+        providerCode: 1048,
+        callbackState: "OK",
+      }),
+    ).toBe("MANUAL_REVIEW");
+    expect(
+      decideSnappayRecovery({
+        providerStatus: "PENDING",
+        providerCode: 1048,
+        callbackState: "OK",
+      }),
+    ).toBe("MANUAL_REVIEW");
+    expect(decideSnappayRecovery({ providerCode: 1048 })).toBe("MANUAL_REVIEW");
+  });
+
   it("rescues a validated OK callback whose token the provider cannot resolve", () => {
     // The customer's browser came back saying the payment succeeded while
     // SnappPay cannot find the token — a direct contradiction that only `verify`

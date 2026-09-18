@@ -11,6 +11,7 @@ import { centralAuth, subscribeToAuthState } from "@/lib/central-auth";
 import { hapticSuccess, hapticError } from "@/utils/haptics";
 import { isOnline } from "@/utils/offlineQueue";
 import { trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
+import { readCheckoutAttemptId } from "@/lib/checkout-identity";
 import {
   CART_STOCK_LIMIT_MESSAGE,
   isCartStockLimitError,
@@ -111,8 +112,12 @@ interface CartContextType {
   /** False until the first client-side cart init (token + API or localStorage) completes. */
   isCartReady: boolean;
   checkCartStock: () => Promise<boolean>;
-  /** Re-fetch the cart from the server (no-op for guest carts). */
-  refreshCart: () => Promise<void>;
+  /**
+   * Re-fetch the cart from the server (no-op for guest carts).
+   * `silent` skips the cart-page skeleton so a background stock sync cannot
+   * flash the whole basket empty/full.
+   */
+  refreshCart: (options?: { silent?: boolean }) => Promise<void>;
   migrateLocalCartToApi: () => Promise<void>;
   /**
    * Set when the server corrected the cart on its own (stock moved underneath
@@ -250,9 +255,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
                 // meant items vanished from the shopper's cart with no message of
                 // any kind — the checkout page reported the same corrections, but
                 // this path, which runs on every login, said nothing.
-                await CartService.checkCartStock()
+                await CartService.checkCartStock(readCheckoutAttemptId())
                   .then((result) => {
                     if (generation !== cartInitGenerationRef.current) return;
+                    if (result.errorCode === "RESERVATION_LOOKUP_FAILED") return;
                     applyStockCorrectionNotice(result);
                   })
                   .catch((error) => {
@@ -310,9 +316,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [cartItems, initializedMode, isLoggedIn, isCartReady]);
 
   // Fetch user's cart from API
-  const fetchUserCart = async (shouldApply: () => boolean = () => true) => {
+  const fetchUserCart = async (
+    shouldApply: () => boolean = () => true,
+    options?: { showLoading?: boolean },
+  ) => {
+    const showLoading = options?.showLoading !== false;
     try {
-      setIsLoading(true);
+      if (showLoading) setIsLoading(true);
 
       const data = await CartService.getUserCart();
 
@@ -488,7 +498,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error("Failed to fetch cart:", error);
     } finally {
-      if (shouldApply()) {
+      // Only clear the flag we set. A silent stock sync must not end an
+      // in-flight add/remove, and vice versa a skipped apply must not leave
+      // the skeleton up after we never set loading.
+      if (shouldApply() && showLoading) {
         setIsLoading(false);
       }
     }
@@ -910,7 +923,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       try {
         setIsLoading(true);
 
-        const data = await CartService.checkCartStock();
+        const data = await CartService.checkCartStock(readCheckoutAttemptId());
+
+        if (data.errorCode === "RESERVATION_LOOKUP_FAILED") {
+          return false;
+        }
 
         // If cart was modified (items adjusted or removed), refresh the local cart
         if (!data.valid) {
@@ -960,8 +977,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     isLoading,
     isCartReady,
     checkCartStock,
-    refreshCart: async () => {
-      if (isLoggedIn) await fetchUserCart();
+    refreshCart: async (options?: { silent?: boolean }) => {
+      if (isLoggedIn) {
+        await fetchUserCart(() => true, { showLoading: options?.silent !== true });
+      }
     },
     migrateLocalCartToApi,
     stockNotice,

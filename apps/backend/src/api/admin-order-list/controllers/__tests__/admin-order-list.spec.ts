@@ -108,6 +108,7 @@ describe("bounded admin orders list", () => {
           { external_id: { $eq: "Ali" } },
           { user: { user_info: { FirstName: { $containsi: "Ali" } } } },
           { user: { user_info: { LastName: { $containsi: "Ali" } } } },
+          { delivery_address: { FullName: { $containsi: "Ali" } } },
           { ShippingBarcode: { $containsi: "Ali" } },
         ],
       },
@@ -223,6 +224,12 @@ describe("bounded admin orders list", () => {
           email: "must-not-leak@example.test",
           user_info: { id: 3, FirstName: "Test", LastName: "User", NationalCode: "secret" },
         },
+        delivery_address: {
+          id: 9,
+          FullName: "گیرنده سفارش",
+          FullAddress: "must-not-leak-address",
+          PostalCode: "secret-post",
+        },
         contract: { id: 4, Amount: 1000, private_note: "secret" },
       },
     ]);
@@ -249,22 +256,28 @@ describe("bounded admin orders list", () => {
       expect.arrayContaining([
         { id: { $gte: 7 } },
         { Status: { $in: ["Done"] } },
-        // A textual query fans out across the transaction id, customer name and
-        // shipping barcode; numeric queries take the cheaper id-first branch.
+        // A textual query fans out across the transaction id, account name,
+        // shipping recipient, and shipping barcode; numeric queries take the
+        // cheaper id-first branch.
         {
           $or: [
             { contract: { external_id: { $containsi: "synthetic-transaction" } } },
             { external_id: { $eq: "synthetic-transaction" } },
             { user: { user_info: { FirstName: { $containsi: "synthetic-transaction" } } } },
             { user: { user_info: { LastName: { $containsi: "synthetic-transaction" } } } },
+            { delivery_address: { FullName: { $containsi: "synthetic-transaction" } } },
             { ShippingBarcode: { $containsi: "synthetic-transaction" } },
           ],
         },
       ]),
     );
+    expect(query.populate.delivery_address).toEqual({ select: ["id", "FullName"] });
     expect(ctx.set).toHaveBeenCalledWith("Cache-Control", "private, no-store");
     expect(JSON.stringify(ctx.body)).not.toContain("must-not-leak");
     expect(JSON.stringify(ctx.body)).not.toContain("NationalCode");
+    expect(JSON.stringify(ctx.body)).not.toContain("must-not-leak-address");
+    expect(JSON.stringify(ctx.body)).not.toContain("secret-post");
+    expect(ctx.body.data[0].attributes.recipientName).toBe("گیرنده سفارش");
     expect(ctx.body.data[0].attributes.user.data.attributes.user_info.data.attributes).toEqual({
       FirstName: "Test",
       LastName: "User",
@@ -323,11 +336,22 @@ describe("bounded admin orders list", () => {
       ],
     };
     expect(findMany.mock.calls[0][0].where.$and[0].$or).toContainEqual(splitCondition);
+    expect(findMany.mock.calls[0][0].where.$and[0].$or).toContainEqual({
+      delivery_address: { FullName: { $containsi: "علی رضایی" } },
+    });
+    // `$eq` on a spaced name against `orders.external_id` (varchar) is both a
+    // miss and Postgres 22001 when the column is narrower than the bind.
+    expect(findMany.mock.calls[0][0].where.$and[0].$or).not.toContainEqual({
+      external_id: { $eq: "علی رضایی" },
+    });
 
     // Tab badges run through the same criteria parser, so they count the same
     // population the table shows.
     await controller.counts(createContext({ search: "علی رضایی" }));
     expect(count.mock.calls[0][0].where.$and[0].$or).toContainEqual(splitCondition);
+    expect(count.mock.calls[0][0].where.$and[0].$or).toContainEqual({
+      delivery_address: { FullName: { $containsi: "علی رضایی" } },
+    });
   });
 
   it("splits a full owner name on the reserve board the same way", async () => {
@@ -341,6 +365,25 @@ describe("bounded admin orders list", () => {
         { owner: { user_info: { FirstName: { $containsi: "علی" } } } },
         { owner: { user_info: { LastName: { $containsi: "رضایی" } } } },
       ],
+    });
+    expect(reserveFindMany.mock.calls[0][0].where.$and[0].$or).toContainEqual({
+      delivery_address: { FullName: { $containsi: "علی رضایی" } },
+    });
+  });
+
+  it("ILIKE-matches the shipping recipient and never equality-matches a capped name against varchar", async () => {
+    const { findMany } = installStrapi();
+    const longName = "گیرنده".repeat(20);
+    expect(longName.length).toBeGreaterThan(80);
+
+    await controller.query(createContext({ search: longName.slice(0, 80) }));
+
+    const or = findMany.mock.calls[0][0].where.$and[0].$or;
+    expect(or).toContainEqual({
+      delivery_address: { FullName: { $containsi: longName.slice(0, 80) } },
+    });
+    expect(or).not.toContainEqual({
+      external_id: { $eq: longName.slice(0, 80) },
     });
   });
 

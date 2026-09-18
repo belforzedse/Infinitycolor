@@ -487,7 +487,11 @@ export default function PDPHeroGallerySingleImage(props: Props) {
                         setVideoRequested(true);
                       } else {
                         noteEnhancementLoaded("optional-video");
-                        void videoRef.current?.play();
+                        // Safari rejects interrupted/autoplay play() with
+                        // undefined; leave that uncaught and it becomes the
+                        // FRONTEND-22 "Non-Error promise rejection" group on
+                        // /pdp/:slug. Native controls remain if play() fails.
+                        void videoRef.current?.play().catch(() => undefined);
                       }
                     }}
                     className={`pointer-events-auto absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300 ${

@@ -3,6 +3,10 @@
 import Modal from "@/components/Kits/Modal";
 import { useState } from "react";
 
+/** Same parcel the previous automatic Done -> Shipment path submitted. */
+export const DEFAULT_ANIPO_WEIGHT_G = 500;
+export const DEFAULT_ANIPO_BOX_SIZE_ID = 3;
+
 interface AnipoBarcodeDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -10,6 +14,11 @@ interface AnipoBarcodeDialogProps {
   loading?: boolean;
   initialWeight?: number;
   initialBoxSizeId?: number;
+}
+
+function parsePositiveInt(value: string): number | undefined {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 export default function AnipoBarcodeDialog({
@@ -21,17 +30,19 @@ export default function AnipoBarcodeDialog({
   initialBoxSizeId,
 }: AnipoBarcodeDialogProps) {
   const [customWeight, setCustomWeight] = useState(() =>
-    initialWeight && initialWeight > 0 ? String(initialWeight) : "",
+    initialWeight && initialWeight > 0
+      ? String(initialWeight)
+      : String(DEFAULT_ANIPO_WEIGHT_G),
   );
   const [customBoxSize, setCustomBoxSize] = useState(() =>
-      initialBoxSizeId && initialBoxSizeId >= 1 && initialBoxSizeId <= 10
-        ? String(initialBoxSizeId)
-        : "3",
+    initialBoxSizeId && initialBoxSizeId >= 1 && initialBoxSizeId <= 10
+      ? String(initialBoxSizeId)
+      : String(DEFAULT_ANIPO_BOX_SIZE_ID),
   );
 
   const handleGenerate = async () => {
-    const weight = customWeight ? parseInt(customWeight) : undefined;
-    const boxSize = customBoxSize ? parseInt(customBoxSize) : undefined;
+    const weight = parsePositiveInt(customWeight) ?? DEFAULT_ANIPO_WEIGHT_G;
+    const boxSize = parsePositiveInt(customBoxSize) ?? DEFAULT_ANIPO_BOX_SIZE_ID;
     await onGenerate(weight, boxSize);
   };
 
@@ -49,7 +60,7 @@ export default function AnipoBarcodeDialog({
               type="number"
               min={1}
               step={1}
-              placeholder="وزن محاسبه‌شده سفارش"
+              placeholder={String(DEFAULT_ANIPO_WEIGHT_G)}
               value={customWeight}
               onChange={(e) => setCustomWeight(e.target.value)}
               className="text-sm rounded-lg border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"

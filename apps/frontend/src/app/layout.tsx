@@ -54,6 +54,8 @@ export async function generateMetadata(): Promise<Metadata> {
       email: false,
       address: false,
       telephone: false,
+      date: false,
+      url: false,
     },
     openGraph: {
       type: "website",
@@ -166,11 +168,13 @@ export default async function RootLayout({
     <html
       lang="fa"
       dir="rtl"
-      className={`${peyda.variable} ${peydaFanum.variable} ${rokh.variable} ${kaghaz.variable}`}
+      translate="no"
+      className={`notranslate ${peyda.variable} ${peydaFanum.variable} ${rokh.variable} ${kaghaz.variable}`}
       suppressHydrationWarning
     >
       <head>
-        {/* Must stay first: dependencies call these during hydration, and an
+        <meta name="google" content="notranslate" />
+        {/* First script: dependencies call these during hydration, and an
             older Android browser without them throws before any handler binds,
             leaving a rendered page whose menus do not open. */}
         <script

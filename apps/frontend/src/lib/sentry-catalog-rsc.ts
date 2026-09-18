@@ -66,7 +66,9 @@ export function catalogRscFingerprint(
   if (name === "PLPProductsError" || (routePath.includes("/plp") && name === "PLPProductsError")) {
     return ["catalog-rsc", "plp", code || "PLPProductsError"];
   }
-  if (message === "PRODUCT_DATA_UNAVAILABLE") {
+  // Prefer the named error (survives Next's client redaction of the message);
+  // keep the message match for older events still in flight.
+  if (name === "PdpProductUnavailableError" || message === "PRODUCT_DATA_UNAVAILABLE") {
     return ["catalog-rsc", "pdp", "PRODUCT_DATA_UNAVAILABLE"];
   }
   return undefined;
@@ -79,7 +81,7 @@ function catalogRscFingerprintFromEvent(event: SentryEventLike): string[] | unde
   if (type === "PLPProductsError") {
     return ["catalog-rsc", "plp", "PLPProductsError"];
   }
-  if (value === "PRODUCT_DATA_UNAVAILABLE") {
+  if (type === "PdpProductUnavailableError" || value === "PRODUCT_DATA_UNAVAILABLE") {
     return ["catalog-rsc", "pdp", "PRODUCT_DATA_UNAVAILABLE"];
   }
   return undefined;

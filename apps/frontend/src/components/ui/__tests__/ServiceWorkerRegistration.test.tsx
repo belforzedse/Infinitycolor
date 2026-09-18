@@ -1,5 +1,6 @@
 import { render, waitFor } from "@testing-library/react";
 import ServiceWorkerRegistration from "../ServiceWorkerRegistration";
+import { serviceWorkerHost } from "../service-worker-host";
 
 type Listener = () => void;
 
@@ -15,6 +16,10 @@ describe("ServiceWorkerRegistration", () => {
     jest.restoreAllMocks();
   });
 
+  const stubHostname = (hostname: string) => {
+    jest.spyOn(serviceWorkerHost, "getHostname").mockReturnValue(hostname);
+  };
+
   // sw.js calls skipWaiting()+clients.claim() unconditionally, so a deploy can
   // swap the controller for an already-open tab mid-session. Without a forced
   // reload the tab keeps running whatever JS it already loaded -- the checkout
@@ -23,18 +28,22 @@ describe("ServiceWorkerRegistration", () => {
   // incognito tab (no service worker) never reproduced.
   const setupControllerChangeHarness = (initialController: unknown) => {
     const listeners: Listener[] = [];
-    const register = jest.fn().mockResolvedValue({
+    const update = jest.fn().mockResolvedValue(undefined);
+    const registration = {
       waiting: null,
       installing: null,
-      active: null,
-      update: jest.fn().mockResolvedValue(undefined),
+      active: { state: "activated" } as ServiceWorker,
+      update,
       addEventListener: jest.fn(),
       removeEventListener: jest.fn(),
-    });
+    };
+    const register = jest.fn().mockResolvedValue(registration);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: {
         register,
+        getRegistration: jest.fn().mockResolvedValue(registration),
+        getRegistrations: jest.fn().mockResolvedValue([]),
         controller: initialController,
         ready: new Promise(() => undefined),
         addEventListener: (event: string, listener: Listener) => {
@@ -44,7 +53,7 @@ describe("ServiceWorkerRegistration", () => {
       },
     });
     jest.spyOn(console, "log").mockImplementation(() => undefined);
-    return { register, fireControllerChange: () => listeners.forEach((fn) => fn()) };
+    return { register, update, fireControllerChange: () => listeners.forEach((fn) => fn()) };
   };
 
   // jsdom's `window.location.reload` is neither configurable nor writable in
@@ -55,6 +64,7 @@ describe("ServiceWorkerRegistration", () => {
   const NAVIGATION_NOT_IMPLEMENTED = "Not implemented: navigation";
 
   it("reloads when the controller changes mid-session (a prior controller existed)", async () => {
+    stubHostname("infinitycolor.co");
     const { register, fireControllerChange } = setupControllerChangeHarness({});
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -70,6 +80,7 @@ describe("ServiceWorkerRegistration", () => {
   });
 
   it("does not reload on the first-ever controllerchange (no prior controller)", async () => {
+    stubHostname("infinitycolor.co");
     const { register, fireControllerChange } = setupControllerChangeHarness(null);
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -85,11 +96,14 @@ describe("ServiceWorkerRegistration", () => {
   });
 
   it("treats a blocked registration as unsupported", async () => {
+    stubHostname("infinitycolor.co");
     const register = jest.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: {
         register,
+        getRegistration: jest.fn().mockResolvedValue(undefined),
+        getRegistrations: jest.fn().mockResolvedValue([]),
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
       },
@@ -106,7 +120,8 @@ describe("ServiceWorkerRegistration", () => {
     expect(consoleError).not.toHaveBeenCalled();
   });
 
-  it("does not raise an unhandled rejection when the periodic update() call fails", async () => {
+  it("does not call update() when active/waiting/installing are all null", async () => {
+    stubHostname("infinitycolor.co");
     jest.useFakeTimers({ legacyFakeTimers: false });
 
     const update = jest.fn().mockRejectedValue(
@@ -125,6 +140,8 @@ describe("ServiceWorkerRegistration", () => {
       configurable: true,
       value: {
         register,
+        getRegistration: jest.fn().mockResolvedValue(registration),
+        getRegistrations: jest.fn().mockResolvedValue([registration]),
         controller: null,
         ready: new Promise(() => undefined),
         addEventListener: jest.fn(),
@@ -134,18 +151,124 @@ describe("ServiceWorkerRegistration", () => {
     jest.spyOn(console, "log").mockImplementation(() => undefined);
     jest.spyOn(console, "error").mockImplementation(() => undefined);
 
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+
+    render(<ServiceWorkerRegistration />);
+    await waitFor(() => expect(register).toHaveBeenCalled());
+
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(update).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
+  it("catches update() rejection when a worker exists", async () => {
+    stubHostname("infinitycolor.co");
+    jest.useFakeTimers({ legacyFakeTimers: false });
+
+    const update = jest.fn().mockRejectedValue(
+      new DOMException("newestWorker is null", "InvalidStateError"),
+    );
+    const registration = {
+      waiting: null,
+      installing: null,
+      active: { state: "activated" } as ServiceWorker,
+      update,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    };
+    const register = jest.fn().mockResolvedValue(registration);
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        register,
+        getRegistration: jest.fn().mockResolvedValue(registration),
+        getRegistrations: jest.fn().mockResolvedValue([registration]),
+        controller: null,
+        ready: new Promise(() => undefined),
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    jest.spyOn(console, "log").mockImplementation(() => undefined);
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+
     const onUnhandledRejection = jest.fn();
     process.on("unhandledRejection", onUnhandledRejection);
 
     render(<ServiceWorkerRegistration />);
     await waitFor(() => expect(register).toHaveBeenCalled());
 
-    await jest.advanceTimersByTimeAsync(60000);
+    await jest.advanceTimersByTimeAsync(60_000);
     expect(update).toHaveBeenCalledTimes(1);
+
+    // Flush the caught promise
+    await Promise.resolve();
+    await Promise.resolve();
 
     process.off("unhandledRejection", onUnhandledRejection);
     expect(onUnhandledRejection).not.toHaveBeenCalled();
 
     jest.useRealTimers();
+  });
+
+  it("does not register on new.infinitycolor.co and unregisters leftover workers", async () => {
+    stubHostname("new.infinitycolor.co");
+    const unregister = jest.fn().mockResolvedValue(true);
+    const register = jest.fn();
+    const getRegistrations = jest.fn().mockResolvedValue([{ unregister }]);
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        register,
+        getRegistrations,
+        getRegistration: jest.fn(),
+        controller: null,
+        ready: new Promise(() => undefined),
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    jest.spyOn(console, "log").mockImplementation(() => undefined);
+
+    render(<ServiceWorkerRegistration />);
+
+    await waitFor(() => expect(getRegistrations).toHaveBeenCalled());
+    await waitFor(() => expect(unregister).toHaveBeenCalled());
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it("does not register on www.infinitycolor.co and unregisters leftover workers", async () => {
+    stubHostname("www.infinitycolor.co");
+    const unregister = jest.fn().mockResolvedValue(true);
+    const register = jest.fn();
+    const getRegistrations = jest.fn().mockResolvedValue([{ unregister }]);
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        register,
+        getRegistrations,
+        getRegistration: jest.fn(),
+        controller: null,
+        ready: new Promise(() => undefined),
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
+    });
+    jest.spyOn(console, "log").mockImplementation(() => undefined);
+
+    render(<ServiceWorkerRegistration />);
+
+    await waitFor(() => expect(getRegistrations).toHaveBeenCalled());
+    await waitFor(() => expect(unregister).toHaveBeenCalled());
+    expect(register).not.toHaveBeenCalled();
   });
 });

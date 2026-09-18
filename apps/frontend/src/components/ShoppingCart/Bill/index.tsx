@@ -35,18 +35,22 @@ import { centralAuth, centralLoginUrl } from "@/lib/central-auth";
 import { getAnalyticsCorrelationId, trackFunnelStep, trackAnalyticsEvent } from "@/lib/analytics";
 import { faNum, normalizeDigits } from "@/utils/faNum";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
+import { isExpectedCheckoutSentryCode } from "@/lib/expected-checkout-sentry";
 import { translateErrorMessage } from "@/lib/errorTranslations";
 import { buildCartStockNoticeText } from "@/utils/cartStock";
-
-const EXPECTED_CHECKOUT_SENTRY_CODES = new Set([
-  "PAYMENT_IN_PROGRESS",
-  "PAYMENT_UNKNOWN",
-  "CHECKOUT_ATTEMPT_CONFLICT",
-  "SNAPPAY_RECONCILIATION_PENDING",
-  "SNAPPAY_MANUAL_REVIEW",
-  "SNAPPAY_TOKEN_DUPLICATE",
-  "ORDER_CANCELLED",
-]);
+import {
+  clearCheckoutIdentity,
+  persistCheckoutOrder,
+  readCheckoutAttemptId,
+  readCheckoutIdentity,
+  resolveCheckoutAttemptId,
+  type CheckoutIdentity,
+} from "@/lib/checkout-identity";
+import {
+  isCheckoutStatusRecoveryCode,
+  orderIdFromCheckoutFailure,
+  persistPendingPaymentResult,
+} from "@/lib/checkout-status-recovery";
 
 const SNAPPAY_MANUAL_REVIEW_COPY =
   "پرداخت اسنپ‌پی در حال بررسی دستی است. لطفاً وضعیت سفارش را کمی بعد بررسی کنید و دوباره پرداخت نکنید.";
@@ -66,12 +70,6 @@ function leftoverCheckoutCopy(errorCode: string): string | undefined {
     default:
       return undefined;
   }
-}
-
-function clearStaleCheckoutAttempt() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem("pendingCheckoutAttemptId");
-  window.localStorage.removeItem("pendingCheckoutQuoteHash");
 }
 
 // Reserve ("ارسال رزروی" / 48h) ships enabled and is soft-locked by building
@@ -160,33 +158,28 @@ const buildDiscountPreviewKey = ({
   cartSignature: string;
 }) => `${String(code || "").trim()}:${shippingId || "none"}:${addressContextKey}:${cartSignature}`;
 
-const getOrCreateCheckoutAttemptId = (quoteHash: string) => {
-  const attemptId =
-    globalThis.crypto?.randomUUID?.() ||
-    `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-  // Private browsing / hardened browser modes can throw on any localStorage
-  // access (Sentry has recorded this). Falling through to a fresh attempt id is
-  // strictly safer than letting the exception escape into the submit handler's
-  // catch block, which would surface the generic "خطا در ثبت سفارش" banner for a
-  // storage quirk that has nothing to do with the order itself.
-  try {
-    const existingAttempt = window.localStorage.getItem("pendingCheckoutAttemptId");
-    const existingQuote = window.localStorage.getItem("pendingCheckoutQuoteHash");
-    if (existingAttempt && existingQuote === quoteHash) return existingAttempt;
-
-    window.localStorage.setItem("pendingCheckoutAttemptId", attemptId);
-    window.localStorage.setItem("pendingCheckoutQuoteHash", quoteHash);
-  } catch {
-    // Storage unavailable -- proceed with the freshly generated attemptId below.
-  }
-  return attemptId;
-};
-
 const checkoutErrorPresentation = (
   errorCode: string,
 ): { displayError: string; clearAttempt: boolean } | null => {
   switch (errorCode) {
+    case "RESERVATION_EXPIRED":
+      return {
+        displayError:
+          "مهلت رزرو موجودی این سفارش تمام شده است. لطفاً وضعیت سفارش را بررسی کنید و در صورت نیاز دوباره سفارش دهید.",
+        clearAttempt: true,
+      };
+    case "RESERVATION_LOOKUP_FAILED":
+      return {
+        displayError:
+          "وضعیت رزرو موجودی این سفارش الان مشخص نیست. لطفاً چند لحظه بعد دوباره تلاش کنید.",
+        clearAttempt: false,
+      };
+    case "SNAPPAY_MANUAL_REVIEW":
+      return { displayError: SNAPPAY_MANUAL_REVIEW_COPY, clearAttempt: false };
+    case "SNAPPAY_RECONCILIATION_PENDING":
+      return { displayError: SNAPPAY_RECONCILIATION_PENDING_COPY, clearAttempt: false };
+    case "ORDER_CANCELLED":
+      return { displayError: ORDER_CANCELLED_COPY, clearAttempt: true };
     case "PAYMENT_IN_PROGRESS":
       return {
         displayError:
@@ -250,6 +243,7 @@ function ShoppingCartBillForm({}: Props) {
   const discountPreviewSeqRef = React.useRef(0);
   const lastSnappEligibilityKeyRef = React.useRef<string | null>(null);
   const snappEligibilitySeqRef = React.useRef(0);
+  const stockReconcileInFlightRef = React.useRef(false);
   const [_submitOrderStep, setSubmitOrderStep] = useAtom(submitOrderStepAtom);
   const [_, setOrderId] = useAtom(orderIdAtom);
   const [__, setOrderNumber] = useAtom(orderNumberAtom);
@@ -380,6 +374,12 @@ function ShoppingCartBillForm({}: Props) {
   const [reserveWindowClosed, setReserveWindowClosed] = useState(false);
   const [mergeChoice, setMergeChoice] = useState<"merge" | "new" | null>(null);
   const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice } = useCart();
+  const cartItemsRef = React.useRef(cartItems);
+  cartItemsRef.current = cartItems;
+  const refreshCartRef = React.useRef(refreshCart);
+  refreshCartRef.current = refreshCart;
+  const setStockNoticeRef = React.useRef(setStockNotice);
+  setStockNoticeRef.current = setStockNotice;
   // `snappEligible` is tri-state, and this must read `undefined` the same way
   // PaymentGateway's `showSnappay` does (`!== false`). It used to reject it as
   // falsy while the card was still rendered and selected, so a submit during any
@@ -498,8 +498,9 @@ function ShoppingCartBillForm({}: Props) {
   }, [canLoadProtectedCheckoutData]);
 
   useEffect(() => {
+    const hasStoredCheckout = Boolean(readCheckoutIdentity()?.attemptId);
     setError((prev) =>
-      selectableGateways.length === 0
+      selectableGateways.length === 0 && !hasStoredCheckout
         ? EMPTY_GATEWAYS_ERROR
         : prev === EMPTY_GATEWAYS_ERROR
           ? null
@@ -684,6 +685,11 @@ function ShoppingCartBillForm({}: Props) {
       return;
     }
 
+    if (readCheckoutIdentity()?.attemptId) {
+      setError((prev) => (prev === EMPTY_CART_ERROR ? null : prev));
+      return;
+    }
+
     if (totalPrice <= 0 && totalItems === 0) {
       setError(EMPTY_CART_ERROR);
     }
@@ -705,7 +711,7 @@ function ShoppingCartBillForm({}: Props) {
       category: "checkout",
       action: "error",
     });
-    if (errorCode && EXPECTED_CHECKOUT_SENTRY_CODES.has(errorCode)) {
+    if (isExpectedCheckoutSentryCode(errorCode)) {
       return;
     }
     try {
@@ -750,17 +756,16 @@ function ShoppingCartBillForm({}: Props) {
       productTitle?: string;
     }): string => {
       if (it.productTitle) return it.productTitle;
-      const byCartItem = cartItems.find((ci) => ci.cartItemId === String(it.cartItemId));
+      const items = cartItemsRef.current;
+      const byCartItem = items.find((ci) => ci.cartItemId === String(it.cartItemId));
       if (byCartItem?.name) return byCartItem.name;
       if (it.productVariationId != null) {
-        const byVariation = cartItems.find(
-          (ci) => ci.variationId === String(it.productVariationId),
-        );
+        const byVariation = items.find((ci) => ci.variationId === String(it.productVariationId));
         if (byVariation?.name) return byVariation.name;
       }
       return "این کالا";
     },
-    [cartItems],
+    [],
   );
 
   /**
@@ -798,18 +803,49 @@ function ShoppingCartBillForm({}: Props) {
   }, []);
 
   /**
+   * Ambiguous SnapPay start used to leave a "check the order" banner whose retry
+   * button only dismissed the message. The payment-result page already polls and
+   * reconciles; send the shopper there whenever the failed finalize named an order.
+   */
+  const recoverInFlightPayment = React.useCallback(
+    (errorCode: string | undefined, source: unknown, attemptId?: string) => {
+      if (!isCheckoutStatusRecoveryCode(errorCode)) return false;
+      const recoveryOrderId = orderIdFromCheckoutFailure(source);
+      if (!recoveryOrderId) return false;
+      const path = persistPendingPaymentResult(
+        recoveryOrderId,
+        attemptId || readCheckoutAttemptId(),
+      );
+      toast.success("در حال بررسی نتیجه پرداخت...", { id: "checkout-error" });
+      router.push(path);
+      return true;
+    },
+    [router],
+  );
+
+  /**
    * Apply a server stock correction to the checkout UI. On submit we also toast
    * via failPayment so پرداخت never looks idle; on mount/pageshow we only show
    * the amber notice (no toast spam just for landing on the page).
+   *
+   * Cart helpers are read from refs: `refreshCart` is a new function on every
+   * CartContext render, and putting it (or `cartItems`) in these deps is what
+   * turned a failed stock mutation into an infinite check → refresh → remount
+   * flicker after an unpaid hold left the last unit reserved.
    */
   const applyCheckoutStockCorrection = React.useCallback(
     async (
       stockResult: Pick<
         CartStockCheckResponse,
-        "cartIsEmpty" | "itemsAdjusted" | "itemsRemoved"
+        "cartIsEmpty" | "itemsAdjusted" | "itemsRemoved" | "errorCode"
       >,
       options: { announce: boolean },
     ): Promise<boolean> => {
+      // A lookup failure is not "item unavailable". Do not strip the line or
+      // empty-cart-banner as if free stock were zero.
+      if (stockResult.errorCode === "RESERVATION_LOOKUP_FAILED") {
+        return false;
+      }
       const adjustedCartItemIds = (stockResult.itemsAdjusted ?? []).map((it) =>
         String(it.cartItemId),
       );
@@ -822,9 +858,9 @@ function ShoppingCartBillForm({}: Props) {
         return false;
       }
 
-      await refreshCart();
+      await refreshCartRef.current({ silent: true });
       if (hadNamedChanges) {
-        setStockNotice({ adjustedCartItemIds, removedNames });
+        setStockNoticeRef.current({ adjustedCartItemIds, removedNames });
         scrollStockNoticeIntoView();
       }
 
@@ -839,18 +875,22 @@ function ShoppingCartBillForm({}: Props) {
       }
       return true;
     },
-    [failPayment, refreshCart, resolveStockItemName, setStockNotice],
+    [failPayment, resolveStockItemName],
   );
 
   const reconcileCheckoutStock = React.useCallback(async () => {
     if (!canLoadProtectedCheckoutData) return;
+    if (stockReconcileInFlightRef.current) return;
+    stockReconcileInFlightRef.current = true;
     try {
-      const stockResult = await CartService.checkCartStock();
+      const stockResult = await CartService.checkCartStock(readCheckoutAttemptId());
       if (!stockResult.valid) {
         await applyCheckoutStockCorrection(stockResult, { announce: false });
       }
     } catch {
       // A failed stock poll must not block checkout; submit still re-checks.
+    } finally {
+      stockReconcileInFlightRef.current = false;
     }
   }, [applyCheckoutStockCorrection, canLoadProtectedCheckoutData]);
 
@@ -870,8 +910,14 @@ function ShoppingCartBillForm({}: Props) {
     return () => window.removeEventListener("pageshow", onPageShow);
   }, [reconcileCheckoutStock]);
 
-  const submitOrder = async (data: FormData) => {
+  const submitOrder = async (data: FormData, continuation?: CheckoutIdentity) => {
     setError(null);
+
+    const pendingIdentity = continuation || readCheckoutIdentity();
+    const cartIsEmpty = totalItems <= 0 || cartItems.length === 0;
+    const canContinuePendingCheckout = Boolean(
+      pendingIdentity?.attemptId && pendingIdentity.quoteHash && (cartIsEmpty || continuation),
+    );
 
     const selectedAddressId = data.address?.id ? Number(data.address.id) : undefined;
     const inlineAddressFieldsFilled =
@@ -880,12 +926,12 @@ function ShoppingCartBillForm({}: Props) {
 
     // An open window must never attach by default: the shopper picks combined or
     // separate fulfillment explicitly.
-    if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null) {
+    if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && !canContinuePendingCheckout) {
       failPayment("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
       return;
     }
 
-    if (!isMergeMode) {
+    if (!canContinuePendingCheckout && !isMergeMode) {
       if (!selectedAddressId && !inlineAddressFieldsFilled) {
         failPayment("لطفاً یک آدرس ذخیره شده را انتخاب یا آدرس جدید وارد کنید");
         return;
@@ -896,7 +942,7 @@ function ShoppingCartBillForm({}: Props) {
       }
     }
 
-    if (!data.phoneNumber || data.phoneNumber.trim() === "") {
+    if (!canContinuePendingCheckout && (!data.phoneNumber || data.phoneNumber.trim() === "")) {
       failPayment("لطفاً شماره تماس خود را وارد کنید");
       return;
     }
@@ -904,13 +950,15 @@ function ShoppingCartBillForm({}: Props) {
     // Validate phone number format (basic check). Persian/Arabic-Indic digits
     // (common on Iranian keyboards) must be normalized before the ASCII-only
     // \D strip, or they're stripped as "non-digits" and the field reads empty.
-    const cleanPhone = normalizeDigits(data.phoneNumber).replace(/\D/g, "");
-    if (cleanPhone.length < 10) {
+    const cleanPhone = canContinuePendingCheckout
+      ? ""
+      : normalizeDigits(data.phoneNumber || "").replace(/\D/g, "");
+    if (!canContinuePendingCheckout && cleanPhone.length < 10) {
       failPayment("شماره تماس وارد شده معتبر نیست");
       return;
     }
 
-    if (!isMergeMode && !selectedAddressId) {
+    if (!canContinuePendingCheckout && !isMergeMode && !selectedAddressId) {
       if (!watchProvince || !watchCity) {
         failPayment("لطفاً استان و شهر را انتخاب کنید");
         return;
@@ -926,13 +974,23 @@ function ShoppingCartBillForm({}: Props) {
       }
     }
 
-    // Validate total price is positive
-    if (totalPrice <= 0) {
+    // Validate total price is positive unless we are continuing a held unpaid order
+    // whose mutable cart was emptied by the reservation-unaware stock check.
+    if (totalPrice <= 0 && !canContinuePendingCheckout) {
       failPayment("مبلغ سفارش باید بیشتر از صفر باشد");
       return;
     }
 
-    if (selectableGateways.length === 0 || !selectableGateways.includes(gateway)) {
+    const resumeGateway = (
+      canContinuePendingCheckout
+        ? String(pendingIdentity?.gateway || gateway).toLowerCase()
+        : gateway
+    ) as typeof gateway;
+
+    if (
+      !canContinuePendingCheckout &&
+      (selectableGateways.length === 0 || !selectableGateways.includes(gateway))
+    ) {
       failPayment("درگاه پرداخت انتخاب شده در دسترس نیست");
       return;
     }
@@ -960,20 +1018,39 @@ function ShoppingCartBillForm({}: Props) {
         category: "checkout",
         action: "place_order_attempt",
         valueToman: totalToman,
-        properties: { gateway, quantity: totalItems },
+        properties: { gateway: resumeGateway, quantity: totalItems },
       });
 
       // Always re-checked: the shopper's previous attempt may itself be what
       // corrected the cart, and nothing is allowed to pay past this guard.
-      const stockValid = await CartService.checkCartStock();
+      const stockValid = await CartService.checkCartStock(
+        canContinuePendingCheckout ? pendingIdentity?.attemptId : readCheckoutAttemptId(),
+      );
 
-      if (!stockValid.valid) {
+      if (stockValid.errorCode === "RESERVATION_LOOKUP_FAILED") {
+        failPayment(checkoutErrorPresentation("RESERVATION_LOOKUP_FAILED")!.displayError);
+        return;
+      }
+
+      if (!stockValid.valid && !canContinuePendingCheckout) {
         const applied = await applyCheckoutStockCorrection(stockValid, { announce: true });
         if (applied) return;
         failPayment("موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.");
         return;
       }
 
+      let checkoutAttemptId: string | undefined;
+      let cartResponse;
+
+      if (canContinuePendingCheckout && pendingIdentity) {
+        checkoutAttemptId = pendingIdentity.attemptId;
+        cartResponse = await CartService.finalizeCart({
+          gateway: resumeGateway,
+          attemptId: pendingIdentity.attemptId,
+          quoteHash: pendingIdentity.quoteHash,
+          analyticsCorrelationId: getAnalyticsCorrelationId(),
+        } as never);
+      } else {
       const addressPayload =
         isMergeMode || selectedAddressId
           ? undefined
@@ -1010,9 +1087,7 @@ function ShoppingCartBillForm({}: Props) {
             reserveShipping: reserveShipping || undefined,
           };
 
-      let checkoutAttemptId: string | undefined;
-      let cartResponse;
-      const quote = await CartService.getCheckoutQuote(finalizeData as any);
+      const quote = await CartService.getCheckoutQuote(finalizeData as never);
 
       // The quote now succeeds even when SnappPay's eligibility check fails, so
       // one slow gateway no longer takes the whole checkout down. The shopper
@@ -1044,16 +1119,23 @@ function ShoppingCartBillForm({}: Props) {
         return;
       }
 
-      checkoutAttemptId = getOrCreateCheckoutAttemptId(quote.quoteHash);
+      const resolvedAttempt = resolveCheckoutAttemptId({
+        quoteHash: quote.quoteHash,
+        cartSignature,
+        cartIsEmpty: false,
+        gateway,
+      });
+      checkoutAttemptId = resolvedAttempt.attemptId;
       cartResponse = await CartService.finalizeCart({
         ...finalizeData,
-        gateway,
+        gateway: resolvedAttempt.gateway || gateway,
         attemptId: checkoutAttemptId,
-        quoteHash: quote.quoteHash,
+        quoteHash: resolvedAttempt.quoteHash,
         // Keep anonymous attribution ephemeral in the browser, but carry the
         // active opaque analytics identity into authoritative order creation.
         analyticsCorrelationId: getAnalyticsCorrelationId(),
-      } as any);
+      } as never);
+      }
 
       if (!cartResponse.success) {
         console.error("❌ Cart finalization failed:", cartResponse);
@@ -1085,20 +1167,21 @@ function ShoppingCartBillForm({}: Props) {
 
         if (errorCode) {
           trackCheckoutError(String(errorCode));
+          if (recoverInFlightPayment(String(errorCode), cartResponse, checkoutAttemptId)) {
+            return;
+          }
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
             if (mappedCheckoutError.clearAttempt) {
-              localStorage.removeItem("pendingCheckoutAttemptId");
-              localStorage.removeItem("pendingCheckoutQuoteHash");
+              clearCheckoutIdentity();
             }
           } else {
             switch (errorCode) {
             case "PAYMENT_INITIATION_FAILED":
             case "WALLET_DEBIT_FAILED":
               displayError = "شروع پرداخت کامل نشد. می‌توانید دوباره تلاش کنید.";
-              localStorage.removeItem("pendingCheckoutAttemptId");
-              localStorage.removeItem("pendingCheckoutQuoteHash");
+              clearCheckoutIdentity();
               break;
             case "CART_EMPTY":
               displayError = "سبد خرید شما خالی است";
@@ -1174,8 +1257,7 @@ function ShoppingCartBillForm({}: Props) {
             case "CHECKOUT_QUOTE_REQUIRED":
               // The stored attempt id belongs to an older basket. Dropping it lets
               // the next tap start a clean attempt instead of failing the same way.
-              localStorage.removeItem("pendingCheckoutAttemptId");
-              localStorage.removeItem("pendingCheckoutQuoteHash");
+              clearCheckoutIdentity();
               displayError = "سفارش شما تازه‌سازی شد. لطفاً یک بار دیگر ثبت سفارش را بزنید.";
               break;
             case "PAYMENT_GATEWAY_DISABLED":
@@ -1191,7 +1273,7 @@ function ShoppingCartBillForm({}: Props) {
             case "ORDER_CANCELLED": {
               const leftover = leftoverCheckoutCopy(String(errorCode));
               if (leftover) displayError = leftover;
-              clearStaleCheckoutAttempt();
+              clearCheckoutIdentity();
               break;
             }
             default:
@@ -1225,6 +1307,7 @@ function ShoppingCartBillForm({}: Props) {
 
       setOrderId(cartResponse.orderId);
       setOrderNumber(cartResponse.orderId.toString());
+      persistCheckoutOrder(cartResponse.orderId);
 
       if (cartResponse.redirectUrl && cartResponse.redirectUrl.trim() !== "") {
         trackAnalyticsEvent({
@@ -1270,8 +1353,7 @@ function ShoppingCartBillForm({}: Props) {
           // Wallet settles immediately; show the same authoritative result surface
           // used by provider callbacks so fulfillment details stay consistent.
           await clearCartSafely();
-          localStorage.removeItem("pendingCheckoutAttemptId");
-          localStorage.removeItem("pendingCheckoutQuoteHash");
+          clearCheckoutIdentity();
           setSubmitOrderStep(SubmitOrderStep.Success);
           router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
         }
@@ -1284,8 +1366,7 @@ function ShoppingCartBillForm({}: Props) {
         });
         await clearCartSafely();
         if (gateway !== "snappay") {
-          localStorage.removeItem("pendingCheckoutAttemptId");
-          localStorage.removeItem("pendingCheckoutQuoteHash");
+          clearCheckoutIdentity();
         }
         setSubmitOrderStep(SubmitOrderStep.Success);
         router.push(`/payment/result?orderId=${encodeURIComponent(cartResponse.orderId)}`);
@@ -1306,12 +1387,14 @@ function ShoppingCartBillForm({}: Props) {
 
         if (errorCode) {
           trackCheckoutError(String(errorCode));
+          if (recoverInFlightPayment(String(errorCode), responseData || err, readCheckoutAttemptId())) {
+            return;
+          }
           const mappedCheckoutError = checkoutErrorPresentation(String(errorCode));
           if (mappedCheckoutError) {
             displayError = mappedCheckoutError.displayError;
             if (mappedCheckoutError.clearAttempt) {
-              window.localStorage.removeItem("pendingCheckoutAttemptId");
-              window.localStorage.removeItem("pendingCheckoutQuoteHash");
+              clearCheckoutIdentity();
             }
           } else {
             switch (errorCode) {
@@ -1327,21 +1410,18 @@ function ShoppingCartBillForm({}: Props) {
                 nextTotal > 0
                   ? `مبلغ نهایی به ${nextTotal.toLocaleString("fa-IR")} تومان تغییر کرده است. لطفاً دوباره تلاش کنید.`
                   : "قیمت یا موجودی سبد خرید تغییر کرده است. لطفاً دوباره تلاش کنید.";
-              window.localStorage.removeItem("pendingCheckoutAttemptId");
-              window.localStorage.removeItem("pendingCheckoutQuoteHash");
+              clearCheckoutIdentity();
               break;
             }
             case "CHECKOUT_ATTEMPT_CONFLICT":
               displayError =
                 "این تلاش پرداخت دیگر معتبر نیست. لطفاً دوباره ثبت سفارش را انتخاب کنید.";
-              window.localStorage.removeItem("pendingCheckoutAttemptId");
-              window.localStorage.removeItem("pendingCheckoutQuoteHash");
+              clearCheckoutIdentity();
               break;
             case "PAYMENT_INITIATION_FAILED":
             case "WALLET_DEBIT_FAILED":
               displayError = "شروع پرداخت کامل نشد. می‌توانید دوباره تلاش کنید.";
-              window.localStorage.removeItem("pendingCheckoutAttemptId");
-              window.localStorage.removeItem("pendingCheckoutQuoteHash");
+              clearCheckoutIdentity();
               break;
             case "CART_EMPTY":
               displayError = "سبد خرید شما خالی است";
@@ -1395,7 +1475,7 @@ function ShoppingCartBillForm({}: Props) {
             case "ORDER_CANCELLED": {
               const leftover = leftoverCheckoutCopy(String(errorCode));
               if (leftover) displayError = leftover;
-              clearStaleCheckoutAttempt();
+              clearCheckoutIdentity();
               break;
             }
             default:
@@ -1475,6 +1555,24 @@ function ShoppingCartBillForm({}: Props) {
         steps={["Information", "Delivery", "Payment"]}
       /> */}
       <CartStockNotice />
+      {(() => {
+        const pending = readCheckoutIdentity();
+        const emptyCart = totalItems <= 0;
+        if (emptyCart && pending?.attemptId) {
+          return (
+            <div
+              role="status"
+              data-testid="checkout-continuation-notice"
+              className="rounded-panel border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900"
+            >
+              سفارش
+              {pending.orderId ? ` #${pending.orderId} ` : " "}
+              هنوز در انتظار پرداخت است. سبد خرید خالی است، اما می‌توانید پرداخت همان سفارش را ادامه دهید.
+            </div>
+          );
+        }
+        return null;
+      })()}
       {error && (
         <div
           id="checkout-form-error"
@@ -1486,7 +1584,10 @@ function ShoppingCartBillForm({}: Props) {
           {error !== EMPTY_CART_ERROR && (
             <button
               type="button"
-              onClick={() => setError(null)}
+              onClick={() => {
+                setError(null);
+                void handleSubmit(onSubmit)();
+              }}
               disabled={isSubmitting}
               data-testid="checkout-error-retry"
               className="shrink-0 self-start rounded-lg border border-red-300 bg-white px-4 py-1.5 text-sm text-red-600 hover:bg-red-100 disabled:opacity-50 sm:self-auto"
