@@ -1,5 +1,6 @@
 import {
   clearCheckoutIdentity,
+  hydrateCheckoutIdentityFromServer,
   persistCheckoutOrder,
   readCheckoutAttemptId,
   readCheckoutIdentity,
@@ -187,18 +188,43 @@ describe("checkout identity", () => {
       gateway: "snappay",
       orderId: "111459",
     };
+    const live = {
+      attemptId: "attempt-111459",
+      quoteHash: "sha256:original",
+      gateway: "snappay",
+      orderId: 111459,
+    };
     expect(
       shouldResumeStoredCheckout({
         stored,
         selectedGateway: "samankish",
         selectableGateways: ["samankish"],
         cartIsEmpty: true,
+        resumableCheckout: live,
       }),
     ).toBe(true);
     expect(
       shouldResumeStoredCheckout({
         stored,
         selectedGateway: "mellat",
+        selectableGateways: ["snappay", "mellat"],
+        cartIsEmpty: true,
+        resumableCheckout: live,
+      }),
+    ).toBe(false);
+    expect(
+      shouldResumeStoredCheckout({
+        stored,
+        selectedGateway: "snappay",
+        selectableGateways: ["snappay", "mellat"],
+        cartIsEmpty: true,
+        resumableCheckout: live,
+      }),
+    ).toBe(true);
+    expect(
+      shouldResumeStoredCheckout({
+        stored,
+        selectedGateway: "snappay",
         selectableGateways: ["snappay", "mellat"],
         cartIsEmpty: true,
       }),
@@ -209,7 +235,24 @@ describe("checkout identity", () => {
         selectedGateway: "snappay",
         selectableGateways: ["snappay", "mellat"],
         cartIsEmpty: true,
+        resumableCheckout: { ...live, quoteHash: "sha256:other" },
       }),
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("hydrates identity from a server-confirmed live hold", () => {
+    hydrateCheckoutIdentityFromServer({
+      attemptId: "attempt-live",
+      quoteHash: "sha256:original",
+      orderId: 111459,
+      gateway: "mellat",
+    });
+
+    expect(readCheckoutIdentity()).toEqual({
+      attemptId: "attempt-live",
+      quoteHash: "sha256:original",
+      orderId: "111459",
+      gateway: "mellat",
+    });
   });
 });

@@ -1216,6 +1216,12 @@ describe("ShoppingCartBillForm auth gate", () => {
       valid: true,
       reservationOutcome: "held",
       heldOrderId: 111459,
+      resumableCheckout: {
+        attemptId: "attempt-111459",
+        orderId: 111459,
+        quoteHash: "sha256:original",
+        gateway: "snappay",
+      },
     });
     (CartService.finalizeCart as jest.Mock).mockResolvedValue({
       success: true,
@@ -1236,10 +1242,67 @@ describe("ShoppingCartBillForm auth gate", () => {
     );
 
     await waitFor(() => {
+      expect(CartService.checkCartStock).toHaveBeenCalled();
       expect(screen.queryByTestId("checkout-form-error")).not.toBeInTheDocument();
       expect(screen.getByTestId("checkout-submit")).toBeVisible();
     });
     expect(screen.queryByText(/هنوز در انتظار پرداخت است/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gateway: "snappay",
+          attemptId: "attempt-111459",
+          quoteHash: "sha256:original",
+        }),
+      );
+    });
+    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+  });
+
+  it("hydrates checkout identity from resumableCheckout when localStorage is empty", async () => {
+    mockCartState = {
+      totalPrice: 0,
+      totalItems: 0,
+      cartItems: [],
+    };
+    (CartService.checkCartStock as jest.Mock).mockResolvedValue({
+      valid: true,
+      reservationOutcome: "held",
+      heldOrderId: 111459,
+      resumableCheckout: {
+        attemptId: "attempt-111459",
+        orderId: 111459,
+        quoteHash: "sha256:original",
+        gateway: "snappay",
+      },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: true,
+      orderId: 111459,
+      attemptId: "attempt-111459",
+      redirectUrl: "https://pay.snapp.test/start",
+      paymentStatus: "Redirected",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("attempt-111459");
+      expect(window.localStorage.getItem("pendingCheckoutQuoteHash")).toBe("sha256:original");
+      expect(screen.queryByTestId("checkout-form-error")).not.toBeInTheDocument();
+    });
 
     fireEvent.click(screen.getByTestId("checkout-accept-terms"));
     fireEvent.click(screen.getByTestId("checkout-submit"));
@@ -1282,11 +1345,11 @@ describe("ShoppingCartBillForm auth gate", () => {
     );
 
     await waitFor(() => {
+      expect(screen.queryByText(/مهلت رزرو موجودی این سفارش تمام شده است/)).not.toBeInTheDocument();
       expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
-        "مهلت رزرو موجودی این سفارش تمام شده است",
+        "سبد خرید شما خالی است",
       );
     });
-    expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("وضعیت سفارش را بررسی کنید");
     expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBeNull();
     expect(CartService.finalizeCart).not.toHaveBeenCalled();
 

@@ -28,10 +28,13 @@ type SentryFrameLike = {
   module?: string | null;
 };
 
+/** Matches Sentry tag values (`Primitive`) so `beforeSend` ErrorEvents type-check. */
+type SentryTagValue = string | number | boolean | bigint | symbol | null | undefined;
+
 type SentryEventLike = {
   message?: string;
   fingerprint?: Array<string | number>;
-  tags?: Record<string, string>;
+  tags?: Record<string, SentryTagValue>;
   exception?: {
     values?: Array<{
       type?: string;
@@ -41,11 +44,7 @@ type SentryEventLike = {
       };
     }>;
   };
-  contexts?: {
-    react?: {
-      componentStack?: string;
-    };
-  };
+  contexts?: unknown;
 };
 
 function eventMessage(event: SentryEventLike): string {
@@ -91,7 +90,11 @@ function hasUsefulStack(event: SentryEventLike): boolean {
   ) {
     return true;
   }
-  const componentStack = event.contexts?.react?.componentStack;
+  const contexts =
+    event.contexts && typeof event.contexts === "object"
+      ? (event.contexts as { react?: { componentStack?: unknown } })
+      : undefined;
+  const componentStack = contexts?.react?.componentStack;
   return typeof componentStack === "string" && componentStack.trim().length > 0;
 }
 
@@ -130,7 +133,7 @@ export function tagStorefrontSentryEvent<T extends SentryEventLike>(event: T): T
   const message = eventMessage(event);
   const frames = allFrames(event);
   const paths = frames.map(frameBlob).join("\n");
-  const tags: Record<string, string> = { ...(event.tags ?? {}) };
+  const tags: Record<string, SentryTagValue> = { ...(event.tags ?? {}) };
 
   if (
     paths.includes("navigation_performance_logger_android") ||
@@ -172,7 +175,7 @@ export function dropNoisyStorefrontSentryEvent<T extends SentryEventLike>(event:
   const message = eventMessage(event);
   const inject = event.tags?.inject;
   if (isReplayHydrationSentryEvent(event)) return null;
-  if (isInjectedTagNameRead(event, inject)) return null;
+  if (isInjectedTagNameRead(event, typeof inject === "string" ? inject : undefined)) return null;
   if (message.includes(WASM_BINDGEN_ALIASING_MESSAGE)) return null;
   if (event.tags?.transport_cut === "rsc") return null;
   return event;

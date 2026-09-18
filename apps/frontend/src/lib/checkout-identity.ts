@@ -16,6 +16,14 @@ export type CheckoutIdentity = {
   cartSignature?: string;
 };
 
+/** Server-confirmed live Paying reservation that may be replayed. */
+export type ResumableCheckoutIdentity = {
+  attemptId: string;
+  quoteHash: string;
+  orderId?: number | string;
+  gateway?: string;
+};
+
 const readKey = (key: string): string => {
   if (typeof window === "undefined") return "";
   try {
@@ -114,6 +122,41 @@ export function persistCheckoutOrder(orderId: number | string | undefined): void
   writeCheckoutIdentity({ ...existing, orderId: id });
 }
 
+/**
+ * Restore the live Paying checkout from the server when the browser has lost
+ * (or never had) matching localStorage keys. A different stored unpaid order
+ * is stashed as continuable instead of being dropped.
+ */
+export function hydrateCheckoutIdentityFromServer(
+  resumable: ResumableCheckoutIdentity | null | undefined,
+): CheckoutIdentity | null {
+  const attemptId = String(resumable?.attemptId || "").trim();
+  const quoteHash = String(resumable?.quoteHash || "").trim();
+  if (!attemptId || !quoteHash) return null;
+
+  const next: CheckoutIdentity = {
+    attemptId,
+    quoteHash,
+    orderId: String(resumable?.orderId || "").trim() || undefined,
+    gateway: String(resumable?.gateway || "").trim() || undefined,
+  };
+  const existing = readCheckoutIdentity();
+  if (existing?.attemptId === next.attemptId && existing.quoteHash === next.quoteHash) {
+    const merged: CheckoutIdentity = {
+      ...existing,
+      orderId: existing.orderId || next.orderId,
+      gateway: existing.gateway || next.gateway,
+    };
+    writeCheckoutIdentity(merged);
+    return merged;
+  }
+  if (existing?.orderId && existing.attemptId && existing.attemptId !== next.attemptId) {
+    writeContinuableIdentity(existing);
+  }
+  writeCheckoutIdentity(next);
+  return next;
+}
+
 export function readCheckoutAttemptId(): string | undefined {
   return readCheckoutIdentity()?.attemptId || readKey(CHECKOUT_ATTEMPT_STORAGE_KEY) || undefined;
 }
@@ -129,17 +172,29 @@ export function checkoutGatewaysMatch(stored?: string, selected?: string): boole
   return a === b;
 }
 
+/**
+ * Resume the original payment only when the server still holds a live Paying
+ * reservation whose quote matches the stored identity. An empty cart alone is
+ * not enough — that used to replay leftover localStorage after the hold died.
+ */
 export function shouldResumeStoredCheckout(input: {
   stored: CheckoutIdentity | null | undefined;
   selectedGateway?: string;
   selectableGateways?: string[];
   cartIsEmpty: boolean;
   continuation?: boolean;
+  resumableCheckout?: ResumableCheckoutIdentity | null;
 }): boolean {
   const stored = input.stored;
   if (!stored?.attemptId || !stored.quoteHash) return false;
   if (input.continuation) return true;
   if (!input.cartIsEmpty) return false;
+
+  const live = input.resumableCheckout;
+  if (!live?.attemptId || !live.quoteHash) return false;
+  if (stored.attemptId !== live.attemptId) return false;
+  if (stored.quoteHash !== live.quoteHash) return false;
+
   if (checkoutGatewaysMatch(stored.gateway, input.selectedGateway)) return true;
   const storedGateway = String(stored.gateway || "").trim().toLowerCase();
   const selectedGateway = String(input.selectedGateway || "").trim().toLowerCase();

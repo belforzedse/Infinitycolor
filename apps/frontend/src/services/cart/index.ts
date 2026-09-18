@@ -9,6 +9,7 @@ import type {
   CheckoutGatewayCode,
   FinalizeCartRequest,
   FinalizeCartResponse,
+  ResumableCheckout,
 } from "./types/cart";
 
 // Types for API responses
@@ -62,7 +63,7 @@ export interface ProductCategory {
 }
 
 // Re-export the interface that's already defined in types/cart
-export type { CartItemResponse, CartResponse, CartStockCheckResponse };
+export type { CartItemResponse, CartResponse, CartStockCheckResponse, ResumableCheckout };
 export type { CheckoutGatewayCode };
 
 export interface AddItemRequest {

@@ -26,6 +26,7 @@ import type {
   CartStockCheckResponse,
   CheckoutGatewayCode,
   ReserveDeliveryAddress,
+  ResumableCheckout,
 } from "@/services/cart/types/cart";
 import toast from "react-hot-toast";
 import WalletService from "@/services/wallet";
@@ -47,6 +48,7 @@ import {
   readContinuableCheckoutIdentity,
   resolveCheckoutAttemptId,
   shouldResumeStoredCheckout,
+  hydrateCheckoutIdentityFromServer,
   writeCheckoutIdentity,
   type CheckoutIdentity,
 } from "@/lib/checkout-identity";
@@ -408,11 +410,10 @@ function ShoppingCartBillForm({}: Props) {
   refreshCartRef.current = refreshCart;
   const setStockNoticeRef = React.useRef(setStockNotice);
   setStockNoticeRef.current = setStockNotice;
-  // null: a stored attempt exists and check-stock has not confirmed the hold yet.
+  // null: check-stock has not confirmed whether this customer still holds stock.
   // Empty-cart continuation is only valid while this is true.
-  const [liveCheckoutHold, setLiveCheckoutHold] = useState<boolean | null>(() =>
-    typeof window !== "undefined" && Boolean(readCheckoutIdentity()?.attemptId) ? null : false,
-  );
+  const [liveCheckoutHold, setLiveCheckoutHold] = useState<boolean | null>(null);
+  const resumableCheckoutRef = React.useRef<ResumableCheckout | null>(null);
   // `snappEligible` is tri-state, and this must read `undefined` the same way
   // PaymentGateway's `showSnappay` does (`!== false`). It used to reject it as
   // falsy while the card was still rendered and selected, so a submit during any
@@ -927,15 +928,23 @@ function ShoppingCartBillForm({}: Props) {
       if (stockResult.errorCode === "RESERVATION_LOOKUP_FAILED") {
         return;
       }
-      if (isLiveCheckoutHold(stockResult.reservationOutcome)) {
+      const resumable = stockResult.resumableCheckout ?? null;
+      resumableCheckoutRef.current = resumable;
+      if (resumable?.attemptId && resumable.quoteHash) {
+        if (isDeadCheckoutHold(stockResult.reservationOutcome)) {
+          const namedId = readCheckoutAttemptId();
+          if (namedId && namedId !== resumable.attemptId) {
+            abandonDeadCheckoutHold(namedId);
+          }
+        }
+        hydrateCheckoutIdentityFromServer(resumable);
+        setLiveCheckoutHold(true);
+      } else if (isLiveCheckoutHold(stockResult.reservationOutcome)) {
         setLiveCheckoutHold(true);
       } else if (isDeadCheckoutHold(stockResult.reservationOutcome)) {
         const attemptId = readCheckoutAttemptId();
         abandonDeadCheckoutHold(attemptId);
         setLiveCheckoutHold(false);
-        if (totalItemsRef.current <= 0) {
-          setError(RESERVATION_EXPIRED_COPY);
-        }
       } else {
         setLiveCheckoutHold(false);
       }
@@ -978,6 +987,7 @@ function ShoppingCartBillForm({}: Props) {
         selectedGateway: gateway,
         selectableGateways,
         cartIsEmpty,
+        resumableCheckout: resumableCheckoutRef.current,
       })
         ? pendingIdentity
         : shouldResumeStoredCheckout({
@@ -985,6 +995,7 @@ function ShoppingCartBillForm({}: Props) {
             selectedGateway: gateway,
             selectableGateways,
             cartIsEmpty,
+            resumableCheckout: resumableCheckoutRef.current,
           })
           ? continuableIdentity
           : null);

@@ -1,5 +1,8 @@
 import { checkCartStockOp } from "../checkCartStock";
-import { resolveEligibleCheckoutHold } from "../../lib/checkout-hold";
+import {
+  findLiveCheckoutHoldForUser,
+  resolveEligibleCheckoutHold,
+} from "../../lib/checkout-hold";
 
 jest.mock("../../lib/stock", () => {
   const actual = jest.requireActual("../../lib/stock");
@@ -13,11 +16,15 @@ jest.mock("../../lib/checkout-hold", () => {
   return {
     ...actual,
     resolveEligibleCheckoutHold: jest.fn().mockResolvedValue({ status: "missing" }),
+    findLiveCheckoutHoldForUser: jest.fn().mockResolvedValue({ status: "none" }),
   };
 });
 
 const mockedResolveHold = resolveEligibleCheckoutHold as jest.MockedFunction<
   typeof resolveEligibleCheckoutHold
+>;
+const mockedFindLiveHold = findLiveCheckoutHoldForUser as jest.MockedFunction<
+  typeof findLiveCheckoutHoldForUser
 >;
 
 function createStrapi(cart: any, updatedCart?: any) {
@@ -43,6 +50,8 @@ describe("checkCartStockOp", () => {
   beforeEach(() => {
     mockedResolveHold.mockReset();
     mockedResolveHold.mockResolvedValue({ status: "missing" });
+    mockedFindLiveHold.mockReset();
+    mockedFindLiveHold.mockResolvedValue({ status: "none" });
   });
   it("keeps a starting empty cart valid", async () => {
     const empty = { cart_items: [] };
@@ -226,6 +235,9 @@ describe("checkCartStockOp", () => {
       hold: {
         attemptId: "attempt-1",
         orderId: 91,
+        quoteHash: "sha256:original",
+        gateway: "mellat",
+        reservedUntil: new Date("2026-09-18T12:00:00.000Z"),
         quantitiesByStockId: new Map([[700, 1]]),
       },
     });
@@ -233,11 +245,19 @@ describe("checkCartStockOp", () => {
 
     const result = await checkCartStockOp(strapi, 1, { attemptId: "attempt-1" });
 
+    expect(mockedFindLiveHold).not.toHaveBeenCalled();
     expect(removeCartItem).not.toHaveBeenCalled();
     expect(updateCartItem).not.toHaveBeenCalled();
     expect(result.valid).toBe(true);
     expect(result.reservationOutcome).toBe("held");
     expect(result.heldOrderId).toBe(91);
+    expect(result.resumableCheckout).toEqual({
+      attemptId: "attempt-1",
+      orderId: 91,
+      quoteHash: "sha256:original",
+      gateway: "mellat",
+      reservedUntil: "2026-09-18T12:00:00.000Z",
+    });
   });
 
   it("does not reduce an original quantity of 2 when that order still holds 2 of 3", async () => {
@@ -271,6 +291,85 @@ describe("checkCartStockOp", () => {
     expect(result.valid).toBe(true);
   });
 
+  it("credits the user's live hold when no attempt id is supplied", async () => {
+    const cart = {
+      cart_items: [
+        {
+          id: 10,
+          Count: 1,
+          product_variation: {
+            id: 100,
+            IsPublished: true,
+            product: { id: 1, Title: "رنگ قرمز", Status: "Active" },
+            product_stock: { id: 700, Count: 1, reservedCount: 1 },
+          },
+        },
+      ],
+    };
+    mockedFindLiveHold.mockResolvedValue({
+      status: "held",
+      hold: {
+        attemptId: "attempt-live",
+        orderId: 91,
+        quoteHash: "sha256:original",
+        gateway: "mellat",
+        reservedUntil: new Date("2026-09-18T12:00:00.000Z"),
+        quantitiesByStockId: new Map([[700, 1]]),
+      },
+    });
+    const { strapi, removeCartItem, updateCartItem } = createStrapi(cart);
+
+    const result = await checkCartStockOp(strapi, 1);
+
+    expect(removeCartItem).not.toHaveBeenCalled();
+    expect(updateCartItem).not.toHaveBeenCalled();
+    expect(result.valid).toBe(true);
+    expect(result.reservationOutcome).toBe("held");
+    expect(result.heldOrderId).toBe(91);
+    expect(result.resumableCheckout).toEqual({
+      attemptId: "attempt-live",
+      orderId: 91,
+      quoteHash: "sha256:original",
+      gateway: "mellat",
+      reservedUntil: "2026-09-18T12:00:00.000Z",
+    });
+  });
+
+  it("credits the live hold when the named attempt is missing", async () => {
+    const cart = {
+      cart_items: [
+        {
+          id: 10,
+          Count: 1,
+          product_variation: {
+            id: 100,
+            IsPublished: true,
+            product: { id: 1, Title: "رنگ قرمز", Status: "Active" },
+            product_stock: { id: 700, Count: 1, reservedCount: 1 },
+          },
+        },
+      ],
+    };
+    mockedResolveHold.mockResolvedValue({ status: "missing" });
+    mockedFindLiveHold.mockResolvedValue({
+      status: "held",
+      hold: {
+        attemptId: "attempt-live",
+        orderId: 91,
+        quoteHash: "sha256:original",
+        quantitiesByStockId: new Map([[700, 1]]),
+      },
+    });
+    const { strapi, removeCartItem } = createStrapi(cart);
+
+    const result = await checkCartStockOp(strapi, 1, { attemptId: "other-attempt" });
+
+    expect(removeCartItem).not.toHaveBeenCalled();
+    expect(result.valid).toBe(true);
+    expect(result.reservationOutcome).toBe("held");
+    expect(result.resumableCheckout?.attemptId).toBe("attempt-live");
+  });
+
   it("does not credit another checkout's reservation even for the same customer", async () => {
     const cart = {
       cart_items: [
@@ -287,6 +386,7 @@ describe("checkCartStockOp", () => {
       ],
     };
     mockedResolveHold.mockResolvedValue({ status: "missing" });
+    mockedFindLiveHold.mockResolvedValue({ status: "none" });
     const { strapi, removeCartItem } = createStrapi(cart, { cart_items: [] });
 
     const result = await checkCartStockOp(strapi, 1, { attemptId: "other-attempt" });
@@ -318,6 +418,37 @@ describe("checkCartStockOp", () => {
     expect(removeCartItem).toHaveBeenCalledWith(10, 1);
     expect(result.valid).toBe(false);
     expect(result.reservationOutcome).toBe("expired");
+    expect(result.resumableCheckout).toBeNull();
+  });
+
+  it("does not treat a live-hold lookup error as missing stock", async () => {
+    const cart = {
+      cart_items: [
+        {
+          id: 10,
+          Count: 1,
+          product_variation: {
+            id: 100,
+            IsPublished: true,
+            product: { id: 1, Title: "رنگ قرمز", Status: "Active" },
+            product_stock: { id: 61157, Count: 1, reservedCount: 1 },
+          },
+        },
+      ],
+    };
+    mockedFindLiveHold.mockResolvedValue({ status: "unavailable" });
+    const { strapi, removeCartItem, updateCartItem } = createStrapi(cart);
+
+    const result = await checkCartStockOp(strapi, 1);
+
+    expect(removeCartItem).not.toHaveBeenCalled();
+    expect(updateCartItem).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: false,
+      valid: false,
+      errorCode: "RESERVATION_LOOKUP_FAILED",
+      reservationOutcome: "unavailable",
+    });
   });
 
   it("does not treat a reservation lookup error as missing stock on an identified checkout", async () => {

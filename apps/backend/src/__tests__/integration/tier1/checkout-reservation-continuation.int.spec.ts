@@ -1,9 +1,9 @@
 /**
  * Last-unit reservation continuation through the real stock-check / finalize path.
  *
- * Reproduces 111459: after checkout reserves the only unit, a later checkCartStock
- * that uses global free stock (count - reserved_count = 0) must not destroy the
- * identified checkout. A second product for the same customer is not a retry.
+ * After checkout reserves the only unit, checkCartStock must credit the shopper's
+ * own live hold even without a client attempt id, so returning from the gateway
+ * cannot wipe the cart. A second product for the same customer is not a retry.
  */
 import { createCheckoutQuote } from "../../../api/cart/services/lib/checkout-quote";
 import { checkCartStockOp } from "../../../api/cart/services/ops/checkCartStock";
@@ -117,15 +117,11 @@ describe("checkout reservation continuation", () => {
     expect(stockReserved(afterReserve)).toBe(1);
 
     const unscoped = await checkCartStockOp(strapi, seeded.user.id);
-    expect(unscoped.valid).toBe(false);
-    expect(unscoped.cartIsEmpty).toBe(true);
-
-    await f.createCartItem({
-      cartId: seeded.cart.id,
-      variationId: seeded.variation.id,
-      count: 1,
-      price: seeded.price,
-    });
+    expect(unscoped.valid).toBe(true);
+    expect(unscoped.reservationOutcome).toBe("held");
+    expect(unscoped.resumableCheckout?.attemptId).toBe(attemptId);
+    expect(unscoped.resumableCheckout?.quoteHash).toBe(first.quote.quoteHash);
+    expect(unscoped.cart?.cart_items?.length).toBe(1);
 
     const scoped = await checkCartStockOp(strapi, seeded.user.id, { attemptId });
     expect(scoped.valid).toBe(true);
@@ -169,13 +165,9 @@ describe("checkout reservation continuation", () => {
     expect(first.result.success).toBe(true);
 
     const unscoped = await checkCartStockOp(strapi, seeded.user.id);
-    expect(unscoped.valid).toBe(false);
-    expect(Number(unscoped.cart?.cart_items?.[0]?.Count)).toBe(1);
-
-    await strapi.db.query("api::cart-item.cart-item").update({
-      where: { id: seeded.cartItem.id },
-      data: { Count: 2, Sum: seeded.price * 2 },
-    });
+    expect(unscoped.valid).toBe(true);
+    expect(Number(unscoped.cart?.cart_items?.[0]?.Count)).toBe(2);
+    expect(unscoped.resumableCheckout?.attemptId).toBe(attemptId);
 
     const scoped = await checkCartStockOp(strapi, seeded.user.id, { attemptId });
     expect(scoped.valid).toBe(true);
@@ -279,6 +271,11 @@ describe("checkout reservation continuation", () => {
 
     const scoped = await checkCartStockOp(strapi, seeded.user.id, { attemptId });
     expect(scoped.reservationOutcome).toBe("expired");
+    expect(scoped.resumableCheckout == null).toBe(true);
+
+    const unscoped = await checkCartStockOp(strapi, seeded.user.id);
+    expect(unscoped.reservationOutcome).not.toBe("held");
+    expect(unscoped.resumableCheckout == null).toBe(true);
 
     const resumed = await strapi.service("api::cart.cart").finalizeCartToOrder(seeded.user.id, {
       gateway: "mellat",
@@ -291,6 +288,28 @@ describe("checkout reservation continuation", () => {
     const stock = await f.getStock(seeded.variation.stockId);
     expect(stockCount(stock)).toBe(1);
     expect(stockReserved(stock)).toBe(0);
+  });
+
+  it("G. lost client identity still credits the live hold and can replay finalize", async () => {
+    const seeded = await seedCart({ stockCount: 1, quantity: 1 });
+    const attemptId = `attempt-lost-${seeded.user.id}`;
+    const first = await placeOrder(seeded.user.id, attemptId);
+    expect(first.result.success).toBe(true);
+
+    const recovered = await checkCartStockOp(strapi, seeded.user.id);
+    expect(recovered.valid).toBe(true);
+    expect(recovered.cart?.cart_items?.length).toBe(1);
+    expect(recovered.resumableCheckout?.attemptId).toBe(attemptId);
+    expect(recovered.resumableCheckout?.quoteHash).toBe(first.quote.quoteHash);
+
+    const resumed = await strapi.service("api::cart.cart").finalizeCartToOrder(seeded.user.id, {
+      gateway: "mellat",
+      attemptId: recovered.resumableCheckout!.attemptId,
+      quoteHash: recovered.resumableCheckout!.quoteHash,
+    });
+    expect(resumed.success).toBe(true);
+    expect(resumed.replayed).toBe(true);
+    expect(resumed.order.id).toBe(first.result.order.id);
   });
 
   it("F. a new attempt with free stock creates a second order on another gateway", async () => {

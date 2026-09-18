@@ -1,6 +1,7 @@
 import type { Strapi } from "@strapi/strapi";
 import { getAvailableStockCount } from "../lib/stock";
 import {
+  findLiveCheckoutHoldForUser,
   resolveEligibleCheckoutHold,
   type CheckoutHold,
   type CheckoutHoldResolution,
@@ -41,11 +42,61 @@ const reservationOutcomeOf = (
   return resolution.status;
 };
 
+export type ResumableCheckout = {
+  attemptId: string;
+  orderId: number;
+  quoteHash: string;
+  gateway?: string;
+  reservedUntil?: string;
+};
+
+const toResumableCheckout = (hold: CheckoutHold | null): ResumableCheckout | null => {
+  const attemptId = String(hold?.attemptId || "").trim();
+  const quoteHash = String(hold?.quoteHash || "").trim();
+  const orderId = hold?.orderId ?? 0;
+  if (!attemptId || !quoteHash || !Number.isInteger(orderId) || orderId <= 0) {
+    return null;
+  }
+  const reservedUntil = hold?.reservedUntil;
+  return {
+    attemptId,
+    orderId,
+    quoteHash,
+    ...(hold?.gateway ? { gateway: hold.gateway } : {}),
+    ...(reservedUntil && !Number.isNaN(reservedUntil.getTime())
+      ? { reservedUntil: reservedUntil.toISOString() }
+      : {}),
+  };
+};
+
+export type CheckCartStockResult = {
+  success: boolean;
+  valid: boolean;
+  message?: string;
+  errorCode?: string;
+  reservationOutcome?: "held" | "expired" | "released" | "ineligible" | "unavailable";
+  cart?: unknown;
+  cartIsEmpty?: boolean;
+  itemsRemoved?: unknown[];
+  itemsAdjusted?: unknown[];
+  heldOrderId?: number;
+  resumableCheckout?: ResumableCheckout | null;
+};
+
+const lookupFailedResult = (cart: unknown): CheckCartStockResult => ({
+  success: false,
+  valid: false,
+  errorCode: RESERVATION_LOOKUP_FAILED_RESULT.errorCode,
+  message: RESERVATION_LOOKUP_FAILED_RESULT.message,
+  reservationOutcome: "unavailable",
+  cart,
+});
+
 export const checkCartStockOp = async (
   strapi: Strapi,
   userId: number,
   options?: CheckCartStockOptions,
-) => {
+): Promise<CheckCartStockResult> => {
   // Same owner requirement as remove/update: without it those ops no-op and the
   // storefront stock-reconcile loop would keep reporting invalid forever.
   if (!Number.isInteger(userId) || userId <= 0) {
@@ -65,18 +116,27 @@ export const checkCartStockOp = async (
   const cartService = strapi.service("api::cart.cart");
   if (holdResolution.status === "unavailable") {
     const cart = await cartService.getUserCart(userId);
-    return {
-      success: false,
-      valid: false,
-      errorCode: RESERVATION_LOOKUP_FAILED_RESULT.errorCode,
-      message: RESERVATION_LOOKUP_FAILED_RESULT.message,
-      reservationOutcome: "unavailable",
-      cart,
-    };
+    return lookupFailedResult(cart);
   }
 
-  const hold = holdResolution.status === "held" ? holdResolution.hold : null;
-  const reservationOutcome = reservationOutcomeOf(holdResolution);
+  let hold: CheckoutHold | null = holdResolution.status === "held" ? holdResolution.hold : null;
+  if (!hold) {
+    const liveHold = await findLiveCheckoutHoldForUser(strapi, userId);
+    if (liveHold.status === "unavailable") {
+      // A thrown user-scoped lookup is not "no reservation". Stripping lines
+      // here would delete the shopper's own hold when localStorage has no id.
+      if (holdResolution.status === "missing") {
+        const cart = await cartService.getUserCart(userId);
+        return lookupFailedResult(cart);
+      }
+    } else if (liveHold.status === "held") {
+      hold = liveHold.hold;
+    }
+  }
+
+  const namedOutcome = reservationOutcomeOf(holdResolution);
+  const reservationOutcome = namedOutcome ?? (hold ? "held" : undefined);
+  const resumableCheckout = toResumableCheckout(hold);
   const cart = await cartService.getUserCart(userId);
   if (!cart.cart_items || cart.cart_items.length === 0) {
     return {
@@ -86,6 +146,7 @@ export const checkCartStockOp = async (
       cart,
       reservationOutcome,
       heldOrderId: hold?.orderId,
+      resumableCheckout,
     };
   }
 
@@ -197,5 +258,6 @@ export const checkCartStockOp = async (
     cart: updatedCart,
     reservationOutcome,
     heldOrderId: hold?.orderId,
+    resumableCheckout,
   };
 };

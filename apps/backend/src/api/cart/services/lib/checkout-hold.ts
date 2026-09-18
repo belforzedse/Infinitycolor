@@ -1,5 +1,8 @@
 import type { Strapi } from "@strapi/strapi";
-import { findPaymentAttempt } from "../../../payment-attempt/services/payment-attempt";
+import {
+  findOrderPaymentAttempt,
+  findPaymentAttempt,
+} from "../../../payment-attempt/services/payment-attempt";
 import { runRawSql } from "../../../../utils/transactionExecutor";
 import { snappayProviderPaymentIsUnresolved } from "../../../payment-gateway/services/snappay-generation";
 
@@ -7,7 +10,15 @@ export type CheckoutHold = {
   attemptId: string;
   orderId: number;
   quantitiesByStockId: Map<number, number>;
+  quoteHash?: string;
+  gateway?: string;
+  reservedUntil?: Date;
 };
+
+export type LiveCheckoutHoldDiscovery =
+  | { status: "none" }
+  | { status: "unavailable" }
+  | { status: "held"; hold: CheckoutHold };
 
 export type CheckoutHoldResolution =
   | { status: "missing" }
@@ -84,11 +95,104 @@ const quantitiesFromOrderItems = (
   return quantitiesByStockId;
 };
 
+const reservedUntilFromOrder = (order: { ReservedUntil?: unknown; reservedUntil?: unknown }): Date | undefined => {
+  const raw = order.ReservedUntil ?? order.reservedUntil;
+  if (!raw) return undefined;
+  const parsed = raw instanceof Date ? raw : new Date(String(raw));
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+};
+
+const holdMetadataFromAttempt = (
+  attempt: { attemptId?: unknown; quoteHash?: unknown; Gateway?: unknown } | null | undefined,
+  order: { ReservedUntil?: unknown; reservedUntil?: unknown },
+): Pick<CheckoutHold, "attemptId" | "quoteHash" | "gateway" | "reservedUntil"> => {
+  const gateway = String(attempt?.Gateway || "").trim().toLowerCase();
+  return {
+    attemptId: String(attempt?.attemptId || "").trim(),
+    quoteHash: String(attempt?.quoteHash || "").trim() || undefined,
+    gateway: gateway || undefined,
+    reservedUntil: reservedUntilFromOrder(order),
+  };
+};
+
+const ORDER_HOLD_POPULATE = {
+  user: true,
+  order_items: {
+    populate: {
+      product_variation: { populate: { product_stock: true } },
+    },
+  },
+} as const;
+
+/**
+ * Discover this customer's newest live Paying reservation, independent of a
+ * client-supplied attempt id. Used to credit stock so a lost localStorage key
+ * cannot make the shopper's own hold look like zero free stock.
+ *
+ * Resume gating still uses {@link resolveEligibleCheckoutHold} for the named
+ * attempt — this lookup never resurrects an expired or released order.
+ */
+export async function findLiveCheckoutHoldForUser(
+  strapi: Strapi,
+  userId: number,
+): Promise<LiveCheckoutHoldDiscovery> {
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return { status: "none" };
+  }
+
+  try {
+    const orders = await strapi.db.query("api::order.order").findMany({
+      where: {
+        user: { id: userId },
+        Status: "Paying",
+        ReservationStatus: "Reserved",
+        ReservedUntil: { $gte: new Date() },
+      },
+      orderBy: { id: "desc" },
+      limit: 1,
+      populate: ORDER_HOLD_POPULATE,
+    });
+    const order = Array.isArray(orders) ? orders[0] : null;
+    const orderId = asPositiveInt(order?.id);
+    if (!order || !orderId) {
+      return { status: "none" };
+    }
+
+    if (userIdFromOrder(order) !== userId) {
+      return { status: "none" };
+    }
+
+    const currentlyHeld = await reservationIsCurrentlyHeld(strapi, orderId);
+    if (!currentlyHeld) {
+      return { status: "none" };
+    }
+
+    const quantitiesByStockId = quantitiesFromOrderItems(order);
+    if (quantitiesByStockId.size === 0) {
+      return { status: "none" };
+    }
+
+    const attempt = await findOrderPaymentAttempt(strapi, orderId);
+    const metadata = holdMetadataFromAttempt(attempt, order);
+    return {
+      status: "held",
+      hold: {
+        ...metadata,
+        orderId,
+        quantitiesByStockId,
+      },
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
+}
+
 /**
  * Resolve a live stock hold for the exact checkout being resumed.
  *
  * Ownership is the authenticated user + attempt id (never a client-supplied
- * order id alone). Another of this customer's reservations is not credited.
+ * order id alone). Stock crediting for a lost attempt id is handled separately
+ * by {@link findLiveCheckoutHoldForUser}.
  */
 export async function resolveEligibleCheckoutHold(
   strapi: Strapi,
@@ -148,9 +252,11 @@ export async function resolveEligibleCheckoutHold(
       return { status: "ineligible" };
     }
 
+    const metadata = holdMetadataFromAttempt(attempt, order);
     return {
       status: "held",
       hold: {
+        ...metadata,
         attemptId: normalizedAttemptId,
         orderId,
         quantitiesByStockId,

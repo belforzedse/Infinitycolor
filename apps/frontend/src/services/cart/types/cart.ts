@@ -114,6 +114,20 @@ export interface CartStockCheckResponse {
   /** Present when check-stock was asked to consider a specific checkout hold. */
   reservationOutcome?: "held" | "expired" | "released" | "ineligible" | "unavailable";
   heldOrderId?: number;
+  /**
+   * The authenticated user's live Paying reservation, when one exists.
+   * Independent of a client-supplied attempt id so resume survives lost localStorage.
+   */
+  resumableCheckout?: ResumableCheckout | null;
+}
+
+/** Live unpaid checkout the server will replay on the same quote. */
+export interface ResumableCheckout {
+  attemptId: string;
+  orderId: number;
+  quoteHash: string;
+  gateway?: string;
+  reservedUntil?: string;
 }
 
 export interface AddItemRequest {
