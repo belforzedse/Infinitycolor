@@ -122,6 +122,37 @@ const newAttemptId = () =>
   globalThis.crypto?.randomUUID?.() ||
   `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+export function checkoutGatewaysMatch(stored?: string, selected?: string): boolean {
+  const a = String(stored || "").trim().toLowerCase();
+  const b = String(selected || "").trim().toLowerCase();
+  if (!a || !b) return true;
+  return a === b;
+}
+
+export function shouldResumeStoredCheckout(input: {
+  stored: CheckoutIdentity | null | undefined;
+  selectedGateway?: string;
+  selectableGateways?: string[];
+  cartIsEmpty: boolean;
+  continuation?: boolean;
+}): boolean {
+  const stored = input.stored;
+  if (!stored?.attemptId || !stored.quoteHash) return false;
+  if (input.continuation) return true;
+  if (!input.cartIsEmpty) return false;
+  if (checkoutGatewaysMatch(stored.gateway, input.selectedGateway)) return true;
+  const storedGateway = String(stored.gateway || "").trim().toLowerCase();
+  const selectedGateway = String(input.selectedGateway || "").trim().toLowerCase();
+  const selectable = (input.selectableGateways || []).map((code) =>
+    String(code || "").trim().toLowerCase(),
+  );
+  const canPickStored = Boolean(storedGateway && selectable.includes(storedGateway));
+  const canPickSelected = Boolean(selectedGateway && selectable.includes(selectedGateway));
+  // Both methods are on the radio: this is a deliberate gateway change.
+  if (canPickStored && canPickSelected && storedGateway !== selectedGateway) return false;
+  return true;
+}
+
 export type ResolvedCheckoutAttempt = {
   attemptId: string;
   quoteHash: string;
@@ -130,10 +161,11 @@ export type ResolvedCheckoutAttempt = {
 };
 
 /**
- * Resume the original payment only when the cart was emptied by a hold, or the
- * payable quote is unchanged. A new total (coupon, shipping, gateway) is a new
- * SnapPay/checkout attempt — the previous unpaid order is left in place so a
- * second delivery of the same items can still be paid separately.
+ * Resume the original payment only when the payable quote and gateway match, or
+ * the cart was emptied by a hold on that same gateway. A different quote
+ * (coupon, shipping, total) or gateway is a new purchase. Matching a stashed
+ * continuable identity restores the original unpaid checkout instead of minting
+ * a third attempt.
  */
 export function resolveCheckoutAttemptId(input: {
   quoteHash: string;
@@ -143,12 +175,32 @@ export function resolveCheckoutAttemptId(input: {
 }): ResolvedCheckoutAttempt {
   const quoteHash = String(input.quoteHash || "").trim();
   const existing = readCheckoutIdentity();
+  const existingGatewayMatches = checkoutGatewaysMatch(existing?.gateway, input.gateway);
 
-  if (existing && (input.cartIsEmpty || existing.quoteHash === quoteHash)) {
+  if (
+    existing &&
+    existingGatewayMatches &&
+    (input.cartIsEmpty || existing.quoteHash === quoteHash)
+  ) {
     return {
       attemptId: existing.attemptId,
       quoteHash: existing.quoteHash,
       gateway: existing.gateway || input.gateway,
+      continueExisting: true,
+    };
+  }
+
+  const continuable = readContinuableCheckoutIdentity();
+  if (
+    continuable &&
+    checkoutGatewaysMatch(continuable.gateway, input.gateway) &&
+    (continuable.quoteHash === quoteHash || input.cartIsEmpty)
+  ) {
+    writeCheckoutIdentity(continuable);
+    return {
+      attemptId: continuable.attemptId,
+      quoteHash: continuable.quoteHash,
+      gateway: continuable.gateway || input.gateway,
       continueExisting: true,
     };
   }

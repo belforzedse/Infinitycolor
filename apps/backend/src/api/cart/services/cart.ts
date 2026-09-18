@@ -25,6 +25,7 @@ import { createCheckoutQuote, type CheckoutQuote } from "./lib/checkout-quote";
 import {
   createPaymentAttempt,
   findPaymentAttempt,
+  updatePaymentAttempt,
 } from "../../payment-attempt/services/payment-attempt";
 import {
   checkoutAttemptOrderId,
@@ -37,6 +38,7 @@ import {
   generateSnappayTransactionId,
   hashSnappayCallbackNonce,
 } from "../../payment-gateway/services/snappay-security";
+import { runRawSql } from "../../../utils/transactionExecutor";
 import { redactSensitive } from "../../../utils/redactSensitive";
 
 export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
@@ -160,14 +162,16 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
         if (decision === "unavailable") {
           return { ...RESERVATION_LOOKUP_FAILED_RESULT };
         }
-        return {
-          success: true,
-          replayed: true,
-          order: replay.order,
-          contract: replay.contract,
-          paymentAttempt: replay,
-          financialSummary: replay.quoteSnapshot?.financialSummary,
-        };
+        if (decision !== "incomplete") {
+          return {
+            success: true,
+            replayed: true,
+            order: replay.order,
+            contract: replay.contract,
+            paymentAttempt: replay,
+            financialSummary: replay.quoteSnapshot?.financialSummary,
+          };
+        }
       }
 
       if (!expectedQuoteHash) {
@@ -180,8 +184,13 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
       }
     }
 
-    // First check stock
+    // New purchases do not credit another attempt's reservation. Available
+    // stock is Count minus reserved_count; shortfalls still remove/reduce.
     const stockCheck = await this.checkCartStock(userId);
+
+    if (stockCheck.errorCode === "RESERVATION_LOOKUP_FAILED") {
+      return { ...RESERVATION_LOOKUP_FAILED_RESULT };
+    }
 
     if (!stockCheck.valid) {
       // Returned without an errorCode and with an English message, so the
@@ -213,7 +222,11 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     const cart = stockCheck.cart || (await this.getUserCart(userId));
 
     if (!cart.cart_items || cart.cart_items.length === 0) {
-      return { success: false, message: "Cannot create order from empty cart" };
+      return {
+        success: false,
+        errorCode: "CART_EMPTY",
+        message: "Cannot create order from empty cart",
+      };
     }
 
     let checkoutQuote: CheckoutQuote | null = null;
@@ -277,14 +290,36 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             if (decision === "unavailable") {
               throw new Error("RESERVATION_LOOKUP_FAILED: Reservation could not be read");
             }
-            return {
-              success: true,
-              replayed: true,
-              order: replay.order,
-              contract: replay.contract,
-              paymentAttempt: replay,
-              financialSummary: replay.quoteSnapshot?.financialSummary,
-            };
+            if (decision !== "incomplete") {
+              return {
+                success: true,
+                replayed: true,
+                order: replay.order,
+                contract: replay.contract,
+                paymentAttempt: replay,
+                financialSummary: replay.quoteSnapshot?.financialSummary,
+              };
+            }
+            const orphanId = Number(replay.id);
+            if (Number.isInteger(orphanId) && orphanId > 0) {
+              await runRawSql(
+                strapi as any,
+                `SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE`,
+                [orphanId],
+                trx,
+              );
+              const locked = await findPaymentAttempt(strapi as any, userId, attemptId, trx);
+              if (locked && checkoutAttemptOrderId(locked)) {
+                return {
+                  success: true,
+                  replayed: true,
+                  order: locked.order,
+                  contract: locked.contract,
+                  paymentAttempt: locked,
+                  financialSummary: locked.quoteSnapshot?.financialSummary,
+                };
+              }
+            }
           }
         }
 
@@ -610,33 +645,44 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           trx,
         });
 
-        const paymentAttempt = managesPaymentAttempt
-          ? await createPaymentAttempt(
+        const attemptFields = {
+          quoteHash: expectedQuoteHash,
+          quoteSnapshot: checkoutQuote,
+          Status: "Created" as const,
+          Gateway: gateway,
+          Amount: Math.round(totals.total * 10),
+          user: userId,
+          order: order.id,
+          contract: contract.id,
+          ...(snappayInitiation
+            ? {
+                providerReference: snappayInitiation.transactionId,
+                providerStatus: "CREATED",
+                callbackNonceHash: hashSnappayCallbackNonce(snappayInitiation.callbackNonce),
+                // Kept so a replayed initiation can rebuild the same return
+                // URL. Private in the schema, so it never leaves the server.
+                callbackNonce: snappayInitiation.callbackNonce,
+              }
+            : {}),
+        };
+        let paymentAttempt: Awaited<ReturnType<typeof createPaymentAttempt>> | undefined;
+        if (managesPaymentAttempt) {
+          const existingAttempt = await findPaymentAttempt(strapi as any, userId, attemptId, trx);
+          if (existingAttempt && !checkoutAttemptOrderId(existingAttempt)) {
+            paymentAttempt = await updatePaymentAttempt(
               strapi as any,
-              {
-                attemptId,
-                quoteHash: expectedQuoteHash,
-                quoteSnapshot: checkoutQuote,
-                Status: "Created",
-                Gateway: gateway,
-                Amount: Math.round(totals.total * 10),
-                user: userId,
-                order: order.id,
-                contract: contract.id,
-                ...(snappayInitiation
-                  ? {
-                      providerReference: snappayInitiation.transactionId,
-                      providerStatus: "CREATED",
-                      callbackNonceHash: hashSnappayCallbackNonce(snappayInitiation.callbackNonce),
-                      // Kept so a replayed initiation can rebuild the same return
-                      // URL. Private in the schema, so it never leaves the server.
-                      callbackNonce: snappayInitiation.callbackNonce,
-                    }
-                  : {}),
-              },
+              Number(existingAttempt.id),
+              attemptFields,
               trx,
-            )
-          : undefined;
+            );
+          } else {
+            paymentAttempt = await createPaymentAttempt(
+              strapi as any,
+              { attemptId, ...attemptFields },
+              trx,
+            );
+          }
+        }
 
         if (snappayInitiation && paymentAttempt) {
           const gatewayRecord: any = await strapi.db

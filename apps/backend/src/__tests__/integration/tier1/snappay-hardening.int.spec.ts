@@ -394,6 +394,7 @@ describe("SnappPay hardened persistence", () => {
             next_action text,
             next_action_at timestamptz,
             lease_until timestamptz,
+            last_reconciled_at timestamptz,
             failure_code text,
             failure_message text,
             callback_nonce text,
@@ -410,6 +411,7 @@ describe("SnappPay hardened persistence", () => {
             gateway_response jsonb,
             last_http_status integer,
             last_provider_code integer,
+            last_reconciled_at timestamptz,
             updated_at timestamptz
           )`);
         await trx.raw(`

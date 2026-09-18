@@ -1,4 +1,7 @@
-import { snappayProviderPaymentIsUnresolved } from "../../../payment-gateway/services/snappay-generation";
+import {
+  snappayHasInFlightDispatch,
+  snappayProviderPaymentIsUnresolved,
+} from "../../../payment-gateway/services/snappay-generation";
 import {
   resolveEligibleCheckoutHold,
   snappayAttemptMayResumeWithoutHold,
@@ -24,6 +27,7 @@ export type CheckoutResumeAttempt = {
   providerStatus?: unknown;
   providerResponse?: unknown;
   providerReference?: unknown;
+  leaseUntil?: unknown;
   order?: unknown;
 };
 
@@ -42,6 +46,18 @@ export function checkoutAttemptOrderId(
 
 function isSnappayReplay(replay: { Gateway?: unknown }): boolean {
   return String(replay.Gateway || "").toLowerCase() === "snappay";
+}
+
+function hasLiveMintLease(replay: { leaseUntil?: unknown }): boolean {
+  if (!replay.leaseUntil) return false;
+  const until = new Date(String(replay.leaseUntil)).getTime();
+  return Number.isFinite(until) && until > Date.now();
+}
+
+function creationIsStillOwned(replay: CheckoutResumeAttempt): boolean {
+  return (
+    hasLiveMintLease(replay) || snappayHasInFlightDispatch(replay.providerResponse)
+  );
 }
 
 function quoteHashConflicts(replay: CheckoutResumeAttempt, expectedQuoteHash?: string): boolean {
@@ -66,7 +82,9 @@ export function existingAttemptBlocksReplacement(
   expectedQuoteHash?: string,
 ): CheckoutResumeDecision {
   if (isSnappayReplay(replay) && snappayProviderPaymentIsUnresolved(replay)) {
-    if (gateway !== "snappay") return "in_progress";
+    // A different gateway is a new purchase with a new attempt id. Reusing this
+    // row would trap the shopper on PAYMENT_IN_PROGRESS; conflict forces a mint.
+    if (gateway !== "snappay") return "conflict";
     if (quoteHashConflicts(replay, expectedQuoteHash)) return "conflict";
     return "replay";
   }
@@ -82,7 +100,11 @@ export function existingAttemptBlocksReplacement(
   return "replay";
 }
 
-export type CheckoutResumeGate = CheckoutResumeDecision | "expired" | "unavailable";
+export type CheckoutResumeGate =
+  | CheckoutResumeDecision
+  | "expired"
+  | "unavailable"
+  | "incomplete";
 
 /**
  * Live attempts resume the original order when the payable quote is unchanged.
@@ -98,7 +120,11 @@ export async function gateCheckoutResume(
 ): Promise<CheckoutResumeGate> {
   const decision = existingAttemptBlocksReplacement(replay, gateway, expectedQuoteHash);
   if (decision !== "replay") return decision;
-  if (snappayAttemptMayResumeWithoutHold(replay)) return "replay";
+  // Unresolved SnappPay still follows initiate/status when an order exists.
+  // A row that never linked an order is incomplete creation, not a payable replay.
+  if (snappayAttemptMayResumeWithoutHold(replay) && checkoutAttemptOrderId(replay)) {
+    return "replay";
+  }
 
   try {
     const hold = await resolveEligibleCheckoutHold(
@@ -108,7 +134,13 @@ export async function gateCheckoutResume(
     );
     if (hold.status === "held") return "replay";
     if (hold.status === "expired" || hold.status === "released") return "expired";
-    if (hold.status === "ineligible") return "expired";
+    if (hold.status === "ineligible") {
+      // A missing order link is incomplete creation, not an expired reservation.
+      if (!checkoutAttemptOrderId(replay)) {
+        return creationIsStillOwned(replay) ? "in_progress" : "incomplete";
+      }
+      return "expired";
+    }
     if (hold.status === "unavailable") return "unavailable";
     // Missing hold on a live attempt (including SnappPay Unknown before dispatch)
     // must still replay the identified checkout rather than mint a replacement.

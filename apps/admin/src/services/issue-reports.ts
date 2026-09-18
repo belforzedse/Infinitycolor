@@ -14,7 +14,11 @@ export type IssueReportClientContext = {
   connectionType: string | null;
   androidHints?: { model: string | null; platformVersion: string | null };
   /** The order the reporter was looking at, per the storefront widget. */
-  order?: { orderId: number };
+  order?: {
+    orderId: number;
+    statusAtSubmit?: string | null;
+    paymentAttemptStatusAtSubmit?: string | null;
+  };
   /** Best-effort cart snapshot the storefront captured at submit time. */
   cart?: { name: string; sku: string | null; quantity: number; price: number }[];
 };
@@ -33,6 +37,9 @@ export type IssueReportOrderSnapshot = {
   }[];
   /** null when neither side has a resolvable user; true/false otherwise. */
   reporterMatchesOrder: boolean | null;
+  /** Frozen at submit so the card does not rewrite what the customer saw. */
+  statusAtSubmit?: string | null;
+  paymentAttemptStatusAtSubmit?: string | null;
 };
 
 export type IssueReportSummary = {

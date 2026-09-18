@@ -66,6 +66,9 @@ export type CreateIssueReportInput = {
 
 export type IssueReportOrderContext = {
   orderId: number;
+  /** Server-written at submit. Ignored if a client sends it. */
+  statusAtSubmit?: string | null;
+  paymentAttemptStatusAtSubmit?: string | null;
 };
 
 export type IssueReportCartItem = {
@@ -163,6 +166,53 @@ function orderContext(value: unknown): IssueReportOrderContext | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const orderId = Number((value as Record<string, unknown>).orderId);
   return Number.isSafeInteger(orderId) && orderId > 0 ? { orderId } : undefined;
+}
+
+function optionalStatus(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().slice(0, 64);
+  return normalized || null;
+}
+
+type StatusSnapshotRow = { status?: unknown };
+
+type StatusSnapshotQuery = {
+  where: (clause: Record<string, unknown> | string, value?: unknown) => StatusSnapshotQuery;
+  join: (table: string, first: string, second: string) => StatusSnapshotQuery;
+  orderBy: (column: string, direction: string) => StatusSnapshotQuery;
+  first: (columns: string | string[]) => Promise<StatusSnapshotRow | null | undefined>;
+};
+
+async function lookupOrderStatusSnapshot(
+  db: (table: string) => StatusSnapshotQuery,
+  orderId: number,
+): Promise<{ status: string | null; paymentAttemptStatus: string | null } | null> {
+  const order = await db("orders").where({ id: orderId }).first("status");
+  if (!order) return null;
+  const attempt = await db("payment_attempts as pa")
+    .join("payment_attempts_order_links as l", "l.payment_attempt_id", "pa.id")
+    .where("l.order_id", orderId)
+    .orderBy("pa.created_at", "desc")
+    .first("pa.status as status");
+  return {
+    status: optionalStatus(order.status),
+    paymentAttemptStatus: optionalStatus(attempt?.status),
+  };
+}
+
+function attachOrderStatusSnapshot(
+  context: IssueReportClientContext | null,
+  snapshot: { status: string | null; paymentAttemptStatus: string | null } | null,
+): IssueReportClientContext | null {
+  if (!context?.order || !snapshot) return context;
+  return {
+    ...context,
+    order: {
+      orderId: context.order.orderId,
+      statusAtSubmit: snapshot.status,
+      paymentAttemptStatusAtSubmit: snapshot.paymentAttemptStatus,
+    },
+  };
 }
 
 const MAX_CART_ITEMS = 20;
@@ -364,6 +414,9 @@ export type IssueReportOrderSnapshot = {
   /** null when neither side has a known user (e.g. a guest report or an
    * order with no linked account) rather than a claim that they match. */
   reporterMatchesOrder: boolean | null;
+  /** Frozen at submit so the admin card does not rewrite what the customer saw. */
+  statusAtSubmit?: string | null;
+  paymentAttemptStatusAtSubmit?: string | null;
 };
 
 /**
@@ -431,6 +484,18 @@ export async function createIssueReport(
     const now = new Date();
     return await knex.transaction(async (trx: any) => {
       await trx.raw("SELECT set_config('statement_timeout', ?, true)", [String(dbTimeoutMs())]);
+      let context = input.context;
+      const orderId = context?.order?.orderId;
+      if (orderId) {
+        try {
+          context = attachOrderStatusSnapshot(
+            context,
+            await lookupOrderStatusSnapshot(trx, orderId),
+          );
+        } catch {
+          // Snapshot is best-effort; the report itself must still persist.
+        }
+      }
       const inserted = await trx(TABLE)
         .insert({
           public_id: randomUUID(),
@@ -440,7 +505,7 @@ export async function createIssueReport(
           reporter_user_id: metadata.reporterUserId || null,
           source_path: clipIssueReportVarchar(input.sourcePath, ISSUE_REPORT_SOURCE_PATH_MAX),
           locale: input.locale,
-          client_context: input.context,
+          client_context: context,
           user_agent: clipIssueReportVarchar(metadata.userAgent, ISSUE_REPORT_USER_AGENT_MAX),
           request_id: metadata.requestId?.slice(0, 64) || null,
           submission_id: input.submissionId,
@@ -641,7 +706,16 @@ export async function findIssueReport(strapi: Strapi, reportId: string) {
   if (!orderId) return detail;
   try {
     const order = await loadOrderSnapshot(strapi, orderId, detail.reporterUserId);
-    return order ? { ...detail, order } : detail;
+    if (!order) return detail;
+    const submitted = detail.clientContext?.order;
+    return {
+      ...detail,
+      order: {
+        ...order,
+        statusAtSubmit: submitted?.statusAtSubmit ?? null,
+        paymentAttemptStatusAtSubmit: submitted?.paymentAttemptStatusAtSubmit ?? null,
+      },
+    };
   } catch {
     // Enrichment is best-effort; the report itself must still load.
     return detail;

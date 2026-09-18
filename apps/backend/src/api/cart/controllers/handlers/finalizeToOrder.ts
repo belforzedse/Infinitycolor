@@ -118,7 +118,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         },
       });
     }
-    const resumeExistingCheckout = resumeDecision === "replay";
+    const resumeExistingCheckout =
+      resumeDecision === "replay" && Boolean(checkoutAttemptOrderId(existingAttempt));
 
     let resolvedAddressId = addressId;
     let resolvedShippingId = shipping;

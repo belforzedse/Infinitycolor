@@ -7,7 +7,10 @@ import {
   dropExpectedCheckoutSentryEvent,
   EXPECTED_CHECKOUT_SENTRY_IGNORE,
 } from "./src/lib/expected-checkout-sentry";
-import { tagStorefrontSentryEvent } from "./src/lib/storefront-sentry-tags";
+import {
+  dropNoisyStorefrontSentryEvent,
+  tagStorefrontSentryEvent,
+} from "./src/lib/storefront-sentry-tags";
 
 const APP_INIT_MARK = "infinity:client-init";
 const ROUTE_START_MARK = "infinity:route-transition-start";
@@ -93,16 +96,22 @@ Sentry.init({
     // Safari aborts in-flight fetches when the shopper leaves the page.
     /AbortError: The operation was aborted/,
     /^The operation was aborted\.?$/,
+    // Replay snapshot title, not React #418. beforeSend also requires a
+    // stackless payload so a real hydration mismatch is not muted.
+    /^Hydration Error$/,
+    // wasm-bindgen / rrweb host panic; not storefront code.
+    /recursive use of an object detected which would lead to unsafe aliasing in rust/,
     // Expected checkout leftovers. Also dropped in beforeSend so a stale
     // checkout chunk cannot keep reporting them after a frontend cutover.
     EXPECTED_CHECKOUT_SENTRY_IGNORE,
   ],
   beforeSend(event) {
-    // Host injects (Instagram/FB WebView, crawler telemetry) and Flight
-    // transport cuts stay visible; tagStorefrontSentryEvent only tags.
-    // WebView/Java-bridge strings are intentionally NOT in ignoreErrors.
+    // Tag injects and Flight cuts, then drop the known-noise fingerprints.
+    // WebView/Java-bridge strings that are not tagName/hydration stay visible.
     const tagged = tagStorefrontSentryEvent(event);
-    return dropExpectedCheckoutSentryEvent(tagged);
+    const withoutNoise = dropNoisyStorefrontSentryEvent(tagged);
+    if (!withoutNoise) return null;
+    return dropExpectedCheckoutSentryEvent(withoutNoise);
   },
 });
 

@@ -4,6 +4,7 @@ import {
   readCheckoutAttemptId,
   readCheckoutIdentity,
   resolveCheckoutAttemptId,
+  shouldResumeStoredCheckout,
 } from "../checkout-identity";
 
 describe("checkout identity", () => {
@@ -75,6 +76,26 @@ describe("checkout identity", () => {
     expect(window.localStorage.getItem("continuableCheckoutQuoteHash")).toBe("sha256:original");
   });
 
+  it("mints a new attempt when the quote changes before an order exists", () => {
+    const first = resolveCheckoutAttemptId({
+      quoteHash: "sha256:original",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "mellat",
+    });
+
+    const discounted = resolveCheckoutAttemptId({
+      quoteHash: "sha256:after-coupon",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "mellat",
+    });
+
+    expect(discounted.attemptId).not.toBe(first.attemptId);
+    expect(discounted.quoteHash).toBe("sha256:after-coupon");
+    expect(discounted.continueExisting).toBe(false);
+  });
+
   it("mints a new attempt for a different non-empty basket and stashes the payable order", () => {
     const first = resolveCheckoutAttemptId({
       quoteHash: "sha256:coat",
@@ -99,6 +120,56 @@ describe("checkout identity", () => {
     expect(window.localStorage.getItem("continuableCheckoutAttemptId")).toBe(first.attemptId);
   });
 
+  it("mints a new attempt when the selected gateway changes, even if the cart is empty", () => {
+    const first = resolveCheckoutAttemptId({
+      quoteHash: "sha256:original",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "snappay",
+    });
+    persistCheckoutOrder(111459);
+
+    const switched = resolveCheckoutAttemptId({
+      quoteHash: "sha256:original",
+      cartSignature: "0:0:",
+      cartIsEmpty: true,
+      gateway: "mellat",
+    });
+
+    expect(switched.attemptId).not.toBe(first.attemptId);
+    expect(switched.continueExisting).toBe(false);
+    expect(window.localStorage.getItem("continuableCheckoutAttemptId")).toBe(first.attemptId);
+    expect(window.localStorage.getItem("continuableCheckoutGateway")).toBe("snappay");
+  });
+
+  it("restores the stashed unpaid checkout when the shopper returns to that gateway", () => {
+    const first = resolveCheckoutAttemptId({
+      quoteHash: "sha256:original",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "snappay",
+    });
+    persistCheckoutOrder(111459);
+    resolveCheckoutAttemptId({
+      quoteHash: "sha256:card",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "mellat",
+    });
+
+    const restored = resolveCheckoutAttemptId({
+      quoteHash: "sha256:original",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "snappay",
+    });
+
+    expect(restored.attemptId).toBe(first.attemptId);
+    expect(restored.continueExisting).toBe(true);
+    expect(restored.gateway).toBe("snappay");
+    expect(readCheckoutAttemptId()).toBe(first.attemptId);
+  });
+
   it("clears stored identity", () => {
     resolveCheckoutAttemptId({
       quoteHash: "sha256:x",
@@ -107,5 +178,38 @@ describe("checkout identity", () => {
     });
     clearCheckoutIdentity();
     expect(readCheckoutIdentity()).toBeNull();
+  });
+
+  it("continues an empty-cart unpaid checkout unless a different selectable gateway is chosen", () => {
+    const stored = {
+      attemptId: "attempt-111459",
+      quoteHash: "sha256:original",
+      gateway: "snappay",
+      orderId: "111459",
+    };
+    expect(
+      shouldResumeStoredCheckout({
+        stored,
+        selectedGateway: "samankish",
+        selectableGateways: ["samankish"],
+        cartIsEmpty: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldResumeStoredCheckout({
+        stored,
+        selectedGateway: "mellat",
+        selectableGateways: ["snappay", "mellat"],
+        cartIsEmpty: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldResumeStoredCheckout({
+        stored,
+        selectedGateway: "snappay",
+        selectableGateways: ["snappay", "mellat"],
+        cartIsEmpty: true,
+      }),
+    ).toBe(true);
   });
 });

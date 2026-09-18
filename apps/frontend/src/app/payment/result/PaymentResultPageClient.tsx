@@ -16,10 +16,28 @@ import { resolvePaymentGateway } from "@/utils/paymentGateways";
 import { translateOrderStatus } from "@/utils/statusTranslations";
 
 const TERMINAL = new Set(["Succeeded", "Failed", "Cancelled", "Expired"]);
+const PAID_ORDER_STATUSES = new Set(["Started", "Shipment", "Done"]);
 /** Quiet poll interval while settlement is in flight. */
 const POLL_INTERVAL_MS = 2500;
-/** ~50s window (20 × 2.5s) once the interval is stable and no longer resets. */
+/** ~50s window (20 × 2.5s) for card/redirect gateways once the interval is stable. */
 const MAX_POLL_CHECKS = 20;
+/** Covers SnappPay's 5-minute first unpaid retry plus a buffer. */
+const SNAPPAY_POLL_BUDGET_MS = 8 * 60 * 1000;
+/** POST reconcile every N quiet ticks so a delayed queue row gets pulled forward. */
+const SNAPPAY_RECONCILE_EVERY = 4;
+
+const isPaidOrderStatus = (status?: string | null): boolean =>
+  PAID_ORDER_STATUSES.has(String(status || "").trim());
+
+const isAuthoritativePaid = (
+  result: Pick<OrderPaymentStatusResponse, "isPaid" | "status"> | null,
+): boolean => Boolean(result && (result.isPaid || isPaidOrderStatus(result.status)));
+
+const pollDelayMs = (checksCompleted: number, snappay: boolean): number => {
+  if (!snappay || checksCompleted < 8) return POLL_INTERVAL_MS;
+  if (checksCompleted < 20) return 5_000;
+  return 10_000;
+};
 
 const normalizeShippingMethod = (value?: string | null) =>
   (value ?? "")
@@ -70,7 +88,7 @@ const applyPaidSideEffects = async (
   next: OrderPaymentStatusResponse,
   clearCart: () => Promise<unknown>,
 ) => {
-  if (!next.isPaid) return;
+  if (!isAuthoritativePaid(next)) return;
   window.localStorage.removeItem("pendingCheckoutAttemptId");
   window.localStorage.removeItem("pendingCheckoutQuoteHash");
   window.localStorage.removeItem("pendingPaymentAttemptId");
@@ -122,11 +140,12 @@ export default function PaymentResultPageClient() {
 
   const load = useCallback(
     async (
-      mode: "initial" | "poll" | "reconcile" = "initial",
+      mode: "initial" | "poll" | "reconcile" | "quiet-reconcile" = "initial",
     ) => {
       if (!Number.isInteger(orderId) || orderId <= 0) return;
       const isReconcile = mode === "reconcile";
-      const isPoll = mode === "poll";
+      const isQuietReconcile = mode === "quiet-reconcile";
+      const isPoll = mode === "poll" || isQuietReconcile;
       const skipGlobalLoader = isPoll || isReconcile;
       try {
         if (isReconcile) {
@@ -138,15 +157,16 @@ export default function PaymentResultPageClient() {
         if (!isPoll) {
           setError(null);
         }
-        const next = isReconcile
-          ? await OrderService.reconcileOrderPayment(
-              orderId,
-              skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
-            )
-          : await OrderService.getOrderPaymentStatus(
-              orderId,
-              skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
-            );
+        const next =
+          isReconcile || isQuietReconcile
+            ? await OrderService.reconcileOrderPayment(
+                orderId,
+                skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
+              )
+            : await OrderService.getOrderPaymentStatus(
+                orderId,
+                skipGlobalLoader ? { skipGlobalLoader: true } : undefined,
+              );
         setResult(next);
         await applyPaidSideEffects(next, () => clearCartRef.current());
       } catch (err) {
@@ -200,10 +220,13 @@ export default function PaymentResultPageClient() {
     };
   }, [orderId]);
 
-  // One-shot SnappPay reconcile: GET payment-status is read-only for SnappPay,
-  // so kick the existing POST once while the attempt is still non-terminal.
+  // Kick SnappPay reconcile while the attempt is still non-terminal. GET
+  // payment-status is read-only for SnappPay; POST pulls a delayed job forward.
+  // The quiet poll loop repeats this every few ticks — this effect is the
+  // immediate first kick so we do not wait for the first interval.
   useEffect(() => {
     if (!result || !needsSnappayReconcileKick(result)) return;
+    if (isAuthoritativePaid(result)) return;
     if (snappayReconcileKickedRef.current) return;
     snappayReconcileKickedRef.current = true;
     void (async () => {
@@ -223,23 +246,40 @@ export default function PaymentResultPageClient() {
   // Quiet poll while non-terminal. Depend on paymentStatus (string), not the
   // whole result object, so setResult(same Pending) does not reset the counter.
   const paymentStatus = result?.paymentStatus;
+  const orderStatus = result?.status;
+  const resultIsPaid = Boolean(result?.isPaid);
+  const isSnappayResult =
+    resolvePaymentGateway(result?.paymentGateway)?.key === "snappay";
   useEffect(() => {
     if (!paymentStatus || TERMINAL.has(paymentStatus)) return;
+    if (resultIsPaid || isPaidOrderStatus(orderStatus)) return;
+    const budgetMs = isSnappayResult
+      ? SNAPPAY_POLL_BUDGET_MS
+      : POLL_INTERVAL_MS * MAX_POLL_CHECKS;
+    const startedAt = Date.now();
     let checks = 0;
     let cancelled = false;
+    let timer: number | undefined;
 
-    const tick = () => {
-      if (cancelled) return;
-      if (typeof document !== "undefined" && document.hidden) return;
-      checks += 1;
-      if (checks > MAX_POLL_CHECKS) {
-        window.clearInterval(timer);
-        return;
-      }
-      void load("poll");
+    const schedule = (delay: number) => {
+      timer = window.setTimeout(runTick, delay);
     };
 
-    const timer = window.setInterval(tick, POLL_INTERVAL_MS);
+    const runTick = () => {
+      if (cancelled) return;
+      if (Date.now() - startedAt > budgetMs) return;
+      if (typeof document !== "undefined" && document.hidden) {
+        schedule(pollDelayMs(checks, isSnappayResult));
+        return;
+      }
+      checks += 1;
+      const shouldReconcile =
+        isSnappayResult && checks % SNAPPAY_RECONCILE_EVERY === 0;
+      void load(shouldReconcile ? "quiet-reconcile" : "poll");
+      schedule(pollDelayMs(checks, isSnappayResult));
+    };
+
+    schedule(pollDelayMs(0, isSnappayResult));
 
     const onVisibility = () => {
       if (typeof document !== "undefined" && !document.hidden) {
@@ -250,12 +290,22 @@ export default function PaymentResultPageClient() {
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [load, paymentStatus]);
+  }, [load, paymentStatus, orderStatus, resultIsPaid, isSnappayResult]);
 
+  const paid = isAuthoritativePaid(result);
   const presentation = useMemo(() => {
+    if (paid) {
+      return {
+        title: "پرداخت با موفقیت ثبت شد",
+        message: "سفارش شما پرداخت شده و برای پردازش آماده است.",
+        tone: "border-emerald-200 bg-emerald-50 text-emerald-950",
+        iconTone: "bg-emerald-100 text-emerald-700",
+        icon: CheckCircle2,
+      };
+    }
     switch (result?.paymentStatus) {
       case "Succeeded":
         return {
@@ -306,7 +356,7 @@ export default function PaymentResultPageClient() {
           icon: Clock3,
         };
     }
-  }, [result?.paymentStatus]);
+  }, [paid, result?.paymentStatus]);
 
   const returnToCart = () => {
     window.localStorage.removeItem("pendingCheckoutAttemptId");
@@ -385,7 +435,7 @@ export default function PaymentResultPageClient() {
               <OrderItemsList order={orderDetail} />
             )}
 
-            {result?.isPaid && (
+            {paid && (
               <section className="rounded-2xl border border-sky-200 bg-sky-50/70 p-5 text-slate-800 shadow-sm sm:p-6">
                 <div className="flex items-start gap-3">
                   <span
@@ -418,7 +468,7 @@ export default function PaymentResultPageClient() {
             )}
 
             {result?.reserveGroupId && (
-              <ReserveOutcomeNotice outcome={result} isPaid={Boolean(result.isPaid)} />
+              <ReserveOutcomeNotice outcome={result} isPaid={paid} />
             )}
 
             {error && (
@@ -428,7 +478,7 @@ export default function PaymentResultPageClient() {
             )}
 
             <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:p-5">
-              {result?.isPaid && (
+              {paid && (
                 <button
                   className="w-full rounded-xl bg-infinity-primary px-5 py-3 font-medium text-white transition-opacity hover:opacity-90 sm:w-auto"
                   onClick={() => router.push(`/orders/${orderId}`)}
@@ -436,7 +486,7 @@ export default function PaymentResultPageClient() {
                   مشاهده سفارش
                 </button>
               )}
-              {result?.canRetry && (
+              {result?.canRetry && !paid && (
                 <button
                   className="w-full rounded-xl bg-infinity-primary px-5 py-3 font-medium text-white transition-opacity hover:opacity-90 sm:w-auto"
                   onClick={returnToCart}
@@ -444,7 +494,7 @@ export default function PaymentResultPageClient() {
                   بازگشت به سبد و تلاش دوباره
                 </button>
               )}
-              {!result?.isPaid && !result?.canRetry && (
+              {!paid && !result?.canRetry && (
                 <button
                   className="w-full rounded-xl bg-infinity-primary px-5 py-3 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60 sm:w-auto"
                   disabled={checking}

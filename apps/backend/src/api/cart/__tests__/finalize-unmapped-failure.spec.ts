@@ -31,6 +31,21 @@ jest.mock("../services/lib/checkout-quote", () => ({ createCheckoutQuote: jest.f
 jest.mock("../../payment-attempt/services/payment-attempt", () => ({
   createPaymentAttempt: jest.fn(),
   findPaymentAttempt: jest.fn().mockResolvedValue(null),
+  updatePaymentAttempt: jest.fn(),
+}));
+jest.mock("../services/lib/checkout-resume", () => ({
+  checkoutAttemptOrderId: jest.fn(),
+  gateCheckoutResume: jest.fn(),
+  RESERVATION_EXPIRED_RESULT: {
+    success: false,
+    status: 409,
+    errorCode: "RESERVATION_EXPIRED",
+  },
+  RESERVATION_LOOKUP_FAILED_RESULT: {
+    success: false,
+    status: 503,
+    errorCode: "RESERVATION_LOOKUP_FAILED",
+  },
 }));
 jest.mock("../../payment-gateway/services/snappay-security", () => ({
   generateSnappayCallbackNonce: jest.fn(),
@@ -127,5 +142,22 @@ describe("finalizeCartToOrder — unmapped failures", () => {
       "Failed to report checkout failure",
       expect.any(Error),
     );
+  });
+
+  it("returns CART_EMPTY when the cart has no items, so the storefront can drop it", async () => {
+    const { service } = buildService(() => Promise.resolve());
+    service.checkCartStock = jest.fn().mockResolvedValue({
+      valid: true,
+      cart: { id: 7, cart_items: [] },
+    });
+
+    const result = await finalize(service);
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: "CART_EMPTY",
+      message: "Cannot create order from empty cart",
+    });
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 });

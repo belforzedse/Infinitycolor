@@ -1,4 +1,4 @@
-import { findIssueReport } from "../services/issue-report";
+import { createIssueReport, findIssueReport } from "../services/issue-report";
 
 function chain(result: unknown) {
   const rows = Array.isArray(result) ? result : result == null ? [] : [result];
@@ -66,6 +66,8 @@ describe("findIssueReport order enrichment", () => {
         { id: 158118, productTitle: "شلوار جین بگ N 0015", productSku: "WC-1293833-1293841", count: 1, perAmount: 3699000 },
       ],
       reporterMatchesOrder: true,
+      statusAtSubmit: null,
+      paymentAttemptStatusAtSubmit: null,
     });
   });
 
@@ -124,5 +126,134 @@ describe("findIssueReport order enrichment", () => {
 
     const report = await findIssueReport(buildStrapi(connection), reportRow.public_id);
     expect(report?.order).toBeUndefined();
+  });
+
+  it("exposes the order status frozen at submit next to the live lookup", async () => {
+    const connection = jest.fn((table: string) => {
+      if (table === "issue_reports") {
+        return chain({
+          ...reportRow,
+          client_context: {
+            order: {
+              orderId: 112908,
+              statusAtSubmit: "Paying",
+              paymentAttemptStatusAtSubmit: "Pending",
+            },
+          },
+        });
+      }
+      if (table === "orders") {
+        return chain({ id: 112908, status: "Started", payment_gateway: "SnappPay", date: null });
+      }
+      if (table === "order_items_order_links as oiol") return chain([]);
+      if (table === "orders_user_links") return chain({ user_id: 29283 });
+      throw new Error(`unexpected table: ${table}`);
+    });
+
+    const report = await findIssueReport(buildStrapi(connection), reportRow.public_id);
+    expect(report?.order).toMatchObject({
+      id: 112908,
+      status: "Started",
+      statusAtSubmit: "Paying",
+      paymentAttemptStatusAtSubmit: "Pending",
+    });
+  });
+});
+
+function createInput(orderId = 112908) {
+  return {
+    submissionId: "fc631904-b813-433f-b76c-77645e9fdb68",
+    contactNumber: "+989121234567",
+    issueName: "نتیجه پرداخت گیر کرده",
+    description: "صفحه پرداخت هنوز در انتظار است.",
+    sourcePath: "/payment/result",
+    locale: "fa-IR",
+    context: {
+      clientTime: "2026-09-18T02:15:23.000Z",
+      timeZone: "Asia/Tehran",
+      language: "fa-IR",
+      viewport: { width: 390, height: 844 },
+      screen: { width: 390, height: 844, pixelRatio: 3 },
+      online: true,
+      connectionType: "4g",
+      order: { orderId },
+    },
+  };
+}
+
+describe("createIssueReport order status snapshot", () => {
+  it("stores live order and payment-attempt status next to the submitted orderId", async () => {
+    let storedContext: unknown;
+    const trx = Object.assign(
+      (table: string) => {
+        if (table === "orders") return chain({ status: "Paying" });
+        if (table === "payment_attempts as pa") return chain({ status: "Pending" });
+        if (table === "issue_reports") {
+          return {
+            insert: (payload: { client_context: unknown }) => {
+              storedContext = payload.client_context;
+              return {
+                onConflict: () => ({
+                  ignore: () => ({
+                    returning: async () => [
+                      { public_id: "fc631904-b813-433f-b76c-77645e9fdb68", created_at: "2026-09-18T02:15:23.212Z" },
+                    ],
+                  }),
+                }),
+              };
+            },
+          };
+        }
+        throw new Error(`unexpected table: ${table}`);
+      },
+      { raw: jest.fn() },
+    );
+    const connection = Object.assign(jest.fn(), {
+      transaction: async (run: (trx: typeof trx) => Promise<unknown>) => run(trx),
+    });
+
+    await createIssueReport(buildStrapi(connection), createInput(), {});
+
+    expect(storedContext).toEqual(
+      expect.objectContaining({
+        order: {
+          orderId: 112908,
+          statusAtSubmit: "Paying",
+          paymentAttemptStatusAtSubmit: "Pending",
+        },
+      }),
+    );
+  });
+
+  it("still persists the report when the status lookup fails", async () => {
+    const trx = Object.assign(
+      (table: string) => {
+        if (table === "orders") throw new Error("connection reset");
+        if (table === "issue_reports") {
+          return {
+            insert: (payload: { client_context: { order?: { orderId: number } } }) => {
+              expect(payload.client_context.order).toEqual({ orderId: 112908 });
+              return {
+                onConflict: () => ({
+                  ignore: () => ({
+                    returning: async () => [
+                      { public_id: "fc631904-b813-433f-b76c-77645e9fdb68", created_at: "2026-09-18T02:15:23.212Z" },
+                    ],
+                  }),
+                }),
+              };
+            },
+          };
+        }
+        throw new Error(`unexpected table: ${table}`);
+      },
+      { raw: jest.fn() },
+    );
+    const connection = Object.assign(jest.fn(), {
+      transaction: async (run: (trx: typeof trx) => Promise<unknown>) => run(trx),
+    });
+
+    const result = await createIssueReport(buildStrapi(connection), createInput(), {});
+    expect(result.replayed).toBe(false);
   });
 });

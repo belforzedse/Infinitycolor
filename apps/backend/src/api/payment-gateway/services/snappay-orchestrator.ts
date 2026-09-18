@@ -34,6 +34,7 @@ import {
   mergeSnappayAttemptObservation,
   promoteIssuedSnappayGeneration,
   requeueParkedSnappayReconcile,
+  shouldEnqueueSnappayReconcileResume,
 } from "../../payment-attempt/services/snappay-attempt-writes";
 import {
   displaySnappayFingerprint,
@@ -776,7 +777,6 @@ async function markAttemptUnknown(
         failureMessage: message.slice(0, 500),
         nextAction,
         nextActionAt: nextActionAt || null,
-        leaseUntil: null,
         lastReconciledAt: new Date(),
       },
       transacting: trx,
@@ -1089,14 +1089,6 @@ async function requestSnappayToken(
   }
 
   if (snappayHasInFlightDispatch(bundle.attempt.providerResponse)) {
-    await markAttemptUnknown(
-      strapi,
-      bundle,
-      "SNAPPAY_TOKEN_UNRESOLVED",
-      "A previous SnappPay token request has no stored payment token",
-      undefined,
-      "reconcile",
-    );
     return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
   }
 
@@ -1531,14 +1523,6 @@ export async function initiateSnappayPayment(
   }
 
   if (snappayHasInFlightDispatch(bundle.attempt.providerResponse)) {
-    await markAttemptUnknown(
-      strapi,
-      bundle,
-      "SNAPPAY_TOKEN_UNRESOLVED",
-      "A previous SnappPay token request has no stored payment token",
-      undefined,
-      "reconcile",
-    );
     return failedInitiation(bundle, "PAYMENT_UNKNOWN", "Unknown");
   }
 
@@ -1727,6 +1711,33 @@ async function createOrReuseOperation(
   return operation;
 }
 
+async function resumeExistingReconcile(
+  strapi: Strapi,
+  bundle: AttemptBundle,
+  existing: { id: unknown; Status?: unknown; retryCount?: unknown },
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  if (existing.Status === "Succeeded") return;
+  const outcome = await requeueParkedSnappayReconcile(strapi, {
+    operationId: Number(existing.id),
+    attemptId: Number(bundle.attempt.id),
+    metadata,
+    nextRunAt: new Date(),
+  });
+  if (!shouldEnqueueSnappayReconcileResume(outcome)) return;
+  if (outcome === "pulled_forward") {
+    await enqueueSnappayOperation(Number(existing.id), Number(existing.retryCount || 0), 0, {
+      jobIdSalt: "pull",
+    });
+    return;
+  }
+  await enqueueSnappayOperation(
+    Number(existing.id),
+    Number(existing.retryCount || 0),
+    0,
+  );
+}
+
 async function enqueueCallbackReconcile(
   strapi: Strapi,
   bundle: AttemptBundle,
@@ -1744,20 +1755,7 @@ async function enqueueCallbackReconcile(
     });
     return;
   }
-  if (existing.Status === "Succeeded") return;
-  const outcome = await requeueParkedSnappayReconcile(strapi, {
-    operationId: Number(existing.id),
-    attemptId: Number(bundle.attempt.id),
-    metadata,
-    nextRunAt: new Date(),
-  });
-  if (outcome === "requeued") {
-    await enqueueSnappayOperation(
-      Number(existing.id),
-      Number(existing.retryCount || 0),
-      0,
-    );
-  }
+  await resumeExistingReconcile(strapi, bundle, existing, metadata);
 }
 
 export async function acceptSnappayCallback(
@@ -1938,11 +1936,20 @@ export async function requestSnappayReconciliation(
   if (["Succeeded", "Cancelled", "Failed", "Expired"].includes(String(bundle.attempt.Status))) {
     return bundle.attempt;
   }
-  await createOrReuseOperation(strapi, bundle, {
-    type: "RECONCILE",
-    idempotencyKey: `reconcile:${bundle.attempt.id}`,
-    metadata: { requestedReason: String(reason).slice(0, 100) },
-  });
+  const key = `reconcile:${bundle.attempt.id}`;
+  const existing: any = await strapi.db.query(OPERATION_UID).findOne({
+    where: { idempotencyKey: key },
+  } as any);
+  const metadata = { requestedReason: String(reason).slice(0, 100) };
+  if (!existing) {
+    await createOrReuseOperation(strapi, bundle, {
+      type: "RECONCILE",
+      idempotencyKey: key,
+      metadata,
+    });
+    return bundle.attempt;
+  }
+  await resumeExistingReconcile(strapi, bundle, existing, metadata);
   return bundle.attempt;
 }
 

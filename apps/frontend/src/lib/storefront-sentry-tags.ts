@@ -1,8 +1,10 @@
 /**
- * Tag-only Sentry beforeSend helpers for storefront noise that must stay
- * visible. Host-injected WebView/crawler frames and Flight transport cuts are
- * not application defects we can implement away — but dropping them hides
- * volume. Tags keep them filterable without mute.
+ * Storefront Sentry beforeSend helpers.
+ *
+ * Host-injected WebView/crawler frames, Replay snapshot hydration titles, and
+ * Flight transport cuts are not application defects we can implement away.
+ * Tag first so a mistaken drop is still diagnosable in the payload, then drop
+ * the fingerprints that drown real issues.
  */
 
 /** Matches StorefrontRecoveryState: RSC/stream cuts that auto-retry there. */
@@ -14,6 +16,11 @@ export const TRANSIENT_NETWORK_MESSAGES = new Set([
   "NetworkError when attempting to fetch resource.",
 ]);
 
+export const WASM_BINDGEN_ALIASING_MESSAGE =
+  "recursive use of an object detected which would lead to unsafe aliasing in rust";
+
+const TAG_NAME_NULL = /Cannot read propert(?:y|ies) of null \(reading ['"]tagName['"]\)/;
+
 type SentryFrameLike = {
   filename?: string | null;
   abs_path?: string | null;
@@ -23,14 +30,21 @@ type SentryFrameLike = {
 
 type SentryEventLike = {
   message?: string;
+  fingerprint?: Array<string | number>;
   tags?: Record<string, string>;
   exception?: {
     values?: Array<{
+      type?: string;
       value?: string;
       stacktrace?: {
         frames?: SentryFrameLike[];
       };
     }>;
+  };
+  contexts?: {
+    react?: {
+      componentStack?: string;
+    };
   };
 };
 
@@ -56,9 +70,61 @@ function isAnonymousOnly(frames: SentryFrameLike[]): boolean {
   });
 }
 
+function stripErrorTypePrefix(message: string): string {
+  return message.replace(/^(?:TypeError|Error):\s*/, "");
+}
+
+function isTransientNetworkMessage(message: string): boolean {
+  return (
+    TRANSIENT_NETWORK_MESSAGES.has(message) ||
+    TRANSIENT_NETWORK_MESSAGES.has(stripErrorTypePrefix(message))
+  );
+}
+
+function hasUsefulStack(event: SentryEventLike): boolean {
+  const frames = allFrames(event);
+  if (
+    frames.some((frame) => {
+      const name = (frame.filename ?? frame.abs_path ?? "").trim();
+      return name !== "" && name !== "<anonymous>" && !name.endsWith("<anonymous>");
+    })
+  ) {
+    return true;
+  }
+  const componentStack = event.contexts?.react?.componentStack;
+  return typeof componentStack === "string" && componentStack.trim().length > 0;
+}
+
+/**
+ * Sentry Replay invents a stackless "Hydration Error" title from snapshot
+ * diffs (html attrs, WebView inject). Real React mismatches keep #418 /
+ * "Hydration failed" / "Text content does not match" and a component stack.
+ */
+export function isReplayHydrationSentryEvent(event: SentryEventLike): boolean {
+  if (hasUsefulStack(event)) return false;
+  const message = eventMessage(event);
+  if (message === "Hydration Error") return true;
+  if (message && /#418|Hydration failed|Text content does not match/i.test(message)) {
+    return false;
+  }
+  return Boolean(
+    event.fingerprint?.some((part) => String(part).toLowerCase().includes("hydration")),
+  );
+}
+
+function isInjectedTagNameRead(event: SentryEventLike, inject: string | undefined): boolean {
+  const message = eventMessage(event);
+  if (!TAG_NAME_NULL.test(message)) return false;
+  if (inject === "crawler-telemetry" || inject === "android-webview" || inject === "eval") {
+    return true;
+  }
+  const frames = allFrames(event);
+  return frames.length === 0 || isAnonymousOnly(frames);
+}
+
 /**
  * Classify host injects / transport cuts and set tags. Always returns the
- * event (never drops). Checkout drops stay in `dropExpectedCheckoutSentryEvent`.
+ * event (never drops). Drops live in `dropNoisyStorefrontSentryEvent`.
  */
 export function tagStorefrontSentryEvent<T extends SentryEventLike>(event: T): T {
   const message = eventMessage(event);
@@ -90,10 +156,24 @@ export function tagStorefrontSentryEvent<T extends SentryEventLike>(event: T): T
     tags.inject = "eval";
   }
 
-  if (TRANSIENT_NETWORK_MESSAGES.has(message)) {
+  if (isTransientNetworkMessage(message)) {
     tags.transport_cut = "rsc";
   }
 
   event.tags = tags;
+  return event;
+}
+
+/**
+ * Drop fingerprints that are not first-party defects. Does not mute React
+ * hydration #418 or application TypeErrors that happen to mention fetch.
+ */
+export function dropNoisyStorefrontSentryEvent<T extends SentryEventLike>(event: T): T | null {
+  const message = eventMessage(event);
+  const inject = event.tags?.inject;
+  if (isReplayHydrationSentryEvent(event)) return null;
+  if (isInjectedTagNameRead(event, inject)) return null;
+  if (message.includes(WASM_BINDGEN_ALIASING_MESSAGE)) return null;
+  if (event.tags?.transport_cut === "rsc") return null;
   return event;
 }

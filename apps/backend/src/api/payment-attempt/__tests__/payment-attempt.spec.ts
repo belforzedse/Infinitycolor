@@ -36,6 +36,7 @@ describe("payment attempt initiation", () => {
       expect.stringContaining("status IN ('Created', 'Pending', 'Redirected', 'Unknown', 'Failed', 'Cancelled', 'Expired')"),
       expect.arrayContaining([17]),
     );
+    expect(raw.mock.calls[0][0]).toContain("provider_response->'pendingDispatch' IS NULL");
   });
 
   it("does not treat a mint lease without a returned version as acquired", async () => {

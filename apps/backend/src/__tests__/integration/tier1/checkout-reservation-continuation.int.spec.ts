@@ -198,7 +198,7 @@ describe("checkout reservation continuation", () => {
   it("C. another customer and a second order cannot take the reserved last unit", async () => {
     const owner = await seedCart({ stockCount: 1, quantity: 1 });
     const attemptId = `attempt-owner-${owner.user.id}`;
-    await placeOrder(owner.user.id, attemptId);
+    const first = await placeOrder(owner.user.id, attemptId);
 
     const other = await f.createUser();
     const otherCart = await f.createCart({ userId: other.id });
@@ -223,11 +223,20 @@ describe("checkout reservation continuation", () => {
     expect(spoofed.reservationOutcome).toBeUndefined();
 
     const sameUserSecond = await strapi.service("api::cart.cart").finalizeCartToOrder(owner.user.id, {
-      gateway: "mellat",
+      gateway: "samankish",
       attemptId: `attempt-second-${owner.user.id}`,
       quoteHash: "sha256:new-order",
     });
     expect(sameUserSecond.success).toBe(false);
+    expect(sameUserSecond.errorCode).not.toBe("PAYMENT_IN_PROGRESS");
+
+    const ownerResume = await strapi.service("api::cart.cart").finalizeCartToOrder(owner.user.id, {
+      gateway: "mellat",
+      attemptId,
+      quoteHash: first.quote.quoteHash,
+    });
+    expect(ownerResume.success).toBe(true);
+    expect(ownerResume.replayed).toBe(true);
 
     const free = await seedCart({ stockCount: 4, quantity: 1 });
     const unrelated = await placeOrder(free.user.id, `attempt-free-${free.user.id}`);
@@ -282,5 +291,141 @@ describe("checkout reservation continuation", () => {
     const stock = await f.getStock(seeded.variation.stockId);
     expect(stockCount(stock)).toBe(1);
     expect(stockReserved(stock)).toBe(0);
+  });
+
+  it("F. a new attempt with free stock creates a second order on another gateway", async () => {
+    const seeded = await seedCart({ stockCount: 2, quantity: 1 });
+    const firstAttemptId = `attempt-first-${seeded.user.id}`;
+    const first = await placeOrder(seeded.user.id, firstAttemptId);
+    expect(first.result.success).toBe(true);
+
+    const secondQuote = await createCheckoutQuote(strapi, seeded.user.id, {
+      shippingCost: 0,
+      gateway: "samankish",
+    });
+    const second = await strapi.service("api::cart.cart").finalizeCartToOrder(seeded.user.id, {
+      gateway: "samankish",
+      attemptId: `attempt-second-${seeded.user.id}`,
+      quoteHash: secondQuote.quoteHash,
+      shippingCost: 0,
+    });
+    await rememberFinalize(second);
+
+    expect(second.success).toBe(true);
+    expect(second.replayed).not.toBe(true);
+    expect(second.order.id).not.toBe(first.result.order.id);
+
+    const resumed = await strapi.service("api::cart.cart").finalizeCartToOrder(seeded.user.id, {
+      gateway: "mellat",
+      attemptId: firstAttemptId,
+      quoteHash: first.quote.quoteHash,
+    });
+    expect(resumed.success).toBe(true);
+    expect(resumed.replayed).toBe(true);
+    expect(resumed.order.id).toBe(first.result.order.id);
+  });
+
+  it("H. an attempt without a linked order is completed on retry instead of expiry", async () => {
+    const seeded = await seedCart({ stockCount: 2, quantity: 1 });
+    const attemptId = `attempt-orphan-${seeded.user.id}`;
+    const quote = await createCheckoutQuote(strapi, seeded.user.id, {
+      shippingCost: 0,
+      gateway: "mellat",
+    });
+    const orphan = await strapi.db.query("api::payment-attempt.payment-attempt").create({
+      data: {
+        attemptId,
+        quoteHash: quote.quoteHash,
+        quoteSnapshot: quote,
+        Status: "Created",
+        Gateway: "mellat",
+        Amount: Math.round(quote.financialSummary.total * 10),
+        user: seeded.user.id,
+      },
+    });
+    f.remember("api::payment-attempt.payment-attempt", orphan.id);
+
+    const result = await strapi.service("api::cart.cart").finalizeCartToOrder(seeded.user.id, {
+      gateway: "mellat",
+      attemptId,
+      quoteHash: quote.quoteHash,
+      shippingCost: 0,
+    });
+    await rememberFinalize(result);
+
+    expect({
+      success: result.success,
+      errorCode: result.errorCode,
+      message: result.message,
+    }).toEqual(expect.objectContaining({ success: true }));
+    expect(result.errorCode).not.toBe("RESERVATION_EXPIRED");
+    expect(result.errorCode).not.toBe("CHECKOUT_ATTEMPT_CONFLICT");
+    expect(result.order?.id).toBeTruthy();
+
+    const attempts = await strapi.db.query("api::payment-attempt.payment-attempt").findMany({
+      where: { attemptId },
+      populate: { order: true },
+    });
+    expect(attempts).toHaveLength(1);
+    expect(Number(attempts[0].order?.id ?? attempts[0].order)).toBe(result.order.id);
+  });
+
+  it("H-concurrent. two eligible orphan retries link one order and one reservation", async () => {
+    const seeded = await seedCart({ stockCount: 2, quantity: 1 });
+    const attemptId = `attempt-orphan-race-${seeded.user.id}`;
+    const quote = await createCheckoutQuote(strapi, seeded.user.id, {
+      shippingCost: 0,
+      gateway: "mellat",
+    });
+    const orphan = await strapi.db.query("api::payment-attempt.payment-attempt").create({
+      data: {
+        attemptId,
+        quoteHash: quote.quoteHash,
+        quoteSnapshot: quote,
+        Status: "Created",
+        Gateway: "mellat",
+        Amount: Math.round(quote.financialSummary.total * 10),
+        user: seeded.user.id,
+      },
+    });
+    f.remember("api::payment-attempt.payment-attempt", orphan.id);
+
+    const payload = {
+      gateway: "mellat",
+      attemptId,
+      quoteHash: quote.quoteHash,
+      shippingCost: 0,
+    };
+    const [first, second] = await Promise.all([
+      strapi.service("api::cart.cart").finalizeCartToOrder(seeded.user.id, payload),
+      strapi.service("api::cart.cart").finalizeCartToOrder(seeded.user.id, payload),
+    ]);
+    await rememberFinalize(first);
+    await rememberFinalize(second);
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(first.errorCode).not.toBe("RESERVATION_EXPIRED");
+    expect(second.errorCode).not.toBe("RESERVATION_EXPIRED");
+    const orderId = Number(first.order?.id || second.order?.id);
+    expect(orderId).toBeGreaterThan(0);
+    expect(Number(first.order?.id || orderId)).toBe(orderId);
+    expect(Number(second.order?.id || orderId)).toBe(orderId);
+
+    const attempts = await strapi.db.query("api::payment-attempt.payment-attempt").findMany({
+      where: { attemptId },
+      populate: { order: true },
+    });
+    expect(attempts).toHaveLength(1);
+    expect(Number(attempts[0].order?.id ?? attempts[0].order)).toBe(orderId);
+
+    const orders = await strapi.db.query("api::order.order").findMany({
+      where: { user: { id: seeded.user.id } },
+    });
+    expect(orders).toHaveLength(1);
+    expect(String(orders[0].ReservationStatus || orders[0].reservationStatus)).toBe("Reserved");
+
+    const stock = await f.getStock(seeded.variation.stockId);
+    expect(stockReserved(stock)).toBe(1);
   });
 });

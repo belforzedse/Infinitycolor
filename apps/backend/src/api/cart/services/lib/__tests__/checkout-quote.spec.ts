@@ -105,4 +105,39 @@ describe("createCheckoutQuote", () => {
       total: 209_000,
     });
   });
+
+  it("changes the quote hash when a coupon is applied or removed", async () => {
+    const strapi = createStrapi();
+    strapi.entityService.findMany = jest.fn(async (uid: string) => {
+      if (uid === "api::discount.discount") {
+        return [{ id: 99, Code: "SAVE10", Type: "Cash", Amount: 10_000, IsActive: true }];
+      }
+      return [];
+    });
+
+    const withoutCoupon = await createCheckoutQuote(strapi, 12, {
+      cart,
+      shippingId: 4,
+      shippingCost: 20_000,
+      gateway: "mellat",
+    });
+    const withCoupon = await createCheckoutQuote(strapi, 12, {
+      cart,
+      shippingId: 4,
+      shippingCost: 20_000,
+      gateway: "mellat",
+      discountCode: "SAVE10",
+    });
+    const removedCoupon = await createCheckoutQuote(strapi, 12, {
+      cart,
+      shippingId: 4,
+      shippingCost: 20_000,
+      gateway: "mellat",
+    });
+
+    expect(withCoupon.quoteHash).not.toBe(withoutCoupon.quoteHash);
+    expect(withCoupon.financialSummary.discount).toBe(10_000);
+    expect(removedCoupon.quoteHash).toBe(withoutCoupon.quoteHash);
+    expect(removedCoupon.financialSummary.total).toBe(withoutCoupon.financialSummary.total);
+  });
 });

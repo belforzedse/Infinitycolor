@@ -146,13 +146,48 @@ jest.mock("./DeliveryForm", () => ({
       >
         select shipping
       </button>
+      <button
+        type="button"
+        data-testid="select-shipping-express"
+        onClick={() =>
+          setValue("shippingMethod", {
+            id: 8,
+            code: "express",
+            title: "Express",
+            price: 40_000,
+            basePrice: 40_000,
+            sortOrder: 2,
+          })
+        }
+      >
+        select express
+      </button>
     </div>
   ),
 }));
 
 jest.mock("./DiscountCoupon", () => ({
   __esModule: true,
-  default: ({ onApplied }: any) => (
+  default: ({
+    onApplied,
+    onRemove,
+  }: {
+    onApplied?: (
+      code: string,
+      preview: {
+        discount: number;
+        summary: {
+          subtotal: number;
+          eligibleSubtotal: number;
+          tax: number;
+          shipping: number;
+          total: number;
+          taxPercent: number;
+        };
+      },
+    ) => void;
+    onRemove?: () => void;
+  }) => (
     <div data-testid="checkout-discount-coupon">
       <button
         type="button"
@@ -164,14 +199,17 @@ jest.mock("./DiscountCoupon", () => ({
               subtotal: 100_000,
               eligibleSubtotal: 100_000,
               tax: 0,
-              shipping: 0,
-              total: 90_000,
+              shipping: 20_000,
+              total: 110_000,
               taxPercent: 0,
             },
           })
         }
       >
         apply discount
+      </button>
+      <button type="button" data-testid="remove-discount" onClick={() => onRemove?.()}>
+        remove discount
       </button>
     </div>
   ),
@@ -185,6 +223,11 @@ jest.mock("./PaymentGateway", () => ({
       {availableGateways?.includes("snappay") && (
         <button type="button" data-testid="select-snappay" onClick={() => onChange("snappay")}>
           select SnappPay
+        </button>
+      )}
+      {availableGateways?.includes("mellat") && (
+        <button type="button" data-testid="select-mellat" onClick={() => onChange("mellat")}>
+          select Mellat
         </button>
       )}
       {availableGateways?.includes("wallet") && (
@@ -726,6 +769,7 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
       "سبد خرید شما خالی است",
     );
+    expect(captureCheckoutMessage).not.toHaveBeenCalled();
   });
 
   async function submitCheckoutWithError(
@@ -804,6 +848,51 @@ describe("ShoppingCartBillForm auth gate", () => {
       expect(captureCheckoutMessage).toHaveBeenCalledWith(
         "checkout.error:WALLET_DEBIT_FAILED",
         expect.objectContaining({ level: "error" }),
+      );
+    });
+  });
+
+  it("does not send CART_EMPTY or REVERT leftovers to Sentry as errors", async () => {
+    await submitCheckoutWithError("REVERT");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toBeVisible();
+    });
+    expect(captureCheckoutMessage).not.toHaveBeenCalled();
+  });
+
+  it("reports unmapped backend copy at warning instead of error", async () => {
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:failing-quote",
+      financialSummary: { total: 120_000 },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: false,
+      message: "Cannot create order from empty cart",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(captureCheckoutMessage).toHaveBeenCalledWith(
+        "checkout.error:BACKEND_MESSAGE",
+        expect.objectContaining({ level: "warning" }),
       );
     });
   });
@@ -1123,6 +1212,11 @@ describe("ShoppingCartBillForm auth gate", () => {
     window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:original");
     window.localStorage.setItem("pendingCheckoutOrderId", "111459");
     window.localStorage.setItem("pendingCheckoutGateway", "snappay");
+    (CartService.checkCartStock as jest.Mock).mockResolvedValue({
+      valid: true,
+      reservationOutcome: "held",
+      heldOrderId: 111459,
+    });
     (CartService.finalizeCart as jest.Mock).mockResolvedValue({
       success: true,
       orderId: 111459,
@@ -1142,11 +1236,10 @@ describe("ShoppingCartBillForm auth gate", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("checkout-continuation-notice")).toBeVisible();
-    });
-    await waitFor(() => {
       expect(screen.queryByTestId("checkout-form-error")).not.toBeInTheDocument();
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
     });
+    expect(screen.queryByText(/هنوز در انتظار پرداخت است/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("checkout-accept-terms"));
     fireEvent.click(screen.getByTestId("checkout-submit"));
@@ -1161,6 +1254,145 @@ describe("ShoppingCartBillForm auth gate", () => {
       );
     });
     expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+  });
+
+  it("does not continue an empty cart after the reservation has expired", async () => {
+    mockCartState = {
+      totalPrice: 0,
+      totalItems: 0,
+      cartItems: [],
+    };
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-111459");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:original");
+    window.localStorage.setItem("pendingCheckoutOrderId", "111459");
+    window.localStorage.setItem("pendingCheckoutGateway", "snappay");
+    (CartService.checkCartStock as jest.Mock).mockResolvedValue({
+      valid: true,
+      reservationOutcome: "expired",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-form-error")).toHaveTextContent(
+        "مهلت رزرو موجودی این سفارش تمام شده است",
+      );
+    });
+    expect(screen.getByTestId("checkout-form-error")).toHaveTextContent("وضعیت سفارش را بررسی کنید");
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBeNull();
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalled();
+    });
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
+    expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
+  });
+
+  it("submits a new card attempt without crediting the stored SnappPay hold", async () => {
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-111459");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:original");
+    window.localStorage.setItem("pendingCheckoutOrderId", "111459");
+    window.localStorage.setItem("pendingCheckoutGateway", "snappay");
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay", "mellat"]);
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+    (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
+      quoteHash: "sha256:card-quote",
+      financialSummary: {
+        subtotal: 100_000,
+        discount: 0,
+        tax: 0,
+        shipping: 20_000,
+        total: 120_000,
+      },
+    });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: false,
+      message: "stop-after-request",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("select-mellat")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("select-mellat"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+    });
+    expect(CartService.checkCartStock).toHaveBeenLastCalledWith(undefined);
+    expect(CartService.finalizeCart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gateway: "mellat",
+        quoteHash: "sha256:card-quote",
+        attemptId: expect.any(String),
+      }),
+    );
+    const submitted = (CartService.finalizeCart as jest.Mock).mock.calls[0][0];
+    expect(submitted.attemptId).not.toBe("attempt-111459");
+    expect(window.localStorage.getItem("continuableCheckoutAttemptId")).toBe("attempt-111459");
+  });
+
+  it("does not replay SnappPay when the cart is empty and a card gateway is selected", async () => {
+    mockCartState = {
+      totalPrice: 0,
+      totalItems: 0,
+      cartItems: [],
+    };
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-111459");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:original");
+    window.localStorage.setItem("pendingCheckoutOrderId", "111459");
+    window.localStorage.setItem("pendingCheckoutGateway", "snappay");
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay", "mellat"]);
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("select-mellat")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-mellat"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalled();
+    });
+    expect(CartService.finalizeCart).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("attempt-111459");
+    expect(window.localStorage.getItem("pendingCheckoutGateway")).toBe("snappay");
   });
 
   it("does not offer a resume path for a leftover unpaid order on a new basket", async () => {
@@ -1257,5 +1489,197 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect(CartService.getCheckoutQuote).not.toHaveBeenCalled();
     expect(CartService.finalizeCart).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("pendingCheckoutAttemptId")).toBe("live-attempt");
+  });
+
+  it("mints a new attempt when only the coupon is applied, then again when it is removed", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["mellat"]);
+    (CartService.applyDiscount as jest.Mock).mockResolvedValue({
+      success: true,
+      discount: 10_000,
+      summary: {
+        subtotal: 100_000,
+        eligibleSubtotal: 100_000,
+        tax: 0,
+        shipping: 20_000,
+        total: 110_000,
+        taxPercent: 0,
+      },
+    });
+    (CartService.getCheckoutQuote as jest.Mock)
+      .mockResolvedValueOnce({
+        quoteHash: "sha256:undiscounted",
+        financialSummary: {
+          subtotal: 100_000,
+          discount: 0,
+          tax: 0,
+          shipping: 20_000,
+          total: 120_000,
+        },
+      })
+      .mockResolvedValueOnce({
+        quoteHash: "sha256:coupon-applied",
+        financialSummary: {
+          subtotal: 100_000,
+          discount: 10_000,
+          tax: 0,
+          shipping: 20_000,
+          total: 110_000,
+        },
+      })
+      .mockResolvedValueOnce({
+        quoteHash: "sha256:coupon-removed",
+        financialSummary: {
+          subtotal: 100_000,
+          discount: 0,
+          tax: 0,
+          shipping: 20_000,
+          total: 120_000,
+        },
+      });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: false,
+      message: "stop-after-request",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+    });
+    const first = (CartService.finalizeCart as jest.Mock).mock.calls[0][0] as {
+      attemptId: string;
+      quoteHash: string;
+      discountCode?: string;
+    };
+    expect(first.quoteHash).toBe("sha256:undiscounted");
+    expect(first.discountCode).toBeFalsy();
+    window.localStorage.setItem("pendingCheckoutOrderId", "91");
+
+    fireEvent.click(screen.getByTestId("apply-discount"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(2);
+    });
+    const discounted = (CartService.finalizeCart as jest.Mock).mock.calls[1][0] as {
+      attemptId: string;
+      quoteHash: string;
+      discountCode?: string;
+    };
+    expect(discounted.attemptId).not.toBe(first.attemptId);
+    expect(discounted.quoteHash).toBe("sha256:coupon-applied");
+    expect(discounted.discountCode).toBe("SUMMER");
+    expect(window.localStorage.getItem("continuableCheckoutAttemptId")).toBe(first.attemptId);
+    expect(window.localStorage.getItem("continuableCheckoutQuoteHash")).toBe("sha256:undiscounted");
+
+    fireEvent.click(screen.getByTestId("remove-discount"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(3);
+    });
+    const removed = (CartService.finalizeCart as jest.Mock).mock.calls[2][0] as {
+      attemptId: string;
+      quoteHash: string;
+      discountCode?: string;
+    };
+    expect(removed.attemptId).not.toBe(first.attemptId);
+    expect(removed.attemptId).not.toBe(discounted.attemptId);
+    expect(removed.quoteHash).toBe("sha256:coupon-removed");
+    expect(removed.discountCode).toBeFalsy();
+  });
+
+  it("mints a new attempt when only shipping changes on an unpaid checkout", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["mellat"]);
+    (CartService.getCheckoutQuote as jest.Mock)
+      .mockResolvedValueOnce({
+        quoteHash: "sha256:post-shipping",
+        financialSummary: {
+          subtotal: 100_000,
+          discount: 0,
+          tax: 0,
+          shipping: 20_000,
+          total: 120_000,
+        },
+      })
+      .mockResolvedValueOnce({
+        quoteHash: "sha256:express-shipping",
+        financialSummary: {
+          subtotal: 100_000,
+          discount: 0,
+          tax: 0,
+          shipping: 40_000,
+          total: 140_000,
+        },
+      });
+    (CartService.finalizeCart as jest.Mock).mockResolvedValue({
+      success: false,
+      message: "stop-after-request",
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-submit")).toBeVisible();
+    });
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    fireEvent.click(screen.getByTestId("checkout-accept-terms"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(1);
+    });
+    const first = (CartService.finalizeCart as jest.Mock).mock.calls[0][0] as {
+      attemptId: string;
+      quoteHash: string;
+      shipping: number;
+    };
+    expect(first.quoteHash).toBe("sha256:post-shipping");
+    expect(first.shipping).toBe(7);
+    window.localStorage.setItem("pendingCheckoutOrderId", "91");
+
+    mockCartState = {
+      ...mockCartState,
+      totalPrice: 100_000,
+    };
+    fireEvent.click(screen.getByTestId("select-shipping-express"));
+    fireEvent.click(screen.getByTestId("checkout-submit"));
+
+    await waitFor(() => {
+      expect(CartService.finalizeCart).toHaveBeenCalledTimes(2);
+    });
+    const express = (CartService.finalizeCart as jest.Mock).mock.calls[1][0] as {
+      attemptId: string;
+      quoteHash: string;
+      shipping: number;
+    };
+    expect(express.attemptId).not.toBe(first.attemptId);
+    expect(express.quoteHash).toBe("sha256:express-shipping");
+    expect(express.shipping).toBe(8);
   });
 });

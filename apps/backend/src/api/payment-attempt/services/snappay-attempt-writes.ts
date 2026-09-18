@@ -46,9 +46,9 @@ export async function promoteIssuedSnappayGeneration(
             callback_nonce = ?,
             callback_nonce_hash = ?,
             provider_response =
-              (COALESCE(provider_response, '{}'::jsonb)
+              (COALESCE(provider_response, '{}'::jsonb) || ?::jsonb)
                 - 'pendingDispatch'
-                - 'pendingTransactionId') || ?::jsonb,
+                - 'pendingTransactionId',
             updated_at = ?
       WHERE id = ?
         AND status <> 'Succeeded'
@@ -192,6 +192,19 @@ export async function mergeSnappayAttemptObservation(
   return true;
 }
 
+export type SnappayReconcileResume =
+  | "requeued"
+  | "pulled_forward"
+  | "running"
+  | "queued"
+  | "missing";
+
+export function shouldEnqueueSnappayReconcileResume(
+  outcome: SnappayReconcileResume,
+): boolean {
+  return outcome === "requeued" || outcome === "pulled_forward";
+}
+
 export async function requeueParkedSnappayReconcile(
   strapi: Strapi,
   input: {
@@ -200,8 +213,9 @@ export async function requeueParkedSnappayReconcile(
     metadata: Record<string, unknown>;
     nextRunAt: Date;
   },
-): Promise<"requeued" | "running" | "queued" | "missing"> {
+): Promise<SnappayReconcileResume> {
   const now = new Date();
+  const callbackState = String(input.metadata.callbackState || "");
   const requeued = await strapi.db.connection.raw(
     `UPDATE payment_operations
         SET status = 'Queued',
@@ -226,6 +240,40 @@ export async function requeueParkedSnappayReconcile(
   );
   if (firstRow(requeued)) return "requeued";
 
+  // A CALLBACK_OK (or customer POST) must not wait out a 5-minute unpaid
+  // backoff that was scheduled because an earlier poll ran before the
+  // provider had the payment. Processing rows stay untouched so two workers
+  // cannot claim the same reconcile.
+  const pulledForward = await strapi.db.connection.raw(
+    `UPDATE payment_operations
+        SET next_run_at = ?,
+            metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb,
+            updated_at = ?
+      WHERE id = ?
+        AND attempt_key = ?
+        AND operation_type = 'RECONCILE'
+        AND status = 'Queued'
+        AND next_run_at IS NOT NULL
+        AND next_run_at > ?
+        AND (lease_until IS NULL OR lease_until < ?)
+        AND NOT (
+          COALESCE(metadata->>'callbackState', '') = 'OK'
+          AND ? = 'FAILED'
+        )
+      RETURNING id, retry_count`,
+    [
+      input.nextRunAt,
+      asJson(input.metadata),
+      now,
+      input.operationId,
+      input.attemptId,
+      now,
+      now,
+      callbackState,
+    ],
+  );
+  if (firstRow(pulledForward)) return "pulled_forward";
+
   const annotated = await strapi.db.connection.raw(
     `UPDATE payment_operations
         SET metadata = COALESCE(metadata, '{}'::jsonb) || ?::jsonb,
@@ -244,7 +292,7 @@ export async function requeueParkedSnappayReconcile(
       now,
       input.operationId,
       input.attemptId,
-      String(input.metadata.callbackState || ""),
+      callbackState,
     ],
   );
   const row = firstRow(annotated);

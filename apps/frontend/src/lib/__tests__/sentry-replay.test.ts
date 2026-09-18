@@ -64,8 +64,36 @@ describe("updateReplayRoute", () => {
         blockAllMedia: true,
         networkCaptureBodies: false,
         networkDetailAllowUrls: [],
+        beforeAddRecordingEvent: expect.any(Function),
       }),
     );
+  });
+
+  it("drops replay hydrate-error breadcrumbs and keeps other recording events", async () => {
+    replay = makeReplay();
+    const { updateReplayRoute } = await loadModule();
+
+    updateReplayRoute("/plp/category/shirt");
+
+    const options = replayIntegration.mock.calls[0]?.[0] as {
+      beforeAddRecordingEvent?: (event: unknown) => unknown;
+    };
+    expect(options.beforeAddRecordingEvent).toEqual(expect.any(Function));
+    expect(
+      options.beforeAddRecordingEvent?.({
+        type: 5,
+        data: { tag: "breadcrumb", payload: { category: "replay.hydrate-error" } },
+      }),
+    ).toBeNull();
+    expect(
+      options.beforeAddRecordingEvent?.({
+        type: 5,
+        data: { tag: "breadcrumb", payload: { category: "navigation" } },
+      }),
+    ).toEqual({
+      type: 5,
+      data: { tag: "breadcrumb", payload: { category: "navigation" } },
+    });
   });
 
   it("does not add the integration twice while the route stays allowed", async () => {

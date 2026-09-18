@@ -8,6 +8,8 @@ export const EXPECTED_CHECKOUT_SENTRY_CODES = [
   "ORDER_CANCELLED",
   "RESERVATION_EXPIRED",
   "RESERVATION_LOOKUP_FAILED",
+  "CART_EMPTY",
+  "REVERT",
 ] as const;
 
 export type ExpectedCheckoutSentryCode = (typeof EXPECTED_CHECKOUT_SENTRY_CODES)[number];

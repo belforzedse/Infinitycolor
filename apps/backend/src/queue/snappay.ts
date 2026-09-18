@@ -30,8 +30,16 @@ import { defaultMaintenanceJobOptions } from "./queues";
  */
 const JOB_ID_BUCKET_MS = 60_000;
 
-const safeJobId = (operationId: number, retryCount: number, now: number) =>
-  `snappay-${operationId}-${retryCount}-${Math.floor(now / JOB_ID_BUCKET_MS)}`;
+const safeJobId = (
+  operationId: number,
+  retryCount: number,
+  now: number,
+  salt?: string,
+) => {
+  const bucket = Math.floor(now / JOB_ID_BUCKET_MS);
+  const suffix = salt && /^[a-z0-9]+$/i.test(salt) ? `-${salt}` : "";
+  return `snappay-${operationId}-${retryCount}-${bucket}${suffix}`;
+};
 
 /**
  * Cached queue handles, keyed by connection settings.
@@ -78,14 +86,14 @@ export async function enqueueSnappayOperation(
   operationId: number,
   retryCount: number,
   delayMs = 0,
-  settings: QueueSettings = getQueueSettings(),
+  options: { settings?: QueueSettings; jobIdSalt?: string } = {},
 ): Promise<void> {
-  const queue = getPaymentsQueue(settings);
+  const queue = getPaymentsQueue(options.settings ?? getQueueSettings());
   await queue.add(
     SNAPPAY_PAYMENT_JOBS.operation,
     { operationId, retryCount },
     {
-      jobId: safeJobId(operationId, retryCount, Date.now()),
+      jobId: safeJobId(operationId, retryCount, Date.now(), options.jobIdSalt),
       delay: Math.max(0, Math.round(delayMs)),
       attempts: 1,
     },

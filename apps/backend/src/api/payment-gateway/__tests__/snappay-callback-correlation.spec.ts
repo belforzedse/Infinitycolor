@@ -1,6 +1,7 @@
 import { enqueueSnappayOperation } from "../../../queue/snappay";
 import {
   acceptSnappayCallback,
+  requestSnappayReconciliation,
 } from "../services/snappay-orchestrator";
 import {
   generateSnappayCallbackNonce,
@@ -87,6 +88,12 @@ function createHarness(input?: {
     }
     if (sql.includes("status = 'Unknown'") && sql.includes("next_run_at IS NULL")) {
       return existing?.Status === "Unknown" && existing.nextRunAt == null
+        ? { rows: [{ id: existing.id, retry_count: existing.retryCount }] }
+        : { rows: [] };
+    }
+    if (sql.includes("status = 'Queued'") && sql.includes("next_run_at >")) {
+      const dueAt = existing?.nextRunAt ? existing.nextRunAt.getTime() : 0;
+      return existing?.Status === "Queued" && dueAt > Date.now()
         ? { rows: [{ id: existing.id, retry_count: existing.retryCount }] }
         : { rows: [] };
     }
@@ -269,6 +276,31 @@ describe("acceptSnappayCallback correlation", () => {
     expect(mockedEnqueue).toHaveBeenCalledWith(55, 2, 0);
   });
 
+  it("pulls a delayed queued reconcile forward after CALLBACK_OK", async () => {
+    const nonce = generateSnappayCallbackNonce();
+    const { strapi, operationCreate } = createHarness({
+      callbackNonceHash: hashSnappayCallbackNonce(nonce),
+      existingOperation: {
+        id: 55,
+        Status: "Queued",
+        retryCount: 1,
+        nextRunAt: new Date(Date.now() + 5 * 60 * 1000),
+        OperationType: "RECONCILE",
+      },
+    });
+
+    const result = await acceptSnappayCallback(strapi, {
+      transactionId: "ABC1234567",
+      state: "OK",
+      amount: 1_200_000,
+      nonce,
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(operationCreate).not.toHaveBeenCalled();
+    expect(mockedEnqueue).toHaveBeenCalledWith(55, 1, 0, { jobIdSalt: "pull" });
+  });
+
   it("does not reset a running reconcile or enqueue a competing job", async () => {
     const nonce = generateSnappayCallbackNonce();
     const { strapi, operationCreate } = createHarness({
@@ -311,6 +343,46 @@ describe("acceptSnappayCallback correlation", () => {
 
     expect(result.accepted).toBe(true);
     expect(attemptUpdate).not.toHaveBeenCalled();
+    expect(operationCreate).not.toHaveBeenCalled();
+    expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe("requestSnappayReconciliation pull-forward", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("pulls a delayed queued reconcile forward instead of no-oping", async () => {
+    const { strapi, operationCreate } = createHarness({
+      existingOperation: {
+        id: 55,
+        Status: "Queued",
+        retryCount: 1,
+        nextRunAt: new Date(Date.now() + 5 * 60 * 1000),
+        OperationType: "RECONCILE",
+      },
+    });
+
+    await requestSnappayReconciliation(strapi, 22, "customer_request");
+
+    expect(operationCreate).not.toHaveBeenCalled();
+    expect(mockedEnqueue).toHaveBeenCalledWith(55, 1, 0, { jobIdSalt: "pull" });
+  });
+
+  it("does not enqueue a competing job while reconcile is already processing", async () => {
+    const { strapi, operationCreate } = createHarness({
+      existingOperation: {
+        id: 55,
+        Status: "Processing",
+        retryCount: 1,
+        nextRunAt: new Date(),
+        OperationType: "RECONCILE",
+      },
+    });
+
+    await requestSnappayReconciliation(strapi, 22, "customer_request");
+
     expect(operationCreate).not.toHaveBeenCalled();
     expect(mockedEnqueue).not.toHaveBeenCalled();
   });

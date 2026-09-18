@@ -144,7 +144,7 @@ describe("issue report payload validation", () => {
 it("captures a valid order reference and drops an invalid one", () => {
   const withOrder = validateCreateIssueReportPayload({
     ...valid,
-    context: { ...valid.context, order: { orderId: 111805, extra: "discard" } },
+    context: { ...valid.context, order: { orderId: 111805, extra: "discard", statusAtSubmit: "Started" } },
   }).context;
   expect(withOrder?.order).toEqual({ orderId: 111805 });
 

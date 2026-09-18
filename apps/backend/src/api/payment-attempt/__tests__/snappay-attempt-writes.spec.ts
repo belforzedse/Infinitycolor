@@ -92,6 +92,7 @@ describe("SnappPay attempt write ownership", () => {
       .fn()
       .mockResolvedValueOnce({ rows: [{ id: 55, retry_count: 2 }] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 55, status: "Processing" }] });
     const strapi = strapiWithRaw(raw);
     const metadata = { callbackState: "OK", transactionId: "ABC1234567" };
@@ -115,8 +116,28 @@ describe("SnappPay attempt write ownership", () => {
         nextRunAt: new Date(),
       }),
     ).resolves.toBe("running");
-    expect(raw.mock.calls[2][0]).toContain("status IN ('Queued', 'Processing')");
-    expect(raw.mock.calls[2][0]).not.toContain("lease_until = NULL");
+    expect(raw.mock.calls[3][0]).toContain("status IN ('Queued', 'Processing')");
+    expect(raw.mock.calls[3][0]).not.toContain("lease_until = NULL");
+  });
+
+  it("pulls a delayed Queued reconcile forward without touching Processing", async () => {
+    const raw = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 55, retry_count: 1 }] });
+    const strapi = strapiWithRaw(raw);
+
+    await expect(
+      requeueParkedSnappayReconcile(strapi as never, {
+        operationId: 55,
+        attemptId: 11,
+        metadata: { callbackState: "OK", transactionId: "ABC1234567" },
+        nextRunAt: new Date(),
+      }),
+    ).resolves.toBe("pulled_forward");
+    expect(raw.mock.calls[1][0]).toContain("status = 'Queued'");
+    expect(raw.mock.calls[1][0]).toContain("next_run_at >");
+    expect(raw.mock.calls[1][0]).not.toContain("status IN ('Queued', 'Processing')");
   });
 
   it("does not let a previous-generation callback rewrite the current generation", async () => {

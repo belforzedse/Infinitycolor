@@ -255,9 +255,33 @@ it("shows the enriched order snapshot with a mismatch warning", async () => {
     "/orders/edit/111805",
   );
   expect(screen.getByText("وست گلدوزی تدی N 0035")).toBeVisible();
+  expect(screen.getByText("در حال انجام")).toBeVisible();
+  expect(screen.queryByText(/وضعیت در زمان گزارش/)).not.toBeInTheDocument();
   expect(
     screen.getByText("این سفارش به حساب کاربری گزارش‌دهنده تعلق ندارد."),
   ).toBeVisible();
+});
+
+it("shows the order status from submit time when it later changed", async () => {
+  get.mockResolvedValue({
+    ...report,
+    order: {
+      id: 112908,
+      status: "Started",
+      paymentGateway: "SnappPay",
+      date: "2026-09-18T02:15:50.000Z",
+      items: [],
+      reporterMatchesOrder: true,
+      statusAtSubmit: "Paying",
+      paymentAttemptStatusAtSubmit: "Pending",
+    },
+  });
+
+  render(<ReportDetails reportId="report-one" onClose={jest.fn()} onChanged={jest.fn()} />);
+
+  expect(await screen.findByText("وضعیت فعلی")).toBeVisible();
+  expect(screen.getByText("در حال انجام")).toBeVisible();
+  expect(screen.getByText("وضعیت در زمان گزارش: در انتظار پرداخت · در انتظار")).toBeVisible();
 });
 
 it("falls back to the cart snapshot when no order was found", async () => {

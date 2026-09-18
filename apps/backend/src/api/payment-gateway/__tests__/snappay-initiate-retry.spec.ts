@@ -647,6 +647,41 @@ describe("SnappPay checkout initiate retry", () => {
     expect(result.errorCode).toBe("PAYMENT_UNKNOWN");
   });
 
+  it("does not clear the mint lease while a token request is still in flight", async () => {
+    const requestPaymentToken = jest.fn();
+    mockedAdapter.mockReturnValue({
+      status: jest.fn(),
+      requestPaymentToken,
+      revert: jest.fn(),
+    } as any);
+    const { strapi, queries, transaction } = createHarness({
+      Status: "Pending",
+      redirectUrl: "",
+      redirectedAt: null,
+      providerReference: "NEWTX12345",
+      providerResponse: {
+        tokenAttemptSeq: 1,
+        pendingDispatch: {
+          seq: 1,
+          transactionId: "NEWTX12345",
+          dispatchedAt: new Date().toISOString(),
+          callbackNonceHash: hashSnappayCallbackNonce(CALLBACK_NONCE),
+        },
+      },
+    });
+    transaction.TrackId = "";
+
+    const result = await initiate(strapi);
+
+    expect(requestPaymentToken).not.toHaveBeenCalled();
+    expect(result.errorCode).toBe("PAYMENT_UNKNOWN");
+    expect(queries["api::payment-attempt.payment-attempt"].update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ leaseUntil: null }),
+      }),
+    );
+  });
+
   it("does not mint when there is no token and the initiation lease is held", async () => {
     const requestPaymentToken = jest.fn();
     mockedAdapter.mockReturnValue({

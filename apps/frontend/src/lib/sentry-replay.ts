@@ -26,6 +26,27 @@ function currentReplayUrl(): string {
   return typeof window === "undefined" ? "" : window.location.pathname;
 }
 
+type ReplayRecordingEventLike = {
+  data?: {
+    tag?: unknown;
+    payload?: {
+      category?: unknown;
+    };
+  };
+};
+
+/**
+ * Replay hydrate breadcrumbs become stackless "Hydration Error" issues on the
+ * server. Drop the breadcrumb so a WebView/html-attr snapshot cannot mint one.
+ * Real React #418 still arrives as an exception, not this breadcrumb category.
+ */
+export function dropHydrationReplayRecordingEvent<T>(event: T): T | null {
+  if (!event || typeof event !== "object") return event;
+  const category = (event as ReplayRecordingEventLike).data?.payload?.category;
+  if (category === "replay.hydrate-error") return null;
+  return event;
+}
+
 function addReplayIntegration(): void {
   if (replayIntegrationAdded) {
     return;
@@ -41,6 +62,7 @@ function addReplayIntegration(): void {
       networkRequestHeaders: [],
       networkResponseHeaders: [],
       beforeErrorSampling: () => isReplayAllowedUrl(currentReplayUrl()),
+      beforeAddRecordingEvent: (event) => dropHydrationReplayRecordingEvent(event),
     }),
   );
   replayIntegrationAdded = true;

@@ -39,6 +39,7 @@ export async function claimPaymentAttemptForSnappayInitiation(
      WHERE id = ?
        AND status IN ('Created', 'Pending', 'Redirected', 'Unknown', 'Failed', 'Cancelled', 'Expired')
        AND (lease_until IS NULL OR lease_until < ?)
+       AND (provider_response IS NULL OR provider_response->'pendingDispatch' IS NULL)
      RETURNING id, lease_version`,
     [leaseUntil, now, id, now],
   );

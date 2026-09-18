@@ -24,10 +24,15 @@ import {
   getIssueReport,
   setIssueReportStatus,
   type IssueReportDetail,
+  type IssueReportOrderSnapshot,
   type IssueReportStatus,
 } from "@/services/issue-reports";
 import { faNum } from "@/utils/faNum";
-import { translateOrderStatus, translatePaymentGateway } from "@/utils/statusTranslations";
+import {
+  translateOrderStatus,
+  translatePaymentGateway,
+  translatePaymentStatus,
+} from "@/utils/statusTranslations";
 import { describeDevice } from "./device";
 import { STATUS } from "./shared";
 
@@ -41,6 +46,34 @@ function dateText(value: string | null | undefined) {
   if (!value || Number.isNaN(new Date(value).getTime())) return "—";
   const date = new Date(value);
   return `${new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium" }).format(date)}، ساعت ${new Intl.DateTimeFormat("fa-IR", { timeStyle: "short" }).format(date)}`;
+}
+
+function OrderStatusLines({ order }: { order: IssueReportOrderSnapshot }) {
+  const statusAtSubmit = order.statusAtSubmit ?? null;
+  const statusChanged =
+    statusAtSubmit != null && statusAtSubmit !== (order.status ?? null);
+  return (
+    <div className="flex flex-col items-end gap-1 text-xs text-slate-500">
+      <div className="flex items-center gap-2">
+        {statusChanged ? <span className="text-slate-400">وضعیت فعلی</span> : null}
+        <span>{translateOrderStatus(order.status)}</span>
+        {order.paymentGateway && (
+          <>
+            <span>·</span>
+            <span>{translatePaymentGateway(order.paymentGateway)}</span>
+          </>
+        )}
+      </div>
+      {statusChanged ? (
+        <p>
+          وضعیت در زمان گزارش: {translateOrderStatus(statusAtSubmit)}
+          {order.paymentAttemptStatusAtSubmit
+            ? ` · ${translatePaymentStatus(order.paymentAttemptStatusAtSubmit)}`
+            : ""}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function Row({
@@ -404,15 +437,7 @@ function ReportContent({
                 >
                   سفارش #{report.order.id}
                 </Link>
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span>{translateOrderStatus(report.order.status)}</span>
-                  {report.order.paymentGateway && (
-                    <>
-                      <span>·</span>
-                      <span>{translatePaymentGateway(report.order.paymentGateway)}</span>
-                    </>
-                  )}
-                </div>
+                <OrderStatusLines order={report.order} />
               </div>
               {report.order.reporterMatchesOrder === false && (
                 <p

@@ -28,6 +28,7 @@ jest.mock("../services/lib/checkout-quote", () => ({ createCheckoutQuote: jest.f
 jest.mock("../../payment-attempt/services/payment-attempt", () => ({
   createPaymentAttempt: jest.fn(),
   findPaymentAttempt: jest.fn(),
+  updatePaymentAttempt: jest.fn(),
 }));
 jest.mock("../services/lib/checkout-hold", () => {
   const actual = jest.requireActual("../services/lib/checkout-hold");
@@ -145,7 +146,7 @@ describe("finalizeCartToOrder — replaying a checkout attempt", () => {
     expect(result).toMatchObject({ success: true, replayed: true });
   });
 
-  it("returns PAYMENT_IN_PROGRESS with the live order when a different gateway is requested", async () => {
+  it("returns CHECKOUT_ATTEMPT_CONFLICT when a different gateway is requested on the same attempt", async () => {
     findPaymentAttempt.mockResolvedValueOnce({
       attemptId: "attempt-1",
       quoteHash: QUOTE_HASH,
@@ -166,9 +167,9 @@ describe("finalizeCartToOrder — replaying a checkout attempt", () => {
     expect(result).toMatchObject({
       success: false,
       status: 409,
-      errorCode: "PAYMENT_IN_PROGRESS",
-      orderId: 91,
+      errorCode: "CHECKOUT_ATTEMPT_CONFLICT",
     });
+    expect(result.errorCode).not.toBe("PAYMENT_IN_PROGRESS");
   });
 
   it("refuses to replay a live attempt at a different payable quote", async () => {
@@ -184,6 +185,28 @@ describe("finalizeCartToOrder — replaying a checkout attempt", () => {
 
     const result = await service.finalizeCartToOrder(23, {
       gateway: "snappay",
+      attemptId: "attempt-1",
+      quoteHash: "discounted-hash",
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      status: 409,
+      errorCode: "CHECKOUT_ATTEMPT_CONFLICT",
+    });
+  });
+
+  it("refuses a different payable quote even when the attempt has no order yet", async () => {
+    findPaymentAttempt.mockResolvedValueOnce({
+      attemptId: "attempt-1",
+      quoteHash: "original-hash",
+      Gateway: "mellat",
+      Status: "Created",
+    });
+    const service = buildService();
+
+    const result = await service.finalizeCartToOrder(23, {
+      gateway: "mellat",
       attemptId: "attempt-1",
       quoteHash: "discounted-hash",
     });
@@ -244,5 +267,35 @@ describe("finalizeCartToOrder — replaying a checkout attempt", () => {
       errorCode: "RESERVATION_LOOKUP_FAILED",
     });
     expect(result.errorCode).not.toBe("RESERVATION_EXPIRED");
+  });
+
+  it("does not treat an attempt without a linked order as an expired reservation", async () => {
+    const { checkCartStockOp } = require("../services/ops/checkCartStock");
+    const { createCheckoutQuote } = require("../services/lib/checkout-quote");
+    checkCartStockOp.mockResolvedValue({
+      valid: true,
+      cart: { id: 1, cart_items: [{ Count: 1, product_variation: { id: 9, Price: 100_000 } }] },
+    });
+    createCheckoutQuote.mockResolvedValue({
+      quoteHash: QUOTE_HASH,
+      financialSummary: { subtotal: 100_000, discount: 0, tax: 0, shipping: 0, total: 100_000 },
+      lineItems: [{ variationId: 9, quantity: 1, unitPrice: 100_000 }],
+    });
+    resolveEligibleCheckoutHold.mockResolvedValue({ status: "ineligible" });
+    findPaymentAttempt.mockResolvedValue({
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+      Gateway: "mellat",
+      Status: "Created",
+    });
+    const service = buildService();
+
+    const result = await service.finalizeCartToOrder(23, {
+      gateway: "mellat",
+      attemptId: "attempt-1",
+      quoteHash: QUOTE_HASH,
+    });
+
+    expect(result?.errorCode).not.toBe("RESERVATION_EXPIRED");
   });
 });

@@ -15,6 +15,10 @@ describe("expected checkout Sentry filters", () => {
     expect(isExpectedCheckoutSentryMessage("checkout.error:RESERVATION_LOOKUP_FAILED")).toBe(true);
     expect(isExpectedCheckoutSentryMessage("checkout.error:SNAPPAY_MANUAL_REVIEW")).toBe(true);
     expect(EXPECTED_CHECKOUT_SENTRY_IGNORE.test("checkout.error:PAYMENT_IN_PROGRESS")).toBe(true);
+    expect(isExpectedCheckoutSentryCode("CART_EMPTY")).toBe(true);
+    expect(isExpectedCheckoutSentryCode("REVERT")).toBe(true);
+    expect(isExpectedCheckoutSentryMessage("checkout.error:CART_EMPTY")).toBe(true);
+    expect(isExpectedCheckoutSentryMessage("checkout.error:REVERT")).toBe(true);
   });
 
   it("still reports unexpected checkout failures", () => {
@@ -32,5 +36,7 @@ describe("expected checkout Sentry filters", () => {
         exception: { values: [{ value: "checkout.error:SNAPPAY_RECONCILIATION_PENDING" }] },
       }),
     ).toBeNull();
+    expect(dropExpectedCheckoutSentryEvent({ message: "checkout.error:CART_EMPTY" })).toBeNull();
+    expect(dropExpectedCheckoutSentryEvent({ message: "checkout.error:REVERT" })).toBeNull();
   });
 });

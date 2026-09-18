@@ -40,10 +40,14 @@ import { translateErrorMessage } from "@/lib/errorTranslations";
 import { buildCartStockNoticeText } from "@/utils/cartStock";
 import {
   clearCheckoutIdentity,
+  clearContinuableCheckoutIdentity,
   persistCheckoutOrder,
   readCheckoutAttemptId,
   readCheckoutIdentity,
+  readContinuableCheckoutIdentity,
   resolveCheckoutAttemptId,
+  shouldResumeStoredCheckout,
+  writeCheckoutIdentity,
   type CheckoutIdentity,
 } from "@/lib/checkout-identity";
 import {
@@ -58,6 +62,29 @@ const SNAPPAY_RECONCILIATION_PENDING_COPY =
   "پرداخت اسنپ‌پی هنوز در حال تطبیق است. لطفاً وضعیت سفارش را بررسی کنید و دوباره پرداخت نکنید.";
 const ORDER_CANCELLED_COPY =
   "این سفارش لغو شده است. از پرداخت دوباره خودداری کنید و وضعیت سفارش را در حساب کاربری بررسی کنید.";
+const RESERVATION_EXPIRED_COPY =
+  "مهلت رزرو موجودی این سفارش تمام شده است. لطفاً وضعیت سفارش را بررسی کنید و در صورت نیاز دوباره سفارش دهید.";
+
+function isLiveCheckoutHold(
+  outcome: CartStockCheckResponse["reservationOutcome"],
+): boolean {
+  return outcome === "held";
+}
+
+function isDeadCheckoutHold(
+  outcome: CartStockCheckResponse["reservationOutcome"],
+): boolean {
+  return outcome === "expired" || outcome === "released" || outcome === "ineligible";
+}
+
+function abandonDeadCheckoutHold(attemptId?: string) {
+  const deadAttemptId = String(attemptId || readCheckoutAttemptId() || "").trim();
+  clearCheckoutIdentity();
+  const continuable = readContinuableCheckoutIdentity();
+  if (deadAttemptId && continuable?.attemptId === deadAttemptId) {
+    clearContinuableCheckoutIdentity();
+  }
+}
 
 function leftoverCheckoutCopy(errorCode: string): string | undefined {
   switch (errorCode) {
@@ -164,8 +191,7 @@ const checkoutErrorPresentation = (
   switch (errorCode) {
     case "RESERVATION_EXPIRED":
       return {
-        displayError:
-          "مهلت رزرو موجودی این سفارش تمام شده است. لطفاً وضعیت سفارش را بررسی کنید و در صورت نیاز دوباره سفارش دهید.",
+        displayError: RESERVATION_EXPIRED_COPY,
         clearAttempt: true,
       };
     case "RESERVATION_LOOKUP_FAILED":
@@ -376,10 +402,17 @@ function ShoppingCartBillForm({}: Props) {
   const { totalPrice, totalItems, clearCart, cartItems, refreshCart, setStockNotice } = useCart();
   const cartItemsRef = React.useRef(cartItems);
   cartItemsRef.current = cartItems;
+  const totalItemsRef = React.useRef(totalItems);
+  totalItemsRef.current = totalItems;
   const refreshCartRef = React.useRef(refreshCart);
   refreshCartRef.current = refreshCart;
   const setStockNoticeRef = React.useRef(setStockNotice);
   setStockNoticeRef.current = setStockNotice;
+  // null: a stored attempt exists and check-stock has not confirmed the hold yet.
+  // Empty-cart continuation is only valid while this is true.
+  const [liveCheckoutHold, setLiveCheckoutHold] = useState<boolean | null>(() =>
+    typeof window !== "undefined" && Boolean(readCheckoutIdentity()?.attemptId) ? null : false,
+  );
   // `snappEligible` is tri-state, and this must read `undefined` the same way
   // PaymentGateway's `showSnappay` does (`!== false`). It used to reject it as
   // falsy while the card was still rendered and selected, so a submit during any
@@ -685,15 +718,19 @@ function ShoppingCartBillForm({}: Props) {
       return;
     }
 
-    if (readCheckoutIdentity()?.attemptId) {
+    if (liveCheckoutHold === true) {
       setError((prev) => (prev === EMPTY_CART_ERROR ? null : prev));
       return;
     }
 
-    if (totalPrice <= 0 && totalItems === 0) {
-      setError(EMPTY_CART_ERROR);
+    if (liveCheckoutHold === null) {
+      return;
     }
-  }, [totalPrice, totalItems, currentUser]);
+
+    if (totalPrice <= 0 && totalItems === 0) {
+      setError((prev) => (prev === RESERVATION_EXPIRED_COPY ? prev : EMPTY_CART_ERROR));
+    }
+  }, [totalPrice, totalItems, currentUser, liveCheckoutHold]);
 
   const clearCartSafely = async () => {
     try {
@@ -716,7 +753,10 @@ function ShoppingCartBillForm({}: Props) {
     }
     try {
       Sentry.captureMessage(`checkout.error:${errorCode || "UNSPECIFIED"}`, {
-        level: "error",
+        // Unmapped backend copy is still worth a breadcrumb, but it is not an
+        // application crash — empty-cart leftovers used this path before the
+        // server started sending CART_EMPTY.
+        level: errorCode === "BACKEND_MESSAGE" ? "warning" : "error",
         tags: {
           area: "checkout",
           stage: "storefront",
@@ -884,6 +924,21 @@ function ShoppingCartBillForm({}: Props) {
     stockReconcileInFlightRef.current = true;
     try {
       const stockResult = await CartService.checkCartStock(readCheckoutAttemptId());
+      if (stockResult.errorCode === "RESERVATION_LOOKUP_FAILED") {
+        return;
+      }
+      if (isLiveCheckoutHold(stockResult.reservationOutcome)) {
+        setLiveCheckoutHold(true);
+      } else if (isDeadCheckoutHold(stockResult.reservationOutcome)) {
+        const attemptId = readCheckoutAttemptId();
+        abandonDeadCheckoutHold(attemptId);
+        setLiveCheckoutHold(false);
+        if (totalItemsRef.current <= 0) {
+          setError(RESERVATION_EXPIRED_COPY);
+        }
+      } else {
+        setLiveCheckoutHold(false);
+      }
       if (!stockResult.valid) {
         await applyCheckoutStockCorrection(stockResult, { announce: false });
       }
@@ -914,9 +969,27 @@ function ShoppingCartBillForm({}: Props) {
     setError(null);
 
     const pendingIdentity = continuation || readCheckoutIdentity();
+    const continuableIdentity = continuation ? null : readContinuableCheckoutIdentity();
     const cartIsEmpty = totalItems <= 0 || cartItems.length === 0;
-    const canContinuePendingCheckout = Boolean(
-      pendingIdentity?.attemptId && pendingIdentity.quoteHash && (cartIsEmpty || continuation),
+    const resumeIdentity =
+      continuation ||
+      (shouldResumeStoredCheckout({
+        stored: pendingIdentity,
+        selectedGateway: gateway,
+        selectableGateways,
+        cartIsEmpty,
+      })
+        ? pendingIdentity
+        : shouldResumeStoredCheckout({
+            stored: continuableIdentity,
+            selectedGateway: gateway,
+            selectableGateways,
+            cartIsEmpty,
+          })
+          ? continuableIdentity
+          : null);
+    const continuationCandidate = Boolean(
+      resumeIdentity?.attemptId && resumeIdentity.quoteHash && (cartIsEmpty || continuation),
     );
 
     const selectedAddressId = data.address?.id ? Number(data.address.id) : undefined;
@@ -926,12 +999,12 @@ function ShoppingCartBillForm({}: Props) {
 
     // An open window must never attach by default: the shopper picks combined or
     // separate fulfillment explicitly.
-    if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && !canContinuePendingCheckout) {
+    if (RESERVE_FEATURE_ENABLED && activeReserve && mergeChoice === null && !continuationCandidate) {
       failPayment("لطفاً مشخص کنید این سفارش به بسته رزروی اضافه شود یا جداگانه ارسال شود");
       return;
     }
 
-    if (!canContinuePendingCheckout && !isMergeMode) {
+    if (!continuationCandidate && !isMergeMode) {
       if (!selectedAddressId && !inlineAddressFieldsFilled) {
         failPayment("لطفاً یک آدرس ذخیره شده را انتخاب یا آدرس جدید وارد کنید");
         return;
@@ -942,7 +1015,7 @@ function ShoppingCartBillForm({}: Props) {
       }
     }
 
-    if (!canContinuePendingCheckout && (!data.phoneNumber || data.phoneNumber.trim() === "")) {
+    if (!continuationCandidate && (!data.phoneNumber || data.phoneNumber.trim() === "")) {
       failPayment("لطفاً شماره تماس خود را وارد کنید");
       return;
     }
@@ -950,15 +1023,15 @@ function ShoppingCartBillForm({}: Props) {
     // Validate phone number format (basic check). Persian/Arabic-Indic digits
     // (common on Iranian keyboards) must be normalized before the ASCII-only
     // \D strip, or they're stripped as "non-digits" and the field reads empty.
-    const cleanPhone = canContinuePendingCheckout
+    const cleanPhone = continuationCandidate
       ? ""
       : normalizeDigits(data.phoneNumber || "").replace(/\D/g, "");
-    if (!canContinuePendingCheckout && cleanPhone.length < 10) {
+    if (!continuationCandidate && cleanPhone.length < 10) {
       failPayment("شماره تماس وارد شده معتبر نیست");
       return;
     }
 
-    if (!canContinuePendingCheckout && !isMergeMode && !selectedAddressId) {
+    if (!continuationCandidate && !isMergeMode && !selectedAddressId) {
       if (!watchProvince || !watchCity) {
         failPayment("لطفاً استان و شهر را انتخاب کنید");
         return;
@@ -976,19 +1049,19 @@ function ShoppingCartBillForm({}: Props) {
 
     // Validate total price is positive unless we are continuing a held unpaid order
     // whose mutable cart was emptied by the reservation-unaware stock check.
-    if (totalPrice <= 0 && !canContinuePendingCheckout) {
+    if (totalPrice <= 0 && !continuationCandidate) {
       failPayment("مبلغ سفارش باید بیشتر از صفر باشد");
       return;
     }
 
     const resumeGateway = (
-      canContinuePendingCheckout
-        ? String(pendingIdentity?.gateway || gateway).toLowerCase()
+      continuationCandidate
+        ? String(resumeIdentity?.gateway || gateway).toLowerCase()
         : gateway
     ) as typeof gateway;
 
     if (
-      !canContinuePendingCheckout &&
+      !continuationCandidate &&
       (selectableGateways.length === 0 || !selectableGateways.includes(gateway))
     ) {
       failPayment("درگاه پرداخت انتخاب شده در دسترس نیست");
@@ -1024,12 +1097,29 @@ function ShoppingCartBillForm({}: Props) {
       // Always re-checked: the shopper's previous attempt may itself be what
       // corrected the cart, and nothing is allowed to pay past this guard.
       const stockValid = await CartService.checkCartStock(
-        canContinuePendingCheckout ? pendingIdentity?.attemptId : readCheckoutAttemptId(),
+        continuationCandidate ? resumeIdentity?.attemptId : undefined,
       );
 
       if (stockValid.errorCode === "RESERVATION_LOOKUP_FAILED") {
         failPayment(checkoutErrorPresentation("RESERVATION_LOOKUP_FAILED")!.displayError);
         return;
+      }
+
+      const holdIsLive = isLiveCheckoutHold(stockValid.reservationOutcome);
+      if (continuationCandidate && !holdIsLive) {
+        if (isDeadCheckoutHold(stockValid.reservationOutcome)) {
+          abandonDeadCheckoutHold(resumeIdentity?.attemptId);
+          setLiveCheckoutHold(false);
+          failPayment(RESERVATION_EXPIRED_COPY);
+          return;
+        }
+        failPayment(EMPTY_CART_ERROR);
+        return;
+      }
+
+      const canContinuePendingCheckout = Boolean(continuationCandidate && holdIsLive);
+      if (canContinuePendingCheckout) {
+        setLiveCheckoutHold(true);
       }
 
       if (!stockValid.valid && !canContinuePendingCheckout) {
@@ -1042,12 +1132,15 @@ function ShoppingCartBillForm({}: Props) {
       let checkoutAttemptId: string | undefined;
       let cartResponse;
 
-      if (canContinuePendingCheckout && pendingIdentity) {
-        checkoutAttemptId = pendingIdentity.attemptId;
+      if (canContinuePendingCheckout && resumeIdentity) {
+        if (resumeIdentity !== pendingIdentity) {
+          writeCheckoutIdentity(resumeIdentity);
+        }
+        checkoutAttemptId = resumeIdentity.attemptId;
         cartResponse = await CartService.finalizeCart({
           gateway: resumeGateway,
-          attemptId: pendingIdentity.attemptId,
-          quoteHash: pendingIdentity.quoteHash,
+          attemptId: resumeIdentity.attemptId,
+          quoteHash: resumeIdentity.quoteHash,
           analyticsCorrelationId: getAnalyticsCorrelationId(),
         } as never);
       } else {
@@ -1555,24 +1648,6 @@ function ShoppingCartBillForm({}: Props) {
         steps={["Information", "Delivery", "Payment"]}
       /> */}
       <CartStockNotice />
-      {(() => {
-        const pending = readCheckoutIdentity();
-        const emptyCart = totalItems <= 0;
-        if (emptyCart && pending?.attemptId) {
-          return (
-            <div
-              role="status"
-              data-testid="checkout-continuation-notice"
-              className="rounded-panel border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900"
-            >
-              سفارش
-              {pending.orderId ? ` #${pending.orderId} ` : " "}
-              هنوز در انتظار پرداخت است. سبد خرید خالی است، اما می‌توانید پرداخت همان سفارش را ادامه دهید.
-            </div>
-          );
-        }
-        return null;
-      })()}
       {error && (
         <div
           id="checkout-form-error"

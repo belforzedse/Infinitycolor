@@ -43,6 +43,23 @@ test.describe("storefront smoke", () => {
     runtime.assertClean();
   });
 
+  test("@smoke homepage with SnapPay referral query does not text-hydrate", async ({
+    page,
+  }) => {
+    const runtime = await prepareStorefrontPage(page);
+
+    await page.goto("/?utm_source=snappay&utm_medium=referral");
+
+    const cards = page.getByTestId("product-card");
+    await expect(cards.first()).toBeAttached({ timeout: 30_000 });
+
+    const textHydration = runtime.errors.filter((error) =>
+      /Text content does not match|Hydration failed|Minified React error #418/i.test(error),
+    );
+    expect(textHydration).toEqual([]);
+    runtime.assertClean();
+  });
+
   test("@smoke category PLP navigates to PDP and exposes variation states", async ({
     page,
   }) => {

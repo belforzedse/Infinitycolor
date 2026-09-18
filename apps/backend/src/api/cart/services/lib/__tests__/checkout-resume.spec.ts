@@ -21,6 +21,7 @@ describe("existingAttemptBlocksReplacement", () => {
           Status: "Redirected",
           Gateway: "snappay",
           quoteHash: "sha256:original",
+          order: { id: 91 },
         },
         "snappay",
         "sha256:after-discount",
@@ -50,6 +51,7 @@ describe("existingAttemptBlocksReplacement", () => {
           Gateway: "snappay",
           quoteHash: "sha256:original",
           providerResponse: { tokenAttemptSeq: 1, tokenFingerprint: "fp" },
+          order: { id: 91 },
         },
         "snappay",
         "sha256:after-discount",
@@ -89,7 +91,21 @@ describe("existingAttemptBlocksReplacement", () => {
         "mellat",
         "sha256:original",
       ),
-    ).toBe("in_progress");
+    ).toBe("conflict");
+  });
+
+  it("does not reuse an attempt at a different payable quote, even before an order exists", () => {
+    expect(
+      existingAttemptBlocksReplacement(
+        {
+          Status: "Created",
+          Gateway: "mellat",
+          quoteHash: "sha256:original",
+        },
+        "mellat",
+        "sha256:after-discount",
+      ),
+    ).toBe("conflict");
   });
 
   it("reads a populated order id from a replayed attempt", () => {
@@ -139,6 +155,28 @@ describe("gateCheckoutResume", () => {
     ).resolves.toBe("expired");
   });
 
+  it("still resumes an unresolved SnappPay generation at the same quote after the hold is gone", async () => {
+    mockedResolveHold.mockResolvedValue({ status: "expired" });
+
+    await expect(
+      gateCheckoutResume(
+        {} as never,
+        17,
+        {
+          Status: "Redirected",
+          Gateway: "snappay",
+          attemptId: "attempt-1",
+          quoteHash: "sha256:original",
+          order: { id: 91 },
+          providerResponse: { tokenAttemptSeq: 1, tokenFingerprint: "fp" },
+        },
+        "snappay",
+        "sha256:original",
+      ),
+    ).resolves.toBe("replay");
+    expect(mockedResolveHold).not.toHaveBeenCalled();
+  });
+
   it("defers resume when the reservation lookup throws instead of treating it as expired", async () => {
     mockedResolveHold.mockRejectedValue(new Error("temporary query failure"));
 
@@ -150,5 +188,61 @@ describe("gateCheckoutResume", () => {
         "mellat",
       ),
     ).resolves.toBe("unavailable");
+  });
+
+  it("treats an attempt without a linked order as incomplete creation, not expiry", async () => {
+    mockedResolveHold.mockResolvedValue({ status: "ineligible" });
+
+    await expect(
+      gateCheckoutResume(
+        {} as never,
+        17,
+        {
+          Status: "Created",
+          Gateway: "mellat",
+          attemptId: "orphan-1",
+          quoteHash: "sha256:original",
+        },
+        "mellat",
+        "sha256:original",
+      ),
+    ).resolves.toBe("incomplete");
+  });
+
+  it("conflicts a quote change on an attempt that never linked an order", async () => {
+    mockedResolveHold.mockResolvedValue({ status: "ineligible" });
+
+    await expect(
+      gateCheckoutResume(
+        {} as never,
+        17,
+        {
+          Status: "Created",
+          Gateway: "mellat",
+          attemptId: "orphan-1",
+          quoteHash: "sha256:original",
+        },
+        "mellat",
+        "sha256:after-discount",
+      ),
+    ).resolves.toBe("conflict");
+  });
+
+  it("keeps an orphan attempt in progress while a mint lease is live", async () => {
+    mockedResolveHold.mockResolvedValue({ status: "ineligible" });
+
+    await expect(
+      gateCheckoutResume(
+        {} as never,
+        17,
+        {
+          Status: "Created",
+          Gateway: "mellat",
+          attemptId: "orphan-1",
+          leaseUntil: new Date(Date.now() + 30_000).toISOString(),
+        },
+        "mellat",
+      ),
+    ).resolves.toBe("in_progress");
   });
 });
