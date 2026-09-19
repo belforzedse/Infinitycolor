@@ -52,7 +52,7 @@ describe("securityHeaders", () => {
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain(
-      "form-action 'self' https://www.zarinpal.com https://sandbox.zarinpal.com",
+      "form-action 'self' https://www.zarinpal.com https://sandbox.zarinpal.com https://bpm.shaparak.ir https://sep.shaparak.ir",
     );
     expect(csp).toContain("https://api.infinitycolor.co");
     expect(csp).toContain("https://analytics.alpagency.net");

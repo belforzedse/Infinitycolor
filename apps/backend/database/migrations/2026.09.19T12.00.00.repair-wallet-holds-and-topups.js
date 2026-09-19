@@ -48,6 +48,10 @@ const WALLET_UNIQUE_INDEXES = [
      ON wallet_topups ((
        CASE WHEN idempotency_key IS NOT NULL THEN idempotency_key ELSE NULL END
      ))`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_topups_one_owner
+     ON wallet_topups_user_links ((
+       CASE WHEN wallet_topup_id IS NOT NULL THEN wallet_topup_id ELSE NULL END
+     ))`,
 ];
 
 const WALLET_CHECK_CONSTRAINTS = [
@@ -78,11 +82,28 @@ const PAYMENT_ATTEMPT_COLUMNS = [
 ];
 
 const WALLET_TOPUP_COLUMNS = [
+  ["amount", "bigint"],
   ["gateway", "character varying(255)"],
+  ["status", "character varying(255)"],
+  ["sale_order_id", "character varying(255)"],
+  ["ref_id", "character varying(255)"],
+  ["sale_reference_id", "character varying(255)"],
   ["provider_reference", "character varying(255)"],
+  ["verification_reference", "character varying(255)"],
   ["expires_at", "timestamp(6) without time zone"],
   ["ledger_reference_id", "character varying(255)"],
   ["idempotency_key", "character varying(255)"],
+  ["redirect_url", "text"],
+  ["redirect_method", "character varying(255)"],
+  ["next_reconcile_at", "timestamp(6) without time zone"],
+  ["reconcile_attempts", "integer"],
+  ["last_provider_code", "integer"],
+  ["last_provider_error", "text"],
+];
+
+const WALLET_TOPUP_LINK_COLUMNS = [
+  ["wallet_topup_id", "integer"],
+  ["user_id", "integer"],
 ];
 
 async function addColumns(knex, table, columns) {
@@ -112,9 +133,12 @@ async function createWalletTopupTables(knex) {
         ref_id character varying(255),
         sale_reference_id character varying(255),
         provider_reference character varying(255),
+        verification_reference character varying(255),
         expires_at timestamp(6) without time zone,
         ledger_reference_id character varying(255),
         idempotency_key character varying(255),
+        redirect_url text,
+        redirect_method character varying(255),
         next_reconcile_at timestamp(6) without time zone,
         reconcile_attempts integer,
         last_provider_code integer,
@@ -176,6 +200,39 @@ async function createWalletTopupTables(knex) {
   }
 }
 
+async function ensureWalletTopupOwnership(knex) {
+  if (!(await knex.schema.hasTable("wallet_topups_user_links"))) return;
+  await addColumns(knex, "wallet_topups_user_links", WALLET_TOPUP_LINK_COLUMNS);
+  await knex.raw(
+    `CREATE INDEX IF NOT EXISTS wallet_topups_user_links_fk
+       ON wallet_topups_user_links (wallet_topup_id)`,
+  );
+  await knex.raw(
+    `CREATE INDEX IF NOT EXISTS wallet_topups_user_links_inv_fk
+       ON wallet_topups_user_links (user_id)`,
+  );
+
+  const existing = await knex.raw(
+    `SELECT 1 FROM pg_constraint
+      WHERE conname = 'wallet_topups_user_links_unique'
+      LIMIT 1`,
+  );
+  if ((existing.rows || []).length > 0) return;
+  try {
+    await knex.raw(
+      `ALTER TABLE wallet_topups_user_links
+         ADD CONSTRAINT wallet_topups_user_links_unique UNIQUE (wallet_topup_id, user_id)`,
+    );
+  } catch (error) {
+    // Preserve legacy rows and let readiness keep top-ups disabled until an
+    // operator resolves duplicate or malformed ownership links.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[wallet-repair] could not assert top-up ownership uniqueness: ${String(error.message).slice(0, 300)}`,
+    );
+  }
+}
+
 async function ensureCheckConstraint(knex, constraint) {
   const existing = await knex.raw(
     `SELECT convalidated FROM pg_constraint WHERE conname = ? LIMIT 1`,
@@ -220,6 +277,7 @@ module.exports = {
     await addColumns(knex, "payment_attempts", PAYMENT_ATTEMPT_COLUMNS);
     await createWalletTopupTables(knex);
     await addColumns(knex, "wallet_topups", WALLET_TOPUP_COLUMNS);
+    await ensureWalletTopupOwnership(knex);
     if (await knex.schema.hasTable("wallet_topups")) {
       await knex.raw("UPDATE wallet_topups SET gateway = 'Mellat' WHERE gateway IS NULL");
     }
@@ -263,5 +321,6 @@ module.exports = {
     WALLET_CHECK_CONSTRAINTS,
     PAYMENT_ATTEMPT_COLUMNS,
     WALLET_TOPUP_COLUMNS,
+    WALLET_TOPUP_LINK_COLUMNS,
   },
 };

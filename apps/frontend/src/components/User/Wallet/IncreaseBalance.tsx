@@ -5,6 +5,7 @@ import { priceFormatter } from "@/utils/price";
 import { normalizeDigits } from "@/utils/faNum";
 import LeftUpArrowIcon from "../Icons/LeftUpArrowIcon";
 import WalletService, { type WalletTopupOptions } from "@/services/wallet";
+import { submitPaymentHandoff } from "@/utils/paymentHandoff";
 
 interface IncreaseBalanceProps {
   options: WalletTopupOptions | null;
@@ -34,41 +35,7 @@ const parseAmount = (raw: string): number | null => {
   return Number.isSafeInteger(parsed) ? parsed : null;
 };
 
-/** Sends the customer to the provider, by the method that provider needs. */
-export const goToProvider = (
-  result: {
-    redirectUrl?: string;
-    redirectMethod?: "GET" | "POST";
-    formFields?: Record<string, string>;
-    refId?: string;
-  },
-  navigate: (url: string) => void = (url) => window.location.assign(url),
-) => {
-  const url = String(result.redirectUrl || "");
-  if (!url) return false;
-
-  if (result.redirectMethod === "POST") {
-    // Mellat's gateway is entered by POSTing its RefId, not by a GET.
-    const form = document.createElement("form");
-    form.method = "POST";
-    form.action = url;
-    form.style.display = "none";
-    const fields = result.formFields ?? (result.refId ? { RefId: result.refId } : {});
-    for (const [name, value] of Object.entries(fields)) {
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = name;
-      input.value = String(value);
-      form.appendChild(input);
-    }
-    document.body.appendChild(form);
-    form.submit();
-    return true;
-  }
-
-  navigate(url);
-  return true;
-};
+export { submitPaymentHandoff as goToProvider };
 
 const IncreaseBalance = ({
   options,
@@ -125,20 +92,41 @@ const IncreaseBalance = ({
         idempotencyKey: idempotencyKey.current,
       });
 
-      if (!result.success) {
+      if (result.saleOrderId) onTopupStarted?.(result.saleOrderId);
+
+      if (result.nextAction === "poll") {
+        return;
+      }
+      if (result.nextAction === "complete") {
+        toast.success("موجودی کیف پول به‌روزرسانی شد.");
+        return;
+      }
+      if (!result.success || result.nextAction === "retry") {
+        idempotencyKey.current = "";
         toast.error(result.message || "شروع پرداخت انجام نشد. لطفاً دوباره تلاش کنید.");
         return;
       }
-      if (result.saleOrderId) onTopupStarted?.(result.saleOrderId);
-      if (!goToProvider(result, navigate)) {
+      if (!submitPaymentHandoff(result, navigate)) {
         toast.error("آدرس درگاه پرداخت دریافت نشد. لطفاً دوباره تلاش کنید.");
       }
     } catch (error) {
-      const payload = (error as { response?: { data?: { data?: { message?: string } } } })?.response
-        ?.data?.data;
+      const payload = (error as {
+        response?: {
+          data?: {
+            data?: {
+              message?: string;
+              nextAction?: "redirect" | "poll" | "complete" | "retry";
+            };
+          };
+        };
+      })?.response?.data?.data;
+      // Strapi rejects 4xx responses at the HTTP client boundary. A provider
+      // refusal still carries the same terminal replay contract, so discard
+      // this key just as we do for a resolved `nextAction: retry` response.
+      if (payload?.nextAction === "retry") idempotencyKey.current = "";
       toast.error(payload?.message || "شروع پرداخت انجام نشد. لطفاً دوباره تلاش کنید.");
-      // A failed attempt is a new intent next time; a succeeded one keeps its key.
-      idempotencyKey.current = "";
+      // A transport failure is ambiguous: retain the key so a retry asks the
+      // server to replay the same durable intent instead of opening a second.
     } finally {
       setSubmitting(false);
     }

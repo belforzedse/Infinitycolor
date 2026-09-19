@@ -1,7 +1,9 @@
 import {
   classifyMellatTopupInquiry,
+  claimDueWalletTopups,
   isMellatTopupSettleConfirmed,
   markWalletTopupUnknown,
+  moveUncorrelatableSamanTopupsToReview,
 } from "../services/wallet-topup";
 
 describe("Mellat wallet top-up reconciliation", () => {
@@ -60,5 +62,56 @@ describe("Mellat wallet top-up reconciliation", () => {
       error: "manual review required",
     });
     expect(raw.mock.calls[0][1][0]).toBeNull();
+  });
+
+  it("selects the provider-specific durable handle for reconciliation", async () => {
+    const raw = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ id: 9 }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 9,
+          gateway: "SamanKish",
+          provider_reference: null,
+          verification_reference: "SAMAN-CANDIDATE",
+        }],
+      });
+    const strapi: any = { db: { connection: { raw } } };
+
+    await expect(claimDueWalletTopups(strapi, 25)).resolves.toHaveLength(1);
+
+    const selectSql = String(raw.mock.calls[0][0]);
+    expect(selectSql).toContain("gateway, 'Mellat') = 'Mellat'");
+    expect(selectSql).toContain("gateway, 'Mellat') = 'SamanKish'");
+    expect(selectSql).toContain("COALESCE(provider_reference, verification_reference)");
+    expect(selectSql).toContain("gateway, 'Mellat') = 'ZarinPal'");
+  });
+
+  it("can park an unverified callback directly for manual review", async () => {
+    const raw = jest.fn().mockResolvedValue({ rows: [{ id: 7 }] });
+    const strapi: any = { db: { connection: { raw } } };
+
+    await markWalletTopupUnknown(strapi, {
+      topupId: 7,
+      error: "untrusted callback failure",
+      schedule: false,
+    });
+
+    expect(raw.mock.calls[0][1][0]).toBeNull();
+  });
+
+  it("moves an expired Saman session with no callback RefNum to operator review", async () => {
+    const raw = jest.fn().mockResolvedValue({ rows: [{ id: 7 }] });
+    const strapi: any = { db: { connection: { raw } } };
+
+    await expect(
+      moveUncorrelatableSamanTopupsToReview(strapi, { graceMinutes: 0 }),
+    ).resolves.toEqual({ reviewed: 1 });
+
+    const sql = String(raw.mock.calls[0][0]);
+    expect(sql).toContain("gateway = 'SamanKish'");
+    expect(sql).toContain("verification_reference IS NULL");
+    expect(sql).toContain("ref_id IS NOT NULL");
+    expect(sql).toContain("next_reconcile_at = NULL");
   });
 });

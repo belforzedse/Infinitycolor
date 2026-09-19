@@ -1,8 +1,7 @@
 "use client";
 import { useState } from "react";
-
-const HEX_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-const isValidHex = (c?: string | null): c is string => !!c && HEX_PATTERN.test(c.trim());
+import AttributeChip from "./AttributeChip";
+import ColorOptionCard, { isValidHex } from "./ColorOptionCard";
 
 type Props = {
   colors: {
@@ -35,115 +34,60 @@ export default function PDPHeroInfoColor(props: Props) {
     }
   };
 
+  /**
+   * Plenty of catalogue colours were imported without a hex code. A grid of blank
+   * boxes says less than the names alone, so a section with nothing to paint falls
+   * back to name chips; a section with any hex keeps the swatch cards.
+   */
+  const hasAnySwatch = colors.some((color) => isValidHex(color.colorCode));
+
   return (
     <div className="flex flex-col gap-3">
-      <span className="text-foreground-primary text-xl">انتخاب رنگ</span>
+      <span className="text-xl text-neutral-800">انتخاب رنگ</span>
 
       <div
-        className="flex max-w-full flex-wrap items-center gap-3 overflow-visible px-1 py-1"
+        className="flex flex-wrap items-center gap-2"
         role="radiogroup"
         aria-label="انتخاب رنگ محصول"
       >
         {colors.map((color) => {
           const isSelected = color.id === selectedColor;
           const isDisabled = disabledColorIds.includes(color.id);
-          const hasSwatch = isValidHex(color.colorCode);
+          const ariaLabel = isDisabled
+            ? `رنگ ${color.title} ناموجود`
+            : `انتخاب رنگ ${color.title}`;
+          const dataProps = {
+            "data-testid": "pdp-color-option",
+            "data-color-id": color.id,
+            "data-color-title": color.title,
+            "data-color-code": color.colorCode || "",
+          };
 
-          if (hasSwatch) {
-            // ── Swatch-style button (color has a valid hex code) ──
+          if (!hasAnySwatch) {
             return (
-              <div key={color.id} className="flex shrink-0 items-center">
-                {isSelected ? (
-                  <button
-                    type="button"
-                    className="flex shrink-0 items-center gap-1 rounded-3xl border border-gray-300 p-1"
-                    data-testid="pdp-color-option"
-                    data-color-id={color.id}
-                    data-color-title={color.title}
-                    data-color-code={color.colorCode || ""}
-                    aria-pressed="true"
-                    aria-label={`رنگ انتخاب شده: ${color.title}`}
-                    disabled
-                  >
-                    <div
-                      className="h-7 w-7 rounded-full"
-                      style={{ backgroundColor: color.colorCode! }}
-                      aria-hidden="true"
-                    />
-                    <span className="text-foreground-primary text-sm">{color.title}</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => (isDisabled ? undefined : handleColorClick(color.id))}
-                    data-testid="pdp-color-option"
-                    data-color-id={color.id}
-                    data-color-title={color.title}
-                    data-color-code={color.colorCode || ""}
-                    className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors"
-                    style={{
-                      backgroundColor: isDisabled ? "#f3f4f6" : color.colorCode!,
-                      borderColor: isDisabled ? "#d1d5db" : "#e5e7eb",
-                    }}
-                    disabled={isDisabled}
-                    aria-disabled={isDisabled}
-                    aria-label={
-                      isDisabled ? `رنگ ${color.title} ناموجود` : `انتخاب رنگ ${color.title}`
-                    }
-                    aria-pressed="false"
-                    title={isDisabled ? "ناموجود" : color.title}
-                  >
-                    {isDisabled && (
-                      <>
-                        <span className="absolute inset-0 rounded-full opacity-60" />
-                        <span className="absolute h-0.5 w-4 rotate-45 bg-[rgba(0,0,0,0.55)]" />
-                        <span className="absolute h-0.5 w-4 -rotate-45 bg-[rgba(0,0,0,0.55)]" />
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
+              <AttributeChip
+                key={color.id}
+                title={color.title}
+                selected={isSelected}
+                disabled={isDisabled}
+                onClick={() => handleColorClick(color.id)}
+                ariaLabel={ariaLabel}
+                dataProps={dataProps}
+              />
             );
           }
 
-          // ── Text/model-style button (hex-less color) ──
           return (
-            <div key={color.id} className="flex shrink-0 items-center">
-              <button
-                type="button"
-                onClick={() => (isDisabled ? undefined : handleColorClick(color.id))}
-                data-testid="pdp-color-option"
-                data-color-id={color.id}
-                data-color-title={color.title}
-                data-color-code={color.colorCode || ""}
-                className="shrink-0 rounded-3xl px-3 py-1 text-sm transition-colors"
-                style={
-                  isDisabled
-                    ? {
-                        opacity: 0.5,
-                        textDecoration: "line-through",
-                        cursor: "not-allowed",
-                        border: "1px solid #e2e8f0",
-                      }
-                    : isSelected
-                      ? {
-                          backgroundColor: "#0f172a",
-                          color: "#fff",
-                          border: "1px solid #0f172a",
-                        }
-                      : {
-                          border: "1px solid #e2e8f0",
-                        }
-                }
-                disabled={isDisabled}
-                aria-disabled={isDisabled}
-                aria-pressed={isSelected ? "true" : "false"}
-                aria-label={isDisabled ? `رنگ ${color.title} ناموجود` : `انتخاب رنگ ${color.title}`}
-                title={isDisabled ? "ناموجود" : color.title}
-              >
-                {color.title}
-              </button>
-            </div>
+            <ColorOptionCard
+              key={color.id}
+              title={color.title}
+              colorCode={color.colorCode}
+              selected={isSelected}
+              disabled={isDisabled}
+              onClick={() => handleColorClick(color.id)}
+              ariaLabel={ariaLabel}
+              dataProps={dataProps}
+            />
           );
         })}
       </div>

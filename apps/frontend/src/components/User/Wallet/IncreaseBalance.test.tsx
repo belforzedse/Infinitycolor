@@ -126,6 +126,109 @@ describe("IncreaseBalance", () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
+  it("tracks an accepted uncertain intent and polls instead of opening another payment", async () => {
+    const onTopupStarted = jest.fn();
+    startTopup.mockResolvedValue({
+      success: true,
+      saleOrderId: "1700000000200",
+      topupStatus: "Unknown",
+      nextAction: "poll",
+    });
+    render(
+      <IncreaseBalance
+        options={options()}
+        navigate={assign}
+        onTopupStarted={onTopupStarted}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("wallet-topup-submit"));
+
+    await waitFor(() => expect(onTopupStarted).toHaveBeenCalledWith("1700000000200"));
+    expect(assign).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("mints a new key only after the server declares the old intent terminal", async () => {
+    startTopup
+      .mockResolvedValueOnce({
+        success: false,
+        saleOrderId: "1700000000300",
+        topupStatus: "Failed",
+        nextAction: "retry",
+        message: "پرداخت انجام نشد.",
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        saleOrderId: "1700000000301",
+        redirectUrl: "https://gateway.test/pay",
+        redirectMethod: "GET",
+        nextAction: "redirect",
+      });
+    render(<IncreaseBalance options={options()} navigate={assign} />);
+
+    const button = screen.getByTestId("wallet-topup-submit");
+    fireEvent.click(button);
+    await waitFor(() => expect(startTopup).toHaveBeenCalledTimes(1));
+    const firstKey = startTopup.mock.calls[0][0].idempotencyKey;
+
+    fireEvent.click(button);
+    await waitFor(() => expect(startTopup).toHaveBeenCalledTimes(2));
+    expect(startTopup.mock.calls[1][0].idempotencyKey).not.toBe(firstKey);
+  });
+
+  it("retains the key after an ambiguous transport error", async () => {
+    startTopup
+      .mockRejectedValueOnce(new Error("network timeout"))
+      .mockResolvedValueOnce({
+        success: true,
+        saleOrderId: "1700000000400",
+        topupStatus: "Unknown",
+        nextAction: "poll",
+      });
+    render(<IncreaseBalance options={options()} navigate={assign} />);
+
+    const button = screen.getByTestId("wallet-topup-submit");
+    fireEvent.click(button);
+    await waitFor(() => expect(startTopup).toHaveBeenCalledTimes(1));
+    const firstKey = startTopup.mock.calls[0][0].idempotencyKey;
+
+    fireEvent.click(button);
+    await waitFor(() => expect(startTopup).toHaveBeenCalledTimes(2));
+    expect(startTopup.mock.calls[1][0].idempotencyKey).toBe(firstKey);
+  });
+
+  it("mints a new key after an HTTP error declares the intent terminal", async () => {
+    startTopup
+      .mockRejectedValueOnce({
+        response: {
+          data: {
+            data: {
+              nextAction: "retry",
+              message: "پرداخت انجام نشد.",
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        saleOrderId: "1700000000501",
+        redirectUrl: "https://gateway.test/pay",
+        redirectMethod: "GET",
+        nextAction: "redirect",
+      });
+    render(<IncreaseBalance options={options()} navigate={assign} />);
+
+    const button = screen.getByTestId("wallet-topup-submit");
+    fireEvent.click(button);
+    await waitFor(() => expect(startTopup).toHaveBeenCalledTimes(1));
+    const firstKey = startTopup.mock.calls[0][0].idempotencyKey;
+
+    fireEvent.click(button);
+    await waitFor(() => expect(startTopup).toHaveBeenCalledTimes(2));
+    expect(startTopup.mock.calls[1][0].idempotencyKey).not.toBe(firstKey);
+  });
+
   it("is inert while the capability is switched off", () => {
     render(<IncreaseBalance options={options({ enabled: false })} navigate={assign} />);
 

@@ -252,7 +252,10 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       };
     } catch (error: any) {
       const details = parseGatewayError(error);
-      strapi.log.error(`[${requestId}] ZarinPal payment request error`, details);
+      strapi.log.error(`[${requestId}] ZarinPal payment request error`, {
+        message: details.message,
+        status: details.status,
+      });
       return {
         success: false,
         requestId,
@@ -281,9 +284,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       const minted = simulatedAuthorityAmount(params.authority);
       if (minted === null || minted !== amount) {
         strapi.log.warn(
-          `[${requestId}] Simulated ZarinPal verification refused: authority ${String(
-            params.authority,
-          ).slice(0, 64)} was minted for ${minted ?? "no"} ${config.currency}, asked to verify ${amount}`,
+          `[${requestId}] Simulated ZarinPal verification refused: authority amount was ${minted ?? "missing"} ${config.currency}, asked to verify ${amount}`,
         );
         return {
           success: false,
@@ -299,7 +300,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
         };
       }
       strapi.log.info(
-        `[${requestId}] Simulated ZarinPal verification for ${String(params.authority).slice(0, 64)} at ${amount} ${config.currency}`,
+        `[${requestId}] Simulated ZarinPal verification at ${amount} ${config.currency}`,
       );
       return {
         success: true,
@@ -316,7 +317,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
     try {
       strapi.log.info(`[${requestId}] Verifying ZarinPal payment`, {
-        authority: params.authority,
+        hasAuthority: Boolean(params.authority),
         amount,
         currency: config.currency,
         sandbox: config.sandbox,
@@ -347,7 +348,10 @@ export default ({ strapi }: { strapi: Strapi }) => ({
     } catch (error: any) {
       const details = parseGatewayError(error);
       const ambiguous = isAmbiguousVerificationFailure(error);
-      strapi.log.error(`[${requestId}] ZarinPal verification error`, details);
+      strapi.log.error(`[${requestId}] ZarinPal verification error`, {
+        message: details.message,
+        status: details.status,
+      });
       return {
         success: false,
         ambiguous,

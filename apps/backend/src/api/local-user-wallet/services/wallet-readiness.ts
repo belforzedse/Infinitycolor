@@ -49,7 +49,28 @@ async function hasColumn(strapi: Strapi, table: string, column: string): Promise
 
 async function hasIndex(strapi: Strapi, name: string): Promise<boolean> {
   const result = await strapi.db.connection.raw(
-    `SELECT 1 FROM pg_class WHERE relkind = 'i' AND relname = ? LIMIT 1`,
+    `SELECT 1
+       FROM pg_class c
+       JOIN pg_index i ON i.indexrelid = c.oid
+      WHERE c.relkind = 'i'
+        AND c.relname = ?
+        AND i.indisunique = TRUE
+        AND i.indisvalid = TRUE
+        AND i.indisready = TRUE
+      LIMIT 1`,
+    [name],
+  );
+  return (result?.rows || []).length > 0;
+}
+
+async function hasConstraint(strapi: Strapi, name: string): Promise<boolean> {
+  const result = await strapi.db.connection.raw(
+    `SELECT 1
+       FROM pg_constraint
+      WHERE conname = ?
+        AND contype = 'u'
+        AND convalidated = TRUE
+      LIMIT 1`,
     [name],
   );
   return (result?.rows || []).length > 0;
@@ -67,6 +88,19 @@ async function duplicateWalletOwners(strapi: Strapi): Promise<number> {
        WHERE user_id IS NOT NULL
        GROUP BY user_id HAVING COUNT(*) > 1
      ) duplicates`,
+  );
+  return Number(result?.rows?.[0]?.count || 0);
+}
+
+async function malformedTopupOwners(strapi: Strapi): Promise<number> {
+  const result = await strapi.db.connection.raw(
+    `SELECT COUNT(*)::int AS count FROM (
+       SELECT t.id
+         FROM wallet_topups t
+         LEFT JOIN wallet_topups_user_links l ON l.wallet_topup_id = t.id
+        GROUP BY t.id
+       HAVING COUNT(l.user_id) <> 1
+     ) malformed`,
   );
   return Number(result?.rows?.[0]?.count || 0);
 }
@@ -138,11 +172,39 @@ export async function refreshWalletReadiness(strapi: Strapi): Promise<WalletRead
   const topupColumns = await record(
     "wallet_topups.columns",
     async () =>
+      (await hasColumn(strapi, "wallet_topups", "amount")) &&
       (await hasColumn(strapi, "wallet_topups", "gateway")) &&
+      (await hasColumn(strapi, "wallet_topups", "status")) &&
+      (await hasColumn(strapi, "wallet_topups", "sale_order_id")) &&
+      (await hasColumn(strapi, "wallet_topups", "ref_id")) &&
+      (await hasColumn(strapi, "wallet_topups", "sale_reference_id")) &&
       (await hasColumn(strapi, "wallet_topups", "provider_reference")) &&
+      (await hasColumn(strapi, "wallet_topups", "verification_reference")) &&
       (await hasColumn(strapi, "wallet_topups", "expires_at")) &&
-      (await hasColumn(strapi, "wallet_topups", "idempotency_key")),
+      (await hasColumn(strapi, "wallet_topups", "ledger_reference_id")) &&
+      (await hasColumn(strapi, "wallet_topups", "idempotency_key")) &&
+      (await hasColumn(strapi, "wallet_topups", "redirect_url")) &&
+      (await hasColumn(strapi, "wallet_topups", "redirect_method")) &&
+      (await hasColumn(strapi, "wallet_topups", "next_reconcile_at")) &&
+      (await hasColumn(strapi, "wallet_topups", "reconcile_attempts")) &&
+      (await hasColumn(strapi, "wallet_topups", "last_provider_code")) &&
+      (await hasColumn(strapi, "wallet_topups", "last_provider_error")),
     "top-up columns missing",
+  );
+  const topupOwnership = await record(
+    "wallet_topups.ownership",
+    async () =>
+      (await hasTable(strapi, "wallet_topups_user_links")) &&
+      (await hasColumn(strapi, "wallet_topups_user_links", "wallet_topup_id")) &&
+      (await hasColumn(strapi, "wallet_topups_user_links", "user_id")) &&
+      (await hasConstraint(strapi, "wallet_topups_user_links_unique")) &&
+      (await hasIndex(strapi, "idx_wallet_topups_one_owner")),
+    "top-up ownership link or uniqueness missing",
+  );
+  const validTopupOwners = await record(
+    "wallet_topups.owner_rows",
+    async () => (await malformedTopupOwners(strapi)) === 0,
+    "at least one top-up does not have exactly one owner",
   );
   const topupUnique = await record(
     "idx_wallet_topups_sale_order_id",
@@ -155,7 +217,14 @@ export async function refreshWalletReadiness(strapi: Strapi): Promise<WalletRead
   const holds =
     heldBalance && holdColumns && oneWalletPerUser && noDuplicateWallets && ledgerUnique;
   const topups =
-    oneWalletPerUser && noDuplicateWallets && ledgerUnique && topupTable && topupColumns && topupUnique;
+    oneWalletPerUser &&
+    noDuplicateWallets &&
+    ledgerUnique &&
+    topupTable &&
+    topupColumns &&
+    topupOwnership &&
+    validTopupOwners &&
+    topupUnique;
 
   cached = { evaluatedAt: new Date().toISOString(), holds, topups, checks };
 

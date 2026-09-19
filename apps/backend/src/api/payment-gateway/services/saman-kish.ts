@@ -24,6 +24,8 @@ type SamanTokenResponse = {
   success: boolean;
   token?: string;
   redirectUrl?: string;
+  redirectMethod?: "POST";
+  formFields?: { Token: string };
   resNum?: string;
   requestId: string;
   status?: number;
@@ -100,6 +102,9 @@ function normalizeCellNumber(input?: string): string | undefined {
   return undefined;
 }
 
+const asBoolean = (value: unknown): boolean =>
+  value === true || value === 1 || ["1", "true"].includes(String(value ?? "").trim().toLowerCase());
+
 export default ({ strapi }: { strapi: Strapi }) => ({
   getConfig(): SamanConfig {
     return {
@@ -144,12 +149,11 @@ export default ({ strapi }: { strapi: Strapi }) => ({
     return this.getConfig().callbackUrl;
   },
 
-  buildRedirectUrl(token: string): string {
-    const { sendTokenUrl, paymentPageUrl } = this.getConfig();
-    if (sendTokenUrl) {
-      return `${sendTokenUrl}?token=${encodeURIComponent(token)}`;
-    }
-    return paymentPageUrl;
+  buildRedirectUrl(): string {
+    // SEP's current contract enters the hosted payment page by POSTing a
+    // capital-T `Token`. Putting the token on SendToken's query string both
+    // loses the requested callback method and leaks the session into URLs.
+    return this.getConfig().paymentPageUrl;
   },
 
   async requestPayment(params: SamanTokenRequest): Promise<SamanTokenResponse> {
@@ -214,14 +218,18 @@ export default ({ strapi }: { strapi: Strapi }) => ({
         errorCode: data?.errorCode,
       });
 
-      if (data?.status === 1 && data?.token) {
+      const status = Number(data?.status ?? data?.Status);
+      const token = String(data?.token ?? data?.Token ?? "").trim();
+      if (status === 1 && token) {
         return {
           success: true,
-          token: data.token,
-          redirectUrl: this.buildRedirectUrl(data.token),
+          token,
+          redirectUrl: this.buildRedirectUrl(),
+          redirectMethod: "POST",
+          formFields: { Token: token },
           resNum,
           requestId,
-          status: data.status,
+          status,
         };
       }
 
@@ -229,13 +237,16 @@ export default ({ strapi }: { strapi: Strapi }) => ({
         success: false,
         error: data?.errorDesc || "Token request failed",
         errorCode: data?.errorCode,
-        status: data?.status,
+        status: Number.isFinite(status) ? status : undefined,
         requestId,
         detailedError: data,
       };
     } catch (err: any) {
       const details = err.isAxiosError ? parseAxiosError(err) : { message: err?.message };
-      strapi.log.error(`[${requestId}] Saman token request error`, details);
+      strapi.log.error(`[${requestId}] Saman token request error`, {
+        message: details.message,
+        status: "status" in details ? details.status : undefined,
+      });
       return {
         success: false,
         error: details.message || "Token request failed",
@@ -252,7 +263,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
     try {
       strapi.log.info(`[${requestId}] Verifying Saman transaction`, {
-        refNum: params.refNum,
+        hasRefNum: Boolean(params.refNum),
         terminalNumber,
       });
 
@@ -274,7 +285,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
         data?.resultDescription ||
         RESULT_CODE_MESSAGES[resultCode] ||
         "نامشخص";
-      const success = Boolean(data?.Success);
+      const success = asBoolean(data?.Success ?? data?.success);
 
       strapi.log.info(`[${requestId}] Saman verify response`, {
         success,
@@ -292,7 +303,10 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       };
     } catch (err: any) {
       const details = err.isAxiosError ? parseAxiosError(err) : { message: err?.message };
-      strapi.log.error(`[${requestId}] Saman verify error`, details);
+      strapi.log.error(`[${requestId}] Saman verify error`, {
+        message: details.message,
+        status: "status" in details ? details.status : undefined,
+      });
       return {
         success: false,
         resultCode: -999,
@@ -311,7 +325,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
 
     try {
       strapi.log.info(`[${requestId}] Reversing Saman transaction`, {
-        refNum: params.refNum,
+        hasRefNum: Boolean(params.refNum),
         terminalNumber,
       });
 
@@ -340,7 +354,7 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       });
 
       return {
-        success: Boolean(data?.Success),
+        success: asBoolean(data?.Success ?? data?.success),
         resultCode,
         resultDescription: description,
         transactionDetail: data?.TransactionDetail ?? data?.transactionDetail,
@@ -349,7 +363,10 @@ export default ({ strapi }: { strapi: Strapi }) => ({
       };
     } catch (err: any) {
       const details = err.isAxiosError ? parseAxiosError(err) : { message: err?.message };
-      strapi.log.error(`[${requestId}] Saman reverse error`, details);
+      strapi.log.error(`[${requestId}] Saman reverse error`, {
+        message: details.message,
+        status: "status" in details ? details.status : undefined,
+      });
       return {
         success: false,
         resultCode: -999,

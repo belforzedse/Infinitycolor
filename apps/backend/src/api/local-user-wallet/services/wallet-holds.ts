@@ -184,13 +184,28 @@ export async function getOrCreateWalletForUpdate(
 }
 
 /**
- * Lock-free read for quotes and the customer wallet endpoint.
+ * Statuses whose wallet hold its owner may reclaim.
  *
- * `reusableAttemptId` names the one predecessor checkout this request is
- * entitled to supersede. Its hold is reported as `reusableIrr` and never folded
- * into `availableIrr`: a customer with a live payment in another tab must not
- * see that money as spendable.
+ * `Created` is an attempt that never reached a provider — a shopper who changed
+ * a coupon, a shipping method or a wallet amount and re-quoted.
+ *
+ * `Redirected` is an attempt that *was* handed to a bank and abandoned there.
+ * Reclaiming it is safe because a bank callback is carried by the shopper's own
+ * browser (`/orders/payment-callback` is a GET/POST the gateway redirects them
+ * through, which settles synchronously and then forwards them to the result
+ * page) and because no sweep polls the bank gateways. A shopper who actually
+ * paid is therefore carried *forward* through settlement; one who pressed back
+ * at the bank has not paid and has no settlement in flight.
+ *
+ * `Pending` is deliberately absent. It is the transient state
+ * `claimPaymentAttemptForInitiation` CASes into while the gateway call is in
+ * flight, and the `Redirected` write that follows it is an unconditional update
+ * rather than a CAS — so a cancellation applied to a `Pending` row would simply
+ * be overwritten. It is also the state the SnappPay queue rewrites an attempt
+ * to when it enqueues an operation.
  */
+const RECLAIMABLE_HOLD_STATUSES = new Set(["Created", "Redirected"]);
+
 /**
  * Whether a payment attempt's wallet hold can be handed back to its owner.
  *
@@ -200,10 +215,13 @@ export async function getOrCreateWalletForUpdate(
  * of the two, it would offer credit the finalize then refuses, and the customer
  * would sit in a 409 loop with no way out.
  *
- * `Created` alone is not proof that nothing is in flight: SnappPay mints a
+ * SnappPay is excluded outright and reclaimed asynchronously instead. It mints a
  * transaction id and a Pending contract transaction the moment the attempt is
- * created, and any attempt with a persisted provider reference has already been
- * shown to a bank. Those funds stay where they are until that payment resolves.
+ * created, so no local state proves nothing is in flight; it keeps reporting
+ * `PENDING`/`REGISTERED` for a long time, so a status probe cannot resolve the
+ * question while the shopper waits; and a synchronous provider call on the
+ * checkout path is a known outage mode here. Its hold is released only once a
+ * queued cancel operation has the provider's answer.
  */
 export const isSupersedableHoldRow = (row: {
   status?: unknown;
@@ -212,10 +230,17 @@ export const isSupersedableHoldRow = (row: {
   wallet_hold_status?: unknown;
 }): boolean =>
   row.wallet_hold_status === "Active" &&
-  row.status === "Created" &&
-  !row.provider_reference &&
+  RECLAIMABLE_HOLD_STATUSES.has(String(row.status || "")) &&
   !isSnappayGatewayValue(row.gateway);
 
+/**
+ * Lock-free read for quotes and the customer wallet endpoint.
+ *
+ * `reusableAttemptId` names the one predecessor checkout this request is
+ * entitled to supersede. Its hold is reported as `reusableIrr` and never folded
+ * into `availableIrr`: a customer with a live payment in another tab must not
+ * see that money as spendable.
+ */
 export async function readWalletAvailability(
   strapi: Strapi,
   userId: number,

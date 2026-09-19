@@ -51,6 +51,9 @@
     "ProviderReference": {
       "type": "string"
     },
+    "VerificationReference": {
+      "type": "string"
+    },
     "ExpiresAt": {
       "type": "datetime"
     },
@@ -59,6 +62,16 @@
     },
     "IdempotencyKey": {
       "type": "string"
+    },
+    "RedirectUrl": {
+      "type": "text"
+    },
+    "RedirectMethod": {
+      "type": "enumeration",
+      "enum": [
+        "GET",
+        "POST"
+      ]
     },
     "NextReconcileAt": {
       "type": "datetime"

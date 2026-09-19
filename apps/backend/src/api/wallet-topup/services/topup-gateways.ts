@@ -42,7 +42,7 @@ export type TopupInitiation =
       /** The provider's own handle for this attempt, persisted before we redirect. */
       providerReference: string;
       redirectUrl: string;
-      /** Mellat needs a form POST of its RefId; the others are plain redirects. */
+      /** Mellat and Saman use provider-specific form POSTs; ZarinPal uses GET. */
       method: "GET" | "POST";
       formFields?: Record<string, string>;
     }
@@ -77,8 +77,20 @@ const truthy = (value?: string): boolean =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 
 const numericOrNull = (value: unknown): number | null => {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const detailValue = (detail: Record<string, unknown>, ...names: string[]): unknown => {
+  const lowered = new Map(
+    Object.entries(detail || {}).map(([key, value]) => [key.trim().toLowerCase(), value]),
+  );
+  for (const name of names) {
+    const value = lowered.get(name.toLowerCase());
+    if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+  }
+  return undefined;
 };
 
 const text = (value: unknown): string => String(value ?? "").trim();
@@ -196,7 +208,8 @@ export async function initiateTopup(
         outcome: "redirect",
         providerReference: text(response.token),
         redirectUrl: text(response.redirectUrl),
-        method: "GET",
+        method: "POST",
+        formFields: { Token: text(response.token) },
       };
     }
     return numericOrNull(response?.status) !== null
@@ -373,11 +386,35 @@ export async function verifyTopup(
       };
     }
     const detail = verify.transactionDetail || verify.TransactionDetail || {};
-    const settledIrr = numericOrNull(detail?.AffectiveAmount ?? detail?.OrginalAmount);
+    const settledIrr = numericOrNull(
+      detailValue(
+        detail,
+        "AffectiveAmount",
+        "OrginalAmount",
+        "OriginalAmount",
+      ),
+    );
+    if (!Number.isSafeInteger(settledIrr) || Number(settledIrr) <= 0) {
+      return {
+        outcome: "unknown",
+        providerCode: resultCode,
+        message: "Saman verification returned no positive settled amount",
+      };
+    }
     // A settled amount that is not what we asked for is not our payment.
-    if (settledIrr !== null && settledIrr > 0 && settledIrr !== params.amountIrr) {
+    if (settledIrr !== params.amountIrr) {
       try {
-        await saman.reverseTransaction({ refNum });
+        const reversed = await saman.reverseTransaction({ refNum });
+        const reverseCode = numericOrNull(reversed?.resultCode);
+        const reversalConfirmed =
+          (reversed?.success === true && reverseCode === 0) || reverseCode === 5;
+        if (!reversalConfirmed) {
+          return {
+            outcome: "unknown",
+            providerCode: resultCode,
+            message: "Saman amount mismatch and the reversal was not confirmed",
+          };
+        }
       } catch (error) {
         strapi.log.error(
           `Saman wallet top-up amount mismatch could not be reversed for ${params.saleOrderId}: ${String(
@@ -396,7 +433,7 @@ export async function verifyTopup(
         message: `Saman settled ${settledIrr} IRR for a ${params.amountIrr} IRR top-up`,
       };
     }
-    return { outcome: "confirmed", providerReference: refNum, providerCode: resultCode, amountIrr: settledIrr ?? undefined };
+    return { outcome: "confirmed", providerReference: refNum, providerCode: resultCode, amountIrr: settledIrr };
   }
 
   const zarinpal = strapi.service("api::payment-gateway.zarinpal") as any;

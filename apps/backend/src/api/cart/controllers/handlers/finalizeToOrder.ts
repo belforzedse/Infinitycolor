@@ -883,10 +883,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     }
 
     strapi.log.info(`Payment successful for Order ${order.id}:`, {
-      ...(selectedGateway === "snappay"
-        ? { hasRedirectUrl: Boolean(paymentResult.redirectUrl) }
-        : { redirectUrl: paymentResult.redirectUrl }),
-      refId: paymentResult.refId,
+      hasRedirectUrl: Boolean(paymentResult.redirectUrl),
+      hasProviderReference: Boolean(paymentResult.refId),
     });
 
     if (managesPaymentAttempt && paymentAttempt?.id) {
@@ -897,7 +895,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           redirectUrl: paymentResult.redirectUrl,
           providerResponse: {
             requestId: paymentResult.requestId,
-            refId: paymentResult.refId,
+            hasProviderReference: Boolean(paymentResult.refId),
           },
           redirectedAt: new Date(),
         });
@@ -912,10 +910,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
           Description: `Gateway payment request initiated (${selectedGateway})`,
           Changes: {
             requestId: paymentResult.requestId,
-            refId: paymentResult.refId,
-            ...(selectedGateway === "snappay"
-              ? { hasRedirectUrl: Boolean(paymentResult.redirectUrl) }
-              : { redirectUrl: paymentResult.redirectUrl }),
+            hasProviderReference: Boolean(paymentResult.refId),
+            hasRedirectUrl: Boolean(paymentResult.redirectUrl),
           },
         },
       });
@@ -933,6 +929,9 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         contractId: contract.id,
         redirectUrl: paymentResult.redirectUrl,
         refId: paymentResult.refId,
+        redirectMethod: paymentResult.redirectMethod ||
+          (["mellat", "samankish"].includes(selectedGateway) ? "POST" : "GET"),
+        ...(paymentResult.formFields ? { formFields: paymentResult.formFields } : {}),
         financialSummary: financialSummary,
         requestId: paymentResult.requestId,
         ...(paymentAllocation ? { paymentAllocation } : {}),

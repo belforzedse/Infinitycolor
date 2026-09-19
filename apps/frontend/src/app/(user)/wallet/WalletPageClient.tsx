@@ -14,6 +14,7 @@ import WalletService, {
 } from "@/services/wallet";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
 import { StorefrontAccountShell } from "@/components/storefront/StorefrontAccountShell";
+import { isWalletTopupUiEnabled } from "@/config/walletTopup";
 
 function StatusBanner({
   variant,
@@ -66,6 +67,7 @@ interface Transaction {
 }
 
 export default function WalletPage() {
+  const topupUiEnabled = isWalletTopupUiEnabled();
   const [isTransactionsHistoryOpen, setIsTransactionsHistoryOpen] = useState(false);
   const [depositList, setDepositList] = useState<Transaction[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
@@ -78,13 +80,20 @@ export default function WalletPage() {
   const topupReference = searchParams.get("topup");
 
   const [topupOptions, setTopupOptions] = useState<WalletTopupOptions | null>(null);
-  const [optionsLoading, setOptionsLoading] = useState(true);
+  const [optionsLoading, setOptionsLoading] = useState(topupUiEnabled);
   const [trackedTopup, setTrackedTopup] = useState<string | null>(topupReference);
   const [topupStatus, setTopupStatus] = useState<WalletTopupStatus | null>(null);
   const [balanceRefreshKey, setBalanceRefreshKey] = useState(0);
 
   // What the store will accept is server state, not a constant in the bundle.
   useEffect(() => {
+    // This UI-only kill switch deliberately does not affect callback/status
+    // handling below. Existing payments can still finish while new ones cannot
+    // be started from the storefront.
+    if (!topupUiEnabled) {
+      return undefined;
+    }
+
     let cancelled = false;
     (async () => {
       try {
@@ -101,7 +110,7 @@ export default function WalletPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [topupUiEnabled]);
 
   /**
    * The query string the provider sent the customer back with is display only.

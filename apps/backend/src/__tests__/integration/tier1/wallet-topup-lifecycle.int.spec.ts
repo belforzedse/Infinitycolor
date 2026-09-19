@@ -15,6 +15,7 @@ import {
   listWalletTopupsNeedingReview,
   markWalletTopupRedirected,
   markWalletTopupUnknown,
+  moveUncorrelatableSamanTopupsToReview,
   WalletTopupIntentError,
 } from "../../../api/wallet-topup/services/wallet-topup";
 import { refreshWalletReadiness } from "../../../api/local-user-wallet/services/wallet-readiness";
@@ -112,6 +113,36 @@ describe("top-up intent creation", () => {
     expect(Number(stored.rows[0].count)).toBe(1);
   });
 
+  it("persists the exact handoff needed for an idempotent replay", async () => {
+    const user = await f.createUser();
+    const { topup } = await createWalletTopupIntent(strapi, {
+      userId: user.id,
+      amountIrr: AMOUNT_IRR,
+      gateway: "SamanKish",
+      idempotencyKey: "saman-replay",
+    });
+    await markWalletTopupRedirected(strapi, {
+      topupId: Number(topup.id),
+      providerReference: null,
+      initiationToken: "SEP-TOKEN-REPLAY",
+      redirectUrl: "https://sep.shaparak.ir/OnlinePG/OnlinePG",
+      redirectMethod: "POST",
+    });
+
+    const stored = await strapi.db.connection.raw(
+      `SELECT ref_id, provider_reference, redirect_url, redirect_method, next_reconcile_at
+         FROM wallet_topups WHERE id = ?`,
+      [Number(topup.id)],
+    );
+    expect(stored.rows[0]).toMatchObject({
+      ref_id: "SEP-TOKEN-REPLAY",
+      provider_reference: null,
+      redirect_url: "https://sep.shaparak.ir/OnlinePG/OnlinePG",
+      redirect_method: "POST",
+    });
+    expect(stored.rows[0].next_reconcile_at).toBeInstanceOf(Date);
+  });
+
   it("refuses the same key with different parameters", async () => {
     const user = await f.createUser();
     await createWalletTopupIntent(strapi, {
@@ -170,6 +201,8 @@ describe("top-up intent creation", () => {
         topupId: Number(topup.id),
         providerReference: `MELLAT-ABANDONED-${index}`,
         initiationToken: `MELLAT-ABANDONED-${index}`,
+        redirectUrl: "https://bpm.shaparak.ir/pay",
+        redirectMethod: "POST",
       });
     }
     await strapi.db.connection.raw(
@@ -229,6 +262,8 @@ describe("crediting a confirmed top-up", () => {
       topupId: Number(topup.id),
       providerReference: "MELLAT-REF-1",
       initiationToken: "MELLAT-REF-1",
+      redirectUrl: "https://bpm.shaparak.ir/pay",
+      redirectMethod: "POST",
     });
 
     const confirm = () =>
@@ -336,6 +371,8 @@ describe("abandoned intents", () => {
       topupId: Number(dispatched.topup.id),
       providerReference: "MELLAT-REF-2",
       initiationToken: "MELLAT-REF-2",
+      redirectUrl: "https://bpm.shaparak.ir/pay",
+      redirectMethod: "POST",
     });
 
     // Both are long past their local TTL.
@@ -355,6 +392,47 @@ describe("abandoned intents", () => {
     expect(byId[Number(abandoned.topup.id)]).toBe("Cancelled");
     // An elapsed local clock says nothing about what happened at the bank.
     expect(byId[Number(dispatched.topup.id)]).toBe("Pending");
+  });
+
+  it("sends a dispatched Saman payment with no callback RefNum to operator review", async () => {
+    const user = await f.createUser();
+    const { topup } = await createWalletTopupIntent(strapi, {
+      userId: user.id,
+      amountIrr: AMOUNT_IRR,
+      gateway: "SamanKish",
+    });
+    await markWalletTopupRedirected(strapi, {
+      topupId: Number(topup.id),
+      providerReference: null,
+      initiationToken: "SEP-TOKEN-WITH-LOST-CALLBACK",
+      redirectUrl: "https://sep.shaparak.ir/OnlinePG/OnlinePG",
+      redirectMethod: "POST",
+    });
+    await strapi.db.connection.raw(
+      `UPDATE wallet_topups SET expires_at = NOW() - INTERVAL '2 hours' WHERE id = ?`,
+      [Number(topup.id)],
+    );
+
+    await expect(
+      moveUncorrelatableSamanTopupsToReview(strapi, { graceMinutes: 0 }),
+    ).resolves.toEqual({ reviewed: 1 });
+
+    const row = await strapi.db.connection.raw(
+      `SELECT status, provider_reference, verification_reference, next_reconcile_at,
+              last_provider_error
+         FROM wallet_topups WHERE id = ?`,
+      [Number(topup.id)],
+    );
+    expect(row.rows[0]).toMatchObject({
+      status: "Unknown",
+      provider_reference: null,
+      verification_reference: null,
+      next_reconcile_at: null,
+    });
+    expect(String(row.rows[0].last_provider_error)).toContain("operator review");
+
+    const review = await listWalletTopupsNeedingReview(strapi);
+    expect(review.map((entry: any) => Number(entry.id))).toContain(Number(topup.id));
   });
 });
 
@@ -381,6 +459,8 @@ describe("intents the ladder gave up on", () => {
       topupId: Number(stranded.topup.id),
       providerReference: "MELLAT-STRANDED",
       initiationToken: "MELLAT-STRANDED",
+      redirectUrl: "https://bpm.shaparak.ir/pay",
+      redirectMethod: "POST",
     });
     // The twelfth attempt is the last one the ladder schedules.
     await markWalletTopupUnknown(strapi, {

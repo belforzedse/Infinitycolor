@@ -296,6 +296,8 @@ export const requestSamanPayment = async (
       success: true,
       refId: paymentResult.token,
       redirectUrl: paymentResult.redirectUrl,
+      redirectMethod: "POST" as const,
+      formFields: { Token: String(paymentResult.token) },
       requestId: paymentResult.requestId,
       resNum: paymentResult.resNum,
     },
@@ -378,7 +380,7 @@ export const requestZarinPalPayment = async (
     strapi.log.error("Failed to create ZarinPal contract transaction", {
       orderId: params.order.id,
       contractId: params.contract.id,
-      authority: paymentResult.authority,
+      hasAuthority: Boolean(paymentResult.authority),
       error: (error as Error)?.message || error,
     });
   }

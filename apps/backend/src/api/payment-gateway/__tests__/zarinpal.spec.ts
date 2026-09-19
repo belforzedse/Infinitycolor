@@ -1,18 +1,17 @@
 const mockRequest = jest.fn();
 const mockGetRedirectUrl = jest.fn((authority: string) => `https://zarinpal.test/pay/${authority}`);
 const mockVerify = jest.fn();
+const mockZarinPalConstructor = jest.fn().mockImplementation(() => ({
+  request: mockRequest,
+  payments: {
+    getRedirectUrl: mockGetRedirectUrl,
+  },
+  verifications: {
+    verify: mockVerify,
+  },
+}));
 
-jest.mock("zarinpal-node-sdk", () =>
-  jest.fn().mockImplementation(() => ({
-    request: mockRequest,
-    payments: {
-      getRedirectUrl: mockGetRedirectUrl,
-    },
-    verifications: {
-      verify: mockVerify,
-    },
-  })),
-);
+jest.mock("zarinpal-node-sdk", () => mockZarinPalConstructor);
 
 import zarinpalServiceFactory, {
   isSimulatedAuthority,
@@ -83,6 +82,40 @@ describe("ZarinPal payment gateway service", () => {
     expect(service.getConfig("https://api.example.test/api/wallet/payment-callback")).toMatchObject(
       { callbackUrl: "https://api.example.test/api/wallet/payment-callback" },
     );
+  });
+
+  it("uses the real SDK sandbox with the configured merchant and wallet callback", async () => {
+    process.env.ZARINPAL_MERCHANT_ID = "sandbox-merchant-id";
+    process.env.ZARINPAL_SANDBOX = "true";
+    process.env.ZARINPAL_CURRENCY = "IRR";
+    mockRequest.mockResolvedValue({
+      data: { code: 100, authority: "A00000000000000000000000000000000002" },
+    });
+    const { service } = createService();
+
+    const result = await service.requestPayment({
+      orderId: 43,
+      amountToman: 100_000,
+      callbackUrl: "https://api.staging.infinitycolor.co/api/wallet/payment-callback",
+    });
+
+    expect(mockZarinPalConstructor).toHaveBeenCalledWith({
+      merchantId: "sandbox-merchant-id",
+      sandbox: true,
+    });
+    expect(mockRequest).toHaveBeenCalledWith(
+      "POST",
+      "/pg/v4/payment/request.json",
+      expect.objectContaining({
+        amount: 1_000_000,
+        currency: "IRR",
+        callback_url: "https://api.staging.infinitycolor.co/api/wallet/payment-callback",
+      }),
+    );
+    expect(result).toMatchObject({
+      success: true,
+      authority: "A00000000000000000000000000000000002",
+    });
   });
 
   it("refuses deterministic mode outright in a production build", () => {

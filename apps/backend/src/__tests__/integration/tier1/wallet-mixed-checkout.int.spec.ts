@@ -479,11 +479,14 @@ describe("mixed wallet + gateway checkout", () => {
       walletAmountToman: WALLET_TOMAN,
     });
 
-    // The attempt reached a provider. It is still `Created`, so a quote that
-    // looked only at the status would count its hold as reclaimable — and the
-    // finalize would then refuse it, leaving the shopper in a 409 loop.
+    // SnappPay is the one gateway whose hold its owner may not reclaim on the
+    // checkout path: it mints a transaction id at creation, so no local state
+    // proves nothing is in flight, and it keeps reporting PENDING long after
+    // the shopper has gone. A quote that looked only at the status would count
+    // this hold as reclaimable — and the finalize would then refuse it, leaving
+    // the shopper in a 409 loop.
     await strapi.db.connection.raw(
-      `UPDATE payment_attempts SET provider_reference = 'ZP-BOUND' WHERE id = ?`,
+      `UPDATE payment_attempts SET gateway = 'snappay', provider_reference = 'SP-BOUND' WHERE id = ?`,
       [Number(first.result.paymentAttempt.id)],
     );
 
@@ -502,6 +505,82 @@ describe("mixed wallet + gateway checkout", () => {
     });
     expect(outcome).toMatchObject({ outcome: "refused", reason: "provider_bound" });
     expect((await wallet(shopper.user.id)).heldIrr).toBe(WALLET_TOMAN * 10);
+  });
+
+  it("reclaims the credit of a bank checkout the shopper abandoned at the gateway", async () => {
+    const shopper = await seedShopper({ balanceIrr: 5_000_000 });
+    const first = await quoteAndFinalize(shopper.user.id, {
+      attemptId: `abandoned-${shopper.user.id}`,
+      walletAmountToman: WALLET_TOMAN,
+    });
+
+    // Exactly where an attempt rests once the shopper has been sent to the bank
+    // and pressed back: Redirected, with the reference the gateway handed us.
+    // Their payment would have been carried forward through the browser-borne
+    // callback, so arriving back here is proof they did not pay.
+    await strapi.db.connection.raw(
+      `UPDATE payment_attempts
+          SET status = 'Redirected', provider_reference = 'ZP-ABANDONED'
+        WHERE id = ?`,
+      [Number(first.result.paymentAttempt.id)],
+    );
+
+    const context = await buildWalletCheckoutContext(strapi, shopper.user.id, {
+      selectedGateway: "zarinpal",
+      requestedWalletAmount: 0,
+      supersedeAttemptId: `abandoned-${shopper.user.id}`,
+    });
+    expect(context.availability.reusableIrr).toBe(WALLET_TOMAN * 10);
+
+    // The release agrees with the quote, which is the invariant that keeps a
+    // shopper out of a 409 loop.
+    const outcome = await supersedeCheckoutAttempt(strapi, {
+      userId: shopper.user.id,
+      attemptId: `abandoned-${shopper.user.id}`,
+      replacementAttemptId: `next-${shopper.user.id}`,
+    });
+    expect(outcome).toMatchObject({ outcome: "superseded", releasedIrr: WALLET_TOMAN * 10 });
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(0);
+    expect(await attemptRow(Number(first.result.paymentAttempt.id))).toMatchObject({
+      status: "Cancelled",
+    });
+  });
+
+  it("refuses to reclaim an abandoned attempt whose payment has already landed", async () => {
+    const shopper = await seedShopper({ balanceIrr: 5_000_000 });
+    const first = await quoteAndFinalize(shopper.user.id, {
+      attemptId: `landed-${shopper.user.id}`,
+      walletAmountToman: WALLET_TOMAN,
+    });
+
+    // The callback won the race: settlement CAS'd the same status column this
+    // supersession competes on. The money is the bank's problem now, not free
+    // credit, and the shopper must be told the payment went through.
+    await strapi.db.connection.raw(
+      `UPDATE payment_attempts
+          SET status = 'Succeeded', provider_reference = 'ZP-LANDED'
+        WHERE id = ?`,
+      [Number(first.result.paymentAttempt.id)],
+    );
+
+    const context = await buildWalletCheckoutContext(strapi, shopper.user.id, {
+      selectedGateway: "zarinpal",
+      requestedWalletAmount: 0,
+      supersedeAttemptId: `landed-${shopper.user.id}`,
+    });
+    expect(context.availability.reusableIrr).toBe(0);
+
+    const outcome = await supersedeCheckoutAttempt(strapi, {
+      userId: shopper.user.id,
+      attemptId: `landed-${shopper.user.id}`,
+      replacementAttemptId: `next-${shopper.user.id}`,
+    });
+    expect(outcome).toMatchObject({ outcome: "refused", reason: "in_flight" });
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(WALLET_TOMAN * 10);
+    expect(await attemptRow(Number(first.result.paymentAttempt.id))).toMatchObject({
+      status: "Succeeded",
+      wallet_hold_status: "Active",
+    });
   });
 
   it("offers a plain abandoned attempt's credit, and hands it back on demand", async () => {

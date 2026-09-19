@@ -15,6 +15,13 @@ interface Props {
    * bank gateways are not part of this payment.
    */
   walletCoversTotal?: boolean;
+  /**
+   * A partial wallet tender is in play and SnappPay is not one of the gateways
+   * the server will split with. The card is withheld rather than left to fail
+   * at the quote, and the reason is said out loud so the shopper can see that
+   * unticking the wallet brings it back.
+   */
+  snappBlockedByWalletSplit?: boolean;
 }
 
 function ShoppingCartBillPaymentGateway({
@@ -25,6 +32,7 @@ function ShoppingCartBillPaymentGateway({
   snappTitle,
   snappDescription,
   walletCoversTotal = false,
+  snappBlockedByWalletSplit = false,
 }: Props) {
 
   const snappDisplayTitle = snappTitle?.trim() || "اسنپ پی";
@@ -85,6 +93,15 @@ function ShoppingCartBillPaymentGateway({
   return (
     <div className="flex flex-col gap-4">
       <span className="text-2xl text-neutral-800 lg:text-xl">درگاه پرداخت خود را انتخاب کنید</span>
+      {snappBlockedByWalletSplit && availableGateways.includes("snappay") && (
+        <p
+          data-testid="payment-gateway-snappay-wallet-blocked"
+          className="rounded-lg border border-stone-100 bg-stone-50 p-4 text-sm text-neutral-700"
+        >
+          پرداخت اقساطی اسنپ‌پی همراه با کیف پول امکان‌پذیر نیست. برای استفاده از اسنپ‌پی، تیک کیف
+          پول را بردارید.
+        </p>
+      )}
       {showSnappay && (
         <button
           onClick={() => !snappay.disabled && onChange(snappay.id)}

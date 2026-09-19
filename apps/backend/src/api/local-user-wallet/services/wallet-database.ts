@@ -18,7 +18,7 @@ const WALLET_MIGRATION_LOCK_KEY = 827453114;
  * every "idempotent" wallet credit currently relies on a read-then-write check
  * with no backstop.
  *
- * All four are written as expression-only indexes for the reason documented in
+ * All five are written as expression-only indexes for the reason documented in
  * `snappay-database.ts`: Strapi's PostgreSQL inspector lists column-based
  * indexes and drops any it does not own on the next schema sync, but it cannot
  * see expression-only entries (`getIndexes` joins `pg_attribute` on
@@ -57,6 +57,13 @@ const WALLET_UNIQUE_INDEXES = [
     statement: `CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_topups_idempotency_key
        ON wallet_topups ((
          CASE WHEN idempotency_key IS NOT NULL THEN idempotency_key ELSE NULL END
+       ))`,
+  },
+  {
+    name: "idx_wallet_topups_one_owner",
+    statement: `CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_topups_one_owner
+       ON wallet_topups_user_links ((
+         CASE WHEN wallet_topup_id IS NOT NULL THEN wallet_topup_id ELSE NULL END
        ))`,
   },
 ] as const;

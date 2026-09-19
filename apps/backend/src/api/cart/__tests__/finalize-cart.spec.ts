@@ -704,8 +704,8 @@ describe("finalizeToOrderHandler", () => {
         data: expect.objectContaining({
           Description: expect.stringContaining("Gateway payment request initiated"),
           Changes: expect.objectContaining({
-            redirectUrl: "https://bank.example/start/ABC",
-            refId: "REF-1",
+            hasRedirectUrl: true,
+            hasProviderReference: true,
             requestId: "REQ-success",
           }),
         }),
@@ -741,6 +741,8 @@ describe("finalizeToOrderHandler", () => {
         success: true,
         redirectUrl: "https://saman.example/start",
         refId: "SAM-REF",
+        redirectMethod: "POST",
+        formFields: { Token: "SAM-REF" },
         requestId: "SAM-REQUEST",
         resNum: "SAM-RES",
       },
@@ -766,6 +768,8 @@ describe("finalizeToOrderHandler", () => {
       contractId: 55,
       redirectUrl: "https://saman.example/start",
       refId: "SAM-REF",
+      redirectMethod: "POST",
+      formFields: { Token: "SAM-REF" },
       requestId: "SAM-REQUEST",
     });
 
@@ -906,7 +910,7 @@ describe("finalizeToOrderHandler", () => {
     expect(successLog?.[1]).toEqual(
       expect.objectContaining({
         hasRedirectUrl: true,
-        refId: "ABC1234567",
+        hasProviderReference: true,
       }),
     );
     expect(successLog?.[1]).not.toHaveProperty("redirectUrl");

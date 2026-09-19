@@ -45,6 +45,15 @@ export async function createPaymentAttempt(
 
 export const paymentAttemptResponse = (attempt: any) => {
   const status = String(attempt?.Status || "Unknown") as PaymentAttemptStatus;
+  const gateway = String(attempt?.Gateway || "").trim().toLowerCase();
+  const providerReference = String(attempt?.providerReference || "");
+  const redirectMethod = ["mellat", "samankish"].includes(gateway) ? "POST" : "GET";
+  const formFields =
+    redirectMethod === "POST" && providerReference
+      ? gateway === "samankish"
+        ? { Token: providerReference }
+        : { RefId: providerReference }
+      : undefined;
   const canContinue = status === "Succeeded" || status === "Redirected";
   const inProgress = ["Created", "Pending", "Unknown"].includes(status);
   return {
@@ -54,8 +63,10 @@ export const paymentAttemptResponse = (attempt: any) => {
     orderId: Number(attempt?.order?.id ?? attempt?.order) || undefined,
     contractId: Number(attempt?.contract?.id ?? attempt?.contract) || undefined,
     redirectUrl: attempt?.redirectUrl || "",
-    refId: attempt?.providerReference || "",
-    requestId: attempt?.providerReference || attempt?.attemptId,
+    refId: providerReference,
+    requestId: providerReference || attempt?.attemptId,
+    redirectMethod,
+    ...(formFields ? { formFields } : {}),
     // While a replay is still in progress, the attempt's `failureCode` can hold an
     // internal reconciliation label (e.g. "SNAPPAY_RECONCILIATION_PENDING") that the
     // storefront's error-code switch has never heard of, so it fell through to the

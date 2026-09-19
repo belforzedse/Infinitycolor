@@ -74,6 +74,7 @@ export function getContentSecurityPolicyReportOnly(): string {
       "https://www.zarinpal.com",
       "https://sandbox.zarinpal.com",
       "https://bpm.shaparak.ir",
+      "https://sep.shaparak.ir",
     ].join(" "),
     ["script-src", "'self'", "'unsafe-inline'", "'unsafe-eval'", getUmamiOrigin()].join(" "),
     "style-src 'self' 'unsafe-inline'",

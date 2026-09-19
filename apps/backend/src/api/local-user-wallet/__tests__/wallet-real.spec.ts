@@ -497,7 +497,10 @@ describe('Wallet Operations - Real Implementation', () => {
           SaleOrderId: '1700000000500',
           Gateway: 'Mellat',
           Amount: 1_000_000,
+          Status: 'Pending',
           RefId: 'MELLAT-REF-500',
+          RedirectUrl: 'https://bpm.shaparak.ir/pay',
+          RedirectMethod: 'POST',
         },
       });
 
@@ -517,6 +520,7 @@ describe('Wallet Operations - Real Implementation', () => {
           success: true,
           reused: true,
           saleOrderId: '1700000000500',
+          nextAction: 'redirect',
         }),
       });
     });

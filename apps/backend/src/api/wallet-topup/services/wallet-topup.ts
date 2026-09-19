@@ -252,6 +252,8 @@ export async function markWalletTopupRedirected(
     providerReference?: string | null;
     /** The token that opens the provider's payment page. */
     initiationToken: string;
+    redirectUrl: string;
+    redirectMethod: "GET" | "POST";
   },
 ): Promise<boolean> {
   const result = await runRawSql(
@@ -259,35 +261,44 @@ export async function markWalletTopupRedirected(
     `UPDATE wallet_topups
         SET provider_reference = COALESCE(provider_reference, ?),
             ref_id = COALESCE(ref_id, ?),
+            redirect_url = COALESCE(redirect_url, ?),
+            redirect_method = COALESCE(redirect_method, ?),
+            next_reconcile_at = COALESCE(next_reconcile_at, expires_at),
             updated_at = NOW()
       WHERE id = ?
         AND status = 'Pending'
       RETURNING id`,
-    [params.providerReference ?? null, params.initiationToken, params.topupId],
+    [
+      params.providerReference ?? null,
+      params.initiationToken,
+      params.redirectUrl,
+      params.redirectMethod,
+      params.topupId,
+    ],
   );
   return (result?.rows || []).length === 1;
 }
 
 /**
- * Binds the verification handle a provider only reveals on the way back.
- *
- * Saman's callback is the first time we learn the RefNum that its verification
- * API takes. Writing it with a CAS on NULL means a second callback carrying a
- * different RefNum cannot repoint an intent at someone else's transaction.
+ * Persists the untrusted Saman RefNum supplied by the browser only as a retry
+ * candidate. It deliberately does not populate `provider_reference`: that
+ * field is bound only in the same transaction that posts a provider-verified
+ * credit, so a forged callback cannot permanently claim the intent.
  */
-export async function bindWalletTopupProviderReference(
+export async function rememberWalletTopupVerificationReference(
   strapi: Strapi,
-  params: { topupId: number; providerReference: string },
+  params: { topupId: number; verificationReference: string },
 ): Promise<boolean> {
   const result = await runRawSql(
     strapi,
     `UPDATE wallet_topups
-        SET provider_reference = ?,
+        SET verification_reference = ?,
             updated_at = NOW()
       WHERE id = ?
-        AND (provider_reference IS NULL OR provider_reference = ?)
+        AND provider_reference IS NULL
+        AND status IN ('Pending', 'Processing', 'Unknown')
       RETURNING id`,
-    [params.providerReference, params.topupId, params.providerReference],
+    [params.verificationReference, params.topupId],
   );
   return (result?.rows || []).length === 1;
 }
@@ -412,7 +423,7 @@ export async function expireAbandonedWalletTopups(
             next_reconcile_at = NULL,
             last_provider_error = 'Abandoned before the provider was contacted',
             updated_at = NOW()
-      WHERE status = 'Pending'
+      WHERE status IN ('Pending', 'Unknown')
         AND provider_reference IS NULL
         AND ref_id IS NULL
         AND sale_reference_id IS NULL
@@ -422,6 +433,39 @@ export async function expireAbandonedWalletTopups(
     [cutoff],
   );
   return { cancelled: (result?.rows || []).length };
+}
+
+/**
+ * A Saman token cannot be verified. SEP reveals the required RefNum only on
+ * the browser callback, so a dispatched session whose callback never arrives
+ * must become an operator-review item after its TTL; it must never be guessed
+ * from the token or credited automatically.
+ */
+export async function moveUncorrelatableSamanTopupsToReview(
+  strapi: Strapi,
+  options: { graceMinutes?: number } = {},
+): Promise<{ reviewed: number }> {
+  const grace = Math.max(0, Number(options.graceMinutes ?? 10));
+  const cutoff = new Date(Date.now() - grace * 60 * 1000);
+  const result = await runRawSql(
+    strapi,
+    `UPDATE wallet_topups
+        SET status = 'Unknown',
+            next_reconcile_at = NULL,
+            last_provider_error = 'Saman callback did not provide a verifiable RefNum; operator review required',
+            updated_at = NOW()
+      WHERE gateway = 'SamanKish'
+        AND status IN ('Pending', 'Processing', 'Unknown')
+        AND provider_reference IS NULL
+        AND verification_reference IS NULL
+        AND ref_id IS NOT NULL
+        AND sale_reference_id IS NULL
+        AND expires_at IS NOT NULL
+        AND expires_at < ?
+      RETURNING id`,
+    [cutoff],
+  );
+  return { reviewed: (result?.rows || []).length };
 }
 
 export async function claimWalletTopupCallback(
@@ -461,11 +505,12 @@ export async function markWalletTopupUnknown(
     attempt?: number;
     providerCode?: number | null;
     error: unknown;
+    schedule?: boolean;
   },
 ): Promise<void> {
   const attempt = Math.max(0, Number(params.attempt || 0));
   const nextReconcileAt =
-    attempt >= MAX_RECONCILE_ATTEMPTS
+    params.schedule === false || attempt >= MAX_RECONCILE_ATTEMPTS
       ? null
       : new Date(
           Date.now() +
@@ -529,13 +574,15 @@ export async function applyConfirmedWalletTopup(
   params: {
     topupId: number;
     saleReferenceId: string;
+    /** Saman RefNum, bound only after SEP has verified it. */
+    providerReference?: string;
     providerCode?: number | null;
     audit?: WalletTopupAuditExecution;
   },
 ): Promise<{ status: "success"; replayed: boolean }> {
   return strapi.db.transaction(async ({ trx }) => {
     const locked = await trx.raw(
-      `SELECT id, amount, status, sale_reference_id, gateway
+      `SELECT id, amount, status, sale_reference_id, provider_reference, gateway
        FROM wallet_topups
        WHERE id = ?
        FOR UPDATE`,
@@ -546,6 +593,15 @@ export async function applyConfirmedWalletTopup(
     const persistedReference = String(row.sale_reference_id || "");
     if (persistedReference && persistedReference !== params.saleReferenceId) {
       throw new Error("WALLET_TOPUP_REFERENCE_MISMATCH");
+    }
+
+    const persistedProviderReference = String(row.provider_reference || "");
+    if (
+      params.providerReference &&
+      persistedProviderReference &&
+      persistedProviderReference !== params.providerReference
+    ) {
+      throw new Error("WALLET_TOPUP_PROVIDER_REFERENCE_MISMATCH");
     }
 
     const gateway = String(row.gateway || "Mellat");
@@ -563,6 +619,9 @@ export async function applyConfirmedWalletTopup(
           Status: "Success",
           SaleReferenceId: params.saleReferenceId,
           LedgerReferenceId: String(existingCredit.ReferenceId || ledgerReferenceId),
+          ...(params.providerReference
+            ? { ProviderReference: params.providerReference }
+            : {}),
           NextReconcileAt: null,
           LastProviderCode: params.providerCode ?? null,
           LastProviderError: null,
@@ -611,6 +670,9 @@ export async function applyConfirmedWalletTopup(
         Status: "Success",
         SaleReferenceId: params.saleReferenceId,
         LedgerReferenceId: ledgerReferenceId,
+        ...(params.providerReference
+          ? { ProviderReference: params.providerReference }
+          : {}),
         NextReconcileAt: null,
         LastProviderCode: params.providerCode ?? null,
         LastProviderError: null,
@@ -654,10 +716,9 @@ export async function applyConfirmedWalletTopup(
       metadata: {
         provider: gateway,
         amountIrr: amount,
-        providerReference: params.saleReferenceId,
         providerCode: params.providerCode ?? null,
       },
-      dedupeKey: `wallet-topup:${params.topupId}:${params.saleReferenceId}:confirmed`,
+      dedupeKey: `wallet-topup:${params.topupId}:confirmed`,
       summaryFa: "افزایش موجودی کیف پول توسط درگاه تأیید شد",
       summaryEn: "Wallet top-up confirmed by payment provider",
     }, { trx });
@@ -665,12 +726,18 @@ export async function applyConfirmedWalletTopup(
   });
 }
 
-async function claimDueWalletTopups(strapi: Strapi, limit: number) {
+export async function claimDueWalletTopups(strapi: Strapi, limit: number) {
   const candidates = await strapi.db.connection.raw(
     `SELECT id
      FROM wallet_topups
      WHERE status IN ('Pending', 'Processing', 'Unknown')
-       AND sale_reference_id IS NOT NULL
+       AND (
+         (COALESCE(gateway, 'Mellat') = 'Mellat' AND sale_reference_id IS NOT NULL)
+         OR
+         (COALESCE(gateway, 'Mellat') = 'SamanKish' AND COALESCE(provider_reference, verification_reference) IS NOT NULL)
+         OR
+         (COALESCE(gateway, 'Mellat') = 'ZarinPal' AND provider_reference IS NOT NULL)
+       )
        AND next_reconcile_at IS NOT NULL
        AND next_reconcile_at <= NOW()
      ORDER BY next_reconcile_at ASC, id ASC
@@ -690,7 +757,8 @@ async function claimDueWalletTopups(strapi: Strapi, limit: number) {
          AND status IN ('Pending', 'Processing', 'Unknown')
          AND next_reconcile_at IS NOT NULL
          AND next_reconcile_at <= NOW()
-       RETURNING id, sale_order_id, sale_reference_id, provider_reference, gateway,
+       RETURNING id, sale_order_id, sale_reference_id, provider_reference,
+                 verification_reference, gateway,
                  amount, reconcile_attempts`,
       [leaseUntil, Number(candidate.id)],
     );
@@ -712,6 +780,12 @@ export async function reconcileWalletTopups(
     strapi.log.error(`Abandoned wallet top-up sweep failed: ${errorMessage(error)}`);
     return { cancelled: 0 };
   });
+  const uncorrelatableSaman = await moveUncorrelatableSamanTopupsToReview(strapi).catch(
+    (error) => {
+      strapi.log.error(`Uncorrelatable Saman wallet top-up sweep failed: ${errorMessage(error)}`);
+      return { reviewed: 0 };
+    },
+  );
   const rows = await claimDueWalletTopups(strapi, batchSize);
   const paymentService = strapi.service("api::payment-gateway.mellat-v3") as any;
   if (!paymentService) throw new Error("MELLAT_PAYMENT_SERVICE_UNAVAILABLE");
@@ -722,6 +796,7 @@ export async function reconcileWalletTopups(
     failed: 0,
     unknown: 0,
     cancelled: expired.cancelled,
+    reviewed: uncorrelatableSaman.reviewed,
   };
   for (const row of rows) {
     const topupId = Number(row.id);
@@ -739,13 +814,18 @@ export async function reconcileWalletTopups(
           gateway,
           saleOrderId,
           amountIrr: Number(row.amount || 0),
-          providerReference: String(row.provider_reference || ""),
+          providerReference: String(
+            row.provider_reference || row.verification_reference || "",
+          ),
           saleReferenceId: saleReferenceId || undefined,
         });
         if (verification.outcome === "confirmed") {
           await applyConfirmedWalletTopup(strapi, {
             topupId,
             saleReferenceId: verification.providerReference,
+            ...(gateway === "SamanKish"
+              ? { providerReference: verification.providerReference }
+              : {}),
             providerCode: verification.providerCode,
             audit: {
               actor: {
@@ -759,6 +839,19 @@ export async function reconcileWalletTopups(
           });
           stats.succeeded += 1;
         } else if (verification.outcome === "failed") {
+          if (gateway === "SamanKish") {
+            // RefNum arrived through an unauthenticated browser callback. A
+            // failed verification cannot prove this intent failed; keep it
+            // retryable/manual-reviewable so a forged RefNum cannot cancel it.
+            await markWalletTopupUnknown(strapi, {
+              topupId,
+              attempt,
+              providerCode: verification.providerCode,
+              error: verification.message,
+            });
+            stats.unknown += 1;
+            continue;
+          }
           await markWalletTopupFailed(strapi, {
             topupId,
             providerCode: verification.providerCode,

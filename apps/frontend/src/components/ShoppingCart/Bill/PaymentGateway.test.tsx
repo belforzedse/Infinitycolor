@@ -58,6 +58,41 @@ describe("ShoppingCartBillPaymentGateway", () => {
     expect(screen.queryByTestId("payment-gateway-snappay")).not.toBeInTheDocument();
   });
 
+  it("says why SnappPay is gone when a wallet split excludes it", () => {
+    // Hiding the card on its own reads as a glitch. The shopper has to be told
+    // the wallet tick is what removed it, since unticking brings it back.
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="samankish"
+        onChange={onChange}
+        availableGateways={["samankish", "snappay"]}
+        snappEligible={false}
+        snappBlockedByWalletSplit
+      />,
+    );
+
+    expect(screen.queryByTestId("payment-gateway-snappay")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("payment-gateway-snappay-wallet-blocked"),
+    ).toBeInTheDocument();
+  });
+
+  it("stays silent about SnappPay when the store never offered it", () => {
+    render(
+      <ShoppingCartBillPaymentGateway
+        selected="samankish"
+        onChange={onChange}
+        availableGateways={["samankish"]}
+        snappEligible={false}
+        snappBlockedByWalletSplit
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("payment-gateway-snappay-wallet-blocked"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders SnappPay disabled before eligibility is known", () => {
     render(
       <ShoppingCartBillPaymentGateway

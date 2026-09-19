@@ -230,11 +230,18 @@ jest.mock("./DiscountCoupon", () => ({
 
 jest.mock("./PaymentGateway", () => ({
   __esModule: true,
-  default: ({ availableGateways, onChange, snappEligible, walletAvailableIrr }: any) => (
+  default: ({
+    availableGateways,
+    onChange,
+    snappEligible,
+    walletAvailableIrr,
+    snappBlockedByWalletSplit,
+  }: any) => (
     <div
       data-testid="checkout-payment-gateway"
       data-snapp-eligible={String(snappEligible)}
       data-wallet-available-irr={String(walletAvailableIrr ?? 0)}
+      data-snapp-blocked-by-wallet-split={String(Boolean(snappBlockedByWalletSplit))}
     >
       <span data-testid="checkout-payment-gateway-count">{availableGateways?.length ?? 0}</span>
       {availableGateways?.includes("snappay") && (
@@ -890,6 +897,198 @@ describe("ShoppingCartBillForm auth gate", () => {
     expect((CartService.finalizeCart as jest.Mock).mock.calls.at(-1)?.[0]).toMatchObject({
       supersedeAttemptId: "attempt-being-replaced",
     });
+  });
+
+  it("re-reads the wallet when bfcache restores the page after a gateway trip", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat"],
+        gatewayMinimumsToman: { mellat: 1000 },
+      },
+    });
+    // Read before the shopper left for the bank: their credit is committed to
+    // the attempt they are about to abandon, so nothing is spendable and the
+    // contribution card hides itself.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        balance: 1_200_000,
+        heldBalance: 1_200_000,
+        availableBalance: 0,
+        reusableBalance: 0,
+      },
+    });
+    window.localStorage.setItem("pendingCheckoutAttemptId", "attempt-abandoned-at-bank");
+    window.localStorage.setItem("pendingCheckoutQuoteHash", "sha256:abandoned-quote");
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("select-checkout-customer")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("select-checkout-customer"));
+    fireEvent.click(screen.getByTestId("select-shipping"));
+    await waitFor(() => expect(WalletService.getMyWallet).toHaveBeenCalled());
+    expect(screen.queryByTestId("wallet-contribution-toggle")).toBeNull();
+
+    // They pressed back at the bank. The server now counts that attempt's hold
+    // as theirs to reclaim, but bfcache does not remount, so without an
+    // explicit re-read the card would stay hidden on a stale zero.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: {
+        balance: 1_200_000,
+        heldBalance: 1_200_000,
+        availableBalance: 0,
+        reusableBalance: 1_200_000,
+      },
+    });
+    (WalletService.getMyWallet as jest.Mock).mockClear();
+
+    await act(async () => {
+      const persisted = new Event("pageshow") as PageTransitionEvent;
+      Object.defineProperty(persisted, "persisted", { value: true });
+      window.dispatchEvent(persisted);
+    });
+
+    await waitFor(() =>
+      expect(WalletService.getMyWallet).toHaveBeenCalledWith("attempt-abandoned-at-bank"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+  });
+
+  it("re-asks SnappPay about the gateway leg when the wallet is ticked", async () => {
+    // Wallet credit is a tender, not a discount: the order total does not move
+    // when the box is ticked, so keying the eligibility check on the total left
+    // SnappPay answering about an amount it would never be charged.
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue([
+      "wallet",
+      "snappay",
+      "mellat",
+    ]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "snappay", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat", "snappay"],
+        gatewayMinimumsToman: { mellat: 1000, snappay: 1000 },
+      },
+    });
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+    // 40,000 toman of credit against a 100,000 toman order.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { balance: 400_000, heldBalance: 0, availableBalance: 400_000 },
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
+    });
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 100_000 });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(2);
+    });
+    // 100,000 total - 40,000 wallet: the leg the server checks at the quote.
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 60_000 });
+
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(3);
+    });
+    expect(CartService.getSnappEligible).toHaveBeenLastCalledWith({ amount: 100_000 });
+  });
+
+  it("withholds SnappPay instead of asking about a split the server refuses", async () => {
+    // `splitGateways` without snappay is the server saying it will refuse the
+    // combination with WALLET_SPLIT_UNSUPPORTED_GATEWAY before any eligibility
+    // call — so there is nothing to ask, and nothing to offer.
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue([
+      "wallet",
+      "snappay",
+      "mellat",
+    ]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "snappay", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat"],
+        gatewayMinimumsToman: { mellat: 1000 },
+      },
+    });
+    (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { balance: 400_000, heldBalance: 0, availableBalance: 400_000 },
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("wallet-contribution-toggle")).toBeVisible(),
+    );
+    fireEvent.click(screen.getByTestId("wallet-contribution-toggle"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
+        "data-snapp-blocked-by-wallet-split",
+        "true",
+      );
+    });
+    // Settled "no", not "unknown": this is what takes the card out of the
+    // selectable list so a bank is picked instead.
+    expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
+      "data-snapp-eligible",
+      "false",
+    );
+    expect(CartService.getSnappEligible).toHaveBeenCalledTimes(1);
   });
 
   it("blocks payment until the shopper accepts the site terms", async () => {

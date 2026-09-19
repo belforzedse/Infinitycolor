@@ -7,10 +7,12 @@ export interface ChargeIntentResponse {
   refId?: string;
   saleOrderId?: string;
   gateway?: string;
-  /** Mellat is entered by POSTing its RefId; the others are plain redirects. */
+  /** Mellat and Saman use provider-specific form POSTs; ZarinPal uses GET. */
   redirectMethod?: "GET" | "POST";
   formFields?: Record<string, string>;
   reused?: boolean;
+  topupStatus?: WalletTopupStatus["status"];
+  nextAction?: "redirect" | "poll" | "complete" | "retry";
   errorCode?: string;
   message?: string;
 }
@@ -115,6 +117,8 @@ export const startTopup = async (params: {
     redirectMethod: data?.redirectMethod,
     formFields: data?.formFields,
     reused: data?.reused,
+    topupStatus: data?.topupStatus,
+    nextAction: data?.nextAction,
     errorCode: data?.errorCode,
     message: data?.message,
   };

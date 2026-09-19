@@ -152,4 +152,76 @@ test.describe("mixed wallet + gateway checkout", () => {
       expect((await getPaymentStatus(request, "customer", orderId))?.isPaid).toBe(false);
     }
   });
+
+  test("@payment offers the credit again when the shopper backs out of the bank", async ({
+    page,
+    request,
+  }) => {
+    const variation = await findProductVariationBySku(request);
+    const before = await getWalletAvailability(request);
+    await resetCartToVariation(request, variation.id, 1, "customer");
+
+    await page.goto("/checkout", { waitUntil: "domcontentloaded" });
+    await selectSeededAddress(page);
+    await selectFirstShipping(page);
+
+    const split = await useWalletAtCheckout(page);
+    test.skip(split.gatewayToman <= 0, "Credit covers the whole order on this target.");
+
+    await selectZarinpalGateway(page);
+    await acceptCheckoutTerms(page);
+
+    const finalizePromise = page.waitForResponse(
+      (response) =>
+        /\/api\/carts\/finalize(?:\?.*)?$/i.test(response.url()) &&
+        response.request().method() === "POST",
+      { timeout: 60_000 },
+    );
+    await page.getByTestId("checkout-submit").click();
+    const finalize = await finalizePromise;
+    const orderId = Number(
+      ((await finalize.json()) as any)?.data?.orderId ??
+        ((await finalize.json()) as any)?.orderId,
+    );
+
+    // Wait until the bank actually has them, so the attempt is Redirected with a
+    // provider reference — the state that used to strand the credit.
+    await page.waitForURL(/zarinpal/i, { timeout: 60_000 });
+    await expect
+      .poll(async () => (await getWalletAvailability(request)).heldIrr, { timeout: 30_000 })
+      .toBe(before.heldIrr + split.walletToman * 10);
+
+    // No cancel, no callback: the shopper simply goes back. Nothing tells the
+    // server anything, which is exactly why this case used to wait out the
+    // 30-minute reservation.
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    await page.waitForURL(/\/checkout/i, { timeout: 60_000 });
+
+    // The card is offered again, with the credit spendable rather than held.
+    const retry = await useWalletAtCheckout(page);
+    expect(retry.walletToman).toBe(split.walletToman);
+
+    await selectZarinpalGateway(page);
+    await acceptCheckoutTerms(page);
+    const replacementPromise = page.waitForResponse(
+      (response) =>
+        /\/api\/carts\/finalize(?:\?.*)?$/i.test(response.url()) &&
+        response.request().method() === "POST",
+      { timeout: 60_000 },
+    );
+    await page.getByTestId("checkout-submit").click();
+    const replacement = await replacementPromise;
+    const replacementBody = (await replacement.json()) as any;
+    expect(replacementBody?.success ?? replacementBody?.data?.success).toBeTruthy();
+
+    // The replacement holds the same credit; the abandoned attempt released its
+    // own rather than the shopper paying twice for it.
+    await expect
+      .poll(async () => (await getWalletAvailability(request)).heldIrr, { timeout: 60_000 })
+      .toBe(before.heldIrr + split.walletToman * 10);
+
+    if (Number.isFinite(orderId) && orderId > 0) {
+      expect((await getPaymentStatus(request, "customer", orderId))?.isPaid).toBe(false);
+    }
+  });
 });

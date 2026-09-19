@@ -168,6 +168,8 @@ export interface FinalizeCartResponse {
   contractId?: number;
   redirectUrl?: string;
   refId?: string;
+  redirectMethod?: "GET" | "POST";
+  formFields?: Record<string, string>;
   financialSummary?: FinancialSummary;
   requestId?: string;
   attemptId?: string;

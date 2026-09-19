@@ -15,7 +15,6 @@ import { requireCapability } from "../../../utils/adminAuthorization";
 import { isWalletTopupEnabled } from "../../local-user-wallet/services/wallet-readiness";
 import {
   applyConfirmedWalletTopup,
-  bindWalletTopupProviderReference,
   claimWalletTopupCallback,
   claimWalletTopupForVerification,
   createWalletTopupIntent,
@@ -26,6 +25,7 @@ import {
   markWalletTopupFailed,
   markWalletTopupRedirected,
   markWalletTopupUnknown,
+  rememberWalletTopupVerificationReference,
   WalletTopupIntentError,
 } from "../services/wallet-topup";
 import {
@@ -83,6 +83,17 @@ const publicTopup = (row: any) => ({
   expiresAt: row.expires_at ?? row.ExpiresAt ?? null,
   reference: String(row.sale_reference_id ?? row.SaleReferenceId ?? "") || null,
 });
+
+const replayFormFields = (
+  gateway: string,
+  method: string,
+  refId: string,
+): Record<string, string> | undefined => {
+  if (method !== "POST" || !refId) return undefined;
+  if (gateway === "SamanKish") return { Token: refId };
+  if (gateway === "Mellat") return { RefId: refId };
+  return undefined;
+};
 
 export default factories.createCoreController(
   WALLET_TOPUP_UID,
@@ -204,20 +215,72 @@ export default factories.createCoreController(
 
       const saleOrderId = String(intent.topup.SaleOrderId);
 
-      // The same request replayed with the same key returns the same intent. If
-      // it already has a provider session, hand back the original redirect
-      // instead of opening a second one.
-      if (intent.reused && intent.topup.RefId) {
-        return ctx.send({
+      // A repeated idempotency key never contacts the provider again. The
+      // durable state tells the browser whether to resume, poll, finish, or
+      // deliberately mint a new key for a new attempt.
+      if (intent.reused) {
+        const topupStatus = String(intent.topup.Status || "Pending");
+        const storedGateway = String(intent.topup.Gateway || gateway);
+        const refId = String(intent.topup.RefId || "");
+        const redirectUrl = String(intent.topup.RedirectUrl || "");
+        const redirectMethod = String(intent.topup.RedirectMethod || "GET") as "GET" | "POST";
+
+        if (topupStatus === "Success") {
+          return ctx.send({
+            data: {
+              success: true,
+              reused: true,
+              saleOrderId,
+              gateway: storedGateway,
+              topupStatus,
+              nextAction: "complete",
+            },
+          });
+        }
+
+        if (["Failed", "Cancelled"].includes(topupStatus)) {
+          return ctx.send({
+            data: {
+              success: false,
+              reused: true,
+              saleOrderId,
+              gateway: storedGateway,
+              topupStatus,
+              nextAction: "retry",
+              message: "این تلاش پایان یافته است. لطفاً دوباره تلاش کنید.",
+            },
+          });
+        }
+
+        if (topupStatus === "Pending" && refId && redirectUrl) {
+          return ctx.send({
+            data: {
+              success: true,
+              reused: true,
+              saleOrderId,
+              gateway: storedGateway,
+              refId,
+              redirectUrl,
+              redirectMethod,
+              formFields: replayFormFields(storedGateway, redirectMethod, refId),
+              topupStatus,
+              nextAction: "redirect",
+            },
+          });
+        }
+
+        ctx.status = 202;
+        return {
           data: {
             success: true,
             reused: true,
             saleOrderId,
-            gateway: intent.topup.Gateway,
-            refId: intent.topup.RefId,
-            redirectUrl: intent.topup.Note || "",
+            gateway: storedGateway,
+            topupStatus,
+            nextAction: "poll",
+            message: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
           },
-        });
+        };
       }
 
       let initiation;
@@ -242,10 +305,12 @@ export default factories.createCoreController(
         ctx.status = 202;
         return {
           data: {
-            success: false,
+            success: true,
             errorCode: "WALLET_TOPUP_UNKNOWN",
             message: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
             saleOrderId,
+            topupStatus: "Unknown",
+            nextAction: "poll",
           },
         };
       }
@@ -256,7 +321,13 @@ export default factories.createCoreController(
           error: initiation.message,
         });
         return ctx.badRequest("درگاه پرداخت درخواست را نپذیرفت.", {
-          data: { success: false, errorCode: initiation.errorCode, saleOrderId },
+          data: {
+            success: false,
+            errorCode: initiation.errorCode,
+            saleOrderId,
+            topupStatus: "Failed",
+            nextAction: "retry",
+          },
         });
       }
 
@@ -268,10 +339,12 @@ export default factories.createCoreController(
         ctx.status = 202;
         return {
           data: {
-            success: false,
+            success: true,
             errorCode: "WALLET_TOPUP_UNKNOWN",
             message: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
             saleOrderId,
+            topupStatus: "Unknown",
+            nextAction: "poll",
           },
         };
       }
@@ -284,6 +357,8 @@ export default factories.createCoreController(
         // Saman only reveals its verification handle (RefNum) on the callback.
         providerReference: gateway === "SamanKish" ? null : initiation.providerReference,
         initiationToken: initiation.providerReference,
+        redirectUrl: initiation.redirectUrl,
+        redirectMethod: initiation.method,
       });
       if (!persisted) {
         await markWalletTopupUnknown(strapi, {
@@ -293,10 +368,12 @@ export default factories.createCoreController(
         ctx.status = 202;
         return {
           data: {
-            success: false,
+            success: true,
             errorCode: "WALLET_TOPUP_UNKNOWN",
             message: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
             saleOrderId,
+            topupStatus: "Unknown",
+            nextAction: "poll",
           },
         };
       }
@@ -310,6 +387,8 @@ export default factories.createCoreController(
           redirectUrl: initiation.redirectUrl,
           redirectMethod: initiation.method,
           formFields: initiation.formFields,
+          topupStatus: "Pending",
+          nextAction: "redirect",
         },
       });
     },
@@ -418,26 +497,17 @@ export default factories.createCoreController(
           return ctx.redirect(walletRedirect(reference, "success"));
         }
 
-        // Saman only reveals the handle its verification API takes on the way
-        // back, so bind it now — CAS'd, so a second callback cannot repoint the
-        // intent at a different transaction.
-        if (storedGateway === "SamanKish" && callback.providerReference) {
-          const bound = await bindWalletTopupProviderReference(strapi, {
-            topupId: Number(topup.id),
-            providerReference: callback.providerReference,
-          });
-          if (!bound) {
-            strapi.log.error(
-              `Wallet top-up ${topup.id} already carries a different Saman reference than this callback`,
-            );
-            return ctx.redirect(walletRedirect(reference, "failure", "unverified"));
-          }
-          topup.ProviderReference = callback.providerReference;
-        }
-
         const correlated = isCallbackCorrelated(topup, callback.providerReference || "");
 
         if (!callback.declaredSuccess) {
+          if (storedGateway === "SamanKish") {
+            // State and RefNum arrived through the customer's browser. A
+            // forged failure must not be able to park a payable intent in
+            // manual review or replace the RefNum that a later real callback
+            // supplies. Leave durable state untouched; the TTL sweep will move
+            // a genuinely lost callback to operator review.
+            return ctx.redirect(walletRedirect(reference, "pending", "unverified"));
+          }
           if (!correlated) {
             strapi.log.error(
               `Wallet top-up ${topup.id} failure callback could not be correlated; leaving the attempt untouched`,
@@ -455,6 +525,24 @@ export default factories.createCoreController(
           return ctx.redirect(walletRedirect(reference, "failure", "declined"));
         }
 
+        // Saman only reveals RefNum on a successful-looking browser callback.
+        // Store it as an untrusted retry candidate; it becomes the durable
+        // provider reference only if SEP verifies it and the credit commits
+        // atomically. Failure callbacks above are intentionally non-mutating.
+        if (storedGateway === "SamanKish" && callback.providerReference) {
+          const remembered = await rememberWalletTopupVerificationReference(strapi, {
+            topupId: Number(topup.id),
+            verificationReference: callback.providerReference,
+          });
+          if (!remembered) {
+            strapi.log.error(
+              `Wallet top-up ${topup.id} could not persist the Saman verification candidate`,
+            );
+            return ctx.redirect(walletRedirect(reference, "pending", "unverified"));
+          }
+          topup.VerificationReference = callback.providerReference;
+        }
+
         // A success callback whose handle does not match the one we stored is
         // pointing at a different attempt, so nothing is mutated. An intent that
         // never recorded a handle at all is a different case: the provider
@@ -465,7 +553,7 @@ export default factories.createCoreController(
         const hasStoredHandle = Boolean(
           String(topup.ProviderReference ?? "").trim(),
         );
-        if (hasStoredHandle && !correlated) {
+        if (storedGateway !== "SamanKish" && hasStoredHandle && !correlated) {
           strapi.log.error(
             `Wallet top-up ${topup.id} success callback handle does not match the stored reference`,
           );
@@ -514,6 +602,14 @@ export default factories.createCoreController(
         });
 
         if (verification.outcome === "failed") {
+          if (storedGateway === "SamanKish") {
+            await markWalletTopupUnknown(strapi, {
+              topupId: Number(topup.id),
+              providerCode: verification.providerCode,
+              error: verification.message,
+            });
+            return ctx.redirect(walletRedirect(reference, "pending", "unverified"));
+          }
           await markWalletTopupFailed(strapi, {
             topupId: Number(topup.id),
             providerCode: verification.providerCode,
@@ -534,6 +630,9 @@ export default factories.createCoreController(
         await applyConfirmedWalletTopup(strapi, {
           topupId: Number(topup.id),
           saleReferenceId: verification.providerReference,
+          ...(storedGateway === "SamanKish"
+            ? { providerReference: verification.providerReference }
+            : {}),
           providerCode: verification.providerCode,
           audit: {
             actor: {
@@ -558,7 +657,7 @@ export default factories.createCoreController(
           }).catch(() => undefined);
         }
         strapi.log.error(
-          `Wallet top-up callback failed for ${saleOrderId || callback.providerReference}: ${String(
+          `Wallet top-up callback failed for ${saleOrderId || "an uncorrelated provider reference"}: ${String(
             (error as any)?.message || error,
           ).slice(0, 300)}`,
         );

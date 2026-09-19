@@ -33,13 +33,21 @@ export type SupersedeOutcome =
  *
  * ## Racing the provider
  * `claimPaymentAttemptForInitiation` CASes the same row `Created → Pending`
- * before it calls a gateway. This CAS competes with it on that column, so
- * exactly one wins: either the replacement wins and the old provider request
- * can never start, or initiation wins and the replacement cannot free its
- * funds. `Created` alone is not proof that nothing is in flight for SnappPay —
- * it mints a transaction id and a Pending contract transaction at creation — so
- * SnappPay predecessors and anything with a persisted provider reference are
- * refused outright.
+ * before it calls a gateway, and `claimPaymentAttemptForSettlement` CASes
+ * `Pending`/`Redirected → Succeeded`/`Failed` when a callback lands. This CAS
+ * competes with both on that one column, so exactly one wins: either the
+ * replacement wins and the predecessor can never start or settle, or the
+ * provider path wins and the replacement cannot free its funds. A shopper whose
+ * payment went through while they were re-checking-out is therefore told so,
+ * rather than losing the money.
+ *
+ * An abandoned bank checkout rests at `Redirected` with a provider reference,
+ * and that is reclaimable: the bank's callback rides the shopper's own browser,
+ * so anyone who actually paid was carried forward through settlement instead of
+ * back to the cart. SnappPay is the exception and is refused outright — it mints
+ * a transaction id at creation, reports `PENDING` long after the shopper has
+ * gone, and must not be probed synchronously on the checkout path. Its hold is
+ * reclaimed by a queued cancel operation instead.
  *
  * ## Stock
  * This runs in its own transaction, before the replacement reserves anything.
@@ -78,7 +86,7 @@ export async function supersedeCheckoutAttempt(
     if (row.wallet_hold_status !== "Active") {
       return { outcome: "refused" as const, reason: "no_hold" as const };
     }
-    if (isSnappayGatewayValue(row.gateway) || row.provider_reference) {
+    if (isSnappayGatewayValue(row.gateway)) {
       return { outcome: "refused" as const, reason: "provider_bound" as const };
     }
     // Belt and braces on the shared predicate: whatever the reasons above do
@@ -103,15 +111,15 @@ export async function supersedeCheckoutAttempt(
               resolved_at = NOW(),
               updated_at = NOW()
         WHERE id = ?
-          AND status = 'Created'
+          AND status IN ('Created', 'Redirected')
           AND wallet_hold_status = 'Active'
-          AND COALESCE(provider_reference, '') = ''
         RETURNING id`,
       [row.id],
     );
     if ((claimed?.rows || []).length === 0) {
-      // Initiation claimed the row first: a provider request may already be in
-      // flight, so its funds and stock stay exactly where they are.
+      // Initiation or settlement claimed the row first: a provider request is
+      // in flight, or the shopper's payment has already landed, so its funds
+      // and stock stay exactly where they are.
       return { outcome: "refused" as const, reason: "in_flight" as const };
     }
 
