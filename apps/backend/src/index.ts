@@ -282,6 +282,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "wallet.history.read": {
     "api::local-user-wallet": { "local-user-wallet": ["adminGetUserWalletHistory"] },
+    "api::wallet-topup": { "wallet-topup": ["adminReviewTopups"] },
   },
   "wallet.adjust": {
     "api::local-user-wallet": { "local-user-wallet": ["adminAdjustWallet"] },

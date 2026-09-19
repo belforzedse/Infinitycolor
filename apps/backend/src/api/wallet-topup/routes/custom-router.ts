@@ -36,6 +36,14 @@ export default {
       handler: "wallet-topup.myTopups",
       config: { auth: { scope: [] } },
     },
+    // Declared before `/wallet/topups/:saleOrderId`, which would otherwise
+    // match "admin" as a sale order id belonging to nobody.
+    {
+      method: "GET",
+      path: "/wallet/topups/admin/review",
+      handler: "wallet-topup.adminReviewTopups",
+      config: { auth: { scope: [] } },
+    },
     {
       method: "GET",
       path: "/wallet/topups/:saleOrderId",

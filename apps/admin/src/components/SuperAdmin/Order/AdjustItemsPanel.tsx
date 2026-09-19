@@ -39,6 +39,14 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
   const [voidLoading, setVoidLoading] = useState(false);
   const [operatorReason, setOperatorReason] = useState("");
   const applyInFlightRef = useRef(false);
+  /**
+   * One id per intended adjustment, minted on the first apply and kept across
+   * retries. A timeout or a network drop leaves the operator unsure whether the
+   * refund landed; pressing again with the same id is recognised by the server
+   * as the same adjustment instead of paying out twice. Cleared once the
+   * adjustment succeeds or the operator changes what they are adjusting.
+   */
+  const adjustmentIdRef = useRef<string>("");
 
   const isSnappPayOrder =
     resolvePaymentGateway(order.paymentGateway)?.key === "snappay";
@@ -114,6 +122,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
     const clamped = Math.max(0, Math.min(item.quantity, value));
     setQuantities((prev) => ({ ...prev, [itemId]: clamped }));
     setPreview(null);
+    adjustmentIdRef.current = "";
   };
 
   const handlePreview = async () => {
@@ -168,12 +177,18 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
 
     setLoading(true);
     try {
+      if (!adjustmentIdRef.current) {
+        adjustmentIdRef.current =
+          globalThis.crypto?.randomUUID?.() ||
+          `adjust-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      }
       const result = willCancelOrder
         ? await cancelOrder(order.id, normalizedReason || undefined)
         : await adjustItems(
             order.id,
             items,
             normalizedReason || undefined,
+            adjustmentIdRef.current,
           );
 
       if (
@@ -238,6 +253,7 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
       setShowConfirm(false);
       setPreview(null);
       setOperatorReason("");
+      adjustmentIdRef.current = "";
       onSuccess();
     } catch (error: any) {
       const responseData = error.response?.data;
@@ -259,7 +275,14 @@ export default function AdjustItemsPanel({ order, onSuccess }: Props) {
         return;
       }
 
-      if (typeof errorMessage === "string" && errorMessage.startsWith("SNAPPAY_")) {
+      if (errorCode === "ORDER_HAS_ACTIVE_WALLET_HOLD") {
+        // The shopper has wallet credit committed to a payment that has not
+        // resolved. Reducing the order now would leave the hold larger than the
+        // total, so the operator cancels or waits instead.
+        toast.error(
+          "بخشی از موجودی کیف پول مشتری برای پرداخت در حال انجام رزرو شده است. تا مشخص شدن نتیجه آن پرداخت نمی‌توان اقلام را تغییر داد؛ در صورت نیاز سفارش را لغو کنید.",
+        );
+      } else if (typeof errorMessage === "string" && errorMessage.startsWith("SNAPPAY_")) {
         toast.error("به‌روزرسانی SnappPay با خطا روبه‌رو شد؛ لطفاً وضعیت پرداخت را بررسی کنید.");
       } else {
         toast.error(errorMessage || "خطا در اعمال تغییرات");

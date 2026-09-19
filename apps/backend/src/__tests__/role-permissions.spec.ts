@@ -501,6 +501,7 @@ function createActionTree() {
           paymentCallback: action(),
           myTopups: action(),
           myTopup: action(),
+          adminReviewTopups: action(),
           find: action(),
           findOne: action(),
           create: action(),
@@ -1480,6 +1481,17 @@ describe("role permission templates", () => {
     // Superadmin (full access) keeps them.
     expect(walletCtrl(superadmin).adminAdjustWallet.enabled).toBe(true);
     expect(walletCtrl(superadmin).adminGetUserWallet.enabled).toBe(true);
+
+    // The stranded-top-up queue rides on the same history capability: whoever
+    // may read a customer's wallet ledger may see the intents nothing will
+    // resolve on its own, and nobody else.
+    const topupCtrl = (tree: any) => tree["api::wallet-topup"].controllers["wallet-topup"];
+    expect(topupCtrl(storeManager2).adminReviewTopups.enabled).toBe(true);
+    expect(topupCtrl(finance).adminReviewTopups.enabled).toBe(true);
+    expect(topupCtrl(superadmin).adminReviewTopups.enabled).toBe(true);
+    for (const tree of [storeManager, editor]) {
+      expect(topupCtrl(tree).adminReviewTopups.enabled).toBe(false);
+    }
   });
 
   it("creates the initial privileged roles when Strapi has only its default roles", async () => {

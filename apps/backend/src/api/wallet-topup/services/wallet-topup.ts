@@ -361,6 +361,36 @@ export async function listWalletTopupsForOwner(
 }
 
 /**
+ * Top-ups the reconciliation ladder gave up on.
+ *
+ * `Unknown` with no next attempt scheduled is the end of that ladder: the
+ * provider never gave an answer we could act on, so money may or may not have
+ * left the customer's account. Nothing automatic will touch these again, which
+ * is exactly why an operator has to see them.
+ */
+export async function listWalletTopupsNeedingReview(
+  strapi: Strapi,
+  params: { limit?: number } = {},
+): Promise<any[]> {
+  const limit = Math.min(200, Math.max(1, Number(params.limit || 50)));
+  const rows = await strapi.db.connection.raw(
+    // `users`, not Strapi's default `up_users` — this project renamed the
+    // users-permissions collection.
+    `SELECT t.*, l.user_id,
+            u.username AS owner_username, u.phone AS owner_phone
+       FROM wallet_topups t
+       LEFT JOIN wallet_topups_user_links l ON l.wallet_topup_id = t.id
+       LEFT JOIN users u ON u.id = l.user_id
+      WHERE t.status = 'Unknown'
+        AND t.next_reconcile_at IS NULL
+      ORDER BY t.updated_at DESC NULLS LAST, t.id DESC
+      LIMIT ?`,
+    [limit],
+  );
+  return rows?.rows || [];
+}
+
+/**
  * Closes intents the customer never carried to a provider.
  *
  * Only rows that never got a provider handle are cancelled: without one no

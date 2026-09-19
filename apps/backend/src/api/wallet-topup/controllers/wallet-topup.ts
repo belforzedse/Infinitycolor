@@ -11,6 +11,7 @@
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import { requireCapability } from "../../../utils/adminAuthorization";
 import { isWalletTopupEnabled } from "../../local-user-wallet/services/wallet-readiness";
 import {
   applyConfirmedWalletTopup,
@@ -21,6 +22,7 @@ import {
   findWalletTopupCredit,
   findWalletTopupForOwner,
   listWalletTopupsForOwner,
+  listWalletTopupsNeedingReview,
   markWalletTopupFailed,
   markWalletTopupRedirected,
   markWalletTopupUnknown,
@@ -332,6 +334,36 @@ export default factories.createCoreController(
         limit: Number(ctx.query?.limit || 20),
       });
       return ctx.send({ data: { success: true, topups: rows.map(publicTopup) } });
+    },
+
+    /**
+     * Intents the reconciliation ladder gave up on, for an operator to settle
+     * by hand. Capability-gated on wallet history rather than on a role name,
+     * and it never mutates anything — deciding what happened to the money is
+     * the operator's call, made with the provider's own records.
+     */
+    async adminReviewTopups(ctx) {
+      if (!(await requireCapability(ctx, strapi, "wallet.history.read"))) return;
+
+      const rows = await listWalletTopupsNeedingReview(strapi, {
+        limit: Number(ctx.query?.limit || 50),
+      });
+      return ctx.send({
+        data: {
+          success: true,
+          topups: rows.map((row: any) => ({
+            ...publicTopup(row),
+            id: Number(row.id),
+            userId: row.user_id == null ? null : Number(row.user_id),
+            owner: String(row.owner_username || row.owner_phone || "") || null,
+            providerReference: String(row.provider_reference || "") || null,
+            reconcileAttempts: Number(row.reconcile_attempts || 0),
+            lastProviderCode: row.last_provider_code ?? null,
+            lastProviderError: row.last_provider_error ?? null,
+            updatedAt: row.updated_at ?? null,
+          })),
+        },
+      });
     },
 
     /**

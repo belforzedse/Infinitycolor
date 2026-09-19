@@ -12,7 +12,9 @@ import {
   createWalletTopupIntent,
   expireAbandonedWalletTopups,
   findWalletTopupCredit,
+  listWalletTopupsNeedingReview,
   markWalletTopupRedirected,
+  markWalletTopupUnknown,
   WalletTopupIntentError,
 } from "../../../api/wallet-topup/services/wallet-topup";
 import { refreshWalletReadiness } from "../../../api/local-user-wallet/services/wallet-readiness";
@@ -353,5 +355,73 @@ describe("abandoned intents", () => {
     expect(byId[Number(abandoned.topup.id)]).toBe("Cancelled");
     // An elapsed local clock says nothing about what happened at the bank.
     expect(byId[Number(dispatched.topup.id)]).toBe("Pending");
+  });
+});
+
+describe("intents the ladder gave up on", () => {
+  /**
+   * `Unknown` with no next attempt is the end of automatic recovery. Money may
+   * have left the customer's account and nothing will look again, so an
+   * operator has to. The queue that shows them must not miss one, and must not
+   * pad itself with rows something is still working on.
+   */
+  it("surfaces exactly the intents nothing is going to resolve on its own", async () => {
+    // Separate customers, because the queue is the store's, not one shopper's
+    // — and because three live intents for one person hit the pending cap.
+    const user = await f.createUser();
+    const other = await f.createUser();
+    const third = await f.createUser();
+
+    const stranded = await createWalletTopupIntent(strapi, {
+      userId: user.id,
+      amountIrr: AMOUNT_IRR,
+      gateway: "Mellat",
+    });
+    await markWalletTopupRedirected(strapi, {
+      topupId: Number(stranded.topup.id),
+      providerReference: "MELLAT-STRANDED",
+      initiationToken: "MELLAT-STRANDED",
+    });
+    // The twelfth attempt is the last one the ladder schedules.
+    await markWalletTopupUnknown(strapi, {
+      topupId: Number(stranded.topup.id),
+      attempt: 12,
+      providerCode: 21,
+      error: "invalid transaction",
+    });
+
+    // Still on the ladder: a retry is scheduled, so nobody needs to be paged.
+    const retrying = await createWalletTopupIntent(strapi, {
+      userId: other.id,
+      amountIrr: AMOUNT_IRR,
+      gateway: "Mellat",
+    });
+    await markWalletTopupUnknown(strapi, {
+      topupId: Number(retrying.topup.id),
+      attempt: 1,
+      providerCode: 21,
+      error: "provider timed out",
+    });
+
+    // Still waiting on the customer.
+    await createWalletTopupIntent(strapi, {
+      userId: third.id,
+      amountIrr: AMOUNT_IRR,
+      gateway: "Mellat",
+    });
+
+    const queue = await listWalletTopupsNeedingReview(strapi);
+    const ids = queue.map((row: any) => Number(row.id));
+    expect(ids).toContain(Number(stranded.topup.id));
+    expect(ids).not.toContain(Number(retrying.topup.id));
+
+    const row = queue.find((entry: any) => Number(entry.id) === Number(stranded.topup.id));
+    // The operator needs the owner and the provider's own words to act on it.
+    expect(Number(row.user_id)).toBe(user.id);
+    expect(String(row.provider_reference)).toBe("MELLAT-STRANDED");
+    expect(String(row.last_provider_error)).toBe("invalid transaction");
+    // The owner is joined through the project's renamed users table, not the
+    // `up_users` Strapi would default to.
+    expect(String(row.owner_username || "")).toBe(String(user.username));
   });
 });
