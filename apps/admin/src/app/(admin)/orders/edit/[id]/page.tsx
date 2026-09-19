@@ -22,6 +22,14 @@ import type {
   SuperAdminOrderItem,
 } from "@/types/super-admin/order";
 import { unwrapCollection, unwrapEntity } from "@/utils/strapi";
+import {
+  customVariantAttributes,
+  findAttributeTerm,
+  isColorAttribute,
+  isModelAttribute,
+  isSizeAttribute,
+  variationAttributeTerms,
+} from "@/utils/orderAttributes";
 import { getPaymentGatewayLabel } from "@/utils/paymentGateways";
 import {
   getOrderStatusMeta,
@@ -256,22 +264,29 @@ export default function EditOrderPage() {
           const size = unwrapEntity(item?.product_size);
           const model = unwrapEntity((item as any)?.product_variation_model);
 
-          // A variation's color/size/model can live only as a "generic" catalog
-          // attribute (LegacyProjection: "None") instead of the legacy relations
-          // above — e.g. a WooCommerce custom color taxonomy. Fall back to it per
-          // dimension so an empty legacy relation doesn't hide data that exists.
-          const attributeTerms = unwrapCollection(
-            (productVariation as any)?.selected_attribute_terms,
-          )
-            .map((term: any) => unwrapEntity(term))
-            .filter(Boolean);
-          const findAttributeTerm = (matches: (attr: any) => boolean) =>
-            attributeTerms.find((term: any) => matches(unwrapEntity(term?.product_attribute)));
-          const genericColor = findAttributeTerm(
-            (attr) => attr?.Type === "Color" || attr?.LegacyProjection === "Color",
-          );
-          const genericSize = findAttributeTerm((attr) => attr?.LegacyProjection === "Size");
-          const genericModel = findAttributeTerm((attr) => attr?.LegacyProjection === "Model");
+          // Colour/size/model are only the three attributes with a relation column of
+          // their own, and even they can live purely as a catalog term (a WooCommerce
+          // colour taxonomy projects as LegacyProjection "None"), so each falls back
+          // to its term. Everything else the variation carries — a «کد» design code
+          // and the like — is just as much part of what was bought, so it is kept too.
+          const attributeTerms = variationAttributeTerms(productVariation);
+          const resolvedColor =
+            color?.Title ||
+            variationColor?.Title ||
+            findAttributeTerm(attributeTerms, isColorAttribute)?.Title;
+          const resolvedSize =
+            size?.Title ||
+            variationSize?.Title ||
+            findAttributeTerm(attributeTerms, isSizeAttribute)?.Title;
+          const resolvedModel =
+            model?.Title ||
+            variationModel?.Title ||
+            findAttributeTerm(attributeTerms, isModelAttribute)?.Title;
+          const customAttributes = customVariantAttributes(attributeTerms, [
+            resolvedColor,
+            resolvedSize,
+            resolvedModel,
+          ]);
           const thumbnailUrl =
             coverImage?.formats?.thumbnail?.url ??
             coverImage?.url ??
@@ -290,9 +305,10 @@ export default function EditOrderPage() {
             productCode: item?.ProductSKU ?? productVariation?.SKU ?? "",
             price: Number(item?.PerAmount ?? productVariation?.Price ?? 0),
             quantity: Number(item?.Count ?? 0),
-            color: color?.Title || variationColor?.Title || genericColor?.Title,
-            size: size?.Title || variationSize?.Title || genericSize?.Title,
-            model: model?.Title || variationModel?.Title || genericModel?.Title,
+            color: resolvedColor,
+            size: resolvedSize,
+            model: resolvedModel,
+            customAttributes: customAttributes.length ? customAttributes : undefined,
             image: imageUrl,
           };
         });

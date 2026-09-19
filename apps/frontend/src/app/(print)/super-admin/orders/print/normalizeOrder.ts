@@ -1,4 +1,12 @@
 import { unwrapCollection, unwrapEntity } from "@/utils/strapi";
+import {
+  customVariantAttributes,
+  findAttributeTerm,
+  isColorAttribute,
+  isModelAttribute,
+  isSizeAttribute,
+  variationAttributeTerms,
+} from "@/utils/orderAttributes";
 import { resolvePaymentGateway, type PaymentGatewayKey } from "@/utils/paymentGateways";
 
 const CANONICAL_GATEWAY_VALUES: Record<PaymentGatewayKey, string> = {
@@ -262,15 +270,24 @@ const normalizeOrderItems = (items: unknown) => {
         if (!entity) return null;
         const pv = unwrapEntity(entity.product_variation);
         const product = unwrapEntity(pv?.product);
-        const color = unwrapEntity(entity.product_color ?? pv?.product_variation_color);
-        const size = unwrapEntity(entity.product_size ?? pv?.product_variation_size);
-        const model = unwrapEntity(entity.product_variation_model ?? pv?.product_variation_model);
-        // Order items only ever snapshot color/size/model. A variation whose sole
-        // dimension is a generic attribute (e.g. "pattern") has none of those, so
-        // without this the invoice silently drops the only variant info it has.
-        const genericTerms = unwrapCollection(pv?.selected_attribute_terms)
-          .map((term: unknown) => unwrapEntity(term)?.Title)
-          .filter((title: unknown): title is string => Boolean(title));
+        const attributeTerms = variationAttributeTerms(pv);
+        const color =
+          unwrapEntity(entity.product_color ?? pv?.product_variation_color) ??
+          findAttributeTerm(attributeTerms, isColorAttribute);
+        const size =
+          unwrapEntity(entity.product_size ?? pv?.product_variation_size) ??
+          findAttributeTerm(attributeTerms, isSizeAttribute);
+        const model =
+          unwrapEntity(entity.product_variation_model ?? pv?.product_variation_model) ??
+          findAttributeTerm(attributeTerms, isModelAttribute);
+        // The remaining attributes (a «کد» design code and the like) print as part of
+        // the same list as colour/size/model — nothing about them is secondary, they
+        // just have no legacy relation column of their own.
+        const customAttributes = customVariantAttributes(attributeTerms, [
+          color?.Title,
+          size?.Title,
+          model?.Title,
+        ]);
         return {
           id: String(entity.id ?? ""),
           attributes: {
@@ -302,8 +319,8 @@ const normalizeOrderItems = (items: unknown) => {
                   },
                 }
               : undefined,
-            genericAttributeLabel: !color && !size && !model && genericTerms.length
-              ? genericTerms.join("، ")
+            customAttributeLabel: customAttributes.length
+              ? customAttributes.map((attribute) => attribute.value).join("، ")
               : undefined,
           },
         };

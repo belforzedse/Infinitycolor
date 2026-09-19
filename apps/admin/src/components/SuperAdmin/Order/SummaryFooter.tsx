@@ -1,4 +1,5 @@
 import { priceFormatter } from "@/utils/price";
+import { formatVariantAttribute } from "@/utils/orderAttributes";
 import Image from "next/image";
 import MobileOrderItem from "./MobileOrderItem";
 import { translateContractStatus } from "@/utils/statusTranslations";
@@ -70,6 +71,9 @@ export default function SuperAdminOrderSummaryFooter({
                   {item.color ? `رنگ: ${item.color}` : "رنگ: -"}
                   {item.model ? ` | مدل: ${item.model}` : ""}
                   {item.size ? ` | سایز: ${item.size}` : ""}
+                  {(item.customAttributes ?? []).map(
+                    (attribute) => ` | ${formatVariantAttribute(attribute, ": ")}`,
+                  )}
                 </p>
               </div>
             </div>

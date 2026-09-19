@@ -59,6 +59,15 @@ export default function SuperAdminOrderMobileOrderItem({
         <div className="text-xs w-2/3 border-r p-4">{item.model ?? '-'}</div>
       </div>
 
+      {(item.customAttributes ?? []).map((attribute, index) => (
+        <div className="flex border-b" key={`${attribute.name ?? ""}-${attribute.value}-${index}`}>
+          <div className="text-sm flex w-1/3 items-center text-nowrap bg-slate-50 px-4 py-2 text-right font-medium text-foreground-primary">
+            {attribute.name || "مشخصه"}
+          </div>
+          <div className="text-xs w-2/3 border-r p-4">{attribute.value}</div>
+        </div>
+      ))}
+
       <div className="flex border-b">
         <div className="text-sm flex w-1/3 items-center text-nowrap bg-slate-50 px-4 py-2 text-right font-medium text-foreground-primary">
           قیمت

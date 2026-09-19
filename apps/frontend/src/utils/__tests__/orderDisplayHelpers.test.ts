@@ -83,6 +83,7 @@ describe("getOrderItemAttributes", () => {
       color: "مشکی",
       size: "۴۲",
       model: undefined,
+      custom: [],
     });
     expect(formatOrderItemAttributes(item)).toBe("رنگ: مشکی | سایز: ۴۲");
   });
@@ -102,6 +103,7 @@ describe("getOrderItemAttributes", () => {
       color: "آبی",
       size: "۴۴",
       model: "اسلیم",
+      custom: [],
     });
   });
 
@@ -135,11 +137,10 @@ describe("getOrderItemAttributes", () => {
     expect(formatOrderItemAttributes(makeItem())).toBe("");
   });
 
-  // Regression: a variation whose only dimension is a generic (non-color/size)
-  // attribute -- e.g. a "pattern"/"design" term -- has none of
-  // color/size/model, so every order view rendered it as if it had no variant
-  // at all even though the customer picked one.
-  it("falls back to the variation's generic attribute term when it has no color/size/model", () => {
+  // Regression: a variation whose only attribute has no legacy relation column --
+  // a "pattern"/"design" term -- has none of color/size/model, so every order view
+  // rendered it as if it had no variant at all even though the customer picked one.
+  it("shows an attribute that has no legacy relation of its own", () => {
     const item = makeItem({
       product_variation: {
         id: 9,
@@ -152,12 +153,12 @@ describe("getOrderItemAttributes", () => {
       color: undefined,
       size: undefined,
       model: undefined,
-      genericAttribute: "کد ۴",
+      custom: [{ value: "کد ۴" }],
     });
     expect(formatOrderItemAttributes(item)).toBe("کد ۴");
   });
 
-  it("prefers a real color/size over the generic attribute fallback when both exist", () => {
+  it("keeps a custom attribute alongside a real color instead of dropping it", () => {
     const item = makeItem({
       product_variation: {
         id: 9,
@@ -167,6 +168,47 @@ describe("getOrderItemAttributes", () => {
       },
     });
 
-    expect(getOrderItemAttributes(item).genericAttribute).toBeUndefined();
+    expect(getOrderItemAttributes(item).custom).toEqual([{ value: "کد ۴" }]);
+    expect(formatOrderItemAttributes(item)).toBe("رنگ: مشکی | کد ۴");
+  });
+
+  it("names a custom attribute whose term does not spell the attribute out", () => {
+    const item = makeItem({
+      product_variation: {
+        id: 9,
+        product: null,
+        product_variation_size: { id: 4, Title: "XL" },
+        selected_attribute_terms: [
+          {
+            Title: "۱",
+            product_attribute: { id: 41, Title: "کد", LegacyProjection: "None" },
+          },
+        ],
+      },
+    });
+
+    expect(formatOrderItemAttributes(item)).toBe("سایز: XL | کد: ۱");
+  });
+
+  it("reads a color that exists only as a catalog attribute term", () => {
+    const item = makeItem({
+      product_variation: {
+        id: 9,
+        product: null,
+        selected_attribute_terms: [
+          {
+            Title: "کرم",
+            product_attribute: { id: 32, Title: "رنگ", Type: "Color", LegacyProjection: "None" },
+          },
+        ],
+      },
+    });
+
+    expect(getOrderItemAttributes(item)).toEqual({
+      color: "کرم",
+      size: undefined,
+      model: undefined,
+      custom: [],
+    });
   });
 });

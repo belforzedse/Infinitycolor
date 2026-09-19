@@ -30,6 +30,10 @@ type OrderLog = {
   };
 };
 
+/** The `{ data: { attributes } }` relation shape the Invoice component reads. */
+const titleRelation = (key: string, title?: string) =>
+  title ? { [key]: { data: { attributes: { Title: title } } } } : {};
+
 export default function SuperAdminOrderSidebar({
   orderData,
   selectedItems = [],
@@ -213,6 +217,14 @@ export default function SuperAdminOrderSidebar({
               PerAmount: item.price,
               ProductTitle: item.productName,
               ProductSKU: item.productCode,
+              // Without these the pre-invoice printed bare product titles, so two
+              // variations of one product were indistinguishable on the page.
+              ...titleRelation("product_color", item.color),
+              ...titleRelation("product_size", item.size),
+              ...titleRelation("product_variation_model", item.model),
+              customAttributeLabel: (item.customAttributes ?? [])
+                .map((attribute) => attribute.value)
+                .join("، ") || undefined,
             },
           })),
         },

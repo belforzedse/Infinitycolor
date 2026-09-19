@@ -1,4 +1,5 @@
 import type { ProductCoverImage } from "@/types/Product";
+import type { VariantAttribute } from "@/utils/orderAttributes";
 
 export type AnipoBarcodeState =
   | "Pending"
@@ -17,6 +18,12 @@ export interface SuperAdminOrderItem {
   color?: string;
   size?: string;
   model?: string;
+  /**
+   * The variation's other attributes — a «کد» design code, a pattern — each with
+   * its own attribute name. Colour/size/model are above only because they have a
+   * relation column of their own; these are shown the same way.
+   */
+  customAttributes?: VariantAttribute[];
   image?: string;
   coverImage?: ProductCoverImage;
 }

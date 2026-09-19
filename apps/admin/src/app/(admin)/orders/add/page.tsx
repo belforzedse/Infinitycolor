@@ -412,7 +412,7 @@ export default function Page() {
             ${selectedItems.map((item, index) => `
               <tr>
                 <td>${index + 1}</td>
-                <td>${item.productName}${item.color ? ` - ${item.color}` : ''}${item.size ? ` - ${item.size}` : ''}</td>
+                <td>${[item.productName, item.color, item.size, item.model, ...(item.customAttributes ?? []).map((attribute) => attribute.value)].filter(Boolean).join(' - ')}</td>
                 <td>${item.productCode}</td>
                 <td>${new Intl.NumberFormat('fa-IR').format(item.price)} تومان</td>
                 <td>${item.quantity}</td>

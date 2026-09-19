@@ -28,7 +28,12 @@ type InvoiceItem = {
     product_color?: Relation<{ Title?: string }>;
     product_size?: Relation<{ Title?: string }>;
     product_variation_model?: Relation<{ Title?: string }>;
-    genericAttributeLabel?: string;
+    /**
+     * The variation's attributes that have no legacy relation column of their own
+     * (a «کد» design code, a pattern …), already joined. Ordinary attributes:
+     * they print in the same list as colour/size/model, never as an afterthought.
+     */
+    customAttributeLabel?: string;
   };
 };
 
@@ -144,18 +149,19 @@ const invoicePaymentMethod = (...values: unknown[]) => {
 
 const productLabel = (item: InvoiceItem) => {
   const attributes = item.attributes ?? {};
-  const variation = [
+  // Every attribute the customer chose, in one flat list — «قرمز، XL، راه راه».
+  // Colour/size/model are only the three with legacy relation columns; the rest
+  // were appended solely when all three were empty, so a variation that differed
+  // from its sibling by exactly a «کد» printed as the same line.
+  const variantLabel = [
     relationAttributes(attributes.product_color)?.Title,
     relationAttributes(attributes.product_size)?.Title,
     relationAttributes(attributes.product_variation_model)?.Title,
+    attributes.customAttributeLabel,
   ]
     .map(textValue)
     .filter(Boolean)
     .join("، ");
-  // Falls back to the variation's generic attribute (e.g. a "pattern"/"design"
-  // term) when it has none of color/size/model — otherwise those variations
-  // print with no variant info at all.
-  const variantLabel = variation || textValue(attributes.genericAttributeLabel);
   const title = textValue(attributes.ProductTitle) || "—";
   return `${title}${variantLabel ? `، ${variantLabel}` : ""}`;
 };

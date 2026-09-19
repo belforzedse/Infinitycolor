@@ -75,10 +75,24 @@ export interface OrderItem {
     product_variation_size?: OrderItemAttributeRef | null;
     product_variation_model?: OrderItemAttributeRef | null;
     /**
-     * A variation's non-color/size dimension (e.g. a "pattern"/"design" term).
-     * Only meaningful when none of the color/size/model relations above are set.
+     * The variation's catalog attribute terms. These carry dimensions the three
+     * relations above cannot express (a «کد …» design code), and they also
+     * carry a color/size/model that exists only as a generic attribute — read
+     * `product_attribute.LegacyProjection`/`Type` to tell which is which
+     * (`getOrderItemAttributes` does).
      */
-    selected_attribute_terms?: { Title?: string }[] | null;
+    selected_attribute_terms?:
+      | {
+          id?: number;
+          Title?: string;
+          product_attribute?: {
+            id?: number;
+            Title?: string;
+            Type?: string | null;
+            LegacyProjection?: string | null;
+          } | null;
+        }[]
+      | null;
   } | null;
 }
 

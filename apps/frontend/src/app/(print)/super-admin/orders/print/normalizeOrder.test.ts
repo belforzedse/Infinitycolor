@@ -166,7 +166,7 @@ describe("normalizeOrderForInvoice", () => {
     });
   });
 
-  it("falls back to the variation's generic attribute term when it has no color/size/model", () => {
+  it("prints the variation's own attribute term when it has no color/size/model", () => {
     const result = normalizeOrderForInvoice({
       id: 78,
       order_items: [
@@ -188,11 +188,11 @@ describe("normalizeOrderForInvoice", () => {
       product_color: undefined,
       product_size: undefined,
       product_variation_model: undefined,
-      genericAttributeLabel: "کد ۴",
+      customAttributeLabel: "کد ۴",
     });
   });
 
-  it("prefers a real color/size over the generic attribute fallback when both exist", () => {
+  it("keeps a custom attribute alongside a real color instead of dropping it", () => {
     const result = normalizeOrderForInvoice({
       id: 79,
       order_items: [
@@ -211,7 +211,10 @@ describe("normalizeOrderForInvoice", () => {
       ],
     });
 
-    expect(result?.attributes.order_items.data[0].attributes.genericAttributeLabel).toBeUndefined();
+    expect(result?.attributes.order_items.data[0].attributes).toMatchObject({
+      product_color: { data: { attributes: { Title: "شکلاتی" } } },
+      customAttributeLabel: "کد ۴",
+    });
   });
 
   it.each([

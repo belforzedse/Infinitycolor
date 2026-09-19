@@ -6,9 +6,19 @@
 import type { PersianOrderStatus } from "@/constants/enums";
 import type { Order, OrderItem } from "@/services/order";
 import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTranslations";
+import {
+  customVariantAttributes,
+  findAttributeTerm,
+  formatVariantAttribute,
+  isColorAttribute,
+  isModelAttribute,
+  isSizeAttribute,
+  variationAttributeTerms,
+  type VariantAttribute,
+} from "@/utils/orderAttributes";
 
 /**
- * Colour/size/model of a purchased line, for display.
+ * Every attribute of a purchased line, for display.
  *
  * Reads the order-item snapshot first and only then falls back to the live
  * variation. Two spellings are in play and mixing them up renders nothing:
@@ -17,12 +27,17 @@ import { getOrderStatusCategory, translateOrderStatus } from "@/utils/statusTran
  * /`product_variation_size`. Every storefront order view used to read
  * `item.product_variation.product_size`, a path that exists on neither entity,
  * so sizes were silently absent from order history.
+ *
+ * Colour, size and model are simply the three attributes with a relation column
+ * of their own, and even they can live purely as a catalog term. `custom` holds
+ * the rest — a «کد» design code, a pattern — each with its own attribute name;
+ * they are shown alongside the other three, not in place of them.
  */
 export function getOrderItemAttributes(item: OrderItem): {
   color?: string;
   size?: string;
   model?: string;
-  genericAttribute?: string;
+  custom: VariantAttribute[];
 } {
   const variation = item.product_variation;
   const pick = (value?: string | null) => {
@@ -30,23 +45,21 @@ export function getOrderItemAttributes(item: OrderItem): {
     return text.length > 0 ? text : undefined;
   };
 
-  const color = pick(item.product_color?.Title) ?? pick(variation?.product_variation_color?.Title);
-  const size = pick(item.product_size?.Title) ?? pick(variation?.product_variation_size?.Title);
+  const terms = variationAttributeTerms(variation);
+  const color =
+    pick(item.product_color?.Title) ??
+    pick(variation?.product_variation_color?.Title) ??
+    pick(findAttributeTerm(terms, isColorAttribute)?.Title);
+  const size =
+    pick(item.product_size?.Title) ??
+    pick(variation?.product_variation_size?.Title) ??
+    pick(findAttributeTerm(terms, isSizeAttribute)?.Title);
   const model =
     pick(item.product_variation_model?.Title) ??
-    pick(variation?.product_variation_model?.Title);
-  // A variation whose sole dimension is a generic (non-color/size) attribute,
-  // e.g. a "pattern"/"design" term, has none of the three above -- without this
-  // fallback it renders with no variant info at all.
-  const genericAttribute =
-    !color && !size && !model
-      ? (variation?.selected_attribute_terms ?? [])
-          .map((term) => pick(term?.Title))
-          .filter((title): title is string => Boolean(title))
-          .join("، ") || undefined
-      : undefined;
+    pick(variation?.product_variation_model?.Title) ??
+    pick(findAttributeTerm(terms, isModelAttribute)?.Title);
 
-  return { color, size, model, genericAttribute };
+  return { color, size, model, custom: customVariantAttributes(terms, [color, size, model]) };
 }
 
 /**
@@ -54,12 +67,14 @@ export function getOrderItemAttributes(item: OrderItem): {
  * Returns "" when the line has no attributes worth showing.
  */
 export function formatOrderItemAttributes(item: OrderItem, separator = " | "): string {
-  const { color, size, model, genericAttribute } = getOrderItemAttributes(item);
+  const { color, size, model, custom } = getOrderItemAttributes(item);
   const parts: string[] = [];
   if (color) parts.push(`رنگ: ${color}`);
   if (size) parts.push(`سایز: ${size}`);
   if (model) parts.push(`مدل: ${model}`);
-  if (genericAttribute) parts.push(genericAttribute);
+  // Named the same way as the three above — «کد: ۱» — except when the term
+  // already spells the attribute out, which imported terms usually do.
+  for (const attribute of custom) parts.push(formatVariantAttribute(attribute, ": "));
   return parts.join(separator);
 }
 

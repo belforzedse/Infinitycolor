@@ -166,7 +166,7 @@ describe("normalizeOrderForInvoice", () => {
     });
   });
 
-  it("falls back to the variation's generic attribute term when it has no color/size/model", () => {
+  it("prints the variation's own attribute term when it has no color/size/model", () => {
     const result = normalizeOrderForInvoice({
       id: 78,
       order_items: [
@@ -188,7 +188,7 @@ describe("normalizeOrderForInvoice", () => {
       product_color: undefined,
       product_size: undefined,
       product_variation_model: undefined,
-      genericAttributeLabel: "کد ۴",
+      customAttributeLabel: "کد ۴",
     });
   });
 
@@ -225,11 +225,11 @@ describe("normalizeOrderForInvoice", () => {
     expect(result?.attributes.order_items.data[0].attributes).toMatchObject({
       product_color: { data: { attributes: { Title: "کرم" } } },
       product_size: { data: { attributes: { Title: "M" } } },
-      genericAttributeLabel: undefined,
+      customAttributeLabel: undefined,
     });
   });
 
-  it("prefers a real color/size over the generic attribute fallback when both exist", () => {
+  it("keeps a custom attribute alongside a real color instead of dropping it", () => {
     const result = normalizeOrderForInvoice({
       id: 79,
       order_items: [
@@ -248,7 +248,79 @@ describe("normalizeOrderForInvoice", () => {
       ],
     });
 
-    expect(result?.attributes.order_items.data[0].attributes.genericAttributeLabel).toBeUndefined();
+    expect(result?.attributes.order_items.data[0].attributes).toMatchObject({
+      product_color: { data: { attributes: { Title: "شکلاتی" } } },
+      customAttributeLabel: "کد ۴",
+    });
+  });
+
+  // The reported invoice: «شورت طرحدار Y 00691» printed as «…، XL» for every
+  // کد, so four different variations came off the printer as the same line.
+  it("keeps a custom attribute alongside a real size", () => {
+    const result = normalizeOrderForInvoice({
+      id: 81,
+      order_items: [
+        {
+          id: 23,
+          Count: 1,
+          PerAmount: 299000,
+          ProductTitle: "شورت طرحدار 00691 Y",
+          ProductSKU: "WC-1290111-1290222",
+          product_variation: {
+            id: 31000,
+            product_variation_size: { id: 3, Title: "XL" },
+            selected_attribute_terms: [
+              {
+                id: 771,
+                Title: "کد ۱",
+                product_attribute: {
+                  id: 41,
+                  Title: "کد",
+                  Type: null,
+                  LegacyProjection: "None",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result?.attributes.order_items.data[0].attributes).toMatchObject({
+      product_size: { data: { attributes: { Title: "XL" } } },
+      customAttributeLabel: "کد ۱",
+    });
+  });
+
+  it("does not repeat a size-projected term next to the size it supplied", () => {
+    const result = normalizeOrderForInvoice({
+      id: 82,
+      order_items: [
+        {
+          id: 24,
+          Count: 1,
+          PerAmount: 299000,
+          ProductTitle: "شورت",
+          ProductSKU: "SKU-82",
+          product_variation: {
+            id: 31001,
+            selected_attribute_terms: [
+              {
+                id: 772,
+                Title: "XL",
+                product_attribute: { id: 42, Title: "سایز", LegacyProjection: "Size" },
+              },
+              { id: 773, Title: "کد ۲" },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result?.attributes.order_items.data[0].attributes).toMatchObject({
+      product_size: { data: { attributes: { Title: "XL" } } },
+      customAttributeLabel: "کد ۲",
+    });
   });
 
   it.each([
