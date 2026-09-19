@@ -7,6 +7,12 @@ type SecurityHeader = {
 
 const DEFAULT_UMAMI_URL = "https://analytics.alpagency.net";
 
+/**
+ * eNamad serves the footer trust seal from its own origin and validates the
+ * referring domain, so the badge can never be proxied or re-hosted.
+ */
+const ENAMAD_TRUSTSEAL_ORIGIN = "https://trustseal.enamad.ir";
+
 function unique(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
@@ -55,7 +61,8 @@ export function getContentSecurityPolicyReportOnly(): string {
   ]);
 
   // Non-self sources are intentionally limited to Strapi/API media, Umami,
-  // Sentry transport, and the configured payment gateway form/redirect hosts.
+  // Sentry transport, the eNamad trust seal, and the configured payment gateway
+  // form/redirect hosts.
   return [
     "default-src 'self'",
     "base-uri 'self'",
@@ -70,7 +77,8 @@ export function getContentSecurityPolicyReportOnly(): string {
     ].join(" "),
     ["script-src", "'self'", "'unsafe-inline'", "'unsafe-eval'", getUmamiOrigin()].join(" "),
     "style-src 'self' 'unsafe-inline'",
-    ["img-src", ...imageSources].join(" "),
+    // The seal is image-only; it stays out of `media-src` below.
+    ["img-src", ...imageSources, ENAMAD_TRUSTSEAL_ORIGIN].join(" "),
     "font-src 'self' data:",
     ["connect-src", ...connectSources].join(" "),
     ["media-src", ...imageSources].join(" "),

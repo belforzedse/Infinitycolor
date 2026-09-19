@@ -80,3 +80,16 @@ export const FOOTER_DATA: FooterData = {
   },
   storeLocations: "گرگان، بلوار ناهارخوران نبش عدالت 68، گنبد کاووس، ابتدای بلوار دانشجو",
 };
+
+/**
+ * eNamad trust seal. The badge must be hot-linked from `trustseal.enamad.ir`
+ * and wrapped in a link back to the verification page — eNamad validates the
+ * referring domain, so a re-hosted or proxied copy fails the check.
+ */
+export const ENAMAD_SEAL = {
+  id: "161544",
+  code: "ubfacOD0MKGTamyXgVNX",
+} as const;
+
+export const ENAMAD_SEAL_IMAGE_URL = `https://trustseal.enamad.ir/logo.aspx?id=${ENAMAD_SEAL.id}&Code=${ENAMAD_SEAL.code}`;
+export const ENAMAD_SEAL_VERIFY_URL = `https://trustseal.enamad.ir/?id=${ENAMAD_SEAL.id}&Code=${ENAMAD_SEAL.code}`;
