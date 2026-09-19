@@ -110,6 +110,13 @@ export async function finalizeSnappaySettlement(
           }`,
         );
       }
+      // NOTE before enabling WALLET_SPLIT_SNAPPAY_ENABLED: this function locks
+      // payment_attempts *before* orders, the reverse of every other settlement
+      // writer. That is only safe while SnappPay attempts carry no wallet hold —
+      // releaseWalletHoldsForOrder takes no attempt lock when it finds none, so
+      // today there is no cycle. Reorder these two locks to orders-first before
+      // SnappPay is allowed to hold wallet credit.
+      //
       // Wallet leg, after stock and last in the lock order. SnappPay mixed
       // tender is gated off, so today this is a no-op for every SnappPay order;
       // it is wired here so that enabling the flag cannot leave a captured

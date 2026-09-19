@@ -74,6 +74,12 @@ export type WalletAvailability = {
    * "every Created hold this customer has".
    */
   reusableIrr: number;
+  /**
+   * True when the balance could not be read at all. Zeros then mean "unknown",
+   * not "empty", and a checkout that wants to spend credit must say so rather
+   * than telling the customer to lower an amount they can actually afford.
+   */
+  degraded?: boolean;
 };
 
 const WALLET_TX_UID =
@@ -202,7 +208,14 @@ export async function readWalletAvailability(
         (error as any)?.message || error,
       ).slice(0, 200)}`,
     );
-    return { walletId: null, balanceIrr: 0, heldIrr: 0, availableIrr: 0, reusableIrr: 0 };
+    return {
+      walletId: null,
+      balanceIrr: 0,
+      heldIrr: 0,
+      availableIrr: 0,
+      reusableIrr: 0,
+      degraded: true,
+    };
   }
 }
 

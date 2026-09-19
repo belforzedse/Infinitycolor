@@ -202,6 +202,16 @@ describe("allocation", () => {
     expect(allocation).toMatchObject({ walletToman: 350_000, gatewayToman: 850_000 });
   });
 
+  it("says the balance is unreadable rather than telling the customer it is too low", () => {
+    expect(() => allocate({ balanceUnavailable: true })).toThrow(
+      expect.objectContaining({ code: "WALLET_UNAVAILABLE" }),
+    );
+    // A checkout that is not using the wallet is unaffected by the same outage.
+    expect(
+      allocate({ balanceUnavailable: true, requestedWalletAmount: 0 }),
+    ).toMatchObject({ walletToman: 0, gatewayToman: 1_200_000 });
+  });
+
   it("refuses any wallet tender when the wallet gateway itself is unavailable", () => {
     expect(() =>
       allocate({

@@ -27,6 +27,7 @@ export const WALLET_ALLOCATION_ERROR_CODES = [
   "WALLET_SPLIT_DISABLED",
   "WALLET_SPLIT_UNSUPPORTED_GATEWAY",
   "WALLET_DISABLED",
+  "WALLET_UNAVAILABLE",
 ] as const;
 
 export type WalletAllocationErrorCode = (typeof WALLET_ALLOCATION_ERROR_CODES)[number];
@@ -208,6 +209,8 @@ export type AllocationInput = {
   heldIrr: number;
   availableIrr: number;
   reusableIrr: number;
+  /** The balance could not be read; any wallet tender must fail closed. */
+  balanceUnavailable?: boolean;
   capabilities: PaymentCapabilities;
 };
 
@@ -262,6 +265,14 @@ export function resolvePaymentAllocation(input: AllocationInput): PaymentAllocat
       gatewayToman: totalToman,
       requiredGateway: (gateway || "mellat") as CheckoutGatewayCode,
     };
+  }
+
+  if (input.balanceUnavailable) {
+    throw new PaymentAllocationError(
+      "WALLET_UNAVAILABLE",
+      "موجودی کیف پول در دسترس نیست. لطفاً چند لحظه بعد دوباره تلاش کنید.",
+      base,
+    );
   }
 
   if (!input.capabilities.walletEnabled) {

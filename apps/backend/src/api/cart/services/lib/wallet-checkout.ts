@@ -61,6 +61,7 @@ export async function buildWalletCheckoutContext(
         heldIrr: availability.heldIrr,
         availableIrr: availability.availableIrr,
         reusableIrr: availability.reusableIrr,
+        balanceUnavailable: availability.degraded === true,
         capabilities,
       }),
   };

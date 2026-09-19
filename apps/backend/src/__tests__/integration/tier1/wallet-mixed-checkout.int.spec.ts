@@ -10,6 +10,7 @@ import { createCheckoutQuote } from "../../../api/cart/services/lib/checkout-quo
 import { PaymentAllocationError } from "../../../api/cart/services/lib/payment-allocation";
 import { buildWalletCheckoutContext } from "../../../api/cart/services/lib/wallet-checkout";
 import { finalizeGatewaySettlement } from "../../../api/order/controllers/helpers/gatewaySettlement";
+import { settleOrderWithWallet } from "../../../api/cart/controllers/handlers/wallet-settlement";
 import { claimPaymentAttemptForInitiation } from "../../../api/payment-attempt/services/claim-payment-attempt";
 import { releaseOrderReservation } from "../../../utils/stockReservations";
 import { refreshWalletReadiness } from "../../../api/local-user-wallet/services/wallet-readiness";
@@ -242,6 +243,73 @@ describe("mixed wallet + gateway checkout", () => {
     expect(
       legs.reduce((sum: number, leg: any) => sum + Number(leg.Amount), 0),
     ).toBe(TOTAL_TOMAN * 10);
+  });
+
+  it("settles a wallet-only order through the hold path and replays without a second debit", async () => {
+    const shopper = await seedShopper({ balanceIrr: 20_000_000 });
+
+    // No explicit amount: `gateway: "wallet"` means the wallet covers the total.
+    const { quote, result } = await quoteAndFinalize(shopper.user.id, {
+      attemptId: `wallet-only-${shopper.user.id}`,
+      gateway: "wallet",
+    });
+    expect(quote!.paymentAllocation).toMatchObject({
+      walletToman: TOTAL_TOMAN,
+      gatewayToman: 0,
+      requiredGateway: "wallet",
+    });
+    expect(result.success).toBe(true);
+
+    // With holds enabled the wallet-only path reserves first, exactly like a
+    // split does, instead of debiting straight away.
+    expect(await attemptRow(result.paymentAttempt.id)).toMatchObject({
+      wallet_hold_status: "Active",
+      wallet_amount: String(TOTAL_TOMAN * 10),
+      gateway_amount: "0",
+    });
+    expect((await wallet(shopper.user.id)).heldIrr).toBe(TOTAL_TOMAN * 10);
+
+    const settle = () =>
+      settleOrderWithWallet(strapi, {
+        userId: Number(shopper.user.id),
+        orderId: Number(result.order.id),
+        contractId: Number(result.contract.id),
+        paymentAttemptId: Number(result.paymentAttempt.id),
+        attemptId: `wallet-only-${shopper.user.id}`,
+        totalToman: TOTAL_TOMAN,
+        discountToman: 0,
+      });
+
+    const settlement = await settle();
+    expect(settlement.success).toBe(true);
+
+    const after = await wallet(shopper.user.id);
+    expect(after.balanceIrr).toBe(20_000_000 - TOTAL_TOMAN * 10);
+    expect(after.heldIrr).toBe(0);
+    expect(await attemptRow(result.paymentAttempt.id)).toMatchObject({
+      status: "Succeeded",
+      wallet_hold_status: "Captured",
+    });
+
+    // A replayed settlement returns the existing result and posts nothing.
+    const replay = await settle();
+    expect(replay).toMatchObject({ success: true, reference: settlement.reference });
+
+    const ledger = await strapi.db
+      .query("api::local-user-wallet-transaction.local-user-wallet-transaction")
+      .findMany({ where: { user_wallet: { id: after.id } } });
+    expect(ledger).toHaveLength(1);
+
+    const unchanged = await wallet(shopper.user.id);
+    expect(unchanged.balanceIrr).toBe(after.balanceIrr);
+    expect(unchanged.heldIrr).toBe(0);
+
+    const logs = await strapi.db
+      .query("api::order-log.order-log")
+      .findMany({ where: { order: { id: result.order.id } } });
+    expect(
+      logs.some((log: any) => log?.Changes?.walletPath === "hold"),
+    ).toBe(true);
   });
 
   it("returns the held credit exactly once when the checkout is released", async () => {
