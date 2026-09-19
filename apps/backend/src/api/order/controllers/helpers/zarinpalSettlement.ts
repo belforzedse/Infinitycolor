@@ -6,6 +6,7 @@ import {
   updatePaymentAttempt,
 } from "../../../payment-attempt/services/payment-attempt-store";
 import { confirmReservePaymentForOrder } from "../../../reserve-group/lib/reserve-group";
+import { captureWalletLegForSettlement } from "../../../local-user-wallet/services/wallet-holds";
 
 type ZarinPalVerification = {
   refId?: string;
@@ -81,6 +82,11 @@ export async function settleZarinPalPayment(
       };
     }
 
+    // Order row next, before anything is read from it, so this settlement
+    // serializes against admin cancellation and reservation expiry on the same
+    // row: orders -> payment_attempts -> product_stocks -> wallet.
+    await trx.raw("SELECT id FROM orders WHERE id = ? FOR UPDATE", [orderId]);
+
     const order: any = await strapi.db.query("api::order.order").findOne({
       where: { id: orderId },
       populate: {
@@ -154,6 +160,24 @@ export async function settleZarinPalPayment(
       );
     }
 
+    // Wallet leg of a split payment, after stock and before anything else is
+    // written. An inactive hold rolls this settlement back so the caller's
+    // existing ZarinPal failure path runs instead of a half-paid order.
+    const settlementAttempt: any = await findOrderPaymentAttempt(strapi, orderId, trx);
+    if (settlementAttempt?.id) {
+      const walletLeg = await captureWalletLegForSettlement(
+        strapi,
+        { paymentAttemptId: Number(settlementAttempt.id), orderId, contractId },
+        trx,
+      );
+      if (walletLeg.outcome === "not_active") {
+        throw new ZarinPalSettlementError(
+          "ZARINPAL_WALLET_HOLD_NOT_ACTIVE",
+          `Order ${orderId} wallet hold is ${String(walletLeg.status)}`,
+        );
+      }
+    }
+
     await strapi.db.query("api::contract.contract").update({
       where: { id: contractId },
       data: {
@@ -198,7 +222,7 @@ export async function settleZarinPalPayment(
         transacting: trx,
       } as any);
 
-    const attempt: any = await findOrderPaymentAttempt(strapi, orderId, trx);
+    const attempt: any = settlementAttempt ?? (await findOrderPaymentAttempt(strapi, orderId, trx));
     if (attempt?.id) {
       await updatePaymentAttempt(
         strapi,

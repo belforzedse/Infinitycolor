@@ -7,6 +7,7 @@ import {
 import { consumeCheckoutCartLines } from "../../cart/services/lib/order-cart-cleanup";
 import { enqueuePurchaseForOrder, enqueueRefundForReturn } from "../../report/analytics/outbox";
 import { confirmReservePaymentForOrder } from "../../reserve-group/lib/reserve-group";
+import { captureWalletLegForSettlement } from "../../local-user-wallet/services/wallet-holds";
 import {
   captureAnipoCancelSnapshot,
   notifyAnipoParcelCancelled,
@@ -108,6 +109,22 @@ export async function finalizeSnappaySettlement(
             consumed.expired ? "reservation_expired" : "reservation_not_consumed"
           }`,
         );
+      }
+      // Wallet leg, after stock and last in the lock order. SnappPay mixed
+      // tender is gated off, so today this is a no-op for every SnappPay order;
+      // it is wired here so that enabling the flag cannot leave a captured
+      // gateway leg beside an uncaptured wallet leg.
+      const walletLeg = await captureWalletLegForSettlement(
+        strapi,
+        {
+          paymentAttemptId: ids.attemptId,
+          orderId: ids.orderId,
+          contractId: ids.contractId,
+        },
+        trx,
+      );
+      if (walletLeg.outcome === "not_active") {
+        throw new Error(`SNAPPAY_WALLET_HOLD_NOT_ACTIVE:${String(walletLeg.status)}`);
       }
     } else if (reservationStatus !== "Consumed") {
       throw new Error(`SNAPPAY_RESERVATION_STATE_CONFLICT:${reservationStatus || "missing"}`);

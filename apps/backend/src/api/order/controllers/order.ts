@@ -587,7 +587,19 @@ export default factories.createCoreController(
             shippingMethodTitle,
             transactionId,
             attemptId: attempt?.attemptId,
+            // `amountIrr` stays the order total. The two legs are reported
+            // alongside it so the result page can show what came from the
+            // wallet and what the bank carried.
             amountIrr: attempt?.Amount ? Number(attempt.Amount) : undefined,
+            ...(Number(attempt?.WalletAmount || 0) > 0
+              ? {
+                  walletAmountIrr: Number(attempt.WalletAmount),
+                  gatewayAmountIrr: Number(
+                    attempt.GatewayAmount ??
+                      Number(attempt.Amount || 0) - Number(attempt.WalletAmount),
+                  ),
+                }
+              : {}),
             canRetry,
             nextAction: isPaid ? "view_order" : canRetry ? "return_to_cart" : "recheck",
             failureCode:

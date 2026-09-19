@@ -17,6 +17,10 @@ import {
   GatewayLocalSettlementError,
 } from "./gatewaySettlement";
 import { snappayCallbackHandler } from "./snappayCallback";
+import {
+  gatewayExpectedAmountIrr,
+  readPaymentAttemptLegs,
+} from "../../../payment-attempt/services/payment-legs";
 const getFrontendBaseUrl = () =>
   (process.env.FRONTEND_BASE_URL || process.env.FRONTEND_URL || "https://infinitycolor.co").replace(
     /\/$/,
@@ -467,11 +471,16 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
         );
       }
 
+      // ZarinPal verifies against the amount it was asked for. That is the
+      // gateway leg: the Pending contract transaction was created with exactly
+      // that figure at initiation, so it is the authoritative source here.
+      // Falling back to the contract total would fail verification for every
+      // split payment.
       const amountToman = Math.round(
         Number(
-          orderEntity?.contract?.Amount ??
-            contractTransaction?.contract?.Amount ??
-            Number(contractTransaction.Amount || 0) / 10,
+          Number(contractTransaction.Amount || 0) > 0
+            ? Number(contractTransaction.Amount) / 10
+            : (orderEntity?.contract?.Amount ?? contractTransaction?.contract?.Amount ?? 0),
         ),
       );
 
@@ -979,8 +988,10 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
       const detail = verifyResult.transactionDetail || verifyResult.TransactionDetail || {};
       const affectiveAmountRaw = detail?.AffectiveAmount ?? detail?.OrginalAmount;
       const affectiveAmountIrr = Number(affectiveAmountRaw);
-      const expectedAmountIrr =
-        attempt?.Amount != null ? Number(attempt.Amount) : contractAmountIrr;
+      // The bank was asked for the gateway leg, which is the whole total unless
+      // the customer paid part of it from their wallet. Comparing against the
+      // total would reverse every split payment as an amount mismatch.
+      const expectedAmountIrr = gatewayExpectedAmountIrr(attempt, contractAmountIrr);
 
       // Amount check: this, together with the ResNum anchor above and a
       // genuine provider verify success, is what actually closes Finding A
@@ -1075,7 +1086,7 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
             external_id: refNum,
           },
           contractTransactionData: {
-            Amount: affectiveAmountIrr || contractAmountIrr,
+            Amount: affectiveAmountIrr || expectedAmountIrr,
             TrackId: refNum,
             external_id: resNumRaw || contractTransaction?.external_id || refNum,
             external_source: "SamanKish",
@@ -1548,7 +1559,12 @@ async function runVerifyPaymentHandler(strapi: Strapi, ctx: any) {
               external_id: String(SaleReferenceId ?? RefId ?? ""),
             },
             contractTransactionData: {
-              Amount: Math.round(Number(settlementContract?.Amount || 0)) * 10,
+              // The gateway leg: what Mellat actually settled. With no wallet
+              // tender this is the contract total, exactly as before.
+              Amount: gatewayExpectedAmountIrr(
+                attempt,
+                Math.round(Number(settlementContract?.Amount || 0)) * 10,
+              ),
               TrackId: String(RefId ?? SaleReferenceId ?? ""),
               external_id: String(SaleReferenceId ?? RefId ?? ""),
               external_source: "Mellat",

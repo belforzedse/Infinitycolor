@@ -114,6 +114,15 @@ function createWorld(topups: TopupRow[]) {
                   }
                 : { rows: [] };
             }
+            // Wallet credits now resolve the row through the owner link with a
+            // FOR UPDATE read so first use is race-safe; the fake mirrors that.
+            if (/FROM local_user_wallets w/.test(sql)) {
+              return {
+                rows: [
+                  { id: wallet.id, balance: wallet.Balance, held_balance: wallet.HeldBalance ?? 0 },
+                ],
+              };
+            }
             if (/UPDATE local_user_wallets/.test(sql)) {
               wallet.Balance += Number(bindings[0]);
               return { rows: [{ id: wallet.id, balance: wallet.Balance }] };
@@ -375,6 +384,11 @@ describe("wallet top-up success callback", () => {
                 status: row.Status,
                 sale_reference_id: row.SaleReferenceId,
               }],
+            };
+          }
+          if (/FROM local_user_wallets w/.test(sql)) {
+            return {
+              rows: [{ id: world.wallet.id, balance: world.wallet.Balance, held_balance: 0 }],
             };
           }
           if (/UPDATE local_user_wallets/.test(sql)) {

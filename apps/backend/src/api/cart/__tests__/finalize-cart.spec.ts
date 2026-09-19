@@ -19,6 +19,12 @@ jest.mock("../controllers/handlers/gateway-helpers", () => ({
   requestMellatPayment: jest.fn(),
   requestSamanPayment: jest.fn(),
   requestZarinPalPayment: jest.fn(),
+  // Deliberately real: whether an initiation failure is a provider verdict or an
+  // unknown outcome decides if the order is cancelled, so these tests exercise
+  // the actual classification rather than a stub of it.
+  classifyGatewayInitiationOutcome: jest.requireActual(
+    "../controllers/handlers/gateway-helpers",
+  ).classifyGatewayInitiationOutcome,
 }));
 
 jest.mock("../controllers/handlers/wallet-settlement", () => ({
@@ -483,7 +489,7 @@ describe("finalizeToOrderHandler", () => {
     );
   });
 
-  it("cancels the order when the external gateway rejects the payment", async () => {
+  it("cancels the order when the external gateway rejects the payment outright", async () => {
     const { strapi, registerService } = createStrapiMock();
     const cartService = {
       finalizeCartToOrder: jest.fn().mockResolvedValue({
@@ -505,10 +511,14 @@ describe("finalizeToOrderHandler", () => {
     }),
   });
 
+    // `resCode` is the bank's own verdict: it answered, and it said no. That is
+    // proof no payment exists, so the order may be cancelled and the customer's
+    // stock and wallet credit released immediately.
     mockedRequestMellatPayment.mockResolvedValue({
       success: false,
       error: "Gateway down",
       requestId: "REQ-123",
+      resCode: 34,
       detailedError: { code: "XX" },
     });
 
@@ -569,6 +579,60 @@ describe("finalizeToOrderHandler", () => {
           requestId: "REQ-123",
         }),
       }),
+    );
+  });
+
+  it("keeps the order intact when the gateway never answered", async () => {
+    const { strapi, registerService } = createStrapiMock();
+    registerService("api::cart.cart", {
+      finalizeCartToOrder: jest.fn().mockResolvedValue({
+        success: true,
+        order: { id: 502 },
+        contract: { id: 78, Amount: 180_000 },
+        financialSummary: { payable: 180_000 },
+        paymentAttempt: { id: 1502, attemptId: "checkout-attempt", Status: "Created" },
+      }),
+    });
+    mockEntityFindOne(strapi, {
+      "api::shipping.shipping": () => ({ id: 4 }),
+      "api::local-user-address.local-user-address": () => ({
+        id: 22,
+        shipping_city: {},
+        user: { id: 9 },
+      }),
+    });
+
+    // A socket-level failure with no provider verdict. A payment may or may not
+    // exist at the bank, so cancelling the order — and with it releasing the
+    // stock and any wallet hold — would be acting on evidence we do not have.
+    mockedRequestMellatPayment.mockResolvedValue({
+      success: false,
+      error: "socket hang up",
+      requestId: "REQ-124",
+      errorCode: "ECONNRESET",
+    });
+
+    const ctx = createCtx({
+      request: {
+        body: { shipping: 4, addressId: 22, gateway: "mellat", shippingCost: 0 },
+      },
+      state: { user: { id: 9 } },
+    });
+
+    const response: any = await finalizeToOrderHandler(strapi)(ctx);
+
+    expect(ctx.status).toBe(202);
+    expect(response.data).toMatchObject({
+      success: false,
+      errorCode: "PAYMENT_UNKNOWN",
+      paymentStatus: "Unknown",
+      orderId: 502,
+    });
+    expect(mockedCancelOrderAndRelease).not.toHaveBeenCalled();
+    expect(mockedUpdatePaymentAttempt).toHaveBeenCalledWith(
+      strapi,
+      1502,
+      expect.objectContaining({ Status: "Unknown", nextAction: "manual_review" }),
     );
   });
 

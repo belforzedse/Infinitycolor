@@ -126,7 +126,11 @@ function createHarness(order: any, ctxOverrides: Record<string, any> = {}) {
     query: jest.fn((uid: string) => queries[uid]),
     db: {
       query: jest.fn((uid: string) => queries[uid]),
-      transaction: jest.fn(async (callback: any) => callback({ trx: {} })),
+      // `raw` is required: cancellation now also hands back any wallet credit
+      // the checkout had reserved, which is raw SQL on the same transaction.
+      transaction: jest.fn(async (callback: any) =>
+        callback({ trx: { raw: jest.fn(async () => ({ rows: [] })) } }),
+      ),
     },
     log: { error: jest.fn(), info: jest.fn(), warn: jest.fn() },
   } as any;

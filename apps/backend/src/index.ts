@@ -32,6 +32,8 @@ import {
 import { backfillLegacySnappayAttempts } from "./api/payment-gateway/services/snappay-legacy-backfill";
 import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/snappay-database";
 import { ensurePaymentAttemptDatabaseInvariants } from "./api/payment-attempt/services/payment-attempt-database";
+import { ensureWalletDatabaseInvariants } from "./api/local-user-wallet/services/wallet-database";
+import { refreshWalletReadiness } from "./api/local-user-wallet/services/wallet-readiness";
 import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 import {
   mapLegacyFaqCategories,
@@ -1368,6 +1370,15 @@ export default {
       // Mellat is always active (no feature flag), so its own payment-attempt
       // provider-reference invariant runs unconditionally alongside SnappPay's.
       await ensurePaymentAttemptDatabaseInvariants(strapi as any);
+      // Wallet money paths: Strapi never turned the schemas' `unique: true` into
+      // database uniqueness, so install it here and then verify it. Holds and
+      // top-ups stay switched off unless every prerequisite verifies, however
+      // the env flags are set.
+      await ensureWalletDatabaseInvariants(strapi as any);
+      const walletReadiness = await refreshWalletReadiness(strapi as any);
+      strapi.log.info(
+        `Wallet readiness evaluated: holds=${walletReadiness.holds} topups=${walletReadiness.topups}`,
+      );
       await ensureCategoryEditorialDatabaseInvariant(strapi);
       const issueReportStorage = await ensureIssueReportStorage(strapi);
       if (issueReportStorage.repaired) {

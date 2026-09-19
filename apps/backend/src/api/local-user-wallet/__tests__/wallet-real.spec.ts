@@ -102,6 +102,14 @@ describe('Wallet Operations - Real Implementation', () => {
               };
             }
 
+            // Credits resolve the wallet through the owner link under FOR UPDATE
+            // so a customer's first ever credit cannot open two wallets.
+            if (sql.includes('FROM local_user_wallets w')) {
+              return {
+                rows: [{ id: wallet.id, balance: wallet.Balance, held_balance: 0 }],
+              };
+            }
+
             if (sql.includes('UPDATE local_user_wallets')) {
               wallet.Balance += Number(bindings[0]);
               return { rows: [{ id: wallet.id, balance: wallet.Balance }] };

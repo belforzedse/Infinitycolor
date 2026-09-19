@@ -330,6 +330,26 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
         );
       if (becameSnappay) throw new OrderChangedConcurrentlyError();
 
+      // A `Paying` order whose customer has committed wallet credit to it is
+      // mid-payment. Shrinking the order would leave the hold larger than the
+      // new total, and the settlement that is already in flight would then be
+      // asked for an amount that no longer matches. Refuse and let the operator
+      // cancel, which releases both the hold and the reservation cleanly.
+      if (String(currentOrder.Status) === "Paying") {
+        const activeHold = await trx.raw(
+          `SELECT pa.id
+             FROM payment_attempts pa
+             JOIN payment_attempts_order_links pol ON pol.payment_attempt_id = pa.id
+            WHERE pol.order_id = ?
+              AND pa.wallet_hold_status = 'Active'
+            LIMIT 1`,
+          [orderIdNum],
+        );
+        if ((activeHold?.rows || []).length > 0) {
+          throw new Error("ORDER_HAS_ACTIVE_WALLET_HOLD");
+        }
+      }
+
       committedRefundToman = currentPlan.refundToman;
       // Update or delete order items
       for (const change of currentPlan.changes) {
@@ -537,6 +557,18 @@ export async function adminAdjustItemsHandler(strapi: Strapi, ctx: any) {
           errorCode: "ORDER_CHANGED_CONCURRENTLY",
         },
       });
+    }
+
+    if (message === "ORDER_HAS_ACTIVE_WALLET_HOLD") {
+      return ctx.conflict(
+        "این سفارش در حال پرداخت با کیف پول است. ابتدا پرداخت را لغو کنید.",
+        {
+          data: {
+            error: "ORDER_HAS_ACTIVE_WALLET_HOLD",
+            errorCode: "ORDER_HAS_ACTIVE_WALLET_HOLD",
+          },
+        },
+      );
     }
 
     if (message.startsWith("SNAPPAY_")) {

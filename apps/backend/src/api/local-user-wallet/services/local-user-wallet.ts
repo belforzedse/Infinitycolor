@@ -6,6 +6,11 @@ import { factories } from '@strapi/strapi';
 import type { Strapi } from "@strapi/strapi";
 import { randomUUID } from "node:crypto";
 import { writeAuditEvent } from "../../../audit/writer";
+import {
+  findWalletForUpdate,
+  getOrCreateWalletForUpdate,
+  WalletHoldError,
+} from "./wallet-holds";
 import type { AuditPrincipal, AuditInitiatorType, AuditActorType, AuditOrigin } from "../../../audit/types";
 
 type WalletBalanceResult = {
@@ -30,15 +35,19 @@ export class WalletAdjustmentError extends Error {
   }
 }
 
-const runRaw = (strapi: Strapi, trx: any, sql: string, bindings: unknown[]) => {
-  if (trx?.raw) return trx.raw(sql, bindings);
-  return strapi.db.connection.raw(sql, bindings);
-};
-
 /**
  * Atomically deduct amount from wallet balance with race condition protection
  * Uses raw SQL UPDATE with WHERE clause to ensure balance doesn't go negative
  * @returns {Promise<{success: boolean, newBalance?: number, error?: string, walletId?: number}>}
+ */
+/**
+ * Atomically deducts posted balance, never dipping into credit that a live
+ * checkout has already reserved.
+ *
+ * The guard is `balance - held_balance >= amount`, not `balance >= amount`:
+ * once holds exist, the posted balance includes money that is spoken for, and
+ * spending it here would let a customer's second checkout overdraw the first.
+ * The guard is unconditional — holds can outlive a flag being switched off.
  */
 export async function deductWalletBalanceAtomic(
   strapi: Strapi,
@@ -48,66 +57,50 @@ export async function deductWalletBalanceAtomic(
 ): Promise<WalletBalanceResult> {
   try {
     const amount = Number(amountIrr);
-    if (amount <= 0) {
+    if (!Number.isInteger(amount) || amount <= 0) {
       return { success: false, error: "Deduct amount must be positive" };
     }
+    if (!trx?.raw) {
+      return {
+        success: false,
+        error: "Wallet debits require an explicit transaction",
+      };
+    }
 
-    // First, get wallet ID for the user
-    const wallet = await strapi.db
-      .query("api::local-user-wallet.local-user-wallet")
-      .findOne({
-        where: { user: userId },
-        select: ["id"],
-        ...(trx ? { transacting: trx } : {}),
-      } as any);
-
+    const wallet = await findWalletForUpdate(strapi, userId, trx);
     if (!wallet) {
       return { success: false, error: "Wallet not found for user" };
     }
 
-    // Use raw SQL for atomic deduction with balance validation
-    // Note: Strapi converts camelCase to snake_case for database columns
-    // So "Balance" becomes "balance" and "LastTransactionDate" becomes "last_transaction_date"
-    const result = await runRaw(
-      strapi,
-      trx,
+    const result = await trx.raw(
       `UPDATE local_user_wallets
-       SET balance = balance - ?,
-           last_transaction_date = NOW()
-       WHERE id = ? AND balance >= ?
+       SET balance = COALESCE(balance, 0) - ?,
+           last_transaction_date = NOW(),
+           updated_at = NOW()
+       WHERE id = ?
+         AND COALESCE(balance, 0) - COALESCE(held_balance, 0) >= ?
        RETURNING balance, id`,
-      [amount, wallet.id, amount]
+      [amount, wallet.walletId, amount],
     );
 
-    // Check if any rows were updated
     const rows = result.rows || [];
     if (rows.length === 0) {
-      // No rows updated means insufficient balance
-      const currentWallet = await strapi.db
-        .query("api::local-user-wallet.local-user-wallet")
-        .findOne({
-          where: { id: wallet.id },
-          ...(trx ? { transacting: trx } : {}),
-        } as any);
-
       return {
         success: false,
-        error: `Insufficient balance: requested ${amount} IRR, available ${currentWallet?.Balance || 0} IRR`,
-        walletId: wallet.id
+        error: `Insufficient balance: requested ${amount} IRR, available ${wallet.availableIrr} IRR`,
+        walletId: wallet.walletId,
       };
     }
 
     return {
       success: true,
-      newBalance: rows[0].balance,
-      walletId: rows[0].id
+      newBalance: Number(rows[0].balance),
+      walletId: Number(rows[0].id),
     };
   } catch (error) {
-    strapi.log.error("Failed to deduct wallet balance atomically", {
-      userId,
-      amountIrr,
-      error: (error as Error).message,
-    });
+    strapi.log.error(
+      `Failed to deduct wallet balance atomically for user ${userId}: ${(error as Error).message}`,
+    );
     return {
       success: false,
       error: `Database error: ${(error as Error).message}`,
@@ -127,32 +120,29 @@ export async function creditWalletBalanceAtomic(
 ): Promise<WalletBalanceResult> {
   try {
     const amount = Number(amountIrr);
-    if (amount <= 0) {
+    if (!Number.isInteger(amount) || amount <= 0) {
       return { success: false, error: "Credit amount must be positive" };
     }
-
-    let wallet = await strapi.db
-      .query("api::local-user-wallet.local-user-wallet")
-      .findOne({ where: { user: userId }, select: ["id"], transacting: trx } as any);
-
-    if (!wallet) {
-      wallet = await strapi.db
-        .query("api::local-user-wallet.local-user-wallet")
-        .create({
-          data: { user: userId, Balance: 0 },
-          transacting: trx,
-        } as any);
+    if (!trx?.raw) {
+      return {
+        success: false,
+        error: "Wallet credits require an explicit transaction",
+      };
     }
 
-    const result = await runRaw(
-      strapi,
-      trx,
+    // Race-safe first use: the link row carries a unique index on the owner, so
+    // two concurrent first credits converge on one wallet instead of creating
+    // two. See getOrCreateWalletForUpdate for why this cannot use a savepoint.
+    const wallet = await getOrCreateWalletForUpdate(strapi, userId, trx);
+
+    const result = await trx.raw(
       `UPDATE local_user_wallets
-       SET balance = balance + ?,
-           last_transaction_date = NOW()
+       SET balance = COALESCE(balance, 0) + ?,
+           last_transaction_date = NOW(),
+           updated_at = NOW()
        WHERE id = ?
        RETURNING balance, id`,
-      [amount, wallet.id]
+      [amount, wallet.walletId],
     );
 
     const rows = result.rows || [];
@@ -160,21 +150,22 @@ export async function creditWalletBalanceAtomic(
       return {
         success: false,
         error: "Wallet credit update did not affect any rows",
-        walletId: wallet.id,
+        walletId: wallet.walletId,
       };
     }
 
     return {
       success: true,
-      newBalance: rows[0].balance,
-      walletId: rows[0].id,
+      newBalance: Number(rows[0].balance),
+      walletId: Number(rows[0].id),
     };
   } catch (error) {
-    strapi.log.error("Failed to credit wallet balance atomically", {
-      userId,
-      amountIrr,
-      error: (error as Error).message,
-    });
+    if (error instanceof WalletHoldError) {
+      return { success: false, error: `${error.code}: ${error.message}` };
+    }
+    strapi.log.error(
+      `Failed to credit wallet balance atomically for user ${userId}: ${(error as Error).message}`,
+    );
     return {
       success: false,
       error: `Database error: ${(error as Error).message}`,
@@ -203,6 +194,7 @@ export async function applyAdminWalletAdjustment(
   walletId: number;
   beforeBalance: number;
   afterBalance: number;
+  heldBalance: number;
   delta: number;
   changed: boolean;
   ledgerId: number | null;
@@ -219,39 +211,13 @@ export async function applyAdminWalletAdjustment(
   }
 
   return strapi.db.transaction(async ({ trx }) => {
-    let wallet: any = await strapi.db
-      .query("api::local-user-wallet.local-user-wallet")
-      .findOne({
-        where: { user: params.userId },
-        select: ["id"],
-        transacting: trx,
-      } as any);
-    if (!wallet) {
-      wallet = await strapi.db
-        .query("api::local-user-wallet.local-user-wallet")
-        .create({
-          data: {
-            user: params.userId,
-            Balance: 0,
-            LastTransactionDate: new Date(),
-          },
-          transacting: trx,
-        } as any);
-    }
+    // One locked read that also creates the wallet on first use. The previous
+    // find-then-create could open a second wallet for the same customer under
+    // concurrency; the owner-unique link index now makes that impossible.
+    const wallet = await getOrCreateWalletForUpdate(strapi, params.userId, trx);
 
-    const locked = await trx.raw(
-      "SELECT id, balance FROM local_user_wallets WHERE id = ? FOR UPDATE",
-      [Number(wallet.id)],
-    );
-    const row = locked?.rows?.[0];
-    if (!row) {
-      throw new WalletAdjustmentError(
-        "WALLET_MUTATION_FAILED",
-        "Wallet disappeared during adjustment",
-      );
-    }
-
-    const beforeBalance = Number(row.balance || 0);
+    const beforeBalance = wallet.balanceIrr;
+    const heldBalance = wallet.heldIrr;
     const delta =
       params.mode === "credit"
         ? params.amountIrr
@@ -267,7 +233,7 @@ export async function applyAdminWalletAdjustment(
         actor: params.audit.actor,
         origin: params.audit.origin,
         target: { type: "customer", id: params.userId, label: `User ${params.userId}` },
-        related: { type: "wallet", id: wallet.id, label: `Wallet ${wallet.id}` },
+        related: { type: "wallet", id: wallet.walletId, label: `Wallet ${wallet.walletId}` },
         changes: [{ field: "balance", label: "موجودی", from: beforeBalance, to: beforeBalance }],
         metadata: { mode: params.mode, amountIrr: params.amountIrr, reason: params.reason },
         requestId: params.audit.requestId,
@@ -277,9 +243,10 @@ export async function applyAdminWalletAdjustment(
         dedupeKey: `wallet-adjust:no-op:${params.userId}:${params.audit.requestId || randomUUID()}`,
       }, { trx });
       return {
-        walletId: Number(wallet.id),
+        walletId: wallet.walletId,
         beforeBalance,
         afterBalance: beforeBalance,
+        heldBalance,
         delta,
         changed: false,
         ledgerId: null,
@@ -296,12 +263,21 @@ export async function applyAdminWalletAdjustment(
           "Wallet balance cannot be negative",
         );
       }
+      // Setting the balance below what a live checkout already holds would make
+      // held_balance exceed balance — the customer would be able to complete a
+      // payment the wallet can no longer fund.
+      if (params.amountIrr < heldBalance) {
+        throw new WalletAdjustmentError(
+          "INSUFFICIENT_BALANCE",
+          "مبلغ هدف کمتر از موجودی در حال رزرو است",
+        );
+      }
       const updated = await trx.raw(
         `UPDATE local_user_wallets
-         SET balance = ?, last_transaction_date = NOW()
+         SET balance = ?, last_transaction_date = NOW(), updated_at = NOW()
          WHERE id = ?
          RETURNING balance`,
-        [params.amountIrr, Number(wallet.id)],
+        [params.amountIrr, wallet.walletId],
       );
       if (!updated?.rows?.length) {
         throw new WalletAdjustmentError(
@@ -354,7 +330,7 @@ export async function applyAdminWalletAdjustment(
           Cause: "Admin Wallet Adjustment",
           Note: params.reason,
           ReferenceId: `admin-adj-${params.userId}-${randomUUID()}`,
-          user_wallet: Number(wallet.id),
+          user_wallet: wallet.walletId,
         },
         transacting: trx,
       } as any);
@@ -366,7 +342,7 @@ export async function applyAdminWalletAdjustment(
       actor: params.audit.actor,
       origin: params.audit.origin,
       target: { type: "customer", id: params.userId, label: `User ${params.userId}` },
-      related: { type: "wallet", id: wallet.id, label: `Wallet ${wallet.id}` },
+      related: { type: "wallet", id: wallet.walletId, label: `Wallet ${wallet.walletId}` },
       changes: [{ field: "balance", label: "موجودی", from: beforeBalance, to: afterBalance }],
       metadata: {
         mode: params.mode,
@@ -384,9 +360,10 @@ export async function applyAdminWalletAdjustment(
     }, { trx });
 
     return {
-      walletId: Number(wallet.id),
+      walletId: wallet.walletId,
       beforeBalance,
       afterBalance,
+      heldBalance,
       delta,
       changed: true,
       ledgerId: Number(ledger.id),

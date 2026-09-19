@@ -17,6 +17,12 @@
       "min": "0",
       "default": "0"
     },
+    "HeldBalance": {
+      "type": "biginteger",
+      "required": true,
+      "min": "0",
+      "default": "0"
+    },
     "LastTransactionDate": {
       "type": "datetime"
     },

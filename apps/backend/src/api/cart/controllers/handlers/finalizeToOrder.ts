@@ -2,6 +2,7 @@ import { Strapi } from "@strapi/strapi";
 import { fetchUserWithRole, resolveCustomerTargetUserId } from "../../../../utils/roles";
 import {
   cancelOrderAndRelease,
+  classifyGatewayInitiationOutcome,
   requestMellatPayment,
   requestSamanPayment,
   requestZarinPalPayment,
@@ -47,6 +48,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
     attemptId,
     quoteHash,
     analyticsCorrelationId,
+    walletAmountToman,
+    supersedeAttemptId,
   } = ctx.request.body;
 
   // The browser correlation id is opaque and never used for authorization. It
@@ -444,6 +447,8 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             gateway: selectedGateway,
             attemptId: normalizedAttemptId,
             quoteHash: normalizedQuoteHash,
+            walletAmountToman,
+            supersedeAttemptId,
           }
         : {}),
       ...(normalizedAnalyticsCorrelationId
@@ -476,6 +481,10 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             errorCode: result.errorCode,
             message: result.message,
             quote: result.quote,
+            ...(result.paymentCapabilities
+              ? { paymentCapabilities: result.paymentCapabilities }
+              : {}),
+            ...(result.details ? result.details : {}),
             ...(Number.isInteger(orderId) && orderId > 0 ? { orderId } : {}),
           },
         });
@@ -543,7 +552,12 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       }
     }
 
-    let totalAmount = contract.Amount || 0;
+    const paymentAllocation = result.paymentAllocation;
+    const totalAmount = Number(contract.Amount || 0);
+    // What the bank is asked for. Wallet credit is a tender, so the gateway
+    // only ever sees the remainder; with no wallet leg this is the full total
+    // and every existing gateway call is byte-for-byte what it was.
+    const gatewayAmountToman = Number(paymentAllocation?.gatewayToman ?? totalAmount);
 
     strapi.log.info(`Processing payment for Order ${order.id}:`, {
       orderId: order.id,
@@ -639,6 +653,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
             requestId: settlement.reference,
             attemptId: normalizedAttemptId,
             paymentStatus: "Succeeded",
+            ...(paymentAllocation ? { paymentAllocation } : {}),
             ...(order.reserveGroupId && { reserveGroupId: order.reserveGroupId }),
             ...(order.reserveExpiresAt && { reserveExpiresAt: order.reserveExpiresAt }),
           },
@@ -732,6 +747,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         callbackURL: callbackURL,
         userId: user.id,
         cellNumber: mobile || user?.Phone,
+        amountToman: gatewayAmountToman,
       });
       paymentResult = pr;
     } else if (selectedGateway === "zarinpal") {
@@ -741,6 +757,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         financialSummary,
         userId: user.id,
         mobile: mobile || user?.Phone,
+        amountToman: gatewayAmountToman,
       });
       paymentResult = pr;
     } else {
@@ -748,7 +765,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         orderId: order.id,
         // Contract amounts are stored in toman; mellat-v3 performs the single
         // required toman-to-rial conversion at the provider boundary.
-        amount: totalAmount,
+        amount: gatewayAmountToman,
         userId: user.id,
         callbackURL: callbackURL,
         contractId: contract.id,
@@ -766,6 +783,52 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
       const reqId = paymentResult?.requestId;
       const errMsg = paymentResult?.error || "Payment gateway error";
       const detailed = paymentResult?.detailedError || {};
+      const classification = classifyGatewayInitiationOutcome(paymentResult);
+
+      // The provider never answered (or answered and we lost the token). A
+      // payment may exist. Nothing is cancelled and nothing is released: the
+      // attempt is parked as Unknown for reconciliation, and the reservation —
+      // which owns the wallet hold's lifetime — runs out on its own clock.
+      if (classification.outcome === "unknown") {
+        if (managesPaymentAttempt && paymentAttempt?.id) {
+          await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
+            Status: "Unknown",
+            failureCode: classification.errorCode,
+            failureMessage: errMsg,
+            providerResponse: detailed,
+            nextAction: "manual_review",
+          }).catch(() => undefined);
+        }
+        try {
+          await strapi.entityService.create("api::order-log.order-log", {
+            data: {
+              order: order.id,
+              performed_by: user.id,
+              Action: "Update",
+              Description: "Gateway initiation outcome is unknown; order left intact for reconciliation",
+              Changes: { requestId: reqId, error: errMsg, errorCode: classification.errorCode },
+            },
+          });
+        } catch (e) {
+          strapi.log.error("Failed to write order-log for unknown gateway initiation", {
+            orderId: order.id,
+            error: (e as Error)?.message || e,
+          });
+        }
+        ctx.status = 202;
+        return {
+          data: {
+            success: false,
+            message: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
+            errorCode: "PAYMENT_UNKNOWN",
+            orderId: order.id,
+            contractId: contract.id,
+            attemptId: normalizedAttemptId,
+            paymentStatus: "Unknown",
+          },
+        };
+      }
+
       if (managesPaymentAttempt && paymentAttempt?.id) {
         await updatePaymentAttempt(strapi, Number(paymentAttempt.id), {
           Status: "Failed",
@@ -872,6 +935,7 @@ export const finalizeToOrderHandler = (strapi: Strapi) => async (ctx: any) => {
         refId: paymentResult.refId,
         financialSummary: financialSummary,
         requestId: paymentResult.requestId,
+        ...(paymentAllocation ? { paymentAllocation } : {}),
         ...(managesPaymentAttempt
           ? {
               attemptId: normalizedAttemptId,

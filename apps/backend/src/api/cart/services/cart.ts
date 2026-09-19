@@ -40,6 +40,18 @@ import {
 } from "../../payment-gateway/services/snappay-security";
 import { runRawSql } from "../../../utils/transactionExecutor";
 import { redactSensitive } from "../../../utils/redactSensitive";
+import { buildWalletCheckoutContext } from "./lib/wallet-checkout";
+import {
+  PaymentAllocationError,
+  tomanToIrr,
+  type PaymentAllocation,
+} from "./lib/payment-allocation";
+import { supersedeCheckoutAttempt } from "./lib/checkout-supersede";
+import {
+  holdWalletForAttempt,
+  WalletHoldError,
+} from "../../local-user-wallet/services/wallet-holds";
+import { isWalletHoldsEnabled } from "../../local-user-wallet/services/wallet-readiness";
 
 export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
   async getUserCart(userId: number) {
@@ -118,6 +130,8 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     const managesPaymentAttempt = gateway !== "";
     const attemptId = String(shippingData?.attemptId || "").trim();
     const expectedQuoteHash = String(shippingData?.quoteHash || "").trim();
+    const requestedWalletAmount = shippingData?.walletAmountToman;
+    const supersedeAttemptId = String(shippingData?.supersedeAttemptId || "").trim();
 
     if (managesPaymentAttempt) {
       if (!attemptId || attemptId.length > 128) {
@@ -182,6 +196,28 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           message: "Checkout quote is required",
         };
       }
+
+      // The customer replaced an earlier checkout of their own (they changed the
+      // wallet amount, or the totals moved). Release exactly that one — never
+      // every `Created` attempt they have — so its wallet credit and stock come
+      // back before this attempt tries to reserve them. A predecessor that has
+      // already been handed to a provider is refused and keeps its funds.
+      if (supersedeAttemptId) {
+        const superseded = await supersedeCheckoutAttempt(strapi as any, {
+          userId,
+          attemptId: supersedeAttemptId,
+          replacementAttemptId: attemptId,
+        });
+        if (superseded.outcome === "superseded") {
+          strapi.log.info(
+            `Checkout attempt ${supersedeAttemptId} superseded by ${attemptId} for user ${userId}; released ${superseded.releasedIrr} IRR`,
+          );
+        } else {
+          strapi.log.info(
+            `Checkout attempt ${supersedeAttemptId} was not superseded by ${attemptId}: ${superseded.reason}`,
+          );
+        }
+      }
     }
 
     // New purchases do not credit another attempt's reservation. Available
@@ -230,15 +266,38 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
     }
 
     let checkoutQuote: CheckoutQuote | null = null;
+    let paymentAllocation: PaymentAllocation | null = null;
     if (managesPaymentAttempt) {
-      checkoutQuote = await createCheckoutQuote(strapi as any, userId, {
-        cart,
-        shippingId: shippingData.shippingId,
-        shippingCost: shippingData.shippingCost,
-        discountCode: shippingData.discountCode,
-        gateway,
-        reserveGroupId: shippingData.reserveGroupId,
+      // The wallet context is rebuilt with no reusable credit: by this point the
+      // named predecessor has either been superseded (its hold released, so the
+      // money is plainly available) or it has not, in which case that money is
+      // genuinely unavailable and the allocation must say so.
+      const walletContext = await buildWalletCheckoutContext(strapi as any, userId, {
+        selectedGateway: gateway,
+        requestedWalletAmount,
       });
+      try {
+        checkoutQuote = await createCheckoutQuote(strapi as any, userId, {
+          cart,
+          shippingId: shippingData.shippingId,
+          shippingCost: shippingData.shippingCost,
+          discountCode: shippingData.discountCode,
+          gateway,
+          reserveGroupId: shippingData.reserveGroupId,
+          resolveAllocation: walletContext.resolve,
+        });
+      } catch (allocationError: any) {
+        if (!(allocationError instanceof PaymentAllocationError)) throw allocationError;
+        return {
+          success: false,
+          status: 409,
+          errorCode: allocationError.code,
+          message: allocationError.message,
+          paymentCapabilities: walletContext.capabilities,
+          details: allocationError.details,
+        };
+      }
+      paymentAllocation = checkoutQuote.paymentAllocation ?? null;
       if (checkoutQuote.quoteHash !== expectedQuoteHash) {
         return {
           success: false,
@@ -246,12 +305,30 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           errorCode: "CHECKOUT_QUOTE_CHANGED",
           message: "قیمت یا موجودی سبد خرید تغییر کرده است",
           quote: checkoutQuote,
+          paymentCapabilities: walletContext.capabilities,
+        };
+      }
+      // Wallet credit covering the whole total changes which gateway must be
+      // used. The gateway is part of the hash, so the server asks the client to
+      // re-quote as wallet-only rather than silently redirecting the payment.
+      if (paymentAllocation && paymentAllocation.requiredGateway !== gateway) {
+        return {
+          success: false,
+          status: 409,
+          errorCode: "WALLET_COVERS_TOTAL",
+          message: "موجودی کیف پول کل مبلغ سفارش را پوشش می‌دهد. پرداخت با کیف پول را انتخاب کنید.",
+          quote: checkoutQuote,
+          paymentCapabilities: walletContext.capabilities,
         };
       }
       if (gateway === "snappay") {
         await strapi
           .service("api::payment-gateway.snappay-orchestrator")
-          .checkEligibility(Math.round(checkoutQuote.financialSummary.total * 10));
+          .checkEligibility(
+            tomanToIrr(
+              paymentAllocation?.gatewayToman ?? checkoutQuote.financialSummary.total,
+            ),
+          );
       }
     }
 
@@ -645,12 +722,29 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           trx,
         });
 
+        // `Amount` stays the order total: payment-status, SnappPay resume checks
+        // and admin update all read it. The two legs are recorded alongside it
+        // and are immutable funding facts once written.
+        const walletLegToman = paymentAllocation?.walletToman ?? 0;
+        const gatewayLegToman = paymentAllocation
+          ? paymentAllocation.gatewayToman
+          : totals.total;
+        const holdsEnabled = isWalletHoldsEnabled();
         const attemptFields = {
           quoteHash: expectedQuoteHash,
           quoteSnapshot: checkoutQuote,
           Status: "Created" as const,
           Gateway: gateway,
-          Amount: Math.round(totals.total * 10),
+          Amount: tomanToIrr(Math.round(totals.total)),
+          WalletAmount: tomanToIrr(walletLegToman),
+          GatewayAmount: tomanToIrr(gatewayLegToman),
+          // Written on every new-format attempt so settlement never has to guess:
+          // `None` is "no wallet leg", `DirectDebit` is "wallet leg, but holds
+          // were switched off when this was created", and NULL only ever means
+          // a row written before this feature shipped.
+          WalletHoldStatus:
+            walletLegToman === 0 ? ("None" as const) : holdsEnabled ? ("None" as const) : ("DirectDebit" as const),
+          ...(supersedeAttemptId ? { SupersedesAttemptId: supersedeAttemptId } : {}),
           user: userId,
           order: order.id,
           contract: contract.id,
@@ -682,6 +776,27 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
               trx,
             );
           }
+        }
+
+        // Wallet hold, last in the lock order (orders -> payment_attempts ->
+        // product_stocks -> wallet). It commits with the order, its items, the
+        // stock reservation and the coupon claim, or none of them happen.
+        if (managesPaymentAttempt && paymentAttempt && walletLegToman > 0 && holdsEnabled) {
+          await runRawSql(
+            strapi as any,
+            "SELECT id FROM payment_attempts WHERE id = ? FOR UPDATE",
+            [Number(paymentAttempt.id)],
+            trx,
+          );
+          await holdWalletForAttempt(
+            strapi as any,
+            {
+              userId,
+              paymentAttemptId: Number(paymentAttempt.id),
+              amountIrr: tomanToIrr(walletLegToman),
+            },
+            trx,
+          );
         }
 
         if (snappayInitiation && paymentAttempt) {
@@ -741,6 +856,7 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
           paymentAttempt,
           ...(snappayInitiation ? { snappayCallbackNonce: snappayInitiation.callbackNonce } : {}),
           financialSummary: totals,
+          ...(paymentAllocation ? { paymentAllocation } : {}),
         };
       });
 
@@ -767,6 +883,26 @@ export default factories.createCoreService("api::cart.cart", ({ strapi }) => ({
             financialSummary: replay.quoteSnapshot?.financialSummary,
           };
         }
+      }
+
+      // A wallet hold that could not be taken is a business conflict, not an
+      // internal failure: the whole transaction has rolled back, so no order,
+      // reservation, coupon claim or held credit survives. The customer is told
+      // exactly which condition failed and is given the fresh figures.
+      if (error instanceof WalletHoldError || error instanceof PaymentAllocationError) {
+        strapi.log.info(
+          `Checkout ${attemptId} for user ${userId} refused by the wallet: ${error.code}`,
+        );
+        return {
+          success: false,
+          status: 409,
+          errorCode: error.code,
+          message:
+            error instanceof PaymentAllocationError
+              ? error.message
+              : "موجودی قابل استفاده کیف پول کافی نیست. مبلغ را تغییر دهید.",
+          details: error instanceof PaymentAllocationError ? error.details : error.details,
+        };
       }
 
       // Enhanced error logging with full context

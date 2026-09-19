@@ -478,11 +478,16 @@ export function makeFactories(strapi: any) {
     };
   }
 
-  async function createWallet(opts: { userId: number; balanceIrr: number }) {
+  async function createWallet(opts: {
+    userId: number;
+    balanceIrr: number;
+    heldBalanceIrr?: number;
+  }) {
     const row = await q("api::local-user-wallet.local-user-wallet").create({
       data: {
         user: opts.userId,
         Balance: opts.balanceIrr,
+        HeldBalance: opts.heldBalanceIrr ?? 0,
         LastTransactionDate: new Date().toISOString(),
         Description: TEST_PREFIX,
       },
@@ -500,6 +505,9 @@ export function makeFactories(strapi: any) {
     attemptId?: string;
     status?: string;
     gateway?: string;
+    walletAmountIrr?: number;
+    gatewayAmountIrr?: number;
+    walletHoldStatus?: "None" | "DirectDebit" | "Active" | "Captured" | "Released";
   }) {
     const attemptId = opts.attemptId ?? uniq();
     const row = await q("api::payment-attempt.payment-attempt").create({
@@ -518,6 +526,9 @@ export function makeFactories(strapi: any) {
         Status: opts.status ?? "Created",
         Gateway: opts.gateway ?? "wallet",
         Amount: opts.amountIrr,
+        ...(opts.walletAmountIrr != null ? { WalletAmount: opts.walletAmountIrr } : {}),
+        ...(opts.gatewayAmountIrr != null ? { GatewayAmount: opts.gatewayAmountIrr } : {}),
+        ...(opts.walletHoldStatus ? { WalletHoldStatus: opts.walletHoldStatus } : {}),
         user: opts.userId,
         order: opts.orderId,
         contract: opts.contractId,

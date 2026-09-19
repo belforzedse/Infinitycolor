@@ -11,6 +11,7 @@ import {
 } from "../api/cart/services/lib/stock";
 import { runRawSql } from "./transactionExecutor";
 import { releaseOrderDiscountClaim } from "../api/cart/services/lib/discount-claim";
+import { releaseWalletHoldsForOrder } from "../api/local-user-wallet/services/wallet-holds";
 
 type ReservationTransition = "Released" | "Expired" | "Consumed";
 
@@ -238,6 +239,14 @@ export async function releaseOrderReservation(
     // is CAS-guarded on the claim column and refuses to release for a settled order, so
     // repeating it — or racing another failure path — decrements at most once.
     await releaseOrderDiscountClaim(strapi, orderId, trx);
+
+    // Wallet credit committed to this checkout goes back to spendable at the same
+    // moment its stock does, for exactly the same reasons: same CAS discipline,
+    // same refusal to touch a settled order, and the wallet row taken last in the
+    // global lock order. Binding the hold's lifetime to the reservation is what
+    // removes the need for any independent hold sweeper — there is no state where
+    // the reservation is gone but the money is still held.
+    await releaseWalletHoldsForOrder(strapi, { orderId, reason: `reservation_${reason}` }, trx);
 
     if (!transitioned) return { outcome: "skipped" };
 
