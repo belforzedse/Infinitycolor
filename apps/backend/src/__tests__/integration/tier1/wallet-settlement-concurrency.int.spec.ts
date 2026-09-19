@@ -5,7 +5,10 @@
 import { settleOrderWithWallet } from "../../../api/cart/controllers/handlers/wallet-settlement";
 import { claimPaymentAttemptForInitiation } from "../../../api/payment-attempt/services/claim-payment-attempt";
 import { applyAdminWalletAdjustment } from "../../../api/local-user-wallet/services/local-user-wallet";
-import { applyConfirmedWalletTopup } from "../../../api/wallet-topup/services/wallet-topup";
+import {
+  applyConfirmedWalletTopup,
+  walletTopupLedgerReferences,
+} from "../../../api/wallet-topup/services/wallet-topup";
 import { setupStrapi, teardownStrapi } from "../strapiInstance";
 import { makeFactories, type Factories } from "../factories";
 
@@ -207,9 +210,14 @@ describe("wallet settlement concurrency", () => {
       .query("api::local-user-wallet.local-user-wallet")
       .findOne({ where: { id: wallet.id } });
     expect(Number(persistedWallet.Balance)).toBe(1_500);
+    // A credit is keyed by gateway now, and the bare provider reference is
+    // still recognised for rows written before that. Exactly one must exist
+    // across both spellings, whichever one this credit chose.
     const ledgers = await strapi.db
       .query("api::local-user-wallet-transaction.local-user-wallet-transaction")
-      .findMany({ where: { ReferenceId: reference } });
+      .findMany({
+        where: { ReferenceId: { $in: walletTopupLedgerReferences("Mellat", reference) } },
+      });
     expect(ledgers).toHaveLength(1);
     const persistedTopup = await strapi.db.query("api::wallet-topup.wallet-topup").findOne({
       where: { id: topup.id },

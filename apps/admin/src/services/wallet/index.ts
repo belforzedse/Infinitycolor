@@ -80,6 +80,15 @@ export interface AdminWalletResponse {
   data?: {
     balanceIrr: number;
     balanceToman: number;
+    /**
+     * Committed to a live checkout of this customer's, so not spendable.
+     * `null` means the hold read failed — unknown, not zero.
+     */
+    heldIrr?: number | null;
+    heldToman?: number | null;
+    /** balance - held; what an adjustment can actually take away. */
+    availableIrr?: number | null;
+    availableToman?: number | null;
     changed?: boolean;
   };
   errorCode?: string;

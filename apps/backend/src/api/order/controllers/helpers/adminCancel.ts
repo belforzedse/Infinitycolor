@@ -22,6 +22,7 @@ import {
   notifyAnipoParcelCancelled,
   type AnipoCancelSnapshot,
 } from "./notifyAnipoParcelCancelled";
+import { releaseWalletHoldsForOrder } from "../../../local-user-wallet/services/wallet-holds";
 
 /**
  * Cancel is allowed through fulfilment (including `Shipment`), but
@@ -231,6 +232,17 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
       // regardless, so the guard reads the pre-cancellation status.
       await releaseOrderDiscountClaim(strapi as any, orderIdNum, trx);
 
+      // Same reasoning for wallet credit: this path bypasses
+      // releaseOrderReservation, so the hold has to be returned explicitly. The
+      // helper is CAS-guarded and refuses on a settled order, so cancelling a
+      // paid order leaves its captured wallet debit alone — that money is
+      // refunded below, not un-held.
+      await releaseWalletHoldsForOrder(
+        strapi as any,
+        { orderId: orderIdNum, reason: "admin_cancel" },
+        trx,
+      );
+
       // Update order and contract. Clear any local Anipo barcode so a later
       // operator does not see a shipped label on a cancelled order. Provider
       // «لغو شده» runs after commit via notifyAnipoParcelCancelled.
@@ -305,6 +317,10 @@ export async function adminCancelOrderHandler(strapi: Strapi, ctx: any) {
         data: {
           success: true,
           refundToman: paidAmount,
+          // The store refunds as credit, so name the method rather than leaving
+          // the caller to infer where the money went.
+          refundMethod: paidAmount > 0 ? "WalletCredit" : "None",
+          walletCreditToman: paidAmount,
           status: "cancelled",
         },
       };

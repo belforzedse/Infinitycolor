@@ -32,6 +32,57 @@ describe("checkout identity", () => {
     expect(second.continueExisting).toBe(true);
   });
 
+  it("names the attempt it replaced so the server can free its wallet credit", () => {
+    const first = resolveCheckoutAttemptId({
+      quoteHash: "sha256:before-wallet-change",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "mellat",
+    });
+
+    // A different wallet amount is a different quote, so a new attempt is
+    // minted — and the old one is still holding the shopper's own credit.
+    const replacement = resolveCheckoutAttemptId({
+      quoteHash: "sha256:after-wallet-change",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "mellat",
+    });
+
+    expect(replacement.attemptId).not.toBe(first.attemptId);
+    expect(replacement.continueExisting).toBe(false);
+    expect(replacement.supersedesAttemptId).toBe(first.attemptId);
+  });
+
+  it("supersedes nothing when it resumes the attempt that is already stored", () => {
+    resolveCheckoutAttemptId({
+      quoteHash: "sha256:same",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "mellat",
+    });
+    const resumed = resolveCheckoutAttemptId({
+      quoteHash: "sha256:same",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "mellat",
+    });
+
+    expect(resumed.continueExisting).toBe(true);
+    expect(resumed.supersedesAttemptId).toBeUndefined();
+  });
+
+  it("supersedes nothing on a shopper's very first checkout", () => {
+    const first = resolveCheckoutAttemptId({
+      quoteHash: "sha256:first-ever",
+      cartSignature: "1:100000:100:1",
+      cartIsEmpty: false,
+      gateway: "mellat",
+    });
+
+    expect(first.supersedesAttemptId).toBeUndefined();
+  });
+
   it("keeps the original attempt and quote when the mutable cart is emptied", () => {
     const first = resolveCheckoutAttemptId({
       quoteHash: "sha256:original",

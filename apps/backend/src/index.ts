@@ -32,6 +32,8 @@ import {
 import { backfillLegacySnappayAttempts } from "./api/payment-gateway/services/snappay-legacy-backfill";
 import { ensureSnappayDatabaseInvariants } from "./api/payment-gateway/services/snappay-database";
 import { ensurePaymentAttemptDatabaseInvariants } from "./api/payment-attempt/services/payment-attempt-database";
+import { ensureWalletDatabaseInvariants } from "./api/local-user-wallet/services/wallet-database";
+import { refreshWalletReadiness } from "./api/local-user-wallet/services/wallet-readiness";
 import { betterAuthJwtStrategy } from "./strategies/better-auth-jwt";
 import {
   mapLegacyFaqCategories,
@@ -280,6 +282,7 @@ const CAPABILITY_GRANTS: Partial<Record<AdminCapability, Record<string, Controll
   },
   "wallet.history.read": {
     "api::local-user-wallet": { "local-user-wallet": ["adminGetUserWalletHistory"] },
+    "api::wallet-topup": { "wallet-topup": ["adminReviewTopups"] },
   },
   "wallet.adjust": {
     "api::local-user-wallet": { "local-user-wallet": ["adminAdjustWallet"] },
@@ -597,6 +600,11 @@ const ROLE_PERMISSION_SPECS: Record<string, RolePermissionSpec> = {
       },
       "api::local-user-wallet-transaction": {
         "local-user-wallet-transaction": READ_ACTIONS,
+      },
+      // Top-up status and history are owner-scoped inside the handlers; the
+      // provider callback stays public because a bank carries no session.
+      "api::wallet-topup": {
+        "wallet-topup": ["topupOptions", "chargeIntent", "myTopups", "myTopup"],
       },
       "api::payment-gateway": {
         "payment-gateway": ["snappEligible", "availableGateways"],
@@ -1368,6 +1376,15 @@ export default {
       // Mellat is always active (no feature flag), so its own payment-attempt
       // provider-reference invariant runs unconditionally alongside SnappPay's.
       await ensurePaymentAttemptDatabaseInvariants(strapi as any);
+      // Wallet money paths: Strapi never turned the schemas' `unique: true` into
+      // database uniqueness, so install it here and then verify it. Holds and
+      // top-ups stay switched off unless every prerequisite verifies, however
+      // the env flags are set.
+      await ensureWalletDatabaseInvariants(strapi as any);
+      const walletReadiness = await refreshWalletReadiness(strapi as any);
+      strapi.log.info(
+        `Wallet readiness evaluated: holds=${walletReadiness.holds} topups=${walletReadiness.topups}`,
+      );
       await ensureCategoryEditorialDatabaseInvariant(strapi);
       const issueReportStorage = await ensureIssueReportStorage(strapi);
       if (issueReportStorage.repaired) {

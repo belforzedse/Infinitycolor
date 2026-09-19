@@ -12,6 +12,7 @@ import { writeAuditEvent } from "../../../audit/writer";
 import { getAuditContext } from "../../../utils/audit-context";
 import { getClientIp, getUserAgent } from "../../../utils/getClientIp";
 import { requireCapability } from "../../../utils/adminAuthorization";
+import { readWalletAvailability } from "../services/wallet-holds";
 
 const WALLET_UID = "api::local-user-wallet.local-user-wallet";
 const WALLET_TRANSACTION_UID =
@@ -49,15 +50,42 @@ export default factories.createCoreController(
             success: true,
             data: {
               balance: 0,
+              heldBalance: 0,
+              availableBalance: 0,
+              reusableBalance: 0,
             },
           });
         }
+
+        // The checkout may name an earlier attempt of this customer's whose
+        // hold it is about to replace. That money is theirs to spend again, so
+        // report it — otherwise a shopper whose own abandoned attempt holds the
+        // whole balance is locked out of their credit until the reservation
+        // expires. Ownership is re-checked against the attempt itself.
+        const reusableAttemptId = String(
+          (ctx.query as any)?.reusableAttemptId || "",
+        ).trim();
+
+        // Posted balance is not the same as spendable balance once a live
+        // checkout has committed part of it. Reporting only the total would
+        // have the storefront offer money the server is going to refuse.
+        const availability = await readWalletAvailability(strapi, Number(pluginUserId), {
+          reusableAttemptId: reusableAttemptId || null,
+        });
+        // A degraded read returns zeros, and so does one that cannot see the
+        // row the ORM just resolved. Either way, keep showing the balance we
+        // did read but report nothing as spendable: the checkout allocation
+        // runs the same query, so it would refuse this money anyway.
+        const trustworthy = !availability.degraded && availability.walletId !== null;
 
         return ctx.send({
           success: true,
           data: {
             id: wallet.id,
-            balance: wallet.Balance,
+            balance: trustworthy ? availability.balanceIrr : Number(wallet.Balance ?? 0),
+            heldBalance: trustworthy ? availability.heldIrr : 0,
+            availableBalance: trustworthy ? availability.availableIrr : 0,
+            reusableBalance: trustworthy ? availability.reusableIrr : 0,
             lastTransactionDate: wallet.LastTransactionDate,
             description: wallet.Description,
           },
@@ -90,10 +118,29 @@ export default factories.createCoreController(
           });
         }
 
-        const balanceIrr = await readBalanceIrr(strapi, userId);
+        // Operators adjusting a balance need to see what a live checkout has
+        // already committed, or a debit that looks affordable gets refused.
+        const availability = await readWalletAvailability(strapi, userId);
+        const trustworthy = !availability.degraded && availability.walletId !== null;
+        const balanceIrr = trustworthy
+          ? availability.balanceIrr
+          : await readBalanceIrr(strapi, userId);
+        // Nulls, not zeros, when the hold read failed: zero held would tell the
+        // operator the whole balance is theirs to move, which is the one wrong
+        // answer. The card hides the breakdown and the server still refuses any
+        // adjustment that would cut into a hold.
+        const heldIrr = trustworthy ? availability.heldIrr : null;
+        const availableIrr = heldIrr === null ? null : Math.max(0, balanceIrr - heldIrr);
         return ctx.send({
           success: true,
-          data: { balanceIrr, balanceToman: rialToToman(balanceIrr) },
+          data: {
+            balanceIrr,
+            balanceToman: rialToToman(balanceIrr),
+            heldIrr,
+            heldToman: heldIrr === null ? null : rialToToman(heldIrr),
+            availableIrr,
+            availableToman: availableIrr === null ? null : rialToToman(availableIrr),
+          },
         });
       } catch (error) {
         strapi.log.error("adminGetUserWallet failed", error);
@@ -287,12 +334,18 @@ export default factories.createCoreController(
 
         const toIrr = adjustment.afterBalance;
         const toToman = rialToToman(toIrr);
+        const heldIrr = adjustment.heldBalance;
+        const availableIrr = Math.max(0, toIrr - heldIrr);
 
         return ctx.send({
           success: true,
           data: {
             balanceIrr: toIrr,
             balanceToman: toToman,
+            heldIrr,
+            heldToman: rialToToman(heldIrr),
+            availableIrr,
+            availableToman: rialToToman(availableIrr),
             changed: adjustment.changed,
           },
         });

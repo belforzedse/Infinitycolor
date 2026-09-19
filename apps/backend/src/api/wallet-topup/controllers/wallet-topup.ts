@@ -1,325 +1,569 @@
 // @ts-nocheck
 /**
  * wallet-topup controller
+ *
+ * Adding money to a wallet is a payment with no order behind it. The shape that
+ * matters is therefore the same as checkout's: a durable, owner-bound intent
+ * exists before any provider is contacted, the browser's return is treated as a
+ * hint, and the credit is posted exactly once from a server-side verification.
  */
 
 import { factories } from "@strapi/strapi";
 import type { Strapi } from "@strapi/strapi";
 import { resolveCustomerTargetUserId } from "../../../utils/roles";
+import { requireCapability } from "../../../utils/adminAuthorization";
+import { isWalletTopupEnabled } from "../../local-user-wallet/services/wallet-readiness";
 import {
   applyConfirmedWalletTopup,
+  bindWalletTopupProviderReference,
   claimWalletTopupCallback,
+  claimWalletTopupForVerification,
+  createWalletTopupIntent,
   findWalletTopupCredit,
+  findWalletTopupForOwner,
+  listWalletTopupsForOwner,
+  listWalletTopupsNeedingReview,
   markWalletTopupFailed,
+  markWalletTopupRedirected,
   markWalletTopupUnknown,
+  WalletTopupIntentError,
 } from "../services/wallet-topup";
+import {
+  initiateTopup,
+  isTopupGatewayCode,
+  parseTopupCallback,
+  resolveTopupGateways,
+  verifyTopup,
+  walletTopupLimits,
+} from "../services/topup-gateways";
+import {
+  normalizeWalletAmountInput,
+  PaymentAllocationError,
+  tomanToIrr,
+} from "../../cart/services/lib/payment-allocation";
 
-const FRONTEND_BASE =
-  process.env.FRONTEND_URL || "https://infinitycolor.co";
-
+const FRONTEND_BASE = process.env.FRONTEND_URL || "https://infinitycolor.co";
 const WALLET_TOPUP_UID = "api::wallet-topup.wallet-topup";
 
+const walletRedirect = (
+  saleOrderId: string,
+  status: "success" | "pending" | "failure",
+  reason?: string,
+) => {
+  const params = new URLSearchParams({ status });
+  if (saleOrderId) params.set("topup", saleOrderId);
+  if (reason) params.set("reason", reason);
+  // Display only: the wallet page re-reads the real state from the server.
+  return `${FRONTEND_BASE}/wallet?${params.toString()}`;
+};
+
 /**
- * Decides whether a callback may drive a destructive transition on this top-up.
+ * Decides whether a callback may drive a *destructive* transition.
  *
- * `SaleOrderId` is caller-supplied and only locates a candidate row. Mellat mints `RefId`
- * at bpPayRequest time and echoes it back in the browser callback, and chargeIntent
- * persists it, so it is the one field that ties a callback to this specific attempt — the
- * same anchor the order flow uses via payment_attempts.providerReference.
- *
- * When no RefId was persisted (the write is best-effort at initiation) the callback
- * cannot be correlated at all. That is deliberately not treated as permission to mutate:
- * the row stays Pending for reconciliation instead.
+ * Locating a row by a reference the caller supplied is not authorization. The
+ * handle we persisted at initiation — Mellat's RefId, ZarinPal's authority — is
+ * the one field that ties a callback to this specific attempt. When we hold no
+ * such handle the callback simply cannot be correlated, and that is deliberately
+ * not treated as permission to mutate: the intent stays open for reconciliation
+ * rather than being flipped to Failed by anyone who can guess a reference.
  */
-function isCallbackCorrelated(topup: any, callbackRefId: string): boolean {
-  const persistedRefId = String(topup?.RefId ?? "").trim();
-  if (!persistedRefId) return false;
-  return persistedRefId === callbackRefId;
-}
+const isCallbackCorrelated = (topup: any, providerReference: string): boolean => {
+  const persisted = String(topup?.provider_reference ?? topup?.ProviderReference ?? "").trim();
+  if (!persisted) return false;
+  return persisted === String(providerReference || "").trim();
+};
 
-function isUniqueConstraintError(error: any) {
-  return (
-    error?.code === "23505" ||
-    /unique|duplicate/i.test(String(error?.message || "")) ||
-    /unique|duplicate/i.test(String(error?.details || ""))
-  );
-}
-
-let lastSaleOrderTimestamp = 0;
-
-function generateWalletSaleOrderId(): string {
-  const now = Date.now();
-  lastSaleOrderTimestamp =
-    now <= lastSaleOrderTimestamp ? lastSaleOrderTimestamp + 1 : now;
-  const randomSuffix = Math.floor(Math.random() * 900) + 100; // 3 digits
-  return `${lastSaleOrderTimestamp}${randomSuffix}`;
-}
+const publicTopup = (row: any) => ({
+  saleOrderId: String(row.sale_order_id ?? row.SaleOrderId ?? ""),
+  status: String(row.status ?? row.Status ?? ""),
+  gateway: String(row.gateway ?? row.Gateway ?? ""),
+  amountToman: Math.floor(Number(row.amount ?? row.Amount ?? 0) / 10),
+  amountIrr: Number(row.amount ?? row.Amount ?? 0),
+  createdAt: row.created_at ?? row.createdAt ?? null,
+  expiresAt: row.expires_at ?? row.ExpiresAt ?? null,
+  reference: String(row.sale_reference_id ?? row.SaleReferenceId ?? "") || null,
+});
 
 export default factories.createCoreController(
-  "api::wallet-topup.wallet-topup",
+  WALLET_TOPUP_UID,
   ({ strapi }: { strapi: Strapi }) => ({
+    /**
+     * What the storefront is allowed to offer. Always answered, so the wallet
+     * page never has to infer a feature flag from a failed request.
+     */
+    async topupOptions(ctx) {
+      const userId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!userId) return;
+
+      const limits = walletTopupLimits();
+      const enabled = isWalletTopupEnabled();
+      const gateways = enabled ? await resolveTopupGateways(strapi) : [];
+      return ctx.send({
+        data: {
+          success: true,
+          // Both halves matter: the operator switch and whether the database
+          // prerequisites actually verified.
+          enabled: enabled && gateways.length > 0,
+          disabledReason: !enabled
+            ? "disabled"
+            : gateways.length === 0
+              ? "no_gateway"
+              : null,
+          gateways,
+          minToman: limits.minToman,
+          maxToman: limits.maxToman,
+          presetsToman: limits.presetsToman,
+          maxPending: limits.maxPending,
+        },
+      });
+    },
+
     async chargeIntent(ctx) {
+      const userId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!userId) return;
+
+      const body = ctx.request.body || {};
+      const limits = walletTopupLimits();
+
+      if (!isWalletTopupEnabled()) {
+        return ctx.badRequest("افزایش موجودی کیف پول در حال حاضر غیرفعال است.", {
+          data: { success: false, errorCode: "WALLET_TOPUP_DISABLED" },
+        });
+      }
+
+      let amountIrr: number;
       try {
-        const pluginUserId = await resolveCustomerTargetUserId(ctx, strapi);
-        if (!pluginUserId) return;
-
-        const { amount } = ctx.request.body || {};
-        const amountIrr = Number(amount);
-        if (!amountIrr || amountIrr <= 0) return ctx.badRequest("amount is required (IRR)");
-
-        const saleOrderId = generateWalletSaleOrderId();
-
-        const topup = await strapi.entityService.create("api::wallet-topup.wallet-topup", {
-          data: {
-            Amount: Math.round(amountIrr),
-            Status: "Pending",
-            SaleOrderId: saleOrderId,
-            user: pluginUserId,
-            Date: new Date(),
-          },
+        if (body.amountToman !== undefined && body.amountToman !== null && body.amountToman !== "") {
+          const amountToman = normalizeWalletAmountInput(body.amountToman);
+          if (amountToman < limits.minToman || amountToman > limits.maxToman) {
+            return ctx.badRequest(
+              `مبلغ باید بین ${limits.minToman} و ${limits.maxToman} تومان باشد.`,
+              {
+                data: {
+                  success: false,
+                  errorCode: "WALLET_TOPUP_AMOUNT_OUT_OF_RANGE",
+                  minToman: limits.minToman,
+                  maxToman: limits.maxToman,
+                },
+              },
+            );
+          }
+          amountIrr = tomanToIrr(amountToman);
+        } else {
+          // Legacy callers send IRR directly. Kept working, bounds still apply.
+          amountIrr = normalizeWalletAmountInput(body.amount);
+          const asToman = Math.floor(amountIrr / 10);
+          if (asToman < limits.minToman || asToman > limits.maxToman) {
+            return ctx.badRequest(
+              `مبلغ باید بین ${limits.minToman} و ${limits.maxToman} تومان باشد.`,
+              {
+                data: {
+                  success: false,
+                  errorCode: "WALLET_TOPUP_AMOUNT_OUT_OF_RANGE",
+                  minToman: limits.minToman,
+                  maxToman: limits.maxToman,
+                },
+              },
+            );
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof PaymentAllocationError)) throw error;
+        return ctx.badRequest(error.message, {
+          data: { success: false, errorCode: "WALLET_TOPUP_AMOUNT_INVALID" },
         });
+      }
 
-        const paymentService = strapi.service("api::payment-gateway.mellat-v3");
-        if (!paymentService) {
-          return ctx.badRequest("Payment service unavailable", {
-            data: { success: false, error: "mellat service missing" },
-          });
-        }
-
-        const configuredBase = String(
-          strapi.config.get("server.url", process.env.URL || "https://api.infinitycolor.co/"),
-        );
-        let baseUrl = configuredBase.trim();
-        if (!/^https?:\/\//i.test(baseUrl)) {
-          baseUrl = process.env.URL || "https://api.infinitycolor.co/";
-        }
-        baseUrl = baseUrl.replace(/\/$/, "").replace(/\/api$/i, "");
-        const callbackURL = `${baseUrl}/api/wallet/payment-callback`;
-
-        const response = await paymentService.requestPayment({
-          orderId: Number(saleOrderId),
-          amount: Math.round(amountIrr),
-          userId: pluginUserId,
-          callbackURL,
-          contractId: undefined,
-          amountInRial: true, // Amount is already in IRR
+      const gateways = await resolveTopupGateways(strapi);
+      const requested = String(body.gateway || "").trim();
+      const gateway = requested
+        ? gateways.find((entry) => entry.code.toLowerCase() === requested.toLowerCase())?.code
+        : gateways[0]?.code;
+      if (!gateway || !isTopupGatewayCode(gateway)) {
+        return ctx.badRequest("درگاه انتخاب‌شده برای افزایش موجودی در دسترس نیست.", {
+          data: { success: false, errorCode: "WALLET_TOPUP_GATEWAY_UNAVAILABLE", gateways },
         });
+      }
 
-        if (!response?.success) {
-          await strapi.entityService.update("api::wallet-topup.wallet-topup", topup.id, {
-            data: { Status: "Failed" },
-          });
-          return ctx.badRequest("Gateway error", {
-            data: { success: false, error: response?.error },
+      let intent;
+      try {
+        intent = await createWalletTopupIntent(strapi, {
+          userId,
+          amountIrr,
+          gateway,
+          idempotencyKey: body.idempotencyKey,
+        });
+      } catch (error) {
+        if (error instanceof WalletTopupIntentError) {
+          return ctx.badRequest(error.message, {
+            data: { success: false, errorCode: error.code, ...error.details },
           });
         }
+        throw error;
+      }
 
-        try {
-          await strapi.entityService.update("api::wallet-topup.wallet-topup", topup.id, {
-            data: { RefId: response.refId },
-          });
-        } catch (e) {
-          strapi.log.error("Failed to persist wallet topup token", {
-            topupId: topup.id,
-            saleOrderId,
-            error: (e as any)?.message || String(e),
-          });
-        }
+      const saleOrderId = String(intent.topup.SaleOrderId);
 
+      // The same request replayed with the same key returns the same intent. If
+      // it already has a provider session, hand back the original redirect
+      // instead of opening a second one.
+      if (intent.reused && intent.topup.RefId) {
         return ctx.send({
           data: {
             success: true,
-            redirectUrl: response.redirectUrl,
-            refId: response.refId,
+            reused: true,
             saleOrderId,
+            gateway: intent.topup.Gateway,
+            refId: intent.topup.RefId,
+            redirectUrl: intent.topup.Note || "",
           },
         });
+      }
+
+      let initiation;
+      try {
+        initiation = await initiateTopup(strapi, {
+          gateway,
+          saleOrderId,
+          amountIrr,
+          mobile: body.mobile,
+        });
       } catch (error) {
-        return ctx.badRequest((error as any).message, {
-          data: { success: false, error: (error as any).message },
+        // An exception before any answer is an unknown outcome, not a refusal.
+        await markWalletTopupUnknown(strapi, {
+          topupId: Number(intent.topup.id),
+          error,
+        }).catch(() => undefined);
+        strapi.log.error(
+          `Wallet top-up initiation threw for ${saleOrderId} on ${gateway}: ${String(
+            (error as any)?.message || error,
+          ).slice(0, 200)}`,
+        );
+        ctx.status = 202;
+        return {
+          data: {
+            success: false,
+            errorCode: "WALLET_TOPUP_UNKNOWN",
+            message: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
+            saleOrderId,
+          },
+        };
+      }
+
+      if (initiation.outcome === "failed") {
+        await markWalletTopupFailed(strapi, {
+          topupId: Number(intent.topup.id),
+          error: initiation.message,
+        });
+        return ctx.badRequest("درگاه پرداخت درخواست را نپذیرفت.", {
+          data: { success: false, errorCode: initiation.errorCode, saleOrderId },
         });
       }
+
+      if (initiation.outcome === "unknown") {
+        await markWalletTopupUnknown(strapi, {
+          topupId: Number(intent.topup.id),
+          error: initiation.message,
+        });
+        ctx.status = 202;
+        return {
+          data: {
+            success: false,
+            errorCode: "WALLET_TOPUP_UNKNOWN",
+            message: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
+            saleOrderId,
+          },
+        };
+      }
+
+      // Persisted before the customer is sent anywhere. A redirect issued while
+      // the handle is still only in memory produces a payable session we could
+      // not recognise on the way back.
+      const persisted = await markWalletTopupRedirected(strapi, {
+        topupId: Number(intent.topup.id),
+        // Saman only reveals its verification handle (RefNum) on the callback.
+        providerReference: gateway === "SamanKish" ? null : initiation.providerReference,
+        initiationToken: initiation.providerReference,
+      });
+      if (!persisted) {
+        await markWalletTopupUnknown(strapi, {
+          topupId: Number(intent.topup.id),
+          error: "Provider session could not be persisted before redirect",
+        }).catch(() => undefined);
+        ctx.status = 202;
+        return {
+          data: {
+            success: false,
+            errorCode: "WALLET_TOPUP_UNKNOWN",
+            message: "پرداخت در حال بررسی است. لطفاً دوباره پرداخت نکنید.",
+            saleOrderId,
+          },
+        };
+      }
+
+      return ctx.send({
+        data: {
+          success: true,
+          saleOrderId,
+          gateway,
+          refId: initiation.providerReference,
+          redirectUrl: initiation.redirectUrl,
+          redirectMethod: initiation.method,
+          formFields: initiation.formFields,
+        },
+      });
     },
 
+    /** Owner-scoped status, so the wallet page never has to trust its own query string. */
+    async myTopup(ctx) {
+      const userId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!userId) return;
+      const row = await findWalletTopupForOwner(strapi, {
+        userId,
+        saleOrderId: String(ctx.params?.saleOrderId || "").trim(),
+      });
+      if (!row) return ctx.notFound("درخواست افزایش موجودی یافت نشد");
+      return ctx.send({ data: { success: true, topup: publicTopup(row) } });
+    },
+
+    async myTopups(ctx) {
+      const userId = await resolveCustomerTargetUserId(ctx, strapi);
+      if (!userId) return;
+      const rows = await listWalletTopupsForOwner(strapi, {
+        userId,
+        limit: Number(ctx.query?.limit || 20),
+      });
+      return ctx.send({ data: { success: true, topups: rows.map(publicTopup) } });
+    },
+
+    /**
+     * Intents the reconciliation ladder gave up on, for an operator to settle
+     * by hand. Capability-gated on wallet history rather than on a role name,
+     * and it never mutates anything — deciding what happened to the money is
+     * the operator's call, made with the provider's own records.
+     */
+    async adminReviewTopups(ctx) {
+      if (!(await requireCapability(ctx, strapi, "wallet.history.read"))) return;
+
+      const rows = await listWalletTopupsNeedingReview(strapi, {
+        limit: Number(ctx.query?.limit || 50),
+      });
+      return ctx.send({
+        data: {
+          success: true,
+          topups: rows.map((row: any) => ({
+            ...publicTopup(row),
+            id: Number(row.id),
+            userId: row.user_id == null ? null : Number(row.user_id),
+            owner: String(row.owner_username || row.owner_phone || "") || null,
+            providerReference: String(row.provider_reference || "") || null,
+            reconcileAttempts: Number(row.reconcile_attempts || 0),
+            lastProviderCode: row.last_provider_code ?? null,
+            lastProviderError: row.last_provider_error ?? null,
+            updatedAt: row.updated_at ?? null,
+          })),
+        },
+      });
+    },
+
+    /**
+     * The provider's return. Routed for both GET and POST: Mellat posts a form,
+     * ZarinPal sends the browser back with `?Authority=&Status=`.
+     */
     async paymentCallback(ctx) {
-      const { ResCode, SaleOrderId, SaleReferenceId, RefId } = (ctx.request as any).body || {};
-      const saleOrderId = String(SaleOrderId ?? "").trim();
-      const saleReferenceId = String(SaleReferenceId ?? "").trim();
-      const callbackRefId = String(RefId ?? "").trim();
+      const callback = parseTopupCallback({
+        query: ctx.request?.query || ctx.query,
+        body: ctx.request?.body,
+      });
+      if (!callback) {
+        return ctx.redirect(walletRedirect("", "failure", "invalid_callback"));
+      }
 
+      const saleOrderId = String(callback.saleOrderId || "");
+      let resolvedTopupId: number | null = null;
       try {
-        if (!saleOrderId) {
-          return ctx.redirect(
-            `${FRONTEND_BASE}/wallet?status=failure&reason=invalid_callback`
-          );
+        // ZarinPal does not echo our reference, and it does not need to: the
+        // authority it minted is stored on the intent, so the lookup is bound
+        // through our own record rather than through a client-supplied id.
+        const where = callback.providerReference && callback.gateway === "ZarinPal"
+          ? { ProviderReference: callback.providerReference }
+          : saleOrderId
+            ? { SaleOrderId: saleOrderId }
+            : null;
+        if (!where) {
+          return ctx.redirect(walletRedirect(saleOrderId, "failure", "invalid_callback"));
         }
 
-        const topups = (await strapi.entityService.findMany(
-          WALLET_TOPUP_UID,
-          { filters: { SaleOrderId: saleOrderId }, limit: 1, populate: { user: true } }
-        )) as any[];
-        const topup = topups?.[0];
-
+        const topup: any = await strapi.db.query(WALLET_TOPUP_UID).findOne({
+          where,
+          populate: { user: true },
+        } as any);
         if (!topup) {
-          return ctx.redirect(
-            `${FRONTEND_BASE}/wallet?status=failure&reason=not_found`
-          );
+          return ctx.redirect(walletRedirect(saleOrderId, "failure", "not_found"));
         }
 
-        const paymentService = strapi.service("api::payment-gateway.mellat-v3");
+        resolvedTopupId = Number(topup.id);
+        const reference = String(topup.SaleOrderId || saleOrderId);
+        const storedGateway = String(topup.Gateway || "Mellat");
+        // The intent's own persisted gateway decides how it is verified — never
+        // a field the caller chose.
+        if (storedGateway !== callback.gateway) {
+          strapi.log.error(
+            `Wallet top-up ${topup.id} received a ${callback.gateway} callback but is a ${storedGateway} intent`,
+          );
+          return ctx.redirect(walletRedirect(reference, "failure", "unverified"));
+        }
 
-        const correlated = isCallbackCorrelated(topup, callbackRefId);
+        if (String(topup.Status) === "Success") {
+          return ctx.redirect(walletRedirect(reference, "success"));
+        }
 
-        const resCode = String(ResCode ?? "").trim();
-        if (resCode !== "0") {
-          // A failure callback destroys local state, so it must be correlated first.
-          // Locating a row by the caller-supplied SaleOrderId is not authorization:
-          // without this check anyone could POST a failure for a guessed SaleOrderId and
-          // flip another customer's (possibly already successful) top-up to Failed.
+        // Saman only reveals the handle its verification API takes on the way
+        // back, so bind it now — CAS'd, so a second callback cannot repoint the
+        // intent at a different transaction.
+        if (storedGateway === "SamanKish" && callback.providerReference) {
+          const bound = await bindWalletTopupProviderReference(strapi, {
+            topupId: Number(topup.id),
+            providerReference: callback.providerReference,
+          });
+          if (!bound) {
+            strapi.log.error(
+              `Wallet top-up ${topup.id} already carries a different Saman reference than this callback`,
+            );
+            return ctx.redirect(walletRedirect(reference, "failure", "unverified"));
+          }
+          topup.ProviderReference = callback.providerReference;
+        }
+
+        const correlated = isCallbackCorrelated(topup, callback.providerReference || "");
+
+        if (!callback.declaredSuccess) {
           if (!correlated) {
             strapi.log.error(
-              "Wallet topup failure callback could not be correlated; leaving attempt untouched",
-              {
-                topupId: topup.id,
-                saleOrderId,
-                hasPersistedRefId: Boolean(String(topup.RefId ?? "").trim()),
-                callbackRefIdPresent: Boolean(callbackRefId),
-              }
+              `Wallet top-up ${topup.id} failure callback could not be correlated; leaving the attempt untouched`,
             );
-            return ctx.redirect(
-              `${FRONTEND_BASE}/wallet?status=failure&reason=unverified`
-            );
+            return ctx.redirect(walletRedirect(reference, "pending", "unverified"));
           }
-
           await markWalletTopupFailed(strapi, {
             topupId: Number(topup.id),
-            providerCode: Number.isFinite(Number(resCode)) ? Number(resCode) : null,
-            error: `Mellat callback failure ${resCode}`,
+            providerCode: Number.isFinite(Number(callback.rawCode))
+              ? Number(callback.rawCode)
+              : null,
+            error: `${storedGateway} callback reported failure ${callback.rawCode || ""}`,
+            allowedFrom: ["Pending", "Processing", "Unknown"],
           });
-          return ctx.redirect(
-            `${FRONTEND_BASE}/wallet?status=failure&code=${encodeURIComponent(resCode)}`
-          );
+          return ctx.redirect(walletRedirect(reference, "failure", "declined"));
         }
 
-        // A mismatched RefId on a success callback points at a different attempt than the
-        // one the SaleOrderId resolved to. Nothing is mutated: the bank verify below is
-        // keyed on this row's saleOrderId, so proceeding could only settle the wrong one.
-        if (String(topup.RefId ?? "").trim() && !correlated) {
-          strapi.log.error("Wallet topup success callback RefId does not match the attempt", {
-            topupId: topup.id,
-            saleOrderId,
-          });
-          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=failure&reason=unverified`);
-        }
-
-        if (!saleReferenceId) {
-          return ctx.redirect(
-            `${FRONTEND_BASE}/wallet?status=failure&reason=invalid_callback`
-          );
-        }
-
-        if (await findWalletTopupCredit(strapi, saleReferenceId)) {
-          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=success`);
-        }
-
-        const claimed = await claimWalletTopupCallback(
-          strapi,
-          Number(topup.id),
-          saleReferenceId,
+        // A success callback whose handle does not match the one we stored is
+        // pointing at a different attempt, so nothing is mutated. An intent that
+        // never recorded a handle at all is a different case: the provider
+        // verification below is keyed on our own reference and only succeeds if
+        // the provider agrees that transaction settled, which is stronger
+        // evidence than the echoed handle. Refusing those would strand money
+        // that was genuinely taken.
+        const hasStoredHandle = Boolean(
+          String(topup.ProviderReference ?? "").trim(),
         );
-        if (!claimed) {
+        if (hasStoredHandle && !correlated) {
+          strapi.log.error(
+            `Wallet top-up ${topup.id} success callback handle does not match the stored reference`,
+          );
+          return ctx.redirect(walletRedirect(reference, "pending", "unverified"));
+        }
+
+        const amountIrr = Number(topup.Amount || 0);
+
+        if (storedGateway === "Mellat") {
+          const saleReferenceId = String(callback.saleReferenceId || "");
+          if (!saleReferenceId) {
+            return ctx.redirect(walletRedirect(reference, "failure", "invalid_callback"));
+          }
+          if (await findWalletTopupCredit(strapi, saleReferenceId, undefined, storedGateway)) {
+            return ctx.redirect(walletRedirect(reference, "success"));
+          }
+          if (!(await claimWalletTopupCallback(strapi, Number(topup.id), saleReferenceId))) {
+            const current: any = await strapi.db.query(WALLET_TOPUP_UID).findOne({
+              where: { id: Number(topup.id) },
+              select: ["Status"],
+            } as any);
+            if (
+              current?.Status === "Success" ||
+              (await findWalletTopupCredit(strapi, saleReferenceId, undefined, storedGateway))
+            ) {
+              return ctx.redirect(walletRedirect(reference, "success"));
+            }
+            return ctx.redirect(walletRedirect(reference, "pending"));
+          }
+        } else if (!(await claimWalletTopupForVerification(strapi, Number(topup.id)))) {
           const current: any = await strapi.db.query(WALLET_TOPUP_UID).findOne({
             where: { id: Number(topup.id) },
             select: ["Status"],
           } as any);
-          if (
-            current?.Status === "Success" ||
-            (await findWalletTopupCredit(strapi, saleReferenceId))
-          ) {
-            return ctx.redirect(`${FRONTEND_BASE}/wallet?status=success`);
-          }
-          if (["Processing", "Unknown"].includes(String(current?.Status))) {
-            return ctx.redirect(`${FRONTEND_BASE}/wallet?status=pending`);
-          }
-          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=failure&reason=unverified`);
+          return ctx.redirect(
+            walletRedirect(reference, current?.Status === "Success" ? "success" : "pending"),
+          );
         }
 
-        if (!paymentService) throw new Error("MELLAT_PAYMENT_SERVICE_UNAVAILABLE");
-        const verifyResult = await paymentService.verifyTransaction({
-          orderId: saleOrderId,
-          saleOrderId,
-          saleReferenceId,
+        const verification = await verifyTopup(strapi, {
+          gateway: storedGateway as any,
+          saleOrderId: reference,
+          amountIrr,
+          providerReference: String(topup.ProviderReference || callback.providerReference || ""),
+          saleReferenceId: callback.saleReferenceId,
         });
-        const verifyCode = Number.isFinite(Number(verifyResult?.resCode))
-          ? Number(verifyResult.resCode)
-          : null;
-        if (!verifyResult?.success && verifyCode !== 43) {
-          await markWalletTopupUnknown(strapi, {
-            topupId: Number(topup.id),
-            providerCode: verifyCode,
-            error: verifyResult?.error || "Mellat verification remains ambiguous",
-          });
-          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=pending`);
-        }
 
-        const settleResult = await paymentService.settleTransaction({
-          orderId: saleOrderId,
-          saleOrderId,
-          saleReferenceId,
-          allowResCode45Success: true,
-        });
-        const settleCode = Number.isFinite(Number(settleResult?.resCode))
-          ? Number(settleResult.resCode)
-          : null;
-        if (!settleResult?.success && settleCode !== 0 && settleCode !== 45) {
+        if (verification.outcome === "failed") {
+          await markWalletTopupFailed(strapi, {
+            topupId: Number(topup.id),
+            providerCode: verification.providerCode,
+            error: verification.message,
+            allowedFrom: ["Pending", "Processing", "Unknown"],
+          });
+          return ctx.redirect(walletRedirect(reference, "failure", "declined"));
+        }
+        if (verification.outcome === "unknown") {
           await markWalletTopupUnknown(strapi, {
             topupId: Number(topup.id),
-            providerCode: settleCode,
-            error: settleResult?.error || "Mellat settlement remains ambiguous",
+            providerCode: verification.providerCode,
+            error: verification.message,
           });
-          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=pending`);
+          return ctx.redirect(walletRedirect(reference, "pending"));
         }
 
         await applyConfirmedWalletTopup(strapi, {
           topupId: Number(topup.id),
-          saleReferenceId,
-          providerCode: settleCode,
+          saleReferenceId: verification.providerReference,
+          providerCode: verification.providerCode,
           audit: {
             actor: {
               type: "webhook",
-              id: "mellat-wallet-callback",
-              label: "وب‌هوک درگاه ملت",
+              id: `${storedGateway.toLowerCase()}-wallet-callback`,
+              label: "وب‌هوک درگاه پرداخت",
             },
             origin: "webhook",
             requestId: ctx.state?.auditRequestId || ctx.state?.requestId,
             correlationId: `wallet-topup:${topup.id}`,
           },
         });
-
-        return ctx.redirect(`${FRONTEND_BASE}/wallet?status=success`);
+        return ctx.redirect(walletRedirect(reference, "success"));
       } catch (error) {
-        if (
-          saleReferenceId &&
-          isUniqueConstraintError(error) &&
-          (await findWalletTopupCredit(strapi, saleReferenceId))
-        ) {
-          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=success`);
+        // Remote verification may have succeeded before local posting failed, so
+        // the intent is parked Unknown for the reconciler to finish rather than
+        // being closed either way.
+        if (resolvedTopupId) {
+          await markWalletTopupUnknown(strapi, {
+            topupId: resolvedTopupId,
+            error,
+          }).catch(() => undefined);
         }
-        if (saleReferenceId) {
-          const topups = (await strapi.entityService.findMany(WALLET_TOPUP_UID, {
-            filters: { SaleOrderId: saleOrderId },
-            limit: 1,
-          })) as any[];
-          if (topups?.[0]?.id) {
-            await markWalletTopupUnknown(strapi, {
-              topupId: Number(topups[0].id),
-              error,
-            }).catch(() => undefined);
-          }
-          return ctx.redirect(`${FRONTEND_BASE}/wallet?status=pending`);
-        }
-        return ctx.redirect(`${FRONTEND_BASE}/wallet?status=failure&reason=internal`);
+        strapi.log.error(
+          `Wallet top-up callback failed for ${saleOrderId || callback.providerReference}: ${String(
+            (error as any)?.message || error,
+          ).slice(0, 300)}`,
+        );
+        return ctx.redirect(walletRedirect(saleOrderId, "pending", "processing"));
       }
     },
-  })
+  }),
 );

@@ -16,9 +16,25 @@
       "required": true,
       "min": "0"
     },
+    "Gateway": {
+      "type": "enumeration",
+      "enum": [
+        "Mellat",
+        "SamanKish",
+        "ZarinPal"
+      ],
+      "default": "Mellat"
+    },
     "Status": {
       "type": "enumeration",
-      "enum": ["Pending", "Processing", "Unknown", "Success", "Failed", "Cancelled"],
+      "enum": [
+        "Pending",
+        "Processing",
+        "Unknown",
+        "Success",
+        "Failed",
+        "Cancelled"
+      ],
       "required": true,
       "default": "Pending"
     },
@@ -30,6 +46,18 @@
       "type": "string"
     },
     "SaleReferenceId": {
+      "type": "string"
+    },
+    "ProviderReference": {
+      "type": "string"
+    },
+    "ExpiresAt": {
+      "type": "datetime"
+    },
+    "LedgerReferenceId": {
+      "type": "string"
+    },
+    "IdempotencyKey": {
       "type": "string"
     },
     "NextReconcileAt": {
@@ -59,4 +87,3 @@
     }
   }
 }
-

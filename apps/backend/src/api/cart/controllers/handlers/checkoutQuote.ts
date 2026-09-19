@@ -9,6 +9,8 @@ import {
   findAttachableGroup,
   hasPaidMember,
 } from "../../../reserve-group/lib/reserve-group";
+import { buildWalletCheckoutContext } from "../../services/lib/wallet-checkout";
+import { PaymentAllocationError, tomanToIrr } from "../../services/lib/payment-allocation";
 
 export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
   const {
@@ -18,6 +20,8 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
     gateway,
     discountCode,
     reserveGroupId,
+    walletAmountToman,
+    supersedeAttemptId,
   } = ctx.request.body || {};
 
   try {
@@ -65,13 +69,37 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
       shippingCost = Number(method.price || 0);
     }
 
-    const quote = await createCheckoutQuote(strapi, userId, {
-      shippingId: Number(shippingId),
-      shippingCost,
-      discountCode,
-      gateway: selectedGateway,
-      reserveGroupId,
+    // Built before the quote so the wallet split is part of the hashed quote,
+    // and reported on every response so the storefront never has to infer a
+    // capability from a field that happens to be missing.
+    const walletContext = await buildWalletCheckoutContext(strapi, userId, {
+      selectedGateway,
+      requestedWalletAmount: walletAmountToman,
+      supersedeAttemptId,
     });
+
+    let quote;
+    try {
+      quote = await createCheckoutQuote(strapi, userId, {
+        shippingId: Number(shippingId),
+        shippingCost,
+        discountCode,
+        gateway: selectedGateway,
+        reserveGroupId,
+        resolveAllocation: walletContext.resolve,
+      });
+    } catch (allocationError: any) {
+      if (!(allocationError instanceof PaymentAllocationError)) throw allocationError;
+      return ctx.badRequest(allocationError.message, {
+        data: {
+          success: false,
+          errorCode: allocationError.code,
+          message: allocationError.message,
+          paymentCapabilities: walletContext.capabilities,
+          ...allocationError.details,
+        },
+      });
+    }
     // SnappPay's own timeouts/rejections are a provider-availability problem, not
     // a defect in this cart's quote. Failing the whole request here meant one slow
     // gateway took down checkout for whoever happened to pick it — the quote,
@@ -82,9 +110,15 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
     let snappayUnavailable: string | null = null;
     if (selectedGateway === "snappay") {
       try {
+        // SnappPay only ever finances the gateway leg. With no wallet tender
+        // this is the full total, exactly as before.
         await strapi
           .service("api::payment-gateway.snappay-orchestrator")
-          .checkEligibility(Math.round(quote.financialSummary.total * 10));
+          .checkEligibility(
+            tomanToIrr(
+              quote.paymentAllocation?.gatewayToman ?? quote.financialSummary.total,
+            ),
+          );
       } catch (snappayError: any) {
         snappayUnavailable =
           String(snappayError?.message || "").split(":")[0] || "SNAPPAY_UNAVAILABLE";
@@ -97,6 +131,7 @@ export const checkoutQuoteHandler = (strapi: Strapi) => async (ctx: any) => {
       data: {
         success: true,
         ...quote,
+        paymentCapabilities: walletContext.capabilities,
         ...(snappayUnavailable
           ? {
               gatewayAvailable: false,

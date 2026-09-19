@@ -36,6 +36,9 @@ export default factories.createCoreService("api::local-user.local-user", {
               data: {
                 user: user.id,
                 Balance: 0,
+                // A new wallet holds nothing. Required, so that no creation path can
+                // leave held credit undefined and make available balance unknowable.
+                HeldBalance: 0,
               },
             }
           );

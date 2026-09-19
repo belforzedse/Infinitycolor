@@ -57,7 +57,9 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 
   it("returns only explicitly active mapped gateways", async () => {
@@ -81,6 +83,7 @@ describe("payment-gateway.availableGateways", () => {
           expect.objectContaining({ code: "samankish" }),
           expect.objectContaining({ code: "wallet" }),
         ],
+        paymentCapabilities: expect.any(Object),
       },
     });
   });
@@ -100,7 +103,10 @@ describe("payment-gateway.availableGateways", () => {
     await controller.availableGateways(ctx);
 
     expect(ctx.send).toHaveBeenCalledWith({
-      data: { gateways: [expect.objectContaining({ code: "wallet" })] },
+      data: {
+        gateways: [expect.objectContaining({ code: "wallet" })],
+        paymentCapabilities: expect.any(Object),
+      },
     });
   });
 
@@ -115,7 +121,9 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 
   it("keeps ZarinPal hidden when active but not configured", async () => {
@@ -128,11 +136,16 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 
   it("includes ZarinPal only when active and configured", async () => {
+    // A localhost callback URL is a deployment detail, not a credential. The
+    // gateway is offered on an explicit merchant id or an explicit test opt-in.
     process.env.URL = "http://localhost:1337";
+    process.env.ZARINPAL_MERCHANT_ID = "merchant-id";
     const { strapi } = createStrapiMock();
     (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
       { Title: "ZarinPal", IsActive: true },
@@ -145,7 +158,26 @@ describe("payment-gateway.availableGateways", () => {
     expect(ctx.send).toHaveBeenCalledWith({
       data: {
         gateways: [expect.objectContaining({ code: "zarinpal" })],
+        paymentCapabilities: expect.any(Object),
       },
+    });
+  });
+
+  it("omits ZarinPal when it is active but has no credential and no test opt-in", async () => {
+    process.env.URL = "http://localhost:1337";
+    delete process.env.ZARINPAL_MERCHANT_ID;
+    delete process.env.ZARINPAL_E2E_DETERMINISTIC;
+    const { strapi } = createStrapiMock();
+    (strapi.entityService.findMany as jest.Mock).mockResolvedValue([
+      { Title: "ZarinPal", IsActive: true },
+    ]);
+    const controller = controllerFactory({ strapi });
+    const ctx = mockContext({});
+
+    await controller.availableGateways(ctx);
+
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
     });
   });
 
@@ -157,6 +189,8 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 });

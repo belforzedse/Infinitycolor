@@ -42,7 +42,7 @@
       "maxLength": 13
     },
     "issueName": {
-      "type": "string",
+      "type": "text",
       "required": true,
       "maxLength": 500
     },
@@ -55,7 +55,7 @@
       "private": true
     },
     "sourcePath": {
-      "type": "string",
+      "type": "text",
       "maxLength": 2048
     },
     "locale": {
@@ -68,7 +68,7 @@
       "private": true
     },
     "userAgent": {
-      "type": "string",
+      "type": "text",
       "maxLength": 4096,
       "private": true
     },

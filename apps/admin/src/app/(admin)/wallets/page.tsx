@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import { apiClient } from "@/services";
 import WalletAdjustCard from "@/app/(admin)/users/edit/[id]/WalletAdjustCard";
+import TopupReviewQueue from "./TopupReviewQueue";
 import { useCan } from "@/hooks/useCan";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { getUserFacingErrorMessage } from "@/utils/userErrorMessage";
@@ -15,6 +16,7 @@ import {
 
 export default function WalletAdministrationPage() {
   const canAdjust = useCan("wallet.adjust");
+  const canReadHistory = useCan("wallet.history.read");
   const { user: currentUser } = useCurrentUser();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WalletCustomer[]>([]);
@@ -194,6 +196,19 @@ export default function WalletAdministrationPage() {
             );
           })}
         </section>
+      )}
+
+      {canReadHistory && (
+        <TopupReviewQueue
+          onSelectOwner={(userId) => {
+            // Jump straight to that customer's wallet; the card is the only
+            // place a stranded top-up can actually be settled.
+            setSelected({ id: userId } as WalletCustomer);
+            setQuery("");
+            setResults([]);
+            setHasSearched(false);
+          }}
+        />
       )}
 
       {selected && (

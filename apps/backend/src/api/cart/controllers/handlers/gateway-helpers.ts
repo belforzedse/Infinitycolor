@@ -194,6 +194,13 @@ type SamanRequestParams = {
   callbackURL?: string;
   userId: number;
   cellNumber?: string;
+  /**
+   * What the bank is asked to charge, in toman. This is the *gateway leg* of
+   * the order: with no wallet tender it equals the contract amount, and with a
+   * wallet tender it is the remainder. Defaults to the contract amount so every
+   * existing caller keeps its exact behaviour.
+   */
+  amountToman?: number;
 };
 
 export const requestSamanPayment = async (
@@ -201,7 +208,9 @@ export const requestSamanPayment = async (
   params: SamanRequestParams
 ) => {
   const saman = strapi.service("api::payment-gateway.saman-kish") as any;
-  const amountToman = Math.round(params.contract?.Amount || 0);
+  const amountToman = Math.round(
+    params.amountToman != null ? params.amountToman : params.contract?.Amount || 0,
+  );
   const amountIrr = amountToman * 10;
 
   const cellNumber =
@@ -300,13 +309,17 @@ type ZarinPalRequestParams = {
   userId: number;
   mobile?: string;
   email?: string;
+  /** Gateway leg in toman; defaults to the whole contract amount. */
+  amountToman?: number;
 };
 
 export const requestZarinPalPayment = async (
   strapi: Strapi,
   params: ZarinPalRequestParams
 ) => {
-  const amountToman = Math.round(Number(params.contract?.Amount || 0));
+  const amountToman = Math.round(
+    Number(params.amountToman != null ? params.amountToman : params.contract?.Amount || 0),
+  );
   const amountIrr = amountToman * 10;
 
   if (!params.order?.id || !params.contract?.id || amountToman <= 0) {
@@ -371,11 +384,19 @@ export const requestZarinPalPayment = async (
   }
 
   if (!transactionCreated) {
+    // ZarinPal has already minted an authority: the customer can still be sent
+    // to it, and a payment against it would be real. Losing our own record of it
+    // is therefore an *unknown* outcome, not a failure — cancelling the order
+    // and releasing the money here would leave a payable authority pointing at a
+    // cancelled order.
     return {
       paymentResult: {
         success: false,
+        ambiguous: true,
+        errorCode: "ZARINPAL_TOKEN_PERSISTENCE_FAILED",
         error: "Failed to persist ZarinPal payment request",
         requestId: paymentResult.requestId,
+        authority: paymentResult.authority,
       },
     };
   }
@@ -411,6 +432,53 @@ export const requestZarinPalPayment = async (
       requestId: paymentResult.requestId,
       authority: paymentResult.authority,
     },
+  };
+};
+
+/**
+ * Did the provider actually answer?
+ *
+ * "Initiation failed" and "we do not know whether initiation happened" are
+ * different facts with different consequences. A gateway that answered with an
+ * error code is proof that no payment exists, so the order can be cancelled and
+ * the customer's wallet credit and stock released immediately. A transport
+ * timeout, a dropped response, or a token we failed to persist proves nothing:
+ * cancelling on that evidence risks releasing credit for a payment that is
+ * about to complete. Those are recorded as `Unknown` for reconciliation, and the
+ * reservation (with its wallet hold) is left to expire on its own clock.
+ */
+export type GatewayInitiationOutcome = {
+  outcome: "failed" | "unknown";
+  errorCode: string;
+};
+
+export const classifyGatewayInitiationOutcome = (
+  paymentResult: any,
+): GatewayInitiationOutcome => {
+  if (paymentResult?.ambiguous === true) {
+    return {
+      outcome: "unknown",
+      errorCode: String(paymentResult.errorCode || "PAYMENT_INITIATION_UNKNOWN"),
+    };
+  }
+
+  // Mellat answers with `resCode`; ZarinPal with a numeric `code`. Either is a
+  // provider verdict.
+  const providerCode = Number(paymentResult?.resCode ?? paymentResult?.code);
+  if (Number.isFinite(providerCode)) {
+    return { outcome: "failed", errorCode: `PROVIDER_${providerCode}` };
+  }
+
+  // An HTTP status in the 4xx range is the provider rejecting the request. 5xx
+  // and "no response at all" are not verdicts.
+  const httpStatus = Number(paymentResult?.detailedError?.status);
+  if (Number.isFinite(httpStatus) && httpStatus >= 400 && httpStatus < 500) {
+    return { outcome: "failed", errorCode: `PROVIDER_HTTP_${httpStatus}` };
+  }
+
+  return {
+    outcome: "unknown",
+    errorCode: String(paymentResult?.errorCode || "PAYMENT_INITIATION_UNKNOWN"),
   };
 };
 

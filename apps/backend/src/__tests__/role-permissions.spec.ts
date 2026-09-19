@@ -496,8 +496,12 @@ function createActionTree() {
     "api::wallet-topup": {
       controllers: {
         "wallet-topup": {
+          topupOptions: action(),
           chargeIntent: action(),
           paymentCallback: action(),
+          myTopups: action(),
+          myTopup: action(),
+          adminReviewTopups: action(),
           find: action(),
           findOne: action(),
           create: action(),
@@ -1395,7 +1399,17 @@ describe("role permission templates", () => {
       "availableGateways",
       "snappEligible",
     ]);
-    expect(enabled("api::wallet-topup", "wallet-topup")).toEqual(["paymentCallback"]);
+    // Staff roles inherit the customer grants, so a staff member can top up
+    // their own wallet like any other shopper. Every one of these is
+    // owner-scoped inside the handler; `paymentCallback` stays public because a
+    // bank carries no session.
+    expect(enabled("api::wallet-topup", "wallet-topup")).toEqual([
+      "chargeIntent",
+      "myTopup",
+      "myTopups",
+      "paymentCallback",
+      "topupOptions",
+    ]);
     expect(enabled("api::local-user-wallet", "local-user-wallet")).toEqual([
       "getCurrentUserWallet",
     ]);
@@ -1467,6 +1481,17 @@ describe("role permission templates", () => {
     // Superadmin (full access) keeps them.
     expect(walletCtrl(superadmin).adminAdjustWallet.enabled).toBe(true);
     expect(walletCtrl(superadmin).adminGetUserWallet.enabled).toBe(true);
+
+    // The stranded-top-up queue rides on the same history capability: whoever
+    // may read a customer's wallet ledger may see the intents nothing will
+    // resolve on its own, and nobody else.
+    const topupCtrl = (tree: any) => tree["api::wallet-topup"].controllers["wallet-topup"];
+    expect(topupCtrl(storeManager2).adminReviewTopups.enabled).toBe(true);
+    expect(topupCtrl(finance).adminReviewTopups.enabled).toBe(true);
+    expect(topupCtrl(superadmin).adminReviewTopups.enabled).toBe(true);
+    for (const tree of [storeManager, editor]) {
+      expect(topupCtrl(tree).adminReviewTopups.enabled).toBe(false);
+    }
   });
 
   it("creates the initial privileged roles when Strapi has only its default roles", async () => {
