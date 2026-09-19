@@ -6,16 +6,24 @@ import {
   getWalletAvailability,
   getWalletTransactions,
 } from "../../helpers/api";
-import { deliverProviderCallback, startTopupFromWalletPage } from "../../helpers/wallet";
+import {
+  deliverProviderCallback,
+  settleOnZarinpalSandbox,
+  startTopupFromWalletPage,
+} from "../../helpers/wallet";
 
 /**
  * Adding money to the wallet, end to end through a real server settlement.
  *
- * ZarinPal runs in its deterministic mode here, which answers verification for
- * an `E2E-` authority it minted itself and only for the amount it minted it
- * for. That is a simulation of the provider, never evidence about a live
- * merchant contract — a real authority is still sent to the real gateway even
- * while simulating.
+ * This drives ZarinPal's own sandbox: a real authority, a real pay page, a real
+ * redirect back to our callback, and a real server-to-server verify. Nothing
+ * about the provider protocol is stubbed, which is the point — the wallet's
+ * money moves entirely on the server, so a browser-level stub of the verify
+ * call would assert nothing about whether it moved.
+ *
+ * It is a sandbox with a test merchant, so it is evidence about the protocol
+ * and about our handling of it, and no evidence at all about a live merchant
+ * contract.
  */
 test.describe("wallet top-up", () => {
   test.use({ storageState: authStorageStatePath("customer") });
@@ -48,11 +56,10 @@ test.describe("wallet top-up", () => {
     expect(pending.balanceIrr).toBe(before.balanceIrr);
     expect((await getTopupStatus(request, started.saleOrderId)).status).not.toBe("Success");
 
-    const callback = await deliverProviderCallback(request, "/api/wallet/payment-callback", {
-      Authority: started.authority,
-      Status: "OK",
-    });
-    expect([301, 302, 303, 307, 308]).toContain(callback.status());
+    await settleOnZarinpalSandbox(page, "pay");
+    // The sandbox sends the browser back to our callback, which verifies with
+    // ZarinPal before it credits anything.
+    await expect(page).toHaveURL(/\/wallet\b/i, { timeout: 60_000 });
 
     await expect
       .poll(async () => (await getTopupStatus(request, started.saleOrderId)).status, {
@@ -77,13 +84,10 @@ test.describe("wallet top-up", () => {
     const amountToman = 30_000;
     const started = await startTopupFromWalletPage(page, amountToman);
 
-    await deliverProviderCallback(request, "/api/wallet/payment-callback", {
-      Authority: started.authority,
-      Status: "OK",
-    });
+    await settleOnZarinpalSandbox(page, "pay");
     await expect
       .poll(async () => (await getTopupStatus(request, started.saleOrderId)).status, {
-        timeout: 30_000,
+        timeout: 60_000,
       })
       .toBe("Success");
 
@@ -91,13 +95,16 @@ test.describe("wallet top-up", () => {
     const ledgerAfterFirst = await getWalletTransactions(request);
 
     // A customer refreshing the return page, or a provider retrying, replays
-    // the same callback. The ledger's uniqueness constraint is what makes the
-    // second one a no-op rather than a second credit.
+    // the same callback. ZarinPal answers the second verify with code 101
+    // ("Verified") rather than 100, and the ledger's uniqueness constraint is
+    // what makes it a no-op rather than a second credit.
     for (let replay = 0; replay < 2; replay += 1) {
-      await deliverProviderCallback(request, "/api/wallet/payment-callback", {
-        Authority: started.authority,
-        Status: "OK",
-      });
+      const response = await deliverProviderCallback(
+        request,
+        "/api/wallet/payment-callback",
+        { Authority: started.authority, Status: "OK" },
+      );
+      expect(response.status(), "a replayed callback must not error").toBeLessThan(500);
     }
 
     const afterReplays = await getWalletAvailability(request);
@@ -112,11 +119,9 @@ test.describe("wallet top-up", () => {
     const before = await getWalletAvailability(request);
     const started = await startTopupFromWalletPage(page, 40_000);
 
-    // ZarinPal reports a cancelled payment as a non-OK status on the return.
-    await deliverProviderCallback(request, "/api/wallet/payment-callback", {
-      Authority: started.authority,
-      Status: "NOK",
-    });
+    // Cancelling on the sandbox sends the browser back with a non-OK status.
+    await settleOnZarinpalSandbox(page, "cancel");
+    await expect(page).toHaveURL(/\/wallet\b/i, { timeout: 60_000 });
 
     const after = await getWalletAvailability(request);
     expect(after.balanceIrr).toBe(before.balanceIrr);

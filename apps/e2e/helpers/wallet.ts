@@ -1,6 +1,5 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { strapiOrigin } from "./env";
-import { routeZarinpalPlaceholder } from "./payment";
 
 /**
  * Helpers for the two wallet money paths: adding credit, and spending part of
@@ -43,12 +42,35 @@ export async function deliverProviderCallback(
   return request.get(url.toString(), { maxRedirects: 0 });
 }
 
+/**
+ * Approve (or reject) a payment on ZarinPal's own sandbox page.
+ *
+ * The sandbox is the real provider running a test merchant: it mints real
+ * authorities, renders a real pay page, and redirects back to our callback,
+ * after which our server verifies against its real API. That is worth more
+ * than a stubbed verify response, because it exercises the protocol we
+ * actually have to get right — including `code: 101` on a replayed verify. It
+ * is still a sandbox, and still proves nothing about a live merchant contract.
+ */
+export async function settleOnZarinpalSandbox(page: Page, outcome: "pay" | "cancel" = "pay") {
+  await expect(page, "the browser should be on ZarinPal's sandbox").toHaveURL(
+    /sandbox\.zarinpal\.com/i,
+    { timeout: 45_000 },
+  );
+  // The sandbox offers exactly two links, distinguished by the status they
+  // carry back. Target that rather than Persian button text, which can change.
+  const link = page.locator(
+    outcome === "pay" ? 'a[href*="status=OK"]' : 'a[href*="status=NOK"]',
+  );
+  await expect(link.first()).toBeVisible({ timeout: 30_000 });
+  await link.first().click();
+}
+
 /** Start a top-up from the wallet page and follow it to the provider. */
 export async function startTopupFromWalletPage(
   page: Page,
   amountToman: number,
 ): Promise<{ redirectUrl: string; saleOrderId: string; authority: string }> {
-  await routeZarinpalPlaceholder(page);
   await page.goto("/wallet", { waitUntil: "domcontentloaded" });
 
   const topup = page.locator("[data-wallet-topup]");
