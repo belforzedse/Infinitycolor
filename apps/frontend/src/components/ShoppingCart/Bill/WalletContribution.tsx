@@ -1,8 +1,7 @@
 "use client";
-import React, { useMemo } from "react";
+import React from "react";
 import type { PaymentCapabilities } from "@repo/api/commerce";
 import { priceFormatter } from "@/utils/price";
-import { normalizeDigits } from "@/utils/faNum";
 
 export interface WalletContributionProps {
   /** Order total in toman. */
@@ -14,33 +13,32 @@ export interface WalletContributionProps {
   capabilities: PaymentCapabilities | null;
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
-  /** Raw text, so Persian digits survive until the server normalises them. */
-  amountText: string;
-  onAmountTextChange: (value: string) => void;
   disabled?: boolean;
 }
-
-/**
- * Parses the typed amount without ever coercing something ambiguous into a
- * number. The server re-validates; this only decides what to show.
- */
-export const parseWalletAmount = (raw: string): number | null => {
-  const normalized = normalizeDigits(raw).replace(/[,٬،\s]/g, "").trim();
-  if (!normalized) return null;
-  if (!/^\d+$/.test(normalized)) return null;
-  const parsed = Number(normalized);
-  return Number.isSafeInteger(parsed) ? parsed : null;
-};
 
 /** IRR to spendable toman, always rounding down — see the server's irrToSpendableToman. */
 export const irrToToman = (amountIrr: number): number =>
   Math.max(0, Math.floor(Number(amountIrr || 0) / 10));
 
 /**
- * Choosing how much of an order to pay from wallet credit.
+ * How much credit a ticked wallet box spends: as much of the order as the
+ * shopper has, and no more.
  *
- * Wallet credit is a tender, not a discount: the order total never moves, and
- * whatever the wallet does not cover is charged to the selected gateway.
+ * Deliberately not a free amount. A shopper choosing an exact figure has to
+ * reason about two tenders at once, and every distinct figure is a distinct
+ * quote and a distinct payment attempt. One decision — use my credit or don't —
+ * keeps the arithmetic the store's job.
+ */
+export const walletContributionToman = (availableIrr: number, totalToman: number): number =>
+  Math.min(irrToToman(availableIrr), Math.max(0, Math.round(totalToman)));
+
+/**
+ * The wallet as a tender the shopper ticks, above the bank gateways.
+ *
+ * Wallet credit is not a payment gateway: it is money already at the store, and
+ * whatever it does not cover is charged to whichever bank the shopper picks
+ * below. Presenting it as a fifth gateway made those mutually exclusive, which
+ * they never were.
  */
 export default function WalletContribution({
   totalToman,
@@ -49,27 +47,18 @@ export default function WalletContribution({
   capabilities,
   enabled,
   onEnabledChange,
-  amountText,
-  onAmountTextChange,
   disabled = false,
 }: WalletContributionProps) {
   const availableToman = irrToToman(availableIrr);
   const heldToman = irrToToman(heldIrr);
-  const maxToman = Math.min(availableToman, Math.max(0, Math.round(totalToman)));
-  const amount = useMemo(() => parseWalletAmount(amountText), [amountText]);
-
-  const error = useMemo(() => {
-    if (!enabled) return null;
-    if (amountText.trim() === "") return null;
-    if (amount === null) return "مبلغ را با عدد وارد کنید.";
-    if (amount > availableToman) return "موجودی قابل استفاده کیف پول کافی نیست. مبلغ را تغییر دهید.";
-    if (amount > totalToman) return "مبلغ کیف پول از مبلغ سفارش بیشتر است.";
-    return null;
-  }, [amount, amountText, availableToman, enabled, totalToman]);
-
-  const walletToman = enabled && amount !== null && !error ? amount : 0;
+  const walletToman = enabled ? walletContributionToman(availableIrr, totalToman) : 0;
   const gatewayToman = Math.max(0, Math.round(totalToman) - walletToman);
   const coversWholeOrder = walletToman > 0 && gatewayToman === 0;
+  // A split the server will not accept is worth saying before the shopper
+  // commits to it, not after the order is refused.
+  const splitRefused = Boolean(
+    walletToman > 0 && gatewayToman > 0 && capabilities && !capabilities.splitEnabled,
+  );
 
   if (!capabilities?.walletEnabled || availableToman <= 0) return null;
 
@@ -79,62 +68,34 @@ export default function WalletContribution({
       className="flex flex-col gap-3 rounded-lg border border-stone-100 bg-stone-50 p-4"
       dir="rtl"
     >
-      <label className="flex items-center justify-between gap-3">
-        <span className="text-base text-neutral-800 lg:text-lg">استفاده از کیف پول</span>
+      <label className="flex cursor-pointer items-start justify-between gap-3">
+        <span className="flex flex-col gap-1">
+          <span className="text-base text-neutral-800 lg:text-lg">استفاده از کیف پول</span>
+          <span className="text-sm text-neutral-600" data-testid="wallet-contribution-available">
+            موجودی قابل استفاده: {priceFormatter(availableToman)} تومان
+          </span>
+          {heldToman > 0 ? (
+            <span className="text-xs text-neutral-500" data-testid="wallet-contribution-held">
+              {priceFormatter(heldToman)} تومان برای یک پرداخت در حال انجام رزرو شده است.
+            </span>
+          ) : null}
+        </span>
         <input
           type="checkbox"
           data-testid="wallet-contribution-toggle"
           checked={enabled}
           disabled={disabled}
           onChange={(event) => onEnabledChange(event.target.checked)}
-          className="h-5 w-5 accent-infinity-primary disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-1 h-5 w-5 shrink-0 accent-infinity-primary disabled:cursor-not-allowed disabled:opacity-60"
         />
       </label>
 
-      <p className="text-sm text-neutral-600">
-        موجودی قابل استفاده: {priceFormatter(availableToman)} تومان
-        {heldToman > 0 ? (
-          <span className="block text-xs text-neutral-500">
-            {priceFormatter(heldToman)} تومان برای یک پرداخت در حال انجام رزرو شده است.
-          </span>
-        ) : null}
-      </p>
-
       {enabled ? (
         <>
-          <div className="flex items-center gap-2">
-            <input
-              data-testid="wallet-contribution-input"
-              inputMode="numeric"
-              dir="ltr"
-              value={amountText}
-              disabled={disabled}
-              onChange={(event) => onAmountTextChange(event.target.value)}
-              aria-label="مبلغ پرداخت از کیف پول"
-              aria-invalid={Boolean(error)}
-              className="h-11 flex-1 rounded-lg border border-stone-200 bg-white text-center text-base text-neutral-800 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-            <button
-              type="button"
-              data-testid="wallet-contribution-max"
-              disabled={disabled || maxToman <= 0}
-              onClick={() => onAmountTextChange(String(maxToman))}
-              className="whitespace-nowrap rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-neutral-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              حداکثر موجودی
-            </button>
-          </div>
-
-          {error ? (
-            <p data-testid="wallet-contribution-error" className="text-sm text-red-600">
-              {error}
-            </p>
-          ) : null}
-
-          {!capabilities.splitEnabled && walletToman > 0 && gatewayToman > 0 ? (
-            <p className="text-sm text-amber-700">
-              پرداخت ترکیبی کیف پول و درگاه در حال حاضر فعال نیست. برای استفاده از کیف پول، کل مبلغ
-              سفارش را از موجودی خود بپردازید.
+          {splitRefused ? (
+            <p className="text-sm text-amber-700" data-testid="wallet-contribution-split-refused">
+              پرداخت ترکیبی کیف پول و درگاه در حال حاضر فعال نیست. برای استفاده از کیف پول، باید کل
+              مبلغ سفارش از موجودی شما پرداخت شود.
             </p>
           ) : null}
 
@@ -144,7 +105,7 @@ export default function WalletContribution({
           >
             <div className="flex justify-between">
               <dt>مبلغ سفارش</dt>
-              <dd>{priceFormatter(totalToman)} تومان</dd>
+              <dd>{priceFormatter(Math.max(0, Math.round(totalToman)))} تومان</dd>
             </div>
             <div className="flex justify-between">
               <dt>پرداخت از کیف پول</dt>
