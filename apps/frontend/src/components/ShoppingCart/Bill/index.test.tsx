@@ -84,6 +84,18 @@ jest.mock("@/contexts/CartContext", () => ({
 jest.mock("@/services", () => ({
   CartService: {
     getAvailableGateways: jest.fn().mockResolvedValue(["samankish"]),
+    // Capabilities travel with the gateway list so the UI never infers a server
+    // feature flag from an absent field.
+    getCheckoutPaymentOptions: jest.fn().mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: false,
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    }),
     getSnappEligible: jest.fn().mockResolvedValue({ eligible: false }),
     applyDiscount: jest.fn(),
     checkCartStock: jest.fn().mockResolvedValue({ valid: true }),
@@ -267,6 +279,26 @@ describe("ShoppingCartBillForm auth gate", () => {
     mockPush.mockReset();
     mockedCentralAuth.centralAuth.tokenManager.getToken.mockReset().mockResolvedValue(null);
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["samankish"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: ["samankish"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: false,
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: false });
     (CartService.checkCartStock as jest.Mock).mockResolvedValue({ valid: true });
     (CartService.applyDiscount as jest.Mock).mockResolvedValue({
@@ -445,6 +477,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("shows no gateway options and blocks submit when no backend gateways are active", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue([]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: [],
+      paymentCapabilities: {
+        walletEnabled: [].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
 
     const store = createStore();
     store.set(currentUserAtom, { id: 1 });
@@ -472,6 +514,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("submits SnappPay only with a server quote and stable payment attempt", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:snappay-quote",
@@ -546,6 +598,16 @@ describe("ShoppingCartBillForm auth gate", () => {
     const paymentPageUrl = "https://pay.snapp.test/start?paymentToken=resume-token";
 
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:snappay-resume-quote",
@@ -608,6 +670,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("on bfcache restore only unsticks پرداخت and does not auto-redirect to SnappPay", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
 
     const store = createStore();
@@ -642,6 +714,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("routes an immediately paid wallet order to the canonical result page", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet"],
+      paymentCapabilities: {
+        walletEnabled: ["wallet"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:wallet-quote",
       financialSummary: {
@@ -1369,6 +1451,16 @@ describe("ShoppingCartBillForm auth gate", () => {
     window.localStorage.setItem("pendingCheckoutOrderId", "111459");
     window.localStorage.setItem("pendingCheckoutGateway", "snappay");
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay", "mellat"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
     (CartService.getCheckoutQuote as jest.Mock).mockResolvedValue({
       quoteHash: "sha256:card-quote",
@@ -1431,6 +1523,16 @@ describe("ShoppingCartBillForm auth gate", () => {
     window.localStorage.setItem("pendingCheckoutOrderId", "111459");
     window.localStorage.setItem("pendingCheckoutGateway", "snappay");
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["snappay", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["snappay", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: ["snappay", "mellat"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: true });
 
     const store = createStore();
@@ -1556,6 +1658,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("mints a new attempt when only the coupon is applied, then again when it is removed", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["mellat"],
+      paymentCapabilities: {
+        walletEnabled: ["mellat"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.applyDiscount as jest.Mock).mockResolvedValue({
       success: true,
       discount: 10_000,
@@ -1670,6 +1782,16 @@ describe("ShoppingCartBillForm auth gate", () => {
 
   it("mints a new attempt when only shipping changes on an unpaid checkout", async () => {
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["mellat"],
+      paymentCapabilities: {
+        walletEnabled: ["mellat"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getCheckoutQuote as jest.Mock)
       .mockResolvedValueOnce({
         quoteHash: "sha256:post-shipping",

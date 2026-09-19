@@ -57,7 +57,9 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 
   it("returns only explicitly active mapped gateways", async () => {
@@ -81,6 +83,7 @@ describe("payment-gateway.availableGateways", () => {
           expect.objectContaining({ code: "samankish" }),
           expect.objectContaining({ code: "wallet" }),
         ],
+        paymentCapabilities: expect.any(Object),
       },
     });
   });
@@ -100,7 +103,10 @@ describe("payment-gateway.availableGateways", () => {
     await controller.availableGateways(ctx);
 
     expect(ctx.send).toHaveBeenCalledWith({
-      data: { gateways: [expect.objectContaining({ code: "wallet" })] },
+      data: {
+        gateways: [expect.objectContaining({ code: "wallet" })],
+        paymentCapabilities: expect.any(Object),
+      },
     });
   });
 
@@ -115,7 +121,9 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 
   it("keeps ZarinPal hidden when active but not configured", async () => {
@@ -128,7 +136,9 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 
   it("includes ZarinPal only when active and configured", async () => {
@@ -148,6 +158,7 @@ describe("payment-gateway.availableGateways", () => {
     expect(ctx.send).toHaveBeenCalledWith({
       data: {
         gateways: [expect.objectContaining({ code: "zarinpal" })],
+        paymentCapabilities: expect.any(Object),
       },
     });
   });
@@ -165,7 +176,9 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 
   it("returns no gateways when gateway rows cannot be loaded", async () => {
@@ -176,6 +189,8 @@ describe("payment-gateway.availableGateways", () => {
 
     await controller.availableGateways(ctx);
 
-    expect(ctx.send).toHaveBeenCalledWith({ data: { gateways: [] } });
+    expect(ctx.send).toHaveBeenCalledWith({
+      data: { gateways: [], paymentCapabilities: expect.any(Object) },
+    });
   });
 });

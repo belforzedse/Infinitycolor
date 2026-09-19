@@ -3,10 +3,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import type { Option } from "@/components/Kits/Form/Select";
+import type { PaymentCapabilities } from "@repo/api/commerce";
 import ShoppingCartBillInformationForm from "./InformationForm";
 import ShoppingCartBillDeliveryForm from "./DeliveryForm";
 import ShoppingCartBillDiscountCoupon from "./DiscountCoupon";
 import ShoppingCartBillPaymentGateway from "./PaymentGateway";
+import WalletContribution, { irrToToman, parseWalletAmount } from "./WalletContribution";
 import CheckoutTermsAcceptance from "./CheckoutTermsAcceptance";
 import ReserveShipping from "./ReserveShipping";
 import ReserveFulfillmentChoice, {
@@ -202,6 +204,49 @@ const checkoutErrorPresentation = (
           "وضعیت رزرو موجودی این سفارش الان مشخص نیست. لطفاً چند لحظه بعد دوباره تلاش کنید.",
         clearAttempt: false,
       };
+    // Wallet tender. None of these clear the attempt: the shopper only has to
+    // change the amount or the method, and the order was never created.
+    case "WALLET_INSUFFICIENT_AVAILABLE":
+      return {
+        displayError: "موجودی قابل استفاده کیف پول کافی نیست. مبلغ را تغییر دهید.",
+        clearAttempt: false,
+      };
+    case "WALLET_FUNDS_HELD_BY_PENDING_PAYMENT":
+      return {
+        displayError:
+          "بخشی از موجودی کیف پول برای پرداخت در حال انجام رزرو شده است. لطفاً نتیجه آن پرداخت را بررسی کنید.",
+        clearAttempt: false,
+      };
+    case "WALLET_SPLIT_UNSUPPORTED_GATEWAY":
+      return {
+        displayError: "مبلغ پرداخت از کیف پول برای این روش پرداخت قابل استفاده نیست.",
+        clearAttempt: false,
+      };
+    case "WALLET_SPLIT_DISABLED":
+      return {
+        displayError:
+          "پرداخت ترکیبی کیف پول و درگاه در حال حاضر فعال نیست. یا کل مبلغ را از کیف پول بپردازید یا بدون کیف پول ادامه دهید.",
+        clearAttempt: false,
+      };
+    case "WALLET_RESIDUAL_BELOW_GATEWAY_MINIMUM":
+      return {
+        displayError:
+          "باقی‌ماندهٔ پرداخت از درگاه بسیار کم است. یا کل مبلغ را از کیف پول بپردازید یا سهم کیف پول را کم کنید.",
+        clearAttempt: false,
+      };
+    case "WALLET_COVERS_TOTAL":
+      return {
+        displayError:
+          "موجودی کیف پول کل مبلغ سفارش را پوشش می‌دهد. پرداخت با کیف پول را انتخاب کنید.",
+        clearAttempt: false,
+      };
+    case "WALLET_UNAVAILABLE":
+      return {
+        displayError: "موجودی کیف پول در دسترس نیست. لطفاً چند لحظه بعد دوباره تلاش کنید.",
+        clearAttempt: false,
+      };
+    case "WALLET_AMOUNT_INVALID":
+      return { displayError: "مبلغ کیف پول نامعتبر است.", clearAttempt: false };
     case "SNAPPAY_MANUAL_REVIEW":
       return { displayError: SNAPPAY_MANUAL_REVIEW_COPY, clearAttempt: false };
     case "SNAPPAY_RECONCILIATION_PENDING":
@@ -391,6 +436,13 @@ function ShoppingCartBillForm({}: Props) {
   >(undefined);
   const [discountPreviewLoading, setDiscountPreviewLoading] = useState(false);
   const [walletBalanceIrr, setWalletBalanceIrr] = useState<number>(0);
+  // Spendable now, and what another of this customer's checkouts is holding.
+  const [walletAvailableIrr, setWalletAvailableIrr] = useState<number>(0);
+  const [walletHeldIrr, setWalletHeldIrr] = useState<number>(0);
+  const [paymentCapabilities, setPaymentCapabilities] = useState<PaymentCapabilities | null>(null);
+  const [useWalletCredit, setUseWalletCredit] = useState(false);
+  const [walletAmountText, setWalletAmountText] = useState("");
+
   const [reserveShipping, setReserveShipping] = useState(false);
   const [reviewedServerQuote, setReviewedServerQuote] = useState<{
     quoteHash: string;
@@ -430,6 +482,30 @@ function ShoppingCartBillForm({}: Props) {
   const discountToman = discountPreview?.discount ?? 0;
   const subtotalToman = totalPrice;
   const totalToman = Math.max(0, Math.round(subtotalToman - discountToman + shippingToman));
+
+  /**
+   * How much of this order the shopper has asked the wallet to cover, and which
+   * gateway that implies.
+   *
+   * Credit covering the whole total makes this a wallet-only payment, and the
+   * gateway is part of the hashed quote — so the gateway is resolved *before*
+   * quoting rather than discovered afterwards. One authoritative quote, one
+   * matching hash, and no round trip that could loop on "quote changed".
+   */
+  const walletContribution = useMemo(() => {
+    const availableToman = irrToToman(walletAvailableIrr);
+    const parsed = parseWalletAmount(walletAmountText);
+    const requested =
+      useWalletCredit && parsed !== null
+        ? Math.min(parsed, availableToman, totalToman)
+        : 0;
+    
+    const valid = useWalletCredit && parsed !== null && parsed === requested && requested > 0;
+    return {
+      walletToman: valid ? requested : 0,
+      coversTotal: valid && requested === totalToman && totalToman > 0,
+    };
+  }, [totalToman, useWalletCredit, walletAmountText, walletAvailableIrr]);
   const addressContextKey = useMemo(
     () => buildAddressContextKey(shippingAddressContext),
     [shippingAddressContext],
@@ -451,7 +527,7 @@ function ShoppingCartBillForm({}: Props) {
 
   useEffect(() => {
     setReviewedServerQuote(null);
-  }, [cartSignature, discountPreviewKey, gateway, mergeChoice]);
+  }, [cartSignature, discountPreviewKey, gateway, mergeChoice, walletContribution.walletToman]);
 
   // Persist/restore discount code
   useEffect(() => {
@@ -521,10 +597,12 @@ function ShoppingCartBillForm({}: Props) {
 
     const loadAvailableGateways = async () => {
       try {
-        const gateways = await CartService.getAvailableGateways();
-        setAvailableGateways(gateways);
+        const options = await CartService.getCheckoutPaymentOptions();
+        setAvailableGateways(options.gateways);
+        setPaymentCapabilities(options.paymentCapabilities);
       } catch {
         setAvailableGateways([]);
+        setPaymentCapabilities(null);
       }
     };
 
@@ -699,7 +777,15 @@ function ShoppingCartBillForm({}: Props) {
     const run = async () => {
       try {
         const res = await WalletService.getMyWallet();
-        if (res?.success && res.data) setWalletBalanceIrr(Number(res.data.balance || 0));
+        if (res?.success && res.data) {
+          const balanceIrr = Number(res.data.balance || 0);
+          const heldIrr = Number(res.data.heldBalance || 0);
+          setWalletBalanceIrr(balanceIrr);
+          setWalletHeldIrr(heldIrr);
+          setWalletAvailableIrr(
+            Number(res.data.availableBalance ?? Math.max(0, balanceIrr - heldIrr)),
+          );
+        }
       } catch {}
     };
     run();
@@ -1155,6 +1241,11 @@ function ShoppingCartBillForm({}: Props) {
           analyticsCorrelationId: getAnalyticsCorrelationId(),
         } as never);
       } else {
+      // Wallet credit covering the whole total is a wallet-only payment. The
+      // gateway is part of the hashed quote, so it is decided here rather than
+      // renegotiated after the server answers.
+      const submittedGateway = walletContribution.coversTotal ? "wallet" : gateway;
+
       const addressPayload =
         isMergeMode || selectedAddressId
           ? undefined
@@ -1174,7 +1265,8 @@ function ShoppingCartBillForm({}: Props) {
         ? {
             reserveGroupId: activeReserve?.reserveGroupId,
             callbackURL: "/orders/payment-callback",
-            gateway,
+            gateway: submittedGateway,
+            walletAmountToman: walletContribution.walletToman || undefined,
             mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
             discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
             note: data.notes || undefined,
@@ -1185,7 +1277,8 @@ function ShoppingCartBillForm({}: Props) {
             callbackURL: "/orders/payment-callback",
             addressId: selectedAddressId,
             addressPayload,
-            gateway,
+            gateway: submittedGateway,
+            walletAmountToman: walletContribution.walletToman || undefined,
             mobile: normalizeDigits(data.phoneNumber || "").replace(/\D/g, ""),
             discountCode: discountCode || localStorage.getItem("discountCode") || undefined,
             reserveShipping: reserveShipping || undefined,
@@ -1227,12 +1320,12 @@ function ShoppingCartBillForm({}: Props) {
         quoteHash: quote.quoteHash,
         cartSignature,
         cartIsEmpty: false,
-        gateway,
+        gateway: submittedGateway,
       });
       checkoutAttemptId = resolvedAttempt.attemptId;
       cartResponse = await CartService.finalizeCart({
         ...finalizeData,
-        gateway: resolvedAttempt.gateway || gateway,
+        gateway: resolvedAttempt.gateway || submittedGateway,
         attemptId: checkoutAttemptId,
         quoteHash: resolvedAttempt.quoteHash,
         // Keep anonymous attribution ephemeral in the browser, but carry the
@@ -1804,6 +1897,22 @@ function ShoppingCartBillForm({}: Props) {
               } catch {}
             }}
           />
+          <WalletContribution
+            totalToman={totalToman}
+            availableIrr={walletAvailableIrr}
+            heldIrr={walletHeldIrr}
+            capabilities={paymentCapabilities}
+            enabled={useWalletCredit}
+            onEnabledChange={(next) => {
+              setUseWalletCredit(next);
+              if (next && !walletAmountText) {
+                setWalletAmountText(String(Math.min(irrToToman(walletAvailableIrr), totalToman)));
+              }
+            }}
+            amountText={walletAmountText}
+            onAmountTextChange={setWalletAmountText}
+            disabled={isSubmitting}
+          />
           <ShoppingCartBillPaymentGateway
             selected={gateway}
             onChange={setGateway}
@@ -1811,8 +1920,9 @@ function ShoppingCartBillForm({}: Props) {
             snappEligible={snappEligible}
             snappTitle={snappTitle}
             snappDescription={snappDescription}
-            walletBalanceIrr={walletBalanceIrr}
+            walletBalanceIrr={walletAvailableIrr || walletBalanceIrr}
             requiredAmountIrr={requiredAmountIrr}
+            walletCoversTotal={walletContribution.coversTotal}
           />
           <Controller
             name="acceptTerms"

@@ -39,6 +39,18 @@ jest.mock("@/contexts/CartContext", () => ({
 jest.mock("@/services", () => ({
   CartService: {
     getAvailableGateways: jest.fn().mockResolvedValue(["samankish"]),
+    // Capabilities travel with the gateway list so the UI never infers a server
+    // feature flag from an absent field.
+    getCheckoutPaymentOptions: jest.fn().mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: false,
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    }),
     getSnappEligible: jest.fn().mockResolvedValue({ eligible: false }),
     applyDiscount: jest.fn(),
     checkCartStock: jest.fn().mockResolvedValue({ valid: true }),
@@ -146,6 +158,26 @@ describe("reserve checkout", () => {
     localStorage.clear();
     jest.clearAllMocks();
     (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["samankish"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: ["samankish"].includes("wallet"),
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["samankish"],
+      paymentCapabilities: {
+        walletEnabled: false,
+        splitEnabled: false,
+        splitDisabledReason: "disabled",
+        splitGateways: [],
+        gatewayMinimumsToman: {},
+      },
+    });
     (CartService.getSnappEligible as jest.Mock).mockResolvedValue({ eligible: false });
     (CartService.checkCartStock as jest.Mock).mockResolvedValue({ valid: true });
     (OrderService.getActiveReserve as jest.Mock).mockResolvedValue({ data: null });

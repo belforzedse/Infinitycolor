@@ -12,6 +12,11 @@ interface Props {
   snappDescription?: string;
   walletBalanceIrr?: number;
   requiredAmountIrr?: number;
+  /**
+   * The shopper has chosen to cover the whole order from their wallet, so the
+   * bank gateways are not part of this payment.
+   */
+  walletCoversTotal?: boolean;
 }
 
 function ShoppingCartBillPaymentGateway({
@@ -23,8 +28,12 @@ function ShoppingCartBillPaymentGateway({
   snappDescription,
   walletBalanceIrr = 0,
   requiredAmountIrr = 0,
+  walletCoversTotal = false,
 }: Props) {
   const [walletHovered, setWalletHovered] = useState(false);
+  // The wallet card is the wallet-*only* option: it needs the whole total.
+  // Paying part of an order from credit is chosen in the contribution card
+  // above, alongside whichever bank carries the rest.
   const walletDisabled = walletBalanceIrr < requiredAmountIrr || requiredAmountIrr <= 0;
   const showWalletDetails = walletHovered || selected === "wallet";
 
@@ -85,6 +94,19 @@ function ShoppingCartBillPaymentGateway({
   const showZarinPal = availableGateways.includes("zarinpal");
   const showSnappay = availableGateways.includes("snappay") && snappEligible !== false;
   const showWallet = availableGateways.includes("wallet");
+
+  if (walletCoversTotal) {
+    // Nothing is left for a bank to carry, so offering one would be a choice
+    // with no effect.
+    return (
+      <div className="flex flex-col gap-2" data-testid="payment-gateway-wallet-only">
+        <span className="text-2xl text-neutral-800 lg:text-xl">روش پرداخت</span>
+        <p className="rounded-lg border border-stone-100 bg-stone-50 p-4 text-base text-neutral-700">
+          کل مبلغ سفارش از کیف پول شما پرداخت می‌شود و نیازی به انتخاب درگاه بانکی نیست.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
