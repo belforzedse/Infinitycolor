@@ -154,6 +154,41 @@ describe("top-up intent creation", () => {
     expect(Number(stored.rows[0].count)).toBe(2);
   });
 
+  it("does not let abandoned intents lock a customer out of the cap forever", async () => {
+    const user = await f.createUser();
+    for (let index = 0; index < 2; index += 1) {
+      const { topup } = await createWalletTopupIntent(strapi, {
+        userId: user.id,
+        amountIrr: AMOUNT_IRR,
+        gateway: "Mellat",
+      });
+      // Reached the bank and was abandoned there: it keeps its provider handle,
+      // so the sweep will never close it and a late callback can still arrive.
+      await markWalletTopupRedirected(strapi, {
+        topupId: Number(topup.id),
+        providerReference: `MELLAT-ABANDONED-${index}`,
+        initiationToken: `MELLAT-ABANDONED-${index}`,
+      });
+    }
+    await strapi.db.connection.raw(
+      `UPDATE wallet_topups SET expires_at = NOW() - INTERVAL '2 hours'`,
+    );
+
+    // The cap is about live intents, not about rows that still exist.
+    await expect(
+      createWalletTopupIntent(strapi, {
+        userId: user.id,
+        amountIrr: AMOUNT_IRR,
+        gateway: "Mellat",
+      }),
+    ).resolves.toMatchObject({ reused: false });
+
+    const stillPending = await strapi.db.connection.raw(
+      `SELECT COUNT(*)::int AS count FROM wallet_topups WHERE status = 'Pending'`,
+    );
+    expect(Number(stillPending.rows[0].count)).toBe(3);
+  });
+
   it("gives every intent a distinct, database-unique reference", async () => {
     const users = await Promise.all([f.createUser(), f.createUser(), f.createUser()]);
     const created = await Promise.all(

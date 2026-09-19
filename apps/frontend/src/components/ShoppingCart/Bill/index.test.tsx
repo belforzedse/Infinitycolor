@@ -229,8 +229,12 @@ jest.mock("./DiscountCoupon", () => ({
 
 jest.mock("./PaymentGateway", () => ({
   __esModule: true,
-  default: ({ availableGateways, onChange, snappEligible }: any) => (
-    <div data-testid="checkout-payment-gateway" data-snapp-eligible={String(snappEligible)}>
+  default: ({ availableGateways, onChange, snappEligible, walletBalanceIrr }: any) => (
+    <div
+      data-testid="checkout-payment-gateway"
+      data-snapp-eligible={String(snappEligible)}
+      data-wallet-balance-irr={String(walletBalanceIrr ?? 0)}
+    >
       <span data-testid="checkout-payment-gateway-count">{availableGateways?.length ?? 0}</span>
       {availableGateways?.includes("snappay") && (
         <button type="button" data-testid="select-snappay" onClick={() => onChange("snappay")}>
@@ -760,6 +764,43 @@ describe("ShoppingCartBillForm auth gate", () => {
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith("/payment/result?orderId=88");
+    });
+  });
+
+  it("offers the wallet-only card no credit while another checkout holds the balance", async () => {
+    (CartService.getAvailableGateways as jest.Mock).mockResolvedValue(["wallet", "mellat"]);
+    (CartService.getCheckoutPaymentOptions as jest.Mock).mockResolvedValue({
+      gateways: ["wallet", "mellat"],
+      paymentCapabilities: {
+        walletEnabled: true,
+        splitEnabled: true,
+        splitDisabledReason: null,
+        splitGateways: ["mellat"],
+        gatewayMinimumsToman: { mellat: 1000 },
+      },
+    });
+    // The posted balance would cover the order, but every rial of it is
+    // committed to a checkout this shopper already started.
+    (WalletService.getMyWallet as jest.Mock).mockResolvedValue({
+      success: true,
+      data: { balance: 5_000_000, heldBalance: 5_000_000, availableBalance: 0 },
+    });
+
+    const store = createStore();
+    store.set(currentUserAtom, { id: 1 });
+    store.set(userLoadingAtom, false);
+
+    render(
+      <Provider store={store}>
+        <ShoppingCartBillForm />
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("checkout-payment-gateway")).toHaveAttribute(
+        "data-wallet-balance-irr",
+        "0",
+      );
     });
   });
 

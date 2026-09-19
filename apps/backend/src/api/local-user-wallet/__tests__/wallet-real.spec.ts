@@ -291,6 +291,8 @@ describe('Wallet Operations - Real Implementation', () => {
         success: true,
         data: {
           balance: 0,
+          heldBalance: 0,
+          availableBalance: 0,
         },
       });
       expect(ctx.send.mock.calls[0][0].data).not.toHaveProperty("id");

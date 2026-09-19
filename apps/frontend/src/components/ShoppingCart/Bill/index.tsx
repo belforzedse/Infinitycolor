@@ -435,7 +435,6 @@ function ShoppingCartBillForm({}: Props) {
     | undefined
   >(undefined);
   const [discountPreviewLoading, setDiscountPreviewLoading] = useState(false);
-  const [walletBalanceIrr, setWalletBalanceIrr] = useState<number>(0);
   // Spendable now, and what another of this customer's checkouts is holding.
   const [walletAvailableIrr, setWalletAvailableIrr] = useState<number>(0);
   const [walletHeldIrr, setWalletHeldIrr] = useState<number>(0);
@@ -770,7 +769,8 @@ function ShoppingCartBillForm({}: Props) {
   // Load wallet balance once
   useEffect(() => {
     if (!canLoadProtectedCheckoutData) {
-      setWalletBalanceIrr(0);
+      setWalletAvailableIrr(0);
+      setWalletHeldIrr(0);
       return;
     }
 
@@ -780,7 +780,6 @@ function ShoppingCartBillForm({}: Props) {
         if (res?.success && res.data) {
           const balanceIrr = Number(res.data.balance || 0);
           const heldIrr = Number(res.data.heldBalance || 0);
-          setWalletBalanceIrr(balanceIrr);
           setWalletHeldIrr(heldIrr);
           setWalletAvailableIrr(
             Number(res.data.availableBalance ?? Math.max(0, balanceIrr - heldIrr)),
@@ -1920,7 +1919,10 @@ function ShoppingCartBillForm({}: Props) {
             snappEligible={snappEligible}
             snappTitle={snappTitle}
             snappDescription={snappDescription}
-            walletBalanceIrr={walletAvailableIrr || walletBalanceIrr}
+            // The wallet-only card must be driven by spendable credit alone.
+            // A `|| walletBalanceIrr` fallback would re-enable it precisely
+            // when everything is held, which is when it must be off.
+            walletBalanceIrr={walletAvailableIrr}
             requiredAmountIrr={requiredAmountIrr}
             walletCoversTotal={walletContribution.coversTotal}
           />

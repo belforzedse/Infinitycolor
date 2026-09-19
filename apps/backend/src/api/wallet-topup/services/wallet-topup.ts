@@ -177,12 +177,17 @@ export async function createWalletTopupIntent(
       }
     }
 
+    // Only intents that are still live count against the cap. An abandoned
+    // one keeps its row — a late callback can still arrive and must still be
+    // processable — but an intent nobody is waiting on any more must not lock
+    // the customer out of ever topping up again.
     const pending = await trx.raw(
       `SELECT COUNT(*)::int AS count
          FROM wallet_topups t
          JOIN wallet_topups_user_links l ON l.wallet_topup_id = t.id
         WHERE l.user_id = ?
-          AND t.status IN ('Pending', 'Processing', 'Unknown')`,
+          AND t.status IN ('Pending', 'Processing', 'Unknown')
+          AND (t.expires_at IS NULL OR t.expires_at > NOW())`,
       [params.userId],
     );
     if (Number(pending.rows[0].count) >= limits.maxPending) {

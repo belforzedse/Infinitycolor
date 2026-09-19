@@ -80,6 +80,12 @@ export interface AdminWalletResponse {
   data?: {
     balanceIrr: number;
     balanceToman: number;
+    /** Committed to a live checkout of this customer's, so not spendable. */
+    heldIrr?: number;
+    heldToman?: number;
+    /** balance - held; what an adjustment can actually take away. */
+    availableIrr?: number;
+    availableToman?: number;
     changed?: boolean;
   };
   errorCode?: string;
