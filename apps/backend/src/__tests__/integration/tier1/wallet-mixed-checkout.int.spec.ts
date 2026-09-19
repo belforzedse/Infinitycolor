@@ -7,6 +7,7 @@
  * externally, and a final wallet balance of 150,000.
  */
 import { createCheckoutQuote } from "../../../api/cart/services/lib/checkout-quote";
+import { PaymentAllocationError } from "../../../api/cart/services/lib/payment-allocation";
 import { buildWalletCheckoutContext } from "../../../api/cart/services/lib/wallet-checkout";
 import { finalizeGatewaySettlement } from "../../../api/order/controllers/helpers/gatewaySettlement";
 import { claimPaymentAttemptForInitiation } from "../../../api/payment-attempt/services/claim-payment-attempt";
@@ -36,8 +37,13 @@ afterAll(async () => {
   delete process.env.WALLET_CHECKOUT_SPLIT_ENABLED;
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   f = makeFactories(strapi);
+  // Gateway availability is driven by active `payment_gateways` rows, and a
+  // fresh integration database has none. Both tenders this suite uses have to
+  // be switched on for the quote to offer a split at all.
+  await f.createPaymentGateway({ title: "Wallet", isActive: true });
+  await f.createPaymentGateway({ title: "ZarinPal", isActive: true });
 });
 
 afterEach(async () => {
@@ -122,11 +128,30 @@ async function quoteAndFinalize(
     requestedWalletAmount: opts.walletAmountToman,
     supersedeAttemptId: opts.supersedeAttemptId,
   });
-  const quote = await createCheckoutQuote(strapi, userId, {
-    shippingCost: 0,
-    gateway,
-    resolveAllocation: context.resolve,
-  });
+  let quote;
+  try {
+    quote = await createCheckoutQuote(strapi, userId, {
+      shippingCost: 0,
+      gateway,
+      resolveAllocation: context.resolve,
+    });
+  } catch (error) {
+    if (!(error instanceof PaymentAllocationError)) throw error;
+    // A refused split is reported at quote time, exactly as the storefront sees
+    // it — there is no point letting the shopper reach finalize with an
+    // allocation the server has already rejected. Shaped like the handler's
+    // response so the assertions are about one observable contract.
+    return {
+      quote: null,
+      context,
+      result: {
+        success: false,
+        status: 409,
+        errorCode: error.code,
+        message: error.message,
+      },
+    };
+  }
   const result = await strapi.service("api::cart.cart").finalizeCartToOrder(userId, {
     gateway,
     attemptId: opts.attemptId,
